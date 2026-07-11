@@ -1,0 +1,36 @@
+# Local reference programs
+.examples/
+
+# CodeGraph local index
+.codegraph/
+
+# Runtime data and secrets
+data/
+*.crt
+*.cer
+*.key
+*.p12
+*.pfx
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+
+# Node.js and frontend builds
+node_modules/
+dist/
+build/
+coverage/
+
+# IDE and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
