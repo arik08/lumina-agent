@@ -20,6 +20,11 @@ if ($LASTEXITCODE -ne 0) {
     throw "CodeGraph update failed with exit code $LASTEXITCODE."
 }
 
-$database = Get-Item (Join-Path $repoRoot ".codegraph\codegraph.db")
-Write-Host "CodeGraph database: $($database.FullName)"
-Write-Host "Last updated: $($database.LastWriteTime)"
+$databasePath = Join-Path $repoRoot ".codegraph\codegraph.db"
+if (Test-Path $databasePath) {
+    $database = Get-Item $databasePath
+    Write-Host "CodeGraph database: $($database.FullName)"
+    Write-Host "Last updated: $($database.LastWriteTime)"
+} else {
+    Write-Warning "No supported source files were found. The CodeGraph database will be created after Python or TypeScript source files are added."
+}
