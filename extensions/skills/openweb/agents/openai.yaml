@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenWeb"
+  short_description: "구조화된 웹 플랫폼 read/search 작업"
+  default_prompt: "Use OpenWeb for supported platform URLs, handles, and platform-scoped searches before generic web search."

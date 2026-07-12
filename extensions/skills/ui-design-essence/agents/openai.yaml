@@ -1,0 +1,4 @@
+interface:
+  display_name: "UI Design Essence"
+  short_description: "UI quality guardrails and polish"
+  default_prompt: "Use UI Design Essence as a supporting design-quality pass: preserve the requested artifact type while improving hierarchy, tokens, density, responsiveness, accessibility, motion, and generic-AI-UI issues."

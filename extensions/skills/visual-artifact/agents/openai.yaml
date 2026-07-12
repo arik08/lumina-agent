@@ -1,0 +1,3 @@
+interface:
+  display_name: "Visual Artifact"
+  short_description: "Create dense reports and browser-ready visual artifacts"

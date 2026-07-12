@@ -1,0 +1,12 @@
+{
+  "name": "myharness-pptx-writer-runtime",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": {
+    "fast-xml-parser": "^4.5.3",
+    "jszip": "^3.10.1",
+    "pptxgenjs": "^3.12.0"
+  }
+}
+

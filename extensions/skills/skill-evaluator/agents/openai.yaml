@@ -1,0 +1,4 @@
+interface:
+  display_name: "Skill Evaluator"
+  short_description: "Evaluate skill safety and quality"
+  default_prompt: "Use $skill-evaluator to review a SKILL.md folder for trigger quality, safety, and maintainability."

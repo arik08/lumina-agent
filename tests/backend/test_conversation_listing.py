@@ -1,0 +1,172 @@
+from __future__ import annotations
+
+from pathlib import Path
+import time
+
+from fastapi.testclient import TestClient
+
+from lumina.config import Settings
+from lumina.main import create_app
+
+
+def test_cursor_preserves_favorite_order_and_search_is_whitespace_tolerant(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'lumina.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        created: list[dict[str, object]] = []
+        for index, title in enumerate(
+            [
+                "Energy    Cost  Review",
+                "Line bottleneck",
+                "Safety checklist",
+                "Maintenance report",
+                "Inventory review",
+            ]
+        ):
+            response = client.post(
+                "/api/conversations",
+                headers={"X-CSRF-Token": csrf},
+                json={"projectId": project_id, "title": title},
+            )
+            assert response.status_code == 201
+            item = response.json()
+            created.append(item)
+            if index in {0, 3}:
+                favorite = client.patch(
+                    f"/api/conversations/{item['id']}",
+                    headers={
+                        "X-CSRF-Token": csrf,
+                        "If-Match": f'"{item["revision"]}"',
+                    },
+                    json={"isFavorite": True},
+                )
+                assert favorite.status_code == 200
+
+        collected: list[dict[str, object]] = []
+        cursor: str | None = None
+        while True:
+            response = client.get(
+                "/api/conversations",
+                params={
+                    "project_id": project_id,
+                    "limit": 2,
+                    **({"cursor": cursor} if cursor else {}),
+                },
+            )
+            assert response.status_code == 200, response.text
+            payload = response.json()
+            collected.extend(payload["items"])
+            cursor = payload["nextCursor"]
+            if cursor is None:
+                break
+
+        assert len(collected) == len(created)
+        assert len({item["id"] for item in collected}) == len(created)
+        assert [item["isFavorite"] for item in collected] == sorted(
+            (item["isFavorite"] for item in collected), reverse=True
+        )
+
+        search = client.get(
+            "/api/conversations/search",
+            params={"project_id": project_id, "title_query": " energy   review "},
+        )
+        assert search.status_code == 200
+        assert [item["title"] for item in search.json()["items"]] == [
+            "Energy    Cost  Review"
+        ]
+
+
+def _login(client: TestClient) -> str:
+    response = client.post(
+        "/api/auth/login",
+        json={
+            "loginName": "admin",
+            "loginDomain": "posco.com",
+            "password": "1",
+        },
+    )
+    assert response.status_code == 200
+    return response.json()["csrfToken"]
+
+
+def test_turn_set_cursor_pages_backwards_without_overlap(tmp_path: Path) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'turns.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "cursor test"},
+        ).json()
+        conversation_id = conversation["id"]
+
+        for index in range(5):
+            started = client.post(
+                f"/api/conversations/{conversation_id}/runs",
+                headers={
+                    "X-CSRF-Token": csrf,
+                    "Idempotency-Key": f"turn-page-{index:04d}",
+                },
+                json={
+                    "message": {
+                        "text": f"질문 {index}",
+                        "attachmentIds": [],
+                        "promptReferences": [],
+                    },
+                    "execution": {
+                        "providerId": "mock",
+                        "modelKey": "mock-agent",
+                        "effortId": "medium",
+                    },
+                },
+            )
+            assert started.status_code == 202
+            _wait_for_terminal(client, started.json()["run"]["runId"])
+
+        latest = client.get(
+            f"/api/conversations/{conversation_id}/turn-sets",
+            params={"limit_turn_sets": 2},
+        ).json()
+        assert len(latest["turnSets"]) == 2
+        assert latest["hasMoreBefore"] is True
+
+        older = client.get(
+            f"/api/conversations/{conversation_id}/turn-sets",
+            params={
+                "limit_turn_sets": 2,
+                "before_cursor": latest["previousCursor"],
+            },
+        ).json()
+        assert len(older["turnSets"]) == 2
+        assert {item["id"] for item in latest["turnSets"]}.isdisjoint(
+            {item["id"] for item in older["turnSets"]}
+        )
+
+
+def _wait_for_terminal(client: TestClient, run_id: str) -> None:
+    deadline = time.monotonic() + 4
+    while time.monotonic() < deadline:
+        status = client.get(f"/api/runs/{run_id}/snapshot").json()["status"]
+        if status in {"completed", "failed", "cancelled", "interrupted"}:
+            assert status == "completed"
+            return
+        time.sleep(0.02)
+    raise AssertionError("Run did not finish")

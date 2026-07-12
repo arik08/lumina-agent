@@ -4,6 +4,10 @@
 # CodeGraph local index
 .codegraph/
 
+# Local development caches
+.cache/
+.playwright-mcp/
+
 # Runtime data and secrets
 data/
 *.crt

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Spreadsheet Analyst"
+  short_description: "Create and audit Excel workbooks"
+  default_prompt: "Use $spreadsheet-analyst to create an Excel workbook with formulas, formatting, and validation."

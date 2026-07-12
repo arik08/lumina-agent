@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "kosis": {
+      "type": "stdio",
+      "description": "KOSIS 국가통계포털 OpenAPI MCP입니다. 통계목록 조회, 통계표 검색, 통계자료 조회, 통계표 메타데이터, 통계설명, 연결 점검을 수행합니다.",
+      "command": "python",
+      "args": [
+        "extensions/mcp/kosis_server.py"
+      ],
+      "cwd": "."
+    }
+  }
+}

@@ -1,0 +1,1591 @@
+import type {
+  ArtifactDownload,
+  ArtifactDraft,
+  ArtifactSummary,
+  ArtifactVersion,
+  AdminAuditList,
+  AdminConversationDetail,
+  AdminConversationList,
+  AdminProviderModel,
+  AdminUser,
+  AdminUserList,
+  AttachmentSummary,
+  AuthSession,
+  CreateAdminUserRequest,
+  CreateConversationRequest,
+  CreateProjectLearningProposalRequest,
+  CreateProjectRequest,
+  CurrentSettings,
+  CursorPage,
+  ListConversationsQuery,
+  LoginRequest,
+  InstructionDocument,
+  UpdateInstructionRequest,
+  MemoryLearningMode,
+  MemoryOptimizationResult,
+  MemorySettings,
+  ModelSummary,
+  NotificationItem,
+  NotificationList,
+  NotificationReadAllResult,
+  NotificationUnreadCount,
+  MessageFeedback,
+  ProjectSummary,
+  ProviderSummary,
+  RunActionRequest,
+  RunEvent,
+  RunMutationResponse,
+  RunSnapshot,
+  RunStreamHandlers,
+  SaveArtifactVersionRequest,
+  StartRunRequest,
+  TurnSetPage,
+  UserMemory,
+  UpdateAdminUserRequest,
+  UpdateProjectRequest,
+  UpdateConversationRequest,
+  UpdateCurrentSettingsRequest,
+  ConversationListItem,
+  ComposerSuggestion,
+  ConversationExportFormat,
+  ConversationSearchResponse,
+  ConversationShareCreated,
+  ExtensionInstallation,
+  ScheduledRun,
+  ScheduledTask,
+  ScheduleKind,
+  SharedConversationSnapshot,
+  SkillDraft,
+  SkillExtension,
+  SkillVersion,
+  ProjectFileDetail,
+  ProjectFileSummary,
+  ProjectLearningMutationResult,
+  ProjectLearningProposal,
+  ProjectLearningProposalStatus,
+  ProjectMemory,
+  ProjectMemoryHistory,
+  McpConfiguration,
+  McpDefinition,
+  McpDefinitionCreateRequest,
+  McpInstallation,
+} from "./api-types";
+
+type QueryValue = string | number | boolean | null | undefined;
+
+interface ApiRequestOptions extends Omit<RequestInit, "body"> {
+  body?: unknown;
+  query?: Record<string, QueryValue>;
+  csrf?: boolean;
+  idempotencyKey?: string;
+}
+
+const apiBase = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
+const streamBase = (import.meta.env.VITE_STREAM_BASE_URL || "/stream").replace(/\/$/, "");
+
+export function attachmentContentUrl(attachmentId: string) {
+  return `${apiBase}/attachments/${encodeURIComponent(attachmentId)}/content`;
+}
+
+let csrfToken: string | null = null;
+let csrfBootstrap: Promise<void> | null = null;
+
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code: string;
+  readonly requestId?: string;
+  readonly field?: string;
+  readonly details?: unknown;
+
+  constructor(
+    message: string,
+    options: {
+      status: number;
+      code: string;
+      requestId?: string;
+      field?: string;
+      details?: unknown;
+    },
+  ) {
+    super(message);
+    this.name = "ApiError";
+    this.status = options.status;
+    this.code = options.code;
+    this.requestId = options.requestId;
+    this.field = options.field;
+    this.details = options.details;
+  }
+}
+
+function buildUrl(base: string, path: string, query?: Record<string, QueryValue>) {
+  const url = new URL(`${base}${path}`, window.location.origin);
+  Object.entries(query ?? {}).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") {
+      url.searchParams.set(key, String(value));
+    }
+  });
+  return url.toString();
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function captureCsrf(response: Response, payload?: unknown) {
+  const headerToken = response.headers.get("X-CSRF-Token");
+  if (headerToken) csrfToken = headerToken;
+  if (isRecord(payload) && typeof payload.csrfToken === "string") {
+    csrfToken = payload.csrfToken;
+  }
+}
+
+async function parseBody(response: Response): Promise<unknown> {
+  if (response.status === 204) return undefined;
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) return response.json();
+  return response.text();
+}
+
+function apiErrorFrom(response: Response, payload: unknown) {
+  if (isRecord(payload)) {
+    return new ApiError(
+      typeof payload.message === "string" ? payload.message : "요청을 처리하지 못했습니다.",
+      {
+        status: response.status,
+        code: typeof payload.code === "string" ? payload.code : "request_failed",
+        requestId: typeof payload.requestId === "string" ? payload.requestId : undefined,
+        field: typeof payload.field === "string" ? payload.field : undefined,
+        details: payload.details,
+      },
+    );
+  }
+  return new ApiError(
+    typeof payload === "string" && payload ? payload : "요청을 처리하지 못했습니다.",
+    { status: response.status, code: "request_failed" },
+  );
+}
+
+async function bootstrapCsrfToken() {
+  if (csrfToken) return;
+  if (!csrfBootstrap) {
+    csrfBootstrap = (async () => {
+      const response = await fetch(buildUrl(apiBase, "/auth/session"), {
+        credentials: "include",
+        headers: { Accept: "application/json" },
+      });
+      const payload = await parseBody(response);
+      captureCsrf(response, payload);
+      if (!response.ok) throw apiErrorFrom(response, payload);
+      if (!csrfToken) {
+        throw new ApiError("보안 토큰을 확인하지 못했습니다. 다시 로그인해 주세요.", {
+          status: 403,
+          code: "csrf_token_missing",
+        });
+      }
+    })().finally(() => {
+      csrfBootstrap = null;
+    });
+  }
+  await csrfBootstrap;
+}
+
+async function fetchApi(path: string, options: ApiRequestOptions = {}) {
+  const {
+    body: requestBody,
+    query,
+    csrf = true,
+    idempotencyKey,
+    ...requestInit
+  } = options;
+  const method = (requestInit.method ?? "GET").toUpperCase();
+  const unsafe = !["GET", "HEAD", "OPTIONS"].includes(method);
+  if (unsafe && csrf) await bootstrapCsrfToken();
+
+  const headers = new Headers(requestInit.headers);
+  headers.set("Accept", "application/json");
+  if (unsafe && csrf && csrfToken) {
+    headers.set("X-CSRF-Token", csrfToken);
+  }
+  if (idempotencyKey) {
+    headers.set("Idempotency-Key", idempotencyKey);
+  }
+
+  let body: BodyInit | undefined;
+  if (requestBody instanceof FormData || requestBody instanceof Blob) {
+    body = requestBody;
+  } else if (requestBody !== undefined) {
+    headers.set("Content-Type", "application/json");
+    body = JSON.stringify(requestBody);
+  }
+
+  const response = await fetch(buildUrl(apiBase, path, query), {
+    ...requestInit,
+    body,
+    credentials: "include",
+    headers,
+  });
+  captureCsrf(response);
+
+  if (!response.ok) {
+    const payload = await parseBody(response);
+    captureCsrf(response, payload);
+    throw apiErrorFrom(response, payload);
+  }
+  return response;
+}
+
+async function request<T>(path: string, options?: ApiRequestOptions): Promise<T> {
+  const response = await fetchApi(path, options);
+  const payload = await parseBody(response);
+  captureCsrf(response, payload);
+  return payload as T;
+}
+
+export async function getAuthSession(signal?: AbortSignal) {
+  return request<AuthSession>("/auth/session", { signal });
+}
+
+export interface UsdKrwExchangeRate {
+  base: "USD";
+  quote: "KRW";
+  rate: number | null;
+  asOf: string | null;
+  source: string | null;
+}
+
+let usdKrwExchangeRateRequest: Promise<UsdKrwExchangeRate> | null = null;
+
+export function getUsdKrwExchangeRate() {
+  if (!usdKrwExchangeRateRequest) {
+    usdKrwExchangeRateRequest = (async () => {
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 8_000);
+      try {
+        return await request<UsdKrwExchangeRate>("/finance/exchange-rate/usd-krw", {
+          signal: controller.signal,
+        });
+      } catch {
+        return { base: "USD", quote: "KRW", rate: null, asOf: null, source: null };
+      } finally {
+        window.clearTimeout(timeout);
+      }
+    })();
+  }
+  return usdKrwExchangeRateRequest;
+}
+
+export async function login(payload: LoginRequest, signal?: AbortSignal) {
+  return request<AuthSession>("/auth/login", {
+    method: "POST",
+    body: payload,
+    csrf: false,
+    signal,
+  });
+}
+
+export async function logout(signal?: AbortSignal) {
+  await request<void>("/auth/logout", { method: "POST", signal });
+  csrfToken = null;
+}
+
+export async function listNotifications(
+  unreadOnly = false,
+  limit = 50,
+  offset = 0,
+  signal?: AbortSignal,
+) {
+  return request<NotificationList>("/notifications", {
+    query: { unreadOnly, limit, offset },
+    signal,
+  });
+}
+
+export async function getNotificationUnreadCount(signal?: AbortSignal) {
+  return request<NotificationUnreadCount>("/notifications/unread-count", { signal });
+}
+
+export async function markNotificationRead(notificationId: string, signal?: AbortSignal) {
+  return request<NotificationItem>(`/notifications/${encodeURIComponent(notificationId)}/read`, {
+    method: "POST",
+    signal,
+  });
+}
+
+export async function markAllNotificationsRead(signal?: AbortSignal) {
+  return request<NotificationReadAllResult>("/notifications/read-all", {
+    method: "POST",
+    signal,
+  });
+}
+
+export async function deleteNotification(notificationId: string, signal?: AbortSignal) {
+  await request<void>(`/notifications/${encodeURIComponent(notificationId)}`, {
+    method: "DELETE",
+    signal,
+  });
+}
+
+export async function deleteAllNotifications(signal?: AbortSignal) {
+  await request<void>("/notifications", { method: "DELETE", signal });
+}
+
+export async function listProjects(signal?: AbortSignal) {
+  return request<ProjectSummary[]>("/projects", { signal });
+}
+
+export async function createProject(payload: CreateProjectRequest, signal?: AbortSignal) {
+  return request<ProjectSummary>("/projects", {
+    method: "POST",
+    body: payload,
+    signal,
+  });
+}
+
+export async function updateProject(
+  projectId: string,
+  payload: UpdateProjectRequest,
+  signal?: AbortSignal,
+) {
+  return request<ProjectSummary>(`/projects/${encodeURIComponent(projectId)}`, {
+    method: "PATCH",
+    body: payload,
+    signal,
+  });
+}
+
+export async function archiveProject(projectId: string, signal?: AbortSignal) {
+  await request<void>(`/projects/${encodeURIComponent(projectId)}`, {
+    method: "DELETE",
+    signal,
+  });
+}
+
+export async function getPersonalInstructions(signal?: AbortSignal) {
+  return request<InstructionDocument>("/instructions/personal", { signal });
+}
+
+export async function updatePersonalInstructions(
+  payload: UpdateInstructionRequest,
+  signal?: AbortSignal,
+) {
+  return request<InstructionDocument>("/instructions/personal", {
+    method: "PATCH",
+    body: payload,
+    signal,
+  });
+}
+
+export async function getProjectInstructions(projectId: string, signal?: AbortSignal) {
+  return request<InstructionDocument>(
+    `/projects/${encodeURIComponent(projectId)}/instructions`,
+    { signal },
+  );
+}
+
+export async function updateProjectInstructions(
+  projectId: string,
+  payload: UpdateInstructionRequest,
+  signal?: AbortSignal,
+) {
+  return request<InstructionDocument>(
+    `/projects/${encodeURIComponent(projectId)}/instructions`,
+    { method: "PATCH", body: payload, signal },
+  );
+}
+
+export async function getOrganizationInstructions(signal?: AbortSignal) {
+  return request<InstructionDocument>("/admin/organization/instructions", { signal });
+}
+
+export async function updateOrganizationInstructions(
+  payload: UpdateInstructionRequest,
+  signal?: AbortSignal,
+) {
+  return request<InstructionDocument>("/admin/organization/instructions", {
+    method: "PATCH",
+    body: payload,
+    signal,
+  });
+}
+
+export async function updateOrganizationInstructionRevisionLabel(
+  revision: number,
+  label: string,
+  signal?: AbortSignal,
+) {
+  return request<{ revision: number; label: string }>(
+    `/admin/organization/instructions/revisions/${revision}/label`,
+    { method: "PATCH", body: { label }, signal },
+  );
+}
+
+export async function getOrganizationInstructionRevision(
+  revision: number,
+  signal?: AbortSignal,
+) {
+  return request<{ revision: number; label: string; content: string }>(
+    `/admin/organization/instructions/revisions/${revision}`,
+    { signal },
+  );
+}
+
+export async function updateOrganizationInstructionRevision(
+  revision: number,
+  content: string,
+  signal?: AbortSignal,
+) {
+  return request<{ revision: number; content: string }>(
+    `/admin/organization/instructions/revisions/${revision}`,
+    { method: "PATCH", body: { content }, signal },
+  );
+}
+
+export async function listProjectFiles(
+  projectId: string,
+  query = "",
+  includeDeleted = false,
+  signal?: AbortSignal,
+) {
+  return request<ProjectFileSummary[]>(`/projects/${encodeURIComponent(projectId)}/files`, {
+    query: { q: query, includeDeleted, limit: 300 },
+    signal,
+  });
+}
+
+export async function getProjectFile(projectId: string, fileId: string, signal?: AbortSignal) {
+  return request<ProjectFileDetail>(
+    `/projects/${encodeURIComponent(projectId)}/files/${encodeURIComponent(fileId)}`,
+    { signal },
+  );
+}
+
+export async function uploadProjectFile(
+  projectId: string,
+  file: File,
+  logicalPath?: string,
+  changeReason = "",
+  signal?: AbortSignal,
+) {
+  const body = new FormData();
+  body.set("file", file);
+  if (logicalPath?.trim()) body.set("logicalPath", logicalPath.trim());
+  if (changeReason.trim()) body.set("changeReason", changeReason.trim());
+  return request<ProjectFileSummary>(`/projects/${encodeURIComponent(projectId)}/files`, {
+    method: "POST",
+    body,
+    signal,
+  });
+}
+
+export async function uploadProjectFileVersion(
+  projectId: string,
+  fileId: string,
+  file: File,
+  baseVersion: number,
+  changeReason = "",
+  signal?: AbortSignal,
+) {
+  const body = new FormData();
+  body.set("file", file);
+  body.set("baseVersion", String(baseVersion));
+  if (changeReason.trim()) body.set("changeReason", changeReason.trim());
+  return request<ProjectFileSummary>(
+    `/projects/${encodeURIComponent(projectId)}/files/${encodeURIComponent(fileId)}/versions`,
+    { method: "POST", body, signal },
+  );
+}
+
+export async function moveProjectFile(
+  projectId: string,
+  fileId: string,
+  logicalPath: string,
+  expectedRevision: number,
+  signal?: AbortSignal,
+) {
+  return request<ProjectFileSummary>(
+    `/projects/${encodeURIComponent(projectId)}/files/${encodeURIComponent(fileId)}`,
+    { method: "PATCH", body: { logicalPath, expectedRevision }, signal },
+  );
+}
+
+export async function downloadProjectFile(
+  projectId: string,
+  fileId: string,
+  version?: number,
+  signal?: AbortSignal,
+): Promise<ArtifactDownload> {
+  const response = await fetchApi(
+    `/projects/${encodeURIComponent(projectId)}/files/${encodeURIComponent(fileId)}/download`,
+    { query: { version }, signal },
+  );
+  return {
+    blob: await response.blob(),
+    fileName: downloadFileName(response, `project-file-${fileId}${version ? `-v${version}` : ""}`),
+  };
+}
+
+export async function deleteProjectFile(
+  projectId: string,
+  fileId: string,
+  expectedRevision: number,
+  signal?: AbortSignal,
+) {
+  await request<void>(
+    `/projects/${encodeURIComponent(projectId)}/files/${encodeURIComponent(fileId)}`,
+    { method: "DELETE", query: { expectedRevision }, signal },
+  );
+}
+
+export async function getCurrentSettings(projectId?: string, signal?: AbortSignal) {
+  return request<CurrentSettings>("/settings/current", {
+    query: { project_id: projectId },
+    signal,
+  });
+}
+
+export async function updateCurrentSettings(
+  projectId: string | undefined,
+  payload: UpdateCurrentSettingsRequest,
+  signal?: AbortSignal,
+) {
+  return request<CurrentSettings>("/settings/current", {
+    method: "PATCH",
+    query: { project_id: projectId },
+    body: payload,
+    signal,
+  });
+}
+
+export async function listProviders(projectId?: string, signal?: AbortSignal) {
+  return request<ProviderSummary[]>("/providers", {
+    query: { project_id: projectId },
+    signal,
+  });
+}
+
+export async function listProviderModels(providerId: string, projectId?: string, signal?: AbortSignal) {
+  return request<ModelSummary[]>(`/providers/${encodeURIComponent(providerId)}/models`, {
+    query: { project_id: projectId },
+    signal,
+  });
+}
+
+export async function listAdminProviderModels(providerId: string, signal?: AbortSignal) {
+  return request<AdminProviderModel[]>(`/admin/providers/${encodeURIComponent(providerId)}/models`, { signal });
+}
+
+export async function updateAdminProviderModel(
+  providerId: string,
+  modelKey: string,
+  capabilities: Record<string, unknown>,
+  signal?: AbortSignal,
+) {
+  return request<AdminProviderModel>(`/admin/providers/${encodeURIComponent(providerId)}/models/${encodeURIComponent(modelKey)}`, {
+    method: "PATCH",
+    body: { capabilities },
+    signal,
+  });
+}
+
+export async function listConversations(query: ListConversationsQuery = {}, signal?: AbortSignal) {
+  const path = query.titleQuery ? "/conversations/search" : "/conversations";
+  return request<CursorPage<ConversationListItem>>(path, {
+    query: {
+      project_id: query.projectId,
+      cursor: query.cursor,
+      limit: query.limit,
+      title_query: query.titleQuery,
+    },
+    signal,
+  });
+}
+
+export async function searchConversationContent(
+  query: string,
+  projectId?: string,
+  signal?: AbortSignal,
+) {
+  return request<ConversationSearchResponse>("/conversations/content-search", {
+    query: { q: query, project_id: projectId, limit: 50 },
+    signal,
+  });
+}
+
+export async function createConversation(payload: CreateConversationRequest, signal?: AbortSignal) {
+  return request<ConversationListItem>("/conversations", {
+    method: "POST",
+    body: payload,
+    signal,
+  });
+}
+
+export async function updateConversation(
+  conversationId: string,
+  payload: UpdateConversationRequest,
+  signal?: AbortSignal,
+) {
+  const { expectedRevision, ...changes } = payload;
+  return request<ConversationListItem>(`/conversations/${encodeURIComponent(conversationId)}`, {
+    method: "PATCH",
+    body: changes,
+    headers: { "If-Match": expectedRevision },
+    signal,
+  });
+}
+
+export async function moveConversation(
+  conversationId: string,
+  projectId: string,
+  signal?: AbortSignal,
+) {
+  return request<ConversationListItem>(`/conversations/${encodeURIComponent(conversationId)}/move`, {
+    method: "POST",
+    body: { projectId, idempotencyKey: crypto.randomUUID() },
+    signal,
+  });
+}
+
+export async function deleteConversation(conversationId: string, signal?: AbortSignal) {
+  await request<void>(`/conversations/${encodeURIComponent(conversationId)}`, {
+    method: "DELETE",
+    signal,
+  });
+}
+
+export async function branchConversation(
+  conversationId: string,
+  anchorMessageId: string,
+  title?: string,
+  signal?: AbortSignal,
+) {
+  return request<ConversationListItem>(`/conversations/${encodeURIComponent(conversationId)}/branch`, {
+    method: "POST",
+    body: { anchorMessageId, title },
+    signal,
+  });
+}
+
+export async function exportConversation(
+  conversationId: string,
+  format: ConversationExportFormat,
+  includeArtifacts = false,
+  signal?: AbortSignal,
+): Promise<ArtifactDownload> {
+  const response = await fetchApi(`/conversations/${encodeURIComponent(conversationId)}/export`, {
+    query: { format, include_artifacts: includeArtifacts },
+    signal,
+  });
+  return {
+    blob: await response.blob(),
+    fileName: downloadFileName(response, `conversation.${format === "markdown" ? "md" : "json"}`),
+  };
+}
+
+export async function getConversationTurnSets(
+  conversationId: string,
+  beforeCursor?: string,
+  limitTurnSets = 3,
+  signal?: AbortSignal,
+) {
+  return request<TurnSetPage>(`/conversations/${encodeURIComponent(conversationId)}/turn-sets`, {
+    query: {
+      before_cursor: beforeCursor,
+      limit_turn_sets: limitTurnSets,
+    },
+    signal,
+  });
+}
+
+export async function startRun(conversationId: string, payload: StartRunRequest, signal?: AbortSignal) {
+  const { idempotencyKey, ...body } = payload;
+  return request<RunMutationResponse>(`/conversations/${encodeURIComponent(conversationId)}/runs`, {
+    method: "POST",
+    body,
+    idempotencyKey,
+    signal,
+  });
+}
+
+export async function sendRunAction(runId: string, payload: RunActionRequest, signal?: AbortSignal) {
+  const { idempotencyKey, ...body } = payload;
+  return request<RunMutationResponse>(`/runs/${encodeURIComponent(runId)}/actions`, {
+    method: "POST",
+    body,
+    idempotencyKey,
+    signal,
+  });
+}
+
+export async function getRunSnapshot(runId: string, signal?: AbortSignal) {
+  return request<RunSnapshot>(`/runs/${encodeURIComponent(runId)}/snapshot`, { signal });
+}
+
+function isRunEvent(value: unknown): value is RunEvent {
+  return isRecord(value)
+    && typeof value.runId === "string"
+    && typeof value.conversationId === "string"
+    && typeof value.sequence === "number"
+    && typeof value.type === "string"
+    && typeof value.createdAt === "string";
+}
+
+export function openRunEventStream(
+  runId: string,
+  afterSequence: number,
+  handlers: RunStreamHandlers,
+) {
+  const source = new EventSource(
+    buildUrl(streamBase, `/runs/${encodeURIComponent(runId)}`, {
+      after_sequence: Math.max(0, afterSequence),
+    }),
+    { withCredentials: true },
+  );
+  let lastDeliveredSequence = afterSequence;
+
+  const handleMessage = (message: MessageEvent<string>) => {
+    try {
+      const parsed: unknown = JSON.parse(message.data);
+      if (!isRunEvent(parsed)) throw new Error("Run event 형식이 올바르지 않습니다.");
+      if (parsed.runId !== runId || parsed.sequence <= lastDeliveredSequence) return;
+      lastDeliveredSequence = parsed.sequence;
+      handlers.onEvent(parsed);
+    } catch (error) {
+      handlers.onError?.(error instanceof Error ? error : new Error("Run event를 읽지 못했습니다."));
+    }
+  };
+
+  source.onopen = () => handlers.onOpen?.();
+  source.onerror = (event) => handlers.onError?.(event);
+  source.onmessage = handleMessage;
+  source.addEventListener("run_event", handleMessage as EventListener);
+
+  return () => source.close();
+}
+
+export async function getArtifact(artifactId: string, signal?: AbortSignal) {
+  return request<ArtifactSummary>(`/artifacts/${encodeURIComponent(artifactId)}`, { signal });
+}
+
+export async function getArtifactVersion(artifactId: string, version: number, signal?: AbortSignal) {
+  return request<ArtifactVersion>(
+    `/artifacts/${encodeURIComponent(artifactId)}/versions/${encodeURIComponent(String(version))}`,
+    { signal },
+  );
+}
+
+export async function saveArtifactVersion(
+  artifactId: string,
+  payload: SaveArtifactVersionRequest,
+  etag: string,
+  draftEtag?: string,
+  signal?: AbortSignal,
+) {
+  const { idempotencyKey, ...body } = payload;
+  return request<ArtifactVersion>(`/artifacts/${encodeURIComponent(artifactId)}/versions`, {
+    method: "POST",
+    body,
+    headers: {
+      "If-Match": etag,
+      ...(draftEtag ? { "X-Artifact-Draft-If-Match": draftEtag } : {}),
+    },
+    idempotencyKey,
+    signal,
+  });
+}
+
+export async function getArtifactDraft(artifactId: string, signal?: AbortSignal) {
+  try {
+    return await request<ArtifactDraft>(`/artifacts/${encodeURIComponent(artifactId)}/draft`, { signal });
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404 && error.code === "artifact_draft_not_found") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+export async function saveArtifactDraft(
+  artifactId: string,
+  baseVersion: number,
+  content: string,
+  etag?: string,
+  signal?: AbortSignal,
+) {
+  return request<ArtifactDraft>(`/artifacts/${encodeURIComponent(artifactId)}/draft`, {
+    method: "PUT",
+    body: { baseVersion, content },
+    headers: etag ? { "If-Match": etag } : undefined,
+    signal,
+  });
+}
+
+function downloadFileName(response: Response, fallback: string) {
+  const disposition = response.headers.get("content-disposition") ?? "";
+  const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded);
+    } catch {
+      return fallback;
+    }
+  }
+  return disposition.match(/filename="?([^";]+)"?/i)?.[1] ?? fallback;
+}
+
+export async function downloadArtifactVersion(
+  artifactId: string,
+  version: number,
+  signal?: AbortSignal,
+): Promise<ArtifactDownload> {
+  const response = await fetchApi(`/artifacts/${encodeURIComponent(artifactId)}/download`, {
+    query: { version },
+    signal,
+  });
+  return {
+    blob: await response.blob(),
+    fileName: downloadFileName(response, `artifact-${artifactId}-v${version}`),
+  };
+}
+
+export async function putMessageRating(
+  messageId: string,
+  value: "like" | "dislike",
+  signal?: AbortSignal,
+) {
+  return request<MessageFeedback>(`/messages/${encodeURIComponent(messageId)}/rating`, {
+    method: "PUT",
+    body: { value },
+    signal,
+  });
+}
+
+export async function deleteMessageRating(messageId: string, signal?: AbortSignal) {
+  await request<void>(`/messages/${encodeURIComponent(messageId)}/rating`, {
+    method: "DELETE",
+    signal,
+  });
+}
+
+export async function reportMessage(
+  messageId: string,
+  description: string,
+  signal?: AbortSignal,
+) {
+  return request<MessageFeedback>(`/messages/${encodeURIComponent(messageId)}/reports`, {
+    method: "POST",
+    body: {
+      category: "other",
+      description,
+      diagnosticScope: {
+        includeRunState: true,
+        includeToolSummaries: true,
+        includeConversation: false,
+        includeAttachments: false,
+      },
+    },
+    signal,
+  });
+}
+
+export async function uploadAttachment(
+  conversationId: string,
+  file: File,
+  source = "upload",
+  signal?: AbortSignal,
+) {
+  const body = new FormData();
+  body.set("file", file);
+  body.set("source", source);
+  return request<AttachmentSummary>(
+    `/conversations/${encodeURIComponent(conversationId)}/attachments`,
+    { method: "POST", body, signal },
+  );
+}
+
+export async function uploadPastedText(
+  conversationId: string,
+  text: string,
+  signal?: AbortSignal,
+) {
+  const body = new FormData();
+  body.set("pasted_text", text);
+  body.set("source", "paste");
+  return request<AttachmentSummary>(
+    `/conversations/${encodeURIComponent(conversationId)}/attachments`,
+    { method: "POST", body, signal },
+  );
+}
+
+export async function listComposerSuggestions(
+  projectId: string,
+  trigger: "@" | "$",
+  query: string,
+  signal?: AbortSignal,
+) {
+  return request<CursorPage<ComposerSuggestion>>("/composer/suggestions", {
+    query: { project_id: projectId, trigger, query, limit: 12 },
+    signal,
+  });
+}
+
+export async function listArtifacts(projectId?: string, signal?: AbortSignal) {
+  return request<CursorPage<ArtifactSummary>>("/artifacts", {
+    query: { project_id: projectId, limit: 100 },
+    signal,
+  });
+}
+
+export async function createConversationShare(
+  conversationId: string,
+  anchorMessageId?: string | null,
+  signal?: AbortSignal,
+) {
+  return request<ConversationShareCreated>("/conversation-shares", {
+    method: "POST",
+    body: { conversationId, anchorMessageId },
+    signal,
+  });
+}
+
+export async function getSharedConversation(token: string, signal?: AbortSignal) {
+  return request<SharedConversationSnapshot>(`/conversation-shares/${encodeURIComponent(token)}`, { signal });
+}
+
+export async function downloadSharedArtifact(
+  token: string,
+  artifactId: string,
+  version: number,
+  signal?: AbortSignal,
+): Promise<ArtifactDownload> {
+  const response = await fetchApi(
+    `/conversation-shares/${encodeURIComponent(token)}/artifacts/${encodeURIComponent(artifactId)}/download`,
+    { query: { version }, signal },
+  );
+  return {
+    blob: await response.blob(),
+    fileName: downloadFileName(response, `shared-artifact-${artifactId}-v${version}`),
+  };
+}
+
+export async function downloadSharedAttachment(
+  token: string,
+  attachmentId: string,
+  signal?: AbortSignal,
+): Promise<ArtifactDownload> {
+  const response = await fetchApi(
+    `/conversation-shares/${encodeURIComponent(token)}/attachments/${encodeURIComponent(attachmentId)}/download`,
+    { signal },
+  );
+  return {
+    blob: await response.blob(),
+    fileName: downloadFileName(response, `shared-attachment-${attachmentId}`),
+  };
+}
+
+export async function listExtensions(query?: string, signal?: AbortSignal) {
+  return request<SkillExtension[]>("/extensions", { query: { query }, signal });
+}
+
+export async function getExtensionVersion(versionId: string, signal?: AbortSignal) {
+  return request<SkillVersion>(`/extension-versions/${encodeURIComponent(versionId)}`, { signal });
+}
+
+export async function checkoutSkillDraft(extensionId: string, signal?: AbortSignal) {
+  return request<SkillDraft>(`/extensions/${encodeURIComponent(extensionId)}/draft`, {
+    method: "POST",
+    signal,
+  });
+}
+
+export async function updateExtensionMetadata(
+  extensionId: string,
+  payload: { name: string; description: string },
+  signal?: AbortSignal,
+) {
+  return request<SkillExtension>(`/extensions/${encodeURIComponent(extensionId)}`, {
+    method: "PATCH",
+    body: payload,
+    signal,
+  });
+}
+
+export async function createSkill(
+  payload: { name: string; description: string; projectId?: string; files: Record<string, string> },
+  signal?: AbortSignal,
+) {
+  return request<SkillExtension>("/extensions", {
+    method: "POST",
+    body: {
+      kind: "skill",
+      name: payload.name,
+      description: payload.description,
+      projectId: payload.projectId,
+      package: { files: payload.files },
+    },
+    signal,
+  });
+}
+
+export async function updateSkillDraft(
+  draft: SkillDraft,
+  files: Record<string, string>,
+  changeSummary: string,
+  signal?: AbortSignal,
+) {
+  return request<SkillDraft>(`/skill-drafts/${encodeURIComponent(draft.id)}`, {
+    method: "PATCH",
+    body: {
+      expectedRevision: draft.revision,
+      expectedDigest: draft.digest,
+      package: { files },
+      changeSummary,
+    },
+    signal,
+  });
+}
+
+export async function saveSkillVersion(draft: SkillDraft, signal?: AbortSignal) {
+  return request<SkillVersion>(`/skill-drafts/${encodeURIComponent(draft.id)}/save-version`, {
+    method: "POST",
+    body: {
+      expectedRevision: draft.revision,
+      expectedDigest: draft.digest,
+      baseVersionId: draft.baseVersionId,
+      manifest: {},
+    },
+    signal,
+  });
+}
+
+export async function listExtensionInstallations(projectId?: string, signal?: AbortSignal) {
+  return request<ExtensionInstallation[]>("/extension-installations", {
+    query: { project_id: projectId },
+    signal,
+  });
+}
+
+export async function installExtensionVersion(
+  versionId: string,
+  projectId: string,
+  signal?: AbortSignal,
+) {
+  return request<ExtensionInstallation>("/extension-installations", {
+    method: "POST",
+    body: { versionId, scopeType: "project", scopeId: projectId, enabled: true, settings: {} },
+    signal,
+  });
+}
+
+export async function uninstallExtension(installationId: string, signal?: AbortSignal) {
+  await request<void>(`/extension-installations/${encodeURIComponent(installationId)}`, {
+    method: "DELETE",
+    signal,
+  });
+}
+
+export async function listMcpCatalog(signal?: AbortSignal) {
+  return request<McpDefinition[]>("/mcp/catalog", { signal });
+}
+
+export async function listMcpInstallations(projectId?: string, signal?: AbortSignal) {
+  return request<McpInstallation[]>("/mcp/installations", {
+    query: { project_id: projectId },
+    signal,
+  });
+}
+
+export async function installMcp(
+  definitionId: string,
+  configurationRevisionId: string,
+  scopeType: "user" | "project",
+  scopeId: string | undefined,
+  toolAllowlist: string[],
+  signal?: AbortSignal,
+) {
+  return request<McpInstallation>("/mcp/installations", {
+    method: "POST",
+    body: {
+      definitionId,
+      configurationRevisionId,
+      scopeType,
+      scopeId,
+      enabled: true,
+      toolAllowlist,
+    },
+    signal,
+  });
+}
+
+export async function setMcpInstallationEnabled(
+  installationId: string,
+  enabled: boolean,
+  signal?: AbortSignal,
+) {
+  return request<McpInstallation>(`/mcp/installations/${encodeURIComponent(installationId)}`, {
+    method: "PATCH",
+    body: { enabled },
+    signal,
+  });
+}
+
+export async function uninstallMcp(installationId: string, signal?: AbortSignal) {
+  await request<void>(`/mcp/installations/${encodeURIComponent(installationId)}`, {
+    method: "DELETE",
+    signal,
+  });
+}
+
+export async function bindMcpSecret(
+  installationId: string,
+  secretName: string,
+  secretRef: string,
+  signal?: AbortSignal,
+) {
+  return request<McpInstallation>(
+    `/mcp/installations/${encodeURIComponent(installationId)}/secrets/${encodeURIComponent(secretName)}`,
+    { method: "PUT", body: { secretRef }, signal },
+  );
+}
+
+export async function unbindMcpSecret(
+  installationId: string,
+  secretName: string,
+  signal?: AbortSignal,
+) {
+  await request<void>(
+    `/mcp/installations/${encodeURIComponent(installationId)}/secrets/${encodeURIComponent(secretName)}`,
+    { method: "DELETE", signal },
+  );
+}
+
+export async function listAdminMcpDefinitions(signal?: AbortSignal) {
+  return request<McpDefinition[]>("/admin/mcp-definitions", { signal });
+}
+
+export async function createAdminMcpDefinition(
+  payload: McpDefinitionCreateRequest,
+  signal?: AbortSignal,
+) {
+  return request<McpDefinition>("/admin/mcp-definitions", {
+    method: "POST",
+    body: payload,
+    signal,
+  });
+}
+
+export async function createAdminMcpRevision(
+  definitionId: string,
+  configuration: McpConfiguration,
+  signal?: AbortSignal,
+) {
+  return request<McpDefinition>(
+    `/admin/mcp-definitions/${encodeURIComponent(definitionId)}/revisions`,
+    { method: "POST", body: { configuration }, signal },
+  );
+}
+
+export async function approveAdminMcpRevision(
+  definitionId: string,
+  configurationRevisionId: string,
+  signal?: AbortSignal,
+) {
+  return request<McpDefinition>(
+    `/admin/mcp-definitions/${encodeURIComponent(definitionId)}/approve`,
+    { method: "POST", body: { configurationRevisionId }, signal },
+  );
+}
+
+export async function setAdminMcpDefinitionStatus(
+  definitionId: string,
+  status: "disabled" | "revoked",
+  reason: string,
+  signal?: AbortSignal,
+) {
+  return request<McpDefinition>(
+    `/admin/mcp-definitions/${encodeURIComponent(definitionId)}/status`,
+    { method: "PATCH", body: { status, reason }, signal },
+  );
+}
+
+export async function listScheduledTasks(projectId?: string, signal?: AbortSignal) {
+  return request<ScheduledTask[]>("/scheduled-tasks", { query: { project_id: projectId }, signal });
+}
+
+export async function createScheduledTask(
+  payload: {
+    projectId: string;
+    name: string;
+    instructions: string;
+    scheduleKind: ScheduleKind;
+    scheduleConfig: Record<string, number>;
+    execution: CurrentSettings["execution"];
+  },
+  signal?: AbortSignal,
+) {
+  return request<ScheduledTask>("/scheduled-tasks", {
+    method: "POST",
+    body: {
+      ...payload,
+      timezone: "Asia/Seoul",
+      contextMode: "new_session_per_run",
+      extensionSnapshotPolicy: "pinned",
+      deliveryPolicy: {},
+      enabled: true,
+      maxAttempts: 1,
+      timeoutSeconds: 900,
+    },
+    signal,
+  });
+}
+
+export async function setScheduledTaskEnabled(taskId: string, enabled: boolean, signal?: AbortSignal) {
+  return request<ScheduledTask>(`/scheduled-tasks/${encodeURIComponent(taskId)}/${enabled ? "enable" : "disable"}`, {
+    method: "POST",
+    signal,
+  });
+}
+
+export async function runScheduledTaskNow(taskId: string, signal?: AbortSignal) {
+  return request<ScheduledRun>(`/scheduled-tasks/${encodeURIComponent(taskId)}/run-now`, {
+    method: "POST",
+    idempotencyKey: crypto.randomUUID(),
+    signal,
+  });
+}
+
+export async function listScheduledRuns(taskId: string, signal?: AbortSignal) {
+  return request<ScheduledRun[]>(`/scheduled-tasks/${encodeURIComponent(taskId)}/runs`, {
+    query: { limit: 50 },
+    signal,
+  });
+}
+
+export async function listAdminUsers(
+  filters: { query?: string; role?: string; status?: string; limit?: number; offset?: number } = {},
+  signal?: AbortSignal,
+) {
+  return request<AdminUserList>("/admin/users", { query: filters, signal });
+}
+
+export async function createAdminUser(payload: CreateAdminUserRequest, signal?: AbortSignal) {
+  return request<AdminUser>("/admin/users", { method: "POST", body: payload, signal });
+}
+
+export async function updateAdminUser(userId: string, payload: UpdateAdminUserRequest, signal?: AbortSignal) {
+  return request<AdminUser>(`/admin/users/${encodeURIComponent(userId)}`, {
+    method: "PATCH",
+    body: payload,
+    signal,
+  });
+}
+
+export async function resetAdminUserPassword(
+  userId: string,
+  newPassword: string,
+  mustChangePassword: boolean,
+  signal?: AbortSignal,
+) {
+  return request<{ user: AdminUser; revokedSessionCount: number }>(
+    `/admin/users/${encodeURIComponent(userId)}/reset-password`,
+    { method: "POST", body: { newPassword, mustChangePassword }, signal },
+  );
+}
+
+export async function listAdminConversations(
+  filters: { query?: string; ownerLoginId?: string; projectId?: string; status?: string; feedbackOnly?: boolean; limit?: number; offset?: number } = {},
+  signal?: AbortSignal,
+) {
+  return request<AdminConversationList>("/admin/conversations", {
+    query: {
+      query: filters.query,
+      owner_login_id: filters.ownerLoginId,
+      project_id: filters.projectId,
+      status: filters.status,
+      feedback_only: filters.feedbackOnly || undefined,
+      limit: filters.limit,
+      offset: filters.offset,
+    },
+    signal,
+  });
+}
+
+export async function getAdminConversation(conversationId: string, signal?: AbortSignal) {
+  return request<AdminConversationDetail>(`/admin/conversations/${encodeURIComponent(conversationId)}`, { signal });
+}
+
+export async function listAdminAuditEvents(
+  filters: { action?: string; actorUserId?: string; targetType?: string; targetId?: string; limit?: number; offset?: number } = {},
+  signal?: AbortSignal,
+) {
+  return request<AdminAuditList>("/admin/audit-events", {
+    query: {
+      action: filters.action,
+      actor_user_id: filters.actorUserId,
+      target_type: filters.targetType,
+      target_id: filters.targetId,
+      limit: filters.limit,
+      offset: filters.offset,
+    },
+    signal,
+  });
+}
+
+export async function listMemories(
+  query?: string,
+  status: "active" | "pending" | "dismissed" | "superseded" = "active",
+  signal?: AbortSignal,
+) {
+  return request<UserMemory[]>("/memories", { query: { query, status }, signal });
+}
+
+export async function updateMemory(
+  memoryId: string,
+  changes: {
+    category?: string;
+    fact?: string;
+    displayText?: string;
+    status?: "active" | "dismissed";
+  },
+  signal?: AbortSignal,
+) {
+  return request<UserMemory>(`/memories/${encodeURIComponent(memoryId)}`, {
+    method: "PATCH",
+    body: changes,
+    signal,
+  });
+}
+
+export async function deleteMemory(memoryId: string, signal?: AbortSignal) {
+  await request<void>(`/memories/${encodeURIComponent(memoryId)}`, {
+    method: "DELETE",
+    signal,
+  });
+}
+
+export async function getMemorySettings(signal?: AbortSignal) {
+  return request<MemorySettings>("/memory-settings", { signal });
+}
+
+export async function updateMemorySettings(mode: MemoryLearningMode, signal?: AbortSignal) {
+  return request<MemorySettings>("/memory-settings", {
+    method: "PATCH",
+    body: { mode },
+    signal,
+  });
+}
+
+export async function optimizeMemories(signal?: AbortSignal) {
+  return request<MemoryOptimizationResult>("/memories/optimize", {
+    method: "POST",
+    signal,
+  });
+}
+
+export async function listProjectMemories(
+  projectId: string,
+  includeHistory = false,
+  signal?: AbortSignal,
+) {
+  return request<ProjectMemory[]>(`/projects/${encodeURIComponent(projectId)}/memories`, {
+    query: { includeHistory },
+    signal,
+  });
+}
+
+export async function getProjectMemoryHistory(
+  projectId: string,
+  memoryKey: string,
+  signal?: AbortSignal,
+) {
+  return request<ProjectMemoryHistory>(
+    `/projects/${encodeURIComponent(projectId)}/memories/${encodeURIComponent(memoryKey)}`,
+    { signal },
+  );
+}
+
+export async function listProjectLearningProposals(
+  projectId: string,
+  status?: ProjectLearningProposalStatus,
+  signal?: AbortSignal,
+) {
+  return request<ProjectLearningProposal[]>(
+    `/projects/${encodeURIComponent(projectId)}/learning-proposals`,
+    { query: { status }, signal },
+  );
+}
+
+export async function createProjectLearningProposal(
+  projectId: string,
+  payload: CreateProjectLearningProposalRequest,
+  signal?: AbortSignal,
+) {
+  return request<ProjectLearningProposal>(
+    `/projects/${encodeURIComponent(projectId)}/learning-proposals`,
+    { method: "POST", body: payload, signal },
+  );
+}
+
+export async function reviewProjectLearningProposal(
+  projectId: string,
+  proposalId: string,
+  action: "approve" | "reject",
+  note = "",
+  signal?: AbortSignal,
+) {
+  return request<ProjectLearningProposal>(
+    `/projects/${encodeURIComponent(projectId)}/learning-proposals/${encodeURIComponent(proposalId)}/${action}`,
+    { method: "POST", body: { note }, signal },
+  );
+}
+
+export async function applyProjectLearningProposal(
+  projectId: string,
+  proposalId: string,
+  signal?: AbortSignal,
+) {
+  return request<ProjectLearningMutationResult>(
+    `/projects/${encodeURIComponent(projectId)}/learning-proposals/${encodeURIComponent(proposalId)}/apply`,
+    { method: "POST", signal },
+  );
+}
+
+export async function rollbackProjectLearningProposal(
+  projectId: string,
+  proposalId: string,
+  signal?: AbortSignal,
+) {
+  return request<ProjectLearningMutationResult>(
+    `/projects/${encodeURIComponent(projectId)}/learning-proposals/${encodeURIComponent(proposalId)}/rollback`,
+    { method: "POST", signal },
+  );
+}
+
+export const api = {
+  auth: { getSession: getAuthSession, login, logout },
+  finance: { getUsdKrwExchangeRate },
+  notifications: {
+    list: listNotifications,
+    getUnreadCount: getNotificationUnreadCount,
+    markRead: markNotificationRead,
+    markAllRead: markAllNotificationsRead,
+    delete: deleteNotification,
+    deleteAll: deleteAllNotifications,
+  },
+  projects: { list: listProjects, create: createProject, update: updateProject, archive: archiveProject },
+  instructions: {
+    getPersonal: getPersonalInstructions,
+    updatePersonal: updatePersonalInstructions,
+    getProject: getProjectInstructions,
+    updateProject: updateProjectInstructions,
+    getOrganization: getOrganizationInstructions,
+    updateOrganization: updateOrganizationInstructions,
+    getOrganizationRevision: getOrganizationInstructionRevision,
+    updateOrganizationRevision: updateOrganizationInstructionRevision,
+    updateOrganizationRevisionLabel: updateOrganizationInstructionRevisionLabel,
+  },
+  projectFiles: {
+    list: listProjectFiles,
+    get: getProjectFile,
+    upload: uploadProjectFile,
+    uploadVersion: uploadProjectFileVersion,
+    move: moveProjectFile,
+    download: downloadProjectFile,
+    delete: deleteProjectFile,
+  },
+  settings: { getCurrent: getCurrentSettings, updateCurrent: updateCurrentSettings },
+  providers: { list: listProviders, listModels: listProviderModels },
+  adminProviders: { listModels: listAdminProviderModels, updateModel: updateAdminProviderModel },
+  conversations: {
+    list: listConversations,
+    searchContent: searchConversationContent,
+    create: createConversation,
+    update: updateConversation,
+    move: moveConversation,
+    delete: deleteConversation,
+    branch: branchConversation,
+    export: exportConversation,
+    getTurnSets: getConversationTurnSets,
+  },
+  runs: { start: startRun, action: sendRunAction, getSnapshot: getRunSnapshot, openStream: openRunEventStream },
+  artifacts: {
+    list: listArtifacts,
+    get: getArtifact,
+    getVersion: getArtifactVersion,
+    getDraft: getArtifactDraft,
+    saveVersion: saveArtifactVersion,
+    saveDraft: saveArtifactDraft,
+    downloadVersion: downloadArtifactVersion,
+  },
+  messages: {
+    putRating: putMessageRating,
+    deleteRating: deleteMessageRating,
+    report: reportMessage,
+  },
+  attachments: { upload: uploadAttachment, uploadPastedText },
+  composer: { listSuggestions: listComposerSuggestions },
+  sharing: {
+    create: createConversationShare,
+    get: getSharedConversation,
+    downloadArtifact: downloadSharedArtifact,
+    downloadAttachment: downloadSharedAttachment,
+  },
+  extensions: {
+    list: listExtensions,
+    getVersion: getExtensionVersion,
+    checkoutDraft: checkoutSkillDraft,
+    updateMetadata: updateExtensionMetadata,
+    createSkill,
+    updateDraft: updateSkillDraft,
+    saveVersion: saveSkillVersion,
+    listInstallations: listExtensionInstallations,
+    install: installExtensionVersion,
+    uninstall: uninstallExtension,
+  },
+  mcp: {
+    listCatalog: listMcpCatalog,
+    listInstallations: listMcpInstallations,
+    install: installMcp,
+    setEnabled: setMcpInstallationEnabled,
+    uninstall: uninstallMcp,
+    bindSecret: bindMcpSecret,
+    unbindSecret: unbindMcpSecret,
+  },
+  schedules: {
+    list: listScheduledTasks,
+    create: createScheduledTask,
+    setEnabled: setScheduledTaskEnabled,
+    runNow: runScheduledTaskNow,
+    listRuns: listScheduledRuns,
+  },
+  memories: {
+    list: listMemories,
+    update: updateMemory,
+    delete: deleteMemory,
+    getSettings: getMemorySettings,
+    updateSettings: updateMemorySettings,
+    optimize: optimizeMemories,
+  },
+  projectMemories: {
+    list: listProjectMemories,
+    getHistory: getProjectMemoryHistory,
+    listProposals: listProjectLearningProposals,
+    createProposal: createProjectLearningProposal,
+    reviewProposal: reviewProjectLearningProposal,
+    applyProposal: applyProjectLearningProposal,
+    rollbackProposal: rollbackProjectLearningProposal,
+  },
+  admin: {
+    listUsers: listAdminUsers,
+    createUser: createAdminUser,
+    updateUser: updateAdminUser,
+    resetPassword: resetAdminUserPassword,
+    listConversations: listAdminConversations,
+    getConversation: getAdminConversation,
+    listAuditEvents: listAdminAuditEvents,
+    listMcpDefinitions: listAdminMcpDefinitions,
+    createMcpDefinition: createAdminMcpDefinition,
+    createMcpRevision: createAdminMcpRevision,
+    approveMcpRevision: approveAdminMcpRevision,
+    setMcpStatus: setAdminMcpDefinitionStatus,
+  },
+};

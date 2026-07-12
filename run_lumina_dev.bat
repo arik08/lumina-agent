@@ -1,7 +1,4 @@
 @echo off
 setlocal
-
-echo [Lumina Agent] The development launcher is not implemented yet.
-echo This entry point will start the frontend and backend development servers.
-
-exit /b 1
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0devtools\run_lumina.ps1" -Development
+exit /b %ERRORLEVEL%

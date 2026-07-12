@@ -31,10 +31,12 @@ queued
 → awaiting_approval
 → tools_running
 → model_streaming
-→ completed | failed | cancelled | limit_reached | interrupted
+→ completed | failed | cancelled | interrupted
 ```
 
 상태 변경과 주요 이벤트를 DB에 기록하고 SSE 또는 WebSocket으로 Frontend에 전달합니다. Backend나 Worker가 재시작되어도 저장된 상태를 기준으로 실패 여부를 판단하거나 안전하게 이어갈 수 있어야 합니다.
+
+Run에는 누적 Turn·실행 시간·토큰·비용을 이유로 하는 terminal 실행 한도를 두지 않습니다. Context가 모델 입력 창에 가까워지면 원본 메시지와 Tool 실행 근거는 저장소에 유지한 채 이전 대화와 진행 상태를 복구 가능한 요약으로 압축하고, 최신 메시지와 미완료 Plan을 보존하여 같은 Run의 다음 Turn을 계속합니다. 압축은 `context_compacted` 이벤트와 revision·source hash를 남겨 재접속과 감사 시 동일한 진행 상태를 복원할 수 있어야 합니다. Run 종료는 완료, 사용자 취소, 명시적 조직 정책 차단, 복구 불가능한 오류에 한정합니다.
 
 ## 한 Turn의 처리
 
@@ -68,17 +70,14 @@ Agent Loop는 다음 조건 중 하나에서 끝납니다.
 
 - 모델이 Tool Call 없는 최종 답변을 반환
 - 사용자가 실행 취소
-- 최대 Turn 도달
-- 전체 실행 시간 초과
-- Token 또는 비용 한도 도달
 - 복구할 수 없는 Provider·저장소 오류
 - 서버 종료 또는 Worker 중단
 
-무한 반복을 막기 위해 `max_turns`, 전체 timeout, Tool timeout, Token 한도와 비용 한도를 둡니다. 제한값은 시스템 및 조직 정책을 넘을 수 없습니다.
+모델 호출 횟수·전체 실행 시간·누적 Token·누적 비용만으로 Run을 종료하지 않습니다. 각 model Turn 전에 현재 요청 Context를 계산하고 기본적으로 유효 입력 예산의 75%를 넘으면 이전 assistant·Tool 구간을 구조화된 요약으로 축약하되 최근 Tool Call/Result pair는 그대로 보존합니다. Codex의 GPT-5.4·5.5·5.6 계열만 서비스 정책상 272K Context와 85% 임계값을 사용합니다. P-GPT, OpenAI API, Gemini API와 Claude API는 각 표준 API model capability의 Context window를 그대로 사용하며 Codex의 272K 제한을 적용하지 않습니다. 따라서 36K 안팎의 낮은 사용량에서는 축약하지 않으며, 더 높은 사용자 설정이 있더라도 임계값을 낮추지 않습니다. 축약 전에는 `컨텍스트 축약 중`, 완료 후에는 축약 전·후 추정 Token과 보존 범위를 Timeline에 표시하고 snapshot과 event replay에 남깁니다. 개별 Provider·Tool 호출의 transport timeout은 해당 호출의 실패·재시도 조건일 뿐 Run 전체를 `limit_reached`로 종료하지 않습니다.
 
 ## Context 관리
 
-각 Turn 전에 예상 Context 크기를 검사합니다. 임계치를 넘으면 오래된 Tool 출력 정리, artifact 전환 또는 대화 요약을 적용합니다. 요약 후에도 사용자 목표, 중요한 결정, 활성 artifacts, 검증된 결과와 다음 작업은 유지해야 합니다.
+각 Turn 전에 예상 Context 크기를 검사합니다. 임계치를 넘으면 오래된 Tool 출력 정리, artifact 전환 또는 대화 요약을 적용합니다. 완료된 대화 기록뿐 아니라 아직 Message로 확정되지 않은 현재 Run의 assistant·Tool loop도 같은 검사 대상입니다. 요약 후에도 사용자 목표, 중요한 결정, 활성 artifacts, 검증된 결과와 다음 작업은 유지해야 합니다.
 
 Provider의 출력 Token 제한이 요청값보다 작으면 Provider capability에 맞게 안전한 값으로 조정하고 상태 이벤트를 남깁니다.
 
@@ -108,6 +107,191 @@ Tool Result까지 저장되었지만 다음 모델 Turn 전에 중단된 Run은 
 - 실행 취소와 승인 권한은 역할 정책으로 제한합니다.
 - 누가 메시지, 옵션, 승인과 취소를 수행했는지 감사 기록에 남깁니다.
 
+## 세션별 병렬 실행
+
+한 사용자는 여러 채팅 세션을 만들고 서로 다른 세션에서 Agent Run을 동시에 실행할 수 있습니다. 실행 잠금 범위는 사용자 전체가 아니라 `conversation_id`입니다.
+
+```text
+사용자 A
+├─ 세션 1 → Run 실행 중
+├─ 세션 2 → 별도 Run 실행 중
+├─ 세션 3 → Queue 대기
+└─ 세션 4 → 완료 결과 열람
+```
+
+- 같은 세션에는 기본적으로 동시에 하나의 Run만 허용합니다.
+- 같은 세션에 실행 중 추가 요청이 들어오면 세션 Queue에 순서대로 저장합니다.
+- 서로 다른 세션의 Run은 사용자와 서버 한도 안에서 병렬 실행합니다.
+- 사용자별 최대 동시 Run과 서버 전체 최대 동시 Run을 관리자가 설정합니다.
+- 한도를 초과한 Run은 실패시키지 않고 `queued` 상태로 대기시킵니다.
+- 공유 세션도 동일한 세션 단위 lock과 Queue를 사용합니다.
+
+초기 기본값은 다음을 권장합니다.
+
+```text
+세션별 동시 Run       = 1
+사용자별 동시 Run     = 3
+서버 전체 동시 Run    = 운영 환경 설정
+```
+
+사용자가 실행 중인 세션에서 다른 세션으로 이동하거나 브라우저 연결을 종료해도 Run을 취소하지 않습니다. Run은 Backend 또는 Worker에서 계속되며, Frontend는 재접속 시 DB의 Run 상태와 저장된 이벤트를 조회해 화면을 복구합니다.
+
+Frontend의 채팅 목록에는 `queued`, `running`, `completed`, `failed`, `cancelled` 상태를 표시하고 실행 완료 알림을 제공할 수 있어야 합니다. 스트리밍 연결은 화면 표시 수단일 뿐 Run의 생명주기를 소유하지 않습니다.
+
+SQLite 개발 환경에서는 WAL 모드, 짧은 트랜잭션과 쓰기 충돌 재시도를 사용합니다. 각 Run이 장시간 DB 트랜잭션을 유지하지 않게 하며, Backend와 Worker를 여러 프로세스나 Pod로 확장할 때는 PostgreSQL 기반 lock과 Queue로 전환합니다.
+
+## 실행 중 세션 전환과 무손실 재부착
+
+사용자가 실행 중인 세션 A에서 세션 B로 이동한 뒤 다시 A로 돌아오면, A의 작업은 계속 실행 중이어야 하며 화면도 사용자가 계속 보고 있었던 것처럼 복원되어야 합니다.
+
+복원 대상에는 다음이 포함됩니다.
+
+- 스트리밍 중인 assistant 부분 응답
+- 현재 Plan·Step·Subtask와 진행 상태
+- 실행 중인 Tool 이름, 입력 요약, 시작 시각과 경과 시간
+- 완료된 Tool Result와 생성된 artifacts
+- 승인 대기, retry, context compact와 오류 상태
+- Run 취소·일시 정지·재개 가능 여부
+
+### Backend 이벤트 계약
+
+각 Run 이벤트는 단조 증가하는 `sequence`를 가집니다.
+
+```text
+run_id
+conversation_id
+sequence
+event_type
+payload
+created_at
+```
+
+- Backend는 현재 Run snapshot과 복구에 필요한 이벤트를 저장합니다.
+- Frontend는 세션별로 마지막 적용 `sequence`를 기억합니다.
+- 세션에 다시 연결할 때 `after_sequence` 또는 `Last-Event-ID`를 전달합니다.
+- Backend는 snapshot 이후 누락된 이벤트를 순서대로 replay한 뒤 live stream에 연결합니다.
+- replay와 live 전환 사이에 이벤트가 빠지지 않도록 동일한 cursor 경계를 사용합니다.
+- 동일 이벤트가 다시 전달되어도 Frontend는 `run_id + sequence`로 중복 적용하지 않습니다.
+- stream이 끊겨도 Run에는 영향을 주지 않으며 자동 재연결 후 같은 방식으로 복구합니다.
+
+이벤트 전체를 무제한 보관하지 않아도 되지만, 현재 상태를 완전히 표현하는 snapshot과 감사·복구에 필요한 주요 이벤트는 유지합니다. 세밀한 text delta를 정리할 때는 누적된 assistant draft를 snapshot에 포함합니다.
+
+### Frontend 상태 계약
+
+- 세션별 message, assistant draft, Run snapshot과 마지막 event sequence를 독립 store에 보관합니다.
+- 화면 전환 시 현재 세션 state를 삭제하거나 다른 세션 state로 덮어쓰지 않습니다.
+- 돌아올 때 cache를 즉시 표시하고 Backend snapshot·event replay로 동기화합니다.
+- cache가 오래되었더라도 화면을 빈 상태로 되돌리지 않고 동기화 중임을 표시합니다.
+- replay 중 text delta와 Tool 이벤트가 중복 렌더링되지 않게 idempotent reducer를 사용합니다.
+- 현재 보고 있지 않은 세션의 상태도 sidebar badge와 알림을 갱신합니다.
+- 경과 시간은 저장된 `started_at`을 기준으로 계산하며 화면을 떠난 시간 동안 멈추지 않습니다.
+
+여러 세션 이벤트는 하나의 WebSocket에서 multiplex하거나 세션별 SSE로 연결할 수 있습니다. 구현 방식과 관계없이 사용자가 보고 있는 세션만 정상이고 다른 세션은 stale해지는 구조는 허용하지 않습니다.
+
+### 텍스트 스트리밍과 메시지 하단 추종
+
+Provider의 text delta는 누적 assistant draft에 즉시 반영합니다. 이 draft가 저장·복구·중복 제거에 사용하는 canonical state이며, 화면용 reveal buffer는 손실되어도 다시 만들 수 있는 일시적 UI state입니다. 화면에는 짧고 상한이 있는 buffer와 animation frame 기반 reveal을 적용해 불규칙한 chunk가 한꺼번에 튀거나 글자가 지나치게 잘게 깜박이지 않게 하되, reveal 때문에 사용자가 응답 시작을 체감하는 시간이 불필요하게 늦어져서는 안 됩니다. 완료 이벤트를 받으면 남은 buffer를 즉시 비우고 저장된 최종 assistant 메시지와 동일한 텍스트로 수렴해야 합니다. Markdown은 스트리밍 중 불완전한 code fence, 표, 링크와 HTML을 안전한 임시 표현으로 렌더링하고, 문법이 완성되면 최종 렌더링으로 전환합니다.
+
+메시지 영역의 자동 스크롤은 단순한 매 delta별 `scrollIntoView` 호출이 아니라, 높이가 계속 증가하는 스트리밍 tail을 animation frame 단위로 부드럽게 추종하는 별도 상태로 관리합니다.
+
+- 자동 추종은 세션별 `following`, `detached`, `restoring` 상태로 관리합니다. `following`만 하단을 움직이고, `detached`는 사용자 위치를 보존하며, `restoring`은 snapshot·replay 적용이 끝날 때까지 자동 이동 여부를 결정하지 않습니다.
+- 사용자가 메시지를 전송한 직후 시작되는 새 응답은 `following`으로 시작합니다. 백그라운드 Run, 재연결 또는 replay로 발견한 응답은 사용자의 기존 세션별 추종 상태를 유지하며 임의로 하단으로 이동하지 않습니다.
+- 스트리밍으로 `scrollHeight`가 계속 커져도 현재 애니메이션을 매번 재시작하지 않고, 변하는 하단 목표를 연속적으로 따라갑니다.
+- 사용자가 wheel, touch 또는 scrollbar로 위쪽을 탐색하면 자동 추종을 즉시 중단하고 현재 위치를 보존합니다. 새 delta가 도착했다는 이유로 강제로 하단으로 끌어내리지 않습니다.
+- 사용자가 하단 근처로 돌아오거나 명시적인 "최신 응답으로 이동" 동작을 실행하면 자동 추종을 재개합니다.
+- 세션을 전환할 때 세션별 scroll 위치와 하단 추종 여부를 분리해 보존합니다. 실행 중인 세션으로 돌아왔고 사용자가 이전에 tail을 따라가던 상태라면 snapshot·event replay를 애니메이션 없이 한 번에 적용한 뒤 현재 하단에서 live delta만 부드럽게 추종합니다. replay된 과거 delta를 타자 효과처럼 다시 재생하지 않습니다.
+- 사용자가 `detached`인 동안 새 내용이 도착하면 위치를 유지하고 "새 응답" 또는 "최신 응답으로 이동" affordance를 표시해 새 내용의 존재와 복귀 동작을 명확히 합니다.
+- `prefers-reduced-motion: reduce`에서는 보간 애니메이션을 생략하고 즉시 목표 위치로 이동합니다.
+- Tool 진행 UI나 Plan Timeline이 메시지 tail 안에서 커질 때도 text delta와 같은 추종 정책을 사용합니다.
+
+구현 시 canonical draft, 텍스트 reveal과 scroll follow를 분리합니다. draft reducer는 "어떤 텍스트가 확정적으로 누적되었는지", reveal은 "그중 얼마나 화면에 보여줄지", scroll follow는 "사용자가 tail을 따라가고 있는지"만 책임지게 하여 네트워크 chunk 간격, replay, Markdown 재배치와 사용자 스크롤 의도가 서로 덮어쓰지 않게 합니다.
+
+Frontend 단위·컴포넌트 테스트에는 최소한 다음 시나리오를 포함합니다.
+
+1. 불규칙한 text delta가 순서와 문자 손실 없이 점진적으로 표시되고 완료 시 최종 텍스트와 일치합니다.
+2. 스트리밍 중 하단 목표가 갑자기 증가해도 scroll 위치가 역행하거나 순간 이동하지 않고 연속적으로 수렴합니다.
+3. 사용자가 위로 스크롤하면 자동 추종이 해제되고 이후 delta에도 위치가 유지됩니다.
+4. 하단 근처 복귀 또는 명시적 이동 동작 후 자동 추종이 다시 활성화됩니다.
+5. 실행 중 세션의 snapshot·event replay는 과거 delta를 다시 애니메이션하지 않고 즉시 복원하며, 중복 텍스트 없이 이후 live delta의 하단 추종만 이어집니다.
+6. reduced-motion 환경에서는 애니메이션 없이 동일한 최종 위치와 상태가 보장됩니다.
+7. `detached` 상태에서 새 delta가 도착해도 위치가 유지되고 새 내용 affordance가 표시되며, 이를 실행하면 `following`으로 전환됩니다.
+
+브라우저 E2E에서는 실제로 긴 스트리밍 응답을 발생시켜 텍스트가 점진적으로 보이는지, scrollbar가 자연스럽게 내려가는지, 사용자가 과거 메시지를 읽는 동안 위치를 빼앗기지 않는지를 시각적으로 확인합니다. JSDOM의 수치 기반 scroll 테스트만으로 완료 판정하지 않습니다.
+
+## Plan, Subtask와 중간 개입
+
+복잡한 업무는 구조화된 Plan과 Step으로 관리합니다. Plan은 사용자에게 보여주기 위한 임시 설명문이 아니라 Backend가 상태와 의존 관계를 추적하는 실행 객체입니다.
+
+```text
+Run
+└─ Plan
+   ├─ Step A → completed
+   ├─ Step B → running
+   │  ├─ Subtask B1 → running
+   │  └─ Subtask B2 → running
+   └─ Step C → queued, depends_on B
+```
+
+- 독립 Subtask는 사용자·서버 동시 실행 한도 안에서 병렬로 실행합니다.
+- 각 Step은 입력, Context, 옵션, dependency, 결과, artifacts와 오류를 저장합니다.
+- 사용자는 실행 중 `steer`, `pause`, `resume`, `cancel`, `retry_step` action을 보낼 수 있습니다.
+- steer는 현재 Tool을 위험하게 중단하지 않고 다음 안전한 Turn 또는 Step 경계에서 적용합니다.
+- 실패 Step 재실행은 다른 완료 Step을 되돌리지 않고 저장된 입력 snapshot을 사용합니다.
+- 진행 중 Plan 수정과 action 수행자는 감사 기록에 남깁니다.
+- 최종 답변과 사용자용 Plan Timeline은 상세 Tool log와 분리합니다.
+- Plan의 사용자 표시 Step은 고정된 `준비 → 분석 → 도구 → 답변` 문구를 재사용하지 않고 요청의 목표와 산출물 유형에 맞게 구성합니다. 실행 중 발견된 Tool 작업은 동적 Subtask로 추가하고 snapshot과 event replay에서 같은 구조를 복원합니다.
+- Agent 내부 raw reasoning과 chain-of-thought는 사용자에게 노출하지 않습니다. 대신 판단 결과와 다음 행동만 정리한 사용자 공개용 `progress_summary`를 Tool event와 같은 순번의 실행 Timeline에 기록합니다.
+
+### 답변 생성 중 Steer와 순차 입력
+
+같은 세션에서 Run이 실행 중일 때도 Composer를 잠그지 않습니다. 사용자가 보내는 추가 메시지는 전송 전에 다음 두 동작 중 하나로 명확히 구분합니다.
+
+```text
+steer       → 현재 Run의 목표·제약·우선순위를 수정
+queue_next  → 현재 Run이 끝난 뒤 새 Run으로 순차 실행
+```
+
+Frontend는 실행 중 Composer에 현재 전송 동작을 표시합니다. Run 실행 중 기본 전송은 `steer`이며 `Enter` 또는 기본 전송 버튼은 `현재 작업에 반영`, `Ctrl+Enter`는 `다음 요청으로 대기(queue_next)`, `Shift+Enter`는 줄바꿈으로 동작합니다. 전송 버튼 주변에 `Ctrl+Enter로 다음 요청 대기` 안내를 제공하고, 키보드 입력과 동일한 동작을 선택할 수 있는 보조 메뉴를 둡니다. 전송 직후 메시지에 실제 적용 방식을 표시하고 아직 적용되지 않은 steer나 queued message는 사용자가 취소할 수 있게 합니다. Queue 항목에는 순번을 표시하며 drag reorder 같은 복잡한 편집은 초기 범위에서 제외합니다.
+
+`steer`의 처리 계약은 다음과 같습니다.
+
+- Backend는 사용자 메시지를 먼저 저장하고 고유한 `action_id`와 접수 순서를 부여한 뒤 Worker에 전달합니다. 브라우저 연결이 끊겨도 지시를 잃지 않습니다.
+- 모델이 text를 streaming 중이면 Provider가 안전한 취소를 지원할 때 현재 생성을 협력적으로 중단하고, 이미 표시·저장된 부분 응답을 `interrupted_by_steer`로 남긴 뒤 steer를 포함한 다음 model Turn을 같은 Run에서 시작합니다.
+- Provider 취소를 지원하지 않거나 취소 확인이 불확실하면 현재 model Turn의 출력을 끝까지 수신하되 사용자에게 노출되는 상태를 `steer 대기`로 표시하고, Turn 완료 직후 steer를 적용합니다.
+- Tool이 실행 중이면 읽기 전용 Tool은 취소 가능 정책에 따라 중단할 수 있지만, 파일 쓰기·외부 전송 같은 부작용 Tool은 강제로 끊지 않습니다. Tool Result를 저장한 다음 안전한 Turn·Step 경계에서 steer를 적용합니다.
+- 여러 steer가 적용 전에 도착하면 접수 순서를 보존해 하나의 다음 Turn Context로 병합할 수 있습니다. 서로 모순되는 지시는 마지막 지시가 자동으로 이전 지시를 지운다고 가정하지 말고, 충돌이 작업 결과를 바꾸면 사용자 확인 대상으로 표시합니다.
+- steer는 새 Run을 만들지 않으며 원래 Run의 Provider·Model·권한 snapshot을 유지합니다. 새 파일 첨부나 `$Skill`·`$MCP` 참조는 현재 Run 권한 범위에서 Backend가 다시 검증합니다.
+
+`queue_next`의 처리 계약은 다음과 같습니다.
+
+- 메시지는 현재 Run과 분리된 `queued` 요청으로 저장하고 세션 Queue의 뒤에 추가합니다. 현재 Run의 Context나 출력 방향을 바꾸지 않습니다.
+- 현재 Run이 `completed`, `failed`, `cancelled` 또는 `interrupted`의 terminal state에 도달하면 Queue의 첫 요청으로 새 Run을 시작합니다. 앞 Run이 실패해도 기본적으로 다음 요청을 버리지 않습니다.
+- 각 queued 요청은 실행을 시작하는 시점의 대화 기록을 Context로 사용하되, 전송 당시 선택한 첨부·Provider·Model·Effort·Skill·MCP 의도는 별도 snapshot으로 보존하고 실행 직전에 권한과 유효성을 다시 검증합니다.
+- 사용자는 대기 중인 요청의 내용과 순번을 확인하고 실행 전 취소할 수 있습니다. 동일 `action_id` 재전송은 중복 Queue 항목을 만들지 않습니다.
+
+다음 상태와 이벤트를 snapshot·replay 대상에 포함합니다.
+
+```text
+steer_received
+steer_waiting_safe_boundary
+steer_applied
+steer_cancelled
+queued_message_added
+queued_message_cancelled
+queued_message_promoted_to_run
+```
+
+수용 기준은 다음과 같습니다.
+
+1. text streaming 중 steer를 보내면 부분 응답을 잃거나 중복시키지 않고 같은 Run에서 수정된 지시가 반영됩니다.
+2. 부작용 Tool 실행 중 steer를 보내도 Tool Call·Result 관계가 깨지지 않고 다음 안전한 경계에서 적용됩니다.
+3. `queue_next` 메시지는 현재 응답에 영향을 주지 않으며 앞 Run 종료 후 정확히 한 번 새 Run으로 시작됩니다.
+4. steer와 Queue 상태는 세션 전환·새로고침·네트워크 재연결 후에도 snapshot·event replay로 복원됩니다.
+5. 여러 추가 입력의 접수 순서가 유지되고, 취소한 대기 입력은 실행되지 않습니다.
+6. Run 실행 중 `Enter`는 steer, `Ctrl+Enter`는 `queue_next`, `Shift+Enter`는 줄바꿈으로 동작하며, 각 추가 메시지가 현재 Run에 반영되는지 다음 Run으로 대기하는지 전송 후 식별할 수 있습니다.
+
+Project, 파일 Workspace와 전문 산출물까지 포함한 제품 요구사항은 `COWORK_FEATURE_REQUIREMENTS.md`를 따릅니다.
+
 ## Provider Adapter 계약
 
 Codex, OpenAI, OpenAI Compatible, P-GPT, Claude와 Gemini는 서로 다른 응답 형식을 사용하더라도 Agent Loop에는 다음 공통 형태를 제공합니다.
@@ -118,6 +302,7 @@ Codex, OpenAI, OpenAI Compatible, P-GPT, Claude와 Gemini는 서로 다른 응�
 - Token 및 비용 사용량
 - Provider 오류 분류와 재시도 가능 여부
 - Provider capability
+- Provider가 제공하는 reasoning summary가 있으면 raw reasoning과 분리해 취급하며, 사용자 공개 정책을 통과한 요약만 `progress_summary`로 정규화할 수 있습니다.
 
 Provider별 특수 처리는 Adapter 내부에 제한하고 Agent Loop는 특정 Provider 응답 구조에 의존하지 않습니다.
 
@@ -128,6 +313,7 @@ Frontend와 감사 로그를 위해 최소한 다음 이벤트를 제공합니�
 ```text
 run_started
 turn_started
+progress_summary
 assistant_text_delta
 assistant_turn_completed
 approval_requested
@@ -140,5 +326,9 @@ run_failed
 run_cancelled
 run_interrupted
 ```
+
+`progress_summary`는 비공개 chain-of-thought 원문이 아니라 “무엇을 확인했고 다음에 무엇을 하는지”를 설명하는 사용자 공개용 진행 메시지입니다. Backend는 이를 durable sequence가 있는 Run event로 저장하고 snapshot에 Tool 시작 event와 함께 정렬된 activity Timeline을 제공해야 합니다. Frontend는 재접속·replay 시 중복 없이 복원하며 Tool log와 진행 요약의 원래 순서를 유지합니다.
+
+Run 프롬프트에 실제 적용된 Skill은 자동 선택, `$Skill` 명시 호출, 예약 실행 snapshot을 구분하여 이름, 간단한 적용 이유와 고정 revision/version을 activity Timeline 첫머리에 항상 표시합니다. 설치되어 있지만 적용되지 않은 Skill은 표시하지 않습니다.
 
 Stream 이벤트가 유실되어도 최종 상태와 대화 내용은 DB에서 다시 조회할 수 있어야 합니다.

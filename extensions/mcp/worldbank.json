@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "worldbank": {
+      "type": "stdio",
+      "description": "World Bank v2 API MCP입니다. 국가 목록, 지표 검색, 지표 메타데이터, 국가별 지표 시계열 데이터, 연결 점검을 수행합니다.",
+      "command": "python",
+      "args": [
+        "extensions/mcp/worldbank_server.py"
+      ],
+      "cwd": "."
+    }
+  }
+}

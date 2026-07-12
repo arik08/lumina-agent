@@ -1,0 +1,7 @@
+interface:
+  display_name: "PPTX Writer"
+  short_description: "사내 템플릿 기반 PPTX 작성과 품질 점검"
+  default_prompt: "Use $pptx-writer to create an executive-ready editable PowerPoint deck from my source material."
+policy:
+  allow_implicit_invocation: true
+

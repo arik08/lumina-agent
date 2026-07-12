@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "comtrade": {
+      "type": "stdio",
+      "description": "UN Comtrade API MCP입니다. 키 없이 공개 preview 무역 데이터를 조회하고, UN_COMTRADE_API_KEY가 있으면 data endpoint를 호출하며, reporter code 검색과 연결 점검을 수행합니다.",
+      "command": "python",
+      "args": [
+        "extensions/mcp/comtrade_server.py"
+      ],
+      "cwd": "."
+    }
+  }
+}

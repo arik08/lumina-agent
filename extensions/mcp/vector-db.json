@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "vector_db": {
+      "type": "stdio",
+      "command": "python",
+      "args": [
+        "extensions/mcp/vector_db/server.py"
+      ],
+      "cwd": ".",
+      "auto_connect": false,
+      "description": "로컬 Markdown 조직 업무 문서를 SQLite GraphRAG(vector+graph)로 검색합니다. `python extensions/mcp/vector_db/ingest.py index`로 인덱싱한 뒤 사용하세요."
+    }
+  }
+}

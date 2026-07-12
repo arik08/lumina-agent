@@ -1,0 +1,16 @@
+{
+  "insane-search": "일반 웹 접근이나 OpenWeb으로 원하는 자료를 얻지 못했을 때 차단되었거나 결과가 부족한 웹 소스를 탐색합니다. WebFetch, WebSearch 또는 OpenWeb에서 401·402·403·429 오류, 접근 거부, 봇·WAF 확인 페이지가 발생하거나 결과가 비정상적으로 적을 때 사용합니다. X, Reddit, YouTube, GitHub, Naver 등 접근이 까다로운 플랫폼에 yt-dlp, Jina Reader, 공개 API, TLS 브라우저 위장, 모바일 URL 변환과 실제 Chrome 자동화를 단계적으로 적용합니다. 일반 WebSearch만으로 충분한 단순 검색에는 사용하지 않습니다.",
+  "national-assembly": "열린국회정보 OpenAPI와 국민참여입법센터 API를 함께 사용하는 대한민국 국회 MCP 라우팅 Skill입니다.",
+  "openweb": "지원되는 웹 플랫폼에 구조적으로 접근합니다. 사용자가 X, Reddit, YouTube, GitHub, Stack Overflow, Medium, Substack, LinkedIn, Wikipedia, arXiv, npm, PyPI, Google 검색·학술검색 또는 쇼핑·여행·소셜 플랫폼의 URL, 계정, 프로필, 페이지, 저장소·패키지, 논문이나 플랫폼 한정 검색을 요청할 때 사용합니다. 대상 플랫폼이 명확하면 일반 web_search나 web_fetch보다 우선합니다. 특정 플랫폼이 없는 일반 검색이나 YouTube 자막 추출에는 사용하지 않습니다.",
+  "playwright-capture": "Playwright와 Chromium으로 로컬 또는 원격 HTML 페이지를 렌더링하고 스크린샷이나 PDF로 내보냅니다. 웹페이지 캡처, HTML의 PNG·PDF 변환, 렌더링 결과 검사, PPT용 이미지 생성, 슬라이드·보고서 출력, 반응형 화면 테스트 또는 HTML의 정상 실행과 내보내기 검증이 필요할 때 사용합니다.",
+  "pptx-writer": "PowerPoint 덱, PPT·PPTX 파일, 슬라이드 자료, 경영진 보고서, 회사 템플릿 프레젠테이션과 문서 기반 발표자료를 생성·편집·읽기·분석·변환하거나 품질을 점검할 때 사용합니다.",
+  "skill-creator": "효과적인 Skill을 만드는 방법을 안내합니다. 전문 지식, 반복 업무 절차 또는 도구 연동으로 Lumina의 기능을 확장하는 새 Skill을 만들거나 기존 Skill을 수정할 때 사용합니다.",
+  "skill-evaluator": "Agent Skill과 Codex Skill의 설치·업데이트·검토 전에 호출 조건의 정확성, 안전성, 단계적 정보 공개, 리소스 구성, UI 메타데이터, 명명 규칙, 기존 Skill과의 충돌, 악성·과도한 지침, 유지보수성과 공유 준비 상태를 평가합니다.",
+  "spreadsheet-analyst": "스프레드시트가 주요 입력 또는 결과물일 때 사용합니다. XLSX, XLSM, CSV, TSV 파일 생성·읽기·편집·감사·정리·변환과 수식, 서식, 차트, 표, 피벗, 데이터 유효성 검사, 재무·운영 모델 및 업무 보고서 작성을 지원합니다. 결과물이 글이나 HTML뿐이고 스프레드시트 파일이 필요하지 않은 작업에는 사용하지 않습니다.",
+  "tailwind-design-system": "Tailwind CSS v4로 디자인 시스템을 구축하고 CSS 중심 테마를 설정하거나, variant 기반 컴포넌트를 만들고 Tailwind v3 프로젝트를 v4로 이전할 때 사용합니다.",
+  "ui-design-essence": "UI와 시각 산출물의 디자인 품질을 지키는 보조 Skill입니다. 페이지, 컴포넌트, 대시보드, 보고서, 프로토타입, 랜딩 페이지와 HTML 미리보기의 시각적 계층, 디자인 토큰, 정보 밀도, 반응형 구성, 접근성과 목적 있는 모션을 다듬거나 검토할 때 사용합니다. 산출물 제작은 visual-artifact 등 해당 제작 Skill과 함께 사용합니다.",
+  "ui-ux-pro-max": "웹과 모바일 UI·UX 설계를 지원하는 디자인 지식 Skill입니다. 다양한 스타일, 색상 팔레트, 글꼴 조합, 제품 유형, UX 지침과 차트 유형을 React, Next.js, Vue, Svelte, SwiftUI, React Native, Flutter, Tailwind, shadcn/ui 및 HTML·CSS 환경에 적용합니다. 웹사이트, 대시보드, 관리자 화면, 전자상거래, SaaS, 포트폴리오와 모바일 앱의 설계·구현·검토·개선에 사용합니다.",
+  "vector-db-rag": "로컬 Markdown 조직 업무 문서를 SQLite GraphRAG MCP로 검색합니다. 회사 조직별 업무, 조직 계층, 부서별 역할, 두 문서 간 업무 비교, 특정 조직 산하 업무 조회가 필요할 때 사용합니다.",
+  "visual-artifact": "시각적으로 완성도 높은 단일 HTML 산출물을 제작합니다. 보고서, 대시보드, 인포그래픽, 원페이지 문서, 슬라이드형 웹페이지, 시각 요약, 비교표, 타임라인과 인터랙티브 미리보기가 필요할 때 사용합니다. 브라우저에서 열거나 PPT·PDF로 캡처할 재사용 가능한 시각 자료에 적합하며, 사용자가 A4나 슬라이드 고정 형식을 명시하지 않으면 일반 보고서는 스크롤 가능한 웹 문서로 유지합니다.",
+  "visual-review": "브라우저에서 렌더링된 시각 산출물의 레이아웃, 내보내기 품질, 접근성과 표현 완성도를 검토합니다. HTML 보고서, 대시보드, 인포그래픽, 슬라이드형 페이지, 스크린샷, PDF 또는 PPT용 시각 자료를 만든 뒤 잘림, 넘침, 간격, 가독성, 전문성과 출력 준비 상태를 점검할 때 사용합니다."
+}

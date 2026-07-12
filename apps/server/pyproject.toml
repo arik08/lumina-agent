@@ -1,0 +1,55 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "lumina-server"
+version = "0.1.0"
+description = "Lumina Agent API and local worker runtime"
+requires-python = ">=3.13"
+dependencies = [
+  "alembic>=1.16,<2",
+  "argon2-cffi>=25.1,<26",
+  "fastapi>=0.116,<1",
+  "httpcore>=1.0.9,<2",
+  "httpx>=0.28,<1",
+  "pydantic-settings>=2.10,<3",
+  "psycopg[binary]>=3.2,<4",
+  "openpyxl>=3.1,<4",
+  "pillow>=11,<13",
+  "pypdf>=6.0,<7",
+  "python-docx>=1.2,<2",
+  "python-multipart>=0.0.20,<1",
+  "python-pptx>=1.0,<2",
+  "sqlalchemy>=2.0.41,<3",
+  "tzdata>=2025.2",
+  "uvicorn[standard]>=0.35,<1",
+  "reportlab>=4.4,<5",
+]
+
+[dependency-groups]
+dev = [
+  "mypy>=1.19,<2",
+  "pytest>=8.4,<9",
+  "pytest-asyncio>=1.1,<2",
+  "ruff>=0.14,<1",
+  "types-openpyxl>=3.1,<4",
+  "types-reportlab>=4.4,<5",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lumina"]
+
+[tool.uv]
+default-groups = ["dev"]
+
+[tool.mypy]
+cache_dir = "$MYPY_CONFIG_FILE_DIR/../../.cache/mypy"
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+cache_dir = "../../.cache/pytest"
+testpaths = ["../../tests/backend"]
+
+[tool.ruff]
+cache-dir = "../../.cache/ruff"

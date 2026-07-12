@@ -1,0 +1,37 @@
+{
+  "mcpServers": {
+    "korean-law": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "korean-law-mcp@4.0.6"
+      ],
+      "env": {
+        "NODE_OPTIONS": "--tls-cipher-list=DEFAULT@SECLEVEL=0",
+        "LAW_API_PROTOCOL": "http"
+      },
+      "tools": [
+        { "name": "chain_full_research", "description": "법률 쟁점 종합 조사", "input_schema": { "type": "object", "additionalProperties": true } },
+        { "name": "chain_law_system", "description": "법령 체계 조사", "input_schema": { "type": "object", "additionalProperties": true } },
+        { "name": "chain_action_basis", "description": "행정 작용의 법적 근거 조사", "input_schema": { "type": "object", "additionalProperties": true } },
+        { "name": "chain_dispute_prep", "description": "법적 분쟁 준비 조사", "input_schema": { "type": "object", "additionalProperties": true } },
+        { "name": "chain_amendment_track", "description": "법령 개정 이력 추적", "input_schema": { "type": "object", "additionalProperties": true } },
+        { "name": "chain_ordinance_compare", "description": "자치법규 비교", "input_schema": { "type": "object", "additionalProperties": true } },
+        { "name": "chain_procedure_detail", "description": "법정 절차 상세 조사", "input_schema": { "type": "object", "additionalProperties": true } },
+        { "name": "chain_document_review", "description": "법률 문서 검토", "input_schema": { "type": "object", "additionalProperties": true } },
+        { "name": "search_law", "description": "법령 검색", "input_schema": { "type": "object", "additionalProperties": true } },
+        { "name": "get_law_text", "description": "법령 본문 조회", "input_schema": { "type": "object", "additionalProperties": true } },
+        { "name": "get_annexes", "description": "별표와 서식 조회", "input_schema": { "type": "object", "additionalProperties": true } },
+        { "name": "search_decisions", "description": "판례와 결정례 검색", "input_schema": { "type": "object", "additionalProperties": true } },
+        { "name": "get_decision_text", "description": "판례와 결정례 본문 조회", "input_schema": { "type": "object", "additionalProperties": true } },
+        { "name": "discover_tools", "description": "추가 법률 도구 탐색", "input_schema": { "type": "object", "additionalProperties": true } },
+        { "name": "execute_tool", "description": "탐색한 법률 도구 실행", "input_schema": { "type": "object", "additionalProperties": true } },
+        { "name": "verify_citations", "description": "법률 인용 검증", "input_schema": { "type": "object", "additionalProperties": true } },
+        { "name": "impact_map", "description": "조문 영향 관계 분석", "input_schema": { "type": "object", "additionalProperties": true } }
+      ],
+      "cwd": ".",
+      "description": "Korean Law MCP - 법제처 Open API 기반 법령, 판례, 행정규칙, 자치법규, 조약, 해석례 조회"
+    }
+  }
+}
