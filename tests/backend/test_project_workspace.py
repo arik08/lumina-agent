@@ -7,6 +7,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from alembic.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, inspect, select
 from sqlalchemy.exc import IntegrityError
@@ -406,6 +407,8 @@ def test_failed_database_commit_cleans_managed_storage_objects(tmp_path: Path) -
 def test_project_workspace_migration_round_trip(tmp_path: Path) -> None:
     database = tmp_path / "workspace-migration.db"
     database_url = f"sqlite:///{database.as_posix()}"
+    config = Config(str(SERVER_ROOT / "alembic.ini"))
+    expected_head = ScriptDirectory.from_config(config).get_current_head()
     upgrade_database(database_url)
     engine = create_engine(database_url)
     try:
@@ -414,12 +417,12 @@ def test_project_workspace_migration_round_trip(tmp_path: Path) -> None:
         )
         with engine.connect() as connection:
             assert (
-                MigrationContext.configure(connection).get_current_revision() == "0013"
+                MigrationContext.configure(connection).get_current_revision()
+                == expected_head
             )
     finally:
         engine.dispose()
 
-    config = Config(str(SERVER_ROOT / "alembic.ini"))
     config.attributes["database_url"] = database_url
     command.downgrade(config, "0006")
     engine = create_engine(database_url)
@@ -438,7 +441,8 @@ def test_project_workspace_migration_round_trip(tmp_path: Path) -> None:
         )
         with engine.connect() as connection:
             assert (
-                MigrationContext.configure(connection).get_current_revision() == "0013"
+                MigrationContext.configure(connection).get_current_revision()
+                == expected_head
             )
     finally:
         engine.dispose()

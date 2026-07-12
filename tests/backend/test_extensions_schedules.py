@@ -469,12 +469,39 @@ def test_published_skill_has_isolated_personal_drafts_and_multiple_owners(
             skill["ownerUserId"],
             worker_id,
         }
+        ownership_by_principal = {
+            item["principalId"]: item["id"]
+            for item in ownership_response.json()["ownerships"]
+        }
+
+        primary_owner_rejected = client.delete(
+            f"/api/skills/{skill['id']}/ownerships/"
+            f"{ownership_by_principal[skill['ownerUserId']]}",
+            headers=admin_headers,
+        )
+        assert primary_owner_rejected.status_code == 409
+        assert primary_owner_rejected.json()["code"] == "primary_owner_transfer_required"
 
         client.cookies.clear()
         _login(client, "worker", "pw")
         promoted_view = client.get(f"/api/extensions/{skill['id']}").json()
         assert promoted_view["canEdit"] is True
         assert promoted_view["currentUserRole"] == "owner"
+
+        client.cookies.clear()
+        admin_csrf = _login(client)
+        removed = client.delete(
+            f"/api/skills/{skill['id']}/ownerships/"
+            f"{ownership_by_principal[worker_id]}",
+            headers={"X-CSRF-Token": admin_csrf},
+        )
+        assert removed.status_code == 204, removed.text
+
+        client.cookies.clear()
+        _login(client, "worker", "pw")
+        demoted_view = client.get(f"/api/extensions/{skill['id']}").json()
+        assert demoted_view["canEdit"] is False
+        assert demoted_view["currentUserRole"] is None
 
     with SessionLocal() as db:
         drafts = list(
@@ -491,7 +518,9 @@ def test_published_skill_has_isolated_personal_drafts_and_multiple_owners(
             skill["ownerUserId"],
             worker_id,
         }
-        assert len(ownerships) == 2
+        assert len(ownerships) == 1
+        assert ownerships[0].principal_id == skill["ownerUserId"]
+        assert "skill_ownership_removed" in set(db.scalars(select(AuditEvent.action)))
 
 
 def test_schedule_run_now_enable_disable_and_due_dispatch(tmp_path: Path) -> None:

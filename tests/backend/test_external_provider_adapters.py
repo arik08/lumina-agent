@@ -951,8 +951,13 @@ def test_executor_preserves_gemini_thought_signature_through_tool_roundtrip(
         snapshot = _wait_for_terminal(client, started.json()["run"]["runId"])
         assert snapshot["status"] == "completed"
 
-    assert len(capturing.requests) == 2
-    second = capturing.requests[1]
+    conversation_requests = [
+        request
+        for request in capturing.requests
+        if request.metadata.get("purpose") != "user_memory_extraction"
+    ]
+    assert len(conversation_requests) == 2
+    second = conversation_requests[1]
     assistant = next(message for message in second.messages if message.tool_calls)
     tool_result = next(message for message in second.messages if message.role == "tool")
     assert assistant.provider_metadata == {

@@ -8,6 +8,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from alembic.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, inspect, select
 
@@ -518,6 +519,8 @@ def test_project_concept_permissions_stale_isolation_apply_and_rollback(
 def test_project_memory_migration_round_trip(tmp_path: Path) -> None:
     database = tmp_path / "project-memory-migration.db"
     database_url = f"sqlite:///{database.as_posix()}"
+    config = Config(str(SERVER_ROOT / "alembic.ini"))
+    expected_head = ScriptDirectory.from_config(config).get_current_head()
     upgrade_database(database_url)
     engine = create_engine(database_url)
     try:
@@ -531,12 +534,12 @@ def test_project_memory_migration_round_trip(tmp_path: Path) -> None:
         assert {"concept_revision", "concept_hash"} <= project_columns
         with engine.connect() as connection:
             assert (
-                MigrationContext.configure(connection).get_current_revision() == "0013"
+                MigrationContext.configure(connection).get_current_revision()
+                == expected_head
             )
     finally:
         engine.dispose()
 
-    config = Config(str(SERVER_ROOT / "alembic.ini"))
     config.attributes["database_url"] = database_url
     command.downgrade(config, "0007")
     engine = create_engine(database_url)
@@ -557,7 +560,8 @@ def test_project_memory_migration_round_trip(tmp_path: Path) -> None:
     try:
         with engine.connect() as connection:
             assert (
-                MigrationContext.configure(connection).get_current_revision() == "0013"
+                MigrationContext.configure(connection).get_current_revision()
+                == expected_head
             )
     finally:
         engine.dispose()

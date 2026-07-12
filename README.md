@@ -22,8 +22,9 @@ React 기반 Frontend와 FastAPI 기반 Backend를 한 서비스처럼 제공하
 - Tool 실행 상태, 승인 요청, Plan과 단계별 진행 상황 표시
 - DOCX, XLSX, PPTX, PDF, HTML, Markdown 산출물 생성과 검증
 - 대화 검색, 분기, 내보내기와 읽기 전용 공유
-- Skill·MCP Marketplace, 예약 작업, 사용자·Project Memory
-- 관리자용 사용자, Provider, MCP와 조직 지침 관리
+- 계정별 설치, 사용자별 WorkingDraft와 복수 Owner를 지원하는 Skill·MCP Marketplace
+- 예약 작업, 사용자·Project Memory와 대화 즐겨찾기·좋아요
+- 가입 요청 승인과 사용자·Provider·MCP·조직 지침 관리
 
 ## 설계 개요
 
@@ -267,12 +268,15 @@ $env:PYTHONPYCACHEPREFIX = "$PWD\.cache\pycache"
 uv run --project apps/server pytest -c apps/server/pyproject.toml
 ```
 
-Frontend typecheck와 build:
+Frontend 단위 테스트, typecheck와 build:
 
 ```powershell
+npm --prefix apps/web test
 npm --prefix apps/web run typecheck
 npm --prefix apps/web run build
 ```
+
+Backend 전체 테스트는 Alembic 최신 head까지의 migration, Agent Loop, Provider adapter, 권한·공유 경계와 Artifact 흐름을 검증합니다. Frontend 단위 테스트는 UI helper와 화면 계약을 빠르게 검사하며, 실제 화면을 바꾸는 작업은 별도의 브라우저 점검도 수행해야 합니다. 조건부 renderer·PostgreSQL 테스트와 테스트 전용 포트 규칙은 [설치와 진단](docs/project-context/INSTALLATION_AND_DIAGNOSTICS.md#개발-검증)을 참고하십시오.
 
 네트워크를 사용하지 않는 환경 진단:
 

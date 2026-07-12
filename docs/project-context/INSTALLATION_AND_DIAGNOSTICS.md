@@ -107,6 +107,33 @@ powershell -ExecutionPolicy Bypass -File devtools/check_postgres_compat.ps1
 
 이 검사는 compile 전용 placeholder URL을 사용하며 PostgreSQL에 연결하지 않습니다.
 
+## 개발 검증
+
+Backend 회귀 테스트는 저장소 루트에서 다음 명령으로 실행합니다. migration 검증은 특정 과거 revision을 완료 상태로 가정하지 않고 repository의 현재 Alembic head까지 올라간 상태를 확인합니다.
+
+```powershell
+$env:PYTHONPYCACHEPREFIX = "$PWD\.cache\pycache"
+uv run --project apps/server pytest -c apps/server/pyproject.toml
+```
+
+Frontend는 빠른 Node 단위 테스트를 먼저 실행한 뒤 TypeScript와 production bundle을 검증합니다.
+
+```powershell
+npm --prefix apps/web test
+npm --prefix apps/web run typecheck
+npm --prefix apps/web run build
+```
+
+Frontend 단위 테스트에는 UI helper와 주요 화면의 소스 계약 검사가 포함됩니다. 실제 UI를 만들거나 수정한 경우에는 이 결과만으로 완료하지 않고 Codex 앱 브라우저에서 주요 화면, 텍스트 겹침·잘림과 콘솔 오류를 직접 확인합니다.
+
+전체 Backend 테스트에서 다음 항목은 로컬 실행 조건이 없으면 skip될 수 있습니다.
+
+- PDF 실제 렌더 검증: 실행 가능한 `pdftoppm` 필요
+- DOCX·XLSX·PPTX 실제 렌더 검증: LibreOffice와 `pdftoppm` 필요
+- PostgreSQL migration 통합 테스트: 전용 `LUMINA_TEST_POSTGRES_URL`과 `LUMINA_TEST_POSTGRES_ALLOW_MIGRATIONS=1` 필요
+
+브라우저 QA나 API 검증을 위해 서비스를 실행할 때는 사용자 기본 포트 `5252`, `5253`을 점유하거나 종료하지 않습니다. 기본 테스트 포트는 Frontend `15252`, Backend `15253`이며 이미 사용 중이면 `5252`, `5253`을 제외한 다른 빈 포트를 선택합니다. 테스트가 시작한 process만 종료하고 기존 listener는 유지합니다.
+
 ## 운영 DATABASE_URL smoke
 
 반드시 빈 전용 검증 DB 또는 승인된 migration 대상에만 실행합니다. 실제 운영 credential은 명령행에 쓰지 않고 process environment나 Secret mount로 전달합니다.
