@@ -59,8 +59,29 @@ _DEEP_LINK_KEYS = frozenset(
         "artifactId",
         "scheduledTaskId",
         "scheduledRunId",
+        "adminUserId",
     }
 )
+
+
+def create_registration_approval_notification(
+    db: Session, *, admin: User, applicant: User
+) -> tuple[Notification | None, bool]:
+    role_label = "관리자" if applicant.role == "admin" else "사용자"
+    return _create_notification(
+        db,
+        user_id=admin.id,
+        kind="registration_approval",
+        title="가입 승인 요청",
+        body=(
+            f"{applicant.login_id} · {applicant.display_name or '이름 없음'} · "
+            f"{applicant.affiliation or '소속 없음'} · {role_label}"
+        ),
+        source_type="user",
+        source_id=applicant.id,
+        idempotency_key=f"registration:{applicant.id}:approval",
+        deep_link={"target": "admin", "adminUserId": applicant.id},
+    )
 
 
 def _clean_deep_link(value: dict[str, Any]) -> dict[str, str]:

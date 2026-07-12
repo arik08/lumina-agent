@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any, cast
 
 from .model import (
@@ -34,6 +35,16 @@ _FORMAT_METADATA: dict[ReportFormat, tuple[str, str, str]] = {
 }
 
 
+def _report_display_name(title: str, extension: str) -> str:
+    stem = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", title)
+    stem = re.sub(r"\s+", "_", stem)
+    stem = re.sub(r"_+", "_", stem).strip(" ._")
+    suffix = f".{extension}"
+    if stem.casefold().endswith(suffix.casefold()):
+        stem = stem[: -len(suffix)].rstrip(" ._")
+    return f"{stem or '작업_결과_보고서'}.{extension}"
+
+
 def generate_report(
     request: str,
     arguments: dict[str, Any],
@@ -49,11 +60,40 @@ def generate_report(
         raise ValueError(
             "본문 이미지 자산은 현재 HTML 또는 DOCX 보고서에서 지원합니다."
         )
+    raw_html_source = arguments.get("html_source")
+    if raw_html_source is not None:
+        if report_format != "html":
+            raise ValueError("html_source는 HTML 보고서에서만 사용할 수 있습니다.")
+        if not isinstance(raw_html_source, str) or not raw_html_source.strip():
+            raise ValueError("html_source는 비어 있지 않은 문자열이어야 합니다.")
+        if images:
+            raise ValueError(
+                "html_source와 이미지 참조를 함께 사용할 수 없습니다. "
+                "완성 HTML에는 허용된 이미지 데이터를 직접 포함해야 합니다."
+            )
+        from ..service import validate_artifact_content
+
+        source = raw_html_source.encode("utf-8")
+        status, validation = validate_artifact_content(
+            kind="html", mime_type="text/html", content=source
+        )
+        if status == "failed":
+            errors = ", ".join(str(item) for item in validation["errors"])
+            raise ValueError(f"HTML 보고서 안전성 검증에 실패했습니다: {errors}")
+        title = str(arguments.get("title") or "작업 결과 보고서")
+        return GeneratedReport(
+            format="html",
+            display_name=_report_display_name(title, "html"),
+            kind="html",
+            mime_type="text/html",
+            content=source,
+            asset_manifest=(),
+        )
     document = normalize_report_document(request, arguments, images=images)
     extension, kind, mime_type = _FORMAT_METADATA[report_format]
     return GeneratedReport(
         format=report_format,
-        display_name=f"Lumina_작업_보고서.{extension}",
+        display_name=_report_display_name(document.title, extension),
         kind=kind,
         mime_type=mime_type,
         content=_generate_content(report_format, document),

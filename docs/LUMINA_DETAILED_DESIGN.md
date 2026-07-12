@@ -686,7 +686,8 @@ Run
 - Step마다 입력, Context, Provider 옵션, Tool version, 결과, 오류와 Artifact를 저장합니다.
 - 독립 Subtask만 사용자·서버 한도 안에서 병렬 실행합니다.
 - 실패 Step retry는 완료 Step을 되돌리지 않고 저장된 입력 snapshot을 사용합니다.
-- Timeline은 model turn이 아니라 사용자가 이해하는 업무 단계 중심으로 표시합니다.
+- 사용자 화면에는 Backend의 고정 실행 경계 대신 모델이 `update_plan`으로 작성한 요청별 업무 계획을 표시합니다. 이 계획은 실제 대상과 결과가 드러나는 단계, `pending | in_progress | completed` 상태와 안정적인 ID를 Run snapshot과 `work_plan_updated` event에 저장합니다.
+- Timeline은 model turn이 아니라 사용자가 이해하는 업무 단계 중심으로 표시하며, 상세 Tool log는 별도 활동 영역에 둡니다.
 
 ### 9.7 Batch Fan-out
 
@@ -808,6 +809,8 @@ append-only tail
 ```
 
 - Run 시작 시 system prompt, 지침, Tool schema, Provider·Model capability와 workspace snapshot을 canonical serialization하고 hash를 저장합니다. 동일 Run 안에서는 바이트 단위로 재사용하며 timestamp, request ID, 경과 시간, 무작위 순서와 live 상태를 stable prefix에 넣지 않습니다.
+- 서로 다른 채팅 Session도 같은 인증 사용자라면 캐시 라우팅을 재사용할 수 있도록 정규화한 로그인 ID(email)의 비가역 hash를 사용자 단위 `prompt_cache_key`로 사용합니다. 이메일 원문은 Provider 요청이나 로그에 넣지 않으며, 요청별 output mode·현재 Message·recall 같은 변동 정보는 안정된 system prefix 뒤에 둡니다.
+- OpenAI GPT-5.6 이상은 `prompt_cache_options.ttl=30m`을 사용하고 이전 지원 Model은 `prompt_cache_retention=24h`를 사용합니다. Provider가 지원하지 않는 cache control을 공통 옵션처럼 강제로 전송하지 않습니다.
 - Tool·Skill·MCP의 검색과 선택은 Run 시작 전에 끝내고 snapshot으로 고정합니다. 설치·활성화·지침 변경은 기본적으로 다음 Run부터 적용하며, 사용자가 즉시 적용을 선택하면 cache 무효화와 비용 영향을 알리고 새 Run snapshot을 만듭니다.
 - 이전 message와 Tool Call JSON은 append-only로 유지하고 key 순서·whitespace·role 배열을 매 호출마다 다시 쓰지 않습니다. Provider 제약에 따른 정규화는 저장 원본이 아닌 전송용 copy에 결정론적으로 적용합니다.
 - 변동하는 memory recall, 현재 시각, 검색 결과와 현재 Turn 전용 힌트는 prefix 뒤쪽의 user/context block에 둡니다. 동일 정보를 system prompt에 재주입하지 않습니다.
@@ -881,6 +884,7 @@ created_at
 run_started / run_status_changed
 turn_started
 progress_summary
+work_plan_updated
 assistant_text_delta
 assistant_turn_completed / message_completed
 approval_requested
@@ -895,7 +899,7 @@ retry_scheduled
 run_completed / run_failed / run_cancelled / run_interrupted
 ```
 
-`progress_summary`는 Provider의 raw reasoning을 그대로 전달하는 이벤트가 아닙니다. Agent가 사용자에게 공개할 수 있는 판단 결과·현재 작업·다음 행동만 간결하게 기록하며, Tool 시작 event와 같은 durable sequence로 저장해 snapshot·replay 후에도 하나의 실행 Timeline 순서를 복원합니다. 사용자 표시 Plan은 요청 목적과 산출물에 따라 동적으로 구성하고 실행 중 실제 Tool Call을 Subtask로 추가합니다.
+`progress_summary`는 Provider의 raw reasoning을 그대로 전달하는 이벤트가 아닙니다. Agent가 사용자에게 공개할 수 있는 판단 결과·현재 작업·다음 행동만 간결하게 기록하며, Tool 시작 event와 같은 durable sequence로 저장해 snapshot·replay 후에도 하나의 실행 Timeline 순서를 복원합니다. 사용자 표시 업무 계획은 `update_plan`으로 요청 목적과 산출물에 따라 동적으로 구성하고 `work_plan_updated`로 복원하며, 실제 Tool Call은 Backend 실행 Plan의 Subtask로 별도 추적합니다.
 
 `approval_requested`는 `on_risk`에서 위험 effect가 감지되거나 `confirm_all`에서 read-only가 아닌 effect를 실행할 때 발생합니다. 이벤트 naming은 API version에서 하나로 정규화하되 기존 의미를 모두 보존합니다.
 
@@ -971,11 +975,8 @@ apps/server/src/lumina/providers/
 |---|---|---|---|---|
 | `pgpt` | `GPT-5.4` | `gpt-5.4` | 예 | 사용자 지정 |
 | `pgpt` | `GPT-5.4-mini` | `gpt-5.4-mini` | 아니요 | 사용자 지정 |
-| `codex` | `GPT-5.6-Sol` | `gpt-5.6-sol` | 예 | 사용자 지정 |
-| `codex` | `GPT-5.6-Terra` | `gpt-5.6-terra` | 아니요 | 사용자 지정 표시명 |
-| `codex` | `GPT-5.6-Luna` | `gpt-5.6-luna` | 아니요 | 사용자 지정 표시명 |
-| `codex` | `GPT-5.5` | `gpt-5.5` | 아니요 | 사용자 지정 |
-| `codex` | `GPT-5.4` | `gpt-5.4` | 아니요 | 사용자 지정 |
+| `codex` | `GPT-5.5` | `gpt-5.5` | 예 | ChatGPT OAuth App Server 공개 catalog |
+| `codex` | `GPT-5.4` | `gpt-5.4` | 아니요 | ChatGPT OAuth App Server 공개 catalog |
 | `google` | `Gemini-3.1-Pro` | `gemini-3.1-pro` | 예 | 사용자 지정 |
 | `google` | `Gemini-3.5-flash` | `gemini-3.5-flash` | 아니요 | 사용자 지정 |
 | `openai` | `GPT-5.6-Sol` | `gpt-5.6-sol` | 예 | OpenAI 최신 flagship |
@@ -986,6 +987,10 @@ apps/server/src/lumina/providers/
 | `anthropic` | `Claude Haiku 4.5` | `claude-haiku-4-5` | 아니요 | 고속·저비용 |
 
 OpenAI 항목은 [공식 최신 모델 가이드](https://developers.openai.com/api/docs/guides/latest-model.md), Anthropic 항목은 [공식 모델 개요](https://platform.claude.com/docs/en/about-claude/models/overview)와 [모델 선택 가이드](https://platform.claude.com/docs/en/about-claude/models/choosing-a-model)를 기준으로 선정했습니다. 외부 Provider의 `latest` alias는 실행 결과가 예고 없이 바뀔 수 있으므로 Run 재현용 ID로 저장하지 않습니다. 구현 직전과 catalog 갱신 시 공식 문서를 다시 확인하고, 변경은 관리자 검토를 거쳐 catalog revision으로 배포합니다.
+
+Codex text Provider는 OpenAI API Key가 아니라 로컬 Codex App Server의 `chatgpt` 인증 모드만 사용합니다. Backend는 Codex 자식 프로세스에서 `OPENAI_API_KEY`를 제거하여 API 과금 경로로 자동 fallback하지 못하게 하며, OAuth runtime이 보고한 검증 모델만 활성화합니다. `OpenAI` Provider의 API Key와 사용량은 Codex 구독 사용량과 분리합니다. Codex OAuth 경로에서 지원하지 않는 Lumina 전용 Tool은 API Key로 우회하지 않고 명시적으로 unavailable 처리합니다.
+
+Codex OAuth의 실제 과금 방식은 모델명 옆에 ChatGPT 구독으로 표시하되, 운영·관리 목적의 비용 비교를 위해 동일 토큰을 공개 단가표로 환산한 `예상비용`을 다른 Provider와 같은 짧은 원화 열로 표시합니다.
 
 `openai_compatible`은 단일 회사의 모델군이 아니므로 고정 초기 목록을 두지 않습니다. 관리자가 등록한 허용 목록을 기본으로 하고, endpoint가 안전한 `/models` discovery를 제공할 때만 후보를 가져와 관리자 allowlist와 교집합을 계산합니다. discovery 실패가 채팅 시작을 막지 않으며 마지막으로 검증된 catalog 또는 수동 등록 목록으로 fallback합니다.
 
@@ -1195,12 +1200,14 @@ Catalog ExtensionVersion
 
 - Skill은 최소 `SKILL.md`를 가지며 선택적으로 manifest, references, scripts, examples와 assets를 포함합니다.
 - 새 Skill은 version 없는 WorkingDraft로 시작하고 대화·편집 변경은 내부 `draft_revision`만 증가시킵니다.
+- Published Skill을 수정하는 사용자는 공용 Draft를 공유하지 않고 `(skill_id, owner_user_id)`로 격리된 개인 WorkingDraft를 가집니다. Owner의 Draft와 Contributor의 Draft는 서로 덮어쓰지 않습니다.
 - 사용자가 명시적으로 `저장`하면 현재 Draft 전체 package snapshot으로 첫 `v1`을 만들고, 이후 수정한 Draft를 다시 저장할 때 `v2`, `v3`를 만듭니다.
 - Draft autosave와 실제 Skill 사용은 `v1`, `v2` 번호를 소비하지 않습니다. 저장된 version은 절대 덮어쓰지 않습니다.
 - version이 없는 활성 Draft는 `Draft · rN · 저장 안 됨`과 `v1로 저장` action을 표시합니다. 저장 version을 기반으로 다시 수정 중이면 `Draft · rN · base vN`과 `새 버전으로 저장`을 표시합니다.
 - 과거 version에서 분기해도 표시 번호는 최신 번호 다음 값이며 `parent_version_id`로 계보를 기록합니다.
 - Draft 수정은 expected revision과 ETag를, version save는 `draft_id`, expected revision, `base_version_id`와 digest를 요구합니다.
 - Run은 SkillVersion 또는 WorkingDraft revision, package digest, MCP config revision과 permission grant를 snapshot으로 고정합니다.
+- `vPublish.Merge.Feedback`는 사용자에게 진화 상태를 설명하는 계산된 표시값으로 사용합니다. Feedback은 DraftRevision, Merge·Publish·Rollback은 immutable SkillVersion으로 저장하고, 선택·정렬·재현에는 표시 문자열이 아니라 UUID와 digest를 사용합니다.
 
 Fork는 원본과 다른 새 `extension_id`와 Private WorkingDraft를 만들고 `forked_from_extension_id`, `forked_from_version_id`를 기록합니다. Fork도 명시 저장 때 첫 `v1`을 만들며 원본의 이후 변경을 자동 병합하지 않습니다. 적법한 권한으로 만든 Fork의 package snapshot은 원본이 비공개 또는 삭제 상태가 되어도 보존합니다.
 
@@ -1222,6 +1229,8 @@ WorkingDraft revision N, owner-executable
 ```
 
 Official은 상태가 아니라 publisher trust 표시입니다. 역할은 User, Author, Publisher, Reviewer, Organization Admin과 Operator로 분리할 수 있습니다. 작성자가 자신의 Organization 공개 version을 단독 승인하지 못하게 정책으로 분리할 수 있어야 합니다.
+
+Skill의 `creator_user_id`는 최초 기여 기록으로 고정합니다. 현재 관리 책임은 `SkillOwnership`의 복수 Owner·Maintainer로 분리하고, Owner 추가·제거·이전과 primary Owner 복구는 Audit 대상입니다. Creator가 퇴사하거나 권한을 잃어도 기록은 보존하며 Owner는 사용자·팀·조직 principal로 이전할 수 있습니다.
 
 - 새 Draft와 저장 version의 기본 visibility는 `Private`이며 소유 사용자만 검색·사용·수정합니다.
 - `공용으로 공개`는 인터넷 공개가 아니라 Organization 구성원에게 catalog와 설치를 허용하는 의미입니다. 일반 사용자의 공개 요청은 admin 검토를 거쳐 `Published`로 전환합니다.
@@ -1760,7 +1769,8 @@ audit_events
 plans / plan_steps / subtasks                    Phase 2 Plan
 memories / project_learning_proposals            Project learning
 extensions / extension_versions / installations  Skill Marketplace
-extension_drafts / extension_draft_revisions       executable WorkingDraft
+extension_drafts / extension_draft_revisions       사용자별 executable WorkingDraft
+skill_ownerships                                  Creator와 분리된 복수 Owner·Maintainer
 extension_draft_bindings                           user·Project Draft activation
 skill_folders / skill_folder_placements             hierarchical organization
 extension_permission_grants / mcp_secret_bindings / reviews
@@ -1880,6 +1890,7 @@ DELETE /api/conversation-shares/{id}
 
 ```text
 POST   /api/extensions
+POST   /api/extensions/{id}/draft
 POST   /api/skill-drafts/from-conversation
 PATCH  /api/skill-drafts/{id}
 POST   /api/skill-drafts/{id}/activate
@@ -1890,6 +1901,8 @@ PATCH  /api/skill-folders/{id}
 POST   /api/skill-folders/{id}/move
 DELETE /api/skill-folders/{id}
 POST   /api/skills/{id}/move-folder
+POST   /api/skills/{id}/ownerships
+DELETE /api/skills/{id}/ownerships/{ownership_id}
 POST   /api/extensions/{id}/versions
 POST   /api/extensions/{id}/forks
 POST   /api/extension-versions/{id}/review-requests

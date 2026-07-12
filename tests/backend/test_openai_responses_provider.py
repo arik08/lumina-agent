@@ -55,6 +55,38 @@ def test_responses_payload_includes_attached_image() -> None:
     ]
 
 
+def test_responses_payload_routes_prompt_cache_by_opaque_user_key() -> None:
+    payload = build_responses_payload(
+        ProviderRequest(
+            model="gpt-test",
+            messages=(ProviderMessage(role="user", content="Hello"),),
+            metadata={
+                "prompt_cache_key": "lumina:user:v1:opaque-user-digest",
+                "prompt_cache_retention": "24h",
+            },
+        )
+    )
+
+    assert payload["prompt_cache_key"] == "lumina:user:v1:opaque-user-digest"
+    assert payload["prompt_cache_retention"] == "24h"
+
+
+def test_responses_payload_uses_modern_cache_ttl_for_gpt_5_6() -> None:
+    payload = build_responses_payload(
+        ProviderRequest(
+            model="gpt-5.6-terra",
+            messages=(ProviderMessage(role="user", content="Hello"),),
+            metadata={
+                "prompt_cache_key": "lumina:user:v1:opaque-user-digest",
+                "prompt_cache_retention": "24h",
+            },
+        )
+    )
+
+    assert payload["prompt_cache_options"] == {"ttl": "30m"}
+    assert "prompt_cache_retention" not in payload
+
+
 def test_responses_payload_maps_function_call_round_trip_and_json_schema() -> None:
     payload = build_responses_payload(
         ProviderRequest(

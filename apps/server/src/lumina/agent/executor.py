@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -45,6 +46,7 @@ from ..memories.service import (
 from ..mcp.runtime import McpRuntime, McpRuntimeError, PreparedMcpTool
 from ..models import (
     Attachment,
+    Artifact,
     ArtifactVersion,
     Conversation,
     Message,
@@ -71,7 +73,7 @@ from ..providers import (
     ProviderRequestError,
 )
 from ..providers.anthropic import AnthropicMessagesAdapter
-from ..providers.codex import CodexImageGenerator, CodexResponsesAdapter
+from ..providers.codex import CodexResponsesAdapter
 from ..providers.google import GoogleGeminiAdapter
 from ..providers.openai import OpenAIResponsesAdapter
 from ..providers.openai_compatible import OpenAICompatibleAdapter
@@ -103,6 +105,7 @@ from ..runs.service import (
     fail_plan,
     start_plan_step,
     transition_run,
+    update_work_plan,
 )
 from ..runs.subtasks import (
     bind_tool_subtask,
@@ -182,6 +185,7 @@ class LocalRunExecutor:
         self.storage = ManagedLocalStorage(_artifact_root(self.settings))
         self.file_storage = ManagedLocalStorage(_file_root(self.settings))
         self.mcp_runtime = McpRuntime(self.settings)
+        self.codex_provider = CodexResponsesAdapter()
         self._started = False
         self._claim_lock = asyncio.Lock()
         self._tasks: dict[str, asyncio.Task[None]] = {}
@@ -204,6 +208,14 @@ class LocalRunExecutor:
         if self._started:
             return
         self._started = True
+        if self.settings.environment != "test":
+            try:
+                await self.codex_provider.warmup()
+            except ProviderError as exc:
+                logger.warning(
+                    "Codex App Server warmup skipped",
+                    extra={"provider_error": type(exc).__name__},
+                )
         queued_ids: list[str] = []
         recovery_notify_ids: list[str] = []
         queue_recovery_run_ids: list[str] = []
@@ -262,6 +274,7 @@ class LocalRunExecutor:
             interrupted_ids = mark_worker_shutdown_interrupted(db)
         for run_id in interrupted_ids:
             await event_broker.notify(run_id)
+        await self.codex_provider.close()
 
     def enqueue(self, run_id: str) -> None:
         if not self._started:
@@ -434,6 +447,9 @@ class LocalRunExecutor:
                 run.snapshot_json.get("tool_checkpoint"), dict
             )
             conversation_title_snapshot = run.snapshot_json.get("conversation_title")
+            prompt_cache_key = str(
+                run.snapshot_json.get("prompt_cache_key", "")
+            ).strip()
 
         with session_scope() as db:
             run = db.get(Run, run_id)
@@ -492,6 +508,7 @@ class LocalRunExecutor:
         mcp_tools = await self.mcp_runtime.prepare_run(run_id)
         mcp_tools_by_name = {tool.provider_name: tool for tool in mcp_tools}
         tool_schemas = (
+            _UPDATE_PLAN_TOOL_SCHEMA,
             *((_REPORT_TOOL_SCHEMA,) if wants_artifact else ()),
             *((GENERATE_IMAGE_TOOL_SCHEMA,) if image_generation_capable else ()),
             _WEB_SEARCH_TOOL_SCHEMA,
@@ -554,6 +571,12 @@ class LocalRunExecutor:
                 messages=tuple(request_messages),
                 tools=tool_schemas,
                 effort=effort,
+                metadata={
+                    "prompt_cache_key": prompt_cache_key,
+                    "prompt_cache_retention": "24h",
+                }
+                if prompt_cache_key
+                else {},
             )
             tool_calls: dict[str, dict[str, Any]] = {}
             tool_order: list[str] = []
@@ -598,10 +621,12 @@ class LocalRunExecutor:
                                     visible_text = title_control_buffer
                                     title_control_buffer = None
                             if visible_text:
-                                progress_control_buffer, visible_text, parsed_progress = (
-                                    _consume_progress_control(
-                                        progress_control_buffer, visible_text
-                                    )
+                                (
+                                    progress_control_buffer,
+                                    visible_text,
+                                    parsed_progress,
+                                ) = _consume_progress_control(
+                                    progress_control_buffer, visible_text
                                 )
                                 if parsed_progress is not None:
                                     model_progress_summary = parsed_progress
@@ -624,6 +649,10 @@ class LocalRunExecutor:
                                 ),
                                 "artifact_progress": None,
                             }
+                            if tool_calls[call_id]["name"] == "write_file":
+                                await self._start_streaming_write_file(
+                                    run_id, tool_calls[call_id]
+                                )
                             if tool_calls[call_id]["name"] == "create_report":
                                 await self._publish_artifact_progress(run_id, 0, 0)
                         elif event.type == "tool_call_delta":
@@ -633,7 +662,7 @@ class LocalRunExecutor:
                                     event.arguments_delta or ""
                                 )
                                 call = tool_calls[delta_call_id]
-                                if call["name"] == "create_report":
+                                if call["name"] in {"create_report", "write_file"}:
                                     progress = _artifact_argument_progress(
                                         call["arguments"]
                                     )
@@ -644,9 +673,14 @@ class LocalRunExecutor:
                                         or progress[1] != previous[1]
                                     ):
                                         call["artifact_progress"] = progress
-                                        await self._publish_artifact_progress(
-                                            run_id, *progress
-                                        )
+                                        if call["name"] == "create_report":
+                                            await self._publish_artifact_progress(
+                                                run_id, *progress
+                                            )
+                                        else:
+                                            await self._update_streaming_write_file(
+                                                run_id, call, *progress
+                                            )
                                 tool_calls[delta_call_id]["provider_metadata"].update(
                                     _safe_provider_metadata(event.provider_metadata)
                                 )
@@ -659,15 +693,20 @@ class LocalRunExecutor:
                                 call["arguments"] = (
                                     event.arguments_json or call["arguments"]
                                 )
-                                if call["name"] == "create_report":
+                                if call["name"] in {"create_report", "write_file"}:
                                     progress = _artifact_argument_progress(
                                         call["arguments"]
                                     )
                                     if call.get("artifact_progress") != progress:
                                         call["artifact_progress"] = progress
-                                        await self._publish_artifact_progress(
-                                            run_id, *progress
-                                        )
+                                        if call["name"] == "create_report":
+                                            await self._publish_artifact_progress(
+                                                run_id, *progress
+                                            )
+                                        else:
+                                            await self._update_streaming_write_file(
+                                                run_id, call, *progress
+                                            )
                                 call["provider_metadata"].update(
                                     _safe_provider_metadata(event.provider_metadata)
                                 )
@@ -743,10 +782,16 @@ class LocalRunExecutor:
                         for text in steer_messages
                     )
                     continue
-                if wants_artifact and not artifact_created and not artifact_completion_reminded:
+                if (
+                    wants_artifact
+                    and not artifact_created
+                    and not artifact_completion_reminded
+                ):
                     if round_text:
                         messages.append(
-                            ProviderMessage(role="assistant", content="".join(round_text))
+                            ProviderMessage(
+                                role="assistant", content="".join(round_text)
+                            )
                         )
                     messages.append(
                         ProviderMessage(
@@ -766,20 +811,27 @@ class LocalRunExecutor:
                 await self._complete_run(run_id, assistant_message_id)
                 return
 
-            await self._enter_tool_plan(run_id)
-            with session_scope() as db:
-                active_run = db.get(Run, run_id)
-                if active_run is None:
-                    raise RuntimeError("Run disappeared before Plan Subtask creation")
-                created_subtasks = ensure_tool_subtasks(db, active_run, calls)
-                if created_subtasks:
-                    change_plan_step(
-                        db,
-                        active_run,
-                        "tools",
-                        result={"subtask_count": len(created_subtasks)},
-                        reason="tool_subtasks_created",
+            execution_calls = [call for call in calls if call["name"] != "update_plan"]
+            created_subtasks: list[dict[str, Any]] = []
+            if execution_calls:
+                await self._enter_tool_plan(run_id)
+                with session_scope() as db:
+                    active_run = db.get(Run, run_id)
+                    if active_run is None:
+                        raise RuntimeError(
+                            "Run disappeared before Plan Subtask creation"
+                        )
+                    created_subtasks = ensure_tool_subtasks(
+                        db, active_run, execution_calls
                     )
+                    if created_subtasks:
+                        change_plan_step(
+                            db,
+                            active_run,
+                            "tools",
+                            result={"subtask_count": len(created_subtasks)},
+                            reason="tool_subtasks_created",
+                        )
             if created_subtasks:
                 await event_broker.notify(run_id)
 
@@ -791,11 +843,12 @@ class LocalRunExecutor:
             ):
                 return
             await self._set_status(run_id, TOOLS_RUNNING)
-            await self._publish_progress_summary(
-                run_id,
-                model_progress_summary or _tool_progress_fallback(calls),
-                phase="tools",
-            )
+            if execution_calls:
+                await self._publish_progress_summary(
+                    run_id,
+                    model_progress_summary or _tool_progress_fallback(execution_calls),
+                    phase="tools",
+                )
 
             messages.append(
                 ProviderMessage(
@@ -820,7 +873,7 @@ class LocalRunExecutor:
                 return
             for call, result in resolved_calls:
                 if (
-                    call["name"] == "create_report"
+                    call["name"] in {"create_report", "write_file"}
                     and isinstance(result, dict)
                     and isinstance(result.get("artifact_id"), str)
                 ):
@@ -1143,6 +1196,8 @@ class LocalRunExecutor:
             )
             if tool is None:
                 return None
+            if tool.status == "streaming":
+                return None
             if tool.status == "completed":
                 return (
                     dict(tool.result_json)
@@ -1203,18 +1258,31 @@ class LocalRunExecutor:
             run = db.get(Run, run_id)
             if run is None:
                 raise RuntimeError("Run disappeared before Tool policy result")
-            tool = ToolExecution(
-                run_id=run.id,
-                tool_call_id=str(tool_call["id"]),
-                tool_name=str(tool_call["name"]),
-                validated_input_json=stored_arguments,
-                status="running",
-                started_at=utc_now(),
+            tool = db.scalar(
+                select(ToolExecution).where(
+                    ToolExecution.run_id == run.id,
+                    ToolExecution.tool_call_id == str(tool_call["id"]),
+                )
             )
-            db.add(tool)
+            streamed = tool is not None and tool.status == "streaming"
+            if tool is None:
+                tool = ToolExecution(
+                    run_id=run.id,
+                    tool_call_id=str(tool_call["id"]),
+                    tool_name=str(tool_call["name"]),
+                    started_at=utc_now(),
+                )
+                db.add(tool)
+            tool.validated_input_json = stored_arguments
+            tool.status = "running"
             db.flush()
             bind_tool_subtask(db, run.id, tool)
-            append_event(db, run, "tool_started", {"execution": _tool_event(tool)})
+            append_event(
+                db,
+                run,
+                "tool_progress" if streamed else "tool_started",
+                {"execution": _tool_event(tool)},
+            )
             tool_id = tool.id
         await event_broker.notify(run_id)
         return await self._fail_tool_execution(
@@ -1446,23 +1514,64 @@ class LocalRunExecutor:
             "the tool name. Do not reveal chain-of-thought, secrets, credentials, or raw "
             "arguments. Do not emit the tag when returning the final answer without tools."
         )
+        system += (
+            "\n\nUser-visible work plan contract: For work that needs multiple meaningful "
+            "actions, investigation, or verification, call `update_plan` before the first "
+            "substantive tool. Write 3-7 concrete steps in the user's language that name the "
+            "actual target and intended outcome. Never use generic filler such as merely "
+            "analyzing the request, performing the work, checking the result, or delivering "
+            "the answer. When writing Korean steps, use polite declarative sentences ending "
+            "in forms such as `...합니다`, for example `관련 자료를 조사합니다` or `근거를 "
+            "분류합니다`; never use plain-style endings such as `...한다`. Keep exactly one "
+            "step `in_progress` while working, update the plan "
+            "whenever the active step changes, and mark every finished step `completed` "
+            "before the final answer. Do not create a plan for a trivial single-action reply."
+        )
+        system += (
+            "\n\nUser-visible answer contract: Never expose internal Artifact IDs, UUIDs, "
+            "storage keys, server paths, content hashes, digests, or raw tool-result metadata "
+            "in progress updates or final answers. Do not print labels such as `Artifact:` or "
+            "`Artifact ID:` followed by an internal identifier. When a file was created, refer "
+            "to it only by its user-visible display name and briefly describe the result; the "
+            "application renders the authoritative open/download card from structured Artifact "
+            "metadata. Do not invent a text link from an internal identifier."
+        )
+        turn_system_parts: list[str] = []
         output_mode = run.snapshot_json.get("output_mode", "auto")
         if output_mode == "chat":
-            system += "\n\nOutput mode: Chat. Return the final result in the chat response and do not create an artifact unless the user explicitly requests a file in their message."
+            turn_system_parts.append(
+                "Output mode: Chat. Return the final result in the chat response and do "
+                "not create an artifact unless the user explicitly requests a file in "
+                "their message."
+            )
         elif output_mode == "file":
-            system += "\n\nOutput mode: File. Create the final deliverable as an artifact file using the available artifact tools. Keep the chat response to a concise summary and link or identify the created artifact."
+            turn_system_parts.append(
+                "Output mode: File. Create the final deliverable as an artifact file "
+                "using the available artifact tools. Keep the chat response to a concise "
+                "summary and refer to the created file by its display name only. The "
+                "application provides the open/download action from structured metadata."
+            )
         if any(
             isinstance(schema.get("function"), dict)
             and schema["function"].get("name") == "create_report"
             for schema in tool_schemas
         ):
-            system += (
-                "\n\nReport artifact contract: The user requested a reusable report "
-                "deliverable. You must call `create_report` before finishing; research and "
-                "chat prose alone do not complete the request. If the user did not specify "
-                "another file format, create a standalone HTML report and follow the selected "
-                "`visual-artifact` Skill. Keep the final chat response concise and identify "
-                "the created Artifact."
+            turn_system_parts.append(
+                "Artifact contract: The user requested a reusable file. Create exactly the "
+                "deliverable that matches the request before finishing; research and chat "
+                "prose alone do not complete it. Use `write_file` for source code and "
+                "executable HTML apps, demos, simulations, or games so the requested filename "
+                "and JavaScript are preserved. For report requests, you must call `create_report`; "
+                "use it for report-style HTML, "
+                "Markdown, DOCX, XLSX, PPTX, or PDF documents. Do not create a fallback report "
+                "after `write_file` has already produced the requested Artifact. For a "
+                "report-style HTML deliverable, put the complete designed document in the "
+                "`html_source` argument. Give every report a short, specific title that names "
+                "its actual subject and deliverable in the user's language; avoid generic "
+                "titles such as 'Lumina report' or 'work report' because the title is also "
+                "used to create its filename. Keep the final chat response concise and refer to "
+                "the single requested file by its display name only, without internal IDs or "
+                "raw tool-result fields."
             )
         instruction_snapshot = run.snapshot_json.get("instructions", {})
         instruction_prompt = (
@@ -1515,6 +1624,10 @@ class LocalRunExecutor:
         messages: list[ProviderMessage] = [
             ProviderMessage(role="system", content=system)
         ]
+        if turn_system_parts:
+            messages.append(
+                ProviderMessage(role="system", content="\n\n".join(turn_system_parts))
+            )
         memories = run.snapshot_json.get("user_memories", [])
         memory_context: str | None = None
         if isinstance(memories, list) and memories:
@@ -1671,15 +1784,7 @@ class LocalRunExecutor:
                 base_url=self.settings.openai_base_url,
             )
         if provider_id == "codex":
-            api_key = self.settings.openai_api_key
-            if api_key is None or not api_key.get_secret_value().strip():
-                raise ProviderConfigurationError(
-                    "Codex Provider를 사용하려면 OPENAI_API_KEY가 필요합니다."
-                )
-            return CodexResponsesAdapter(
-                api_key=api_key.get_secret_value(),
-                base_url=self.settings.openai_base_url,
-            )
+            return self.codex_provider
         if provider_id == "anthropic":
             api_key = self.settings.anthropic_api_key
             if api_key is None or not api_key.get_secret_value().strip():
@@ -1738,6 +1843,20 @@ class LocalRunExecutor:
                 raise ValueError("Tool arguments must be a JSON object")
         except (json.JSONDecodeError, ValueError):
             arguments = {}
+        if tool_call["name"] == "update_plan":
+            try:
+                raw_steps = arguments.get("plan", [])
+                if not isinstance(raw_steps, list):
+                    raise ValueError("plan must be an array")
+                with session_scope() as db:
+                    active_run = db.get(Run, run_id)
+                    if active_run is None:
+                        raise RuntimeError("Run disappeared during work plan update")
+                    work_plan = update_work_plan(db, active_run, steps=raw_steps)
+                await event_broker.notify(run_id)
+                return {"plan": work_plan}
+            except (TypeError, ValueError) as exc:
+                return {"error": "invalid_work_plan", "message": str(exc)}
         mcp_tool = (mcp_tools or {}).get(str(tool_call["name"]))
         stored_arguments = (
             _mcp_input_metadata(arguments)
@@ -1750,18 +1869,31 @@ class LocalRunExecutor:
             run = db.get(Run, run_id)
             if run is None:
                 raise RuntimeError("Run disappeared before tool execution")
-            tool = ToolExecution(
-                run_id=run.id,
-                tool_call_id=str(tool_call["id"]),
-                tool_name=str(tool_call["name"]),
-                validated_input_json=stored_arguments,
-                status="running",
-                started_at=utc_now(),
+            tool = db.scalar(
+                select(ToolExecution).where(
+                    ToolExecution.run_id == run.id,
+                    ToolExecution.tool_call_id == str(tool_call["id"]),
+                )
             )
-            db.add(tool)
+            streamed = tool is not None and tool.status == "streaming"
+            if tool is None:
+                tool = ToolExecution(
+                    run_id=run.id,
+                    tool_call_id=str(tool_call["id"]),
+                    tool_name=str(tool_call["name"]),
+                    started_at=utc_now(),
+                )
+                db.add(tool)
+            tool.validated_input_json = stored_arguments
+            tool.status = "running"
             db.flush()
             subtask = bind_tool_subtask(db, run.id, tool)
-            append_event(db, run, "tool_started", {"execution": _tool_event(tool)})
+            append_event(
+                db,
+                run,
+                "tool_progress" if streamed else "tool_started",
+                {"execution": _tool_event(tool)},
+            )
             if subtask is not None:
                 change_plan_step(
                     db,
@@ -1950,6 +2082,9 @@ class LocalRunExecutor:
             user = db.get(User, run.user_id) if run else None
             if run is None or user is None or completed_tool is None:
                 raise RuntimeError("Run context disappeared during tool execution")
+            report_display_name = _unique_report_display_name(
+                db, run.project_id, report.display_name
+            )
             artifact, version = create_artifact(
                 db,
                 self.storage,
@@ -1957,7 +2092,7 @@ class LocalRunExecutor:
                 project_id=run.project_id,
                 conversation_id=run.conversation_id,
                 source_run_id=run.id,
-                display_name=report.display_name,
+                display_name=report_display_name,
                 kind=report.kind,
                 mime_type=report.mime_type,
                 content=report.content,
@@ -2129,16 +2264,10 @@ class LocalRunExecutor:
         await event_broker.notify(run_id)
         return persisted.tool_result()
 
-    def _codex_image_generator(self) -> CodexImageGenerator:
-        api_key = self.settings.openai_api_key
-        if api_key is None or not api_key.get_secret_value().strip():
-            raise ProviderConfigurationError(
-                "Codex 이미지 생성을 사용하려면 OPENAI_API_KEY가 필요합니다."
-            )
-        return CodexImageGenerator(
-            api_key=api_key.get_secret_value(),
-            base_url=self.settings.openai_base_url,
-            max_output_bytes=self.settings.max_upload_bytes,
+    def _codex_image_generator(self) -> Any:
+        raise ProviderConfigurationError(
+            "Codex OAuth 경로에서는 Lumina 이미지 생성 Tool을 아직 지원하지 않습니다. "
+            "OPENAI_API_KEY로 자동 전환하지 않습니다."
         )
 
     async def _complete_tool_execution(
@@ -2402,6 +2531,68 @@ class LocalRunExecutor:
                 return
             run.snapshot_json = {**run.snapshot_json, "artifact_progress": progress}
             append_event(db, run, "artifact_progress", progress)
+        await event_broker.notify(run_id)
+
+    async def _start_streaming_write_file(
+        self, run_id: str, tool_call: dict[str, Any]
+    ) -> None:
+        with session_scope() as db:
+            run = db.get(Run, run_id)
+            if run is None or run.status in TERMINAL_STATUSES:
+                return
+            existing = db.scalar(
+                select(ToolExecution).where(
+                    ToolExecution.run_id == run.id,
+                    ToolExecution.tool_call_id == str(tool_call["id"]),
+                )
+            )
+            if existing is not None:
+                return
+            tool = ToolExecution(
+                run_id=run.id,
+                tool_call_id=str(tool_call["id"]),
+                tool_name="write_file",
+                validated_input_json={
+                    "__lumina_stream_tokens": 0,
+                    "__lumina_stream_lines": 0,
+                },
+                status="streaming",
+                started_at=utc_now(),
+            )
+            db.add(tool)
+            db.flush()
+            bind_tool_subtask(db, run.id, tool)
+            append_event(db, run, "tool_started", {"execution": _tool_event(tool)})
+        await event_broker.notify(run_id)
+
+    async def _update_streaming_write_file(
+        self,
+        run_id: str,
+        tool_call: dict[str, Any],
+        tokens: int,
+        lines: int,
+    ) -> None:
+        with session_scope() as db:
+            run = db.get(Run, run_id)
+            if run is None or run.status in TERMINAL_STATUSES:
+                return
+            tool = db.scalar(
+                select(ToolExecution).where(
+                    ToolExecution.run_id == run.id,
+                    ToolExecution.tool_call_id == str(tool_call["id"]),
+                )
+            )
+            if tool is None or tool.status != "streaming":
+                return
+            progress_state: dict[str, int | str] = {
+                "__lumina_stream_tokens": max(0, tokens),
+                "__lumina_stream_lines": max(0, lines),
+            }
+            file_name = _streamed_write_file_name(str(tool_call.get("arguments", "")))
+            if file_name:
+                progress_state["__lumina_stream_file_name"] = file_name
+            tool.validated_input_json = progress_state
+            append_event(db, run, "tool_progress", {"execution": _tool_event(tool)})
         await event_broker.notify(run_id)
 
     async def _compact_runtime_context(
@@ -3011,6 +3202,13 @@ def _tool_event(tool: ToolExecution) -> dict[str, Any]:
         parts = tool.tool_name.split("__")
         if len(parts) >= 3:
             label = f"{parts[1]} · {parts[2]}"
+    progress = _write_file_tool_progress(tool.validated_input_json)
+    display_input = {
+        key: value
+        for key in ("query", "url", "title")
+        if isinstance((value := tool.validated_input_json.get(key)), str)
+        and value.strip()
+    }
     return {
         "id": tool.id,
         "callId": tool.tool_call_id,
@@ -3018,15 +3216,65 @@ def _tool_event(tool: ToolExecution) -> dict[str, Any]:
         "toolName": tool.tool_name,
         "label": label,
         "status": tool.status,
-        "inputSummary": [
-            f"{key}: {value}" for key, value in tool.validated_input_json.items()
-        ],
+        "input": display_input or None,
+        "inputSummary": (
+            ["파일 내용을 생성하고 있습니다."]
+            if "__lumina_stream_tokens" in tool.validated_input_json
+            else [f"{key}: {value}" for key, value in tool.validated_input_json.items()]
+        ),
         "resultSummary": [tool.result_summary] if tool.result_summary else [],
         "startedAt": tool.started_at,
         "completedAt": tool.finished_at,
         "durationMs": duration,
+        "progress": progress,
         "error": tool.error_message,
     }
+
+
+def _write_file_tool_progress(
+    arguments: Mapping[str, Any],
+) -> dict[str, int | str] | None:
+    if "__lumina_stream_tokens" in arguments:
+        progress: dict[str, int | str] = {
+            "tokens": max(0, int(arguments.get("__lumina_stream_tokens", 0))),
+            "lines": max(0, int(arguments.get("__lumina_stream_lines", 0))),
+        }
+        file_name = arguments.get("__lumina_stream_file_name")
+        if isinstance(file_name, str) and file_name.strip():
+            progress["fileName"] = file_name.strip()
+        return progress
+    content = arguments.get("content")
+    if not isinstance(content, str):
+        return None
+    if not content:
+        return {"tokens": 0, "lines": 0}
+    return {
+        "tokens": max(1, math.ceil(len(content) / 4)),
+        "lines": max(1, content.count("\n") + 1),
+        **(
+            {"fileName": str(arguments["path"]).replace("\\", "/").rsplit("/", 1)[-1]}
+            if arguments.get("path")
+            else {}
+        ),
+    }
+
+
+_STREAMED_WRITE_FILE_PATH = re.compile(r'"path"\s*:\s*"((?:\\.|[^"\\])*)"')
+
+
+def _streamed_write_file_name(arguments: str) -> str | None:
+    """Extract only the write target name from partial tool JSON."""
+    match = _STREAMED_WRITE_FILE_PATH.search(arguments)
+    if match is None:
+        return None
+    try:
+        path = json.loads(f'"{match.group(1)}"')
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(path, str):
+        return None
+    normalized = path.strip().replace("\\", "/").rstrip("/")
+    return normalized.rsplit("/", 1)[-1] or None
 
 
 def _consume_progress_control(
@@ -3046,11 +3294,11 @@ def _consume_progress_control(
         if len(candidate) > 1_200:
             return None, candidate, None
         return candidate, "", None
-    raw_summary = candidate[len(opening):closing_index]
+    raw_summary = candidate[len(opening) : closing_index]
     summary = " ".join(raw_summary.split()).strip()
     if len(summary) > 600:
         summary = summary[:599].rstrip() + "…"
-    remainder = candidate[closing_index + len(closing):].lstrip("\r\n")
+    remainder = candidate[closing_index + len(closing) :].lstrip("\r\n")
     return None, remainder, summary or None
 
 
@@ -3117,8 +3365,9 @@ def _usage_payload(
         "output_tokens": usage.output_tokens,
         "raw": dict(usage.raw),
     }
+    subscription_usage = usage.raw.get("billing") == "subscription_usage"
     reported_cost = _reported_cost_usd(usage.raw)
-    if reported_cost is not None:
+    if reported_cost is not None and not subscription_usage:
         payload["cost_usd"] = reported_cost
         payload["cost_basis"] = "provider_reported"
     else:
@@ -3132,7 +3381,11 @@ def _usage_payload(
         )
         if estimated_cost is not None:
             payload["cost_usd"] = estimated_cost
-            payload["cost_basis"] = "price_table_estimate"
+            payload["cost_basis"] = (
+                "subscription_price_table_estimate"
+                if subscription_usage
+                else "price_table_estimate"
+            )
             payload["pricing_version"] = "public-list-2026-07-12"
     return payload
 
@@ -3192,7 +3445,7 @@ _MODEL_TOKEN_PRICING: dict[
             12.5,
             45.0,
         )
-        for provider in ("openai", "codex")
+        for provider in ("openai",)
     },
     **{
         (provider, "gpt-5.6-terra"): (
@@ -3206,11 +3459,11 @@ _MODEL_TOKEN_PRICING: dict[
             6.25,
             22.5,
         )
-        for provider in ("openai", "codex")
+        for provider in ("openai",)
     },
     **{
         (provider, "gpt-5.6-luna"): (1.0, 0.1, 1.25, 6.0, 272_000, 2.0, 0.2, 2.5, 9.0)
-        for provider in ("openai", "codex")
+        for provider in ("openai",)
     },
     ("codex", "gpt-5.5"): (5.0, 0.5, 5.0, 30.0, 272_000, 10.0, 1.0, 10.0, 45.0),
     ("codex", "gpt-5.4"): (2.5, 0.25, 2.5, 15.0, 272_000, 5.0, 0.5, 5.0, 22.5),
@@ -3360,23 +3613,93 @@ def _artifact_argument_progress(arguments: str) -> tuple[int, int]:
     return tokens, lines
 
 
+_UPDATE_PLAN_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "update_plan",
+        "description": (
+            "Create or update the concise, user-visible work plan for the current task. "
+            "Use concrete task-specific steps and update their statuses as work progresses."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "plan": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 8,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "step": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 240,
+                                "description": (
+                                    "A concrete user-visible action. In Korean, write a polite "
+                                    "declarative sentence ending in a form such as '...합니다', "
+                                    "never a plain-style sentence ending such as '...한다'."
+                                ),
+                            },
+                            "status": {
+                                "type": "string",
+                                "enum": ["pending", "in_progress", "completed"],
+                            },
+                        },
+                        "required": ["step", "status"],
+                        "additionalProperties": False,
+                    },
+                }
+            },
+            "required": ["plan"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
 _REPORT_TOOL_SCHEMA = {
     "type": "function",
     "function": {
         "name": "create_report",
         "description": (
             "Create a managed HTML, Markdown, DOCX, XLSX, PPTX, or PDF report "
-            "Artifact for the current Project."
+            "Artifact for the current Project. For HTML visual reports, provide a complete "
+            "single-file document in html_source so the selected visual-artifact Skill's "
+            "layout, typography, tables, charts, interactions, and print styles are preserved. "
+            "Inline JavaScript, script tags, and event handlers are supported for interactive "
+            "documents, apps, demos, and games. Keep the HTML self-contained."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "format": {"type": "string", "enum": list(REPORT_FORMATS)},
-                "title": {"type": "string", "minLength": 1, "maxLength": 180},
+                "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 180,
+                    "description": (
+                        "Short, specific title in the user's language that identifies the "
+                        "actual subject and deliverable. This title becomes the Artifact "
+                        "filename, so omit the file extension and do not use generic names "
+                        "such as Lumina report, work report, output, or result."
+                    ),
+                },
                 "executive_summary": {
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 2000,
+                },
+                "html_source": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200000,
+                    "description": (
+                        "Complete standalone HTML source for format=html. Include doctype, "
+                        "html, head, non-empty title, body, responsive inline CSS, semantic "
+                        "sections, and @media print when appropriate. Inline JavaScript and "
+                        "event handlers are supported for executable interactive HTML."
+                    ),
                 },
                 "key_metrics": {
                     "type": "array",
@@ -3436,6 +3759,28 @@ _REPORT_TOOL_SCHEMA = {
         },
     },
 }
+
+
+def _unique_report_display_name(
+    db: Session, project_id: str, display_name: str
+) -> str:
+    existing_names = {
+        name.casefold()
+        for name in db.scalars(
+            select(Artifact.display_name).where(
+                Artifact.project_id == project_id,
+                Artifact.deleted_at.is_(None),
+            )
+        )
+    }
+    if display_name.casefold() not in existing_names:
+        return display_name
+    path = Path(display_name)
+    for index in range(2, 10_000):
+        candidate = f"{path.stem}_{index}{path.suffix}"
+        if candidate.casefold() not in existing_names:
+            return candidate
+    return f"{path.stem}_{new_uuid()[:8]}{path.suffix}"
 
 _WEB_SEARCH_TOOL_SCHEMA = {
     "type": "function",

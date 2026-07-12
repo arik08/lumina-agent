@@ -7,6 +7,7 @@
 # Local development caches
 .cache/
 .playwright-mcp/
+/.tmp-comment-selection-verify.*
 
 # Runtime data and secrets
 data/

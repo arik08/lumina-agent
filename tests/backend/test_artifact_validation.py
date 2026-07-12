@@ -37,19 +37,20 @@ def test_structured_report_uses_model_fields_and_escapes_active_content() -> Non
     assert validation["warnings"] == ["render_verification_pending"]
 
 
-def test_html_validation_reports_unsafe_active_content() -> None:
+def test_html_validation_allows_executable_javascript() -> None:
     status, validation = validate_artifact_content(
         kind="html",
         mime_type="text/html",
         content=(
             b"<!doctype html><html><head><title>x</title></head>"
-            b'<body onload="run()"><script>run()</script></body></html>'
+            b'<body onload="run()"><button onclick="run()">Run</button>'
+            b"<script>function run(){document.body.dataset.ran='true'}</script></body></html>"
         ),
     )
 
-    assert status == "failed"
-    assert "event_handler:onload" in validation["errors"]
-    assert "forbidden_tag:script" in validation["errors"]
+    assert status == "structural_passed"
+    assert validation["errors"] == []
+    assert "executable_content" in validation["checks"]
 
 
 def test_binary_validation_checks_real_file_signature() -> None:

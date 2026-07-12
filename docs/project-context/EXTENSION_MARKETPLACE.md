@@ -1,3 +1,5 @@
+> 생성일: 2026-07-12
+
 # Extension Marketplace 설계
 
 ## 목적
@@ -16,6 +18,9 @@
 6. 삭제는 Draft 폐기, 설치 해제, 카탈로그 숨김과 version 폐기의 서로 다른 작업으로 구분합니다. Run 재현과 감사에 사용된 snapshot은 물리 삭제하지 않습니다.
 7. Frontend가 보낸 소유자, 조직, 경로, 권한과 비밀값을 신뢰하지 않습니다. Backend가 인증 주체와 정책으로 다시 결정합니다.
 8. Skill은 서버에서 직접 실행되는 code가 아닌 지침 package로 취급합니다. Plugin과 MCP는 실행·network 위험이 있으므로 검증과 permission policy를 통과하기 전에는 Worker에 노출하지 않습니다.
+9. `creator_user_id`는 최초 기여 기록으로 고정하고, 현재 관리 책임은 복수 `SkillOwnership`의 Owner·Maintainer로 분리합니다. 소유권 변경은 Creator 기록을 바꾸지 않습니다.
+10. 공개 Skill의 수정은 공용 WorkingDraft를 공유하지 않고 사용자별 개인 WorkingDraft를 만듭니다. 같은 사용자의 병렬 변경이 충돌하면 기존 head를 덮어쓰지 않고 별도 branch로 보존합니다.
+11. 사용자에게 보이는 `vPublish.Merge.Feedback`는 진화 상태를 설명하는 계산된 표시값입니다. 내부 정렬·참조·Run 재현은 immutable `version_id`, Draft `revision_id`와 digest를 사용합니다.
 
 ## 목업에서 채택할 사용자 경험
 
@@ -38,7 +43,8 @@ Skill package는 최소 `SKILL.md`를 가지며 선택적으로 manifest, refere
 
 ```text
 Skill
-├─ WorkingDraft revision 1..N (mutable head, owner-executable)
+├─ User A WorkingDraft revision 1..N (mutable personal head)
+├─ User B WorkingDraft revision 1..N (mutable personal head)
 ├─ SkillVersion v1 (immutable, explicit save)
    ├─ SKILL.md
    ├─ manifest
@@ -47,6 +53,7 @@ Skill
 ```
 
 - Harness 대화에서 “이 작업을 Skill로 만들어”라고 하면 본인 전용 WorkingDraft를 만들고 현재 사용자에게 활성화합니다. 이 시점에는 `v1`이 없습니다.
+- 다른 사용자의 Published Skill에서 `내 버전으로 수정`을 시작하면 최신 설치·공식 version을 기준으로 해당 사용자만의 WorkingDraft를 만듭니다. 원본 Owner의 Draft와 다른 사용자의 Draft는 바뀌지 않습니다.
 - Draft는 autosave하며 각 변경에 내부 revision과 package digest를 부여합니다. 다음 Agent Run부터 최신 Draft revision을 실제 Skill로 사용하여 응답 변화가 나타나야 합니다.
 - 첫 명시적 `저장`은 현재 Draft snapshot으로 immutable `v1`을 만들고, 이후 다시 수정한 Draft를 저장하면 `v2`를 만듭니다.
 - 저장 직후 WorkingDraft의 `base_version_id`를 새 version으로 옮기고 clean 상태로 유지합니다. 이후 대화 수정이 생기면 다시 Draft head를 사용합니다.
@@ -55,6 +62,23 @@ Skill
 - Draft 갱신은 `draft_revision`과 ETag를, version 저장은 `draft_id`, expected revision, `base_version_id`와 digest를 요구합니다. 충돌 시 다른 작업을 조용히 덮어쓰지 않습니다.
 - 버전 번호는 표시용 정수 `v1`, `v2`, `v3`를 기본으로 합니다. 호환성 표기가 필요하면 별도 `release_label`에 SemVer를 둘 수 있지만 불변 version ID를 대체하지 않습니다.
 - 게시, 검증, 폐기는 version 단위 상태입니다. Skill 전체의 `latest_published_version_id`는 포인터일 뿐 과거 version을 변경하지 않습니다.
+
+### Skill 진화 표시 버전
+
+Skill의 진화 상태는 `vPublish.Merge.Feedback` 형식으로 표시할 수 있습니다. 이 문자열은 내부 식별자가 아니며 다음 정수에서 계산합니다.
+
+```text
+v3.2.7
+ │ │ └─ 현재 Merge 이후 실제 반영된 Feedback 수
+ │ └─── 현재 Publish 세대의 Merge 수
+ └───── Marketplace 공식 Publish 세대
+```
+
+- Feedback은 최종 package digest가 실제로 달라진 정상 완료 수정 요청에 한 번만 반영합니다. Agent 내부 재시도·테스트·무변경 응답은 증가시키지 않습니다.
+- Feedback 변경은 `ExtensionDraftRevision`, Merge·Publish·Rollback 결과는 immutable `ExtensionVersion`으로 저장합니다.
+- 동시에 여러 개인 작업본이 같은 `v3.2.7` 표시 상태를 가질 수 있으므로 API와 Run은 표시 문자열만으로 version을 선택하지 않습니다.
+- 공식 원복은 과거 Tree를 다시 가리키는 새 Publish version을 만들며 Publish 번호를 감소시키지 않습니다.
+- 기존 단조 증가 `v1`, `v2`는 immutable snapshot의 sequence label로 계속 보존하고, 진화 표시값과 분리합니다.
 
 ### MCP
 
@@ -89,6 +113,13 @@ Plugin은 Skill, MCP binding, Tool, UI와 기타 자원을 묶을 수 있는 ver
 | Organization | 허용된 조직 구성원 | 조직 정책상 허용 역할 | Publisher | 조직 관리자/검토자 |
 
 기본 역할은 User, Author, Publisher, Reviewer, Organization Admin, Operator로 나눕니다. 한 사람이 여러 역할을 가질 수 있지만 작성자가 자신의 Organization 공개 version을 단독 승인하지 못하도록 정책으로 분리할 수 있어야 합니다.
+
+Skill 자산 자체에는 제품 역할과 별도로 다음 소유권을 둡니다.
+
+- `Creator`: 최초 작성 사용자이며 영구 기여 기록입니다. 계정 비활성화나 조직 이동으로 관리 권한을 잃어도 바꾸지 않습니다.
+- `Owner`: 복수 지정할 수 있는 현재 관리 책임자입니다. Merge 검토, Change Request 결정, Publish와 원복 권한을 가집니다.
+- `Maintainer`: Draft·metadata와 운영 검토를 지원하며 Publish 권한은 조직 정책으로 제한합니다.
+- Owner 추가·제거·이전은 모두 Audit Log에 남깁니다. 마지막 Owner 또는 기존 primary Owner 제거는 명시적 소유권 이전 workflow 없이 허용하지 않습니다.
 
 새 Skill과 Draft의 기본 범위는 `Private`이며 생성한 사용자만 검색·사용·수정할 수 있습니다. UI의 `공용으로 공개`는 인터넷 공개가 아니라 같은 Lumina Organization의 모든 허용 사용자가 카탈로그에서 보고 설치할 수 있는 `Organization` 공개를 뜻합니다.
 
@@ -144,7 +175,7 @@ Skill Folder Root
 
 ## 설치와 적용
 
-설치 대상은 `user`, `project`, `organization` 중 하나이며 Project 설치를 기본 협업 단위로 권장합니다.
+설치 대상은 `user`, `project`, `organization` 중 하나입니다. 일반 Marketplace의 기본 설치는 로그인한 `user` 계정 범위이며, Project와 Organization 설치는 권한이 있는 협업·관리 workflow에서 명시적으로 선택합니다.
 
 ```text
 Catalog ExtensionVersion

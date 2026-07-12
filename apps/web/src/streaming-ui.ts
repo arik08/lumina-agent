@@ -10,6 +10,7 @@ const minChunkIntervalMs = 24;
 const maxChunkIntervalMs = 600;
 const nearBottomPx = 140;
 const streamingRejoinPx = 360;
+const jumpButtonThresholdPx = 12;
 
 export function useStreamingText(targetText: string, streaming: boolean) {
   const [visibleText, setVisibleText] = useState(() => (streaming ? "" : targetText));
@@ -181,6 +182,14 @@ export function useConversationAutoFollow(active: boolean, conversationId: strin
   const followingRef = useRef(true);
   const animationRef = useRef<number | null>(null);
   const userIntentUntilRef = useRef(0);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+
+  const updateJumpVisibility = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const distance = container.scrollHeight - container.clientHeight - container.scrollTop;
+    setShowJumpToLatest(distance > jumpButtonThresholdPx);
+  }, []);
 
   const stop = useCallback(() => {
     followingRef.current = false;
@@ -188,13 +197,14 @@ export function useConversationAutoFollow(active: boolean, conversationId: strin
     animationRef.current = null;
   }, []);
 
-  const follow = useCallback((immediate = false) => {
+  const follow = useCallback((immediate = false, animateWhenHidden = false) => {
     const container = containerRef.current;
     if (!container || !followingRef.current) return;
     if (animationRef.current !== null) return;
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
-    if (immediate || reduceMotion || document.hidden) {
+    if (immediate || reduceMotion || (document.hidden && !animateWhenHidden)) {
       container.scrollTop = container.scrollHeight;
+      setShowJumpToLatest(false);
       return;
     }
     const step = () => {
@@ -208,6 +218,7 @@ export function useConversationAutoFollow(active: boolean, conversationId: strin
       current.scrollTop += Math.max(1, distance * 0.2);
       if (distance <= 1) {
         current.scrollTop = target;
+        setShowJumpToLatest(false);
         animationRef.current = null;
         return;
       }
@@ -218,6 +229,7 @@ export function useConversationAutoFollow(active: boolean, conversationId: strin
 
   useEffect(() => {
     followingRef.current = true;
+    setShowJumpToLatest(false);
     window.requestAnimationFrame(() => follow(true));
   }, [conversationId, follow]);
 
@@ -230,10 +242,13 @@ export function useConversationAutoFollow(active: boolean, conversationId: strin
     const container = containerRef.current;
     const content = container?.firstElementChild;
     if (!container || !content || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => follow());
+    const observer = new ResizeObserver(() => {
+      updateJumpVisibility();
+      follow();
+    });
     observer.observe(content);
     return () => observer.disconnect();
-  }, [conversationId, follow]);
+  }, [conversationId, follow, updateJumpVisibility]);
 
   useEffect(() => () => {
     if (animationRef.current !== null) window.cancelAnimationFrame(animationRef.current);
@@ -243,12 +258,13 @@ export function useConversationAutoFollow(active: boolean, conversationId: strin
     const container = containerRef.current;
     if (!container) return;
     const distance = container.scrollHeight - container.clientHeight - container.scrollTop;
+    updateJumpVisibility();
     if (distance <= nearBottomPx) {
       followingRef.current = true;
       return;
     }
     if (distance > streamingRejoinPx) stop();
-  }, [stop]);
+  }, [stop, updateJumpVisibility]);
 
   const onUserIntent = useCallback(() => {
     userIntentUntilRef.current = Date.now() + 900;
@@ -260,14 +276,13 @@ export function useConversationAutoFollow(active: boolean, conversationId: strin
   }, [onUserIntent]);
 
   const onPointerDown = useCallback(() => {
-    userIntentUntilRef.current = Date.now() + 900;
-  }, []);
+    onUserIntent();
+  }, [onUserIntent]);
 
   const jumpToLatest = useCallback(() => {
     followingRef.current = true;
-    const container = containerRef.current;
-    if (container) container.scrollTop = container.scrollHeight;
-  }, []);
+    follow(false, true);
+  }, [follow]);
 
   return {
     containerRef,
@@ -276,6 +291,7 @@ export function useConversationAutoFollow(active: boolean, conversationId: strin
     onWheel,
     onPointerDown,
     jumpToLatest,
+    showJumpToLatest,
     follow,
     notifyGrowth: follow,
   };

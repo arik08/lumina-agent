@@ -555,11 +555,21 @@ def _shared_artifact_version(
 ) -> tuple[Artifact, ArtifactVersion]:
     messages = _snapshot_messages(db, conversation, marker)
     run_ids = {message.run_id for message in messages if message.run_id is not None}
-    for artifact, version in _snapshot_artifact_versions(db, grant, run_ids):
-        if artifact.id == artifact_id and (
-            requested_version is None or version.version_number == requested_version
-        ):
+    for artifact, snapshot_version in _snapshot_artifact_versions(db, grant, run_ids):
+        if artifact.id != artifact_id:
+            continue
+        if requested_version is None or snapshot_version.version_number == requested_version:
+            return artifact, snapshot_version
+        version = db.scalar(
+            select(ArtifactVersion).where(
+                ArtifactVersion.artifact_id == artifact.id,
+                ArtifactVersion.version_number == requested_version,
+                ArtifactVersion.created_at <= grant.created_at,
+            )
+        )
+        if version is not None:
             return artifact, version
+        break
     raise _not_found()
 
 

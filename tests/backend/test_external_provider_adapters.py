@@ -34,6 +34,7 @@ from lumina.providers.openai_compatible import (
     OpenAICompatibleAdapter,
     build_chat_completions_payload,
 )
+from lumina.providers.codex import CodexResponsesAdapter
 
 
 _TOOL = {
@@ -726,6 +727,7 @@ async def test_openai_compatible_rejects_non_object_stream_events() -> None:
 
 
 def test_provider_settings_ready_status_executor_and_codex_boundary(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     settings = Settings(
@@ -744,7 +746,10 @@ def test_provider_settings_ready_status_executor_and_codex_boundary(
     assert _provider_status("anthropic", settings) == "ready"
     assert _provider_status("google", settings) == "ready"
     assert _provider_status("openai_compatible", settings) == "ready"
-    assert _provider_status("codex", settings) == "needs_setup"
+    monkeypatch.setattr(
+        "lumina.api.routes.providers.codex_oauth_available", lambda: True
+    )
+    assert _provider_status("codex", settings) == "ready"
     executor = LocalRunExecutor(settings)
     assert isinstance(
         executor._provider("anthropic", wants_artifact=False, first_turn=True),
@@ -758,6 +763,14 @@ def test_provider_settings_ready_status_executor_and_codex_boundary(
         executor._provider("openai_compatible", wants_artifact=False, first_turn=True),
         OpenAICompatibleAdapter,
     )
+    assert isinstance(
+        executor._provider("codex", wants_artifact=False, first_turn=True),
+        CodexResponsesAdapter,
+    )
+    monkeypatch.setattr(
+        "lumina.api.routes.providers.codex_oauth_available", lambda: False
+    )
+    assert _provider_status("codex", settings) == "needs_setup"
     representation = repr(settings)
     assert "anthropic-secret" not in representation
     assert "google-secret" not in representation

@@ -96,6 +96,7 @@ def classify_tool_risk(
         "grep",
         "read_file",
         "list_dir",
+        "update_plan",
     }:
         return ToolRisk("read_only", "low", False)
     if tool_name in {"create_report", "generate_image", "write_file"}:

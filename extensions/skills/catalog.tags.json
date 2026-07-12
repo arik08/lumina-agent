@@ -1,0 +1,16 @@
+{
+  "insane-search": ["리서치", "웹검색"],
+  "national-assembly": ["경영기획", "공공데이터"],
+  "openweb": ["리서치", "웹검색"],
+  "playwright-capture": ["디자인", "브라우저"],
+  "pptx-writer": ["경영기획", "프레젠테이션"],
+  "skill-creator": ["Agent", "개발"],
+  "skill-evaluator": ["Agent", "품질관리"],
+  "spreadsheet-analyst": ["경영기획", "데이터분석"],
+  "tailwind-design-system": ["디자인", "프론트엔드"],
+  "ui-design-essence": ["디자인", "UIUX"],
+  "ui-ux-pro-max": ["디자인", "UIUX"],
+  "vector-db-rag": ["지식검색", "데이터분석"],
+  "visual-artifact": ["경영기획", "디자인"],
+  "visual-review": ["디자인", "품질관리"]
+}

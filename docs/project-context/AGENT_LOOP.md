@@ -1,3 +1,5 @@
+> 생성일: 2026-07-11
+
 # Agent Loop
 
 Lumina Agent의 Harness는 사용자 요청을 한 번의 모델 호출로 끝내지 않고, 모델이 최종 답변을 반환할 때까지 모델 호출과 Tool 실행을 반복하는 Agent Loop를 사용합니다.
@@ -62,7 +64,12 @@ Tool 실패는 가능한 경우 전체 Loop를 즉시 중단하지 않고 구조
 - 병렬 실행 중 하나가 실패해도 다른 결과를 취소하거나 잃지 않습니다.
 - 모든 Tool Call에는 대응하는 Tool Result를 생성하여 대화 상태가 깨지지 않게 합니다.
 - 큰 출력은 메시지에 전부 넣지 않고 artifact로 저장한 뒤 요약과 참조만 Context에 넣습니다.
+- Tool Result의 Artifact ID, storage key, 서버 경로, content hash와 digest는 Agent Loop 내부의 구조화 참조로만 사용합니다. 공통 System Prompt는 모델이 이 값을 진행 메시지나 최종 답변에 출력하지 못하게 명시해야 합니다.
+- 생성 파일은 최종 답변에서 사용자 표시명과 결과 요약으로만 안내합니다. 열기·다운로드 동작은 문자열 링크를 모델이 만들지 않고 Backend의 구조화 Artifact metadata를 Frontend 카드가 렌더링합니다.
+- Frontend의 내부 식별자 제거는 과거 응답과 Provider 지침 이탈을 위한 최종 안전망이며, 모델 출력 규칙을 대신하는 주 처리 방식으로 사용하지 않습니다.
 - Tool별 timeout, 재시도 정책과 출력 크기 제한을 적용합니다.
+- `write_file`처럼 모델이 큰 파일 본문을 Tool 인자로 생성하는 작업은 Tool Call 인자 streaming 시작을 실행 Timeline의 시작 시각으로 기록합니다. 표시 소요 시간은 인자 생성부터 실제 파일 저장 완료까지 이어지며 디스크 I/O 시간만 별도로 축소해 보여주지 않습니다.
+- `write_file` 인자 streaming 중에는 누적 추정 Token과 줄 수, 안전하게 추출한 대상 파일명을 durable `tool_progress` event로 갱신합니다. Frontend는 5,000 Token마다 같은 게이지를 왼쪽부터 다시 채우며 0~5,000은 파란색, 5,000~10,000은 녹색, 10,000~15,000은 노란색, 15,000~20,000 이상은 빨간색으로 표시합니다. `파일명`, `N 토큰 (N줄)` 카운터를 같은 Tool 행에 표시하며, 이 바는 완료율이 아니라 누적 생성량입니다. 재접속 시 snapshot과 event replay로 동일한 시작 시각과 최신 카운터를 복원합니다.
 
 ## 종료와 제한
 
@@ -238,8 +245,9 @@ Run
 - steer는 현재 Tool을 위험하게 중단하지 않고 다음 안전한 Turn 또는 Step 경계에서 적용합니다.
 - 실패 Step 재실행은 다른 완료 Step을 되돌리지 않고 저장된 입력 snapshot을 사용합니다.
 - 진행 중 Plan 수정과 action 수행자는 감사 기록에 남깁니다.
-- 최종 답변과 사용자용 Plan Timeline은 상세 Tool log와 분리합니다.
-- Plan의 사용자 표시 Step은 고정된 `준비 → 분석 → 도구 → 답변` 문구를 재사용하지 않고 요청의 목표와 산출물 유형에 맞게 구성합니다. 실행 중 발견된 Tool 작업은 동적 Subtask로 추가하고 snapshot과 event replay에서 같은 구조를 복원합니다.
+- 최종 답변과 사용자용 업무 계획은 상세 Tool log와 분리합니다.
+- Backend 실행 Plan은 상태 전이·재시도·Subtask를 책임지고, 모델이 `update_plan`으로 작성하는 사용자용 업무 계획은 실제 요청의 대상과 결과가 드러나는 3~7개 단계로 별도 유지합니다. 고정된 `준비 → 분석 → 도구 → 답변` 문구를 사용자 계획처럼 노출하지 않습니다.
+- 사용자용 업무 계획은 한 번에 하나의 `in_progress` 단계만 허용하고 `work_plan_updated` event와 Run snapshot에 저장하여 재접속과 event replay에서도 같은 단계와 상태를 복원합니다.
 - Agent 내부 raw reasoning과 chain-of-thought는 사용자에게 노출하지 않습니다. 대신 판단 결과와 다음 행동만 정리한 사용자 공개용 `progress_summary`를 Tool event와 같은 순번의 실행 Timeline에 기록합니다.
 
 ### 답변 생성 중 Steer와 순차 입력
@@ -314,6 +322,7 @@ Frontend와 감사 로그를 위해 최소한 다음 이벤트를 제공합니�
 run_started
 turn_started
 progress_summary
+work_plan_updated
 assistant_text_delta
 assistant_turn_completed
 approval_requested

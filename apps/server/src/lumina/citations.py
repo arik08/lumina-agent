@@ -13,8 +13,6 @@ _NUMBERED_MARKER_RE = re.compile(
 _CIRCLED_ORDINALS = {
     marker: index for index, marker in enumerate("①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳", start=1)
 }
-
-
 def resolve_inline_citations(
     text: str, sources: Sequence[Mapping[str, Any]]
 ) -> dict[str, list[dict[str, Any]]]:
@@ -73,7 +71,7 @@ def resolve_inline_citations(
                 "marker": marker,
                 "charStart": start,
                 "charEnd": end,
-                "status": "resolved",
+                "status": "cited",
             }
         )
 

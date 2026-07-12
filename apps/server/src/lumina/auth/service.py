@@ -88,15 +88,8 @@ MODEL_CATALOG_SEEDS: tuple[ModelSeed, ...] = (
     ModelSeed(
         "pgpt", "GPT-5.4-mini", "gpt-5.4-mini", False, 20, "product_contract:user"
     ),
-    ModelSeed("codex", "GPT-5.6-Sol", "gpt-5.6-sol", True, 10, "product_contract:user"),
-    ModelSeed(
-        "codex", "GPT-5.6-Terra", "gpt-5.6-terra", False, 20, "product_contract:user"
-    ),
-    ModelSeed(
-        "codex", "GPT-5.6-Luna", "gpt-5.6-luna", False, 30, "product_contract:user"
-    ),
-    ModelSeed("codex", "GPT-5.5", "gpt-5.5", False, 40, "product_contract:user"),
-    ModelSeed("codex", "GPT-5.4", "gpt-5.4", False, 50, "product_contract:user"),
+    ModelSeed("codex", "GPT-5.5", "gpt-5.5", True, 10, "product_contract:user"),
+    ModelSeed("codex", "GPT-5.4", "gpt-5.4", False, 20, "product_contract:user"),
     ModelSeed(
         "google", "Gemini-3.1-Pro", "gemini-3.1-pro", True, 10, "product_contract:user"
     ),
@@ -279,7 +272,7 @@ def seed_provider_models(session: Session) -> int:
         item.provider_id for item in existing_models.values() if item.is_default
     }
     created = 0
-    verified_at = datetime(2026, 7, 11, tzinfo=UTC)
+    verified_at = datetime(2026, 7, 12, tzinfo=UTC)
 
     for seed in MODEL_CATALOG_SEEDS:
         key = (seed.provider_id, seed.model_key)

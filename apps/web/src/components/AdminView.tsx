@@ -1,5 +1,7 @@
 import {
   AlertTriangle,
+  BarChart3,
+  Check,
   ChevronDown,
   FileText,
   KeyRound,
@@ -15,19 +17,21 @@ import {
   ShieldCheck,
   Users,
 } from "lucide-react";
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import type {
   AdminAuditEvent,
   AdminConversationDetail,
   AdminConversationSummary,
   AdminUser,
+  AdminUsageStatistics,
   UserRole,
   UserStatus,
 } from "../api-types";
 import { OrganizationInstructionsPanel } from "./OrganizationInstructionsPanel";
 
-type AdminTab = "users" | "conversations" | "audit" | "policy";
+type AdminTab = "users" | "usage" | "conversations" | "audit" | "policy";
+type UsageMetric = "activeUsers" | "loginCount" | "runCount";
 type AuditViewMode = "recent" | "user";
 type AdminListLimit = 50 | 120 | 250 | 500;
 type ConversationViewMode = "recent" | "user";
@@ -58,6 +62,138 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "요청을 처리하지 못했습니다.";
 }
 
+const usageMetricLabels: Record<UsageMetric, string> = {
+  activeUsers: "활동 사용자",
+  loginCount: "접속 횟수",
+  runCount: "Run",
+};
+
+const adminListLimits: AdminListLimit[] = [50, 120, 250, 500];
+
+function AdminLimitSelect({
+  value,
+  onChange,
+  ariaLabel,
+}: {
+  value: AdminListLimit;
+  onChange: (value: AdminListLimit) => void;
+  ariaLabel: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(() => adminListLimits.indexOf(value));
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const listId = useId();
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    return () => document.removeEventListener("pointerdown", closeOnOutsidePointer);
+  }, [open]);
+
+  const openMenu = () => {
+    setActiveIndex(Math.max(adminListLimits.indexOf(value), 0));
+    setOpen(true);
+  };
+
+  const choose = (nextValue: AdminListLimit) => {
+    onChange(nextValue);
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
+
+  return (
+    <div className={`admin-limit-select ${open ? "is-open" : ""}`} ref={rootRef}>
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? listId : undefined}
+        aria-activedescendant={open ? `${listId}-${activeIndex}` : undefined}
+        onClick={() => open ? setOpen(false) : openMenu()}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            event.preventDefault();
+            if (!open) {
+              openMenu();
+              return;
+            }
+            const direction = event.key === "ArrowDown" ? 1 : -1;
+            setActiveIndex((current) => (current + direction + adminListLimits.length) % adminListLimits.length);
+          } else if (event.key === "Home" && open) {
+            event.preventDefault();
+            setActiveIndex(0);
+          } else if (event.key === "End" && open) {
+            event.preventDefault();
+            setActiveIndex(adminListLimits.length - 1);
+          } else if ((event.key === "Enter" || event.key === " ") && open) {
+            event.preventDefault();
+            choose(adminListLimits[activeIndex]);
+          } else if (event.key === "Escape" && open) {
+            event.preventDefault();
+            setOpen(false);
+          }
+        }}
+      >
+        <span>{value}건</span>
+        <ChevronDown size={13} aria-hidden="true" />
+      </button>
+      {open && (
+        <div className="admin-limit-menu" id={listId} role="listbox" aria-label={ariaLabel}>
+          {adminListLimits.map((limit, index) => (
+            <button
+              id={`${listId}-${index}`}
+              className={`${limit === value ? "is-selected" : ""} ${index === activeIndex ? "is-active" : ""}`}
+              type="button"
+              role="option"
+              aria-selected={limit === value}
+              key={limit}
+              onMouseEnter={() => setActiveIndex(index)}
+              onClick={() => choose(limit)}
+            >
+              <span>{limit}건</span>
+              <Check size={13} aria-hidden="true" />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function UsageTrendChart({ statistics, metric }: { statistics: AdminUsageStatistics; metric: UsageMetric }) {
+  const values = statistics.trend.map((item) => item[metric]);
+  const max = Math.max(1, ...values);
+  const width = 960;
+  const height = 210;
+  const inset = { top: 14, right: 12, bottom: 28, left: 30 };
+  const plotWidth = width - inset.left - inset.right;
+  const plotHeight = height - inset.top - inset.bottom;
+  const points = statistics.trend.map((item, index) => ({
+    ...item,
+    x: inset.left + (statistics.trend.length === 1 ? 0 : index / (statistics.trend.length - 1)) * plotWidth,
+    y: inset.top + plotHeight - (item[metric] / max) * plotHeight,
+  }));
+  const line = points.map((point, index) => `${index ? "L" : "M"}${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ");
+  const area = points.length ? `${line} L${points.at(-1)?.x},${inset.top + plotHeight} L${points[0].x},${inset.top + plotHeight} Z` : "";
+  const labelEvery = Math.max(1, Math.ceil(statistics.trend.length / 6));
+  return (
+    <div className="admin-usage-chart-wrap">
+      <svg className="admin-usage-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${usageMetricLabels[metric]} ${statistics.periodDays}일 추이`}>
+        {[0, 0.5, 1].map((ratio) => <g key={ratio}><line x1={inset.left} x2={width - inset.right} y1={inset.top + plotHeight * ratio} y2={inset.top + plotHeight * ratio} /><text x={inset.left - 7} y={inset.top + plotHeight * ratio + 4}>{Math.round(max * (1 - ratio))}</text></g>)}
+        <path className="admin-usage-area" d={area} />
+        <path className="admin-usage-line" d={line} />
+        {points.map((point, index) => <g className="admin-usage-point" key={point.date}><circle cx={point.x} cy={point.y} r="3"><title>{point.date} · {point[metric]}{metric === "activeUsers" ? "명" : "회"}</title></circle>{(index % labelEvery === 0 || index === points.length - 1) && <text className="admin-usage-date" x={point.x} y={height - 7}>{point.date.slice(5)}</text>}</g>)}
+      </svg>
+    </div>
+  );
+}
+
 export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminViewProps) {
   const [tab, setTab] = useState<AdminTab>("users");
   const [query, setQuery] = useState("");
@@ -65,6 +201,9 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
+  const [usageStatistics, setUsageStatistics] = useState<AdminUsageStatistics | null>(null);
+  const [usagePeriod, setUsagePeriod] = useState<0 | 30 | 90>(30);
+  const [usageMetric, setUsageMetric] = useState<UsageMetric>("activeUsers");
   const [userTotal, setUserTotal] = useState(0);
   const [conversations, setConversations] = useState<AdminConversationSummary[]>([]);
   const [conversationTotal, setConversationTotal] = useState(0);
@@ -130,6 +269,8 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
             setUsers(page.items);
             setUserTotal(page.total);
           })
+        : tab === "usage"
+          ? api.admin.getUsageStatistics(usagePeriod, controller.signal).then(setUsageStatistics)
         : tab === "conversations"
           ? api.admin.listConversations({ query, feedbackOnly, limit: conversationLimit }, controller.signal).then((page) => {
               setConversations(page.items);
@@ -149,7 +290,7 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [auditLimit, conversationLimit, feedbackOnly, query, refreshKey, tab]);
+  }, [auditLimit, conversationLimit, feedbackOnly, query, refreshKey, tab, usagePeriod]);
 
   const chooseUser = (user: AdminUser) => {
     const next = selectedUser?.id === user.id ? null : user;
@@ -194,14 +335,14 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
     }
   };
 
-  const saveUser = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const saveUser = async () => {
     if (!selectedUser) return;
     const destructive = userRole !== selectedUser.role || userStatus !== selectedUser.status;
     if (destructive && !userChangeArmed) {
       setUserChangeArmed(true);
       return;
     }
+    setSelectedUser(null);
     setSaving(true);
     try {
       const updated = await api.admin.updateUser(selectedUser.id, {
@@ -211,10 +352,23 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
         status: userStatus,
       });
       setUsers((items) => items.map((item) => item.id === updated.id ? updated : item));
-      setSelectedUser(updated);
       setUserChangeArmed(false);
       onUserUpdated();
       onToast("사용자 정보를 변경했습니다.");
+    } catch (requestError) {
+      onToast(errorMessage(requestError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const approveUser = async (user: AdminUser) => {
+    setSaving(true);
+    try {
+      const updated = await api.admin.updateUser(user.id, { status: "active" });
+      setUsers((items) => items.map((item) => item.id === updated.id ? updated : item));
+      onUserUpdated();
+      onToast(`${updated.loginId} 가입을 승인했습니다.`);
     } catch (requestError) {
       onToast(errorMessage(requestError));
     } finally {
@@ -263,7 +417,11 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
     </button>
   );
 
-  const placeholder = tab === "users" ? "ID 또는 표시 이름 검색" : tab === "conversations" ? "대화 제목 검색" : "정확한 audit action 검색";
+  const placeholder = tab === "users" || tab === "usage" ? "ID 또는 표시 이름 검색" : tab === "conversations" ? "대화 제목 검색" : "정확한 audit action 검색";
+  const filteredUsageUsers = usageStatistics?.users.filter((user) => {
+    const term = query.trim().toLocaleLowerCase();
+    return !term || [user.loginId, user.displayName, user.affiliation].some((value) => value?.toLocaleLowerCase().includes(term));
+  }) ?? [];
 
   return (
     <main className="feature-view admin-view" aria-label="관리자 화면">
@@ -274,6 +432,7 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
       <div className="admin-toolbar">
         <div className="admin-tabs" role="tablist" aria-label="관리 항목">
           <button type="button" role="tab" aria-selected={tab === "users"} onClick={() => setTab("users")}><Users size={15} /> 사용자</button>
+          <button type="button" role="tab" aria-selected={tab === "usage"} onClick={() => setTab("usage")}><BarChart3 size={15} /> 사용통계</button>
           <button type="button" role="tab" aria-selected={tab === "conversations"} onClick={() => setTab("conversations")}><MessageSquare size={15} /> 대화</button>
           <button type="button" role="tab" aria-selected={tab === "audit"} onClick={() => setTab("audit")}><ShieldCheck size={15} /> 모니터링</button>
           <button type="button" role="tab" aria-selected={tab === "policy"} onClick={() => setTab("policy")}><FileText size={15} /> 기본 지침</button>
@@ -303,7 +462,7 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
             {users.map((user) => (
               <article className={`admin-row ${selectedUser?.id === user.id ? "is-open" : ""}`} key={user.id}>
                 {selectedUser?.id === user.id ? (
-                  <form className="admin-user-inline-edit" onSubmit={(event) => void saveUser(event)}>
+                  <form className="admin-user-inline-edit" onSubmit={(event) => { event.preventDefault(); void saveUser(); }} onKeyDown={(event) => { if (event.key !== "Enter") return; event.preventDefault(); void saveUser(); }}>
                     <strong title={user.loginId}>{user.loginId}</strong>
                     <input aria-label="표시 이름" value={userDisplayName} onChange={(event) => setUserDisplayName(event.currentTarget.value)} />
                     <input aria-label="소속" value={userAffiliation} onChange={(event) => setUserAffiliation(event.currentTarget.value)} />
@@ -312,10 +471,13 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
                     <button className={userChangeArmed ? "is-confirm-armed" : ""} type="submit" disabled={saving}>{userChangeArmed ? <AlertTriangle size={14} /> : <Save size={14} />} {userChangeArmed ? "한 번 더 눌러 변경" : "변경"}</button>
                   </form>
                 ) : (
-                  <button className="admin-row-trigger" type="button" aria-expanded={false} onClick={() => chooseUser(user)}>
-                    <span className="admin-user-summary"><strong>{user.loginId}</strong><small>{user.displayName || "이름 없음"}</small><small>{user.affiliation || "소속 없음"}</small></span>
-                    <span className="admin-row-meta"><i className={`status-dot status-${user.status}`} />{userRoleLabel(user.role)} · {userStatuses.find((item) => item.value === user.status)?.label}<ChevronDown size={15} /></span>
-                  </button>
+                  <div className="admin-row-summary-line">
+                    <button className="admin-row-trigger" type="button" aria-expanded={false} onClick={() => chooseUser(user)}>
+                      <span className="admin-user-summary"><strong>{user.loginId}</strong><small>{user.displayName || "이름 없음"}</small><small>{user.affiliation || "소속 없음"}</small></span>
+                      <span className="admin-row-meta"><i className={`status-dot status-${user.status}`} />{userRoleLabel(user.role)} · {userStatuses.find((item) => item.value === user.status)?.label}<ChevronDown size={15} /></span>
+                    </button>
+                    {user.status === "invited" && <button className="admin-approve-user" type="button" disabled={saving} onClick={() => void approveUser(user)}>승인</button>}
+                  </div>
                 )}
                 {selectedUser?.id === user.id && (
                   <div className="admin-row-detail">
@@ -336,17 +498,42 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
         </section>
       )}
 
+      {tab === "usage" && (
+        <section className="admin-section admin-usage" aria-label="사용 통계">
+          <div className="admin-usage-heading">
+            <div><strong>조직 사용 현황</strong><small>활동 사용자는 해당 날짜에 로그인했거나 Agent Run을 시작한 고유 사용자입니다. · {usageStatistics?.timezone ?? "Asia/Seoul"}</small></div>
+            <label>조회 기간<select value={usagePeriod} onChange={(event) => setUsagePeriod(Number(event.currentTarget.value) as 0 | 30 | 90)}><option value={30}>최근 30일</option><option value={90}>최근 90일</option><option value={0}>전체</option></select></label>
+          </div>
+          {usageStatistics && <>
+            <div className="admin-usage-kpis">
+              <div><span>DAU</span><strong>{usageStatistics.summary.dau.toLocaleString()}</strong><small>오늘 활동</small></div>
+              <div><span>WAU</span><strong>{usageStatistics.summary.wau.toLocaleString()}</strong><small>최근 7일</small></div>
+              <div><span>MAU</span><strong>{usageStatistics.summary.mau.toLocaleString()}</strong><small>최근 30일</small></div>
+              <div><span>고착도</span><strong>{usageStatistics.summary.stickinessPercent}%</strong><small>DAU / MAU</small></div>
+              <div><span>신규 사용자</span><strong>{usageStatistics.summary.newUsers30d.toLocaleString()}</strong><small>최근 30일</small></div>
+              <div><span>Agent Run</span><strong>{usageStatistics.summary.runs.toLocaleString()}</strong><small>선택 기간</small></div>
+            </div>
+            <div className="admin-usage-trend-heading"><div><strong>{usageMetricLabels[usageMetric]} 추이</strong><small>일별 집계</small></div><div role="group" aria-label="차트 지표">{(Object.keys(usageMetricLabels) as UsageMetric[]).map((metric) => <button type="button" aria-pressed={usageMetric === metric} onClick={() => setUsageMetric(metric)} key={metric}>{usageMetricLabels[metric]}</button>)}</div></div>
+            <UsageTrendChart statistics={usageStatistics} metric={usageMetric} />
+            <div className="admin-usage-table-heading"><div><strong>사용자별 접속 통계</strong><small>{filteredUsageUsers.length}명 · {usagePeriod === 0 ? "전체 기간" : `최근 ${usagePeriod}일`} 기준</small></div></div>
+            <div className="admin-usage-table-scroll">
+              <div className="admin-usage-table" role="table" aria-label="사용자별 접속 통계">
+                <div className="admin-usage-table-row is-header" role="row"><span>ID / 사용자</span><span>최근 로그인</span><span>활동일</span><span>접속</span><span>Run</span><span>입력 토큰</span><span>Cached 입력 토큰</span><span>Hit Ratio</span><span>Output 토큰</span><span>예상 비용</span><span>휴면</span></div>
+                {filteredUsageUsers.map((user) => <div className="admin-usage-table-row" role="row" key={user.userId}><span><strong>{user.loginId}</strong><small>{[user.displayName, user.affiliation].filter(Boolean).join(" · ") || "-"}</small></span><time>{formatDate(user.lastLoginAt)}</time><span>{user.activeDays}일</span><span>{user.loginCount}회</span><span>{user.runCount}회</span><span>{user.inputTokens.toLocaleString()}</span><span>{user.cachedInputTokens.toLocaleString()}</span><span>{user.cacheHitRatioPercent.toFixed(1)}%</span><span>{user.outputTokens.toLocaleString()}</span><span>{user.estimatedCostUsd ? `$${user.estimatedCostUsd.toFixed(4)}` : "-"}</span><span>{user.inactiveDays === null ? "기록 없음" : user.inactiveDays === 0 ? "오늘" : `${user.inactiveDays}일`}</span></div>)}
+              </div>
+            </div>
+          </>}
+          {!usageStatistics && !loading && !error && <p className="workspace-empty">집계할 사용 기록이 없습니다.</p>}
+        </section>
+      )}
+
       {tab === "conversations" && (
         <section className="admin-conversation-layout" aria-label="전체 대화 모니터링 조회">
           <div className="admin-list-panel">
             <div className="admin-conversation-heading">
               <div className="admin-count">대화 {conversations.length} / {conversationTotal}건</div>
               <div className="admin-conversation-controls">
-                <label>조회 한도
-                  <select value={conversationLimit} onChange={(event) => setConversationLimit(Number(event.currentTarget.value) as AdminListLimit)}>
-                    {[50, 120, 250, 500].map((limit) => <option value={limit} key={limit}>{limit}건</option>)}
-                  </select>
-                </label>
+                <div className="admin-control-label"><span>조회 한도</span><AdminLimitSelect value={conversationLimit} onChange={setConversationLimit} ariaLabel="대화 조회 한도" /></div>
                 <div className="admin-conversation-view-toggle" role="group" aria-label="대화 목록 보기 방식">
                   <button className="tooltip-control" type="button" aria-label="메시지순" data-tooltip="메시지순" aria-pressed={conversationViewMode === "recent"} onClick={() => setConversationViewMode("recent")}><MessageSquare size={14} /></button>
                   <button className="tooltip-control" type="button" aria-label="사용자별" data-tooltip="사용자별" aria-pressed={conversationViewMode === "user"} onClick={() => setConversationViewMode("user")}><Users size={14} /></button>
@@ -394,11 +581,7 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
           <div className="admin-audit-heading">
             <div className="admin-count">최근 모니터링 이벤트 {auditEvents.length} / {auditTotal}건</div>
             <div className="admin-audit-controls">
-              <label>조회 한도
-                <select value={auditLimit} onChange={(event) => setAuditLimit(Number(event.currentTarget.value) as AdminListLimit)}>
-                  {[50, 120, 250, 500].map((limit) => <option value={limit} key={limit}>{limit}건</option>)}
-                </select>
-              </label>
+              <div className="admin-control-label"><span>조회 한도</span><AdminLimitSelect value={auditLimit} onChange={setAuditLimit} ariaLabel="모니터링 로그 조회 한도" /></div>
               <div className="admin-audit-view-toggle" role="group" aria-label="모니터링 로그 보기 방식">
                 <button className="tooltip-control" type="button" aria-label="이벤트순" data-tooltip="이벤트순" aria-pressed={auditViewMode === "recent"} onClick={() => setAuditViewMode("recent")}><List size={14} /></button>
                 <button className="tooltip-control" type="button" aria-label="사용자 ID별" data-tooltip="사용자 ID별" aria-pressed={auditViewMode === "user"} onClick={() => setAuditViewMode("user")}><Users size={14} /></button>

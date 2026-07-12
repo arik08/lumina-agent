@@ -80,6 +80,11 @@ class SkillFolderMove(ApiModel):
     scope_id: str | None = None
 
 
+class SkillOwnershipCreate(ApiModel):
+    user_id: str
+    role: Literal["owner", "maintainer"] = "owner"
+
+
 class PublishVersion(ApiModel):
     visibility: Literal["organization"] = "organization"
 

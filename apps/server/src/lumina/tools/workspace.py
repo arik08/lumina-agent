@@ -8,6 +8,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..audit import record_audit
+from ..extensions.service import sync_workspace_skill
 from ..models import ProjectFile, Run, User
 from ..project_files.service import (
     create_project_file,
@@ -22,6 +24,19 @@ MAX_RESULTS = 200
 MAX_READ_LINES = 2_000
 MAX_READ_CHARS = 100_000
 MAX_GREP_FILE_CHARS = 1_000_000
+_SKILL_FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|$)", re.DOTALL)
+_SKILL_TEXT_SUFFIXES = {
+    ".md",
+    ".txt",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".py",
+    ".js",
+    ".mjs",
+    ".ts",
+    ".tsx",
+}
 
 
 WORKSPACE_TOOL_SCHEMAS: tuple[dict[str, Any], ...] = (
@@ -97,7 +112,12 @@ WORKSPACE_TOOL_SCHEMAS: tuple[dict[str, Any], ...] = (
         "type": "function",
         "function": {
             "name": "write_file",
-            "description": "Create or replace a UTF-8 text file in the current Project workspace. Replacing a file creates a new immutable version.",
+            "description": (
+                "Create or replace a UTF-8 text file in the current Project workspace, "
+                "including standalone HTML files with inline CSS and JavaScript. "
+                "Use write_file for executable HTML apps, demos, and games. Replacing a "
+                "file creates a new immutable version."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -219,7 +239,7 @@ def execute_workspace_tool(
                 storage=storage,
             )
             action = "updated"
-        return {
+        result = {
             "projectFileId": item.id,
             "path": item.logical_path,
             "action": action,
@@ -228,6 +248,16 @@ def execute_workspace_tool(
             "contentHash": version.content_hash,
             "sizeBytes": version.size_bytes,
         }
+        skill_draft = _sync_workspace_skill_draft(
+            db,
+            storage,
+            run=run,
+            user=user,
+            written_path=item.logical_path,
+        )
+        if skill_draft is not None:
+            result["skillDraft"] = skill_draft
+        return result
     raise ValueError(f"Unknown workspace tool: {name}")
 
 
@@ -241,6 +271,105 @@ def _active_files(db: Session, project_id: str) -> list[ProjectFile]:
             .order_by(ProjectFile.logical_path)
         )
     )
+
+
+def _sync_workspace_skill_draft(
+    db: Session,
+    storage: ManagedStorage,
+    *,
+    run: Run,
+    user: User,
+    written_path: str,
+) -> dict[str, Any] | None:
+    parts = PurePosixPath(written_path).parts
+    if len(parts) < 3 or parts[0].casefold() != "skills":
+        return None
+    slug = parts[1]
+    root = f"{parts[0]}/{slug}"
+    package: dict[str, str] = {}
+    for item in _active_files(db, run.project_id):
+        item_parts = PurePosixPath(item.logical_path).parts
+        if (
+            len(item_parts) < 3
+            or item_parts[0].casefold() != "skills"
+            or item_parts[1].casefold() != slug.casefold()
+            or PurePosixPath(item.logical_path).suffix.casefold()
+            not in _SKILL_TEXT_SUFFIXES
+        ):
+            continue
+        version = get_project_file_version(db, item)
+        package[PurePosixPath(item.logical_path).relative_to(root).as_posix()] = (
+            _decode_text(
+                storage.read_bytes(
+                    version.storage_key, expected_sha256=version.content_hash
+                )
+            )
+        )
+    skill_md = next(
+        (content for path, content in package.items() if path.casefold() == "skill.md"),
+        None,
+    )
+    if skill_md is None:
+        return None
+    metadata = _skill_frontmatter(skill_md)
+    extension, draft, changed = sync_workspace_skill(
+        db,
+        user=user,
+        project_id=run.project_id,
+        source_conversation_id=run.conversation_id,
+        slug=slug,
+        name=metadata.get("name") or slug,
+        description=metadata.get("description", ""),
+        package_files=package,
+    )
+    if changed:
+        record_audit(
+            db,
+            action=(
+                "extension_created_from_workspace"
+                if draft.current_revision == 1
+                else "extension_draft_synced_from_workspace"
+            ),
+            target_type="extension",
+            target_id=extension.id,
+            result="success",
+            actor=user,
+            metadata={
+                "projectId": run.project_id,
+                "conversationId": run.conversation_id,
+                "draftRevision": draft.current_revision,
+            },
+        )
+    return {
+        "extensionId": extension.id,
+        "draftId": draft.id,
+        "slug": extension.slug,
+        "name": extension.name,
+        "revision": draft.current_revision,
+        "digest": draft.current_digest,
+        "changed": changed,
+    }
+
+
+def _skill_frontmatter(content: str) -> dict[str, str]:
+    match = _SKILL_FRONTMATTER.match(content.replace("\r\n", "\n"))
+    if match is None:
+        return {}
+    metadata: dict[str, str] = {}
+    active_key: str | None = None
+    for raw_line in match.group(1).splitlines():
+        if raw_line[:1].isspace() and active_key:
+            metadata[active_key] = f"{metadata[active_key]} {raw_line.strip()}".strip()
+            continue
+        key, separator, value = raw_line.partition(":")
+        normalized_key = key.strip()
+        if separator and normalized_key in {"name", "description"}:
+            active_key = normalized_key
+            cleaned = value.strip().strip("'\"")
+            metadata[active_key] = "" if cleaned in {">", "|", ">-", "|-"} else cleaned
+        else:
+            active_key = None
+    return metadata
 
 
 def _require_file(files: list[ProjectFile], raw_path: Any) -> ProjectFile:

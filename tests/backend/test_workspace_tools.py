@@ -11,7 +11,14 @@ from lumina.agent.executor import LocalRunExecutor, local_run_executor
 from lumina.config import Settings
 from lumina.db import SessionLocal
 from lumina.main import create_app
-from lumina.models import ProjectFile, Run, User
+from lumina.models import (
+    Extension,
+    ExtensionDraft,
+    ExtensionDraftBinding,
+    ProjectFile,
+    Run,
+    User,
+)
 from lumina.providers import MockProvider, MockToolCall
 from lumina.runs.approvals import classify_tool_risk
 from lumina.tools.workspace import WORKSPACE_TOOL_SCHEMAS, execute_workspace_tool
@@ -40,6 +47,15 @@ def _login(client: TestClient) -> dict[str, str]:
 def test_workspace_tool_schemas_and_risk_contract() -> None:
     names = [schema["function"]["name"] for schema in WORKSPACE_TOOL_SCHEMAS]
     assert names == ["glob", "grep", "read_file", "write_file", "list_dir"]
+    write_schema = next(
+        schema
+        for schema in WORKSPACE_TOOL_SCHEMAS
+        if schema["function"]["name"] == "write_file"
+    )
+    assert (
+        "standalone HTML files with inline CSS and JavaScript"
+        in write_schema["function"]["description"]
+    )
     assert classify_tool_risk("glob", approval_mode="on_risk").effect == "read_only"
     write_risk = classify_tool_risk("write_file", approval_mode="on_risk")
     assert write_risk.effect == "workspace_write"
@@ -167,6 +183,125 @@ def test_workspace_tools_are_project_scoped_and_version_writes(tmp_path: Path) -
                 )
 
 
+def test_skill_workspace_writes_register_and_update_active_draft(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    executor = LocalRunExecutor(settings)
+    with TestClient(create_app(settings)) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers=headers,
+            json={"projectId": project_id, "title": "skill creator"},
+        ).json()
+        started = client.post(
+            f"/api/conversations/{conversation['id']}/runs",
+            headers={**headers, "Idempotency-Key": "workspace-skill-run"},
+            json={"message": {"text": "Skill을 만들어 주세요."}},
+        )
+        assert started.status_code == 202, started.text
+        run_id = started.json()["run"]["runId"]
+
+        with SessionLocal() as db:
+            run = db.get(Run, run_id)
+            user = db.scalar(select(User).where(User.login_id == "admin@posco.com"))
+            assert run is not None and user is not None
+            execute_workspace_tool(
+                db,
+                executor.file_storage,
+                run=run,
+                user=user,
+                name="write_file",
+                arguments={
+                    "path": "skills/daily-standup-helper/references/templates.md",
+                    "content": "# Standup templates",
+                },
+                max_upload_bytes=settings.max_upload_bytes,
+            )
+            written = execute_workspace_tool(
+                db,
+                executor.file_storage,
+                run=run,
+                user=user,
+                name="write_file",
+                arguments={
+                    "path": "skills/daily-standup-helper/SKILL.md",
+                    "content": (
+                        "---\n"
+                        "name: daily-standup-helper\n"
+                        "description: 매일 스탠드업을 정리합니다.\n"
+                        "---\n\n"
+                        "# Daily Standup Helper\n"
+                    ),
+                },
+                max_upload_bytes=settings.max_upload_bytes,
+            )
+            db.commit()
+
+            assert written["skillDraft"]["slug"] == "daily-standup-helper"
+            assert written["skillDraft"]["revision"] == 1
+
+        with SessionLocal() as db:
+            extension = db.scalar(
+                select(Extension).where(Extension.slug == "daily-standup-helper")
+            )
+            assert extension is not None
+            assert extension.project_id == project_id
+            assert extension.name == "daily-standup-helper"
+            assert extension.description == "매일 스탠드업을 정리합니다."
+            draft = db.scalar(
+                select(ExtensionDraft).where(
+                    ExtensionDraft.extension_id == extension.id
+                )
+            )
+            assert draft is not None
+            assert draft.source_conversation_id == conversation["id"]
+            assert set(draft.package_json) == {
+                "SKILL.md",
+                "references/templates.md",
+            }
+            binding = db.scalar(
+                select(ExtensionDraftBinding).where(
+                    ExtensionDraftBinding.draft_id == draft.id,
+                    ExtensionDraftBinding.user_id == extension.owner_user_id,
+                )
+            )
+            assert binding is not None and binding.enabled is True
+
+        suggestions = client.get(
+            "/api/composer/suggestions",
+            params={"project_id": project_id, "trigger": "$"},
+        )
+        assert suggestions.status_code == 200, suggestions.text
+        candidate = next(
+            item
+            for item in suggestions.json()["items"]
+            if item["insertText"] == "$skill:daily-standup-helper"
+        )
+        assert candidate["subtitle"] == "Draft r1 · 저장 안 됨"
+
+        with SessionLocal() as db:
+            run = db.get(Run, run_id)
+            user = db.scalar(select(User).where(User.login_id == "admin@posco.com"))
+            assert run is not None and user is not None
+            updated = execute_workspace_tool(
+                db,
+                executor.file_storage,
+                run=run,
+                user=user,
+                name="write_file",
+                arguments={
+                    "path": "skills/daily-standup-helper/references/templates.md",
+                    "content": "# Updated templates",
+                },
+                max_upload_bytes=settings.max_upload_bytes,
+            )
+            db.commit()
+            assert updated["skillDraft"]["revision"] == 2
+
+
 def test_glob_tool_call_name_is_persisted_for_ui(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -277,5 +412,72 @@ def test_write_file_result_is_exposed_as_document_artifact(
 
     assert snapshot["status"] == "completed"
     assert snapshot["toolExecutions"][0]["artifactId"] == snapshot["artifacts"][0]["id"]
+    assert snapshot["toolExecutions"][0]["progress"]["tokens"] > 0
+    assert snapshot["toolExecutions"][0]["progress"]["lines"] == 1
+    assert snapshot["toolExecutions"][0]["durationMs"] >= 100
     assert snapshot["artifacts"][0]["displayName"] == "result.md"
     assert snapshot["artifacts"][0]["mimeType"] == "text/markdown"
+
+
+def test_write_file_allows_executable_html_and_exposes_html_artifact(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = _settings(tmp_path)
+    html = (
+        "<!doctype html><html><head><title>AI Worm</title></head>"
+        "<body><canvas id='game'></canvas><script>"
+        "document.body.dataset.ready = 'true';"
+        "</script></body></html>"
+    )
+
+    def provider(
+        _provider_id: str, *, wants_artifact: bool, first_turn: bool
+    ) -> MockProvider:
+        del wants_artifact
+        if first_turn:
+            return MockProvider(
+                tool_call=MockToolCall(
+                    name="write_file",
+                    arguments={"path": "ai_worm_game.html", "content": html},
+                    call_id="write-html-game",
+                )
+            )
+        return MockProvider(text_chunks=("게임을 생성했습니다.",))
+
+    monkeypatch.setattr(local_run_executor, "_provider", provider)
+    with TestClient(create_app(settings)) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers=headers,
+            json={"projectId": project_id, "title": "executable HTML game"},
+        ).json()
+        started = client.post(
+            f"/api/conversations/{conversation['id']}/runs",
+            headers={**headers, "Idempotency-Key": "write-html-game-run"},
+            json={"message": {"text": "실행 가능한 HTML 게임을 만들어 주세요."}},
+        )
+        assert started.status_code == 202, started.text
+
+        deadline = time.monotonic() + 5
+        snapshot = {}
+        while time.monotonic() < deadline:
+            snapshot = client.get(
+                f"/api/runs/{started.json()['run']['runId']}/snapshot"
+            ).json()
+            if snapshot.get("status") == "completed":
+                break
+            time.sleep(0.02)
+
+        assert snapshot["status"] == "completed"
+        artifact = snapshot["artifacts"][0]
+        assert artifact["displayName"] == "ai_worm_game.html"
+        assert artifact["kind"] == "html"
+        assert artifact["mimeType"] == "text/html"
+        version = client.get(
+            f"/api/artifacts/{artifact['id']}/versions/{artifact['currentVersion']}"
+        )
+        assert version.status_code == 200, version.text
+        assert version.json()["sourceText"] == html
+        assert version.json()["validationStatus"] == "structural_passed"

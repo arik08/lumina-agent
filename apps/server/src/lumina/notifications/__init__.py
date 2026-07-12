@@ -1,4 +1,5 @@
 from .service import (
+    create_registration_approval_notification,
     delete_all_notifications,
     delete_notification,
     create_run_transition_notification,
@@ -11,6 +12,7 @@ from .service import (
 )
 
 __all__ = [
+    "create_registration_approval_notification",
     "delete_all_notifications",
     "delete_notification",
     "create_run_transition_notification",

@@ -55,6 +55,7 @@ def _summary(db: Session, conversation) -> dict[str, object]:
         "projectId": result["project_id"],
         "title": result["title"],
         "isFavorite": result["is_favorite"],
+        "isLiked": result["is_liked"],
         "lastRunStatus": result["last_run_status"],
         "activeRunId": result["active_run_id"],
         "lastSequence": result["last_sequence"],
@@ -215,6 +216,7 @@ def patch_conversation(
         expected_revision=_parse_revision(if_match) or payload.expected_revision,
         title=payload.title,
         is_favorite=payload.is_favorite,
+        is_liked=payload.is_liked,
         archived=payload.archived,
     )
     db.commit()

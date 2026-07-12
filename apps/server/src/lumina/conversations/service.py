@@ -138,6 +138,25 @@ def list_conversations(
     return items, next_cursor
 
 
+def list_auto_delete_candidates(
+    db: Session, *, older_than: datetime, limit: int = 100
+) -> list[Conversation]:
+    """Return inactive chat candidates while honoring the durable like protection."""
+    return list(
+        db.scalars(
+            select(Conversation)
+            .where(
+                Conversation.status == "active",
+                Conversation.deleted_at.is_(None),
+                Conversation.is_liked.is_(False),
+                Conversation.last_activity_at < older_than,
+            )
+            .order_by(Conversation.last_activity_at, Conversation.id)
+            .limit(max(1, min(limit, 1000)))
+        )
+    )
+
+
 def search_conversation_content(
     db: Session,
     user: User,
@@ -193,6 +212,7 @@ def conversation_summary(db: Session, conversation: Conversation) -> dict[str, o
         "project_id": conversation.project_id,
         "title": conversation.title,
         "is_favorite": conversation.is_favorite,
+        "is_liked": conversation.is_liked,
         "last_run_status": sidebar_status(latest.status) if latest else None,
         "active_run_id": active.id if active else None,
         "last_sequence": latest.last_sequence if latest else 0,
@@ -210,6 +230,7 @@ def update_conversation(
     expected_revision: int | None,
     title: str | None = None,
     is_favorite: bool | None = None,
+    is_liked: bool | None = None,
     archived: bool | None = None,
 ) -> Conversation:
     conversation = require_conversation(db, user, conversation_id, write=True)
@@ -219,6 +240,8 @@ def update_conversation(
         conversation.title = title.strip()
     if is_favorite is not None:
         conversation.is_favorite = is_favorite
+    if is_liked is not None:
+        conversation.is_liked = is_liked
     if archived is not None:
         conversation.status = "archived" if archived else "active"
     conversation.revision += 1

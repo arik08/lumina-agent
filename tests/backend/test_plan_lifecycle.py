@@ -40,6 +40,7 @@ from lumina.runs.service import (
     plan_snapshot,
     start_plan_step,
     transition_run,
+    update_work_plan,
 )
 from lumina.runs.state import (
     CANCELLED,
@@ -142,6 +143,54 @@ def _move_to_model(db: Session, run: Run) -> dict[str, PlanStep]:
             .order_by(PlanStep.position)
         )
     }
+
+
+def test_model_authored_work_plan_is_persisted_with_stable_step_ids(
+    tmp_path: Path,
+) -> None:
+    run_id, _user_id = _direct_run(tmp_path, key="work-plan")
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        assert run is not None
+        initial = update_work_plan(
+            db,
+            run,
+            steps=[
+                {"step": "설비 이력에서 반복 고장 구간 추출", "status": "in_progress"},
+                {"step": "고장 원인별 근거와 빈도 비교", "status": "pending"},
+                {"step": "우선 정비 대상과 판단 근거 정리", "status": "pending"},
+            ],
+        )
+        updated = update_work_plan(
+            db,
+            run,
+            steps=[
+                {"step": "설비 이력에서 반복 고장 구간 추출", "status": "completed"},
+                {"step": "고장 원인별 근거와 빈도 비교", "status": "in_progress"},
+                {"step": "우선 정비 대상과 판단 근거 정리", "status": "pending"},
+            ],
+        )
+        db.commit()
+
+        assert [step["id"] for step in updated] == [step["id"] for step in initial]
+        assert [step["status"] for step in updated] == [
+            "completed",
+            "in_progress",
+            "pending",
+        ]
+        assert run.snapshot_json["work_plan"] == updated
+        events = list(
+            db.scalars(
+                select(RunEvent)
+                .where(
+                    RunEvent.run_id == run.id,
+                    RunEvent.event_type == "work_plan_updated",
+                )
+                .order_by(RunEvent.sequence)
+            )
+        )
+        assert len(events) == 2
+        assert events[-1].payload_json["steps"] == updated
 
 
 def test_tool_calls_are_durable_plan_subtasks_without_raw_arguments(

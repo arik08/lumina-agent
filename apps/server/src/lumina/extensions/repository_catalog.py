@@ -16,12 +16,31 @@ from ..mcp.service import (
     normalize_slug,
     validate_configuration,
 )
-from ..models import Extension, ExtensionVersion, McpConfigurationRevision, McpDefinition, User, utc_now
+from ..models import (
+    Extension,
+    ExtensionVersion,
+    McpConfigurationRevision,
+    McpDefinition,
+    SkillOwnership,
+    User,
+    utc_now,
+)
 from .service import normalize_package, package_digest
 
 
 _FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.DOTALL)
-_TEXT_SUFFIXES = {".md", ".txt", ".json", ".yaml", ".yml", ".py", ".js", ".mjs", ".ts", ".tsx"}
+_TEXT_SUFFIXES = {
+    ".md",
+    ".txt",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".py",
+    ".js",
+    ".mjs",
+    ".ts",
+    ".tsx",
+}
 _IGNORED_PARTS = {".git", "__pycache__", "node_modules", "vendor", ".venv"}
 
 
@@ -45,6 +64,20 @@ def _frontmatter(text: str) -> dict[str, str]:
     return result
 
 
+def _catalog_tags(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    tags: list[str] = []
+    for item in value:
+        tag = str(item).strip().removeprefix("#").strip()
+        if not tag or tag in tags:
+            continue
+        tags.append(tag[:24])
+        if len(tags) == 3:
+            break
+    return tags
+
+
 def _skill_package(folder: Path) -> dict[str, str]:
     files: dict[str, str] = {}
     for path in sorted(folder.rglob("*")):
@@ -62,7 +95,9 @@ def _skill_package(folder: Path) -> dict[str, str]:
     return normalize_package(files)
 
 
-def sync_repository_skills(db: Session, *, admin: User, root: Path | None = None) -> int:
+def sync_repository_skills(
+    db: Session, *, admin: User, root: Path | None = None
+) -> int:
     skills_root = (root or REPOSITORY_ROOT) / "extensions" / "skills"
     if not skills_root.is_dir():
         return 0
@@ -72,6 +107,10 @@ def sync_repository_skills(db: Session, *, admin: User, root: Path | None = None
         if translations_path.is_file()
         else {}
     )
+    tags_path = skills_root / "catalog.tags.json"
+    tags_by_slug = (
+        json.loads(tags_path.read_text(encoding="utf-8")) if tags_path.is_file() else {}
+    )
     changed = 0
     for folder in sorted(path for path in skills_root.iterdir() if path.is_dir()):
         skill_md = folder / "SKILL.md"
@@ -80,10 +119,25 @@ def sync_repository_skills(db: Session, *, admin: User, root: Path | None = None
         package = _skill_package(folder)
         digest = package_digest(package)
         metadata = _frontmatter(package["SKILL.md"])
-        slug = re.sub(r"[^a-z0-9]+", "-", metadata.get("name", folder.name).casefold()).strip("-") or folder.name
+        slug = (
+            re.sub(
+                r"[^a-z0-9]+", "-", metadata.get("name", folder.name).casefold()
+            ).strip("-")
+            or folder.name
+        )
         description = str(translations.get(slug) or metadata.get("description", ""))
+        manifest = {
+            "source": "repository",
+            "sourcePath": folder.relative_to(root or REPOSITORY_ROOT).as_posix(),
+            "category": "기본 제공",
+            "tags": _catalog_tags(tags_by_slug.get(slug)),
+            "publisher": "Lumina",
+            "fileCount": len(package),
+        }
         extension = db.scalar(
-            select(Extension).where(Extension.owner_user_id == admin.id, Extension.slug == slug)
+            select(Extension).where(
+                Extension.owner_user_id == admin.id, Extension.slug == slug
+            )
         )
         if extension is None:
             extension = Extension(
@@ -92,36 +146,47 @@ def sync_repository_skills(db: Session, *, admin: User, root: Path | None = None
                 name=metadata.get("name", folder.name),
                 description=description,
                 owner_user_id=admin.id,
+                creator_user_id=admin.id,
                 organization_id=admin.organization_id,
                 visibility="organization",
                 publisher_user_id=admin.id,
             )
             db.add(extension)
             db.flush()
+            db.add(
+                SkillOwnership(
+                    skill_id=extension.id,
+                    principal_type="user",
+                    principal_id=admin.id,
+                    role="owner",
+                    created_by_user_id=admin.id,
+                )
+            )
         latest = db.scalar(
             select(ExtensionVersion)
             .where(ExtensionVersion.extension_id == extension.id)
             .order_by(ExtensionVersion.version_number.desc())
         )
-        if latest is not None and latest.package_digest == digest:
-            continue
         extension.name = metadata.get("name", folder.name)
         extension.description = description
         extension.visibility = "organization"
         extension.publisher_user_id = admin.id
+        if (
+            latest is not None
+            and latest.package_digest == digest
+            and all(
+                latest.manifest_json.get(key) == value
+                for key, value in manifest.items()
+            )
+        ):
+            continue
         version = ExtensionVersion(
             extension_id=extension.id,
             version_number=(latest.version_number + 1 if latest else 1),
             parent_version_id=latest.id if latest else None,
             package_json=package,
             package_digest=digest,
-            manifest_json={
-                "source": "repository",
-                "sourcePath": folder.relative_to(root or REPOSITORY_ROOT).as_posix(),
-                "category": "기본 제공",
-                "publisher": "Lumina",
-                "fileCount": len(package),
-            },
+            manifest_json=manifest,
             status="published",
             created_by_user_id=admin.id,
             published_at=utc_now(),
@@ -134,13 +199,19 @@ def sync_repository_skills(db: Session, *, admin: User, root: Path | None = None
     return changed
 
 
-def _declared_python_tools(raw: dict[str, Any], repository_root: Path) -> list[dict[str, Any]]:
+def _declared_python_tools(
+    raw: dict[str, Any], repository_root: Path
+) -> list[dict[str, Any]]:
     args = [str(item) for item in raw.get("args", [])]
-    script = next((repository_root / item for item in args if item.endswith(".py")), None)
+    script = next(
+        (repository_root / item for item in args if item.endswith(".py")), None
+    )
     if script is None or not script.is_file():
         return []
     source = script.read_text(encoding="utf-8")
-    names = re.findall(r"@\w+\.tool\(\)\s*\ndef\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(", source)
+    names = re.findall(
+        r"@\w+\.tool\(\)\s*\ndef\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(", source
+    )
     return [
         {
             "name": name,
@@ -153,7 +224,11 @@ def _declared_python_tools(raw: dict[str, Any], repository_root: Path) -> list[d
 
 def _mcp_configuration(raw: dict[str, Any], repository_root: Path) -> dict[str, Any]:
     transport = "streamable_http" if raw.get("type") == "streamable_http" else "stdio"
-    command = [str(raw.get("command", "")), *[str(item) for item in raw.get("args", [])]] if transport == "stdio" else []
+    command = (
+        [str(raw.get("command", "")), *[str(item) for item in raw.get("args", [])]]
+        if transport == "stdio"
+        else []
+    )
     return {
         "transport": transport,
         "command": [item for item in command if item],
@@ -197,19 +272,30 @@ def sync_repository_mcp(db: Session, *, admin: User, root: Path | None = None) -
                     configuration=configuration,
                 )
             else:
-                current = db.get(McpConfigurationRevision, definition.current_revision_id) if definition.current_revision_id else None
+                current = (
+                    db.get(McpConfigurationRevision, definition.current_revision_id)
+                    if definition.current_revision_id
+                    else None
+                )
                 if current is not None and current.config_digest == digest:
                     continue
                 revision = add_configuration_revision(
-                    db, user=admin, definition_id=definition.id, configuration=configuration
+                    db,
+                    user=admin,
+                    definition_id=definition.id,
+                    configuration=configuration,
                 )
-            approve_revision(db, user=admin, definition_id=definition.id, revision_id=revision.id)
+            approve_revision(
+                db, user=admin, definition_id=definition.id, revision_id=revision.id
+            )
             changed += 1
     db.flush()
     return changed
 
 
-def sync_repository_catalog(db: Session, *, admin: User, root: Path | None = None) -> tuple[int, int]:
+def sync_repository_catalog(
+    db: Session, *, admin: User, root: Path | None = None
+) -> tuple[int, int]:
     return (
         sync_repository_skills(db, admin=admin, root=root),
         sync_repository_mcp(db, admin=admin, root=root),

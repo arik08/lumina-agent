@@ -9,11 +9,11 @@ Create browser-native visual deliverables that are polished enough to screenshot
 
 ## Default output
 
-- Prefer one self-contained `.html` file with inline CSS and JS.
-- For MyHarness single-file previews, keep CSS and app code in the HTML file when practical so the file card can open it directly; relative external files can break in `iframe srcdoc` previews.
+- Prefer one self-contained `.html` file with inline CSS. Pass the complete document through `create_report.html_source` so the visual design reaches the saved Artifact unchanged.
+- Lumina HTML Artifacts support inline JavaScript, `script` tags, and event handlers. Use them when the requested result is interactive, executable, app-like, or game-like. Keep the document self-contained because relative external files can break in isolated previews.
 - If the user describes report length in tokens, including Korean forms such as `5000~8000 토큰`, `10000 토큰 수준`, `15000~20000 토큰 이상`, or `30000토큰 수준`, treat the number as an approximate output-size target that should be checked, not merely a style cue. Use the target to plan content depth, but do not crowd the page with walls of prose, cramped tables, or repetitive cards just to hit a length. Preserve visual rhythm with section summaries, charts, callouts, and source notes.
 - Use a short purpose-specific filename, not `index.html`, unless the user explicitly asks for it or an existing app requires it. Prefer concise readable Korean filenames with underscores for Korean-facing reports/previews; use English kebab-case or snake_case for code-heavy demos, games, or English-facing artifacts.
-- Keep dependencies purposeful. CDN libraries are optional, not mandatory: use React/ReactDOM via CDN only when repeated sections, controls, reusable state, or chart containers would materially benefit from component structure without a build step. Use plain static HTML/CSS/JS when it is sufficient for the artifact.
+- Keep the artifact self-contained. Prefer inline CSS, JavaScript, and SVG over CDN dependencies so the saved Artifact remains executable offline.
 - Make the artifact readable in a constrained iframe and in a normal browser window.
 - Do not include secrets or unsanitized user-provided HTML.
 
@@ -24,7 +24,7 @@ Create browser-native visual deliverables that are polished enough to screenshot
 - **Dashboard**: KPI cards, charts, filters/toggles if useful, data table.
 - **Infographic/one-pager**: strong story flow, big numbers, compact sections, print/capture-ready layout.
 - **Slide-like HTML**: 16:9 sections, keyboard or scroll navigation only if useful.
-- **Diagram/timeline/comparison**: SVG, Mermaid, or HTML/CSS layouts depending on complexity.
+- **Diagram/timeline/comparison**: inline SVG or HTML/CSS layouts depending on complexity.
 
 ## Report-first rule
 
@@ -41,17 +41,19 @@ quarterly trends, sources, or a report:
 - Avoid nav menus, sign-up buttons, pricing blocks, testimonials, "features" funnels, and generic
   landing-page conversion sections unless explicitly requested.
 - Put exact numbers in tables and chart labels; use charts for trend cognition.
-- For analysis requests, actively consider adding a compact Mermaid `flowchart` when causal logic, process steps, decision paths, stakeholder relationships, system flow, or issue-to-action structure would make the analysis easier to scan. This is recommended, not mandatory; skip it when prose, a table, or a numeric chart communicates the point more clearly.
+- For analysis requests, actively consider adding a compact inline SVG flow diagram when causal logic, process steps, decision paths, stakeholder relationships, system flow, or issue-to-action structure would make the analysis easier to scan. This is recommended, not mandatory; skip it when prose, a table, or a numeric chart communicates the point more clearly.
 - For financial/company reports, include a compact source note area and make uncertainty explicit.
 - If important claims, numbers, charts, or recommendations rely on external knowledge such as web research, MCP/vector database results, source documents, or database queries, cite the source in the report using a compact footnote, source note, or sources section. Use the most specific identifier available: URL/title, document page/path, MCP server/resource, document id, table name, or query label. Do not invent citations when source metadata is missing; state the limitation instead.
 
 ## HTML Source Footnotes
 
 - For standalone HTML reports, cite source-backed facts with compact clickable numbered source badges instead of long inline URLs or visible source chips.
-- Use this fixed markup pattern next to the sourced fact: `<sup class="source-ref"><a href="https://example.com" target="_blank" rel="noreferrer">3</a></sup>`.
-- Put `<!-- myharness:source-footnotes-css -->` once in the HTML `<head>`. Do not write custom CSS for `.source-ref`; the `write_file` tool expands this marker into the fixed tooltip CSS when saving the artifact.
-- The visible mark should stay short: a small circular badge containing only the number, such as `3`. The click target opens the original source link in a new tab.
-- For web sources gathered through `web_search`/`web_fetch`, do not write the excerpt yourself. Leave `data-tooltip` absent or empty; `write_file` fills it from stored tool evidence when saving. The filled tooltip contains the short source address on the first line and a short verbatim excerpt directly taken from the source/tool result on the second line. The excerpt line is wrapped in double quotes to show it was copied unchanged. Do not summarize the excerpt in your own words when a direct source sentence is available.
+- Match Lumina chat citations: keep the badge on the text baseline and use circled labels `①` through `⑳` (then `[21]`, `[22]`, and so on). Do not use `<sup>`, `vertical-align: super`, reduced font sizing, or a raised footnote position.
+- Use this fixed markup pattern next to the sourced fact: `<a class="source-ref" href="https://example.com" target="_blank" rel="noreferrer noopener" aria-label="출처 3 열기" title="Source title or URL">③</a>`.
+- Define compact, accessible `.source-ref` CSS in the document `<style>` block. Lumina preserves the submitted HTML without expanding special markers.
+- Keep `.source-ref` at `font-size:1em`, `line-height:inherit`, and `vertical-align:baseline`; use the report's link/accent color without a filled circular background. The click target must open the original source link in a new tab.
+- Give every badge an informative `title` and `aria-label`. Lumina's preview also reveals the full source URL in an in-report source card when the badge is clicked, so the interaction always has a visible response even when the host blocks a popup.
+- For web sources gathered through `web_search`/`web_fetch`, keep the visible badge short and map it to the source list. Do not invent excerpts or source metadata.
 - Keep a compact `Sources`/`출처` list near the end of the HTML that maps the same numbers to site names or titles and URLs.
 
 ## Visual direction
@@ -64,7 +66,7 @@ quarterly trends, sources, or a report:
 
 ## Interactive Elements
 
-- For MyHarness HTML reports, dashboards, infographics, and interactive previews, actively use interaction when it improves scanning, comparison, or decision-making, but keep the artifact report-first. Prefer interactions that enrich visible content in place, such as hover/focus tooltips, chart hover details, source/excerpt tooltips, inline highlighting, sortable tables, search/filter refinement, and chart-series toggles.
+- For report-like HTML, keep essential conclusions and evidence visible without requiring interaction. For apps, demos, simulations, and games, use JavaScript freely to implement the requested behavior.
 - Treat interaction as a report-reading aid, not decoration. Each control should answer a reader question such as “which segment matters?”, “what changed by period?”, “where is the risk?”, “what evidence supports this?”, or “how do scenarios compare?”
 - Be cautious with click-to-reveal screens such as tabs, accordions, hidden panels, modal detail views, and multi-step drilldowns. Use them only when space or density genuinely requires it, and never make them the only path to the executive summary, primary recommendation, key risks, or essential evidence.
 - Keep the core conclusion and main narrative visible without requiring interaction. Use controls to refine, annotate, compare, sort, or reveal secondary detail; do not turn the report into an app where the reader must click through hidden screens to understand the message.
@@ -83,11 +85,10 @@ quarterly trends, sources, or a report:
 - Avoid yellowed report palettes. Unless the user explicitly asks for that look, do not make reports feel like aged paper, parchment, sepia, or a cream/beige/yellowed document. Choose an appropriate non-yellowed palette for the subject instead of defaulting to all-white/all-gray surfaces.
 - Avoid arbitrary pastel flooding across large cards, quadrants, table cells, or sections just to label categories. This is a caution against noisy decoration, not a ban on color. For business reports, use color with intent: section bands, pale fills with crisp accents, chart marks, left/top borders, small tags, icons, or callouts. Use stronger color when it supports quantitative intensity, status severity, selected state, brand tone, or a deliberately infographic-style artifact.
 - Use exact tables for exact values; use charts for trends, comparisons, proportions, timelines, or distributions.
-- For standalone HTML reports or web reports, use Mermaid when workflow, architecture, sequence, dependency, approval, or organization-change diagrams would explain the subject better than prose or a table. Organization redesign, governance, handoff, approval, and operating-model reports should usually include at least one real process/workflow map when the source material supports it.
-- In MyHarness previews, raw `<div class="mermaid">...</div>` and `language-mermaid` code blocks are rendered by the same app Mermaid renderer used for chat. Do not leave visible raw Mermaid text or placeholder boxes in the finished preview. If an artifact must work as a fully standalone file outside MyHarness, include Mermaid.js and initialize it in the artifact itself.
+- For standalone HTML reports or web reports, use an inline SVG diagram when workflow, architecture, sequence, dependency, approval, or organization-change structure would explain the subject better than prose or a table. Organization redesign, governance, handoff, approval, and operating-model reports should usually include at least one real process/workflow map when the source material supports it.
 - For report-like artifacts, actively consider restrained semantic icons for section markers, KPIs, risks, recommendations, and action items when they improve scanning. Keep icons small, consistent, and businesslike; avoid childish, toy-like, emoji-heavy, or purely decorative icon use. Do not force icons into every card or paragraph.
 - Prefer this default color palette for charts, categorical accents, heat scales, and report highlights unless the user provides a brand palette or the artifact clearly needs another scheme: `#3288bd`, `#66c2a5`, `#e6f598`, `#d53e4f`, `#9e0142`, `#f46d43`, `#fdae61`, `#fee08b`, `#abdda4`, `#5e4fa2`. Use a few colors intentionally; avoid turning every section into a rainbow.
-- For Mermaid process maps and dense diagrams, use semantic color groups so the reader can scan the system at a glance: blue for standards/requests/reports, teal for operations/market/planning, orange for investment/CAPEX/strategic decisions, red for risk/issues, and purple for governance/approval. Prefer pale fills with crisp colored borders and readable dark text; use stronger fills only for start/end, warnings, or key status nodes. In flowcharts, add `classDef` styles and assign classes by meaning instead of leaving all nodes the same color.
+- For process maps and dense diagrams, use semantic color groups so the reader can scan the system at a glance: blue for standards/requests/reports, teal for operations/market/planning, orange for investment/CAPEX/strategic decisions, red for risk/issues, and purple for governance/approval. Prefer pale fills with crisp colored borders and readable dark text; use stronger fills only for start/end, warnings, or key status nodes.
 - Use accessible contrast and semantic HTML.
 
 ## Layout Density And Whitespace QA
@@ -104,14 +105,11 @@ quarterly trends, sources, or a report:
 
 ## Library choices
 
-- **React/ReactDOM via CDN**: optional for MyHarness HTML reports, dashboards, infographics, and interactive previews. Use it when repeated report sections, tabs, filters, search, chart panels, sortable/explorable tables, or reusable UI state would be clearer as component-driven browser JS inside a single HTML file. Skip it when plain static HTML/CSS/JS is simpler and sufficient. Prefer prewritten browser JS over in-browser JSX/Babel when practical to keep load time lower.
-- **ECharts**: multi-chart business dashboards/reports.
-- **Chart.js**: simple common charts.
-- **Lucide or similar icon sets**: restrained semantic icons for reports, dashboards, and visual summaries.
-- **SVG/CSS**: small bespoke static visuals, cards, fixed callouts, and simple timelines when Mermaid or ECharts would be heavier than the job.
-- **Mermaid**: maintainable diagrams in the Mermaid.js family, not only flowcharts. Prefer Mermaid over hand-drawn SVG for structured diagrams when the visual type fits, because Mermaid is usually cleaner and easier to revise. In MyHarness chat or Markdown artifact previews, prefer fenced `mermaid` blocks for compact diagrams such as `flowchart`, `sequenceDiagram`, `classDiagram`, `stateDiagram`, `erDiagram`, `gantt`, `pie`, `journey`, `gitGraph`, `timeline`, `mindmap`, `quadrantChart`, and `sankey`. Choose the type that fits the content instead of defaulting to flowchart. Use `quadrantChart` freely for 2x2 prioritization/positioning and use `sankey` for flow/allocation diagrams; MyHarness validates Mermaid before writing human-facing HTML/Markdown artifacts so syntax errors can be fixed before preview. Avoid Mermaid keyword-like flowchart class names such as `end`; use names like `finish` or `done`. If a requirement diagram is the right choice, quote user-defined `id`/`text` values and use canonical enum casing so MyHarness can render it reliably. In standalone HTML artifacts, include Mermaid via CDN only when the artifact needs those diagram types, and render from `<div class="mermaid">...</div>` blocks rather than showing Mermaid as code.
-- **Reveal.js**: full HTML slide decks.
-- **Three.js/D3/Leaflet**: only when 3D, advanced data visualization, or maps are central.
+- **Inline SVG**: primary choice for bespoke charts, timelines, maps, and diagrams that must remain self-contained.
+- **CSS**: metric strips, comparison bars, heatmaps, callouts, and simple timelines.
+- **Inline semantic icons**: restrained section markers and status symbols when they materially improve scanning.
+- **SVG/CSS**: small bespoke static visuals, cards, fixed callouts, and simple timelines.
+- **JavaScript libraries**: avoid CDN-only dependencies when a small inline implementation is practical. If a library is necessary, preserve a useful fallback because network access is not guaranteed in Artifact preview.
 
 ## Workflow
 

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterable
+import math
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from sqlalchemy import func, or_, select, update
@@ -405,6 +406,11 @@ def create_run(
         ],
         "excluded_scopes": list(instruction_stack.excluded_scopes),
     }
+    normalized_login_id = user.login_id.strip().casefold()
+    prompt_cache_key = (
+        "lumina:user:v1:"
+        + hashlib.sha256(normalized_login_id.encode("utf-8")).hexdigest()[:48]
+    )
     extensions = (
         [dict(item) for item in extension_snapshot_override]
         if extension_snapshot_override is not None
@@ -441,6 +447,7 @@ def create_run(
         "extension_application": extension_application,
         "environment_type": "local_worker",
         "approval_mode": "on_risk",
+        "prompt_cache_key": prompt_cache_key,
     }
     if auto_selected_skill_ids:
         stable_prefix["auto_selected_skill_ids"] = auto_selected_skill_ids
@@ -496,6 +503,7 @@ def create_run(
                 else {}
             ),
             "prompt_prefix_hash": prefix_hash,
+            "prompt_cache_key": prompt_cache_key,
             "contract_version": stable_prefix["contract_version"],
             "environment_type": "local_worker",
             "approval_mode": "on_risk",
@@ -988,38 +996,38 @@ def _dynamic_plan_step_specs(
     normalized = goal.casefold()
     if any(token in normalized for token in ("보고서", "report", "조사", "리서치", "동향", "비교", "분석")):
         labels = (
-            "요청 범위와 조사 기준 정리",
-            "관련 자료 탐색 및 근거 수집",
-            "핵심 내용 분석 및 결과 구조화",
-            "결과 검증 및 보고서 전달",
+            "요청 범위와 조사 기준을 정리합니다",
+            "관련 자료를 탐색하고 근거를 수집합니다",
+            "핵심 내용을 분석하고 결과를 구조화합니다",
+            "결과를 검증하고 보고서를 전달합니다",
         )
     elif any(token in normalized for token in ("코드", "구현", "수정", "버그", "리팩터", "테스트", "build", "fix")):
         labels = (
-            "요청과 관련 코드 영향 범위 확인",
-            "변경 방향 설계 및 구현",
-            "테스트와 실제 동작 검증",
-            "변경 결과 정리 및 전달",
+            "요청과 관련된 코드의 영향 범위를 확인합니다",
+            "변경 방향을 설계하고 구현합니다",
+            "테스트와 실제 동작을 검증합니다",
+            "변경 결과를 정리하고 전달합니다",
         )
     elif any(token in normalized for token in ("표", "엑셀", "데이터", "csv", "xlsx", "통계", "차트")):
         labels = (
-            "데이터 범위와 산출물 기준 확인",
-            "데이터 정리 및 분석",
-            "표와 시각화 결과 검증",
-            "분석 결과 및 산출물 전달",
+            "데이터 범위와 산출물 기준을 확인합니다",
+            "데이터를 정리하고 분석합니다",
+            "표와 시각화 결과를 검증합니다",
+            "분석 결과와 산출물을 전달합니다",
         )
     elif any(token in normalized for token in ("파일", "문서", "pdf", "docx", "pptx", "요약")):
         labels = (
-            "대상 문서와 요청 범위 확인",
-            "문서 내용 분석 및 핵심 정보 추출",
-            "결과 구성과 산출물 검증",
-            "완성 결과 전달",
+            "대상 문서와 요청 범위를 확인합니다",
+            "문서 내용을 분석하고 핵심 정보를 추출합니다",
+            "결과 구성과 산출물을 검증합니다",
+            "완성된 결과를 전달합니다",
         )
     else:
         labels = (
-            "요청 목표와 제약 확인",
-            "필요 정보 확인 및 작업 수행",
-            "결과 검토 및 정확성 확인",
-            "최종 답변 정리 및 전달",
+            "요청 목표와 제약을 확인합니다",
+            "필요한 정보를 확인하고 작업을 수행합니다",
+            "결과를 검토하고 정확성을 확인합니다",
+            "최종 답변을 정리하고 전달합니다",
         )
 
     return (
@@ -1079,6 +1087,61 @@ def plan_snapshot(db: Session, run: Run) -> dict[str, Any] | None:
         "createdAt": plan.created_at,
         "updatedAt": plan.updated_at,
     }
+
+
+def update_work_plan(
+    db: Session,
+    run: Run,
+    *,
+    steps: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Persist the model-authored, user-visible work plan for a Run."""
+    if not 1 <= len(steps) <= 8:
+        raise ValueError("업무 계획은 1개 이상 8개 이하의 단계여야 합니다.")
+
+    previous = run.snapshot_json.get("work_plan", [])
+    previous_ids = {
+        str(item.get("step", "")).strip().casefold(): str(item.get("id"))
+        for item in previous
+        if isinstance(item, dict) and item.get("id")
+    }
+    previous_ids_by_order = {
+        int(item.get("order")): str(item.get("id"))
+        for item in previous
+        if isinstance(item, dict)
+        and item.get("id")
+        and isinstance(item.get("order"), int)
+    }
+    normalized: list[dict[str, Any]] = []
+    active_count = 0
+    for order, item in enumerate(steps, start=1):
+        if not isinstance(item, dict):
+            raise ValueError("각 업무 계획 단계는 객체여야 합니다.")
+        label = " ".join(str(item.get("step", "")).split())
+        if not label or len(label) > 240:
+            raise ValueError("업무 계획 단계명은 1자 이상 240자 이하여야 합니다.")
+        status = str(item.get("status", "pending"))
+        if status not in {"pending", "in_progress", "completed"}:
+            raise ValueError("업무 계획 상태가 올바르지 않습니다.")
+        if status == "in_progress":
+            active_count += 1
+        normalized.append(
+            {
+                "id": previous_ids.get(label.casefold())
+                or previous_ids_by_order.get(order)
+                or new_uuid(),
+                "step": label,
+                "status": status,
+                "order": order,
+            }
+        )
+    if active_count > 1:
+        raise ValueError("동시에 진행 중인 업무 계획 단계는 하나만 허용됩니다.")
+
+    run.snapshot_json = {**run.snapshot_json, "work_plan": normalized}
+    append_event(db, run, "work_plan_updated", {"steps": normalized})
+    db.flush()
+    return normalized
 
 
 def _plan_step_payload(db: Session, step: PlanStep) -> dict[str, Any]:
@@ -1524,6 +1587,7 @@ def tool_response(tool: ToolExecution) -> dict[str, Any]:
     duration_ms = None
     if tool.started_at and tool.finished_at:
         duration_ms = int((tool.finished_at - tool.started_at).total_seconds() * 1000)
+    progress = _write_file_progress(tool.validated_input_json)
     return {
         "id": tool.id,
         "callId": tool.tool_call_id,
@@ -1531,16 +1595,55 @@ def tool_response(tool: ToolExecution) -> dict[str, Any]:
         "toolName": tool.tool_name,
         "label": tool.tool_name.replace("_", " "),
         "status": tool.status,
-        "input": tool.validated_input_json,
+        "input": (
+            {}
+            if "__lumina_stream_tokens" in tool.validated_input_json
+            else tool.validated_input_json
+        ),
         "result": tool.result_json if tool.status == "completed" else None,
-        "inputSummary": [
-            f"{key}: {value}" for key, value in tool.validated_input_json.items()
-        ],
+        "inputSummary": (
+            ["파일 내용을 생성하고 있습니다."]
+            if "__lumina_stream_tokens" in tool.validated_input_json
+            else [
+                f"{key}: {value}"
+                for key, value in tool.validated_input_json.items()
+            ]
+        ),
         "resultSummary": [tool.result_summary] if tool.result_summary else [],
         "startedAt": tool.started_at,
         "completedAt": tool.finished_at,
         "durationMs": duration_ms,
+        "progress": progress,
         "error": tool.error_message,
+    }
+
+
+def _write_file_progress(
+    arguments: Mapping[str, Any],
+) -> dict[str, int | str] | None:
+    if "__lumina_stream_tokens" in arguments:
+        progress: dict[str, int | str] = {
+            "tokens": max(0, int(arguments.get("__lumina_stream_tokens", 0))),
+            "lines": max(0, int(arguments.get("__lumina_stream_lines", 0))),
+        }
+        file_name = arguments.get("__lumina_stream_file_name")
+        if isinstance(file_name, str) and file_name.strip():
+            progress["fileName"] = file_name.strip()
+        return progress
+    content = arguments.get("content")
+    if not isinstance(content, str):
+        return None
+    character_count = len(content)
+    if character_count == 0:
+        return {"tokens": 0, "lines": 0}
+    return {
+        "tokens": max(1, math.ceil(character_count / 4)),
+        "lines": max(1, content.count("\n") + 1),
+        **(
+            {"fileName": str(arguments["path"]).replace("\\", "/").rsplit("/", 1)[-1]}
+            if arguments.get("path")
+            else {}
+        ),
     }
 
 
@@ -1667,6 +1770,8 @@ def run_snapshot(db: Session, run: Run) -> dict[str, Any]:
         "conversationTitle": conversation.title if conversation is not None else None,
         "conversationRevision": conversation.revision if conversation is not None else None,
         "status": run.status,
+        "errorCode": run.error_code,
+        "errorMessage": run.error_message,
         "lastSequence": run.last_sequence,
         "startedAt": run.started_at,
         "finishedAt": run.finished_at,
@@ -1676,6 +1781,7 @@ def run_snapshot(db: Session, run: Run) -> dict[str, Any]:
             else None
         ),
         "artifactProgress": run.snapshot_json.get("artifact_progress"),
+        "workPlan": run.snapshot_json.get("work_plan", []),
         "plan": plan_snapshot(db, run),
         "activities": activities,
         "toolExecutions": [tool_response(tool) for tool in tools],

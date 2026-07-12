@@ -188,7 +188,7 @@ def test_codex_catalog_and_legacy_seed_merge_preserve_adapter_capabilities(
         codex = db.scalar(
             select(ProviderModel).where(
                 ProviderModel.provider_id == "codex",
-                ProviderModel.model_key == "gpt-5.6-sol",
+                ProviderModel.model_key == "gpt-5.5",
             )
         )
         pgpt = db.scalar(
@@ -212,7 +212,7 @@ def test_codex_catalog_and_legacy_seed_merge_preserve_adapter_capabilities(
 
         bootstrap_database(db, settings=settings)
         db.commit()
-        assert codex.capabilities_json["image_generation"] is True
+        assert codex.capabilities_json["image_generation"] is False
         assert codex.capabilities_json["tools"] is True
         assert pgpt.capabilities_json["tools"] is True
         assert pgpt.capabilities_json["structured_output"] is True
@@ -228,13 +228,7 @@ def test_codex_catalog_and_legacy_seed_merge_preserve_adapter_capabilities(
         assert codex.capabilities_json == custom
 
     catalog = initial_model_catalog("codex")
-    assert [item.capabilities.image_generation for item in catalog] == [
-        True,
-        True,
-        True,
-        True,
-        False,
-    ]
+    assert [item.capabilities.image_generation for item in catalog] == [False, False]
     engine.dispose()
 
 
@@ -485,7 +479,7 @@ def test_codex_image_tool_persists_immutable_versions_without_raw_payloads(
         async def generate(self, request: ImageGenerationRequest) -> GeneratedImage:
             self.calls += 1
             assert request.image_model == "gpt-image-2"
-            assert request.model == "gpt-5.6-sol"
+            assert request.model == "gpt-5.5"
             content = _PNG + (b"second-version" if self.calls == 2 else b"")
             return GeneratedImage(
                 content=content,
@@ -494,7 +488,7 @@ def test_codex_image_tool_persists_immutable_versions_without_raw_payloads(
                 actual_backend="openai_responses.image_generation",
                 actual_model="gpt-image-2",
                 actual_model_reported=True,
-                response_model="gpt-5.6-sol",
+                response_model="gpt-5.5",
                 revised_prompt_hash="b" * 64,
             )
 
@@ -504,6 +498,19 @@ def test_codex_image_tool_persists_immutable_versions_without_raw_payloads(
 
     with TestClient(create_app(settings)) as client:
         csrf = _login(client)
+        with SessionLocal() as db:
+            model = db.scalar(
+                select(ProviderModel).where(
+                    ProviderModel.provider_id == "codex",
+                    ProviderModel.model_key == "gpt-5.5",
+                )
+            )
+            assert model is not None
+            capabilities = dict(model.capabilities_json)
+            capabilities["image_generation"] = True
+            model.capabilities_json = capabilities
+            model.source = "admin_manual"
+            db.commit()
         project_id = client.get("/api/projects").json()[0]["id"]
         conversation_id = client.post(
             "/api/conversations",
@@ -589,12 +596,7 @@ def test_codex_image_tool_persists_immutable_versions_without_raw_payloads(
             assert base64.b64encode(_PNG).decode("ascii") not in stored_json
             assert "test-openai-key" not in stored_json
 
-    assert isinstance(
-        CodexResponsesAdapter(
-            api_key="test-openai-key", base_url="https://api.openai.test/v1"
-        ),
-        CodexResponsesAdapter,
-    )
+    assert isinstance(CodexResponsesAdapter(), CodexResponsesAdapter)
 
 
 def _manual_run(
@@ -673,7 +675,7 @@ def _start_codex_run(
             },
             "execution": {
                 "providerId": "codex",
-                "modelKey": "gpt-5.6-sol",
+                "modelKey": "gpt-5.5",
                 "effortId": "medium",
             },
         },

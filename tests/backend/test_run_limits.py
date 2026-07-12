@@ -10,7 +10,11 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from lumina.agent.executor import _MODEL_TOKEN_PRICING, _usage_payload, local_run_executor
+from lumina.agent.executor import (
+    _MODEL_TOKEN_PRICING,
+    _usage_payload,
+    local_run_executor,
+)
 from lumina.config import Settings
 from lumina.db import SessionLocal
 from lumina.main import create_app
@@ -26,7 +30,7 @@ from lumina.providers.catalog import initial_model_catalog
 from lumina.runs.state import TERMINAL_STATUSES
 
 
-def test_usage_payload_estimates_gpt_5_6_terra_cost() -> None:
+def test_usage_payload_estimates_codex_gpt_5_4_cost() -> None:
     payload = _usage_payload(
         ProviderUsage(
             input_tokens=20_053,
@@ -35,7 +39,7 @@ def test_usage_payload_estimates_gpt_5_6_terra_cost() -> None:
             output_tokens=2_335,
         ),
         provider_id="codex",
-        model="gpt-5.6-terra",
+        model="gpt-5.4",
     )
 
     assert payload["cost_usd"] == pytest.approx(0.065974)
@@ -59,12 +63,25 @@ def test_usage_payload_prefers_provider_reported_cost() -> None:
     assert "pricing_version" not in payload
 
 
+def test_usage_payload_labels_subscription_cost_as_management_estimate() -> None:
+    payload = _usage_payload(
+        ProviderUsage(
+            input_tokens=20_053,
+            output_tokens=2_335,
+            raw={"auth_mode": "chatgpt", "billing": "subscription_usage"},
+        ),
+        provider_id="codex",
+        model="gpt-5.5",
+    )
+
+    assert payload["cost_basis"] == "subscription_price_table_estimate"
+    assert payload["cost_usd"] > 0
+    assert payload["pricing_version"] == "public-list-2026-07-12"
+
+
 @pytest.mark.parametrize(
     ("provider_id", "model", "expected_cost"),
     [
-        ("codex", "gpt-5.6-sol", 3.5),
-        ("codex", "gpt-5.6-terra", 1.75),
-        ("codex", "gpt-5.6-luna", 0.7),
         ("codex", "gpt-5.5", 3.5),
         ("codex", "gpt-5.4", 1.75),
         ("openai", "gpt-5.6-sol", 3.5),
@@ -90,7 +107,9 @@ def test_usage_payload_estimates_every_public_catalog_model(
 
 
 @pytest.mark.parametrize("provider_id", ["pgpt", "openai_compatible"])
-def test_usage_payload_does_not_guess_private_provider_pricing(provider_id: str) -> None:
+def test_usage_payload_does_not_guess_private_provider_pricing(
+    provider_id: str,
+) -> None:
     payload = _usage_payload(
         ProviderUsage(input_tokens=100_000, output_tokens=100_000),
         provider_id=provider_id,
@@ -284,9 +303,7 @@ def test_legacy_usage_limit_settings_do_not_stop_run(
         assert run.status == "completed"
         assert not any(
             event.event_type == "run_limit_reached"
-            for event in db.scalars(
-                select(RunEvent).where(RunEvent.run_id == run_id)
-            )
+            for event in db.scalars(select(RunEvent).where(RunEvent.run_id == run_id))
         )
     if expected_code == "run_cost_limit":
         assert run.usage_json["cost_usd"] == pytest.approx(0.25)

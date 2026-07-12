@@ -82,7 +82,7 @@ flowchart LR
 | Windows 10/11과 PowerShell | Windows에 기본 포함되어 있으므로 별도로 설치하지 않아도 됩니다. |
 | Python 3.13 | [`Python 공식 Windows 다운로드`](https://www.python.org/downloads/windows/)에서 최신 Python 3.13.x의 **Windows installer (64-bit)**를 설치합니다. 직접 설치하지 않아도 `uv`가 필요한 Python 3.13을 자동으로 내려받을 수 있습니다. |
 | `uv` | [`uv 공식 설치 안내`](https://docs.astral.sh/uv/getting-started/installation/)의 Windows 방법을 따르거나 PowerShell에서 아래 명령을 실행합니다. |
-| Node.js와 npm | [`Node.js 공식 다운로드`](https://nodejs.org/en/download)에서 **LTS** 버전을 설치합니다. `npm`은 Node.js 설치에 포함되므로 따로 설치하지 않습니다. |
+| Node.js와 npm | [`Node.js 공식 다운로드`](https://nodejs.org/en/download)에서 **Node.js 20.19.0 이상인 LTS** 버전을 설치합니다. `npm`은 Node.js 설치에 포함되므로 따로 설치하지 않습니다. |
 
 처음 설치한다면 다음 순서가 가장 간단합니다.
 
@@ -246,7 +246,8 @@ $사내검색 최근 관련 규정을 찾아 주세요.
 
 | Provider | 주요 설정 |
 |---|---|
-| OpenAI / Codex | `OPENAI_API_KEY` |
+| Codex | 로컬 Codex App Server의 ChatGPT OAuth (`codex login`) |
+| OpenAI | `OPENAI_API_KEY` |
 | Anthropic | `ANTHROPIC_API_KEY` |
 | Gemini | `GOOGLE_API_KEY` |
 | OpenAI Compatible | `LUMINA_OPENAI_COMPATIBLE_BASE_URL`, `LUMINA_OPENAI_COMPATIBLE_API_KEY` |
@@ -255,7 +256,7 @@ $사내검색 최근 관련 규정을 찾아 주세요.
 
 P-GPT의 기본 endpoint는 코드에 정의된 사내 profile을 사용하며, `PGPT_BASE_URL`은 관리자 override가 필요할 때만 설정합니다. 새로 발견한 Provider 모델은 자동으로 활성화하지 않고 관리자가 검증한 카탈로그 항목만 사용자에게 노출합니다.
 
-Provider credential을 설정하지 않은 개발 환경에서는 deterministic Mock Provider를 사용해 대화, Tool, Plan과 Artifact 흐름을 검증할 수 있습니다.
+Codex는 ChatGPT 구독 사용량을 쓰며 `OPENAI_API_KEY`로 자동 전환하지 않습니다. 현재 공개 Codex App Server에서 검증된 초기 모델은 `GPT-5.5`와 `GPT-5.4`입니다. Provider credential을 설정하지 않은 개발 환경에서는 deterministic Mock Provider를 사용해 대화, Tool, Plan과 Artifact 흐름을 검증할 수 있습니다.
 
 ## 개발과 검증
 

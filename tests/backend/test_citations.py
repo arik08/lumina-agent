@@ -19,6 +19,7 @@ def test_resolves_explicit_markers_and_leaves_reference_only_sources() -> None:
         "source-a",
     ]
     assert [item["marker"] for item in payload["citations"]] == ["[1]", "【2】", "①"]
+    assert {item["status"] for item in payload["citations"]} == {"cited"}
     assert [source["citationStatus"] for source in payload["sources"]] == [
         "cited",
         "cited",

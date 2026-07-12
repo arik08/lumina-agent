@@ -293,7 +293,15 @@ def test_installer_validate_only_forces_offline_uv(tmp_path: Path) -> None:
         )
     for command_name in ("uv", "node", "npm"):
         command = tmp_path / f"{command_name}{suffix}"
-        command.write_text(script, encoding="utf-8")
+        command_script = script
+        if command_name == "node":
+            command_script = (
+                '@echo off\r\n>>"%LUMINA_INSTALL_TEST_CAPTURE%" echo %*\r\n'
+                'echo v22.12.0\r\nexit /b 0\r\n'
+            ) if os.name == "nt" else (
+                '#!/usr/bin/env sh\nprintf "%s\\n" "$*" >> "$LUMINA_INSTALL_TEST_CAPTURE"\nprintf "v22.12.0\\n"\n'
+            )
+        command.write_text(command_script, encoding="utf-8")
         command.chmod(0o700)
 
     installer = Path(__file__).resolve().parents[2] / "devtools" / "install_lumina.ps1"
@@ -321,3 +329,242 @@ def test_installer_validate_only_forces_offline_uv(tmp_path: Path) -> None:
     assert completed.returncode == 0, completed.stderr
     invocation = capture.read_text(encoding="utf-8")
     assert "run --offline --project" in invocation
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows batch entrypoint")
+def test_installer_batch_keeps_failure_visible_and_preserves_exit_code(
+    tmp_path: Path,
+) -> None:
+    repository_root = Path(__file__).resolve().parents[2]
+    installer = repository_root / "installer.bat"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "powershell.cmd").write_text(
+        "@echo off\r\necho simulated installer failure\r\nexit /b 7\r\n",
+        encoding="utf-8",
+    )
+
+    environment = os.environ.copy()
+    environment["PATH"] = f"{fake_bin}{os.pathsep}{environment.get('PATH', '')}"
+    completed = subprocess.run(
+        ["cmd", "/d", "/c", str(installer)],
+        input="\n",
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+        env=environment,
+    )
+
+    assert completed.returncode == 7
+    assert "simulated installer failure" in completed.stdout
+    assert "Lumina installation failed" in completed.stdout
+    assert "Press any key" in completed.stdout
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows batch entrypoint")
+def test_installer_batch_keeps_success_visible_until_keypress(tmp_path: Path) -> None:
+    repository_root = Path(__file__).resolve().parents[2]
+    installer = repository_root / "installer.bat"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "powershell.cmd").write_text(
+        "@echo off\r\necho simulated installer success\r\nexit /b 0\r\n",
+        encoding="utf-8",
+    )
+
+    environment = os.environ.copy()
+    environment["PATH"] = f"{fake_bin}{os.pathsep}{environment.get('PATH', '')}"
+    completed = subprocess.run(
+        ["cmd", "/d", "/c", str(installer)],
+        input="\n",
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+        env=environment,
+    )
+
+    assert completed.returncode == 0
+    assert "simulated installer success" in completed.stdout
+    assert "Lumina installation completed successfully" in completed.stdout
+    assert "Press any key" in completed.stdout
+
+
+def test_installer_missing_uv_error_includes_install_guidance(tmp_path: Path) -> None:
+    powershell = shutil.which("pwsh") or shutil.which("powershell")
+    if powershell is None:
+        pytest.skip("PowerShell is not installed")
+
+    suffix = ".cmd" if os.name == "nt" else ""
+    shim = "@echo off\r\nexit /b 0\r\n" if os.name == "nt" else "#!/bin/sh\nexit 0\n"
+    for command_name in ("node", "npm"):
+        command = tmp_path / f"{command_name}{suffix}"
+        command.write_text(shim, encoding="utf-8")
+        command.chmod(0o700)
+
+    installer = Path(__file__).resolve().parents[2] / "devtools" / "install_lumina.ps1"
+    environment = os.environ.copy()
+    environment["PATH"] = str(tmp_path)
+    completed = subprocess.run(
+        [
+            powershell,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(installer),
+            "-NonInteractive",
+            "-SkipPgpt",
+            "-ValidateOnly",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+        env=environment,
+    )
+
+    output = completed.stdout + completed.stderr
+    assert completed.returncode != 0
+    assert "Required command 'uv' was not found" in output
+    assert "astral.sh/uv/install.ps1" in output
+
+
+def test_installer_rejects_node_version_too_old_for_vite(tmp_path: Path) -> None:
+    powershell = shutil.which("pwsh") or shutil.which("powershell")
+    if powershell is None:
+        pytest.skip("PowerShell is not installed")
+    if os.name != "nt":
+        pytest.skip("Windows command shims are used by the installer entrypoint")
+
+    (tmp_path / "uv.cmd").write_text("@echo off\r\nexit /b 0\r\n", encoding="utf-8")
+    (tmp_path / "npm.cmd").write_text("@echo off\r\nexit /b 0\r\n", encoding="utf-8")
+    (tmp_path / "node.cmd").write_text("@echo off\r\necho v18.20.0\r\n", encoding="utf-8")
+    installer = Path(__file__).resolve().parents[2] / "devtools" / "install_lumina.ps1"
+    environment = os.environ.copy()
+    environment["PATH"] = str(tmp_path)
+    completed = subprocess.run(
+        [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(installer), "-NonInteractive", "-SkipPgpt", "-ValidateOnly"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+        env=environment,
+    )
+
+    output = completed.stdout + completed.stderr
+    assert completed.returncode != 0
+    assert "Node.js 20.19.0 or newer is required" in output
+    assert "nodejs.org" in output
+
+
+def test_installer_ignores_missing_saved_optional_company_ca(tmp_path: Path) -> None:
+    powershell = shutil.which("pwsh") or shutil.which("powershell")
+    if powershell is None:
+        pytest.skip("PowerShell is not installed")
+    if os.name != "nt":
+        pytest.skip("Windows command shims are used by the installer entrypoint")
+
+    capture = tmp_path / "invocations.txt"
+    shim = (
+        '@echo off\r\n'
+        '>>"%LUMINA_INSTALL_TEST_CAPTURE%" echo %~n0 %*\r\n'
+        'if /I "%~n0"=="node" echo v22.12.0\r\n'
+        'exit /b 0\r\n'
+    )
+    for command_name in ("uv", "node", "npm"):
+        (tmp_path / f"{command_name}.cmd").write_text(shim, encoding="utf-8")
+
+    installer = Path(__file__).resolve().parents[2] / "devtools" / "install_lumina.ps1"
+    environment = os.environ.copy()
+    environment["PATH"] = f"{tmp_path}{os.pathsep}{environment.get('PATH', '')}"
+    environment["LUMINA_INSTALL_TEST_CAPTURE"] = str(capture)
+    environment["LUMINA_CA_CERT"] = str(tmp_path / "office-only-company-ca.crt")
+    environment.pop("LUMINA_CA_BUNDLE", None)
+    completed = subprocess.run(
+        [
+            powershell,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(installer),
+            "-NonInteractive",
+            "-SkipPgpt",
+            "-SkipDependencyInstall",
+            "-SkipFrontendBuild",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+        env=environment,
+    )
+
+    output = completed.stdout + completed.stderr
+    assert completed.returncode == 0, output
+    assert "Saved company CA path was not found" in output
+    assert "Continuing with public CA trust" in output
+
+
+def test_installer_uses_npm_cmd_instead_of_npm_ps1_on_windows(tmp_path: Path) -> None:
+    powershell = shutil.which("pwsh") or shutil.which("powershell")
+    if powershell is None:
+        pytest.skip("PowerShell is not installed")
+    if os.name != "nt":
+        pytest.skip("npm.cmd and npm.ps1 precedence is Windows-specific")
+
+    capture = tmp_path / "invocations.txt"
+    (tmp_path / "uv.cmd").write_text(
+        '@echo off\r\n>>"%LUMINA_INSTALL_TEST_CAPTURE%" echo uv %*\r\nexit /b 0\r\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "node.cmd").write_text(
+        "@echo off\r\necho v22.12.0\r\nexit /b 0\r\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "npm.ps1").write_text(
+        'Write-Error "npm.ps1 must not be invoked by the installer"\nexit 9\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "npm.cmd").write_text(
+        '@echo off\r\n>>"%LUMINA_INSTALL_TEST_CAPTURE%" echo npm.cmd %*\r\nexit /b 0\r\n',
+        encoding="utf-8",
+    )
+
+    installer = Path(__file__).resolve().parents[2] / "devtools" / "install_lumina.ps1"
+    environment = os.environ.copy()
+    environment["PATH"] = f"{tmp_path}{os.pathsep}{environment.get('PATH', '')}"
+    environment["LUMINA_INSTALL_TEST_CAPTURE"] = str(capture)
+    environment.pop("LUMINA_CA_CERT", None)
+    environment.pop("LUMINA_CA_BUNDLE", None)
+    completed = subprocess.run(
+        [
+            powershell,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(installer),
+            "-NonInteractive",
+            "-SkipPgpt",
+            "-SkipFrontendBuild",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+        env=environment,
+    )
+
+    output = completed.stdout + completed.stderr
+    assert completed.returncode == 0, output
+    invocation = capture.read_text(encoding="utf-8")
+    assert "npm.cmd ci --prefix" in invocation

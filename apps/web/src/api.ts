@@ -7,6 +7,7 @@ import type {
   AdminConversationDetail,
   AdminConversationList,
   AdminProviderModel,
+  AdminUsageStatistics,
   AdminUser,
   AdminUserList,
   AttachmentSummary,
@@ -19,6 +20,8 @@ import type {
   CursorPage,
   ListConversationsQuery,
   LoginRequest,
+  RegistrationRequest,
+  RegistrationResponse,
   InstructionDocument,
   UpdateInstructionRequest,
   MemoryLearningMode,
@@ -70,6 +73,7 @@ import type {
   McpDefinitionCreateRequest,
   McpInstallation,
 } from "./api-types";
+import { createClientId } from "./client-id";
 
 type QueryValue = string | number | boolean | null | undefined;
 
@@ -276,6 +280,15 @@ export function getUsdKrwExchangeRate() {
 
 export async function login(payload: LoginRequest, signal?: AbortSignal) {
   return request<AuthSession>("/auth/login", {
+    method: "POST",
+    body: payload,
+    csrf: false,
+    signal,
+  });
+}
+
+export async function registerAccount(payload: RegistrationRequest, signal?: AbortSignal) {
+  return request<RegistrationResponse>("/auth/register", {
     method: "POST",
     body: payload,
     csrf: false,
@@ -640,7 +653,7 @@ export async function moveConversation(
 ) {
   return request<ConversationListItem>(`/conversations/${encodeURIComponent(conversationId)}/move`, {
     method: "POST",
-    body: { projectId, idempotencyKey: crypto.randomUUID() },
+    body: { projectId, idempotencyKey: createClientId() },
     signal,
   });
 }
@@ -1057,21 +1070,43 @@ export async function saveSkillVersion(draft: SkillDraft, signal?: AbortSignal) 
   });
 }
 
-export async function listExtensionInstallations(projectId?: string, signal?: AbortSignal) {
+export async function addSkillOwnership(
+  skillId: string,
+  userId: string,
+  role: "owner" | "maintainer" = "owner",
+  signal?: AbortSignal,
+) {
+  return request<SkillExtension>(`/skills/${encodeURIComponent(skillId)}/ownerships`, {
+    method: "POST",
+    body: { userId, role },
+    signal,
+  });
+}
+
+export async function removeSkillOwnership(
+  skillId: string,
+  ownershipId: string,
+  signal?: AbortSignal,
+) {
+  await request<void>(
+    `/skills/${encodeURIComponent(skillId)}/ownerships/${encodeURIComponent(ownershipId)}`,
+    { method: "DELETE", signal },
+  );
+}
+
+export async function listExtensionInstallations(signal?: AbortSignal) {
   return request<ExtensionInstallation[]>("/extension-installations", {
-    query: { project_id: projectId },
     signal,
   });
 }
 
 export async function installExtensionVersion(
   versionId: string,
-  projectId: string,
   signal?: AbortSignal,
 ) {
   return request<ExtensionInstallation>("/extension-installations", {
     method: "POST",
-    body: { versionId, scopeType: "project", scopeId: projectId, enabled: true, settings: {} },
+    body: { versionId, scopeType: "user", enabled: true, settings: {} },
     signal,
   });
 }
@@ -1248,7 +1283,7 @@ export async function setScheduledTaskEnabled(taskId: string, enabled: boolean, 
 export async function runScheduledTaskNow(taskId: string, signal?: AbortSignal) {
   return request<ScheduledRun>(`/scheduled-tasks/${encodeURIComponent(taskId)}/run-now`, {
     method: "POST",
-    idempotencyKey: crypto.randomUUID(),
+    idempotencyKey: createClientId(),
     signal,
   });
 }
@@ -1265,6 +1300,10 @@ export async function listAdminUsers(
   signal?: AbortSignal,
 ) {
   return request<AdminUserList>("/admin/users", { query: filters, signal });
+}
+
+export async function getAdminUsageStatistics(days: 0 | 30 | 90 = 30, signal?: AbortSignal) {
+  return request<AdminUsageStatistics>("/admin/usage-statistics", { query: { days }, signal });
 }
 
 export async function createAdminUser(payload: CreateAdminUserRequest, signal?: AbortSignal) {
@@ -1537,6 +1576,8 @@ export const api = {
     createSkill,
     updateDraft: updateSkillDraft,
     saveVersion: saveSkillVersion,
+    addOwnership: addSkillOwnership,
+    removeOwnership: removeSkillOwnership,
     listInstallations: listExtensionInstallations,
     install: installExtensionVersion,
     uninstall: uninstallExtension,
@@ -1575,6 +1616,7 @@ export const api = {
     rollbackProposal: rollbackProjectLearningProposal,
   },
   admin: {
+    getUsageStatistics: getAdminUsageStatistics,
     listUsers: listAdminUsers,
     createUser: createAdminUser,
     updateUser: updateAdminUser,

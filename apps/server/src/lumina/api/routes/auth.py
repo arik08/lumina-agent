@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request, Response
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ...audit import record_audit
@@ -8,6 +9,7 @@ from ...auth import (
     AccountUnavailableError,
     AuthenticationError,
     authenticate_user,
+    create_user,
     issue_server_session,
     revoke_server_session,
     verify_csrf_token,
@@ -15,9 +17,10 @@ from ...auth import (
 from ...config import Settings, get_settings
 from ...db import get_db
 from ...models import User
+from ...notifications import create_registration_approval_notification
 from ..dependencies import AuthContext, get_auth_context, require_csrf
 from ..errors import ApiProblem
-from ..schemas import LoginRequest
+from ..schemas import LoginRequest, RegistrationRequest
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -43,6 +46,64 @@ def _session_payload(user: User, expires_at, csrf_token: str) -> dict[str, objec
         "user": _user_payload(user),
         "expiresAt": expires_at,
         "csrfToken": csrf_token,
+    }
+
+
+@router.post("/register", status_code=201)
+def register(
+    payload: RegistrationRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    email = payload.email.strip().casefold()
+    if email.count("@") != 1:
+        raise ApiProblem(422, "invalid_email", "올바른 이메일 주소를 입력해 주세요.")
+    login_name, login_domain = email.split("@", 1)
+    bootstrap_admin = db.scalar(
+        select(User).where(
+            User.login_id == "admin@posco.com",
+            User.role == "admin",
+            User.status == "active",
+        )
+    )
+    if bootstrap_admin is None:
+        raise ApiProblem(503, "registration_unavailable", "가입 신청을 처리할 관리자가 없습니다.")
+    try:
+        applicant = create_user(
+            db,
+            login_name=login_name,
+            login_domain=login_domain,
+            password=payload.password,
+            organization_id=bootstrap_admin.organization_id,
+            display_name=payload.display_name.strip(),
+            affiliation=payload.affiliation.strip(),
+            role=payload.role,
+            status="invited",
+        )
+    except ValueError as exc:
+        code = "login_id_exists" if "already exists" in str(exc) else "invalid_user"
+        raise ApiProblem(
+            409 if code == "login_id_exists" else 422,
+            code,
+            "이미 가입되었거나 신청 중인 이메일입니다." if code == "login_id_exists" else "가입 신청 정보를 확인해 주세요.",
+        ) from exc
+    create_registration_approval_notification(
+        db, admin=bootstrap_admin, applicant=applicant
+    )
+    record_audit(
+        db,
+        action="registration_requested",
+        target_type="user",
+        target_id=applicant.id,
+        result="success",
+        request_id=getattr(request.state, "request_id", None),
+        metadata={"requested_role": applicant.role},
+    )
+    db.commit()
+    return {
+        "loginId": applicant.login_id,
+        "status": applicant.status,
+        "message": "가입 신청이 접수되었습니다. 관리자 승인 후 로그인할 수 있습니다.",
     }
 
 

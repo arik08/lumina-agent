@@ -1,4 +1,4 @@
-from .adapter import CodexResponsesAdapter
+from .adapter import CodexResponsesAdapter, codex_oauth_available
 from .image_generation import (
     CodexImageGenerator,
     GeneratedImage,
@@ -11,6 +11,7 @@ __all__ = [
     "PROVIDER_ID",
     "CodexImageGenerator",
     "CodexResponsesAdapter",
+    "codex_oauth_available",
     "GeneratedImage",
     "ImageGenerationRequest",
 ]

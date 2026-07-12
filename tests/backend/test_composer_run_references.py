@@ -421,6 +421,9 @@ def test_run_snapshot_and_message_references_are_canonical_and_reproducible(
             == "# 점검 보고서\n\n초기 절차를 따릅니다."
         )
         assert len(run.snapshot_json["prompt_prefix_hash"]) == 64
+        assert run.snapshot_json["prompt_cache_key"].startswith("lumina:user:v1:")
+        assert len(run.snapshot_json["prompt_cache_key"]) == 63
+        assert "@" not in run.snapshot_json["prompt_cache_key"]
         assert (
             db.scalar(
                 select(func.count(MessageReference.id)).where(

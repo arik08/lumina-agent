@@ -7,8 +7,8 @@ from typing import Any
 
 from .types import ProviderCapabilities
 
-CATALOG_REVISION = "2026-07-12.1"
-CATALOG_VERIFIED_AT = date(2026, 7, 11)
+CATALOG_REVISION = "2026-07-12.2-codex-oauth"
+CATALOG_VERIFIED_AT = date(2026, 7, 12)
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,13 +43,6 @@ _PGPT_MINI_CAPABILITIES = ProviderCapabilities(
     structured_output=True,
     reasoning_effort=True,
     context_window=400_000,
-)
-_CODEX_IMAGE_CAPABILITIES = ProviderCapabilities(
-    tools=True,
-    structured_output=True,
-    reasoning_effort=True,
-    image_generation=True,
-    context_window=272_000,
 )
 _CODEX_TEXT_CAPABILITIES = ProviderCapabilities(
     tools=True,
@@ -103,43 +96,13 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
     ),
     ModelCatalogSeed(
         "codex",
-        "gpt-5.6-sol",
-        "GPT-5.6-Sol",
-        "gpt-5.6-sol",
-        True,
-        10,
-        _PRODUCT_CONTRACT,
-        capabilities=_CODEX_IMAGE_CAPABILITIES,
-    ),
-    ModelCatalogSeed(
-        "codex",
-        "gpt-5.6-terra",
-        "GPT-5.6-Terra",
-        "gpt-5.6-terra",
-        False,
-        20,
-        _PRODUCT_CONTRACT,
-        capabilities=_CODEX_IMAGE_CAPABILITIES,
-    ),
-    ModelCatalogSeed(
-        "codex",
-        "gpt-5.6-luna",
-        "GPT-5.6-Luna",
-        "gpt-5.6-luna",
-        False,
-        30,
-        _PRODUCT_CONTRACT,
-        capabilities=_CODEX_IMAGE_CAPABILITIES,
-    ),
-    ModelCatalogSeed(
-        "codex",
         "gpt-5.5",
         "GPT-5.5",
         "gpt-5.5",
-        False,
-        40,
+        True,
+        10,
         _PRODUCT_CONTRACT,
-        capabilities=_CODEX_IMAGE_CAPABILITIES,
+        capabilities=_CODEX_TEXT_CAPABILITIES,
     ),
     ModelCatalogSeed(
         "codex",
@@ -147,7 +110,7 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
         "GPT-5.4",
         "gpt-5.4",
         False,
-        50,
+        20,
         _PRODUCT_CONTRACT,
         capabilities=_CODEX_TEXT_CAPABILITIES,
     ),

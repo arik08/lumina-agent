@@ -1,5 +1,6 @@
 import {
   AlertCircle,
+  ArrowDown,
   ArrowLeft,
   AtSign,
   Bell,
@@ -28,6 +29,7 @@ import {
   FolderInput,
   FolderSearch,
   Globe2,
+  Heart,
   Library,
   LoaderCircle,
   LogOut,
@@ -35,13 +37,13 @@ import {
   Menu,
   MessageCircle,
   MessageSquarePlus,
+  Megaphone,
   Minimize2,
   Moon,
   MoreVertical,
   Paperclip,
   PanelLeftClose,
   PanelLeftOpen,
-  Pause,
   Pencil,
   Pin,
   PinOff,
@@ -68,8 +70,10 @@ import {
   Wrench,
   X,
 } from "lucide-react";
+import { createClientId } from "./client-id";
+import { copyText } from "./clipboard";
 import type { Link, Parent, PhrasingContent, Root, Text } from "mdast";
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type UIEvent as ReactUIEvent } from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components, type Options as ReactMarkdownOptions } from "react-markdown";
 import { createPortal } from "react-dom";
 import remarkGfm from "remark-gfm";
@@ -104,15 +108,74 @@ import { ProjectSettings } from "./components/ProjectSettings";
 import { ProjectFilesView } from "./components/ProjectFilesView";
 import { SchedulesView } from "./components/SchedulesView";
 import { SharedSnapshotViewer } from "./components/SharedSnapshotViewer";
+import { sanitizeAssistantResponse } from "./assistant-response";
 import { ConversationSearchDialog } from "./components/ConversationSearchDialog";
 import { type RunControlAction, useLuminaWorkspace } from "./use-lumina-workspace";
 import { useConversationAutoFollow, useStreamingText } from "./streaming-ui";
+import { mergedToolActiveDurationMs, progressStageTimingById } from "./run-activity-duration";
+import { formatModelExchangeValue } from "./model-exchange-format";
 
 type ArtifactTab = "preview" | "source";
+type NotificationTab = "notifications" | "announcements";
 
 const artifactPreviewEditMessage = "lumina:artifact-preview-edit";
 const artifactAiCommentMessage = "lumina:artifact-ai-comment";
 const artifactAiCommentsMessage = "lumina:artifact-ai-comments";
+
+const artifactCitationMarkers = [
+  "①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩",
+  "⑪", "⑫", "⑬", "⑭", "⑮", "⑯", "⑰", "⑱", "⑲", "⑳",
+];
+
+function previewArtifactHtml(source: string) {
+  if (!/class=["'][^"']*\bsource-ref\b/i.test(source)) return source;
+  const compatibilityLayer = `<style id="lumina-artifact-citation-style">
+sup.source-ref { display: inline; margin: 0 1px 0 2px; color: #315fbd; font-size: inherit; line-height: inherit; vertical-align: baseline; }
+a.source-ref, sup.source-ref > a { display: inline; width: auto; height: auto; margin: 0 1px 0 2px; padding: 0; border: 0; border-radius: 3px; background: transparent; color: #315fbd; font-family: inherit; font-size: 1em; font-weight: 720; line-height: inherit; text-decoration: none; vertical-align: baseline; }
+a.source-ref:focus-visible, sup.source-ref > a:focus-visible { outline: 2px solid color-mix(in srgb, currentColor 55%, transparent); outline-offset: 2px; }
+.lumina-artifact-source-card { position: fixed; z-index: 2147483647; right: 18px; bottom: 18px; display: grid; width: min(420px, calc(100vw - 36px)); gap: 8px; padding: 14px 42px 14px 15px; border: 1px solid rgba(49,95,189,.28); border-radius: 8px; background: #fff; color: #202631; box-shadow: 0 16px 44px rgba(20,31,54,.22); font: 14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif; }
+.lumina-artifact-source-card strong { font-size: 13px; }
+.lumina-artifact-source-card a { overflow-wrap: anywhere; color: #315fbd; text-decoration: underline; text-underline-offset: 2px; }
+.lumina-artifact-source-card button { position: absolute; top: 8px; right: 8px; display: grid; width: 28px; height: 28px; place-items: center; border: 0; border-radius: 5px; background: transparent; color: #6b7280; cursor: pointer; font: 18px/1 sans-serif; }
+</style><script id="lumina-artifact-citation-bridge">
+(() => {
+  const markers = ${JSON.stringify(artifactCitationMarkers)};
+  document.querySelectorAll("a.source-ref[href], sup.source-ref > a[href]").forEach((link) => {
+    const number = Number((link.textContent || "").trim());
+    if (Number.isInteger(number) && number > 0) link.textContent = markers[number - 1] || "[" + number + "]";
+    link.target = "_blank";
+    link.rel = "noreferrer noopener";
+    if (!link.getAttribute("aria-label")) link.setAttribute("aria-label", Number.isInteger(number) ? "출처 " + number + " 열기" : "출처 열기");
+    if (!link.title) link.title = link.href;
+    link.addEventListener("click", () => {
+      document.getElementById("lumina-artifact-source-card")?.remove();
+      const card = document.createElement("aside");
+      card.id = "lumina-artifact-source-card";
+      card.className = "lumina-artifact-source-card";
+      card.setAttribute("role", "dialog");
+      card.setAttribute("aria-label", "출처 링크");
+      const heading = document.createElement("strong");
+      heading.textContent = link.getAttribute("aria-label") || "출처 링크";
+      const sourceLink = document.createElement("a");
+      sourceLink.href = link.href;
+      sourceLink.target = "_blank";
+      sourceLink.rel = "noreferrer noopener";
+      sourceLink.textContent = link.href;
+      const close = document.createElement("button");
+      close.type = "button";
+      close.setAttribute("aria-label", "출처 링크 닫기");
+      close.textContent = "×";
+      close.addEventListener("click", () => card.remove());
+      card.append(heading, sourceLink, close);
+      document.body.appendChild(card);
+    });
+  });
+})();
+</script>`;
+  return /<\/body\s*>/i.test(source)
+    ? source.replace(/<\/body\s*>/i, `${compatibilityLayer}</body>`)
+    : `${source}${compatibilityLayer}`;
+}
 
 type ArtifactAiComment = {
   id: string;
@@ -247,7 +310,15 @@ function editableArtifactHtml(source: string) {
       const addComment = () => {
         const instruction = input.value.trim();
         if (!instruction) return;
-        const id = crypto.randomUUID();
+        const randomBytes = new Uint8Array(16);
+        if (typeof crypto.getRandomValues === 'function') crypto.getRandomValues(randomBytes);
+        else for (let index = 0; index < randomBytes.length; index += 1) randomBytes[index] = Math.floor(Math.random() * 256);
+        randomBytes[6] = (randomBytes[6] & 15) | 64;
+        randomBytes[8] = (randomBytes[8] & 63) | 128;
+        const randomHex = Array.from(randomBytes, (byte) => byte.toString(16).padStart(2, '0'));
+        const id = typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : randomHex.slice(0, 4).join('') + '-' + randomHex.slice(4, 6).join('') + '-' + randomHex.slice(6, 8).join('') + '-' + randomHex.slice(8, 10).join('') + '-' + randomHex.slice(10).join('');
         if (pendingRange) {
           const mark = document.createElement('mark');
           mark.className = 'lumina-ai-comment-highlight';
@@ -394,9 +465,12 @@ function suggestionIcon(kind: ReferenceKind) {
 function toolCallIcon(toolName: string, size = 15) {
   const normalizedName = toolName.toLowerCase().replace(/[\s-]+/g, "_");
   if (normalizedName === "web_search") return <Globe2 className="tool-kind-icon is-web-search" size={size} aria-hidden="true" />;
-  if (normalizedName === "glob") return <FolderSearch className="tool-kind-icon is-glob" size={size} aria-hidden="true" />;
+  if (normalizedName === "web_fetch") return <FileCheck2 className="tool-kind-icon is-web-fetch" size={size} aria-hidden="true" />;
+  if (["glob", "grep", "list_dir"].includes(normalizedName)) return <FolderSearch className="tool-kind-icon is-file-browse" size={size} aria-hidden="true" />;
+  if (normalizedName === "read_file") return <FileText className="tool-kind-icon is-read-file" size={size} aria-hidden="true" />;
   if (normalizedName === "write_file") return <FilePenLine className="tool-kind-icon is-write-file" size={size} aria-hidden="true" />;
   if (normalizedName.includes("report")) return <FileCode2 className="tool-kind-icon is-report" size={size} aria-hidden="true" />;
+  if (normalizedName === "generate_image") return <ImageIcon className="tool-kind-icon is-image" size={size} aria-hidden="true" />;
   return <FileText className="tool-kind-icon" size={size} aria-hidden="true" />;
 }
 
@@ -421,9 +495,27 @@ function sharedThemeFromLocation() {
   return new URLSearchParams(window.location.search).get("theme") === "dark" ? "dark" : "light";
 }
 
+function sharedArtifactFromLocation() {
+  const params = new URLSearchParams(window.location.search);
+  const artifactId = params.get("artifact");
+  const parsedVersion = Number(params.get("version"));
+  return {
+    artifactId,
+    artifactVersion: Number.isInteger(parsedVersion) && parsedVersion > 0 ? parsedVersion : null,
+  };
+}
+
 function formatDuration(durationMs: number | null) {
   if (durationMs === null) return "—";
   return `${(durationMs / 1000).toFixed(2)}초`;
+}
+
+function formatWorkDuration(durationMs: number) {
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000));
+  if (totalSeconds < 60) return `${totalSeconds}초`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}분 ${seconds}초`;
 }
 
 function formatCompletedAt(value: string | null | undefined) {
@@ -490,6 +582,11 @@ function estimatedModelCostParts(provider: string | undefined, model: string | u
 }
 
 function UsageCostPopover({ usage, model, provider }: { usage: Record<string, unknown> | undefined; model?: string; provider?: string }) {
+  const rawUsage = usage?.raw;
+  const isSubscriptionUsage = provider === "codex"
+    && typeof rawUsage === "object"
+    && rawUsage !== null
+    && (rawUsage as Record<string, unknown>).billing === "subscription_usage";
   const [usdKrwRate, setUsdKrwRate] = useState<number | null | undefined>(undefined);
   useEffect(() => {
     let active = true;
@@ -524,9 +621,11 @@ function UsageCostPopover({ usage, model, provider }: { usage: Record<string, un
   };
   const totalCost = formatCost(cost);
   const currencySymbol = usdKrwRate === null ? "$" : "₩";
-  const costHeading = (!hasReportedCost && estimatedCost !== undefined) || usage?.cost_basis === "price_table_estimate"
+  const costHeading = isSubscriptionUsage
     ? `예상비용(${currencySymbol})`
-    : `비용(${currencySymbol})`;
+    : (!hasReportedCost && estimatedCost !== undefined) || usage?.cost_basis === "price_table_estimate"
+      ? `예상비용(${currencySymbol})`
+      : `비용(${currencySymbol})`;
   const rows = [
     ["Input", input.toLocaleString(), formatCost(estimatedCosts?.input)],
     ["Cached", cached.toLocaleString(), formatCost(estimatedCosts?.cachedInput)],
@@ -538,9 +637,9 @@ function UsageCostPopover({ usage, model, provider }: { usage: Record<string, un
 
   return (
     <span className="answer-usage-control">
-      <button className="answer-usage-button" type="button" aria-label="토큰 비용 확인"><Coins size={16} /></button>
+      <button className="answer-usage-button" type="button" aria-label={isSubscriptionUsage ? "토큰 및 예상 비용 확인" : "토큰 비용 확인"}><Coins size={16} /></button>
       <span className="answer-usage-popover" role="tooltip">
-        <table aria-label="이번 답변 토큰 및 비용">
+        <table aria-label={isSubscriptionUsage ? "이번 답변 토큰 및 예상 비용" : "이번 답변 토큰 및 비용"}>
           <thead>
             <tr><th>{model || "사용량"}</th><th>토큰</th><th>{costHeading}</th></tr>
           </thead>
@@ -573,6 +672,7 @@ function runStatusLabel(status: RunStatus | null | undefined) {
 }
 
 function toolStatusLabel(status: ToolExecution["status"]) {
+  if (status === "streaming") return "작성 중";
   if (status === "running") return "실행 중";
   if (status === "queued") return "대기";
   if (status === "failed") return "실패";
@@ -618,6 +718,35 @@ function createReportSummary(execution: ToolExecution) {
   return typeof title === "string" && title.trim() ? title.trim() : null;
 }
 
+const WRITE_FILE_PROGRESS_TOKEN_CAPACITY = 5_000;
+const WRITE_FILE_PROGRESS_STAGES = ["blue", "green", "yellow", "red"] as const;
+
+function writeFileName(execution: ToolExecution) {
+  if (execution.toolName !== "write_file") return null;
+  const candidates = [execution.progress?.fileName, execution.result?.path, execution.input?.path];
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string" || !candidate.trim()) continue;
+    return candidate.trim().replaceAll("\\", "/").split("/").filter(Boolean).at(-1) ?? null;
+  }
+  return null;
+}
+
+function writeFileProgress(tokens: number) {
+  const totalTokens = Math.max(0, tokens);
+  const stageIndex = totalTokens === 0
+    ? 0
+    : Math.min(WRITE_FILE_PROGRESS_STAGES.length - 1, Math.floor((totalTokens - 1) / WRITE_FILE_PROGRESS_TOKEN_CAPACITY));
+  const stageTokens = Math.min(
+    WRITE_FILE_PROGRESS_TOKEN_CAPACITY,
+    Math.max(0, totalTokens - (stageIndex * WRITE_FILE_PROGRESS_TOKEN_CAPACITY)),
+  );
+  return {
+    stage: WRITE_FILE_PROGRESS_STAGES[stageIndex],
+    stageTokens,
+    percent: (stageTokens / WRITE_FILE_PROGRESS_TOKEN_CAPACITY) * 100,
+  };
+}
+
 const httpStatusDescriptions: Record<number, string> = {
   200: "요청이 성공적으로 처리되었습니다.",
   201: "요청이 성공하여 새 리소스가 생성되었습니다.",
@@ -660,11 +789,13 @@ function httpStatusExplanation(text: string) {
 function ToolCallRow({
   execution,
   isOpen,
+  summaryText,
   onToggle,
   onCopy,
 }: {
   execution: ToolExecution;
   isOpen: boolean;
+  summaryText?: string;
   onToggle: () => void;
   onCopy: (execution: ToolExecution) => void;
 }) {
@@ -708,8 +839,23 @@ function ToolCallRow({
   }, [isOpen, onToggle]);
   const contentId = `tool-call-${execution.id}`;
   const complete = execution.status === "completed";
-  const running = execution.status === "running";
-  const headerDetail = webSearchQuery(execution) ?? webFetchSummary(execution) ?? createReportSummary(execution);
+  const running = execution.status === "running" || execution.status === "streaming";
+  const writeFileActive = execution.toolName === "write_file" && running;
+  const [liveNow, setLiveNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!running || !execution.startedAt) return;
+    setLiveNow(Date.now());
+    const timer = window.setInterval(() => setLiveNow(Date.now()), 100);
+    return () => window.clearInterval(timer);
+  }, [execution.startedAt, running]);
+  const liveDurationMs = execution.durationMs ?? (
+    running && execution.startedAt
+      ? Math.max(0, liveNow - Date.parse(execution.startedAt))
+      : null
+  );
+  const activeWriteFileName = writeFileName(execution);
+  const headerDetail = activeWriteFileName ?? webSearchQuery(execution) ?? webFetchSummary(execution) ?? createReportSummary(execution);
+  const writeProgress = writeFileProgress(execution.progress?.tokens ?? 0);
   const requestText = execution.input
     ? JSON.stringify(execution.input, null, 2)
     : execution.inputSummary.length
@@ -722,12 +868,11 @@ function ToolCallRow({
   const resultText = statusExplanation ? `${rawResultText}\n\n${statusExplanation}` : rawResultText;
   return (
     <div className={`tool-call ${isOpen ? "is-open" : ""}`}>
-      <button ref={triggerRef} className="tool-call-trigger" type="button" aria-expanded={isOpen} aria-controls={contentId} onClick={onToggle}>
+      <button ref={triggerRef} className={`tool-call-trigger ${summaryText ? "has-summary" : ""} ${complete ? "without-status-icon" : ""}`} type="button" aria-expanded={isOpen} aria-controls={contentId} onClick={onToggle}>
+        {summaryText && <span className="tool-call-summary-text">{summaryText}</span>}
         {running ? (
           <LoaderCircle className="status-icon is-running" size={15} aria-hidden="true" />
-        ) : complete ? (
-          <Check className="status-icon is-complete" size={15} aria-hidden="true" />
-        ) : execution.status === "failed" ? (
+        ) : complete ? null : execution.status === "failed" ? (
           <AlertCircle className="status-icon status-warning" size={15} aria-hidden="true" />
         ) : (
           <Circle className="status-icon is-waiting" size={15} aria-hidden="true" />
@@ -736,9 +881,20 @@ function ToolCallRow({
         <span className="tool-call-label">{execution.label || execution.toolName}</span>
         <span className="tool-call-detail" title={headerDetail ?? undefined}>{headerDetail}</span>
         <span className={`tool-call-status status-${running ? "running" : complete ? "complete" : "warning"}`}>{toolStatusLabel(execution.status)}</span>
-        <span className="tool-call-duration">{formatDuration(execution.durationMs)}</span>
+        <span className="tool-call-duration" title={execution.toolName === "write_file" ? "파일 내용 생성 시작부터 디스크 저장 완료까지의 시간" : "도구 실행 시간"}>{formatDuration(liveDurationMs)}</span>
         {isOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
       </button>
+      {writeFileActive && execution.progress && (
+        <div className={`write-file-stream-progress is-${writeProgress.stage}`} role="status" aria-live="polite" aria-label={`${activeWriteFileName ?? "파일"} 작성 중 ${execution.progress.tokens.toLocaleString()} 토큰 ${execution.progress.lines.toLocaleString()}줄`}>
+          <div className="write-file-stream-heading">
+            <strong title={activeWriteFileName ?? undefined}>WRITE FILE · {activeWriteFileName ?? "파일명 확인 중"}</strong>
+            <span>{execution.progress.tokens.toLocaleString()} 토큰 · {execution.progress.lines.toLocaleString()}줄</span>
+          </div>
+          <div className="write-file-stream-meter" role="progressbar" aria-label="현재 5,000 토큰 구간의 생성량" aria-valuemin={0} aria-valuemax={WRITE_FILE_PROGRESS_TOKEN_CAPACITY} aria-valuenow={writeProgress.stageTokens}>
+            <span style={{ width: `${writeProgress.percent}%` }} />
+          </div>
+        </div>
+      )}
       {isOpen && overlayStyle && createPortal(
         <div ref={overlayRef} className="tool-message is-global" id={contentId} style={overlayStyle}>
           <section className="tool-message-section">
@@ -754,6 +910,71 @@ function ToolCallRow({
           </div>
         </div>,
         triggerRef.current?.closest(".app-shell") ?? document.body,
+      )}
+    </div>
+  );
+}
+
+type ModelExchangeItem = { label: string; value: unknown };
+
+function modelExchangeText(value: unknown) {
+  return formatModelExchangeValue(value);
+}
+
+function ModelProcessingRow({ durationMs, running, sent, received, model, provider }: {
+  durationMs: number;
+  running: boolean;
+  sent: ModelExchangeItem[];
+  received: ModelExchangeItem[];
+  model?: string;
+  provider?: string;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const contentId = useId();
+  const exchangeSections = [
+    { title: "Provider로 보냄", items: sent, empty: "이 단계에서 별도로 전달된 도구 결과가 없습니다." },
+    { title: "Provider에서 받음", items: received, empty: running ? "응답을 수신하고 있습니다." : "공개 가능한 응답 내용이 없습니다." },
+  ];
+
+  return (
+    <div className={`tool-call model-processing-call ${isOpen ? "is-open" : ""}`}>
+      <button
+        className={`tool-call-trigger model-processing-row ${running ? "" : "without-status-icon"}`}
+        type="button"
+        aria-expanded={isOpen}
+        aria-controls={contentId}
+        onClick={(event) => preserveConversationScrollPosition(event.currentTarget, () => setIsOpen((open) => !open))}
+      >
+        <Brain className="tool-kind-icon is-model-processing" size={15} aria-hidden="true" />
+        <span className="model-processing-label">
+          <span className="tool-call-label">AI 내부 추론</span>
+          {running ? <LoaderCircle className="status-icon is-running" size={15} aria-hidden="true" /> : null}
+        </span>
+        <span className="tool-call-detail">Provider 요청 전송 · 응답 수신</span>
+        <span className={`tool-call-status status-${running ? "running" : "complete"}`}>{running ? "처리 중" : "완료"}</span>
+        <span className="tool-call-duration" title="모델 요청 전송부터 응답 수신·처리까지의 시간(도구 실행 제외)">{formatDuration(durationMs)}</span>
+        {isOpen ? <ChevronDown size={15} aria-hidden="true" /> : <ChevronRight size={15} aria-hidden="true" />}
+      </button>
+      {isOpen && (
+        <div className="model-exchange" id={contentId}>
+          <div className="model-exchange-heading">
+            <strong>실제 교환 정보</strong>
+            <span>{[provider, model].filter(Boolean).join(" · ") || "Provider"}</span>
+          </div>
+          <div className="model-exchange-columns">
+            {exchangeSections.map((section) => (
+              <section key={section.title}>
+                <h4>{section.title}</h4>
+                {section.items.length > 0 ? section.items.map((item, index) => (
+                  <div className="model-exchange-item" key={`${item.label}-${index}`}>
+                    <strong>{item.label}</strong>
+                    <SyntaxCode value={modelExchangeText(item.value)} language={typeof item.value === "object" ? "json" : "plaintext"} />
+                  </div>
+                )) : <p>{section.empty}</p>}
+              </section>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );
@@ -782,24 +1003,58 @@ function toolCallGroupDuration(activities: RunActivity[]) {
     : null;
 }
 
+function preserveConversationScrollPosition(target: HTMLElement, update: () => void) {
+  const container = target.closest<HTMLElement>(".conversation-scroll");
+  const scrollTop = container?.scrollTop;
+  update();
+  if (!container || scrollTop === undefined) return;
+  window.requestAnimationFrame(() => {
+    container.scrollTop = scrollTop;
+  });
+}
+
 function RunActivityTimeline({
   activities,
+  timelineStartedAtMs,
+  timelineFinishedAtMs,
+  timelineRunning,
+  keepLatestToolGroupOpen,
+  userRequest,
+  assistantResponse,
+  model,
+  provider,
   openCalls,
   onToggleCall,
   onCopy,
 }: {
   activities: RunActivity[];
+  timelineStartedAtMs: number;
+  timelineFinishedAtMs: number;
+  timelineRunning: boolean;
+  keepLatestToolGroupOpen: boolean;
+  userRequest: string;
+  assistantResponse: string;
+  model?: string;
+  provider?: string;
   openCalls: Set<string>;
   onToggleCall: (id: string) => void;
   onCopy: (execution: ToolExecution) => void;
 }) {
   const [openSummaryIds, setOpenSummaryIds] = useState<Set<string>>(new Set());
-  const previousActiveSummaryIds = useRef<Set<string>>(new Set());
+  const previousAutoOpenSummaryIds = useRef<Set<string>>(new Set());
   const activityGroups = activities.reduce<RunActivity[][]>((groups, activity) => {
     if (activity.type === "progress_summary" || activity.type === "skill" || groups.length === 0) groups.push([]);
     groups.at(-1)?.push(activity);
     return groups;
   }, []);
+  const progressStageTimings = progressStageTimingById(
+    activityGroups.flatMap((group) => {
+      const summary = group[0]?.type === "progress_summary" ? group[0] : null;
+      return summary ? [{ id: summary.id, createdAt: summary.createdAt }] : [];
+    }),
+    timelineStartedAtMs,
+    timelineFinishedAtMs,
+  );
   const activeSummaryIds = new Set(activityGroups.flatMap((group) => {
     const summary = group[0]?.type === "progress_summary" ? group[0] : null;
     const toolCount = group.filter((activity) => activity.type === "tool").length;
@@ -807,40 +1062,90 @@ function RunActivityTimeline({
       && (activity.execution.status === "queued" || activity.execution.status === "running"));
     return summary && toolCount > 1 && hasActiveTools ? [summary.id] : [];
   }));
-  const activeSummaryKey = [...activeSummaryIds].sort().join("|");
+  const latestToolGroupSummaryId = activityGroups.reduce<string | null>((latestId, group) => {
+    const summary = group[0]?.type === "progress_summary" ? group[0] : null;
+    const toolCount = group.filter((activity) => activity.type === "tool").length;
+    return summary && toolCount > 1 ? summary.id : latestId;
+  }, null);
+  const latestProgressSummaryId = activityGroups.reduce<string | null>((latestId, group) => {
+    const summary = group[0]?.type === "progress_summary" ? group[0] : null;
+    return summary?.id ?? latestId;
+  }, null);
+  const autoOpenSummaryIds = new Set(activeSummaryIds);
+  if (keepLatestToolGroupOpen && latestToolGroupSummaryId) autoOpenSummaryIds.add(latestToolGroupSummaryId);
+  const autoOpenSummaryKey = [...autoOpenSummaryIds].sort().join("|");
 
   useEffect(() => {
-    const previous = previousActiveSummaryIds.current;
+    const previous = previousAutoOpenSummaryIds.current;
     setOpenSummaryIds((current) => {
       const next = new Set(current);
       previous.forEach((id) => {
-        if (!activeSummaryIds.has(id)) next.delete(id);
+        if (!autoOpenSummaryIds.has(id)) next.delete(id);
       });
-      activeSummaryIds.forEach((id) => {
+      autoOpenSummaryIds.forEach((id) => {
         if (!previous.has(id)) next.add(id);
       });
       return next;
     });
-    previousActiveSummaryIds.current = activeSummaryIds;
-  }, [activeSummaryKey]);
+    previousAutoOpenSummaryIds.current = autoOpenSummaryIds;
+  }, [autoOpenSummaryKey]);
 
   return (
     <section className="run-activity-timeline" aria-label="실행 과정">
-      {activityGroups.map((group) => {
+      {activityGroups.map((group, groupIndex) => {
         const summary = group[0]?.type === "progress_summary" ? group[0] : null;
         const skill = group[0]?.type === "skill" ? group[0] : null;
         const toolActivities = group.filter((activity) => activity.type === "tool");
+        const nextGroup = activityGroups[groupIndex + 1] ?? null;
+        const nextSummary = nextGroup?.[0]?.type === "progress_summary" ? nextGroup[0] : null;
+        const nextToolActivities = nextGroup?.filter((activity) => activity.type === "tool") ?? [];
+        const sent: ModelExchangeItem[] = toolActivities.length > 0
+          ? toolActivities.map((activity) => ({
+              label: `${activity.execution.label || activity.execution.toolName} 결과`,
+              value: activity.execution.result ?? activity.execution.error ?? activity.execution.resultSummary,
+            }))
+          : groupIndex === 0 && userRequest
+            ? [{ label: "사용자 요청", value: userRequest }]
+            : [];
+        const received: ModelExchangeItem[] = [
+          ...(nextSummary ? [{ label: "다음 단계", value: nextSummary.text }] : []),
+          ...nextToolActivities.map((activity) => ({
+            label: `${activity.execution.label || activity.execution.toolName} 호출`,
+            value: activity.execution.input ?? activity.execution.inputSummary,
+          })),
+          ...(groupIndex === activityGroups.length - 1 && assistantResponse
+            ? [{ label: "답변", value: assistantResponse }]
+            : []),
+        ];
         const hasTools = toolActivities.length > 0;
         const hasToolGroup = toolActivities.length > 1;
+        const hasSingleTool = toolActivities.length === 1;
         const toolsOpen = !hasToolGroup || (summary ? openSummaryIds.has(summary.id) : true);
+        const stageTiming = summary ? progressStageTimings.get(summary.id) ?? null : null;
+        const stageDurationMs = stageTiming?.durationMs ?? null;
+        const toolActiveDurationMs = stageTiming
+          ? mergedToolActiveDurationMs(
+              toolActivities.map((activity) => activity.execution),
+              stageTiming.startedAtMs,
+              stageTiming.finishedAtMs,
+            )
+          : 0;
+        const modelProcessingDurationMs = stageTiming
+          ? Math.max(0, stageTiming.durationMs - toolActiveDurationMs)
+          : null;
+        const modelProcessingRunning = timelineRunning && summary?.id === latestProgressSummaryId;
         const toolGroupId = summary ? `progress-tools-${summary.id}` : undefined;
-        const toggleTools = () => setOpenSummaryIds((current) => {
-          if (!summary) return current;
-          const next = new Set(current);
-          if (next.has(summary.id)) next.delete(summary.id);
-          else next.add(summary.id);
-          return next;
-        });
+        const toggleTools = (event: ReactMouseEvent<HTMLButtonElement>) => {
+          preserveConversationScrollPosition(event.currentTarget, () => {
+            setOpenSummaryIds((current) => {
+              if (!summary) return current;
+              const next = new Set(current);
+              if (next.has(summary.id)) next.delete(summary.id);
+              else next.add(summary.id);
+              return next;
+            });
+          });
+        };
         return (
           <div className="progress-group" key={summary?.id ?? group[0]?.id}>
             {skill && (
@@ -850,30 +1155,27 @@ function RunActivityTimeline({
                 <strong>{skill.slug}</strong>
                 <span className="skill-activity-detail">
                   {skill.reason} · {skill.appliedBy === "auto" ? "자동 적용" : skill.appliedBy === "explicit" ? "$Skill 호출" : "예약 적용"}
-                  {skill.versionLabel ? ` · ${skill.versionLabel}` : ""}
                 </span>
-                <span className="skill-activity-status">적용됨</span>
               </div>
             )}
             {summary && (hasToolGroup ? (
               <button className="progress-group-toggle" type="button" aria-controls={toolGroupId} aria-expanded={toolsOpen} onClick={toggleTools}>
                 <div className={`progress-summary phase-${summary.phase}`}>
                   <div className="progress-summary-text">
-                    {progressSummaryIcon(summary.phase, summary.text)}
                     <span>{summary.text}</span>
                   </div>
                 </div>
                 <div className="tool-call-group-summary">
                   {toolCallIcon(toolActivities[0].execution.toolName, 14)}
                   <span>{toolCallGroupSummary(toolActivities)}</span>
-                  <span className="tool-call-group-duration">{formatDuration(toolCallGroupDuration(toolActivities))}</span>
+                  <span className="tool-call-group-duration" title="단계 전체 소요 시간">{formatDuration(stageDurationMs ?? toolCallGroupDuration(toolActivities))}</span>
                   {toolsOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
                 </div>
               </button>
             ) : (
-              <div className={`progress-summary phase-${summary.phase}`}><div className="progress-summary-text">{progressSummaryIcon(summary.phase, summary.text)}<span>{summary.text}</span></div></div>
+              <div className={`progress-summary phase-${summary.phase}`}><div className="progress-summary-text"><span>{summary.text}</span><span className="progress-summary-duration" title="단계 전체 소요 시간">{formatDuration(stageDurationMs)}</span></div></div>
             ))}
-            {toolsOpen && hasTools && (
+            {toolsOpen && summary && (
               <div className="progress-tools" id={toolGroupId}>
                 {toolActivities.map((activity) => (
                   <ToolCallRow
@@ -884,6 +1186,16 @@ function RunActivityTimeline({
                     onToggle={() => onToggleCall(activity.execution.id)}
                   />
                 ))}
+                {modelProcessingDurationMs !== null && modelProcessingDurationMs >= 10 && (
+                  <ModelProcessingRow
+                    durationMs={modelProcessingDurationMs}
+                    running={modelProcessingRunning}
+                    sent={sent}
+                    received={received}
+                    model={model}
+                    provider={provider}
+                  />
+                )}
               </div>
             )}
           </div>
@@ -891,18 +1203,6 @@ function RunActivityTimeline({
       })}
     </section>
   );
-}
-
-function progressSummaryIcon(phase: string, text: string) {
-  if (text.includes("검색") || text.includes("근거를 수집")) return <Search size={14} aria-hidden="true" />;
-  if (text.includes("원문")) return <Eye size={14} aria-hidden="true" />;
-  if (text.includes("보고서") || text.includes("문서")) return <FileText size={14} aria-hidden="true" />;
-  if (text.includes("이미지")) return <ImageIcon size={14} aria-hidden="true" />;
-  if (phase === "planning") return <GitBranch size={14} aria-hidden="true" />;
-  if (phase === "review") return <FileCheck2 size={14} aria-hidden="true" />;
-  if (phase === "compacting" || phase === "compacted") return <Brain size={14} aria-hidden="true" />;
-  if (phase === "tools") return <Wrench size={14} aria-hidden="true" />;
-  return <Sparkles size={14} aria-hidden="true" />;
 }
 
 function pendingMessageLabel(message: ChatMessage, commands: RunCommand[]) {
@@ -917,6 +1217,7 @@ interface CitationTarget {
   source: SourceEvidence;
   markerNumber: number;
   cited: boolean;
+  reviewed: boolean;
 }
 
 const circledCitationMarkers = [
@@ -938,7 +1239,8 @@ function citationTargets(text: string, sources: SourceEvidence[], citations: Mes
     return {
       source,
       markerNumber,
-      cited: citation ? citation.status === "cited" : hasSourceToken || hasMarkerToken,
+      cited: citation ? citation.status === "cited" || citation.status === "resolved" : hasSourceToken || hasMarkerToken,
+      reviewed: source.evidenceKind === "fetched_content",
     };
   });
 }
@@ -976,6 +1278,54 @@ function splitCitationText(value: string, targets: CitationTarget[]): PhrasingCo
   if (lastIndex === 0) return null;
   if (lastIndex < value.length) parts.push({ type: "text", value: value.slice(lastIndex) } satisfies Text);
   return parts;
+}
+
+function normalizeCitationPositions(text: string, targets: CitationTarget[]) {
+  const byToken = new Map<string, CitationTarget>();
+  targets.filter((target) => target.cited).forEach((target) => {
+    byToken.set(target.source.sourceId, target);
+    byToken.set(String(target.markerNumber), target);
+    byToken.set(citationMarkerLabel(target.markerNumber), target);
+  });
+  if (byToken.size === 0) return text;
+
+  const markerPattern = /\[\[([^\]\n]+)\]\]|\[([^\]\n]+)\]|[①-⑳]/gu;
+  const sentenceEndPattern = /[.!?。！？]+(?=\s|$)/gu;
+  let inFence = false;
+  return text.split(/(\r?\n)/).map((line) => {
+    if (/^\s*(`{3,}|~{3,})/.test(line)) {
+      inFence = !inFence;
+      return line;
+    }
+    if (inFence || /^\r?\n$/.test(line)) return line;
+
+    const boundaries = [...line.matchAll(sentenceEndPattern)].map((match) => (match.index ?? 0) + match[0].length);
+    boundaries.push(line.length);
+    let start = 0;
+    return boundaries.map((boundary) => {
+      if (boundary <= start) return "";
+      const sentence = line.slice(start, boundary);
+      start = boundary;
+      const matches = [...sentence.matchAll(markerPattern)].filter((match) => {
+        const token = match[1] ?? match[2] ?? match[0];
+        return byToken.has(token);
+      });
+      if (matches.length === 0) return sentence;
+      let cleaned = sentence;
+      [...matches].reverse().forEach((match) => {
+        const index = match.index ?? 0;
+        let removalStart = index;
+        let removalEnd = index + match[0].length;
+        const before = cleaned.slice(Math.max(0, removalStart - 2), removalStart);
+        const after = cleaned.slice(removalEnd, removalEnd + 2);
+        if ((before === "**" || before === "__") && /[ \t]/.test(cleaned[removalEnd] ?? "")) removalEnd += 1;
+        if ((after === "**" || after === "__") && /[ \t]/.test(cleaned[removalStart - 1] ?? "")) removalStart -= 1;
+        cleaned = cleaned.slice(0, removalStart) + cleaned.slice(removalEnd);
+      });
+      cleaned = cleaned.replace(/[ \t]{2,}/g, " ").trimEnd();
+      return `${cleaned} ${matches.map((match) => match[0]).join(" ")}`;
+    }).join("");
+  }).join("");
 }
 
 function remarkCitationLinks(options: { targets: CitationTarget[] }) {
@@ -1124,10 +1474,6 @@ function pastedTextAttachmentLabel(attachment: AttachmentSummary, index: number)
   return `[텍스트 첨부 #${index + 1}${lineCount > 0 ? ` +${lineCount}줄` : ""}]`;
 }
 
-function hideRedundantArtifactOpenLine(text: string, hasArtifacts: boolean) {
-  return hasArtifacts ? text.replace(/^[ \t]*보고서 열기[ \t]*\r?\n?/gm, "") : text;
-}
-
 function MarkdownResponse({
   text,
   sources = emptySources,
@@ -1141,11 +1487,12 @@ function MarkdownResponse({
   streaming?: boolean;
   artifact?: boolean;
 }) {
-  const streamingParts = useMemo(() => streaming ? splitStreamingMarkdown(text) : { prefix: text, liveTail: "" }, [streaming, text]);
+  const targets = useMemo(() => citationTargets(text, sources, citations), [citations, sources, text]);
+  const renderedText = useMemo(() => streaming ? text : normalizeCitationPositions(text, targets), [streaming, targets, text]);
+  const streamingParts = useMemo(() => streaming ? splitStreamingMarkdown(renderedText) : { prefix: renderedText, liveTail: "" }, [renderedText, streaming]);
   const pendingKind = useMemo(() => streaming ? pendingStreamingKind(streamingParts.liveTail) : null, [streaming, streamingParts.liveTail]);
   const prefixText = useMemo(() => normalizeKoreanMarkdownEmphasis(streamingParts.prefix), [streamingParts.prefix]);
   const tailText = useMemo(() => normalizeKoreanMarkdownEmphasis(streamingParts.liveTail), [streamingParts.liveTail]);
-  const targets = useMemo(() => citationTargets(text, sources, citations), [citations, sources, text]);
   const targetById = useMemo(() => new Map(targets.map((target) => [target.source.sourceId, target])), [targets]);
   const remarkPlugins = useMemo<NonNullable<ReactMarkdownOptions["remarkPlugins"]>>(
     () => [remarkGfm, [remarkCitationLinks, { targets }]],
@@ -1222,9 +1569,13 @@ function AssistantTurn({
   const sources = finalMessage?.metadata?.sources ?? [];
   const citations = finalMessage?.metadata?.citations ?? [];
   const searches = finalMessage?.metadata?.searchInvocations ?? [];
+  const artifacts = snapshot?.artifacts ?? turnSet.artifacts;
   const assistantText = finalMessage?.text || snapshot?.assistantDraft?.text || "";
-  const sourceTargets = citationTargets(assistantText, sources, citations);
+  const sanitizedAssistantText = sanitizeAssistantResponse(assistantText, artifacts.length > 0);
+  const sourceTargets = citationTargets(sanitizedAssistantText, sources, citations);
   const citedSourceCount = sourceTargets.filter((target) => target.cited).length;
+  const reviewedSourceCount = sourceTargets.filter((target) => !target.cited && target.reviewed).length;
+  const referenceSourceCount = sources.length - citedSourceCount - reviewedSourceCount;
   const tools = snapshot?.toolExecutions ?? turnSet.toolExecutions;
   const activities: RunActivity[] = snapshot?.activities?.length
     ? snapshot.activities
@@ -1234,13 +1585,15 @@ function AssistantTurn({
         sequence: index,
         execution,
       }));
-  const artifacts = snapshot?.artifacts ?? turnSet.artifacts;
   const pendingCommands = snapshot?.pendingCommands ?? [];
   const status = snapshot?.status ?? (finalMessage ? "completed" : null);
   const terminal = status === "completed" || status === "failed" || status === "cancelled" || status === "interrupted" || status === "limit_reached";
+  const terminalReason = status && status !== "completed"
+    ? snapshot?.errorMessage?.trim() || (status === "cancelled" ? "요청에 따라 작업을 취소했습니다." : "작업을 완료하지 못했습니다. 다시 실행해 주세요.")
+    : "";
+  const copyableAnswerText = sanitizedAssistantText || terminalReason;
   const streaming = !finalMessage && Boolean(snapshot?.assistantDraft);
-  const { visibleText, revealing } = useStreamingText(assistantText, streaming);
-  const displayedText = hideRedundantArtifactOpenLine(visibleText, artifacts.length > 0);
+  const { visibleText: displayedText, revealing } = useStreamingText(sanitizedAssistantText, streaming);
   const [reportOpen, setReportOpen] = useState(false);
   const [reportText, setReportText] = useState("");
   const [reportSubmitting, setReportSubmitting] = useState(false);
@@ -1251,7 +1604,28 @@ function AssistantTurn({
   const [textPreviewAttachment, setTextPreviewAttachment] = useState<AttachmentSummary | null>(null);
   const [textPreviewContent, setTextPreviewContent] = useState("");
   const [textPreviewError, setTextPreviewError] = useState<string | null>(null);
+  const [workDetailsOpen, setWorkDetailsOpen] = useState(!terminal);
+  const [workClock, setWorkClock] = useState(() => Date.now());
   const expandedSourceTarget = sourceTargets.find(({ source }) => source.sourceId === expandedSourceId) ?? null;
+  const workStartedAt = snapshot?.startedAt ?? turnSet.createdAt;
+  const workFinishedAt = snapshot?.finishedAt ?? turnSet.completedAt;
+  const workStartedAtMs = new Date(workStartedAt).getTime();
+  const workFinishedAtMs = workFinishedAt ? new Date(workFinishedAt).getTime() : workClock;
+  const workDuration = Number.isFinite(workStartedAtMs) && Number.isFinite(workFinishedAtMs)
+    ? formatWorkDuration(workFinishedAtMs - workStartedAtMs)
+    : "0초";
+  const hasWorkDetails = activities.length > 0;
+
+  useEffect(() => {
+    setWorkDetailsOpen(!terminal);
+  }, [snapshot?.runId, terminal]);
+
+  useEffect(() => {
+    if (terminal || !hasWorkDetails) return;
+    setWorkClock(Date.now());
+    const timer = window.setInterval(() => setWorkClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [hasWorkDetails, terminal]);
 
   const openSourceDetail = useCallback((sourceId: string) => {
     const currentDetail = window.history.state?.luminaSourceDetail;
@@ -1309,10 +1683,14 @@ function AssistantTurn({
   }, [displayedText, onVisibleGrowth, revealing]);
 
   const copyAnswer = async () => {
-    if (!assistantText) return;
+    if (!copyableAnswerText) {
+      onToast("복사할 내용이 없습니다.");
+      return;
+    }
     try {
-      await navigator.clipboard.writeText(assistantText);
-      onToast("답변을 복사했습니다.");
+      if (sanitizedAssistantText) await copyText(sanitizedAssistantText);
+      else await copyText(terminalReason);
+      onToast(sanitizedAssistantText ? "답변을 복사했습니다." : "중단 사유를 복사했습니다.");
     } catch {
       onToast("답변을 복사하지 못했습니다.");
     }
@@ -1396,15 +1774,37 @@ function AssistantTurn({
           </div>
         </div>
       ))}
-      {activities.length > 0 && (
-        <div className="turn-tool-activity">
-          <RunActivityTimeline
-            activities={activities}
-            openCalls={openCalls}
-            onCopy={onCopyTool}
-            onToggleCall={onToggleCall}
-          />
-        </div>
+      {hasWorkDetails && (
+        <section className={`turn-work-details ${workDetailsOpen ? "is-open" : ""}`} aria-label="답변 작업 과정">
+          <button
+            className="turn-work-trigger"
+            type="button"
+            aria-controls={`turn-work-details-${turnSet.id}`}
+            aria-expanded={workDetailsOpen}
+            onClick={(event) => preserveConversationScrollPosition(event.currentTarget, () => setWorkDetailsOpen((open) => !open))}
+          >
+            <span>{workDuration} 동안 작업</span>
+            <ChevronRight size={15} aria-hidden="true" />
+          </button>
+          {workDetailsOpen && (
+            <div className="turn-tool-activity" id={`turn-work-details-${turnSet.id}`}>
+              <RunActivityTimeline
+                activities={activities}
+                timelineStartedAtMs={workStartedAtMs}
+                timelineFinishedAtMs={workFinishedAtMs}
+                timelineRunning={!terminal}
+                keepLatestToolGroupOpen={status === "model_streaming"}
+                userRequest={userMessages.at(-1)?.text ?? ""}
+                assistantResponse={sanitizedAssistantText}
+                model={snapshot?.execution.runtimeModelId}
+                provider={snapshot?.execution.providerId}
+                openCalls={openCalls}
+                onCopy={onCopyTool}
+                onToggleCall={onToggleCall}
+              />
+            </div>
+          )}
+        </section>
       )}
       {previewAttachment && (
         <div className="image-attachment-viewer" role="dialog" aria-modal="true" aria-label={`${previewAttachment.fileName} 이미지 보기`} onClick={(event) => { if (event.target === event.currentTarget) setPreviewAttachment(null); }}>
@@ -1417,12 +1817,15 @@ function AssistantTurn({
           <div className="assistant-content">
             {assistantText && <MarkdownResponse text={displayedText} sources={sources} citations={citations} streaming={revealing} />}
             {snapshot?.artifactProgress && (
-              <div className="artifact-progress-count" role="status" aria-label="Artifact 작성 진행률">
-                <strong>{snapshot.artifactProgress.tokens.toLocaleString()} 토큰</strong>
-                <span>({snapshot.artifactProgress.lines.toLocaleString()}줄)</span>
+              <div className="artifact-progress-count" role="status" aria-live="polite" aria-label={`Artifact 작성 중 ${snapshot.artifactProgress.tokens.toLocaleString()} 토큰 ${snapshot.artifactProgress.lines.toLocaleString()}줄`}>
+                <div className="artifact-progress-heading">
+                  <span>{snapshot.artifactProgress.tokens.toLocaleString()} 토큰 · {snapshot.artifactProgress.lines.toLocaleString()}줄</span>
+                </div>
+                <div className="artifact-progress-meter" aria-hidden="true">
+                  <span className="artifact-progress-fill" />
+                </div>
               </div>
             )}
-            {!assistantText && snapshot && !terminal && <p className="assistant-placeholder"><LoaderCircle className="is-running" size={14} /> {runStatusLabel(snapshot.status)}</p>}
             {artifacts.map((artifact) => (
               <button className="artifact-result" type="button" key={artifact.id} onClick={() => onOpenArtifact(artifact)}>
                 <FileCode2 size={18} />
@@ -1438,7 +1841,7 @@ function AssistantTurn({
                     {status === "completed" ? "작성 완료" : runStatusLabel(status)}
                   </div>
                   <div className="answer-actions" role="group" aria-label="답변 작업">
-                    <button className="tooltip-control" type="button" aria-label="답변 복사" data-tooltip="복사" onClick={() => void copyAnswer()}><Copy size={16} /></button>
+                    <button className="tooltip-control" type="button" aria-label="답변 복사" data-tooltip="복사" disabled={!copyableAnswerText} onClick={() => void copyAnswer()}><Copy size={16} /></button>
                     <button className="tooltip-control" type="button" aria-label="답변 공유" data-tooltip="공유" disabled={!assistantText} onClick={() => onShare(finalMessage?.id ?? null)}><Share2 size={16} /></button>
                     <UsageCostPopover
                       usage={finalMessage?.metadata?.usage ?? snapshot?.usage}
@@ -1452,7 +1855,7 @@ function AssistantTurn({
                   <time className="answer-completed-time" dateTime={snapshot?.finishedAt ?? finalMessage?.completedAt ?? undefined}>{formatCompletedAt(snapshot?.finishedAt ?? finalMessage?.completedAt)}</time>
                   {sources.length > 0 && (
                     <div className="answer-sources">
-                      <button className="answer-sources-trigger" type="button" aria-expanded={sourcesOpen} onClick={() => { if (sourcesOpen) closeSources(); else setSourcesOpen(true); }}>검색 및 참고 출처 · 인용 {citedSourceCount} · 참고 {sources.length - citedSourceCount}</button>
+                      <button className="answer-sources-trigger" type="button" aria-expanded={sourcesOpen} onClick={() => { if (sourcesOpen) closeSources(); else setSourcesOpen(true); }}>검색 및 참고 출처 · 인용 {citedSourceCount} · 본문 확인 {reviewedSourceCount} · 검색 참고 {referenceSourceCount}</button>
                       {sourcesOpen && (
                         <>
                           <button className="answer-sources-backdrop" type="button" aria-label="검색 및 참고 출처 닫기" onClick={closeSources} />
@@ -1464,11 +1867,11 @@ function AssistantTurn({
                                   <button className="source-detail-back is-icon" type="button" aria-label="출처 목록으로 돌아가기" onClick={returnToSourceList}><ArrowLeft size={15} /></button>
                                 </div>
                                 <div className="source-header">
-                                  <span className="source-kind">{expandedSourceTarget.cited ? `${citationMarkerLabel(expandedSourceTarget.markerNumber)} 본문 인용` : "참고만 함"}</span>
+                                  <span className={`source-kind${expandedSourceTarget.cited ? "" : expandedSourceTarget.reviewed ? " is-reviewed" : " is-reference-only"}`}>{expandedSourceTarget.cited ? `${citationMarkerLabel(expandedSourceTarget.markerNumber)} 본문 인용` : expandedSourceTarget.reviewed ? "본문 확인" : "검색 참고"}</span>
                                   {defaultUrlTransform(expandedSourceTarget.source.normalizedUrl || expandedSourceTarget.source.originalUrl)
                                     ? <a href={defaultUrlTransform(expandedSourceTarget.source.normalizedUrl || expandedSourceTarget.source.originalUrl)} target="_blank" rel="noreferrer noopener">{expandedSourceTarget.source.title || expandedSourceTarget.source.domain}</a>
                                     : <strong>{expandedSourceTarget.source.title || expandedSourceTarget.source.domain}</strong>}
-                                  <small>{expandedSourceTarget.source.domain}{expandedSourceTarget.source.evidenceKind === "fetched_content" ? " · 본문 확인" : ""}</small>
+                                  <small>{expandedSourceTarget.source.domain}</small>
                                 </div>
                                 <p className="source-detail-excerpt">{expandedSourceTarget.source.verbatimExcerpt}</p>
                               </div>
@@ -1478,20 +1881,20 @@ function AssistantTurn({
                                   <div className="source-queries">{searches.map((search) => <span key={search.invocationId}>{search.query}</span>)}</div>
                                 )}
                                 <ol>
-                                  {sourceTargets.map(({ source, markerNumber, cited }) => (
-                                    <li className={cited ? "is-cited" : "is-reference-only"} key={source.sourceId}>
+                                  {sourceTargets.map(({ source, markerNumber, cited, reviewed }) => (
+                                    <li className={cited ? "is-cited" : reviewed ? "is-reviewed" : "is-reference-only"} key={source.sourceId}>
                                       <div className="source-header">
-                                        <span className="source-kind">{cited ? `${citationMarkerLabel(markerNumber)} 본문 인용` : "참고만 함"}</span>
+                                        <span className="source-kind">{cited ? `${citationMarkerLabel(markerNumber)} 본문 인용` : reviewed ? "본문 확인" : "검색 참고"}</span>
                                         {defaultUrlTransform(source.normalizedUrl || source.originalUrl)
                                           ? <a href={defaultUrlTransform(source.normalizedUrl || source.originalUrl)} target="_blank" rel="noreferrer noopener">{source.title || source.domain}</a>
                                           : <strong>{source.title || source.domain}</strong>}
-                                        <small>{source.domain}{source.evidenceKind === "fetched_content" ? " · 본문 확인" : ""}</small>
+                                        <small>{source.domain}</small>
                                         </div>
                                       {source.verbatimExcerpt && (
                                         <div className="source-excerpt-row">
                                           <button className="source-excerpt" type="button" aria-label={`${source.title || source.domain} 확대해서 보기`} onClick={() => openSourceDetail(source.sourceId)}>{source.verbatimExcerpt}</button>
                                           <button type="button" aria-label={`${source.title || source.domain} 본문 복사`} onClick={() => {
-                                            void navigator.clipboard.writeText(source.verbatimExcerpt ?? "")
+                                            void copyText(source.verbatimExcerpt ?? "")
                                               .then(() => onToast("전체 내용을 복사했습니다. 메모장에 붙여넣어 확인하세요."))
                                               .catch(() => onToast("전체 내용을 복사하지 못했습니다."));
                                           }}><Copy size={12} /></button>
@@ -1508,6 +1911,7 @@ function AssistantTurn({
                     </div>
                   )}
                 </div>
+                {terminalReason && <p className="final-answer-error" role="alert">{terminalReason}</p>}
                 {reportOpen && (
                   <form className="answer-feedback-form" onSubmit={(event) => void reportAnswer(event)}>
                     <label htmlFor={`feedback-${finalMessage?.id}`}>이 답변에서 개선이 필요한 점</label>
@@ -1525,23 +1929,30 @@ function AssistantTurn({
   );
 }
 
+function formalizePlanStepLabel(label: string) {
+  return label
+    .replace(/한다([.!?]?)$/u, "합니다$1")
+    .replace(/된다([.!?]?)$/u, "됩니다$1")
+    .replace(/이다([.!?]?)$/u, "입니다$1");
+}
+
 function derivedProgress(run: RunSnapshot) {
-  if (run.plan?.steps.length) {
-    return run.plan.steps.map((step) => ({
+  if (run.workPlan?.length) {
+    return [...run.workPlan].sort((left, right) => left.order - right.order).map((step) => ({
       id: step.id,
-      label: step.label,
-      status: step.status === "completed" ? "complete" : step.status === "running" ? "running" : step.status === "failed" ? "error" : "waiting",
-      subtasks: [...(step.subtasks ?? [])].sort((left, right) => left.order - right.order),
+      label: formalizePlanStepLabel(step.step),
+      status: step.status === "completed" ? "complete" : step.status === "in_progress" ? "running" : "waiting",
+      subtasks: [],
     }));
   }
   const terminal = ["completed", "failed", "cancelled", "limit_reached", "interrupted"].includes(run.status);
-  const hasTools = run.toolExecutions.length > 0;
-  const toolsDone = hasTools && run.toolExecutions.every((item) => item.status === "completed");
   return [
-    { id: "accepted", label: "요청 접수 및 실행 준비", status: "complete", subtasks: [] },
-    { id: "analysis", label: "요청 분석 및 응답 구성", status: hasTools || terminal ? "complete" : "running", subtasks: [] },
-    { id: "tools", label: "필요한 도구 실행", status: run.status === "tools_running" ? "running" : toolsDone || terminal ? "complete" : "waiting", subtasks: [] },
-    { id: "answer", label: "결과 정리 및 사용자 전달", status: run.status === "completed" ? "complete" : terminal ? "error" : toolsDone || !hasTools && run.status === "model_streaming" ? "running" : "waiting", subtasks: [] },
+    {
+      id: "request",
+      label: terminal ? "요청을 처리했습니다" : "작업 계획을 수립합니다",
+      status: run.status === "completed" ? "complete" : terminal ? "error" : "running",
+      subtasks: [],
+    },
   ];
 }
 
@@ -1674,11 +2085,13 @@ function App() {
   const [settingsSection, setSettingsSection] = useState<"personal" | "admin">("personal");
   const [progressOpen, setProgressOpen] = useState(false);
   const progressRunIdRef = useRef<string | null>(null);
+  const progressPlanIdRef = useRef<string | null>(null);
   const [openCalls, setOpenCalls] = useState<Set<string>>(new Set());
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const sidebarAutoCollapsedRef = useRef(false);
   const [sessionMenuId, setSessionMenuId] = useState<string | null>(null);
+  const [likedSessionsOnly, setLikedSessionsOnly] = useState(false);
   const [sessionDeleteArmedId, setSessionDeleteArmedId] = useState<string | null>(null);
   const [sessionDeleteBusyId, setSessionDeleteBusyId] = useState<string | null>(null);
   const [moveMenuId, setMoveMenuId] = useState<string | null>(null);
@@ -1694,6 +2107,7 @@ function App() {
   const [modelNameTooltip, setModelNameTooltip] = useState<{ name: string; left: number; top: number } | null>(null);
   const [conversationSearchOpen, setConversationSearchOpen] = useState(false);
   const [notificationOpen, setNotificationOpen] = useState(false);
+  const [notificationTab, setNotificationTab] = useState<NotificationTab>("notifications");
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
   const [notificationLoading, setNotificationLoading] = useState(false);
@@ -1716,6 +2130,7 @@ function App() {
   const [adminSettingsBusy, setAdminSettingsBusy] = useState(false);
   const [adminSettingsError, setAdminSettingsError] = useState<string | null>(null);
   const [artifactOpen, setArtifactOpen] = useState(false);
+  const [artifactVersionMenuOpen, setArtifactVersionMenuOpen] = useState(false);
   const [artifactPaneWidth, setArtifactPaneWidth] = useState(() => {
     const saved = Number(localStorage.getItem("lumina:artifactPaneWidth"));
     return Number.isFinite(saved) && saved >= 360 ? saved : Math.max(520, Math.round(window.innerWidth * 0.42));
@@ -1747,6 +2162,7 @@ function App() {
   const dockAreaRef = useRef<HTMLDivElement>(null);
   const notificationMenuRef = useRef<HTMLDivElement>(null);
   const modelNameTooltipTimerRef = useRef<number | null>(null);
+  const sessionScrollbarIdleTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     localStorage.setItem("lumina:artifactPaneWidth", String(artifactPaneWidth));
@@ -1857,8 +2273,13 @@ function App() {
     artifactOpenRequestRef.current += 1;
     artifactHistoryOpenRef.current = false;
     setArtifactLoading(false);
+    setArtifactVersionMenuOpen(false);
     setArtifactOpen(false);
     setArtifactFullscreen(false);
+    if (sidebarAutoCollapsedRef.current) {
+      sidebarAutoCollapsedRef.current = false;
+      setSidebarCollapsed(false);
+    }
   }, []);
 
   const closeArtifact = useCallback(() => {
@@ -1887,18 +2308,25 @@ function App() {
   useEffect(() => {
     if (!activeRun) {
       progressRunIdRef.current = null;
+      progressPlanIdRef.current = null;
       return;
     }
     const terminal = ["completed", "failed", "cancelled", "limit_reached", "interrupted"].includes(activeRun.status);
+    const planId = activeRun.plan?.id ?? null;
     if (progressRunIdRef.current !== activeRun.runId) {
       progressRunIdRef.current = activeRun.runId;
-      setProgressOpen(false);
+      progressPlanIdRef.current = planId;
+      setProgressOpen(Boolean(planId) && !terminal);
       return;
+    }
+    if (planId && progressPlanIdRef.current !== planId) {
+      progressPlanIdRef.current = planId;
+      if (!terminal) setProgressOpen(true);
     }
     if (terminal) {
       setProgressOpen(false);
     }
-  }, [activeRun?.runId, activeRun?.status]);
+  }, [activeRun?.plan?.id, activeRun?.runId, activeRun?.status]);
   const accountProviders = workspace.providers
     .filter((provider) => provider.id !== "mock")
     .sort((left, right) => (accountProviderOrder[left.id] ?? Number.MAX_SAFE_INTEGER) - (accountProviderOrder[right.id] ?? Number.MAX_SAFE_INTEGER)
@@ -2022,8 +2450,6 @@ function App() {
     ? [...activeRun.activities].reverse().find((activity) => activity.type === "progress_summary")
     : undefined;
   const retryableStepIds = new Set(activeRun?.plan?.steps.filter((step) => step.status === "failed").map((step) => step.id) ?? []);
-  const runCanPause = Boolean(activeRun && !["paused", "awaiting_approval", "completed", "failed", "cancelled", "limit_reached", "interrupted"].includes(activeRun.status));
-  const runCanCancel = Boolean(activeRun && !["completed", "failed", "cancelled", "limit_reached", "interrupted"].includes(activeRun.status));
   const runIsPaused = activeRun?.status === "paused";
   const conversationFollow = useConversationAutoFollow(
     Boolean(activeRun && !["completed", "failed", "cancelled", "limit_reached", "interrupted"].includes(activeRun.status)),
@@ -2038,11 +2464,13 @@ function App() {
   const artifactVersionOptions = artifactSummary
     ? [...new Set(artifactSummary.versions?.length ? artifactSummary.versions : [artifactSummary.currentVersion])].sort((left, right) => right - left)
     : [];
+  const artifactDownloadVersion = artifactVersion?.version ?? artifactSummary?.currentVersion ?? null;
   const artifactPreviewUrl = artifactVersion?.previewUrl
     ?? (artifactSummary && artifactVersion?.mimeType === "application/pdf"
       ? `/api/artifacts/${encodeURIComponent(artifactSummary.id)}/preview?version=${encodeURIComponent(String(artifactVersion.version))}`
       : null);
   const sharedViewerToken = sharedTokenFromPath(window.location.pathname);
+  const sharedArtifactTarget = sharedArtifactFromLocation();
 
   useEffect(() => {
     if (!toast) return;
@@ -2054,15 +2482,24 @@ function App() {
     const dock = dockAreaRef.current;
     const pane = dock?.parentElement;
     if (!dock || !pane) return;
-    const updateDockHeight = () => pane.style.setProperty("--dock-height", `${Math.ceil(dock.getBoundingClientRect().height)}px`);
+    let followFrame: number | null = null;
+    const updateDockHeight = () => {
+      pane.style.setProperty("--dock-height", `${Math.ceil(dock.getBoundingClientRect().height)}px`);
+      if (followFrame !== null) window.cancelAnimationFrame(followFrame);
+      followFrame = window.requestAnimationFrame(() => {
+        followFrame = null;
+        conversationFollow.follow(true);
+      });
+    };
     updateDockHeight();
     const observer = new ResizeObserver(updateDockHeight);
     observer.observe(dock);
     return () => {
       observer.disconnect();
+      if (followFrame !== null) window.cancelAnimationFrame(followFrame);
       pane.style.removeProperty("--dock-height");
     };
-  }, []);
+  }, [conversationFollow.follow, mainView, workspace.authSession?.user.id]);
 
   useEffect(() => {
     if (!workspace.notice) return;
@@ -2073,6 +2510,7 @@ function App() {
   useEffect(() => {
     if (!workspace.authSession) {
       setNotificationOpen(false);
+      setNotificationTab("notifications");
       setNotifications([]);
       setNotificationUnreadCount(0);
       setNotificationError(null);
@@ -2190,7 +2628,22 @@ function App() {
     if (modelNameTooltipTimerRef.current !== null) {
       window.clearTimeout(modelNameTooltipTimerRef.current);
     }
+    if (sessionScrollbarIdleTimerRef.current !== null) {
+      window.clearTimeout(sessionScrollbarIdleTimerRef.current);
+    }
   }, []);
+
+  function handleSessionListScroll(event: ReactUIEvent<HTMLDivElement>) {
+    const list = event.currentTarget;
+    list.classList.add("is-scrolling");
+    if (sessionScrollbarIdleTimerRef.current !== null) {
+      window.clearTimeout(sessionScrollbarIdleTimerRef.current);
+    }
+    sessionScrollbarIdleTimerRef.current = window.setTimeout(() => {
+      list.classList.remove("is-scrolling");
+      sessionScrollbarIdleTimerRef.current = null;
+    }, 650);
+  }
 
   useEffect(() => {
     setSessionDeleteArmedId(null);
@@ -2203,6 +2656,10 @@ function App() {
   const startNewConversation = useCallback(async () => {
     setMainView("chat");
     setSidebarOpen(false);
+    setComposerTrigger(null);
+    setComposerSuggestions([]);
+    setSuggestionIndex(0);
+    setSuggestionsLoading(false);
     await workspace.createConversation();
     window.requestAnimationFrame(() => composerInputRef.current?.focus());
   }, [workspace.createConversation]);
@@ -2248,7 +2705,8 @@ function App() {
       }
       if (event.key !== "Escape") return;
       if (artifactSaveBusy) return;
-      if (notificationOpen) setNotificationOpen(false);
+      if (artifactVersionMenuOpen) setArtifactVersionMenuOpen(false);
+      else if (notificationOpen) setNotificationOpen(false);
       else if (conversationSearchOpen) setConversationSearchOpen(false);
       else if (sessionTitleEditing) setSessionTitleEditing(false);
       else if (artifactEditing) setArtifactEditing(false);
@@ -2262,7 +2720,7 @@ function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [accountMenuOpen, artifactEditing, artifactFullscreen, artifactOpen, artifactSaveBusy, closeArtifact, conversationSearchOpen, isAdmin, notificationOpen, openAdmin, openSettings, providerMenuOpen, providerModelMenuId, sessionMenuId, sessionTitleEditing, sidebarOpen, startNewConversation, workspace.toggleTheme]);
+  }, [accountMenuOpen, artifactEditing, artifactFullscreen, artifactOpen, artifactSaveBusy, artifactVersionMenuOpen, closeArtifact, conversationSearchOpen, isAdmin, notificationOpen, openAdmin, openSettings, providerMenuOpen, providerModelMenuId, sessionMenuId, sessionTitleEditing, sidebarOpen, startNewConversation, workspace.toggleTheme]);
 
   const showToast = useCallback((message: string) => setToast(message), []);
 
@@ -2399,6 +2857,20 @@ function App() {
   const insertComposerTrigger = (trigger: "@" | "$") => {
     const input = composerInputRef.current;
     const caret = input?.selectionStart ?? draft.length;
+    if (composerTrigger?.trigger === trigger) {
+      setComposerTrigger(null);
+      setComposerSuggestions([]);
+      setSuggestionIndex(0);
+      setSuggestionsLoading(false);
+      window.requestAnimationFrame(() => input?.focus());
+      return;
+    }
+    const existingTrigger = findComposerTrigger(draft, caret);
+    if (existingTrigger?.trigger === trigger) {
+      setComposerTrigger(existingTrigger);
+      window.requestAnimationFrame(() => input?.focus());
+      return;
+    }
     const prefix = caret > 0 && !/\s/.test(draft.charAt(caret - 1)) ? ` ${trigger}` : trigger;
     const nextDraft = `${draft.slice(0, caret)}${prefix}${draft.slice(caret)}`;
     const nextCaret = caret + prefix.length;
@@ -2480,7 +2952,7 @@ function App() {
       ? JSON.stringify(execution.result, null, 2)
       : execution.error || execution.resultSummary.join("\n") || "결과 없음";
     try {
-      await navigator.clipboard.writeText([`[${execution.toolName}]`, "", "도구 요청", requestText, "", "도구 결과", resultText].join("\n"));
+      await copyText([`[${execution.toolName}]`, "", "도구 요청", requestText, "", "도구 결과", resultText].join("\n"));
       showToast("전체 Tool 로그를 복사했습니다.");
     } catch {
       showToast("Tool 메시지를 복사하지 못했습니다.");
@@ -2491,6 +2963,13 @@ function App() {
     if (artifactSaveBusy) {
       showToast("Artifact 저장이 끝난 뒤 다른 문서를 열어 주세요.");
       return;
+    }
+    if (window.innerWidth >= 1024 && window.innerWidth < 1400) {
+      if (!sidebarCollapsed) {
+        sidebarAutoCollapsedRef.current = true;
+        setSidebarCollapsed(true);
+      }
+      setArtifactPaneWidth((current) => Math.round(clampArtifactPaneWidth(current, true)));
     }
     if (!artifactOpen && !artifactHistoryOpenRef.current) {
       window.history.pushState({ ...window.history.state, luminaArtifactPanel: true }, "");
@@ -2513,11 +2992,14 @@ function App() {
     setArtifactAiStatus(null);
     setArtifactDraftEtag(undefined);
     try {
-      const summary = await api.artifacts.get(artifact.id);
-      const [version, savedDraft] = await Promise.all([
-        api.artifacts.getVersion(artifact.id, summary.currentVersion),
+      const [summary, initialVersion, savedDraft] = await Promise.all([
+        api.artifacts.get(artifact.id),
+        api.artifacts.getVersion(artifact.id, artifact.currentVersion),
         api.artifacts.getDraft(artifact.id),
       ]);
+      const version = summary.currentVersion === initialVersion.version
+        ? initialVersion
+        : await api.artifacts.getVersion(artifact.id, summary.currentVersion);
       if (artifactOpenRequestRef.current !== requestId) return;
       setArtifactSummary(summary);
       setArtifactVersion(version);
@@ -2615,7 +3097,7 @@ function App() {
           baseVersion: artifactVersion.version,
           sourceText: artifactDraft,
           changeSummary: "Artifact 패널에서 직접 편집",
-          idempotencyKey: crypto.randomUUID(),
+          idempotencyKey: createClientId(),
         },
         artifactVersion.etag,
         cleanupDraftEtag,
@@ -2694,9 +3176,9 @@ function App() {
   };
 
   const downloadArtifact = async () => {
-    if (!artifactSummary || !artifactVersion) return;
+    if (!artifactSummary || artifactDownloadVersion === null) return;
     try {
-      const download = await api.artifacts.downloadVersion(artifactSummary.id, artifactVersion.version);
+      const download = await api.artifacts.downloadVersion(artifactSummary.id, artifactDownloadVersion);
       const url = URL.createObjectURL(download.blob);
       const anchor = document.createElement("a");
       anchor.href = url;
@@ -2715,7 +3197,9 @@ function App() {
       const share = await api.sharing.create(artifactSummary.conversationId);
       const url = new URL(share.viewerPath, window.location.origin);
       url.searchParams.set("theme", theme);
-      await navigator.clipboard.writeText(url.toString());
+      url.searchParams.set("artifact", artifactSummary.id);
+      url.searchParams.set("version", String(artifactDownloadVersion ?? artifactSummary.currentVersion));
+      await copyText(url.toString());
       showToast("Artifact 공유 링크를 복사했습니다.");
     } catch (error) {
       showToast(error instanceof Error ? error.message : "공유 링크를 만들지 못했습니다.");
@@ -2790,6 +3274,12 @@ function App() {
       }
     }
 
+    if (notification.deepLink.target === "admin" && workspace.authSession?.user.role === "admin") {
+      setMainView("admin");
+      setNotificationBusyId(null);
+      return;
+    }
+
     const { projectId, conversationId, runId, artifactId } = notification.deepLink;
     const projectAvailable = !projectId || workspace.projects.some((project) => project.id === projectId);
     let openedTarget = false;
@@ -2855,6 +3345,16 @@ function App() {
       </>
     );
   }
+  if (sharedViewerToken) {
+    return (
+      <SharedSnapshotViewer
+        artifactId={sharedArtifactTarget.artifactId}
+        artifactVersion={sharedArtifactTarget.artifactVersion}
+        token={sharedViewerToken}
+        theme={sharedThemeFromLocation()}
+      />
+    );
+  }
   const streamLabel = activeRuntime.streamState === "reconnecting"
     ? "재연결 중"
     : activeRuntime.streamState === "connecting"
@@ -2870,6 +3370,7 @@ function App() {
         setMoveMenuId(null);
         setAccountMenuOpen(false);
         setProjectMenuOpen(false);
+        setArtifactVersionMenuOpen(false);
       }}
     >
       <button className={`sidebar-backdrop ${sidebarOpen ? "is-visible" : ""}`} type="button" aria-label="사이드바 닫기" onClick={() => setSidebarOpen(false)} />
@@ -2940,7 +3441,7 @@ function App() {
 
           <section className="sidebar-section session-section">
             <div className="sidebar-section-heading session-heading">
-              <span>{bulkSessionMode ? `${bulkSessionIds.size}개 선택` : "최근 항목"}</span>
+              <span>{bulkSessionMode ? `${likedSessionsOnly ? "좋아요 · " : ""}${bulkSessionIds.size}개 선택` : likedSessionsOnly ? "좋아요" : "최근 항목"}</span>
               {bulkSessionMode ? (
                 <div className="bulk-session-heading-actions">
                   <button className="tooltip-control" type="button" aria-label="선택한 대화 이동" data-tooltip="이동" disabled={!bulkSessionIds.size || bulkSessionBusy || workspace.projects.length < 2} onClick={() => setBulkMoveOpen((open) => !open)}><FolderInput size={14} /></button>
@@ -2958,31 +3459,41 @@ function App() {
               ) : (
                 <div className="session-heading-actions">
                   {workspace.loadingWorkspace && <LoaderCircle className="is-running" size={13} />}
+                  <button className={`liked-sessions-filter session-heading-action tooltip-control ${likedSessionsOnly ? "is-active" : ""}`} type="button" aria-label={likedSessionsOnly ? "전체 보기" : "좋아요만 보기"} aria-pressed={likedSessionsOnly} data-tooltip={likedSessionsOnly ? "전체 보기" : "좋아요만"} onClick={() => setLikedSessionsOnly((active) => !active)}><Heart size={14} fill={likedSessionsOnly ? "currentColor" : "none"} /></button>
                   <button className="bulk-session-open tooltip-control" type="button" aria-label="세션 관리" data-tooltip="세션 관리" disabled={workspace.conversations.length === 0} onClick={() => { setBulkSessionMode(true); setBulkSessionIds(new Set()); setSessionMenuId(null); setMoveMenuId(null); }}><CheckCheck size={14} /></button>
                 </div>
               )}
             </div>
-            <div className="session-list">
-              {workspace.conversations.map((conversation) => (
+            <div className="session-list" onScroll={handleSessionListScroll}>
+              {workspace.conversations.filter((conversation) => !likedSessionsOnly || conversation.isLiked).map((conversation) => (
                 <div className={`session-item ${conversation.id === workspace.activeConversationId && !bulkSessionMode ? "is-selected" : ""} ${bulkSessionMode ? "is-bulk" : ""}`} key={conversation.id}>
-                  <button className="session-row" type="button" onClick={() => {
-                    if (bulkSessionMode) {
+                  {bulkSessionMode ? (
+                    <button className="session-row" type="button" onClick={() => {
                       setBulkSessionIds((current) => {
                         const next = new Set(current);
                         if (next.has(conversation.id)) next.delete(conversation.id);
                         else next.add(conversation.id);
                         return next;
                       });
-                      return;
-                    }
-                    setSessionTitleEditing(false);
-                    setMainView("chat");
-                    workspace.selectConversation(conversation.id);
-                    setSidebarOpen(false);
-                  }} aria-pressed={bulkSessionMode ? bulkSessionIds.has(conversation.id) : undefined}>
-                    {bulkSessionMode ? <span className={`bulk-session-checkbox ${bulkSessionIds.has(conversation.id) ? "is-checked" : ""}`}>{bulkSessionIds.has(conversation.id) && <Check size={11} />}</span> : conversation.lastRunStatus === "running" ? <LoaderCircle className="is-running" size={14} /> : conversation.lastRunStatus === "queued" ? <Clock3 size={14} /> : conversation.lastRunStatus === "failed" ? <AlertCircle size={14} /> : conversation.isFavorite ? <Pin className="session-pin" size={14} /> : <MessageCircle size={14} />}
-                    <span className={isUntitledConversation(conversation.title) ? "is-untitled" : undefined}>{isUntitledConversation(conversation.title) ? "제목 없음" : conversation.title}</span>
-                  </button>
+                    }} aria-pressed={bulkSessionIds.has(conversation.id)}>
+                      <span className={`bulk-session-checkbox ${bulkSessionIds.has(conversation.id) ? "is-checked" : ""}`}>{bulkSessionIds.has(conversation.id) && <Check size={11} />}</span>
+                      <span className={isUntitledConversation(conversation.title) ? "is-untitled" : undefined}>{isUntitledConversation(conversation.title) ? "제목 없음" : conversation.title}</span>
+                    </button>
+                  ) : (
+                    <>
+                      <button className="session-like-button" type="button" aria-label={`${conversation.title} ${conversation.isLiked ? "좋아요 취소" : "좋아요"}`} aria-pressed={conversation.isLiked} onClick={() => void workspace.toggleLikedConversation(conversation.id)}>
+                        {conversation.isLiked ? <Heart className="session-like" size={14} fill="currentColor" /> : conversation.lastRunStatus === "running" ? <LoaderCircle className="is-running" size={14} /> : conversation.lastRunStatus === "queued" ? <Clock3 size={14} /> : conversation.lastRunStatus === "failed" ? <AlertCircle size={14} /> : conversation.isFavorite ? <Pin className="session-pin" size={14} /> : <MessageCircle size={14} />}
+                      </button>
+                      <button className="session-row session-title-button" type="button" onClick={() => {
+                        setSessionTitleEditing(false);
+                        setMainView("chat");
+                        workspace.selectConversation(conversation.id);
+                        setSidebarOpen(false);
+                      }}>
+                        <span className={isUntitledConversation(conversation.title) ? "is-untitled" : undefined}>{isUntitledConversation(conversation.title) ? "제목 없음" : conversation.title}</span>
+                      </button>
+                    </>
+                  )}
                   {!bulkSessionMode && <button className="session-options-button" type="button" aria-label={`${conversation.title} 옵션`} aria-expanded={sessionMenuId === conversation.id} onClick={(event) => {
                     event.stopPropagation();
                     setAccountMenuOpen(false);
@@ -2992,6 +3503,7 @@ function App() {
                   {!bulkSessionMode && sessionMenuId === conversation.id && (
                     <div className="session-options-menu" role="menu" onClick={(event) => event.stopPropagation()}>
                       <button type="button" role="menuitem" onClick={() => { setSessionMenuId(null); void workspace.toggleFavoriteConversation(conversation.id); }}>{conversation.isFavorite ? <PinOff size={14} /> : <Pin size={14} />} {conversation.isFavorite ? "즐겨찾기 해제" : "즐겨찾기"}</button>
+                      <button type="button" role="menuitem" onClick={() => { setSessionMenuId(null); void workspace.toggleLikedConversation(conversation.id); }}><Heart size={14} fill={conversation.isLiked ? "currentColor" : "none"} /> {conversation.isLiked ? "좋아요 취소" : "좋아요"}</button>
                       <button type="button" role="menuitem" onClick={() => beginSessionTitleEdit(conversation.id)}><Pencil size={14} /> 세션명 변경</button>
                       <button type="button" role="menuitem" onClick={() => setMoveMenuId((current) => current === conversation.id ? null : conversation.id)}><FolderInput size={14} /> 프로젝트 변경</button>
                       {moveMenuId === conversation.id && (
@@ -3002,12 +3514,12 @@ function App() {
                           {workspace.projects.length < 2 && <span>이동할 프로젝트가 없습니다.</span>}
                         </div>
                       )}
-                      <button className={`is-danger ${sessionDeleteArmedId === conversation.id ? "is-armed" : ""}`} type="button" role="menuitem" disabled={sessionDeleteBusyId === conversation.id} onClick={() => void deleteSessionFromMenu(conversation.id)}>{sessionDeleteBusyId === conversation.id ? <LoaderCircle className="is-running" size={14} /> : sessionDeleteArmedId === conversation.id ? <AlertCircle size={14} /> : <Trash2 size={14} />} {sessionDeleteArmedId === conversation.id ? "한 번 더 눌러 삭제" : "삭제"}</button>
+                      <button className={`is-danger ${sessionDeleteArmedId === conversation.id ? "is-armed" : ""}`} type="button" role="menuitem" disabled={sessionDeleteBusyId === conversation.id} onClick={() => void deleteSessionFromMenu(conversation.id)}>{sessionDeleteBusyId === conversation.id ? <LoaderCircle className="is-running" size={14} /> : sessionDeleteArmedId === conversation.id ? <AlertCircle size={14} /> : <Trash2 size={14} />} {sessionDeleteArmedId === conversation.id ? "삭제 확인" : "삭제"}</button>
                     </div>
                   )}
                 </div>
               ))}
-              {!workspace.loadingWorkspace && workspace.conversations.length === 0 && <p className="sidebar-empty">새 채팅을 만들어 시작하세요.</p>}
+              {!workspace.loadingWorkspace && workspace.conversations.filter((conversation) => !likedSessionsOnly || conversation.isLiked).length === 0 && <p className="sidebar-empty">{likedSessionsOnly ? "좋아요한 채팅이 없습니다." : "새 채팅을 만들어 시작하세요."}</p>}
             </div>
           </section>
         </div>
@@ -3107,33 +3619,66 @@ function App() {
                 )}
               </button>
               {notificationOpen && (
-                <section className="notification-panel" aria-label="알림 목록">
+                <section className="notification-panel" aria-label="알림과 공지사항">
                   <header>
-                    <div><strong>알림</strong><span>{notificationUnreadCount > 0 ? `읽지 않음 ${notificationUnreadCount}` : "모두 확인함"}</span></div>
-                    <div className="notification-panel-actions">
+                    <div className="notification-tabs" role="tablist" aria-label="받은 소식 분류">
                       <button
-                        className="tooltip-control"
+                        id="notification-tab-notifications"
                         type="button"
-                        aria-label="모든 알림 읽음 처리"
-                        data-tooltip="모두 읽음"
-                        disabled={notificationUnreadCount === 0 || Boolean(notificationBusyId)}
-                        onClick={() => void markAllNotificationsRead()}
+                        role="tab"
+                        aria-controls="notification-panel-notifications"
+                        aria-selected={notificationTab === "notifications"}
+                        onClick={() => setNotificationTab("notifications")}
                       >
-                        {notificationBusyId === "all" ? <LoaderCircle className="is-running" size={15} /> : <CheckCheck size={15} />}
+                        알림
+                        {notificationUnreadCount > 0 && <span>{notificationUnreadCount > 99 ? "99+" : notificationUnreadCount}</span>}
                       </button>
                       <button
-                        className={`tooltip-control notification-delete-all ${notificationDeleteArmedId === "all" ? "is-armed" : ""}`}
+                        id="notification-tab-announcements"
                         type="button"
-                        aria-label={notificationDeleteArmedId === "all" ? "모든 알림 삭제 확인, 한 번 더 누르면 삭제" : "모든 알림 삭제"}
-                        data-tooltip={notificationDeleteArmedId === "all" ? "한 번 더 눌러 삭제" : "모두 삭제"}
-                        disabled={notifications.length === 0 || Boolean(notificationBusyId)}
-                        onClick={() => void deleteAllNotifications()}
+                        role="tab"
+                        aria-controls="notification-panel-announcements"
+                        aria-selected={notificationTab === "announcements"}
+                        onClick={() => {
+                          setNotificationDeleteArmedId(null);
+                          setNotificationTab("announcements");
+                        }}
                       >
-                        {notificationBusyId === "delete-all" ? <LoaderCircle className="is-running" size={15} /> : notificationDeleteArmedId === "all" ? <AlertCircle size={15} /> : <Trash2 size={15} />}
+                        공지사항
                       </button>
                     </div>
+                    {notificationTab === "notifications" && (
+                      <div className="notification-panel-actions">
+                        <button
+                          className="tooltip-control"
+                          type="button"
+                          aria-label="모든 알림 읽음 처리"
+                          data-tooltip="모두 읽음"
+                          disabled={notificationUnreadCount === 0 || Boolean(notificationBusyId)}
+                          onClick={() => void markAllNotificationsRead()}
+                        >
+                          {notificationBusyId === "all" ? <LoaderCircle className="is-running" size={15} /> : <CheckCheck size={15} />}
+                        </button>
+                        <button
+                          className={`tooltip-control notification-delete-all ${notificationDeleteArmedId === "all" ? "is-armed" : ""}`}
+                          type="button"
+                          aria-label={notificationDeleteArmedId === "all" ? "모든 알림 삭제 확인, 한 번 더 누르면 삭제" : "모든 알림 삭제"}
+                          data-tooltip={notificationDeleteArmedId === "all" ? "한 번 더 눌러 삭제" : "모두 삭제"}
+                          disabled={notifications.length === 0 || Boolean(notificationBusyId)}
+                          onClick={() => void deleteAllNotifications()}
+                        >
+                          {notificationBusyId === "delete-all" ? <LoaderCircle className="is-running" size={15} /> : notificationDeleteArmedId === "all" ? <AlertCircle size={15} /> : <Trash2 size={15} />}
+                        </button>
+                      </div>
+                    )}
                   </header>
-                  <div className="notification-list">
+                  {notificationTab === "notifications" ? (
+                  <div
+                    className="notification-list"
+                    id="notification-panel-notifications"
+                    role="tabpanel"
+                    aria-labelledby="notification-tab-notifications"
+                  >
                     {notificationLoading && notifications.length === 0 && (
                       <div className="notification-state"><LoaderCircle className="is-running" size={16} /> 알림을 불러오고 있습니다.</div>
                     )}
@@ -3149,10 +3694,6 @@ function App() {
                       const conversationTitle = workspace.conversations.find(
                         (conversation) => conversation.id === notification.deepLink.conversationId,
                       )?.title.trim();
-                      const runReference = notification.deepLink.runId?.slice(0, 6);
-                      const notificationContext = [conversationTitle, runReference ? `작업 ${runReference}` : null]
-                        .filter(Boolean)
-                        .join(" · ");
                       const displayTitle = notification.kind === "run_completed" && notification.title === "작업이 완료되었습니다."
                         ? `${conversationTitle || "작업"} · 완료`
                         : notification.title;
@@ -3164,7 +3705,6 @@ function App() {
                           <button className="notification-open" type="button" disabled={Boolean(notificationBusyId)} onClick={() => void openNotificationTarget(notification)}>
                             <span className="notification-copy">
                               <strong>{displayTitle}</strong>
-                              <small>{notificationContext ? `${notificationContext} — ${notification.body}` : notification.body}</small>
                             </span>
                             <span className="notification-meta">
                               <time dateTime={notification.createdAt}>{formatNotificationTime(notification.createdAt)}</time>
@@ -3178,15 +3718,25 @@ function App() {
                       );
                     })}
                   </div>
+                  ) : (
+                    <div
+                      className="notification-list announcement-list"
+                      id="notification-panel-announcements"
+                      role="tabpanel"
+                      aria-labelledby="notification-tab-announcements"
+                    >
+                      <div className="announcement-empty">
+                        <Megaphone size={18} />
+                        <strong>게시된 공지사항이 없습니다.</strong>
+                        <span>새 공지가 등록되면 이곳에서 확인할 수 있습니다.</span>
+                      </div>
+                    </div>
+                  )}
                 </section>
               )}
             </div>
           </div>
         </header>
-
-        {sharedViewerToken && (
-          <SharedSnapshotViewer embedded token={sharedViewerToken} theme={sharedThemeFromLocation()} />
-        )}
 
         <div
           className="conversation-scroll"
@@ -3219,7 +3769,7 @@ function App() {
                       const url = new URL(share.viewerPath, window.location.origin).toString();
                       const themedUrl = new URL(url);
                       themedUrl.searchParams.set("theme", theme);
-                      await navigator.clipboard.writeText(themedUrl.toString());
+                      await copyText(themedUrl.toString());
                       showToast("공유 링크를 복사했습니다.");
                     })
                     .catch((error) => {
@@ -3234,12 +3784,24 @@ function App() {
         </div>
 
         <div className="dock-area" ref={dockAreaRef}>
+          {conversationFollow.showJumpToLatest && (
+            <button className="jump-to-latest" type="button" aria-label="최신 응답으로 이동" onClick={conversationFollow.jumpToLatest}>
+              <ArrowDown size={16} aria-hidden="true" />
+            </button>
+          )}
           <div className="run-dock">
             {activeRun && (
-              <>
+              <div
+                className="progress-panel"
+                onClick={(event) => {
+                  const clickedButton = (event.target as HTMLElement).closest("button");
+                  if (clickedButton && !clickedButton.classList.contains("progress-trigger")) return;
+                  setProgressOpen((open) => !open);
+                }}
+              >
                 <div className="progress-header">
-                  <button className="progress-trigger" type="button" aria-expanded={progressOpen} onClick={() => setProgressOpen((open) => !open)}>
-                    <div className="progress-title"><Sparkles size={15} /><strong>작업 진행 상황</strong></div>
+                  <button className="progress-trigger" type="button" aria-expanded={progressOpen} aria-controls="active-run-progress-steps">
+                    <div className="progress-title"><Sparkles size={15} /><strong>작업 계획</strong></div>
                     {!progressOpen && (
                       <span className="current-step" title={latestProgressSummary?.text}>
                         {latestProgressSummary?.text ?? runStatusLabel(activeRun.status)}
@@ -3248,11 +3810,9 @@ function App() {
                     <span className="progress-count">{progress.filter((item) => item.status === "complete").length} / {progress.length} · {runStatusLabel(activeRun.status)}</span>
                     {progressOpen ? <ChevronDown className="progress-chevron" size={15} /> : <ChevronUp className="progress-chevron" size={15} />}
                   </button>
-                  {(runCanPause || runIsPaused || runCanCancel) && (
+                  {runIsPaused && (
                     <div className="run-controls" role="group" aria-label="Run 실행 제어">
-                      {runCanPause && <button type="button" aria-label="Run 일시 정지" title="일시 정지" disabled={workspace.runActionBusy} onClick={() => void controlRun("pause")}><Pause size={14} /></button>}
                       {runIsPaused && <button type="button" aria-label="Run 재개" title="재개" disabled={workspace.runActionBusy} onClick={() => void controlRun("resume")}><Play size={14} /></button>}
-                      {runCanCancel && <button className="is-danger" type="button" aria-label="Run 취소" title="취소" disabled={workspace.runActionBusy} onClick={() => void controlRun("cancel")}><X size={14} /></button>}
                     </div>
                   )}
                 </div>
@@ -3272,21 +3832,21 @@ function App() {
                   </div>
                 )}
                 {progressOpen && (
-                  <ol className="progress-steps">
+                  <ol className="progress-steps" id="active-run-progress-steps">
                     {progress.map((step) => {
                       const canRetry = (activeRun.status === "failed" || activeRun.status === "limit_reached") && retryableStepIds.has(step.id);
                       return (
                       <li className={`progress-step step-${step.status} ${canRetry ? "has-action" : ""}`} key={step.id}>
                         <div className="progress-step-label">
                           {step.status === "complete" ? <Check size={15} /> : step.status === "running" ? <LoaderCircle className="is-running" size={15} /> : step.status === "error" ? <AlertCircle size={15} /> : <Circle size={14} />}
-                          <span>{step.label}</span><small>{step.status === "complete" ? "완료" : step.status === "running" ? "진행 중" : step.status === "error" ? "확인 필요" : "대기"}</small>
+                          <span>{step.label}</span><small className={`progress-step-status ${step.status === "complete" ? "status-complete" : ""}`}>{step.status === "complete" ? "완료" : step.status === "running" ? "진행 중" : step.status === "error" ? "확인 필요" : "대기"}</small>
                         </div>
                         {canRetry && <button className="step-retry" type="button" disabled={workspace.runActionBusy} onClick={() => void controlRun("retry_step", step.id)}><RotateCcw size={12} /> 재시도</button>}
                       </li>
                     );})}
                   </ol>
                 )}
-              </>
+              </div>
             )}
             <div className="composer">
               {workspace.composerAttachments.length > 0 && (
@@ -3295,7 +3855,6 @@ function App() {
                     <span key={attachment.id}>
                       <FileText size={13} />
                       <span>{attachment.kind === "pasted_text" ? pastedTextAttachmentLabel(attachment, workspace.composerAttachments.slice(0, attachmentIndex).filter((item) => item.kind === "pasted_text").length) : attachment.fileName}</span>
-                      {attachment.kind !== "pasted_text" && <small>{attachment.extractionStatus === "completed" ? "읽기 완료" : attachment.extractionStatus}</small>}
                       <button type="button" aria-label={`${attachment.fileName} 첨부 제거`} onClick={() => workspace.removeComposerAttachment(attachment.id)}><X size={12} /></button>
                     </span>
                   ))}
@@ -3526,9 +4085,26 @@ function App() {
           <header className="artifact-header">
             <div>
               {artifactSummary && artifactVersionOptions.length > 0 && (
-                <select className="artifact-version-control" aria-label="Artifact 버전 선택" value={artifactVersion?.version ?? artifactSummary.currentVersion} disabled={artifactLoading || artifactEditing || artifactSaveBusy !== null} onChange={(event) => void selectArtifactVersion(Number(event.currentTarget.value))}>
-                  {artifactVersionOptions.map((version) => <option value={version} key={version}>{version === 1 ? "원본" : `v${version}`}</option>)}
-                </select>
+                <div className="artifact-version-control">
+                  <button className="artifact-version-trigger" type="button" aria-label="Artifact 버전 선택" aria-haspopup="menu" aria-expanded={artifactVersionMenuOpen} disabled={artifactLoading || artifactEditing || artifactSaveBusy !== null} onClick={(event) => {
+                    event.stopPropagation();
+                    setArtifactVersionMenuOpen((open) => !open);
+                  }}>
+                    <span>{(artifactVersion?.version ?? artifactSummary.currentVersion) === 1 ? "원본" : `v${artifactVersion?.version ?? artifactSummary.currentVersion}`}</span>
+                    <ChevronDown size={13} aria-hidden="true" />
+                  </button>
+                  {artifactVersionMenuOpen && (
+                    <div className="artifact-version-menu" role="menu" aria-label="Artifact 버전 목록" onClick={(event) => event.stopPropagation()}>
+                      {artifactVersionOptions.map((version) => {
+                        const selected = version === (artifactVersion?.version ?? artifactSummary.currentVersion);
+                        return <button className={selected ? "is-selected" : ""} type="button" role="menuitemradio" aria-checked={selected} key={version} onClick={() => {
+                          setArtifactVersionMenuOpen(false);
+                          void selectArtifactVersion(version);
+                        }}>{version === 1 ? "원본" : `v${version}`}</button>;
+                      })}
+                    </div>
+                  )}
+                </div>
               )}
               <strong>{artifactSummary?.displayName ?? "Artifact"}</strong>
             </div>
@@ -3566,11 +4142,11 @@ function App() {
               <button className="artifact-view-control tooltip-control" type="button" aria-label={artifactTab === "preview" ? "코드 보기" : "미리보기"} data-tooltip={artifactHasTextSource ? artifactTab === "preview" ? "코드 보기" : "미리보기" : "Binary 형식은 소스 보기 없음"} disabled={!artifactHasTextSource} onClick={() => setArtifactTab((current) => current === "preview" ? "source" : "preview")}>
                 {artifactTab === "preview" ? <Code2 size={17} /> : <Eye size={17} />}
               </button>
+              <button className="tooltip-control" type="button" aria-label="Artifact 공유 링크 복사" data-tooltip={artifactSummary?.conversationId ? "공유 링크 복사" : "대화에 연결된 Artifact만 공유 가능"} disabled={!artifactSummary?.conversationId} onClick={() => void shareArtifact()}><Share2 size={17} /></button>
+              <button className="artifact-file-control tooltip-control" type="button" aria-label="Artifact 다운로드" data-tooltip="다운로드" disabled={!artifactSummary || artifactDownloadVersion === null} onClick={() => void downloadArtifact()}><Download size={17} /></button>
               <button className="tooltip-control" type="button" aria-label={artifactFullscreen ? "전체화면 종료" : "전체화면"} data-tooltip={artifactFullscreen ? "전체화면 종료" : "전체화면"} onClick={() => setArtifactFullscreen((value) => !value)}>
                 {artifactFullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
               </button>
-              <button className="tooltip-control" type="button" aria-label="Artifact 공유 링크 복사" data-tooltip={artifactSummary?.conversationId ? "공유 링크 복사" : "대화에 연결된 Artifact만 공유 가능"} disabled={!artifactSummary?.conversationId || artifactLoading} onClick={() => void shareArtifact()}><Share2 size={17} /></button>
-              <button className="artifact-file-control tooltip-control" type="button" aria-label="Artifact 다운로드" data-tooltip="다운로드" disabled={!artifactVersion} onClick={() => void downloadArtifact()}><Download size={17} /></button>
               <button className="tooltip-control" type="button" aria-label="Artifact 닫기" data-tooltip="닫기" disabled={artifactSaveBusy !== null} onClick={closeArtifact}><X size={18} /></button>
             </div>
           </header>
@@ -3630,7 +4206,7 @@ function App() {
               artifactVersion.mimeType === "text/markdown" || artifactSummary?.kind === "markdown" ? (
                 <div className="artifact-markdown-preview"><MarkdownResponse text={artifactEditing ? artifactDraft : artifactVersion.sourceText ?? ""} artifact /></div>
               ) : artifactVersion.mimeType === "text/html" ? (
-                <iframe ref={artifactPreviewFrameRef} className="artifact-preview-frame" title={artifactSummary?.displayName ?? "Artifact 미리보기"} sandbox={artifactEditing ? "allow-scripts allow-same-origin" : ""} srcDoc={artifactEditing ? artifactEditablePreview : artifactVersion.sourceText ?? ""} />
+                <iframe ref={artifactPreviewFrameRef} className="artifact-preview-frame" title={artifactSummary?.displayName ?? "Artifact 미리보기"} sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock allow-downloads allow-popups allow-popups-to-escape-sandbox" srcDoc={previewArtifactHtml(artifactEditing ? artifactEditablePreview : artifactVersion.sourceText ?? "")} />
               ) : (
                 <SyntaxCode className="artifact-text-preview" value={artifactEditing ? artifactDraft : artifactVersion.sourceText ?? ""} fileName={artifactSummary?.displayName} mimeType={artifactVersion.mimeType} />
               )
@@ -3650,10 +4226,6 @@ function App() {
               </div>
             )}
           </div>
-          <footer className="artifact-footer">
-            <span><i /> {artifactSaveBusy === "draft" ? "초안 저장 중" : artifactSaveBusy === "version" ? "버전 저장 중" : artifactDraftStale ? "초안 충돌" : artifactEditing ? artifactDraftSaved ? "초안 저장됨" : "편집 중" : "저장됨"}</span>
-            <span>{artifactSummary && artifactVersion ? `v${artifactVersion.version} · ${artifactSummary.kind.toUpperCase()} · ${(artifactVersion.size / 1024).toFixed(1)}KB` : ""}</span>
-          </footer>
         </aside>
       )}
 

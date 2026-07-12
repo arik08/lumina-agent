@@ -644,7 +644,7 @@ def _inspect_pdf_links(reader: Any) -> tuple[int, list[str]]:
 
 
 class _ArtifactHTMLValidator(HTMLParser):
-    forbidden_tags = {"script", "iframe", "object", "embed", "form", "base"}
+    forbidden_tags = {"iframe", "object", "embed", "base"}
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -663,11 +663,8 @@ class _ArtifactHTMLValidator(HTMLParser):
         for name, value in attrs:
             attr_name = name.casefold()
             attr_value = (value or "").strip().casefold()
-            if attr_name.startswith("on"):
-                self.errors.append(f"event_handler:{attr_name}")
             if attr_name in {"href", "src", "action", "formaction"} and (
-                attr_value.startswith("javascript:")
-                or attr_value.startswith("data:text/html")
+                attr_value.startswith("data:text/html")
             ):
                 self.errors.append(f"unsafe_url:{attr_name}")
 
@@ -696,7 +693,7 @@ def validate_artifact_content(
         errors.append("empty_content")
 
     if mime_type == "text/html" or kind == "html":
-        checks.extend(["utf8", "html_structure", "active_content"])
+        checks.extend(["utf8", "html_structure", "executable_content"])
         try:
             source = content.decode("utf-8", errors="strict")
         except UnicodeDecodeError:

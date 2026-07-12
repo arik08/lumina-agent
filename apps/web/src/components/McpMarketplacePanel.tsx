@@ -32,10 +32,10 @@ export function McpMarketplacePanel({ projectId }: McpMarketplacePanelProps) {
   const [installations, setInstallations] = useState<McpInstallation[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
-  const [installScope, setInstallScope] = useState<"user" | "project">("project");
   const [secretInputs, setSecretInputs] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [catalogPendingId, setCatalogPendingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -68,16 +68,16 @@ export function McpMarketplacePanel({ projectId }: McpMarketplacePanelProps) {
 
   const refresh = () => setRefreshKey((value) => value + 1);
 
-  const install = async () => {
-    if (!selected || !currentRevision || busy || installScope === "project" && !projectId) return;
+  const install = async (scope: "user" | "project") => {
+    if (!selected || !currentRevision || busy || scope === "project" && !projectId) return;
     setBusy(true);
     setError(null);
     try {
       await api.mcp.install(
         selected.id,
         currentRevision.id,
-        installScope,
-        installScope === "project" ? projectId ?? undefined : undefined,
+        scope,
+        scope === "project" ? projectId ?? undefined : undefined,
         selectedTools,
       );
       refresh();
@@ -85,6 +85,25 @@ export function McpMarketplacePanel({ projectId }: McpMarketplacePanelProps) {
       setError(errorMessage(caught));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const toggleCatalogInstallation = async (definition: McpDefinition) => {
+    if (catalogPendingId) return;
+    const revision = definition.revisions.find((item) => item.id === definition.currentRevisionId) ?? definition.revisions.at(-1) ?? null;
+    const userInstallation = installations.find((item) => item.definitionId === definition.id && item.scopeType === "user") ?? null;
+    if (!revision && !userInstallation) return;
+    setCatalogPendingId(definition.id);
+    setError(null);
+    try {
+      const updated = userInstallation
+        ? await api.mcp.setEnabled(userInstallation.id, !userInstallation.enabled)
+        : await api.mcp.install(definition.id, revision!.id, "user", undefined, revision!.tools.map((tool) => tool.name));
+      setInstallations((current) => [...current.filter((item) => item.id !== updated.id), updated]);
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setCatalogPendingId(null);
     }
   };
 
@@ -152,8 +171,14 @@ export function McpMarketplacePanel({ projectId }: McpMarketplacePanelProps) {
       <div className="split-feature">
         <aside className="feature-list" aria-label="승인된 MCP 카탈로그">
           {catalog.length === 0 ? <div className="feature-state">승인된 MCP가 없습니다.</div> : catalog.map((definition) => {
-            const installed = installations.filter((item) => item.definitionId === definition.id);
-            return <button className={definition.id === selected?.id ? "is-selected" : ""} type="button" key={definition.id} onClick={() => setSelectedId(definition.id)}><span><strong>{definition.name}</strong><small>{definition.description || definition.slug}</small></span>{installed.length > 0 && <em className="is-enabled">설치 {installed.length}</em>}</button>;
+            const userInstallation = installations.find((item) => item.definitionId === definition.id && item.scopeType === "user") ?? null;
+            const currentDefinitionRevision = definition.revisions.find((item) => item.id === definition.currentRevisionId) ?? definition.revisions.at(-1) ?? null;
+            const pending = catalogPendingId === definition.id;
+            const stateClass = userInstallation?.enabled ? "is-installed" : userInstallation ? "is-unused" : "";
+            return <div className={`marketplace-skill-row ${definition.id === selected?.id ? "is-selected" : ""}`} key={definition.id}>
+              <button className="marketplace-skill-select" type="button" onClick={() => setSelectedId(definition.id)}><span><strong>{definition.name}</strong><small>{definition.description || definition.slug}</small></span></button>
+              <button className={`marketplace-install-toggle ${stateClass}`} type="button" aria-label={`${definition.name} ${userInstallation?.enabled ? "미사용" : userInstallation ? "사용" : "설치"}`} aria-pressed={Boolean(userInstallation?.enabled)} aria-busy={pending} disabled={pending || !userInstallation && !currentDefinitionRevision} onClick={() => void toggleCatalogInstallation(definition)}>{pending ? <LoaderCircle className="is-running" size={12} /> : userInstallation?.enabled ? <><span className="install-toggle-rest">설치됨</span><span className="install-toggle-hover">미사용</span></> : userInstallation ? <span>미사용</span> : <span>설치</span>}</button>
+            </div>;
           })}
         </aside>
         <section className="feature-detail mcp-detail">
@@ -166,7 +191,10 @@ export function McpMarketplacePanel({ projectId }: McpMarketplacePanelProps) {
               <div className="mcp-tool-section">
                 <div className="mcp-section-heading"><strong><Wrench size={14} /> 설치 Tool allowlist</strong><small>{selectedTools.length} / {currentRevision.tools.length}</small></div>
                 <div className="mcp-tool-list">{currentRevision.tools.map((tool) => <label key={tool.name}><input type="checkbox" checked={selectedTools.includes(tool.name)} onChange={(event) => { const checked = event.currentTarget.checked; setSelectedTools((current) => checked ? [...current, tool.name] : current.filter((name) => name !== tool.name)); }} /><span><strong>{tool.name}</strong><small>{tool.description || "설명 없음"}</small></span></label>)}</div>
-                <div className="mcp-install-controls"><label>설치 범위<select value={installScope} onChange={(event) => setInstallScope(event.currentTarget.value as "user" | "project")}><option value="project" disabled={!projectId}>현재 Project</option><option value="user">내 계정</option></select></label><button className="is-primary lumina-primary-action" type="button" disabled={busy || selectedTools.length === 0 || selectedInstallations.some((item) => item.scopeType === installScope)} onClick={() => void install()}><Plug size={14} /> {selectedInstallations.some((item) => item.scopeType === installScope) ? "설치됨" : "설치"}</button></div>
+                <div className="mcp-install-controls" aria-label="MCP 설치 대상">
+                  <button className="is-primary lumina-primary-action" type="button" disabled={busy || selectedTools.length === 0 || selectedInstallations.some((item) => item.scopeType === "user")} onClick={() => void install("user")}><Plug size={14} /> {selectedInstallations.some((item) => item.scopeType === "user") ? "내 계정 설치됨" : "내 계정 설치"}</button>
+                  <button type="button" title={!projectId ? "Project를 선택해야 설치할 수 있습니다." : undefined} disabled={busy || !projectId || selectedTools.length === 0 || selectedInstallations.some((item) => item.scopeType === "project")} onClick={() => void install("project")}><Plug size={14} /> {selectedInstallations.some((item) => item.scopeType === "project") ? "내 프로젝트 설치됨" : "내 프로젝트 설치"}</button>
+                </div>
               </div>
               <div className="mcp-installation-section">
                 <div className="mcp-section-heading"><strong><ShieldCheck size={14} /> 설치 및 연결</strong><small>Secret 값은 저장·재표시하지 않습니다.</small></div>

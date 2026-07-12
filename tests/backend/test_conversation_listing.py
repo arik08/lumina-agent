@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 import time
 
 from fastapi.testclient import TestClient
 
 from lumina.config import Settings
+from lumina.conversations.service import list_auto_delete_candidates
+from lumina.db import SessionLocal
 from lumina.main import create_app
+from lumina.models import utc_now
 
 
 def test_cursor_preserves_favorite_order_and_search_is_whitespace_tolerant(
@@ -75,6 +79,35 @@ def test_cursor_preserves_favorite_order_and_search_is_whitespace_tolerant(
         assert [item["isFavorite"] for item in collected] == sorted(
             (item["isFavorite"] for item in collected), reverse=True
         )
+
+        liked = client.patch(
+            f"/api/conversations/{created[1]['id']}",
+            headers={
+                "X-CSRF-Token": csrf,
+                "If-Match": f'"{created[1]["revision"]}"',
+            },
+            json={"isLiked": True},
+        )
+        assert liked.status_code == 200
+        assert liked.json()["isLiked"] is True
+
+        persisted = client.get(
+            "/api/conversations",
+            params={"project_id": project_id, "limit": 10},
+        )
+        assert next(
+            item for item in persisted.json()["items"] if item["id"] == created[1]["id"]
+        )["isLiked"] is True
+
+        with SessionLocal() as db:
+            candidate_ids = {
+                item.id
+                for item in list_auto_delete_candidates(
+                    db, older_than=utc_now() + timedelta(days=1)
+                )
+            }
+        assert created[1]["id"] not in candidate_ids
+        assert created[2]["id"] in candidate_ids
 
         search = client.get(
             "/api/conversations/search",

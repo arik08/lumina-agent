@@ -238,6 +238,7 @@ class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         String(24), default="active", index=True, nullable=False
     )
     is_favorite: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_liked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     agent_id: Mapped[str] = mapped_column(String(80), default="general", nullable=False)
     agent_version: Mapped[str] = mapped_column(String(40), default="1", nullable=False)
     revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
@@ -1262,6 +1263,9 @@ class Extension(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     owner_user_id: Mapped[str] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), index=True, nullable=False
     )
+    creator_user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), index=True, nullable=False
+    )
     organization_id: Mapped[str] = mapped_column(
         ForeignKey("organizations.id", ondelete="RESTRICT"), index=True, nullable=False
     )
@@ -1286,7 +1290,7 @@ class Extension(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 class ExtensionDraft(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "extension_drafts"
-    __table_args__ = (UniqueConstraint("extension_id"),)
+    __table_args__ = (UniqueConstraint("extension_id", "owner_user_id"),)
 
     extension_id: Mapped[str] = mapped_column(
         ForeignKey("extensions.id", ondelete="CASCADE"), index=True, nullable=False
@@ -1311,6 +1315,29 @@ class ExtensionDraft(UUIDPrimaryKeyMixin, Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class SkillOwnership(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "skill_ownerships"
+    __table_args__ = (
+        UniqueConstraint("skill_id", "principal_type", "principal_id"),
+        Index(
+            "ix_skill_ownerships_principal", "principal_type", "principal_id", "role"
+        ),
+    )
+
+    skill_id: Mapped[str] = mapped_column(
+        ForeignKey("extensions.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    principal_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    principal_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    role: Mapped[str] = mapped_column(String(24), nullable=False)
+    created_by_user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, nullable=False
     )
 
 

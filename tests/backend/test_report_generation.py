@@ -21,24 +21,24 @@ from lumina.providers import MockProvider, MockToolCall
 
 
 _EXPECTED_METADATA = {
-    "html": ("Lumina_작업_보고서.html", "html", "text/html"),
-    "markdown": ("Lumina_작업_보고서.md", "markdown", "text/markdown"),
+    "html": ("광양_설비_점검_보고서.html", "html", "text/html"),
+    "markdown": ("광양_설비_점검_보고서.md", "markdown", "text/markdown"),
     "docx": (
-        "Lumina_작업_보고서.docx",
+        "광양_설비_점검_보고서.docx",
         "docx",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ),
     "xlsx": (
-        "Lumina_작업_보고서.xlsx",
+        "광양_설비_점검_보고서.xlsx",
         "xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ),
     "pptx": (
-        "Lumina_작업_보고서.pptx",
+        "광양_설비_점검_보고서.pptx",
         "pptx",
         "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     ),
-    "pdf": ("Lumina_작업_보고서.pdf", "pdf", "application/pdf"),
+    "pdf": ("광양_설비_점검_보고서.pdf", "pdf", "application/pdf"),
 }
 
 
@@ -103,6 +103,54 @@ def test_report_formats_reopen_and_retain_korean_content(report_format: str) -> 
 def test_create_report_schema_advertises_every_supported_format() -> None:
     schema = _REPORT_TOOL_SCHEMA["function"]["parameters"]["properties"]["format"]
     assert schema["enum"] == list(REPORT_FORMATS)
+    title_description = _REPORT_TOOL_SCHEMA["function"]["parameters"]["properties"][
+        "title"
+    ]["description"]
+    assert "Artifact filename" in title_description
+    assert "generic names" in title_description
+
+
+def test_html_source_preserves_visual_artifact_and_executable_javascript() -> None:
+    source = """<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>시각 보고서</title>
+<style>body{background:#eef3fa}.chart{display:grid}</style></head>
+<body><main><section class="chart"><h1>시각 보고서</h1><svg viewBox="0 0 10 10" aria-label="추세"><path d="M0 9L9 1"/></svg></section></main></body></html>"""
+    arguments = _arguments("html")
+    arguments["html_source"] = source
+
+    report = generate_report("시각 보고서를 만들어 주세요.", arguments)
+
+    assert report.content.decode("utf-8") == source
+    assert report.display_name == "광양_설비_점검_보고서.html"
+    assert "html_source" in _REPORT_TOOL_SCHEMA["function"]["parameters"]["properties"]
+
+    executable_source = source.replace(
+        "</body>",
+        "<script>document.body.dataset.ready = 'true';</script></body>",
+    )
+    arguments["html_source"] = executable_source
+
+    executable_report = generate_report("시각 보고서를 만들어 주세요.", arguments)
+
+    assert executable_report.content.decode("utf-8") == executable_source
+
+
+def test_report_filename_is_safe_and_does_not_repeat_the_extension() -> None:
+    arguments = _arguments("html")
+    arguments["title"] = "  광양 / 포항: 설비 비교.html  "
+
+    report = generate_report("두 사업장을 비교해 주세요.", arguments)
+
+    assert report.display_name == "광양_포항_설비_비교.html"
+
+
+def test_html_source_is_rejected_for_non_html_reports() -> None:
+    arguments = _arguments("pdf")
+    arguments["html_source"] = (
+        "<!doctype html><html><head><title>x</title></head><body>x</body></html>"
+    )
+    with pytest.raises(ValueError, match="HTML 보고서에서만"):
+        generate_report("PDF 보고서를 만들어 주세요.", arguments)
 
 
 def test_xlsx_keeps_formula_like_model_text_as_plain_text() -> None:
@@ -265,12 +313,42 @@ def test_create_report_tool_persists_and_downloads_selected_format(
         assert downloaded.status_code == 200
         assert downloaded.headers["content-type"].split(";", 1)[0] == expected_mime
         assert downloaded.headers["content-disposition"].startswith(
-            "attachment; filename*=UTF-8''Lumina_"
+            "attachment; filename*=UTF-8''%EA%B4%91%EC%96%91_"
         )
         assert downloaded.headers["content-disposition"].endswith(
             f".{expected_name.rsplit('.', 1)[-1]}"
         )
         _assert_reopened(report_format, downloaded.content)
+
+        if report_format == "html":
+            duplicate = client.post(
+                f"/api/conversations/{conversation['id']}/runs",
+                headers={
+                    "X-CSRF-Token": csrf,
+                    "Idempotency-Key": "create-html-report-duplicate-0001",
+                },
+                json={
+                    "message": {
+                        "text": "같은 주제의 HTML 보고서를 하나 더 만들어 주세요.",
+                        "attachmentIds": [],
+                        "promptReferences": [],
+                    },
+                    "execution": {
+                        "providerId": "mock",
+                        "modelKey": "mock-agent",
+                        "effortId": "medium",
+                    },
+                },
+            )
+            assert duplicate.status_code == 202, duplicate.text
+            duplicate_snapshot = _wait_for_terminal(
+                client, duplicate.json()["run"]["runId"]
+            )
+            assert duplicate_snapshot["status"] == "completed"
+            assert any(
+                item["displayName"] == "광양_설비_점검_보고서_2.html"
+                for item in duplicate_snapshot["artifacts"]
+            )
 
 
 def _assert_reopened(report_format: str, content: bytes) -> None:

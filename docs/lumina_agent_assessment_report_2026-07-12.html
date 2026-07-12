@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lumina Agent 통합 기술·제품 평가 보고서</title>
+  <style>
+    :root {
+      --ink:#172033; --muted:#657087; --line:#dbe2ec; --paper:#fff;
+      --surface:#f5f7fb; --navy:#163968; --cobalt:#315fbd; --blue:#eaf0fb;
+      --good:#157347; --good-bg:#e9f7ef; --warn:#a15c00; --warn-bg:#fff4dc;
+      --bad:#b42318; --bad-bg:#fff0ee; --purple:#6e45a5; --purple-bg:#f5effd;
+    }
+    * { box-sizing:border-box; }
+    html { scroll-behavior:smooth; }
+    body { margin:0; background:#eef2f7; color:var(--ink); font:15px/1.7 "Pretendard","Noto Sans KR","Malgun Gothic",sans-serif; }
+    .page { width:min(1120px,calc(100% - 32px)); margin:30px auto; background:var(--paper); box-shadow:0 14px 44px rgba(23,32,51,.09); }
+    .hero { padding:58px 64px 48px; color:white; background:linear-gradient(135deg,#102746 0%,#1c4d8f 62%,#315fbd 100%); }
+    .eyebrow { margin:0 0 12px; font-size:12px; font-weight:800; letter-spacing:.14em; text-transform:uppercase; opacity:.75; }
+    h1 { max-width:850px; margin:0; font-size:38px; line-height:1.22; letter-spacing:-.035em; }
+    .hero p { max-width:810px; margin:18px 0 0; color:#dce8fb; font-size:17px; }
+    .meta { display:flex; flex-wrap:wrap; gap:8px 22px; margin-top:30px; color:#c5d6f1; font-size:13px; }
+    .toc { padding:26px 64px; border-bottom:1px solid var(--line); background:#f9fbfe; }
+    .toc strong { display:block; margin-bottom:8px; color:var(--navy); }
+    .toc-links { display:flex; flex-wrap:wrap; gap:7px 18px; }
+    .toc a { color:#3a557c; text-decoration:none; font-size:13px; }
+    main { padding:30px 64px 70px; }
+    section { padding:30px 0; border-bottom:1px solid var(--line); }
+    section:last-child { border-bottom:0; }
+    h2 { margin:0 0 18px; color:var(--navy); font-size:26px; line-height:1.3; letter-spacing:-.025em; }
+    h3 { margin:25px 0 10px; color:#213b61; font-size:19px; line-height:1.4; }
+    h4 { margin:18px 0 6px; font-size:16px; }
+    p { margin:8px 0 13px; }
+    ul,ol { margin:8px 0 15px; padding-left:23px; }
+    li { margin:4px 0; }
+    code { padding:.12em .35em; border-radius:4px; background:#eef2f7; color:#23466f; font:13px/1.5 Consolas,monospace; }
+    .lead { font-size:17px; color:#33445f; }
+    .summary-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin:18px 0; }
+    .metric { padding:17px; border:1px solid var(--line); border-radius:10px; background:var(--surface); }
+    .metric span { display:block; color:var(--muted); font-size:12px; }
+    .metric strong { display:block; margin-top:3px; color:var(--navy); font-size:25px; line-height:1.25; }
+    .metric small { display:block; margin-top:5px; color:#707b8e; }
+    .verdict { padding:20px 22px; border-left:5px solid var(--cobalt); border-radius:7px; background:var(--blue); color:#233a5d; }
+    .callout { margin:16px 0; padding:15px 18px; border:1px solid var(--line); border-radius:8px; background:#fafbfd; }
+    .callout.good { border-color:#b8dfc8; background:var(--good-bg); }
+    .callout.warn { border-color:#ead096; background:var(--warn-bg); }
+    .callout.bad { border-color:#efb9b3; background:var(--bad-bg); }
+    .callout strong { color:inherit; }
+    .chips { display:flex; flex-wrap:wrap; gap:7px; margin:12px 0; }
+    .chip { padding:3px 9px; border-radius:999px; background:#e8eef8; color:#38557e; font-size:12px; font-weight:700; }
+    .chip.good { background:var(--good-bg); color:var(--good); }
+    .chip.bad { background:var(--bad-bg); color:var(--bad); }
+    table { width:100%; margin:14px 0 22px; border-collapse:collapse; font-size:13.5px; }
+    th,td { padding:10px 11px; border:1px solid var(--line); vertical-align:top; text-align:left; }
+    th { background:#edf2f9; color:#29476f; font-weight:800; }
+    tr:nth-child(even) td { background:#fbfcfe; }
+    .score { font-weight:900; white-space:nowrap; }
+    .p0,.critical { color:var(--bad); font-weight:900; }
+    .p1,.high { color:#c05f00; font-weight:900; }
+    .p2,.medium { color:#72520a; font-weight:900; }
+    .p3,.low { color:#49708c; font-weight:900; }
+    .theme { margin:19px 0; padding:20px 22px; border:1px solid var(--line); border-radius:10px; }
+    .theme h3 { margin:0 0 10px; }
+    .two-col { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+    .good-list,.bad-list { padding:14px 17px; border-radius:8px; }
+    .good-list { background:var(--good-bg); }
+    .bad-list { background:var(--bad-bg); }
+    .good-list h4 { color:var(--good); }
+    .bad-list h4 { color:var(--bad); }
+    .todo-phase { margin:18px 0; border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+    .todo-head { display:flex; justify-content:space-between; gap:20px; padding:14px 18px; background:#edf2f9; }
+    .todo-head h3 { margin:0; }
+    .todo-head span { color:var(--muted); font-size:13px; }
+    .todo-phase table { margin:0; border:0; }
+    .todo-phase th:first-child,.todo-phase td:first-child { border-left:0; }
+    .todo-phase th:last-child,.todo-phase td:last-child { border-right:0; }
+    .todo-phase tr:last-child td { border-bottom:0; }
+    .checklist { columns:2; column-gap:30px; }
+    .checklist li { break-inside:avoid; }
+    .footnote { color:var(--muted); font-size:12px; }
+    footer { padding:24px 64px; background:#172b48; color:#cbd8e9; font-size:12px; }
+    @media (max-width:850px) {
+      .hero,.toc,main,footer { padding-left:24px; padding-right:24px; }
+      .summary-grid { grid-template-columns:1fr 1fr; }
+      .two-col { grid-template-columns:1fr; }
+      .checklist { columns:1; }
+      h1 { font-size:30px; }
+    }
+    @media print {
+      @page { size:A4; margin:14mm; }
+      body { background:white; font-size:10.5pt; }
+      .page { width:auto; margin:0; box-shadow:none; }
+      .hero { padding:26mm 12mm 18mm; print-color-adjust:exact; -webkit-print-color-adjust:exact; }
+      .toc { display:none; }
+      main { padding:8mm 12mm 15mm; }
+      section { break-inside:auto; }
+      .theme,.todo-phase,.callout,.verdict { break-inside:avoid; }
+      table { font-size:8.5pt; }
+      a { color:inherit; text-decoration:none; }
+      footer { padding:8mm 12mm; print-color-adjust:exact; -webkit-print-color-adjust:exact; }
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+  <header class="hero">
+    <p class="eyebrow">Integrated Product · Architecture · Security Review</p>
+    <h1>Lumina Agent 통합 기술·제품 평가 보고서</h1>
+    <p>Agent Harness 기반 사내 AI 업무 플랫폼의 설계 완성도, 구현 정합성, 보안·권한, 실행 내구성, 확장 생태계, Artifact, 운영 준비도를 종합 평가하고 단계별 개선 로드맵을 제시합니다.</p>
+    <div class="meta"><span>평가기준일 2026-07-12</span><span>대상 버전 0.1.0 개발단계</span><span>검토방식 저장소 구조·핵심 코드·문서·테스트·정적검사</span></div>
+  </header>
+
+  <nav class="toc">
+    <strong>목차</strong>
+    <div class="toc-links">
+      <a href="#summary">요약</a><a href="#intro">서론</a><a href="#method">검토방법</a><a href="#assessment">종합평가</a>
+      <a href="#themes">테마별 평가</a><a href="#risks">핵심 위험</a><a href="#todo">To-do 로드맵</a>
+      <a href="#gate">운영 합격기준</a><a href="#conclusion">결론</a><a href="#appendix">부록</a>
+    </div>
+  </nav>
+
+  <main>
+    <section id="summary">
+      <h2>1. Executive Summary</h2>
+      <p class="lead">Lumina Agent는 단순한 대화형 UI나 기능 시연물이 아니라, <strong>사내 AI 실행을 재현·통제·복구·감사하기 위한 Agent Operating Layer</strong>를 지향하는 실질적인 Alpha 제품입니다.</p>
+      <div class="summary-grid">
+        <div class="metric"><span>제품·업무 설계</span><strong>9.0 / 10</strong><small>핵심 문제 정의가 정확함</small></div>
+        <div class="metric"><span>Agent 실행 내구성</span><strong>9.0 / 10</strong><small>복구·Replay·Snapshot 우수</small></div>
+        <div class="metric"><span>현재 구현 완성도</span><strong>6.0 / 10</strong><small>기능은 넓지만 정합성 부채 존재</small></div>
+        <div class="metric"><span>다중사용자 운영 준비도</span><strong>4.0 / 10</strong><small>권한·반출·동시성 보완 필요</small></div>
+      </div>
+      <div class="verdict"><strong>종합판정: 발전 가능성이 매우 높은 사내용 Alpha.</strong><br />핵심 아키텍처를 다시 설계할 필요는 없지만, 신규 기능 확장보다 권한·실행한도·동시성·데이터 반출·브라우저/프로세스 격리를 먼저 닫아야 제한적 Beta 배포가 가능합니다.</div>
+      <div class="chips"><span class="chip good">Run 상태머신</span><span class="chip good">Worker 복구</span><span class="chip good">Skill/MCP Snapshot</span><span class="chip good">Project File CAS</span><span class="chip bad">Private Scope</span><span class="chip bad">실행한도</span><span class="chip bad">운영 Bootstrap</span><span class="chip bad">Data Egress</span></div>
+    </section>
+
+    <section id="intro">
+      <h2>2. 서론: 제품의 의미와 평가 관점</h2>
+      <p>본 제품의 가치는 “또 하나의 ChatGPT 화면”에 있지 않습니다. 조직 내 여러 AI Provider와 파일·지침·Memory·Skill·MCP·Tool·산출물을 하나의 실행 계약으로 묶고, 누가 어떤 권한과 버전을 사용해 무엇을 수행했는지 복원하는 데 있습니다.</p>
+      <div class="callout good"><strong>핵심 포지셔닝</strong><br />사내 여러 LLM을 단일 업무공간에서 사용하고, Skill·MCP·업무지침을 조직 자산으로 버전 관리하며, 장시간 Agent Run과 산출물을 안전하게 실행·복원·감사하는 플랫폼.</div>
+      <p>따라서 평가는 화면의 완성도보다 다음 질문에 초점을 맞췄습니다.</p>
+      <ol>
+        <li>설정과 상태값이 실제 서버 정책으로 강제되는가?</li>
+        <li>사용자·Project·대화·파일의 격리가 모든 조회·검색·실행 경로에 일관되게 적용되는가?</li>
+        <li>서버 중단·재시도·동시 요청에도 중복 부작용과 데이터 손상이 방지되는가?</li>
+        <li>외부 Provider·Web·MCP로 반출되는 데이터가 조직 정책에 따라 통제되는가?</li>
+        <li>생성된 파일과 HTML을 비신뢰 입력으로 취급하는가?</li>
+      </ol>
+    </section>
+
+    <section id="method">
+      <h2>3. 검토 범위와 객관적 검증 결과</h2>
+      <table>
+        <thead><tr><th>구분</th><th>확인 결과</th><th>해석</th></tr></thead>
+        <tbody>
+          <tr><td>추적 파일</td><td>575개</td><td>내장 Skill 및 Vendor 코드 포함</td></tr>
+          <tr><td>주요 코드 규모</td><td>약 14.8만 줄</td><td>전체 규모보다 자체 코드와 Vendor를 분리해서 보아야 함</td></tr>
+          <tr><td>Backend 테스트</td><td>280 통과 / 4 실패 / 3 스킵</td><td>테스트 밀도는 높으나 main이 완전 녹색은 아님</td></tr>
+          <tr><td>Ruff</td><td>통과</td><td>기본 Python 정적 품질 양호</td></tr>
+          <tr><td>Mypy</td><td>5개 파일, 6개 오류</td><td>공유·Provider·Artifact·지침 영역의 타입 불일치</td></tr>
+          <tr><td>Frontend 자동 테스트</td><td>발견되지 않음</td><td>핵심 UI 회귀가 수동 검증에 의존</td></tr>
+          <tr><td>Frontend Build</td><td>검토 환경의 패키지 설치 문제로 최종 확인 보류</td><td>CI 환경에서 재검증 필요</td></tr>
+          <tr><td>CI/CD</td><td>GitHub Actions 등 자동 품질 게이트 미구성</td><td>실패 테스트가 main에 포함될 수 있음</td></tr>
+        </tbody>
+      </table>
+      <p class="footnote">테스트 실패 유형: Skill snapshot hash 계약 불일치, Gemini Tool roundtrip 호출 수 변경, Migration head 기대값 미갱신 2건. 단순 미구현보다는 기능 추가 후 계약·테스트가 따라오지 못한 드리프트 성격이 강합니다.</p>
+    </section>
+
+    <section id="assessment">
+      <h2>4. 종합 평가표</h2>
+      <table>
+        <thead><tr><th>영역</th><th>점수</th><th>평가</th></tr></thead>
+        <tbody>
+          <tr><td>제품 방향과 업무 모델</td><td class="score">9.0</td><td>Organization → Project → Session → Run 계층과 사내 업무 적용점이 정확함</td></tr>
+          <tr><td>아키텍처 방향</td><td class="score">8.0</td><td>Modular Monolith로 시작하고 Worker·Queue 분리 경계를 유지한 판단이 합리적</td></tr>
+          <tr><td>Run 상태·재시작 복구</td><td class="score">9.0</td><td>부분 Draft checkpoint, Event replay, unknown Tool outcome 처리 우수</td></tr>
+          <tr><td>Skill·MCP·확장 생태계</td><td class="score">8.0</td><td>Draft revision, immutable version, digest, Secret binding, 설치 Scope가 강점</td></tr>
+          <tr><td>파일·Artifact</td><td class="score">7.0</td><td>Project File은 견고하나 Artifact 원자성·Preview 격리·GC가 부족</td></tr>
+          <tr><td>인증·기본 보안</td><td class="score">7.0</td><td>Argon2, CSRF, Token hash, 감사로그는 좋으나 Bootstrap/비밀번호 정책 취약</td></tr>
+          <tr><td>사용자·Project 권한</td><td class="score">4.0</td><td>private visibility와 실제 쿼리 권한이 연결되지 않는 구조적 문제</td></tr>
+          <tr><td>비용·무한실행 방지</td><td class="score">3.0</td><td>관련 설정은 존재하나 의도적으로 미집행</td></tr>
+          <tr><td>데이터 반출 거버넌스</td><td class="score">3.0</td><td>Provider·Web·외부 MCP별 데이터 등급 통제가 없음</td></tr>
+          <tr><td>Frontend 품질·테스트</td><td class="score">5.0</td><td>기능 구현은 풍부하나 거대 App, 수동 API 타입, 자동 UI 테스트 부재</td></tr>
+          <tr><td>운영·배포 준비도</td><td class="score">4.0</td><td>Windows 로컬 설치는 세심하나 CI, Linux/container, HA, TLS 운영계약 부족</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="themes">
+      <h2>5. 테마별 잘한 점과 개선할 점</h2>
+
+      <article class="theme">
+        <h3>5.1 제품·도메인 설계</h3>
+        <div class="two-col">
+          <div class="good-list"><h4>잘한 점</h4><ul><li>Project를 파일·지침·Memory·확장의 격리 경계로 설정</li><li>Run에 Provider·Model·지침·Skill·MCP·파일 버전을 고정</li><li>브라우저가 아니라 Backend가 실행을 소유</li><li>사내 업무에 필요한 관리자·감사·Marketplace를 초기부터 고려</li></ul></div>
+          <div class="bad-list"><h4>개선할 점</h4><ul><li>Stable/Beta/Experimental/Planned 기능이 README에 혼재</li><li>연구 문서가 모두 현재 필수계약처럼 작동해 범위가 계속 팽창</li><li>공유 Project 타입은 모델에 있으나 생성·전환 Workflow가 없음</li><li>기능 범위가 핵심 Golden Path보다 빠르게 확장됨</li></ul></div>
+        </div>
+      </article>
+
+      <article class="theme">
+        <h3>5.2 Agent Loop·Run 내구성</h3>
+        <div class="two-col">
+          <div class="good-list"><h4>잘한 점</h4><ul><li>중앙 Run 상태머신과 불가능한 전이 차단</li><li>DB Event가 원본이고 Process Broker는 깨우기 힌트로만 사용</li><li>Worker 종료 후 Queue 복구와 부분 Draft checkpoint</li><li>실행 중이던 외부 Tool의 결과 미확정 시 자동 재실행 금지</li><li>완료된 Tool 결과와 Run snapshot을 재사용</li></ul></div>
+          <div class="bad-list"><h4>개선할 점</h4><ul><li>시간·Token·비용·Turn 제한이 실제로 적용되지 않음</li><li>Worker lease·heartbeat·execution epoch 부재</li><li>Event sequence 증가가 다중 Writer에서 원자적이지 않음</li><li>동시 Tool 승인 처리 시 Run이 awaiting_approval에 고착 가능</li><li>ToolExecution idempotency key가 대부분 비어 있음</li></ul></div>
+        </div>
+      </article>
+
+      <article class="theme">
+        <h3>5.3 인증·권한·공유</h3>
+        <div class="two-col">
+          <div class="good-list"><h4>잘한 점</h4><ul><li>Argon2 비밀번호 Hash와 필요 시 Rehash</li><li>존재하지 않는 계정에도 Dummy 검증을 수행해 Timing 차이 축소</li><li>Session·CSRF 원문을 DB에 저장하지 않고 Hash만 보존</li><li>계정 비활성화·비밀번호 초기화 시 Session 폐기</li><li>공유 Token 원문 미저장, 로그 경로 마스킹, 동일 404 응답</li></ul></div>
+          <div class="bad-list"><h4>개선할 점</h4><ul><li>Project 구성원이 다른 사용자의 private 대화를 읽고 수정할 수 있는 권한식</li><li>Composer·Artifact·Attachment 조회도 Project 범위로 과도하게 열림</li><li>개발용 고정 관리자 계정이 운영환경에서도 생성</li><li>비밀번호 최소 길이 1, must_change_password 실질 미강제</li><li>공유 링크가 로그인·수신자 제한·기본 만료 없이 누구나 접근 가능</li><li>Project member가 Project 보관 등 관리 작업까지 수행 가능</li></ul></div>
+        </div>
+      </article>
+
+      <article class="theme">
+        <h3>5.4 Provider·네트워크·데이터 반출</h3>
+        <div class="two-col">
+          <div class="good-list"><h4>잘한 점</h4><ul><li>Provider별 Adapter 경계와 Model catalog 승인 절차</li><li>회사 CA와 Public CA를 결합하고 TLS 검증 우회 금지</li><li>공용 Web의 Redirect·Private IP·DNS rebinding 방어</li><li>외부 콘텐츠를 데이터로 명시하고 Prompt Injection 경계 문구 사용</li></ul></div>
+          <div class="bad-list"><h4>개선할 점</h4><ul><li>사내 Provider 기본 주소가 평문 HTTP로 인증값과 Prompt 전송</li><li>Project 데이터 등급 × Provider trust level 정책 부재</li><li>User/Project Memory가 외부 Provider로 자동 포함될 수 있음</li><li>Read Tool의 query·URL에 내부 원문을 넣어 외부 반출 가능</li><li>공개 코드에 회사 Endpoint·인증 Envelope·내부 시스템명이 포함</li></ul></div>
+        </div>
+      </article>
+
+      <article class="theme">
+        <h3>5.5 Skill·MCP·Tool 승인</h3>
+        <div class="two-col">
+          <div class="good-list"><h4>잘한 점</h4><ul><li>Working Draft와 공개 Version을 분리하고 Run이 정확한 digest를 고정</li><li>Secret 파일·inline Secret·Token 패턴을 게시 단계에서 차단</li><li>MCP exact host allowlist, HTTPS, IP pinning, DNS 재검증</li><li>Shell 대신 create_subprocess_exec 사용</li><li>승인 객체에 Tool·effect·risk·argument digest를 보존</li></ul></div>
+          <div class="bad-list"><h4>개선할 점</h4><ul><li>MCP 위험도를 Tool 이름의 get/read/delete 등 단어로 추론</li><li>읽기 Tool도 외부로 데이터를 전송할 수 있으나 별도 egress 분류 없음</li><li>npx·uvx 허용은 실행 시 Package 다운로드와 원격 코드 실행 가능</li><li>stdio MCP가 서버 OS 계정으로 실행되어 논리 권한을 우회 가능</li><li>승인 UI가 실제 수신자·대상·내용을 충분히 설명하지 못함</li><li>yolo 모드는 사내 운영에서 과도한 권한</li></ul></div>
+        </div>
+      </article>
+
+      <article class="theme">
+        <h3>5.6 파일·Artifact·브라우저 안전성</h3>
+        <div class="two-col">
+          <div class="good-list"><h4>잘한 점</h4><ul><li>Project File 경로 정규화·Hash·Immutable Version·CAS</li><li>DB 충돌 시 저장 파일 정리와 추출물 cleanup</li><li>OpenXML ZIP bomb·Macro·외부 Relationship·구조 검사</li><li>XLSX 수식형 모델 텍스트를 문자열로 강제해 Formula Injection 방지</li><li>Artifact 공유 시점의 Version과 Hash를 고정</li></ul></div>
+          <div class="bad-list"><h4>개선할 점</h4><ul><li>Artifact 저장은 Project File보다 DB/Storage 원자성이 약함</li><li>Orphan blob·오래된 Draft·삭제 파일 Garbage Collection 부재</li><li>HTML 편집 iframe의 allow-scripts + allow-same-origin 조합 위험</li><li>직접 작성한 HTML Sanitizer가 CSS·SVG·외부 Resource를 완전히 다루지 못함</li><li>입력마다 전체 HTML을 postMessage하여 대형 문서에서 성능 저하</li><li>첨부 문서 추출이 API 요청에서 동기 실행되어 자원 고갈 가능</li></ul></div>
+        </div>
+      </article>
+
+      <article class="theme">
+        <h3>5.7 Frontend·API 계약·코드 품질</h3>
+        <div class="two-col">
+          <div class="good-list"><h4>잘한 점</h4><ul><li>ReactMarkdown skipHtml, 안전한 링크 변환, Mermaid strict mode</li><li>중단된 SSE를 Snapshot과 sequence로 복구하는 UI 구조</li><li>Run/Tool/Plan/Artifact 상태를 사용자에게 가시화</li><li>공통 디자인 토큰과 비교적 일관된 업무형 UI</li></ul></div>
+          <div class="bad-list"><h4>개선할 점</h4><ul><li>App.tsx 약 3,680줄, executor.py 약 3,499줄 등 책임 집중</li><li>Frontend API·Type 약 2,800줄을 수작업 관리</li><li>대부분의 FastAPI Route가 response_model을 사용하지 않음</li><li>Frontend 단위·통합·E2E 테스트 부재</li><li>API 계약·Migration·호출 수가 기능 추가 후 쉽게 드리프트</li></ul></div>
+        </div>
+      </article>
+
+      <article class="theme">
+        <h3>5.8 운영·배포·관측성</h3>
+        <div class="two-col">
+          <div class="good-list"><h4>잘한 점</h4><ul><li>Windows 설치기에서 의존성·Migration·Build·CA·진단을 일관되게 처리</li><li>비밀값을 명령 오류 메시지에 재출력하지 않으려는 방어</li><li>Health live/ready 분리와 구조화 요청 로그</li><li>감사 이벤트 범위가 넓고 민감 Key 재귀 Redaction 적용</li></ul></div>
+          <div class="bad-list"><h4>개선할 점</h4><ul><li>CI, Container, Linux 운영 배포 Manifest 부재</li><li>실제 PostgreSQL 동시성·Migration 통합 테스트 부족</li><li>Audit log append-only·외부 SIEM·보존 정책 부재</li><li>사용자 데이터 삭제·보존·Orphan cleanup 정책 미완성</li><li>Root License와 제3자 Vendor 라이선스 정합성 확인 필요</li><li>임시 검증 이미지가 저장소에 포함</li></ul></div>
+        </div>
+      </article>
+    </section>
+
+    <section id="risks">
+      <h2>6. 핵심 위험 목록</h2>
+      <table>
+        <thead><tr><th>심각도</th><th>위험</th><th>가능 영향</th><th>권고</th></tr></thead>
+        <tbody>
+          <tr><td class="critical">Critical</td><td>private 대화·자산의 Project 구성원 노출</td><td>타 사용자 대화, 첨부, Artifact 조회·수정</td><td>중앙 Scope 정책과 침투 테스트</td></tr>
+          <tr><td class="critical">Critical</td><td>고정 관리자 계정·한 자리 비밀번호</td><td>전체 관리자 기능 탈취, 계정 잠금 DoS</td><td>운영 Bootstrap 분리, 강제 변경·SSO/MFA</td></tr>
+          <tr><td class="high">High</td><td>사내 Provider 평문 HTTP</td><td>인증정보·업무 Prompt 네트워크 노출</td><td>HTTPS Gateway 또는 Endpoint 전환</td></tr>
+          <tr><td class="high">High</td><td>Project 보관 시 대화만 개인 Project로 이동</td><td>타 사용자 데이터 이동, Asset Project 불일치</td><td>Owner 전용 보관 및 원자적 보존 절차</td></tr>
+          <tr><td class="high">High</td><td>Run 시간·Token·비용·Turn 무제한</td><td>무한 Loop, 과금 폭증, Tool 반복</td><td>Emergency hard limit와 반복 탐지</td></tr>
+          <tr><td class="high">High</td><td>HTML 편집 Preview 격리 부족</td><td>XSS·외부 요청·앱 Origin 침해 가능성</td><td>별도 Origin, CSP, 검증 Sanitizer</td></tr>
+          <tr><td class="high">High</td><td>MCP 프로세스 OS 격리 부재</td><td>서버 파일·Secret·Network 접근</td><td>Container/Sandbox와 egress 차단</td></tr>
+          <tr><td class="high">High</td><td>Provider·Tool 데이터 반출 정책 부재</td><td>기밀 파일·Memory·검색 Query 외부 전송</td><td>데이터 등급과 Provider trust matrix</td></tr>
+          <tr><td class="medium">Medium</td><td>동시 승인·Event sequence 경합</td><td>Run 고착, Event 충돌, last-writer-wins</td><td>Atomic update, row lock, lease</td></tr>
+          <tr><td class="medium">Medium</td><td>Idempotency-Key의 형식적 사용</td><td>재시도 시 중복 Version·외부 부작용</td><td>멱등 결과 저장소와 Effect key</td></tr>
+          <tr><td class="medium">Medium</td><td>Artifact orphan 및 GC 부재</td><td>디스크 증가, 삭제 정책 불이행</td><td>Mark-and-Sweep와 보존 정책</td></tr>
+          <tr><td class="medium">Medium</td><td>공개 링크 무기한·무인증</td><td>전달·유출된 링크로 내부 자료 열람</td><td>로그인·조직·수신자·기본 만료</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="todo">
+      <h2>7. 우선순위별 To-do 로드맵</h2>
+
+      <div class="todo-phase">
+        <div class="todo-head"><h3><span class="p0">P0</span> 즉시 조치</h3><span>1~2주 · 운영 노출 전 필수</span></div>
+        <table><thead><tr><th>과제</th><th>완료 기준</th><th>난이도</th></tr></thead><tbody>
+          <tr><td>대화·Attachment·Artifact Scope 재설계</td><td>private는 소유자만, project_shared는 역할별 접근. 목록·검색·Composer·Run·다운로드 전 경로 침투 테스트 통과</td><td>높음</td></tr>
+          <tr><td>운영 Bootstrap 관리자 제거</td><td>운영에서 고정 계정 생성 금지, 초기 Secret 필수, 최초 변경 전 다른 API 차단</td><td>중간</td></tr>
+          <tr><td>Project 보관 로직 차단·수정</td><td>Owner/Admin만 수행, 관련 Run·Attachment·Artifact·File·Schedule 정합성 보장</td><td>높음</td></tr>
+          <tr><td>Run Hard limit 복구</td><td>Deadline·Token·비용·Turn·Tool 호출·동일 호출 반복 상한을 Snapshot으로 고정하고 실제 중단</td><td>높음</td></tr>
+          <tr><td>사내 Provider TLS</td><td>인증값·Prompt가 HTTPS로만 전송되고 인증서 검증 성공</td><td>외부협의</td></tr>
+          <tr><td>현재 품질 게이트 복구</td><td>Backend 0 fail, Mypy 0 error, Frontend typecheck/build 성공</td><td>낮음</td></tr>
+        </tbody></table>
+      </div>
+
+      <div class="todo-phase">
+        <div class="todo-head"><h3><span class="p1">P1</span> 제한적 Beta 준비</h3><span>2~5주 · 소수 사용자 배포 전</span></div>
+        <table><thead><tr><th>과제</th><th>완료 기준</th><th>난이도</th></tr></thead><tbody>
+          <tr><td>CI 자동화</td><td>Pytest, Ruff, Mypy, Frontend build, Migration, Secret scan이 모든 PR에서 필수</td><td>중간</td></tr>
+          <tr><td>PostgreSQL 실제 통합 테스트</td><td>Scheduler, Event sequence, Queue, Approval, CAS 동시성 테스트 통과</td><td>높음</td></tr>
+          <tr><td>Run worker lease</td><td>worker_id, heartbeat, lease expiry, execution epoch로 이중 실행 차단</td><td>높음</td></tr>
+          <tr><td>승인 원자성·Preview 개선</td><td>동시 승인 고착 방지, 실행 직전 digest 재검증, Tool별 안전한 대상 요약</td><td>중간</td></tr>
+          <tr><td>HTML Preview 격리</td><td>별도 Origin 또는 opaque iframe, 엄격 CSP, DOMPurify, nonce 기반 postMessage</td><td>높음</td></tr>
+          <tr><td>공유 링크 정책</td><td>기본 로그인·조직 제한·만료, Snapshot allowlist를 Grant에 고정</td><td>중간</td></tr>
+          <tr><td>Frontend Golden Path 테스트</td><td>대화 실행, SSE 재접속, 승인, Artifact, 권한, 공유 핵심 E2E 통과</td><td>중간</td></tr>
+        </tbody></table>
+      </div>
+
+      <div class="todo-phase">
+        <div class="todo-head"><h3><span class="p2">P2</span> 운영 안정화</h3><span>1~2개월 · 조직 확대 전</span></div>
+        <table><thead><tr><th>과제</th><th>완료 기준</th><th>난이도</th></tr></thead><tbody>
+          <tr><td>데이터 반출 정책 엔진</td><td>Project 등급 × Provider × Tool/MCP egress × 사용자 역할을 Run 시작 전에 판정</td><td>매우 높음</td></tr>
+          <tr><td>MCP Sandbox·공급망 통제</td><td>Package/version/hash 고정, 실행 시 설치 금지, CPU/Memory/Network/FS 제한</td><td>매우 높음</td></tr>
+          <tr><td>Background Memory Job 분리</td><td>본 Run과 비용·실패·Provider 정책 분리, 기밀 Project 기본 OFF</td><td>중간</td></tr>
+          <tr><td>Artifact·Attachment 비동기 처리</td><td>Upload→Validate→Extract/Render→Ready 상태와 자원 제한 Worker</td><td>높음</td></tr>
+          <tr><td>Storage GC·보존정책</td><td>Orphan/Draft/삭제 원본 Mark-and-Sweep, 유예기간, 감사 가능한 삭제</td><td>높음</td></tr>
+          <tr><td>OpenAPI 계약 단일화</td><td>Backend response_model 확대, Frontend 타입·Client 자동 생성</td><td>중간</td></tr>
+          <tr><td>대형 파일 분리</td><td>RunOrchestrator, ToolLoop, Artifact, Memory 및 Chat UI를 책임별 모듈로 분리</td><td>높음</td></tr>
+        </tbody></table>
+      </div>
+
+      <div class="todo-phase">
+        <div class="todo-head"><h3><span class="p3">P3</span> 제품화·거버넌스</h3><span>2~4개월 · 전사 서비스 준비</span></div>
+        <table><thead><tr><th>과제</th><th>완료 기준</th><th>난이도</th></tr></thead><tbody>
+          <tr><td>역할 세분화</td><td>System Admin, Project Admin, Security Auditor, Content Auditor, Marketplace Reviewer 분리</td><td>높음</td></tr>
+          <tr><td>SSO·MFA·Break-glass</td><td>사내 IdP 연계, 관리자 강한 인증, 대화 원문 열람 사유·알림·감사</td><td>외부협의</td></tr>
+          <tr><td>감사로그 강화</td><td>Append-only DB role, hash chain 또는 외부 SIEM, 보존·조회 정책</td><td>높음</td></tr>
+          <tr><td>완전한 Run Provenance</td><td>Prompt·Tool schema·Adapter·Build commit·가격표·MCP server digest까지 고정</td><td>높음</td></tr>
+          <tr><td>운영 Observability</td><td>비용, latency, queue, recovery, approval, tool failure, cache hit, egress 대시보드</td><td>높음</td></tr>
+        </tbody></table>
+      </div>
+
+      <div class="todo-phase">
+        <div class="todo-head"><h3><span style="color:var(--purple);font-weight:900">P4</span> 도전 과제</h3><span>중장기 · 차별화 단계</span></div>
+        <table><thead><tr><th>과제</th><th>목표</th><th>도전성</th></tr></thead><tbody>
+          <tr><td>정책 기반 Agent 실행환경 자동 배치</td><td>업무 등급과 Tool에 따라 Local, Sandbox, 사내 GPU, 격리 Provider를 자동 선택</td><td>매우 높음</td></tr>
+          <tr><td>조직형 Skill 신뢰 체계</td><td>권한 Manifest, 검토·서명, 성능 Eval, 안전성 점수, 단계적 Rollout</td><td>매우 높음</td></tr>
+          <tr><td>업무 결과 폐쇄루프</td><td>AI 제안 → 담당자·기한·효과 → 실제 성과 피드백 → 검토 가능한 학습 제안</td><td>매우 높음</td></tr>
+          <tr><td>정형·비정형 의사결정 Graph</td><td>문서·ERP·DW·조직·제품·투자과제를 연결하고 근거 가능한 Agent 실행</td><td>매우 높음</td></tr>
+          <tr><td>Agent Eval·재현 연구</td><td>동일 Snapshot 재실행 비교, Tool 정확도, 인용 충실도, 비용 대비 업무성과 측정</td><td>높음</td></tr>
+        </tbody></table>
+      </div>
+    </section>
+
+    <section id="gate">
+      <h2>8. 제한적 운영 배포 합격 기준</h2>
+      <ul class="checklist">
+        <li>모든 자동 테스트와 정적검사 0 fail</li>
+        <li>타 사용자 private 대화·파일 IDOR 테스트 통과</li>
+        <li>Project member/viewer 역할별 Matrix 테스트 통과</li>
+        <li>운영 고정 관리자 계정 미생성</li>
+        <li>Provider 통신 전 구간 TLS</li>
+        <li>Run hard limit 및 무한 Tool loop 탐지</li>
+        <li>승인 인자 digest 실행 직전 재검증</li>
+        <li>Worker 재시작·강제 종료·이중 Worker 테스트</li>
+        <li>PostgreSQL 동시성 테스트</li>
+        <li>HTML Artifact 격리 침투 테스트</li>
+        <li>MCP 프로세스 Sandbox와 egress 차단</li>
+        <li>기밀 Project 외부 Provider·Web Tool 차단</li>
+        <li>공유 링크 만료·폐기·수신자 정책</li>
+        <li>Orphan Storage 정리와 삭제 정책</li>
+        <li>Golden Path 3개 E2E 성공</li>
+      </ul>
+      <div class="callout warn"><strong>권장 Golden Path</strong><ol><li>파일 첨부 → 분석 → 근거 포함 HTML 보고서</li><li>$Skill 실행 → Tool 호출 → 승인 → Artifact 생성</li><li>브라우저 종료 또는 서버 재시작 → 재접속 → Run 상태 완전 복원</li></ol></div>
+    </section>
+
+    <section id="conclusion">
+      <h2>9. 결론</h2>
+      <p>짧은 개발 기간과 AI 중심 구현이라는 조건을 고려하면 제품 방향, 상태 모델, 복구 설계, 확장 버전 관리의 수준은 매우 높습니다. 특히 Worker 중단 후 복구, Tool의 미확정 부작용 비재실행, Run Snapshot, MCP 네트워크 방어는 일반적인 초기 프로젝트의 범위를 넘어섭니다.</p>
+      <p>반면 현재 가장 큰 문제는 기능의 부재가 아니라 <strong>정책 표현과 실제 강제의 간극</strong>입니다. private, visibility, limit, idempotency 같은 필드와 설정이 존재하지만 모든 실행 경로에서 동일하게 집행되지 않습니다. 이 간극은 다중 사용자와 실제 회사 데이터가 들어오는 순간 보안사고·과금·데이터 손상으로 확대될 수 있습니다.</p>
+      <div class="verdict"><strong>최종 권고</strong><br />신규 기능 개발을 잠시 동결하고 P0·P1을 완료한 후 3~5명의 제한된 사용자에게 Golden Path 중심으로 배포하십시오. 기능 개수 대신 “하나의 실제 업무가 권한·근거·복구·산출물까지 안전하게 끝났는가”를 성공 지표로 삼는 것이 적절합니다.</div>
+    </section>
+
+    <section id="appendix">
+      <h2>10. 기타 첨부사항</h2>
+      <h3>10.1 주요 대형 모듈</h3>
+      <table><thead><tr><th>모듈</th><th>대략적 규모</th><th>주요 위험</th></tr></thead><tbody>
+        <tr><td>Agent Executor</td><td>약 3,499줄</td><td>Provider·Tool·Artifact·Memory·상태 처리 책임 집중</td></tr>
+        <tr><td>Frontend App</td><td>약 3,680줄</td><td>UI 상태·Artifact 편집·채팅·관리 기능 결합</td></tr>
+        <tr><td>ORM Models</td><td>약 1,834줄</td><td>도메인 경계 파악과 Migration 영향 분석 어려움</td></tr>
+        <tr><td>MCP Runtime</td><td>약 1,192줄</td><td>Network·Process·Secret·Protocol 책임 혼재</td></tr>
+        <tr><td>Workspace Hook</td><td>약 1,179줄</td><td>SSE·Cache·Session 상태 복잡성 증가</td></tr>
+      </tbody></table>
+
+      <h3>10.2 실패 테스트 및 타입 오류 개요</h3>
+      <ul>
+        <li>예약 Run의 Skill snapshot prompt hash 기대값 불일치</li>
+        <li>Gemini Tool roundtrip에서 Background Memory 호출 추가로 기대 호출 수 불일치</li>
+        <li>Migration 최신 head와 테스트의 고정 revision 불일치 2건</li>
+        <li>SQLAlchemy rowcount typing, nullable key/string, Setting 타입 혼용, nullable User 전달 등 Mypy 오류 6건</li>
+      </ul>
+
+      <h3>10.3 문서 관리 권고</h3>
+      <table><thead><tr><th>문서 유형</th><th>의미</th></tr></thead><tbody>
+        <tr><td>Normative</td><td>현재 코드가 반드시 지켜야 하는 계약과 불변조건</td></tr>
+        <tr><td>Current Product Contract</td><td>현재 Stable/Beta/Experimental/Planned 기능의 단일 원본</td></tr>
+        <tr><td>Roadmap</td><td>구현 예정이며 현재 지원한다고 주장하지 않는 기능</td></tr>
+        <tr><td>Research</td><td>참고 아이디어로서 구현 의무가 없는 문서</td></tr>
+      </tbody></table>
+
+      <h3>10.4 검토 한계</h3>
+      <p class="footnote">본 평가는 코드·문서·테스트 기반의 정적·로컬 검토입니다. 실제 회사망, 사내 Provider, 운영 PostgreSQL, 다중 Worker, 브라우저별 HTML Sandbox, 실제 사용자 부하와 조직 보안정책은 해당 환경에서 별도 통합·침투·부하 테스트가 필요합니다. 확인되지 않은 운영환경의 안전성을 본 보고서가 보증하지는 않습니다.</p>
+    </section>
+  </main>
+
+  <footer>Confidential Working Assessment · Lumina Agent 0.1.0 · 2026-07-12<br />본 문서는 제품 개선을 위한 기술·제품 평가 자료이며 저장소 식별정보는 포함하지 않았습니다.</footer>
+</div>
+</body>
+</html>

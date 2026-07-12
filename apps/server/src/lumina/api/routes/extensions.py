@@ -21,9 +21,12 @@ from ...extensions.schemas import (
     InstallationPatch,
     PublishVersion,
     SkillFolderMove,
+    SkillOwnershipCreate,
 )
 from ...extensions.service import (
     activate_draft,
+    add_skill_ownership,
+    can_manage_skill,
     create_folder,
     create_skill,
     checkout_draft,
@@ -41,6 +44,7 @@ from ...extensions.service import (
     move_skill_to_folder,
     publish_version,
     require_extension,
+    remove_skill_ownership,
     save_draft_version,
     set_installation_enabled,
     uninstall,
@@ -71,8 +75,7 @@ def get_extensions(
         extension_payload(
             db,
             extension,
-            include_private=extension.owner_user_id == user.id or user.role == "admin",
-            can_edit=extension.owner_user_id == user.id or user.role == "admin",
+            user=user,
         )
         for extension in list_extensions(db, user=user, query=query)
     ]
@@ -85,12 +88,7 @@ def get_extension(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     extension = require_extension(db, user, extension_id)
-    return extension_payload(
-        db,
-        extension,
-        include_private=extension.owner_user_id == user.id or user.role == "admin",
-        can_edit=extension.owner_user_id == user.id or user.role == "admin",
-    )
+    return extension_payload(db, extension, user=user)
 
 
 @router.post("/extensions", status_code=201)
@@ -123,7 +121,7 @@ def post_extension(
     )
     db.commit()
     response.headers["ETag"] = draft_etag(draft)
-    return extension_payload(db, extension, include_private=True, can_edit=True)
+    return extension_payload(db, extension, user=context.user)
 
 
 @router.patch("/extensions/{extension_id}")
@@ -151,7 +149,7 @@ def patch_extension(
         request_id=_request_id(request),
     )
     db.commit()
-    return extension_payload(db, extension, include_private=True, can_edit=True)
+    return extension_payload(db, extension, user=context.user)
 
 
 @router.post("/extensions/{extension_id}/draft")
@@ -170,11 +168,82 @@ def post_extension_draft_checkout(
         result="success",
         actor=context.user,
         request_id=_request_id(request),
-        metadata={"extension_id": extension_id, "base_version_id": draft.base_version_id},
+        metadata={
+            "extension_id": extension_id,
+            "base_version_id": draft.base_version_id,
+        },
     )
     db.commit()
-    base = db.get(ExtensionVersion, draft.base_version_id) if draft.base_version_id else None
+    base = (
+        db.get(ExtensionVersion, draft.base_version_id)
+        if draft.base_version_id
+        else None
+    )
     return draft_payload(draft, base_version=base, include_package=True)
+
+
+@router.post("/skills/{skill_id}/ownerships", status_code=201)
+def post_skill_ownership(
+    skill_id: str,
+    payload: SkillOwnershipCreate,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    ownership = add_skill_ownership(
+        db,
+        user=context.user,
+        extension_id=skill_id,
+        principal_user_id=payload.user_id,
+        role=payload.role,
+    )
+    record_audit(
+        db,
+        action="skill_ownership_added",
+        target_type="skill_ownership",
+        target_id=ownership.id,
+        result="success",
+        actor=context.user,
+        request_id=_request_id(request),
+        metadata={
+            "skill_id": skill_id,
+            "principal_type": ownership.principal_type,
+            "principal_id": ownership.principal_id,
+            "role": ownership.role,
+        },
+    )
+    db.commit()
+    return extension_payload(
+        db, require_extension(db, context.user, skill_id), user=context.user
+    )
+
+
+@router.delete("/skills/{skill_id}/ownerships/{ownership_id}", status_code=204)
+def delete_skill_ownership(
+    skill_id: str,
+    ownership_id: str,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> Response:
+    ownership = remove_skill_ownership(
+        db,
+        user=context.user,
+        extension_id=skill_id,
+        ownership_id=ownership_id,
+    )
+    record_audit(
+        db,
+        action="skill_ownership_removed",
+        target_type="skill_ownership",
+        target_id=ownership.id,
+        result="success",
+        actor=context.user,
+        request_id=_request_id(request),
+        metadata={"skill_id": skill_id},
+    )
+    db.commit()
+    return Response(status_code=204)
 
 
 @router.patch("/skill-drafts/{draft_id}")
@@ -291,7 +360,9 @@ def get_extension_version(
     if version is None:
         raise ApiProblem(404, "version_not_found", "Skill version을 찾을 수 없습니다.")
     extension = require_extension(db, user, version.extension_id)
-    if extension.owner_user_id != user.id and version.status != "published":
+    if not can_manage_skill(db, user, extension) and (
+        version.status != "published" and version.created_by_user_id != user.id
+    ):
         raise ApiProblem(404, "version_not_found", "Skill version을 찾을 수 없습니다.")
     return version_payload(version, include_package=True)
 
@@ -560,7 +631,10 @@ def post_skill_move_folder(
         .limit(1)
     )
     draft = db.scalar(
-        select(ExtensionDraft).where(ExtensionDraft.extension_id == skill_id)
+        select(ExtensionDraft).where(
+            ExtensionDraft.extension_id == skill_id,
+            ExtensionDraft.owner_user_id == context.user.id,
+        )
     )
     placement = move_skill_to_folder(
         db,

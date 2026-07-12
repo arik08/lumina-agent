@@ -1,0 +1,30 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+const appPath = new URL("../src/App.tsx", import.meta.url);
+const stylesheetPath = new URL("../src/styles.css", import.meta.url);
+
+test("artifact header keeps its actions visible above the preview", async () => {
+  const [app, stylesheet] = await Promise.all([
+    readFile(appPath, "utf8"),
+    readFile(stylesheetPath, "utf8"),
+  ]);
+
+  for (const label of ["본문 수정", "코드 보기", "전체화면", "Artifact 공유 링크 복사", "Artifact 다운로드", "Artifact 닫기"]) {
+    assert.ok(app.includes(label), `missing Artifact header action: ${label}`);
+  }
+  assert.match(stylesheet, /\.artifact-header\s*\{[^}]*position:\s*relative[^}]*z-index:\s*4[^}]*background:\s*var\(--surface\)/s);
+  assert.match(stylesheet, /\.artifact-header button\s*\{[^}]*color:\s*var\(--muted\)/s);
+  assert.match(stylesheet, /\.artifact-header button:disabled\s*\{[^}]*color:\s*var\(--muted\)[^}]*opacity:\s*1/s);
+  assert.match(stylesheet, /\.artifact-header \.artifact-version-trigger\s*\{[^}]*width:\s*auto[^}]*min-width:\s*60px/s);
+  assert.match(app, /const artifactDownloadVersion = artifactVersion\?\.version \?\? artifactSummary\?\.currentVersion \?\? null/);
+  assert.match(app, /const \[summary, initialVersion, savedDraft\] = await Promise\.all\(\[\s*api\.artifacts\.get\(artifact\.id\),\s*api\.artifacts\.getVersion\(artifact\.id, artifact\.currentVersion\),\s*api\.artifacts\.getDraft\(artifact\.id\),\s*\]\)/s);
+  assert.match(app, /aria-label="Artifact 공유 링크 복사"[^>]*disabled=\{!artifactSummary\?\.conversationId\}/);
+  assert.match(app, /url\.searchParams\.set\("artifact", artifactSummary\.id\)/);
+  assert.match(app, /url\.searchParams\.set\("version", String\(artifactDownloadVersion \?\? artifactSummary\.currentVersion\)\)/);
+  assert.match(app, /aria-label="Artifact 다운로드"[^>]*disabled=\{!artifactSummary \|\| artifactDownloadVersion === null\}/);
+  assert.match(app, /aria-label="Artifact 다운로드"[\s\S]*?aria-label=\{artifactFullscreen \? "전체화면 종료" : "전체화면"\}[\s\S]*?aria-label="Artifact 닫기"/);
+  assert.ok(!app.includes('className="artifact-footer"'), "artifact footer should not be rendered");
+  assert.ok(!stylesheet.includes(".artifact-footer"), "artifact footer styles should be removed");
+});

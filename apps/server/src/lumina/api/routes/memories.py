@@ -91,9 +91,6 @@ async def optimize_user_memories(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
-    api_key = settings.openai_api_key
-    if api_key is None or not api_key.get_secret_value().strip():
-        raise ApiProblem(503, "memory_optimizer_unavailable", "Codex LLM 설정이 필요합니다.")
     model = db.scalar(
         select(ProviderModel).where(
             ProviderModel.provider_id == "codex",
@@ -102,14 +99,13 @@ async def optimize_user_memories(
         )
     )
     if model is None:
-        raise ApiProblem(503, "memory_optimizer_unavailable", "활성 Codex 기본 Model이 없습니다.")
+        raise ApiProblem(
+            503, "memory_optimizer_unavailable", "활성 Codex 기본 Model이 없습니다."
+        )
     result = await optimize_memories_with_llm(
         db,
         user=context.user,
-        provider=CodexResponsesAdapter(
-            api_key=api_key.get_secret_value(),
-            base_url=settings.openai_base_url,
-        ),
+        provider=CodexResponsesAdapter(),
         model=model.runtime_model_id,
     )
     record_audit(
@@ -120,10 +116,17 @@ async def optimize_user_memories(
         result="success",
         actor=context.user,
         request_id=_request_id(request),
-        metadata={"merged_ids": list(result.merged_ids), "superseded_ids": list(result.superseded_ids), "model": model.runtime_model_id},
+        metadata={
+            "merged_ids": list(result.merged_ids),
+            "superseded_ids": list(result.superseded_ids),
+            "model": model.runtime_model_id,
+        },
     )
     db.commit()
-    return {"mergedIds": list(result.merged_ids), "supersededIds": list(result.superseded_ids)}
+    return {
+        "mergedIds": list(result.merged_ids),
+        "supersededIds": list(result.superseded_ids),
+    }
 
 
 @router.patch("/memories/{memory_id}")

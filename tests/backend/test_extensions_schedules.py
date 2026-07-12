@@ -28,6 +28,7 @@ from lumina.models import (
     ScheduledRun,
     ScheduledTask,
     SkillFolderPlacement,
+    SkillOwnership,
     User,
 )
 from lumina.schedules.service import (
@@ -369,6 +370,130 @@ def test_skill_draft_versions_installation_and_folder_move(tmp_path: Path) -> No
         } <= audit_actions
 
 
+def test_published_skill_has_isolated_personal_drafts_and_multiple_owners(
+    tmp_path: Path,
+) -> None:
+    app, _settings = _test_app(tmp_path)
+    with SessionLocal() as db:
+        organization = db.scalar(select(Organization))
+        admin = db.scalar(select(User).where(User.login_id == "admin@posco.com"))
+        assert organization is not None and admin is not None
+        worker = create_user(
+            db,
+            login_name="worker",
+            password="pw",
+            organization_id=organization.id,
+            created_by_user_id=admin.id,
+        )
+        worker_id = worker.id
+        db.commit()
+
+    with TestClient(app) as client:
+        admin_csrf = _login(client)
+        admin_headers = {"X-CSRF-Token": admin_csrf}
+        created = client.post(
+            "/api/extensions",
+            headers=admin_headers,
+            json={
+                "name": "공식 보고서",
+                "slug": "official-report",
+                "description": "공식 보고서를 작성합니다.",
+                "package": {"files": {"SKILL.md": "# 공식 보고서\n\n기본 절차"}},
+            },
+        )
+        assert created.status_code == 201, created.text
+        skill = created.json()
+        owner_draft = skill["draft"]
+        saved = client.post(
+            f"/api/skill-drafts/{owner_draft['id']}/save-version",
+            headers=admin_headers,
+            json={
+                "expectedRevision": owner_draft["revision"],
+                "expectedDigest": owner_draft["digest"],
+                "baseVersionId": None,
+                "manifest": {},
+            },
+        )
+        assert saved.status_code == 201, saved.text
+        published = client.post(
+            f"/api/extension-versions/{saved.json()['id']}/publish",
+            headers=admin_headers,
+            json={},
+        )
+        assert published.status_code == 200, published.text
+
+        client.cookies.clear()
+        worker_csrf = _login(client, "worker", "pw")
+        worker_headers = {"X-CSRF-Token": worker_csrf}
+        worker_view = client.get(f"/api/extensions/{skill['id']}")
+        assert worker_view.status_code == 200
+        assert worker_view.json().get("draft") is None
+        assert worker_view.json()["canCreateDraft"] is True
+        assert worker_view.json()["canEdit"] is False
+
+        checkout = client.post(
+            f"/api/extensions/{skill['id']}/draft", headers=worker_headers
+        )
+        assert checkout.status_code == 200, checkout.text
+        personal_draft = checkout.json()
+        assert personal_draft["id"] != owner_draft["id"]
+        changed = client.patch(
+            f"/api/skill-drafts/{personal_draft['id']}",
+            headers=worker_headers,
+            json={
+                "expectedRevision": personal_draft["revision"],
+                "expectedDigest": personal_draft["digest"],
+                "package": {"files": {"SKILL.md": "# 공식 보고서\n\n개인 개선 절차"}},
+                "changeSummary": "개인 절차 개선",
+            },
+        )
+        assert changed.status_code == 200, changed.text
+        assert changed.json()["revision"] == 2
+
+        client.cookies.clear()
+        admin_csrf = _login(client)
+        admin_headers = {"X-CSRF-Token": admin_csrf}
+        owner_view = client.get(f"/api/extensions/{skill['id']}").json()
+        assert owner_view["draft"]["id"] == owner_draft["id"]
+        assert owner_view["draft"]["revision"] == 1
+
+        ownership_response = client.post(
+            f"/api/skills/{skill['id']}/ownerships",
+            headers=admin_headers,
+            json={"userId": worker_id, "role": "owner"},
+        )
+        assert ownership_response.status_code == 201, ownership_response.text
+        assert {
+            item["principalId"] for item in ownership_response.json()["ownerships"]
+        } == {
+            skill["ownerUserId"],
+            worker_id,
+        }
+
+        client.cookies.clear()
+        _login(client, "worker", "pw")
+        promoted_view = client.get(f"/api/extensions/{skill['id']}").json()
+        assert promoted_view["canEdit"] is True
+        assert promoted_view["currentUserRole"] == "owner"
+
+    with SessionLocal() as db:
+        drafts = list(
+            db.scalars(
+                select(ExtensionDraft).where(ExtensionDraft.extension_id == skill["id"])
+            )
+        )
+        ownerships = list(
+            db.scalars(
+                select(SkillOwnership).where(SkillOwnership.skill_id == skill["id"])
+            )
+        )
+        assert {draft.owner_user_id for draft in drafts} == {
+            skill["ownerUserId"],
+            worker_id,
+        }
+        assert len(ownerships) == 2
+
+
 def test_schedule_run_now_enable_disable_and_due_dispatch(tmp_path: Path) -> None:
     app, _settings = _test_app(tmp_path)
     with TestClient(app) as client:
@@ -547,11 +672,13 @@ def test_scheduled_run_applies_frozen_skill_snapshot_to_hash_and_prompt(
             "agent": snapshot["agent"],
             "project": snapshot["project"],
             "execution": snapshot["execution"],
+            "output_mode": snapshot["output_mode"],
             "instructions": snapshot["instructions"],
             "extensions": frozen_extensions,
             "extension_application": "all_snapshot",
             "environment_type": snapshot["environment_type"],
             "approval_mode": snapshot["approval_mode"],
+            "prompt_cache_key": snapshot["prompt_cache_key"],
         }
         expected_hash = hashlib.sha256(
             json.dumps(

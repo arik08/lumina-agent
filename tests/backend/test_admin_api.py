@@ -178,6 +178,47 @@ def test_admin_user_lifecycle_permissions_and_audit(tmp_path: Path) -> None:
         assert "passwordHash" not in audit.text
 
 
+def test_admin_usage_statistics_are_organization_scoped_and_admin_only(tmp_path: Path) -> None:
+    app = _test_app(tmp_path)
+    with TestClient(app) as admin_client:
+        admin_csrf = _login(admin_client, "admin", "1")
+        _create_user(admin_client, admin_csrf, login_name="analyst")
+        user_client = TestClient(app)
+        try:
+            _login(user_client, "analyst", "initial-password")
+            assert user_client.get("/api/admin/usage-statistics").status_code == 403
+        finally:
+            user_client.close()
+
+        response = admin_client.get("/api/admin/usage-statistics?days=30")
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["timezone"] == "Asia/Seoul"
+        assert payload["periodDays"] == 30
+        assert len(payload["trend"]) == 30
+        assert payload["summary"]["dau"] >= 2
+        assert payload["summary"]["mau"] >= 2
+        assert payload["summary"]["stickinessPercent"] >= 0
+        analyst = next(item for item in payload["users"] if item["loginId"] == "analyst@posco.com")
+        assert analyst["loginCount"] == 1
+        assert analyst["activeDays"] == 1
+        assert analyst["inactiveDays"] == 0
+        assert analyst["inputTokens"] == 0
+        assert analyst["cachedInputTokens"] == 0
+        assert analyst["cacheHitRatioPercent"] == 0
+        assert analyst["outputTokens"] == 0
+
+        audit = admin_client.get("/api/admin/audit-events?action=admin_usage_statistics_viewed")
+        assert audit.status_code == 200
+        assert audit.json()["items"][0]["metadata"]["days"] == 30
+
+        all_time = admin_client.get("/api/admin/usage-statistics?days=0")
+        assert all_time.status_code == 200, all_time.text
+        assert all_time.json()["periodDays"] >= 1
+        assert len(all_time.json()["trend"]) == all_time.json()["periodDays"]
+        assert all_time.json()["summary"]["runs"] >= payload["summary"]["runs"]
+
+
 def test_admin_conversation_view_is_audited(tmp_path: Path) -> None:
     app = _test_app(tmp_path)
     with TestClient(app) as client:

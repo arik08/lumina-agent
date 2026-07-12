@@ -2,10 +2,12 @@ import { useEffect, useRef, useState, type PropsWithChildren } from "react";
 import { AlertCircle, LoaderCircle } from "lucide-react";
 
 const HEALTH_CHECK_INTERVAL_MS = 1_500;
+const RECOVERY_SUCCESS_THRESHOLD = 3;
 
 export function BackendConnectionGuard({ children }: PropsWithChildren) {
   const [disconnected, setDisconnected] = useState(false);
   const disconnectedRef = useRef(false);
+  const recoverySuccessCountRef = useRef(0);
   const reloadRequestedRef = useRef(false);
 
   useEffect(() => {
@@ -22,13 +24,21 @@ export function BackendConnectionGuard({ children }: PropsWithChildren) {
           signal: controller.signal,
         });
         if (!response.ok) throw new Error(`Backend readiness returned ${response.status}.`);
-        if (disconnectedRef.current && !reloadRequestedRef.current) {
-          reloadRequestedRef.current = true;
-          window.location.reload();
-          return;
+        if (disconnectedRef.current) {
+          recoverySuccessCountRef.current += 1;
+          if (recoverySuccessCountRef.current < RECOVERY_SUCCESS_THRESHOLD) {
+            // Keep polling until readiness has remained stable across multiple checks.
+          } else if (!reloadRequestedRef.current) {
+            reloadRequestedRef.current = true;
+            window.location.reload();
+            return;
+          }
+        } else {
+          recoverySuccessCountRef.current = 0;
         }
       } catch {
         if (stopped || controller.signal.aborted) return;
+        recoverySuccessCountRef.current = 0;
         disconnectedRef.current = true;
         setDisconnected(true);
       }
@@ -51,7 +61,7 @@ export function BackendConnectionGuard({ children }: PropsWithChildren) {
           <AlertCircle size={18} aria-hidden="true" />
           <div>
             <strong>시스템 접속이 끊겼습니다.</strong>
-            <span>연결이 복구되면 자동으로 새로고침합니다.</span>
+            <span>연결이 안정되면 자동으로 새로고침합니다.</span>
           </div>
           <LoaderCircle className="is-running" size={17} aria-hidden="true" />
         </div>

@@ -29,6 +29,12 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
             column["name"] for column in inspector.get_columns("organizations")
         }
         user_columns = {column["name"] for column in inspector.get_columns("users")}
+        extension_columns = {
+            column["name"] for column in inspector.get_columns("extensions")
+        }
+        conversation_columns = {
+            column["name"] for column in inspector.get_columns("conversations")
+        }
         with engine.connect() as connection:
             revision = MigrationContext.configure(connection).get_current_revision()
     finally:
@@ -56,6 +62,7 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
         "project_memories",
         "project_learning_proposals",
         "notifications",
+        "skill_ownerships",
     } <= tables
     assert {"concept_revision", "concept_hash"} <= project_columns
     assert {
@@ -65,18 +72,20 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
     } <= project_columns
     assert {
         "policy_instructions",
-            "policy_revision",
-            "policy_digest",
-            "policy_revision_labels",
-            "policy_revision_contents",
+        "policy_revision",
+        "policy_digest",
+        "policy_revision_labels",
+        "policy_revision_contents",
     } <= organization_columns
     assert {
         "personal_instructions",
-            "personal_instruction_revision",
-            "personal_instruction_digest",
-            "affiliation",
-        } <= user_columns
-    assert revision == "0018"
+        "personal_instruction_revision",
+        "personal_instruction_digest",
+        "affiliation",
+    } <= user_columns
+    assert "creator_user_id" in extension_columns
+    assert "is_liked" in conversation_columns
+    assert revision == "0021"
 
 
 def test_structured_plan_migration_round_trip(tmp_path: Path) -> None:
@@ -104,7 +113,7 @@ def test_structured_plan_migration_round_trip(tmp_path: Path) -> None:
         assert {"plans", "plan_steps"} <= set(inspect(engine).get_table_names())
         with engine.connect() as connection:
             assert (
-                MigrationContext.configure(connection).get_current_revision() == "0018"
+                MigrationContext.configure(connection).get_current_revision() == "0021"
             )
     finally:
         engine.dispose()
@@ -154,7 +163,7 @@ def test_context_compaction_memory_learning_migration_round_trip(
         }
         with engine.connect() as connection:
             assert (
-                MigrationContext.configure(connection).get_current_revision() == "0018"
+                MigrationContext.configure(connection).get_current_revision() == "0021"
             )
     finally:
         engine.dispose()
@@ -186,7 +195,7 @@ def test_context_migration_adopts_legacy_create_all_table(tmp_path: Path) -> Non
         }
         with engine.connect() as connection:
             assert (
-                MigrationContext.configure(connection).get_current_revision() == "0018"
+                MigrationContext.configure(connection).get_current_revision() == "0021"
             )
     finally:
         engine.dispose()

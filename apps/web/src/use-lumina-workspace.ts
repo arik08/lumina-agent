@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError } from "./api";
+import { imageAttachmentFileName } from "./attachment-file-name";
+import { createClientId } from "./client-id";
 import type {
   AuthSession,
   AttachmentSummary,
@@ -86,7 +88,11 @@ function upsertById<T extends { id: string }>(items: T[], value: T) {
 }
 
 function upsertTool(items: ToolExecution[], execution: ToolExecution) {
-  return upsertById(items, execution);
+  const index = items.findIndex((item) => item.id === execution.id || item.callId === execution.callId);
+  if (index < 0) return [...items, execution];
+  const next = [...items];
+  next[index] = execution;
+  return next;
 }
 
 function ensureTurnSet(runtime: ConversationRuntime, runId: string, message?: ChatMessage | null) {
@@ -327,15 +333,20 @@ export function useLuminaWorkspace() {
         nextSnapshot.assistantDraft = null;
       } else if (event.type === "artifact_progress") {
         nextSnapshot.artifactProgress = event.payload;
+      } else if (event.type === "work_plan_updated") {
+        nextSnapshot.workPlan = event.payload.steps;
       } else if (event.type === "plan_step_changed" && nextSnapshot.plan) {
         nextSnapshot.plan = {
           ...nextSnapshot.plan,
           steps: upsertById(nextSnapshot.plan.steps, event.payload.step),
         };
-      } else if (event.type === "tool_started" || event.type === "tool_completed") {
+      } else if (event.type === "tool_started" || event.type === "tool_progress" || event.type === "tool_completed") {
         nextSnapshot.toolExecutions = upsertTool(nextSnapshot.toolExecutions, event.payload.execution);
         const existingActivity = nextSnapshot.activities.findIndex(
-          (activity) => activity.type === "tool" && activity.execution.id === event.payload.execution.id,
+          (activity) => activity.type === "tool" && (
+            activity.execution.id === event.payload.execution.id
+            || activity.execution.callId === event.payload.execution.callId
+          ),
         );
         if (existingActivity >= 0) {
           nextSnapshot.activities = nextSnapshot.activities.map((activity, index) =>
@@ -849,6 +860,24 @@ export function useLuminaWorkspace() {
     }
   }, [refreshConversations]);
 
+  const toggleLikedConversation = useCallback(async (conversationId: string) => {
+    const conversation = conversationsRef.current.find((item) => item.id === conversationId);
+    if (!conversation) return null;
+    try {
+      const updated = await api.conversations.update(conversationId, {
+        isLiked: !conversation.isLiked,
+        expectedRevision: conversation.revision,
+      });
+      setConversations((items) => items.map((item) => item.id === updated.id ? updated : item));
+      setNotice(updated.isLiked ? "좋아요로 표시했습니다. 자동 삭제 대상에서 제외됩니다." : "좋아요 표시를 해제했습니다.");
+      return updated;
+    } catch (error) {
+      setNotice(apiMessage(error));
+      await refreshConversations();
+      return null;
+    }
+  }, [refreshConversations]);
+
   const moveConversation = useCallback(async (conversationId: string, projectId: string) => {
     try {
       await api.conversations.move(conversationId, projectId);
@@ -944,7 +973,15 @@ export function useLuminaWorkspace() {
     setUploadingAttachments(true);
     try {
       const uploaded = await Promise.all(
-        files.map((file) => api.attachments.upload(conversationId, file, source)),
+        files.map((file) => {
+          const uploadFile = file.type.startsWith("image/")
+            ? new File([file], imageAttachmentFileName(file.name), {
+                type: file.type,
+                lastModified: file.lastModified,
+              })
+            : file;
+          return api.attachments.upload(conversationId, uploadFile, source);
+        }),
       );
       setComposerAttachments((current) => [...current, ...uploaded]);
       return uploaded;
@@ -1027,13 +1064,13 @@ export function useLuminaWorkspace() {
       let mutation: RunMutationResponse;
       if (activeRunId) {
         mutation = await api.runs.action(activeRunId, {
-          idempotencyKey: crypto.randomUUID(),
+          idempotencyKey: createClientId(),
           type: queueNext ? "queue_next" : "steer",
           message: input,
         });
       } else {
         mutation = await api.runs.start(conversationId, {
-          idempotencyKey: crypto.randomUUID(),
+          idempotencyKey: createClientId(),
           message: input,
           execution: currentSettings.execution,
         });
@@ -1062,10 +1099,10 @@ export function useLuminaWorkspace() {
   ) => {
     if (runActionBusy || ["retry_step", "approve", "reject"].includes(action) && !targetId) return false;
     const payload: RunActionRequest = action === "retry_step"
-      ? { idempotencyKey: crypto.randomUUID(), type: action, stepId: targetId as string }
+      ? { idempotencyKey: createClientId(), type: action, stepId: targetId as string }
       : action === "approve" || action === "reject"
-        ? { idempotencyKey: crypto.randomUUID(), type: action, approvalId: targetId as string }
-      : { idempotencyKey: crypto.randomUUID(), type: action };
+        ? { idempotencyKey: createClientId(), type: action, approvalId: targetId as string }
+      : { idempotencyKey: createClientId(), type: action };
     setRunActionBusy(true);
     try {
       const mutation = await api.runs.action(runId, payload);
@@ -1142,6 +1179,7 @@ export function useLuminaWorkspace() {
     createConversation,
     renameConversation,
     toggleFavoriteConversation,
+    toggleLikedConversation,
     moveConversation,
     deleteConversation,
     moveConversations,

@@ -20,6 +20,14 @@ export function codeLanguage(fileName?: string | null, mimeType?: string | null,
 }
 
 function highlightedHtml(value: string, language: string) {
+  if (language === "markdown") {
+    const frontmatter = value.match(/^(\uFEFF?---[ \t]*)(\r?\n)([\s\S]*?)(\r?\n)(---[ \t]*)(?=\r?\n|$)/);
+    if (frontmatter) {
+      const [, opening, openingBreak, yaml, closingBreak, closing] = frontmatter;
+      const markdown = value.slice(frontmatter[0].length);
+      return `<span class="hljs-meta">${opening}</span>${openingBreak}${hljs.highlight(yaml, { language: "yaml", ignoreIllegals: true }).value}${closingBreak}<span class="hljs-meta">${closing}</span>${hljs.highlight(markdown, { language: "markdown", ignoreIllegals: true }).value}`;
+    }
+  }
   return hljs.getLanguage(language)
     ? hljs.highlight(value, { language, ignoreIllegals: true }).value
     : hljs.highlight(value, { language: "plaintext" }).value;

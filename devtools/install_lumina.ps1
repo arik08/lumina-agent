@@ -21,9 +21,24 @@ $EnvFile = Join-Path $RepositoryRoot ".env"
 . (Join-Path $PSScriptRoot "LuminaInstall.Env.ps1")
 
 function Assert-Command {
-    param([Parameter(Mandatory = $true)][string]$Name)
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$InstallHint
+    )
     if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
-        throw "Required command '$Name' was not found on PATH."
+        throw "Required command '$Name' was not found on PATH. $InstallHint After installing it, close this window, open a new terminal, and run installer.bat again."
+    }
+}
+
+function Assert-NodeVersion {
+    $rawVersion = (& node --version 2>$null).Trim().TrimStart("v")
+    $parsedVersion = $null
+    if (-not [version]::TryParse($rawVersion, [ref]$parsedVersion)) {
+        throw "Could not determine the installed Node.js version. Reinstall the current Node.js LTS from https://nodejs.org/en/download and run installer.bat again."
+    }
+    $minimumVersion = [version]"20.19.0"
+    if ($parsedVersion -lt $minimumVersion) {
+        throw "Node.js 20.19.0 or newer is required by the frontend build, but $parsedVersion is installed. Install the current Node.js LTS from https://nodejs.org/en/download and run installer.bat again."
     }
 }
 
@@ -109,9 +124,18 @@ if ($PgptNetworkCheck -and $NoNetwork) {
 }
 
 Set-Location -LiteralPath $RepositoryRoot
-Assert-Command "uv"
-Assert-Command "node"
-Assert-Command "npm"
+Write-Host "[Lumina] Checking required tools..."
+Assert-Command "uv" "Install uv with: powershell -ExecutionPolicy Bypass -c `"irm https://astral.sh/uv/install.ps1 | iex`"."
+Assert-Command "node" "Install the current Node.js LTS from https://nodejs.org/en/download."
+Assert-Command "npm" "npm is included with Node.js; reinstall the current Node.js LTS from https://nodejs.org/en/download."
+Assert-NodeVersion
+$NpmCommand = if ($env:OS -eq "Windows_NT") {
+    (Get-Command "npm.cmd" -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+}
+else {
+    (Get-Command "npm" -ErrorAction Stop | Select-Object -First 1).Source
+}
+Write-Host "[Lumina] Required tools are available."
 
 if ($ValidateOnly) {
     if ($PgptNetworkCheck) {
@@ -215,10 +239,21 @@ if ([string]::IsNullOrWhiteSpace($selectedCa) -and -not $NonInteractive) {
 
 $resolvedCa = ""
 if (-not [string]::IsNullOrWhiteSpace($selectedCa)) {
-    $resolvedCa = Resolve-ConfiguredPath -PathValue $selectedCa
-    if (-not [string]::IsNullOrWhiteSpace($CompanyCaPath) -or
-        [string]::IsNullOrWhiteSpace((Get-LuminaDotEnvValue -Path $EnvFile -Key "LUMINA_CA_CERT"))) {
-        Set-LuminaDotEnvValue -Path $EnvFile -Key "LUMINA_CA_CERT" -Value $resolvedCa
+    $selectedCaCandidate = [Environment]::ExpandEnvironmentVariables($selectedCa)
+    if (-not [System.IO.Path]::IsPathRooted($selectedCaCandidate)) {
+        $selectedCaCandidate = Join-Path $RepositoryRoot $selectedCaCandidate
+    }
+    if (-not (Test-Path -LiteralPath $selectedCaCandidate -PathType Leaf) -and
+        [string]::IsNullOrWhiteSpace($CompanyCaPath) -and
+        -not $RequireCompanyCa) {
+        Write-Warning "Saved company CA path was not found. Continuing with public CA trust."
+    }
+    else {
+        $resolvedCa = Resolve-ConfiguredPath -PathValue $selectedCa
+        if (-not [string]::IsNullOrWhiteSpace($CompanyCaPath) -or
+            [string]::IsNullOrWhiteSpace((Get-LuminaDotEnvValue -Path $EnvFile -Key "LUMINA_CA_CERT"))) {
+            Set-LuminaDotEnvValue -Path $EnvFile -Key "LUMINA_CA_CERT" -Value $resolvedCa
+        }
     }
 }
 elseif ($RequireCompanyCa) {
@@ -268,7 +303,19 @@ if (-not [string]::IsNullOrWhiteSpace($resolvedCa)) {
 else {
     $configuredBundle = Get-ConfiguredValue -Key "LUMINA_CA_BUNDLE"
     if (-not [string]::IsNullOrWhiteSpace($configuredBundle)) {
-        $resolvedBundle = Resolve-ConfiguredPath -PathValue $configuredBundle
+        $configuredBundleCandidate = [Environment]::ExpandEnvironmentVariables($configuredBundle)
+        if (-not [System.IO.Path]::IsPathRooted($configuredBundleCandidate)) {
+            $configuredBundleCandidate = Join-Path $RepositoryRoot $configuredBundleCandidate
+        }
+        if (Test-Path -LiteralPath $configuredBundleCandidate -PathType Leaf) {
+            $resolvedBundle = (Resolve-Path -LiteralPath $configuredBundleCandidate).Path
+        }
+        elseif ($RequireCompanyCa) {
+            throw "Configured certificate or bundle file does not exist."
+        }
+        else {
+            Write-Warning "Saved combined CA bundle was not found. Continuing with public CA trust."
+        }
     }
 }
 if (-not [string]::IsNullOrWhiteSpace($resolvedBundle)) {
@@ -281,7 +328,7 @@ if (-not $SkipDependencyInstall) {
     if ($NoNetwork) {
         $frontendInstallArguments += @("--offline", "--no-audit")
     }
-    Invoke-Checked -Command "npm" -Arguments $frontendInstallArguments
+    Invoke-Checked -Command $NpmCommand -Arguments $frontendInstallArguments
 }
 
 Write-Host "[Lumina] Applying database migrations..."
@@ -298,7 +345,7 @@ Invoke-Checked -Command "uv" -Arguments $migrationArguments
 
 if (-not $SkipFrontendBuild) {
     Write-Host "[Lumina] Building the frontend..."
-    Invoke-Checked -Command "npm" -Arguments @("run", "build", "--prefix", $WebRoot)
+    Invoke-Checked -Command $NpmCommand -Arguments @("run", "build", "--prefix", $WebRoot)
 }
 
 $runPgptNetworkCheck = [bool]$PgptNetworkCheck

@@ -59,6 +59,17 @@ function skillFileIcon(path: string): ReactNode {
   return <FileText className={extension === "md" ? "is-markdown" : "is-text"} size={13} />;
 }
 
+function skillTags(item: SkillExtension): string[] {
+  const manifest = item.versions.at(-1)?.manifest;
+  const configured = Array.isArray(manifest?.tags)
+    ? manifest.tags.filter((tag): tag is string => typeof tag === "string" && Boolean(tag.trim())).map((tag) => tag.trim().replace(/^#/, ""))
+    : [];
+  if (configured.length > 0) return configured.slice(0, 3);
+  const category = typeof manifest?.category === "string" ? manifest.category.trim() : "";
+  if (category && category !== "기본 제공") return [category.replace(/^#/, "")];
+  return [item.visibility === "organization" ? "조직" : "개인"];
+}
+
 export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceViewProps) {
   const skillContentRef = useRef<HTMLDivElement>(null);
   const [marketKind, setMarketKind] = useState<"skill" | "mcp">("skill");
@@ -68,6 +79,8 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const pendingInstallationIdsRef = useRef<Set<string>>(new Set());
+  const [pendingInstallationSurfaceById, setPendingInstallationSurfaceById] = useState<Record<string, "list" | "detail">>({});
   const [error, setError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState("");
@@ -104,7 +117,8 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
     return items.filter((item) => {
       if (skillView === "drafts" && !item.draft) return false;
       if (skillView === "installed" && !installations.some((entry) => entry.extensionId === item.id)) return false;
-      return !normalized || `${item.name} ${item.description} ${item.slug}`.toLocaleLowerCase().includes(normalized);
+      const tags = skillTags(item);
+      return !normalized || `${item.name} ${item.description} ${item.slug} ${tags.join(" ")} ${tags.map((tag) => `#${tag}`).join(" ")}`.toLocaleLowerCase().includes(normalized);
     });
   }, [installations, items, query, skillView]);
   const sourceDetailFiles = selected?.draft?.package.files ?? versionDetail?.package?.files ?? {};
@@ -118,10 +132,10 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
     try {
       const [extensions, installed] = await Promise.all([
         api.extensions.list(),
-        api.extensions.listInstallations(projectId ?? undefined),
+        api.extensions.listInstallations(),
       ]);
       setItems(extensions);
-      setInstallations(installed);
+      setInstallations(installed.filter((entry) => entry.scopeType === "user"));
       setSelectedId((current) => preferredId ?? (current && extensions.some((item) => item.id === current) ? current : extensions[0]?.id ?? null));
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "Marketplace를 불러오지 못했습니다.");
@@ -197,22 +211,36 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
     }
   };
 
-  const toggleInstallation = async () => {
-    if (!selected || !projectId || busy) return;
-    setBusy(true);
+  const toggleInstallation = async (target: SkillExtension, surface: "list" | "detail") => {
+    if (busy || pendingInstallationIdsRef.current.has(target.id)) return;
+    const targetInstallation = installations.find((entry) => entry.extensionId === target.id) ?? null;
+    const targetVersion = target.versions.at(-1) ?? null;
+    if (!targetInstallation && !targetVersion) return;
+    pendingInstallationIdsRef.current.add(target.id);
+    setPendingInstallationSurfaceById((current) => ({ ...current, [target.id]: surface }));
+    setError(null);
     try {
-      if (installation) await api.extensions.uninstall(installation.id);
-      else if (latestVersion) await api.extensions.install(latestVersion.id, projectId);
-      await refresh(selected.id);
+      if (targetInstallation) {
+        await api.extensions.uninstall(targetInstallation.id);
+        setInstallations((current) => current.filter((entry) => entry.extensionId !== target.id));
+      } else if (targetVersion) {
+        const installed = await api.extensions.install(targetVersion.id);
+        setInstallations((current) => [...current.filter((entry) => entry.extensionId !== target.id), installed]);
+      }
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "설치 상태를 변경하지 못했습니다.");
     } finally {
-      setBusy(false);
+      pendingInstallationIdsRef.current.delete(target.id);
+      setPendingInstallationSurfaceById((current) => {
+        const next = { ...current };
+        delete next[target.id];
+        return next;
+      });
     }
   };
 
   const beginPackageEdit = async () => {
-    if (!selected?.canEdit || busy) return;
+    if (!selected?.canCreateDraft || busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -233,15 +261,17 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
   };
 
   const savePackageEdit = async () => {
-    if (!selected?.draft || !editableName.trim() || busy) return;
+    if (!selected?.draft || (selected.canEdit && !editableName.trim()) || busy) return;
     setBusy(true);
     setError(null);
     try {
       await api.extensions.updateDraft(selected.draft, editableFiles, "Marketplace 패키지 편집");
-      await api.extensions.updateMetadata(selected.id, {
-        name: editableName.trim(),
-        description: editableDescription.trim(),
-      });
+      if (selected.canEdit) {
+        await api.extensions.updateMetadata(selected.id, {
+          name: editableName.trim(),
+          description: editableDescription.trim(),
+        });
+      }
       await refresh(selected.id);
       setEditMode(false);
       setRenamingPath(null);
@@ -333,27 +363,32 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
       {marketKind === "skill" && error && <div className="feature-error" role="alert">{error}</div>}
       {marketKind === "mcp" ? <McpMarketplacePanel key={`${projectId ?? "none"}:${mcpRefreshKey}`} projectId={projectId} /> : <div className="split-feature">
         <aside className="feature-list" aria-label="Skill 목록">
-          {loading ? <div className="feature-state"><LoaderCircle className="is-running" size={16} /> 불러오는 중</div> : visibleItems.length === 0 ? <div className="feature-state">조건에 맞는 Skill이 없습니다.</div> : visibleItems.map((item) => (
-            <button className={item.id === selected?.id ? "is-selected" : ""} type="button" key={item.id} onClick={() => setSelectedId(item.id)}>
-              <span><strong>{item.name}</strong><small>{item.description || item.slug}</small><small className="marketplace-source">{item.versions.at(-1)?.manifest.source === "repository" ? "Lumina 기본 제공" : item.visibility === "organization" ? "조직 공개" : "개인 Skill"}</small></span>
-              {item.draft ? <em>Draft r{item.draft.revision}</em> : installations.some((entry) => entry.extensionId === item.id) ? <em className="is-enabled">설치됨</em> : <em className="is-official">공식</em>}
-            </button>
-          ))}
+          {loading ? <div className="feature-state"><LoaderCircle className="is-running" size={16} /> 불러오는 중</div> : visibleItems.length === 0 ? <div className="feature-state">조건에 맞는 Skill이 없습니다.</div> : visibleItems.map((item) => {
+            const itemInstallation = installations.find((entry) => entry.extensionId === item.id) ?? null;
+            const itemVersion = item.versions.at(-1) ?? null;
+            const itemInstallationPending = pendingInstallationSurfaceById[item.id] === "list";
+            return <div className={`marketplace-skill-row ${item.id === selected?.id ? "is-selected" : ""}`} key={item.id}>
+              <button className="marketplace-skill-select" type="button" onClick={() => setSelectedId(item.id)}>
+                <span><strong>{item.name}</strong><small>{item.description || item.slug}</small><small className="marketplace-tags" aria-label="Skill 태그">{skillTags(item).map((tag) => <span key={tag}>#{tag}</span>)}{item.draft && <span className="is-draft">Draft r{item.draft.revision}</span>}</small></span>
+              </button>
+              <button className={`marketplace-install-toggle ${itemInstallation ? "is-installed" : ""}`} type="button" aria-label={`${item.name} ${itemInstallation ? "미사용" : "설치"}`} aria-pressed={Boolean(itemInstallation)} aria-busy={itemInstallationPending} disabled={!itemVersion || itemInstallationPending} onClick={() => void toggleInstallation(item, "list")}>{itemInstallationPending ? <LoaderCircle className="is-running" size={12} /> : itemInstallation ? <><span className="install-toggle-rest">설치됨</span><span className="install-toggle-hover">미사용</span></> : <span>설치</span>}</button>
+            </div>;
+          })}
         </aside>
         <section className="feature-detail">
           {!selected ? <div className="feature-state">Skill을 선택해 주세요.</div> : (
             <>
               <header className="detail-heading">
-                <div>{editMode ? <><input className="marketplace-title-editor" aria-label="Skill 이름" value={editableName} onChange={(event) => setEditableName(event.currentTarget.value)} /><textarea className="marketplace-description-editor" aria-label="Skill 설명" value={editableDescription} onChange={(event) => setEditableDescription(event.currentTarget.value)} /></> : <><h2>{selected.name}</h2><p>{selected.description || "설명 없음"}</p></>}</div>
+                <div>{editMode && selected.canEdit ? <><h2 className="marketplace-inline-editor" contentEditable="plaintext-only" suppressContentEditableWarning role="textbox" aria-label="Skill 이름" aria-multiline="false" onInput={(event) => setEditableName(event.currentTarget.textContent ?? "")} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }}>{editableName}</h2><p className="marketplace-inline-editor" contentEditable="plaintext-only" suppressContentEditableWarning role="textbox" aria-label="Skill 설명" aria-multiline="false" data-placeholder="설명 없음" onInput={(event) => setEditableDescription(event.currentTarget.textContent ?? "")} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }}>{editableDescription}</p></> : <><h2>{selected.name}</h2><p>{selected.description || "설명 없음"}</p></>}</div>
                 <div className="detail-badges"><span>{selected.visibility}</span>{selected.draft && <span className="is-draft">Draft r{selected.draft.revision}{selected.draft.dirty ? " · 저장 안 됨" : ""}</span>}{latestVersion && <span>v{latestVersion.version}</span>}</div>
               </header>
               <div className={`marketplace-package-detail ${editMode ? "is-editing" : ""}`}>
                 <div className="marketplace-package-summary">
-                  <div><strong>{selected.draft ? `WorkingDraft r${selected.draft.revision}` : latestVersion?.manifest.publisher === "Lumina" ? "Lumina 기본 제공" : "공개 Skill"}</strong><span>{latestVersion ? `v${latestVersion.version} · 파일 ${Object.keys(detailFiles).length}개` : `파일 ${Object.keys(detailFiles).length}개`}</span></div>
+                  <div><strong>{selected.draft ? `내 WorkingDraft r${selected.draft.revision}` : skillTags(selected).map((tag) => `#${tag}`).join(" ")}</strong><span>Owner {selected.ownerships.filter((item) => item.role === "owner").map((item) => item.displayName).join(", ") || "미지정"}</span></div>
                   <div className="marketplace-package-actions">
-                    {editMode ? <><button type="button" disabled={busy} onClick={() => { setEditMode(false); setRenamingPath(null); }}><X size={14} /> 취소</button><button className="lumina-primary-action" type="button" disabled={busy || !editableName.trim()} onClick={() => void savePackageEdit()}><Save size={14} /> Draft 저장</button></> : selected.canEdit && <button type="button" disabled={busy} onClick={() => void beginPackageEdit()}><Pencil size={14} /> 편집</button>}
+                    {editMode ? <><button type="button" disabled={busy} onClick={() => { setEditMode(false); setRenamingPath(null); }}><X size={14} /> 취소</button><button className="lumina-primary-action" type="button" disabled={busy || (selected.canEdit && !editableName.trim())} onClick={() => void savePackageEdit()}><Save size={14} /> Draft 저장</button></> : selected.canCreateDraft && <button type="button" disabled={busy} onClick={() => void beginPackageEdit()}><Pencil size={14} /> {selected.canEdit ? "편집" : "내 버전으로 수정"}</button>}
                     {!editMode && selected.draft?.dirty && <button type="button" disabled={busy} onClick={() => void saveVersion()}><Check size={14} /> v{selected.versions.length + 1}로 저장</button>}
-                    {!editMode && <button className={installation ? "is-danger" : "is-primary lumina-primary-action"} type="button" disabled={!latestVersion || busy} onClick={() => void toggleInstallation()}>{installation ? <Trash2 size={14} /> : <Download size={14} />}{installation ? "설치 해제" : "Project에 설치"}</button>}
+                    {!editMode && <button className={installation ? "is-danger" : "is-primary lumina-primary-action"} type="button" aria-busy={pendingInstallationSurfaceById[selected.id] === "detail"} disabled={!latestVersion || busy || pendingInstallationSurfaceById[selected.id] === "detail"} onClick={() => selected && void toggleInstallation(selected, "detail")}>{pendingInstallationSurfaceById[selected.id] === "detail" ? <><LoaderCircle className="is-running" size={14} /> 처리 중</> : <>{installation ? <Trash2 size={14} /> : <Download size={14} />}{installation ? "미사용" : "설치"}</>}</button>}
                   </div>
                 </div>
                 <div className="marketplace-file-browser">
@@ -367,7 +402,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
                         </div>}
                       </header>
                       <div className="skill-file-content" ref={skillContentRef}>
-                        {editMode ? <SyntaxTextarea className="skill-file-editor" ariaLabel={`${activeFile} 내용`} fileName={activeFile} value={detailFiles[activeFile] ?? ""} onChange={(event) => setEditableFiles((current) => ({ ...current, [activeFile]: event.currentTarget.value }))} /> : activeFileIsMarkdown && skillContentView === "rendered"
+                        {editMode ? <SyntaxTextarea className="skill-file-editor" ariaLabel={`${activeFile} 내용`} fileName={activeFile} value={detailFiles[activeFile] ?? ""} onChange={(event) => { const nextValue = event.currentTarget.value; setEditableFiles((current) => ({ ...current, [activeFile]: nextValue })); }} /> : activeFileIsMarkdown && skillContentView === "rendered"
                           ? <div className="markdown-response skill-markdown-preview"><ReactMarkdown skipHtml remarkPlugins={[remarkGfm]}>{detailFiles[activeFile] ?? "파일 내용을 불러오는 중입니다."}</ReactMarkdown></div>
                           : <SyntaxCode value={detailFiles[activeFile] ?? "파일 내용을 불러오는 중입니다."} fileName={activeFile} />}
                       </div>

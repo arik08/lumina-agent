@@ -1,7 +1,7 @@
-import { ArrowRight, AtSign, KeyRound, LoaderCircle, ShieldCheck, Sparkles } from "lucide-react";
+import { ArrowRight, AtSign, KeyRound, LoaderCircle, ShieldCheck, Sparkles, UserPlus } from "lucide-react";
 import { type FormEvent, useRef, useState } from "react";
-import { ApiError, login } from "../api";
-import type { AuthSession } from "../api-types";
+import { ApiError, login, registerAccount } from "../api";
+import type { AuthSession, UserRole } from "../api-types";
 import "../login.css";
 
 export interface LoginScreenProps {
@@ -16,6 +16,14 @@ export function LoginScreen({ onAuthenticated, initialDomain = "posco.com" }: Lo
   const [domainEditing, setDomainEditing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [registering, setRegistering] = useState(false);
+  const [registrationEmail, setRegistrationEmail] = useState("");
+  const [registrationName, setRegistrationName] = useState("");
+  const [registrationAffiliation, setRegistrationAffiliation] = useState("");
+  const [registrationRole, setRegistrationRole] = useState<UserRole>("user");
+  const [registrationPassword, setRegistrationPassword] = useState("");
+  const [registrationPasswordConfirm, setRegistrationPasswordConfirm] = useState("");
+  const [registrationMessage, setRegistrationMessage] = useState<string | null>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -52,6 +60,41 @@ export function LoginScreen({ onAuthenticated, initialDomain = "posco.com" }: Lo
     }
   };
 
+  const submitRegistration = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (submitting) return;
+    if (!registrationEmail.trim() || !registrationName.trim() || !registrationAffiliation.trim()) {
+      setError("이메일, 이름과 소속을 모두 입력해 주세요.");
+      return;
+    }
+    if (registrationPassword.length < 8) {
+      setError("비밀번호는 8자 이상 입력해 주세요.");
+      return;
+    }
+    if (registrationPassword !== registrationPasswordConfirm) {
+      setError("비밀번호 확인이 일치하지 않습니다.");
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const result = await registerAccount({
+        email: registrationEmail.trim(),
+        displayName: registrationName.trim(),
+        affiliation: registrationAffiliation.trim(),
+        role: registrationRole,
+        password: registrationPassword,
+      });
+      setRegistrationMessage(result.message);
+      setRegistrationPassword("");
+      setRegistrationPasswordConfirm("");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "가입 신청을 접수하지 못했습니다.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <main className="login-screen">
       <section className="login-layout" aria-labelledby="login-heading">
@@ -82,11 +125,12 @@ export function LoginScreen({ onAuthenticated, initialDomain = "posco.com" }: Lo
             </div>
           </div>
 
-          <form className="login-form" noValidate onSubmit={submit}>
+          {!registering ? <form className="login-form" noValidate onSubmit={submit}>
             {import.meta.env.DEV && (
               <button
                 className="login-dev-account"
                 type="button"
+                aria-label="개발 계정 admin@posco.com 채우기"
                 disabled={submitting}
                 onClick={() => {
                   setLoginName("admin");
@@ -94,7 +138,10 @@ export function LoginScreen({ onAuthenticated, initialDomain = "posco.com" }: Lo
                   passwordRef.current?.focus();
                 }}
               >
-                개발 계정 admin@posco.com 채우기
+                <UserPlus size={16} strokeWidth={1.8} aria-hidden="true" />
+                <span className="login-dev-account-tooltip" role="tooltip">
+                  개발 계정 admin@posco.com 채우기
+                </span>
               </button>
             )}
             <label className="login-field" htmlFor="lumina-login-name">
@@ -105,7 +152,7 @@ export function LoginScreen({ onAuthenticated, initialDomain = "posco.com" }: Lo
                 autoFocus
                 disabled={submitting}
                 inputMode="text"
-                placeholder="admin"
+                placeholder="POSCO_계정명"
                 value={loginName}
                 onChange={(event) => setLoginName(event.currentTarget.value)}
                 onKeyDown={(event) => {
@@ -177,9 +224,29 @@ export function LoginScreen({ onAuthenticated, initialDomain = "posco.com" }: Lo
                 <>로그인 <ArrowRight size={17} aria-hidden="true" /></>
               )}
             </button>
-          </form>
-
-          <p className="login-session-note">인증된 세션은 오늘 자정까지 유지됩니다.</p>
+            <button className="login-register-open" type="button" onClick={() => { setRegistering(true); setError(null); }}>
+              회원가입
+            </button>
+          </form> : (
+            <form className="login-form login-registration-form" noValidate onSubmit={submitRegistration}>
+              <div className="login-registration-heading">
+                <strong>회원가입 신청</strong>
+                <span>관리자 승인 후 로그인할 수 있습니다.</span>
+              </div>
+              <label className="login-field"><span>이메일</span><input aria-label="가입 이메일" type="email" autoComplete="email" placeholder="account@posco.com" value={registrationEmail} onChange={(event) => setRegistrationEmail(event.currentTarget.value)} /></label>
+              <label className="login-field"><span>이름</span><input aria-label="이름" autoComplete="name" value={registrationName} onChange={(event) => setRegistrationName(event.currentTarget.value)} /></label>
+              <label className="login-field"><span>소속</span><input aria-label="소속" value={registrationAffiliation} onChange={(event) => setRegistrationAffiliation(event.currentTarget.value)} /></label>
+              <label className="login-field"><span>권한</span><select aria-label="신청 역할" value={registrationRole} onChange={(event) => setRegistrationRole(event.currentTarget.value as UserRole)}><option value="user">사용자</option><option value="admin">관리자</option></select></label>
+              <div className="login-registration-passwords">
+                <label className="login-field"><span>비밀번호</span><input aria-label="가입 비밀번호" type="password" autoComplete="new-password" value={registrationPassword} onChange={(event) => setRegistrationPassword(event.currentTarget.value)} /></label>
+                <label className="login-field"><span>비밀번호 확인</span><input aria-label="비밀번호 확인" type="password" autoComplete="new-password" value={registrationPasswordConfirm} onChange={(event) => setRegistrationPasswordConfirm(event.currentTarget.value)} /></label>
+              </div>
+              <div className="login-error" aria-live="polite" role={error ? "alert" : undefined}>{error}</div>
+              {registrationMessage && <p className="login-registration-success" role="status">{registrationMessage}</p>}
+              <button className="login-submit" type="submit" disabled={submitting || Boolean(registrationMessage)}>{submitting ? "신청 중" : "가입 신청"}</button>
+              <button className="login-register-open" type="button" onClick={() => { setRegistering(false); setError(null); setRegistrationMessage(null); }}>로그인으로 돌아가기</button>
+            </form>
+          )}
         </div>
       </section>
     </main>

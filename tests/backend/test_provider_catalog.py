@@ -40,10 +40,7 @@ def test_initial_model_catalog_matches_detailed_design_section_12_3() -> None:
     assert actual == [
         ("pgpt", "GPT-5.4", "gpt-5.4", True),
         ("pgpt", "GPT-5.4-mini", "gpt-5.4-mini", False),
-        ("codex", "GPT-5.6-Sol", "gpt-5.6-sol", True),
-        ("codex", "GPT-5.6-Terra", "gpt-5.6-terra", False),
-        ("codex", "GPT-5.6-Luna", "gpt-5.6-luna", False),
-        ("codex", "GPT-5.5", "gpt-5.5", False),
+        ("codex", "GPT-5.5", "gpt-5.5", True),
         ("codex", "GPT-5.4", "gpt-5.4", False),
         ("google", "Gemini-3.1-Pro", "gemini-3.1-pro", True),
         ("google", "Gemini-3.5-flash", "gemini-3.5-flash", False),

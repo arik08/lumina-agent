@@ -119,6 +119,15 @@ def build_responses_payload(request: ProviderRequest) -> dict[str, Any]:
         payload["max_output_tokens"] = request.max_output_tokens
     if request.temperature is not None:
         payload["temperature"] = request.temperature
+    prompt_cache_key = request.metadata.get("prompt_cache_key")
+    if isinstance(prompt_cache_key, str) and prompt_cache_key:
+        payload["prompt_cache_key"] = prompt_cache_key
+        if request.model.casefold().startswith("gpt-5.6"):
+            payload["prompt_cache_options"] = {"ttl": "30m"}
+        else:
+            retention = request.metadata.get("prompt_cache_retention")
+            if retention in {"in_memory", "24h"}:
+                payload["prompt_cache_retention"] = retention
     return payload
 
 

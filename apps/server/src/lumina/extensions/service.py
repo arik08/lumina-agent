@@ -22,6 +22,7 @@ from ..models import (
     ProjectMembership,
     SkillFolder,
     SkillFolderPlacement,
+    SkillOwnership,
     User,
     new_uuid,
     utc_now,
@@ -162,10 +163,16 @@ def extension_access_query(user: User):
         ProjectMembership.user_id == user.id,
         ProjectMembership.status == "active",
     )
+    owned_skill_ids = select(SkillOwnership.skill_id).where(
+        SkillOwnership.principal_type == "user",
+        SkillOwnership.principal_id == user.id,
+        SkillOwnership.role.in_(("owner", "maintainer")),
+    )
     return select(Extension).where(
         Extension.archived_at.is_(None),
         or_(
             Extension.owner_user_id == user.id,
+            Extension.id.in_(owned_skill_ids),
             (
                 (Extension.organization_id == user.organization_id)
                 & (Extension.visibility == "organization")
@@ -189,17 +196,39 @@ def require_extension(db: Session, user: User, extension_id: str) -> Extension:
 
 def require_owned_draft(db: Session, user: User, draft_id: str) -> ExtensionDraft:
     draft = db.get(ExtensionDraft, draft_id)
-    if draft is None or (draft.owner_user_id != user.id and user.role != "admin") or draft.status != "active":
+    if (
+        draft is None
+        or (draft.owner_user_id != user.id and user.role != "admin")
+        or draft.status != "active"
+    ):
         raise ApiProblem(404, "draft_not_found", "Skill Draft를 찾을 수 없습니다.")
     return draft
+
+
+def skill_role(db: Session, user: User, extension: Extension) -> str | None:
+    if user.role == "admin" or extension.owner_user_id == user.id:
+        return "owner"
+    return db.scalar(
+        select(SkillOwnership.role).where(
+            SkillOwnership.skill_id == extension.id,
+            SkillOwnership.principal_type == "user",
+            SkillOwnership.principal_id == user.id,
+        )
+    )
+
+
+def can_manage_skill(db: Session, user: User, extension: Extension) -> bool:
+    return skill_role(db, user, extension) in {"owner", "maintainer"}
 
 
 def update_extension_metadata(
     db: Session, *, user: User, extension_id: str, name: str, description: str
 ) -> Extension:
     extension = require_extension(db, user, extension_id)
-    if extension.owner_user_id != user.id and user.role != "admin":
-        raise ApiProblem(403, "extension_write_forbidden", "Skill을 수정할 권한이 없습니다.")
+    if not can_manage_skill(db, user, extension):
+        raise ApiProblem(
+            403, "extension_write_forbidden", "Skill을 수정할 권한이 없습니다."
+        )
     extension.name = " ".join(name.split())
     extension.description = description.strip()
     extension.updated_at = utc_now()
@@ -209,23 +238,31 @@ def update_extension_metadata(
 
 def checkout_draft(db: Session, *, user: User, extension_id: str) -> ExtensionDraft:
     extension = require_extension(db, user, extension_id)
-    if extension.owner_user_id != user.id and user.role != "admin":
-        raise ApiProblem(403, "extension_write_forbidden", "Skill을 수정할 권한이 없습니다.")
-    draft = db.scalar(select(ExtensionDraft).where(ExtensionDraft.extension_id == extension.id))
+    draft = db.scalar(
+        select(ExtensionDraft).where(
+            ExtensionDraft.extension_id == extension.id,
+            ExtensionDraft.owner_user_id == user.id,
+        )
+    )
     if draft is not None:
         if draft.status != "active":
-            raise ApiProblem(409, "draft_not_active", "활성 상태의 Skill Draft가 아닙니다.")
+            raise ApiProblem(
+                409, "draft_not_active", "활성 상태의 Skill Draft가 아닙니다."
+            )
         return draft
-    version = db.scalar(
-        select(ExtensionVersion)
-        .where(ExtensionVersion.extension_id == extension.id)
-        .order_by(ExtensionVersion.version_number.desc())
+    version_query = select(ExtensionVersion).where(
+        ExtensionVersion.extension_id == extension.id
     )
+    if not can_manage_skill(db, user, extension):
+        version_query = version_query.where(ExtensionVersion.status == "published")
+    version = db.scalar(version_query.order_by(ExtensionVersion.version_number.desc()))
     if version is None:
-        raise ApiProblem(409, "version_required", "편집을 시작할 Skill 버전이 없습니다.")
+        raise ApiProblem(
+            409, "version_required", "편집을 시작할 Skill 버전이 없습니다."
+        )
     draft = ExtensionDraft(
         extension_id=extension.id,
-        owner_user_id=extension.owner_user_id,
+        owner_user_id=user.id,
         base_version_id=version.id,
         current_revision=1,
         current_digest=version.package_digest,
@@ -244,6 +281,34 @@ def checkout_draft(db: Session, *, user: User, extension_id: str) -> ExtensionDr
             created_by_user_id=user.id,
         )
     )
+    db.add(
+        ExtensionDraftBinding(
+            draft_id=draft.id,
+            user_id=user.id,
+            project_id=None,
+            enabled=True,
+        )
+    )
+    placement = db.scalar(
+        select(SkillFolderPlacement).where(
+            SkillFolderPlacement.skill_id == extension.id,
+            SkillFolderPlacement.scope_type == "user",
+            SkillFolderPlacement.scope_id == user.id,
+        )
+    )
+    if placement is None:
+        folder = ensure_unclassified_folder(
+            db, user=user, scope_type="user", scope_id=user.id
+        )
+        db.add(
+            SkillFolderPlacement(
+                folder_id=folder.id,
+                skill_id=extension.id,
+                scope_type="user",
+                scope_id=user.id,
+                moved_by_user_id=user.id,
+            )
+        )
     db.flush()
     return draft
 
@@ -291,12 +356,22 @@ def create_skill(
         name=name.strip(),
         description=description,
         owner_user_id=user.id,
+        creator_user_id=user.id,
         organization_id=user.organization_id,
         project_id=project_id,
         visibility="private",
     )
     db.add(extension)
     db.flush()
+    db.add(
+        SkillOwnership(
+            skill_id=extension.id,
+            principal_type="user",
+            principal_id=user.id,
+            role="owner",
+            created_by_user_id=user.id,
+        )
+    )
     draft = ExtensionDraft(
         extension_id=extension.id,
         owner_user_id=user.id,
@@ -340,6 +415,82 @@ def create_skill(
     )
     db.flush()
     return extension, draft
+
+
+def sync_workspace_skill(
+    db: Session,
+    *,
+    user: User,
+    project_id: str,
+    source_conversation_id: str,
+    slug: str,
+    name: str,
+    description: str,
+    package_files: dict[str, str],
+) -> tuple[Extension, ExtensionDraft, bool]:
+    """Create or refresh the active Draft represented by a Project skills/ folder."""
+    resolved_slug = _slug(slug, name, new_uuid())
+    extension = db.scalar(
+        select(Extension).where(
+            Extension.owner_user_id == user.id,
+            Extension.slug == resolved_slug,
+            Extension.archived_at.is_(None),
+        )
+    )
+    if extension is None:
+        extension, created_draft = create_skill(
+            db,
+            user=user,
+            name=name,
+            slug=resolved_slug,
+            description=description,
+            package_files=package_files,
+            project_id=project_id,
+            source_conversation_id=source_conversation_id,
+        )
+        return extension, created_draft, True
+    if extension.project_id != project_id:
+        raise ApiProblem(
+            409,
+            "workspace_skill_project_conflict",
+            "같은 slug의 Skill이 다른 Project에 있습니다.",
+        )
+
+    draft = db.scalar(
+        select(ExtensionDraft).where(
+            ExtensionDraft.extension_id == extension.id,
+            ExtensionDraft.owner_user_id == user.id,
+            ExtensionDraft.status == "active",
+        )
+    )
+    if draft is None:
+        draft = checkout_draft(db, user=user, extension_id=extension.id)
+
+    normalized_name = " ".join(name.split())
+    normalized_description = description.strip()
+    if (
+        extension.name != normalized_name
+        or extension.description != normalized_description
+    ):
+        extension.name = normalized_name
+        extension.description = normalized_description
+        extension.updated_at = utc_now()
+
+    package = normalize_package(package_files)
+    digest = package_digest(package)
+    if draft.current_digest == digest:
+        db.flush()
+        return extension, draft, False
+    draft, changed = update_draft(
+        db,
+        user=user,
+        draft_id=draft.id,
+        expected_revision=draft.current_revision,
+        expected_digest=draft.current_digest,
+        package_files=package,
+        change_summary="Project workspace Skill 동기화",
+    )
+    return extension, draft, changed
 
 
 def update_draft(
@@ -482,7 +633,7 @@ def publish_version(
     extension = db.get(Extension, version.extension_id)
     if extension is None or extension.archived_at is not None:
         raise ApiProblem(404, "extension_not_found", "Skill을 찾을 수 없습니다.")
-    if extension.owner_user_id != user.id and user.role != "admin":
+    if skill_role(db, user, extension) != "owner":
         raise ApiProblem(403, "extension_write_forbidden", "게시 권한이 없습니다.")
     organization = db.get(Organization, user.organization_id)
     auto = (
@@ -503,6 +654,73 @@ def publish_version(
     extension.latest_published_version_id = version.id
     db.flush()
     return extension, version
+
+
+def add_skill_ownership(
+    db: Session,
+    *,
+    user: User,
+    extension_id: str,
+    principal_user_id: str,
+    role: str,
+) -> SkillOwnership:
+    extension = require_extension(db, user, extension_id)
+    if skill_role(db, user, extension) != "owner":
+        raise ApiProblem(
+            403, "skill_owner_forbidden", "Skill Owner만 담당자를 변경할 수 있습니다."
+        )
+    principal = db.get(User, principal_user_id)
+    if principal is None or principal.organization_id != extension.organization_id:
+        raise ApiProblem(
+            404, "skill_owner_user_not_found", "같은 조직의 사용자를 찾을 수 없습니다."
+        )
+    ownership = db.scalar(
+        select(SkillOwnership).where(
+            SkillOwnership.skill_id == extension.id,
+            SkillOwnership.principal_type == "user",
+            SkillOwnership.principal_id == principal.id,
+        )
+    )
+    if ownership is None:
+        ownership = SkillOwnership(
+            skill_id=extension.id,
+            principal_type="user",
+            principal_id=principal.id,
+            role=role,
+            created_by_user_id=user.id,
+        )
+        db.add(ownership)
+    else:
+        ownership.role = role
+    db.flush()
+    return ownership
+
+
+def remove_skill_ownership(
+    db: Session, *, user: User, extension_id: str, ownership_id: str
+) -> SkillOwnership:
+    extension = require_extension(db, user, extension_id)
+    if skill_role(db, user, extension) != "owner":
+        raise ApiProblem(
+            403, "skill_owner_forbidden", "Skill Owner만 담당자를 변경할 수 있습니다."
+        )
+    ownership = db.get(SkillOwnership, ownership_id)
+    if ownership is None or ownership.skill_id != extension.id:
+        raise ApiProblem(
+            404, "skill_ownership_not_found", "Skill 담당자 정보를 찾을 수 없습니다."
+        )
+    if (
+        ownership.principal_type == "user"
+        and ownership.principal_id == extension.owner_user_id
+    ):
+        raise ApiProblem(
+            409,
+            "primary_owner_transfer_required",
+            "최초 Owner는 소유권 이전 후 제거할 수 있습니다.",
+        )
+    db.delete(ownership)
+    db.flush()
+    return ownership
 
 
 def install_version(
@@ -1102,18 +1320,48 @@ def delete_folder(
 
 
 def extension_payload(
-    db: Session, extension: Extension, *, include_private: bool, can_edit: bool = False
+    db: Session, extension: Extension, *, user: User
 ) -> dict[str, Any]:
+    role = skill_role(db, user, extension)
+    can_manage = role in {"owner", "maintainer"}
     draft = db.scalar(
-        select(ExtensionDraft).where(ExtensionDraft.extension_id == extension.id)
-    )
-    versions = list(
-        db.scalars(
-            select(ExtensionVersion)
-            .where(ExtensionVersion.extension_id == extension.id)
-            .order_by(ExtensionVersion.version_number)
+        select(ExtensionDraft).where(
+            ExtensionDraft.extension_id == extension.id,
+            ExtensionDraft.owner_user_id == user.id,
         )
     )
+    version_query = select(ExtensionVersion).where(
+        ExtensionVersion.extension_id == extension.id
+    )
+    if not can_manage:
+        version_query = version_query.where(
+            or_(
+                ExtensionVersion.status == "published",
+                ExtensionVersion.created_by_user_id == user.id,
+            )
+        )
+    versions = list(db.scalars(version_query.order_by(ExtensionVersion.version_number)))
+    ownerships = list(
+        db.scalars(
+            select(SkillOwnership)
+            .where(SkillOwnership.skill_id == extension.id)
+            .order_by(SkillOwnership.created_at, SkillOwnership.id)
+        )
+    )
+    principal_users = {
+        principal.id: principal
+        for principal in db.scalars(
+            select(User).where(
+                User.id.in_(
+                    [
+                        item.principal_id
+                        for item in ownerships
+                        if item.principal_type == "user"
+                    ]
+                )
+            )
+        )
+    }
     payload: dict[str, Any] = {
         "id": extension.id,
         "kind": extension.kind,
@@ -1122,15 +1370,34 @@ def extension_payload(
         "description": extension.description,
         "visibility": extension.visibility,
         "ownerUserId": extension.owner_user_id,
+        "creatorUserId": extension.creator_user_id,
+        "currentUserRole": role,
+        "ownerships": [
+            {
+                "id": item.id,
+                "principalType": item.principal_type,
+                "principalId": item.principal_id,
+                "role": item.role,
+                "displayName": (
+                    principal_users[item.principal_id].display_name
+                    or principal_users[item.principal_id].login_id
+                    if item.principal_id in principal_users
+                    else item.principal_id
+                ),
+                "createdAt": item.created_at,
+            }
+            for item in ownerships
+        ],
         "latestPublishedVersionId": extension.latest_published_version_id,
         "versions": [
             version_payload(version, include_package=False) for version in versions
         ],
         "createdAt": extension.created_at,
         "updatedAt": extension.updated_at,
-        "canEdit": can_edit,
+        "canEdit": can_manage,
+        "canCreateDraft": extension.visibility != "private" or can_manage,
     }
-    if include_private and draft is not None:
+    if draft is not None:
         base = (
             db.get(ExtensionVersion, draft.base_version_id)
             if draft.base_version_id

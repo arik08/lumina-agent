@@ -37,13 +37,28 @@ export interface AuthSession {
 }
 
 export interface NotificationDeepLink {
-  target?: "conversation" | "artifact";
+  target?: "conversation" | "artifact" | "admin";
   projectId?: UUID;
   conversationId?: UUID;
   runId?: UUID;
   artifactId?: UUID;
   scheduledTaskId?: UUID;
   scheduledRunId?: UUID;
+  adminUserId?: UUID;
+}
+
+export interface RegistrationRequest {
+  email: string;
+  displayName: string;
+  affiliation: string;
+  role: UserRole;
+  password: string;
+}
+
+export interface RegistrationResponse {
+  loginId: string;
+  status: "invited";
+  message: string;
 }
 
 export interface NotificationItem {
@@ -254,6 +269,7 @@ export interface ConversationListItem {
   projectId: UUID;
   title: string;
   isFavorite: boolean;
+  isLiked: boolean;
   lastRunStatus: SidebarRunStatus | null;
   activeRunId: UUID | null;
   lastSequence: number;
@@ -276,6 +292,7 @@ export interface CreateConversationRequest {
 export interface UpdateConversationRequest {
   title?: string;
   isFavorite?: boolean;
+  isLiked?: boolean;
   expectedRevision: string;
 }
 
@@ -360,7 +377,7 @@ export interface MessageCitation {
   markerNumber?: number;
   marker_number?: number;
   claimBlockId?: string | null;
-  status: "cited" | "reference_only";
+  status: "cited" | "resolved" | "reference_only";
 }
 
 export interface MessageMetadata {
@@ -410,6 +427,39 @@ export interface AdminUserList {
   total: number;
   offset: number;
   hasMore: boolean;
+}
+
+export interface AdminUsageStatistics {
+  generatedAt: IsoDateTime;
+  timezone: string;
+  periodDays: number;
+  summary: {
+    dau: number;
+    wau: number;
+    mau: number;
+    stickinessPercent: number;
+    newUsers30d: number;
+    runs: number;
+  };
+  trend: Array<{ date: string; activeUsers: number; loginCount: number; runCount: number }>;
+  users: Array<{
+    userId: UUID;
+    loginId: string;
+    displayName: string | null;
+    affiliation: string | null;
+    status: UserStatus;
+    lastLoginAt: IsoDateTime | null;
+    activeDays: number;
+    loginCount: number;
+    runCount: number;
+    inputTokens: number;
+    cachedInputTokens: number;
+    cacheHitRatioPercent: number;
+    outputTokens: number;
+    estimatedCostUsd: number;
+    lastActiveDate: string | null;
+    inactiveDays: number | null;
+  }>;
 }
 
 export interface CreateAdminUserRequest {
@@ -582,7 +632,16 @@ export interface RunPlan {
   steps: PlanStep[];
 }
 
-export type ToolExecutionStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+export type WorkPlanStepStatus = "pending" | "in_progress" | "completed";
+
+export interface WorkPlanStep {
+  id: UUID;
+  step: string;
+  status: WorkPlanStepStatus;
+  order: number;
+}
+
+export type ToolExecutionStatus = "queued" | "streaming" | "running" | "completed" | "failed" | "cancelled";
 
 export interface ToolExecution {
   id: UUID;
@@ -598,6 +657,11 @@ export interface ToolExecution {
   startedAt: IsoDateTime | null;
   completedAt: IsoDateTime | null;
   durationMs: number | null;
+  progress?: {
+    tokens: number;
+    lines: number;
+    fileName?: string;
+  } | null;
   error: string | null;
 }
 
@@ -791,6 +855,15 @@ export interface SkillVersion {
   publishedAt: IsoDateTime | null;
 }
 
+export interface SkillOwnership {
+  id: UUID;
+  principalType: "user" | "team" | "organization";
+  principalId: UUID;
+  role: "owner" | "maintainer";
+  displayName: string;
+  createdAt: IsoDateTime;
+}
+
 export interface SkillExtension {
   id: UUID;
   kind: "skill";
@@ -799,7 +872,11 @@ export interface SkillExtension {
   description: string;
   visibility: "private" | "project" | "organization";
   ownerUserId: UUID;
+  creatorUserId: UUID;
+  currentUserRole: "owner" | "maintainer" | null;
+  ownerships: SkillOwnership[];
   canEdit: boolean;
+  canCreateDraft: boolean;
   latestPublishedVersionId: UUID | null;
   versions: SkillVersion[];
   draft?: SkillDraft;
@@ -1097,6 +1174,8 @@ export interface RunSnapshot {
   conversationTitle: string | null;
   conversationRevision: number | null;
   status: RunStatus;
+  errorCode: string | null;
+  errorMessage: string | null;
   lastSequence: number;
   startedAt: IsoDateTime | null;
   finishedAt: IsoDateTime | null;
@@ -1108,6 +1187,7 @@ export interface RunSnapshot {
     tokens: number;
     lines: number;
   } | null;
+  workPlan: WorkPlanStep[];
   plan: RunPlan | null;
   activities: RunActivity[];
   toolExecutions: ToolExecution[];
@@ -1218,8 +1298,10 @@ export type RunEventType =
   | "assistant_turn_completed"
   | "conversation_title_updated"
   | "artifact_progress"
+  | "work_plan_updated"
   | "plan_step_changed"
   | "tool_started"
+  | "tool_progress"
   | "tool_completed"
   | "approval_requested"
   | "approval_resolved"
@@ -1254,8 +1336,9 @@ export type RunEvent =
   | RunEventEnvelope<"assistant_turn_completed", { message: ChatMessage }>
   | RunEventEnvelope<"conversation_title_updated", { title: string; revision: number; source: "llm" }>
   | RunEventEnvelope<"artifact_progress", { tokens: number; lines: number }>
+  | RunEventEnvelope<"work_plan_updated", { steps: WorkPlanStep[] }>
   | RunEventEnvelope<"plan_step_changed", { planId: UUID; step: PlanStep }>
-  | RunEventEnvelope<"tool_started" | "tool_completed", { execution: ToolExecution }>
+  | RunEventEnvelope<"tool_started" | "tool_progress" | "tool_completed", { execution: ToolExecution }>
   | RunEventEnvelope<"approval_requested", { approval: ToolApproval }>
   | RunEventEnvelope<"approval_resolved", { approval: ToolApproval; decision: ToolApproval["status"]; command?: RunCommand }>
   | RunEventEnvelope<"approval_checkpoint_consumed", { toolCallIds: string[] }>

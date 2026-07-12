@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,8 +12,27 @@ from lumina.agent import executor as executor_module
 from lumina.agent.executor import local_run_executor
 from lumina.config import Settings
 from lumina.main import create_app
+from lumina.models import ToolExecution
 from lumina.providers import MockProvider, MockToolCall
+from lumina.providers.codex.adapter import _CodexToolCallStream
 from lumina.tools.web import SearchInvocation, SourceEvidence, WebSearchResult
+
+
+def test_codex_structured_final_text_streams_before_envelope_completion() -> None:
+    expected = "첫 문장부터 보여야 합니다. 두 번째 문장도 이어집니다."
+    envelope = json.dumps(
+        {"kind": "final", "text": expected, "tool_calls": []},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    stream = _CodexToolCallStream()
+    events = []
+    for index in range(0, len(envelope), 7):
+        events.extend(stream.feed(envelope[index : index + 7]))
+
+    text_deltas = [event.text or "" for event in events if event.type == "text_delta"]
+    assert len(text_deltas) > 1
+    assert "".join(text_deltas) == expected
 
 
 def test_progress_control_extracts_llm_authored_summary_across_chunks() -> None:
@@ -45,6 +65,52 @@ def test_tool_progress_fallback_does_not_expose_arguments() -> None:
 
     assert "secret" not in summary
     assert "도구 작업" in summary
+
+
+def test_write_file_progress_counts_streamed_tokens_and_lines() -> None:
+    streamed = executor_module._write_file_tool_progress(
+        {
+            "__lumina_stream_tokens": 321,
+            "__lumina_stream_lines": 27,
+        }
+    )
+    completed = executor_module._write_file_tool_progress(
+        {"content": "first line\nsecond line"}
+    )
+
+    assert streamed == {"tokens": 321, "lines": 27}
+    assert completed is not None
+    assert completed["tokens"] > 0
+    assert completed["lines"] == 2
+
+
+def test_streamed_write_file_name_extracts_only_the_target_name() -> None:
+    arguments = '{"path":"reports\\\\quarterly_summary.html","content":"private'
+
+    assert executor_module._streamed_write_file_name(arguments) == "quarterly_summary.html"
+    assert executor_module._streamed_write_file_name('{"content":"private"}') is None
+
+
+def test_running_tool_event_includes_web_search_query_immediately() -> None:
+    tool = ToolExecution(
+        id="tool-search",
+        run_id="run-search",
+        tool_call_id="call-search",
+        tool_name="web_search",
+        validated_input_json={"query": "POSCO labor union bargaining"},
+        status="running",
+        result_json=None,
+        result_summary=None,
+        artifact_id=None,
+        error_message=None,
+        started_at=datetime.now(UTC),
+        finished_at=None,
+    )
+
+    event = executor_module._tool_event(tool)
+
+    assert event["status"] == "running"
+    assert event["input"] == {"query": "POSCO labor union bargaining"}
 
 
 def test_agent_loop_persists_web_evidence_and_returns_to_model(
@@ -91,7 +157,9 @@ def test_agent_loop_persists_web_evidence_and_returns_to_model(
         del wants_artifact
         if first_turn:
             return MockProvider(
-                text_chunks=("<progress>최신 자료를 검색하고 출처가 분명한 근거를 선별하겠습니다.</progress>\n",),
+                text_chunks=(
+                    "<progress>최신 자료를 검색하고 출처가 분명한 근거를 선별하겠습니다.</progress>\n",
+                ),
                 tool_call=MockToolCall(
                     name="web_search",
                     arguments={"query": "설비 예방 정비 최신 동향", "result_limit": 3},
@@ -154,7 +222,7 @@ def test_agent_loop_persists_web_evidence_and_returns_to_model(
             activity["sequence"] for activity in snapshot["activities"]
         )
         assert snapshot["activities"][2]["execution"]["status"] == "completed"
-        assert snapshot["plan"]["steps"][1]["label"] == "관련 자료 탐색 및 근거 수집"
+        assert snapshot["plan"]["steps"][1]["label"] == "관련 자료를 탐색하고 근거를 수집합니다"
 
         turn_sets = client.get(
             f"/api/conversations/{conversation['id']}/turn-sets"
@@ -185,6 +253,7 @@ def test_report_request_recovers_when_model_tries_to_finish_without_artifact(
     )
     provider_turn = 0
     observed_system_prompts: list[str] = []
+    observed_stable_prefixes: list[str] = []
 
     def provider(
         _provider_id: str, *, wants_artifact: bool, first_turn: bool
@@ -223,7 +292,14 @@ def test_report_request_recovers_when_model_tries_to_finish_without_artifact(
 
     def capture_messages(*args, **kwargs):
         messages = original_conversation_messages(*args, **kwargs)
-        observed_system_prompts.append(str(messages[0].content))
+        observed_stable_prefixes.append(str(messages[0].content))
+        observed_system_prompts.append(
+            "\n\n".join(
+                str(message.content)
+                for message in messages
+                if message.role == "system" and message.content
+            )
+        )
         return messages
 
     monkeypatch.setattr(local_run_executor, "_provider", provider)
@@ -254,6 +330,76 @@ def test_report_request_recovers_when_model_tries_to_finish_without_artifact(
     ]
     assert len(snapshot["artifacts"]) == 1
     assert "must call `create_report`" in observed_system_prompts[0]
+    assert "`html_source` argument" in observed_system_prompts[0]
+    assert "Never expose internal Artifact IDs" in observed_system_prompts[0]
+    assert "refer to it only by its user-visible display name" in observed_system_prompts[0]
+    assert "without internal IDs or raw tool-result fields" in observed_system_prompts[0]
+    assert "must call `create_report`" not in observed_stable_prefixes[0]
+
+
+def test_executable_html_write_file_satisfies_artifact_completion_gate(
+    monkeypatch, tmp_path: Path
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'html-write-gate.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    provider_turn = 0
+
+    def provider(
+        _provider_id: str, *, wants_artifact: bool, first_turn: bool
+    ) -> MockProvider:
+        nonlocal provider_turn
+        del first_turn
+        assert wants_artifact is True
+        provider_turn += 1
+        if provider_turn > 1:
+            return MockProvider(text_chunks=("실행 가능한 HTML 게임을 만들었습니다.",))
+        return MockProvider(
+            text_chunks=("HTML 게임 파일을 만들겠습니다.",),
+            tool_call=MockToolCall(
+                name="write_file",
+                arguments={
+                    "path": "game.html",
+                    "content": (
+                        "<!doctype html><html><body><p id='status'>대기</p>"
+                        "<script>document.getElementById('status').textContent='실행';"
+                        "</script></body></html>"
+                    ),
+                },
+                call_id="call_html_game",
+            ),
+        )
+
+    monkeypatch.setattr(local_run_executor, "_provider", provider)
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "HTML 게임 완료 조건"},
+        ).json()
+        started = client.post(
+            f"/api/conversations/{conversation['id']}/runs",
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": "html-write-completion-gate-0001",
+            },
+            json={"message": {"text": "자바스크립트가 실행되는 HTML 게임을 만들어줘"}},
+        )
+        assert started.status_code == 202, started.text
+        snapshot = _wait_for_terminal(client, started.json()["run"]["runId"])
+
+    assert snapshot["status"] == "completed"
+    assert provider_turn == 2
+    assert [tool["toolName"] for tool in snapshot["toolExecutions"]] == ["write_file"]
+    assert len(snapshot["artifacts"]) == 1
+    assert snapshot["artifacts"][0]["displayName"] == "game.html"
 
 
 def test_independent_tool_calls_run_in_parallel_and_persist_subtasks(
@@ -358,6 +504,75 @@ def test_independent_tool_calls_run_in_parallel_and_persist_subtasks(
             "parallel-a",
             "parallel-b",
         ]
+
+
+def test_update_plan_tool_publishes_meaningful_plan_without_tool_activity(
+    monkeypatch, tmp_path: Path
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'work-plan-loop.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    provider_turn = 0
+    steps = [
+        "CodeGraph에서 실행 이벤트와 화면 렌더링 경로를 확인합니다",
+        "모델 계획 이벤트를 Run snapshot과 SSE에 연결합니다",
+        "브라우저에서 단계 상태와 오류 여부를 검증합니다",
+    ]
+
+    def provider(
+        _provider_id: str, *, wants_artifact: bool, first_turn: bool
+    ) -> MockProvider:
+        nonlocal provider_turn
+        del wants_artifact, first_turn
+        provider_turn += 1
+        if provider_turn == 1:
+            statuses = ["in_progress", "pending", "pending"]
+        elif provider_turn == 2:
+            statuses = ["completed", "completed", "completed"]
+        else:
+            return MockProvider(text_chunks=("계획한 검증까지 완료했습니다.",))
+        return MockProvider(
+            tool_call=MockToolCall(
+                name="update_plan",
+                arguments={
+                    "plan": [
+                        {"step": step, "status": status}
+                        for step, status in zip(steps, statuses, strict=True)
+                    ]
+                },
+                call_id=f"work-plan-{provider_turn}",
+            )
+        )
+
+    monkeypatch.setattr(local_run_executor, "_provider", provider)
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "의미 있는 업무 계획"},
+        ).json()
+        started = client.post(
+            f"/api/conversations/{conversation['id']}/runs",
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": "work-plan-tool-contract-0001",
+            },
+            json={"message": {"text": "계획을 세워 구현하고 검증해 주세요."}},
+        )
+        assert started.status_code == 202, started.text
+        snapshot = _wait_for_terminal(client, started.json()["run"]["runId"])
+
+        assert snapshot["status"] == "completed"
+        assert [item["step"] for item in snapshot["workPlan"]] == steps
+        assert {item["status"] for item in snapshot["workPlan"]} == {"completed"}
+        assert snapshot["toolExecutions"] == []
 
 
 def _login(client: TestClient) -> str:

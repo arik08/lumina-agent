@@ -15,6 +15,7 @@ from ...config import Settings, get_settings
 from ...conversations.service import default_project
 from ...db import get_db
 from ...models import Project, ProjectSetting, ProviderModel, User, UserSetting
+from ...providers.codex import codex_oauth_available
 from ..dependencies import AuthContext, get_current_user, require_csrf
 from ..errors import ApiProblem
 from ..schemas import SettingsPatch
@@ -43,7 +44,9 @@ def _provider_status(provider_id: str, settings: Settings) -> str:
             if all(os.getenv(key, "").strip() for key in required)
             else "needs_setup"
         )
-    if provider_id in {"openai", "codex"}:
+    if provider_id == "codex":
+        return "ready" if codex_oauth_available() else "needs_setup"
+    if provider_id == "openai":
         api_key = settings.openai_api_key
         return (
             "ready"
@@ -262,7 +265,9 @@ def _resolved_settings(
     )
     result: dict[str, Any] = {
         "theme": theme if theme in {"light", "dark"} else "light",
-        "outputMode": output_mode if output_mode in {"auto", "chat", "file"} else "auto",
+        "outputMode": output_mode
+        if output_mode in {"auto", "chat", "file"}
+        else "auto",
         "execution": execution,
         "modelCandidates": model_candidates,
         "source": {"theme": "user", "execution": execution_source},
@@ -345,8 +350,8 @@ def patch_current_settings(
         if project_id
         else default_project(db, context.user)
     )
-    current, theme_setting, execution_setting, model_candidates_setting = _resolved_settings(
-        db, context.user, project, settings
+    current, theme_setting, execution_setting, model_candidates_setting = (
+        _resolved_settings(db, context.user, project, settings)
     )
     if current["revision"] != payload.expected_revision:
         raise ApiProblem(
@@ -365,7 +370,12 @@ def patch_current_settings(
         if project.project_type == "shared":
             output_target = _project_setting(db, project.id, key)
             if output_target is None:
-                output_target = ProjectSetting(project_id=project.id, key=key, value_json=payload.output_mode, updated_by_user_id=context.user.id)
+                output_target = ProjectSetting(
+                    project_id=project.id,
+                    key=key,
+                    value_json=payload.output_mode,
+                    updated_by_user_id=context.user.id,
+                )
                 db.add(output_target)
             else:
                 output_target.value_json = payload.output_mode
@@ -373,7 +383,9 @@ def patch_current_settings(
         else:
             output_target = _setting(db, context.user.id, key)
             if output_target is None:
-                output_target = UserSetting(user_id=context.user.id, key=key, value_json=payload.output_mode)
+                output_target = UserSetting(
+                    user_id=context.user.id, key=key, value_json=payload.output_mode
+                )
                 db.add(output_target)
             else:
                 output_target.value_json = payload.output_mode
@@ -434,7 +446,9 @@ def _validate_model_candidates(
     normalized: dict[str, list[str]] = {}
     for provider_id, model_keys in candidates.items():
         unique_keys = list(dict.fromkeys(model_keys))
-        if any((provider_id, model_key) not in enabled_pairs for model_key in unique_keys):
+        if any(
+            (provider_id, model_key) not in enabled_pairs for model_key in unique_keys
+        ):
             raise ApiProblem(
                 409,
                 "model_candidate_unavailable",

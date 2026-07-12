@@ -147,6 +147,28 @@ def test_link_snapshot_share_and_revoke(tmp_path: Path) -> None:
             [attachment_id],
         )
         first_artifact_id = first_snapshot["artifacts"][0]["id"]
+        first_artifact_version = client.get(
+            f"/api/artifacts/{first_artifact_id}/versions/1"
+        )
+        assert first_artifact_version.status_code == 200
+        first_artifact_payload = first_artifact_version.json()
+        second_artifact_version = client.post(
+            f"/api/artifacts/{first_artifact_id}/versions",
+            headers={
+                "X-CSRF-Token": alice_csrf,
+                "If-Match": first_artifact_payload["etag"],
+                "Idempotency-Key": "shared-artifact-v2",
+            },
+            json={
+                "baseVersion": 1,
+                "sourceText": first_artifact_payload["sourceText"].replace(
+                    "작업 결과 보고서", "공유용 v2 작업 결과 보고서"
+                ),
+                "changeSummary": "공유 version 고정 검증",
+            },
+        )
+        assert second_artifact_version.status_code == 201, second_artifact_version.text
+        assert second_artifact_version.json()["version"] == 2
 
         with SessionLocal() as db:
             anchor = db.scalar(
@@ -210,6 +232,7 @@ def test_link_snapshot_share_and_revoke(tmp_path: Path) -> None:
         assert [artifact["id"] for artifact in payload["artifacts"]] == [
             first_artifact_id
         ]
+        assert payload["artifacts"][0]["version"] == 2
         assert [item["id"] for item in payload["attachments"]] == [attachment_id]
         assert "projectId" not in shared.text
         assert "previousConversationId" not in shared.text
@@ -239,7 +262,13 @@ def test_link_snapshot_share_and_revoke(tmp_path: Path) -> None:
             f"/api/conversation-shares/{token}/artifacts/{first_artifact_id}/download"
         )
         assert downloaded.status_code == 200, downloaded.text
-        assert "작업 결과 보고서" in downloaded.text
+        assert "공유용 v2 작업 결과 보고서" in downloaded.text
+        downloaded_original = client.get(
+            f"/api/conversation-shares/{token}/artifacts/{first_artifact_id}/download?version=1"
+        )
+        assert downloaded_original.status_code == 200, downloaded_original.text
+        assert "작업 결과 보고서" in downloaded_original.text
+        assert "공유용 v2" not in downloaded_original.text
         downloaded_attachment = client.get(
             f"/api/conversation-shares/{token}/attachments/{attachment_id}/download"
         )

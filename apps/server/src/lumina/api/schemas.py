@@ -25,6 +25,14 @@ class LoginRequest(ApiModel):
     password: str = Field(min_length=1, max_length=1024)
 
 
+class RegistrationRequest(ApiModel):
+    email: str = Field(min_length=3, max_length=336)
+    display_name: str = Field(min_length=1, max_length=200)
+    affiliation: str = Field(min_length=1, max_length=200)
+    role: Literal["user", "admin"] = "user"
+    password: str = Field(min_length=8, max_length=1024)
+
+
 class UserSummary(ApiModel):
     id: str
     login_id: str
@@ -115,6 +123,7 @@ class ConversationCreate(ApiModel):
 class ConversationPatch(ApiModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     is_favorite: bool | None = None
+    is_liked: bool | None = None
     archived: bool | None = None
     expected_revision: int | None = Field(default=None, ge=1)
 
@@ -134,6 +143,7 @@ class ConversationListItem(ApiModel):
     project_id: str
     title: str
     is_favorite: bool
+    is_liked: bool
     last_run_status: str | None
     active_run_id: str | None
     last_sequence: int = 0

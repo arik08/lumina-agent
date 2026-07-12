@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime, time, timedelta
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import Field
@@ -15,6 +16,7 @@ from ...authorization import require_admin
 from ...db import get_db
 from ...models import (
     Artifact,
+    AuthSession,
     AuditEvent,
     Conversation,
     ConversationShareGrant,
@@ -34,6 +36,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 _USER_STATUSES = {"invited", "active", "locked", "disabled"}
 _USER_ROLES = {"user", "admin"}
+_ANALYTICS_TIMEZONE = ZoneInfo("Asia/Seoul")
 
 
 class AdminUserCreate(ApiModel):
@@ -134,6 +137,159 @@ def _guard_last_active_admin(
             "last_active_admin",
             "마지막 활성 관리자 계정은 비활성화하거나 강등할 수 없습니다.",
         )
+
+
+def _usage_number(usage: dict[str, object], key: str) -> float:
+    value = usage.get(key, 0)
+    return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else 0.0
+
+
+@router.get("/usage-statistics")
+def get_usage_statistics(
+    request: Request,
+    days: int = Query(default=30, ge=0, le=90),
+    actor: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Return organization-level activity derived from login sessions and agent runs."""
+    require_admin(actor)
+    now = utc_now()
+    today = now.astimezone(_ANALYTICS_TIMEZONE).date()
+    month_start = datetime.combine(today - timedelta(days=29), time.min, _ANALYTICS_TIMEZONE).astimezone(UTC)
+
+    users = list(
+        db.scalars(
+            select(User)
+            .where(User.organization_id == actor.organization_id)
+            .order_by(User.login_id)
+        )
+    )
+    session_query = select(AuthSession).join(User, User.id == AuthSession.user_id).where(User.organization_id == actor.organization_id)
+    run_query = select(Run).where(Run.organization_id == actor.organization_id)
+    if days:
+        requested_first_day = today - timedelta(days=days - 1)
+        range_start = datetime.combine(requested_first_day, time.min, _ANALYTICS_TIMEZONE).astimezone(UTC)
+        session_query = session_query.where(AuthSession.created_at >= range_start)
+        run_query = run_query.where(Run.created_at >= range_start)
+    sessions = list(db.scalars(session_query))
+    runs = list(db.scalars(run_query))
+
+    if days:
+        first_day = today - timedelta(days=days - 1)
+    else:
+        activity_dates = [
+            item.created_at.astimezone(_ANALYTICS_TIMEZONE).date()
+            for item in [*sessions, *runs]
+        ]
+        first_day = min(activity_dates, default=today)
+    period_days = (today - first_day).days + 1
+
+    dates = [first_day + timedelta(days=index) for index in range(period_days)]
+    daily_users: dict[object, set[str]] = {day: set() for day in dates}
+    daily_logins = {day: 0 for day in dates}
+    daily_runs = {day: 0 for day in dates}
+    user_activity: dict[str, set[object]] = {user.id: set() for user in users}
+    user_logins = {user.id: 0 for user in users}
+    user_runs = {user.id: 0 for user in users}
+    user_input_tokens = {user.id: 0 for user in users}
+    user_cached_input_tokens = {user.id: 0 for user in users}
+    user_uncached_input_tokens = {user.id: 0 for user in users}
+    user_output_tokens = {user.id: 0 for user in users}
+    user_cost = {user.id: 0.0 for user in users}
+
+    for session in sessions:
+        day = session.created_at.astimezone(_ANALYTICS_TIMEZONE).date()
+        if day in daily_users:
+            daily_users[day].add(session.user_id)
+            daily_logins[day] += 1
+            user_activity.setdefault(session.user_id, set()).add(day)
+            user_logins[session.user_id] = user_logins.get(session.user_id, 0) + 1
+
+    for run in runs:
+        day = run.created_at.astimezone(_ANALYTICS_TIMEZONE).date()
+        if day in daily_users:
+            daily_users[day].add(run.user_id)
+            daily_runs[day] += 1
+            user_activity.setdefault(run.user_id, set()).add(day)
+            user_runs[run.user_id] = user_runs.get(run.user_id, 0) + 1
+            usage = run.usage_json or {}
+            input_tokens = int(_usage_number(usage, "input_tokens"))
+            cached_input_tokens = int(_usage_number(usage, "cached_input_tokens"))
+            uncached_input_tokens = int(_usage_number(usage, "uncached_input_tokens"))
+            if "uncached_input_tokens" not in usage:
+                uncached_input_tokens = max(0, input_tokens - cached_input_tokens)
+            user_input_tokens[run.user_id] = user_input_tokens.get(run.user_id, 0) + input_tokens
+            user_cached_input_tokens[run.user_id] = user_cached_input_tokens.get(run.user_id, 0) + cached_input_tokens
+            user_uncached_input_tokens[run.user_id] = user_uncached_input_tokens.get(run.user_id, 0) + uncached_input_tokens
+            user_output_tokens[run.user_id] = user_output_tokens.get(run.user_id, 0) + int(_usage_number(usage, "output_tokens"))
+            user_cost[run.user_id] = user_cost.get(run.user_id, 0.0) + _usage_number(usage, "cost_usd")
+
+    dau = len(daily_users[today])
+    wau_users = set().union(*(daily_users[day] for day in dates if day >= today - timedelta(days=6)))
+    mau_users = set().union(*(daily_users[day] for day in dates if day >= today - timedelta(days=29)))
+    new_users = sum(1 for user in users if user.created_at >= month_start)
+    per_user = []
+    for user in users:
+        active_days = user_activity.get(user.id, set())
+        last_active_day = max(active_days) if active_days else None
+        cached_input_tokens = user_cached_input_tokens.get(user.id, 0)
+        uncached_input_tokens = user_uncached_input_tokens.get(user.id, 0)
+        cacheable_input_tokens = cached_input_tokens + uncached_input_tokens
+        per_user.append(
+            {
+                "userId": user.id,
+                "loginId": user.login_id,
+                "displayName": user.display_name,
+                "affiliation": user.affiliation,
+                "status": user.status,
+                "lastLoginAt": user.last_login_at,
+                "activeDays": len(active_days),
+                "loginCount": user_logins.get(user.id, 0),
+                "runCount": user_runs.get(user.id, 0),
+                "inputTokens": user_input_tokens.get(user.id, 0),
+                "cachedInputTokens": cached_input_tokens,
+                "cacheHitRatioPercent": round(cached_input_tokens / cacheable_input_tokens * 100, 1) if cacheable_input_tokens else 0,
+                "outputTokens": user_output_tokens.get(user.id, 0),
+                "estimatedCostUsd": round(user_cost.get(user.id, 0.0), 6),
+                "lastActiveDate": last_active_day.isoformat() if last_active_day else None,
+                "inactiveDays": (today - last_active_day).days if last_active_day else None,
+            }
+        )
+    per_user.sort(key=lambda item: (int(item["activeDays"]), int(item["runCount"]), str(item["loginId"])), reverse=True)
+
+    record_audit(
+        db,
+        action="admin_usage_statistics_viewed",
+        target_type="usage_statistics",
+        result="success",
+        actor=actor,
+        request_id=_request_id(request),
+        metadata={"days": days},
+    )
+    db.commit()
+    return {
+        "generatedAt": now,
+        "timezone": str(_ANALYTICS_TIMEZONE),
+        "periodDays": period_days,
+        "summary": {
+            "dau": dau,
+            "wau": len(wau_users),
+            "mau": len(mau_users),
+            "stickinessPercent": round(dau / len(mau_users) * 100, 1) if mau_users else 0,
+            "newUsers30d": new_users,
+            "runs": len(runs),
+        },
+        "trend": [
+            {
+                "date": day.isoformat(),
+                "activeUsers": len(daily_users[day]),
+                "loginCount": daily_logins[day],
+                "runCount": daily_runs[day],
+            }
+            for day in dates
+        ],
+        "users": per_user,
+    }
 
 
 @router.get("/users")

@@ -66,7 +66,7 @@ def test_bootstrap_is_idempotent_and_seeds_contract_data(
     db_session.commit()
 
     assert first.admin_created is True
-    assert first.provider_models_created == 15
+    assert first.provider_models_created == 12
     assert second.admin_created is False
     assert second.provider_models_created == 0
 
@@ -97,31 +97,31 @@ def test_bootstrap_is_idempotent_and_seeds_contract_data(
     organization = db_session.get(Organization, admin.organization_id)
     assert organization is not None
     assert organization.marketplace_permission_mode == "admin_review"
-    assert db_session.scalar(select(func.count()).select_from(ProviderModel)) == 15
+    assert db_session.scalar(select(func.count()).select_from(ProviderModel)) == 12
 
 
 def test_bootstrap_refreshes_contract_display_names_without_overwriting_admin_names(
     db_session: Session, test_settings: Settings
 ) -> None:
     bootstrap_database(db_session, settings=test_settings)
-    terra = db_session.scalar(
+    codex_model = db_session.scalar(
         select(ProviderModel).where(
             ProviderModel.provider_id == "codex",
-            ProviderModel.model_key == "gpt-5.6-terra",
+            ProviderModel.model_key == "gpt-5.4",
         )
     )
-    assert terra is not None
+    assert codex_model is not None
 
-    terra.display_name = "Terra"
+    codex_model.display_name = "Codex 5.4"
     db_session.commit()
     bootstrap_database(db_session, settings=test_settings)
-    assert terra.display_name == "GPT-5.6-Terra"
+    assert codex_model.display_name == "GPT-5.4"
 
-    terra.display_name = "Team Terra"
-    terra.source = "admin_manual"
+    codex_model.display_name = "Team Codex"
+    codex_model.source = "admin_manual"
     db_session.commit()
     bootstrap_database(db_session, settings=test_settings)
-    assert terra.display_name == "Team Terra"
+    assert codex_model.display_name == "Team Codex"
 
     defaults = {
         model.provider_id: model.runtime_model_id
@@ -131,7 +131,7 @@ def test_bootstrap_refreshes_contract_display_names_without_overwriting_admin_na
     }
     assert defaults == {
         "anthropic": "claude-sonnet-5",
-        "codex": "gpt-5.6-sol",
+        "codex": "gpt-5.5",
         "google": "gemini-3.1-pro",
         "openai": "gpt-5.6-sol",
         "pgpt": "gpt-5.4",

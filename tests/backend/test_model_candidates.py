@@ -49,24 +49,18 @@ def test_model_candidates_allow_multiple_and_empty_selection(tmp_path: Path) -> 
             params={"project_id": project_id},
             headers=headers,
             json={
-                "modelCandidates": {
-                    "codex": ["gpt-5.6-sol", "gpt-5.6-terra"]
-                },
+                "modelCandidates": {"codex": ["gpt-5.5", "gpt-5.4"]},
                 "expectedRevision": cleared.json()["revision"],
             },
         )
         assert selected.status_code == 200, selected.text
-        assert selected.json()["modelCandidates"] == {
-            "codex": ["gpt-5.6-sol", "gpt-5.6-terra"]
-        }
+        assert selected.json()["modelCandidates"] == {"codex": ["gpt-5.5", "gpt-5.4"]}
 
         restored = client.get(
             "/api/settings/current", params={"project_id": project_id}
         )
         assert restored.status_code == 200
-        assert restored.json()["modelCandidates"] == {
-            "codex": ["gpt-5.6-sol", "gpt-5.6-terra"]
-        }
+        assert restored.json()["modelCandidates"] == {"codex": ["gpt-5.5", "gpt-5.4"]}
 
 
 def test_composer_output_mode_defaults_and_persists(tmp_path: Path) -> None:
