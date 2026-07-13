@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 from pydantic import Field
 
@@ -10,6 +10,9 @@ from ..api.schemas import ApiModel, ExecutionSelection
 ScheduleKind = Literal["hourly", "daily", "weekly", "weekdays", "manual"]
 ContextMode = Literal["continue_session", "new_session_per_run"]
 ExtensionSnapshotPolicy = Literal["pinned", "latest_allowed"]
+SCHEDULE_KINDS = frozenset(get_args(ScheduleKind))
+CONTEXT_MODES = frozenset(get_args(ContextMode))
+EXTENSION_SNAPSHOT_POLICIES = frozenset(get_args(ExtensionSnapshotPolicy))
 
 
 class ScheduledTaskCreate(ApiModel):

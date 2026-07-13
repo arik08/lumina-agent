@@ -127,6 +127,9 @@ def _assert_execution_selection(db_session: Session, tmp_path: Path) -> None:
     )
     assert (fallback["provider_id"], fallback["model_key"]) == ("pgpt", "gpt-5.4")
     assert fallback["fallback_messages"]
+    assert fallback["capabilities"]["context_window"] == 1_050_000
+    assert fallback["capabilities"]["max_output_tokens"] == 128_000
+    assert fallback["capabilities"]["configured_max_output_tokens"] == 42_000
 
     with pytest.raises(ApiProblem) as explicit_mock:
         resolve_execution(

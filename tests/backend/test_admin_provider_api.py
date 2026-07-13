@@ -24,6 +24,39 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
         assert pgpt_models.status_code == 200
         gpt_54 = next(model for model in pgpt_models.json() if model["modelKey"] == "gpt-5.4")
         assert gpt_54["defaultContextWindow"] == 1_050_000
+        assert gpt_54["maxOutputTokens"] == 128_000
+        assert gpt_54["defaultMaxOutputTokens"] == 42_000
+        assert gpt_54["configuredMaxOutputTokens"] == 42_000
+        assert gpt_54["outputTokenStep"] == 1_000
+
+        configured = client.patch(
+            "/api/admin/providers/pgpt/models/gpt-5.4",
+            headers={"X-CSRF-Token": csrf},
+            json={
+                "capabilities": {
+                    **gpt_54["capabilities"],
+                    "configured_max_output_tokens": 64_000,
+                }
+            },
+        )
+        assert configured.status_code == 200, configured.text
+        assert configured.json()["configuredMaxOutputTokens"] == 64_000
+
+        rejected_output_limit = client.patch(
+            "/api/admin/providers/pgpt/models/gpt-5.4",
+            headers={"X-CSRF-Token": csrf},
+            json={
+                "capabilities": {
+                    **configured.json()["capabilities"],
+                    "configured_max_output_tokens": 129_000,
+                }
+            },
+        )
+        assert rejected_output_limit.status_code == 422
+        assert (
+            rejected_output_limit.json()["code"]
+            == "model_output_token_limit_exceeded"
+        )
 
         discovered = client.post(
             "/api/admin/providers/pgpt/models/discover",
@@ -48,6 +81,7 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
         assert created.status_code == 201, created.text
         assert created.json()["enabled"] is False
         assert created.json()["defaultContextWindow"] is None
+        assert created.json()["maxOutputTokens"] is None
 
         activated = client.patch(
             "/api/admin/providers/internal/models/internal-analysis-v1",

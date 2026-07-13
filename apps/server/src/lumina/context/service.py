@@ -22,20 +22,14 @@ from ..models import (
     utc_now,
 )
 from ..providers import ProviderMessage
+from ..providers.catalog import model_operational_profile
 from ..runs.service import append_event
 
 
 PROMPT_VERSION = "context-compaction-v1"
 DEFAULT_CONTEXT_WINDOW = 32_000
 SOFT_THRESHOLD = 0.75
-CODEX_CONTEXT_WINDOW = 272_000
-CODEX_COMPACTION_THRESHOLD = 0.85
-STANDARD_GPT_CONTEXT_WINDOW = 1_050_000
-STANDARD_GPT_MINI_CONTEXT_WINDOW = 400_000
 PGPT_TOKEN_ESTIMATION_PADDING = 4 / 3
-GEMINI_CONTEXT_WINDOW = 1_000_000
-CLAUDE_LARGE_CONTEXT_WINDOW = 1_000_000
-CLAUDE_HAIKU_CONTEXT_WINDOW = 200_000
 RECENT_MESSAGES_TO_PRESERVE = 4
 RUNTIME_RECENT_UNITS_TO_PRESERVE = 3
 RUNTIME_SUMMARY_MARKER = "[Compacted runtime context]"
@@ -244,7 +238,9 @@ def compact_runtime_messages(
     for unit in compacted_units:
         for message in unit:
             summary_parts.append(_runtime_message_summary(message))
-    summary = _bounded("\n".join(summary_parts), max(1_500, min(8_000, effective_budget * 3)))
+    summary = _bounded(
+        "\n".join(summary_parts), max(1_500, min(8_000, effective_budget * 3))
+    )
     retained = [message for unit in retained_units for message in unit]
     compacted_messages = [message for unit in compacted_units for message in unit]
     prepared_messages = (
@@ -606,10 +602,23 @@ def _context_budget(
         capabilities.get("context_window", capabilities.get("contextWindow")),
         fallback_context_window,
     )
-    if _is_codex_large_context_model(run):
-        context_window = max(context_window, CODEX_CONTEXT_WINDOW)
+    operational_profile = _run_operational_profile(run)
+    if (
+        operational_profile is not None
+        and operational_profile.context_compaction_threshold is not None
+        and operational_profile.context_window is not None
+    ):
+        context_window = max(context_window, operational_profile.context_window)
     reserved_output = _positive_integer(
-        capabilities.get("max_output_tokens", capabilities.get("maxOutputTokens")),
+        capabilities.get(
+            "configured_max_output_tokens",
+            capabilities.get(
+                "configuredMaxOutputTokens",
+                capabilities.get(
+                    "max_output_tokens", capabilities.get("maxOutputTokens")
+                ),
+            ),
+        ),
         max(512, min(4_096, context_window // 8)),
     )
     tool_tokens = estimate_text_tokens(
@@ -622,11 +631,28 @@ def _context_budget(
 
 
 def _compaction_threshold(run: Run, effective_budget: int) -> int:
-    ratio = (
-        CODEX_COMPACTION_THRESHOLD
-        if _is_codex_large_context_model(run)
-        else SOFT_THRESHOLD
+    execution = run.snapshot_json.get("execution", {})
+    capabilities = (
+        execution.get("capabilities", {}) if isinstance(execution, Mapping) else {}
     )
+    ratio = (
+        capabilities.get("context_compaction_threshold")
+        if isinstance(capabilities, Mapping)
+        else None
+    )
+    if (
+        not isinstance(ratio, (int, float))
+        or isinstance(ratio, bool)
+        or not 0 < ratio <= 1
+    ):
+        operational_profile = _run_operational_profile(run)
+        ratio = (
+            operational_profile.context_compaction_threshold
+            if operational_profile is not None
+            else None
+        )
+    if ratio is None:
+        ratio = SOFT_THRESHOLD
     return max(1, int(effective_budget * ratio))
 
 
@@ -636,30 +662,21 @@ def _padded_estimate(run: Run, estimated_tokens: int) -> int:
     return estimated_tokens
 
 
-def _is_codex_large_context_model(run: Run) -> bool:
-    if run.provider_id != "codex":
-        return False
-    model = run.runtime_model_id.lower()
-    return model.startswith(("gpt-5.4", "gpt-5.5", "gpt-5.6"))
-
-
 def _fallback_context_window(run: Run) -> int:
-    model = run.runtime_model_id.lower()
-    if _is_codex_large_context_model(run):
-        return CODEX_CONTEXT_WINDOW
-    if run.provider_id in {"pgpt", "openai"}:
-        if model.startswith("gpt-5.4-mini"):
-            return STANDARD_GPT_MINI_CONTEXT_WINDOW
-        if model.startswith(("gpt-5.4", "gpt-5.5", "gpt-5.6")):
-            return STANDARD_GPT_CONTEXT_WINDOW
-    if run.provider_id == "google" and model.startswith("gemini-3"):
-        return GEMINI_CONTEXT_WINDOW
-    if run.provider_id == "anthropic":
-        if model.startswith("claude-haiku-4-5"):
-            return CLAUDE_HAIKU_CONTEXT_WINDOW
-        if model.startswith(("claude-opus-4-8", "claude-sonnet-5")):
-            return CLAUDE_LARGE_CONTEXT_WINDOW
+    operational_profile = _run_operational_profile(run)
+    if (
+        operational_profile is not None
+        and operational_profile.context_window is not None
+    ):
+        return operational_profile.context_window
     return DEFAULT_CONTEXT_WINDOW
+
+
+def _run_operational_profile(run: Run):
+    return model_operational_profile(
+        run.provider_id,
+        getattr(run, "model_key", None) or run.runtime_model_id,
+    )
 
 
 def _estimate_context(
@@ -732,8 +749,7 @@ def _provider_message_units(
                 index < len(messages)
                 and messages[index].role == "tool"
                 and (
-                    not call_ids
-                    or str(messages[index].tool_call_id or "") in call_ids
+                    not call_ids or str(messages[index].tool_call_id or "") in call_ids
                 )
             ):
                 unit.append(messages[index])

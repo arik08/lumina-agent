@@ -14,7 +14,7 @@ from ...config import Settings, get_settings
 from ...db import get_db
 from ...models import ProviderModel
 from ...providers import ProviderConfigurationError, ProviderRequestError
-from ...providers.catalog import initial_model_catalog
+from ...providers.catalog import ModelCatalogSeed, catalog_model, initial_model_catalog
 from ...providers.openai_compatible import OpenAICompatibleAdapter
 from ..dependencies import AuthContext, get_current_user, require_csrf
 from ..errors import ApiProblem
@@ -52,14 +52,25 @@ class ProviderModelPatch(ApiModel):
 
 
 def _payload(model: ProviderModel) -> dict[str, Any]:
-    catalog_model = next(
-        (
-            item
-            for item in initial_model_catalog(model.provider_id)
-            if item.model_key == model.model_key
-        ),
-        None,
+    catalog_entry = catalog_model(model.provider_id, model.model_key)
+    hard_max = _positive_int(
+        catalog_entry.capabilities.max_output_tokens
+        if catalog_entry
+        else model.capabilities_json.get(
+            "max_output_tokens", model.capabilities_json.get("maxOutputTokens")
+        )
     )
+    default_max = _positive_int(
+        catalog_entry.default_max_output_tokens if catalog_entry else None
+    )
+    configured_max = _positive_int(
+        model.capabilities_json.get(
+            "configured_max_output_tokens",
+            model.capabilities_json.get("configuredMaxOutputTokens"),
+        )
+    )
+    if configured_max is None or (hard_max is not None and configured_max > hard_max):
+        configured_max = default_max
     return {
         "providerId": model.provider_id,
         "modelKey": model.model_key,
@@ -71,15 +82,21 @@ def _payload(model: ProviderModel) -> dict[str, Any]:
         "sortOrder": model.sort_order,
         "capabilities": model.capabilities_json,
         "defaultContextWindow": (
-            catalog_model.capabilities.context_window if catalog_model else None
+            catalog_entry.capabilities.context_window if catalog_entry else None
         ),
+        "maxOutputTokens": hard_max,
+        "defaultMaxOutputTokens": default_max,
+        "configuredMaxOutputTokens": configured_max,
+        "outputTokenStep": catalog_entry.output_token_step if catalog_entry else 1_000,
         "source": model.source,
         "catalogRevision": model.catalog_revision,
         "verifiedAt": model.verified_at,
     }
 
 
-def _validate_capabilities(capabilities: dict[str, Any]) -> None:
+def _validate_capabilities(
+    capabilities: dict[str, Any], *, catalog_entry: ModelCatalogSeed | None = None
+) -> None:
     context_window = capabilities.get("context_window", capabilities.get("contextWindow"))
     if context_window is not None and (
         isinstance(context_window, bool)
@@ -91,6 +108,45 @@ def _validate_capabilities(capabilities: dict[str, Any]) -> None:
             "invalid_model_context_window",
             "최대 컨텍스트 토큰은 1 이상의 정수여야 합니다.",
         )
+    stored_hard_max = capabilities.get(
+        "max_output_tokens", capabilities.get("maxOutputTokens")
+    )
+    if stored_hard_max is not None and _positive_int(stored_hard_max) is None:
+        raise ApiProblem(
+            422,
+            "invalid_model_output_token_limit",
+            "모델 최대 출력 토큰은 1 이상의 정수여야 합니다.",
+        )
+    configured_max = capabilities.get(
+        "configured_max_output_tokens",
+        capabilities.get("configuredMaxOutputTokens"),
+    )
+    if configured_max is None:
+        return
+    configured_max = _positive_int(configured_max)
+    if configured_max is None:
+        raise ApiProblem(
+            422,
+            "invalid_model_output_token_limit",
+            "출력 토큰 상한은 1 이상의 정수여야 합니다.",
+        )
+    hard_max = _positive_int(
+        catalog_entry.capabilities.max_output_tokens
+        if catalog_entry
+        else stored_hard_max
+    )
+    if hard_max is not None and configured_max > hard_max:
+        raise ApiProblem(
+            422,
+            "model_output_token_limit_exceeded",
+            f"출력 토큰 상한은 이 모델의 최대값 {hard_max:,} 토큰을 넘을 수 없습니다.",
+        )
+
+
+def _positive_int(value: Any) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    return None
 
 
 @router.get("/{provider_id}/models")
@@ -231,7 +287,10 @@ def create_model(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     require_admin(context.user)
-    _validate_capabilities(payload.capabilities)
+    _validate_capabilities(
+        payload.capabilities,
+        catalog_entry=catalog_model(provider_id, payload.model_key),
+    )
     existing = db.scalar(
         select(ProviderModel.id).where(
             ProviderModel.provider_id == provider_id,
@@ -352,7 +411,10 @@ def patch_model(
     if "aliases" in values:
         model.aliases_json = _normalized_aliases(values["aliases"])
     if "capabilities" in values:
-        _validate_capabilities(values["capabilities"])
+        _validate_capabilities(
+            values["capabilities"],
+            catalog_entry=catalog_model(provider_id, model_key),
+        )
         model.capabilities_json = values["capabilities"]
     model.source = "admin_manual"
     model.catalog_revision = f"admin-{datetime.now(UTC).date().isoformat()}"

@@ -21,6 +21,7 @@ import type {
   ToolExecution,
   TurnSet,
 } from "./api-types";
+import { isTerminalRunEvent, isTerminalRunStatus } from "./run-status";
 
 export type StreamState = "idle" | "connecting" | "connected" | "reconnecting";
 export type RunControlAction = "pause" | "resume" | "cancel" | "retry_step" | "approve" | "reject";
@@ -35,13 +36,6 @@ export interface ConversationRuntime {
   streamState: StreamState;
 }
 
-const TERMINAL_RUN_STATUSES = new Set<RunStatus>([
-  "completed",
-  "failed",
-  "cancelled",
-  "limit_reached",
-  "interrupted",
-]);
 const UNTITLED_CONVERSATION_TITLES = new Set(["제목 없음", "새 작업"]);
 const PROVISIONAL_TITLE_MAX_LENGTH = 60;
 
@@ -288,7 +282,7 @@ export function useLuminaWorkspace() {
             ...item,
             title: run.conversationTitle ?? item.title,
             revision: run.conversationRevision === null ? item.revision : String(run.conversationRevision),
-            activeRunId: TERMINAL_RUN_STATUSES.has(run.status) ? null : run.runId,
+            activeRunId: isTerminalRunStatus(run.status) ? null : run.runId,
             lastRunStatus: sidebarStatus(run.status),
             lastSequence: run.lastSequence,
             updatedAt: new Date().toISOString(),
@@ -372,7 +366,7 @@ export function useLuminaWorkspace() {
       } else if (event.type === "artifact_created") {
         nextSnapshot.artifacts = upsertById(nextSnapshot.artifacts, event.payload.artifact);
         nextSnapshot.artifactProgress = null;
-      } else if (event.type === "run_completed" || event.type === "run_failed" || event.type === "run_cancelled" || event.type === "run_interrupted") {
+      } else if (isTerminalRunEvent(event)) {
         nextSnapshot.status = event.payload.status;
         nextSnapshot.finishedAt = event.payload.finishedAt;
         nextSnapshot.artifactProgress = null;
@@ -417,7 +411,7 @@ export function useLuminaWorkspace() {
 
     const status = event.type === "run_started" || event.type === "run_status_changed"
       ? event.payload.status
-      : event.type === "run_completed" || event.type === "run_failed" || event.type === "run_cancelled" || event.type === "run_interrupted"
+      : isTerminalRunEvent(event)
         ? event.payload.status
         : null;
     const titleUpdate = event.type === "conversation_title_updated" ? event.payload : null;
@@ -427,7 +421,7 @@ export function useLuminaWorkspace() {
             ...item,
             title: titleUpdate?.title ?? item.title,
             revision: titleUpdate ? String(titleUpdate.revision) : item.revision,
-            activeRunId: status && TERMINAL_RUN_STATUSES.has(status) ? null : (item.activeRunId ?? event.runId),
+            activeRunId: isTerminalRunStatus(status) ? null : (item.activeRunId ?? event.runId),
             lastRunStatus: status ? sidebarStatus(status) : item.lastRunStatus,
             lastSequence: Math.max(item.lastSequence, event.sequence),
             updatedAt: new Date().toISOString(),
@@ -435,7 +429,7 @@ export function useLuminaWorkspace() {
         : item,
     ));
 
-    const terminal = event.type === "run_completed" || event.type === "run_failed" || event.type === "run_cancelled" || event.type === "run_interrupted";
+    const terminal = isTerminalRunEvent(event);
     if (terminal) {
       void loadConversation(event.conversationId, true);
       const retryDelays = [40, 220, 650];
@@ -459,13 +453,13 @@ export function useLuminaWorkspace() {
       const closeTimer = window.setTimeout(() => {
         reconciliationTimersRef.current.delete(closeTimer);
         const latestSnapshot = runtimesRef.current[event.conversationId]?.snapshots[event.runId];
-        if (latestSnapshot && !TERMINAL_RUN_STATUSES.has(latestSnapshot.status)) return;
+        if (latestSnapshot && !isTerminalRunStatus(latestSnapshot.status)) return;
         streamsRef.current.get(event.runId)?.();
         streamsRef.current.delete(event.runId);
         setRuntimes((current) => {
           const runtime = current[event.conversationId] ?? emptyRuntime();
           const hasAnotherActiveRun = Object.values(runtime.snapshots).some(
-            (snapshot) => snapshot.runId !== event.runId && !TERMINAL_RUN_STATUSES.has(snapshot.status),
+            (snapshot) => snapshot.runId !== event.runId && !isTerminalRunStatus(snapshot.status),
           );
           return {
             ...current,
@@ -487,7 +481,7 @@ export function useLuminaWorkspace() {
   }, [loadConversation, refreshConversations]);
 
   const openSnapshotStream = useCallback((snapshot: RunSnapshot) => {
-    if (TERMINAL_RUN_STATUSES.has(snapshot.status) || streamsRef.current.has(snapshot.runId)) return;
+    if (isTerminalRunStatus(snapshot.status) || streamsRef.current.has(snapshot.runId)) return;
     setRuntimes((current) => ({
       ...current,
       [snapshot.conversationId]: {
@@ -1039,7 +1033,7 @@ export function useLuminaWorkspace() {
     if (!conversationId || !currentSettings) return null;
     const listedConversation = conversationsRef.current.find((item) => item.id === conversationId) ?? createdConversation;
     const runtime = runtimesRef.current[conversationId];
-    const activeSnapshot = Object.values(runtime?.snapshots ?? {}).find((snapshot) => !TERMINAL_RUN_STATUSES.has(snapshot.status));
+    const activeSnapshot = Object.values(runtime?.snapshots ?? {}).find((snapshot) => !isTerminalRunStatus(snapshot.status));
     const activeRunId = listedConversation?.activeRunId ?? activeSnapshot?.runId ?? null;
     const shouldShowProvisionalTitle = Boolean(
       !activeRunId
@@ -1111,7 +1105,7 @@ export function useLuminaWorkspace() {
     try {
       const mutation = await api.runs.action(runId, payload);
       const previous = runtimesRef.current[mutation.run.conversationId]?.snapshots[runId];
-      if (previous && TERMINAL_RUN_STATUSES.has(previous.status) && !TERMINAL_RUN_STATUSES.has(mutation.run.status)) {
+      if (previous && isTerminalRunStatus(previous.status) && !isTerminalRunStatus(mutation.run.status)) {
         streamsRef.current.get(runId)?.();
         streamsRef.current.delete(runId);
       }

@@ -57,13 +57,20 @@ from ..notifications import create_run_transition_notification
 from ..project_files import get_project_file_version
 from ..project_memories import select_relevant_project_memories
 from ..projects.memberships import effective_project_role
+from ..providers.catalog import (
+    application_default_execution,
+    catalog_model,
+    estimate_model_cost_parts,
+)
 from .approvals import approval_payload, pending_approval_payloads
+from .safety import run_limit_snapshot
 from .subtasks import list_step_subtasks
 from .state import (
     ACTIVE_STATUSES,
     AWAITING_APPROVAL,
     CANCELLED,
     COMPLETED,
+    INTERRUPTED,
     MODEL_STREAMING,
     PAUSED,
     QUEUED,
@@ -90,7 +97,18 @@ def _auto_selected_skill_ids(
     )
     explicit_other_format = any(
         marker in normalized
-        for marker in ("pdf", "ppt", "pptx", "파워포인트", "xlsx", "엑셀", "docx", "워드", "markdown", "마크다운")
+        for marker in (
+            "pdf",
+            "ppt",
+            "pptx",
+            "파워포인트",
+            "xlsx",
+            "엑셀",
+            "docx",
+            "워드",
+            "markdown",
+            "마크다운",
+        )
     )
     if not explicit_visual_artifact and (not generic_report or explicit_other_format):
         return []
@@ -99,6 +117,7 @@ def _auto_selected_skill_ids(
         for extension in extensions
         if str(extension.get("slug", "")).casefold() == "visual-artifact"
     ]
+
 
 UNTITLED_CONVERSATION_TITLES = {"제목 없음", "새 작업"}
 PROVISIONAL_CONVERSATION_TITLE_MAX_LENGTH = 60
@@ -109,6 +128,7 @@ def _provisional_conversation_title(message_text: str) -> str:
     if len(normalized) <= PROVISIONAL_CONVERSATION_TITLE_MAX_LENGTH:
         return normalized
     return normalized[: PROVISIONAL_CONVERSATION_TITLE_MAX_LENGTH - 1].rstrip() + "…"
+
 
 _PLAN_STEP_TRANSITIONS = {
     PLAN_STEP_QUEUED: {
@@ -206,7 +226,7 @@ def resolve_execution(
         "model_display_name": model.display_name,
         "effort": requested.effort_id,
         "catalog_revision": model.catalog_revision,
-        "capabilities": model.capabilities_json,
+        "capabilities": _model_capabilities_snapshot(model),
         "fallback_messages": fallback_messages,
     }
     if model.provider_id == "codex" and bool(
@@ -216,6 +236,36 @@ def resolve_execution(
             image_backend_model or config.codex_image_model
         )
     return resolved
+
+
+def _model_capabilities_snapshot(model: ProviderModel) -> dict[str, Any]:
+    """Pin reviewed hard limits and the admin-selected operating limit to a Run."""
+    capabilities = dict(model.capabilities_json)
+    catalog_entry = catalog_model(model.provider_id, model.model_key)
+    if catalog_entry is None:
+        return capabilities
+    hard_max = catalog_entry.capabilities.max_output_tokens
+    if hard_max is not None:
+        capabilities["max_output_tokens"] = hard_max
+    if catalog_entry.context_compaction_threshold is not None:
+        capabilities["context_compaction_threshold"] = (
+            catalog_entry.context_compaction_threshold
+        )
+    configured_max = capabilities.get(
+        "configured_max_output_tokens",
+        capabilities.get("configuredMaxOutputTokens"),
+    )
+    if (
+        not isinstance(configured_max, int)
+        or isinstance(configured_max, bool)
+        or configured_max < 1
+        or (hard_max is not None and configured_max > hard_max)
+    ):
+        configured_max = catalog_entry.default_max_output_tokens
+    if configured_max is not None:
+        capabilities["configured_max_output_tokens"] = configured_max
+    capabilities.pop("configuredMaxOutputTokens", None)
+    return capabilities
 
 
 def _default_execution_selection(
@@ -259,19 +309,13 @@ def _default_execution_selection(
     else:
         warning = ""
 
-    if settings.environment == "production":
-        fallback = ExecutionSelection(
-            provider_id="pgpt", model_key="gpt-5.4", effort_id="medium"
-        )
-    else:
-        fallback = ExecutionSelection(
-            provider_id="mock", model_key="mock-agent", effort_id="medium"
-        )
+    provider_id, model_key, effort_id = application_default_execution(
+        settings.environment
+    )
+    fallback = ExecutionSelection(
+        provider_id=provider_id, model_key=model_key, effort_id=effort_id
+    )
     return fallback, [warning] if warning else []
-
-
-def _run_limit_snapshot(settings: Settings) -> dict[str, Any]:
-    return {"costAccounting": "provider_reported"}
 
 
 def create_run(
@@ -337,7 +381,6 @@ def create_run(
         project=project,
         settings=config,
     )
-    limits = _run_limit_snapshot(config)
     memory_learning_mode = _memory_learning_mode(db, user.id)
     from ..memories.service import select_relevant_memories
 
@@ -382,6 +425,7 @@ def create_run(
         raise ApiProblem(
             409, "organization_missing", "사용자의 조직을 찾을 수 없습니다."
         )
+    limits = run_limit_snapshot(organization.run_safety_settings_json)
     instruction_stack = resolve_instruction_stack_from_models(
         organization=organization,
         project=project,
@@ -542,8 +586,7 @@ def create_run(
     db.flush()
     _persist_message_references(db, message, references)
     provisional_title_assigned = (
-        turn_index == 1
-        and conversation.title in UNTITLED_CONVERSATION_TITLES
+        turn_index == 1 and conversation.title in UNTITLED_CONVERSATION_TITLES
     )
     if provisional_title_assigned:
         conversation.title = _provisional_conversation_title(payload.message.text)
@@ -994,28 +1037,48 @@ def _dynamic_plan_step_specs(
     run: Run, goal: str
 ) -> tuple[tuple[str, str, str, dict[str, Any]], ...]:
     normalized = goal.casefold()
-    if any(token in normalized for token in ("보고서", "report", "조사", "리서치", "동향", "비교", "분석")):
+    if any(
+        token in normalized
+        for token in ("보고서", "report", "조사", "리서치", "동향", "비교", "분석")
+    ):
         labels = (
             "요청 범위와 조사 기준을 정리합니다",
             "관련 자료를 탐색하고 근거를 수집합니다",
             "핵심 내용을 분석하고 결과를 구조화합니다",
             "결과를 검증하고 보고서를 전달합니다",
         )
-    elif any(token in normalized for token in ("코드", "구현", "수정", "버그", "리팩터", "테스트", "build", "fix")):
+    elif any(
+        token in normalized
+        for token in (
+            "코드",
+            "구현",
+            "수정",
+            "버그",
+            "리팩터",
+            "테스트",
+            "build",
+            "fix",
+        )
+    ):
         labels = (
             "요청과 관련된 코드의 영향 범위를 확인합니다",
             "변경 방향을 설계하고 구현합니다",
             "테스트와 실제 동작을 검증합니다",
             "변경 결과를 정리하고 전달합니다",
         )
-    elif any(token in normalized for token in ("표", "엑셀", "데이터", "csv", "xlsx", "통계", "차트")):
+    elif any(
+        token in normalized
+        for token in ("표", "엑셀", "데이터", "csv", "xlsx", "통계", "차트")
+    ):
         labels = (
             "데이터 범위와 산출물 기준을 확인합니다",
             "데이터를 정리하고 분석합니다",
             "표와 시각화 결과를 검증합니다",
             "분석 결과와 산출물을 전달합니다",
         )
-    elif any(token in normalized for token in ("파일", "문서", "pdf", "docx", "pptx", "요약")):
+    elif any(
+        token in normalized for token in ("파일", "문서", "pdf", "docx", "pptx", "요약")
+    ):
         labels = (
             "대상 문서와 요청 범위를 확인합니다",
             "문서 내용을 분석하고 핵심 정보를 추출합니다",
@@ -1604,10 +1667,7 @@ def tool_response(tool: ToolExecution) -> dict[str, Any]:
         "inputSummary": (
             ["파일 내용을 생성하고 있습니다."]
             if "__lumina_stream_tokens" in tool.validated_input_json
-            else [
-                f"{key}: {value}"
-                for key, value in tool.validated_input_json.items()
-            ]
+            else [f"{key}: {value}" for key, value in tool.validated_input_json.items()]
         ),
         "resultSummary": [tool.result_summary] if tool.result_summary else [],
         "startedAt": tool.started_at,
@@ -1688,6 +1748,7 @@ def message_response(message: Message, db: Session | None = None) -> dict[str, A
 
 def run_snapshot(db: Session, run: Run) -> dict[str, Any]:
     conversation = db.get(Conversation, run.conversation_id)
+    usage = _usage_snapshot(run)
     tools = list(
         db.scalars(
             select(ToolExecution)
@@ -1768,7 +1829,9 @@ def run_snapshot(db: Session, run: Run) -> dict[str, Any]:
         "runId": run.id,
         "conversationId": run.conversation_id,
         "conversationTitle": conversation.title if conversation is not None else None,
-        "conversationRevision": conversation.revision if conversation is not None else None,
+        "conversationRevision": conversation.revision
+        if conversation is not None
+        else None,
         "status": run.status,
         "errorCode": run.error_code,
         "errorMessage": run.error_message,
@@ -1837,9 +1900,34 @@ def run_snapshot(db: Session, run: Run) -> dict[str, Any]:
             "catalogRevision": execution.get("catalog_revision", "unknown"),
         },
         "limits": run.snapshot_json.get("limits", {}),
-        "usage": run.usage_json,
+        "usage": usage,
         "mcpServers": run.snapshot_json.get("mcp_servers", []),
     }
+
+
+def _usage_snapshot(run: Run) -> dict[str, Any]:
+    usage = dict(run.usage_json)
+    if "estimated_cost_breakdown_usd" in usage:
+        return usage
+    breakdown = estimate_model_cost_parts(
+        run.provider_id,
+        run.model_key,
+        input_tokens=_usage_token_count(usage.get("input_tokens")),
+        cached_input_tokens=_usage_token_count(usage.get("cached_input_tokens")),
+        cache_write_tokens=_usage_token_count(usage.get("cache_write_tokens")),
+        output_tokens=_usage_token_count(usage.get("output_tokens")),
+    )
+    if breakdown is not None:
+        usage["estimated_cost_breakdown_usd"] = breakdown
+    return usage
+
+
+def _usage_token_count(value: Any) -> int:
+    return (
+        value
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0
+        else 0
+    )
 
 
 def _skill_activities(run: Run) -> list[dict[str, Any]]:
@@ -1848,9 +1936,7 @@ def _skill_activities(run: Run) -> list[dict[str, Any]]:
         for item in run.snapshot_json.get("extensions", [])
         if isinstance(item, dict)
     ]
-    application = run.snapshot_json.get(
-        "extension_application", "explicit_references"
-    )
+    application = run.snapshot_json.get("extension_application", "explicit_references")
     explicit_ids = {
         str(reference.get("reference_id"))
         for reference in run.snapshot_json.get("prompt_references", [])
@@ -1882,10 +1968,14 @@ def _skill_activities(run: Run) -> list[dict[str, Any]]:
             reason = "보고서 HTML 시각 산출물 제작"
         else:
             description = " ".join(str(extension.get("description", "")).split())
-            reason = description[:80].rstrip() if description else (
-                "예약 작업에 고정된 절차 적용"
-                if applied_by == "scheduled"
-                else "요청에 맞는 작업 절차 적용"
+            reason = (
+                description[:80].rstrip()
+                if description
+                else (
+                    "예약 작업에 고정된 절차 적용"
+                    if applied_by == "scheduled"
+                    else "요청에 맞는 작업 절차 적용"
+                )
             )
         activities.append(
             {
@@ -1901,6 +1991,100 @@ def _skill_activities(run: Run) -> list[dict[str, Any]]:
             }
         )
     return activities
+
+
+def cancel_organization_work(
+    db: Session,
+    *,
+    organization_id: str,
+    actor_user_id: str,
+) -> tuple[list[str], int]:
+    cancellable_statuses = {*ACTIVE_STATUSES, QUEUED, INTERRUPTED}
+    runs = list(
+        db.scalars(
+            select(Run)
+            .where(
+                Run.organization_id == organization_id,
+                Run.status.in_(cancellable_statuses),
+            )
+            .order_by(Run.queued_at, Run.id)
+        )
+    )
+    for run in runs:
+        _cancel_run_state(
+            db,
+            run,
+            actor_user_id=actor_user_id,
+            reason="admin_emergency_stop",
+        )
+
+    queued_messages = list(
+        db.scalars(
+            select(QueuedMessage)
+            .join(Conversation, Conversation.id == QueuedMessage.conversation_id)
+            .where(
+                Conversation.organization_id == organization_id,
+                QueuedMessage.status == "queued",
+            )
+        )
+    )
+    cancelled_at = utc_now()
+    for queued in queued_messages:
+        queued.status = "cancelled"
+        queued.cancelled_at = cancelled_at
+    db.flush()
+    return [run.id for run in runs], len(queued_messages)
+
+
+def _cancel_run_state(
+    db: Session,
+    run: Run,
+    *,
+    actor_user_id: str,
+    reason: str = "user_cancelled",
+) -> None:
+    if run.status == CANCELLED:
+        return
+    pending_approvals = list(
+        db.scalars(
+            select(ToolApproval).where(
+                ToolApproval.run_id == run.id,
+                ToolApproval.status == "pending",
+            )
+        )
+    )
+    for pending in pending_approvals:
+        pending.status = "cancelled"
+        pending.resolved_by_user_id = actor_user_id
+        pending.resolved_at = utc_now()
+        append_event(
+            db,
+            run,
+            "approval_resolved",
+            {"approval": approval_payload(pending), "decision": "cancelled"},
+        )
+
+    running_tools = list(
+        db.scalars(
+            select(ToolExecution).where(
+                ToolExecution.run_id == run.id,
+                ToolExecution.status == "running",
+            )
+        )
+    )
+    for tool in running_tools:
+        tool.status = "failed"
+        tool.error_code = "run_cancelled"
+        tool.error_message = "Run이 중단되어 Tool 실행을 종료했습니다."
+        tool.finished_at = utc_now()
+        append_event(db, run, "tool_completed", {"execution": tool_response(tool)})
+
+    snapshot = dict(run.snapshot_json)
+    snapshot.pop("tool_checkpoint", None)
+    snapshot["cancelReason"] = reason
+    run.snapshot_json = snapshot
+    transition_run(db, run, CANCELLED, event_type="run_cancelled")
+    cancel_plan(db, run)
 
 
 def apply_run_action(
@@ -2095,29 +2279,7 @@ def apply_run_action(
         if run.status in TERMINAL_STATUSES:
             command.status = "applied"
         else:
-            pending_approvals = list(
-                db.scalars(
-                    select(ToolApproval).where(
-                        ToolApproval.run_id == run.id,
-                        ToolApproval.status == "pending",
-                    )
-                )
-            )
-            for pending in pending_approvals:
-                pending.status = "cancelled"
-                pending.resolved_by_user_id = user.id
-                pending.resolved_at = utc_now()
-                append_event(
-                    db,
-                    run,
-                    "approval_resolved",
-                    {"approval": approval_payload(pending), "decision": "cancelled"},
-                )
-            snapshot = dict(run.snapshot_json)
-            snapshot.pop("tool_checkpoint", None)
-            run.snapshot_json = snapshot
-            transition_run(db, run, CANCELLED, event_type="run_cancelled")
-            cancel_plan(db, run)
+            _cancel_run_state(db, run, actor_user_id=user.id)
             command.status = "applied"
         command.applied_at = utc_now()
     elif payload.type == "retry_step":

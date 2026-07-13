@@ -76,6 +76,7 @@ import { copyText } from "./clipboard";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type UIEvent as ReactUIEvent } from "react";
 import { createPortal } from "react-dom";
 import { api, ApiError, attachmentContentUrl } from "./api";
+import { isTerminalRunStatus } from "./run-status";
 import { SyntaxCode, SyntaxTextarea } from "./components/SyntaxCode";
 import type {
   AdminProviderModel,
@@ -501,7 +502,7 @@ function derivedProgress(run: RunSnapshot) {
       subtasks: [],
     }));
   }
-  const terminal = ["completed", "failed", "cancelled", "limit_reached", "interrupted"].includes(run.status);
+  const terminal = isTerminalRunStatus(run.status);
   return [
     {
       id: "request",
@@ -683,6 +684,7 @@ function App() {
   const [adminSettingsModels, setAdminSettingsModels] = useState<AdminProviderModel[]>([]);
   const [adminSettingsModelKey, setAdminSettingsModelKey] = useState("");
   const [adminMaxTokens, setAdminMaxTokens] = useState("");
+  const [adminOutputTokens, setAdminOutputTokens] = useState(0);
   const [adminSettingsBusy, setAdminSettingsBusy] = useState(false);
   const [adminSettingsError, setAdminSettingsError] = useState<string | null>(null);
   const [artifactOpen, setArtifactOpen] = useState(false);
@@ -873,7 +875,7 @@ function App() {
       progressPlanIdRef.current = null;
       return;
     }
-    const terminal = ["completed", "failed", "cancelled", "limit_reached", "interrupted"].includes(activeRun.status);
+    const terminal = isTerminalRunStatus(activeRun.status);
     const planId = activeRun.plan?.id ?? null;
     if (progressRunIdRef.current !== activeRun.runId) {
       progressRunIdRef.current = activeRun.runId;
@@ -920,6 +922,11 @@ function App() {
       ?? selectedAdminSettingsModel?.capabilities.contextWindow
       ?? selectedAdminSettingsModel?.defaultContextWindow;
     setAdminMaxTokens(typeof value === "number" ? value.toLocaleString("en-US") : "");
+    setAdminOutputTokens(
+      selectedAdminSettingsModel?.configuredMaxOutputTokens
+      ?? selectedAdminSettingsModel?.defaultMaxOutputTokens
+      ?? 0,
+    );
   }, [selectedAdminSettingsModel]);
 
   const saveAdminMaxTokens = async () => {
@@ -961,6 +968,39 @@ function App() {
     } finally {
       setAdminSettingsBusy(false);
     }
+  };
+  const saveAdminOutputTokens = async (value = adminOutputTokens) => {
+    if (!selectedAdminSettingsModel?.maxOutputTokens) return;
+    if (!Number.isSafeInteger(value) || value < 1 || value > selectedAdminSettingsModel.maxOutputTokens) {
+      setAdminSettingsError(`출력 토큰 상한은 1부터 모델 최대 ${selectedAdminSettingsModel.maxOutputTokens.toLocaleString()} 사이여야 합니다.`);
+      return;
+    }
+    setAdminSettingsBusy(true);
+    setAdminSettingsError(null);
+    try {
+      const capabilities: Record<string, unknown> = {
+        ...selectedAdminSettingsModel.capabilities,
+        configured_max_output_tokens: value,
+      };
+      delete capabilities.configuredMaxOutputTokens;
+      const updated = await api.adminProviders.updateModel(
+        adminSettingsProviderId,
+        selectedAdminSettingsModel.modelKey,
+        capabilities,
+      );
+      setAdminSettingsModels((models) => models.map((model) => model.modelKey === updated.modelKey ? updated : model));
+      showToast(`${updated.displayName} 출력 토큰 상한을 ${value.toLocaleString()}으로 저장했습니다.`);
+    } catch (error) {
+      setAdminSettingsError(error instanceof Error ? error.message : "출력 토큰 상한을 저장하지 못했습니다.");
+    } finally {
+      setAdminSettingsBusy(false);
+    }
+  };
+  const resetAdminOutputTokens = () => {
+    const defaultValue = selectedAdminSettingsModel?.defaultMaxOutputTokens;
+    if (!defaultValue) return;
+    setAdminOutputTokens(defaultValue);
+    void saveAdminOutputTokens(defaultValue);
   };
   const candidateModelOptions = accountProviders.flatMap((provider) =>
     (workspace.providerModels[provider.id] ?? [])
@@ -1013,7 +1053,7 @@ function App() {
     : undefined;
   const retryableStepIds = new Set(activeRun?.plan?.steps.filter((step) => step.status === "failed").map((step) => step.id) ?? []);
   const runIsActive = Boolean(
-    activeRun && !["completed", "failed", "cancelled", "limit_reached", "interrupted"].includes(activeRun.status),
+    activeRun && !isTerminalRunStatus(activeRun.status),
   );
   const runIsPaused = activeRun?.status === "paused";
   const composerHasPayload = Boolean(draft.trim() || workspace.composerAttachments.length > 0);
@@ -1638,7 +1678,7 @@ function App() {
     ].join("\n");
     setArtifactAiSubmitting(true);
     setArtifactAiStatus("AI 수정 요청을 중앙 Agent Run으로 전달하고 있습니다.");
-    const hasActiveRun = Boolean(activeRun && !["completed", "failed", "cancelled", "limit_reached", "interrupted"].includes(activeRun.status));
+    const hasActiveRun = Boolean(activeRun && !isTerminalRunStatus(activeRun.status));
     const mode = await workspace.sendMessage(prompt, hasActiveRun, [{
       kind: "artifact",
       referenceId: artifactSummary.id,
@@ -2642,6 +2682,35 @@ function App() {
                     <label className="settings-row"><span><strong>Provider</strong><small>최대 토큰을 변경할 Provider입니다.</small></span><select value={adminSettingsProviderId} disabled={adminSettingsBusy} onChange={(event) => setAdminSettingsProviderId(event.currentTarget.value)}>{accountProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.displayName}</option>)}</select></label>
                     <label className="settings-row"><span><strong>Model</strong><small>설정값은 선택한 Model에만 적용됩니다.</small></span><select value={adminSettingsModelKey} disabled={adminSettingsBusy} onChange={(event) => setAdminSettingsModelKey(event.currentTarget.value)}>{adminSettingsModels.map((model) => <option key={model.modelKey} value={model.modelKey}>{model.displayName}</option>)}</select></label>
                     <div className="settings-row"><span><strong>최대 컨텍스트 토큰</strong><small>Run의 입력 예산 계산에 사용하는 모델별 최대 토큰입니다.{selectedAdminSettingsModel?.defaultContextWindow ? ` 기본값 ${selectedAdminSettingsModel.defaultContextWindow.toLocaleString()} 토큰.` : " 등록된 기본값이 없습니다."}</small></span><div className="settings-inline-control"><input type="text" inputMode="numeric" value={adminMaxTokens} disabled={adminSettingsBusy || !selectedAdminSettingsModel} onChange={(event) => setAdminMaxTokens(event.currentTarget.value.replace(/\D/g, "").replace(/\B(?=(\d{3})+(?!\d))/g, ","))} /><button className="is-secondary" type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel?.defaultContextWindow} onClick={() => void resetAdminMaxTokens()}>초기화</button><button type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel} onClick={() => void saveAdminMaxTokens()}>{adminSettingsBusy ? "저장 중" : "저장"}</button></div></div>
+                    <div className="settings-row settings-output-token-row">
+                      <span>
+                        <strong>최대 출력 토큰</strong>
+                        <small>
+                          한 번의 모델 호출에 적용할 운영 상한입니다.
+                          {selectedAdminSettingsModel?.maxOutputTokens
+                            ? adminOutputTokens > 0
+                              ? ` 현재 ${adminOutputTokens.toLocaleString()} · 모델 최대 ${selectedAdminSettingsModel.maxOutputTokens.toLocaleString()} 토큰.`
+                              : ` 모델 최대 ${selectedAdminSettingsModel.maxOutputTokens.toLocaleString()} 토큰 · 운영 기본값이 등록되지 않았습니다.`
+                            : " 모델 최대 출력 한도가 등록되지 않았습니다."}
+                        </small>
+                      </span>
+                      <div className="settings-inline-control settings-token-slider">
+                        <input
+                          type="range"
+                          min={Math.min(selectedAdminSettingsModel?.outputTokenStep ?? 1_000, selectedAdminSettingsModel?.maxOutputTokens ?? 1_000)}
+                          max={selectedAdminSettingsModel?.maxOutputTokens ?? 1_000}
+                          step={selectedAdminSettingsModel?.outputTokenStep ?? 1_000}
+                          value={adminOutputTokens || selectedAdminSettingsModel?.outputTokenStep || 1_000}
+                          disabled={adminSettingsBusy || !selectedAdminSettingsModel?.maxOutputTokens || !adminOutputTokens}
+                          aria-label="최대 출력 토큰"
+                          aria-valuetext={`${adminOutputTokens.toLocaleString()} 토큰`}
+                          onChange={(event) => setAdminOutputTokens(event.currentTarget.valueAsNumber)}
+                        />
+                        <output>{adminOutputTokens > 0 ? `${adminOutputTokens.toLocaleString()} 토큰` : "미설정"}</output>
+                        <button className="is-secondary" type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel?.defaultMaxOutputTokens} onClick={resetAdminOutputTokens}>초기화</button>
+                        <button type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel?.maxOutputTokens || !adminOutputTokens} onClick={() => void saveAdminOutputTokens()}>{adminSettingsBusy ? "저장 중" : "저장"}</button>
+                      </div>
+                    </div>
                     {adminSettingsError && <p className="settings-inline-error" role="alert">{adminSettingsError}</p>}
                   </section>
                 )}

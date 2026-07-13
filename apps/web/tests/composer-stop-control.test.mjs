@@ -8,7 +8,7 @@ const stylesUrl = new URL("../src/styles.css", import.meta.url);
 test("the composer primary action becomes a working stop control during an active run", async () => {
   const app = await readFile(appUrl, "utf8");
 
-  assert.match(app, /const runIsActive = Boolean\([\s\S]*?activeRun[\s\S]*?cancelled[\s\S]*?interrupted/);
+  assert.match(app, /const runIsActive = Boolean\([\s\S]*?activeRun[\s\S]*?!isTerminalRunStatus\(activeRun\.status\)/);
   assert.match(app, /const composerShowsStop = Boolean\(runIsActive && !composerHasPayload\)/);
   assert.match(app, /className=\{`send-button tooltip-control \$\{composerShowsStop \? "is-stop" : ""\}`\}/);
   assert.match(app, /aria-label=\{composerShowsStop \? "작업 중단"/);

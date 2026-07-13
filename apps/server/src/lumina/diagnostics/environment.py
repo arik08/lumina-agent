@@ -6,6 +6,7 @@ from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from ..config import DEFAULT_DATABASE_URL
+from ..providers.catalog import default_catalog_model
 
 
 class DiagnosticEnvironment(BaseSettings):
@@ -21,7 +22,7 @@ class DiagnosticEnvironment(BaseSettings):
     pgpt_employee_no: SecretStr | None = None
     pgpt_company_code: SecretStr | None = None
     pgpt_base_url: str = ""
-    pgpt_diagnostic_model: str = "gpt-5.4"
+    pgpt_diagnostic_model: str = default_catalog_model("pgpt").runtime_model_id
     lumina_ca_cert: str = ""
     lumina_ca_bundle: str = ""
     lumina_tls_compat_mode: bool = False

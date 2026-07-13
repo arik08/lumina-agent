@@ -31,11 +31,9 @@ from ..models import (
 from ..notifications import create_scheduled_run_result_notification
 from ..runs.service import apply_run_action, create_run, resolve_execution
 from ..runs.state import TERMINAL_STATUSES
+from .schemas import CONTEXT_MODES, EXTENSION_SNAPSHOT_POLICIES, SCHEDULE_KINDS
 
 
-_SCHEDULE_KINDS = {"hourly", "daily", "weekly", "weekdays", "manual"}
-_CONTEXT_MODES = {"continue_session", "new_session_per_run"}
-_EXTENSION_POLICIES = {"pinned", "latest_allowed"}
 _SECRET_PARTS = ("password", "secret", "token", "api_key", "apikey", "credential")
 _ACTIVE_SCHEDULED_RUN_STATUSES = {"queued", "running", "retry_waiting"}
 _RETRYABLE_RUN_STATUSES = {"failed", "interrupted", "limit_reached"}
@@ -71,7 +69,7 @@ def _timezone(name: str) -> ZoneInfo:
 
 
 def normalize_schedule_config(kind: str, config: dict[str, Any]) -> dict[str, int]:
-    if kind not in _SCHEDULE_KINDS:
+    if kind not in SCHEDULE_KINDS:
         raise ApiProblem(422, "invalid_schedule_kind", "지원하지 않는 예약 유형입니다.")
     if kind == "manual":
         return {}
@@ -190,7 +188,7 @@ def create_scheduled_task(
     )
     normalized_config = normalize_schedule_config(schedule_kind, schedule_config)
     _timezone(timezone)
-    if extension_snapshot_policy not in _EXTENSION_POLICIES:
+    if extension_snapshot_policy not in EXTENSION_SNAPSHOT_POLICIES:
         raise ApiProblem(
             422, "invalid_extension_policy", "확장 snapshot 정책이 올바르지 않습니다."
         )
@@ -245,7 +243,7 @@ def _validate_context(
     context_mode: str,
     source_conversation_id: str | None,
 ) -> None:
-    if context_mode not in _CONTEXT_MODES:
+    if context_mode not in CONTEXT_MODES:
         raise ApiProblem(
             422, "invalid_context_mode", "예약 작업 Context 방식이 올바르지 않습니다."
         )
@@ -345,7 +343,7 @@ def update_scheduled_task(
         task.effort = resolved_execution.effort_id
     extension_mode = changes.get("extension_snapshot_policy")
     if extension_mode is not None:
-        if extension_mode not in _EXTENSION_POLICIES:
+        if extension_mode not in EXTENSION_SNAPSHOT_POLICIES:
             raise ApiProblem(
                 422,
                 "invalid_extension_policy",

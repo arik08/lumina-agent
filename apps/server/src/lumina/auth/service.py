@@ -35,7 +35,6 @@ BOOTSTRAP_ADMIN_LOGIN_ID = "admin@posco.com"
 BOOTSTRAP_ADMIN_PASSWORD = "1"
 DEFAULT_ORGANIZATION_SLUG = "posco"
 DEFAULT_PROJECT_NAME = "기본 프로젝트"
-CATALOG_REVISION = "2026-07-11.initial"
 
 
 class AuthenticationError(Exception):
@@ -67,83 +66,6 @@ class BootstrapResult:
     admin_user_id: str
     admin_created: bool
     provider_models_created: int
-
-
-@dataclass(frozen=True, slots=True)
-class ModelSeed:
-    provider_id: str
-    display_name: str
-    runtime_model_id: str
-    is_default: bool
-    sort_order: int
-    source: str
-
-    @property
-    def model_key(self) -> str:
-        return self.runtime_model_id
-
-
-MODEL_CATALOG_SEEDS: tuple[ModelSeed, ...] = (
-    ModelSeed("pgpt", "GPT-5.4", "gpt-5.4", True, 10, "product_contract:user"),
-    ModelSeed(
-        "pgpt", "GPT-5.4-mini", "gpt-5.4-mini", False, 20, "product_contract:user"
-    ),
-    ModelSeed("codex", "GPT-5.5", "gpt-5.5", True, 10, "product_contract:user"),
-    ModelSeed("codex", "GPT-5.4", "gpt-5.4", False, 20, "product_contract:user"),
-    ModelSeed(
-        "google", "Gemini-3.1-Pro", "gemini-3.1-pro", True, 10, "product_contract:user"
-    ),
-    ModelSeed(
-        "google",
-        "Gemini-3.5-flash",
-        "gemini-3.5-flash",
-        False,
-        20,
-        "product_contract:user",
-    ),
-    ModelSeed(
-        "openai", "GPT-5.6-Sol", "gpt-5.6-sol", True, 10, "official_docs:2026-07-11"
-    ),
-    ModelSeed(
-        "openai",
-        "GPT-5.6-Terra",
-        "gpt-5.6-terra",
-        False,
-        20,
-        "official_docs:2026-07-11",
-    ),
-    ModelSeed(
-        "openai", "GPT-5.6-Luna", "gpt-5.6-luna", False, 30, "official_docs:2026-07-11"
-    ),
-    ModelSeed(
-        "anthropic",
-        "Claude Opus 4.8",
-        "claude-opus-4-8",
-        False,
-        10,
-        "official_docs:2026-07-11",
-    ),
-    ModelSeed(
-        "anthropic",
-        "Claude Sonnet 5",
-        "claude-sonnet-5",
-        True,
-        20,
-        "official_docs:2026-07-11",
-    ),
-    ModelSeed(
-        "anthropic",
-        "Claude Haiku 4.5",
-        "claude-haiku-4-5",
-        False,
-        30,
-        "official_docs:2026-07-11",
-    ),
-)
-
-_CATALOG_SEEDS_BY_KEY = {
-    (item.provider_id, item.model_key): item for item in initial_model_catalog()
-}
 
 
 def _utc_now(now: datetime | None = None) -> datetime:
@@ -272,15 +194,19 @@ def seed_provider_models(session: Session) -> int:
         item.provider_id for item in existing_models.values() if item.is_default
     }
     created = 0
-    verified_at = datetime(2026, 7, 12, tzinfo=UTC)
-
-    for seed in MODEL_CATALOG_SEEDS:
+    for seed in initial_model_catalog():
         key = (seed.provider_id, seed.model_key)
-        catalog_seed = _CATALOG_SEEDS_BY_KEY[key]
         capabilities = {
-            **asdict(catalog_seed.capabilities),
+            **asdict(seed.capabilities),
             "verification_status": "verified",
         }
+        if seed.context_compaction_threshold is not None:
+            capabilities["context_compaction_threshold"] = (
+                seed.context_compaction_threshold
+            )
+        verified_at = datetime.combine(
+            seed.verified_at, datetime.min.time(), tzinfo=UTC
+        )
         existing = existing_models.get(key)
         if existing is not None:
             existing_capabilities = existing.capabilities_json
@@ -295,7 +221,7 @@ def seed_provider_models(session: Session) -> int:
                     **existing_capabilities,
                     **capabilities,
                 }
-                existing.catalog_revision = catalog_seed.catalog_revision
+                existing.catalog_revision = seed.catalog_revision
                 existing.verified_at = verified_at
             continue
         is_default = seed.is_default and seed.provider_id not in providers_with_default
@@ -309,7 +235,7 @@ def seed_provider_models(session: Session) -> int:
             sort_order=seed.sort_order,
             capabilities_json=capabilities,
             source=seed.source,
-            catalog_revision=catalog_seed.catalog_revision,
+            catalog_revision=seed.catalog_revision,
             verified_at=verified_at,
         )
         session.add(model)

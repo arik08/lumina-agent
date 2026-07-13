@@ -38,6 +38,7 @@ import {
   X,
 } from "lucide-react";
 import { copyText } from "../clipboard";
+import { isTerminalRunStatus } from "../run-status";
 import type { Link, Parent, PhrasingContent, Root, Text } from "mdast";
 import {
   useCallback,
@@ -126,46 +127,16 @@ function usageNumber(usage: Record<string, unknown> | undefined, key: string) {
   return Number.isFinite(value) && value >= 0 ? value : 0;
 }
 
-type TokenPricing = readonly [number, number, number, number, number?, number?, number?, number?, number?];
-
-const MODEL_TOKEN_PRICING: Record<string, TokenPricing> = {
-  "openai:gpt-5.6-sol": [5, 0.5, 6.25, 30, 272_000, 10, 1, 12.5, 45],
-  "codex:gpt-5.6-sol": [5, 0.5, 6.25, 30, 272_000, 10, 1, 12.5, 45],
-  "openai:gpt-5.6-terra": [2.5, 0.25, 3.125, 15, 272_000, 5, 0.5, 6.25, 22.5],
-  "codex:gpt-5.6-terra": [2.5, 0.25, 3.125, 15, 272_000, 5, 0.5, 6.25, 22.5],
-  "openai:gpt-5.6-luna": [1, 0.1, 1.25, 6, 272_000, 2, 0.2, 2.5, 9],
-  "codex:gpt-5.6-luna": [1, 0.1, 1.25, 6, 272_000, 2, 0.2, 2.5, 9],
-  "codex:gpt-5.5": [5, 0.5, 5, 30, 272_000, 10, 1, 10, 45],
-  "codex:gpt-5.4": [2.5, 0.25, 2.5, 15, 272_000, 5, 0.5, 5, 22.5],
-  "anthropic:claude-opus-4-8": [5, 0.5, 6.25, 25],
-  "anthropic:claude-sonnet-5": [2, 0.2, 2.5, 10],
-  "anthropic:claude-haiku-4-5": [1, 0.1, 1.25, 5],
-  "google:gemini-3.1-pro": [2, 0.2, 2, 12, 200_000, 4, 0.4, 4, 18],
-  "google:gemini-3.5-flash": [1.5, 0.15, 1.5, 9],
-};
-
-function estimatedModelCostParts(provider: string | undefined, model: string | undefined, usage: Record<string, unknown> | undefined) {
-  const pricing = MODEL_TOKEN_PRICING[`${provider}:${model}`];
-  if (!pricing) return undefined;
-  const input = usageNumber(usage, "input_tokens");
-  const cached = usageNumber(usage, "cached_input_tokens");
-  const cacheWrite = usageNumber(usage, "cache_write_tokens");
-  const uncached = usage?.uncached_input_tokens === undefined
-    ? Math.max(0, input - cached - cacheWrite)
-    : usageNumber(usage, "uncached_input_tokens");
-  const output = usageNumber(usage, "output_tokens");
-  const [baseInput, baseCached, baseWrite, baseOutput, threshold, highInput, highCached, highWrite, highOutput] = pricing;
-  const high = threshold !== undefined && input > threshold;
-  const uncachedInput = uncached * (high ? highInput! : baseInput) / 1_000_000;
-  const cachedInput = cached * (high ? highCached! : baseCached) / 1_000_000;
-  const cacheWriteInput = cacheWrite * (high ? highWrite! : baseWrite) / 1_000_000;
-  const outputCost = output * (high ? highOutput! : baseOutput) / 1_000_000;
+function estimatedModelCostParts(usage: Record<string, unknown> | undefined) {
+  const raw = usage?.estimated_cost_breakdown_usd;
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const costs = raw as Record<string, unknown>;
   return {
-    cachedInput,
-    input: uncachedInput + cachedInput + cacheWriteInput,
-    output: outputCost,
-    total: uncachedInput + cachedInput + cacheWriteInput + outputCost,
-    uncachedInput,
+    cachedInput: usageNumber(costs, "cached_input"),
+    input: usageNumber(costs, "input"),
+    output: usageNumber(costs, "output"),
+    total: usageNumber(costs, "total"),
+    uncachedInput: usageNumber(costs, "uncached_input"),
   };
 }
 
@@ -197,7 +168,7 @@ function UsageCostPopover({ usage, model, provider }: { usage: Record<string, un
   const cacheRate = input > 0 ? `${((cached / input) * 100).toFixed(1)}%` : "0.0%";
   const reportedCost = Number(usage?.cost_usd);
   const hasReportedCost = Number.isFinite(reportedCost) && reportedCost >= 0;
-  const estimatedCosts = estimatedModelCostParts(provider, model, usage);
+  const estimatedCosts = estimatedModelCostParts(usage);
   const estimatedCost = estimatedCosts?.total;
   const cost = hasReportedCost ? reportedCost : estimatedCost;
   const formatCost = (value: number | undefined) => {
@@ -1179,7 +1150,7 @@ export function AssistantTurn({
       }));
   const pendingCommands = snapshot?.pendingCommands ?? [];
   const status = snapshot?.status ?? (finalMessage ? "completed" : null);
-  const terminal = status === "completed" || status === "failed" || status === "cancelled" || status === "interrupted" || status === "limit_reached";
+  const terminal = isTerminalRunStatus(status);
   const terminalReason = status && status !== "completed"
     ? snapshot?.errorMessage?.trim() || (status === "cancelled" ? "요청에 따라 작업을 취소했습니다." : "작업을 완료하지 못했습니다. 다시 실행해 주세요.")
     : "";

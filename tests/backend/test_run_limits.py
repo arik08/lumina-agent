@@ -11,7 +11,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from lumina.agent.executor import (
-    _MODEL_TOKEN_PRICING,
     _usage_payload,
     local_run_executor,
 )
@@ -27,6 +26,7 @@ from lumina.providers import (
     ProviderUsage,
 )
 from lumina.providers.catalog import initial_model_catalog
+from lumina.runs.service import _usage_snapshot
 from lumina.runs.state import TERMINAL_STATUSES
 
 
@@ -43,6 +43,16 @@ def test_usage_payload_estimates_codex_gpt_5_4_cost() -> None:
     )
 
     assert payload["cost_usd"] == pytest.approx(0.065974)
+    assert payload["estimated_cost_breakdown_usd"] == pytest.approx(
+        {
+            "uncached_input": 0.0288175,
+            "cached_input": 0.0021315,
+            "cache_write_input": 0.0,
+            "input": 0.030949,
+            "output": 0.035025,
+            "total": 0.065974,
+        }
+    )
     assert payload["cost_basis"] == "price_table_estimate"
     assert payload["pricing_version"] == "public-list-2026-07-12"
 
@@ -77,6 +87,28 @@ def test_usage_payload_labels_subscription_cost_as_management_estimate() -> None
     assert payload["cost_basis"] == "subscription_price_table_estimate"
     assert payload["cost_usd"] > 0
     assert payload["pricing_version"] == "public-list-2026-07-12"
+
+
+def test_usage_snapshot_backfills_cost_breakdown_for_existing_runs() -> None:
+    run = type(
+        "StoredRun",
+        (),
+        {
+            "provider_id": "codex",
+            "model_key": "gpt-5.4",
+            "usage_json": {
+                "input_tokens": 20_053,
+                "cached_input_tokens": 8_526,
+                "output_tokens": 2_335,
+                "cost_usd": 0.065974,
+            },
+        },
+    )()
+
+    usage = _usage_snapshot(run)
+
+    assert usage["cost_usd"] == pytest.approx(0.065974)
+    assert usage["estimated_cost_breakdown_usd"]["total"] == pytest.approx(0.065974)
 
 
 @pytest.mark.parametrize(
@@ -119,14 +151,13 @@ def test_usage_payload_does_not_guess_private_provider_pricing(
     assert "cost_usd" not in payload
 
 
-def test_public_catalog_models_have_token_pricing() -> None:
-    catalog_models = {
-        (item.provider_id, item.runtime_model_id)
+def test_public_catalog_models_define_token_pricing_in_the_catalog() -> None:
+    assert all(
+        item.token_pricing is not None
         for item in initial_model_catalog()
         if item.provider_id != "pgpt"
-    }
-
-    assert set(_MODEL_TOKEN_PRICING) == catalog_models
+    )
+    assert all(item.token_pricing is None for item in initial_model_catalog("pgpt"))
 
 
 def _settings(tmp_path: Path, name: str, **overrides: Any) -> Settings:
@@ -219,7 +250,7 @@ def _assert_limit_event(run_id: str, code: str) -> Run:
         return run
 
 
-def test_run_snapshot_has_no_terminal_execution_limits(
+def test_run_snapshot_uses_organization_safety_limits_instead_of_legacy_settings(
     tmp_path: Path,
 ) -> None:
     settings = _settings(
@@ -238,11 +269,13 @@ def test_run_snapshot_has_no_terminal_execution_limits(
         )
         snapshot = _wait_for_terminal(client, run_id)
 
-    assert "maxTurns" not in snapshot["limits"]
-    assert "deadline" not in snapshot["limits"]
-    assert "tokenLimit" not in snapshot["limits"]
-    assert "costLimitUsd" not in snapshot["limits"]
-    assert snapshot["limits"]["costAccounting"] == "provider_reported"
+    assert snapshot["limits"] == {
+        "maxModelTurns": 400,
+        "maxTotalTokens": 4_000_000,
+        "maxElapsedSeconds": 604_800,
+        "maxCostUsd": 100.0,
+        "costAccounting": "provider_reported_or_estimated",
+    }
     assert snapshot["usage"]["model_turns"] >= 1
     with SessionLocal() as db:
         run = db.get(Run, run_id)

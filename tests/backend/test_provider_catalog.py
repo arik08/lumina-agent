@@ -18,6 +18,11 @@ from lumina.providers import (
     initial_model_catalog,
 )
 from lumina.providers.openai_compatible import OpenAICompatibleAdapter
+from lumina.providers.catalog import (
+    application_default_execution,
+    default_catalog_model,
+    model_operational_profile,
+)
 from lumina.providers.pgpt import (
     DEFAULT_PGPT_BASE_URL,
     PgptCredentials,
@@ -60,6 +65,59 @@ def test_initial_model_catalog_matches_detailed_design_section_12_3() -> None:
         assert [item.sort_order for item in items] == sorted(
             item.sort_order for item in items
         )
+
+    pgpt = initial_model_catalog("pgpt")[0]
+    assert pgpt.capabilities.context_window == 1_050_000
+    assert pgpt.capabilities.max_output_tokens == 128_000
+    assert pgpt.default_max_output_tokens == 42_000
+    assert pgpt.output_token_step == 1_000
+
+
+def test_application_default_execution_tracks_the_catalog_default() -> None:
+    pgpt_default = default_catalog_model("pgpt")
+
+    assert application_default_execution("production") == (
+        pgpt_default.provider_id,
+        pgpt_default.model_key,
+        "medium",
+    )
+    assert application_default_execution("development") == (
+        "mock",
+        "mock-agent",
+        "medium",
+    )
+
+
+def test_codex_runtime_profiles_are_derived_from_reviewed_openai_models() -> None:
+    codex_profile = model_operational_profile("codex", "gpt-5.6-sol")
+    openai_profile = model_operational_profile("openai", "gpt-5.6-sol")
+
+    assert codex_profile is not None
+    assert openai_profile is not None
+    assert codex_profile.context_window == 272_000
+    assert codex_profile.context_compaction_threshold == 0.85
+    assert codex_profile.token_pricing == openai_profile.token_pricing
+
+
+def test_runtime_model_ids_are_declared_only_in_the_catalog() -> None:
+    root = Path(__file__).resolve().parents[2]
+    catalog_path = (root / "apps/server/src/lumina/providers/catalog.py").resolve()
+    runtime_sources = [
+        *root.glob("apps/server/src/lumina/**/*.py"),
+        *root.glob("apps/web/src/**/*.ts"),
+        *root.glob("apps/web/src/**/*.tsx"),
+    ]
+    model_ids = {item.runtime_model_id for item in initial_model_catalog()}
+    duplicates: list[str] = []
+    for path in runtime_sources:
+        if path.resolve() == catalog_path:
+            continue
+        source = path.read_text(encoding="utf-8")
+        for model_id in model_ids:
+            if model_id in source:
+                duplicates.append(f"{path.relative_to(root)}: {model_id}")
+
+    assert duplicates == []
 
 
 @pytest.mark.asyncio
@@ -146,7 +204,8 @@ def test_pgpt_redaction_hides_envelope_and_raw_fields() -> None:
 
 
 def test_trust_manager_combines_ca_and_exports_subprocess_environment(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("LUMINA_TLS_COMPAT_MODE", raising=False)
     (tmp_path / ".env").write_text(

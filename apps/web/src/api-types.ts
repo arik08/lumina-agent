@@ -254,6 +254,10 @@ export interface AdminProviderModel {
   isDefault: boolean;
   capabilities: Record<string, unknown>;
   defaultContextWindow: number | null;
+  maxOutputTokens: number | null;
+  defaultMaxOutputTokens: number | null;
+  configuredMaxOutputTokens: number | null;
+  outputTokenStep: number;
 }
 
 export type SidebarRunStatus =
@@ -460,6 +464,19 @@ export interface AdminUsageStatistics {
     lastActiveDate: string | null;
     inactiveDays: number | null;
   }>;
+}
+
+export interface AdminRunSafetySettings {
+  maxModelTurns: number;
+  maxTotalTokens: number;
+  maxElapsedMinutes: number;
+  maxCostUsd: number;
+}
+
+export interface AdminEmergencyStopResult {
+  cancelledRunCount: number;
+  cancelledQueuedMessageCount: number;
+  cancelledActiveTaskCount: number;
 }
 
 export interface CreateAdminUserRequest {

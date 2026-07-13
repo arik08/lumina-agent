@@ -1,18 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast, get_args
 
 
 ReportFormat = Literal["html", "markdown", "docx", "xlsx", "pptx", "pdf"]
-REPORT_FORMATS: tuple[ReportFormat, ...] = (
-    "html",
-    "markdown",
-    "docx",
-    "xlsx",
-    "pptx",
-    "pdf",
-)
+REPORT_FORMATS = cast(tuple[ReportFormat, ...], get_args(ReportFormat))
 
 
 @dataclass(frozen=True)

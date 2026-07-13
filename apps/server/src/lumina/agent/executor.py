@@ -9,7 +9,7 @@ import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -78,6 +78,7 @@ from ..providers.google import GoogleGeminiAdapter
 from ..providers.openai import OpenAIResponsesAdapter
 from ..providers.openai_compatible import OpenAICompatibleAdapter
 from ..providers.pgpt import PgptAdapter
+from ..providers.catalog import estimate_model_cost_parts, model_operational_profile
 from ..storage import ManagedLocalStorage
 from ..tools.web import WebToolError, WebToolPolicy, web_fetch, web_search
 from ..tools.workspace import WORKSPACE_TOOL_SCHEMAS, execute_workspace_tool
@@ -288,6 +289,17 @@ class LocalRunExecutor:
         self._tasks[run_id] = task
         task.add_done_callback(self._discard_task)
 
+    def cancel(self, run_id: str) -> bool:
+        self._reenqueue_after_task.discard(run_id)
+        task = self._tasks.get(run_id)
+        if task is None or task.done():
+            return False
+        task.cancel()
+        return True
+
+    def cancel_many(self, run_ids: list[str]) -> int:
+        return sum(1 for run_id in run_ids if self.cancel(run_id))
+
     def _discard_task(self, task: asyncio.Task[None]) -> None:
         for run_id, current in list(self._tasks.items()):
             if current is task:
@@ -437,6 +449,7 @@ class LocalRunExecutor:
                 if isinstance(execution_snapshot, dict)
                 else {}
             )
+            configured_max_output_tokens = _configured_max_output_tokens(capabilities)
             image_generation_capable = bool(
                 provider_id == "codex"
                 and isinstance(capabilities, dict)
@@ -572,6 +585,7 @@ class LocalRunExecutor:
                 messages=tuple(request_messages),
                 tools=tool_schemas,
                 effort=effort,
+                max_output_tokens=configured_max_output_tokens,
                 metadata={
                     "prompt_cache_key": prompt_cache_key,
                     "prompt_cache_retention": "24h",
@@ -719,6 +733,7 @@ class LocalRunExecutor:
                                     event.usage,
                                     provider_id=provider_id,
                                     model=runtime_model_id,
+                                    model_key=run.model_key,
                                 ),
                             )
                             if limit_violation is not None:
@@ -2767,6 +2782,21 @@ class LocalRunExecutor:
                     and value >= 0
                 ):
                     previous[key] = float(previous.get(key, 0.0)) + value
+                elif key == "estimated_cost_breakdown_usd" and isinstance(
+                    value, Mapping
+                ):
+                    accumulated = previous.get(key, {})
+                    if not isinstance(accumulated, Mapping):
+                        accumulated = {}
+                    previous[key] = {
+                        part: float(accumulated.get(part, 0.0)) + float(amount)
+                        for part, amount in value.items()
+                        if isinstance(part, str)
+                        and isinstance(amount, (int, float))
+                        and not isinstance(amount, bool)
+                        and math.isfinite(float(amount))
+                        and amount >= 0
+                    }
                 elif key == "raw":
                     previous[key] = value
                 elif key in {"cost_basis", "pricing_version"}:
@@ -3400,7 +3430,11 @@ def _safe_provider_metadata(raw: Any) -> dict[str, str]:
 
 
 def _usage_payload(
-    usage: Any, *, provider_id: str | None = None, model: str | None = None
+    usage: Any,
+    *,
+    provider_id: str | None = None,
+    model: str | None = None,
+    model_key: str | None = None,
 ) -> dict[str, Any]:
     payload = {
         "input_tokens": usage.input_tokens,
@@ -3412,112 +3446,30 @@ def _usage_payload(
     }
     subscription_usage = usage.raw.get("billing") == "subscription_usage"
     reported_cost = _reported_cost_usd(usage.raw)
+    estimated_cost = estimate_model_cost_parts(
+        provider_id or "",
+        model_key or model or "",
+        input_tokens=usage.input_tokens,
+        cached_input_tokens=usage.cached_input_tokens,
+        cache_write_tokens=usage.cache_write_tokens,
+        output_tokens=usage.output_tokens,
+    )
+    if estimated_cost is not None:
+        payload["estimated_cost_breakdown_usd"] = estimated_cost
     if reported_cost is not None and not subscription_usage:
         payload["cost_usd"] = reported_cost
         payload["cost_basis"] = "provider_reported"
-    else:
-        estimated_cost = _estimated_cost_usd(
-            provider_id=provider_id,
-            model=model,
-            input_tokens=usage.input_tokens,
-            cached_input_tokens=usage.cached_input_tokens,
-            cache_write_tokens=usage.cache_write_tokens,
-            output_tokens=usage.output_tokens,
+    elif estimated_cost is not None:
+        payload["cost_usd"] = estimated_cost["total"]
+        payload["cost_basis"] = (
+            "subscription_price_table_estimate"
+            if subscription_usage
+            else "price_table_estimate"
         )
-        if estimated_cost is not None:
-            payload["cost_usd"] = estimated_cost
-            payload["cost_basis"] = (
-                "subscription_price_table_estimate"
-                if subscription_usage
-                else "price_table_estimate"
-            )
-            payload["pricing_version"] = "public-list-2026-07-12"
+        profile = model_operational_profile(provider_id or "", model_key or model or "")
+        if profile is not None and profile.token_pricing is not None:
+            payload["pricing_version"] = profile.token_pricing.version
     return payload
-
-
-def _estimated_cost_usd(
-    *,
-    provider_id: str | None,
-    model: str | None,
-    input_tokens: int,
-    cached_input_tokens: int,
-    cache_write_tokens: int,
-    output_tokens: int,
-) -> float | None:
-    pricing = _MODEL_TOKEN_PRICING.get((provider_id, model))
-    if pricing is None:
-        return None
-
-    uncached_input_tokens = max(
-        0, input_tokens - cached_input_tokens - cache_write_tokens
-    )
-    input_rate, cached_rate, cache_write_rate, output_rate = pricing[:4]
-    (
-        threshold,
-        high_input_rate,
-        high_cached_rate,
-        high_cache_write_rate,
-        high_output_rate,
-    ) = pricing[4:]
-    if threshold is not None and input_tokens > threshold:
-        input_rate = high_input_rate
-        cached_rate = high_cached_rate
-        cache_write_rate = high_cache_write_rate
-        output_rate = high_output_rate
-    return (
-        uncached_input_tokens * input_rate
-        + cached_input_tokens * cached_rate
-        + cache_write_tokens * cache_write_rate
-        + output_tokens * output_rate
-    ) / 1_000_000
-
-
-# USD per 1M tokens: input, cache read, cache write, output, then optional
-# long-context threshold and its four rates. Public list prices verified 2026-07-12.
-_MODEL_TOKEN_PRICING: dict[
-    tuple[str | None, str | None],
-    tuple[float, float, float, float, int | None, float, float, float, float],
-] = {
-    **{
-        (provider, "gpt-5.6-sol"): (
-            5.0,
-            0.5,
-            6.25,
-            30.0,
-            272_000,
-            10.0,
-            1.0,
-            12.5,
-            45.0,
-        )
-        for provider in ("openai",)
-    },
-    **{
-        (provider, "gpt-5.6-terra"): (
-            2.5,
-            0.25,
-            3.125,
-            15.0,
-            272_000,
-            5.0,
-            0.5,
-            6.25,
-            22.5,
-        )
-        for provider in ("openai",)
-    },
-    **{
-        (provider, "gpt-5.6-luna"): (1.0, 0.1, 1.25, 6.0, 272_000, 2.0, 0.2, 2.5, 9.0)
-        for provider in ("openai",)
-    },
-    ("codex", "gpt-5.5"): (5.0, 0.5, 5.0, 30.0, 272_000, 10.0, 1.0, 10.0, 45.0),
-    ("codex", "gpt-5.4"): (2.5, 0.25, 2.5, 15.0, 272_000, 5.0, 0.5, 5.0, 22.5),
-    ("anthropic", "claude-opus-4-8"): (5.0, 0.5, 6.25, 25.0, None, 0.0, 0.0, 0.0, 0.0),
-    ("anthropic", "claude-sonnet-5"): (2.0, 0.2, 2.5, 10.0, None, 0.0, 0.0, 0.0, 0.0),
-    ("anthropic", "claude-haiku-4-5"): (1.0, 0.1, 1.25, 5.0, None, 0.0, 0.0, 0.0, 0.0),
-    ("google", "gemini-3.1-pro"): (2.0, 0.2, 2.0, 12.0, 200_000, 4.0, 0.4, 4.0, 18.0),
-    ("google", "gemini-3.5-flash"): (1.5, 0.15, 1.5, 9.0, None, 0.0, 0.0, 0.0, 0.0),
-}
 
 
 def _nonnegative_int(value: Any) -> int:
@@ -3540,6 +3492,23 @@ def _optional_positive_int(value: Any) -> int | None:
     return parsed if parsed > 0 else None
 
 
+def _configured_max_output_tokens(capabilities: Any) -> int | None:
+    if not isinstance(capabilities, Mapping):
+        return None
+    configured = _optional_positive_int(
+        capabilities.get(
+            "configured_max_output_tokens",
+            capabilities.get("configuredMaxOutputTokens"),
+        )
+    )
+    hard_max = _optional_positive_int(
+        capabilities.get("max_output_tokens", capabilities.get("maxOutputTokens"))
+    )
+    if configured is not None and hard_max is not None:
+        return min(configured, hard_max)
+    return configured
+
+
 def _run_deadline(run: Run) -> datetime | None:
     limits = run.snapshot_json.get("limits", {})
     if not isinstance(limits, Mapping):
@@ -3553,16 +3522,69 @@ def _run_deadline(run: Run) -> datetime | None:
         except ValueError:
             return None
     else:
-        return None
+        max_elapsed_seconds = _nonnegative_int(limits.get("maxElapsedSeconds"))
+        if max_elapsed_seconds <= 0 or run.started_at is None:
+            return None
+        parsed = run.started_at + timedelta(seconds=max_elapsed_seconds)
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
 
 
 def _run_limit_violation(run: Run) -> RunLimitViolation | None:
-    # Context pressure is handled by compaction before every model turn.
-    # Accumulated time, token and cost accounting never terminates a Run.
+    limits = run.snapshot_json.get("limits", {})
+    if not isinstance(limits, Mapping):
+        return None
+
+    max_model_turns = _nonnegative_int(limits.get("maxModelTurns"))
+    model_turns = _nonnegative_int(run.usage_json.get("model_turns"))
+    if max_model_turns and model_turns >= max_model_turns:
+        return RunLimitViolation(
+            code="run_model_turn_limit_reached",
+            message="관리자가 설정한 Run 모델 Turn 한도에 도달했습니다.",
+            limit=max_model_turns,
+            observed=model_turns,
+        )
+
+    max_total_tokens = _nonnegative_int(limits.get("maxTotalTokens"))
+    total_tokens = _nonnegative_int(
+        run.usage_json.get("input_tokens")
+    ) + _nonnegative_int(run.usage_json.get("output_tokens"))
+    if max_total_tokens and total_tokens >= max_total_tokens:
+        return RunLimitViolation(
+            code="run_token_limit_reached",
+            message="관리자가 설정한 Run 누적 Token 한도에 도달했습니다.",
+            limit=max_total_tokens,
+            observed=total_tokens,
+        )
+
+    max_cost_usd = _nonnegative_float(limits.get("maxCostUsd"))
+    cost_usd = _nonnegative_float(run.usage_json.get("cost_usd"))
+    if max_cost_usd and cost_usd >= max_cost_usd:
+        return RunLimitViolation(
+            code="run_cost_limit_reached",
+            message="관리자가 설정한 Run 예상 비용 한도에 도달했습니다.",
+            limit=max_cost_usd,
+            observed=cost_usd,
+        )
+
+    deadline = _run_deadline(run)
+    if deadline is not None and utc_now() >= deadline:
+        return RunLimitViolation(
+            code="run_deadline_reached",
+            message="관리자가 설정한 Run 실행 시간 한도에 도달했습니다.",
+            limit=deadline.isoformat(),
+            observed=utc_now().isoformat(),
+        )
     return None
+
+
+def _nonnegative_float(value: Any) -> float:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        converted = float(value)
+        if math.isfinite(converted) and converted >= 0:
+            return converted
+    return 0.0
 
 
 def _reported_cost_usd(raw: Any) -> float | None:
@@ -3865,9 +3887,7 @@ _REPORT_TOOL_SCHEMA = {
 }
 
 
-def _unique_report_display_name(
-    db: Session, project_id: str, display_name: str
-) -> str:
+def _unique_report_display_name(db: Session, project_id: str, display_name: str) -> str:
     existing_names = {
         name.casefold()
         for name in db.scalars(
@@ -3885,6 +3905,7 @@ def _unique_report_display_name(
         if candidate.casefold() not in existing_names:
             return candidate
     return f"{path.stem}_{new_uuid()[:8]}{path.suffix}"
+
 
 _WEB_SEARCH_TOOL_SCHEMA = {
     "type": "function",

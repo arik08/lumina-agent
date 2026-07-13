@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, time, timedelta
-from typing import Literal
+from typing import Literal, get_args
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query, Request, Response
@@ -10,6 +11,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from ...audit import record_audit
+from ...agent.executor import local_run_executor
 from ...auth import create_user, revoke_user_sessions
 from ...auth.security import hash_password
 from ...authorization import require_admin
@@ -22,11 +24,14 @@ from ...models import (
     ConversationShareGrant,
     Message,
     MessageFeedback,
+    Organization,
     Run,
     User,
     utc_now,
 )
-from ...runs.service import message_response, run_snapshot
+from ...runs.broker import event_broker
+from ...runs.safety import normalize_run_safety_settings, run_safety_payload
+from ...runs.service import cancel_organization_work, message_response, run_snapshot
 from ..dependencies import AuthContext, get_current_user, require_csrf
 from ..errors import ApiProblem
 from ..schemas import ApiModel
@@ -34,8 +39,10 @@ from ..schemas import ApiModel
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
-_USER_STATUSES = {"invited", "active", "locked", "disabled"}
-_USER_ROLES = {"user", "admin"}
+UserStatus = Literal["invited", "active", "locked", "disabled"]
+UserRole = Literal["user", "admin"]
+_USER_STATUSES = frozenset(get_args(UserStatus))
+_USER_ROLES = frozenset(get_args(UserRole))
 _ANALYTICS_TIMEZONE = ZoneInfo("Asia/Seoul")
 
 
@@ -45,16 +52,16 @@ class AdminUserCreate(ApiModel):
     password: str = Field(min_length=1, max_length=1024)
     display_name: str | None = Field(default=None, max_length=200)
     affiliation: str | None = Field(default=None, max_length=200)
-    role: Literal["user", "admin"] = "user"
-    status: Literal["invited", "active", "locked", "disabled"] = "active"
+    role: UserRole = "user"
+    status: UserStatus = "active"
     must_change_password: bool = False
 
 
 class AdminUserPatch(ApiModel):
     display_name: str | None = Field(default=None, max_length=200)
     affiliation: str | None = Field(default=None, max_length=200)
-    role: Literal["user", "admin"] | None = None
-    status: Literal["invited", "active", "locked", "disabled"] | None = None
+    role: UserRole | None = None
+    status: UserStatus | None = None
 
 
 class AdminPasswordReset(ApiModel):
@@ -64,6 +71,17 @@ class AdminPasswordReset(ApiModel):
 
 class AdminShareRevoke(ApiModel):
     reason: str = Field(default="", max_length=1000)
+
+
+class AdminRunSafetyPatch(ApiModel):
+    max_model_turns: int = Field(ge=10, le=10_000)
+    max_total_tokens: int = Field(ge=100_000, le=100_000_000)
+    max_elapsed_minutes: int = Field(ge=30, le=525_600)
+    max_cost_usd: float = Field(ge=1, le=10_000)
+
+
+class AdminEmergencyStop(ApiModel):
+    reason: str = Field(default="관리자 비상 중단", max_length=1000)
 
 
 def _request_id(request: Request) -> str | None:
@@ -141,7 +159,11 @@ def _guard_last_active_admin(
 
 def _usage_number(usage: dict[str, object], key: str) -> float:
     value = usage.get(key, 0)
-    return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else 0.0
+    return (
+        float(value)
+        if isinstance(value, int | float) and not isinstance(value, bool)
+        else 0.0
+    )
 
 
 @router.get("/usage-statistics")
@@ -155,7 +177,9 @@ def get_usage_statistics(
     require_admin(actor)
     now = utc_now()
     today = now.astimezone(_ANALYTICS_TIMEZONE).date()
-    month_start = datetime.combine(today - timedelta(days=29), time.min, _ANALYTICS_TIMEZONE).astimezone(UTC)
+    month_start = datetime.combine(
+        today - timedelta(days=29), time.min, _ANALYTICS_TIMEZONE
+    ).astimezone(UTC)
 
     users = list(
         db.scalars(
@@ -164,11 +188,17 @@ def get_usage_statistics(
             .order_by(User.login_id)
         )
     )
-    session_query = select(AuthSession).join(User, User.id == AuthSession.user_id).where(User.organization_id == actor.organization_id)
+    session_query = (
+        select(AuthSession)
+        .join(User, User.id == AuthSession.user_id)
+        .where(User.organization_id == actor.organization_id)
+    )
     run_query = select(Run).where(Run.organization_id == actor.organization_id)
     if days:
         requested_first_day = today - timedelta(days=days - 1)
-        range_start = datetime.combine(requested_first_day, time.min, _ANALYTICS_TIMEZONE).astimezone(UTC)
+        range_start = datetime.combine(
+            requested_first_day, time.min, _ANALYTICS_TIMEZONE
+        ).astimezone(UTC)
         session_query = session_query.where(AuthSession.created_at >= range_start)
         run_query = run_query.where(Run.created_at >= range_start)
     sessions = list(db.scalars(session_query))
@@ -218,15 +248,29 @@ def get_usage_statistics(
             uncached_input_tokens = int(_usage_number(usage, "uncached_input_tokens"))
             if "uncached_input_tokens" not in usage:
                 uncached_input_tokens = max(0, input_tokens - cached_input_tokens)
-            user_input_tokens[run.user_id] = user_input_tokens.get(run.user_id, 0) + input_tokens
-            user_cached_input_tokens[run.user_id] = user_cached_input_tokens.get(run.user_id, 0) + cached_input_tokens
-            user_uncached_input_tokens[run.user_id] = user_uncached_input_tokens.get(run.user_id, 0) + uncached_input_tokens
-            user_output_tokens[run.user_id] = user_output_tokens.get(run.user_id, 0) + int(_usage_number(usage, "output_tokens"))
-            user_cost[run.user_id] = user_cost.get(run.user_id, 0.0) + _usage_number(usage, "cost_usd")
+            user_input_tokens[run.user_id] = (
+                user_input_tokens.get(run.user_id, 0) + input_tokens
+            )
+            user_cached_input_tokens[run.user_id] = (
+                user_cached_input_tokens.get(run.user_id, 0) + cached_input_tokens
+            )
+            user_uncached_input_tokens[run.user_id] = (
+                user_uncached_input_tokens.get(run.user_id, 0) + uncached_input_tokens
+            )
+            user_output_tokens[run.user_id] = user_output_tokens.get(
+                run.user_id, 0
+            ) + int(_usage_number(usage, "output_tokens"))
+            user_cost[run.user_id] = user_cost.get(run.user_id, 0.0) + _usage_number(
+                usage, "cost_usd"
+            )
 
     dau = len(daily_users[today])
-    wau_users = set().union(*(daily_users[day] for day in dates if day >= today - timedelta(days=6)))
-    mau_users = set().union(*(daily_users[day] for day in dates if day >= today - timedelta(days=29)))
+    wau_users = set().union(
+        *(daily_users[day] for day in dates if day >= today - timedelta(days=6))
+    )
+    mau_users = set().union(
+        *(daily_users[day] for day in dates if day >= today - timedelta(days=29))
+    )
     new_users = sum(1 for user in users if user.created_at >= month_start)
     per_user = []
     for user in users:
@@ -248,14 +292,29 @@ def get_usage_statistics(
                 "runCount": user_runs.get(user.id, 0),
                 "inputTokens": user_input_tokens.get(user.id, 0),
                 "cachedInputTokens": cached_input_tokens,
-                "cacheHitRatioPercent": round(cached_input_tokens / cacheable_input_tokens * 100, 1) if cacheable_input_tokens else 0,
+                "cacheHitRatioPercent": round(
+                    cached_input_tokens / cacheable_input_tokens * 100, 1
+                )
+                if cacheable_input_tokens
+                else 0,
                 "outputTokens": user_output_tokens.get(user.id, 0),
                 "estimatedCostUsd": round(user_cost.get(user.id, 0.0), 6),
-                "lastActiveDate": last_active_day.isoformat() if last_active_day else None,
-                "inactiveDays": (today - last_active_day).days if last_active_day else None,
+                "lastActiveDate": last_active_day.isoformat()
+                if last_active_day
+                else None,
+                "inactiveDays": (today - last_active_day).days
+                if last_active_day
+                else None,
             }
         )
-    per_user.sort(key=lambda item: (int(item["activeDays"]), int(item["runCount"]), str(item["loginId"])), reverse=True)
+    per_user.sort(
+        key=lambda item: (
+            int(item["activeDays"]),
+            int(item["runCount"]),
+            str(item["loginId"]),
+        ),
+        reverse=True,
+    )
 
     record_audit(
         db,
@@ -275,7 +334,9 @@ def get_usage_statistics(
             "dau": dau,
             "wau": len(wau_users),
             "mau": len(mau_users),
-            "stickinessPercent": round(dau / len(mau_users) * 100, 1) if mau_users else 0,
+            "stickinessPercent": round(dau / len(mau_users) * 100, 1)
+            if mau_users
+            else 0,
             "newUsers30d": new_users,
             "runs": len(runs),
         },
@@ -951,6 +1012,97 @@ def list_audit_events(
         "total": total,
         "offset": offset,
         "hasMore": offset + len(event_rows) < total,
+    }
+
+
+def _admin_organization(db: Session, actor: User) -> Organization:
+    require_admin(actor)
+    organization = db.get(Organization, actor.organization_id)
+    if organization is None:
+        raise ApiProblem(404, "organization_not_found", "조직을 찾을 수 없습니다.")
+    return organization
+
+
+@router.get("/run-safety")
+def get_run_safety_settings(
+    request: Request,
+    actor: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, int | float]:
+    organization = _admin_organization(db, actor)
+    record_audit(
+        db,
+        action="admin_run_safety_viewed",
+        target_type="organization",
+        target_id=organization.id,
+        result="success",
+        actor=actor,
+        request_id=_request_id(request),
+    )
+    db.commit()
+    return run_safety_payload(organization.run_safety_settings_json)
+
+
+@router.patch("/run-safety")
+def patch_run_safety_settings(
+    payload: AdminRunSafetyPatch,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, int | float]:
+    organization = _admin_organization(db, context.user)
+    previous = normalize_run_safety_settings(organization.run_safety_settings_json)
+    updated = normalize_run_safety_settings(payload.model_dump())
+    organization.run_safety_settings_json = updated
+    record_audit(
+        db,
+        action="admin_run_safety_updated",
+        target_type="organization",
+        target_id=organization.id,
+        result="unchanged" if previous == updated else "success",
+        actor=context.user,
+        request_id=_request_id(request),
+        metadata={"previous": previous, "updated": updated},
+    )
+    db.commit()
+    return run_safety_payload(updated)
+
+
+@router.post("/run-safety/emergency-stop")
+async def emergency_stop_all_runs(
+    payload: AdminEmergencyStop,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, int]:
+    organization = _admin_organization(db, context.user)
+    run_ids, queued_message_count = cancel_organization_work(
+        db,
+        organization_id=organization.id,
+        actor_user_id=context.user.id,
+    )
+    record_audit(
+        db,
+        action="admin_all_runs_killed",
+        target_type="organization",
+        target_id=organization.id,
+        result="success" if run_ids or queued_message_count else "unchanged",
+        actor=context.user,
+        request_id=_request_id(request),
+        reason=payload.reason.strip() or None,
+        metadata={
+            "cancelled_run_count": len(run_ids),
+            "cancelled_queued_message_count": queued_message_count,
+        },
+    )
+    db.commit()
+    active_task_count = local_run_executor.cancel_many(run_ids)
+    if run_ids:
+        await asyncio.gather(*(event_broker.notify(run_id) for run_id in run_ids))
+    return {
+        "cancelledRunCount": len(run_ids),
+        "cancelledQueuedMessageCount": queued_message_count,
+        "cancelledActiveTaskCount": active_task_count,
     }
 
 

@@ -92,6 +92,9 @@ class Organization(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     policy_revision_contents: Mapped[dict[str, str]] = mapped_column(
         JSON, default=dict, nullable=False
     )
+    run_safety_settings_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
 
 
 class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):

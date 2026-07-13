@@ -6,7 +6,9 @@ import type {
   AdminAuditList,
   AdminConversationDetail,
   AdminConversationList,
+  AdminEmergencyStopResult,
   AdminProviderModel,
+  AdminRunSafetySettings,
   AdminUsageStatistics,
   AdminUser,
   AdminUserList,
@@ -1320,6 +1322,26 @@ export async function getAdminUsageStatistics(days: 0 | 30 | 90 = 30, signal?: A
   return request<AdminUsageStatistics>("/admin/usage-statistics", { query: { days }, signal });
 }
 
+export async function getAdminRunSafetySettings(signal?: AbortSignal) {
+  return request<AdminRunSafetySettings>("/admin/run-safety", { signal });
+}
+
+export async function updateAdminRunSafetySettings(payload: AdminRunSafetySettings, signal?: AbortSignal) {
+  return request<AdminRunSafetySettings>("/admin/run-safety", {
+    method: "PATCH",
+    body: payload,
+    signal,
+  });
+}
+
+export async function emergencyStopAllAdminRuns(signal?: AbortSignal) {
+  return request<AdminEmergencyStopResult>("/admin/run-safety/emergency-stop", {
+    method: "POST",
+    body: { reason: "관리자 비상 중단" },
+    signal,
+  });
+}
+
 export async function createAdminUser(payload: CreateAdminUserRequest, signal?: AbortSignal) {
   return request<AdminUser>("/admin/users", { method: "POST", body: payload, signal });
 }
@@ -1633,6 +1655,9 @@ export const api = {
   },
   admin: {
     getUsageStatistics: getAdminUsageStatistics,
+    getRunSafetySettings: getAdminRunSafetySettings,
+    updateRunSafetySettings: updateAdminRunSafetySettings,
+    emergencyStopAllRuns: emergencyStopAllAdminRuns,
     listUsers: listAdminUsers,
     createUser: createAdminUser,
     updateUser: updateAdminUser,

@@ -4,12 +4,21 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from lumina.api.routes import admin
 from lumina.config import Settings
 from lumina.db import SessionLocal
 from lumina.main import create_app
-from lumina.models import Message
+from lumina.models import (
+    Conversation,
+    Message,
+    Organization,
+    Project,
+    QueuedMessage,
+    Run,
+    User,
+)
 
 
 def _test_app(tmp_path: Path) -> FastAPI:
@@ -72,6 +81,128 @@ def _create_user(
     )
     assert response.status_code == 201, response.text
     return response.json()
+
+
+def test_admin_run_safety_settings_and_emergency_stop(tmp_path: Path) -> None:
+    app = _test_app(tmp_path)
+    with TestClient(app) as admin_client:
+        csrf = _login(admin_client, "admin", "1")
+
+        defaults = admin_client.get("/api/admin/run-safety")
+        assert defaults.status_code == 200, defaults.text
+        assert defaults.json() == {
+            "maxModelTurns": 400,
+            "maxTotalTokens": 4_000_000,
+            "maxElapsedMinutes": 10_080,
+            "maxCostUsd": 100.0,
+        }
+        assert (
+            admin_client.patch(
+                "/api/admin/run-safety",
+                json={
+                    "maxModelTurns": 300,
+                    "maxTotalTokens": 3_000_000,
+                    "maxElapsedMinutes": 480,
+                    "maxCostUsd": 75,
+                },
+            ).status_code
+            == 403
+        )
+
+        updated = admin_client.patch(
+            "/api/admin/run-safety",
+            headers={"X-CSRF-Token": csrf},
+            json={
+                "maxModelTurns": 300,
+                "maxTotalTokens": 3_000_000,
+                "maxElapsedMinutes": 480,
+                "maxCostUsd": 75,
+            },
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["maxTotalTokens"] == 3_000_000
+
+        with SessionLocal() as db:
+            admin_user = db.scalar(
+                select(User).where(User.login_id == "admin@posco.com")
+            )
+            assert admin_user is not None
+            organization = db.get(Organization, admin_user.organization_id)
+            project = db.scalar(
+                select(Project).where(Project.owner_user_id == admin_user.id)
+            )
+            assert organization is not None and project is not None
+            conversation = Conversation(
+                organization_id=organization.id,
+                project_id=project.id,
+                owner_user_id=admin_user.id,
+                title="비상 중단 테스트",
+            )
+            db.add(conversation)
+            db.flush()
+            assert organization.run_safety_settings_json["max_model_turns"] == 300
+            active_run = Run(
+                organization_id=organization.id,
+                project_id=conversation.project_id,
+                conversation_id=conversation.id,
+                user_id=admin_user.id,
+                status="model_streaming",
+                provider_id="mock",
+                model_key="mock-agent",
+                runtime_model_id="mock-agent",
+                model_display_name="Mock Agent",
+                snapshot_json={"limits": {}},
+                usage_json={},
+                idempotency_key="admin-emergency-active",
+            )
+            queued_run = Run(
+                organization_id=organization.id,
+                project_id=conversation.project_id,
+                conversation_id=conversation.id,
+                user_id=admin_user.id,
+                status="queued",
+                provider_id="mock",
+                model_key="mock-agent",
+                runtime_model_id="mock-agent",
+                model_display_name="Mock Agent",
+                snapshot_json={"limits": {}},
+                usage_json={},
+                idempotency_key="admin-emergency-queued",
+            )
+            db.add_all((active_run, queued_run))
+            db.flush()
+            queued_message = QueuedMessage(
+                conversation_id=conversation.id,
+                user_id=admin_user.id,
+                position=1,
+                message_text="비상 중단할 다음 요청",
+                idempotency_key="admin-emergency-message",
+            )
+            db.add(queued_message)
+            db.commit()
+            run_ids = {active_run.id, queued_run.id}
+            queued_message_id = queued_message.id
+
+        stopped = admin_client.post(
+            "/api/admin/run-safety/emergency-stop",
+            headers={"X-CSRF-Token": csrf},
+            json={"reason": "테스트 비상 중단"},
+        )
+        assert stopped.status_code == 200, stopped.text
+        assert stopped.json()["cancelledRunCount"] == 2
+        assert stopped.json()["cancelledQueuedMessageCount"] == 1
+
+        with SessionLocal() as db:
+            statuses = set(db.scalars(select(Run.status).where(Run.id.in_(run_ids))))
+            assert statuses == {"cancelled"}
+            queued_message = db.get(QueuedMessage, queued_message_id)
+            assert queued_message is not None
+            assert queued_message.status == "cancelled"
+            assert queued_message.cancelled_at is not None
+
+        audit = admin_client.get("/api/admin/audit-events?action=admin_all_runs_killed")
+        assert audit.status_code == 200
+        assert audit.json()["items"][0]["metadata"]["cancelled_run_count"] == 2
 
 
 def test_admin_user_lifecycle_permissions_and_audit(tmp_path: Path) -> None:
@@ -178,7 +309,9 @@ def test_admin_user_lifecycle_permissions_and_audit(tmp_path: Path) -> None:
         assert "passwordHash" not in audit.text
 
 
-def test_admin_usage_statistics_are_organization_scoped_and_admin_only(tmp_path: Path) -> None:
+def test_admin_usage_statistics_are_organization_scoped_and_admin_only(
+    tmp_path: Path,
+) -> None:
     app = _test_app(tmp_path)
     with TestClient(app) as admin_client:
         admin_csrf = _login(admin_client, "admin", "1")
@@ -199,7 +332,9 @@ def test_admin_usage_statistics_are_organization_scoped_and_admin_only(tmp_path:
         assert payload["summary"]["dau"] >= 2
         assert payload["summary"]["mau"] >= 2
         assert payload["summary"]["stickinessPercent"] >= 0
-        analyst = next(item for item in payload["users"] if item["loginId"] == "analyst@posco.com")
+        analyst = next(
+            item for item in payload["users"] if item["loginId"] == "analyst@posco.com"
+        )
         assert analyst["loginCount"] == 1
         assert analyst["activeDays"] == 1
         assert analyst["inactiveDays"] == 0
@@ -208,7 +343,9 @@ def test_admin_usage_statistics_are_organization_scoped_and_admin_only(tmp_path:
         assert analyst["cacheHitRatioPercent"] == 0
         assert analyst["outputTokens"] == 0
 
-        audit = admin_client.get("/api/admin/audit-events?action=admin_usage_statistics_viewed")
+        audit = admin_client.get(
+            "/api/admin/audit-events?action=admin_usage_statistics_viewed"
+        )
         assert audit.status_code == 200
         assert audit.json()["items"][0]["metadata"]["days"] == 30
 
@@ -266,7 +403,9 @@ def test_admin_conversation_view_is_audited(tmp_path: Path) -> None:
         detail = client.get(f"/api/admin/conversations/{conversation_id}")
         assert detail.status_code == 200
         assert detail.json()["conversation"]["title"] == "관리자 조회 감사 테스트"
-        assert detail.json()["feedback"][0]["description"] == "관리 화면에서 확인할 의견"
+        assert (
+            detail.json()["feedback"][0]["description"] == "관리 화면에서 확인할 의견"
+        )
         assert detail.json()["feedback"][0]["author"]["loginId"] == "admin@posco.com"
 
         turn_sets = client.get(f"/api/admin/conversations/{conversation_id}/turn-sets")
