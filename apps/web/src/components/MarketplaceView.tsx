@@ -70,6 +70,12 @@ function skillTags(item: SkillExtension): string[] {
   return [item.visibility === "organization" ? "조직" : "개인"];
 }
 
+function visibilityLabel(visibility: SkillExtension["visibility"]): string {
+  if (visibility === "organization") return "조직";
+  if (visibility === "project") return "프로젝트";
+  return "개인";
+}
+
 export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceViewProps) {
   const skillContentRef = useRef<HTMLDivElement>(null);
   const [marketKind, setMarketKind] = useState<"skill" | "mcp">("skill");
@@ -192,7 +198,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
       setNewInstructions("");
       await refresh(created.id);
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Skill Draft를 만들지 못했습니다.");
+      setError(caught instanceof ApiError ? caught.message : "Skill 초안을 만들지 못했습니다.");
     } finally {
       setBusy(false);
     }
@@ -350,13 +356,13 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
 
   return (
     <div className="feature-view marketplace-view">
-      <header className="feature-header"><div><button className="feature-mobile-menu" type="button" aria-label="사이드바 열기" onClick={onOpenNavigation}><Menu size={17} /></button><Store size={17} /><h1>마켓스토어</h1><span>{marketKind === "skill" ? `Skill ${items.length} · Draft ${counts.drafts} · 설치 ${counts.installed}` : "승인 MCP · 설치 · Secret binding"}</span></div><div><button type="button" aria-label="새로 고침" onClick={() => marketKind === "skill" ? void refresh() : setMcpRefreshKey((value) => value + 1)}><RefreshCw size={15} /></button>{marketKind === "skill" && <button className="feature-primary-action lumina-primary-action" type="button" onClick={() => setCreateOpen(true)}><Plus size={15} /> 새 Skill</button>}</div></header>
+      <header className="feature-header"><div><button className="feature-mobile-menu" type="button" aria-label="사이드바 열기" onClick={onOpenNavigation}><Menu size={17} /></button><Store size={17} /><h1>마켓스토어</h1><span>{marketKind === "skill" ? `Skill ${items.length} · 초안 ${counts.drafts} · 설치 ${counts.installed}` : "승인 MCP · 설치 · Secret binding"}</span></div><div><button type="button" aria-label="새로 고침" onClick={() => marketKind === "skill" ? void refresh() : setMcpRefreshKey((value) => value + 1)}><RefreshCw size={15} /></button>{marketKind === "skill" && <button className="feature-primary-action lumina-primary-action" type="button" onClick={() => setCreateOpen(true)}><Plus size={15} /> 새 Skill</button>}</div></header>
       <div className="feature-kind-tabs" role="tablist" aria-label="Marketplace 유형"><button type="button" role="tab" aria-selected={marketKind === "skill"} onClick={() => setMarketKind("skill")}><Sparkles size={14} /> Skill</button><button type="button" role="tab" aria-selected={marketKind === "mcp"} onClick={() => setMarketKind("mcp")}><Wrench size={14} /> MCP</button></div>
       {marketKind === "skill" && <div className="marketplace-toolbar">
         <div className="marketplace-scope-tabs" role="tablist" aria-label="Skill 보기">
           <button type="button" role="tab" aria-selected={skillView === "catalog"} onClick={() => setSkillView("catalog")}><Package size={14} /> 카탈로그 <span>{items.length}</span></button>
           <button type="button" role="tab" aria-selected={skillView === "installed"} onClick={() => setSkillView("installed")}><Download size={14} /> 설치됨 <span>{counts.installed}</span></button>
-          <button type="button" role="tab" aria-selected={skillView === "drafts"} onClick={() => setSkillView("drafts")}><Sparkles size={14} /> 내 Draft <span>{counts.drafts}</span></button>
+          <button type="button" role="tab" aria-selected={skillView === "drafts"} onClick={() => setSkillView("drafts")}><Sparkles size={14} /> 내 초안 <span>{counts.drafts}</span></button>
         </div>
         <label className="marketplace-search"><Search size={14} /><input aria-label="Skill 검색" placeholder="Skill 이름 또는 설명 검색" value={query} onChange={(event) => setQuery(event.currentTarget.value)} /></label>
       </div>}
@@ -369,7 +375,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
             const itemInstallationPending = pendingInstallationSurfaceById[item.id] === "list";
             return <div className={`marketplace-skill-row ${item.id === selected?.id ? "is-selected" : ""}`} key={item.id}>
               <button className="marketplace-skill-select" type="button" onClick={() => setSelectedId(item.id)}>
-                <span><strong>{item.name}</strong><small>{item.description || item.slug}</small><small className="marketplace-tags" aria-label="Skill 태그">{skillTags(item).map((tag) => <span key={tag}>#{tag}</span>)}{item.draft && <span className="is-draft">Draft r{item.draft.revision}</span>}</small></span>
+                <span><strong>{item.name}</strong><small>{item.description || item.slug}</small><small className="marketplace-tags" aria-label="Skill 태그">{skillTags(item).map((tag) => <span key={tag}>#{tag}</span>)}{item.draft && <span className="is-draft">초안 r{item.draft.revision}</span>}</small></span>
               </button>
               <button className={`marketplace-install-toggle ${itemInstallation ? "is-installed" : ""}`} type="button" aria-label={`${item.name} ${itemInstallation ? "미사용" : "설치"}`} aria-pressed={Boolean(itemInstallation)} aria-busy={itemInstallationPending} disabled={!itemVersion || itemInstallationPending} onClick={() => void toggleInstallation(item, "list")}>{itemInstallationPending ? <LoaderCircle className="is-running" size={12} /> : itemInstallation ? <><span className="install-toggle-rest">설치됨</span><span className="install-toggle-hover">미사용</span></> : <span>설치</span>}</button>
             </div>;
@@ -380,13 +386,13 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
             <>
               <header className="detail-heading">
                 <div>{editMode && selected.canEdit ? <><h2 className="marketplace-inline-editor" contentEditable="plaintext-only" suppressContentEditableWarning role="textbox" aria-label="Skill 이름" aria-multiline="false" onInput={(event) => setEditableName(event.currentTarget.textContent ?? "")} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }}>{editableName}</h2><p className="marketplace-inline-editor" contentEditable="plaintext-only" suppressContentEditableWarning role="textbox" aria-label="Skill 설명" aria-multiline="false" data-placeholder="설명 없음" onInput={(event) => setEditableDescription(event.currentTarget.textContent ?? "")} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }}>{editableDescription}</p></> : <><h2>{selected.name}</h2><p>{selected.description || "설명 없음"}</p></>}</div>
-                <div className="detail-badges"><span>{selected.visibility}</span>{selected.draft && <span className="is-draft">Draft r{selected.draft.revision}{selected.draft.dirty ? " · 저장 안 됨" : ""}</span>}{latestVersion && <span>v{latestVersion.version}</span>}</div>
+                <div className="detail-badges"><span>{visibilityLabel(selected.visibility)}</span>{selected.draft && <span className="is-draft">초안 r{selected.draft.revision}{selected.draft.dirty ? " · 저장 안 됨" : ""}</span>}{latestVersion && <span>v{latestVersion.version}</span>}</div>
               </header>
               <div className={`marketplace-package-detail ${editMode ? "is-editing" : ""}`}>
                 <div className="marketplace-package-summary">
-                  <div><strong>{selected.draft ? `내 WorkingDraft r${selected.draft.revision}` : skillTags(selected).map((tag) => `#${tag}`).join(" ")}</strong><span>Owner {selected.ownerships.filter((item) => item.role === "owner").map((item) => item.displayName).join(", ") || "미지정"}</span></div>
+                  <div><strong>{selected.draft ? `내 작업 초안 r${selected.draft.revision}` : skillTags(selected).map((tag) => `#${tag}`).join(" ")}</strong><span>Owner {selected.ownerships.filter((item) => item.role === "owner").map((item) => item.displayName).join(", ") || "미지정"}</span></div>
                   <div className="marketplace-package-actions">
-                    {editMode ? <><button type="button" disabled={busy} onClick={() => { setEditMode(false); setRenamingPath(null); }}><X size={14} /> 취소</button><button className="lumina-primary-action" type="button" disabled={busy || (selected.canEdit && !editableName.trim())} onClick={() => void savePackageEdit()}><Save size={14} /> Draft 저장</button></> : selected.canCreateDraft && <button type="button" disabled={busy} onClick={() => void beginPackageEdit()}><Pencil size={14} /> {selected.canEdit ? "편집" : "내 버전으로 수정"}</button>}
+                    {editMode ? <><button type="button" disabled={busy} onClick={() => { setEditMode(false); setRenamingPath(null); }}><X size={14} /> 취소</button><button className="lumina-primary-action" type="button" disabled={busy || (selected.canEdit && !editableName.trim())} onClick={() => void savePackageEdit()}><Save size={14} /> 초안 저장</button></> : selected.canCreateDraft && <button type="button" disabled={busy} onClick={() => void beginPackageEdit()}><Pencil size={14} /> {selected.canEdit ? "편집" : "내 버전으로 수정"}</button>}
                     {!editMode && selected.draft?.dirty && <button type="button" disabled={busy} onClick={() => void saveVersion()}><Check size={14} /> v{selected.versions.length + 1}로 저장</button>}
                     {!editMode && <button className={installation ? "is-danger" : "is-primary lumina-primary-action"} type="button" aria-busy={pendingInstallationSurfaceById[selected.id] === "detail"} disabled={!latestVersion || busy || pendingInstallationSurfaceById[selected.id] === "detail"} onClick={() => selected && void toggleInstallation(selected, "detail")}>{pendingInstallationSurfaceById[selected.id] === "detail" ? <><LoaderCircle className="is-running" size={14} /> 처리 중</> : <>{installation ? <Trash2 size={14} /> : <Download size={14} />}{installation ? "미사용" : "설치"}</>}</button>}
                   </div>
@@ -416,11 +422,11 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
       {marketKind === "skill" && createOpen && (
         <div className="feature-inline-dialog" role="dialog" aria-modal="true" aria-labelledby="new-skill-title">
           <form className="compact-dialog compact-form" onSubmit={(event) => void createSkill(event)}>
-            <header><strong id="new-skill-title">새 Skill WorkingDraft</strong><button type="button" aria-label="닫기" onClick={() => setCreateOpen(false)}><X size={16} /></button></header>
+            <header><strong id="new-skill-title">새 Skill 작업 초안</strong><button type="button" aria-label="닫기" onClick={() => setCreateOpen(false)}><X size={16} /></button></header>
             <label><span>이름</span><input autoFocus value={newName} onChange={(event) => setNewName(event.currentTarget.value)} /></label>
             <label><span>설명</span><input value={newDescription} onChange={(event) => setNewDescription(event.currentTarget.value)} /></label>
             <label><span>SKILL.md</span><textarea rows={10} placeholder="# 업무 절차&#10;&#10;이 Skill이 수행할 절차를 작성하세요." value={newInstructions} onChange={(event) => setNewInstructions(event.currentTarget.value)} /></label>
-            <div className="dialog-actions"><button type="button" onClick={() => setCreateOpen(false)}>취소</button><button className="is-primary lumina-primary-action" type="submit" disabled={!newName.trim() || !newInstructions.trim() || busy}>Draft 생성</button></div>
+            <div className="dialog-actions"><button type="button" onClick={() => setCreateOpen(false)}>취소</button><button className="is-primary lumina-primary-action" type="submit" disabled={!newName.trim() || !newInstructions.trim() || busy}>초안 생성</button></div>
           </form>
         </div>
       )}

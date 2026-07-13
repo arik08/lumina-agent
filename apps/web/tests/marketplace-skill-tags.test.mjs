@@ -21,6 +21,18 @@ test("repository skills display searchable hashtag metadata instead of a source 
   assert.doesNotMatch(view, /Lumina 기본 제공/);
 });
 
+test("skill visibility and draft state use clear Korean labels", async () => {
+  const view = await readFile(viewPath, "utf8");
+
+  assert.match(view, /if \(visibility === "organization"\) return "조직"/);
+  assert.match(view, /if \(visibility === "project"\) return "프로젝트"/);
+  assert.match(view, /className="is-draft">초안 r/);
+  assert.match(view, /내 작업 초안 r/);
+  assert.doesNotMatch(view, /<span>\{selected\.visibility\}<\/span>/);
+  assert.doesNotMatch(view, />Draft r/);
+  assert.doesNotMatch(view, /WorkingDraft/);
+});
+
 test("skill rows use a dedicated install and unused toggle without status badges", async () => {
   const [view, styles] = await Promise.all([readFile(viewPath, "utf8"), readFile(stylesPath, "utf8")]);
 
