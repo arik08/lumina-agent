@@ -1458,7 +1458,18 @@ export function AssistantTurn({
                   <time className="answer-completed-time" dateTime={snapshot?.finishedAt ?? finalMessage?.completedAt ?? undefined}>{formatCompletedAt(snapshot?.finishedAt ?? finalMessage?.completedAt)}</time>
                   {sources.length > 0 && (
                     <div className="answer-sources">
-                      <button className="answer-sources-trigger" type="button" aria-expanded={sourcesOpen} onClick={() => { if (sourcesOpen) closeSources(); else setSourcesOpen(true); }}>검색 및 참고 출처 · 인용 {citedSourceCount} · 본문 확인 {reviewedSourceCount} · 검색 참고 {referenceSourceCount}</button>
+                      <button
+                        className="answer-sources-trigger"
+                        type="button"
+                        aria-label={`검색 및 참고 출처, 인용 ${citedSourceCount}, 본문 확인 ${reviewedSourceCount}, 검색 참고 ${referenceSourceCount}`}
+                        aria-expanded={sourcesOpen}
+                        onClick={() => { if (sourcesOpen) closeSources(); else setSourcesOpen(true); }}
+                      >
+                        <span>검색 및 참고 출처</span>
+                        <span className="answer-source-count is-cited"> · 인용 {citedSourceCount}</span>
+                        <span className="answer-source-count is-reviewed"> · 본문 확인 {reviewedSourceCount}</span>
+                        <span className="answer-source-count is-reference-only"> · 검색 참고 {referenceSourceCount}</span>
+                      </button>
                       {sourcesOpen && (
                         <>
                           <button className="answer-sources-backdrop" type="button" aria-label="검색 및 참고 출처 닫기" onClick={closeSources} />
