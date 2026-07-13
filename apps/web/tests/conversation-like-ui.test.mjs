@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const appSource = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+const stylesSource = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
 const workspaceSource = await readFile(new URL("../src/use-lumina-workspace.ts", import.meta.url), "utf8");
 
 test("conversation like is available below favorite and drives the sidebar heart and filter", () => {
@@ -21,4 +22,8 @@ test("conversation like is available below favorite and drives the sidebar heart
   assert.doesNotMatch(appSource, /세션 관리 닫기[\s\S]{0,300}setLikedSessionsOnly/);
   assert.match(workspaceSource, /isLiked: !conversation\.isLiked/);
   assert.doesNotMatch(workspaceSource, /좋아요로 표시했습니다|좋아요 표시를 해제했습니다/);
+});
+
+test("session titles keep the same horizontal position in management mode", () => {
+  assert.match(stylesSource, /\.session-item\.is-bulk \.session-row \{ padding-left: 7px; \}/);
 });

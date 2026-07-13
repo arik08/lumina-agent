@@ -475,6 +475,7 @@ button:focus-visible, textarea:focus-visible, a:focus-visible {
   cursor: pointer;
 }
 .session-row.session-title-button { grid-template-columns: minmax(0, 1fr); gap: 0; padding-left: 0; }
+.session-item.is-bulk .session-row { padding-left: 7px; }
 .session-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-row .is-untitled { color: var(--muted); font-weight: 400; }
 .session-like-button .session-pin { color: var(--cobalt); }
