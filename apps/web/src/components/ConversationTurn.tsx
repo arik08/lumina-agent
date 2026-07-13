@@ -1192,6 +1192,8 @@ export function AssistantTurn({
   const [reportText, setReportText] = useState("");
   const [reportSubmitting, setReportSubmitting] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
+  const [answerRating, setAnswerRating] = useState<"like" | "dislike" | null>(null);
+  const [ratingSubmitting, setRatingSubmitting] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [expandedSourceId, setExpandedSourceId] = useState<string | null>(null);
   const [previewAttachment, setPreviewAttachment] = useState<AttachmentSummary | null>(null);
@@ -1213,6 +1215,10 @@ export function AssistantTurn({
   useEffect(() => {
     setWorkDetailsOpen(!terminal);
   }, [snapshot?.runId, terminal]);
+
+  useEffect(() => {
+    setAnswerRating(null);
+  }, [finalMessage?.id]);
 
   useEffect(() => {
     if (terminal || !hasWorkDetails) return;
@@ -1315,12 +1321,17 @@ export function AssistantTurn({
     }
   };
   const rateAnswer = async (value: "like" | "dislike") => {
-    if (!finalMessage) return;
+    if (!finalMessage || ratingSubmitting) return;
+    const previousRating = answerRating;
+    setAnswerRating(value);
+    setRatingSubmitting(true);
     try {
       await api.messages.putRating(finalMessage.id, value);
-      onToast(value === "like" ? "좋아요를 기록했습니다." : "싫어요를 기록했습니다.");
     } catch {
+      setAnswerRating(previousRating);
       onToast("평가를 기록하지 못했습니다.");
+    } finally {
+      setRatingSubmitting(false);
     }
   };
   const reportAnswer = async (event: FormEvent<HTMLFormElement>) => {
@@ -1469,8 +1480,8 @@ export function AssistantTurn({
                     <button className="tooltip-control" type="button" aria-label="답변을 Markdown Artifact로 저장" data-tooltip="Markdown 저장" disabled={!finalMessage || !sanitizedAssistantText || markdownSaving} onClick={() => void saveAnswerAsMarkdown()}>{markdownSaving ? <LoaderCircle className="is-running" size={16} /> : <Download size={16} />}</button>
                     <button className="tooltip-control" type="button" aria-label="이 답변까지 새 채팅으로 분기" data-tooltip="여기서 분기" disabled={!finalMessage || branching} onClick={() => void branchAnswer()}>{branching ? <LoaderCircle className="is-running" size={16} /> : <GitBranch size={16} />}</button>
                     <button className="tooltip-control" type="button" aria-label="답변 공유" data-tooltip="공유" disabled={!assistantText} onClick={() => onShare(finalMessage?.id ?? null)}><Share2 size={16} /></button>
-                    <button className="tooltip-control" type="button" aria-label="좋아요" data-tooltip="좋아요" disabled={!finalMessage} onClick={() => void rateAnswer("like")}><ThumbsUp size={16} /></button>
-                    <button className="tooltip-control" type="button" aria-label="싫어요" data-tooltip="싫어요" disabled={!finalMessage} onClick={() => void rateAnswer("dislike")}><ThumbsDown size={16} /></button>
+                    <button className={`tooltip-control answer-rating-control ${answerRating === "like" ? "is-like" : ""}`} type="button" aria-label="좋아요" aria-pressed={answerRating === "like"} data-tooltip="좋아요" disabled={!finalMessage || ratingSubmitting} onClick={() => void rateAnswer("like")}><ThumbsUp size={16} /></button>
+                    <button className={`tooltip-control answer-rating-control ${answerRating === "dislike" ? "is-dislike" : ""}`} type="button" aria-label="싫어요" aria-pressed={answerRating === "dislike"} data-tooltip="싫어요" disabled={!finalMessage || ratingSubmitting} onClick={() => void rateAnswer("dislike")}><ThumbsDown size={16} /></button>
                     <button className={`tooltip-control ${reportOpen ? "is-active" : ""}`} type="button" aria-label="의견 게시" aria-expanded={reportOpen} data-tooltip="의견 게시" disabled={!finalMessage} onClick={() => { setReportOpen((open) => !open); setReportError(null); }}><MessageSquarePlus size={16} /></button>
                   </div>
                   <time className="answer-completed-time" dateTime={snapshot?.finishedAt ?? finalMessage?.completedAt ?? undefined}>{formatCompletedAt(snapshot?.finishedAt ?? finalMessage?.completedAt)}</time>

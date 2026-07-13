@@ -2001,6 +2001,10 @@ button:disabled { cursor: default; opacity: 0.5; }
 .answer-actions button { display: inline-flex; width: 30px; height: 30px; align-items: center; justify-content: center; border: 0; border-radius: 5px; background: transparent; color: var(--muted); cursor: pointer; }
 .answer-actions button:hover { background: #eff0f2; color: var(--ink); }
 .answer-actions button.is-active { background: var(--surface-soft); color: var(--cobalt); }
+.answer-actions .answer-rating-control.is-like,
+.answer-actions .answer-rating-control.is-like:hover { color: var(--success); }
+.answer-actions .answer-rating-control.is-dislike,
+.answer-actions .answer-rating-control.is-dislike:hover { color: var(--danger); }
 .answer-feedback-form { display: grid; gap: 7px; margin-top: 7px; padding: 11px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-soft); }
 .answer-feedback-form > label { color: var(--ink); font-size: 14px; font-weight: 650; }
 .answer-feedback-form textarea { width: 100%; min-height: 78px; resize: vertical; border: 1px solid var(--line-strong); border-radius: 5px; outline: 0; padding: 8px 9px; background: var(--surface); color: var(--ink); font: inherit; font-size: 14px; line-height: 1.5; }
@@ -2550,6 +2554,10 @@ button:disabled { cursor: default; opacity: 0.5; }
 .theme-dark .answer-actions button:hover,
 .theme-dark .composer-footer button:hover,
 .theme-dark .progress-trigger:hover { background: #292d34; color: var(--ink); }
+.theme-dark .answer-actions .answer-rating-control.is-like,
+.theme-dark .answer-actions .answer-rating-control.is-like:hover { color: var(--success); }
+.theme-dark .answer-actions .answer-rating-control.is-dislike,
+.theme-dark .answer-actions .answer-rating-control.is-dislike:hover { color: var(--danger); }
 .theme-dark .artifact-result:hover { background: #20242a; }
 .theme-dark .progress-steps li { color: #cbd1d8; }
 .theme-dark .composer-footer .model-control,
