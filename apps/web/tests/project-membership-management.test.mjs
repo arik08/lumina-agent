@@ -29,4 +29,5 @@ test("project settings manage registered accounts inline", async () => {
   assert.doesNotMatch(view, /window\.confirm|<dialog|modal/i);
   assert.match(styles, /\.project-membership-settings\s*\{/);
   assert.match(styles, /\.project-member-list article\s*\{/);
+  assert.match(styles, /\.project-manager-list > header \.tooltip-control::after\s*\{[\s\S]*?top: calc\(100% \+ 5px\);[\s\S]*?right: 0;[\s\S]*?bottom: auto;[\s\S]*?left: auto;/);
 });
