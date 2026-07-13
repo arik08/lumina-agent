@@ -7,6 +7,9 @@
 ## Project Context
 
 - 작업 전에 루트 `README.md`와 관련된 `docs/project-context/` 문서를 확인합니다.
+- Lumina의 UI를 수정하거나 새 사용자 기능 화면을 만들기 전에는 루트 `PRODUCT.md`와 `DESIGN.md`를 함께 확인하고, 정의된 token·공용 component·interaction pattern을 따릅니다.
+- `DESIGN.md`는 Lumina runtime이 읽거나 제품 기능에서 직접 사용하는 설정 파일이 아니라, 구현·리뷰 시 시각적 일관성을 유지하기 위한 개발 기준입니다.
+- 같은 역할의 button, input, List of Value, list와 상태 표현을 화면별로 다시 하드코딩하지 않고 기존 공용 style·component를 우선 사용합니다. 공용 기준에 없는 값이 반복되어야 할 때는 먼저 token 또는 공용 variant로 정의합니다.
 - 제품 방향과 구현이 충돌하면 임의로 변경하지 않고 차이를 사용자에게 알립니다.
 
 ## Architecture
