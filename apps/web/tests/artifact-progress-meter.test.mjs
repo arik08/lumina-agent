@@ -26,6 +26,7 @@ test("artifact progress fills each 5,000-token bucket with staged colors", async
 
   assert.match(stylesheet, /--artifact-progress-color: var\(--cobalt\)/);
   assert.match(stylesheet, /\.artifact-progress-count \{[^}]*width: 100%/s);
+  assert.match(stylesheet, /\.artifact-progress-count \{[^}]*font: 12px\/1\.35 var\(--font-code\)/s);
   assert.match(stylesheet, /\.artifact-progress-count\.is-green \{ --artifact-progress-color: var\(--success\); \}/);
   assert.match(stylesheet, /\.artifact-progress-count\.is-orange \{ --artifact-progress-color: var\(--warning\); \}/);
   assert.match(stylesheet, /\.artifact-progress-count\.is-red \{ --artifact-progress-color: var\(--danger\); \}/);
