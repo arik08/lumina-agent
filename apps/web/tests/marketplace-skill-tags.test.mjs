@@ -39,6 +39,7 @@ test("marketplace keeps Skill creation in the chat Skill Creator flow", async ()
   assert.doesNotMatch(view, /새 Skill<\/button>/);
   assert.doesNotMatch(view, /새 Skill 작업 초안/);
   assert.doesNotMatch(view, /const createSkill = async/);
+  assert.doesNotMatch(view, /`Skill \$\{items\.length\} · 초안 \$\{counts\.drafts\} · 설치 \$\{counts\.installed\}`/);
 });
 
 test("skill rows use a dedicated install and unused toggle without status badges", async () => {
