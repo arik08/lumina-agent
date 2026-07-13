@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from datetime import datetime
 from urllib.parse import quote
 
@@ -11,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from ...artifacts.service import (
     artifact_summary,
+    create_artifact,
     create_artifact_version,
     current_artifact_version,
     delete_user_draft_if_matches,
@@ -24,7 +26,8 @@ from ...audit import record_audit
 from ...authorization import project_access_query
 from ...config import Settings, get_settings
 from ...db import get_db
-from ...models import Artifact, ArtifactVersion, Project, User
+from ...messages.service import require_message
+from ...models import Artifact, ArtifactVersion, Conversation, Project, User
 from ...storage import ManagedLocalStorage
 from ..dependencies import AuthContext, get_current_user, require_csrf
 from ..errors import ApiProblem
@@ -38,11 +41,35 @@ from ..schemas import (
 
 router = APIRouter(prefix="/artifacts", tags=["artifacts"])
 
+_INTERNAL_ARTIFACT_METADATA_LINE = re.compile(
+    r"^[ \t]*(?:[-*+]\s*)?(?:\*\*|__)?Artifact(?: ID)?"
+    r"(?:(?:\*\*|__)?[ \t]*:|[ \t]*:(?:\*\*|__))"
+    r"[ \t]*`?[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}`?[ \t]*\r?\n?",
+    flags=re.IGNORECASE | re.MULTILINE,
+)
+_REPORT_OPEN_LINE = re.compile(r"^[ \t]*보고서 열기[ \t]*\r?\n?", re.MULTILINE)
+_UNSAFE_FILE_NAME_CHARACTER = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
 
 def _storage(settings: Settings) -> ManagedLocalStorage:
     if settings.artifacts_dir is None:
         raise RuntimeError("LUMINA_ARTIFACTS_DIR is not configured")
     return ManagedLocalStorage(settings.artifacts_dir)
+
+
+def _message_markdown(text: str, *, has_artifacts: bool) -> str:
+    content = _INTERNAL_ARTIFACT_METADATA_LINE.sub("", text)
+    if has_artifacts:
+        content = _REPORT_OPEN_LINE.sub("", content)
+    return content
+
+
+def _message_markdown_name(conversation: Conversation, created_at: datetime) -> str:
+    title = _UNSAFE_FILE_NAME_CHARACTER.sub(" ", conversation.title)
+    title = " ".join(title.split()).strip(" .")
+    if not title or title in {"제목 없음", "새 작업"}:
+        title = "답변"
+    return f"{title[:80].rstrip()}_{created_at:%Y%m%d_%H%M%S}.md"
 
 
 def _version_payload(version: ArtifactVersion, content: bytes) -> dict[str, object]:
@@ -97,6 +124,69 @@ def list_artifacts(
         "nextCursor": None,
         "hasMore": False,
     }
+
+
+@router.post("/from-message/{message_id}", status_code=201)
+def create_markdown_artifact_from_message(
+    message_id: str,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    message = require_message(db, context.user, message_id, assistant_only=True)
+    conversation = db.get(Conversation, message.conversation_id)
+    if conversation is None:
+        raise ApiProblem(404, "not_found", "대화를 찾을 수 없습니다.")
+    has_artifacts = bool(
+        message.run_id
+        and db.scalar(
+            select(Artifact.id)
+            .where(
+                Artifact.source_run_id == message.run_id,
+                Artifact.deleted_at.is_(None),
+            )
+            .limit(1)
+        )
+    )
+    content = _message_markdown(
+        message.canonical_text, has_artifacts=has_artifacts
+    )
+    if not content.strip():
+        raise ApiProblem(
+            409,
+            "assistant_message_empty",
+            "Markdown으로 저장할 답변 내용이 없습니다.",
+        )
+    artifact, version = create_artifact(
+        db,
+        _storage(settings),
+        user=context.user,
+        project_id=conversation.project_id,
+        conversation_id=conversation.id,
+        source_run_id=message.run_id,
+        display_name=_message_markdown_name(conversation, message.created_at),
+        kind="markdown",
+        mime_type="text/markdown",
+        content=content.encode("utf-8"),
+        change_type="saved_from_message",
+        change_summary="채팅 답변을 Markdown Artifact로 저장",
+        renderer_manifest={
+            "source": {"type": "assistant_message", "messageId": message.id}
+        },
+    )
+    record_audit(
+        db,
+        action="message_markdown_artifact_created",
+        target_type="artifact",
+        target_id=artifact.id,
+        result="success",
+        actor=context.user,
+        request_id=getattr(request.state, "request_id", None),
+        metadata={"message_id": message.id, "version": version.version_number},
+    )
+    db.commit()
+    return artifact_summary(artifact, version)
 
 
 @router.get("/{artifact_id}")

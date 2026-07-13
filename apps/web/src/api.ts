@@ -779,6 +779,13 @@ export async function getArtifact(artifactId: string, signal?: AbortSignal) {
   return request<ArtifactSummary>(`/artifacts/${encodeURIComponent(artifactId)}`, { signal });
 }
 
+export async function createMessageMarkdownArtifact(messageId: string, signal?: AbortSignal) {
+  return request<ArtifactSummary>(`/artifacts/from-message/${encodeURIComponent(messageId)}`, {
+    method: "POST",
+    signal,
+  });
+}
+
 export async function getArtifactVersion(artifactId: string, version: number, signal?: AbortSignal) {
   return request<ArtifactVersion>(
     `/artifacts/${encodeURIComponent(artifactId)}/versions/${encodeURIComponent(String(version))}`,
@@ -1556,6 +1563,7 @@ export const api = {
   artifacts: {
     list: listArtifacts,
     get: getArtifact,
+    createFromMessage: createMessageMarkdownArtifact,
     getVersion: getArtifactVersion,
     getDraft: getArtifactDraft,
     saveVersion: saveArtifactVersion,

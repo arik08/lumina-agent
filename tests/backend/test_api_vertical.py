@@ -130,6 +130,23 @@ def test_login_run_replay_and_artifact_version(tmp_path: Path, capsys) -> None:
         assert downloaded.status_code == 200
         assert "수정된 작업 결과 보고서" in downloaded.text
 
+        markdown_saved = client.post(
+            f"/api/artifacts/from-message/{snapshot['assistantDraft']['messageId']}",
+            headers=headers,
+        )
+        assert markdown_saved.status_code == 201, markdown_saved.text
+        markdown_artifact = markdown_saved.json()
+        assert markdown_artifact["kind"] == "markdown"
+        assert markdown_artifact["mimeType"] == "text/markdown"
+        assert markdown_artifact["displayName"].endswith(".md")
+        markdown_version = client.get(
+            f"/api/artifacts/{markdown_artifact['id']}/versions/1"
+        )
+        assert markdown_version.status_code == 200
+        assert markdown_version.json()["sourceText"].strip()
+        assert "Artifact ID" not in markdown_version.json()["sourceText"]
+        assert list((tmp_path / "artifacts").rglob("*.md"))
+
 
 def _wait_for_terminal(client: TestClient, run_id: str) -> dict[str, object]:
     deadline = time.monotonic() + 5
