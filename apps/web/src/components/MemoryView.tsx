@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "../api";
+import { SelectMenu } from "./SelectMenu";
 import { SyntaxCode } from "./SyntaxCode";
 import type {
   MemoryLearningMode,
@@ -43,12 +44,16 @@ interface MemoryViewProps {
 
 type MemoryTab = "personal" | "project" | "proposals";
 type MemoryListStatus = "all" | "active" | "pending" | "dismissed";
+
+const editableMemoryStatusOptions = [
+  { value: "active", label: "활성" },
+  { value: "dismissed", label: "보류" },
+];
 type ProposalFilter = "all" | ProjectLearningProposalStatus;
 
 interface MemoryDraft {
   id: string;
   category: string;
-  fact: string;
   displayText: string;
   status: "active" | "dismissed";
 }
@@ -285,7 +290,7 @@ function PersonalMemoryPanel({ refreshKey }: { refreshKey: number }) {
               <form className="memory-edit-form" key={memory.id} onSubmit={(event) => void saveEdit(event)}>
                 <div className="memory-edit-grid">
                   <label><span>Category</span><input value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.currentTarget.value })} /></label>
-                  <label><span>상태</span><select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.currentTarget.value as "active" | "dismissed" })}><option value="active">활성</option><option value="dismissed">보류</option></select></label>
+                  <div className="lumina-select-field"><span>상태</span><SelectMenu value={draft.status} options={editableMemoryStatusOptions} ariaLabel="개인 Memory 상태" onChange={(value) => setDraft({ ...draft, status: value as "active" | "dismissed" })} /></div>
                 </div>
                 <label><span>기억할 사실</span><input value={draft.fact} onChange={(event) => setDraft({ ...draft, fact: event.currentTarget.value })} /></label>
                 <label><span>표시 내용</span><textarea rows={3} value={draft.displayText} onChange={(event) => setDraft({ ...draft, displayText: event.currentTarget.value })} /></label>
@@ -450,10 +455,7 @@ function ProjectMemoryPanel({
       {error && <div className="feature-error" role="alert">{error}</div>}
       <div className="memory-toolbar project-memory-toolbar">
         <label className="feature-search"><Search size={15} /><input aria-label="Project Memory 검색" placeholder="내용·hash·Run 검색" value={query} onChange={(event) => setQuery(event.currentTarget.value)} /></label>
-        <select aria-label="Project Memory category" value={category} onChange={(event) => setCategory(event.currentTarget.value)}>
-          <option value="all">모든 Category</option>
-          {categories.map((item) => <option value={item} key={item}>{item}</option>)}
-        </select>
+        <SelectMenu className="memory-category-select" size="small" width="auto" value={category} options={[{ value: "all", label: "모든 Category" }, ...categories.map((item) => ({ value: item, label: item }))]} ariaLabel="Project Memory category" onChange={setCategory} />
         <button className="memory-primary-action lumina-primary-action" type="button" disabled={!completedRunId} title={completedRunId ? "새 Project Memory 제안" : "현재 세션에 완료된 Run이 필요합니다."} onClick={() => openDraft("new")}><Plus size={14} /> 새 Memory 제안</button>
       </div>
       {!completedRunId && <div className="memory-source-warning"><AlertTriangle size={14} /><span>현재 세션에 완료된 Run이 없어 제안을 만들 수 없습니다. 채팅 작업을 완료한 뒤 다시 시도해 주세요.</span></div>}
@@ -643,10 +645,7 @@ function LearningProposalsPanel({
       {error && <div className="feature-error" role="alert">{error}</div>}
       {notice && <div className="feature-notice" role="status">{notice}</div>}
       <div className="learning-proposal-toolbar">
-        <label><span>상태</span><select aria-label="메모리 반영 제안 상태" value={status} onChange={(event) => setStatus(event.currentTarget.value as ProposalFilter)}>
-          <option value="all">모든 상태</option>
-          {Object.entries(proposalStatusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
-        </select></label>
+        <div className="lumina-select-field learning-proposal-select-field"><span>상태</span><SelectMenu size="small" value={status} options={[{ value: "all", label: "모든 상태" }, ...Object.entries(proposalStatusLabels).map(([value, label]) => ({ value, label }))]} ariaLabel="메모리 반영 제안 상태" onChange={(value) => setStatus(value as ProposalFilter)} /></div>
         {canReview ? <label className="proposal-review-note"><span>검토 메모</span><input maxLength={1000} placeholder="선택 입력" value={reviewNote} onChange={(event) => setReviewNote(event.currentTarget.value)} /></label> : <div className="proposal-review-policy"><ShieldCheck size={14} /><span>검토·적용은 Project owner 또는 admin만 가능합니다.</span></div>}
         <button className="memory-primary-action lumina-primary-action" type="button" disabled={!completedRunId || !projectBasis} title={completedRunId ? "Project concept 변경 제안" : "현재 세션에 완료된 Run이 필요합니다."} onClick={() => { setConcept(projectBasis?.concept ?? ""); setConceptFormOpen(true); }}><Lightbulb size={14} /> Concept 제안</button>
       </div>
