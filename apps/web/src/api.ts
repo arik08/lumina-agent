@@ -36,6 +36,9 @@ import type {
   NotificationUnreadCount,
   MessageFeedback,
   ProjectSummary,
+  ProjectMembership,
+  CreateProjectMembershipRequest,
+  UpdateProjectMembershipRequest,
   ProviderSummary,
   RunActionRequest,
   RunEvent,
@@ -779,6 +782,57 @@ export function openRunEventStream(
 
 export async function getArtifact(artifactId: string, signal?: AbortSignal) {
   return request<ArtifactSummary>(`/artifacts/${encodeURIComponent(artifactId)}`, { signal });
+}
+
+export async function listProjectMemberships(
+  projectId: string,
+  includeRevoked = false,
+  signal?: AbortSignal,
+) {
+  return request<ProjectMembership[]>(
+    `/projects/${encodeURIComponent(projectId)}/memberships`,
+    { query: { includeRevoked }, signal },
+  );
+}
+
+export async function addProjectMembership(
+  projectId: string,
+  payload: CreateProjectMembershipRequest,
+  signal?: AbortSignal,
+) {
+  return request<ProjectMembership>(
+    `/projects/${encodeURIComponent(projectId)}/memberships`,
+    { method: "POST", body: payload, signal },
+  );
+}
+
+export async function updateProjectMembership(
+  projectId: string,
+  membershipId: string,
+  payload: UpdateProjectMembershipRequest,
+  signal?: AbortSignal,
+) {
+  return request<ProjectMembership>(
+    `/projects/${encodeURIComponent(projectId)}/memberships/${encodeURIComponent(membershipId)}`,
+    { method: "PATCH", body: payload, signal },
+  );
+}
+
+export async function removeProjectMembership(
+  projectId: string,
+  membershipId: string,
+  expectedRole: ProjectMembership["role"],
+  expectedStatus: ProjectMembership["status"],
+  signal?: AbortSignal,
+) {
+  await request<void>(
+    `/projects/${encodeURIComponent(projectId)}/memberships/${encodeURIComponent(membershipId)}`,
+    {
+      method: "DELETE",
+      query: { expectedRole, expectedStatus },
+      signal,
+    },
+  );
 }
 
 export async function createMessageMarkdownArtifact(messageId: string, signal?: AbortSignal) {
@@ -1547,6 +1601,12 @@ export const api = {
     deleteAll: deleteAllNotifications,
   },
   projects: { list: listProjects, create: createProject, update: updateProject, archive: archiveProject },
+  projectMemberships: {
+    list: listProjectMemberships,
+    add: addProjectMembership,
+    update: updateProjectMembership,
+    remove: removeProjectMembership,
+  },
   instructions: {
     getPersonal: getPersonalInstructions,
     updatePersonal: updatePersonalInstructions,

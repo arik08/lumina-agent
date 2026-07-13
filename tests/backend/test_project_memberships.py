@@ -10,7 +10,7 @@ from lumina.auth.service import create_user
 from lumina.config import Settings
 from lumina.db import SessionLocal
 from lumina.main import create_app
-from lumina.models import AuditEvent, Organization, ProjectMembership, User
+from lumina.models import AuditEvent, Organization, Project, ProjectMembership, User
 
 
 def _settings(tmp_path: Path, name: str) -> Settings:
@@ -68,6 +68,47 @@ def _default_project(client: TestClient) -> dict[str, object]:
     response = client.get("/api/projects")
     assert response.status_code == 200, response.text
     return next(item for item in response.json() if item["isDefault"])
+
+
+def test_memberships_toggle_project_between_personal_and_shared(tmp_path: Path) -> None:
+    app = create_app(_settings(tmp_path, "membership-project-scope.db"))
+    with TestClient(app) as client:
+        _create_posco_user("scope-owner")
+        collaborator = _create_posco_user("scope-collaborator")
+        headers = _login(client, "scope-owner")
+        project = _default_project(client)
+        project_id = str(project["id"])
+        assert project["projectType"] == "personal"
+
+        added = client.post(
+            f"/api/projects/{project_id}/memberships",
+            headers=headers,
+            json={"loginId": collaborator["loginId"], "role": "member"},
+        )
+        assert added.status_code == 201, added.text
+        shared_project = next(
+            item for item in client.get("/api/projects").json() if item["id"] == project_id
+        )
+        assert shared_project["projectType"] == "shared"
+        with SessionLocal() as db:
+            persisted_project = db.get(Project, project_id)
+            assert persisted_project is not None
+            assert persisted_project.visibility == "shared"
+
+        revoked = client.delete(
+            f"/api/projects/{project_id}/memberships/{added.json()['id']}",
+            headers=headers,
+            params={"expectedRole": "member", "expectedStatus": "active"},
+        )
+        assert revoked.status_code == 204, revoked.text
+        personal_project = next(
+            item for item in client.get("/api/projects").json() if item["id"] == project_id
+        )
+        assert personal_project["projectType"] == "personal"
+        with SessionLocal() as db:
+            persisted_project = db.get(Project, project_id)
+            assert persisted_project is not None
+            assert persisted_project.visibility == "private"
 
 
 def test_project_membership_lifecycle_permissions_and_audit(tmp_path: Path) -> None:
@@ -165,6 +206,7 @@ def test_project_membership_lifecycle_permissions_and_audit(tmp_path: Path) -> N
             if item["id"] == project_id
         )
         assert member_project["role"] == "member"
+        assert member_project["projectType"] == "shared"
         member_cannot_manage = client.post(
             f"/api/projects/{project_id}/memberships",
             headers=member_headers,

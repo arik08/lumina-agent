@@ -194,11 +194,10 @@ def test_instruction_api_permissions_concurrency_and_secret_guard(
                 "organization",
                 "agent",
                 "project",
-                "personal",
             ]
             assert "모든 결과에는 근거와 검토 상태" in pinned["prompt_text"]
             assert "설비 명칭은 원문 표기" in pinned["prompt_text"]
-            assert private_marker in pinned["prompt_text"]
+            assert private_marker not in pinned["prompt_text"]
             assert all(layer["digest"] for layer in pinned["layers"])
 
         client.cookies.clear()

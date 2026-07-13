@@ -742,6 +742,17 @@ export function useLuminaWorkspace() {
     setActiveConversationId(null);
   }, []);
 
+  const refreshProjects = useCallback(async () => {
+    try {
+      const items = await api.projects.list();
+      setProjects(items);
+      return items;
+    } catch (error) {
+      setNotice(apiMessage(error));
+      return null;
+    }
+  }, []);
+
   const createProject = useCallback(async (name: string, description = "") => {
     try {
       const project = await api.projects.create({ name, description });
@@ -1167,6 +1178,7 @@ export function useLuminaWorkspace() {
     activeProjectId,
     setActiveProjectId,
     createProject,
+    refreshProjects,
     updateProjectDetails,
     archiveProject,
     conversations,

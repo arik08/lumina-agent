@@ -95,6 +95,7 @@ export interface LoginRequest {
 
 export type ProjectType = "personal" | "shared" | "system";
 export type ProjectRole = "owner" | "admin" | "member" | "viewer";
+export type ProjectMembershipStatus = "active" | "revoked";
 
 export interface ProjectSummary {
   id: UUID;
@@ -258,6 +259,33 @@ export interface AdminProviderModel {
   defaultMaxOutputTokens: number | null;
   configuredMaxOutputTokens: number | null;
   outputTokenStep: number;
+}
+
+export interface ProjectMembership {
+  id: UUID;
+  projectId: UUID;
+  userId: UUID;
+  loginId: string;
+  displayName: string;
+  accountStatus: UserStatus;
+  role: ProjectRole;
+  status: ProjectMembershipStatus;
+  isProjectOwner: boolean;
+  createdByUserId: UUID;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+export interface CreateProjectMembershipRequest {
+  loginId: string;
+  role: Exclude<ProjectRole, "owner">;
+}
+
+export interface UpdateProjectMembershipRequest {
+  role?: ProjectRole;
+  status?: ProjectMembershipStatus;
+  expectedRole: ProjectRole;
+  expectedStatus: ProjectMembershipStatus;
 }
 
 export type SidebarRunStatus =

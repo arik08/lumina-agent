@@ -494,6 +494,9 @@ ConversationShareGrant
 ### 6.3 Project 공동 작업
 
 - Project membership은 `view_share`와 별개입니다.
+- 초기 Project 구성원 관리는 같은 Organization에 등록된 active `login_id`를 Project 설정에서 직접 추가하는 계정 기준 방식입니다. 팀·부서 membership은 인사정보 연동 시 별도 directory 계층으로 추가하고, 현재 Project membership을 대체하지 않습니다.
+- active 비소유 membership이 하나 이상이면 `project_type=shared`, `visibility=shared`로 전환하고, 모두 revoked되면 `project_type=personal`, `visibility=private`로 되돌립니다.
+- owner·admin은 구성원을 추가하고 role을 변경·회수할 수 있으며 canonical owner는 이 화면에서 변경하거나 제거하지 않습니다.
 - Project role이 허용한 범위에서 파일·세션·Artifact를 공동 사용합니다.
 - Session 또는 Run 조작은 별도의 `run_collaborator` 권한으로 제한할 수 있습니다.
 - 개인 Run을 공동 Run으로 전환할 때 개인 Connector token, browser session과 credential lease를 자동 승계하지 않습니다.

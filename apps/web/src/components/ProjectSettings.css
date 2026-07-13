@@ -1,0 +1,40 @@
+.project-membership-settings { display: grid; width: min(720px, calc(100% - 36px)); gap: 13px; margin: 0 auto; padding: 22px 0; border-bottom: 1px solid var(--line); }
+.project-membership-settings > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.project-membership-settings > header h2 { margin: 0; font-size: 13px; }
+.project-membership-settings > header p { margin: 3px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.project-membership-settings > header > span { display: inline-flex; height: 25px; flex: 0 0 auto; align-items: center; gap: 5px; padding: 0 8px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 10.5px; white-space: nowrap; }
+.project-membership-settings > header > span.is-shared { border-color: color-mix(in srgb, var(--cobalt) 32%, var(--line)); background: var(--cobalt-pale); color: var(--cobalt); }
+.project-member-add { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 11px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-soft); }
+.project-member-add label { display: grid; min-width: 0; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 7px; }
+.project-member-add label:nth-child(2) { grid-template-columns: auto 104px; }
+.project-member-add label > span { color: var(--muted); font-size: 10.5px; }
+.project-member-add :is(input, select) { width: 100%; height: 32px; min-width: 0; border: 1px solid var(--line); border-radius: 5px; outline: 0; padding: 0 8px; background: var(--surface); color: var(--ink); font: inherit; font-size: 11.5px; }
+.project-member-add :is(input, select):focus { border-color: var(--cobalt); }
+.project-member-add button { display: inline-flex; height: 32px; align-items: center; justify-content: center; gap: 5px; white-space: nowrap; }
+.project-member-list { display: grid; border-top: 1px solid var(--line); }
+.project-member-list article { display: grid; min-height: 54px; grid-template-columns: 31px minmax(0, 1fr) 104px auto; align-items: center; gap: 9px; padding: 7px 2px; border-bottom: 1px solid color-mix(in srgb, var(--line) 78%, transparent); }
+.project-member-avatar { display: inline-grid; width: 29px; height: 29px; place-items: center; border-radius: 50%; background: color-mix(in srgb, var(--cobalt) 11%, var(--surface-soft)); color: var(--cobalt); font-size: 11px; font-weight: 700; }
+.project-member-identity { display: grid; min-width: 0; gap: 2px; }
+.project-member-identity strong, .project-member-identity small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-member-identity strong { color: var(--ink); font-size: 11.5px; font-weight: 650; }
+.project-member-identity small { color: var(--muted); font-size: 10px; }
+.project-member-list article > select { width: 104px; height: 29px; border: 1px solid var(--line); border-radius: 5px; outline: 0; padding: 0 7px; background: var(--surface); color: var(--ink); font: inherit; font-size: 10.5px; }
+.project-member-list article > select:focus { border-color: var(--cobalt); }
+.project-member-owner, .project-member-role { justify-self: end; color: var(--muted); font-size: 10.5px; }
+.project-member-owner { color: var(--cobalt); font-weight: 650; }
+.project-member-list article > button { display: inline-flex; height: 29px; align-items: center; justify-content: center; gap: 4px; padding: 0 7px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--muted); font-size: 10.5px; cursor: pointer; white-space: nowrap; }
+.project-member-list article > button:hover { border-color: color-mix(in srgb, var(--danger) 24%, var(--line)); background: color-mix(in srgb, var(--danger) 7%, transparent); color: var(--danger); }
+.project-member-list article > button.is-delete-armed { border-color: color-mix(in srgb, var(--danger) 42%, var(--line)); background: color-mix(in srgb, var(--danger) 10%, var(--surface)); color: var(--danger); }
+.project-member-list article > button:disabled { cursor: not-allowed; opacity: .5; }
+.project-member-state { display: flex; min-height: 44px; align-items: center; justify-content: center; gap: 6px; margin: 0; color: var(--muted); font-size: 10.5px; }
+.project-member-note { color: var(--muted); font-size: 10.5px; }
+
+@media (max-width: 720px) {
+  .project-membership-settings { width: calc(100% - 20px); padding-top: 18px; }
+  .project-member-add { grid-template-columns: minmax(0, 1fr) auto; }
+  .project-member-add label:nth-child(2) { grid-template-columns: auto 96px; }
+  .project-member-add button { grid-column: 1 / -1; justify-self: end; }
+  .project-member-list article { grid-template-columns: 29px minmax(0, 1fr) auto; }
+  .project-member-list article > :is(select, .project-member-owner, .project-member-role) { grid-column: 2; justify-self: start; }
+  .project-member-list article > button { grid-column: 3; grid-row: 1 / span 2; }
+}

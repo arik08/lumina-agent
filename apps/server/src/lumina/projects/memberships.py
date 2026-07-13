@@ -9,6 +9,22 @@ from ..models import Project, ProjectMembership, User, utc_now
 from .schemas import MEMBERSHIP_STATUSES, PROJECT_ROLES
 
 
+def _sync_project_sharing_state(db: Session, project: Project) -> None:
+    """Keep the project scope aligned with its active non-owner accounts."""
+    if project.project_type == "system":
+        return
+    collaborator_id = db.scalar(
+        select(ProjectMembership.id).where(
+            ProjectMembership.project_id == project.id,
+            ProjectMembership.user_id != project.owner_user_id,
+            ProjectMembership.status == "active",
+        ).limit(1)
+    )
+    shared = collaborator_id is not None
+    project.project_type = "shared" if shared else "personal"
+    project.visibility = "shared" if shared else "private"
+
+
 def require_membership_manager(db: Session, user: User, project_id: str) -> Project:
     project = require_project(db, user, project_id)
     if user.role == "admin" or project.owner_user_id == user.id:
@@ -137,6 +153,7 @@ def add_membership(
     )
     if existing is not None:
         if existing.status == "active" and existing.role == role:
+            _sync_project_sharing_state(db, project)
             return existing, target, False
         raise ApiProblem(
             409,
@@ -153,6 +170,7 @@ def add_membership(
     )
     db.add(membership)
     db.flush()
+    _sync_project_sharing_state(db, project)
     return membership, target, True
 
 
@@ -265,6 +283,7 @@ def change_membership(
         next_status=next_status,
     )
     if next_role == membership.role and next_status == membership.status:
+        _sync_project_sharing_state(db, project)
         return membership, target, False
     result = db.execute(
         update(ProjectMembership)
@@ -283,6 +302,7 @@ def change_membership(
         raise _membership_conflict(membership)
     db.expire(membership)
     db.refresh(membership)
+    _sync_project_sharing_state(db, project)
     return membership, target, True
 
 

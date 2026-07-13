@@ -2746,6 +2746,7 @@ function App() {
           }}
           onSave={(projectId, changes) => workspace.updateProjectDetails(projectId, changes)}
           onDelete={(projectId) => workspace.archiveProject(projectId)}
+          onMembershipsChanged={workspace.refreshProjects}
         />}
       </section>
 

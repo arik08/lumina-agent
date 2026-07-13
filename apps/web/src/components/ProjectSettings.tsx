@@ -1,7 +1,22 @@
-import { AlertTriangle, Archive, Check, FileText, Folder, FolderPlus, LoaderCircle, Menu, Save } from "lucide-react";
-import { type FormEvent, useEffect, useState } from "react";
-import type { ProjectSummary } from "../api-types";
+import { AlertTriangle, Archive, Check, FileText, Folder, FolderPlus, LoaderCircle, Menu, Save, Trash2, UserPlus, Users } from "lucide-react";
+import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { api } from "../api";
+import type { ProjectMembership, ProjectRole, ProjectSummary } from "../api-types";
 import { InstructionEditor } from "./InstructionEditor";
+import "./ProjectSettings.css";
+
+type AssignableRole = Exclude<ProjectRole, "owner">;
+
+const roleLabels: Record<ProjectRole, string> = {
+  owner: "소유자",
+  admin: "관리자",
+  member: "편집자",
+  viewer: "조회자",
+};
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "요청을 처리하지 못했습니다.";
+}
 
 interface ProjectSettingsProps {
   projects: ProjectSummary[];
@@ -11,9 +26,10 @@ interface ProjectSettingsProps {
   onCreate: () => Promise<unknown>;
   onSave: (projectId: string, changes: { name: string; description: string; concept: string }) => Promise<unknown>;
   onDelete: (projectId: string) => Promise<boolean>;
+  onMembershipsChanged: () => Promise<unknown>;
 }
 
-export function ProjectSettings({ projects, project, onOpenNavigation, onSelect, onCreate, onSave, onDelete }: ProjectSettingsProps) {
+export function ProjectSettings({ projects, project, onOpenNavigation, onSelect, onCreate, onSave, onDelete, onMembershipsChanged }: ProjectSettingsProps) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [concept, setConcept] = useState("");
@@ -21,13 +37,56 @@ export function ProjectSettings({ projects, project, onOpenNavigation, onSelect,
   const [deleteArmed, setDeleteArmed] = useState(false);
   const [personalSelected, setPersonalSelected] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [memberships, setMemberships] = useState<ProjectMembership[]>([]);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [memberActionId, setMemberActionId] = useState<string | null>(null);
+  const [memberDeleteArmed, setMemberDeleteArmed] = useState<string | null>(null);
+  const [memberMessage, setMemberMessage] = useState("");
+  const [memberError, setMemberError] = useState("");
+  const [accountLoginId, setAccountLoginId] = useState("");
+  const [newRole, setNewRole] = useState<AssignableRole>("member");
+
+  const canManageMembers = project?.role === "owner" || project?.role === "admin";
+  const sortedMemberships = useMemo(
+    () => [...memberships].sort((left, right) => {
+      if (left.isProjectOwner !== right.isProjectOwner) return left.isProjectOwner ? -1 : 1;
+      return left.displayName.localeCompare(right.displayName, "ko");
+    }),
+    [memberships],
+  );
+  const collaboratorCount = memberships.filter((membership) => !membership.isProjectOwner).length;
+
+  const loadMemberships = useCallback(async (projectId: string, signal?: AbortSignal) => {
+    const items = await api.projectMemberships.list(projectId, false, signal);
+    setMemberships(items);
+    return items;
+  }, []);
 
   useEffect(() => {
     setName(project?.name ?? "");
     setDescription(project?.description ?? "");
     setConcept(project?.concept ?? "");
     setDeleteArmed(false);
-  }, [project]);
+    setMemberDeleteArmed(null);
+    setMemberMessage("");
+    setMemberError("");
+    setAccountLoginId("");
+    setMemberships([]);
+    if (!project) {
+      setMembersLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    setMembersLoading(true);
+    void loadMemberships(project.id, controller.signal)
+      .catch((error) => {
+        if (!controller.signal.aborted) setMemberError(errorMessage(error));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setMembersLoading(false);
+      });
+    return () => controller.abort();
+  }, [loadMemberships, project?.id]);
 
   const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -56,11 +115,81 @@ export function ProjectSettings({ projects, project, onOpenNavigation, onSelect,
     }
   };
 
+  const addMember = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const loginId = accountLoginId.trim();
+    if (!project || !canManageMembers || !loginId) return;
+    setMemberActionId("add");
+    setMemberDeleteArmed(null);
+    setMemberError("");
+    setMemberMessage("");
+    try {
+      const added = await api.projectMemberships.add(project.id, { loginId, role: newRole });
+      await Promise.all([loadMemberships(project.id), onMembershipsChanged()]);
+      setAccountLoginId("");
+      setMemberMessage(`${added.displayName} 계정을 추가했습니다.`);
+    } catch (error) {
+      setMemberError(errorMessage(error));
+    } finally {
+      setMemberActionId(null);
+    }
+  };
+
+  const changeMemberRole = async (membership: ProjectMembership, role: AssignableRole) => {
+    if (!project || !canManageMembers || membership.isProjectOwner || membership.role === role) return;
+    setMemberActionId(membership.id);
+    setMemberDeleteArmed(null);
+    setMemberError("");
+    setMemberMessage("");
+    try {
+      const updated = await api.projectMemberships.update(project.id, membership.id, {
+        role,
+        expectedRole: membership.role,
+        expectedStatus: membership.status,
+      });
+      setMemberships((items) => items.map((item) => item.id === updated.id ? updated : item));
+      setMemberMessage(`${updated.displayName} 계정의 권한을 변경했습니다.`);
+    } catch (error) {
+      setMemberError(errorMessage(error));
+      await loadMemberships(project.id).catch(() => undefined);
+    } finally {
+      setMemberActionId(null);
+    }
+  };
+
+  const removeMember = async (membership: ProjectMembership) => {
+    if (!project || !canManageMembers || membership.isProjectOwner) return;
+    if (memberDeleteArmed !== membership.id) {
+      setMemberDeleteArmed(membership.id);
+      setMemberMessage("");
+      setMemberError("");
+      return;
+    }
+    setMemberActionId(membership.id);
+    setMemberError("");
+    try {
+      await api.projectMemberships.remove(
+        project.id,
+        membership.id,
+        membership.role,
+        membership.status,
+      );
+      await Promise.all([loadMemberships(project.id), onMembershipsChanged()]);
+      setMemberDeleteArmed(null);
+      setMemberMessage(`${membership.displayName} 계정을 제거했습니다.`);
+    } catch (error) {
+      setMemberError(errorMessage(error));
+      await loadMemberships(project.id).catch(() => undefined);
+    } finally {
+      setMemberActionId(null);
+    }
+  };
+
   return (
     <main className="feature-view project-settings-view" aria-label="프로젝트 설정">
       <header className="workspace-view-header">
         <button className="mobile-menu-button" type="button" aria-label="사이드바 열기" onClick={onOpenNavigation}><Menu size={19} /></button>
-        <div><h1>프로젝트 설정</h1><p>프로젝트를 추가·삭제하고 프로젝트별 정보와 지침을 관리합니다.</p></div>
+        <div><h1>프로젝트 설정</h1><p>프로젝트 정보와 지침, 함께 일할 계정을 관리합니다.</p></div>
       </header>
       <div className="project-settings-layout">
         <aside className="project-manager-list" aria-label="프로젝트 목록">
@@ -101,6 +230,42 @@ export function ProjectSettings({ projects, project, onOpenNavigation, onSelect,
               </div>
               {project.isDefault && <small>기본 프로젝트는 삭제할 수 없습니다.</small>}
             </form>
+
+            <section className="project-membership-settings" aria-labelledby="project-membership-heading">
+              <header>
+                <div><h2 id="project-membership-heading">공유 및 구성원</h2><p>등록된 계정을 추가해 다른 부서의 동료와도 같은 프로젝트에서 작업할 수 있습니다.</p></div>
+                <span className={collaboratorCount > 0 ? "is-shared" : ""}><Users size={13} /> {collaboratorCount > 0 ? `공유 · ${memberships.length}명` : "개인 프로젝트"}</span>
+              </header>
+              {canManageMembers && (
+                <form className="project-member-add" onSubmit={(event) => void addMember(event)}>
+                  <label><span>계정명</span><input type="email" value={accountLoginId} placeholder="name@posco.com" autoComplete="off" onChange={(event) => setAccountLoginId(event.currentTarget.value)} /></label>
+                  <label><span>권한</span><select value={newRole} onChange={(event) => setNewRole(event.currentTarget.value as AssignableRole)}><option value="member">편집자</option><option value="viewer">조회자</option><option value="admin">관리자</option></select></label>
+                  <button className="primary-compact" type="submit" disabled={!accountLoginId.trim() || memberActionId !== null}>{memberActionId === "add" ? <LoaderCircle className="is-running" size={14} /> : <UserPlus size={14} />} 계정 추가</button>
+                </form>
+              )}
+              <div className="project-member-list" aria-live="polite">
+                {membersLoading ? <p className="project-member-state"><LoaderCircle className="is-running" size={14} /> 구성원을 불러오는 중입니다.</p> : sortedMemberships.map((membership) => {
+                  const actionBusy = memberActionId === membership.id;
+                  const removalArmed = memberDeleteArmed === membership.id;
+                  const protectedOwner = membership.isProjectOwner || membership.role === "owner";
+                  return (
+                    <article key={membership.id}>
+                      <span className="project-member-avatar" aria-hidden="true">{membership.displayName.trim().charAt(0).toUpperCase() || "?"}</span>
+                      <span className="project-member-identity"><strong>{membership.displayName}</strong><small>{membership.loginId}</small></span>
+                      {protectedOwner ? <span className="project-member-owner">소유자</span> : canManageMembers ? (
+                        <select aria-label={`${membership.displayName} 권한`} value={membership.role} disabled={actionBusy} onChange={(event) => void changeMemberRole(membership, event.currentTarget.value as AssignableRole)}><option value="member">편집자</option><option value="viewer">조회자</option><option value="admin">관리자</option></select>
+                      ) : <span className="project-member-role">{roleLabels[membership.role]}</span>}
+                      {!protectedOwner && canManageMembers && <button className={removalArmed ? "is-delete-armed" : ""} type="button" aria-label={removalArmed ? `${membership.displayName} 제거 확인, 한 번 더 누르면 제거` : `${membership.displayName} 제거`} disabled={actionBusy} onClick={() => void removeMember(membership)}>{actionBusy ? <LoaderCircle className="is-running" size={14} /> : removalArmed ? <AlertTriangle size={14} /> : <Trash2 size={14} />}<span>{removalArmed ? "한 번 더 눌러 제거" : "제거"}</span></button>}
+                    </article>
+                  );
+                })}
+              </div>
+              {!membersLoading && memberships.length === 0 && <p className="project-member-state">구성원 정보를 찾지 못했습니다.</p>}
+              {!canManageMembers && <small className="project-member-note">소유자와 관리자만 구성원을 변경할 수 있습니다.</small>}
+              {memberMessage && <p className="instruction-message">{memberMessage}</p>}
+              {memberError && <p className="instruction-message is-error">{memberError}</p>}
+            </section>
+
             <InstructionEditor
               scope="project"
               projectId={project.id}
