@@ -468,13 +468,13 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
   }) ?? [];
 
   return (
-    <main className="feature-view admin-view" aria-label="관리자 화면">
+    <main className="feature-view admin-view" aria-label="시스템 관리 화면">
       <header className="workspace-view-header">
         <button className="mobile-menu-button" type="button" aria-label="사이드바 열기" onClick={onOpenNavigation}><Menu size={19} /></button>
-        <div><h1>관리</h1><p>민감한 조회와 변경은 모니터링 로그에 기록됩니다.</p></div>
+        <div><h1>시스템 관리</h1><p>민감한 조회와 변경은 모니터링 로그에 기록됩니다.</p></div>
       </header>
       <div className="admin-toolbar">
-        <div className="admin-tabs" role="tablist" aria-label="관리 항목">
+        <div className="admin-tabs" role="tablist" aria-label="시스템 관리 항목">
           <button type="button" role="tab" aria-selected={tab === "users"} onClick={() => setTab("users")}><Users size={15} /> 사용자</button>
           <button type="button" role="tab" aria-selected={tab === "usage"} onClick={() => setTab("usage")}><BarChart3 size={15} /> 사용통계</button>
           <button type="button" role="tab" aria-selected={tab === "conversations"} onClick={() => setTab("conversations")}><MessageSquare size={15} /> 대화</button>

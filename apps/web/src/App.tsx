@@ -2144,7 +2144,7 @@ function App() {
         <footer className="sidebar-footer" onClick={(event) => event.stopPropagation()}>
           {accountMenuOpen && (
             <div className="account-menu" role="menu" aria-label="계정 설정">
-              {isAdmin && <button className="account-menu-admin" type="button" role="menuitem" onClick={openAdmin}><ShieldCheck size={15} /><span><strong>관리자 메뉴</strong></span><kbd aria-hidden="true">Ctrl + Shift + X</kbd></button>}
+              {isAdmin && <button className="account-menu-admin" type="button" role="menuitem" onClick={openAdmin}><ShieldCheck size={15} /><span><strong>시스템 관리</strong></span><kbd aria-hidden="true">Ctrl + Shift + X</kbd></button>}
               <button className="account-menu-shortcut" type="button" role="menuitem" onClick={openSettings}><Settings size={15} /><span><strong>설정</strong></span><kbd aria-hidden="true">Ctrl + Shift + S</kbd></button>
               <div className="account-menu-separator" />
               <button className="account-menu-provider-trigger" type="button" role="menuitem" aria-expanded={providerMenuOpen} onClick={() => setProviderMenuOpen((open) => !open)}>
