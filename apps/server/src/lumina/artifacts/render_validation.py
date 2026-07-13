@@ -12,6 +12,8 @@ from typing import Protocol, Sequence, cast
 from PIL import Image, ImageChops, UnidentifiedImageError
 from pypdf import PdfReader
 
+from ..document_limits import MAX_DOCUMENT_PAGES
+
 
 OFFICE_MIME_TYPES = frozenset(
     {
@@ -25,7 +27,6 @@ _OFFICE_EXTENSIONS = {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
     "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
 }
-_MAX_RENDERED_PAGES = 500
 _MAX_RENDERED_PAGE_PIXELS = 40_000_000
 _MAX_RENDERED_BYTES = 256 * 1024 * 1024
 _MIN_RENDERED_DIMENSION = 96
@@ -188,7 +189,7 @@ def verify_artifact_render(
             "-f",
             "1",
             "-l",
-            str(_MAX_RENDERED_PAGES),
+            str(MAX_DOCUMENT_PAGES),
             str(rendered_pdf),
             str(page_prefix),
         ]
@@ -207,7 +208,7 @@ def verify_artifact_render(
             result.errors.append(
                 f"rendered_page_count_mismatch:{expected_page_count}:{len(page_files)}"
             )
-        if len(page_files) > _MAX_RENDERED_PAGES:
+        if len(page_files) > MAX_DOCUMENT_PAGES:
             result.errors.append("rendered_page_limit_exceeded")
         if [number for number, _ in page_files] != list(range(1, len(page_files) + 1)):
             result.errors.append("rendered_page_sequence_invalid")
@@ -322,7 +323,7 @@ def _pdf_page_count(path: Path, result: RenderVerification) -> int | None:
     if count == 0:
         result.errors.append("empty_renderer_pdf_output")
         return None
-    if count > _MAX_RENDERED_PAGES:
+    if count > MAX_DOCUMENT_PAGES:
         result.errors.append("rendered_page_limit_exceeded")
         return None
     if result.errors:

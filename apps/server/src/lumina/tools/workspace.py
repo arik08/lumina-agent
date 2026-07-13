@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..audit import record_audit
+from ..extensions.package_policy import SKILL_TEXT_SUFFIXES
 from ..extensions.service import sync_workspace_skill
 from ..models import ProjectFile, Run, User
 from ..project_files.service import (
@@ -25,20 +26,6 @@ MAX_READ_LINES = 2_000
 MAX_READ_CHARS = 100_000
 MAX_GREP_FILE_CHARS = 1_000_000
 _SKILL_FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|$)", re.DOTALL)
-_SKILL_TEXT_SUFFIXES = {
-    ".md",
-    ".txt",
-    ".json",
-    ".yaml",
-    ".yml",
-    ".py",
-    ".js",
-    ".mjs",
-    ".ts",
-    ".tsx",
-}
-
-
 WORKSPACE_TOOL_SCHEMAS: tuple[dict[str, Any], ...] = (
     {
         "type": "function",
@@ -294,7 +281,7 @@ def _sync_workspace_skill_draft(
             or item_parts[0].casefold() != "skills"
             or item_parts[1].casefold() != slug.casefold()
             or PurePosixPath(item.logical_path).suffix.casefold()
-            not in _SKILL_TEXT_SUFFIXES
+            not in SKILL_TEXT_SUFFIXES
         ):
             continue
         version = get_project_file_version(db, item)

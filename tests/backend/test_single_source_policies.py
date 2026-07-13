@@ -1,10 +1,14 @@
 from pathlib import Path
 from typing import get_args
 
+from lumina import document_limits, image_formats, secret_policy
 from lumina.agent import image_tool
+from lumina.artifacts import render_validation
+from lumina.artifacts import service as artifact_service
 from lumina.artifacts.reporting import theme
+from lumina.attachments import extraction, validation
 from lumina.extensions import service as extension_service
-from lumina import image_formats, secret_policy
+from lumina.extensions import package_policy, repository_catalog
 from lumina.mcp import policy as mcp_policy
 from lumina.mcp import runtime as mcp_runtime
 from lumina.mcp import service as mcp_service
@@ -13,6 +17,7 @@ from lumina.projects import memberships, schemas
 from lumina.providers.codex import image_generation
 from lumina.runs import state as run_state
 from lumina.schedules import service as schedule_service
+from lumina.tools import workspace
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -72,3 +77,16 @@ def test_terminal_and_secret_policies_are_shared() -> None:
         schedule_service.reject_secret_key_names
         is secret_policy.reject_secret_key_names
     )
+
+
+def test_document_safety_limits_are_shared_across_processing_stages() -> None:
+    assert render_validation.MAX_DOCUMENT_PAGES is document_limits.MAX_DOCUMENT_PAGES
+    assert artifact_service.MAX_DOCUMENT_PAGES is document_limits.MAX_DOCUMENT_PAGES
+    assert extraction.MAX_DOCUMENT_PAGES is document_limits.MAX_DOCUMENT_PAGES
+    assert validation.MAX_OPENXML_MEMBERS is document_limits.MAX_OPENXML_MEMBERS
+    assert artifact_service.MAX_OPENXML_MEMBERS is document_limits.MAX_OPENXML_MEMBERS
+
+
+def test_skill_text_file_policy_is_shared_by_catalog_and_workspace() -> None:
+    assert repository_catalog.SKILL_TEXT_SUFFIXES is package_policy.SKILL_TEXT_SUFFIXES
+    assert workspace.SKILL_TEXT_SUFFIXES is package_policy.SKILL_TEXT_SUFFIXES

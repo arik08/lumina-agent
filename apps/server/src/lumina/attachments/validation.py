@@ -3,6 +3,8 @@ from __future__ import annotations
 from io import BytesIO
 from zipfile import BadZipFile, ZipFile
 
+from ..document_limits import MAX_OPENXML_MEMBERS
+
 
 MIME_BY_EXTENSION = {
     ".pdf": "application/pdf",
@@ -27,7 +29,6 @@ _OPENXML_REQUIRED_MEMBER = {
     ".pptx": "ppt/presentation.xml",
 }
 _MAX_OPENXML_EXPANDED_BYTES = 150 * 1024 * 1024
-_MAX_OPENXML_MEMBERS = 10_000
 
 
 def sniff_mime(content: bytes, extension: str) -> str:
@@ -58,7 +59,7 @@ def _sniff_openxml_mime(content: bytes, extension: str) -> str:
     try:
         with ZipFile(BytesIO(content)) as archive:
             members = archive.infolist()
-            if len(members) > _MAX_OPENXML_MEMBERS:
+            if len(members) > MAX_OPENXML_MEMBERS:
                 return "application/octet-stream"
             expanded_size = sum(member.file_size for member in members)
             if expanded_size > _MAX_OPENXML_EXPANDED_BYTES:

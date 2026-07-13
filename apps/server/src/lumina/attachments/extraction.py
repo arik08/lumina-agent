@@ -11,11 +11,11 @@ from openpyxl import load_workbook
 from pptx import Presentation
 from pypdf import PdfReader
 
+from ..document_limits import MAX_DOCUMENT_PAGES
+
 
 MAX_EXTRACTED_CHARS = 500_000
 MAX_SPREADSHEET_CELLS = 50_000
-MAX_PDF_PAGES = 500
-MAX_PRESENTATION_SLIDES = 500
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,12 +63,12 @@ def _extract_pdf(content: bytes) -> ExtractionResult:
         return ExtractionResult(status="failed", metadata={"errorType": "EncryptedPdf"})
     pages: list[str] = []
     total_pages = len(reader.pages)
-    for index, page in enumerate(reader.pages[:MAX_PDF_PAGES], start=1):
+    for index, page in enumerate(reader.pages[:MAX_DOCUMENT_PAGES], start=1):
         pages.append(f"[Page {index}]\n{page.extract_text() or ''}")
     return _completed(
         "\n\n".join(pages),
         locator_map={"kind": "page", "count": total_pages},
-        metadata={"truncatedByPageLimit": total_pages > MAX_PDF_PAGES},
+        metadata={"truncatedByPageLimit": total_pages > MAX_DOCUMENT_PAGES},
     )
 
 
@@ -120,14 +120,14 @@ def _extract_pptx(content: bytes) -> ExtractionResult:
     slides: list[str] = []
     total_slides = len(presentation.slides)
     for index, slide in enumerate(
-        islice(presentation.slides, MAX_PRESENTATION_SLIDES), start=1
+        islice(presentation.slides, MAX_DOCUMENT_PAGES), start=1
     ):
         text = [shape.text for shape in slide.shapes if hasattr(shape, "text")]
         slides.append(f"[Slide {index}]\n" + "\n".join(text))
     return _completed(
         "\n\n".join(slides),
         locator_map={"kind": "slide", "count": total_slides},
-        metadata={"truncatedBySlideLimit": total_slides > MAX_PRESENTATION_SLIDES},
+        metadata={"truncatedBySlideLimit": total_slides > MAX_DOCUMENT_PAGES},
     )
 
 

@@ -25,22 +25,11 @@ from ..models import (
     User,
     utc_now,
 )
+from .package_policy import SKILL_TEXT_SUFFIXES
 from .service import normalize_package, package_digest
 
 
 _FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.DOTALL)
-_TEXT_SUFFIXES = {
-    ".md",
-    ".txt",
-    ".json",
-    ".yaml",
-    ".yml",
-    ".py",
-    ".js",
-    ".mjs",
-    ".ts",
-    ".tsx",
-}
 _IGNORED_PARTS = {".git", "__pycache__", "node_modules", "vendor", ".venv"}
 
 
@@ -81,7 +70,7 @@ def _catalog_tags(value: Any) -> list[str]:
 def _skill_package(folder: Path) -> dict[str, str]:
     files: dict[str, str] = {}
     for path in sorted(folder.rglob("*")):
-        if not path.is_file() or path.suffix.casefold() not in _TEXT_SUFFIXES:
+        if not path.is_file() or path.suffix.casefold() not in SKILL_TEXT_SUFFIXES:
             continue
         relative = path.relative_to(folder)
         if any(part in _IGNORED_PARTS for part in relative.parts):

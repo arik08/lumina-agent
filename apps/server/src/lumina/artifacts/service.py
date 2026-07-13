@@ -14,6 +14,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from ..api.errors import ApiProblem
+from ..document_limits import MAX_DOCUMENT_PAGES, MAX_OPENXML_MEMBERS
 from ..authorization import require_conversation, require_project
 from ..models import Artifact, ArtifactDraft, ArtifactVersion, User, utc_now
 from ..storage import ManagedLocalStorage, StorageNotFoundError
@@ -500,12 +501,10 @@ def delete_user_draft_if_matches(
     return getattr(result, "rowcount", 0) == 1
 
 
-_MAX_OPENXML_FILES = 10_000
 _MAX_OPENXML_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
 _MAX_OPENXML_ENTRY_BYTES = 128 * 1024 * 1024
 _MAX_OPENXML_RELATIONSHIP_BYTES = 2 * 1024 * 1024
 _MAX_XLSX_VISITED_CELLS = 2_000_000
-_MAX_DOCUMENT_PAGES = 500
 _MIN_PDF_PAGE_POINTS = 36.0
 _MAX_PDF_PAGE_POINTS = 7_500.0
 _MAX_PDF_PAGE_AREA_POINTS = 22_500_000.0
@@ -525,7 +524,7 @@ def _inspect_openxml_package(
         with ZipFile(BytesIO(content)) as package:
             entries = package.infolist()
             details["packageParts"] = len(entries)
-            if len(entries) > _MAX_OPENXML_FILES:
+            if len(entries) > MAX_OPENXML_MEMBERS:
                 errors.append("openxml_package_file_limit_exceeded")
             names: set[str] = set()
             total_uncompressed = 0
@@ -753,7 +752,7 @@ def validate_artifact_content(
                 page_count = len(reader.pages)
                 if page_count == 0:
                     errors.append("empty_pdf")
-                if page_count > _MAX_DOCUMENT_PAGES:
+                if page_count > MAX_DOCUMENT_PAGES:
                     errors.append("pdf_page_limit_exceeded")
                 page_text: list[str] = []
                 if not errors:
