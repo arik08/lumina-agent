@@ -23,11 +23,15 @@ test("project settings manage registered accounts inline", async () => {
   assert.match(view, /type="email"[\s\S]*?name@posco\.com/);
   assert.match(view, /await api\.projectMemberships\.add/);
   assert.match(view, /await api\.projectMemberships\.update/);
+  assert.match(view, /aria-haspopup="menu"/);
+  assert.match(view, /role="menuitemradio"/);
+  assert.doesNotMatch(view, /<select/);
   assert.match(view, /memberDeleteArmed !== membership\.id[\s\S]*?setMemberDeleteArmed\(membership\.id\)/);
   assert.match(view, /await api\.projectMemberships\.remove/);
   assert.match(view, /한 번 더 눌러 제거/);
   assert.doesNotMatch(view, /window\.confirm|<dialog|modal/i);
   assert.match(styles, /\.project-membership-settings\s*\{/);
   assert.match(styles, /\.project-member-list article\s*\{/);
+  assert.match(styles, /\.project-role-menu\s*\{[\s\S]*?border-radius: 8px;/);
   assert.match(styles, /\.project-manager-list > header \.tooltip-control::after\s*\{[\s\S]*?top: calc\(100% \+ 5px\);[\s\S]*?right: 0;[\s\S]*?bottom: auto;[\s\S]*?left: auto;/);
 });
