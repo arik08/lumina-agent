@@ -1203,6 +1203,9 @@ button:disabled { cursor: default; opacity: 0.5; }
 
 .file-workspace-toolbar { display: flex; min-height: 45px; align-items: center; gap: 9px; padding: 7px 18px; border-bottom: 1px solid var(--line); background: var(--surface); }
 .file-workspace-toolbar .feature-search { flex: 1; }
+.file-workspace-list-toolbar { position: sticky; z-index: 1; top: 0; gap: 6px; padding: 7px 12px; }
+.file-workspace-list-toolbar button { height: 30px; padding: 0 9px; }
+.file-workspace-list-toolbar .file-workspace-list-refresh { width: 30px; padding: 0; color: var(--muted); }
 .file-drop-target { display: inline-flex; min-height: 29px; align-items: center; gap: 5px; padding: 0 9px; border: 1px dashed var(--line-strong); border-radius: 5px; background: transparent; color: var(--muted); font-size: 11.5px; cursor: pointer; }
 .file-drop-target:hover, .file-drop-target.is-active { border-color: var(--cobalt); background: var(--cobalt-pale); color: var(--cobalt); }
 .file-workspace-split { grid-template-columns: minmax(240px, 31%) minmax(0, 1fr); }

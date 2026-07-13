@@ -220,7 +220,6 @@ export function ProjectFilesView({ projectId, onOpenNavigation, onToast }: Proje
     <div className="feature-view project-files-view">
       <header className="feature-header">
         <div><button className="feature-mobile-menu" type="button" aria-label="사이드바 열기" onClick={onOpenNavigation}><Menu size={17} /></button><FolderOpen size={17} /><h1>파일 Workspace</h1><span>{files.length}개 · Server Workspace</span></div>
-        <div><button type="button" aria-label="새로 고침" disabled={loading} onClick={() => setRefreshKey((value) => value + 1)}>{loading ? <LoaderCircle className="is-running" size={15} /> : <RefreshCw size={15} />}</button><button className="feature-primary-action lumina-primary-action" type="button" disabled={!projectId || busy} onClick={() => uploadInputRef.current?.click()}><Upload size={15} /> 업로드</button></div>
       </header>
       <input ref={uploadInputRef} className="visually-hidden" type="file" multiple onChange={(event) => { const selected = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = ""; void uploadFiles(selected); }} />
       <input ref={versionInputRef} className="visually-hidden" type="file" onChange={(event) => { const selected = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (selected) void addVersion(selected); }} />
@@ -232,6 +231,10 @@ export function ProjectFilesView({ projectId, onOpenNavigation, onToast }: Proje
       {!projectId ? <div className="feature-state">파일을 관리할 Project를 선택해 주세요.</div> : (
         <div className="split-feature file-workspace-split">
           <aside className="feature-list file-workspace-list" aria-label="Project 파일 목록">
+            <div className="feature-toolbar file-workspace-list-toolbar">
+              <button className="feature-primary-action lumina-primary-action" type="button" disabled={!projectId || busy} onClick={() => uploadInputRef.current?.click()}><Upload size={15} /> 업로드</button>
+              <button className="file-workspace-list-refresh" type="button" aria-label="새로 고침" disabled={loading} onClick={() => setRefreshKey((value) => value + 1)}>{loading ? <LoaderCircle className="is-running" size={15} /> : <RefreshCw size={15} />}</button>
+            </div>
             {loading && files.length === 0 ? <div className="feature-state"><LoaderCircle className="is-running" size={15} /> 불러오는 중</div> : files.length === 0 ? <div className="feature-state">Project 파일이 없습니다.</div> : files.map((item) => (
               <button className={item.id === selectedId ? "is-selected" : ""} type="button" key={item.id} onClick={() => setSelectedId(item.id)}>
                 <span><strong>{item.displayName}</strong><small>{item.logicalPath} · {formatBytes(item.size)}</small></span><em className="is-enabled">v{item.currentVersion}</em>
