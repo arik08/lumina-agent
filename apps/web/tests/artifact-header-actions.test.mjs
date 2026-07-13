@@ -15,6 +15,7 @@ test("artifact header keeps its actions visible above the preview", async () => 
     assert.ok(app.includes(label), `missing Artifact header action: ${label}`);
   }
   assert.match(stylesheet, /\.artifact-header\s*\{[^}]*position:\s*relative[^}]*z-index:\s*4[^}]*background:\s*var\(--surface\)/s);
+  assert.match(stylesheet, /@media \(max-width: 720px\)\s*\{[\s\S]*?\.artifact-header\s*\{[^}]*padding:\s*0 14px 0 11px/s);
   assert.match(stylesheet, /\.artifact-header > div:last-child > button\s*\{[^}]*color:\s*var\(--muted\)/s);
   assert.match(stylesheet, /\.artifact-header > div:last-child > button:disabled\s*\{[^}]*color:\s*var\(--muted\)[^}]*opacity:\s*1/s);
   assert.ok(!stylesheet.includes(".artifact-header button"), "Artifact header icon rules must not override nested SelectMenu buttons");

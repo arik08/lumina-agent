@@ -2849,7 +2849,7 @@ button:disabled { cursor: default; opacity: 0.5; }
   .composer-suggestions { max-height: 184px; }
   .composer-footer .model-control { max-width: 82px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .composer-footer .effort-control { padding: 0 4px; }
-  .artifact-header { gap: 5px; padding: 0 7px 0 11px; }
+  .artifact-header { gap: 5px; padding: 0 14px 0 11px; }
   .artifact-header strong { font-size: 12.5px; }
   .artifact-header > div:last-child { gap: 0; }
   .artifact-header > div:last-child > button { width: 29px; height: 29px; border-radius: 6px; }
