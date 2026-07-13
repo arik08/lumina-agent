@@ -1,7 +1,7 @@
 @property --session-scrollbar-strength {
   syntax: "<percentage>";
   inherits: true;
-  initial-value: 17%;
+  initial-value: 11%;
 }
 
 :root {
@@ -374,7 +374,7 @@ button:focus-visible, textarea:focus-visible, a:focus-visible {
 .session-section { display: flex; min-height: 0; flex: 1; flex-direction: column; padding: 0; }
 .session-heading { flex: 0 0 auto; margin: 0 11px; }
 .session-list {
-  --session-scrollbar-strength: 17%;
+  --session-scrollbar-strength: 11%;
   display: grid;
   min-height: 0;
   flex: 1;
@@ -2579,8 +2579,8 @@ button:disabled { cursor: default; opacity: 0.5; }
 .theme-dark .chat-header { background: rgba(23, 25, 29, 0.98); }
 .theme-dark .notification-badge { border-color: var(--surface); }
 .theme-dark .notification-panel { box-shadow: 0 16px 38px rgba(0, 0, 0, 0.32); }
-.theme-dark .session-list { scrollbar-color: var(--scrollbar-thumb) transparent; }
-.theme-dark .session-list::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); }
+.theme-dark .session-list { scrollbar-color: color-mix(in srgb, var(--ink) var(--session-scrollbar-strength), transparent) transparent; }
+.theme-dark .session-list::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--ink) var(--session-scrollbar-strength), transparent); }
 .theme-dark .session-list.is-scrolling { scrollbar-color: var(--scrollbar-thumb-strong) transparent; }
 .theme-dark .session-list.is-scrolling::-webkit-scrollbar-thumb,
 .theme-dark .session-list::-webkit-scrollbar-thumb:hover { border: 0; background: var(--scrollbar-thumb-strong); }
