@@ -31,6 +31,8 @@
   --cobalt: #3f66c9;
   --cobalt-hover: #3158b8;
   --cobalt-pale: #edf2fb;
+  --skill-accent: oklch(54% 0.15 290);
+  --mcp-accent: oklch(48% 0.1 175);
   --success: #2f9765;
   --warning: #b8771f;
   --danger: #c34f51;
@@ -2221,6 +2223,8 @@ button:disabled { cursor: default; opacity: 0.5; }
 .composer-suggestions.is-extension-list > button { min-height: 29px; grid-template-columns: 21px minmax(0, 1fr) auto; gap: 6px; padding-block: 2px; }
 .composer-suggestion-icon { display: inline-grid; width: 22px; height: 22px; place-items: center; color: var(--cobalt); }
 .composer-suggestions.is-extension-list .composer-suggestion-icon { width: 20px; height: 20px; }
+.composer-suggestions.is-extension-list .composer-suggestion-icon.kind-skill { color: var(--skill-accent); }
+.composer-suggestions.is-extension-list .composer-suggestion-icon.kind-mcp { color: var(--mcp-accent); }
 .composer-suggestion-copy { display: grid; min-width: 0; gap: 1px; }
 .composer-suggestions.is-extension-list .composer-suggestion-copy { display: flex; align-items: center; gap: 6px; overflow: hidden; white-space: nowrap; }
 .composer-suggestions.is-extension-list .composer-suggestion-copy strong { max-width: 42%; flex: 0 1 auto; }
@@ -2485,6 +2489,8 @@ button:disabled { cursor: default; opacity: 0.5; }
   --cobalt: #7e9ce5;
   --cobalt-hover: #6f91df;
   --cobalt-pale: #26334d;
+  --skill-accent: oklch(76% 0.12 290);
+  --mcp-accent: oklch(75% 0.11 175);
   --shadow-overlay: 0 12px 28px rgba(0, 0, 0, 0.38), 0 2px 7px rgba(0, 0, 0, 0.24);
   color: var(--ink);
 }

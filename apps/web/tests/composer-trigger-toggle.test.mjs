@@ -37,10 +37,13 @@ test("Skill and MCP suggestions use compact single-line rows", async () => {
   const [app, styles] = await Promise.all([readFile(appUrl, "utf8"), readFile(stylesUrl, "utf8")]);
 
   assert.match(app, /composerTrigger\.trigger === "\$" \? "is-extension-list" : ""/);
+  assert.match(app, /className=\{`composer-suggestion-icon kind-\$\{suggestion\.kind\}`\}/);
   assert.match(app, /composerTrigger\.trigger === "\$" && suggestion\.description && <small className="composer-suggestion-description">· \{suggestion\.description\}<\/small>/);
   assert.match(app, /composerTrigger\.trigger === "@" && <small>\{suggestion\.subtitle\}<\/small>/);
   assert.doesNotMatch(app, /suggestion\.kind === "mcp" \? `MCP ·/);
   assert.match(styles, /\.composer-suggestions\.is-extension-list > button \{[^}]*min-height: 29px;[^}]*padding-block: 2px;/);
   assert.match(styles, /\.composer-suggestions\.is-extension-list \.composer-suggestion-copy \{[^}]*display: flex;[^}]*overflow: hidden;[^}]*white-space: nowrap;/);
   assert.match(styles, /\.composer-suggestions\.is-extension-list \.composer-suggestion-description \{[^}]*min-width: 0;[^}]*flex: 1 1 0;/);
+  assert.match(styles, /\.composer-suggestions\.is-extension-list \.composer-suggestion-icon\.kind-skill \{ color: var\(--skill-accent\); \}/);
+  assert.match(styles, /\.composer-suggestions\.is-extension-list \.composer-suggestion-icon\.kind-mcp \{ color: var\(--mcp-accent\); \}/);
 });

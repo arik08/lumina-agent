@@ -2523,7 +2523,7 @@ function App() {
                         onMouseDown={(event) => event.preventDefault()}
                         onClick={() => selectComposerSuggestion(suggestion)}
                       >
-                        <span className="composer-suggestion-icon">{suggestionIcon(suggestion.kind)}</span>
+                        <span className={`composer-suggestion-icon kind-${suggestion.kind}`}>{suggestionIcon(suggestion.kind)}</span>
                         <span className="composer-suggestion-copy">
                           <strong>{suggestion.name}</strong>
                           {composerTrigger.trigger === "$" && suggestion.description && <small className="composer-suggestion-description">· {suggestion.description}</small>}
