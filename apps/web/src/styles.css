@@ -2192,7 +2192,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .composer-reference button { display: inline-grid; width: 20px; height: 20px; flex: 0 0 auto; place-items: center; border: 0; border-radius: 4px; background: transparent; color: var(--muted); cursor: pointer; }
 .composer-reference button:hover { background: rgba(63, 102, 201, 0.1); color: var(--ink); }
 .composer-reference.kind-skill, .composer-reference.kind-mcp { background: #f1f0f6; color: #62577d; }
-.composer-suggestions { max-height: 226px; margin: 0 -13px 7px; overflow-y: auto; border-block: 1px solid var(--line); background: var(--menu-surface); }
+.composer-suggestions { max-height: 226px; margin: 0 -13px 7px; overflow-y: auto; border-block: 1px solid var(--line); background: var(--surface); }
 .composer-suggestions-heading { position: sticky; top: 0; z-index: 1; display: flex; min-height: 30px; align-items: center; justify-content: space-between; padding: 0 13px; background: var(--surface-soft); color: var(--ink); font-size: 11.5px; font-weight: 650; }
 .composer-suggestions-heading small { color: var(--muted); font-size: 10.5px; font-weight: 400; }
 .composer-suggestions > button { display: grid; width: 100%; min-height: 38px; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 7px; padding: 4px 13px; border: 0; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }

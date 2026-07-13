@@ -16,7 +16,6 @@ const menuSurfaceSelectors = [
   ".project-manager-list > header",
   ".notification-panel",
   ".answer-usage-popover",
-  ".composer-suggestions",
   ".composer-picker-menu",
   ".lumina-select-menu",
 ];
@@ -40,6 +39,15 @@ test("navigation and menu surfaces share one neutral color token", async () => {
       `${selector} must use --menu-surface`,
     );
   }
+});
+
+test("embedded composer suggestions use the composer surface", async () => {
+  const styles = await readFile(stylesPath, "utf8");
+
+  assert.match(
+    styles,
+    /\.composer-suggestions\s*\{[^}]*background:\s*var\(--surface\);/,
+  );
 });
 
 test("scrollable surfaces use neutral scrollbar tokens", async () => {
