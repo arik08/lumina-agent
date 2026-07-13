@@ -66,6 +66,34 @@ def _upload(
     )
 
 
+@pytest.mark.parametrize("content", ["", "   \n\t"])
+def test_project_file_api_accepts_blank_text_files(
+    tmp_path: Path, content: str
+) -> None:
+    settings = _settings(tmp_path, "blank-project-file.db")
+    with TestClient(create_app(settings)) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+
+        created = _upload(
+            client,
+            headers,
+            project_id,
+            logical_path="notes/blank.md",
+            content=content,
+        )
+
+        assert created.status_code == 201, created.text
+        payload = created.json()
+        assert payload["logicalPath"] == "notes/blank.md"
+        assert payload["size"] == len(content.encode())
+        downloaded = client.get(
+            f"/api/projects/{project_id}/files/{payload['id']}/download"
+        )
+        assert downloaded.status_code == 200
+        assert downloaded.content == content.encode()
+
+
 def test_project_file_api_versions_paths_search_and_isolation(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     with TestClient(create_app(settings)) as client:

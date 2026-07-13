@@ -207,10 +207,6 @@ def prepare_project_file(
             "mime_mismatch",
             "파일 내용과 경로의 확장자가 일치하지 않습니다.",
         )
-    if not content or (mime_type.startswith("text/") and not content.strip()):
-        raise ApiProblem(
-            422, "project_file_empty", "빈 Project 파일은 저장할 수 없습니다."
-        )
     extraction = extract_attachment_text(
         filename=PurePosixPath(logical_path).name,
         mime_type=mime_type,
