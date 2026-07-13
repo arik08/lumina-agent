@@ -14,8 +14,11 @@ test("answer ratings use accessible selected states and semantic colors", () => 
   assert.match(styles, /answer-rating-control\.is-dislike[\s\S]*?color: var\(--danger\)/);
 });
 
-test("answer rating success is shown inline without a toast and failures remain visible", () => {
-  assert.match(turnSource, /setAnswerRating\(value\)/);
+test("answer ratings toggle off on a second click and failures restore the previous state", () => {
+  assert.match(turnSource, /const nextRating = answerRating === value \? null : value/);
+  assert.match(turnSource, /setAnswerRating\(nextRating\)/);
+  assert.match(turnSource, /if \(nextRating === null\) \{[\s\S]*?await api\.messages\.deleteRating\(finalMessage\.id\)/);
+  assert.match(turnSource, /await api\.messages\.putRating\(finalMessage\.id, nextRating\)/);
   assert.match(turnSource, /setAnswerRating\(previousRating\)[\s\S]*?onToast\("평가를 기록하지 못했습니다\."\)/);
   assert.doesNotMatch(turnSource, /좋아요를 기록했습니다|싫어요를 기록했습니다/);
 });

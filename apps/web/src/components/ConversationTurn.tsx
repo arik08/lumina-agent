@@ -1336,10 +1336,15 @@ export function AssistantTurn({
   const rateAnswer = async (value: "like" | "dislike") => {
     if (!finalMessage || ratingSubmitting) return;
     const previousRating = answerRating;
-    setAnswerRating(value);
+    const nextRating = answerRating === value ? null : value;
+    setAnswerRating(nextRating);
     setRatingSubmitting(true);
     try {
-      await api.messages.putRating(finalMessage.id, value);
+      if (nextRating === null) {
+        await api.messages.deleteRating(finalMessage.id);
+      } else {
+        await api.messages.putRating(finalMessage.id, nextRating);
+      }
     } catch {
       setAnswerRating(previousRating);
       onToast("평가를 기록하지 못했습니다.");
