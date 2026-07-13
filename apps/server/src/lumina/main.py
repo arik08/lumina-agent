@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import Scope
@@ -26,6 +27,7 @@ from .api.routes import (
     conversations,
     extensions,
     finance,
+    help,
     instructions,
     mcp,
     memories,
@@ -161,6 +163,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         composer,
         extensions,
         finance,
+        help,
         instructions,
         mcp,
         messages,
@@ -184,9 +187,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     @application.get("/api/health/ready", tags=["health"])
-    def readiness() -> dict[str, str]:
+    def readiness() -> dict[str, str] | JSONResponse:
         with SessionLocal() as db:
             db.execute(text("SELECT 1"))
+        if not local_run_executor.started:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "not_ready",
+                    "database": "ready",
+                    "executor": "stopped",
+                },
+            )
         return {"status": "ok", "database": "ready", "executor": "ready"}
 
     frontend_dist = REPOSITORY_ROOT / "apps" / "web" / "dist"

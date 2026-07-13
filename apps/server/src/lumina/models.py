@@ -113,6 +113,39 @@ class RuntimePromptOverride(TimestampMixin, Base):
     )
 
 
+class HelpItem(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "help_items"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "parent_scope_key",
+            "title_key",
+            name="uq_help_items_sibling_title",
+        ),
+        Index("ix_help_items_tree", "organization_id", "parent_id", "sort_order"),
+    )
+
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    parent_id: Mapped[str | None] = mapped_column(
+        ForeignKey("help_items.id", ondelete="CASCADE"), index=True
+    )
+    parent_scope_key: Mapped[str] = mapped_column(String(36), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    title_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    markdown_content: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    created_by_user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    updated_by_user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+
+
 class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "users"
 
@@ -823,6 +856,39 @@ class ProjectFile(UUIDPrimaryKeyMixin, Base):
     current_version_number: Mapped[int] = mapped_column(
         Integer, default=1, nullable=False
     )
+    revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(24), default="active", index=True, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, onupdate=utc_now, nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), index=True)
+
+
+class ProjectFolder(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "project_folders"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id", "active_path_key", name="uq_project_folders_active_path"
+        ),
+        Index("ix_project_folders_listing", "project_id", "status", "logical_path"),
+    )
+
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), index=True, nullable=False
+    )
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="RESTRICT"), index=True, nullable=False
+    )
+    created_by_user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    logical_path: Mapped[str] = mapped_column(String(1000), nullable=False)
+    active_path_key: Mapped[str | None] = mapped_column(String(1000))
     revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     status: Mapped[str] = mapped_column(
         String(24), default="active", index=True, nullable=False
@@ -1842,6 +1908,7 @@ __all__ = [
     "ExtensionDraftRevision",
     "ExtensionInstallation",
     "ExtensionVersion",
+    "HelpItem",
     "Message",
     "MessageFeedback",
     "MessageReference",
@@ -1857,6 +1924,7 @@ __all__ = [
     "PlanSubtask",
     "Project",
     "ProjectFile",
+    "ProjectFolder",
     "ProjectFileVersion",
     "ProjectLearningProposal",
     "ProjectMemory",

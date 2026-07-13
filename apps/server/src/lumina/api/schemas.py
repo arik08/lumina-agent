@@ -115,6 +115,24 @@ class ProjectFileMove(ApiModel):
     expected_revision: int = Field(ge=1)
 
 
+class ProjectFolderResponse(ApiModel):
+    id: str
+    project_id: str
+    logical_path: str
+    revision: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class ProjectFolderCreate(ApiModel):
+    logical_path: str = Field(min_length=1, max_length=1000)
+
+
+class ProjectFolderMove(ApiModel):
+    source_path: str = Field(min_length=1, max_length=1000)
+    target_path: str = Field(min_length=1, max_length=1000)
+
+
 class ConversationCreate(ApiModel):
     project_id: str | None = None
     title: str = Field(default="제목 없음", min_length=1, max_length=200)
@@ -158,7 +176,7 @@ class CursorPage(ApiModel):
 
 
 class MessageReferenceInput(ApiModel):
-    kind: Literal["file", "artifact", "skill", "mcp"]
+    kind: Literal["file", "folder", "artifact", "skill", "mcp"]
     reference_id: str
     version_or_digest: str | None = None
     display_snapshot: dict[str, Any] = Field(default_factory=dict)

@@ -5,6 +5,7 @@ import base64
 import json
 import logging
 import math
+import mimetypes
 import os
 import re
 import time
@@ -80,7 +81,12 @@ from ..providers.pgpt import PgptAdapter
 from ..providers.catalog import estimate_model_cost_parts, model_operational_profile
 from ..storage import ManagedLocalStorage
 from ..tools.web import WebToolError, WebToolPolicy, web_fetch, web_search
-from ..tools.workspace import WORKSPACE_TOOL_SCHEMAS, execute_workspace_tool
+from ..project_files.service import normalize_logical_path
+from ..tools.workspace import (
+    ARTIFACT_WRITE_TOOL_SCHEMA,
+    WORKSPACE_TOOL_SCHEMAS,
+    execute_workspace_tool,
+)
 from ..runs.broker import event_broker
 from ..runs.recovery import (
     clear_model_turn_inflight,
@@ -139,6 +145,7 @@ from ..api.schemas import (
 
 
 logger = logging.getLogger(__name__)
+_PROVIDER_RETRY_DELAYS_SECONDS = (1.0, 2.0)
 ClaimResult = Literal["claimed", "wait", "stop"]
 
 
@@ -268,6 +275,7 @@ class LocalRunExecutor:
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._reenqueue_after_task: set[str] = set()
+        self._codex_warmup_task: asyncio.Task[None] | None = None
 
     def configure(self, settings: Settings) -> None:
         if self._started:
@@ -301,14 +309,6 @@ class LocalRunExecutor:
             raise
 
     async def _start_owned(self) -> None:
-        if self.settings.environment != "test":
-            try:
-                await self.codex_provider.warmup()
-            except ProviderError as exc:
-                logger.warning(
-                    "Codex App Server warmup skipped",
-                    extra={"provider_error": type(exc).__name__},
-                )
         queued_ids: list[str] = []
         recovery_notify_ids: list[str] = []
         queue_recovery_run_ids: list[str] = []
@@ -351,6 +351,28 @@ class LocalRunExecutor:
             await self._promote_next_message(run_id)
         for run_id in queued_ids:
             self.enqueue(run_id)
+        if self.settings.environment != "test":
+            self._codex_warmup_task = asyncio.create_task(
+                self._warm_codex_provider(), name="lumina-codex-warmup"
+            )
+            self._codex_warmup_task.add_done_callback(
+                self._clear_codex_warmup_task
+            )
+
+    async def _warm_codex_provider(self) -> None:
+        try:
+            await self.codex_provider.warmup()
+        except ProviderError as exc:
+            logger.warning(
+                "Codex App Server warmup skipped",
+                extra={"provider_error": type(exc).__name__},
+            )
+        except Exception:
+            logger.exception("Unexpected Codex App Server warmup failure")
+
+    def _clear_codex_warmup_task(self, task: asyncio.Task[None]) -> None:
+        if self._codex_warmup_task is task:
+            self._codex_warmup_task = None
 
     async def stop(self) -> None:
         self._started = False
@@ -359,6 +381,9 @@ class LocalRunExecutor:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+        warmup_task = self._codex_warmup_task
+        if warmup_task is not None:
+            await asyncio.gather(warmup_task, return_exceptions=True)
         background_tasks = list(self._background_tasks)
         if background_tasks:
             await asyncio.gather(*background_tasks, return_exceptions=True)
@@ -626,6 +651,7 @@ class LocalRunExecutor:
             _UPDATE_PLAN_TOOL_SCHEMA,
             *((skill_activation_schema,) if skill_activation_schema else ()),
             *((_REPORT_TOOL_SCHEMA,) if wants_artifact else ()),
+            *((ARTIFACT_WRITE_TOOL_SCHEMA,) if wants_artifact else ()),
             *((GENERATE_IMAGE_TOOL_SCHEMA,) if image_generation_capable else ()),
             _WEB_SEARCH_TOOL_SCHEMA,
             _WEB_FETCH_TOOL_SCHEMA,
@@ -650,6 +676,7 @@ class LocalRunExecutor:
         artifact_created = False
         artifact_completion_reminded = False
         reactive_context_recovery_attempted = False
+        provider_retry_attempt = 0
         while True:
             messages = await self._compact_runtime_context(
                 run_id, messages, tool_schemas
@@ -658,7 +685,7 @@ class LocalRunExecutor:
             if violation is not None:
                 await self._limit_run(run_id, violation)
                 return
-            if round_index == 0:
+            if round_index == 0 and provider_retry_attempt == 0:
                 self._emit_run_activity(run_id, "started")
             await self._set_status(run_id, MODEL_STREAMING)
             provider = self._provider(
@@ -690,6 +717,7 @@ class LocalRunExecutor:
             interrupted_by_steer = False
             limit_violation: RunLimitViolation | None = None
             provider_request_error: ProviderRequestError | None = None
+            provider_output_started = False
             pending_text: list[str] = []
             pending_text_chars = 0
             last_text_flush = time.monotonic()
@@ -709,6 +737,13 @@ class LocalRunExecutor:
             try:
                 async with asyncio.timeout(self._remaining_run_seconds(run_id)):
                     async for event in provider.stream(request):
+                        if event.type in {
+                            "text_delta",
+                            "tool_call_started",
+                            "tool_call_delta",
+                            "tool_call_completed",
+                        }:
+                            provider_output_started = True
                         if not await self._wait_until_runnable(run_id):
                             return
                         if await self._has_pending_steers(run_id):
@@ -860,7 +895,17 @@ class LocalRunExecutor:
                     if recovered_messages is not messages:
                         messages = recovered_messages
                         continue
+                if await self._retry_provider_request(
+                    run_id,
+                    provider_request_error,
+                    retry_index=provider_retry_attempt,
+                    round_index=round_index,
+                    output_started=provider_output_started,
+                ):
+                    provider_retry_attempt += 1
+                    continue
                 raise provider_request_error
+            provider_retry_attempt = 0
 
             if progress_control_buffer:
                 await self._append_text(
@@ -1489,50 +1534,83 @@ class LocalRunExecutor:
         with SessionLocal() as db:
             for reference in prompt_references:
                 snapshot = reference.get("display_snapshot")
+                if not isinstance(snapshot, dict):
+                    continue
+                targets: list[dict[str, str]] = []
                 if (
-                    reference.get("kind") != "file"
-                    or not isinstance(snapshot, dict)
-                    or snapshot.get("targetType") != "project_file"
+                    reference.get("kind") == "file"
+                    and snapshot.get("targetType") == "project_file"
                 ):
+                    digest = reference.get("version_or_digest")
+                    file_id = reference.get("reference_id")
+                    if isinstance(digest, str) and isinstance(file_id, str):
+                        targets.append(
+                            {
+                                "id": file_id,
+                                "path": str(
+                                    snapshot.get(
+                                        "logicalPath", snapshot.get("name", "file")
+                                    )
+                                ),
+                                "digest": digest,
+                            }
+                        )
+                elif (
+                    reference.get("kind") == "folder"
+                    and snapshot.get("targetType") == "project_folder"
+                ):
+                    raw_targets = snapshot.get("fileVersions")
+                    if isinstance(raw_targets, list):
+                        targets.extend(
+                            {
+                                "id": str(item["id"]),
+                                "path": str(item["path"]),
+                                "digest": str(item["digest"]),
+                            }
+                            for item in raw_targets
+                            if isinstance(item, dict)
+                            and isinstance(item.get("id"), str)
+                            and isinstance(item.get("path"), str)
+                            and isinstance(item.get("digest"), str)
+                        )
+                if not targets:
                     continue
-                digest = reference.get("version_or_digest")
-                file_id = reference.get("reference_id")
-                if not isinstance(digest, str) or not isinstance(file_id, str):
-                    continue
-                workspace_version = db.scalar(
-                    select(ProjectFileVersion)
-                    .where(
-                        ProjectFileVersion.project_file_id == file_id,
-                        ProjectFileVersion.content_hash == digest,
+                for target in targets:
+                    workspace_version = db.scalar(
+                        select(ProjectFileVersion)
+                        .where(
+                            ProjectFileVersion.project_file_id == target["id"],
+                            ProjectFileVersion.content_hash == target["digest"],
+                        )
+                        .order_by(ProjectFileVersion.version_number.desc())
+                        .limit(1)
                     )
-                    .order_by(ProjectFileVersion.version_number.desc())
-                    .limit(1)
-                )
-                if workspace_version is None:
-                    continue
-                key = workspace_version.metadata_json.get("extractedStorageKey")
-                extracted_digest = workspace_version.metadata_json.get(
-                    "extractedContentHash"
-                )
-                if isinstance(key, str) and isinstance(extracted_digest, str):
-                    raw = self.file_storage.read_bytes(
-                        key, expected_sha256=extracted_digest
+                    if workspace_version is None:
+                        continue
+                    key = workspace_version.metadata_json.get("extractedStorageKey")
+                    extracted_digest = workspace_version.metadata_json.get(
+                        "extractedContentHash"
                     )
-                elif workspace_version.mime_type.startswith("text/"):
-                    raw = self.file_storage.read_bytes(
-                        workspace_version.storage_key,
-                        expected_sha256=workspace_version.content_hash,
+                    if isinstance(key, str) and isinstance(extracted_digest, str):
+                        raw = self.file_storage.read_bytes(
+                            key, expected_sha256=extracted_digest
+                        )
+                    elif workspace_version.mime_type.startswith("text/"):
+                        raw = self.file_storage.read_bytes(
+                            workspace_version.storage_key,
+                            expected_sha256=workspace_version.content_hash,
+                        )
+                    else:
+                        continue
+                    source = raw.decode("utf-8", errors="replace")[:workspace_remaining]
+                    workspace_sections.append(
+                        f'<project-file id="{target["id"]}" path="{target["path"]}" '
+                        f'version="{workspace_version.version_number}" '
+                        f'digest="{target["digest"]}">\n{source}\n</project-file>'
                     )
-                else:
-                    continue
-                source = raw.decode("utf-8", errors="replace")[:workspace_remaining]
-                workspace_sections.append(
-                    f'<project-file id="{file_id}" '
-                    f'path="{snapshot.get("logicalPath", snapshot.get("name", "file"))}" '
-                    f'version="{workspace_version.version_number}" digest="{digest}">\n'
-                    f"{source}\n</project-file>"
-                )
-                workspace_remaining -= len(source)
+                    workspace_remaining -= len(source)
+                    if workspace_remaining <= 0:
+                        break
                 if workspace_remaining <= 0:
                     break
         if workspace_sections:
@@ -2140,8 +2218,7 @@ class LocalRunExecutor:
             )
             return payload
 
-        if tool_call["name"] in {"glob", "grep", "read_file", "write_file", "list_dir"}:
-            artifact_id: str | None = None
+        if tool_call["name"] in {"glob", "grep", "read_file", "list_dir"}:
             try:
                 with session_scope() as db:
                     workspace_run = db.get(Run, run_id)
@@ -2163,33 +2240,6 @@ class LocalRunExecutor:
                         arguments=arguments,
                         max_upload_bytes=self.settings.max_upload_bytes,
                     )
-                    if tool_call["name"] == "write_file":
-                        display_name = Path(str(payload["path"])).name
-                        suffix = Path(display_name).suffix.casefold()
-                        kind = {
-                            ".md": "markdown",
-                            ".txt": "text",
-                        }.get(suffix, suffix.lstrip(".") or "text")
-                        artifact, version = create_artifact(
-                            db,
-                            self.storage,
-                            user=workspace_user,
-                            project_id=workspace_run.project_id,
-                            conversation_id=workspace_run.conversation_id,
-                            source_run_id=workspace_run.id,
-                            display_name=display_name,
-                            kind=kind,
-                            mime_type=str(payload["mimeType"]),
-                            content=str(arguments.get("content", "")).encode("utf-8"),
-                            change_type="agent_generated",
-                            change_summary="Project workspace write_file 결과",
-                        )
-                        artifact_id = artifact.id
-                        payload = {
-                            **payload,
-                            "artifact_id": artifact.id,
-                            "artifact_version": version.version_number,
-                        }
             except (ApiProblem, TypeError, ValueError) as exc:
                 return await self._fail_tool_execution(run_id, tool_id, exc)
             await self._complete_tool_execution(
@@ -2197,6 +2247,68 @@ class LocalRunExecutor:
                 tool_id,
                 payload,
                 f"Project workspace {tool_call['name']} 작업을 완료했습니다.",
+            )
+            return payload
+
+        if tool_call["name"] == "write_file":
+            try:
+                logical_path = normalize_logical_path(str(arguments.get("path", "")))
+                display_name = Path(logical_path).name
+                content = str(arguments.get("content", "")).encode("utf-8")
+                if len(content) > self.settings.max_upload_bytes:
+                    raise ApiProblem(
+                        413,
+                        "artifact_too_large",
+                        "생성 파일이 허용된 최대 크기를 초과했습니다.",
+                    )
+                suffix = Path(display_name).suffix.casefold()
+                kind = {
+                    ".md": "markdown",
+                    ".txt": "text",
+                }.get(suffix, suffix.lstrip(".") or "text")
+                mime_type = mimetypes.guess_type(display_name)[0] or "text/plain"
+                with session_scope() as db:
+                    workspace_run = db.get(Run, run_id)
+                    workspace_user = (
+                        db.get(User, workspace_run.user_id)
+                        if workspace_run is not None
+                        else None
+                    )
+                    if workspace_run is None or workspace_user is None:
+                        raise RuntimeError(
+                            "Run context disappeared during Artifact creation"
+                        )
+                    artifact, version = create_artifact(
+                        db,
+                        self.storage,
+                        user=workspace_user,
+                        project_id=workspace_run.project_id,
+                        conversation_id=workspace_run.conversation_id,
+                        source_run_id=workspace_run.id,
+                        display_name=display_name,
+                        kind=kind,
+                        mime_type=mime_type,
+                        content=content,
+                        change_type="agent_generated",
+                        change_summary="Agent가 생성한 Artifact",
+                    )
+                    payload = {
+                        "path": display_name,
+                        "action": "created",
+                        "mimeType": mime_type,
+                        "contentHash": version.content_hash,
+                        "sizeBytes": version.size_bytes,
+                        "artifact_id": artifact.id,
+                        "artifact_version": version.version_number,
+                    }
+                    artifact_id = artifact.id
+            except (ApiProblem, TypeError, ValueError) as exc:
+                return await self._fail_tool_execution(run_id, tool_id, exc)
+            await self._complete_tool_execution(
+                run_id,
+                tool_id,
+                payload,
+                "사용자 요청 Artifact를 생성했습니다.",
                 artifact_id=artifact_id,
             )
             return payload
@@ -2333,9 +2445,7 @@ class LocalRunExecutor:
                 "asset_count": len(report.asset_manifest),
                 "document_tokens": document_tokens,
                 "target_tokens": target_output_tokens,
-                "target_met": (
-                    target_floor is None or document_tokens >= target_floor
-                ),
+                "target_met": (target_floor is None or document_tokens >= target_floor),
             }
             completed_tool.result_summary = (
                 f"{report.format.upper()} 보고서를 Artifact로 저장하고 형식을 검증했습니다."
@@ -2913,6 +3023,57 @@ class LocalRunExecutor:
             mark_model_turn_inflight(db, run, turn_index=completed_turns)
             return None, completed_turns
 
+    async def _retry_provider_request(
+        self,
+        run_id: str,
+        error: ProviderRequestError,
+        *,
+        retry_index: int,
+        round_index: int,
+        output_started: bool,
+    ) -> bool:
+        if (
+            not error.retryable
+            or output_started
+            or retry_index >= len(_PROVIDER_RETRY_DELAYS_SECONDS)
+        ):
+            return False
+        delay_seconds = _PROVIDER_RETRY_DELAYS_SECONDS[retry_index]
+        with session_scope() as db:
+            run = db.get(Run, run_id)
+            if run is None or run.status in TERMINAL_STATUSES:
+                return False
+            usage = dict(run.usage_json)
+            usage["model_turns"] = min(
+                _nonnegative_int(usage.get("model_turns")), round_index
+            )
+            run.usage_json = usage
+            append_event(
+                db,
+                run,
+                "provider_retry_scheduled",
+                {
+                    "attempt": retry_index + 2,
+                    "maxAttempts": len(_PROVIDER_RETRY_DELAYS_SECONDS) + 1,
+                    "delaySeconds": delay_seconds,
+                    "stage": error.stage,
+                    "statusCode": error.status_code,
+                },
+            )
+        logger.warning(
+            "Retrying transient Provider request before output",
+            extra={
+                "run_id": run_id,
+                "provider_stage": error.stage,
+                "provider_status_code": error.status_code,
+                "retry_attempt": retry_index + 2,
+            },
+        )
+        await event_broker.notify(run_id)
+        if delay_seconds > 0:
+            await asyncio.sleep(delay_seconds)
+        return True
+
     def _current_limit_violation(self, run_id: str) -> RunLimitViolation | None:
         with SessionLocal() as db:
             run = db.get(Run, run_id)
@@ -3262,9 +3423,7 @@ class LocalRunExecutor:
                     for message in source_rows
                 )
             provider = (
-                self._provider(
-                    provider_id, wants_artifact=False, first_turn=False
-                )
+                self._provider(provider_id, wants_artifact=False, first_turn=False)
                 if provider_id != "mock"
                 else None
             )
@@ -3423,9 +3582,7 @@ class LocalRunExecutor:
                                 for reference in queued.prompt_references_json
                             ],
                             output_mode=execution.get("output_mode", "auto"),
-                            target_output_tokens=execution.get(
-                                "target_output_tokens"
-                            ),
+                            target_output_tokens=execution.get("target_output_tokens"),
                         ),
                         execution=ExecutionSelection(
                             provider_id=execution.get(
@@ -3756,9 +3913,7 @@ def _artifact_model_request_tokens(
         requested = max(configured, requested)
     hard_max = (
         _optional_positive_int(
-            capabilities.get(
-                "max_output_tokens", capabilities.get("maxOutputTokens")
-            )
+            capabilities.get("max_output_tokens", capabilities.get("maxOutputTokens"))
         )
         if isinstance(capabilities, Mapping)
         else None
@@ -4066,8 +4221,7 @@ def _skill_activation_tool_schema(
                     "skillId": {
                         "type": "string",
                         "enum": [
-                            str(extension["extension_id"])
-                            for extension in candidates
+                            str(extension["extension_id"]) for extension in candidates
                         ],
                     },
                     "reason": {

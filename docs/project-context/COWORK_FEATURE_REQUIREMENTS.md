@@ -81,7 +81,7 @@ Plan Timeline
 
 ### 제품 목표
 
-파일은 단순 첨부가 아니라 지속되는 업무 입력과 산출물입니다. 사용자가 허용한 Project Workspace 안에서 Agent가 파일을 읽고 결과를 지정 위치에 저장할 수 있어야 합니다.
+파일 저장소는 사용자가 AI Agent에게 제공하는 지속적인 업무 입력 공간입니다. Agent는 사용자가 넣은 파일과 폴더를 읽고 Context로 사용할 수 있지만 이 저장소에 파일을 임의로 생성하거나 수정할 수 없습니다. Agent가 만든 결과는 파일 저장소와 분리된 Artifact Library에 저장합니다.
 
 ### 서버형 Lumina에서의 해석
 
@@ -94,17 +94,18 @@ Local Workspace    → 사용자 PC의 Local Bridge가 허용 폴더만 연결
 Remote Connector   → SharePoint, Drive, Box 등 외부 저장소
 ```
 
-`Server Workspace`가 Lumina의 기본 저장 위치입니다. 채팅의 `저장`과 Agent의 Artifact 생성·편집 결과는 사용자의 브라우저 PC가 아니라 Lumina Backend가 구동되는 서버 또는 PC의 관리 저장소에 기록합니다. 사용자의 개인 PC에는 사용자가 명시적으로 브라우저 다운로드를 실행할 때만 사본을 전달합니다. 초기에는 단일 구동 장비의 관리된 `data/` 영역을 사용할 수 있지만, API와 metadata는 Storage Adapter를 통해 향후 별도 S3/MinIO 또는 조직 파일 서버로 이전할 수 있게 합니다.
+`Server Workspace`는 사용자가 업로드한 참조 파일의 기본 저장 위치입니다. 채팅의 `저장`과 Agent의 Artifact 생성·편집 결과는 별도 Artifact Storage에 기록하며 파일 저장소 트리에 자동으로 추가하지 않습니다. 사용자의 개인 PC에는 사용자가 명시적으로 브라우저 다운로드를 실행할 때만 사본을 전달합니다. 초기에는 단일 구동 장비의 관리된 `data/` 영역을 사용할 수 있지만, API와 metadata는 Storage Adapter를 통해 향후 별도 S3/MinIO 또는 조직 파일 서버로 이전할 수 있게 합니다.
 
 Local Bridge가 없는 환경에서는 “로컬 폴더 직접 접근”을 제공한다고 오해하게 만들지 않습니다. 초기 버전은 Upload와 Server Workspace부터 구현하고, Local Bridge는 이후 별도 설치 구성요소로 제공합니다.
 
 ### 사용자 체감 기능
 
-- 사용자가 명시적으로 연결한 폴더와 Project 파일만 접근합니다.
-- Project 화면에 파일 트리, 검색, Preview와 최근 변경을 표시합니다.
-- `@파일명`으로 채팅에서 파일을 빠르게 연결합니다.
-- Agent가 파일을 생성·수정하면 저장 위치와 변경 내용을 표시합니다.
-- 기존 파일 덮어쓰기 전에 diff 또는 새 버전 생성을 기본으로 합니다.
+- 사용자가 명시적으로 업로드한 폴더와 Project 파일만 접근합니다.
+- 파일과 폴더 Drag & Drop 시 하위 구조를 보존해 업로드합니다.
+- Project 화면 왼쪽에 탐색기형 파일 트리와 검색, 오른쪽에 선택 파일 Preview를 표시합니다.
+- `@파일명`과 `@폴더명`으로 채팅에서 파일 또는 폴더 전체를 빠르게 연결합니다.
+- Agent의 Workspace Tool은 탐색과 읽기만 허용하고 생성 결과는 Artifact로 분리합니다.
+- 사용자 UI에 파일 버전 관리 흐름을 제공하지 않습니다. 저장 무결성과 감사에 필요한 내부 revision은 사용자 조작 개념과 분리합니다.
 - 삭제는 휴지통 이동과 영구 삭제를 구분하고 영구 삭제는 추가 승인을 요구합니다.
 - 생성된 파일에서 원본 입력과 생성 Run으로 이동할 수 있습니다.
 
@@ -113,8 +114,9 @@ Local Bridge가 없는 환경에서는 “로컬 폴더 직접 접근”을 제�
 - Project별 허용 Workspace root와 Storage key 범위를 관리합니다.
 - Frontend가 보낸 raw path를 신뢰하지 않고 reference ID를 다시 검증합니다.
 - 경로 탈출, symbolic link, 절대 경로와 다른 사용자 Workspace 접근을 차단합니다.
-- 파일 버전, checksum, 작성자, 원본 Run과 변경 이유를 기록합니다.
-- 쓰기 작업은 optimistic concurrency 또는 base version을 사용해 다른 사용자의 변경을 덮어쓰지 않습니다.
+- checksum, 업로드한 사용자와 업로드 시각을 기록합니다.
+- 폴더 참조는 선택 시점의 하위 파일 ID와 digest를 고정하여 Run 재현성과 권한 검증을 유지합니다.
+- Agent가 생성하는 Artifact와 사용자가 관리하는 파일 저장소의 쓰기 경계를 Backend에서 분리합니다.
 - Local Bridge는 사용자 인증, 장치 등록, 폴더별 grant와 폐기 기능을 제공해야 합니다.
 
 ### 폴더별 지침

@@ -28,7 +28,19 @@ test("tool group metadata reserves the same scrollbar gutter as its tool rows", 
 
   assert.match(styles, /\.tool-call-group-summary \{[^}]*overflow-y: auto;[^}]*scrollbar-gutter: stable;[^}]*scrollbar-width: thin;/s);
   assert.match(styles, /\.tool-call-group-summary \{[^}]*grid-template-columns: 17px minmax\(0, 1fr\) 46px 16px;[^}]*gap: 5px;/s);
-  assert.match(styles, /\.progress-tools \{[^}]*overflow-y: auto;[^}]*scrollbar-gutter: stable;[^}]*scrollbar-width: thin;/s);
+  assert.match(styles, /\.progress-tools \{[^}]*max-height: 470px;[^}]*overflow-y: auto;[^}]*scrollbar-gutter: stable;[^}]*scrollbar-width: thin;/s);
+  for (const selector of [
+    ".model-exchange",
+    ".model-exchange-heading strong",
+    ".model-exchange-heading span",
+    ".model-exchange h4",
+    ".model-exchange-item > strong",
+    ".model-exchange-item pre",
+    ".model-exchange p",
+    ".model-exchange > small",
+  ]) {
+    assert.match(styles, new RegExp(`${selector.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")} \\{[^}]*font-size: 12px;`, "s"));
+  }
 });
 
 test("single-tool stage durations use the same duration and chevron columns as tool rows", async () => {

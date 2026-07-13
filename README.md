@@ -14,11 +14,11 @@ React 기반 Frontend와 FastAPI 기반 Backend를 한 서비스처럼 제공하
 
 ## 주요 기능
 
-- Project별 대화, 파일, 지침, Memory와 Artifact 관리
+- Project별 대화, 사용자 파일 저장소, 지침, Memory와 Artifact 관리
 - 세션을 이동하거나 다시 접속해도 이어지는 Background Agent Run
 - Provider·Model·Effort 선택과 사용자별 마지막 선택 복원
 - OpenAI, Codex, P-GPT, Anthropic, Gemini 및 OpenAI Compatible Provider
-- `@파일명` Context 연결과 `$Skill`·`$MCP` 명시 호출
+- `@파일명`·`@폴더명` Context 연결과 `$Skill`·`$MCP` 명시 호출
 - Tool 실행 상태, 승인 요청, Plan과 단계별 진행 상황 표시
 - DOCX, XLSX, PPTX, PDF, HTML, Markdown 산출물 생성과 검증
 - 대화 검색, 분기, 내보내기와 읽기 전용 공유
@@ -214,11 +214,12 @@ Composer에서 다음 문법을 사용합니다.
 
 ```text
 @분기보고서.pdf의 핵심 위험을 요약해 주세요.
+@점검자료 폴더를 참고해 설비별 주의사항을 정리해 주세요.
 $회의록작성 이 대화를 회의록으로 정리해 주세요.
 $사내검색 최근 관련 규정을 찾아 주세요.
 ```
 
-- `@`는 현재 Project에서 접근 가능한 파일 또는 Artifact를 Context에 연결합니다.
+- `@`는 현재 Project에서 접근 가능한 파일, 폴더 또는 Artifact를 Context에 연결합니다.
 - `$`는 설치되고 허용된 Skill 또는 MCP를 명시적으로 호출합니다.
 - 자동완성에서 항목을 선택하면 이름이 아니라 Backend 검증용 참조 ID가 Run에 전달됩니다.
 
@@ -229,7 +230,7 @@ $사내검색 최근 관련 규정을 찾아 주세요.
 | 에이전트 | 대화, Run, Tool 실행과 Artifact 작업 |
 | 마켓스토어 | Skill과 MCP 탐색·설치·관리 |
 | 라이브러리 | 생성된 Artifact 검색, Preview와 다운로드 |
-| 파일 | Project 파일 업로드와 Context 관리 |
+| 파일 | 사용자가 제공하는 Project 파일·폴더 업로드, 탐색, Preview와 Context 관리 |
 | 예약 작업 | 반복 또는 지정 시각 작업 관리 |
 | Memory | 사용자 및 Project 학습 항목 검토 |
 | 관리 | 사용자, Provider, MCP와 조직 운영 상태 관리 |

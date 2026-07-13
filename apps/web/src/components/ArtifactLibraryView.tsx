@@ -1,4 +1,4 @@
-import { CheckCircle2, FileCode2, FileText, LoaderCircle, Menu, RefreshCw, Search } from "lucide-react";
+import { FileCode2, FileText, LoaderCircle, Menu, RefreshCw, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import type { ArtifactSummary } from "../api-types";
@@ -114,7 +114,6 @@ export function ArtifactLibraryView({ projectId, onOpenArtifact, onOpenNavigatio
               <button type="button" className="artifact-library-row" key={artifact.id} onClick={() => onOpenArtifact(artifact)}>
                 <span className="feature-row-icon">{artifact.kind === "html" || artifact.kind === "code" ? <FileCode2 size={17} /> : <FileText size={17} />}</span>
                 <span className="feature-row-copy"><strong>{artifact.displayName}</strong><small>{artifact.kind.toUpperCase()} · v{artifact.currentVersion} · {(artifact.size / 1024).toFixed(1)}KB</small></span>
-                <span className={`validation-mark status-${artifact.validationStatus}`}><CheckCircle2 size={13} /> {artifact.validationStatus}</span>
                 <time>{new Date(artifact.updatedAt).toLocaleDateString("ko-KR")}</time>
               </button>
             ))}

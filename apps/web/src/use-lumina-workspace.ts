@@ -828,6 +828,10 @@ export function useLuminaWorkspace() {
     }
   }, []);
 
+  const startNewConversation = useCallback(() => {
+    setActiveConversationId(null);
+  }, []);
+
   const openConversation = useCallback((conversation: ConversationListItem) => {
     if (conversation.projectId !== activeProjectIdRef.current) {
       setActiveProjectIdState(conversation.projectId);
@@ -1195,6 +1199,7 @@ export function useLuminaWorkspace() {
     activeConversationId,
     selectConversation: setActiveConversationId,
     openConversation,
+    startNewConversation,
     createConversation,
     renameConversation,
     toggleFavoriteConversation,

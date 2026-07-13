@@ -21,7 +21,11 @@ from lumina.models import (
 )
 from lumina.providers import MockProvider, MockToolCall
 from lumina.runs.approvals import classify_tool_risk
-from lumina.tools.workspace import WORKSPACE_TOOL_SCHEMAS, execute_workspace_tool
+from lumina.tools.workspace import (
+    ARTIFACT_WRITE_TOOL_SCHEMA,
+    WORKSPACE_TOOL_SCHEMAS,
+    execute_workspace_tool,
+)
 
 
 def _settings(tmp_path: Path) -> Settings:
@@ -46,15 +50,10 @@ def _login(client: TestClient) -> dict[str, str]:
 
 def test_workspace_tool_schemas_and_risk_contract() -> None:
     names = [schema["function"]["name"] for schema in WORKSPACE_TOOL_SCHEMAS]
-    assert names == ["glob", "grep", "read_file", "write_file", "list_dir"]
-    write_schema = next(
-        schema
-        for schema in WORKSPACE_TOOL_SCHEMAS
-        if schema["function"]["name"] == "write_file"
-    )
-    assert (
-        "standalone HTML files with inline CSS and JavaScript"
-        in write_schema["function"]["description"]
+    assert names == ["glob", "grep", "read_file", "list_dir"]
+    assert ARTIFACT_WRITE_TOOL_SCHEMA["function"]["name"] == "write_file"
+    assert "without writing to the user-managed Project file repository" in (
+        ARTIFACT_WRITE_TOOL_SCHEMA["function"]["description"]
     )
     assert classify_tool_risk("glob", approval_mode="on_risk").effect == "read_only"
     write_risk = classify_tool_risk("write_file", approval_mode="on_risk")

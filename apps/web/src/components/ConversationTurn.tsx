@@ -29,7 +29,6 @@ import {
   MessageSquarePlus,
   Play,
   RotateCcw,
-  Share2,
   Sparkles,
   Table2,
   ThumbsDown,
@@ -82,6 +81,7 @@ import {
 } from "../run-activity-duration";
 import { useStreamingText } from "../streaming-ui";
 import { SyntaxCode, SyntaxCodeContent } from "./SyntaxCode";
+import { BranchFromHereIcon, ShareActionIcon } from "./ActionIcons";
 
 function toolCallIcon(toolName: string, size = 15) {
   const normalizedName = toolName.toLowerCase().replace(/[\s-]+/g, "_");
@@ -1554,8 +1554,8 @@ export function AssistantTurn({
                     />
                     <button className="tooltip-control" type="button" aria-label="답변 복사" data-tooltip="복사" disabled={!copyableAnswerText} onClick={() => void copyAnswer()}><Copy size={16} /></button>
                     <button className="tooltip-control" type="button" aria-label="답변 저장" data-tooltip="저장" disabled={!finalMessage || !sanitizedAssistantText || markdownSaving} onClick={() => void saveAnswerAsMarkdown()}>{markdownSaving ? <LoaderCircle className="is-running" size={16} /> : <Download size={16} />}</button>
-                    <button className="tooltip-control" type="button" aria-label="이 답변까지 새 채팅으로 분기" data-tooltip="여기서 분기" disabled={!finalMessage || branching} onClick={() => void branchAnswer()}>{branching ? <LoaderCircle className="is-running" size={16} /> : <GitBranch size={16} />}</button>
-                    <button className="tooltip-control" type="button" aria-label="답변 공유" data-tooltip="공유" disabled={!assistantText} onClick={() => onShare(finalMessage?.id ?? null)}><Share2 size={16} /></button>
+                    <button className="tooltip-control" type="button" aria-label="이 답변까지 새 채팅으로 분기" data-tooltip="여기서 분기" disabled={!finalMessage || branching} onClick={() => void branchAnswer()}>{branching ? <LoaderCircle className="is-running" size={16} /> : <BranchFromHereIcon size={16} />}</button>
+                    <button className="tooltip-control" type="button" aria-label="답변 공유" data-tooltip="공유" disabled={!assistantText} onClick={() => onShare(finalMessage?.id ?? null)}><ShareActionIcon size={16} /></button>
                     <button className={`tooltip-control answer-rating-control ${answerRating === "like" ? "is-like" : ""}`} type="button" aria-label="좋아요" aria-pressed={answerRating === "like"} data-tooltip="좋아요" disabled={!finalMessage || ratingSubmitting} onClick={() => void rateAnswer("like")}><ThumbsUp size={16} /></button>
                     <button className={`tooltip-control answer-rating-control ${answerRating === "dislike" ? "is-dislike" : ""}`} type="button" aria-label="싫어요" aria-pressed={answerRating === "dislike"} data-tooltip="싫어요" disabled={!finalMessage || ratingSubmitting} onClick={() => void rateAnswer("dislike")}><ThumbsDown size={16} /></button>
                     <button className={`tooltip-control ${reportOpen ? "is-active" : ""}`} type="button" aria-label="의견 게시" aria-expanded={reportOpen} data-tooltip="의견 게시" disabled={!finalMessage} onClick={() => { setReportOpen((open) => !open); setReportError(null); }}><MessageSquarePlus size={16} /></button>

@@ -26,6 +26,28 @@ MAX_READ_LINES = 2_000
 MAX_READ_CHARS = 100_000
 MAX_GREP_FILE_CHARS = 1_000_000
 _SKILL_FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|$)", re.DOTALL)
+ARTIFACT_WRITE_TOOL_SCHEMA: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "write_file",
+        "description": (
+            "Create a user-requested UTF-8 Artifact without writing to the user-managed "
+            "Project file repository. Use it for source code, executable HTML apps, demos, "
+            "and games."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "minLength": 1, "maxLength": 1000},
+                "content": {"type": "string"},
+            },
+            "required": ["path", "content"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
 WORKSPACE_TOOL_SCHEMAS: tuple[dict[str, Any], ...] = (
     {
         "type": "function",
@@ -91,27 +113,6 @@ WORKSPACE_TOOL_SCHEMAS: tuple[dict[str, Any], ...] = (
                     },
                 },
                 "required": ["path"],
-                "additionalProperties": False,
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "write_file",
-            "description": (
-                "Create or replace a UTF-8 text file in the current Project workspace, "
-                "including standalone HTML files with inline CSS and JavaScript. "
-                "Use write_file for executable HTML apps, demos, and games. Replacing a "
-                "file creates a new immutable version."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "minLength": 1, "maxLength": 1000},
-                    "content": {"type": "string"},
-                },
-                "required": ["path", "content"],
                 "additionalProperties": False,
             },
         },
@@ -485,4 +486,8 @@ def _decode_text(content: bytes) -> str:
         raise ValueError("The requested Project file is not UTF-8 text.") from exc
 
 
-__all__ = ["WORKSPACE_TOOL_SCHEMAS", "execute_workspace_tool"]
+__all__ = [
+    "ARTIFACT_WRITE_TOOL_SCHEMA",
+    "WORKSPACE_TOOL_SCHEMAS",
+    "execute_workspace_tool",
+]

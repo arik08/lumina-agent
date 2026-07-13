@@ -180,6 +180,36 @@ export interface ProjectFileDetail extends ProjectFileSummary {
   versions: ProjectFileVersion[];
 }
 
+export interface ProjectFolderSummary {
+  id: UUID;
+  projectId: UUID;
+  logicalPath: string;
+  revision: number;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+export type HelpItemKind = "folder" | "document";
+
+export interface HelpItem {
+  id: UUID;
+  parentId: UUID | null;
+  kind: HelpItemKind;
+  title: string;
+  markdownContent: string;
+  sortOrder: number;
+  revision: number;
+  createdByUserId: UUID;
+  updatedByUserId: UUID;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+export interface HelpItemList {
+  items: HelpItem[];
+  canManage: boolean;
+}
+
 export type Theme = "light" | "dark";
 export type OutputMode = "auto" | "chat" | "file";
 
@@ -360,7 +390,7 @@ export interface ConversationSearchResponse {
   queryTokens: string[];
 }
 
-export type ReferenceKind = "file" | "artifact" | "skill" | "mcp";
+export type ReferenceKind = "file" | "folder" | "artifact" | "skill" | "mcp";
 export type ReferenceValidationStatus = "valid" | "unavailable" | "revoked";
 
 export interface PromptReference {

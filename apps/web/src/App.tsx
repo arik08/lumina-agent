@@ -53,7 +53,6 @@ import {
   Search,
   Send,
   Settings,
-  Share2,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
@@ -67,12 +66,13 @@ import {
   Undo2,
   GitBranch,
   Image as ImageIcon,
+  Info,
   Wrench,
   X,
 } from "lucide-react";
 import { createClientId } from "./client-id";
 import { copyText } from "./clipboard";
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type UIEvent as ReactUIEvent } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type UIEvent as ReactUIEvent } from "react";
 import { createPortal } from "react-dom";
 import { api, ApiError, attachmentContentUrl } from "./api";
 import { isTerminalRunStatus } from "./run-status";
@@ -96,6 +96,7 @@ import { MarketplaceView } from "./components/MarketplaceView";
 import { MemoryView } from "./components/MemoryView";
 import { ProjectSettings } from "./components/ProjectSettings";
 import { ProjectFilesView } from "./components/ProjectFilesView";
+import { HelpCenterView } from "./components/HelpCenterView";
 import { SchedulesView } from "./components/SchedulesView";
 import { SelectMenu } from "./components/SelectMenu";
 import { SharedSnapshotViewer } from "./components/SharedSnapshotViewer";
@@ -109,6 +110,7 @@ import {
   pastedTextAttachmentLabel,
   runStatusLabel,
 } from "./components/ConversationTurn";
+import { ShareActionIcon } from "./components/ActionIcons";
 
 type ArtifactTab = "preview" | "source";
 type NotificationTab = "notifications" | "announcements";
@@ -413,7 +415,9 @@ function StarterPrompts({ onSelect }: { onSelect: (prompt: string) => void }) {
     </div>
   );
 }
-type MainView = "chat" | "marketplace" | "library" | "files" | "schedules" | "memory" | "admin" | "settings" | "project-settings";
+type MainView = "chat" | "marketplace" | "library" | "files" | "help" | "schedules" | "memory" | "admin" | "settings" | "project-settings";
+
+const artifactPaneViews = new Set<MainView>(["chat", "library"]);
 
 interface ComposerTriggerState {
   trigger: "@" | "$";
@@ -474,6 +478,7 @@ function findComposerTrigger(text: string, caret: number): ComposerTriggerState 
 
 function suggestionIcon(kind: ReferenceKind) {
   if (kind === "artifact") return <FileCode2 size={15} aria-hidden="true" />;
+  if (kind === "folder") return <Folder size={15} aria-hidden="true" />;
   if (kind === "skill") return <Sparkles size={15} aria-hidden="true" />;
   if (kind === "mcp") return <Wrench size={15} aria-hidden="true" />;
   return <FileText size={15} aria-hidden="true" />;
@@ -481,6 +486,7 @@ function suggestionIcon(kind: ReferenceKind) {
 
 function referenceKindLabel(kind: ReferenceKind) {
   if (kind === "artifact") return "Artifact";
+  if (kind === "folder") return "폴더";
   if (kind === "skill") return "Skill";
   if (kind === "mcp") return "MCP";
   return "파일";
@@ -558,14 +564,16 @@ interface ComposerPickerOption {
   triggerLabel?: string;
 }
 
+const defaultArtifactOutputTokens = 10_000;
+
 const artifactLengthSteps = [
-  { value: null, label: "자동 10–12k", warning: null },
+  { value: 8_000, label: "8k", warning: null },
   { value: 10_000, label: "10k", warning: null },
   { value: 12_000, label: "12k", warning: null },
-  { value: 16_000, label: "16k", warning: null },
-  { value: 24_000, label: "~24k", warning: "장문" },
-  { value: 32_000, label: "~32k", warning: "장문" },
-  { value: 40_000, label: "~40k", warning: "최대" },
+  { value: 15_000, label: "15k", warning: null },
+  { value: 20_000, label: "20k", warning: "장문" },
+  { value: 30_000, label: "30k", warning: "장문" },
+  { value: 40_000, label: "40k", warning: "최대" },
 ] as const;
 
 function ArtifactLengthSlider({
@@ -577,15 +585,21 @@ function ArtifactLengthSlider({
   onChange: (value: number | null) => void;
   disabled?: boolean;
 }) {
+  const [open, setOpen] = useState(false);
+  const [popoverStyle, setPopoverStyle] = useState<CSSProperties>({ left: 0, top: 0, visibility: "hidden" });
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
   const inputId = useId();
+  const popoverId = useId();
   const selectedIndex = Math.max(
     0,
-    artifactLengthSteps.findIndex((option) => option.value === value),
+    artifactLengthSteps.findIndex((option) => option.value === (value ?? defaultArtifactOutputTokens)),
   );
   const selected = artifactLengthSteps[selectedIndex];
   const selectStep = (index: number) => {
     const boundedIndex = Math.min(artifactLengthSteps.length - 1, Math.max(0, index));
-    onChange(artifactLengthSteps[boundedIndex]?.value ?? null);
+    onChange(artifactLengthSteps[boundedIndex]?.value ?? defaultArtifactOutputTokens);
   };
   const tone = selectedIndex === artifactLengthSteps.length - 1
     ? "danger"
@@ -594,49 +608,127 @@ function ArtifactLengthSlider({
       : "normal";
   const ariaValueText = `${selected.label}${selected.warning ? `, ${selected.warning}` : ""}, 채팅 답변이 아닌 생성 파일의 목표 분량`;
 
+  useEffect(() => {
+    if (!open) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!rootRef.current?.contains(target) && !popoverRef.current?.contains(target)) setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      triggerRef.current?.focus();
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open) return undefined;
+    const updatePosition = () => {
+      const trigger = triggerRef.current;
+      const popover = popoverRef.current;
+      if (!trigger || !popover) return;
+      const triggerRect = trigger.getBoundingClientRect();
+      const popoverRect = popover.getBoundingClientRect();
+      const viewportPadding = 12;
+      const gap = 8;
+      const maximumLeft = Math.max(viewportPadding, window.innerWidth - viewportPadding - popoverRect.width);
+      const left = Math.min(
+        maximumLeft,
+        Math.max(viewportPadding, triggerRect.left),
+      );
+      setPopoverStyle({
+        left,
+        top: Math.max(viewportPadding, triggerRect.top - gap - popoverRect.height),
+        visibility: "visible",
+      });
+    };
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (disabled) setOpen(false);
+  }, [disabled]);
+
   return (
-    <label
-      className={`artifact-length-control is-${tone}${disabled ? " is-disabled" : ""}`}
-      style={{
-        "--artifact-length-progress": `${(selectedIndex / (artifactLengthSteps.length - 1)) * 100}%`,
-      } as CSSProperties}
+    <div
+      ref={rootRef}
+      className={`artifact-length-control is-${tone}${open ? " is-open" : ""}`}
     >
-      <span className="artifact-length-label">
-        <FileText size={12} aria-hidden="true" />
-        <span>파일 분량</span>
-      </span>
-      <input
-        id={inputId}
-        data-testid="artifact-length-slider"
-        type="range"
-        min={0}
-        max={artifactLengthSteps.length - 1}
-        step={1}
-        value={selectedIndex}
+      <button
+        ref={triggerRef}
+        className="artifact-length-trigger"
+        type="button"
         disabled={disabled}
-        aria-label="생성 파일 목표 분량"
-        aria-valuetext={ariaValueText}
-        onChange={(event) => selectStep(Number(event.currentTarget.value))}
-        onKeyDown={(event) => {
-          const nextIndex = event.key === "Home"
-            ? 0
-            : event.key === "End"
-              ? artifactLengthSteps.length - 1
-              : ["ArrowRight", "ArrowUp"].includes(event.key)
-                ? selectedIndex + 1
-                : ["ArrowLeft", "ArrowDown"].includes(event.key)
-                  ? selectedIndex - 1
-                  : null;
-          if (nextIndex === null) return;
-          event.preventDefault();
-          selectStep(nextIndex);
-        }}
-      />
-      <output htmlFor={inputId}>
-        <span>{selected.label}</span>
+        aria-label={`문서 출력 토큰: ${selected.label}${selected.warning ? `, ${selected.warning}` : ""}`}
+        aria-expanded={open}
+        aria-controls={popoverId}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <FileText size={12} aria-hidden="true" />
+        <span className="artifact-length-value">{selected.label}</span>
         {selected.warning && <small>{selected.warning}</small>}
-      </output>
-    </label>
+      </button>
+      {open && createPortal(
+        <div
+          ref={popoverRef}
+          id={popoverId}
+          className={`artifact-length-popover is-${tone}${rootRef.current?.closest(".theme-dark") ? " theme-dark" : ""}`}
+          role="group"
+          aria-label="문서 출력 토큰 조절"
+          style={{
+            ...popoverStyle,
+            "--artifact-length-progress": `${(selectedIndex / (artifactLengthSteps.length - 1)) * 100}%`,
+          } as CSSProperties}
+        >
+          <div>
+            <label htmlFor={inputId}>문서 출력 토큰</label>
+            <output htmlFor={inputId}>
+              <span>{selected.label}</span>
+              {selected.warning && <small>{selected.warning}</small>}
+            </output>
+          </div>
+          <input
+            id={inputId}
+            data-testid="artifact-length-slider"
+            type="range"
+            min={0}
+            max={artifactLengthSteps.length - 1}
+            step={1}
+            value={selectedIndex}
+            aria-label="문서 출력 토큰"
+            aria-valuetext={ariaValueText}
+            onChange={(event) => selectStep(Number(event.currentTarget.value))}
+            onKeyDown={(event) => {
+              const nextIndex = event.key === "Home"
+                ? 0
+                : event.key === "End"
+                  ? artifactLengthSteps.length - 1
+                  : ["ArrowRight", "ArrowUp"].includes(event.key)
+                    ? selectedIndex + 1
+                    : ["ArrowLeft", "ArrowDown"].includes(event.key)
+                      ? selectedIndex - 1
+                      : null;
+              if (nextIndex === null) return;
+              event.preventDefault();
+              selectStep(nextIndex);
+            }}
+          />
+        </div>,
+        document.body,
+      )}
+    </div>
   );
 }
 
@@ -785,7 +877,7 @@ function App() {
   const [sessionTitleEditing, setSessionTitleEditing] = useState(false);
   const [sessionTitleDraft, setSessionTitleDraft] = useState("");
   const [draft, setDraft] = useState("");
-  const [targetOutputTokens, setTargetOutputTokens] = useState<number | null>(null);
+  const [targetOutputTokens, setTargetOutputTokens] = useState<number | null>(defaultArtifactOutputTokens);
   const [composerTrigger, setComposerTrigger] = useState<ComposerTriggerState | null>(null);
   const [composerSuggestions, setComposerSuggestions] = useState<ComposerSuggestion[]>([]);
   const [selectedReferences, setSelectedReferences] = useState<SelectedComposerReference[]>([]);
@@ -971,6 +1063,12 @@ function App() {
   }, [artifactSaveBusy, finishCloseArtifact]);
 
   useEffect(() => {
+    if (!artifactOpen || artifactPaneViews.has(mainView)) return;
+    if (artifactHistoryOpenRef.current) window.history.back();
+    else finishCloseArtifact();
+  }, [artifactOpen, finishCloseArtifact, mainView]);
+
+  useEffect(() => {
     const onPopState = () => {
       if (artifactHistoryOpenRef.current) finishCloseArtifact();
     };
@@ -980,6 +1078,7 @@ function App() {
 
   const theme = workspace.settings?.theme ?? "light";
   const isAdmin = workspace.authSession?.user.role === "admin";
+  const artifactPaneVisible = artifactOpen && artifactPaneViews.has(mainView);
   const activeRuntime = workspace.activeRuntime;
   const activeRun = workspace.activeRun;
   const activeProject = workspace.projects.find((project) => project.id === workspace.activeProjectId) ?? null;
@@ -1381,16 +1480,16 @@ function App() {
     setBulkSessionDeleteArmed(false);
   }, [bulkSessionIds, bulkSessionMode]);
 
-  const startNewConversation = useCallback(async () => {
+  const startNewConversation = useCallback(() => {
     setMainView("chat");
     setSidebarOpen(false);
     setComposerTrigger(null);
     setComposerSuggestions([]);
     setSuggestionIndex(0);
     setSuggestionsLoading(false);
-    await workspace.createConversation();
+    workspace.startNewConversation();
     window.requestAnimationFrame(() => composerInputRef.current?.focus());
-  }, [workspace.createConversation]);
+  }, [workspace.startNewConversation]);
 
   const openAdmin = useCallback(() => {
     setMainView("admin");
@@ -1664,7 +1763,7 @@ function App() {
     if (!mode) return;
     setDraft("");
     setSelectedReferences([]);
-    setTargetOutputTokens(null);
+    setTargetOutputTokens(defaultArtifactOutputTokens);
     setComposerTrigger(null);
     setComposerSuggestions([]);
     showToast(mode === "queue_next" ? "다음 요청으로 대기열에 추가했습니다." : mode === "steer" ? "현재 Run에 반영할 지시를 접수했습니다." : "새 Run을 시작했습니다.");
@@ -2096,7 +2195,7 @@ function App() {
 
   return (
     <div
-      className={`app-shell ${artifactOpen ? "has-artifact" : ""} ${sidebarCollapsed ? "is-sidebar-collapsed" : ""} ${artifactResizing ? "is-artifact-resizing" : ""} ${theme === "dark" ? "theme-dark" : ""}`}
+      className={`app-shell ${artifactPaneVisible ? "has-artifact" : ""} ${sidebarCollapsed ? "is-sidebar-collapsed" : ""} ${artifactResizing ? "is-artifact-resizing" : ""} ${theme === "dark" ? "theme-dark" : ""}`}
       style={{ "--artifact-pane-width": `${artifactPaneWidth}px` } as CSSProperties}
       onClick={() => {
         setSessionMenuId(null);
@@ -2110,8 +2209,12 @@ function App() {
         <nav
           className="sidebar-collapsed-navigation"
           aria-label="축소된 Lumina 탐색"
-          onClick={(event) => {
+          onMouseDown={(event) => {
+            if (event.detail > 1 && event.target === event.currentTarget) event.preventDefault();
+          }}
+          onDoubleClick={(event) => {
             if (event.target !== event.currentTarget) return;
+            event.preventDefault();
             sidebarAutoCollapsedRef.current = false;
             setSidebarCollapsed(false);
           }}
@@ -2129,6 +2232,7 @@ function App() {
             <button className="tooltip-control" type="button" aria-label={theme === "dark" ? "Light 테마로 변경" : "Dark 테마로 변경"} data-tooltip={theme === "dark" ? "Light 테마" : "Dark 테마"} onClick={() => void workspace.toggleTheme()}>
               {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
             </button>
+            <button className="tooltip-control" type="button" aria-label="사용 안내 열기" data-tooltip="사용 안내" onClick={() => { setMainView("help"); setSidebarOpen(false); }}><Info size={17} /></button>
             <button type="button" aria-label="사이드바 접기" onClick={() => {
               if (window.innerWidth < 1024) setSidebarOpen(false);
               else {
@@ -2745,7 +2849,7 @@ function App() {
                         className={workspace.settings?.outputMode === value ? "is-active" : ""}
                         aria-pressed={workspace.settings?.outputMode === value}
                         onClick={() => {
-                          if (value === "chat") setTargetOutputTokens(null);
+                          setTargetOutputTokens((current) => value === "chat" ? null : current ?? defaultArtifactOutputTokens);
                           void workspace.selectOutputMode(value);
                         }}
                       >{label}</button>
@@ -2806,6 +2910,7 @@ function App() {
         {mainView === "marketplace" && <MarketplaceView projectId={workspace.activeProjectId} onOpenNavigation={() => setSidebarOpen(true)} />}
         {mainView === "library" && <ArtifactLibraryView projectId={workspace.activeProjectId} onOpenArtifact={(artifact) => void openArtifact(artifact)} onOpenNavigation={() => setSidebarOpen(true)} />}
         {mainView === "files" && <ProjectFilesView projectId={workspace.activeProjectId} onOpenNavigation={() => setSidebarOpen(true)} onToast={showToast} />}
+        {mainView === "help" && <HelpCenterView canManage={isAdmin} onOpenNavigation={() => setSidebarOpen(true)} onToast={showToast} />}
         {mainView === "schedules" && <SchedulesView projectId={workspace.activeProjectId} execution={workspace.settings?.execution ?? null} onOpenNavigation={() => setSidebarOpen(true)} />}
         {mainView === "memory" && <MemoryView project={activeProject} completedRunId={completedProjectLearningRunId} canReviewProjectLearning={canReviewProjectLearning} onOpenNavigation={() => setSidebarOpen(true)} />}
         {mainView === "admin" && isAdmin && <AdminView onOpenNavigation={() => setSidebarOpen(true)} onToast={showToast} onUserUpdated={() => void workspace.refreshAuthSession()} />}
@@ -2897,7 +3002,7 @@ function App() {
         />}
       </section>
 
-      {artifactOpen && (
+      {artifactPaneVisible && (
         <aside className={`artifact-pane ${artifactFullscreen ? "is-fullscreen" : ""}`} aria-label="Artifact 작업 화면" aria-busy={artifactLoading || artifactSaveBusy !== null}>
           {!artifactFullscreen && <button className="artifact-resize-handle" type="button" role="separator" aria-label="Artifact 패널 너비 조절" aria-orientation="vertical" aria-valuemin={artifactPaneMinWidth} aria-valuenow={artifactPaneWidth} onPointerDown={beginArtifactResize} onKeyDown={resizeArtifactByKeyboard} />}
           <header className="artifact-header">
@@ -2941,7 +3046,7 @@ function App() {
               <button className="artifact-view-control tooltip-control" type="button" aria-label={artifactTab === "preview" ? "코드 보기" : "미리보기"} data-tooltip={artifactHasTextSource ? artifactTab === "preview" ? "코드 보기" : "미리보기" : "Binary 형식은 소스 보기 없음"} disabled={!artifactHasTextSource} onClick={() => setArtifactTab((current) => current === "preview" ? "source" : "preview")}>
                 {artifactTab === "preview" ? <Code2 size={17} /> : <Eye size={17} />}
               </button>
-              <button className="tooltip-control" type="button" aria-label="Artifact 공유 링크 복사" data-tooltip={artifactSummary?.conversationId ? "공유 링크 복사" : "대화에 연결된 Artifact만 공유 가능"} disabled={!artifactSummary?.conversationId} onClick={() => void shareArtifact()}><Share2 size={17} /></button>
+              <button className="tooltip-control" type="button" aria-label="Artifact 공유 링크 복사" data-tooltip={artifactSummary?.conversationId ? "공유 링크 복사" : "대화에 연결된 Artifact만 공유 가능"} disabled={!artifactSummary?.conversationId} onClick={() => void shareArtifact()}><ShareActionIcon size={17} /></button>
               <button className="artifact-file-control tooltip-control" type="button" aria-label="Artifact 다운로드" data-tooltip="다운로드" disabled={!artifactSummary || artifactDownloadVersion === null} onClick={() => void downloadArtifact()}><Download size={17} /></button>
               <button className="tooltip-control" type="button" aria-label={artifactFullscreen ? "전체화면 종료" : "전체화면"} data-tooltip={artifactFullscreen ? "전체화면 종료" : "전체화면"} onClick={() => setArtifactFullscreen((value) => !value)}>
                 {artifactFullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}

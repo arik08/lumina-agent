@@ -5,6 +5,7 @@ import remarkGfm from "remark-gfm";
 import { api, ApiError } from "../api";
 import type { ExtensionInstallation, SkillExtension, SkillVersion } from "../api-types";
 import { McpMarketplacePanel } from "./McpMarketplacePanel";
+import { ResizableSplitPane } from "./ResizableSplitPane";
 import { SyntaxCode, SyntaxTextarea } from "./SyntaxCode";
 
 interface MarketplaceViewProps {
@@ -389,7 +390,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
         <label className="marketplace-search"><Search size={14} /><input aria-label="Skill 검색" placeholder="Skill 이름 또는 설명 검색" value={query} onChange={(event) => setQuery(event.currentTarget.value)} /></label>
       </div>}
       {marketKind === "skill" && error && <div className="feature-error" role="alert">{error}</div>}
-      {marketKind === "mcp" ? <McpMarketplacePanel key={`${projectId ?? "none"}:${mcpRefreshKey}`} projectId={projectId} /> : <div className="split-feature">
+      {marketKind === "mcp" ? <McpMarketplacePanel key={`${projectId ?? "none"}:${mcpRefreshKey}`} projectId={projectId} /> : <ResizableSplitPane storageKey="lumina:marketplace-list-width" ariaLabel="Skill 목록 너비 조절" className="marketplace-split">
         <aside className="feature-list" aria-label={skillView === "trash" ? "삭제된 Skill 목록" : "Skill 목록"}>
           {loading ? <div className="feature-state"><LoaderCircle className="is-running" size={16} /> 불러오는 중</div> : visibleItems.length === 0 ? <div className="feature-state">조건에 맞는 Skill이 없습니다.</div> : visibleItems.map((item) => {
             const itemInstallation = installations.find((entry) => entry.extensionId === item.id) ?? null;
@@ -443,7 +444,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
             </>
           )}
         </section>
-      </div>}
+      </ResizableSplitPane>}
     </div>
   );
 }

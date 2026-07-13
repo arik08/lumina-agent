@@ -501,9 +501,7 @@ def test_runtime_compaction_preserves_recent_tool_pairs_and_marks_summary(
                 )
             )
 
-        prepared = compact_runtime_messages(
-            run, messages, ({"name": "web_search"},)
-        )
+        prepared = compact_runtime_messages(run, messages, ({"name": "web_search"},))
 
     assert prepared.compacted is True
     assert prepared.estimated_tokens_after < prepared.estimated_tokens_before
@@ -626,11 +624,10 @@ def test_reactive_runtime_compaction_forces_recovery_below_soft_threshold(
     ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"),
 )
 def test_codex_36k_context_uses_272k_budget_without_compaction(
-    tmp_path: Path, model_id: str,
+    tmp_path: Path,
+    model_id: str,
 ) -> None:
-    user, project, conversation = _configure(
-        tmp_path, f"codex-36k-context-{model_id}"
-    )
+    user, project, conversation = _configure(tmp_path, f"codex-36k-context-{model_id}")
     with SessionLocal() as db:
         user = db.merge(user)
         project = db.merge(project)
@@ -1170,25 +1167,54 @@ async def test_llm_memory_optimizer_merges_provenance_and_supersedes_sources(
             assert request.metadata == {"purpose": "user_memory_optimization"}
             yield ProviderEvent(
                 type="text_delta",
-                text=json.dumps({
-                    "merges": [{
-                        "sourceMemoryIds": [first.id, second.id],
-                        "category": "output_preference",
-                        "fact": "reports should use html",
-                        "displayText": "보고서는 HTML 형식을 선호합니다.",
-                        "conflictKey": "report_output",
-                        "confidence": 0.96,
-                    }]
-                }, ensure_ascii=False),
+                text=json.dumps(
+                    {
+                        "merges": [
+                            {
+                                "sourceMemoryIds": [first.id, second.id],
+                                "category": "output_preference",
+                                "fact": "reports should use html",
+                                "displayText": "보고서는 HTML 형식을 선호합니다.",
+                                "conflictKey": "report_output",
+                                "confidence": 0.96,
+                            }
+                        ]
+                    },
+                    ensure_ascii=False,
+                ),
             )
 
     with SessionLocal() as db:
         user = db.merge(user)
-        first = UserMemory(user_id=user.id, category="output_preference", normalized_fact="html 보고서 선호", display_text="HTML 보고서를 선호합니다.", source_message_ids_json=["m1"], source_run_ids_json=["r1"], confidence=0.9, evidence_count=2, status="active", extractor_version="test")
-        second = UserMemory(user_id=user.id, category="output_preference", normalized_fact="보고서는 html", display_text="보고서 형식은 HTML입니다.", source_message_ids_json=["m2"], source_run_ids_json=["r2"], confidence=0.8, evidence_count=1, status="active", extractor_version="test")
+        first = UserMemory(
+            user_id=user.id,
+            category="output_preference",
+            normalized_fact="html 보고서 선호",
+            display_text="HTML 보고서를 선호합니다.",
+            source_message_ids_json=["m1"],
+            source_run_ids_json=["r1"],
+            confidence=0.9,
+            evidence_count=2,
+            status="active",
+            extractor_version="test",
+        )
+        second = UserMemory(
+            user_id=user.id,
+            category="output_preference",
+            normalized_fact="보고서는 html",
+            display_text="보고서 형식은 HTML입니다.",
+            source_message_ids_json=["m2"],
+            source_run_ids_json=["r2"],
+            confidence=0.8,
+            evidence_count=1,
+            status="active",
+            extractor_version="test",
+        )
         db.add_all((first, second))
         db.flush()
-        result = await optimize_memories_with_llm(db, user=user, provider=Provider(), model="test-model")
+        result = await optimize_memories_with_llm(
+            db, user=user, provider=Provider(), model="test-model"
+        )
         assert len(result.merged_ids) == 1
         merged = db.get(UserMemory, result.merged_ids[0])
         assert merged is not None

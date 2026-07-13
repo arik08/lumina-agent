@@ -16,6 +16,7 @@ from ..authorization import require_conversation, require_project
 from ..models import (
     ProjectFile,
     ProjectFileVersion,
+    ProjectFolder,
     Run,
     User,
     new_uuid,
@@ -269,6 +270,18 @@ def create_project_file(
             "project_file_path_exists",
             "같은 경로의 Project 파일이 이미 있습니다.",
         )
+    folder_collision = db.scalar(
+        select(ProjectFolder.id).where(
+            ProjectFolder.project_id == project.id,
+            ProjectFolder.active_path_key == active_path_key,
+        )
+    )
+    if folder_collision is not None:
+        raise ApiProblem(
+            409,
+            "project_file_path_exists",
+            "같은 경로의 Project 폴더가 이미 있습니다.",
+        )
 
     file_id = new_uuid()
     version_id = new_uuid()
@@ -506,6 +519,18 @@ def move_project_file(
             409,
             "project_file_path_exists",
             "같은 경로의 Project 파일이 이미 있습니다.",
+        )
+    folder_collision = db.scalar(
+        select(ProjectFolder.id).where(
+            ProjectFolder.project_id == project_id,
+            ProjectFolder.active_path_key == active_path_key,
+        )
+    )
+    if folder_collision is not None:
+        raise ApiProblem(
+            409,
+            "project_file_path_exists",
+            "같은 경로의 Project 폴더가 이미 있습니다.",
         )
     result = db.execute(
         update(ProjectFile)

@@ -2,6 +2,7 @@ import { Check, KeyRound, LoaderCircle, Plug, Power, ShieldCheck, Trash2, Wrench
 import { type FormEvent, useEffect, useState } from "react";
 import { api, ApiError } from "../api";
 import type { McpDefinition, McpInstallation } from "../api-types";
+import { ResizableSplitPane } from "./ResizableSplitPane";
 
 interface McpMarketplacePanelProps {
   projectId: string | null;
@@ -168,7 +169,7 @@ export function McpMarketplacePanel({ projectId }: McpMarketplacePanelProps) {
   return (
     <div className="mcp-marketplace-panel">
       {error && <div className="feature-error" role="alert">{error}</div>}
-      <div className="split-feature">
+      <ResizableSplitPane storageKey="lumina:marketplace-list-width" ariaLabel="MCP 목록 너비 조절" className="marketplace-split">
         <aside className="feature-list" aria-label="승인된 MCP 카탈로그">
           {catalog.length === 0 ? <div className="feature-state">승인된 MCP가 없습니다.</div> : catalog.map((definition) => {
             const userInstallation = installations.find((item) => item.definitionId === definition.id && item.scopeType === "user") ?? null;
@@ -212,7 +213,7 @@ export function McpMarketplacePanel({ projectId }: McpMarketplacePanelProps) {
             </>
           )}
         </section>
-      </div>
+      </ResizableSplitPane>
     </div>
   );
 }

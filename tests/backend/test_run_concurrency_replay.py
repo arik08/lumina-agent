@@ -13,12 +13,13 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from lumina.agent import executor as executor_module
 from lumina.agent.executor import local_run_executor
 from lumina.api.dependencies import AuthContext
 from lumina.api.routes.runs import stream_run
 from lumina.auth.service import create_user
 from lumina.config import Settings
-from lumina.db import SessionLocal
+from lumina.db import SessionLocal, configure_database, create_schema
 from lumina.main import create_app
 from lumina.models import (
     AuthSession,
@@ -205,6 +206,29 @@ class _FailThenSucceedProvider:
         )
 
 
+class _RetryableProvider:
+    provider_id = "mock"
+    capabilities = ProviderCapabilities(tools=True)
+
+    def __init__(self, *, partial_output: bool = False) -> None:
+        self.attempts = 0
+        self.partial_output = partial_output
+
+    async def stream(self, _request: ProviderRequest) -> AsyncIterator[ProviderEvent]:
+        self.attempts += 1
+        if self.attempts == 1:
+            if self.partial_output:
+                yield ProviderEvent(type="text_delta", text="partial response")
+            raise ProviderRequestError(
+                "temporary upstream failure",
+                retryable=True,
+                stage="response",
+                status_code=503,
+            )
+        yield ProviderEvent(type="text_delta", text="recovered response")
+        yield ProviderEvent(type="completed", stop_reason="stop")
+
+
 class _ConnectedRequest:
     async def is_disconnected(self) -> bool:
         return False
@@ -218,6 +242,143 @@ def _gate_factory(provider: _GateProvider) -> Callable[..., _GateProvider]:
         return provider
 
     return factory
+
+
+def test_health_ready_reports_stopped_executor(tmp_path: Path) -> None:
+    with TestClient(create_app(_settings(tmp_path, "truthful-ready.db"))) as client:
+        assert client.get("/api/health/ready").status_code == 200
+        local_run_executor._started = False
+        try:
+            response = client.get("/api/health/ready")
+        finally:
+            local_run_executor._started = True
+
+        assert response.status_code == 503
+        assert response.json() == {
+            "status": "not_ready",
+            "database": "ready",
+            "executor": "stopped",
+        }
+
+
+def test_optional_codex_warmup_does_not_block_backend_startup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = _settings(tmp_path, "background-warmup.db").model_copy(
+        update={"environment": "development"}
+    )
+    configure_database(settings.database_url)
+    create_schema()
+    warmup_started = threading.Event()
+    release_warmup = threading.Event()
+
+    async def blocking_warmup() -> None:
+        warmup_started.set()
+        await asyncio.to_thread(release_warmup.wait, 2.5)
+
+    monkeypatch.setattr(local_run_executor.codex_provider, "warmup", blocking_warmup)
+    started_at = time.monotonic()
+    with TestClient(create_app(settings)) as client:
+        try:
+            startup_seconds = time.monotonic() - started_at
+            assert startup_seconds < 1.25
+            assert warmup_started.wait(timeout=1)
+            assert client.get("/api/health/ready").status_code == 200
+        finally:
+            release_warmup.set()
+
+
+def test_retryable_provider_failure_retries_only_before_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    provider = _RetryableProvider()
+    monkeypatch.setattr(
+        local_run_executor, "_provider", lambda *_args, **_kwargs: provider
+    )
+    monkeypatch.setattr(
+        local_run_executor, "_learn_memory_background", _skip_memory_extraction
+    )
+    monkeypatch.setattr(
+        executor_module,
+        "_PROVIDER_RETRY_DELAYS_SECONDS",
+        (0.0, 0.0),
+        raising=False,
+    )
+
+    with TestClient(create_app(_settings(tmp_path, "retry-before-output.db"))) as client:
+        csrf = _login(client)
+        conversation_id = _conversation(client, csrf, "Provider retry")
+        run_id = _start_run(
+            client,
+            csrf,
+            conversation_id,
+            text="retry-before-output",
+            idempotency_key="retry-before-output-0001",
+        )
+        snapshot = _wait_for_terminal(client, run_id)
+
+    assert snapshot["status"] == "completed"
+    assert provider.attempts == 2
+    with SessionLocal() as db:
+        retry_events = list(
+            db.scalars(
+                select(RunEvent)
+                .where(
+                    RunEvent.run_id == run_id,
+                    RunEvent.event_type == "provider_retry_scheduled",
+                )
+                .order_by(RunEvent.sequence)
+            )
+        )
+    assert len(retry_events) == 1
+    assert retry_events[0].payload_json == {
+        "attempt": 2,
+        "maxAttempts": 3,
+        "delaySeconds": 0.0,
+        "stage": "response",
+        "statusCode": 503,
+    }
+
+
+def test_retryable_provider_failure_does_not_replay_partial_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    provider = _RetryableProvider(partial_output=True)
+    monkeypatch.setattr(
+        local_run_executor, "_provider", lambda *_args, **_kwargs: provider
+    )
+    monkeypatch.setattr(
+        local_run_executor, "_learn_memory_background", _skip_memory_extraction
+    )
+    monkeypatch.setattr(
+        executor_module,
+        "_PROVIDER_RETRY_DELAYS_SECONDS",
+        (0.0, 0.0),
+        raising=False,
+    )
+
+    with TestClient(create_app(_settings(tmp_path, "no-replay-after-output.db"))) as client:
+        csrf = _login(client)
+        conversation_id = _conversation(client, csrf, "No partial replay")
+        run_id = _start_run(
+            client,
+            csrf,
+            conversation_id,
+            text="do-not-replay-partial-output",
+            idempotency_key="do-not-replay-partial-output-0001",
+        )
+        snapshot = _wait_for_terminal(client, run_id)
+
+    assert snapshot["status"] == "failed"
+    assert provider.attempts == 1
+    with SessionLocal() as db:
+        retry_event = db.scalar(
+            select(RunEvent).where(
+                RunEvent.run_id == run_id,
+                RunEvent.event_type == "provider_retry_scheduled",
+            )
+        )
+    assert retry_event is None
 
 
 def test_different_conversations_for_one_user_execute_in_parallel(

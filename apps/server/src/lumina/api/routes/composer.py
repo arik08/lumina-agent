@@ -12,6 +12,7 @@ from ...authorization import require_project
 from ...db import get_db
 from ...extensions.service import resolve_skill_snapshot
 from ...mcp.service import resolve_mcp_snapshot
+from ...project_files.folders import build_project_folder_references
 from ...models import (
     Artifact,
     ArtifactVersion,
@@ -91,7 +92,7 @@ def _context_candidates(db: Session, project_id: str) -> list[dict[str, Any]]:
                 ProjectFile.status == "active",
             )
             .order_by(ProjectFile.updated_at.desc(), ProjectFile.id)
-            .limit(100)
+            .limit(500)
         )
     )
     attachments = list(
@@ -114,6 +115,31 @@ def _context_candidates(db: Session, project_id: str) -> list[dict[str, Any]]:
             .limit(100)
         )
     )
+    folder_items: list[dict[str, Any]] = [
+        {
+            "id": folder.id,
+            "referenceId": folder.id,
+            "kind": "folder",
+            "name": folder.name,
+            "displayName": folder.name,
+            "subtitle": f"{folder.logical_path} · {len(folder.file_versions)}개 파일",
+            "description": "하위 파일 전체를 Context로 참조",
+            "insertText": f"@{folder.name}",
+            "status": "available",
+            "versionOrDigest": folder.content_hash,
+            "projectId": project_id,
+            "scope": {"type": "project", "id": project_id},
+            "displaySnapshot": {
+                "name": folder.name,
+                "targetType": "project_folder",
+                "logicalPath": folder.logical_path,
+                "fileCount": len(folder.file_versions),
+                "fileVersions": list(folder.file_versions),
+                "contentHash": folder.content_hash,
+            },
+        }
+        for folder in build_project_folder_references(project_id, workspace_rows)
+    ]
     workspace_items: list[dict[str, Any]] = [
         {
             "id": project_file.id,
@@ -121,8 +147,8 @@ def _context_candidates(db: Session, project_id: str) -> list[dict[str, Any]]:
             "kind": "file",
             "name": project_file.logical_path.rsplit("/", 1)[-1],
             "displayName": project_file.logical_path.rsplit("/", 1)[-1],
-            "subtitle": f"{project_file.logical_path} · v{version.version_number}",
-            "description": f"Server Workspace · v{version.version_number}",
+            "subtitle": project_file.logical_path,
+            "description": f"사용자 파일 · {version.mime_type}",
             "insertText": f"@{project_file.logical_path.rsplit('/', 1)[-1]}",
             "status": "available",
             "versionOrDigest": version.content_hash,
@@ -200,6 +226,7 @@ def _context_candidates(db: Session, project_id: str) -> list[dict[str, Any]]:
         return str(item["name"]).casefold(), str(item["id"])
 
     return [
+        *sorted(folder_items, key=sort_key),
         *sorted(workspace_items, key=sort_key),
         *sorted(attachment_items, key=sort_key),
         *sorted(artifact_items, key=sort_key),

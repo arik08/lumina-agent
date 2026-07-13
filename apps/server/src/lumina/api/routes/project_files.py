@@ -11,16 +11,20 @@ from sqlalchemy.orm import Session
 from ...audit import record_audit
 from ...config import Settings, get_settings
 from ...db import get_db
-from ...models import ProjectFile, ProjectFileVersion, User
+from ...models import ProjectFile, ProjectFileVersion, ProjectFolder, User
 from ...project_files import (
+    create_project_folder,
     create_project_file,
     create_project_file_version,
     get_project_file,
     get_project_file_version,
     list_project_files,
+    list_project_folders,
+    move_project_folder,
     move_project_file,
     normalize_logical_path,
     soft_delete_project_file,
+    soft_delete_project_folder,
 )
 from ...storage import ManagedLocalStorage
 from ..dependencies import AuthContext, get_current_user, require_csrf
@@ -28,6 +32,9 @@ from ..schemas import (
     ProjectFileDetailResponse,
     ProjectFileMove,
     ProjectFileResponse,
+    ProjectFolderCreate,
+    ProjectFolderMove,
+    ProjectFolderResponse,
 )
 
 
@@ -76,6 +83,17 @@ def _file_payload(
         "createdByUserId": project_file.created_by_user_id,
         "createdAt": project_file.created_at,
         "updatedAt": project_file.updated_at,
+    }
+
+
+def _folder_payload(folder: ProjectFolder) -> dict[str, object]:
+    return {
+        "id": folder.id,
+        "projectId": folder.project_id,
+        "logicalPath": folder.logical_path,
+        "revision": folder.revision,
+        "createdAt": folder.created_at,
+        "updatedAt": folder.updated_at,
     }
 
 
@@ -159,6 +177,111 @@ async def post_project_file(
     )
     db.commit()
     return _file_payload(project_file, version)
+
+
+@router.get("/folders", response_model=list[ProjectFolderResponse])
+def get_project_folders(
+    project_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict[str, object]]:
+    return [_folder_payload(folder) for folder in list_project_folders(db, user, project_id)]
+
+
+@router.post("/folders", status_code=201, response_model=ProjectFolderResponse)
+def post_project_folder(
+    project_id: str,
+    payload: ProjectFolderCreate,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    folder = create_project_folder(
+        db,
+        user=context.user,
+        project_id=project_id,
+        logical_path=payload.logical_path,
+    )
+    record_audit(
+        db,
+        action="project_folder_created",
+        target_type="project_folder",
+        target_id=folder.id,
+        result="success",
+        actor=context.user,
+        request_id=getattr(request.state, "request_id", None),
+        metadata={"project_id": project_id, "logical_path": folder.logical_path},
+    )
+    db.commit()
+    return _folder_payload(folder)
+
+
+@router.patch("/folders")
+def patch_project_folder(
+    project_id: str,
+    payload: ProjectFolderMove,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, int]:
+    file_count, folder_count = move_project_folder(
+        db,
+        user=context.user,
+        project_id=project_id,
+        source_path=payload.source_path,
+        target_path=payload.target_path,
+    )
+    record_audit(
+        db,
+        action="project_folder_moved",
+        target_type="project_folder",
+        target_id=payload.source_path,
+        result="success",
+        actor=context.user,
+        request_id=getattr(request.state, "request_id", None),
+        metadata={
+            "project_id": project_id,
+            "source_path": payload.source_path,
+            "target_path": payload.target_path,
+            "file_count": file_count,
+            "folder_count": folder_count,
+        },
+    )
+    db.commit()
+    return {"fileCount": file_count, "folderCount": folder_count}
+
+
+@router.delete("/folders", status_code=204)
+def delete_project_folder(
+    project_id: str,
+    request: Request,
+    logical_path: str = Query(alias="logicalPath", min_length=1, max_length=1000),
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> Response:
+    file_count, folder_count = soft_delete_project_folder(
+        db,
+        user=context.user,
+        project_id=project_id,
+        logical_path=logical_path,
+    )
+    record_audit(
+        db,
+        action="project_folder_deleted",
+        target_type="project_folder",
+        target_id=logical_path,
+        result="success",
+        actor=context.user,
+        request_id=getattr(request.state, "request_id", None),
+        metadata={
+            "project_id": project_id,
+            "logical_path": logical_path,
+            "file_count": file_count,
+            "folder_count": folder_count,
+        },
+    )
+    db.commit()
+    return Response(status_code=204)
 
 
 @router.get("/{file_id}", response_model=ProjectFileDetailResponse)

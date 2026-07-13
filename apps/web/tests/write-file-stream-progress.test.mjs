@@ -17,9 +17,9 @@ test("write file shows a filename and token-proportional cumulative meter", asyn
   assert.match(workspace, /event\.type === "tool_progress"/);
   assert.match(app, /WRITE FILE · \{activeWriteFileName \?\? "파일명 확인 중"\}/);
   assert.match(app, /execution\.progress\.tokens\.toLocaleString\(\)\} 토큰 · \{execution\.progress\.lines\.toLocaleString\(\)\}줄/);
-  assert.match(app, /WRITE_FILE_PROGRESS_TOKEN_CAPACITY = 5_000/);
-  assert.match(app, /WRITE_FILE_PROGRESS_STAGES = \["blue", "green", "yellow", "red"\]/);
-  assert.match(app, /Math\.floor\(\(totalTokens - 1\) \/ WRITE_FILE_PROGRESS_TOKEN_CAPACITY\)/);
+  assert.match(app, /TOKEN_PROGRESS_BUCKET_SIZE = 5_000/);
+  assert.match(app, /TOKEN_PROGRESS_STAGES = \["blue", "green", "orange", "red"\]/);
+  assert.match(app, /\(\(totalTokens - 1\) % TOKEN_PROGRESS_BUCKET_SIZE\) \+ 1/);
   assert.match(app, /style=\{\{ width: `\$\{writeProgress\.percent\}%` \}\}/);
   assert.match(app, /setInterval\(\(\) => setLiveNow\(Date\.now\(\)\), 100\)/);
   assert.match(stylesheet, /\.write-file-stream-meter \{/);
@@ -28,6 +28,6 @@ test("write file shows a filename and token-proportional cumulative meter", asyn
   assert.match(stylesheet, /\.write-file-stream-meter > span \{[^}]*transition: width 180ms/s);
   assert.doesNotMatch(stylesheet, /\.write-file-stream-meter > span \{[^}]*animation:/s);
   assert.match(stylesheet, /\.write-file-stream-progress\.is-green \{ --write-stream-color: var\(--success\); \}/);
-  assert.match(stylesheet, /\.write-file-stream-progress\.is-yellow \{/);
+  assert.match(stylesheet, /\.write-file-stream-progress\.is-orange \{ --write-stream-color: var\(--warning\); \}/);
   assert.match(stylesheet, /\.write-file-stream-progress\.is-red \{ --write-stream-color: var\(--danger\); \}/);
 });

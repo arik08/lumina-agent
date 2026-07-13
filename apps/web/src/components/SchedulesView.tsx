@@ -16,6 +16,7 @@ import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "../api";
 import type { ExecutionSelection, ScheduleKind, ScheduledRun, ScheduledTask } from "../api-types";
 import { SelectMenu } from "./SelectMenu";
+import { ResizableSplitPane } from "./ResizableSplitPane";
 
 interface SchedulesViewProps {
   projectId: string | null;
@@ -240,7 +241,7 @@ export function SchedulesView({ projectId, execution, onOpenNavigation }: Schedu
         </div>
       </header>
       {error && <div className="feature-error" role="alert">{error}</div>}
-      <div className="split-feature">
+      <ResizableSplitPane storageKey="lumina:schedules-list-width" ariaLabel="예약 작업 목록 너비 조절" className="schedules-split">
         <aside className="feature-list schedule-list" aria-label="예약 작업 목록">
           {loading ? <div className="feature-state"><LoaderCircle className="is-running" size={16} /> 불러오는 중</div> : tasks.length === 0 ? <div className="feature-state">예약 작업이 없습니다.</div> : tasks.map((task) => (
             <button className={task.id === selected?.id ? "is-selected" : ""} type="button" key={task.id} onClick={() => setSelectedId(task.id)}>
@@ -294,7 +295,7 @@ export function SchedulesView({ projectId, execution, onOpenNavigation }: Schedu
             </>
           )}
         </section>
-      </div>
+      </ResizableSplitPane>
       {createOpen && (
         <div className="feature-inline-dialog" role="dialog" aria-modal="true" aria-labelledby="new-schedule-title">
           <form className="compact-dialog compact-form schedule-form" onSubmit={(event) => void createTask(event)}>

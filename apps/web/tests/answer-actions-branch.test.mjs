@@ -5,6 +5,7 @@ import test from "node:test";
 const turnSource = await readFile(new URL("../src/components/ConversationTurn.tsx", import.meta.url), "utf8");
 const appSource = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
 const workspaceSource = await readFile(new URL("../src/use-lumina-workspace.ts", import.meta.url), "utf8");
+const actionIconsSource = await readFile(new URL("../src/components/ActionIcons.tsx", import.meta.url), "utf8");
 
 test("answer actions place usage first and branch immediately before share", () => {
   const actions = turnSource.match(/<div className="answer-actions"[\s\S]*?<\/div>/)?.[0] ?? "";
@@ -16,7 +17,16 @@ test("answer actions place usage first and branch immediately before share", () 
 
   assert.ok(usageIndex >= 0 && usageIndex < copyIndex, "usage control should be the leftmost answer action");
   assert.ok(branchIndex >= 0 && branchIndex < shareIndex, "branch should be immediately before share");
-  assert.match(actions.slice(branchIndex, shareIndex), /GitBranch size=\{16\}/);
+  assert.match(actions.slice(branchIndex, shareIndex), /BranchFromHereIcon size=\{16\}/);
+});
+
+test("branch icon uses Codex-style arrows and every share action uses the rotated shared icon", () => {
+  assert.match(actionIconsSource, /createLucideIcon\("BranchFromHere"/);
+  assert.doesNotMatch(actionIconsSource, /\["circle"/);
+  assert.match(actionIconsSource, /transform: "rotate\(90deg\)"/);
+  assert.match(turnSource, /aria-label="답변 공유"[\s\S]*?<ShareActionIcon size=\{16\}/);
+  assert.match(appSource, /aria-label="Artifact 공유 링크 복사"[\s\S]*?<ShareActionIcon size=\{17\}/);
+  assert.doesNotMatch(`${turnSource}\n${appSource}`, /<Share2\b/);
 });
 
 test("answer branching sends the clicked assistant message and activates the created session", () => {

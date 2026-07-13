@@ -215,4 +215,67 @@ finally {
     Remove-Item -LiteralPath $SupervisorPidPath -Force -ErrorAction SilentlyContinue
 }
 
-Write-Host "run_lumina tests passed ($($cases.Count) key cases, 2 reset paths, fast and identity-safe process cleanup)."
+$startProcessesFunction = $ast.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq "Start-LuminaProcesses"
+    },
+    $true
+)
+$prepareRuntimeFunction = $ast.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq "Confirm-LuminaRuntimePrepared"
+    },
+    $true
+)
+$restartDelayFunction = $ast.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq "Get-AutomaticRestartDelay"
+    },
+    $true
+)
+if ($null -eq $startProcessesFunction -or $null -eq $prepareRuntimeFunction) {
+    throw "Launcher preparation and process-start functions must both exist."
+}
+if ($null -eq $restartDelayFunction) {
+    throw "Get-AutomaticRestartDelay was not found."
+}
+. ([scriptblock]::Create($restartDelayFunction.Extent.Text))
+
+if ($startProcessesFunction.Extent.Text -match 'alembic|npm') {
+    throw "Automatic process restart must not run migration or Frontend build commands."
+}
+$preparationSource = $prepareRuntimeFunction.Extent.Text
+if (
+    $preparationSource -notmatch 'current' -or
+    $preparationSource -notmatch '--check-heads' -or
+    $preparationSource -notmatch 'dist.*index\.html' -or
+    $preparationSource -notmatch 'upgrade.*head'
+) {
+    throw "Runtime preparation must migrate development once and only validate production assets/schema."
+}
+$preparationCall = $source.LastIndexOf('Confirm-LuminaRuntimePrepared')
+$supervisorLoop = $source.IndexOf('while ($true)', $preparationCall)
+if ($preparationCall -lt 0 -or $supervisorLoop -lt 0 -or $preparationCall -ge $supervisorLoop) {
+    throw "Runtime preparation must happen before the automatic supervisor loop."
+}
+if ($source -notmatch '\$MaxAutomaticRestarts\s*=\s*3') {
+    throw "Automatic restart budget must be capped at three retries."
+}
+if ($source -match 'Restarting in 1 second') {
+    throw "The launcher must not retain the unbounded fixed one-second restart loop."
+}
+$expectedDelays = @(1, 2, 5, 5)
+for ($attempt = 1; $attempt -le $expectedDelays.Count; $attempt++) {
+    $actualDelay = Get-AutomaticRestartDelay -Attempt $attempt
+    if ($actualDelay -ne $expectedDelays[$attempt - 1]) {
+        throw "Restart attempt $attempt expected delay $($expectedDelays[$attempt - 1]), got $actualDelay."
+    }
+}
+
+Write-Host "run_lumina tests passed ($($cases.Count) key cases, bounded restart policy, preparation isolation, and identity-safe process cleanup)."

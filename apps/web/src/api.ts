@@ -66,10 +66,14 @@ import type {
   ScheduledTask,
   ScheduleKind,
   SharedConversationSnapshot,
+  HelpItem,
+  HelpItemKind,
+  HelpItemList,
   SkillDraft,
   SkillExtension,
   SkillVersion,
   ProjectFileDetail,
+  ProjectFolderSummary,
   ProjectFileSummary,
   ProjectLearningMutationResult,
   ProjectLearningProposal,
@@ -802,6 +806,39 @@ export async function updateRuntimePrompt(
   );
 }
 
+export async function listProjectFolders(projectId: string, signal?: AbortSignal) {
+  return request<ProjectFolderSummary[]>(
+    `/projects/${encodeURIComponent(projectId)}/files/folders`,
+    { signal },
+  );
+}
+
+export async function createProjectFolder(projectId: string, logicalPath: string, signal?: AbortSignal) {
+  return request<ProjectFolderSummary>(
+    `/projects/${encodeURIComponent(projectId)}/files/folders`,
+    { method: "POST", body: { logicalPath }, signal },
+  );
+}
+
+export async function moveProjectFolder(
+  projectId: string,
+  sourcePath: string,
+  targetPath: string,
+  signal?: AbortSignal,
+) {
+  return request<{ fileCount: number; folderCount: number }>(
+    `/projects/${encodeURIComponent(projectId)}/files/folders`,
+    { method: "PATCH", body: { sourcePath, targetPath }, signal },
+  );
+}
+
+export async function deleteProjectFolder(projectId: string, logicalPath: string, signal?: AbortSignal) {
+  await request<void>(
+    `/projects/${encodeURIComponent(projectId)}/files/folders`,
+    { method: "DELETE", query: { logicalPath }, signal },
+  );
+}
+
 export async function listProjectMemberships(
   projectId: string,
   includeRevoked = false,
@@ -1401,6 +1438,33 @@ export async function listScheduledRuns(taskId: string, signal?: AbortSignal) {
   });
 }
 
+export async function listHelpItems(signal?: AbortSignal) {
+  return request<HelpItemList>("/help/items", { signal });
+}
+
+export async function createHelpItem(
+  payload: { kind: HelpItemKind; title: string; parentId: string | null; markdownContent?: string },
+  signal?: AbortSignal,
+) {
+  return request<HelpItem>("/help/items", { method: "POST", body: payload, signal });
+}
+
+export async function updateHelpItem(
+  itemId: string,
+  payload: { title: string; markdownContent: string; expectedRevision: number },
+  signal?: AbortSignal,
+) {
+  return request<HelpItem>(`/help/items/${encodeURIComponent(itemId)}`, {
+    method: "PATCH",
+    body: payload,
+    signal,
+  });
+}
+
+export async function deleteHelpItem(itemId: string, signal?: AbortSignal) {
+  return request<void>(`/help/items/${encodeURIComponent(itemId)}`, { method: "DELETE", signal });
+}
+
 export async function listAdminUsers(
   filters: { query?: string; role?: string; status?: string; limit?: number; offset?: number } = {},
   signal?: AbortSignal,
@@ -1671,6 +1735,16 @@ export const api = {
     move: moveProjectFile,
     download: downloadProjectFile,
     delete: deleteProjectFile,
+    listFolders: listProjectFolders,
+    createFolder: createProjectFolder,
+    moveFolder: moveProjectFolder,
+    deleteFolder: deleteProjectFolder,
+  },
+  help: {
+    list: listHelpItems,
+    create: createHelpItem,
+    update: updateHelpItem,
+    delete: deleteHelpItem,
   },
   settings: { getCurrent: getCurrentSettings, updateCurrent: updateCurrentSettings },
   providers: { list: listProviders, listModels: listProviderModels },

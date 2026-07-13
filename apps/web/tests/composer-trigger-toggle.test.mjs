@@ -14,15 +14,24 @@ test("composer trigger buttons toggle their picker without inserting duplicate t
 
 test("starting a new conversation closes and resets the composer picker", async () => {
   const app = await readFile(appUrl, "utf8");
-  const startNewConversation = app.match(/const startNewConversation = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[workspace\.createConversation\]\);/)?.[1] ?? "";
+  const startNewConversation = app.match(/const startNewConversation = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[workspace\.startNewConversation\]\);/)?.[1] ?? "";
 
   assert.match(startNewConversation, /setComposerTrigger\(null\);/);
   assert.match(startNewConversation, /setComposerSuggestions\(\[\]\);/);
   assert.match(startNewConversation, /setSuggestionIndex\(0\);/);
-  assert.ok(
-    startNewConversation.indexOf("setComposerTrigger(null);") < startNewConversation.indexOf("await workspace.createConversation();"),
-    "the picker must close even when the workspace reuses the current untouched conversation",
-  );
+  assert.match(startNewConversation, /workspace\.startNewConversation\(\);/);
+  assert.doesNotMatch(startNewConversation, /workspace\.createConversation\(/);
+});
+
+test("a new chat stays local until the first message is sent", async () => {
+  const workspace = await readFile(new URL("../src/use-lumina-workspace.ts", import.meta.url), "utf8");
+  const startNewConversation = workspace.match(/const startNewConversation = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[\]\);/)?.[1] ?? "";
+  const sendMessage = workspace.match(/const sendMessage = useCallback\(async \(([\s\S]*?)\n  \}, \[activeConversationId, createConversation/)?.[1] ?? "";
+
+  assert.match(startNewConversation, /setActiveConversationId\(null\);/);
+  assert.doesNotMatch(startNewConversation, /api\.conversations\.create|createConversation\(/);
+  assert.match(sendMessage, /if \(!conversationId\) \{[\s\S]*?await createConversation\(\);/);
+  assert.match(workspace, /openConversation,[\s\S]*?startNewConversation,[\s\S]*?createConversation,/);
 });
 
 test("send button tooltip uses the shared global layer", async () => {

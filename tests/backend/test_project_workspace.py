@@ -273,7 +273,19 @@ def test_composer_and_run_pin_exact_project_file_version_and_project(
             params={"project_id": project_id, "trigger": "@"},
         )
         assert suggestions.status_code == 200
-        candidate = suggestions.json()["items"][0]
+        suggestion_items = suggestions.json()["items"]
+        candidate = next(item for item in suggestion_items if item["id"] == uploaded["id"])
+        folder_candidate = next(item for item in suggestion_items if item["kind"] == "folder")
+        assert folder_candidate["name"] == "inspection"
+        assert folder_candidate["displaySnapshot"]["logicalPath"] == "inspection"
+        assert folder_candidate["displaySnapshot"]["fileCount"] == 1
+        assert folder_candidate["displaySnapshot"]["fileVersions"] == [
+            {
+                "id": uploaded["id"],
+                "path": "inspection/checklist.md",
+                "digest": uploaded["contentHash"],
+            }
+        ]
         assert candidate["id"] == uploaded["id"]
         assert candidate["versionOrDigest"] == uploaded["contentHash"]
         assert candidate["displaySnapshot"] == {
@@ -291,6 +303,51 @@ def test_composer_and_run_pin_exact_project_file_version_and_project(
             headers=headers,
             json={"projectId": project_id, "title": "Project file snapshot"},
         ).json()
+
+        folder_conversation = client.post(
+            "/api/conversations",
+            headers=headers,
+            json={"projectId": project_id, "title": "Project folder snapshot"},
+        ).json()
+        with SessionLocal() as db:
+            admin = db.scalar(select(User).where(User.login_id == "admin@posco.com"))
+            assert admin is not None
+            folder_run, folder_message, folder_created = create_run(
+                db,
+                user=admin,
+                conversation_id=folder_conversation["id"],
+                payload=RunCreate(
+                    message=RunMessageInput(
+                        text="@inspection 폴더를 적용해 주세요.",
+                        prompt_references=[
+                            MessageReferenceInput(
+                                kind="folder",
+                                reference_id=folder_candidate["id"],
+                                version_or_digest=folder_candidate["versionOrDigest"],
+                            )
+                        ],
+                    )
+                ),
+                idempotency_key="project-folder-snapshot-1",
+            )
+            db.commit()
+            assert folder_created is True
+            assert folder_run.snapshot_json["project_files"] == []
+            folder_reference = db.scalar(
+                select(MessageReference).where(
+                    MessageReference.message_id == folder_message.id
+                )
+            )
+            assert folder_reference is not None
+            assert folder_reference.kind == "folder"
+            assert folder_reference.display_snapshot_json["logicalPath"] == "inspection"
+            assert folder_reference.display_snapshot_json["fileVersions"] == [
+                {
+                    "id": uploaded["id"],
+                    "path": "inspection/checklist.md",
+                    "digest": uploaded["contentHash"],
+                }
+            ]
 
         with SessionLocal() as db:
             admin = db.scalar(select(User).where(User.login_id == "admin@posco.com"))
@@ -390,6 +447,80 @@ def test_composer_and_run_pin_exact_project_file_version_and_project(
             assert referenced_audit is not None
 
 
+def test_project_folder_api_creates_moves_and_deletes_nested_files(tmp_path: Path) -> None:
+    settings = _settings(tmp_path, "folders.db")
+    with TestClient(create_app(settings)) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+
+        created = client.post(
+            f"/api/projects/{project_id}/files/folders",
+            headers=headers,
+            json={"logicalPath": "Inbox"},
+        )
+        assert created.status_code == 201, created.text
+        assert created.json()["logicalPath"] == "Inbox"
+
+        uploaded = _upload(
+            client,
+            headers,
+            project_id,
+            logical_path="Inbox/note.md",
+            content="이동할 내용",
+        )
+        assert uploaded.status_code == 201, uploaded.text
+        archive = client.post(
+            f"/api/projects/{project_id}/files/folders",
+            headers=headers,
+            json={"logicalPath": "Archive"},
+        )
+        assert archive.status_code == 201, archive.text
+
+        moved = client.patch(
+            f"/api/projects/{project_id}/files/folders",
+            headers=headers,
+            json={"sourcePath": "Inbox", "targetPath": "Archive/Inbox"},
+        )
+        assert moved.status_code == 200, moved.text
+        assert moved.json() == {"fileCount": 1, "folderCount": 1}
+        assert client.get(f"/api/projects/{project_id}/files").json()[0][
+            "logicalPath"
+        ] == "Archive/Inbox/note.md"
+        assert {folder["logicalPath"] for folder in client.get(
+            f"/api/projects/{project_id}/files/folders"
+        ).json()} == {"Archive", "Archive/Inbox"}
+
+        descendant = client.patch(
+            f"/api/projects/{project_id}/files/folders",
+            headers=headers,
+            json={
+                "sourcePath": "Archive",
+                "targetPath": "Archive/Inbox/Archive",
+            },
+        )
+        assert descendant.status_code == 422
+        assert descendant.json()["code"] == "invalid_project_folder_target"
+
+        deleted = client.delete(
+            f"/api/projects/{project_id}/files/folders",
+            headers=headers,
+            params={"logicalPath": "Archive/Inbox"},
+        )
+        assert deleted.status_code == 204
+        assert client.get(f"/api/projects/{project_id}/files").json() == []
+        assert [folder["logicalPath"] for folder in client.get(
+            f"/api/projects/{project_id}/files/folders"
+        ).json()] == ["Archive"]
+
+    with SessionLocal() as db:
+        audit_actions = {event.action for event in db.scalars(select(AuditEvent))}
+        assert {
+            "project_folder_created",
+            "project_folder_moved",
+            "project_folder_deleted",
+        } <= audit_actions
+
+
 def test_failed_database_commit_cleans_managed_storage_objects(tmp_path: Path) -> None:
     settings = _settings(tmp_path, "cleanup.db")
     configure_database(settings.database_url)
@@ -440,7 +571,7 @@ def test_project_workspace_migration_round_trip(tmp_path: Path) -> None:
     upgrade_database(database_url)
     engine = create_engine(database_url)
     try:
-        assert {"project_files", "project_file_versions"} <= set(
+        assert {"project_files", "project_file_versions", "project_folders"} <= set(
             inspect(engine).get_table_names()
         )
         with engine.connect() as connection:

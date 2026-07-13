@@ -57,6 +57,8 @@ if ($FrontendPort -eq $BackendPort) {
 $HealthCheckIntervalSeconds = 5
 $HealthFailureThreshold = 3
 $StartupTimeoutSeconds = 60
+$MaxAutomaticRestarts = 3
+$RestartBudgetResetSeconds = 600
 $SupervisorPidPath = Join-Path $LogRoot $(
     if ($Development) { "run_lumina_dev.pid" } else { "run_lumina.pid" }
 )
@@ -441,20 +443,45 @@ function Test-HardResetKey {
     return Test-HardResetInput -Character $keyCharacter -VirtualKeyCode $virtualKeyCode
 }
 
+function Confirm-LuminaRuntimePrepared {
+    if ($Development) {
+        Write-Host "[Lumina] Applying development database migrations once..."
+        Invoke-Checked -Command "uv" -Arguments @(
+            "run", "--project", $ServerRoot,
+            "alembic", "-c", (Join-Path $ServerRoot "alembic.ini"),
+            "upgrade", "head"
+        )
+        return
+    }
+
+    $frontendEntry = Join-Path $WebRoot "dist/index.html"
+    if (-not (Test-Path -LiteralPath $frontendEntry -PathType Leaf)) {
+        throw (
+            "Lumina Frontend build is missing. Run installer.bat before starting " +
+            "the production launcher."
+        )
+    }
+    Write-Host "[Lumina] Verifying the production database schema..."
+    Invoke-Checked -Command "uv" -Arguments @(
+        "run", "--project", $ServerRoot,
+        "alembic", "-c", (Join-Path $ServerRoot "alembic.ini"),
+        "current", "--check-heads"
+    )
+}
+
+function Get-AutomaticRestartDelay {
+    param([Parameter(Mandatory = $true)][int]$Attempt)
+
+    $delays = @(1, 2, 5)
+    $index = [Math]::Min([Math]::Max($Attempt, 1) - 1, $delays.Count - 1)
+    return $delays[$index]
+}
+
 function Start-LuminaProcesses {
     param([switch]$PreserveFrontend)
 
     $ports = if ($Development -and -not $PreserveFrontend) { @($BackendPort, $FrontendPort) } else { @($BackendPort) }
     Stop-ExistingLuminaListeners -Ports $ports
-
-    Invoke-Checked -Command "uv" -Arguments @(
-        "run", "--project", $ServerRoot,
-        "alembic", "-c", (Join-Path $ServerRoot "alembic.ini"),
-        "upgrade", "head"
-    )
-    if (-not $Development) {
-        Invoke-Checked -Command "npm" -Arguments @("run", "build", "--prefix", $WebRoot)
-    }
 
     $backendArguments = @(
         "run", "--project", $ServerRoot,
@@ -519,23 +546,30 @@ if (-not (Test-Path -LiteralPath (Join-Path $RepositoryRoot ".env"))) {
     & (Join-Path $PSScriptRoot "install_lumina.ps1")
 }
 
+Confirm-LuminaRuntimePrepared
 Stop-PreviousSupervisor
 Set-SupervisorPid
 $env:LUMINA_ENVIRONMENT = if ($Development) { "development" } else { "production" }
 $resetReason = "initial startup"
+$automaticRestartCount = 0
 
 try {
     $preserveFrontend = $false
     while ($true) {
+        $manualResetRequested = $false
+        $readyAt = $null
         try {
             Write-Host "[Lumina] Hard reset: $resetReason"
             Stop-ManagedProcesses -PreserveFrontend:$preserveFrontend
             Start-LuminaProcesses -PreserveFrontend:$preserveFrontend
             if (-not (Wait-LuminaReady)) {
+                $manualResetRequested = $true
                 $preserveFrontend = $false
-                throw "Manual hard reset requested during startup."
+                $resetReason = "manual request"
+                continue
             }
             $preserveFrontend = $Development
+            $readyAt = [DateTime]::UtcNow
             Write-Host ""
 
             if ($Development) {
@@ -558,6 +592,7 @@ try {
             while ($true) {
                 Write-NewBackendActivity
                 if (Test-HardResetKey) {
+                    $manualResetRequested = $true
                     $preserveFrontend = $false
                     $resetReason = "manual request"
                     break
@@ -573,6 +608,14 @@ try {
                 if ([DateTime]::UtcNow -ge $nextHealthCheck) {
                     if (Test-LuminaHealthy) {
                         $healthFailures = 0
+                        if (
+                            $automaticRestartCount -gt 0 -and
+                            $null -ne $readyAt -and
+                            ([DateTime]::UtcNow - $readyAt).TotalSeconds -ge $RestartBudgetResetSeconds
+                        ) {
+                            $automaticRestartCount = 0
+                            $readyAt = [DateTime]::UtcNow
+                        }
                     }
                     else {
                         $healthFailures++
@@ -594,8 +637,23 @@ try {
         finally {
             Stop-ManagedProcesses -PreserveFrontend:$preserveFrontend
         }
-        Write-Host "[Lumina] Restarting in 1 second..."
-        Start-Sleep -Seconds 1
+        if ($manualResetRequested) {
+            continue
+        }
+        if ($automaticRestartCount -ge $MaxAutomaticRestarts) {
+            throw (
+                "Lumina exhausted its automatic restart budget after " +
+                "$MaxAutomaticRestarts retries. Last failure: $resetReason. " +
+                "See logs in $LogRoot."
+            )
+        }
+        $automaticRestartCount++
+        $restartDelay = Get-AutomaticRestartDelay -Attempt $automaticRestartCount
+        Write-Host (
+            "[Lumina] Restarting in $restartDelay second(s) " +
+            "($automaticRestartCount/$MaxAutomaticRestarts)..."
+        )
+        Start-Sleep -Seconds $restartDelay
     }
 }
 finally {

@@ -495,12 +495,13 @@ Hermes의 slash command UX는 참고하되 Lumina에서는 Skill과 MCP의 명�
 
 ```text
 @보고서.pdf 요약해줘
+@분기자료 지난 분기 자료 전체를 참고해줘
 @src/main.tsx 이 컴포넌트의 문제를 찾아줘
 $web-research 최신 자료를 조사해줘
 $internal-search 사내 규정을 찾아줘
 ```
 
-- `@` 뒤에는 현재 사용자가 접근할 수 있는 파일과 artifacts를 검색합니다.
+- `@` 뒤에는 현재 사용자가 접근할 수 있는 파일, 폴더와 artifacts를 검색합니다.
 - `$` 뒤에는 현재 사용자의 활성 Skill WorkingDraft와 현재 사용자·Project에서 설치된 Skill·MCP를 함께 검색합니다.
 - 자동완성 후보는 Composer 입력란 바로 위에 표시하고 파일·Artifact·Skill·MCP를 이름, 유형 icon, 설명과 상태로 구분합니다. Skill에는 현재 Folder breadcrumb를 보조 정보로 표시합니다.
 - 선택된 항목은 Composer와 전송된 user Message에서 이름과 유형 icon이 있는 독립 pill로 표시합니다.
@@ -513,10 +514,11 @@ $internal-search 사내 규정을 찾아줘
 
 ```text
 @file       → 업로드 또는 허용된 workspace 파일
+@folder     → 사용자가 업로드한 폴더와 선택 시점의 하위 파일 전체
 @artifact   → 이전에 생성된 artifact
 ```
 
-향후 필요하면 folder, 특정 line 범위와 terminal snapshot을 추가할 수 있습니다. 사용자가 보는 chip은 `@파일명`처럼 단순하게 표시하되 Backend에는 안정적인 reference ID와 종류를 구조화해 전송합니다.
+향후 필요하면 특정 line 범위와 terminal snapshot을 추가할 수 있습니다. 사용자가 보는 chip은 `@파일명`, `@폴더명`처럼 단순하게 표시하되 Backend에는 안정적인 reference ID와 종류를 구조화해 전송합니다. 폴더는 논리 경로에서 결정적으로 생성한 ID와 하위 파일 digest snapshot으로 검증합니다.
 
 ```text
 표시: @매출보고서.xlsx

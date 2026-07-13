@@ -8,6 +8,12 @@ from .service import (
     normalize_logical_path,
     soft_delete_project_file,
 )
+from .folders import (
+    create_project_folder,
+    list_project_folders,
+    move_project_folder,
+    soft_delete_project_folder,
+)
 
 __all__ = [
     "create_project_file",
@@ -18,4 +24,8 @@ __all__ = [
     "move_project_file",
     "normalize_logical_path",
     "soft_delete_project_file",
+    "create_project_folder",
+    "list_project_folders",
+    "move_project_folder",
+    "soft_delete_project_folder",
 ]

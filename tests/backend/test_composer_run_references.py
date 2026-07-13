@@ -83,9 +83,10 @@ def test_implicit_skill_activation_requires_a_model_tool_choice() -> None:
         "visual-id",
         "pptx-id",
     ]
-    assert classify_tool_risk(
-        "activate_skill", approval_mode="on_risk"
-    ).approval_required is False
+    assert (
+        classify_tool_risk("activate_skill", approval_mode="on_risk").approval_required
+        is False
+    )
 
     selected = activate_run_skill(
         run,
@@ -129,9 +130,7 @@ def test_skill_activities_show_which_skill_was_actually_applied() -> None:
             "extensions": extensions,
             "extension_application": "explicit_and_auto",
             "auto_selected_skill_ids": ["visual-id"],
-            "prompt_references": [
-                {"kind": "skill", "reference_id": "explicit-id"}
-            ],
+            "prompt_references": [{"kind": "skill", "reference_id": "explicit-id"}],
         }
     )
 
@@ -369,7 +368,9 @@ def test_model_selected_skill_keeps_its_event_sequence_in_run_snapshot(
             item for item in snapshot["activities"] if item["type"] == "skill"
         )
         assert selected_activity["sequence"] == event.sequence
-        assert selected_activity["reason"] == "설비 점검 보고서 절차가 요청에 적합합니다."
+        assert (
+            selected_activity["reason"] == "설비 점검 보고서 절차가 요청에 적합합니다."
+        )
 
 
 def _login(client: TestClient) -> None:

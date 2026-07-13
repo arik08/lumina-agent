@@ -22,7 +22,10 @@ from ..config import Settings, get_settings
 from ..audit import record_audit
 from ..authorization import require_conversation
 from ..extensions.service import resolve_skill_snapshot
-from ..instructions import resolve_instruction_stack_from_models, runtime_prompt_snapshot
+from ..instructions import (
+    resolve_instruction_stack_from_models,
+    runtime_prompt_snapshot,
+)
 from ..mcp.service import resolve_mcp_snapshot
 from ..models import (
     Artifact,
@@ -37,6 +40,7 @@ from ..models import (
     PlanStep,
     Project,
     ProjectFile,
+    ProjectFileVersion,
     ProjectSetting,
     ProviderModel,
     QueuedMessage,
@@ -52,6 +56,7 @@ from ..models import (
 )
 from ..notifications import create_run_transition_notification
 from ..project_files import get_project_file_version
+from ..project_files.folders import build_project_folder_references
 from ..project_memories import select_relevant_project_memories
 from ..projects.memberships import effective_project_role
 from ..providers.catalog import (
@@ -438,9 +443,7 @@ def create_run(
         references=references,
     )
     extension_application = (
-        "all_snapshot"
-        if apply_extension_snapshot
-        else "explicit_references"
+        "all_snapshot" if apply_extension_snapshot else "explicit_references"
     )
     stable_prefix = {
         "contract_version": "lumina-run-v1",
@@ -686,6 +689,58 @@ def _validate_references(
                 "kind": artifact.kind,
                 "version": version.version_number,
                 "contentHash": version.content_hash,
+            }
+        elif reference.kind == "folder":
+            workspace_rows = list(
+                db.execute(
+                    select(ProjectFile, ProjectFileVersion)
+                    .join(
+                        ProjectFileVersion,
+                        (ProjectFileVersion.project_file_id == ProjectFile.id)
+                        & (
+                            ProjectFileVersion.version_number
+                            == ProjectFile.current_version_number
+                        ),
+                    )
+                    .where(
+                        ProjectFile.project_id == conversation.project_id,
+                        ProjectFile.deleted_at.is_(None),
+                        ProjectFile.status == "active",
+                    )
+                    .order_by(ProjectFile.logical_path, ProjectFile.id)
+                )
+            )
+            folder = next(
+                (
+                    item
+                    for item in build_project_folder_references(
+                        conversation.project_id, workspace_rows
+                    )
+                    if item.id == reference.reference_id
+                ),
+                None,
+            )
+            if folder is None:
+                raise ApiProblem(
+                    404, "reference_not_found", "폴더 참조를 찾을 수 없습니다."
+                )
+            if (
+                reference.version_or_digest
+                and reference.version_or_digest != folder.content_hash
+            ):
+                raise ApiProblem(
+                    409,
+                    "reference_version_unavailable",
+                    "폴더 내용이 선택 이후 변경되었습니다.",
+                )
+            payload["version_or_digest"] = folder.content_hash
+            payload["display_snapshot"] = {
+                "name": folder.name,
+                "targetType": "project_folder",
+                "logicalPath": folder.logical_path,
+                "fileCount": len(folder.file_versions),
+                "fileVersions": list(folder.file_versions),
+                "contentHash": folder.content_hash,
             }
         elif reference.kind == "file":
             project_file = db.get(ProjectFile, reference.reference_id)
@@ -2345,9 +2400,7 @@ def apply_run_action(
                 execution_options_json={
                     **run.snapshot_json.get("execution", {}),
                     "output_mode": payload.message.output_mode,
-                    "target_output_tokens": canonical_message[
-                        "target_output_tokens"
-                    ],
+                    "target_output_tokens": canonical_message["target_output_tokens"],
                 },
                 idempotency_key=idempotency_key,
             )
