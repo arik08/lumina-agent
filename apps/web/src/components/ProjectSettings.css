@@ -2,16 +2,26 @@
 .project-membership-settings > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .project-membership-settings > header h2 { margin: 0; font-size: 13px; }
 .project-membership-settings > header p { margin: 3px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
-.project-membership-settings > header > span { display: inline-flex; height: 25px; flex: 0 0 auto; align-items: center; gap: 5px; padding: 0 8px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 10.5px; white-space: nowrap; }
+.project-membership-settings > header > span { display: inline-flex; height: 25px; flex: 0 0 auto; align-items: center; gap: 5px; padding: 0 8px; border: 1px solid var(--line); border-radius: var(--radius-pill); color: var(--muted); font-size: 10.5px; white-space: nowrap; }
 .project-membership-settings > header > span.is-shared { border-color: color-mix(in srgb, var(--cobalt) 32%, var(--line)); background: var(--cobalt-pale); color: var(--cobalt); }
-.project-member-add { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 11px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-soft); }
+.project-member-add { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-3); padding: 11px; border: 1px solid var(--line); border-radius: var(--radius-field); background: var(--surface-soft); }
 .project-member-add label, .project-role-field { display: grid; min-width: 0; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 7px; }
 .project-role-field { grid-template-columns: auto 104px; }
 .project-member-add :is(label, .project-role-field) > span { color: var(--muted); font-size: 10.5px; }
-.project-member-add input { width: 100%; height: 32px; min-width: 0; border: 1px solid var(--line); border-radius: 5px; outline: 0; padding: 0 8px; background: var(--surface); color: var(--ink); font: inherit; font-size: 11.5px; }
+.project-member-add input { width: 100%; height: var(--control-height-md); min-width: 0; border: 1px solid var(--line); border-radius: var(--radius-control); outline: 0; padding: 0 8px; background: var(--surface); color: var(--ink); font: inherit; font-size: 11.5px; }
 .project-member-add input:focus { border-color: var(--cobalt); }
-.project-member-add > button { display: inline-flex; height: 32px; align-items: center; justify-content: center; gap: 5px; white-space: nowrap; }
+.project-member-add > button { display: inline-flex; height: var(--control-height-md); align-items: center; justify-content: center; gap: 5px; white-space: nowrap; }
 .project-role-field .lumina-select { width: 104px; }
+.project-membership-settings .lumina-select-trigger:focus-visible,
+.project-membership-settings .lumina-select.is-open .lumina-select-trigger {
+  outline: 0;
+  border-color: var(--cobalt);
+  box-shadow: none;
+}
+.project-membership-settings .lumina-select-menu > button:focus-visible {
+  outline: 0;
+  box-shadow: none;
+}
 .project-member-list { display: grid; border-top: 1px solid var(--line); }
 .project-member-list article { display: grid; min-height: 54px; grid-template-columns: 31px minmax(0, 1fr) 104px auto; align-items: center; gap: 9px; padding: 7px 2px; border-bottom: 1px solid color-mix(in srgb, var(--line) 78%, transparent); }
 .project-member-avatar { display: inline-grid; width: 29px; height: 29px; place-items: center; border-radius: 50%; background: color-mix(in srgb, var(--cobalt) 11%, var(--surface-soft)); color: var(--cobalt); font-size: 11px; font-weight: 700; }

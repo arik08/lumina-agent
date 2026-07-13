@@ -35,7 +35,7 @@ test("project settings manage registered accounts inline", async () => {
   assert.doesNotMatch(view, /window\.confirm|<dialog|modal/i);
   assert.match(styles, /\.project-membership-settings\s*\{/);
   assert.match(styles, /\.project-member-list article\s*\{/);
-  assert.match(selectStyles, /\.lumina-select-menu\s*\{[\s\S]*?border-radius: 10px;/);
+  assert.match(selectStyles, /\.lumina-select-menu\s*\{[\s\S]*?border-radius: var\(--radius-menu\);/);
   assert.match(view, /data-tooltip="프로젝트 추가"/);
   assert.doesNotMatch(styles, /tooltip-control::after/);
 });

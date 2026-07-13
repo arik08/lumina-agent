@@ -1,0 +1,170 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-14T03:56:00.3867363+09:00",
+  "title": "Design System: Lumina Agent",
+  "extensions": {
+    "colorMeta": {
+      "cobalt": {
+        "role": "primary",
+        "displayName": "Operational Cobalt",
+        "canonical": "#3f66c9",
+        "tonalRamp": ["oklch(25% 0.08 264)", "oklch(35% 0.11 264)", "oklch(45% 0.14 264)", "oklch(55% 0.15 264)", "oklch(65% 0.13 264)", "oklch(75% 0.10 264)", "oklch(86% 0.06 264)", "oklch(95% 0.02 264)"]
+      },
+      "success": {
+        "role": "secondary",
+        "displayName": "Completion Green",
+        "canonical": "#2f9765",
+        "tonalRamp": ["oklch(25% 0.06 156)", "oklch(35% 0.08 156)", "oklch(45% 0.10 156)", "oklch(55% 0.11 156)", "oklch(65% 0.10 156)", "oklch(75% 0.08 156)", "oklch(86% 0.05 156)", "oklch(95% 0.02 156)"]
+      },
+      "warning": {
+        "role": "secondary",
+        "displayName": "Attention Amber",
+        "canonical": "#b8771f",
+        "tonalRamp": ["oklch(25% 0.07 72)", "oklch(35% 0.10 72)", "oklch(45% 0.12 72)", "oklch(55% 0.13 72)", "oklch(65% 0.12 72)", "oklch(75% 0.09 72)", "oklch(86% 0.05 72)", "oklch(95% 0.02 72)"]
+      },
+      "danger": {
+        "role": "tertiary",
+        "displayName": "Destructive Red",
+        "canonical": "#c34f51",
+        "tonalRamp": ["oklch(25% 0.08 24)", "oklch(35% 0.11 24)", "oklch(45% 0.14 24)", "oklch(55% 0.15 24)", "oklch(65% 0.13 24)", "oklch(75% 0.10 24)", "oklch(86% 0.06 24)", "oklch(95% 0.02 24)"]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Operational Ink",
+        "canonical": "#20242c",
+        "tonalRamp": ["oklch(15% 0.008 255)", "oklch(28% 0.008 255)", "oklch(40% 0.008 255)", "oklch(52% 0.007 255)", "oklch(64% 0.006 255)", "oklch(76% 0.005 255)", "oklch(88% 0.004 255)", "oklch(96% 0.002 255)"]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Work Surface",
+        "canonical": "#ffffff",
+        "tonalRamp": ["oklch(15% 0.004 255)", "oklch(28% 0.004 255)", "oklch(40% 0.004 255)", "oklch(52% 0.004 255)", "oklch(64% 0.003 255)", "oklch(76% 0.003 255)", "oklch(88% 0.002 255)", "oklch(100% 0 255)"]
+      },
+      "dark-surface": {
+        "role": "neutral",
+        "displayName": "Night Work Surface",
+        "canonical": "#1d2025",
+        "tonalRamp": ["oklch(13% 0.006 255)", "oklch(20% 0.006 255)", "oklch(30% 0.006 255)", "oklch(42% 0.005 255)", "oklch(55% 0.005 255)", "oklch(68% 0.004 255)", "oklch(82% 0.003 255)", "oklch(94% 0.002 255)"]
+      },
+      "dark-cobalt": {
+        "role": "primary",
+        "displayName": "Night Operational Cobalt",
+        "canonical": "#7e9ce5",
+        "tonalRamp": ["oklch(25% 0.07 264)", "oklch(35% 0.09 264)", "oklch(45% 0.11 264)", "oklch(55% 0.12 264)", "oklch(65% 0.12 264)", "oklch(75% 0.10 264)", "oklch(86% 0.06 264)", "oklch(95% 0.02 264)"]
+      }
+    },
+    "typographyMeta": {
+      "headline": { "displayName": "Feature Headline", "purpose": "Feature headers and primary panel titles." },
+      "title": { "displayName": "Section Title", "purpose": "Sections, rows and card identities." },
+      "body": { "displayName": "Dense Body", "purpose": "Descriptions, values and work content." },
+      "label": { "displayName": "Control Label", "purpose": "Buttons, fields and compact metadata." }
+    },
+    "shadows": [
+      { "name": "overlay-light", "value": "0 12px 28px rgba(20, 24, 31, 0.14), 0 2px 7px rgba(20, 24, 31, 0.06)", "purpose": "Floating menus and popovers in Light theme." },
+      { "name": "overlay-dark", "value": "0 12px 28px rgba(0, 0, 0, 0.38), 0 2px 7px rgba(0, 0, 0, 0.24)", "purpose": "Floating menus and popovers in Dark theme without a white aura." },
+      { "name": "tooltip", "value": "0 6px 16px rgba(20, 24, 31, 0.22)", "purpose": "Global tooltip layer only." }
+    ],
+    "motion": [
+      { "name": "fast", "value": "140ms cubic-bezier(0.25, 1, 0.5, 1)", "purpose": "Hover, focus and compact state changes." },
+      { "name": "medium", "value": "220ms cubic-bezier(0.22, 1, 0.36, 1)", "purpose": "Menu and panel state changes." },
+      { "name": "slow", "value": "300ms cubic-bezier(0.22, 1, 0.36, 1)", "purpose": "Large but non-layout transitions." }
+    ],
+    "breakpoints": [
+      { "name": "mobile", "value": "720px" },
+      { "name": "compact", "value": "980px" },
+      { "name": "artifact-overlay", "value": "1180px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Save, apply and create actions with one shared semantic treatment.",
+      "html": "<button class=\"ds-btn-primary\">정보 저장</button>",
+      "css": ".ds-btn-primary { min-height: 30px; padding: 0 9px; border: 1px solid var(--cobalt); border-radius: var(--radius-control); background: var(--cobalt); color: var(--surface); font: 650 11.5px/1.4 var(--font-ui); cursor: pointer; transition: background var(--motion-fast) var(--ease-out-quart), border-color var(--motion-fast) var(--ease-out-quart); } .ds-btn-primary:hover { border-color: var(--cobalt-hover); background: var(--cobalt-hover); } .ds-btn-primary:focus-visible { outline: 2px solid color-mix(in srgb, var(--cobalt) 72%, transparent); outline-offset: 2px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Neutral supporting action that keeps the primary action visually singular.",
+      "html": "<button class=\"ds-btn-secondary\">취소</button>",
+      "css": ".ds-btn-secondary { min-height: 30px; padding: 0 9px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); color: var(--ink); font: 500 11.5px/1.4 var(--font-ui); cursor: pointer; transition: background var(--motion-fast) var(--ease-out-quart), border-color var(--motion-fast) var(--ease-out-quart); } .ds-btn-secondary:hover { border-color: var(--line-strong); background: var(--surface-soft); } .ds-btn-secondary:focus-visible { outline: 2px solid color-mix(in srgb, var(--cobalt) 72%, transparent); outline-offset: 2px; }"
+    },
+    {
+      "name": "Input Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Compact 32px work input with a quiet border and explicit cobalt focus.",
+      "html": "<input class=\"ds-input\" value=\"name@posco.com\" aria-label=\"계정명\" />",
+      "css": ".ds-input { width: 240px; height: var(--control-height-md); padding: 0 9px; border: 1px solid var(--line); border-radius: var(--radius-control); outline: 0; background: var(--surface); color: var(--ink); font: 400 12.5px/1.55 var(--font-ui); } .ds-input:hover { border-color: var(--line-strong); } .ds-input:focus-visible { border-color: var(--cobalt); box-shadow: 0 0 0 2px color-mix(in srgb, var(--cobalt) 12%, transparent); }"
+    },
+    {
+      "name": "List of Value Trigger",
+      "kind": "custom",
+      "refersTo": "select-trigger",
+      "description": "Rounded shared select trigger used instead of visually inconsistent native popups.",
+      "html": "<button class=\"ds-select-trigger\">편집자 <svg width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"m6 9 6 6 6-6\"/></svg></button>",
+      "css": ".ds-select-trigger { display: flex; width: 120px; height: var(--control-height-md); align-items: center; justify-content: space-between; gap: 8px; padding: 0 9px; border: 1px solid var(--line); border-radius: var(--radius-select); background: var(--surface); color: var(--ink); font: 400 12px/1.4 var(--font-ui); cursor: pointer; } .ds-select-trigger:hover { border-color: var(--line-strong); background: var(--surface-soft); } .ds-select-trigger:focus-visible { outline: 0; border-color: var(--cobalt); }"
+    },
+    {
+      "name": "List of Value Menu",
+      "kind": "custom",
+      "refersTo": "select-menu",
+      "description": "Ten-pixel rounded floating menu with selected cobalt wash and theme-safe shadow.",
+      "html": "<div class=\"ds-select-menu\"><button class=\"ds-select-option is-selected\">편집자 <svg width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"m5 12 4 4L19 6\"/></svg></button><button class=\"ds-select-option\">조회자</button><button class=\"ds-select-option\">관리자</button></div>",
+      "css": ".ds-select-menu { display: grid; width: 120px; gap: 2px; padding: 4px; border: 1px solid var(--line-strong); border-radius: var(--radius-menu); background: var(--menu-surface); box-shadow: var(--shadow-overlay); } .ds-select-option { display: flex; width: 100%; height: 30px; align-items: center; justify-content: space-between; padding: 0 7px; border: 0; border-radius: var(--radius-option); outline: 0; background: transparent; color: var(--ink); font: 500 11.5px/1.4 var(--font-ui); cursor: pointer; } .ds-select-option:hover, .ds-select-option:focus-visible { background: var(--surface-soft); } .ds-select-option.is-selected { background: var(--cobalt-pale); color: var(--cobalt); font-weight: 650; }"
+    },
+    {
+      "name": "Selected Chip",
+      "kind": "chip",
+      "refersTo": "chip-selected",
+      "description": "Compact pill for selected or shared state, never generic metadata decoration.",
+      "html": "<span class=\"ds-chip-selected\">공유 · 2명</span>",
+      "css": ".ds-chip-selected { display: inline-flex; height: 25px; align-items: center; padding: 0 8px; border: 1px solid color-mix(in srgb, var(--cobalt) 32%, var(--line)); border-radius: var(--radius-pill); background: var(--cobalt-pale); color: var(--cobalt); font: 500 10.5px/1 var(--font-ui); }"
+    },
+    {
+      "name": "Connected List Row",
+      "kind": "custom",
+      "description": "Divider-led work row that avoids wrapping every item in a rounded card.",
+      "html": "<div class=\"ds-list-row\"><span class=\"ds-list-avatar\">오</span><span class=\"ds-list-copy\"><strong>오명철</strong><small>myeongcheol@posco.com</small></span><span>편집자</span></div>",
+      "css": ".ds-list-row { display: grid; width: 420px; min-height: 54px; grid-template-columns: 31px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 7px 2px; border-top: 1px solid var(--line); border-bottom: 1px solid color-mix(in srgb, var(--line) 78%, transparent); background: var(--surface); color: var(--muted); font: 500 10.5px/1.4 var(--font-ui); } .ds-list-avatar { display: inline-grid; width: 29px; height: 29px; place-items: center; border-radius: var(--radius-pill); background: color-mix(in srgb, var(--cobalt) 11%, var(--surface-soft)); color: var(--cobalt); font-weight: 700; } .ds-list-copy { display: grid; gap: 2px; } .ds-list-copy strong { color: var(--ink); font-size: 11.5px; } .ds-list-copy small { color: var(--muted); font-size: 10px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "조용한 컨트롤 데스크",
+    "overview": "Lumina는 사용자가 여러 Project와 장시간 Agent Run을 오가면서도 현재 상태와 다음 행동을 즉시 이해하는 업무 도구입니다. 화면은 장식보다 정보 밀도와 조작 예측 가능성을 우선하며, 얇은 구분선과 톤 차이로 구조를 만들고 코발트 색은 선택, 주 동작, 진행 상태에만 제한적으로 사용합니다. Light와 Dark는 별도 디자인이 아니라 같은 semantic token의 두 표현입니다. 같은 역할의 버튼, 입력, List of Value, 목록 행은 화면마다 다시 만들지 않습니다.",
+    "keyCharacteristics": [
+      "절제된 단일 accent와 차갑게 tint된 neutral",
+      "촘촘하지만 읽기 순서가 분명한 업무 밀도",
+      "얇은 border와 tonal layering을 중심으로 한 평평한 표면",
+      "권한, 선택, 실행 상태를 숨기지 않는 일관된 상태 표현",
+      "Light와 Dark에서 같은 의미와 같은 component geometry 유지"
+    ],
+    "rules": [
+      { "name": "The Shared Primitive Rule", "body": "같은 의미와 크기의 UI는 반드시 같은 primitive와 semantic variant를 사용합니다. 화면 selector에 button, input, menu 스타일을 다시 선언하는 것은 금지합니다.", "section": "components" },
+      { "name": "The Token Before Value Rule", "body": "반복되는 color, radius, spacing, height, shadow, motion 값은 CSS custom property가 먼저입니다. 컴포넌트에 숫자나 색을 직접 추가하지 않습니다.", "section": "components" },
+      { "name": "The One Accent Rule", "body": "한 화면에서 cobalt는 전체 면적의 10% 이하를 유지합니다. 선택과 주 동작이 아닌 장식용 cobalt 면은 금지합니다.", "section": "colors" },
+      { "name": "The Semantic Theme Rule", "body": "component selector에 Light 또는 Dark 전용 hex를 직접 넣지 않습니다. semantic token을 theme root에서 교체합니다.", "section": "colors" },
+      { "name": "The Dark Shadow Rule", "body": "Dark theme shadow를 text token에서 만들지 않습니다. 흰 아우라가 생기면 색이 아니라 shadow source가 잘못된 것입니다.", "section": "elevation" },
+      { "name": "The Flat By Default Rule", "body": "문서 흐름 안의 card, list row와 form group에 shadow를 추가하지 않습니다. 떠 있지 않은 것은 띄우지 않습니다.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do 먼저 기존 공용 primitive와 semantic variant를 찾고, 없을 때만 새 component API를 추가합니다.",
+      "Do radius, control height, spacing, shadow와 motion을 CSS custom property로 정의한 뒤 사용합니다.",
+      "Do 주 버튼은 하나의 공용 primary action style로 관리하고 Light와 Dark 변형은 theme token으로 해결합니다.",
+      "Do List of Value는 8px trigger, 10px menu, 6px option의 공용 rounded geometry를 사용합니다."
+    ],
+    "donts": [
+      "Don't 장식이 업무보다 앞서는 대시보드를 만들지 않습니다.",
+      "Don't 서로 다른 컴포넌트 규칙이 섞인 화면을 만들지 않습니다.",
+      "Don't 브라우저 기본 컨트롤이 제품 UI와 어색하게 충돌하게 두지 않습니다.",
+      "Don't 과도한 카드 중첩을 만들지 않습니다.",
+      "Don't 의미 없는 모션과 색상을 추가하지 않습니다.",
+      "Don't 중요한 실행·권한 상태를 모호하게 감추지 않습니다.",
+      "Don't 같은 버튼, input, menu, list row의 geometry와 state를 화면 selector마다 하드코딩하지 않습니다.",
+      "Don't Dark theme shadow를 밝은 text 또는 ink token으로 계산해 흰 아우라를 만들지 않습니다."
+    ]
+  }
+}

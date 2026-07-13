@@ -244,7 +244,7 @@ export function ProjectSettings({ projects, project, onOpenNavigation, onSelect,
                 <form className="project-member-add" onSubmit={(event) => void addMember(event)}>
                   <label><span>계정명</span><input type="email" value={accountLoginId} placeholder="name@posco.com" autoComplete="off" onChange={(event) => setAccountLoginId(event.currentTarget.value)} /></label>
                   <div className="project-role-field"><span>권한</span><SelectMenu value={newRole} options={assignableRoleOptions} ariaLabel="새 구성원 권한" disabled={memberActionId !== null} onChange={(role) => setNewRole(role as AssignableRole)} /></div>
-                  <button className="primary-compact" type="submit" disabled={!accountLoginId.trim() || memberActionId !== null}>{memberActionId === "add" ? <LoaderCircle className="is-running" size={14} /> : <UserPlus size={14} />} 계정 추가</button>
+                  <button className="primary-compact lumina-primary-action" type="submit" disabled={!accountLoginId.trim() || memberActionId !== null}>{memberActionId === "add" ? <LoaderCircle className="is-running" size={14} /> : <UserPlus size={14} />} 계정 추가</button>
                 </form>
               )}
               <div className="project-member-list" aria-live="polite">

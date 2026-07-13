@@ -55,6 +55,23 @@
   --tooltip-padding: 7px 9px;
   --tooltip-radius: 5px;
   --tooltip-shadow: 0 6px 16px rgba(20, 24, 31, 0.22);
+  --radius-xs: 3px;
+  --radius-sm: 4px;
+  --radius-control: 5px;
+  --radius-option: 6px;
+  --radius-field: 7px;
+  --radius-select: 8px;
+  --radius-menu: 10px;
+  --radius-pill: 999px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --control-height-sm: 29px;
+  --control-height-md: 32px;
+  --shadow-overlay: 0 12px 28px rgba(20, 24, 31, 0.14), 0 2px 7px rgba(20, 24, 31, 0.06);
   --motion-fast: 140ms;
   --motion-medium: 220ms;
   --motion-slow: 300ms;
@@ -944,7 +961,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .workspace-view-header p { margin: 2px 0 0; color: var(--muted); font-size: 11px; }
 .workspace-empty { color: var(--muted); font-size: 12.5px; text-align: center; }
 .workspace-error { margin: 0; padding: 8px 18px; border-bottom: 1px solid color-mix(in srgb, var(--danger) 25%, var(--line)); color: var(--danger); font-size: 11.5px; }
-.primary-compact, .project-settings-actions button { display: inline-flex; min-height: 30px; align-items: center; justify-content: center; gap: 5px; padding: 0 9px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); color: var(--ink); font-size: 11.5px; cursor: pointer; }
+.primary-compact, .project-settings-actions button { display: inline-flex; min-height: 30px; align-items: center; justify-content: center; gap: 5px; padding: 0 9px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); color: var(--ink); font-size: 11.5px; cursor: pointer; }
 .primary-compact { border-color: var(--cobalt); background: var(--cobalt); color: white; }
 .text-danger { color: var(--danger) !important; }
 
@@ -2466,6 +2483,7 @@ button:disabled { cursor: default; opacity: 0.5; }
   --cobalt: #7e9ce5;
   --cobalt-hover: #6f91df;
   --cobalt-pale: #26334d;
+  --shadow-overlay: 0 12px 28px rgba(0, 0, 0, 0.38), 0 2px 7px rgba(0, 0, 0, 0.24);
   color: var(--ink);
 }
 

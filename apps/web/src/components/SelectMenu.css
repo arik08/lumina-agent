@@ -22,13 +22,13 @@
   display: flex;
   width: 100%;
   min-width: 0;
-  height: 32px;
+  height: var(--control-height-md);
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   padding: 0 9px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-select);
   outline: 0;
   background: var(--surface);
   color: var(--ink);
@@ -79,9 +79,9 @@
   overflow-x: hidden;
   overflow-y: auto;
   border: 1px solid var(--line-strong);
-  border-radius: 10px;
+  border-radius: var(--radius-menu);
   background: var(--menu-surface);
-  box-shadow: 0 12px 28px color-mix(in srgb, var(--ink) 14%, transparent), 0 2px 7px color-mix(in srgb, var(--ink) 6%, transparent);
+  box-shadow: var(--shadow-overlay);
   scrollbar-width: thin;
   scrollbar-color: var(--scrollbar-thumb) transparent;
 }
@@ -104,7 +104,7 @@
   gap: 12px;
   padding: 0 7px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-option);
   outline: 0;
   background: transparent;
   color: var(--ink);
@@ -128,7 +128,7 @@
 .lumina-select-menu > button.is-selected > svg { opacity: 1; }
 .lumina-select-menu > button:disabled { cursor: default; opacity: .45; }
 
-.lumina-select.size-small .lumina-select-trigger { height: 29px; padding: 0 7px; font-size: 10.5px; }
+.lumina-select.size-small .lumina-select-trigger { height: var(--control-height-sm); padding: 0 7px; font-size: 10.5px; }
 .lumina-select.size-small .lumina-select-menu > button { height: 28px; font-size: 11px; }
 
 @media (prefers-reduced-motion: reduce) {
