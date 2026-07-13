@@ -192,7 +192,6 @@ function PersonalMemoryPanel({ refreshKey }: { refreshKey: number }) {
     setDraft({
       id: memory.id,
       category: memory.category,
-      fact: memory.normalizedFact,
       displayText: memory.displayText,
       status: memory.status === "dismissed" ? "dismissed" : "active",
     });
@@ -200,13 +199,13 @@ function PersonalMemoryPanel({ refreshKey }: { refreshKey: number }) {
 
   const saveEdit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!draft || busy || !draft.category.trim() || !draft.fact.trim() || !draft.displayText.trim()) return;
+    if (!draft || busy || !draft.category.trim() || !draft.displayText.trim()) return;
     setBusy(draft.id);
     setError(null);
     try {
       const updated = await api.memories.update(draft.id, {
         category: draft.category.trim(),
-        fact: draft.fact.trim(),
+        fact: draft.displayText.trim(),
         displayText: draft.displayText.trim(),
         status: draft.status,
       });
@@ -292,8 +291,7 @@ function PersonalMemoryPanel({ refreshKey }: { refreshKey: number }) {
                   <label><span>Category</span><input value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.currentTarget.value })} /></label>
                   <div className="lumina-select-field"><span>상태</span><SelectMenu value={draft.status} options={editableMemoryStatusOptions} ariaLabel="개인 Memory 상태" onChange={(value) => setDraft({ ...draft, status: value as "active" | "dismissed" })} /></div>
                 </div>
-                <label><span>기억할 사실</span><input value={draft.fact} onChange={(event) => setDraft({ ...draft, fact: event.currentTarget.value })} /></label>
-                <label><span>표시 내용</span><textarea rows={3} value={draft.displayText} onChange={(event) => setDraft({ ...draft, displayText: event.currentTarget.value })} /></label>
+                <label><span>기억할 내용</span><textarea rows={3} value={draft.displayText} onChange={(event) => setDraft({ ...draft, displayText: event.currentTarget.value })} /></label>
                 <div className="memory-edit-actions"><button type="button" onClick={() => setDraft(null)}><X size={14} /> 취소</button><button className="is-primary lumina-primary-action" type="submit" disabled={busy === memory.id}><Save size={14} /> 저장</button></div>
               </form>
             ) : (
@@ -315,7 +313,6 @@ function PersonalMemoryPanel({ refreshKey }: { refreshKey: number }) {
                   </div>
                 </header>
                 <p>{memory.displayText}</p>
-                <div className="memory-fact">{memory.normalizedFact}</div>
                 <footer><span>근거 {memory.evidenceCount}회</span><span>신뢰도 {Math.round(memory.confidence * 100)}%</span><span>확인 {dateLabel(memory.lastConfirmedAt)}</span>{memory.supersedesMemoryId && <span>기존 Memory 대체 후보</span>}{memory.expiresAt && <span>만료 {dateLabel(memory.expiresAt)}</span>}</footer>
               </article>
             ))}

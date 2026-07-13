@@ -64,7 +64,7 @@ async def test_llm_memory_extractor_keeps_name_and_discards_remember_command() -
 
     assert len(candidates) == 1
     assert candidates[0].category == "user_identity"
-    assert candidates[0].fact == "user name: 오명철"
+    assert candidates[0].fact == "사용자 이름: 오명철"
     assert candidates[0].display_text == "사용자 이름: 오명철"
     assert candidates[0].conflict_key == "user_name"
     assert candidates[0].source_message_ids == ("message-1",)
@@ -133,8 +133,8 @@ async def test_explicit_name_uses_local_extractor_without_second_model_call() ->
     assert provider.request is None
     assert len(candidates) == 1
     assert candidates[0].category == "user_identity"
-    assert candidates[0].fact == "user name: 오명철"
-    assert candidates[0].display_text == "사용자 이름: 오명철"
+    assert candidates[0].fact == "사용자 이름은 오명철입니다."
+    assert candidates[0].display_text == "사용자 이름은 오명철입니다."
     assert candidates[0].conflict_key == "user_name"
     assert candidates[0].source_message_ids == ("message-1",)
 

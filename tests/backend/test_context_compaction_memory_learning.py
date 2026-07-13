@@ -946,8 +946,8 @@ def test_explicit_name_is_stored_by_offline_extractor(tmp_path: Path) -> None:
         memory = db.get(UserMemory, result.created_ids[0])
         assert memory is not None
         assert memory.category == "user_identity"
-        assert memory.normalized_fact == "user name: 오명철"
-        assert memory.display_text == "사용자 이름: 오명철"
+        assert memory.normalized_fact == "사용자 이름은 오명철입니다."
+        assert memory.display_text == "사용자 이름은 오명철입니다."
         assert memory.conflict_key == "user_name"
         assert memory.source_message_ids_json == [source.id]
         assert memory.extractor_version == "offline-conservative-v2"
@@ -1083,5 +1083,7 @@ async def test_llm_memory_optimizer_merges_provenance_and_supersedes_sources(
         assert merged.source_message_ids_json == ["m1", "m2"]
         assert merged.source_run_ids_json == ["r1", "r2"]
         assert merged.evidence_count == 3
+        assert merged.normalized_fact == "보고서는 html 형식을 선호합니다."
+        assert merged.display_text == "보고서는 HTML 형식을 선호합니다."
         assert merged.extractor_version == "llm-memory-optimizer-v1"
         assert first.status == second.status == "superseded"

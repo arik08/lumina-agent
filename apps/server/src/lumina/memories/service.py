@@ -250,7 +250,10 @@ async def extract_memory_candidates_with_llm(
         "health, politics, union membership, one-time codes, temporary approvals, "
         "third-party secrets, and transient requests. Use a stable conflictKey such as "
         "user_name, user_role, response_language, response_tone, or null when facts can "
-        "coexist. Return no candidate when there is no useful durable fact.\n\n"
+        "coexist. Write fact and displayText as the same concise Korean sentence. "
+        "Do not add an English translation; keep only proper nouns and established "
+        "technical terms when needed. Return no candidate when there is no useful "
+        "durable fact.\n\n"
         f"User-authored messages:\n{json.dumps(source_payload, ensure_ascii=False)}"
     )
     chunks: list[str] = []
@@ -297,10 +300,11 @@ async def extract_memory_candidates_with_llm(
         if not source_ids:
             continue
         conflict_key = row.get("conflictKey")
+        display_text = str(row.get("displayText", "")).strip()
         candidate = MemoryCandidate(
             category=str(row.get("category", "")),
-            fact=str(row.get("fact", "")),
-            display_text=str(row.get("displayText", "")),
+            fact=display_text,
+            display_text=display_text,
             confidence=float(row.get("confidence", 0)),
             conflict_key=conflict_key if isinstance(conflict_key, str) else None,
             source_message_ids=source_ids,
@@ -371,8 +375,9 @@ async def optimize_memories_with_llm(
         "Merge paraphrases and fragmented statements when no meaning is lost. Never "
         "merge merely related facts, different people, conflicting values, or facts "
         "with different scopes. Return an empty merges array when uncertain. Preserve "
-        "all concrete details in a concise standalone fact and displayText. Use only "
-        "the supplied memory IDs.\n\nActive memories:\n"
+        "all concrete details in a concise standalone Korean sentence. Write fact and "
+        "displayText as that same Korean sentence without an English translation. Use "
+        "only the supplied memory IDs.\n\nActive memories:\n"
         + json.dumps(payload, ensure_ascii=False)
     )
     chunks: list[str] = []
@@ -406,8 +411,8 @@ async def optimize_memories_with_llm(
         if len(source_ids) < 2 or any(source_id not in by_id or source_id in used for source_id in source_ids):
             continue
         category = str(merge.get("category", "")).strip()
-        fact = str(merge.get("fact", "")).strip()
         display_text = str(merge.get("displayText", "")).strip()
+        fact = display_text
         conflict_key = merge.get("conflictKey")
         confidence = float(merge.get("confidence", 0))
         candidate = MemoryCandidate(category, fact, display_text, confidence, conflict_key if isinstance(conflict_key, str) else None, ())
@@ -1026,8 +1031,8 @@ def _explicit_identity_candidate(
         return None
     return MemoryCandidate(
         category="user_identity",
-        fact=f"user name: {name}",
-        display_text=f"사용자 이름: {name}",
+        fact=f"사용자 이름은 {name}입니다.",
+        display_text=f"사용자 이름은 {name}입니다.",
         confidence=0.99,
         conflict_key="user_name",
         source_message_ids=(message_id,),
@@ -1042,12 +1047,12 @@ def _candidate_from_sentence(sentence: str, message_id: str) -> MemoryCandidate 
     )
     if language_match is not None and _STABLE_MARKER.search(sentence):
         language = language_match.group(1).casefold()
-        canonical = "Korean" if language in {"한국어", "korean"} else "English"
-        display_language = "한국어" if canonical == "Korean" else "영어"
+        display_language = "한국어" if language in {"한국어", "korean"} else "영어"
+        memory_text = f"답변 언어로 {display_language}를 선호합니다."
         return MemoryCandidate(
             category="communication_preference",
-            fact=f"response language: {canonical}",
-            display_text=f"답변 언어로 {display_language}를 선호합니다.",
+            fact=memory_text,
+            display_text=memory_text,
             confidence=0.98,
             conflict_key="response_language",
             source_message_ids=(message_id,),
@@ -1056,10 +1061,11 @@ def _candidate_from_sentence(sentence: str, message_id: str) -> MemoryCandidate 
     if role_match is not None:
         role = " ".join(role_match.group(1).split()).strip(" .")
         if role and not _contains_sensitive(role):
+            memory_text = f"사용자 역할은 {role}입니다."
             return MemoryCandidate(
                 category="user_role",
-                fact=f"user role: {role}",
-                display_text=f"사용자 역할: {role}",
+                fact=memory_text,
+                display_text=memory_text,
                 confidence=0.9,
                 conflict_key="user_role",
                 source_message_ids=(message_id,),
