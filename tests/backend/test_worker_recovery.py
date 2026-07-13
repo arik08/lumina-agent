@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import pytest
 from sqlalchemy import select
 
 from lumina.api.schemas import RunCreate, RunMessageInput
@@ -176,6 +177,28 @@ def test_stale_worker_shutdown_does_not_interrupt_reclaimed_run(
         assert interrupted == ()
         assert run.status == MODEL_STREAMING
         assert run.error_code is None
+
+
+def test_sqlite_database_allows_only_one_live_run_executor(tmp_path: Path) -> None:
+    settings = _settings(tmp_path, "single-live-executor")
+    configure_database(settings.database_url)
+    create_schema()
+    bootstrap_database(settings=settings)
+    owner = LocalRunExecutor(settings)
+    contender = LocalRunExecutor(settings)
+
+    async def exercise() -> None:
+        await owner.start()
+        try:
+            with pytest.raises(RuntimeError, match="SQLite database"):
+                await contender.start()
+        finally:
+            await owner.stop()
+
+        await contender.start()
+        await contender.stop()
+
+    asyncio.run(exercise())
 
 
 def test_executor_start_recovers_model_turn_and_parks_approval(tmp_path: Path) -> None:

@@ -84,8 +84,9 @@ test("non-tool time is rendered as a model processing row with a clear explanati
   const app = await read("../src/components/ConversationTurn.tsx");
 
   assert.match(app, /<ModelProcessingRow[\s\S]*durationMs=\{modelProcessingDurationMs\}/);
-  assert.match(app, /Provider 요청 전송 · 응답 수신/);
-  assert.match(app, /모델 요청 전송부터 응답 수신·처리까지의 시간\(도구 실행 제외\)/);
+  assert.match(app, /모델 판단 · 내부 실행 합계/);
+  assert.match(app, /여러 모델 호출과 Skill·계획 처리, 재시도 시간을 합산한 값\(외부 도구 실행 제외\)/);
+  assert.doesNotMatch(app, /Provider 요청 전송 · 응답 수신/);
 });
 
 test("model processing expands to the actual persisted exchange instead of token totals", async () => {

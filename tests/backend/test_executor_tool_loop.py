@@ -67,6 +67,28 @@ def test_tool_progress_fallback_does_not_expose_arguments() -> None:
     assert "도구 작업" in summary
 
 
+def test_skill_activation_can_share_the_planning_turn() -> None:
+    schema = executor_module._skill_activation_tool_schema(
+        {
+            "extensions": [
+                {
+                    "extension_id": "visual-id",
+                    "slug": "visual-artifact",
+                    "name": "Visual Artifact",
+                    "description": "HTML 시각 보고서를 제작합니다.",
+                    "instructions": "Create a polished standalone HTML report.",
+                }
+            ],
+            "prompt_references": [],
+        }
+    )
+
+    assert schema is not None
+    description = schema["function"]["description"]
+    assert "same response as `update_plan`" in description
+    assert "not with substantive tools" in description
+
+
 def test_large_web_fetch_result_is_truncated_only_for_provider_context() -> None:
     result = {
         "source": {"sourceId": "src-large", "normalizedUrl": "https://example.com"},
