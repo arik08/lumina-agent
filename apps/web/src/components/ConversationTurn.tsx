@@ -141,6 +141,9 @@ function estimatedModelCostParts(usage: Record<string, unknown> | undefined) {
 }
 
 function UsageCostPopover({ usage, model, provider }: { usage: Record<string, unknown> | undefined; model?: string; provider?: string }) {
+  const controlRef = useRef<HTMLSpanElement>(null);
+  const popoverRef = useRef<HTMLSpanElement>(null);
+  const [popoverPlacement, setPopoverPlacement] = useState<"above" | "below">("above");
   const rawUsage = usage?.raw;
   const isSubscriptionUsage = provider === "codex"
     && typeof rawUsage === "object"
@@ -193,11 +196,27 @@ function UsageCostPopover({ usage, model, provider }: { usage: Record<string, un
     ["Output", output.toLocaleString(), formatCost(estimatedCosts?.output)],
     ["Total", total.toLocaleString(), totalCost],
   ];
+  const updatePopoverPlacement = useCallback(() => {
+    const control = controlRef.current;
+    const popover = popoverRef.current;
+    if (!control || !popover) return;
+    const controlRect = control.getBoundingClientRect();
+    const viewportPadding = 12;
+    const popoverGap = 8;
+    const spaceAbove = controlRect.top - viewportPadding - popoverGap;
+    const spaceBelow = window.innerHeight - controlRect.bottom - viewportPadding - popoverGap;
+    setPopoverPlacement(spaceAbove < popover.offsetHeight && spaceBelow > spaceAbove ? "below" : "above");
+  }, []);
 
   return (
-    <span className="answer-usage-control">
+    <span
+      className={`answer-usage-control ${popoverPlacement === "below" ? "is-below" : ""}`}
+      ref={controlRef}
+      onPointerEnter={updatePopoverPlacement}
+      onFocusCapture={updatePopoverPlacement}
+    >
       <button className="answer-usage-button" type="button" aria-label={isSubscriptionUsage ? "토큰 및 예상 비용 확인" : "토큰 비용 확인"}><Coins size={16} /></button>
-      <span className="answer-usage-popover" role="tooltip">
+      <span className="answer-usage-popover" role="tooltip" ref={popoverRef}>
         <table aria-label={isSubscriptionUsage ? "이번 답변 토큰 및 예상 비용" : "이번 답변 토큰 및 비용"}>
           <thead>
             <tr><th>{model || "사용량"}</th><th>토큰</th><th>{costHeading}</th></tr>
