@@ -277,8 +277,8 @@ function createReportSummary(execution: ToolExecution) {
   return typeof title === "string" && title.trim() ? title.trim() : null;
 }
 
-const WRITE_FILE_PROGRESS_TOKEN_CAPACITY = 5_000;
-const WRITE_FILE_PROGRESS_STAGES = ["blue", "green", "yellow", "red"] as const;
+const TOKEN_PROGRESS_BUCKET_SIZE = 5_000;
+const TOKEN_PROGRESS_STAGES = ["blue", "green", "orange", "red"] as const;
 
 function writeFileName(execution: ToolExecution) {
   if (execution.toolName !== "write_file") return null;
@@ -290,19 +290,18 @@ function writeFileName(execution: ToolExecution) {
   return null;
 }
 
-function writeFileProgress(tokens: number) {
-  const totalTokens = Math.max(0, tokens);
-  const stageIndex = totalTokens === 0
+function tokenBucketProgress(tokens: number) {
+  const totalTokens = Math.max(0, Math.floor(tokens));
+  const bucketIndex = totalTokens === 0
     ? 0
-    : Math.min(WRITE_FILE_PROGRESS_STAGES.length - 1, Math.floor((totalTokens - 1) / WRITE_FILE_PROGRESS_TOKEN_CAPACITY));
-  const stageTokens = Math.min(
-    WRITE_FILE_PROGRESS_TOKEN_CAPACITY,
-    Math.max(0, totalTokens - (stageIndex * WRITE_FILE_PROGRESS_TOKEN_CAPACITY)),
-  );
+    : Math.floor((totalTokens - 1) / TOKEN_PROGRESS_BUCKET_SIZE);
+  const bucketTokens = totalTokens === 0
+    ? 0
+    : ((totalTokens - 1) % TOKEN_PROGRESS_BUCKET_SIZE) + 1;
   return {
-    stage: WRITE_FILE_PROGRESS_STAGES[stageIndex],
-    stageTokens,
-    percent: (stageTokens / WRITE_FILE_PROGRESS_TOKEN_CAPACITY) * 100,
+    stage: TOKEN_PROGRESS_STAGES[Math.min(bucketIndex, TOKEN_PROGRESS_STAGES.length - 1)],
+    bucketTokens,
+    percent: (bucketTokens / TOKEN_PROGRESS_BUCKET_SIZE) * 100,
   };
 }
 
@@ -414,7 +413,7 @@ function ToolCallRow({
   );
   const activeWriteFileName = writeFileName(execution);
   const headerDetail = activeWriteFileName ?? webSearchQuery(execution) ?? webFetchSummary(execution) ?? createReportSummary(execution);
-  const writeProgress = writeFileProgress(execution.progress?.tokens ?? 0);
+  const writeProgress = tokenBucketProgress(execution.progress?.tokens ?? 0);
   const requestText = execution.input
     ? JSON.stringify(execution.input, null, 2)
     : execution.inputSummary.length
@@ -451,7 +450,7 @@ function ToolCallRow({
             <strong title={activeWriteFileName ?? undefined}>WRITE FILE · {activeWriteFileName ?? "파일명 확인 중"}</strong>
             <span>{execution.progress.tokens.toLocaleString()} 토큰 · {execution.progress.lines.toLocaleString()}줄</span>
           </div>
-          <div className="write-file-stream-meter" role="progressbar" aria-label="현재 5,000 토큰 구간의 생성량" aria-valuemin={0} aria-valuemax={WRITE_FILE_PROGRESS_TOKEN_CAPACITY} aria-valuenow={writeProgress.stageTokens}>
+          <div className="write-file-stream-meter" role="progressbar" aria-label="현재 5,000 토큰 구간의 생성량" aria-valuemin={0} aria-valuemax={TOKEN_PROGRESS_BUCKET_SIZE} aria-valuenow={writeProgress.bucketTokens}>
             <span style={{ width: `${writeProgress.percent}%` }} />
           </div>
         </div>
@@ -720,9 +719,7 @@ function RunActivityTimeline({
             ? [{ label: "답변", value: assistantResponse }]
             : []),
         ];
-        const hasTools = toolActivities.length > 0;
         const hasToolGroup = toolActivities.length > 1;
-        const hasSingleTool = toolActivities.length === 1;
         const toolsOpen = !hasToolGroup || (summary ? openSummaryIds.has(summary.id) : true);
         const stageTiming = summary ? progressStageTimings.get(summary.id) ?? null : null;
         const stageDurationMs = stageTiming?.durationMs ?? null;
@@ -736,6 +733,9 @@ function RunActivityTimeline({
         const modelProcessingDurationMs = stageTiming
           ? Math.max(0, stageTiming.durationMs - toolActiveDurationMs)
           : null;
+        const hasModelProcessingRow = modelProcessingDurationMs !== null && modelProcessingDurationMs >= 10;
+        const timedChildCount = toolActivities.length + (hasModelProcessingRow ? 1 : 0);
+        const showStageDuration = timedChildCount !== 1;
         const modelProcessingRunning = timelineRunning && summary?.id === latestProgressSummaryId;
         const toolGroupId = summary ? `progress-tools-${summary.id}` : undefined;
         const toggleTools = (event: ReactMouseEvent<HTMLButtonElement>) => {
@@ -757,7 +757,7 @@ function RunActivityTimeline({
                 <span className="skill-activity-kind">Skill</span>
                 <strong>{skill.slug}</strong>
                 <span className="skill-activity-detail">
-                  {skill.reason} · {skill.appliedBy === "auto" ? "자동 적용" : skill.appliedBy === "explicit" ? "$Skill 호출" : "예약 적용"}
+                  {skill.reason} · {skill.appliedBy === "auto" ? "AI 선택" : skill.appliedBy === "explicit" ? "$Skill 호출" : "예약 적용"}
                 </span>
               </div>
             )}
@@ -776,7 +776,7 @@ function RunActivityTimeline({
                 </div>
               </button>
             ) : (
-              <div className={`progress-summary phase-${summary.phase}`}><div className="progress-summary-text"><span>{summary.text}</span><span className="progress-summary-duration" title="단계 전체 소요 시간">{formatDuration(stageDurationMs)}</span></div></div>
+              <div className={`progress-summary phase-${summary.phase}`}><div className="progress-summary-text"><span>{summary.text}</span>{showStageDuration && <span className="progress-summary-duration" title="단계 전체 소요 시간">{formatDuration(stageDurationMs)}</span>}</div></div>
             ))}
             {toolsOpen && summary && (
               <div className="progress-tools" id={toolGroupId}>
@@ -789,7 +789,7 @@ function RunActivityTimeline({
                     onToggle={() => onToggleCall(activity.execution.id)}
                   />
                 ))}
-                {modelProcessingDurationMs !== null && modelProcessingDurationMs >= 10 && (
+                {hasModelProcessingRow && (
                   <ModelProcessingRow
                     durationMs={modelProcessingDurationMs}
                     running={modelProcessingRunning}
@@ -1368,6 +1368,9 @@ export function AssistantTurn({
       setReportSubmitting(false);
     }
   };
+  const artifactProgress = snapshot?.artifactProgress
+    ? tokenBucketProgress(snapshot.artifactProgress.tokens)
+    : null;
   return (
     <div className="turn-set" data-run-id={turnSet.runId ?? undefined}>
       {userMessages.map((message) => (
@@ -1462,16 +1465,16 @@ export function AssistantTurn({
         </div>
       )}
       {(assistantText || tools.length > 0 || artifacts.length > 0 || snapshot) && (
-        <section className="assistant-turn">
+        <section className="assistant-turn" data-response-anchor={turnSet.id}>
           <div className="assistant-content">
             {assistantText && <MarkdownResponse text={displayedText} sources={sources} citations={citations} streaming={revealing} />}
-            {snapshot?.artifactProgress && (
-              <div className="artifact-progress-count" role="status" aria-live="polite" aria-label={`Artifact 작성 중 ${snapshot.artifactProgress.tokens.toLocaleString()} 토큰 ${snapshot.artifactProgress.lines.toLocaleString()}줄`}>
+            {snapshot?.artifactProgress && artifactProgress && (
+              <div className={`artifact-progress-count is-${artifactProgress.stage}`} role="status" aria-live="polite" aria-label={`Artifact 작성 중 ${snapshot.artifactProgress.tokens.toLocaleString()} 토큰 ${snapshot.artifactProgress.lines.toLocaleString()}줄`}>
                 <div className="artifact-progress-heading">
                   <span>{snapshot.artifactProgress.tokens.toLocaleString()} 토큰 · {snapshot.artifactProgress.lines.toLocaleString()}줄</span>
                 </div>
-                <div className="artifact-progress-meter" aria-hidden="true">
-                  <span className="artifact-progress-fill" />
+                <div className="artifact-progress-meter" role="progressbar" aria-label="현재 5,000 토큰 구간의 생성량" aria-valuemin={0} aria-valuemax={TOKEN_PROGRESS_BUCKET_SIZE} aria-valuenow={artifactProgress.bucketTokens}>
+                  <span className="artifact-progress-fill" style={{ width: `${artifactProgress.percent}%` }} />
                 </div>
               </div>
             )}
