@@ -7,6 +7,9 @@
 .admin-prompt-sidebar > header > div { display: flex; align-items: center; gap: 6px; color: var(--ink); }
 .admin-prompt-sidebar > header > div svg { color: var(--cobalt); }
 .admin-prompt-sidebar > header strong { font-size: 11.5px; }
+.admin-prompt-sidebar > header > button.tooltip-control { display: grid; width: 28px; height: 28px; flex: 0 0 auto; appearance: none; place-items: center; border: 0; padding: 0; background: transparent; color: var(--muted); cursor: pointer; }
+.admin-prompt-sidebar > header > button.tooltip-control:hover { background: transparent; color: var(--cobalt); }
+.admin-prompt-sidebar > header > button.tooltip-control:focus-visible { outline: 2px solid color-mix(in srgb, var(--cobalt) 70%, transparent); outline-offset: 1px; }
 .admin-prompt-layer-group { display: grid; padding: 7px; border-bottom: 1px solid var(--line); }
 .admin-prompt-layer-group > span { padding: 3px 5px 6px; color: var(--muted); font-size: 9.5px; font-weight: 600; }
 .admin-prompt-layer-group > button { display: grid; min-width: 0; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 7px; padding: 8px 7px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--muted); text-align: left; cursor: pointer; }
@@ -36,12 +39,14 @@
 .admin-prompt-toolbar .select-menu { width: min(260px, 38vw); }
 .admin-prompt-toolbar > small { overflow: hidden; margin-left: auto; color: var(--muted); font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
 .admin-prompt-composition { width: min(820px, calc(100% - 36px)); margin: 16px auto 0; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-soft); }
-.admin-prompt-composition > header { display: flex; min-height: 40px; align-items: center; justify-content: space-between; padding: 0 11px 0 13px; border-bottom: 1px solid var(--line); }
-.admin-prompt-composition > header > div { display: flex; align-items: center; gap: 6px; }
-.admin-prompt-composition > header svg { color: var(--cobalt); }
-.admin-prompt-composition h2 { margin: 0; font-size: 12px; }
-.admin-prompt-composition > header button { display: inline-flex; height: 27px; align-items: center; gap: 4px; border: 0; border-radius: 5px; padding: 0 7px; background: transparent; color: var(--muted); cursor: pointer; font-size: 10px; }
-.admin-prompt-composition > header button:hover { background: var(--surface); color: var(--ink); }
+.admin-prompt-composition > header { min-height: 40px; border-bottom: 1px solid var(--line); }
+.admin-prompt-composition-toggle { display: flex; width: 100%; min-height: 40px; appearance: none; align-items: center; justify-content: space-between; border: 0; border-radius: 7px 7px 0 0; padding: 0 11px 0 13px; background: transparent; color: var(--muted); cursor: pointer; font: inherit; text-align: left; }
+.admin-prompt-composition-toggle > span { display: inline-flex; align-items: center; gap: 6px; }
+.admin-prompt-composition-toggle svg { color: var(--cobalt); }
+.admin-prompt-composition-title { color: var(--ink); font-size: 12px; font-weight: 700; }
+.admin-prompt-composition-toggle > span:last-child { font-size: 10px; }
+.admin-prompt-composition-toggle:hover { background: var(--surface); color: var(--ink); }
+.admin-prompt-composition-toggle:focus-visible { outline: 2px solid color-mix(in srgb, var(--cobalt) 70%, transparent); outline-offset: -2px; }
 .admin-prompt-composition ol { display: grid; margin: 0; padding: 0 13px; list-style: none; counter-reset: prompt-step; }
 .admin-prompt-composition li { display: grid; min-width: 0; grid-template-columns: 22px 150px minmax(0, 1fr); align-items: baseline; gap: 7px; padding: 7px 0; border-bottom: 1px solid color-mix(in srgb, var(--line) 75%, transparent); counter-increment: prompt-step; }
 .admin-prompt-composition li::before { content: counter(prompt-step); display: grid; width: 18px; height: 18px; place-items: center; border-radius: 999px; background: var(--cobalt-pale); color: var(--cobalt); font-size: 9px; font-weight: 700; }

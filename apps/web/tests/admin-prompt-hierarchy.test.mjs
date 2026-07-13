@@ -6,6 +6,10 @@ const panelSource = readFileSync(
   new URL("../src/components/OrganizationInstructionsPanel.tsx", import.meta.url),
   "utf8",
 );
+const panelStyles = readFileSync(
+  new URL("../src/components/OrganizationInstructionsPanel.css", import.meta.url),
+  "utf8",
+);
 const apiSource = readFileSync(new URL("../src/api.ts", import.meta.url), "utf8");
 
 test("admin prompt management exposes the complete six-layer overview", () => {
@@ -32,4 +36,10 @@ test("internal prompts are editable while project-scoped layers remain read only
   assert.doesNotMatch(panelSource, /<select/);
   assert.doesNotMatch(panelSource, /role="dialog"/);
   assert.match(apiSource, /\/admin\/runtime-prompts/);
+});
+
+test("prompt composition controls stay visually quiet and collapse from the full header row", () => {
+  assert.match(panelSource, /className="admin-prompt-composition-toggle"[\s\S]*onClick=\{\(\) => setShowComposition\(false\)\}/);
+  assert.match(panelStyles, /\.admin-prompt-sidebar > header > button\.tooltip-control \{[^}]*border: 0;[^}]*background: transparent;/);
+  assert.match(panelStyles, /\.admin-prompt-composition-toggle \{[^}]*width: 100%;/);
 });

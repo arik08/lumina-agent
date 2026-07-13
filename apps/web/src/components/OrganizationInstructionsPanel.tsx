@@ -476,10 +476,18 @@ export function OrganizationInstructionsPanel() {
         </div>
 
         {showComposition && (
-          <section className="admin-prompt-composition" aria-label="전체 프롬프트 합성 구조">
+          <section className="admin-prompt-composition" aria-labelledby="admin-prompt-composition-title">
             <header>
-              <div><CircleHelp size={15} /><h2>실제 Run 프롬프트 합성 구조</h2></div>
-              <button type="button" aria-label="전체 프롬프트 합성 구조 닫기" onClick={() => setShowComposition(false)}><ChevronUp size={14} /> 접기</button>
+              <button
+                className="admin-prompt-composition-toggle"
+                type="button"
+                aria-label="전체 프롬프트 합성 구조 닫기"
+                aria-expanded="true"
+                onClick={() => setShowComposition(false)}
+              >
+                <span><CircleHelp size={15} /><span id="admin-prompt-composition-title" className="admin-prompt-composition-title">실제 Run 프롬프트 합성 구조</span></span>
+                <span><ChevronUp size={14} /> 접기</span>
+              </button>
             </header>
             <ol>
               <li><strong>고정 system</strong><span>Lumina의 기본 행동, 진행 표시, Plan과 사용자 노출 안전 계약</span></li>
