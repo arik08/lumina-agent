@@ -128,6 +128,7 @@ function previewArtifactHtml(source: string) {
   const compatibilityLayer = `<style id="lumina-artifact-citation-style">
 sup.source-ref { display: inline; margin: 0 1px 0 2px; color: #315fbd; font-size: inherit; line-height: inherit; vertical-align: baseline; }
 a.source-ref, sup.source-ref > a { display: inline; width: auto; height: auto; margin: 0 1px 0 2px; padding: 0; border: 0; border-radius: 3px; background: transparent; color: #315fbd; font-family: inherit; font-size: 1em; font-weight: 720; line-height: inherit; text-decoration: none; vertical-align: baseline; }
+a.source-ref:hover, sup.source-ref > a:hover { text-decoration: none !important; }
 a.source-ref:focus-visible, sup.source-ref > a:focus-visible { outline: 2px solid color-mix(in srgb, currentColor 55%, transparent); outline-offset: 2px; }
 .lumina-artifact-source-card { position: fixed; z-index: 2147483647; right: 18px; bottom: 18px; display: grid; width: min(420px, calc(100vw - 36px)); gap: 8px; padding: 14px 42px 14px 15px; border: 1px solid rgba(49,95,189,.28); border-radius: 8px; background: #fff; color: #202631; box-shadow: 0 16px 44px rgba(20,31,54,.22); font: 14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif; }
 .lumina-artifact-source-card strong { font-size: 14px; }
