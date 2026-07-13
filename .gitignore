@@ -8,7 +8,10 @@
 .cache/
 .vite/
 .playwright-mcp/
+.lumina-ui-checks/
 /.tmp-comment-selection-verify.*
+/artifact-output-length-composer.png
+/lumina-question-navigator.png
 
 # Runtime data and secrets
 data/
