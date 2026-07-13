@@ -540,15 +540,87 @@ interface ComposerPickerOption {
   triggerLabel?: string;
 }
 
-const artifactLengthOptions: ComposerPickerOption[] = [
-  { id: "auto", label: "자동 · 일반 보고서 10–12k", triggerLabel: "분량 자동" },
-  { id: "10000", label: "10k", triggerLabel: "분량 10k" },
-  { id: "12000", label: "12k", triggerLabel: "분량 12k" },
-  { id: "16000", label: "16k", triggerLabel: "분량 16k" },
-  { id: "24000", label: "~24k", triggerLabel: "분량 ~24k" },
-  { id: "32000", label: "~32k", triggerLabel: "분량 ~32k" },
-  { id: "40000", label: "~40k", triggerLabel: "분량 ~40k" },
-];
+const artifactLengthSteps = [
+  { value: null, label: "자동 10–12k", warning: null },
+  { value: 10_000, label: "10k", warning: null },
+  { value: 12_000, label: "12k", warning: null },
+  { value: 16_000, label: "16k", warning: null },
+  { value: 24_000, label: "~24k", warning: "장문" },
+  { value: 32_000, label: "~32k", warning: "장문" },
+  { value: 40_000, label: "~40k", warning: "최대" },
+] as const;
+
+function ArtifactLengthSlider({
+  value,
+  onChange,
+  disabled = false,
+}: {
+  value: number | null;
+  onChange: (value: number | null) => void;
+  disabled?: boolean;
+}) {
+  const inputId = useId();
+  const selectedIndex = Math.max(
+    0,
+    artifactLengthSteps.findIndex((option) => option.value === value),
+  );
+  const selected = artifactLengthSteps[selectedIndex];
+  const selectStep = (index: number) => {
+    const boundedIndex = Math.min(artifactLengthSteps.length - 1, Math.max(0, index));
+    onChange(artifactLengthSteps[boundedIndex]?.value ?? null);
+  };
+  const tone = selectedIndex === artifactLengthSteps.length - 1
+    ? "danger"
+    : selectedIndex >= 4
+      ? "warning"
+      : "normal";
+  const ariaValueText = `${selected.label}${selected.warning ? `, ${selected.warning}` : ""}, 채팅 답변이 아닌 생성 파일의 목표 분량`;
+
+  return (
+    <label
+      className={`artifact-length-control is-${tone}${disabled ? " is-disabled" : ""}`}
+      style={{
+        "--artifact-length-progress": `${(selectedIndex / (artifactLengthSteps.length - 1)) * 100}%`,
+      } as CSSProperties}
+    >
+      <span className="artifact-length-label">
+        <FileText size={12} aria-hidden="true" />
+        <span>파일 분량</span>
+      </span>
+      <input
+        id={inputId}
+        data-testid="artifact-length-slider"
+        type="range"
+        min={0}
+        max={artifactLengthSteps.length - 1}
+        step={1}
+        value={selectedIndex}
+        disabled={disabled}
+        aria-label="생성 파일 목표 분량"
+        aria-valuetext={ariaValueText}
+        onChange={(event) => selectStep(Number(event.currentTarget.value))}
+        onKeyDown={(event) => {
+          const nextIndex = event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? artifactLengthSteps.length - 1
+              : ["ArrowRight", "ArrowUp"].includes(event.key)
+                ? selectedIndex + 1
+                : ["ArrowLeft", "ArrowDown"].includes(event.key)
+                  ? selectedIndex - 1
+                  : null;
+          if (nextIndex === null) return;
+          event.preventDefault();
+          selectStep(nextIndex);
+        }}
+      />
+      <output htmlFor={inputId}>
+        <span>{selected.label}</span>
+        {selected.warning && <small>{selected.warning}</small>}
+      </output>
+    </label>
+  );
+}
 
 function ComposerPicker({
   options,
@@ -2020,12 +2092,8 @@ function App() {
         <nav
           className="sidebar-collapsed-navigation"
           aria-label="축소된 Lumina 탐색"
-          onMouseDown={(event) => {
-            if (event.detail > 1 && event.target === event.currentTarget) event.preventDefault();
-          }}
-          onDoubleClick={(event) => {
+          onClick={(event) => {
             if (event.target !== event.currentTarget) return;
-            event.preventDefault();
             sidebarAutoCollapsedRef.current = false;
             setSidebarCollapsed(false);
           }}
@@ -2660,14 +2728,9 @@ function App() {
                       >{label}</button>
                     ))}
                   </div>
-                  <ComposerPicker
-                    options={artifactLengthOptions}
-                    value={targetOutputTokens === null ? "auto" : String(targetOutputTokens)}
-                    onChange={(value) => setTargetOutputTokens(value === "auto" ? null : Number(value))}
-                    ariaLabel="Artifact 출력 분량"
-                    menuLabel="출력한도"
-                    controlClassName="length-control"
-                    tooltip="파일 생성 시 목표 분량입니다. 채팅 답변 길이에는 적용하지 않습니다."
+                  <ArtifactLengthSlider
+                    value={targetOutputTokens}
+                    onChange={setTargetOutputTokens}
                     disabled={workspace.settings?.outputMode === "chat"}
                   />
                 </div>
