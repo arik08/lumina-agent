@@ -36,12 +36,9 @@ from ..config import Settings, get_settings
 from ..citations import resolve_inline_citations
 from ..db import SessionLocal, session_scope
 from ..memories.service import (
-    ConservativeMemoryExtractor,
-    MemoryExtractor,
     MemorySourceMessage,
-    PreparedMemoryExtractor,
-    extract_memory_candidates_with_llm,
     learn_memories_for_run,
+    prepare_memory_extractor,
 )
 from ..mcp.runtime import McpRuntime, McpRuntimeError, PreparedMcpTool
 from ..models import (
@@ -3096,17 +3093,18 @@ class LocalRunExecutor:
                     )
                     for message in source_rows
                 )
-            extractor: MemoryExtractor = ConservativeMemoryExtractor()
-            if provider_id != "mock":
-                provider = self._provider(
+            provider = (
+                self._provider(
                     provider_id, wants_artifact=False, first_turn=False
                 )
-                candidates = await extract_memory_candidates_with_llm(
-                    provider,
-                    model=runtime_model_id,
-                    messages=sources,
-                )
-                extractor = PreparedMemoryExtractor(candidates)
+                if provider_id != "mock"
+                else None
+            )
+            extractor = await prepare_memory_extractor(
+                provider,
+                model=runtime_model_id,
+                messages=sources,
+            )
             with session_scope() as db:
                 learn_memories_for_run(db, run_id, extractor=extractor)
         except Exception:

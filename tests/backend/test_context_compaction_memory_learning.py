@@ -733,7 +733,7 @@ def test_automatic_memory_learning_merge_conflict_delete_and_modes(
         )
         assert extraction_event is not None
         assert extraction_event.payload_json["extractorVersion"] == (
-            "offline-conservative-v1"
+            "offline-conservative-v2"
         )
         assert extraction_event.payload_json["createdIds"] == [korean.id]
 
@@ -912,6 +912,45 @@ def test_conservative_memory_extractor_blocks_prohibited_sensitive_topics() -> N
     for index, text in enumerate(sensitive):
         candidates = extractor.extract((MemorySourceMessage(str(index), "run", text),))
         assert not candidates, text
+
+
+def test_explicit_name_is_stored_by_offline_extractor(tmp_path: Path) -> None:
+    user, project, conversation = _configure(tmp_path, "explicit-name-memory")
+    with SessionLocal() as db:
+        user = db.merge(user)
+        project = db.merge(project)
+        conversation = db.merge(conversation)
+        run = _run(
+            db,
+            user=user,
+            project=project,
+            conversation=conversation,
+            sequence=1,
+        )
+        source = _message(
+            db,
+            run=run,
+            user=user,
+            role="user",
+            text="내 이름은 오명철이야. 기억해",
+            turn_index=1,
+            offset=1,
+        )
+
+        result = learn_memories_for_run(
+            db,
+            run.id,
+            extractor=ConservativeMemoryExtractor(),
+        )
+        assert len(result.created_ids) == 1
+        memory = db.get(UserMemory, result.created_ids[0])
+        assert memory is not None
+        assert memory.category == "user_identity"
+        assert memory.normalized_fact == "user name: 오명철"
+        assert memory.display_text == "사용자 이름: 오명철"
+        assert memory.conflict_key == "user_name"
+        assert memory.source_message_ids_json == [source.id]
+        assert memory.extractor_version == "offline-conservative-v2"
 
 
 def test_memory_retrieval_selects_relevant_subset_with_core_preferences(

@@ -22,7 +22,7 @@ from .policy import (
 )
 
 
-EXTRACTOR_VERSION = "offline-conservative-v1"
+EXTRACTOR_VERSION = "offline-conservative-v2"
 LLM_EXTRACTOR_VERSION = "llm-structured-v1"
 LLM_OPTIMIZER_VERSION = "llm-memory-optimizer-v1"
 _STABLE_MARKER = re.compile(
@@ -40,6 +40,19 @@ _KOREAN_ROLE = re.compile(
     r"(.{2,80}?)(?:입니다|이에요|예요)(?:[.!?]|$)"
 )
 _ENGLISH_ROLE = re.compile(r"(?i)\b(?:my\s+role\s+is|i\s+work\s+as)\s+([^.!?\n]{2,80})")
+_KOREAN_NAME = re.compile(
+    r"(?:제|내)\s*이름\s*(?:은|는|이|가)?\s*"
+    r"([가-힣A-Za-z][가-힣A-Za-z0-9 ._-]{0,79}?)"
+    r"(?:이라고|라고|이야|야|입니다|이에요|예요)(?=[.!?。！？\s]|$)"
+)
+_ENGLISH_NAME = re.compile(
+    r"(?i)\bmy\s+name\s+is\s+([A-Za-z][A-Za-z0-9 .'-]{0,79}?)"
+    r"(?=[.!?]|\s+(?:and\s+)?remember\b|$)"
+)
+_MEMORY_COMMAND_ONLY = re.compile(
+    r"(?i)^(?:(?:앞으로|항상)\s*)?(?:이걸?|그걸?|이것|그것)?\s*"
+    r"(?:기억해(?:\s*줘|\s*주세요)?|remember(?:\s+it|\s+this)?)[.!?。！？]*$"
+)
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?。！？])\s+|[\r\n]+")
 _MEMORY_TERM = re.compile(r"[A-Za-z0-9_]{2,}|[가-힣]{2,}")
 
@@ -95,8 +108,20 @@ class ConservativeMemoryExtractor:
         candidates: list[MemoryCandidate] = []
         seen: set[tuple[str, str]] = set()
         for message in messages:
+            identity_candidate = _explicit_identity_candidate(message.text, message.id)
+            if identity_candidate is not None:
+                key = (
+                    identity_candidate.conflict_key or "",
+                    normalize_fact(identity_candidate.fact),
+                )
+                seen.add(key)
+                candidates.append(identity_candidate)
             for sentence in _sentences(message.text):
                 if _contains_sensitive(sentence):
+                    continue
+                if identity_candidate is not None and (
+                    _KOREAN_NAME.search(sentence) or _ENGLISH_NAME.search(sentence)
+                ):
                     continue
                 candidate = _candidate_from_sentence(sentence, message.id)
                 if candidate is None:
@@ -119,6 +144,31 @@ class PreparedMemoryExtractor:
         self, messages: Sequence[MemorySourceMessage]
     ) -> Sequence[MemoryCandidate]:
         return self._candidates
+
+
+async def prepare_memory_extractor(
+    provider: ProviderAdapter | None,
+    *,
+    model: str,
+    messages: Sequence[MemorySourceMessage],
+) -> MemoryExtractor:
+    """Prefer the deterministic path and call an LLM only when it adds value."""
+
+    local_extractor = ConservativeMemoryExtractor()
+    local_candidates = local_extractor.extract(messages)
+    if (
+        local_candidates
+        or provider is None
+        or not messages
+        or any(_contains_sensitive(message.text) for message in messages)
+    ):
+        return local_extractor
+    candidates = await extract_memory_candidates_with_llm(
+        provider,
+        model=model,
+        messages=messages,
+    )
+    return PreparedMemoryExtractor(candidates)
 
 
 async def extract_memory_candidates_with_llm(
@@ -218,7 +268,8 @@ async def extract_memory_candidates_with_llm(
                 ProviderMessage(role="user", content=prompt),
             ),
             response_format=schema,
-            max_output_tokens=1_500,
+            effort="low",
+            max_output_tokens=800,
             metadata={"purpose": "user_memory_extraction"},
         )
     ):
@@ -962,7 +1013,30 @@ def _memory_terms(value: str) -> set[str]:
     return result
 
 
+def _explicit_identity_candidate(
+    value: str, message_id: str
+) -> MemoryCandidate | None:
+    if not _STABLE_MARKER.search(value) or _contains_sensitive(value):
+        return None
+    match = _KOREAN_NAME.search(value) or _ENGLISH_NAME.search(value)
+    if match is None:
+        return None
+    name = " ".join(match.group(1).split()).strip(" ._-'")
+    if not name or _contains_sensitive(name):
+        return None
+    return MemoryCandidate(
+        category="user_identity",
+        fact=f"user name: {name}",
+        display_text=f"사용자 이름: {name}",
+        confidence=0.99,
+        conflict_key="user_name",
+        source_message_ids=(message_id,),
+    )
+
+
 def _candidate_from_sentence(sentence: str, message_id: str) -> MemoryCandidate | None:
+    if _MEMORY_COMMAND_ONLY.fullmatch(sentence.strip()):
+        return None
     language_match = _KOREAN_LANGUAGE.search(sentence) or _ENGLISH_LANGUAGE.search(
         sentence
     )
