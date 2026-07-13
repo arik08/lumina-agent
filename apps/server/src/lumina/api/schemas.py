@@ -177,6 +177,7 @@ class RunMessageInput(ApiModel):
     attachment_ids: list[str] = Field(default_factory=list)
     prompt_references: list[MessageReferenceInput] = Field(default_factory=list)
     output_mode: Literal["auto", "chat", "file"] = "auto"
+    target_output_tokens: int | None = Field(default=None, ge=1, le=40_000)
 
 
 class RunCreate(ApiModel):

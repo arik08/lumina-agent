@@ -327,6 +327,11 @@ def create_run(
         payload.message.prompt_references,
         message_text=payload.message.text,
     )
+    target_output_tokens = (
+        payload.message.target_output_tokens
+        if payload.message.output_mode != "chat"
+        else None
+    )
     project_file_snapshots = [
         {
             "reference_id": reference["reference_id"],
@@ -496,6 +501,7 @@ def create_run(
             "assistant_message_id": assistant_message_id,
             "user_message_text": payload.message.text,
             "output_mode": payload.message.output_mode,
+            "target_output_tokens": target_output_tokens,
             "agent": {
                 "id": conversation.agent_id,
                 "version": conversation.agent_version,
@@ -538,6 +544,7 @@ def create_run(
             "attachment_ids": attachment_ids,
             "prompt_references": references,
             "output_mode": payload.message.output_mode,
+            "target_output_tokens": target_output_tokens,
         },
     )
     db.add(message)
@@ -1704,7 +1711,7 @@ def message_response(message: Message, db: Session | None = None) -> dict[str, A
     }
 
 
-def _artifact_usage_snapshot(db: Session, run: Run) -> dict[str, int] | None:
+def _artifact_usage_snapshot(db: Session, run: Run) -> dict[str, Any] | None:
     usage: object = run.snapshot_json.get("artifact_usage")
     if not isinstance(usage, Mapping):
         latest_progress = db.scalar(
@@ -1730,7 +1737,17 @@ def _artifact_usage_snapshot(db: Session, run: Run) -> dict[str, int] | None:
         or lines < 0
     ):
         return None
-    return {"tokens": tokens, "lines": lines}
+    normalized: dict[str, Any] = {"tokens": tokens, "lines": lines}
+    if isinstance(usage.get("estimated"), bool):
+        normalized["estimated"] = usage["estimated"]
+    target_tokens = usage.get("targetTokens")
+    if (
+        isinstance(target_tokens, int)
+        and not isinstance(target_tokens, bool)
+        and target_tokens > 0
+    ):
+        normalized["targetTokens"] = target_tokens
+    return normalized
 
 
 def run_snapshot(db: Session, run: Run) -> dict[str, Any]:
@@ -2237,6 +2254,11 @@ def apply_run_action(
             "attachment_ids": attachment_ids,
             "prompt_references": references,
             "output_mode": payload.message.output_mode,
+            "target_output_tokens": (
+                payload.message.target_output_tokens
+                if payload.message.output_mode != "chat"
+                else None
+            ),
         }
 
     command_payload_json = payload.model_dump(mode="json", by_alias=False)
@@ -2271,6 +2293,7 @@ def apply_run_action(
                 "attachment_ids": attachment_ids,
                 "prompt_references": references,
                 "output_mode": payload.message.output_mode,
+                "target_output_tokens": canonical_message["target_output_tokens"],
             },
         )
         db.add(message)
@@ -2287,6 +2310,9 @@ def apply_run_action(
                         "text": message.canonical_text,
                         "attachment_ids": attachment_ids,
                         "prompt_references": references,
+                        "target_output_tokens": canonical_message[
+                            "target_output_tokens"
+                        ],
                     },
                 ],
             }
@@ -2320,6 +2346,9 @@ def apply_run_action(
                 execution_options_json={
                     **run.snapshot_json.get("execution", {}),
                     "output_mode": payload.message.output_mode,
+                    "target_output_tokens": canonical_message[
+                        "target_output_tokens"
+                    ],
                 },
                 idempotency_key=idempotency_key,
             )

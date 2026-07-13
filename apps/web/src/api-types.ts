@@ -417,6 +417,8 @@ export interface MessageMetadata {
   artifactUsage?: {
     tokens: number;
     lines: number;
+    estimated?: boolean;
+    targetTokens?: number;
   };
   sources?: SourceEvidence[];
   citations?: MessageCitation[];
@@ -1248,10 +1250,14 @@ export interface RunSnapshot {
   artifactProgress: {
     tokens: number;
     lines: number;
+    estimated?: boolean;
+    targetTokens?: number;
   } | null;
   artifactUsage?: {
     tokens: number;
     lines: number;
+    estimated?: boolean;
+    targetTokens?: number;
   } | null;
   workPlan: WorkPlanStep[];
   plan: RunPlan | null;
@@ -1320,6 +1326,7 @@ export interface RunMessageInput {
   attachmentIds: UUID[];
   promptReferences: PromptReference[];
   outputMode: OutputMode;
+  targetOutputTokens?: number;
 }
 
 export interface StartRunRequest {

@@ -24,6 +24,7 @@ from ..artifacts.service import (
     require_artifact,
 )
 from ..artifacts.reporting import REPORT_FORMATS, generate_report
+from ..artifacts.token_estimation import estimate_tokens
 from .image_tool import (
     GENERATE_IMAGE_TOOL_SCHEMA,
     ImageToolError,
@@ -455,7 +456,6 @@ class LocalRunExecutor:
                 if isinstance(execution_snapshot, dict)
                 else {}
             )
-            configured_max_output_tokens = _configured_max_output_tokens(capabilities)
             image_generation_capable = bool(
                 provider_id == "codex"
                 and isinstance(capabilities, dict)
@@ -593,7 +593,9 @@ class LocalRunExecutor:
                 messages=tuple(request_messages),
                 tools=tool_schemas,
                 effort=effort,
-                max_output_tokens=configured_max_output_tokens,
+                max_output_tokens=self._model_request_output_tokens(
+                    run_id, capabilities
+                ),
                 metadata={
                     "prompt_cache_key": prompt_cache_key,
                     "prompt_cache_retention": "24h",
@@ -1643,6 +1645,25 @@ class LocalRunExecutor:
                 "the single requested file by its display name only, without internal IDs or "
                 "raw tool-result fields."
             )
+            target_output_tokens = _optional_positive_int(
+                run.snapshot_json.get("target_output_tokens")
+            )
+            if target_output_tokens is not None:
+                floor_tokens = int(target_output_tokens * 0.8)
+                turn_system_parts.append(
+                    "Artifact length contract: The user selected a target of about "
+                    f"{target_output_tokens:,} tokens for the Artifact content. Treat this "
+                    "as a substantive length target, not merely an upper cap; aim for 80-105% "
+                    f"of it and do not finish below about {floor_tokens:,} tokens unless the "
+                    "available source material genuinely cannot support that length."
+                )
+            else:
+                turn_system_parts.append(
+                    "Artifact length contract: For a normal report without an explicit length "
+                    "selection, aim for a coherent, substantive Artifact around 10,000-12,000 "
+                    "tokens. This target applies to the report file, not to the concise final "
+                    "chat response."
+                )
         instruction_snapshot = run.snapshot_json.get("instructions", {})
         instruction_prompt = (
             str(instruction_snapshot.get("prompt_text", "")).strip()
@@ -2183,6 +2204,13 @@ class LocalRunExecutor:
                     raise RuntimeError(
                         "Run context disappeared during report generation"
                     )
+                report_model = report_run.runtime_model_id
+                target_output_tokens = _optional_positive_int(
+                    report_run.snapshot_json.get("target_output_tokens")
+                )
+                length_retry_count = int(
+                    report_run.snapshot_json.get("artifact_length_retry_count", 0) or 0
+                )
                 report_images = resolve_report_images(
                     db,
                     run=report_run,
@@ -2199,6 +2227,57 @@ class LocalRunExecutor:
             )
         except ValueError as exc:
             return await self._fail_tool_execution(run_id, tool_id, exc)
+        report_text = (
+            report.content.decode("utf-8")
+            if report.format in {"html", "markdown"}
+            else ""
+        )
+        document_tokens = (
+            estimate_tokens(report_text, model=report_model) if report_text else 0
+        )
+        document_lines = report_text.count("\n") + 1 if report_text else 0
+        target_floor = (
+            int(target_output_tokens * 0.8)
+            if target_output_tokens is not None
+            else None
+        )
+        if (
+            report_text
+            and target_output_tokens is not None
+            and target_floor is not None
+            and document_tokens < target_floor
+            and length_retry_count < 1
+        ):
+            missing_tokens = max(0, target_output_tokens - document_tokens)
+            with session_scope() as db:
+                run = db.get(Run, run_id)
+                if run is not None:
+                    run.snapshot_json = {
+                        **run.snapshot_json,
+                        "artifact_progress": None,
+                        "artifact_length_retry_count": length_retry_count + 1,
+                    }
+            length_check = {
+                "status": "needs_expansion",
+                "documentTokens": document_tokens,
+                "targetTokens": target_output_tokens,
+                "minimumTokens": target_floor,
+                "targetLengthCheck": (
+                    "The report file has not been saved because its Artifact content is only "
+                    f"about {document_tokens:,} tokens, below the selected minimum of about "
+                    f"{target_floor:,} tokens. Call `create_report` again with the complete "
+                    "revised document and add about "
+                    f"{missing_tokens:,} tokens of substantive analysis, explanations, tables, "
+                    "source notes, and interpretation. Do not finish with chat text only."
+                ),
+            }
+            await self._complete_tool_execution(
+                run_id,
+                tool_id,
+                length_check,
+                "선택한 목표 분량보다 짧아 보고서 확장 작성을 요청했습니다.",
+            )
+            return length_check
         with session_scope() as db:
             run = db.get(Run, run_id)
             completed_tool = db.get(ToolExecution, tool_id)
@@ -2234,6 +2313,11 @@ class LocalRunExecutor:
                 "display_name": artifact.display_name,
                 "mime_type": artifact.mime_type,
                 "asset_count": len(report.asset_manifest),
+                "document_tokens": document_tokens,
+                "target_tokens": target_output_tokens,
+                "target_met": (
+                    target_floor is None or document_tokens >= target_floor
+                ),
             }
             completed_tool.result_summary = (
                 f"{report.format.upper()} 보고서를 Artifact로 저장하고 형식을 검증했습니다."
@@ -2267,7 +2351,19 @@ class LocalRunExecutor:
                     )
                 },
             )
-            run.snapshot_json = {**run.snapshot_json, "artifact_progress": None}
+            artifact_usage: dict[str, Any] = {
+                "tokens": document_tokens,
+                "lines": document_lines,
+                "estimated": False,
+            }
+            if target_output_tokens is not None:
+                artifact_usage["targetTokens"] = target_output_tokens
+            run.snapshot_json = {
+                **run.snapshot_json,
+                "artifact_progress": None,
+                "artifact_usage": artifact_usage,
+            }
+            append_event(db, run, "artifact_progress", artifact_usage)
             change_plan_step(
                 db,
                 run,
@@ -2281,7 +2377,13 @@ class LocalRunExecutor:
             )
             artifact_id = artifact.id
         await event_broker.notify(run_id)
-        return {"artifact_id": artifact_id, "status": "completed"}
+        return {
+            "artifact_id": artifact_id,
+            "status": "completed",
+            "documentTokens": document_tokens,
+            "targetTokens": target_output_tokens,
+            "targetMet": target_floor is None or document_tokens >= target_floor,
+        }
 
     async def _execute_generate_image(
         self,
@@ -2644,14 +2746,40 @@ class LocalRunExecutor:
         if changed:
             await event_broker.notify(run_id)
 
+    def _model_request_output_tokens(
+        self, run_id: str, capabilities: Any
+    ) -> int | None:
+        with SessionLocal() as db:
+            run = db.get(Run, run_id)
+            target_tokens = (
+                _optional_positive_int(run.snapshot_json.get("target_output_tokens"))
+                if run is not None
+                else None
+            )
+        return _artifact_model_request_tokens(capabilities, target_tokens)
+
     async def _publish_artifact_progress(
-        self, run_id: str, tokens: int, lines: int
+        self,
+        run_id: str,
+        tokens: int,
+        lines: int,
+        *,
+        estimated: bool = True,
     ) -> None:
-        progress = {"tokens": max(0, tokens), "lines": max(0, lines)}
         with session_scope() as db:
             run = db.get(Run, run_id)
             if run is None or run.status in TERMINAL_STATUSES:
                 return
+            progress: dict[str, Any] = {
+                "tokens": max(0, tokens),
+                "lines": max(0, lines),
+                "estimated": estimated,
+            }
+            target_tokens = _optional_positive_int(
+                run.snapshot_json.get("target_output_tokens")
+            )
+            if target_tokens is not None:
+                progress["targetTokens"] = target_tokens
             run.snapshot_json = {
                 **run.snapshot_json,
                 "artifact_progress": progress,
@@ -2988,9 +3116,24 @@ class LocalRunExecutor:
                             "[Output mode for this request: create an artifact file]\n"
                             + steer_messages[-1]
                         )
+                    steer_target_tokens = _optional_positive_int(
+                        message.metadata_json.get("target_output_tokens")
+                    )
+                    if steer_output_mode != "chat" and steer_target_tokens is not None:
+                        steer_messages[-1] = (
+                            "[Artifact content length target for this request: about "
+                            f"{steer_target_tokens:,} tokens; aim for 80-105%]\n"
+                            + steer_messages[-1]
+                        )
                     applied_message_ids.add(message.id)
                     run.snapshot_json = {
                         **run.snapshot_json,
+                        **(
+                            {"target_output_tokens": steer_target_tokens}
+                            if steer_output_mode != "chat"
+                            and steer_target_tokens is not None
+                            else {}
+                        ),
                         "applied_steers": [
                             *run.snapshot_json.get("applied_steers", []),
                             {
@@ -2998,6 +3141,7 @@ class LocalRunExecutor:
                                 "text": message.canonical_text,
                                 "attachment_ids": attachment_ids,
                                 "prompt_references": prompt_references,
+                                "target_output_tokens": steer_target_tokens,
                             },
                         ],
                     }
@@ -3280,6 +3424,9 @@ class LocalRunExecutor:
                                 for reference in queued.prompt_references_json
                             ],
                             output_mode=execution.get("output_mode", "auto"),
+                            target_output_tokens=execution.get(
+                                "target_output_tokens"
+                            ),
                         ),
                         execution=ExecutionSelection(
                             provider_id=execution.get(
@@ -3595,6 +3742,29 @@ def _configured_max_output_tokens(capabilities: Any) -> int | None:
     if configured is not None and hard_max is not None:
         return min(configured, hard_max)
     return configured
+
+
+def _artifact_model_request_tokens(
+    capabilities: Any, target_output_tokens: int | None
+) -> int | None:
+    """Give an explicit Artifact target headroom while respecting model hard limits."""
+    configured = _configured_max_output_tokens(capabilities)
+    target = _optional_positive_int(target_output_tokens)
+    if target is None:
+        return configured
+    requested = max(target, int(target * 1.25))
+    if configured is not None:
+        requested = max(configured, requested)
+    hard_max = (
+        _optional_positive_int(
+            capabilities.get(
+                "max_output_tokens", capabilities.get("maxOutputTokens")
+            )
+        )
+        if isinstance(capabilities, Mapping)
+        else None
+    )
+    return min(requested, hard_max) if hard_max is not None else requested
 
 
 def _run_deadline(run: Run) -> datetime | None:

@@ -1036,6 +1036,7 @@ export function useLuminaWorkspace() {
     text: string,
     queueNext: boolean,
     promptReferences: PromptReference[] = [],
+    targetOutputTokens?: number,
   ) => {
     const messageText = text.trim();
     if (!messageText || sending) return null;
@@ -1073,6 +1074,9 @@ export function useLuminaWorkspace() {
       attachmentIds,
       promptReferences,
       outputMode: currentSettings.outputMode,
+      ...(currentSettings.outputMode !== "chat" && targetOutputTokens
+        ? { targetOutputTokens }
+        : {}),
     };
     setSending(true);
     try {

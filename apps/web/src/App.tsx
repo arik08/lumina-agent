@@ -537,6 +537,16 @@ interface ComposerPickerOption {
   triggerLabel?: string;
 }
 
+const artifactLengthOptions: ComposerPickerOption[] = [
+  { id: "auto", label: "자동 · 일반 보고서 10–12k", triggerLabel: "분량 자동" },
+  { id: "10000", label: "10k", triggerLabel: "분량 10k" },
+  { id: "12000", label: "12k", triggerLabel: "분량 12k" },
+  { id: "16000", label: "16k", triggerLabel: "분량 16k" },
+  { id: "24000", label: "~24k", triggerLabel: "분량 ~24k" },
+  { id: "32000", label: "~32k", triggerLabel: "분량 ~32k" },
+  { id: "40000", label: "~40k", triggerLabel: "분량 ~40k" },
+];
+
 function ComposerPicker({
   options,
   value,
@@ -545,6 +555,8 @@ function ComposerPicker({
   menuLabel,
   controlClassName,
   placeholder,
+  tooltip,
+  disabled = false,
 }: {
   options: ComposerPickerOption[];
   value: string;
@@ -553,6 +565,8 @@ function ComposerPicker({
   menuLabel: string;
   controlClassName: string;
   placeholder?: string;
+  tooltip?: string;
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -586,13 +600,14 @@ function ComposerPicker({
     <div className={`composer-picker ${open ? "is-open" : ""}`} ref={rootRef}>
       <button
         ref={triggerRef}
-        className={`composer-picker-trigger ${controlClassName}`}
+        className={`composer-picker-trigger ${controlClassName}${tooltip ? " tooltip-control" : ""}`}
         type="button"
         aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? listId : undefined}
-        disabled={options.length === 0}
+        disabled={disabled || options.length === 0}
+        data-tooltip={tooltip}
         onClick={() => open ? setOpen(false) : openMenu()}
         onKeyDown={(event) => {
           if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -677,6 +692,7 @@ function App() {
   const [sessionTitleEditing, setSessionTitleEditing] = useState(false);
   const [sessionTitleDraft, setSessionTitleDraft] = useState("");
   const [draft, setDraft] = useState("");
+  const [targetOutputTokens, setTargetOutputTokens] = useState<number | null>(null);
   const [composerTrigger, setComposerTrigger] = useState<ComposerTriggerState | null>(null);
   const [composerSuggestions, setComposerSuggestions] = useState<ComposerSuggestion[]>([]);
   const [selectedReferences, setSelectedReferences] = useState<SelectedComposerReference[]>([]);
@@ -1544,10 +1560,16 @@ function App() {
       if (tokenStart < 0) return [];
       return [{ ...reference, tokenStart, tokenEnd: tokenStart + token.length }];
     });
-    const mode = await workspace.sendMessage(value, queueNext, promptReferences);
+    const mode = await workspace.sendMessage(
+      value,
+      queueNext,
+      promptReferences,
+      targetOutputTokens ?? undefined,
+    );
     if (!mode) return;
     setDraft("");
     setSelectedReferences([]);
+    setTargetOutputTokens(null);
     setComposerTrigger(null);
     setComposerSuggestions([]);
     showToast(mode === "queue_next" ? "다음 요청으로 대기열에 추가했습니다." : mode === "steer" ? "현재 Run에 반영할 지시를 접수했습니다." : "새 Run을 시작했습니다.");
@@ -2614,10 +2636,23 @@ function App() {
                         key={value}
                         className={workspace.settings?.outputMode === value ? "is-active" : ""}
                         aria-pressed={workspace.settings?.outputMode === value}
-                        onClick={() => void workspace.selectOutputMode(value)}
+                        onClick={() => {
+                          if (value === "chat") setTargetOutputTokens(null);
+                          void workspace.selectOutputMode(value);
+                        }}
                       >{label}</button>
                     ))}
                   </div>
+                  <ComposerPicker
+                    options={artifactLengthOptions}
+                    value={targetOutputTokens === null ? "auto" : String(targetOutputTokens)}
+                    onChange={(value) => setTargetOutputTokens(value === "auto" ? null : Number(value))}
+                    ariaLabel="Artifact 출력 분량"
+                    menuLabel="출력한도"
+                    controlClassName="length-control"
+                    tooltip="파일 생성 시 목표 분량입니다. 채팅 답변 길이에는 적용하지 않습니다."
+                    disabled={workspace.settings?.outputMode === "chat"}
+                  />
                 </div>
                 <div>
                   <ComposerPicker

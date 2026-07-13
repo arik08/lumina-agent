@@ -308,7 +308,6 @@ def test_create_report_tool_persists_and_downloads_selected_format(
                 (tmp_path / "artifacts" / "artifact-drafts").rglob("*.md")
             )
             assert len(draft_files) == 1
-
         downloaded = client.get(f"/api/artifacts/{artifact['id']}/download")
         assert downloaded.status_code == 200
         assert downloaded.headers["content-type"].split(";", 1)[0] == expected_mime
@@ -349,6 +348,86 @@ def test_create_report_tool_persists_and_downloads_selected_format(
                 item["displayName"] == "광양_설비_점검_보고서_2.html"
                 for item in duplicate_snapshot["artifacts"]
             )
+
+
+def test_selected_artifact_target_retries_short_report_and_exposes_separate_counts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'target-length.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    short_html = (
+        "<!doctype html><html lang='ko'><head><title>짧은 보고서</title></head>"
+        "<body><main><h1>짧은 보고서</h1><p>요약입니다.</p></main></body></html>"
+    )
+    long_html = (
+        "<!doctype html><html lang='ko'><head><title>확장 보고서</title></head><body><main>"
+        + "<p>근거와 수치를 바탕으로 원인, 영향, 대응 방향을 구체적으로 분석합니다.</p>\n"
+        * 300
+        + "</main></body></html>"
+    )
+    provider_turn = 0
+
+    def fake_provider(
+        _provider_id: str, *, wants_artifact: bool, first_turn: bool
+    ) -> MockProvider:
+        nonlocal provider_turn
+        del first_turn
+        assert wants_artifact is True
+        provider_turn += 1
+        if provider_turn <= 2:
+            arguments = _arguments("html")
+            arguments["html_source"] = short_html if provider_turn == 1 else long_html
+            return MockProvider(
+                tool_call=MockToolCall(
+                    name="create_report",
+                    arguments=arguments,
+                    call_id=f"call_target_length_{provider_turn}",
+                )
+            )
+        return MockProvider(text_chunks=("확장한 HTML 보고서를 저장했습니다.",))
+
+    monkeypatch.setattr(local_run_executor, "_provider", fake_provider)
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "보고서 목표 분량"},
+        ).json()
+        started = client.post(
+            f"/api/conversations/{conversation['id']}/runs",
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": "target-length-report-0001",
+            },
+            json={
+                "message": {
+                    "text": "분석 보고서를 HTML로 만들어 주세요.",
+                    "targetOutputTokens": 1_000,
+                }
+            },
+        )
+        assert started.status_code == 202, started.text
+        snapshot = _wait_for_terminal(client, started.json()["run"]["runId"])
+
+    assert snapshot["status"] == "completed"
+    assert provider_turn == 3
+    assert len(snapshot["artifacts"]) == 1
+    assert len(snapshot["toolExecutions"]) == 2
+    first_result = snapshot["toolExecutions"][0]["result"]
+    assert first_result["status"] == "needs_expansion"
+    assert first_result["documentTokens"] < first_result["minimumTokens"]
+    artifact_usage = snapshot["artifactUsage"]
+    assert artifact_usage["estimated"] is False
+    assert artifact_usage["targetTokens"] == 1_000
+    assert artifact_usage["tokens"] >= 800
 
 
 def _assert_reopened(report_format: str, content: bytes) -> None:

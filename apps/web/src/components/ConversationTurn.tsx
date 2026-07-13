@@ -302,7 +302,7 @@ function writeFileName(execution: ToolExecution) {
   return null;
 }
 
-function tokenBucketProgress(tokens: number) {
+function tokenBucketProgress(tokens: number, targetTokens?: number) {
   const totalTokens = Math.max(0, Math.floor(tokens));
   const bucketIndex = totalTokens === 0
     ? 0
@@ -310,10 +310,16 @@ function tokenBucketProgress(tokens: number) {
   const bucketTokens = totalTokens === 0
     ? 0
     : ((totalTokens - 1) % TOKEN_PROGRESS_BUCKET_SIZE) + 1;
+  const normalizedTarget = targetTokens && targetTokens > 0
+    ? Math.floor(targetTokens)
+    : null;
   return {
     stage: TOKEN_PROGRESS_STAGES[Math.min(bucketIndex, TOKEN_PROGRESS_STAGES.length - 1)],
-    bucketTokens,
-    percent: (bucketTokens / TOKEN_PROGRESS_BUCKET_SIZE) * 100,
+    bucketTokens: normalizedTarget ? Math.min(totalTokens, normalizedTarget) : bucketTokens,
+    maxTokens: normalizedTarget ?? TOKEN_PROGRESS_BUCKET_SIZE,
+    percent: normalizedTarget
+      ? Math.min(100, (totalTokens / normalizedTarget) * 100)
+      : (bucketTokens / TOKEN_PROGRESS_BUCKET_SIZE) * 100,
   };
 }
 
@@ -1392,8 +1398,10 @@ export function AssistantTurn({
     ?? finalMessage?.metadata?.artifactUsage
     ?? null;
   const artifactProgress = artifactUsage
-    ? tokenBucketProgress(artifactUsage.tokens)
+    ? tokenBucketProgress(artifactUsage.tokens, artifactUsage.targetTokens)
     : null;
+  const runUsage = finalMessage?.metadata?.usage ?? snapshot?.usage;
+  const modelOutputTokens = usageNumber(runUsage, "output_tokens");
   return (
     <div className="turn-set" data-run-id={turnSet.runId ?? undefined}>
       {userMessages.map((message) => (
@@ -1492,11 +1500,12 @@ export function AssistantTurn({
           <div className="assistant-content">
             {assistantText && <MarkdownResponse text={displayedText} sources={sources} citations={citations} streaming={revealing} />}
             {artifactUsage && artifactProgress && (
-              <div className={`artifact-progress-count is-${artifactProgress.stage}`} role="status" aria-live={terminal ? undefined : "polite"} aria-label={`Artifact ${terminal ? "생성량" : "작성 중"} ${artifactUsage.tokens.toLocaleString()} 토큰 ${artifactUsage.lines.toLocaleString()}줄`}>
+              <div className={`artifact-progress-count is-${artifactProgress.stage}`} role="status" aria-live={terminal ? undefined : "polite"} aria-label={`문서 ${artifactUsage.estimated === false ? "완성 분량" : "작성 중 추정 분량"} ${artifactUsage.tokens.toLocaleString()} 토큰 ${artifactUsage.lines.toLocaleString()}줄${modelOutputTokens > 0 ? `, 모델 출력 누계 ${modelOutputTokens.toLocaleString()} 토큰` : ""}`}>
                 <div className="artifact-progress-heading">
-                  <span>{artifactUsage.tokens.toLocaleString()} 토큰 · {artifactUsage.lines.toLocaleString()}줄</span>
+                  <span>{artifactUsage.estimated === false ? "문서 약" : "작성 중 약"} {artifactUsage.tokens.toLocaleString()}토큰 · {artifactUsage.lines.toLocaleString()}줄{artifactUsage.targetTokens ? ` · 목표 ${artifactUsage.targetTokens.toLocaleString()}토큰` : ""}</span>
+                  {modelOutputTokens > 0 && <span className="artifact-model-output">모델 출력 누계 {modelOutputTokens.toLocaleString()}토큰</span>}
                 </div>
-                <div className="artifact-progress-meter" role="progressbar" aria-label="현재 5,000 토큰 구간의 생성량" aria-valuemin={0} aria-valuemax={TOKEN_PROGRESS_BUCKET_SIZE} aria-valuenow={artifactProgress.bucketTokens}>
+                <div className="artifact-progress-meter" role="progressbar" aria-label={artifactUsage.targetTokens ? "선택한 문서 목표 분량 대비 작성량" : "현재 5,000 토큰 구간의 생성량"} aria-valuemin={0} aria-valuemax={artifactProgress.maxTokens} aria-valuenow={artifactProgress.bucketTokens}>
                   <span className="artifact-progress-fill" style={{ width: `${artifactProgress.percent}%` }} />
                 </div>
               </div>

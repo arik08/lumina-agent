@@ -361,6 +361,7 @@ def test_report_request_recovers_when_model_tries_to_finish_without_artifact(
     assert len(snapshot["artifacts"]) == 1
     assert "must call `create_report`" in observed_system_prompts[0]
     assert "`html_source` argument" in observed_system_prompts[0]
+    assert "around 10,000-12,000 tokens" in observed_system_prompts[0]
     assert "Never expose internal Artifact IDs" in observed_system_prompts[0]
     assert "refer to it only by its user-visible display name" in observed_system_prompts[0]
     assert "without internal IDs or raw tool-result fields" in observed_system_prompts[0]

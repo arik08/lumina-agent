@@ -1903,8 +1903,9 @@ button:disabled { cursor: default; opacity: 0.5; }
 .artifact-progress-count.is-green { --artifact-progress-color: var(--success); }
 .artifact-progress-count.is-orange { --artifact-progress-color: var(--warning); }
 .artifact-progress-count.is-red { --artifact-progress-color: var(--danger); }
-.artifact-progress-heading { display: flex; align-items: baseline; color: var(--muted); }
+.artifact-progress-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; color: var(--muted); }
 .artifact-progress-heading span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-progress-heading .artifact-model-output { flex: 0 0 auto; color: var(--faint); }
 .artifact-progress-meter { position: relative; overflow: hidden; width: 100%; height: 7px; border: 1px solid color-mix(in srgb, var(--artifact-progress-color) 34%, var(--line)); border-radius: 2px; background: color-mix(in srgb, var(--artifact-progress-color) 9%, transparent); box-shadow: inset 0 1px 2px color-mix(in srgb, var(--ink) 12%, transparent); }
 .artifact-progress-fill { display: block; height: 100%; background: var(--artifact-progress-color); box-shadow: 0 0 7px color-mix(in srgb, var(--artifact-progress-color) 48%, transparent); transition: width 180ms cubic-bezier(.25, 1, .5, 1); }
 
@@ -2259,7 +2260,9 @@ button:disabled { cursor: default; opacity: 0.5; }
 .composer-footer .output-mode-toggle button { min-width: 0; height: 25px; padding: 0 7px; border-radius: 5px; color: var(--muted); font-size: 11.5px; font-weight: 600; }
 .composer-footer .output-mode-toggle button.is-active { background: var(--surface); box-shadow: 0 1px 3px rgba(31, 39, 51, 0.12); color: var(--cobalt); }
 .composer-footer .text-control { gap: 5px; padding: 0 7px; color: var(--muted); font-size: 12.5px; font-weight: 650; }
-.composer-footer .model-control, .composer-footer .effort-control { width: auto; padding: 0 6px; color: #4b525c; font-size: 12px; }
+.composer-footer .model-control, .composer-footer .effort-control, .composer-footer .length-control { width: auto; padding: 0 6px; color: #4b525c; font-size: 12px; }
+.composer-footer .length-control { max-width: 82px; margin-left: 2px; color: var(--muted); font-size: 11.5px; font-weight: 620; }
+.composer-footer .length-control:disabled { cursor: not-allowed; opacity: 0.46; }
 .composer-footer .composer-picker-trigger { gap: 5px; }
 .composer-footer .model-control { max-width: 156px; padding: 0 8px; font-weight: 620; }
 .composer-picker-trigger > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2620,7 +2623,8 @@ button:disabled { cursor: default; opacity: 0.5; }
 .theme-dark .artifact-result:hover { background: #20242a; }
 .theme-dark .progress-steps li { color: #cbd1d8; }
 .theme-dark .composer-footer .model-control,
-.theme-dark .composer-footer .effort-control { color: #c9cfd7; }
+.theme-dark .composer-footer .effort-control,
+.theme-dark .composer-footer .length-control { color: #c9cfd7; }
 .theme-dark .artifact-edit-hint { border-bottom-color: #394662; background: #222a3a; color: #aebde0; }
 .theme-dark .artifact-edit-hint.is-conflict { border-bottom-color: #6d3d43; background: #332429; color: #efafb4; }
 .theme-dark .artifact-preview { background: #121418; }

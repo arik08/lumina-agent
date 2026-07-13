@@ -4,7 +4,7 @@ import test from "node:test";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
-test("artifact progress fills each 5,000-token bucket with staged colors", async () => {
+test("artifact progress distinguishes document size, target, and model output usage", async () => {
   const [app, stylesheet] = await Promise.all([
     read("../src/components/ConversationTurn.tsx"),
     read("../src/styles.css"),
@@ -14,11 +14,15 @@ test("artifact progress fills each 5,000-token bucket with staged colors", async
   assert.match(app, /TOKEN_PROGRESS_STAGES = \["blue", "green", "orange", "red"\]/);
   assert.match(app, /\(\(totalTokens - 1\) % TOKEN_PROGRESS_BUCKET_SIZE\) \+ 1/);
   assert.match(app, /Math\.min\(bucketIndex, TOKEN_PROGRESS_STAGES\.length - 1\)/);
+  assert.match(app, /tokenBucketProgress\(artifactUsage\.tokens, artifactUsage\.targetTokens\)/);
+  assert.match(app, /Math\.min\(100, \(totalTokens \/ normalizedTarget\) \* 100\)/);
   assert.match(app, /artifact-progress-meter/);
   assert.match(app, /artifact-progress-fill/);
   assert.match(app, /style=\{\{ width: `\$\{artifactProgress\.percent\}%` \}\}/);
   assert.match(app, /snapshot\?\.artifactProgress\s+\?\? snapshot\?\.artifactUsage\s+\?\? finalMessage\?\.metadata\?\.artifactUsage/);
-  assert.match(app, /artifactUsage\.tokens\.toLocaleString\(\)\} 토큰 · \{artifactUsage\.lines\.toLocaleString\(\)\}줄/);
+  assert.match(app, /artifactUsage\.estimated === false \? "문서 약" : "작성 중 약"/);
+  assert.match(app, /모델 출력 누계 \{modelOutputTokens\.toLocaleString\(\)\}토큰/);
+  assert.match(app, /artifactUsage\.targetTokens \? ` · 목표/);
   assert.match(app, /aria-live=\{terminal \? undefined : "polite"\}/);
 
   const workspace = await read("../src/use-lumina-workspace.ts");

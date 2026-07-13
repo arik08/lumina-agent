@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from lumina.agent.executor import _configured_max_output_tokens
+from lumina.agent.executor import (
+    _artifact_model_request_tokens,
+    _configured_max_output_tokens,
+)
 from lumina.context.service import _compaction_threshold, _context_budget
 
 
@@ -25,6 +28,18 @@ def test_executor_uses_configured_output_limit_without_exceeding_hard_max() -> N
         )
         == 128_000
     )
+
+
+def test_artifact_target_gets_myharness_style_headroom_within_hard_max() -> None:
+    capabilities = {
+        "configured_max_output_tokens": 4_096,
+        "max_output_tokens": 64_000,
+    }
+
+    assert _artifact_model_request_tokens(capabilities, 12_000) == 15_000
+    assert _artifact_model_request_tokens(capabilities, 40_000) == 50_000
+    assert _artifact_model_request_tokens(capabilities, None) == 4_096
+    assert _artifact_model_request_tokens({"max_output_tokens": 45_000}, 40_000) == 45_000
 
 
 def test_context_budget_reserves_configured_output_limit() -> None:
