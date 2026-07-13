@@ -85,13 +85,13 @@ export function InstructionEditor({
       if (!updated) return;
       setSnapshot(updated);
       setDraft(updated.content);
-      setNotice(`저장했습니다 · revision ${updated.revision}`);
+      setNotice("지침을 저장했습니다.");
       onSaved?.();
     } catch (requestError) {
       if (requestError instanceof ApiError && requestError.code === "instruction_conflict") {
         try {
           await fetchSnapshot(undefined, true);
-          setError("다른 작업에서 지침이 변경되었습니다. 입력한 내용은 유지했습니다. 최신 버전을 확인한 뒤 다시 저장해 주세요.");
+          setError("다른 작업에서 지침이 변경되었습니다. 입력한 내용은 유지했습니다. 최신 내용을 확인한 뒤 다시 저장해 주세요.");
         } catch (reloadError) {
           setError(errorMessage(reloadError));
         }
@@ -110,7 +110,6 @@ export function InstructionEditor({
           <h2 id={`${scope}-instruction-heading`}>{heading}</h2>
           <p>{description}</p>
         </div>
-        {snapshot && <span>r{snapshot.revision} · {snapshot.digest.slice(0, 8)}</span>}
       </header>
       {loading ? (
         <p className="instruction-loading"><LoaderCircle className="is-running" size={15} /> 지침을 불러오는 중입니다.</p>

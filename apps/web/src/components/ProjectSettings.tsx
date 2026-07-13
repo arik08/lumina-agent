@@ -85,7 +85,7 @@ export function ProjectSettings({ projects, project, onOpenNavigation, onSelect,
               scope="personal"
               heading="개인 지침"
               description="현재 프로젝트 선택과 무관하게 개인 작업에 적용할 전역 프롬프트입니다."
-              note="공유 프로젝트에서는 개인 지침을 포함하거나 다른 사용자에게 공개하지 않습니다."
+              note="나만 볼 수 있으며 언제든 바로 수정할 수 있습니다. 공유 프로젝트에는 포함되지 않습니다."
             />
           </div>
         ) : !project ? <p className="workspace-empty">설정할 프로젝트가 없습니다.</p> : (
@@ -106,7 +106,7 @@ export function ProjectSettings({ projects, project, onOpenNavigation, onSelect,
               projectId={project.id}
               heading="프로젝트 지침"
               description="이 프로젝트의 모든 Run에 적용할 작업 방식과 산출물 원칙입니다."
-              note="공유 프로젝트에서는 모든 구성원에게 같은 지침이 적용됩니다. 편집은 프로젝트 Owner와 Admin만 할 수 있습니다."
+              note="모든 구성원에게 같은 지침이 적용되며, 프로젝트를 편집할 수 있는 구성원은 언제든 수정할 수 있습니다."
             />
           </div>
         )}

@@ -10,7 +10,7 @@ test("answer ratings use accessible selected states and semantic colors", () => 
   assert.match(turnSource, /aria-label="싫어요" aria-pressed=\{answerRating === "dislike"\}/);
   assert.match(turnSource, /answerRating === "like" \? "is-like"/);
   assert.match(turnSource, /answerRating === "dislike" \? "is-dislike"/);
-  assert.match(styles, /answer-rating-control\.is-like[\s\S]*?color: var\(--success\)/);
+  assert.match(styles, /answer-rating-control\.is-like[\s\S]*?color: var\(--cobalt\)/);
   assert.match(styles, /answer-rating-control\.is-dislike[\s\S]*?color: var\(--danger\)/);
 });
 

@@ -75,17 +75,17 @@
 
 ### 1.4 현재 구현 상세 인벤토리
 
-아래 표는 2026-07-13의 migration `0001`~`0021`, 현재 route·service·Frontend source와 회귀 test로 확인한 실제 구현 범위입니다. `Implemented`는 source가 존재하고 해당 계약 test가 있다는 뜻이며 운영 규모·보안 심사·실사용 품질까지 완료되었다는 뜻은 아닙니다.
+아래 표는 2026-07-13의 migration `0001`~`0022`, 현재 route·service·Frontend source와 회귀 test로 확인한 실제 구현 범위입니다. `Implemented`는 source가 존재하고 해당 계약 test가 있다는 뜻이며 운영 규모·보안 심사·실사용 품질까지 완료되었다는 뜻은 아닙니다.
 
 | 영역 | 구현된 세부 기능 | 주요 source·test 근거 |
 |---|---|---|
 | 인증·가입 | idempotent Bootstrap admin과 기본 catalog seed, login ID 정규화, 사용자별 Default Project 자동 생성, 로그인 실패 count·잠금 복구, 다음 Asia/Seoul 자정 만료 server session, CSRF, production secure cookie, idempotent logout, `invited` 가입 신청과 관리자 승인 알림 | `auth/service.py`, `routes/auth.py`, `test_auth_core.py`, `test_registration_approval.py` |
-| 관리자 | 사용자 생성·조회·수정·비밀번호 reset·role/status 변경, 마지막 active admin 보호, 조직 범위 사용량 통계, 다른 사용자 대화·Turn Set 감사 조회, audit event 검색, 공유 링크 목록과 token 비노출 강제 revoke | `routes/admin.py`, `test_admin_api.py`, `test_admin_share_revoke.py` |
-| Project·지침 | Project CRUD와 Default 삭제 방지, owner·editor·viewer membership 생명주기와 조직 격리, Organization→Agent default→Project→Personal 지침 합성, revision·digest·ETag 동시성, 조직 지침 과거 revision label·내용 수정, Secret 패턴 차단 | `projects/`, `routes/project_memberships.py`, `instructions/`, `test_project_memberships.py`, `test_instruction_hierarchy.py` |
+| 관리자 | 사용자 생성·조회·수정·비밀번호 reset·role/status 변경, 마지막 active admin 보호, 조직 범위 사용량 통계, 다른 사용자 대화·Turn Set 감사 조회, audit event 검색, 공유 링크 목록과 token 비노출 강제 revoke, 조직 Run 안전 한도 설정과 비상 전체 중단 | `routes/admin.py`, `test_admin_api.py`, `test_admin_share_revoke.py`, `test_run_safety.py` |
+| Project·지침 | Project CRUD와 Default 삭제 방지, owner·editor·viewer membership 생명주기와 조직 격리, Organization→Agent default→Project→Personal 지침 합성, 사용자에게 노출하지 않는 revision·digest·ETag 동시성, 프로젝트 쓰기 구성원의 지침 편집, 조직 지침 과거 revision label·내용 수정, Secret 패턴 차단 | `projects/`, `routes/project_memberships.py`, `instructions/`, `test_project_memberships.py`, `test_instruction_hierarchy.py` |
 | Project File·Workspace | Project 파일 upload·목록·상세·rename·새 version·download·삭제, 안전한 상대 경로, content hash와 immutable version, DB commit 실패 시 storage cleanup, Composer와 Run의 exact file version 고정, `read_file`·`write_file`·`glob` Project scope 강제 | `project_files/`, `tools/workspace.py`, `test_project_workspace.py`, `test_workspace_tools.py` |
 | Conversation | favorite 우선 cursor 목록, 좋아요 filter·보존, whitespace-tolerant 제목 검색, Message 본문 검색과 snippet, Turn Set 역방향 pagination, first Run 임시·모델 제목, Project 이동과 Session-owned asset 이동, 특정 Message 기준 분기, JSON·Markdown 내보내기 | `routes/conversations.py`, `conversations/service.py`, `test_conversation_listing.py`, `test_conversation_branch_export.py`, `test_conversation_move_assets.py` |
 | 공유·Message 상호작용 | 특정 Message까지의 immutable snapshot 공유, attachment·Artifact version 고정, token hash 저장, owner·admin revoke와 공유 download 권한, Message reference 조회, like/dislike upsert·취소, 문제 신고, 선택 문장 Comment CRUD와 stale anchor | `routes/sharing.py`, `routes/messages.py`, `test_conversation_sharing_api.py`, `test_message_memory_interactions.py` |
-| Agent Run·Plan | Conversation 단위 single active Run과 다른 Conversation 병렬 실행, durable Queue와 `queue_next` 승격, SSE snapshot·Last-Event-ID replay, worker restart 복구, pause·resume·cancel·retry, 모델 `update_plan`, stable Step ID, Tool Subtask, 독립 Tool 병렬 실행, approval 대기·승인·거부 | `runs/`, `agent/executor.py`, `test_run_concurrency_replay.py`, `test_worker_recovery.py`, `test_plan_lifecycle.py`, `test_tool_approvals.py` |
+| Agent Run·Plan | Conversation 단위 single active Run과 다른 Conversation 병렬 실행, durable Queue와 `queue_next` 승격, SSE snapshot·Last-Event-ID replay, worker restart 복구, pause·resume·cancel·retry, model Turn·총 Token·경과 시간·예상 비용 한도, 모델 `update_plan`, stable Step ID, Tool Subtask, 독립 Tool 병렬 실행, approval 대기·승인·거부 | `runs/`, `agent/executor.py`, `test_run_concurrency_replay.py`, `test_worker_recovery.py`, `test_plan_lifecycle.py`, `test_tool_approvals.py`, `test_run_safety.py` |
 | Context·Memory | recoverable compaction, Tool Call/Result pair·side effect 보존, 실패 시 원 Context 유지, 모델별 Context budget, 사용자 Memory 후보·자동/확인/끔 mode, 민감정보 차단, relevant subset recall, LLM 최적화와 provenance 병합, Project learning proposal approve·reject·apply·rollback | `context/`, `memories/`, `project_memories/`, `test_context_compaction_memory_learning.py`, `test_project_memory_learning.py` |
 | Provider | Mock·P-GPT·OpenAI Responses·Anthropic·Gemini·OpenAI Compatible adapter, multimodal image 입력, Tool roundtrip, typed·redacted 오류, 관리자 Model discovery와 명시 활성화, 사용자·Project 실행 선택 저장, Codex ChatGPT OAuth App Server·warm client·transport retry·API key 제거, 사용자 hash prompt-cache routing | `providers/`, `routes/providers.py`, `routes/admin_providers.py`, `test_external_provider_adapters.py`, `test_codex_oauth_provider.py`, `test_openai_responses_provider.py` |
 | Web Search·인용 | DuckDuckGo search, readable HTML fetch, query·timeout·size·content-type 제한, redirect·private IP·DNS rebinding 방어, search snippet→fetched evidence 승격, source hash·번호 안정화, cited·reviewed·search-only UI 상태 | `tools/web.py`, `citations.py`, `test_web_tools.py`, `test_citations.py`, `source-evidence-status.test.mjs` |
@@ -99,7 +99,7 @@
 
 현재 명시적으로 구현하지 않은 경계도 함께 고정합니다.
 
-- 누적 Turn·실행 시간·token·비용 값은 usage와 운영 관측에 표시하지만 현재 Run을 자동 종료하지 않습니다. legacy limit 설정도 실행을 중단시키지 않습니다.
+- Run당 model Turn·총 Token·경과 시간·예상 비용은 생성 시 조직 설정을 snapshot으로 고정하고 한도 도달 시 `limit_reached`로 종료합니다. 기본값은 각각 400, 4,000,000, 10,080분, $100이며 관리자 화면에서 조정합니다.
 - multi-worker lease·heartbeat, Redis queue, Object Storage, hosted document RAG, Local Workspace Bridge와 Skill Change Request·자동 Eval은 Target입니다.
 - 조건부 LibreOffice·Poppler·PostgreSQL test가 skip되면 해당 외부 실행 환경까지 검증되었다고 주장하지 않습니다.
 
@@ -444,6 +444,8 @@ Frontend가 보낸 `owner_user_id`, `recipient_user_id`, role, organization과 s
 - 공유 grant 조회·강제 취소
 - 저장량, 사용량, 최근 로그인과 상태 확인
 - 보안·운영 감사 기록 조회
+- 조직별 Run당 model Turn·총 Token·경과 시간·예상 비용 안전 한도 설정
+- 같은 조직의 활성·대기·중단된 Run과 대기 Message 비상 전체 중단
 
 관리자도 비밀번호 원문, Provider Secret, Connector token을 볼 수 없습니다. 다른 사용자의 대화는 관리자 전용 viewer에서 조회하며 사용자 가장 기능은 초기 범위에서 제외합니다.
 
@@ -561,7 +563,7 @@ System security policy
 
 사용자별 `AGENTS.md` 원본은 DB에 저장하고 실행 시 격리된 Workspace에 materialize할 수 있습니다. Kubernetes와 다중 Backend에서는 로컬 파일을 원본으로 사용하지 않습니다. 비밀값은 지침 파일에 넣지 않습니다.
 
-현재 구현은 개인, Project와 Organization 지침을 각각 revision·digest로 저장하고 `If-Match`/expected revision으로 동시 수정을 보호합니다. Organization 지침은 과거 revision의 표시 label과 본문을 별도로 조회·수정할 수 있으며, code resolver는 `Organization → Agent default → Project → Personal` 순서의 snapshot을 Run에 고정합니다. Personal layer는 개인 Project에만 포함하고 공유 Project에서는 명시적으로 제외합니다. Backend는 지침 저장 시 credential·private key·token 패턴을 다시 검사합니다.
+현재 구현은 개인, Project와 Organization 지침의 동시 수정을 내부 revision·digest와 `If-Match`로 보호하되 개인·Project 화면에는 이를 버전 정보로 노출하지 않습니다. 개인 지침은 본인이 직접 관리하고 Project 지침은 owner·admin·member가 즉시 수정하며 viewer는 읽기만 합니다. Organization 지침은 과거 revision의 표시 label과 본문을 별도로 조회·수정할 수 있으며, code resolver는 `Organization → Agent default → Project → Personal` 순서의 snapshot을 Run에 고정합니다. Personal layer는 개인 Project에만 포함하고 공유 Project에서는 명시적으로 제외합니다. Backend는 지침 저장 시 credential·private key·token 패턴을 다시 검사합니다.
 
 ### 7.4 Workspace 유형
 
@@ -691,7 +693,7 @@ queued
 
 Plan의 Step과 Subtask는 `queued`, `running`, `blocked`, `approval`, `completed`, `failed`, `cancelled`를 사용합니다.
 
-Run은 누적 Turn·실행 시간·토큰·비용 한도로 종료하지 않습니다. 모델 Context가 임계치에 가까워지면 원문과 Tool 근거를 영속 저장한 상태에서 이전 진행을 복구 가능한 summary로 압축하고, 최신 대화·현재 Plan·미완료 작업을 유지한 채 같은 Run을 계속 실행합니다. 압축 revision, source message 범위·hash와 전후 추정 token 수는 event와 snapshot에 기록합니다.
+Run은 생성 시 조직의 관리자 안전 설정을 snapshot으로 고정하고 model Turn, 총 Token, 경과 시간과 예상 비용을 Run 단위로 계산합니다. 기본값은 400 Turn, 4,000,000 Token, 10,080분(7일), $100이며 같은 Session의 다음 Run은 새 한도로 다시 시작합니다. 모델 Context가 임계치에 가까워지면 원문과 Tool 근거를 영속 저장한 상태에서 이전 진행을 복구 가능한 summary로 압축하고, 최신 대화·현재 Plan·미완료 작업을 유지한 채 같은 Run을 계속 실행합니다. 압축 revision, source message 범위·hash와 전후 추정 token 수는 event와 snapshot에 기록합니다.
 
 Run 상태는 여러 boolean (`is_running`, `is_paused`, `is_failed`)으로 중복 저장하지 않고 하나의 enum과 상태별 timestamp로 관리합니다. 상태 변경은 한 module의 transition function과 DB compare-and-set을 통과해야 하며, 허용되지 않은 전이는 거부하고 audit 대상 오류로 남깁니다. Frontend의 버튼 활성화와 badge는 canonical status에서 파생합니다.
 
@@ -722,13 +724,14 @@ Run 상태는 여러 boolean (`is_running`, `is_paused`, `is_failed`)으로 중�
 
 - Tool Call 없는 최종 답변
 - 사용자 취소
-- 모델 호출 횟수 기반 강제 종료는 사용하지 않고 Context 예산 기반 반복 축약을 적용
+- Run snapshot의 model Turn 한도 도달
 - 개별 Provider·Tool 호출 timeout으로 인한 재시도 또는 복구 불가능한 실패
-- 누적 Token·비용은 현재 종료 조건이 아니라 usage·관측 값입니다. 자동 종료 limit은 별도 정책·복구 UX가 구현되기 전까지 적용하지 않습니다.
+- Run snapshot의 총 Token·경과 시간·예상 비용 한도 도달
+- 관리자의 조직 전체 비상 중단
 - 복구할 수 없는 Provider·Storage 오류
 - Worker 중단 또는 서버 종료
 
-향후 hard limit을 도입할 때만 시스템·조직 상한보다 느슨한 사용자 설정을 금지하고, 기존 Run snapshot·부분 결과·retry 가능 상태를 보존하는 terminal 계약을 함께 추가합니다. 현재 legacy deadline·usage limit 설정은 Run을 중단시키지 않습니다.
+한도 도달 시 기존 Run snapshot, 부분 결과, checkpoint와 usage를 보존하고 `limit_reached` terminal event를 남깁니다. 설정 변경은 진행 중 Run에 소급하지 않고 새 Run부터 적용합니다. 관리자의 비상 전체 중단은 조직 범위의 활성·대기·중단된 Run, 승인·Tool 상태와 대기 Message를 취소하고 실행 중인 local task에 cancellation을 전달하며 감사 이벤트를 기록합니다.
 
 ### 9.5 Session별 병렬과 Queue
 
@@ -1903,7 +1906,7 @@ audit_events
 
 초기 `ArtifactAssetRef`는 `artifact_versions.asset_manifest` JSON에 저장합니다. asset 단위 검색·재사용·license 추적 요구가 실제로 생길 때 별도 table로 승격합니다.
 
-### 21.2 현재 구현된 확장 table (`0002`~`0021`)
+### 21.2 현재 구현된 확장 table (`0002`~`0022`)
 
 ```text
 skill_folders / skill_folder_placements            논리 Folder tree와 안정된 Skill 배치
@@ -1924,9 +1927,10 @@ project_files / project_file_versions               Project Workspace 파일 ver
 project_learning_proposals / project_memories       검토 가능한 Project 학습
 notifications                                      persistent inbox와 read state
 tool_approvals                                     one-shot Tool approval 결정
+organizations.run_safety_settings_json             조직별 Run 안전 한도 설정
 ```
 
-현재 migration head는 `0021_codex_oauth_catalog`입니다. `0009`, `0013`~`0018`, `0020`, `0021`은 기존 table에 MCP runtime header, instruction hierarchy·revision, 공개 share link, 사용자 소속, 알림 compact metadata, Skill 개인 Draft·소유권, 대화 좋아요와 Codex OAuth catalog 필드를 증분 추가합니다. 따라서 위 객체는 더 이상 미래 설계용 이름이 아니라 현재 ORM·migration이 관리하는 물리 table입니다.
+현재 migration head는 `0022_run_safety_settings`입니다. `0009`, `0013`~`0018`, `0020`~`0022`는 기존 table에 MCP runtime header, instruction hierarchy·revision, 공개 share link, 사용자 소속, 알림 compact metadata, Skill 개인 Draft·소유권, 대화 좋아요, Codex OAuth catalog와 조직별 Run 안전 설정을 증분 추가합니다. 따라서 위 객체는 더 이상 미래 설계용 이름이 아니라 현재 ORM·migration이 관리하는 물리 table입니다.
 
 ### 21.3 후속 기능에서 추가할 table
 
@@ -2124,6 +2128,9 @@ POST   /api/admin/users/{id}/reset-password
 GET    /api/admin/audit-events
 GET    /api/admin/conversation-shares
 DELETE /api/admin/conversation-shares/{id}
+GET    /api/admin/run-safety
+PATCH  /api/admin/run-safety
+POST   /api/admin/run-safety/emergency-stop
 
 # Project membership·지침·파일
 GET    /api/projects/{project_id}/memberships
@@ -2243,7 +2250,7 @@ Secret Store→ credentials and keys
 - content hash, immutable version과 optimistic concurrency
 - 기본 `on_risk`의 sandbox·scope 강제, one-shot ToolApproval과 후속 Permission Lease
 - upload size, request·Tool timeout, Project scope와 Conversation 단위 concurrent Run 제한
-- 누적 token·비용 hard limit은 현재 미구현이며 usage 관측과 향후 조직 정책으로 분리
+- 조직별 Run당 model Turn·총 Token·경과 시간·예상 비용 hard limit과 관리자 비상 전체 중단
 
 ### 24.2 감사 이벤트
 
@@ -2254,6 +2261,7 @@ password_reset_issued / role_changed
 login_succeeded / login_failed
 conversation_share_created / opened / revoked / expired
 admin_user_viewed / admin_conversation_viewed / admin_share_force_revoked
+admin_run_safety_viewed / admin_run_safety_updated / admin_all_runs_killed
 run_action / approval / permission_lease
 extension_installed / published / deprecated / revoked
 skill_draft_checked_out / skill_draft_updated / skill_draft_binding_changed / skill_version_saved
@@ -2570,6 +2578,7 @@ PDF 실제 렌더는 `pdftoppm`, DOCX·XLSX·PPTX 실제 렌더는 LibreOffice�
 51. 예약 작업 삭제는 인라인 2단계 확인 뒤 archive되어 새 실행에서 제외되고 과거 실행·Artifact·audit는 보존됩니다.
 52. 일반 문서 RAG MCP는 지원 형식별 자연 위치 citation과 4개 일반 Tool 계약을 제공하고, 조직 전용 field를 제거하며 malformed 문서와 index 변경을 다른 문서에서 격리합니다.
 53. Skill 기여는 개인 Draft, immutable version, 구조적 diff, Change Request, Owner 검토와 새 version rollback으로 이어지고 Run은 실제 사용한 UUID·digest를 계속 고정합니다.
+54. 관리자는 Run당 400 model Turn, 총 4,000,000 Token, 10,080분과 예상 비용 $100의 기본 안전 한도를 모두 조정할 수 있고, 비상 시 같은 조직의 모든 활성·대기 작업을 인라인 2단계 확인으로 즉시 중단할 수 있습니다.
 
 ## 30. 확정된 구현 결정
 

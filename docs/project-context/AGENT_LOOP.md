@@ -38,7 +38,7 @@ queued
 
 상태 변경과 주요 이벤트를 DB에 기록하고 SSE 또는 WebSocket으로 Frontend에 전달합니다. Backend나 Worker가 재시작되어도 저장된 상태를 기준으로 실패 여부를 판단하거나 안전하게 이어갈 수 있어야 합니다.
 
-Run에는 누적 Turn·실행 시간·토큰·비용을 이유로 하는 terminal 실행 한도를 두지 않습니다. Context가 모델 입력 창에 가까워지면 원본 메시지와 Tool 실행 근거는 저장소에 유지한 채 이전 대화와 진행 상태를 복구 가능한 요약으로 압축하고, 최신 메시지와 미완료 Plan을 보존하여 같은 Run의 다음 Turn을 계속합니다. 압축은 `context_compacted` 이벤트와 revision·source hash를 남겨 재접속과 감사 시 동일한 진행 상태를 복원할 수 있어야 합니다. Run 종료는 완료, 사용자 취소, 명시적 조직 정책 차단, 복구 불가능한 오류에 한정합니다.
+각 Run은 생성 시 조직의 관리자 실행 안전 한도를 snapshot으로 고정합니다. 기본값은 Run당 400 model Turn, 총 4,000,000 Token, 시작 후 10,080분(7일), 예상 비용 $100이며 관리자가 관리 화면에서 모두 조정할 수 있습니다. 한도는 Session 누적이 아니라 Run마다 새로 계산하고, 변경된 설정은 새 Run부터 적용합니다. 한도에 도달하면 부분 결과, 사용량과 checkpoint를 보존한 채 `limit_reached`로 종료합니다. Context가 모델 입력 창에 가까워지면 원본 메시지와 Tool 실행 근거는 저장소에 유지한 채 이전 대화와 진행 상태를 복구 가능한 요약으로 압축하고, 최신 메시지와 미완료 Plan을 보존하여 같은 Run의 다음 Turn을 계속합니다. 압축은 `context_compacted` 이벤트와 revision·source hash를 남겨 재접속과 감사 시 동일한 진행 상태를 복원할 수 있어야 합니다.
 
 ## 한 Turn의 처리
 
@@ -77,10 +77,12 @@ Agent Loop는 다음 조건 중 하나에서 끝납니다.
 
 - 모델이 Tool Call 없는 최종 답변을 반환
 - 사용자가 실행 취소
+- Run snapshot의 model Turn·총 Token·경과 시간·예상 비용 안전 한도 도달
+- 관리자의 조직 전체 비상 중단
 - 복구할 수 없는 Provider·저장소 오류
 - 서버 종료 또는 Worker 중단
 
-모델 호출 횟수·전체 실행 시간·누적 Token·누적 비용만으로 Run을 종료하지 않습니다. 각 model Turn 전에 현재 요청 Context를 계산하고 기본적으로 유효 입력 예산의 75%를 넘으면 이전 assistant·Tool 구간을 구조화된 요약으로 축약하되 최근 Tool Call/Result pair는 그대로 보존합니다. Codex의 GPT-5.4·5.5·5.6 계열만 서비스 정책상 272K Context와 85% 임계값을 사용합니다. P-GPT, OpenAI API, Gemini API와 Claude API는 각 표준 API model capability의 Context window를 그대로 사용하며 Codex의 272K 제한을 적용하지 않습니다. 따라서 36K 안팎의 낮은 사용량에서는 축약하지 않으며, 더 높은 사용자 설정이 있더라도 임계값을 낮추지 않습니다. 축약 전에는 `컨텍스트 축약 중`, 완료 후에는 축약 전·후 추정 Token과 보존 범위를 Timeline에 표시하고 snapshot과 event replay에 남깁니다. 개별 Provider·Tool 호출의 transport timeout은 해당 호출의 실패·재시도 조건일 뿐 Run 전체를 `limit_reached`로 종료하지 않습니다.
+실행기는 매 model Turn 전후에 `modelTurns`, `inputTokens + outputTokens`, `costUsd`와 `started_at` 기준 경과 시간을 검사합니다. 이 값은 Run 단위이며 같은 Session에서 다음 작업으로 생성된 새 Run은 0부터 시작합니다. Context는 별도로 각 model Turn 전에 계산하고 기본적으로 유효 입력 예산의 75%를 넘으면 이전 assistant·Tool 구간을 구조화된 요약으로 축약하되 최근 Tool Call/Result pair는 그대로 보존합니다. Codex의 GPT-5.4·5.5·5.6 계열만 서비스 정책상 272K Context와 85% 임계값을 사용합니다. P-GPT, OpenAI API, Gemini API와 Claude API는 각 표준 API model capability의 Context window를 그대로 사용합니다. 축약 전에는 `컨텍스트 축약 중`, 완료 후에는 축약 전·후 추정 Token과 보존 범위를 Timeline에 표시하고 snapshot과 event replay에 남깁니다. 개별 Provider·Tool 호출의 transport timeout은 해당 호출의 실패·재시도 조건이며 Run 전체의 경과 시간 한도와 구분합니다.
 
 ## Context 관리
 
@@ -89,6 +91,8 @@ Agent Loop는 다음 조건 중 하나에서 끝납니다.
 Provider의 출력 Token 제한이 요청값보다 작으면 Provider capability에 맞게 안전한 값으로 조정하고 상태 이벤트를 남깁니다.
 
 ## 중단과 재개
+
+관리자의 비상 전체 중단은 같은 조직의 `running`, `awaiting_approval`, `paused`, `queued`, `interrupted` Run과 대기 Message를 취소하고 현재 process의 실행 task에도 즉시 cancellation을 전달합니다. 실행 중 Tool과 승인 대기는 취소 상태로 정리하며 조치자, 사유와 대상 수를 감사 기록에 남깁니다.
 
 Tool Result까지 저장되었지만 다음 모델 Turn 전에 중단된 Run은 `interrupted`로 표시합니다. 재개할 때 새 사용자 메시지를 임의로 추가하지 않고, 저장된 Tool Result부터 다음 모델 Turn을 이어갑니다.
 

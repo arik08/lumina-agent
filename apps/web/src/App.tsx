@@ -114,6 +114,7 @@ type NotificationTab = "notifications" | "announcements";
 const artifactPreviewEditMessage = "lumina:artifact-preview-edit";
 const artifactAiCommentMessage = "lumina:artifact-ai-comment";
 const artifactAiCommentsMessage = "lumina:artifact-ai-comments";
+const chatPaneMinWidth = 440;
 
 const artifactCitationMarkers = [
   "①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩",
@@ -728,7 +729,7 @@ function App() {
 
   function clampArtifactPaneWidth(value: number, collapsed: boolean) {
     const sidebarWidth = collapsed ? 48 : 278;
-    const maximum = Math.max(360, window.innerWidth - sidebarWidth - 400);
+    const maximum = Math.max(360, window.innerWidth - sidebarWidth - chatPaneMinWidth);
     return Math.min(Math.max(value, 360), maximum);
   }
 
@@ -760,11 +761,11 @@ function App() {
       }
       const expandedChatWidth = moveEvent.clientX - 278;
       let nextCollapsed = currentCollapsed;
-      if (!currentCollapsed && expandedChatWidth <= 400) {
+      if (!currentCollapsed && expandedChatWidth <= chatPaneMinWidth) {
         nextCollapsed = true;
         sidebarAutoCollapsedRef.current = true;
         setSidebarCollapsed(true);
-      } else if (currentCollapsed && sidebarAutoCollapsedRef.current && expandedChatWidth > 400) {
+      } else if (currentCollapsed && sidebarAutoCollapsedRef.current && expandedChatWidth > chatPaneMinWidth) {
         nextCollapsed = false;
         sidebarAutoCollapsedRef.current = false;
         setSidebarCollapsed(false);
@@ -786,11 +787,11 @@ function App() {
     const nextWidth = artifactPaneWidth + delta;
     const expandedChatWidth = window.innerWidth - 278 - nextWidth;
     let nextCollapsed = sidebarCollapsed;
-    if (!sidebarCollapsed && expandedChatWidth <= 400) {
+    if (!sidebarCollapsed && expandedChatWidth <= chatPaneMinWidth) {
       nextCollapsed = true;
       sidebarAutoCollapsedRef.current = true;
       setSidebarCollapsed(true);
-    } else if (sidebarCollapsed && sidebarAutoCollapsedRef.current && expandedChatWidth > 400) {
+    } else if (sidebarCollapsed && sidebarAutoCollapsedRef.current && expandedChatWidth > chatPaneMinWidth) {
       nextCollapsed = false;
       sidebarAutoCollapsedRef.current = false;
       setSidebarCollapsed(false);

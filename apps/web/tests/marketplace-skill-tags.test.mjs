@@ -66,11 +66,11 @@ test("install toggles update locally without replacing the marketplace list", as
 test("skill draft editor keeps one aligned scroll surface", async () => {
   const styles = await readFile(stylesPath, "utf8");
 
-  assert.match(styles, /\.marketplace-package-detail \.marketplace-file-browser \.skill-file-editor \{[^}]*height: 520px;[^}]*min-height: 0;[^}]*overflow: hidden;[^}]*padding: 0;[^}]*font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;[^}]*font-size: 12\.5px;/);
+  assert.match(styles, /\.marketplace-package-detail \.marketplace-file-browser \.skill-file-editor \{[^}]*height: 520px;[^}]*min-height: 0;[^}]*overflow: hidden;[^}]*padding: 0;[^}]*font-family: var\(--font-code\);[^}]*font-size: 12\.5px;/);
   assert.match(styles, /\.marketplace-file-browser \.skill-file-editor > :is\(pre, textarea\) \{ padding: 13px 15px; \}/);
   assert.match(styles, /\.marketplace-package-detail\.is-editing \.skill-file-content \{ overflow: hidden; \}/);
   assert.match(styles, /\.syntax-editor > pre \{[^}]*overflow: hidden;[^}]*pointer-events: none;/);
-  assert.match(styles, /\.skill-file-editor > textarea \{\s*scrollbar-color: color-mix\(in srgb, var\(--cobalt\) 38%, transparent\) transparent;/);
+  assert.match(styles, /\.skill-file-editor > textarea \{\s*scrollbar-color: var\(--scrollbar-thumb\) transparent;/);
 });
 
 test("skill metadata stays in place while editing", async () => {

@@ -28,7 +28,7 @@ function escapeRegExp(value) {
 test("navigation and menu surfaces share one neutral color token", async () => {
   const styles = await readFile(stylesPath, "utf8");
 
-  assert.match(styles, /--menu-surface:\s*oklch\(95\.5% 0\.003 255\);/);
+  assert.match(styles, /--menu-surface:\s*oklch\(97\.2% 0\.002 255\);/);
   assert.match(styles, /--menu-surface:\s*#121417;/);
   assert.doesNotMatch(styles, /--sidebar\s*:/);
   assert.doesNotMatch(styles, /#(?:f7f7f5|fbfbfa|f4f4f2|f7f7f6)\b/i);
@@ -40,4 +40,16 @@ test("navigation and menu surfaces share one neutral color token", async () => {
       `${selector} must use --menu-surface`,
     );
   }
+});
+
+test("scrollable surfaces use neutral scrollbar tokens", async () => {
+  const styles = await readFile(stylesPath, "utf8");
+
+  assert.match(styles, /--scrollbar-thumb:\s*color-mix\(in srgb, var\(--ink\) 17%, transparent\);/);
+  assert.match(styles, /--scrollbar-thumb-strong:\s*color-mix\(in srgb, var\(--ink\) 30%, transparent\);/);
+  assert.doesNotMatch(
+    styles,
+    /scrollbar-(?:color|thumb)[^;}]*var\(--cobalt\)/,
+    "scrollbars must not derive their color from the cobalt accent",
+  );
 });

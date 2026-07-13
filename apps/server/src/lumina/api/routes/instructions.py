@@ -23,7 +23,7 @@ from ...instructions.service import (
     update_project_instructions,
 )
 from ...models import Organization, User
-from ...projects.memberships import effective_project_role, require_membership_manager
+from ...projects.memberships import effective_project_role
 from ..dependencies import AuthContext, get_current_user, require_csrf
 from ..errors import ApiProblem
 
@@ -110,7 +110,7 @@ def get_project_instructions(
     _set_instruction_headers(response, snapshot)
     return instruction_payload(
         snapshot,
-        editable=role in {"owner", "admin"},
+        editable=role in {"owner", "admin", "member"},
         applies_to_shared_projects=True,
     )
 
@@ -124,7 +124,7 @@ def patch_project_instructions(
     context: AuthContext = Depends(require_csrf),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
-    project = require_membership_manager(db, context.user, project_id)
+    project = require_project(db, context.user, project_id, write=True)
     project, changed = update_project_instructions(
         db,
         project,

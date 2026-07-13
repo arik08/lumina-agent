@@ -69,7 +69,7 @@ flowchart LR
 
 - 사용자 데이터는 기본적으로 사용자와 Project 범위로 격리합니다.
 - Frontend가 보낸 파일 경로, Skill 이름과 MCP 이름은 Backend에서 다시 권한을 검사합니다.
-- Run은 Provider, Model, Effort, 지침, 확장 버전과 실행 제한을 snapshot으로 고정합니다.
+- Run은 Provider, Model, Effort, 지침, 확장 버전과 관리자 실행 안전 한도를 snapshot으로 고정합니다. 기본 한도는 Run당 400 model Turn, 총 4,000,000 Token, 10,080분, 예상 비용 $100이며 관리자가 조정할 수 있습니다.
 - API Key, 비밀번호, 인증 토큰과 회사 인증서는 Git, 로그와 Run event에 기록하지 않습니다.
 - 회사 CA는 public CA와 결합한 Trust Manager를 사용하며 TLS 검증을 끄지 않습니다.
 - Provider·Model·Effort의 마지막 선택은 브라우저가 아니라 서버 DB에 저장합니다.
@@ -232,7 +232,7 @@ $사내검색 최근 관련 규정을 찾아 주세요.
 | 파일 | Project 파일 업로드와 Context 관리 |
 | 예약 작업 | 반복 또는 지정 시각 작업 관리 |
 | Memory | 사용자 및 Project 학습 항목 검토 |
-| 관리 | 사용자, Provider, MCP와 조직 설정 관리 |
+| 관리 | 사용자, Provider, MCP, 조직 설정, Run 안전 한도와 비상 전체 중단 관리 |
 
 ### 결과 저장과 공유
 

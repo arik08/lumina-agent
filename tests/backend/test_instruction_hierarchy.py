@@ -205,14 +205,15 @@ def test_instruction_api_permissions_concurrency_and_secret_guard(
         member_headers = _login(client, "instruction-member", "test-password")
         member_view = client.get(f"/api/projects/{project_id}/instructions")
         assert member_view.status_code == 200
-        assert member_view.json()["editable"] is False
+        assert member_view.json()["editable"] is True
         assert member_view.json()["content"] == updated_project.json()["content"]
-        forbidden_edit = client.patch(
+        member_edit = client.patch(
             f"/api/projects/{project_id}/instructions",
             headers=member_headers,
-            json=_patch_payload(member_view.json(), "권한 없는 변경"),
+            json=_patch_payload(member_view.json(), "구성원이 직접 관리하는 지침"),
         )
-        assert forbidden_edit.status_code == 403
+        assert member_edit.status_code == 200, member_edit.text
+        assert member_edit.json()["content"] == "구성원이 직접 관리하는 지침"
 
         member_personal = client.get("/api/instructions/personal")
         assert member_personal.status_code == 200
@@ -238,7 +239,7 @@ def test_instruction_api_permissions_concurrency_and_secret_guard(
                     )
                 )
             )
-        assert len(events) == 3
+        assert len(events) == 4
         serialized_audit = json.dumps(
             [event.metadata_json for event in events], ensure_ascii=False
         )
