@@ -19,7 +19,7 @@
   --scrollbar-thumb-strong: color-mix(in srgb, var(--ink) 30%, transparent);
   --scrollbar-activation-duration: 140ms;
   --scrollbar-activation-easing: cubic-bezier(0.25, 1, 0.5, 1);
-  --scrollbar-fade-duration: 720ms;
+  --scrollbar-fade-duration: 520ms;
   --surface: #ffffff;
   --surface-soft: #f5f6f7;
   --surface-selected: #edf2fb;

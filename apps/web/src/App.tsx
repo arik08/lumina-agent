@@ -57,7 +57,6 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
-  Square,
   SquarePen,
   Store,
   Sun,
@@ -2646,7 +2645,7 @@ function App() {
                     {composerShowsStop && workspace.runActionBusy
                       ? <LoaderCircle className="is-running" size={17} />
                       : composerShowsStop
-                        ? <Square size={12} fill="currentColor" strokeWidth={0} />
+                        ? <span className="stop-glyph" aria-hidden="true" />
                         : workspace.sending
                           ? <LoaderCircle className="is-running" size={17} />
                           : <Send size={17} />}
