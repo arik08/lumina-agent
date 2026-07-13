@@ -51,14 +51,20 @@ test("every running tool spinner follows its label while duration and chevron st
   assert.match(app, /isOpen \? <ChevronDown size=\{15\}/);
 });
 
-test("tool icons use distinct semantic colors", async () => {
+test("frequent tool icons stay neutral while important tools keep semantic colors", async () => {
   const app = await read("../src/components/ConversationTurn.tsx");
   const styles = await read("../src/styles.css");
 
-  for (const className of ["is-web-search", "is-web-fetch", "is-file-browse", "is-read-file", "is-write-file", "is-report", "is-image"]) {
+  for (const className of ["is-web-search", "is-web-fetch", "is-file-browse", "is-read-file", "is-write-file", "is-model-processing"]) {
+    assert.match(app, new RegExp(`tool-kind-icon ${className}`));
+  }
+  assert.match(styles, /\.tool-kind-icon:is\(\.is-web-search, \.is-web-fetch, \.is-file-browse, \.is-read-file, \.is-write-file, \.is-model-processing\) \{ --tool-icon-color: var\(--tool-common\); \}/);
+  for (const className of ["is-report", "is-image"]) {
     assert.match(app, new RegExp(`tool-kind-icon ${className}`));
     assert.match(styles, new RegExp(`\\.tool-kind-icon\\.${className} \\{ --tool-icon-color: var\\(--tool-`));
   }
-  assert.match(styles, /\.theme-dark \.tool-kind-icon \{ color: var\(--tool-icon-color, #aeb6c2\); \}/);
-  assert.match(styles, /\.tool-call-group-summary > svg:first-child \{ color: var\(--tool-icon-color, var\(--cobalt\)\); \}/);
+  assert.match(styles, /\.skill-activity > svg \{ color: var\(--cobalt\); \}/);
+  assert.match(styles, /\.skill-activity-kind \{ color: var\(--cobalt\);/);
+  assert.match(styles, /\.theme-dark \.tool-kind-icon \{ color: var\(--tool-icon-color, var\(--tool-common\)\); \}/);
+  assert.match(styles, /\.tool-call-group-summary > svg:first-child \{ color: var\(--tool-icon-color, var\(--tool-common\)\); \}/);
 });

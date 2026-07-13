@@ -49,11 +49,7 @@
   --syntax-number: #0550ae;
   --syntax-function: #8250df;
   --syntax-property: #953800;
-  --tool-web-search: #3b82f6;
-  --tool-web-fetch: #d97706;
-  --tool-file-browse: #a66a00;
-  --tool-file-read: #0e7490;
-  --tool-file-write: #9b59b6;
+  --tool-common: var(--muted);
   --tool-report: #0f8a78;
   --tool-image: #c94f86;
   --tooltip-background: #292d34;
@@ -1815,7 +1811,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .progress-group-toggle:hover .tool-call-group-summary { color: var(--ink); }
 .tool-call-group-summary > span { overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
 .tool-call-group-summary > .tool-call-group-duration { font-size: 11.5px; text-align: right; }
-.tool-call-group-summary > svg:first-child { color: var(--tool-icon-color, var(--cobalt)); }
+.tool-call-group-summary > svg:first-child { color: var(--tool-icon-color, var(--tool-common)); }
 .progress-tools { display: grid; max-height: 235px; gap: 5px; overflow-y: auto; transform-origin: top; animation: activity-expand var(--motion-medium) var(--ease-out-quint) both; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) transparent; }
 .progress-tools > :is(.tool-call, .model-processing-row) { animation: activity-enter var(--motion-medium) var(--ease-out-quint) both; }
 .progress-tools::-webkit-scrollbar { width: 7px; }
@@ -1968,15 +1964,10 @@ button:disabled { cursor: default; opacity: 0.5; }
 .tool-call-summary-text { grid-column: 1 / -1; color: var(--ink); font-size: 14px; line-height: 1.55; text-align: left; white-space: normal; }
 
 .tool-call.is-open > .tool-call-trigger { background: var(--cobalt-pale); color: #252a32; }
-.tool-kind-icon { color: var(--tool-icon-color, #68717e); }
-.tool-kind-icon.is-web-search { --tool-icon-color: var(--tool-web-search); }
-.tool-kind-icon.is-web-fetch { --tool-icon-color: var(--tool-web-fetch); }
-.tool-kind-icon.is-file-browse { --tool-icon-color: var(--tool-file-browse); }
-.tool-kind-icon.is-read-file { --tool-icon-color: var(--tool-file-read); }
-.tool-kind-icon.is-write-file { --tool-icon-color: var(--tool-file-write); }
+.tool-kind-icon { color: var(--tool-icon-color, var(--tool-common)); }
+.tool-kind-icon:is(.is-web-search, .is-web-fetch, .is-file-browse, .is-read-file, .is-write-file, .is-model-processing) { --tool-icon-color: var(--tool-common); }
 .tool-kind-icon.is-report { --tool-icon-color: var(--tool-report); }
 .tool-kind-icon.is-image { --tool-icon-color: var(--tool-image); }
-.tool-kind-icon.is-model-processing { --tool-icon-color: var(--cobalt); }
 .model-processing-row { grid-template-columns: 17px minmax(90px, .65fr) minmax(0, 1.35fr) auto 46px 16px; }
 .model-processing-row.without-status-icon { grid-template-columns: 17px minmax(90px, .65fr) minmax(0, 1.35fr) auto 46px 16px; }
 .model-processing-call.is-open > .model-processing-row { position: sticky; z-index: 3; top: 0; }
@@ -2556,11 +2547,6 @@ button:disabled { cursor: default; opacity: 0.5; }
   --menu-surface: #121417;
   --scrollbar-thumb: color-mix(in srgb, var(--ink) 11%, transparent);
   --scrollbar-thumb-strong: color-mix(in srgb, var(--ink) 30%, transparent);
-  --tool-web-search: #72a7ff;
-  --tool-web-fetch: #f0a84b;
-  --tool-file-browse: #e0ad4f;
-  --tool-file-read: #5bc0d3;
-  --tool-file-write: #cf8be6;
   --tool-report: #57c5b5;
   --tool-image: #ed82ad;
   --syntax-text: #c9d1d9;
@@ -2697,7 +2683,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .theme-dark .tool-call-trigger { color: #b4bbc5; }
 .theme-dark .tool-calls { border-left-color: #3a414b; }
 .theme-dark .tool-call.is-open > .tool-call-trigger { background: var(--cobalt-pale); color: #eef1f5; }
-.theme-dark .tool-kind-icon { color: var(--tool-icon-color, #aeb6c2); }
+.theme-dark .tool-kind-icon { color: var(--tool-icon-color, var(--tool-common)); }
 .theme-dark .tool-message { border-left-color: #7189c2; background: #1f2329; }
 .theme-dark .model-exchange { background: color-mix(in srgb, var(--cobalt) 8%, var(--panel)); }
 .theme-dark .tool-message-heading { color: #b5bdc7; }
