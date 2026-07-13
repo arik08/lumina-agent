@@ -880,7 +880,6 @@ export function useLuminaWorkspace() {
         expectedRevision: conversation.revision,
       });
       setConversations((items) => items.map((item) => item.id === updated.id ? updated : item));
-      setNotice(updated.isLiked ? "좋아요로 표시했습니다. 자동 삭제 대상에서 제외됩니다." : "좋아요 표시를 해제했습니다.");
       return updated;
     } catch (error) {
       setNotice(apiMessage(error));

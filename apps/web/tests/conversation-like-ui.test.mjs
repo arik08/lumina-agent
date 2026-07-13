@@ -20,5 +20,5 @@ test("conversation like is available below favorite and drives the sidebar heart
   assert.match(appSource, /likedSessionsOnly \? "좋아요" : "최근 항목"/);
   assert.doesNotMatch(appSource, /세션 관리 닫기[\s\S]{0,300}setLikedSessionsOnly/);
   assert.match(workspaceSource, /isLiked: !conversation\.isLiked/);
-  assert.match(workspaceSource, /자동 삭제 대상에서 제외됩니다/);
+  assert.doesNotMatch(workspaceSource, /좋아요로 표시했습니다|좋아요 표시를 해제했습니다/);
 });
