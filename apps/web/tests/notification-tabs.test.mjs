@@ -42,5 +42,6 @@ test("notification trigger does not render an empty tooltip while the panel is o
   ]);
 
   assert.match(app, /data-tooltip=\{notificationOpen \? undefined : "알림"\}/);
-  assert.match(stylesheet, /\.tooltip-control:not\(\[data-tooltip\]\)::after \{ content: none; \}/);
+  assert.match(stylesheet, /\.global-tooltip-layer\s*\{/);
+  assert.doesNotMatch(stylesheet, /tooltip-control:not\(\[data-tooltip\]\)::after/);
 });

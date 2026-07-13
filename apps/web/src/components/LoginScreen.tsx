@@ -137,11 +137,9 @@ export function LoginScreen({ onAuthenticated, initialDomain = "posco.com" }: Lo
                   setLoginDomain("posco.com");
                   passwordRef.current?.focus();
                 }}
+                data-tooltip="개발 계정 admin@posco.com 채우기"
               >
                 <UserPlus size={16} strokeWidth={1.8} aria-hidden="true" />
-                <span className="login-dev-account-tooltip" role="tooltip">
-                  개발 계정 admin@posco.com 채우기
-                </span>
               </button>
             )}
             <label className="login-field" htmlFor="lumina-login-name">

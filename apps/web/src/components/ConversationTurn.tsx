@@ -74,6 +74,7 @@ import type {
   TurnSet,
 } from "../api-types";
 import { sanitizeAssistantResponse } from "../assistant-response";
+import { GlobalTooltipLayer } from "./GlobalTooltip";
 import { formatModelExchangeValue } from "../model-exchange-format";
 import {
   mergedToolActiveDurationMs,
@@ -142,8 +143,8 @@ function estimatedModelCostParts(usage: Record<string, unknown> | undefined) {
 
 function UsageCostPopover({ usage, model, provider }: { usage: Record<string, unknown> | undefined; model?: string; provider?: string }) {
   const controlRef = useRef<HTMLSpanElement>(null);
-  const popoverRef = useRef<HTMLSpanElement>(null);
-  const [popoverPlacement, setPopoverPlacement] = useState<"above" | "below">("above");
+  const popoverId = useId();
+  const [popoverOpen, setPopoverOpen] = useState(false);
   const rawUsage = usage?.raw;
   const isSubscriptionUsage = provider === "codex"
     && typeof rawUsage === "object"
@@ -196,33 +197,19 @@ function UsageCostPopover({ usage, model, provider }: { usage: Record<string, un
     ["Output", output.toLocaleString(), formatCost(estimatedCosts?.output)],
     ["Total", total.toLocaleString(), totalCost],
   ];
-  const updatePopoverPlacement = useCallback(() => {
-    const control = controlRef.current;
-    const popover = popoverRef.current;
-    if (!control || !popover) return;
-    const controlRect = control.getBoundingClientRect();
-    const clippingRect = control.closest<HTMLElement>(".conversation-scroll")?.getBoundingClientRect();
-    const viewportPadding = 12;
-    const popoverGap = 8;
-    const topBoundary = Math.max(viewportPadding, (clippingRect?.top ?? 0) + viewportPadding);
-    const bottomBoundary = Math.min(
-      window.innerHeight - viewportPadding,
-      (clippingRect?.bottom ?? window.innerHeight) - viewportPadding,
-    );
-    const spaceAbove = controlRect.top - topBoundary - popoverGap;
-    const spaceBelow = bottomBoundary - controlRect.bottom - popoverGap;
-    setPopoverPlacement(spaceAbove < popover.offsetHeight && spaceBelow > spaceAbove ? "below" : "above");
-  }, []);
-
   return (
     <span
-      className={`answer-usage-control ${popoverPlacement === "below" ? "is-below" : ""}`}
+      className="answer-usage-control"
       ref={controlRef}
-      onPointerEnter={updatePopoverPlacement}
-      onFocusCapture={updatePopoverPlacement}
+      onPointerEnter={() => setPopoverOpen(true)}
+      onPointerLeave={() => setPopoverOpen(false)}
+      onFocusCapture={() => setPopoverOpen(true)}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setPopoverOpen(false);
+      }}
     >
-      <button className="answer-usage-button" type="button" aria-label={isSubscriptionUsage ? "토큰 및 예상 비용 확인" : "토큰 비용 확인"}><Coins size={16} /></button>
-      <span className="answer-usage-popover" role="tooltip" ref={popoverRef}>
+      <button className="answer-usage-button" type="button" aria-label={isSubscriptionUsage ? "토큰 및 예상 비용 확인" : "토큰 비용 확인"} aria-describedby={popoverOpen ? popoverId : undefined}><Coins size={16} /></button>
+      <GlobalTooltipLayer anchor={controlRef.current} className="answer-usage-popover" id={popoverId} open={popoverOpen}>
         <table aria-label={isSubscriptionUsage ? "이번 답변 토큰 및 예상 비용" : "이번 답변 토큰 및 비용"}>
           <thead>
             <tr><th>{model || "사용량"}</th><th>토큰</th><th>{costHeading}</th></tr>
@@ -235,7 +222,7 @@ function UsageCostPopover({ usage, model, provider }: { usage: Record<string, un
             ))}
           </tbody>
         </table>
-      </span>
+      </GlobalTooltipLayer>
     </span>
   );
 }
@@ -970,21 +957,23 @@ function remarkCitationLinks(options: { targets: CitationTarget[] }) {
 
 function CitationMarker({ target }: { target: CitationTarget }) {
   const tooltipId = useId();
+  const markerRef = useRef<HTMLElement | null>(null);
+  const [tooltipOpen, setTooltipOpen] = useState(false);
   const marker = citationMarkerLabel(target.markerNumber);
   const rawUrl = target.source.normalizedUrl || target.source.originalUrl;
   const safeUrl = defaultUrlTransform(rawUrl);
   const tooltip = (
-    <span className="citation-tooltip" id={tooltipId} role="tooltip">
+    <GlobalTooltipLayer anchor={markerRef.current} className="citation-tooltip" id={tooltipId} open={tooltipOpen}>
       <strong>{target.source.title || target.source.domain || `출처 ${target.markerNumber}`}</strong>
       <span>{rawUrl || "URL 없음"}</span>
       <q>{target.source.verbatimExcerpt || "근거 문장 없음"}</q>
-    </span>
+    </GlobalTooltipLayer>
   );
   if (!safeUrl) {
-    return <span className="inline-citation" tabIndex={0} aria-label={`출처 ${target.markerNumber}`} aria-describedby={tooltipId}><span aria-hidden="true">{marker}</span>{tooltip}</span>;
+    return <span className="inline-citation" ref={(node) => { markerRef.current = node; }} tabIndex={0} aria-label={`출처 ${target.markerNumber}`} aria-describedby={tooltipOpen ? tooltipId : undefined} onMouseEnter={() => setTooltipOpen(true)} onMouseLeave={() => setTooltipOpen(false)} onFocus={() => setTooltipOpen(true)} onBlur={() => setTooltipOpen(false)}><span aria-hidden="true">{marker}</span>{tooltip}</span>;
   }
   return (
-    <a className="inline-citation" href={safeUrl} target="_blank" rel="noreferrer noopener" aria-label={`출처 ${target.markerNumber}: ${target.source.title || target.source.domain}`} aria-describedby={tooltipId}>
+    <a className="inline-citation" ref={(node) => { markerRef.current = node; }} href={safeUrl} target="_blank" rel="noreferrer noopener" aria-label={`출처 ${target.markerNumber}: ${target.source.title || target.source.domain}`} aria-describedby={tooltipOpen ? tooltipId : undefined} onMouseEnter={() => setTooltipOpen(true)} onMouseLeave={() => setTooltipOpen(false)} onFocus={() => setTooltipOpen(true)} onBlur={() => setTooltipOpen(false)}>
       <span aria-hidden="true">{marker}</span>{tooltip}
     </a>
   );
@@ -1393,8 +1382,12 @@ export function AssistantTurn({
       setReportSubmitting(false);
     }
   };
-  const artifactProgress = snapshot?.artifactProgress
-    ? tokenBucketProgress(snapshot.artifactProgress.tokens)
+  const artifactUsage = snapshot?.artifactProgress
+    ?? snapshot?.artifactUsage
+    ?? finalMessage?.metadata?.artifactUsage
+    ?? null;
+  const artifactProgress = artifactUsage
+    ? tokenBucketProgress(artifactUsage.tokens)
     : null;
   return (
     <div className="turn-set" data-run-id={turnSet.runId ?? undefined}>
@@ -1493,10 +1486,10 @@ export function AssistantTurn({
         <section className="assistant-turn">
           <div className="assistant-content">
             {assistantText && <MarkdownResponse text={displayedText} sources={sources} citations={citations} streaming={revealing} />}
-            {snapshot?.artifactProgress && artifactProgress && (
-              <div className={`artifact-progress-count is-${artifactProgress.stage}`} role="status" aria-live="polite" aria-label={`Artifact 작성 중 ${snapshot.artifactProgress.tokens.toLocaleString()} 토큰 ${snapshot.artifactProgress.lines.toLocaleString()}줄`}>
+            {artifactUsage && artifactProgress && (
+              <div className={`artifact-progress-count is-${artifactProgress.stage}`} role="status" aria-live={terminal ? undefined : "polite"} aria-label={`Artifact ${terminal ? "생성량" : "작성 중"} ${artifactUsage.tokens.toLocaleString()} 토큰 ${artifactUsage.lines.toLocaleString()}줄`}>
                 <div className="artifact-progress-heading">
-                  <span>{snapshot.artifactProgress.tokens.toLocaleString()} 토큰 · {snapshot.artifactProgress.lines.toLocaleString()}줄</span>
+                  <span>{artifactUsage.tokens.toLocaleString()} 토큰 · {artifactUsage.lines.toLocaleString()}줄</span>
                 </div>
                 <div className="artifact-progress-meter" role="progressbar" aria-label="현재 5,000 토큰 구간의 생성량" aria-valuemin={0} aria-valuemax={TOKEN_PROGRESS_BUCKET_SIZE} aria-valuenow={artifactProgress.bucketTokens}>
                   <span className="artifact-progress-fill" style={{ width: `${artifactProgress.percent}%` }} />

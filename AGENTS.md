@@ -60,6 +60,7 @@
 
 - 현재 요청에 필요한 범위만 변경합니다.
 - 사용자에게 보이는 세로·가로 스크롤 영역은 브라우저 기본 스크롤바를 그대로 노출하지 않습니다. `scrollbar-width: thin`과 투명 track을 기본으로 하고, thumb는 현재 테마의 `--cobalt`를 `color-mix`한 공용 스타일을 사용합니다. 다크 테마에서도 같은 색상 토큰으로 명도만 조정하며, 특정 화면마다 임의의 회색·고정 색상 스크롤바를 새로 만들지 않습니다.
+- 모든 UI 툴팁은 `GlobalTooltipProvider` 또는 `GlobalTooltipLayer`를 통해 `document.body` Portal에 렌더링합니다. 기본 위치는 trigger 위쪽이며 상단 viewport 공간이 부족할 때만 아래쪽으로 전환합니다. clipping container 내부의 absolute 요소, `::after`, 브라우저 기본 `title` 팝업으로 개별 구현하지 않습니다.
 - Windows와 Linux에서 모두 동작할 수 있도록 경로와 실행 환경을 처리합니다.
 - 사용자별 `AGENTS.md`는 프로젝트 루트 규칙을 대체하지 않으며 허용된 사용자 설정만 추가할 수 있습니다.
 - 공유 모드에서도 비밀값, 인증 정보, 사용자별 `AGENTS.md`와 개인 계정 정보는 공유하지 않습니다.

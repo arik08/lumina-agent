@@ -1046,7 +1046,7 @@ function App() {
       setModelNameTooltip({
         name,
         left: Math.max(8, Math.min(rect.left, window.innerWidth - 368)),
-        top: rect.bottom + 5,
+        top: rect.top - 5,
       });
       modelNameTooltipTimerRef.current = null;
     }, 900);
@@ -2923,7 +2923,7 @@ function App() {
       )}
 
       {toast && <div className="toast" role="status">{toast}</div>}
-      {modelNameTooltip && <div className="account-model-tooltip" role="tooltip" style={{ left: modelNameTooltip.left, top: modelNameTooltip.top }}>{modelNameTooltip.name}</div>}
+      {modelNameTooltip && createPortal(<div className="account-model-tooltip" role="tooltip" style={{ left: modelNameTooltip.left, top: modelNameTooltip.top }}>{modelNameTooltip.name}</div>, document.body)}
     </div>
   );
 }

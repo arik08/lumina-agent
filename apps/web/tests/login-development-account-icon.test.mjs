@@ -14,9 +14,9 @@ test("development account helper is a discreet accessible icon with a tooltip", 
   assert.match(component, /\bUserPlus\b/);
   assert.match(component, /aria-label="개발 계정 admin@posco\.com 채우기"/);
   assert.match(component, /<UserPlus[^>]*aria-hidden="true"[^>]*\/>/);
-  assert.match(component, /<span className="login-dev-account-tooltip" role="tooltip">/);
+  assert.match(component, /data-tooltip="개발 계정 admin@posco\.com 채우기"/);
+  assert.doesNotMatch(component, /login-dev-account-tooltip|role="tooltip"/);
   assert.doesNotMatch(component, />\s*개발 계정 admin@posco\.com 채우기\s*<\/button>/);
 
-  assert.match(stylesheet, /\.login-dev-account:hover\s+\.login-dev-account-tooltip/);
-  assert.match(stylesheet, /\.login-dev-account:focus-visible\s+\.login-dev-account-tooltip/);
+  assert.doesNotMatch(stylesheet, /login-dev-account-tooltip/);
 });

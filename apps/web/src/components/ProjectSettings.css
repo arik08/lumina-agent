@@ -1,16 +1,3 @@
-.project-manager-list > header .tooltip-control::after {
-  top: calc(100% + 5px);
-  right: 0;
-  bottom: auto;
-  left: auto;
-  transform: translateY(-2px);
-}
-
-.project-manager-list > header .tooltip-control:hover::after,
-.project-manager-list > header .tooltip-control:focus-visible::after {
-  transform: translateY(0);
-}
-
 .project-membership-settings { display: grid; width: min(720px, calc(100% - 36px)); gap: 13px; margin: 0 auto; padding: 22px 0; border-bottom: 1px solid var(--line); }
 .project-membership-settings > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .project-membership-settings > header h2 { margin: 0; font-size: 13px; }

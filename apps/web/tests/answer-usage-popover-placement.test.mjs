@@ -3,21 +3,22 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const turnUrl = new URL("../src/components/ConversationTurn.tsx", import.meta.url);
+const globalTooltipUrl = new URL("../src/components/GlobalTooltip.tsx", import.meta.url);
 const stylesUrl = new URL("../src/styles.css", import.meta.url);
 
-test("usage popover flips below the trigger before the conversation scroller clips it", async () => {
-  const [turn, styles] = await Promise.all([
+test("usage popover uses the global layer and only flips below at the viewport edge", async () => {
+  const [turn, globalTooltip, styles] = await Promise.all([
     readFile(turnUrl, "utf8"),
+    readFile(globalTooltipUrl, "utf8"),
     readFile(stylesUrl, "utf8"),
   ]);
 
-  assert.match(turn, /control\.closest<HTMLElement>\("\.conversation-scroll"\)\?\.getBoundingClientRect\(\)/);
-  assert.match(turn, /const topBoundary = Math\.max\(viewportPadding, \(clippingRect\?\.top \?\? 0\) \+ viewportPadding\)/);
-  assert.match(turn, /const bottomBoundary = Math\.min\(/);
-  assert.match(turn, /const spaceAbove = controlRect\.top - topBoundary - popoverGap/);
-  assert.match(turn, /const spaceBelow = bottomBoundary - controlRect\.bottom - popoverGap/);
-  assert.match(turn, /spaceAbove < popover\.offsetHeight && spaceBelow > spaceAbove \? "below" : "above"/);
-  assert.match(turn, /onPointerEnter=\{updatePopoverPlacement\}/);
-  assert.match(turn, /onFocusCapture=\{updatePopoverPlacement\}/);
-  assert.match(styles, /\.answer-usage-control\.is-below \.answer-usage-popover\s*\{[^}]*top:\s*calc\(100% \+ 8px\)[^}]*bottom:\s*auto/);
+  assert.match(turn, /aria-describedby=\{popoverOpen \? popoverId : undefined\}/);
+  assert.match(turn, /<GlobalTooltipLayer anchor=\{controlRef\.current\} className="answer-usage-popover" id=\{popoverId\} open=\{popoverOpen\}>/);
+  assert.match(globalTooltip, /createPortal\([\s\S]*?document\.body/s);
+  assert.match(globalTooltip, /const spaceAbove = anchorRect\.top - viewportPadding - tooltipGap/);
+  assert.match(globalTooltip, /const spaceBelow = window\.innerHeight - anchorRect\.bottom - viewportPadding - tooltipGap/);
+  assert.match(globalTooltip, /spaceAbove < layerRect\.height && spaceBelow > spaceAbove \? "below" : "above"/);
+  assert.match(styles, /\.global-tooltip-layer\s*\{[^}]*position:\s*fixed;[^}]*z-index:\s*10000/s);
+  assert.doesNotMatch(styles, /\.answer-usage-control\.is-below/);
 });

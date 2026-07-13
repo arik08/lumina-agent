@@ -33,5 +33,6 @@ test("project settings manage registered accounts inline", async () => {
   assert.match(styles, /\.project-membership-settings\s*\{/);
   assert.match(styles, /\.project-member-list article\s*\{/);
   assert.match(styles, /\.project-role-menu\s*\{[\s\S]*?border-radius: 8px;/);
-  assert.match(styles, /\.project-manager-list > header \.tooltip-control::after\s*\{[\s\S]*?top: calc\(100% \+ 5px\);[\s\S]*?right: 0;[\s\S]*?bottom: auto;[\s\S]*?left: auto;/);
+  assert.match(view, /data-tooltip="프로젝트 추가"/);
+  assert.doesNotMatch(styles, /tooltip-control::after/);
 });

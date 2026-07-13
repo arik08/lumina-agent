@@ -7,6 +7,7 @@ import {
   type RefObject,
 } from "react";
 import type { TurnSet } from "../api-types";
+import { GlobalTooltipLayer } from "./GlobalTooltip";
 
 interface QuestionNavigatorItem {
   anchorId: string;
@@ -71,6 +72,7 @@ export function ConversationQuestionNavigator({
   const items = useMemo(() => questionItems(turnSets), [turnSets]);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  const markerRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const itemKey = items.map((item) => item.anchorId).join("|");
 
   const cancelScrollAnimation = () => {
@@ -156,6 +158,7 @@ export function ConversationQuestionNavigator({
             <button
               className={`question-navigator-marker ${index < 2 ? "is-tooltip-start" : ""} ${index >= items.length - 2 ? "is-tooltip-end" : ""}`}
               type="button"
+              ref={(node) => { markerRefs.current[index] = node; }}
               aria-label={`질문 ${index + 1}로 이동: ${item.preview}`}
               aria-describedby={activeIndex === index ? tooltipId : undefined}
               style={markerStyle}
@@ -165,10 +168,10 @@ export function ConversationQuestionNavigator({
               key={item.anchorId}
             >
               {activeIndex === index && (
-                <span className="question-navigator-tooltip" id={tooltipId} role="tooltip">
+                <GlobalTooltipLayer anchor={markerRefs.current[index]} className="question-navigator-tooltip" id={tooltipId} open>
                   <strong>질문 {index + 1}</strong>
                   <span>{item.preview}</span>
-                </span>
+                </GlobalTooltipLayer>
               )}
             </button>
           );

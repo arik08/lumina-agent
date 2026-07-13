@@ -25,9 +25,10 @@ test("starting a new conversation closes and resets the composer picker", async 
   );
 });
 
-test("send button tooltip is anchored to the composer right edge", async () => {
-  const styles = await readFile(stylesUrl, "utf8");
+test("send button tooltip uses the shared global layer", async () => {
+  const [app, styles] = await Promise.all([readFile(appUrl, "utf8"), readFile(stylesUrl, "utf8")]);
 
-  assert.match(styles, /\.composer-footer \.send-button::after\s*\{[^}]*right:\s*0;[^}]*left:\s*auto;/);
-  assert.match(styles, /\.composer-footer \.send-button:hover::after,[\s\S]*?\.composer-footer \.send-button:focus-visible::after\s*\{\s*transform:\s*translateY\(0\);/);
+  assert.match(app, /className=\{`send-button tooltip-control/);
+  assert.match(app, /data-tooltip=\{composerShowsStop \? "중지" : "Enter 반영 · Ctrl\+Enter 대기"\}/);
+  assert.doesNotMatch(styles, /send-button::after/);
 });
