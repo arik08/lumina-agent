@@ -414,6 +414,10 @@ export interface MessageCitation {
 
 export interface MessageMetadata {
   usage?: Record<string, unknown>;
+  artifactUsage?: {
+    tokens: number;
+    lines: number;
+  };
   sources?: SourceEvidence[];
   citations?: MessageCitation[];
   searchInvocations?: Array<{
@@ -1241,6 +1245,10 @@ export interface RunSnapshot {
     text: string;
   } | null;
   artifactProgress: {
+    tokens: number;
+    lines: number;
+  } | null;
+  artifactUsage?: {
     tokens: number;
     lines: number;
   } | null;

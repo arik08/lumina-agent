@@ -1001,6 +1001,16 @@ def test_sse_disconnect_snapshot_and_last_event_id_replay_are_lossless(
             canonical = [
                 (event.sequence, event.event_type, event.payload_json) for event in rows
             ]
+            stored_run = db.get(Run, run_id)
+            assert stored_run is not None
+            assert stored_run.snapshot_json["artifact_usage"]["tokens"] > 0
+            assert stored_run.snapshot_json["artifact_usage"]["lines"] > 0
+            stored_run.snapshot_json = {
+                key: value
+                for key, value in stored_run.snapshot_json.items()
+                if key != "artifact_usage"
+            }
+            db.commit()
         cut_sequence = next(
             sequence
             for sequence, event_type, _payload in canonical
@@ -1062,3 +1072,4 @@ def test_sse_disconnect_snapshot_and_last_event_id_replay_are_lossless(
         assert progress[0] == {"tokens": 0, "lines": 0}
         assert progress[-1]["tokens"] > 0
         assert progress[-1]["lines"] > 0
+        assert snapshot_json["artifactUsage"] == progress[-1]

@@ -1704,9 +1704,39 @@ def message_response(message: Message, db: Session | None = None) -> dict[str, A
     }
 
 
+def _artifact_usage_snapshot(db: Session, run: Run) -> dict[str, int] | None:
+    usage: object = run.snapshot_json.get("artifact_usage")
+    if not isinstance(usage, Mapping):
+        latest_progress = db.scalar(
+            select(RunEvent)
+            .where(
+                RunEvent.run_id == run.id,
+                RunEvent.event_type == "artifact_progress",
+            )
+            .order_by(RunEvent.sequence.desc())
+            .limit(1)
+        )
+        usage = latest_progress.payload_json if latest_progress is not None else None
+    if not isinstance(usage, Mapping):
+        return None
+    tokens = usage.get("tokens")
+    lines = usage.get("lines")
+    if (
+        not isinstance(tokens, int)
+        or isinstance(tokens, bool)
+        or tokens < 0
+        or not isinstance(lines, int)
+        or isinstance(lines, bool)
+        or lines < 0
+    ):
+        return None
+    return {"tokens": tokens, "lines": lines}
+
+
 def run_snapshot(db: Session, run: Run) -> dict[str, Any]:
     conversation = db.get(Conversation, run.conversation_id)
     usage = _usage_snapshot(run)
+    artifact_usage = _artifact_usage_snapshot(db, run)
     tools = list(
         db.scalars(
             select(ToolExecution)
@@ -1820,6 +1850,7 @@ def run_snapshot(db: Session, run: Run) -> dict[str, Any]:
             else None
         ),
         "artifactProgress": run.snapshot_json.get("artifact_progress"),
+        "artifactUsage": artifact_usage,
         "workPlan": run.snapshot_json.get("work_plan", []),
         "plan": plan_snapshot(db, run),
         "activities": activities,

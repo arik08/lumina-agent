@@ -332,6 +332,7 @@ export function useLuminaWorkspace() {
         nextSnapshot.assistantDraft = null;
       } else if (event.type === "artifact_progress") {
         nextSnapshot.artifactProgress = event.payload;
+        nextSnapshot.artifactUsage = event.payload;
       } else if (event.type === "work_plan_updated") {
         nextSnapshot.workPlan = event.payload.steps;
       } else if (event.type === "plan_step_changed" && nextSnapshot.plan) {

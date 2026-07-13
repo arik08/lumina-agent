@@ -2642,7 +2642,11 @@ class LocalRunExecutor:
             run = db.get(Run, run_id)
             if run is None or run.status in TERMINAL_STATUSES:
                 return
-            run.snapshot_json = {**run.snapshot_json, "artifact_progress": progress}
+            run.snapshot_json = {
+                **run.snapshot_json,
+                "artifact_progress": progress,
+                "artifact_usage": progress,
+            }
             append_event(db, run, "artifact_progress", progress)
         await event_broker.notify(run_id)
 
@@ -3013,6 +3017,10 @@ class LocalRunExecutor:
                     web_metadata["sources"],
                 )
             )
+            artifact_usage = run.snapshot_json.get("artifact_usage")
+            message_metadata = {"usage": run.usage_json, **web_metadata}
+            if isinstance(artifact_usage, Mapping):
+                message_metadata["artifactUsage"] = dict(artifact_usage)
             message = Message(
                 id=assistant_message_id,
                 conversation_id=run.conversation_id,
@@ -3022,7 +3030,7 @@ class LocalRunExecutor:
                 status="completed",
                 canonical_text=run.assistant_draft,
                 turn_index=run.current_turn + 1,
-                metadata_json={"usage": run.usage_json, **web_metadata},
+                metadata_json=message_metadata,
             )
             db.add(message)
             run.current_turn += 1
