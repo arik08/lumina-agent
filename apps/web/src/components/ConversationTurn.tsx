@@ -201,10 +201,16 @@ function UsageCostPopover({ usage, model, provider }: { usage: Record<string, un
     const popover = popoverRef.current;
     if (!control || !popover) return;
     const controlRect = control.getBoundingClientRect();
+    const clippingRect = control.closest<HTMLElement>(".conversation-scroll")?.getBoundingClientRect();
     const viewportPadding = 12;
     const popoverGap = 8;
-    const spaceAbove = controlRect.top - viewportPadding - popoverGap;
-    const spaceBelow = window.innerHeight - controlRect.bottom - viewportPadding - popoverGap;
+    const topBoundary = Math.max(viewportPadding, (clippingRect?.top ?? 0) + viewportPadding);
+    const bottomBoundary = Math.min(
+      window.innerHeight - viewportPadding,
+      (clippingRect?.bottom ?? window.innerHeight) - viewportPadding,
+    );
+    const spaceAbove = controlRect.top - topBoundary - popoverGap;
+    const spaceBelow = bottomBoundary - controlRect.bottom - popoverGap;
     setPopoverPlacement(spaceAbove < popover.offsetHeight && spaceBelow > spaceAbove ? "below" : "above");
   }, []);
 
