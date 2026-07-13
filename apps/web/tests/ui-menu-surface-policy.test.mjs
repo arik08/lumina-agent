@@ -50,14 +50,14 @@ test("embedded composer suggestions use the composer surface", async () => {
   );
 });
 
-test("scrollable surfaces use neutral scrollbar tokens", async () => {
+test("scrollable surfaces use shared neutral scrollbar tokens", async () => {
   const styles = await readFile(stylesPath, "utf8");
 
-  assert.match(styles, /--scrollbar-thumb:\s*color-mix\(in srgb, var\(--ink\) 17%, transparent\);/);
+  assert.match(styles, /--scrollbar-thumb:\s*color-mix\(in srgb, var\(--ink\) 11%, transparent\);/);
   assert.match(styles, /--scrollbar-thumb-strong:\s*color-mix\(in srgb, var\(--ink\) 30%, transparent\);/);
   assert.doesNotMatch(
     styles,
-    /scrollbar-(?:color|thumb)[^;}]*var\(--cobalt\)/,
+    /scrollbar[^;}]*var\(--cobalt\)/,
     "scrollbars must not derive their color from the cobalt accent",
   );
 });
