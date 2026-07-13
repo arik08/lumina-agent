@@ -741,9 +741,13 @@ function App() {
     setArtifactResizing(true);
     try { handle.setPointerCapture(event.pointerId); } catch { /* Pointer capture is not available in every browser path. */ }
     let finished = false;
+    let resizeFrame: number | null = null;
+    let pendingClientX = event.clientX;
     const finish = () => {
       if (finished) return;
       finished = true;
+      if (resizeFrame !== null) window.cancelAnimationFrame(resizeFrame);
+      resizeFrame = null;
       setArtifactResizing(false);
       try {
         if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
@@ -754,12 +758,9 @@ function App() {
       window.removeEventListener("mouseup", finish);
       window.removeEventListener("blur", finish);
     };
-    const move = (moveEvent: PointerEvent) => {
-      if (moveEvent.buttons === 0) {
-        finish();
-        return;
-      }
-      const expandedChatWidth = moveEvent.clientX - 278;
+    const applyResize = () => {
+      resizeFrame = null;
+      const expandedChatWidth = pendingClientX - 278;
       let nextCollapsed = currentCollapsed;
       if (!currentCollapsed && expandedChatWidth <= chatPaneMinWidth) {
         nextCollapsed = true;
@@ -771,7 +772,15 @@ function App() {
         setSidebarCollapsed(false);
       }
       currentCollapsed = nextCollapsed;
-      setArtifactPaneWidth(Math.round(clampArtifactPaneWidth(window.innerWidth - moveEvent.clientX, nextCollapsed)));
+      setArtifactPaneWidth(Math.round(clampArtifactPaneWidth(window.innerWidth - pendingClientX, nextCollapsed)));
+    };
+    const move = (moveEvent: PointerEvent) => {
+      if (moveEvent.buttons === 0) {
+        finish();
+        return;
+      }
+      pendingClientX = moveEvent.clientX;
+      if (resizeFrame === null) resizeFrame = window.requestAnimationFrame(applyResize);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", finish);

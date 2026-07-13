@@ -46,6 +46,11 @@
   --tooltip-padding: 7px 9px;
   --tooltip-radius: 5px;
   --tooltip-shadow: 0 6px 16px rgba(20, 24, 31, 0.22);
+  --motion-fast: 140ms;
+  --motion-medium: 220ms;
+  --motion-slow: 300ms;
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 * { box-sizing: border-box; }
@@ -1731,13 +1736,14 @@ button:disabled { cursor: default; opacity: 0.5; }
 .turn-work-trigger:focus-visible { outline: 2px solid color-mix(in srgb, var(--cobalt) 58%, transparent); outline-offset: 3px; border-radius: 3px; }
 .turn-work-trigger svg { transition: transform 180ms cubic-bezier(.22, 1, .36, 1); }
 .turn-work-details.is-open .turn-work-trigger svg { transform: rotate(90deg); }
-.turn-tool-activity { padding: 4px 0 10px; }
+.turn-tool-activity { padding: 4px 0 10px; transform-origin: top; animation: activity-expand var(--motion-medium) var(--ease-out-quint) both; }
 .turn-work-details .progress-summary { padding: 5px 0 0; border-left: 0; }
 .turn-work-details .skill-activity { margin-left: 0; padding-left: 0; }
 .turn-work-details .tool-call-group-summary { width: 100%; margin-left: 0; padding-left: 0; }
 .turn-work-details .run-activity-timeline .tool-call { margin-left: 0; }
 .turn-work-details .tool-call-trigger { padding-left: 0; }
 .run-activity-timeline { display: grid; gap: 5px; margin-bottom: 12px; }
+.progress-group { min-width: 0; animation: activity-enter var(--motion-medium) var(--ease-out-quint) both; }
 .skill-activity { display: grid; min-height: 30px; grid-template-columns: 17px auto minmax(0, auto) minmax(0, 1fr) auto; align-items: center; gap: 7px; margin-left: 30px; padding: 3px 6px 3px 4px; color: var(--muted); font-size: 13.4px; }
 .skill-activity > svg { color: var(--cobalt); }
 .skill-activity-kind { color: var(--cobalt); font-size: 11.5px; font-weight: 700; text-transform: uppercase; }
@@ -1762,7 +1768,8 @@ button:disabled { cursor: default; opacity: 0.5; }
 .tool-call-group-summary > span { overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
 .tool-call-group-summary > .tool-call-group-duration { font-size: 11.5px; text-align: right; }
 .tool-call-group-summary > svg:first-child { color: var(--tool-icon-color, var(--cobalt)); }
-.progress-tools { display: grid; max-height: 235px; gap: 5px; overflow-y: auto; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) transparent; }
+.progress-tools { display: grid; max-height: 235px; gap: 5px; overflow-y: auto; transform-origin: top; animation: activity-expand var(--motion-medium) var(--ease-out-quint) both; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) transparent; }
+.progress-tools > :is(.tool-call, .model-processing-row) { animation: activity-enter var(--motion-medium) var(--ease-out-quint) both; }
 .progress-tools::-webkit-scrollbar { width: 7px; }
 .progress-tools::-webkit-scrollbar-track { background: transparent; }
 .progress-tools::-webkit-scrollbar-thumb { border-radius: 999px; background: var(--scrollbar-thumb); }
@@ -2323,7 +2330,7 @@ button:disabled { cursor: default; opacity: 0.5; }
   flex-direction: column;
   border-left: 1px solid var(--line);
   background: var(--surface);
-  animation: slide-in 180ms ease-out;
+  animation: artifact-pane-enter var(--motion-slow) var(--ease-out-quint) both;
 }
 
 .artifact-resize-handle {
@@ -2339,8 +2346,8 @@ button:disabled { cursor: default; opacity: 0.5; }
   cursor: col-resize;
   touch-action: none;
 }
-.artifact-resize-handle::after { position: absolute; top: 0; bottom: 0; left: 4px; width: 2px; content: ""; background: transparent; transition: background-color 120ms ease; }
-.artifact-resize-handle:hover::after, .artifact-resize-handle:focus-visible::after, .is-artifact-resizing .artifact-resize-handle::after { background: color-mix(in srgb, var(--cobalt) 56%, transparent); }
+.artifact-resize-handle::after { position: absolute; top: 12px; bottom: 12px; left: 4px; width: 2px; border-radius: 999px; content: ""; background: color-mix(in srgb, var(--cobalt) 64%, transparent); opacity: 0; transform: scaleY(.35); transition: opacity var(--motion-fast) var(--ease-out-quart), transform var(--motion-medium) var(--ease-out-quint), box-shadow var(--motion-medium) var(--ease-out-quint); }
+.artifact-resize-handle:hover::after, .artifact-resize-handle:focus-visible::after, .is-artifact-resizing .artifact-resize-handle::after { opacity: 1; transform: scaleY(1); box-shadow: 0 0 9px color-mix(in srgb, var(--cobalt) 26%, transparent); }
 .artifact-resize-handle:focus-visible { outline: 0; }
 
 .artifact-pane.is-fullscreen { position: fixed; inset: 0; z-index: 80; width: 100%; }
@@ -2671,6 +2678,9 @@ button:disabled { cursor: default; opacity: 0.5; }
 @keyframes reveal { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes slide-in { from { opacity: 0; transform: translateX(10px); } to { opacity: 1; transform: translateX(0); } }
 @keyframes toast-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes activity-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes activity-expand { from { opacity: 0; transform: translateY(-4px) scaleY(.985); } to { opacity: 1; transform: translateY(0) scaleY(1); } }
+@keyframes artifact-pane-enter { from { opacity: 0; transform: translateX(18px); } to { opacity: 1; transform: translateX(0); } }
 
 @media (max-width: 1399px) {
   .artifact-resize-handle { display: none; }

@@ -574,6 +574,40 @@ function preserveConversationScrollPosition(target: HTMLElement, update: () => v
   });
 }
 
+const runActivityRevealDelayMs = 85;
+
+function useStaggeredRunActivities(activities: RunActivity[], enabled: boolean) {
+  const [visibleCount, setVisibleCount] = useState(activities.length);
+  const visibleCountRef = useRef(visibleCount);
+  const firstActivityIdRef = useRef(activities[0]?.id ?? "");
+
+  useEffect(() => {
+    visibleCountRef.current = visibleCount;
+  }, [visibleCount]);
+
+  useEffect(() => {
+    const firstActivityId = activities[0]?.id ?? "";
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    if (!enabled || reduceMotion || firstActivityIdRef.current !== firstActivityId || visibleCountRef.current > activities.length) {
+      firstActivityIdRef.current = firstActivityId;
+      visibleCountRef.current = activities.length;
+      setVisibleCount(activities.length);
+      return undefined;
+    }
+    if (visibleCountRef.current >= activities.length) return undefined;
+    const timer = window.setTimeout(() => {
+      setVisibleCount((current) => {
+        const next = Math.min(activities.length, current + 1);
+        visibleCountRef.current = next;
+        return next;
+      });
+    }, runActivityRevealDelayMs);
+    return () => window.clearTimeout(timer);
+  }, [activities.length, activities[0]?.id, enabled, visibleCount]);
+
+  return activities.slice(0, visibleCount);
+}
+
 function RunActivityTimeline({
   activities,
   timelineStartedAtMs,
@@ -587,6 +621,7 @@ function RunActivityTimeline({
   openCalls,
   onToggleCall,
   onCopy,
+  onVisibleGrowth,
 }: {
   activities: RunActivity[];
   timelineStartedAtMs: number;
@@ -600,10 +635,13 @@ function RunActivityTimeline({
   openCalls: Set<string>;
   onToggleCall: (id: string) => void;
   onCopy: (execution: ToolExecution) => void;
+  onVisibleGrowth?: () => void;
 }) {
   const [openSummaryIds, setOpenSummaryIds] = useState<Set<string>>(new Set());
   const previousAutoOpenSummaryIds = useRef<Set<string>>(new Set());
-  const activityGroups = activities.reduce<RunActivity[][]>((groups, activity) => {
+  const visibleActivities = useStaggeredRunActivities(activities, timelineRunning);
+  const latestVisibleActivityId = visibleActivities.at(-1)?.id ?? "";
+  const activityGroups = visibleActivities.reduce<RunActivity[][]>((groups, activity) => {
     if (activity.type === "progress_summary" || activity.type === "skill" || groups.length === 0) groups.push([]);
     groups.at(-1)?.push(activity);
     return groups;
@@ -650,6 +688,10 @@ function RunActivityTimeline({
     });
     previousAutoOpenSummaryIds.current = autoOpenSummaryIds;
   }, [autoOpenSummaryKey]);
+
+  useEffect(() => {
+    if (timelineRunning && latestVisibleActivityId) onVisibleGrowth?.();
+  }, [latestVisibleActivityId, onVisibleGrowth, timelineRunning]);
 
   return (
     <section className="run-activity-timeline" aria-label="실행 과정">
@@ -1402,6 +1444,7 @@ export function AssistantTurn({
                 openCalls={openCalls}
                 onCopy={onCopyTool}
                 onToggleCall={onToggleCall}
+                onVisibleGrowth={onVisibleGrowth}
               />
             </div>
           )}

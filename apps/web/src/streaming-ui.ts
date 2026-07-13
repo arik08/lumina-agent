@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 const streamStartBufferMs = 180;
 const streamRevealDurationMs = 420;
-const frameFallbackMs = 34;
+const visibleFrameIntervalMs = 50;
+const frameFallbackMs = 100;
+const streamCatchUpDeadlineMs = 1_200;
 const minRevealRate = 1 / 96;
 const maxRevealRate = 0.5;
 const chunkSampleSize = 3;
@@ -10,13 +12,28 @@ const minChunkIntervalMs = 24;
 const maxChunkIntervalMs = 600;
 const nearBottomPx = 140;
 const streamingRejoinPx = 360;
-const jumpButtonThresholdPx = 12;
+const jumpButtonThresholdPx = 40;
+
+function smoothRevealCount(pendingLength: number, desiredCount: number) {
+  if (!pendingLength || desiredCount <= 0) return 0;
+  const maxTickChars = pendingLength >= 1_400
+    ? 24
+    : pendingLength >= 700
+      ? 16
+      : pendingLength >= 220
+        ? 12
+        : pendingLength >= 40
+          ? 8
+          : 4;
+  return Math.min(pendingLength, Math.max(1, Math.min(maxTickChars, desiredCount)));
+}
 
 export function useStreamingText(targetText: string, streaming: boolean) {
   const [visibleText, setVisibleText] = useState(() => (streaming ? "" : targetText));
   const visibleRef = useRef(visibleText);
   const pendingRef = useRef("");
   const startTimerRef = useRef<number | null>(null);
+  const frameTimerRef = useRef<number | null>(null);
   const animationRef = useRef<number | null>(null);
   const fallbackRef = useRef<number | null>(null);
   const deadlineRef = useRef<number | null>(null);
@@ -29,10 +46,12 @@ export function useStreamingText(targetText: string, streaming: boolean) {
 
   const clearScheduled = useCallback(() => {
     if (startTimerRef.current !== null) window.clearTimeout(startTimerRef.current);
+    if (frameTimerRef.current !== null) window.clearTimeout(frameTimerRef.current);
     if (animationRef.current !== null) window.cancelAnimationFrame(animationRef.current);
     if (fallbackRef.current !== null) window.clearTimeout(fallbackRef.current);
     if (deadlineRef.current !== null) window.clearTimeout(deadlineRef.current);
     startTimerRef.current = null;
+    frameTimerRef.current = null;
     animationRef.current = null;
     fallbackRef.current = null;
     deadlineRef.current = null;
@@ -72,28 +91,38 @@ export function useStreamingText(targetText: string, streaming: boolean) {
       ? revealRateRef.current * 0.7 + targetRate * 0.3
       : targetRate;
     if (deadlineRef.current !== null) window.clearTimeout(deadlineRef.current);
-    deadlineRef.current = window.setTimeout(flushAll, streamRevealDurationMs);
+    deadlineRef.current = window.setTimeout(
+      flushAll,
+      Math.max(streamCatchUpDeadlineMs, streamRevealDurationMs * 3),
+    );
   }, [flushAll]);
 
   const flushFrameRef = useRef<(timestamp?: number) => void>(() => undefined);
   const scheduleFrame = useCallback(() => {
-    if (animationRef.current !== null || fallbackRef.current !== null) return;
+    if (frameTimerRef.current !== null || animationRef.current !== null || fallbackRef.current !== null) return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) {
+      flushAll();
+      return;
+    }
     if (document.hidden) {
       flushAll();
       return;
     }
-    animationRef.current = window.requestAnimationFrame((timestamp) => {
-      animationRef.current = null;
-      if (fallbackRef.current !== null) window.clearTimeout(fallbackRef.current);
-      fallbackRef.current = null;
-      flushFrameRef.current(timestamp);
-    });
-    fallbackRef.current = window.setTimeout(() => {
-      fallbackRef.current = null;
-      if (animationRef.current !== null) window.cancelAnimationFrame(animationRef.current);
-      animationRef.current = null;
-      flushFrameRef.current(performance.now());
-    }, frameFallbackMs);
+    frameTimerRef.current = window.setTimeout(() => {
+      frameTimerRef.current = null;
+      animationRef.current = window.requestAnimationFrame((timestamp) => {
+        animationRef.current = null;
+        if (fallbackRef.current !== null) window.clearTimeout(fallbackRef.current);
+        fallbackRef.current = null;
+        flushFrameRef.current(timestamp);
+      });
+      fallbackRef.current = window.setTimeout(() => {
+        fallbackRef.current = null;
+        if (animationRef.current !== null) window.cancelAnimationFrame(animationRef.current);
+        animationRef.current = null;
+        flushFrameRef.current(performance.now());
+      }, frameFallbackMs);
+    }, visibleFrameIntervalMs);
   }, [flushAll]);
 
   flushFrameRef.current = (timestamp = performance.now()) => {
@@ -111,7 +140,11 @@ export function useStreamingText(targetText: string, streaming: boolean) {
       return;
     }
     const chars = Array.from(pending);
-    const revealCount = Math.max(1, Math.min(chars.length, Math.floor(revealBudgetRef.current)));
+    const revealCount = smoothRevealCount(chars.length, Math.floor(revealBudgetRef.current));
+    if (revealCount <= 0) {
+      scheduleFrame();
+      return;
+    }
     revealBudgetRef.current = Math.max(0, revealBudgetRef.current - revealCount);
     visibleRef.current += chars.slice(0, revealCount).join("");
     pendingRef.current = chars.slice(revealCount).join("");
@@ -120,6 +153,10 @@ export function useStreamingText(targetText: string, streaming: boolean) {
   };
 
   const scheduleReveal = useCallback(() => {
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) {
+      flushAll();
+      return;
+    }
     if (displayStartedRef.current) {
       scheduleFrame();
       return;
@@ -129,15 +166,29 @@ export function useStreamingText(targetText: string, streaming: boolean) {
       startTimerRef.current = null;
       scheduleFrame();
     }, streamStartBufferMs);
-  }, [scheduleFrame]);
+  }, [flushAll, scheduleFrame]);
 
   useEffect(() => {
     if (!streaming) {
+      recentChunksRef.current = [];
+      lastChunkAtRef.current = null;
+      const queued = visibleRef.current + pendingRef.current;
+      if (queued === targetText) {
+        if (pendingRef.current) {
+          retune();
+          scheduleReveal();
+        }
+        return;
+      }
+      if (targetText.startsWith(visibleRef.current)) {
+        pendingRef.current = targetText.slice(visibleRef.current.length);
+        retune();
+        scheduleReveal();
+        return;
+      }
       clearScheduled();
       pendingRef.current = "";
       displayStartedRef.current = false;
-      recentChunksRef.current = [];
-      lastChunkAtRef.current = null;
       visibleRef.current = targetText;
       setVisibleText((current) => current === targetText ? current : targetText);
       return;
@@ -207,16 +258,38 @@ export function useConversationAutoFollow(active: boolean, conversationId: strin
       setShowJumpToLatest(false);
       return;
     }
-    const step = () => {
+    let previousFrameAt = performance.now();
+    let followVelocity = 0;
+    let lastTarget = Math.max(0, container.scrollHeight - container.clientHeight);
+    let targetStableMs = 0;
+    const step = (now: number) => {
       const current = containerRef.current;
       if (!current || !followingRef.current) {
         animationRef.current = null;
         return;
       }
       const target = Math.max(0, current.scrollHeight - current.clientHeight);
+      const elapsed = Math.min(64, Math.max(8, now - previousFrameAt));
+      previousFrameAt = now;
+      if (Math.abs(target - lastTarget) > 0.5) {
+        lastTarget = target;
+        targetStableMs = 0;
+      } else {
+        targetStableMs += elapsed;
+      }
       const distance = target - current.scrollTop;
-      current.scrollTop += Math.max(1, distance * 0.2);
-      if (distance <= 1) {
+      const dt = elapsed / 1_000;
+      const responseMs = 340;
+      const omega = (1_000 / responseMs) * 2.25;
+      const acceleration = distance * omega * omega - followVelocity * 2 * omega;
+      const maxAcceleration = Math.max(12_000, Math.min(42_000, current.clientHeight * 70));
+      followVelocity += Math.max(-maxAcceleration, Math.min(maxAcceleration, acceleration)) * dt;
+      const maxVelocity = Math.max(520, Math.min(4_200, current.clientHeight * 4 + Math.abs(distance) * 3));
+      followVelocity = Math.max(0, Math.min(maxVelocity, followVelocity));
+      const nextTop = current.scrollTop + followVelocity * dt;
+      current.scrollTop = Math.max(current.scrollTop, Math.min(target, nextTop));
+      const remaining = target - current.scrollTop;
+      if (targetStableMs > 120 && remaining <= Math.max(1, followVelocity * dt)) {
         current.scrollTop = target;
         setShowJumpToLatest(false);
         animationRef.current = null;
@@ -263,7 +336,7 @@ export function useConversationAutoFollow(active: boolean, conversationId: strin
       followingRef.current = true;
       return;
     }
-    if (distance > streamingRejoinPx) stop();
+    if (distance > streamingRejoinPx && Date.now() <= userIntentUntilRef.current) stop();
   }, [stop, updateJumpVisibility]);
 
   const onUserIntent = useCallback(() => {
