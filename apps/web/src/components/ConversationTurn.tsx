@@ -128,6 +128,14 @@ function usageNumber(usage: Record<string, unknown> | undefined, key: string) {
   return Number.isFinite(value) && value >= 0 ? value : 0;
 }
 
+function cacheRateTone(rate: number) {
+  if (rate <= 50) return "cache-rate-critical";
+  if (rate <= 70) return "cache-rate-low";
+  if (rate <= 80) return "cache-rate-moderate";
+  if (rate <= 90) return "cache-rate-good";
+  return "cache-rate-excellent";
+}
+
 function estimatedModelCostParts(usage: Record<string, unknown> | undefined) {
   const raw = usage?.estimated_cost_breakdown_usd;
   if (typeof raw !== "object" || raw === null) return undefined;
@@ -169,7 +177,9 @@ function UsageCostPopover({ usage, model, provider }: { usage: Record<string, un
     : usageNumber(usage, "uncached_input_tokens");
   const output = usageNumber(usage, "output_tokens");
   const total = input + output;
-  const cacheRate = input > 0 ? `${((cached / input) * 100).toFixed(1)}%` : "0.0%";
+  const cacheRatePercent = input > 0 ? (cached / input) * 100 : 0;
+  const cacheRate = `${cacheRatePercent.toFixed(1)}%`;
+  const cacheRateClass = cacheRateTone(cacheRatePercent);
   const reportedCost = Number(usage?.cost_usd);
   const hasReportedCost = Number.isFinite(reportedCost) && reportedCost >= 0;
   const estimatedCosts = estimatedModelCostParts(usage);
@@ -217,7 +227,7 @@ function UsageCostPopover({ usage, model, provider }: { usage: Record<string, un
           <tbody>
             {rows.map(([label, tokens, cost]) => (
               <tr className={label === "Total" ? "is-total" : label === "Cached" || label === "Uncached" || label === "Cache rate" ? "is-child" : ""} key={label}>
-                <th scope="row">{label}</th><td>{tokens}</td><td>{cost}</td>
+                <th scope="row">{label}</th><td className={label === "Cache rate" ? cacheRateClass : undefined}>{tokens}</td><td>{cost}</td>
               </tr>
             ))}
           </tbody>
