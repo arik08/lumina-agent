@@ -90,6 +90,7 @@ import type {
 } from "./api-types";
 import LoginScreen from "./components/LoginScreen";
 import { AdminView } from "./components/AdminView";
+import { AdminRunSafetySettings } from "./components/AdminRunSafetySettings";
 import { ArtifactLibraryView } from "./components/ArtifactLibraryView";
 import { MarketplaceView } from "./components/MarketplaceView";
 import { MemoryView } from "./components/MemoryView";
@@ -2692,7 +2693,7 @@ function App() {
                   <label className="settings-row"><span><strong>Effort</strong><small>지원되는 경우 기본 추론 강도를 선택합니다.</small></span><select value={workspace.settings?.execution.effortId ?? ""} onChange={(event) => void workspace.selectEffort(event.currentTarget.value || null)}><option value="">기본값</option>{effortOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>
                 </section>
                 </>}
-                {isAdmin && settingsSection === "admin" && (
+                {isAdmin && settingsSection === "admin" && (<>
                   <section className="settings-card settings-admin-card" aria-labelledby="admin-model-settings-title">
                     <header><span><ShieldCheck size={15} /><h2 id="admin-model-settings-title">관리자 설정</h2></span><small>모든 사용자에게 적용</small></header>
                     <label className="settings-row"><span><strong>Provider</strong><small>최대 토큰을 변경할 Provider입니다.</small></span><select value={adminSettingsProviderId} disabled={adminSettingsBusy} onChange={(event) => setAdminSettingsProviderId(event.currentTarget.value)}>{accountProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.displayName}</option>)}</select></label>
@@ -2729,7 +2730,8 @@ function App() {
                     </div>
                     {adminSettingsError && <p className="settings-inline-error" role="alert">{adminSettingsError}</p>}
                   </section>
-                )}
+                  <AdminRunSafetySettings onToast={showToast} />
+                </>)}
               </div>
             </section>
           </main>

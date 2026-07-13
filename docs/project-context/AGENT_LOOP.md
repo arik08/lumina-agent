@@ -38,7 +38,7 @@ queued
 
 상태 변경과 주요 이벤트를 DB에 기록하고 SSE 또는 WebSocket으로 Frontend에 전달합니다. Backend나 Worker가 재시작되어도 저장된 상태를 기준으로 실패 여부를 판단하거나 안전하게 이어갈 수 있어야 합니다.
 
-각 Run은 생성 시 조직의 관리자 실행 안전 한도를 snapshot으로 고정합니다. 기본값은 Run당 400 model Turn, 총 4,000,000 Token, 시작 후 10,080분(7일), 예상 비용 $100이며 관리자가 관리 화면에서 모두 조정할 수 있습니다. 한도는 Session 누적이 아니라 Run마다 새로 계산하고, 변경된 설정은 새 Run부터 적용합니다. 한도에 도달하면 부분 결과, 사용량과 checkpoint를 보존한 채 `limit_reached`로 종료합니다. Context가 모델 입력 창에 가까워지면 원본 메시지와 Tool 실행 근거는 저장소에 유지한 채 이전 대화와 진행 상태를 복구 가능한 요약으로 압축하고, 최신 메시지와 미완료 Plan을 보존하여 같은 Run의 다음 Turn을 계속합니다. 압축은 `context_compacted` 이벤트와 revision·source hash를 남겨 재접속과 감사 시 동일한 진행 상태를 복원할 수 있어야 합니다.
+각 Run은 생성 시 조직의 관리자 실행 안전 한도를 snapshot으로 고정합니다. 기본값은 Run당 400 model Turn, 총 4,000,000 Token, 시작 후 10,080분(7일), 예상 비용 $100이며 관리자가 `설정 → 관리자 설정`에서 모두 조정할 수 있습니다. 한도는 Session 누적이 아니라 Run마다 새로 계산하고, 변경된 설정은 새 Run부터 적용합니다. 한도에 도달하면 부분 결과, 사용량과 checkpoint를 보존한 채 `limit_reached`로 종료합니다. Context가 모델 입력 창에 가까워지면 원본 메시지와 Tool 실행 근거는 저장소에 유지한 채 이전 대화와 진행 상태를 복구 가능한 요약으로 압축하고, 최신 메시지와 미완료 Plan을 보존하여 같은 Run의 다음 Turn을 계속합니다. 압축은 `context_compacted` 이벤트와 revision·source hash를 남겨 재접속과 감사 시 동일한 진행 상태를 복원할 수 있어야 합니다.
 
 ## 한 Turn의 처리
 

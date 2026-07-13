@@ -3,7 +3,6 @@ import {
   BarChart3,
   Check,
   ChevronDown,
-  CircleStop,
   FileText,
   KeyRound,
   List,
@@ -16,7 +15,6 @@ import {
   Save,
   Search,
   ShieldCheck,
-  ShieldAlert,
   Users,
 } from "lucide-react";
 import { type FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
@@ -25,7 +23,6 @@ import type {
   AdminAuditEvent,
   AdminConversationDetail,
   AdminConversationSummary,
-  AdminRunSafetySettings,
   AdminUser,
   AdminUsageStatistics,
   UserRole,
@@ -33,7 +30,7 @@ import type {
 } from "../api-types";
 import { OrganizationInstructionsPanel } from "./OrganizationInstructionsPanel";
 
-type AdminTab = "users" | "usage" | "conversations" | "audit" | "safety" | "policy";
+type AdminTab = "users" | "usage" | "conversations" | "audit" | "policy";
 type UsageMetric = "activeUsers" | "loginCount" | "runCount";
 type AdminHistoryViewMode = "recent" | "user";
 type AdminListLimit = 50 | 120 | 250 | 500;
@@ -206,10 +203,6 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
   const [usageStatistics, setUsageStatistics] = useState<AdminUsageStatistics | null>(null);
   const [usagePeriod, setUsagePeriod] = useState<0 | 30 | 90>(30);
   const [usageMetric, setUsageMetric] = useState<UsageMetric>("activeUsers");
-  const [runSafety, setRunSafety] = useState<AdminRunSafetySettings | null>(null);
-  const [safetySaving, setSafetySaving] = useState(false);
-  const [killArmed, setKillArmed] = useState(false);
-  const [killRunning, setKillRunning] = useState(false);
   const [userTotal, setUserTotal] = useState(0);
   const [conversations, setConversations] = useState<AdminConversationSummary[]>([]);
   const [conversationTotal, setConversationTotal] = useState(0);
@@ -282,8 +275,6 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
               setConversations(page.items);
               setConversationTotal(page.total);
             })
-          : tab === "safety"
-            ? api.admin.getRunSafetySettings(controller.signal).then(setRunSafety)
           : api.admin.listAuditEvents({ action: query, limit: auditLimit }, controller.signal).then((page) => {
               setAuditEvents(page.items);
               setAuditTotal(page.total);
@@ -299,10 +290,6 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
       controller.abort();
     };
   }, [auditLimit, conversationLimit, feedbackOnly, query, refreshKey, tab, usagePeriod]);
-
-  useEffect(() => {
-    setKillArmed(false);
-  }, [tab]);
 
   const chooseUser = (user: AdminUser) => {
     const next = selectedUser?.id === user.id ? null : user;
@@ -411,38 +398,6 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
     }
   };
 
-  const saveRunSafety = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!runSafety) return;
-    setSafetySaving(true);
-    try {
-      const updated = await api.admin.updateRunSafetySettings(runSafety);
-      setRunSafety(updated);
-      onToast("Run 안전 한도를 저장했습니다. 새 Run부터 적용됩니다.");
-    } catch (requestError) {
-      onToast(errorMessage(requestError));
-    } finally {
-      setSafetySaving(false);
-    }
-  };
-
-  const emergencyStopAllRuns = async () => {
-    if (!killArmed) {
-      setKillArmed(true);
-      return;
-    }
-    setKillRunning(true);
-    try {
-      const result = await api.admin.emergencyStopAllRuns();
-      setKillArmed(false);
-      onToast(`Run ${result.cancelledRunCount}개 · 대기 요청 ${result.cancelledQueuedMessageCount}개를 중단했습니다.`);
-    } catch (requestError) {
-      onToast(errorMessage(requestError));
-    } finally {
-      setKillRunning(false);
-    }
-  };
-
   const openConversation = async (conversationId: string) => {
     setDetailLoading(true);
     try {
@@ -479,10 +434,9 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
           <button type="button" role="tab" aria-selected={tab === "usage"} onClick={() => setTab("usage")}><BarChart3 size={15} /> 사용통계</button>
           <button type="button" role="tab" aria-selected={tab === "conversations"} onClick={() => setTab("conversations")}><MessageSquare size={15} /> 대화</button>
           <button type="button" role="tab" aria-selected={tab === "audit"} onClick={() => setTab("audit")}><ShieldCheck size={15} /> 모니터링</button>
-          <button type="button" role="tab" aria-selected={tab === "safety"} onClick={() => setTab("safety")}><ShieldAlert size={15} /> 실행 안전</button>
           <button type="button" role="tab" aria-selected={tab === "policy"} onClick={() => setTab("policy")}><FileText size={15} /> 기본 지침</button>
         </div>
-        {tab !== "policy" && tab !== "safety" && <label className="admin-search"><Search size={15} /><input value={query} placeholder={placeholder} onChange={(event) => setQuery(event.currentTarget.value)} /></label>}
+        {tab !== "policy" && <label className="admin-search"><Search size={15} /><input value={query} placeholder={placeholder} onChange={(event) => setQuery(event.currentTarget.value)} /></label>}
         {tab !== "policy" && <button className="tooltip-control" type="button" aria-label="새로 고침" data-tooltip="새로 고침" onClick={() => setRefreshKey((value) => value + 1)}>{loading ? <LoaderCircle className="is-running" size={16} /> : <RefreshCcw size={16} />}</button>}
         {tab === "conversations" && <label className="admin-feedback-filter"><input type="checkbox" checked={feedbackOnly} onChange={(event) => setFeedbackOnly(event.currentTarget.checked)} /> 의견 있는 대화만</label>}
         {tab === "users" && <button className="primary-compact lumina-primary-action" type="button" onClick={() => setCreateOpen((open) => !open)}><Plus size={15} /> 사용자</button>}
@@ -651,27 +605,6 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
                 </section>
               );
             })}
-          </div>
-        </section>
-      )}
-      {tab === "safety" && (
-        <section className="admin-section admin-run-safety" aria-label="Run 실행 안전 설정">
-          <div className="admin-run-safety-heading">
-            <div><strong>Run 폭주 방지 한도</strong><small>정상적인 장시간 작업은 방해하지 않도록 넉넉한 기본값을 사용합니다.</small></div>
-          </div>
-          {runSafety && (
-            <form className="admin-run-safety-form" onSubmit={(event) => void saveRunSafety(event)}>
-              <label><span>최대 모델 Turn</span><input type="number" min="10" max="10000" value={runSafety.maxModelTurns} onChange={(event) => setRunSafety({ ...runSafety, maxModelTurns: Number(event.currentTarget.value) })} /><small>Run당 모델 호출 단계</small></label>
-              <label><span>최대 누적 Token</span><input type="number" min="100000" max="100000000" step="100000" value={runSafety.maxTotalTokens} onChange={(event) => setRunSafety({ ...runSafety, maxTotalTokens: Number(event.currentTarget.value) })} /><small>입력과 출력 Token 합계</small></label>
-              <label><span>최대 실행 시간</span><div className="admin-run-safety-input"><input type="number" min="30" max="525600" step="1" value={runSafety.maxElapsedMinutes} onChange={(event) => setRunSafety({ ...runSafety, maxElapsedMinutes: Number(event.currentTarget.value) })} /><span>분</span></div><small>실제 실행 시작 이후 기준</small></label>
-              <label><span>최대 예상 비용</span><div className="admin-run-safety-input"><span>$</span><input type="number" min="1" max="10000" step="1" value={runSafety.maxCostUsd} onChange={(event) => setRunSafety({ ...runSafety, maxCostUsd: Number(event.currentTarget.value) })} /></div><small>Provider 보고값 또는 가격표 추정</small></label>
-              <footer><p>저장한 값은 새로 시작하는 Run의 snapshot에 고정됩니다.</p><button type="submit" disabled={safetySaving}>{safetySaving ? <LoaderCircle className="is-running" size={14} /> : <Save size={14} />} 저장</button></footer>
-            </form>
-          )}
-          <div className="admin-emergency-stop-panel">
-            <div><strong>비상 전체 중단</strong><small>이 조직의 실행 중·대기 중 Run과 다음 요청 Queue를 즉시 중단합니다.</small></div>
-            <button className={killArmed ? "is-armed" : ""} type="button" disabled={killRunning} onClick={() => void emergencyStopAllRuns()}>{killRunning ? <LoaderCircle className="is-running" size={15} /> : <CircleStop size={15} />} {killArmed ? "한 번 더 눌러 모든 작업 중단" : "모든 세션 작업 Kill"}</button>
-            {killArmed && <p className="admin-inline-confirm"><AlertTriangle size={14} /> 같은 버튼을 한 번 더 누르면 복구 대기 작업까지 모두 취소됩니다.</p>}
           </div>
         </section>
       )}
