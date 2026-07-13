@@ -277,6 +277,86 @@ async def test_codex_oauth_stream_maps_lumina_tool_calls(
 
 
 @pytest.mark.asyncio
+async def test_codex_oauth_recovers_structural_tool_argument_suffix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state: dict[str, Any] = {
+        "response": json.dumps(
+            {
+                "kind": "tool_calls",
+                "text": "",
+                "tool_calls": [
+                    {
+                        "id": "call_search",
+                        "name": "web_search",
+                        "arguments_json": '{"query":"POSCO news"},{',
+                    }
+                ],
+            }
+        )
+    }
+    monkeypatch.setattr(
+        "lumina.providers.codex.adapter.AsyncCodex", _fake_async_codex(state)
+    )
+
+    events = [
+        event
+        async for event in CodexResponsesAdapter().stream(
+            ProviderRequest(
+                model="gpt-5.5",
+                messages=(ProviderMessage(role="user", content="검색"),),
+            )
+        )
+    ]
+
+    completed = next(
+        event for event in events if event.type == "tool_call_completed"
+    )
+    assert json.loads(completed.arguments_json or "") == {"query": "POSCO news"}
+    assert events[-1].stop_reason == "tool_calls"
+
+
+@pytest.mark.asyncio
+async def test_codex_oauth_preserves_invalid_result_classification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state: dict[str, Any] = {
+        "response": json.dumps(
+            {
+                "kind": "tool_calls",
+                "text": "",
+                "tool_calls": [
+                    {
+                        "id": "call_search",
+                        "name": "web_search",
+                        "arguments_json": '{"query":"POSCO"},{"query":"steel"}',
+                    }
+                ],
+            }
+        )
+    }
+    monkeypatch.setattr(
+        "lumina.providers.codex.adapter.AsyncCodex", _fake_async_codex(state)
+    )
+
+    with pytest.raises(codex_adapter.ProviderRequestError) as captured:
+        _events = [
+            event
+            async for event in CodexResponsesAdapter().stream(
+                ProviderRequest(
+                    model="gpt-5.5",
+                    messages=(ProviderMessage(role="user", content="검색"),),
+                )
+            )
+        ]
+
+    assert captured.value.stage == "response"
+    assert captured.value.status_code is None
+    assert "final/tool_calls 계약" in str(captured.value)
+    assert "인증을 확인" not in str(captured.value)
+
+
+@pytest.mark.asyncio
 async def test_codex_oauth_requires_chatgpt_account(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

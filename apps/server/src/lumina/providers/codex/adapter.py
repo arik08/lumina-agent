@@ -491,12 +491,7 @@ def _result_payload(raw: str | None) -> dict[str, Any]:
             or not isinstance(arguments_json, str)
         ):
             raise _invalid_result()
-        try:
-            arguments = json.loads(arguments_json)
-        except json.JSONDecodeError as exc:
-            raise _invalid_result() from exc
-        if not isinstance(arguments, dict):
-            raise _invalid_result()
+        arguments_json = _normalized_tool_arguments(arguments_json)
         seen_ids.add(call_id)
         calls.append({"id": call_id, "name": name, "arguments_json": arguments_json})
     if kind == "final" and (calls or not text.strip()):
@@ -504,6 +499,28 @@ def _result_payload(raw: str | None) -> dict[str, Any]:
     if kind == "tool_calls" and not calls:
         raise _invalid_result()
     return {"kind": kind, "text": text, "tool_calls": calls}
+
+
+def _normalized_tool_arguments(raw: str) -> str:
+    try:
+        arguments = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        stripped = raw.lstrip()
+        try:
+            arguments, end = json.JSONDecoder().raw_decode(stripped)
+        except json.JSONDecodeError:
+            raise _invalid_result() from exc
+        trailing = stripped[end:].strip()
+        # Codex can append the start of an abandoned second JSON value.
+        if (
+            not isinstance(arguments, dict)
+            or "".join(trailing.split()) not in {",", ",{", ",["}
+        ):
+            raise _invalid_result() from exc
+        return json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
+    if not isinstance(arguments, dict):
+        raise _invalid_result()
+    return raw
 
 
 def _invalid_result() -> ProviderRequestError:
@@ -531,6 +548,8 @@ def _usage(raw: object) -> ProviderUsage | None:
 
 
 def _request_error(exc: Exception) -> ProviderRequestError:
+    if isinstance(exc, ProviderRequestError):
+        return exc
     message = str(exc).lower()
     if (
         type(exc).__name__ == "TransportClosedError"
