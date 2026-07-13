@@ -39,6 +39,6 @@ test("motion styling uses shared easing and disables itself for reduced motion",
   assert.match(styles, /--ease-out-quint: cubic-bezier\(0\.22, 1, 0\.36, 1\);/);
   assert.match(styles, /\.progress-group \{[^}]*animation: activity-enter/s);
   assert.match(styles, /\.artifact-pane \{[\s\S]*?animation: artifact-pane-enter/s);
-  assert.match(styles, /\.artifact-resize-handle::after \{[^}]*transform: scaleY\(\.35\);[^}]*transition:/s);
+  assert.match(styles, /\.artifact-resize-handle::after \{[^}]*transition: opacity var\(--motion-fast\) var\(--ease-out-quart\);/s);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);
 });

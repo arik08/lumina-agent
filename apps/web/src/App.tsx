@@ -116,6 +116,8 @@ type NotificationTab = "notifications" | "announcements";
 const artifactPreviewEditMessage = "lumina:artifact-preview-edit";
 const artifactAiCommentMessage = "lumina:artifact-ai-comment";
 const artifactAiCommentsMessage = "lumina:artifact-ai-comments";
+const artifactPaneMinWidth = 360;
+const artifactSplitPaneMinViewport = 1024;
 const chatPaneMinWidth = 440;
 
 const artifactCitationMarkers = [
@@ -710,7 +712,9 @@ function App() {
   const [artifactOpen, setArtifactOpen] = useState(false);
   const [artifactPaneWidth, setArtifactPaneWidth] = useState(() => {
     const saved = Number(localStorage.getItem("lumina:artifactPaneWidth"));
-    return Number.isFinite(saved) && saved >= 360 ? saved : Math.max(520, Math.round(window.innerWidth * 0.42));
+    return Number.isFinite(saved) && saved >= artifactPaneMinWidth
+      ? saved
+      : Math.max(520, Math.round(window.innerWidth * 0.42));
   });
   const [artifactResizing, setArtifactResizing] = useState(false);
   const [artifactFullscreen, setArtifactFullscreen] = useState(false);
@@ -747,12 +751,12 @@ function App() {
 
   function clampArtifactPaneWidth(value: number, collapsed: boolean) {
     const sidebarWidth = collapsed ? 48 : 278;
-    const maximum = Math.max(360, window.innerWidth - sidebarWidth - chatPaneMinWidth);
-    return Math.min(Math.max(value, 360), maximum);
+    const maximum = Math.max(artifactPaneMinWidth, window.innerWidth - sidebarWidth - chatPaneMinWidth);
+    return Math.min(Math.max(value, artifactPaneMinWidth), maximum);
   }
 
   function beginArtifactResize(event: ReactPointerEvent<HTMLButtonElement>) {
-    if (artifactFullscreen || window.innerWidth < 1400) return;
+    if (artifactFullscreen || window.innerWidth < artifactSplitPaneMinViewport) return;
     event.preventDefault();
     const handle = event.currentTarget;
     let currentCollapsed = sidebarCollapsed;
@@ -808,7 +812,7 @@ function App() {
   }
 
   function resizeArtifactByKeyboard(event: React.KeyboardEvent<HTMLButtonElement>) {
-    if (artifactFullscreen || window.innerWidth < 1400 || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+    if (artifactFullscreen || window.innerWidth < artifactSplitPaneMinViewport || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
     event.preventDefault();
     const delta = event.key === "ArrowLeft" ? 24 : -24;
     const nextWidth = artifactPaneWidth + delta;
@@ -2805,7 +2809,7 @@ function App() {
 
       {artifactOpen && (
         <aside className={`artifact-pane ${artifactFullscreen ? "is-fullscreen" : ""}`} aria-label="Artifact 작업 화면" aria-busy={artifactLoading || artifactSaveBusy !== null}>
-          {!artifactFullscreen && <button className="artifact-resize-handle" type="button" role="separator" aria-label="Artifact 패널 너비 조절" aria-orientation="vertical" aria-valuemin={360} aria-valuenow={artifactPaneWidth} onPointerDown={beginArtifactResize} onKeyDown={resizeArtifactByKeyboard} />}
+          {!artifactFullscreen && <button className="artifact-resize-handle" type="button" role="separator" aria-label="Artifact 패널 너비 조절" aria-orientation="vertical" aria-valuemin={artifactPaneMinWidth} aria-valuenow={artifactPaneWidth} onPointerDown={beginArtifactResize} onKeyDown={resizeArtifactByKeyboard} />}
           <header className="artifact-header">
             <div>
               {artifactSummary && artifactVersionOptions.length > 0 && (
