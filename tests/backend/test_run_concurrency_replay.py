@@ -261,6 +261,29 @@ def test_health_ready_reports_stopped_executor(tmp_path: Path) -> None:
         }
 
 
+def test_health_startup_reports_completed_backend_phases(tmp_path: Path) -> None:
+    with TestClient(create_app(_settings(tmp_path, "startup-phases.db"))) as client:
+        response = client.get("/api/health/startup")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ready"
+    assert payload["phase"] == "ready"
+    assert payload["executor"] == "ready"
+    assert payload["errorCode"] is None
+    assert payload["elapsedMs"] >= 0
+    assert payload["startedAt"].endswith("+00:00")
+    completed = payload["completedPhases"]
+    assert [item["phase"] for item in completed] == [
+        "created",
+        "configuring_database",
+        "bootstrapping_database",
+        "recovering_worker",
+        "starting_scheduler",
+    ]
+    assert all(item["durationMs"] >= 0 for item in completed)
+
+
 def test_optional_codex_warmup_does_not_block_backend_startup(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

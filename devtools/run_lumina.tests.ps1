@@ -239,13 +239,45 @@ $restartDelayFunction = $ast.Find(
     },
     $true
 )
+$stateTextFunction = $ast.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq "ConvertTo-LuminaStateText"
+    },
+    $true
+)
+$errorDetailsFunction = $ast.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq "Get-LuminaLauncherErrorDetails"
+    },
+    $true
+)
+$startupStateFunction = $ast.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq "Write-LuminaStartupState"
+    },
+    $true
+)
 if ($null -eq $startProcessesFunction -or $null -eq $prepareRuntimeFunction) {
     throw "Launcher preparation and process-start functions must both exist."
 }
-if ($null -eq $restartDelayFunction) {
-    throw "Get-AutomaticRestartDelay was not found."
+if (
+    $null -eq $restartDelayFunction -or
+    $null -eq $stateTextFunction -or
+    $null -eq $errorDetailsFunction -or
+    $null -eq $startupStateFunction
+) {
+    throw "Launcher restart and startup-state functions must all exist."
 }
 . ([scriptblock]::Create($restartDelayFunction.Extent.Text))
+. ([scriptblock]::Create($stateTextFunction.Extent.Text))
+. ([scriptblock]::Create($errorDetailsFunction.Extent.Text))
+. ([scriptblock]::Create($startupStateFunction.Extent.Text))
 
 if ($startProcessesFunction.Extent.Text -match 'alembic|npm') {
     throw "Automatic process restart must not run migration or Frontend build commands."
@@ -267,6 +299,9 @@ if ($preparationCall -lt 0 -or $supervisorLoop -lt 0 -or $preparationCall -ge $s
 if ($source -notmatch '\$MaxAutomaticRestarts\s*=\s*3') {
     throw "Automatic restart budget must be capped at three retries."
 }
+if ($source -notmatch '\$StartupTimeoutSeconds\s*=\s*90') {
+    throw "The startup deadline must allow a 90-second Windows cold start."
+}
 if ($source -match 'Restarting in 1 second') {
     throw "The launcher must not retain the unbounded fixed one-second restart loop."
 }
@@ -278,4 +313,70 @@ for ($attempt = 1; $attempt -le $expectedDelays.Count; $attempt++) {
     }
 }
 
-Write-Host "run_lumina tests passed ($($cases.Count) key cases, bounded restart policy, preparation isolation, and identity-safe process cleanup)."
+$foreignPort = Get-LuminaLauncherErrorDetails `
+    -Phase "STARTING_PROCESSES" `
+    -Message "Port 5253 is used by a non-Lumina process: sample.exe (PID 10)"
+if ($foreignPort.Code -ne "PORT_IN_USE_FOREIGN") {
+    throw "Foreign port ownership must have a stable launcher error code."
+}
+$schemaMismatch = Get-LuminaLauncherErrorDetails `
+    -Phase "PREFLIGHT" `
+    -Message "Command failed: alembic current --check-heads"
+if ($schemaMismatch.Code -ne "UPDATE_REQUIRED") {
+    throw "A stale database schema must be classified as UPDATE_REQUIRED."
+}
+$startupTimeout = Get-LuminaLauncherErrorDetails `
+    -Phase "WAITING_FOR_READINESS" `
+    -Message "Lumina did not become healthy within 90 seconds."
+if ($startupTimeout.Code -ne "STARTUP_TIMEOUT") {
+    throw "A readiness deadline must be classified as STARTUP_TIMEOUT."
+}
+
+$stateRoot = Join-Path $env:TEMP "lumina-startup-state-test-$([guid]::NewGuid())"
+$StartupStatePath = Join-Path $stateRoot "run_lumina.state.json"
+$Development = $false
+$script:LauncherStartedAt = [DateTime]::UtcNow.AddSeconds(-1)
+$script:StartupStateSequence = 0
+$script:StartupStateStatus = "starting"
+try {
+    Write-LuminaStartupState `
+        -Status "starting" `
+        -Phase "PREFLIGHT" `
+        -Attempt 0
+    Write-LuminaStartupState `
+        -Status "restarting" `
+        -Phase "WAITING_FOR_READINESS" `
+        -Attempt 2 `
+        -ErrorCode "STARTUP_TIMEOUT" `
+        -HelpAction "Inspect data/logs." `
+        -LastError "Authorization: Bearer secret-token PGPT_API_KEY=secret-key"
+
+    $state = Get-Content -Raw -LiteralPath $StartupStatePath | ConvertFrom-Json
+    if (
+        $state.schemaVersion -ne 1 -or
+        $state.status -ne "restarting" -or
+        $state.phase -ne "WAITING_FOR_READINESS" -or
+        $state.attempt -ne 2 -or
+        $state.sequence -ne 2 -or
+        $state.errorCode -ne "STARTUP_TIMEOUT" -or
+        $state.elapsedMs -lt 900
+    ) {
+        throw "The atomic launcher state did not preserve its required contract."
+    }
+    if ($state.lastError -match 'secret-token|secret-key') {
+        throw "The launcher startup state exposed a secret-like value."
+    }
+    if (Get-ChildItem -LiteralPath $stateRoot -Filter '*.tmp' -File) {
+        throw "Atomic startup-state writes left a temporary file behind."
+    }
+    if (Get-ChildItem -LiteralPath $stateRoot -Filter '*.bak' -File) {
+        throw "Atomic startup-state writes left a backup file behind."
+    }
+}
+finally {
+    Get-ChildItem -LiteralPath $stateRoot -File -ErrorAction SilentlyContinue |
+        Remove-Item -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $stateRoot -Force -ErrorAction SilentlyContinue
+}
+
+Write-Host "run_lumina tests passed ($($cases.Count) key cases, bounded restart policy, atomic startup diagnostics, preparation isolation, and identity-safe process cleanup)."

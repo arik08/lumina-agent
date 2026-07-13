@@ -1,7 +1,7 @@
 # Lumina 환경 이식성·시작·실행 신뢰성 개선안
 
 > 작성일: 2026-07-14  
-> 상태: 구현 전 설계 기준  
+> 상태: 1차 구현 진행 중 — Slice 0·1·3의 핵심 안전장치 반영
 > 비교 대상: 현재 Lumina, `.examples/MyHarness`, `.examples/hermes-agent`  
 > 목표: 집·회사·개발 PC가 달라도 설치 결과와 실행 상태를 설명할 수 있고, 일시 장애는 복구하되 영구 오류는 빠르고 정확하게 멈추는 Lumina
 
@@ -9,7 +9,7 @@
 
 현재 반복되는 문제의 중심은 인증서, 포트, Provider 중 어느 하나가 아니다. **설치·업데이트·시작·준비 판정·Provider 연결·Run 복구의 책임과 성공 조건이 하나의 신뢰성 계약으로 묶여 있지 않은 것**이 근본 원인이다.
 
-현재 코드에서 확인한 대표적인 실패 사슬은 다음과 같다.
+최초 조사 당시 코드에서 확인한 대표적인 실패 사슬은 다음과 같았다.
 
 ```text
 run_lumina.ps1 실행
@@ -33,6 +33,40 @@ run_lumina.ps1 실행
 3. **환경 차이를 profile로 명시한다.** 집과 회사의 CA·proxy·필수 Provider 정책을 우연한 파일 발견과 흩어진 환경 변수에 맡기지 않는다.
 4. **일시 오류와 영구 오류를 다르게 다룬다.** retryable 정보, 응답 시작 여부, `Retry-After`를 기준으로 bounded retry를 수행하고 설정·인증 오류는 즉시 멈춘다.
 5. **모든 실패는 한 번에 진단 가능해야 한다.** 사용자가 로그 여러 개를 찾아다니지 않아도 마지막 실패 단계, 안정적인 오류 코드, 해결 명령을 확인할 수 있어야 한다.
+
+### 1.1 현재 구현 상태
+
+2026-07-14 기준으로 최초 실패 사슬의 앞부분은 다음처럼 바뀌었다.
+
+```text
+run_lumina.ps1 실행
+  ├─ production: Frontend build 존재와 DB schema head를 읽기 전용 검증
+  ├─ development: migration을 supervisor 진입 전에 1회 수행
+  ├─ Backend 시작
+  │    ├─ Worker recovery 완료 후 ready
+  │    └─ optional Codex warmup은 background task로 분리
+  ├─ /api/health/ready
+  │    └─ DB + 실제 executor.started 확인
+  ├─ /api/health/startup
+  │    └─ Backend phase별 소요 시간과 최종 상태 반환
+  ├─ Provider 일시 실패
+  │    └─ 출력 전까지만 bounded retry + provider_retry_scheduled event
+  └─ Process/readiness 실패
+       ├─ 1s → 2s → 5s backoff, 최대 3회
+       └─ data/logs/run_lumina*.state.json에 phase·stable code·조치 보존
+```
+
+| 항목 | 구현 상태 | 남은 일 |
+|---|---|---|
+| Prepare/Run 경계 | 1차 완료 | install manifest와 release artifact digest 검증 |
+| Ready 진실성 | 1차 완료 | deployment profile의 required trust/capability 반영 |
+| Startup 측정 | 1차 완료 | 회사망·저사양 PC baseline과 SLO 조정 |
+| Provider retry | 1차 완료 | `Retry-After`와 adapter별 중복 retry 정리 |
+| Supervisor 복구 | 1차 완료 | 오류 분류 확대와 doctor 연결 |
+| Profile·path·trust | 미구현 | Slice 2 전체 |
+| Doctor·support bundle | 미구현 | Slice 4 전체 |
+
+Launcher state 파일은 비밀값을 저장하지 않으며 임시 파일을 같은 디렉터리에 쓴 뒤 원자적으로 교체한다. `status`, `phase`, `attempt`, `elapsedMs`, `errorCode`, `helpAction`, `lastError`를 제공하고 인증 header와 secret 형태의 값은 기록 전에 마스킹한다. 운영 런처는 `data/logs/run_lumina.state.json`, 개발 런처는 `data/logs/run_lumina_dev.state.json`을 사용한다.
 
 ## 2. 조사 범위와 판단 기준
 
@@ -90,7 +124,9 @@ run_lumina.ps1 실행
 
 ### P0-1. 정상 실행과 복구 루프 안에서 build와 migration이 반복된다
 
-**확인 근거**
+**상태: 1차 구현 완료**
+
+**최초 확인 근거**
 
 - `devtools/run_lumina.ps1:444-456`의 `Start-LuminaProcesses`가 시작할 때마다 `alembic upgrade head`를 실행한다.
 - production이면 같은 함수에서 `npm run build`도 매번 실행한다.
@@ -113,9 +149,13 @@ run_lumina.ps1 실행
 - schema가 뒤처졌으면 자동 재시작 루프에서 migration하지 않고 `UPDATE_REQUIRED`로 한 번 멈춘다.
 - 개발 모드의 자동 migration/build는 별도 명시 옵션으로만 허용한다.
 
+현재 `Confirm-LuminaRuntimePrepared`는 production에서 `dist/index.html`과 Alembic head만 검증하고, development migration은 supervisor loop 전에 한 번만 수행한다. `Start-LuminaProcesses`에는 npm·Alembic 호출이 없으며 자동 재시작은 process 시작만 반복한다. install manifest가 아직 없으므로 설치 결과의 runtime·lock·build digest 증명은 P1-1에 남아 있다.
+
 ### P0-2. `/api/health/ready`가 실제 Worker 준비 상태를 증명하지 않는다
 
-**확인 근거**
+**상태: 부분 구현**
+
+**최초 확인 근거**
 
 - `apps/server/src/lumina/main.py:188-192`는 DB `SELECT 1` 뒤 `executor: "ready"`를 고정 반환한다.
 - 같은 파일의 liveness 응답은 `local_run_executor.started`를 실제로 읽으므로 두 endpoint의 의미가 서로 다르다.
@@ -144,9 +184,13 @@ run_lumina.ps1 실행
 
 선택되지 않은 optional Provider 장애는 전역 readiness를 막지 않는다. 반대로 corporate profile이 P-GPT를 필수로 선언했다면 단순 HTTP health가 아니라 실제 P-GPT leg가 통과해야 한다.
 
+현재 `/api/health/ready`는 DB 질의와 실제 `local_run_executor.started`를 확인하며, executor가 멈추면 503을 반환한다. `/api/health/startup`은 `configuring_database → bootstrapping_database → recovering_worker → starting_scheduler → ready`의 phase별 소요 시간을 반환한다. deployment profile과 required trust/capability가 아직 없으므로 회사 P-GPT 실제 leg까지 ready에 포함하는 작업은 Slice 2에 남아 있다.
+
 ### P0-3. Provider가 알려 준 `retryable` 의미가 Run 실패 경계에서 사라진다
 
-**확인 근거**
+**상태: 1차 구현 완료**
+
+**최초 확인 근거**
 
 - `apps/server/src/lumina/providers/errors.py:12-22`의 `ProviderRequestError`는 `stage`, `status_code`, `retryable`을 가진다.
 - 그러나 `apps/server/src/lumina/agent/executor.py:447-459`의 상위 실행 경계는 모든 `ProviderError`를 설정 오류 또는 요청 오류로 바꾼 뒤 Run을 실패시킨다.
@@ -164,6 +208,8 @@ run_lumina.ps1 실행
 - configuration/auth/permission/invalid request는 재시도하지 않는다.
 - 사용자에게 `retry_scheduled`, attempt, next_delay, stable error code를 Run event로 보여 준다.
 - **첫 token/event 이후에는 요청 전체를 자동 재전송하지 않는다.** 부분 응답과 tool side effect 중복을 막기 위해 checkpoint/resume가 가능할 때만 이어가고, 아니면 부분 결과를 보존한 채 명확히 중단한다.
+
+현재 executor는 retryable Provider 요청 오류를 출력 전까지만 최대 세 번의 시도 범위에서 재실행하고 `provider_retry_scheduled` event를 저장한다. 첫 text event 뒤의 동일 오류는 재전송하지 않으며 회귀 테스트가 요청 횟수와 event replay 계약을 보호한다. `Retry-After`와 Provider adapter 내부 retry의 단일화는 후속 작업이다.
 
 ### P0-4. 집과 회사의 차이가 명시적 profile이 아니라 파일·환경 변수 발견 순서에 의존한다
 
@@ -200,7 +246,9 @@ corporate에서 home으로 조용히 fallback하거나, stale CA 경로 오류�
 
 ### P0-5. 선택 Provider와 무관하게 Codex warmup이 전체 Backend 시작 경로를 점유한다
 
-**확인 근거**
+**상태: 1차 구현 완료**
+
+**최초 확인 근거**
 
 - `apps/server/src/lumina/agent/executor.py:309-317`은 test 외 모든 환경에서 Worker recovery 전에 `codex_provider.warmup()`을 기다린다.
 - 실패는 warning으로 건너뛰지만 느린 warmup은 앱 lifespan 완료와 readiness 도달을 지연시킨다.
@@ -215,6 +263,8 @@ P-GPT만 사용하는 회사 환경이나 다른 Provider를 선택한 환경도
 - Worker recovery와 HTTP bind를 warmup에서 분리한다.
 - optional warmup은 global readiness를 막지 않고 startup phase/metric에 별도로 보인다.
 - required Provider의 warmup 실패만 해당 capability 또는 profile readiness를 막는다.
+
+현재 Worker recovery가 완료된 뒤 Codex warmup을 background task로 시작하므로 optional Codex 초기화는 Backend readiness를 막지 않는다. required Provider를 profile로 선언하고 capability readiness에 연결하는 작업은 Slice 2에 남아 있다.
 
 ### P1-1. installer 성공 여부를 다음 실행이 증명할 manifest가 없다
 
@@ -251,14 +301,16 @@ P-GPT만 사용하는 회사 환경이나 다른 Provider를 선택한 환경도
 - PID 재사용을 피하는 supervisor identity
 - reset 시 Frontend/Backend 재시작
 
-그러나 다음은 아직 계약 테스트가 아니다.
+현재 launcher와 Backend 회귀 테스트는 다음을 추가로 보호한다.
 
-- 정상 `run`에서 npm build와 migration을 호출하지 않는지
-- 영구 오류 시 restart budget이 소진되고 멈추는지
-- transient crash에만 backoff 재시작하는지
-- ready가 실제 executor 상태를 반영하는지
-- foreign process가 포트를 점유했을 때 종료하지 않는지
-- 60초를 넘는 정상 cold start를 중복 process로 오판하지 않는지
+- process restart 함수가 npm build와 migration을 호출하지 않음
+- 최대 3회 restart budget과 `1, 2, 5`초 backoff
+- ready가 실제 executor 상태를 반영함
+- foreign process와 Lumina-owned process를 구분함
+- startup state의 원자적 교체, stable error code와 secret redaction
+- Windows cold start 기본 deadline 90초
+
+실제 transient crash fixture와 90초 cold-start fixture, restart budget reset의 장시간 통합 테스트는 아직 남아 있다.
 
 ## 5. 목표 구조
 
@@ -405,6 +457,8 @@ API key, token, employee number, 전체 `.env`, 사용자 문서 내용과 원�
 
 ### Slice 0 — 실패를 먼저 측정한다
 
+**상태: 1차 구현 완료, 실제 환경 baseline 수집 대기**
+
 **변경 후보**
 
 - `apps/server/src/lumina/main.py`
@@ -425,6 +479,8 @@ API key, token, employee number, 전체 `.env`, 사용자 문서 내용과 원�
 - 기존 secret redaction 테스트가 새 로그 필드에도 적용된다.
 
 ### Slice 1 — 실행에서 build·migration을 제거한다
+
+**상태: 1차 구현 완료, install manifest 미구현**
 
 **변경 후보**
 
@@ -472,6 +528,8 @@ API key, token, employee number, 전체 `.env`, 사용자 문서 내용과 원�
 - readiness와 실제 P-GPT transport가 같은 settings/trust snapshot digest를 보고한다.
 
 ### Slice 3 — Provider 공용 retry와 부분 응답 안전성
+
+**상태: 1차 구현 완료, Retry-After·adapter 정책 통합 남음**
 
 **변경 후보**
 
@@ -603,4 +661,4 @@ HERMES에서 취할 것은 단일 resolver, 실제 import/연결 probe, 명시�
 9. 사용자는 첫 화면 또는 한 번의 `lumina doctor`로 실패 단계와 해결 action을 확인할 수 있다.
 10. 관련 운영 문서와 구현 계약 테스트가 같은 변경에 포함된다.
 
-가장 먼저 구현할 것은 기능 추가가 아니다. **`ready`의 진실성, run에서 build/migration 제거, restart budget, startup phase 측정** 네 가지다. 이 기반을 먼저 만들면 이후 CA·P-GPT·Codex 문제를 고칠 때도 “이번 PC에서 우연히 됐다”가 아니라 어느 환경에서 왜 되는지 증명할 수 있다.
+첫 기반인 **`ready`의 진실성, run에서 build/migration 제거, restart budget, startup phase 측정**은 1차 구현됐다. 다음 우선순위는 Slice 2의 `LuminaPaths`와 `home/corporate` deployment profile, startup trust 초기화다. 이 경계를 먼저 닫아야 회사 CA·proxy·P-GPT 실패를 집 설정으로 조용히 fallback하지 않고 정확히 설명할 수 있다.

@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from time import perf_counter
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
+from datetime import UTC, datetime
+from time import perf_counter
+from typing import Any
 from uuid import uuid4
 
 from fastapi import FastAPI, Request, Response
@@ -52,6 +54,65 @@ from .schedules.service import local_scheduler
 logger = logging.getLogger(__name__)
 
 
+class StartupTracker:
+    """Keep a secret-free, process-local record of Backend startup phases."""
+
+    def __init__(self) -> None:
+        self.started_at = datetime.now(UTC)
+        self._started_clock = perf_counter()
+        self._phase_started_clock = self._started_clock
+        self._finished_clock: float | None = None
+        self.status = "starting"
+        self.phase = "created"
+        self.error_code: str | None = None
+        self.completed_phases: list[dict[str, float | str]] = []
+
+    def enter(self, phase: str) -> None:
+        now = perf_counter()
+        self._complete_current_phase(now)
+        self.phase = phase
+        self._phase_started_clock = now
+
+    def ready(self) -> None:
+        now = perf_counter()
+        self._complete_current_phase(now)
+        self.phase = "ready"
+        self.status = "ready"
+        self._phase_started_clock = now
+        self._finished_clock = now
+
+    def fail(self, error_code: str) -> None:
+        now = perf_counter()
+        self._complete_current_phase(now)
+        self.phase = "failed"
+        self.status = "failed"
+        self.error_code = error_code
+        self._phase_started_clock = now
+        self._finished_clock = now
+
+    def snapshot(self, *, executor_started: bool) -> dict[str, Any]:
+        now = self._finished_clock or perf_counter()
+        return {
+            "status": self.status,
+            "phase": self.phase,
+            "startedAt": self.started_at.isoformat(),
+            "elapsedMs": round((now - self._started_clock) * 1000, 3),
+            "errorCode": self.error_code,
+            "executor": "ready" if executor_started else "stopped",
+            "completedPhases": [dict(item) for item in self.completed_phases],
+        }
+
+    def _complete_current_phase(self, now: float) -> None:
+        if self.phase in {"ready", "failed"}:
+            return
+        self.completed_phases.append(
+            {
+                "phase": self.phase,
+                "durationMs": round((now - self._phase_started_clock) * 1000, 3),
+            }
+        )
+
+
 class SPAStaticFiles(StaticFiles):
     """Serve Vite assets while falling back to index.html for client routes."""
 
@@ -70,20 +131,38 @@ class SPAStaticFiles(StaticFiles):
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     config = settings or get_settings()
+    startup_tracker = StartupTracker()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        configure_database(config.database_url)
-        if config.environment == "test":
-            create_schema()
-        bootstrap_database(settings=config)
-        local_run_executor.configure(config)
-        await local_run_executor.start()
         scheduler_task: asyncio.Task[None] | None = None
-        if config.environment != "test":
-            scheduler_task = asyncio.create_task(
-                _scheduler_loop(), name="lumina-local-scheduler"
+        try:
+            startup_tracker.enter("configuring_database")
+            configure_database(config.database_url)
+            if config.environment == "test":
+                create_schema()
+            startup_tracker.enter("bootstrapping_database")
+            bootstrap_database(settings=config)
+            startup_tracker.enter("recovering_worker")
+            local_run_executor.configure(config)
+            await local_run_executor.start()
+            startup_tracker.enter("starting_scheduler")
+            if config.environment != "test":
+                scheduler_task = asyncio.create_task(
+                    _scheduler_loop(), name="lumina-local-scheduler"
+                )
+            startup_tracker.ready()
+        except BaseException:
+            startup_tracker.fail("BACKEND_STARTUP_FAILED")
+            logger.exception(
+                "Backend startup failed",
+                extra={
+                    "startup": startup_tracker.snapshot(
+                        executor_started=local_run_executor.started
+                    )
+                },
             )
+            raise
         try:
             yield
         finally:
@@ -101,6 +180,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         openapi_url="/api/openapi.json",
     )
     application.state.settings = config
+    application.state.startup_tracker = startup_tracker
     application.dependency_overrides[get_settings] = lambda: config
     application.add_middleware(
         CORSMiddleware,
@@ -202,6 +282,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(
             content={"status": "ok", "database": "ready", "executor": "ready"}
         )
+
+    @application.get("/api/health/startup", tags=["health"])
+    def startup_status() -> dict[str, Any]:
+        return startup_tracker.snapshot(executor_started=local_run_executor.started)
 
     frontend_dist = REPOSITORY_ROOT / "apps" / "web" / "dist"
     if frontend_dist.is_dir():

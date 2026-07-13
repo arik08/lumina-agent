@@ -10,6 +10,12 @@ $ServerRoot = Join-Path $RepositoryRoot "apps/server"
 $WebRoot = Join-Path $RepositoryRoot "apps/web"
 $LogRoot = Join-Path $RepositoryRoot "data/logs"
 $BackendOutputLog = Join-Path $LogRoot "backend.out.log"
+$StartupStatePath = Join-Path $LogRoot $(
+    if ($Development) { "run_lumina_dev.state.json" } else { "run_lumina.state.json" }
+)
+$script:LauncherStartedAt = [DateTime]::UtcNow
+$script:StartupStateSequence = 0
+$script:StartupStateStatus = "starting"
 . (Join-Path $PSScriptRoot "LuminaCache.Env.ps1") -RepositoryRoot $RepositoryRoot
 
 function Get-ConfiguredPort {
@@ -56,7 +62,7 @@ if ($FrontendPort -eq $BackendPort) {
 }
 $HealthCheckIntervalSeconds = 5
 $HealthFailureThreshold = 3
-$StartupTimeoutSeconds = 60
+$StartupTimeoutSeconds = 90
 $MaxAutomaticRestarts = 3
 $RestartBudgetResetSeconds = 600
 $SupervisorPidPath = Join-Path $LogRoot $(
@@ -97,6 +103,125 @@ function Write-LuminaBanner {
     $sparkle = [char]0x2726
     Write-Host "$sparkle Language Understanding Meets Intelligent Navigation & Automation. $sparkle" -ForegroundColor Blue
     Write-Host ""
+}
+
+function ConvertTo-LuminaStateText {
+    param([AllowNull()][string]$Text)
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return $null
+    }
+    $safeText = ($Text -replace '[\r\n]+', ' ').Trim()
+    $safeText = $safeText -replace (
+        '(?i)(authorization\s*:\s*bearer)\s+[^\s,;]+'
+    ), '$1 <redacted>'
+    $safeText = $safeText -replace (
+        '(?i)\b[a-z0-9_]*(api[_-]?key|token|password|employee[_-]?no)\b(\s*[:=]\s*)[^\s,;]+'
+    ), '$1$2<redacted>'
+    if ($safeText.Length -gt 600) {
+        return $safeText.Substring(0, 600)
+    }
+    return $safeText
+}
+
+function Get-LuminaLauncherErrorDetails {
+    param(
+        [Parameter(Mandatory = $true)][string]$Phase,
+        [AllowNull()][string]$Message
+    )
+
+    $text = if ($null -eq $Message) { "" } else { $Message }
+    if ($text -match 'used by a non-Lumina process') {
+        return [pscustomobject]@{
+            Code = "PORT_IN_USE_FOREIGN"
+            HelpAction = "Stop the listed process or configure another Lumina port."
+        }
+    }
+    if ($text -match 'Frontend build is missing') {
+        return [pscustomobject]@{
+            Code = "INSTALL_INCOMPLETE"
+            HelpAction = "Run installer.bat, then start Lumina again."
+        }
+    }
+    if ($Phase -eq "PREFLIGHT" -and $text -match 'alembic.*current.*--check-heads') {
+        return [pscustomobject]@{
+            Code = "UPDATE_REQUIRED"
+            HelpAction = "Run installer.bat to update the database schema."
+        }
+    }
+    if ($text -match 'exited during startup|exited unexpectedly') {
+        return [pscustomobject]@{
+            Code = "CHILD_EXITED"
+            HelpAction = "Inspect data/logs/backend.err.log and frontend.err.log."
+        }
+    }
+    if ($text -match 'did not become healthy') {
+        return [pscustomobject]@{
+            Code = "STARTUP_TIMEOUT"
+            HelpAction = "Inspect the startup state and Backend error log before retrying."
+        }
+    }
+    if ($text -match 'health check failed') {
+        return [pscustomobject]@{
+            Code = "HEALTH_CHECK_FAILED"
+            HelpAction = "Inspect /api/health/startup and data/logs/backend.err.log."
+        }
+    }
+    return [pscustomobject]@{
+        Code = "STARTUP_FAILED"
+        HelpAction = "Inspect the startup state and logs in data/logs."
+    }
+}
+
+function Write-LuminaStartupState {
+    param(
+        [Parameter(Mandatory = $true)][string]$Status,
+        [Parameter(Mandatory = $true)][string]$Phase,
+        [int]$Attempt = 0,
+        [AllowNull()][string]$ErrorCode = $null,
+        [AllowNull()][string]$HelpAction = $null,
+        [AllowNull()][string]$LastError = $null
+    )
+
+    $script:StartupStateSequence++
+    $script:StartupStateStatus = $Status
+    $now = [DateTime]::UtcNow
+    $payload = [ordered]@{
+        schemaVersion = 1
+        mode = if ($Development) { "development" } else { "production" }
+        status = $Status
+        phase = $Phase
+        attempt = $Attempt
+        sequence = $script:StartupStateSequence
+        startedAt = $script:LauncherStartedAt.ToString("o")
+        updatedAt = $now.ToString("o")
+        elapsedMs = [Math]::Round(($now - $script:LauncherStartedAt).TotalMilliseconds, 3)
+        errorCode = $ErrorCode
+        helpAction = ConvertTo-LuminaStateText -Text $HelpAction
+        lastError = ConvertTo-LuminaStateText -Text $LastError
+        logDirectory = "data/logs"
+    }
+    $temporaryPath = "$StartupStatePath.$PID.$($script:StartupStateSequence).tmp"
+    $backupPath = "$StartupStatePath.bak"
+    try {
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $StartupStatePath) | Out-Null
+        $json = $payload | ConvertTo-Json -Depth 4 -Compress
+        $encoding = [System.Text.UTF8Encoding]::new($false)
+        [System.IO.File]::WriteAllText($temporaryPath, $json, $encoding)
+        if (Test-Path -LiteralPath $StartupStatePath) {
+            Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
+            [System.IO.File]::Replace($temporaryPath, $StartupStatePath, $backupPath)
+            Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
+        }
+        else {
+            [System.IO.File]::Move($temporaryPath, $StartupStatePath)
+        }
+    }
+    catch {
+        Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
+        # Diagnostics must never become the reason the launcher exits.
+    }
 }
 
 function Invoke-Checked {
@@ -540,21 +665,37 @@ function Wait-LuminaReady {
 Set-Location -LiteralPath $RepositoryRoot
 New-Item -ItemType Directory -Force -Path $LogRoot | Out-Null
 Write-LuminaBanner
+Write-LuminaStartupState -Status "starting" -Phase "PREFLIGHT"
 
-if (-not (Test-Path -LiteralPath (Join-Path $RepositoryRoot ".env"))) {
-    Write-Host "[Lumina] .env is missing. Running the installer first..."
-    & (Join-Path $PSScriptRoot "install_lumina.ps1")
-}
+try {
+    if (-not (Test-Path -LiteralPath (Join-Path $RepositoryRoot ".env"))) {
+        Write-LuminaStartupState -Status "starting" -Phase "INSTALLING"
+        Write-Host "[Lumina] .env is missing. Running the installer first..."
+        & (Join-Path $PSScriptRoot "install_lumina.ps1")
+    }
 
-$env:LUMINA_ENVIRONMENT = if ($Development) { "development" } else { "production" }
-if (-not $Development) {
-    Confirm-LuminaRuntimePrepared
+    $env:LUMINA_ENVIRONMENT = if ($Development) { "development" } else { "production" }
+    Write-LuminaStartupState -Status "starting" -Phase "PREFLIGHT"
+    if (-not $Development) {
+        Confirm-LuminaRuntimePrepared
+    }
+    Stop-PreviousSupervisor
+    if ($Development) {
+        Confirm-LuminaRuntimePrepared
+    }
+    Set-SupervisorPid
 }
-Stop-PreviousSupervisor
-if ($Development) {
-    Confirm-LuminaRuntimePrepared
+catch {
+    $preflightError = $_.Exception.Message
+    $details = Get-LuminaLauncherErrorDetails -Phase "PREFLIGHT" -Message $preflightError
+    Write-LuminaStartupState `
+        -Status "failed" `
+        -Phase "PREFLIGHT" `
+        -ErrorCode $details.Code `
+        -HelpAction $details.HelpAction `
+        -LastError $preflightError
+    throw
 }
-Set-SupervisorPid
 $resetReason = "initial startup"
 $automaticRestartCount = 0
 
@@ -563,18 +704,39 @@ try {
     while ($true) {
         $manualResetRequested = $false
         $readyAt = $null
+        $attemptNumber = $automaticRestartCount + 1
+        $currentPhase = "STARTING_PROCESSES"
         try {
+            Write-LuminaStartupState `
+                -Status "starting" `
+                -Phase $currentPhase `
+                -Attempt $attemptNumber
             Write-Host "[Lumina] Hard reset: $resetReason"
             Stop-ManagedProcesses -PreserveFrontend:$preserveFrontend
             Start-LuminaProcesses -PreserveFrontend:$preserveFrontend
+            $currentPhase = "WAITING_FOR_READINESS"
+            Write-LuminaStartupState `
+                -Status "starting" `
+                -Phase $currentPhase `
+                -Attempt $attemptNumber
             if (-not (Wait-LuminaReady)) {
                 $preserveFrontend = $false
                 $resetReason = "manual request"
                 $manualResetRequested = $true
+                Write-LuminaStartupState `
+                    -Status "restarting" `
+                    -Phase "MANUAL_RESET" `
+                    -Attempt $attemptNumber `
+                    -HelpAction "Manual reset requested."
                 continue
             }
             $preserveFrontend = $Development
             $readyAt = [DateTime]::UtcNow
+            $currentPhase = "RUNNING"
+            Write-LuminaStartupState `
+                -Status "ready" `
+                -Phase "READY" `
+                -Attempt $attemptNumber
             Write-Host ""
 
             if ($Development) {
@@ -643,9 +805,22 @@ try {
             Stop-ManagedProcesses -PreserveFrontend:$preserveFrontend
         }
         if ($manualResetRequested) {
+            Write-LuminaStartupState `
+                -Status "restarting" `
+                -Phase "MANUAL_RESET" `
+                -Attempt $attemptNumber `
+                -HelpAction "Manual reset requested."
             continue
         }
+        $details = Get-LuminaLauncherErrorDetails -Phase $currentPhase -Message $resetReason
         if ($automaticRestartCount -ge $MaxAutomaticRestarts) {
+            Write-LuminaStartupState `
+                -Status "exhausted" `
+                -Phase $currentPhase `
+                -Attempt $attemptNumber `
+                -ErrorCode "RESTART_EXHAUSTED" `
+                -HelpAction $details.HelpAction `
+                -LastError $resetReason
             throw (
                 "Lumina exhausted its automatic restart budget after " +
                 "$MaxAutomaticRestarts retries. Last failure: $resetReason. " +
@@ -654,6 +829,13 @@ try {
         }
         $automaticRestartCount++
         $restartDelay = Get-AutomaticRestartDelay -Attempt $automaticRestartCount
+        Write-LuminaStartupState `
+            -Status "restarting" `
+            -Phase $currentPhase `
+            -Attempt $attemptNumber `
+            -ErrorCode $details.Code `
+            -HelpAction $details.HelpAction `
+            -LastError $resetReason
         Write-Host (
             "[Lumina] Restarting in $restartDelay second(s) " +
             "($automaticRestartCount/$MaxAutomaticRestarts)..."
@@ -664,4 +846,7 @@ try {
 finally {
     Stop-ManagedProcesses
     Remove-SupervisorPid
+    if ($script:StartupStateStatus -notin @("failed", "exhausted")) {
+        Write-LuminaStartupState -Status "stopped" -Phase "STOPPED"
+    }
 }
