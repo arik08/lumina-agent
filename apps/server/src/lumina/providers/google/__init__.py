@@ -1,12 +1,10 @@
 from .adapter import (
     DEFAULT_GOOGLE_BASE_URL,
     GoogleGeminiAdapter,
+    PROVIDER_ID,
     build_google_payload,
     normalize_google_usage,
 )
-
-
-PROVIDER_ID = "google"
 
 __all__ = [
     "DEFAULT_GOOGLE_BASE_URL",

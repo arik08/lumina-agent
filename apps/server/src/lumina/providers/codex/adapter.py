@@ -25,6 +25,7 @@ from openai_codex.generated.v2_all import (
     TurnCompletedNotification,
 )
 
+from ..constants import CODEX_PROVIDER_ID
 from ..errors import ProviderConfigurationError, ProviderRequestError
 from ..types import ProviderCapabilities, ProviderEvent, ProviderRequest, ProviderUsage
 
@@ -54,6 +55,7 @@ _OUTPUT_SCHEMA: dict[str, Any] = {
 
 
 _JSON_FIELD_VALUE = r'"{field}"\s*:\s*"((?:\\.|[^"\\])*)"'
+PROVIDER_ID = CODEX_PROVIDER_ID
 
 
 class _CodexToolCallStream:
@@ -219,7 +221,7 @@ def codex_oauth_available() -> bool:
 class CodexResponsesAdapter:
     """Codex App Server adapter backed only by ChatGPT OAuth subscription access."""
 
-    provider_id = "codex"
+    provider_id = PROVIDER_ID
     capabilities = ProviderCapabilities(
         tools=True,
         structured_output=True,
@@ -268,7 +270,9 @@ class CodexResponsesAdapter:
                         "서버 사용자 계정에서 `codex login`을 실행해 주세요."
                     )
                 available_models = frozenset(
-                    item.model for item in (await client.models()).data if not item.hidden
+                    item.model
+                    for item in (await client.models()).data
+                    if not item.hidden
                 )
             except Exception:
                 await client.close()
@@ -305,15 +309,15 @@ class CodexResponsesAdapter:
                         f"Codex OAuth에서 사용할 수 없는 모델입니다: {request.model}"
                     )
                 thread = await client.thread_start(
-                        model=request.model,
-                        approval_mode=ApprovalMode.deny_all,
-                        sandbox=Sandbox.read_only,
-                        ephemeral=True,
-                        base_instructions=_BASE_INSTRUCTIONS,
-                        developer_instructions=_cache_developer_instructions(request),
-                        cwd=cwd,
-                        service_name="lumina_agent",
-                    )
+                    model=request.model,
+                    approval_mode=ApprovalMode.deny_all,
+                    sandbox=Sandbox.read_only,
+                    ephemeral=True,
+                    base_instructions=_BASE_INSTRUCTIONS,
+                    developer_instructions=_cache_developer_instructions(request),
+                    cwd=cwd,
+                    service_name="lumina_agent",
+                )
                 run_kwargs = {
                     "model": request.model,
                     "effort": _effort(request.effort),
@@ -528,7 +532,10 @@ def _usage(raw: object) -> ProviderUsage | None:
 
 def _request_error(exc: Exception) -> ProviderRequestError:
     message = str(exc).lower()
-    if type(exc).__name__ == "TransportClosedError" or "process closed stdout" in message:
+    if (
+        type(exc).__name__ == "TransportClosedError"
+        or "process closed stdout" in message
+    ):
         return ProviderRequestError(
             "Codex App Server 연결이 일시적으로 종료되었습니다.",
             retryable=True,

@@ -1,10 +1,9 @@
 from .adapter import (
     DEFAULT_OPENAI_BASE_URL,
     OpenAIResponsesAdapter,
+    PROVIDER_ID,
     build_responses_payload,
 )
-
-PROVIDER_ID = "openai"
 
 __all__ = [
     "DEFAULT_OPENAI_BASE_URL",

@@ -6,9 +6,8 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from urllib.parse import urlsplit
 
+from ..constants import DEFAULT_PGPT_BASE_URL
 from ..errors import ProviderConfigurationError
-
-DEFAULT_PGPT_BASE_URL = "http://pgpt.posco.com/s0la01-gpt/v1"
 
 
 @dataclass(frozen=True, slots=True)

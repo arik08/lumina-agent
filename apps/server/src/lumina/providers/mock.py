@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from .constants import MOCK_PROVIDER_ID
 from .types import (
     ProviderCapabilities,
     ProviderEvent,
@@ -24,7 +25,7 @@ class MockToolCall:
 class MockProvider:
     """A deterministic provider used by local development and contract tests."""
 
-    provider_id = "mock"
+    provider_id = MOCK_PROVIDER_ID
     capabilities = ProviderCapabilities(
         tools=True,
         structured_output=True,

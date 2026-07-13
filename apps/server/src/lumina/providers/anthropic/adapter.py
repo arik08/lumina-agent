@@ -9,6 +9,7 @@ import httpx
 
 from lumina.http_client import TrustManager, TrustProfile, create_http_client
 
+from ..constants import ANTHROPIC_PROVIDER_ID, DEFAULT_ANTHROPIC_BASE_URL
 from ..errors import ProviderConfigurationError, ProviderRequestError
 from ..http import http_status_error, network_error, validate_http_base_url
 from ..types import (
@@ -19,7 +20,7 @@ from ..types import (
 )
 
 
-DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1"
+PROVIDER_ID = ANTHROPIC_PROVIDER_ID
 ANTHROPIC_VERSION = "2023-06-01"
 DEFAULT_MAX_OUTPUT_TOKENS = 4_096
 
@@ -34,7 +35,7 @@ class _ToolState:
 
 
 class AnthropicMessagesAdapter:
-    provider_id = "anthropic"
+    provider_id = PROVIDER_ID
     capabilities = ProviderCapabilities(tools=True)
 
     def __init__(

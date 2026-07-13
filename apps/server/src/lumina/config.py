@@ -7,6 +7,11 @@ from typing import Literal
 from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .providers.constants import (
+    DEFAULT_ANTHROPIC_BASE_URL,
+    DEFAULT_GOOGLE_BASE_URL,
+    DEFAULT_OPENAI_BASE_URL,
+)
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_DATA_DIR = REPOSITORY_ROOT / "data"
@@ -40,7 +45,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("OPENAI_API_KEY", "LUMINA_OPENAI_API_KEY"),
     )
     openai_base_url: str = Field(
-        default="https://api.openai.com/v1",
+        default=DEFAULT_OPENAI_BASE_URL,
         validation_alias=AliasChoices("OPENAI_BASE_URL", "LUMINA_OPENAI_BASE_URL"),
     )
     codex_image_model: str = Field(
@@ -55,7 +60,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("ANTHROPIC_API_KEY", "LUMINA_ANTHROPIC_API_KEY"),
     )
     anthropic_base_url: str = Field(
-        default="https://api.anthropic.com/v1",
+        default=DEFAULT_ANTHROPIC_BASE_URL,
         validation_alias=AliasChoices(
             "ANTHROPIC_BASE_URL", "LUMINA_ANTHROPIC_BASE_URL"
         ),
@@ -65,7 +70,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("GOOGLE_API_KEY", "LUMINA_GOOGLE_API_KEY"),
     )
     google_base_url: str = Field(
-        default="https://generativelanguage.googleapis.com/v1beta",
+        default=DEFAULT_GOOGLE_BASE_URL,
         validation_alias=AliasChoices("GOOGLE_BASE_URL", "LUMINA_GOOGLE_BASE_URL"),
     )
     # Generic compatible endpoints are operator-managed and deliberately use only

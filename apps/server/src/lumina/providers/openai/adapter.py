@@ -10,6 +10,7 @@ import httpx
 
 from lumina.http_client import TrustManager, TrustProfile, create_http_client
 
+from ..constants import DEFAULT_OPENAI_BASE_URL, OPENAI_PROVIDER_ID
 from ..errors import ProviderConfigurationError, ProviderRequestError
 from ..openai_compatible import normalize_openai_usage
 from ..types import (
@@ -20,7 +21,7 @@ from ..types import (
 )
 
 
-DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
+PROVIDER_ID = OPENAI_PROVIDER_ID
 _RETRYABLE_ERROR_CODES = {
     "rate_limit_exceeded",
     "server_error",
@@ -143,7 +144,7 @@ class _ToolState:
 
 
 class OpenAIResponsesAdapter:
-    provider_id = "openai"
+    provider_id = PROVIDER_ID
     capabilities = ProviderCapabilities(
         tools=True,
         structured_output=True,

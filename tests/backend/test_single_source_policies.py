@@ -7,6 +7,7 @@ from lumina.artifacts import render_validation
 from lumina.artifacts import service as artifact_service
 from lumina.artifacts.reporting import theme
 from lumina.attachments import extraction, validation
+from lumina.config import Settings
 from lumina.extensions import service as extension_service
 from lumina.extensions import package_policy, repository_catalog
 from lumina.mcp import policy as mcp_policy
@@ -14,7 +15,9 @@ from lumina.mcp import runtime as mcp_runtime
 from lumina.mcp import service as mcp_service
 from lumina.notifications import service as notification_service
 from lumina.projects import memberships, schemas
+from lumina.providers import anthropic, codex, constants, google, openai, pgpt
 from lumina.providers.codex import image_generation
+from lumina.providers.mock import MockProvider
 from lumina.runs import state as run_state
 from lumina.schedules import service as schedule_service
 from lumina.tools import workspace
@@ -90,3 +93,46 @@ def test_document_safety_limits_are_shared_across_processing_stages() -> None:
 def test_skill_text_file_policy_is_shared_by_catalog_and_workspace() -> None:
     assert repository_catalog.SKILL_TEXT_SUFFIXES is package_policy.SKILL_TEXT_SUFFIXES
     assert workspace.SKILL_TEXT_SUFFIXES is package_policy.SKILL_TEXT_SUFFIXES
+
+
+def test_provider_ids_and_default_endpoints_have_one_literal_source() -> None:
+    assert anthropic.PROVIDER_ID == constants.ANTHROPIC_PROVIDER_ID
+    assert (
+        anthropic.AnthropicMessagesAdapter.provider_id
+        == constants.ANTHROPIC_PROVIDER_ID
+    )
+    assert codex.PROVIDER_ID == constants.CODEX_PROVIDER_ID
+    assert codex.CodexResponsesAdapter.provider_id == constants.CODEX_PROVIDER_ID
+    assert google.PROVIDER_ID == constants.GOOGLE_PROVIDER_ID
+    assert google.GoogleGeminiAdapter.provider_id == constants.GOOGLE_PROVIDER_ID
+    assert openai.PROVIDER_ID == constants.OPENAI_PROVIDER_ID
+    assert openai.OpenAIResponsesAdapter.provider_id == constants.OPENAI_PROVIDER_ID
+    assert pgpt.PROVIDER_ID == constants.PGPT_PROVIDER_ID
+    assert pgpt.PgptAdapter.provider_id == constants.PGPT_PROVIDER_ID
+    assert MockProvider.provider_id == constants.MOCK_PROVIDER_ID
+    assert (
+        Settings.model_fields["openai_base_url"].default
+        == constants.DEFAULT_OPENAI_BASE_URL
+    )
+    assert (
+        Settings.model_fields["anthropic_base_url"].default
+        == constants.DEFAULT_ANTHROPIC_BASE_URL
+    )
+    assert (
+        Settings.model_fields["google_base_url"].default
+        == constants.DEFAULT_GOOGLE_BASE_URL
+    )
+
+    provider_root = REPOSITORY_ROOT / "apps/server/src/lumina/providers"
+    endpoint_values = {
+        constants.DEFAULT_PGPT_BASE_URL,
+        constants.DEFAULT_OPENAI_BASE_URL,
+        constants.DEFAULT_ANTHROPIC_BASE_URL,
+        constants.DEFAULT_GOOGLE_BASE_URL,
+    }
+    for path in provider_root.rglob("*.py"):
+        if path.name == "constants.py":
+            continue
+        source = path.read_text(encoding="utf-8")
+        for value in endpoint_values:
+            assert value not in source, path

@@ -10,6 +10,7 @@ import httpx
 
 from lumina.http_client import TrustManager, TrustProfile, create_http_client
 
+from ..constants import DEFAULT_GOOGLE_BASE_URL, GOOGLE_PROVIDER_ID
 from ..errors import ProviderConfigurationError, ProviderRequestError
 from ..http import http_status_error, network_error, validate_http_base_url
 from ..types import (
@@ -20,7 +21,7 @@ from ..types import (
 )
 
 
-DEFAULT_GOOGLE_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+PROVIDER_ID = GOOGLE_PROVIDER_ID
 
 
 @dataclass(slots=True)
@@ -35,7 +36,7 @@ class _ToolState:
 
 
 class GoogleGeminiAdapter:
-    provider_id = "google"
+    provider_id = PROVIDER_ID
     capabilities = ProviderCapabilities(tools=True, structured_output=True)
 
     def __init__(

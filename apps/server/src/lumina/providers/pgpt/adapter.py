@@ -10,6 +10,7 @@ from typing import Any
 
 from lumina.http_client import HttpClientOptions, TrustProfile
 
+from ..constants import PGPT_PROVIDER_ID
 from ..openai_compatible import OpenAICompatibleAdapter, build_chat_completions_payload
 from ..types import ProviderCapabilities, ProviderEvent, ProviderRequest
 from .auth import PgptCredentials, build_pgpt_authorization_header
@@ -17,6 +18,7 @@ from .profile import PgptProfile
 
 
 DEFAULT_PGPT_MAX_COMPLETION_TOKENS = 42_000
+PROVIDER_ID = PGPT_PROVIDER_ID
 
 
 def build_pgpt_payload(request: ProviderRequest) -> dict[str, Any]:
@@ -37,7 +39,7 @@ def build_pgpt_payload(request: ProviderRequest) -> dict[str, Any]:
 
 
 class PgptAdapter:
-    provider_id = "pgpt"
+    provider_id = PROVIDER_ID
     capabilities = ProviderCapabilities(
         tools=True,
         structured_output=True,

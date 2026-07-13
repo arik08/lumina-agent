@@ -1,4 +1,4 @@
-from .adapter import PgptAdapter, build_pgpt_payload
+from .adapter import PROVIDER_ID, PgptAdapter, build_pgpt_payload
 from .auth import (
     PgptCredentials,
     build_pgpt_auth_token,
@@ -6,8 +6,6 @@ from .auth import (
 )
 from .diagnostics import PgptDiagnostic, diagnostic_for_status, redact_pgpt_text
 from .profile import DEFAULT_PGPT_BASE_URL, PgptProfile
-
-PROVIDER_ID = "pgpt"
 
 __all__ = [
     "DEFAULT_PGPT_BASE_URL",
