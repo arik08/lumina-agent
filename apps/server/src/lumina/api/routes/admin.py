@@ -1015,6 +1015,59 @@ def list_audit_events(
     }
 
 
+@router.get("/audit-traffic")
+def get_audit_traffic(
+    request: Request,
+    minutes: int = Query(default=60, ge=15, le=1440),
+    actor: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Return complete minute buckets for recent organization audit activity."""
+    require_admin(actor)
+    now = utc_now()
+    window_end = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
+    window_start = window_end - timedelta(minutes=minutes)
+    event_times = list(
+        db.scalars(
+            select(AuditEvent.created_at).where(
+                AuditEvent.organization_id == actor.organization_id,
+                AuditEvent.created_at >= window_start,
+                AuditEvent.created_at < window_end,
+            )
+        )
+    )
+    counts = {
+        window_start + timedelta(minutes=index): 0 for index in range(minutes)
+    }
+    for event_time in event_times:
+        bucket = event_time.astimezone(UTC).replace(second=0, microsecond=0)
+        if bucket in counts:
+            counts[bucket] += 1
+
+    record_audit(
+        db,
+        action="admin_audit_traffic_viewed",
+        target_type="audit_event",
+        result="success",
+        actor=actor,
+        request_id=_request_id(request),
+        metadata={"minutes": minutes},
+    )
+    db.commit()
+    bucket_values = list(counts.values())
+    return {
+        "generatedAt": now,
+        "timezone": str(_ANALYTICS_TIMEZONE),
+        "periodMinutes": minutes,
+        "total": sum(bucket_values),
+        "peak": max(bucket_values, default=0),
+        "buckets": [
+            {"minute": minute, "count": count}
+            for minute, count in counts.items()
+        ],
+    }
+
+
 def _admin_organization(db: Session, actor: User) -> Organization:
     require_admin(actor)
     organization = db.get(Organization, actor.organization_id)

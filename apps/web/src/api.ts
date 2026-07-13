@@ -4,6 +4,7 @@ import type {
   ArtifactSummary,
   ArtifactVersion,
   AdminAuditList,
+  AdminAuditTraffic,
   AdminConversationDetail,
   AdminConversationList,
   AdminEmergencyStopResult,
@@ -1459,6 +1460,13 @@ export async function listAdminAuditEvents(
   });
 }
 
+export async function getAdminAuditTraffic(minutes = 60, signal?: AbortSignal) {
+  return request<AdminAuditTraffic>("/admin/audit-traffic", {
+    query: { minutes },
+    signal,
+  });
+}
+
 export async function listMemories(
   query?: string,
   status: "active" | "pending" | "dismissed" | "superseded" = "active",
@@ -1725,6 +1733,7 @@ export const api = {
     listConversations: listAdminConversations,
     getConversation: getAdminConversation,
     listAuditEvents: listAdminAuditEvents,
+    getAuditTraffic: getAdminAuditTraffic,
     listMcpDefinitions: listAdminMcpDefinitions,
     createMcpDefinition: createAdminMcpDefinition,
     createMcpRevision: createAdminMcpRevision,

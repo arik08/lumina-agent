@@ -604,6 +604,18 @@ export interface AdminAuditList {
   hasMore: boolean;
 }
 
+export interface AdminAuditTraffic {
+  generatedAt: IsoDateTime;
+  timezone: string;
+  periodMinutes: number;
+  total: number;
+  peak: number;
+  buckets: Array<{
+    minute: IsoDateTime;
+    count: number;
+  }>;
+}
+
 export interface AttachmentSummary {
   id: UUID;
   conversationId: UUID;

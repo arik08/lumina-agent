@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -12,12 +13,14 @@ from lumina.db import SessionLocal
 from lumina.main import create_app
 from lumina.models import (
     Conversation,
+    AuditEvent,
     Message,
     Organization,
     Project,
     QueuedMessage,
     Run,
     User,
+    utc_now,
 )
 
 
@@ -354,6 +357,60 @@ def test_admin_usage_statistics_are_organization_scoped_and_admin_only(
         assert all_time.json()["periodDays"] >= 1
         assert len(all_time.json()["trend"]) == all_time.json()["periodDays"]
         assert all_time.json()["summary"]["runs"] >= payload["summary"]["runs"]
+
+
+def test_admin_audit_traffic_returns_complete_minute_buckets(tmp_path: Path) -> None:
+    app = _test_app(tmp_path)
+    with TestClient(app) as admin_client:
+        admin_csrf = _login(admin_client, "admin", "1")
+        _create_user(admin_client, admin_csrf, login_name="traffic-user")
+        user_client = TestClient(app)
+        try:
+            _login(user_client, "traffic-user", "initial-password")
+            assert user_client.get("/api/admin/audit-traffic").status_code == 403
+        finally:
+            user_client.close()
+
+        with SessionLocal() as db:
+            admin_user = db.scalar(select(User).where(User.login_id == "admin@posco.com"))
+            assert admin_user is not None
+            now = utc_now()
+            db.add_all(
+                [
+                    AuditEvent(
+                        organization_id=admin_user.organization_id,
+                        actor_user_id=admin_user.id,
+                        action=f"traffic_probe_{index}",
+                        target_type="test",
+                        result="success",
+                        created_at=now - timedelta(minutes=2, seconds=index),
+                    )
+                    for index in range(3)
+                ]
+            )
+            db.add(
+                AuditEvent(
+                    organization_id=admin_user.organization_id,
+                    actor_user_id=admin_user.id,
+                    action="outside_traffic_window",
+                    target_type="test",
+                    result="success",
+                    created_at=now - timedelta(minutes=61),
+                )
+            )
+            db.commit()
+
+        response = admin_client.get("/api/admin/audit-traffic?minutes=60")
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["timezone"] == "Asia/Seoul"
+        assert payload["periodMinutes"] == 60
+        assert len(payload["buckets"]) == 60
+        assert payload["total"] == sum(bucket["count"] for bucket in payload["buckets"])
+        assert payload["peak"] == max(bucket["count"] for bucket in payload["buckets"])
+        assert payload["peak"] >= 3
+        assert payload["total"] >= 3
+        assert admin_client.get("/api/admin/audit-traffic?minutes=14").status_code == 422
 
 
 def test_admin_conversation_view_is_audited(tmp_path: Path) -> None:

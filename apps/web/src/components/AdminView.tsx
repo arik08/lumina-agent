@@ -28,6 +28,7 @@ import type {
   UserRole,
   UserStatus,
 } from "../api-types";
+import { AdminTrafficChart } from "./AdminTrafficChart";
 import { OrganizationInstructionsPanel } from "./OrganizationInstructionsPanel";
 
 type AdminTab = "users" | "usage" | "conversations" | "audit" | "policy";
@@ -577,6 +578,7 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
 
       {tab === "audit" && (
         <section className="admin-section" aria-label="모니터링 로그">
+          <AdminTrafficChart refreshKey={refreshKey} />
           <div className="admin-audit-heading">
             <div className="admin-count">최근 모니터링 이벤트 {auditEvents.length} / {auditTotal}건</div>
             <div className="admin-audit-controls">
