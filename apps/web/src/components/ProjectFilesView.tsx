@@ -223,18 +223,15 @@ export function ProjectFilesView({ projectId, onOpenNavigation, onToast }: Proje
       </header>
       <input ref={uploadInputRef} className="visually-hidden" type="file" multiple onChange={(event) => { const selected = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = ""; void uploadFiles(selected); }} />
       <input ref={versionInputRef} className="visually-hidden" type="file" onChange={(event) => { const selected = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (selected) void addVersion(selected); }} />
-      <div className="file-workspace-toolbar">
-        <label className="feature-search"><Search size={14} /><input value={query} placeholder="파일명 또는 논리 경로 검색" onChange={(event) => setQuery(event.currentTarget.value)} /></label>
+      <div className="feature-toolbar file-workspace-toolbar">
         <button className={`file-drop-target ${dropActive ? "is-active" : ""}`} type="button" disabled={!projectId || busy} onClick={() => uploadInputRef.current?.click()} onDragEnter={(event) => { event.preventDefault(); setDropActive(true); }} onDragOver={(event) => event.preventDefault()} onDragLeave={() => setDropActive(false)} onDrop={handleDrop}><FilePlus2 size={14} /> 파일을 놓거나 선택해서 업로드</button>
+        <button className="file-workspace-refresh" type="button" aria-label="새로 고침" disabled={loading} onClick={() => setRefreshKey((value) => value + 1)}>{loading ? <LoaderCircle className="is-running" size={15} /> : <RefreshCw size={15} />}</button>
+        <label className="feature-search"><Search size={14} /><input value={query} placeholder="파일명 또는 논리 경로 검색" onChange={(event) => setQuery(event.currentTarget.value)} /></label>
       </div>
       {error && <div className="feature-error" role="alert">{error}</div>}
       {!projectId ? <div className="feature-state">파일을 관리할 Project를 선택해 주세요.</div> : (
         <div className="split-feature file-workspace-split">
           <aside className="feature-list file-workspace-list" aria-label="Project 파일 목록">
-            <div className="feature-toolbar file-workspace-list-toolbar">
-              <button className="feature-primary-action lumina-primary-action" type="button" disabled={!projectId || busy} onClick={() => uploadInputRef.current?.click()}><Upload size={15} /> 업로드</button>
-              <button className="file-workspace-list-refresh" type="button" aria-label="새로 고침" disabled={loading} onClick={() => setRefreshKey((value) => value + 1)}>{loading ? <LoaderCircle className="is-running" size={15} /> : <RefreshCw size={15} />}</button>
-            </div>
             {loading && files.length === 0 ? <div className="feature-state"><LoaderCircle className="is-running" size={15} /> 불러오는 중</div> : files.length === 0 ? <div className="feature-state">Project 파일이 없습니다.</div> : files.map((item) => (
               <button className={item.id === selectedId ? "is-selected" : ""} type="button" key={item.id} onClick={() => setSelectedId(item.id)}>
                 <span><strong>{item.displayName}</strong><small>{item.logicalPath} · {formatBytes(item.size)}</small></span><em className="is-enabled">v{item.currentVersion}</em>
