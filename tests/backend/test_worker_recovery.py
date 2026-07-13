@@ -150,7 +150,8 @@ def test_graceful_shutdown_records_interrupted_then_schedules_recovery(
         run = db.get(Run, run_id)
         assert run is not None
         _move_to_model(db, run)
-        interrupted = mark_worker_shutdown_interrupted(db)
+        run.snapshot_json = {**run.snapshot_json, "workerId": "worker-current"}
+        interrupted = mark_worker_shutdown_interrupted(db, worker_id="worker-current")
         db.commit()
         assert interrupted == (run_id,)
         assert run.status == "interrupted"
@@ -166,6 +167,23 @@ def test_graceful_shutdown_records_interrupted_then_schedules_recovery(
         assert run.status == QUEUED
         assert run.error_code is None
         assert "workerRecoverable" not in run.snapshot_json
+
+
+def test_stale_worker_shutdown_does_not_interrupt_reclaimed_run(
+    tmp_path: Path,
+) -> None:
+    run_id = _direct_run(tmp_path, "stale-worker-shutdown")
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        assert run is not None
+        _move_to_model(db, run)
+        run.snapshot_json = {**run.snapshot_json, "workerId": "worker-new"}
+        interrupted = mark_worker_shutdown_interrupted(db, worker_id="worker-old")
+        db.commit()
+
+        assert interrupted == ()
+        assert run.status == MODEL_STREAMING
+        assert run.error_code is None
 
 
 def test_executor_start_recovers_model_turn_and_parks_approval(tmp_path: Path) -> None:
@@ -212,6 +230,9 @@ def test_executor_start_recovers_model_turn_and_parks_approval(tmp_path: Path) -
     asyncio.run(exercise())
 
     with SessionLocal() as db:
+        recovered = db.get(Run, recovered_run_id)
+        assert recovered is not None
+        assert recovered.snapshot_json["workerId"] == executor._worker_id
         approval = db.get(Run, approval_run_id)
         assert approval is not None and approval.status == AWAITING_APPROVAL
 

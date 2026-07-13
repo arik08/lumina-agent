@@ -48,7 +48,9 @@ def prepare_worker_recovery(db: Session) -> WorkerRecoveryBatch:
     return WorkerRecoveryBatch(tuple(resumable), tuple(waiting))
 
 
-def mark_worker_shutdown_interrupted(db: Session) -> tuple[str, ...]:
+def mark_worker_shutdown_interrupted(
+    db: Session, *, worker_id: str
+) -> tuple[str, ...]:
     """Record a graceful worker shutdown without discarding resumable state."""
 
     interrupted: list[str] = []
@@ -62,6 +64,8 @@ def mark_worker_shutdown_interrupted(db: Session) -> tuple[str, ...]:
     for run in active_runs:
         previous_status = run.status
         snapshot = dict(run.snapshot_json)
+        if snapshot.get("workerId") != worker_id:
+            continue
         snapshot["workerRecoverable"] = True
         snapshot["workerInterruptedFrom"] = previous_status
         run.snapshot_json = snapshot

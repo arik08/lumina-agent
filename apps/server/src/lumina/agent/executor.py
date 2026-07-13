@@ -186,6 +186,7 @@ class LocalRunExecutor:
         self.file_storage = ManagedLocalStorage(_file_root(self.settings))
         self.mcp_runtime = McpRuntime(self.settings)
         self.codex_provider = CodexResponsesAdapter()
+        self._worker_id = new_uuid()
         self._started = False
         self._claim_lock = asyncio.Lock()
         self._tasks: dict[str, asyncio.Task[None]] = {}
@@ -271,7 +272,9 @@ class LocalRunExecutor:
             await asyncio.gather(*background_tasks, return_exceptions=True)
         interrupted_ids: tuple[str, ...] = ()
         with session_scope() as db:
-            interrupted_ids = mark_worker_shutdown_interrupted(db)
+            interrupted_ids = mark_worker_shutdown_interrupted(
+                db, worker_id=self._worker_id
+            )
         for run_id in interrupted_ids:
             await event_broker.notify(run_id)
         await self.codex_provider.close()
@@ -407,6 +410,10 @@ class LocalRunExecutor:
                     or server_active >= self.settings.server_concurrency_limit
                 ):
                     return "wait"
+                run.snapshot_json = {
+                    **run.snapshot_json,
+                    "workerId": self._worker_id,
+                }
                 if isinstance(run.snapshot_json.get("tool_checkpoint"), dict):
                     transition_run(db, run, TOOLS_RUNNING)
                     return "claimed"
