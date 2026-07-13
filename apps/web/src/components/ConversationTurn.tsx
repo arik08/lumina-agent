@@ -1503,7 +1503,19 @@ export function AssistantTurn({
               <div className={`artifact-progress-count is-${artifactProgress.stage}`} role="status" aria-live={terminal ? undefined : "polite"} aria-label={`문서 ${artifactUsage.estimated === false ? "완성 분량" : "작성 중 추정 분량"} ${artifactUsage.tokens.toLocaleString()} 토큰 ${artifactUsage.lines.toLocaleString()}줄${modelOutputTokens > 0 ? `, 모델 출력 누계 ${modelOutputTokens.toLocaleString()} 토큰` : ""}`}>
                 <div className="artifact-progress-heading">
                   <span>{artifactUsage.estimated === false ? "문서 약" : "작성 중 약"} {artifactUsage.tokens.toLocaleString()}토큰 · {artifactUsage.lines.toLocaleString()}줄{artifactUsage.targetTokens ? ` · 목표 ${artifactUsage.targetTokens.toLocaleString()}토큰` : ""}</span>
-                  {modelOutputTokens > 0 && <span className="artifact-model-output">모델 출력 누계 {modelOutputTokens.toLocaleString()}토큰</span>}
+                  {modelOutputTokens > 0 && (
+                    <span className="artifact-model-output">
+                      모델 출력 누계 {modelOutputTokens.toLocaleString()}토큰
+                      <button
+                        className="artifact-model-output-help"
+                        type="button"
+                        aria-label="작성 중 토큰과 모델 출력 누계의 차이"
+                        data-tooltip="작성 중은 현재 문서 본문의 추정량이고, 모델 출력 누계는 이번 작업의 모든 모델 응답을 합산한 값입니다."
+                      >
+                        ⓘ
+                      </button>
+                    </span>
+                  )}
                 </div>
                 <div className="artifact-progress-meter" role="progressbar" aria-label={artifactUsage.targetTokens ? "선택한 문서 목표 분량 대비 작성량" : "현재 5,000 토큰 구간의 생성량"} aria-valuemin={0} aria-valuemax={artifactProgress.maxTokens} aria-valuenow={artifactProgress.bucketTokens}>
                   <span className="artifact-progress-fill" style={{ width: `${artifactProgress.percent}%` }} />
