@@ -220,12 +220,12 @@ export function ProjectFilesView({ projectId, onOpenNavigation, onToast }: Proje
     <div className="feature-view project-files-view">
       <header className="feature-header">
         <div><button className="feature-mobile-menu" type="button" aria-label="사이드바 열기" onClick={onOpenNavigation}><Menu size={17} /></button><FolderOpen size={17} /><h1>파일 Workspace</h1><span>{files.length}개 · Server Workspace</span></div>
+        <div><button className="file-workspace-refresh" type="button" aria-label="새로 고침" disabled={loading} onClick={() => setRefreshKey((value) => value + 1)}>{loading ? <LoaderCircle className="is-running" size={15} /> : <RefreshCw size={15} />}</button></div>
       </header>
       <input ref={uploadInputRef} className="visually-hidden" type="file" multiple onChange={(event) => { const selected = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = ""; void uploadFiles(selected); }} />
       <input ref={versionInputRef} className="visually-hidden" type="file" onChange={(event) => { const selected = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (selected) void addVersion(selected); }} />
       <div className="feature-toolbar file-workspace-toolbar">
         <button className={`file-drop-target ${dropActive ? "is-active" : ""}`} type="button" disabled={!projectId || busy} onClick={() => uploadInputRef.current?.click()} onDragEnter={(event) => { event.preventDefault(); setDropActive(true); }} onDragOver={(event) => event.preventDefault()} onDragLeave={() => setDropActive(false)} onDrop={handleDrop}><FilePlus2 size={14} /> 파일을 놓거나 선택해서 업로드</button>
-        <button className="file-workspace-refresh" type="button" aria-label="새로 고침" disabled={loading} onClick={() => setRefreshKey((value) => value + 1)}>{loading ? <LoaderCircle className="is-running" size={15} /> : <RefreshCw size={15} />}</button>
         <label className="feature-search"><Search size={14} /><input value={query} placeholder="파일명 또는 논리 경로 검색" onChange={(event) => setQuery(event.currentTarget.value)} /></label>
       </div>
       {error && <div className="feature-error" role="alert">{error}</div>}
