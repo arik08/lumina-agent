@@ -322,6 +322,11 @@ export function useLuminaWorkspace() {
             createdAt: event.createdAt,
           },
         ];
+      } else if (event.type === "skill_selected") {
+        nextSnapshot.activities = [
+          ...nextSnapshot.activities.filter((activity) => activity.id !== event.payload.activity.id),
+          { ...event.payload.activity, sequence: event.sequence },
+        ];
       } else if (event.type === "assistant_turn_completed") {
         turnSets = ensureTurnSet({ ...runtime, turnSets }, event.runId, event.payload.message);
         nextSnapshot.assistantDraft = null;

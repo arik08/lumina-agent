@@ -18,6 +18,7 @@ from lumina.api.schemas import (
     RunMessageInput,
 )
 from lumina.auth import bootstrap_database, create_user
+from lumina.agent.executor import _skill_activation_tool_schema
 from lumina.config import Settings, get_settings
 from lumina.db import SessionLocal, configure_database, create_schema
 from lumina.extensions.service import create_skill, resolve_skill_snapshot, update_draft
@@ -34,31 +35,69 @@ from lumina.models import (
     RunCommand,
     User,
 )
+from lumina.runs.approvals import classify_tool_risk
 from lumina.runs.service import (
-    _auto_selected_skill_ids,
     _skill_activities,
+    activate_run_skill,
+    append_event,
     apply_run_action,
     create_run,
     run_snapshot,
 )
 
 
-def test_visual_artifact_is_auto_selected_for_generic_reports() -> None:
+def test_implicit_skill_activation_requires_a_model_tool_choice() -> None:
     extensions = [
-        {"extension_id": "visual-id", "slug": "visual-artifact"},
-        {"extension_id": "pptx-id", "slug": "pptx-writer"},
+        {
+            "extension_id": "visual-id",
+            "slug": "visual-artifact",
+            "name": "Visual Artifact",
+            "description": "HTML 시각 보고서를 제작합니다.",
+            "instructions": "Create a polished standalone HTML report.",
+            "version": 1,
+            "digest": "visual-digest",
+        },
+        {
+            "extension_id": "pptx-id",
+            "slug": "pptx-writer",
+            "name": "PPTX Writer",
+            "description": "프레젠테이션을 제작합니다.",
+            "instructions": "Create a presentation.",
+            "version": 1,
+            "digest": "pptx-digest",
+        },
     ]
+    run = SimpleNamespace(
+        snapshot_json={
+            "extensions": extensions,
+            "extension_application": "explicit_references",
+            "prompt_references": [],
+        }
+    )
 
-    assert _auto_selected_skill_ids("시장 동향 보고서로 작성해줘", extensions) == [
-        "visual-id"
+    assert _skill_activities(run) == []
+    schema = _skill_activation_tool_schema(run.snapshot_json)
+    assert schema is not None
+    assert schema["function"]["name"] == "activate_skill"
+    assert schema["function"]["parameters"]["properties"]["skillId"]["enum"] == [
+        "visual-id",
+        "pptx-id",
     ]
-    assert _auto_selected_skill_ids("시장 동향 리포트로 작성해줘", extensions) == [
-        "visual-id"
-    ]
-    assert _auto_selected_skill_ids("visual-artifact 써서 만들어", extensions) == [
-        "visual-id"
-    ]
-    assert _auto_selected_skill_ids("시장 동향 PPTX 보고서로 작성해줘", extensions) == []
+    assert classify_tool_risk(
+        "activate_skill", approval_mode="on_risk"
+    ).approval_required is False
+
+    selected = activate_run_skill(
+        run,
+        skill_id="visual-id",
+        reason="요청한 시장 동향을 읽기 쉬운 HTML 보고서로 구성하기 위해 선택했습니다.",
+    )
+
+    assert selected["extension_id"] == "visual-id"
+    assert run.snapshot_json["auto_selected_skill_ids"] == ["visual-id"]
+    assert _skill_activities(run)[0]["reason"] == (
+        "요청한 시장 동향을 읽기 쉬운 HTML 보고서로 구성하기 위해 선택했습니다."
+    )
 
 
 def test_skill_activities_show_which_skill_was_actually_applied() -> None:
@@ -289,6 +328,50 @@ def _setup(tmp_path: Path) -> tuple[FastAPI, dict[str, str]]:
     return application, ids
 
 
+def test_model_selected_skill_keeps_its_event_sequence_in_run_snapshot(
+    tmp_path: Path,
+) -> None:
+    _app, ids = _setup(tmp_path)
+    with SessionLocal() as db:
+        admin = db.get(User, ids["admin_id"])
+        assert admin is not None
+        run, _message, created = create_run(
+            db,
+            user=admin,
+            conversation_id=ids["conversation_id"],
+            payload=RunCreate(
+                message=RunMessageInput(
+                    text="시장 동향 보고서를 작성해 주세요.",
+                    attachment_ids=[],
+                    prompt_references=[],
+                )
+            ),
+            idempotency_key="model-skill-selection-1",
+        )
+        assert created is True
+        assert "auto_selected_skill_ids" not in run.snapshot_json
+
+        selected = activate_run_skill(
+            run,
+            skill_id=ids["skill_id"],
+            reason="설비 점검 보고서 절차가 요청에 적합합니다.",
+        )
+        activity = next(
+            item
+            for item in _skill_activities(run)
+            if item["skillId"] == selected["extension_id"]
+        )
+        event = append_event(db, run, "skill_selected", {"activity": activity})
+        db.flush()
+
+        snapshot = run_snapshot(db, run)
+        selected_activity = next(
+            item for item in snapshot["activities"] if item["type"] == "skill"
+        )
+        assert selected_activity["sequence"] == event.sequence
+        assert selected_activity["reason"] == "설비 점검 보고서 절차가 요청에 적합합니다."
+
+
 def _login(client: TestClient) -> None:
     response = client.post(
         "/api/auth/login",
@@ -406,6 +489,7 @@ def test_run_snapshot_and_message_references_are_canonical_and_reproducible(
         db.commit()
 
         references = _reference_map(run.snapshot_json["prompt_references"])
+        assert "auto_selected_skill_ids" not in run.snapshot_json
         assert run.snapshot_json["attachments"] == [ids["attachment_id"]]
         assert references["file"]["version_or_digest"] == "file-sha256-v1"
         assert references["file"]["display_snapshot"]["name"] == "점검표.xlsx"

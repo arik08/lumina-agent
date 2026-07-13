@@ -1340,6 +1340,7 @@ export type RunEventType =
   | "run_status_changed"
   | "assistant_text_delta"
   | "progress_summary"
+  | "skill_selected"
   | "assistant_turn_completed"
   | "conversation_title_updated"
   | "artifact_progress"
@@ -1378,6 +1379,7 @@ export type RunEvent =
   | RunEventEnvelope<"run_started" | "run_status_changed", { status: RunStatus }>
   | RunEventEnvelope<"assistant_text_delta", { messageId: UUID; delta: string }>
   | RunEventEnvelope<"progress_summary", { id: UUID; text: string; phase: string }>
+  | RunEventEnvelope<"skill_selected", { activity: Extract<RunActivity, { type: "skill" }> }>
   | RunEventEnvelope<"assistant_turn_completed", { message: ChatMessage }>
   | RunEventEnvelope<"conversation_title_updated", { title: string; revision: number; source: "llm" }>
   | RunEventEnvelope<"artifact_progress", { tokens: number; lines: number }>

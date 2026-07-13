@@ -87,38 +87,6 @@ PLAN_STEP_FAILED = "failed"
 PLAN_STEP_CANCELLED = "cancelled"
 
 
-def _auto_selected_skill_ids(
-    message_text: str, extensions: Iterable[dict[str, Any]]
-) -> list[str]:
-    normalized = " ".join(message_text.casefold().split())
-    explicit_visual_artifact = "visual-artifact" in normalized
-    generic_report = any(
-        marker in normalized for marker in ("보고서", "리포트", "report")
-    )
-    explicit_other_format = any(
-        marker in normalized
-        for marker in (
-            "pdf",
-            "ppt",
-            "pptx",
-            "파워포인트",
-            "xlsx",
-            "엑셀",
-            "docx",
-            "워드",
-            "markdown",
-            "마크다운",
-        )
-    )
-    if not explicit_visual_artifact and (not generic_report or explicit_other_format):
-        return []
-    return [
-        str(extension["extension_id"])
-        for extension in extensions
-        if str(extension.get("slug", "")).casefold() == "visual-artifact"
-    ]
-
-
 UNTITLED_CONVERSATION_TITLES = {"제목 없음", "새 작업"}
 PROVISIONAL_CONVERSATION_TITLE_MAX_LENGTH = 60
 
@@ -460,7 +428,6 @@ def create_run(
         if extension_snapshot_override is not None
         else resolve_skill_snapshot(db, user=user, project_id=project.id)
     )
-    auto_selected_skill_ids = _auto_selected_skill_ids(payload.message.text, extensions)
     mcp_servers = _selected_mcp_snapshots(
         db,
         user=user,
@@ -470,8 +437,6 @@ def create_run(
     extension_application = (
         "all_snapshot"
         if apply_extension_snapshot
-        else "explicit_and_auto"
-        if auto_selected_skill_ids
         else "explicit_references"
     )
     stable_prefix = {
@@ -493,8 +458,6 @@ def create_run(
         "approval_mode": "on_risk",
         "prompt_cache_key": prompt_cache_key,
     }
-    if auto_selected_skill_ids:
-        stable_prefix["auto_selected_skill_ids"] = auto_selected_skill_ids
     if mcp_servers:
         stable_prefix["mcp_servers"] = mcp_servers
     prefix_hash = hashlib.sha256(
@@ -541,11 +504,6 @@ def create_run(
             "instructions": instruction_snapshot,
             "extensions": extensions,
             "extension_application": extension_application,
-            **(
-                {"auto_selected_skill_ids": auto_selected_skill_ids}
-                if auto_selected_skill_ids
-                else {}
-            ),
             "prompt_prefix_hash": prefix_hash,
             "prompt_cache_key": prompt_cache_key,
             "contract_version": stable_prefix["contract_version"],
@@ -1762,13 +1720,25 @@ def run_snapshot(db: Session, run: Run) -> dict[str, Any]:
             select(RunEvent)
             .where(
                 RunEvent.run_id == run.id,
-                RunEvent.event_type.in_(("progress_summary", "tool_started")),
+                RunEvent.event_type.in_(
+                    ("progress_summary", "skill_selected", "tool_started")
+                ),
             )
             .order_by(RunEvent.sequence)
         )
     )
     activities = _skill_activities(run)
     for event in activity_events:
+        if event.event_type == "skill_selected":
+            event_activity = event.payload_json.get("activity", {})
+            event_activity_id = str(event_activity.get("id", ""))
+            activities = [
+                {**activity, "sequence": event.sequence}
+                if activity.get("id") == event_activity_id
+                else activity
+                for activity in activities
+            ]
+            continue
         if event.event_type == "progress_summary":
             activities.append(
                 {
@@ -1792,6 +1762,12 @@ def run_snapshot(db: Session, run: Run) -> dict[str, Any]:
                     "execution": tool_response(tool),
                 }
             )
+    activities.sort(
+        key=lambda activity: (
+            int(activity.get("sequence", 0)),
+            str(activity.get("id", "")),
+        )
+    )
     tool_artifact_ids = {
         tool.artifact_id for tool in tools if tool.artifact_id is not None
     }
@@ -1930,6 +1906,75 @@ def _usage_token_count(value: Any) -> int:
     )
 
 
+def activate_run_skill(
+    run: Run,
+    *,
+    skill_id: str,
+    reason: str,
+) -> dict[str, Any]:
+    """Persist a model-selected Skill in the immutable Run extension snapshot."""
+    extensions = [
+        item
+        for item in run.snapshot_json.get("extensions", [])
+        if isinstance(item, dict)
+    ]
+    selected = next(
+        (
+            extension
+            for extension in extensions
+            if str(extension.get("extension_id", "")) == skill_id
+        ),
+        None,
+    )
+    if selected is None:
+        raise ApiProblem(
+            422,
+            "skill_not_in_run_snapshot",
+            "현재 Run에서 사용할 수 없는 Skill입니다.",
+        )
+
+    explicit_ids = {
+        str(reference.get("reference_id"))
+        for reference in run.snapshot_json.get("prompt_references", [])
+        if isinstance(reference, dict) and reference.get("kind") == "skill"
+    }
+    if (
+        run.snapshot_json.get("extension_application") == "all_snapshot"
+        or skill_id in explicit_ids
+    ):
+        return {**selected, "activation_reason": "", "already_active": True}
+
+    selected_ids = [
+        str(item)
+        for item in run.snapshot_json.get("auto_selected_skill_ids", [])
+        if str(item)
+    ]
+    already_active = skill_id in selected_ids
+    if not already_active:
+        selected_ids.append(skill_id)
+    normalized_reason = " ".join(reason.split())[:160].rstrip()
+    reasons = {
+        str(key): str(value)
+        for key, value in dict(
+            run.snapshot_json.get("auto_selected_skill_reasons", {})
+        ).items()
+        if str(key) and str(value).strip()
+    }
+    if normalized_reason:
+        reasons[skill_id] = normalized_reason
+    run.snapshot_json = {
+        **run.snapshot_json,
+        "extension_application": "explicit_and_auto",
+        "auto_selected_skill_ids": selected_ids,
+        **({"auto_selected_skill_reasons": reasons} if reasons else {}),
+    }
+    return {
+        **selected,
+        "activation_reason": reasons.get(skill_id, ""),
+        "already_active": already_active,
+    }
+
+
 def _skill_activities(run: Run) -> list[dict[str, Any]]:
     extensions = [
         item
@@ -1945,6 +1990,13 @@ def _skill_activities(run: Run) -> list[dict[str, Any]]:
     auto_ids = {
         str(extension_id)
         for extension_id in run.snapshot_json.get("auto_selected_skill_ids", [])
+    }
+    auto_reasons = {
+        str(key): " ".join(str(value).split())[:160].rstrip()
+        for key, value in dict(
+            run.snapshot_json.get("auto_selected_skill_reasons", {})
+        ).items()
+        if str(key) and str(value).strip()
     }
     activities: list[dict[str, Any]] = []
     for extension in extensions:
@@ -1964,7 +2016,9 @@ def _skill_activities(run: Run) -> list[dict[str, Any]]:
             if extension.get("version") is not None
             else str(extension.get("digest", ""))[:12]
         )
-        if extension.get("slug") == "visual-artifact":
+        if applied_by == "auto" and auto_reasons.get(extension_id):
+            reason = auto_reasons[extension_id]
+        elif extension.get("slug") == "visual-artifact":
             reason = "보고서 HTML 시각 산출물 제작"
         else:
             description = " ".join(str(extension.get("description", "")).split())

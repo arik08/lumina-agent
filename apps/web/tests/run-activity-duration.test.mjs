@@ -45,6 +45,25 @@ test("group wall time is shown once while expanded tools keep their own executio
   assert.doesNotMatch(app, /displayDurationMs=\{/);
 });
 
+test("a stage with one timed child hides the duplicate parent duration", async () => {
+  const app = await read("../src/components/ConversationTurn.tsx");
+
+  assert.match(app, /const timedChildCount = toolActivities\.length \+ \(hasModelProcessingRow \? 1 : 0\)/);
+  assert.match(app, /const showStageDuration = timedChildCount !== 1/);
+  assert.match(app, /\{showStageDuration && <span className="progress-summary-duration"/);
+});
+
+test("model-selected skills enter the live timeline only through a selection event", async () => {
+  const apiTypes = await read("../src/api-types.ts");
+  const workspace = await read("../src/use-lumina-workspace.ts");
+  const turn = await read("../src/components/ConversationTurn.tsx");
+
+  assert.match(apiTypes, /RunEventEnvelope<"skill_selected"/);
+  assert.match(workspace, /event\.type === "skill_selected"/);
+  assert.match(workspace, /\{ \.\.\.event\.payload\.activity, sequence: event\.sequence \}/);
+  assert.match(turn, /skill\.appliedBy === "auto" \? "AI 선택"/);
+});
+
 test("parallel tool intervals are merged before calculating non-tool model time", () => {
   const stageStartedAtMs = Date.parse("2026-07-12T15:18:38.647Z");
   const stageFinishedAtMs = Date.parse("2026-07-12T15:19:01.885Z");
