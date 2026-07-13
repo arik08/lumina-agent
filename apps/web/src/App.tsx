@@ -2013,7 +2013,15 @@ function App() {
     >
       <button className={`sidebar-backdrop ${sidebarOpen ? "is-visible" : ""}`} type="button" aria-label="사이드바 닫기" onClick={() => setSidebarOpen(false)} />
       <aside className={`sidebar ${sidebarOpen ? "is-open" : ""} ${sidebarCollapsed ? "is-collapsed" : ""}`} aria-label="Lumina 탐색">
-        <nav className="sidebar-collapsed-navigation" aria-label="축소된 Lumina 탐색">
+        <nav
+          className="sidebar-collapsed-navigation"
+          aria-label="축소된 Lumina 탐색"
+          onClick={(event) => {
+            if (event.target !== event.currentTarget) return;
+            sidebarAutoCollapsedRef.current = false;
+            setSidebarCollapsed(false);
+          }}
+        >
           <button type="button" aria-label="사이드바 펼치기" title="사이드바 펼치기" onClick={() => { sidebarAutoCollapsedRef.current = false; setSidebarCollapsed(false); }}><PanelLeftOpen size={17} /></button>
           <button type="button" aria-label="새 채팅" title="새 채팅" onClick={startNewConversation}><SquarePen size={18} /></button>
           {navigation.map(({ id, label, icon: Icon }) => (
