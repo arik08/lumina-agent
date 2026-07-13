@@ -217,6 +217,52 @@ def update_extension_metadata(
     return extension
 
 
+def delete_skill(db: Session, *, user: User, extension_id: str) -> Extension:
+    extension = require_extension(db, user, extension_id)
+    if skill_role(db, user, extension) != "owner":
+        raise ApiProblem(
+            403, "extension_delete_forbidden", "Skill을 삭제할 권한이 없습니다."
+        )
+
+    deleted_at = utc_now()
+    installations = list(
+        db.scalars(
+            select(ExtensionInstallation).where(
+                ExtensionInstallation.extension_id == extension.id,
+                ExtensionInstallation.removed_at.is_(None),
+            )
+        )
+    )
+    for installation in installations:
+        installation.enabled = False
+        installation.removed_at = deleted_at
+
+    drafts = list(
+        db.scalars(
+            select(ExtensionDraft).where(ExtensionDraft.extension_id == extension.id)
+        )
+    )
+    for draft in drafts:
+        if draft.status == "active":
+            draft.status = "deleted"
+            draft.updated_at = deleted_at
+
+    draft_ids = [draft.id for draft in drafts]
+    if draft_ids:
+        for binding in db.scalars(
+            select(ExtensionDraftBinding).where(
+                ExtensionDraftBinding.draft_id.in_(draft_ids),
+                ExtensionDraftBinding.enabled.is_(True),
+            )
+        ):
+            binding.enabled = False
+
+    extension.archived_at = deleted_at
+    extension.updated_at = deleted_at
+    db.flush()
+    return extension
+
+
 def checkout_draft(db: Session, *, user: User, extension_id: str) -> ExtensionDraft:
     extension = require_extension(db, user, extension_id)
     draft = db.scalar(
@@ -1377,6 +1423,7 @@ def extension_payload(
         "updatedAt": extension.updated_at,
         "canEdit": can_manage,
         "canCreateDraft": extension.visibility != "private" or can_manage,
+        "canDelete": role == "owner",
     }
     if draft is not None:
         base = (

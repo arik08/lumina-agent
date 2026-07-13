@@ -1276,7 +1276,8 @@ button:disabled { cursor: default; opacity: 0.5; }
 .mcp-installation-row { border-bottom: 1px solid var(--line); }
 .mcp-installation-row > header { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 10px; }
 .mcp-installation-row > header > div { display: flex; min-width: 0; align-items: center; gap: 5px; }
-.mcp-installation-row > header > div:first-child { display: grid; gap: 2px; }
+.mcp-installation-row > header > div:first-child { display: grid; min-width: 0; flex: 1 1 auto; gap: 2px; overflow: hidden; }
+.mcp-installation-row > header > .mcp-installation-actions { flex: 0 0 auto; flex-wrap: nowrap; white-space: nowrap; }
 .mcp-installation-row > header strong { font-size: 11.5px; }
 .mcp-installation-row > header small { overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .mcp-installation-row > header button { display: inline-flex; width: 27px; height: 27px; align-items: center; justify-content: center; border: 0; border-radius: 4px; background: transparent; color: var(--muted); cursor: pointer; }
@@ -1294,6 +1295,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .mcp-secret-row input { min-width: 0; height: 27px; border: 1px solid var(--line); border-radius: 4px; outline: 0; padding: 0 7px; background: var(--surface); color: var(--ink); font-size: 10.5px; }
 .mcp-secret-row input:focus { border-color: var(--cobalt); }
 .mcp-secret-row button { height: 27px; border: 1px solid var(--line); border-radius: 4px; padding: 0 7px; background: var(--surface); color: var(--ink); font-size: 10.5px; cursor: pointer; }
+.mcp-secret-row > .mcp-secret-action { grid-column: -2 / -1; width: max-content; justify-self: end; white-space: nowrap; }
 
 .admin-mcp-panel { min-height: 0; flex: 1; overflow: hidden; }
 .admin-mcp-toolbar { display: flex; min-height: 38px; align-items: center; justify-content: space-between; padding: 0 18px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 10.5px; }

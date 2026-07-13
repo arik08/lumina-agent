@@ -31,6 +31,7 @@ from ...extensions.service import (
     create_skill,
     checkout_draft,
     delete_folder,
+    delete_skill,
     draft_etag,
     draft_payload,
     extension_payload,
@@ -150,6 +151,28 @@ def patch_extension(
     )
     db.commit()
     return extension_payload(db, extension, user=context.user)
+
+
+@router.delete("/extensions/{extension_id}", status_code=204)
+def delete_extension(
+    extension_id: str,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> Response:
+    extension = delete_skill(db, user=context.user, extension_id=extension_id)
+    record_audit(
+        db,
+        action="extension_deleted",
+        target_type="extension",
+        target_id=extension.id,
+        result="success",
+        actor=context.user,
+        request_id=_request_id(request),
+        metadata={"kind": extension.kind},
+    )
+    db.commit()
+    return Response(status_code=204)
 
 
 @router.post("/extensions/{extension_id}/draft")

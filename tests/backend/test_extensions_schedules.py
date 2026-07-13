@@ -19,7 +19,9 @@ from lumina.db import SessionLocal, configure_database, create_schema
 from lumina.models import (
     Artifact,
     AuditEvent,
+    Extension,
     ExtensionDraft,
+    ExtensionDraftBinding,
     ExtensionInstallation,
     ExtensionVersion,
     Organization,
@@ -521,6 +523,144 @@ def test_published_skill_has_isolated_personal_drafts_and_multiple_owners(
         assert len(ownerships) == 1
         assert ownerships[0].principal_id == skill["ownerUserId"]
         assert "skill_ownership_removed" in set(db.scalars(select(AuditEvent.action)))
+
+
+def test_skill_delete_requires_owner_or_admin_and_removes_active_state(
+    tmp_path: Path,
+) -> None:
+    app, _settings = _test_app(tmp_path)
+    with SessionLocal() as db:
+        organization = db.scalar(select(Organization))
+        admin = db.scalar(select(User).where(User.login_id == "admin@posco.com"))
+        assert organization is not None and admin is not None
+        owner = create_user(
+            db,
+            login_name="skill-owner",
+            password="pw",
+            organization_id=organization.id,
+            created_by_user_id=admin.id,
+        )
+        maintainer = create_user(
+            db,
+            login_name="skill-maintainer",
+            password="pw",
+            organization_id=organization.id,
+            created_by_user_id=admin.id,
+        )
+        owner_id = owner.id
+        maintainer_id = maintainer.id
+        db.commit()
+
+    with TestClient(app) as client:
+        owner_csrf = _login(client, "skill-owner", "pw")
+        owner_headers = {"X-CSRF-Token": owner_csrf}
+        created = client.post(
+            "/api/extensions",
+            headers=owner_headers,
+            json={
+                "name": "삭제 권한 점검",
+                "slug": "delete-permission-check",
+                "description": "삭제 시 활성 상태가 정리되는지 점검합니다.",
+                "package": {"files": {"SKILL.md": "# 삭제 권한 점검"}},
+            },
+        )
+        assert created.status_code == 201, created.text
+        skill = created.json()
+        assert skill["currentUserRole"] == "owner"
+        assert skill["canDelete"] is True
+
+        draft = skill["draft"]
+        saved = client.post(
+            f"/api/skill-drafts/{draft['id']}/save-version",
+            headers=owner_headers,
+            json={
+                "expectedRevision": draft["revision"],
+                "expectedDigest": draft["digest"],
+                "baseVersionId": None,
+                "manifest": {},
+            },
+        )
+        assert saved.status_code == 201, saved.text
+        installed = client.post(
+            "/api/extension-installations",
+            headers=owner_headers,
+            json={
+                "versionId": saved.json()["id"],
+                "scopeType": "user",
+                "enabled": True,
+                "settings": {},
+            },
+        )
+        assert installed.status_code == 201, installed.text
+
+        client.cookies.clear()
+        admin_csrf = _login(client)
+        admin_headers = {"X-CSRF-Token": admin_csrf}
+        ownership = client.post(
+            f"/api/skills/{skill['id']}/ownerships",
+            headers=admin_headers,
+            json={"userId": maintainer_id, "role": "maintainer"},
+        )
+        assert ownership.status_code == 201, ownership.text
+
+        client.cookies.clear()
+        maintainer_csrf = _login(client, "skill-maintainer", "pw")
+        maintainer_headers = {"X-CSRF-Token": maintainer_csrf}
+        maintainer_view = client.get(f"/api/extensions/{skill['id']}")
+        assert maintainer_view.status_code == 200, maintainer_view.text
+        assert maintainer_view.json()["canDelete"] is False
+        forbidden = client.delete(
+            f"/api/extensions/{skill['id']}", headers=maintainer_headers
+        )
+        assert forbidden.status_code == 403, forbidden.text
+        assert forbidden.json()["code"] == "extension_delete_forbidden"
+
+        client.cookies.clear()
+        owner_csrf = _login(client, "skill-owner", "pw")
+        deleted = client.delete(
+            f"/api/extensions/{skill['id']}",
+            headers={"X-CSRF-Token": owner_csrf},
+        )
+        assert deleted.status_code == 204, deleted.text
+        assert client.get(f"/api/extensions/{skill['id']}").status_code == 404
+        assert skill["id"] not in {item["id"] for item in client.get("/api/extensions").json()}
+
+        admin_deletable = client.post(
+            "/api/extensions",
+            headers={"X-CSRF-Token": owner_csrf},
+            json={
+                "name": "관리자 삭제 점검",
+                "slug": "admin-delete-check",
+                "package": {"files": {"SKILL.md": "# 관리자 삭제 점검"}},
+            },
+        )
+        assert admin_deletable.status_code == 201, admin_deletable.text
+        client.cookies.clear()
+        admin_csrf = _login(client)
+        admin_deleted = client.delete(
+            f"/api/extensions/{admin_deletable.json()['id']}",
+            headers={"X-CSRF-Token": admin_csrf},
+        )
+        assert admin_deleted.status_code == 204, admin_deleted.text
+
+    with SessionLocal() as db:
+        extension = db.get(Extension, skill["id"])
+        draft_row = db.get(ExtensionDraft, draft["id"])
+        installation = db.get(ExtensionInstallation, installed.json()["id"])
+        bindings = list(
+            db.scalars(
+                select(ExtensionDraftBinding).where(
+                    ExtensionDraftBinding.draft_id == draft["id"]
+                )
+            )
+        )
+        assert extension is not None and extension.archived_at is not None
+        assert draft_row is not None and draft_row.status == "deleted"
+        assert installation is not None
+        assert installation.enabled is False and installation.removed_at is not None
+        assert bindings and all(binding.enabled is False for binding in bindings)
+        assert owner_id == extension.owner_user_id
+        assert "extension_deleted" in set(db.scalars(select(AuditEvent.action)))
 
 
 def test_schedule_run_now_enable_disable_and_due_dispatch(tmp_path: Path) -> None:

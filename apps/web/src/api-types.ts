@@ -938,6 +938,7 @@ export interface SkillExtension {
   ownerships: SkillOwnership[];
   canEdit: boolean;
   canCreateDraft: boolean;
+  canDelete: boolean;
   latestPublishedVersionId: UUID | null;
   versions: SkillVersion[];
   draft?: SkillDraft;

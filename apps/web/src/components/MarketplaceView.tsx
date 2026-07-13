@@ -1,4 +1,4 @@
-import { Braces, Check, ChevronDown, ChevronRight, Code2, Download, Eye, FileCode2, FileJson, FileText, Folder, FolderOpen, LoaderCircle, Menu, Package, Pencil, Plus, RefreshCw, Save, Search, Sparkles, Store, Trash2, Wrench, X } from "lucide-react";
+import { AlertTriangle, Braces, Check, ChevronDown, ChevronRight, Code2, Download, Eye, FileCode2, FileJson, FileText, Folder, FolderOpen, LoaderCircle, Menu, Package, Pencil, Plus, RefreshCw, Save, Search, Sparkles, Store, Trash2, Wrench, X } from "lucide-react";
 import { type DragEvent, type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -107,6 +107,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
   const [renameValue, setRenameValue] = useState("");
   const [draggedPath, setDraggedPath] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
   useEffect(() => {
     const element = skillContentRef.current;
@@ -178,6 +179,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
     setRenamingPath(null);
     setDraggedPath(null);
     setDropTarget(null);
+    setDeleteConfirmId(null);
   }, [selected?.id]);
 
   const createSkill = async (event: FormEvent) => {
@@ -212,6 +214,25 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
       await refresh(selected.id);
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "새 Skill 버전을 저장하지 못했습니다.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteSelectedSkill = async () => {
+    if (!selected?.canDelete || busy) return;
+    if (deleteConfirmId !== selected.id) {
+      setDeleteConfirmId(selected.id);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await api.extensions.delete(selected.id);
+      setDeleteConfirmId(null);
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : "Skill을 삭제하지 못했습니다.");
     } finally {
       setBusy(false);
     }
@@ -395,6 +416,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
                     {editMode ? <><button type="button" disabled={busy} onClick={() => { setEditMode(false); setRenamingPath(null); }}><X size={14} /> 취소</button><button className="lumina-primary-action" type="button" disabled={busy || (selected.canEdit && !editableName.trim())} onClick={() => void savePackageEdit()}><Save size={14} /> 초안 저장</button></> : selected.canCreateDraft && <button type="button" disabled={busy} onClick={() => void beginPackageEdit()}><Pencil size={14} /> {selected.canEdit ? "편집" : "내 버전으로 수정"}</button>}
                     {!editMode && selected.draft?.dirty && <button type="button" disabled={busy} onClick={() => void saveVersion()}><Check size={14} /> v{selected.versions.length + 1}로 저장</button>}
                     {!editMode && <button className={installation ? "is-danger" : "is-primary lumina-primary-action"} type="button" aria-busy={pendingInstallationSurfaceById[selected.id] === "detail"} disabled={!latestVersion || busy || pendingInstallationSurfaceById[selected.id] === "detail"} onClick={() => selected && void toggleInstallation(selected, "detail")}>{pendingInstallationSurfaceById[selected.id] === "detail" ? <><LoaderCircle className="is-running" size={14} /> 처리 중</> : <>{installation ? <Trash2 size={14} /> : <Download size={14} />}{installation ? "미사용" : "설치"}</>}</button>}
+                    {!editMode && selected.canDelete && <button className={`text-danger ${deleteConfirmId === selected.id ? "is-delete-armed" : ""}`} type="button" aria-label={deleteConfirmId === selected.id ? `${selected.name} 삭제 확인, 한 번 더 누르면 삭제` : `${selected.name} 삭제`} disabled={busy} onClick={() => void deleteSelectedSkill()}>{busy && deleteConfirmId === selected.id ? <LoaderCircle className="is-running" size={14} /> : deleteConfirmId === selected.id ? <AlertTriangle size={14} /> : <Trash2 size={14} />} {deleteConfirmId === selected.id ? "한 번 더 눌러 삭제" : "Skill 삭제"}</button>}
                   </div>
                 </div>
                 <div className="marketplace-file-browser">

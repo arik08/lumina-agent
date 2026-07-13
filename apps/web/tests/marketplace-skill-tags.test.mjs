@@ -95,6 +95,21 @@ test("skill metadata stays in place while editing", async () => {
   assert.match(styles, /\.marketplace-inline-editor:focus \{[^}]*box-shadow: inset 0 -1px var\(--cobalt\);/);
 });
 
+test("owners and administrators get a distinct two-step Skill delete action", async () => {
+  const [view, api, types] = await Promise.all([
+    readFile(viewPath, "utf8"),
+    readFile(apiPath, "utf8"),
+    readFile(new URL("../src/api-types.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(types, /canDelete: boolean/);
+  assert.match(api, /method: "DELETE"/);
+  assert.match(view, /selected\.canDelete && <button/);
+  assert.match(view, /deleteConfirmId !== selected\.id/);
+  assert.match(view, /"한 번 더 눌러 삭제" : "Skill 삭제"/);
+  assert.match(view, /api\.extensions\.delete\(selected\.id\)/);
+});
+
 test("skill file edits do not retain a released React event", async () => {
   const view = await readFile(viewPath, "utf8");
 

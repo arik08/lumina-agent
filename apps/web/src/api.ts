@@ -1086,6 +1086,13 @@ export async function updateExtensionMetadata(
   });
 }
 
+export async function deleteExtension(extensionId: string, signal?: AbortSignal) {
+  await request<void>(`/extensions/${encodeURIComponent(extensionId)}`, {
+    method: "DELETE",
+    signal,
+  });
+}
+
 export async function createSkill(
   payload: { name: string; description: string; projectId?: string; files: Record<string, string> },
   signal?: AbortSignal,
@@ -1678,6 +1685,7 @@ export const api = {
     getVersion: getExtensionVersion,
     checkoutDraft: checkoutSkillDraft,
     updateMetadata: updateExtensionMetadata,
+    delete: deleteExtension,
     createSkill,
     updateDraft: updateSkillDraft,
     saveVersion: saveSkillVersion,
