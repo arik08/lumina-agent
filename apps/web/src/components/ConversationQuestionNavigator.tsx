@@ -6,10 +6,9 @@ import {
   type CSSProperties,
   type RefObject,
 } from "react";
-import type { RunSnapshot, TurnSet } from "../api-types";
-import { sanitizeAssistantResponse } from "../assistant-response";
+import type { TurnSet } from "../api-types";
 
-interface ResponseNavigatorItem {
+interface QuestionNavigatorItem {
   anchorId: string;
   preview: string;
 }
@@ -20,18 +19,17 @@ const previewCharacterLimit = 180;
 
 function plainTextPreview(text: string) {
   return text
-    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi, "")
     .replace(/```[\s\S]*?```/g, " 코드 ")
     .replace(/!\[[^\]]*\]\([^)]*\)/g, " 이미지 ")
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
     .replace(/^#{1,6}\s+/gm, "")
-    .replace(/[*_`~>|]/g, "")
+    .replace(/[*`~>|]/g, "")
     .replace(/:\s*(?=(?:또한|그리고|$))/g, ". ")
     .replace(/\s+/g, " ")
     .trim();
 }
 
-export function responseNavigatorPreview(text: string) {
+export function questionNavigatorPreview(text: string) {
   const preview = plainTextPreview(text);
   if (preview.length <= previewCharacterLimit) return preview;
   return `${preview.slice(0, previewCharacterLimit).trimEnd()}…`;
@@ -51,29 +49,26 @@ export function easeInOutCubic(progress: number) {
     : 1 - ((-2 * progress + 2) ** 3) / 2;
 }
 
-function responseItems(turnSets: TurnSet[], snapshots: Record<string, RunSnapshot>) {
-  return turnSets.flatMap<ResponseNavigatorItem>((turnSet) => {
-    const finalMessage = turnSet.messages.filter((message) => message.role === "assistant").at(-1);
-    const snapshot = turnSet.runId ? snapshots[turnSet.runId] : undefined;
-    const responseText = finalMessage?.text || snapshot?.assistantDraft?.text || "";
-    const sanitizedText = sanitizeAssistantResponse(responseText, (snapshot?.artifacts ?? turnSet.artifacts).length > 0);
-    const preview = responseNavigatorPreview(sanitizedText);
-    return preview ? [{ anchorId: turnSet.id, preview }] : [];
-  });
+function questionItems(turnSets: TurnSet[]) {
+  return turnSets.flatMap<QuestionNavigatorItem>((turnSet) => (
+    turnSet.messages.flatMap((message) => {
+      if (message.role !== "user") return [];
+      const preview = questionNavigatorPreview(message.text);
+      return preview ? [{ anchorId: message.id, preview }] : [];
+    })
+  ));
 }
 
-export function ConversationResponseNavigator({
+export function ConversationQuestionNavigator({
   turnSets,
-  snapshots,
   scrollContainerRef,
   onNavigateStart,
 }: {
   turnSets: TurnSet[];
-  snapshots: Record<string, RunSnapshot>;
   scrollContainerRef: RefObject<HTMLDivElement | null>;
   onNavigateStart: () => void;
 }) {
-  const items = useMemo(() => responseItems(turnSets, snapshots), [snapshots, turnSets]);
+  const items = useMemo(() => questionItems(turnSets), [turnSets]);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const itemKey = items.map((item) => item.anchorId).join("|");
@@ -103,11 +98,11 @@ export function ConversationResponseNavigator({
     };
   }, [scrollContainerRef]);
 
-  const navigateToResponse = (item: ResponseNavigatorItem) => {
+  const navigateToQuestion = (item: QuestionNavigatorItem) => {
     const container = scrollContainerRef.current;
     if (!container) return;
-    const target = [...container.querySelectorAll<HTMLElement>("[data-response-anchor]")]
-      .find((element) => element.dataset.responseAnchor === item.anchorId);
+    const target = [...container.querySelectorAll<HTMLElement>("[data-question-anchor]")]
+      .find((element) => element.dataset.questionAnchor === item.anchorId);
     if (!target) return;
 
     onNavigateStart();
@@ -142,36 +137,36 @@ export function ConversationResponseNavigator({
 
   return (
     <nav
-      className="response-navigator"
-      aria-label={`AI 응답 ${items.length}개 바로가기`}
+      className="question-navigator"
+      aria-label={`사용자 질문 ${items.length}개 바로가기`}
       onMouseLeave={() => setActiveIndex(null)}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setActiveIndex(null);
       }}
     >
-      <div className="response-navigator-track" style={{ "--response-count": items.length } as NavigatorStyle}>
+      <div className="question-navigator-track" style={{ "--question-count": items.length } as NavigatorStyle}>
         {items.map((item, index) => {
           const distance = activeIndex === null ? Number.POSITIVE_INFINITY : Math.abs(activeIndex - index);
-          const tooltipId = `response-navigator-tooltip-${item.anchorId}`;
+          const tooltipId = `question-navigator-tooltip-${item.anchorId}`;
           const markerStyle = {
-            "--response-marker-scale": markerScaleForDistance(distance),
-            "--response-marker-opacity": distance === 0 ? 1 : distance <= 3 ? 0.72 : 0.42,
+            "--question-marker-scale": markerScaleForDistance(distance),
+            "--question-marker-opacity": distance === 0 ? 1 : distance <= 3 ? 0.72 : 0.42,
           } as NavigatorStyle;
           return (
             <button
-              className={`response-navigator-marker ${index < 2 ? "is-tooltip-start" : ""} ${index >= items.length - 2 ? "is-tooltip-end" : ""}`}
+              className={`question-navigator-marker ${index < 2 ? "is-tooltip-start" : ""} ${index >= items.length - 2 ? "is-tooltip-end" : ""}`}
               type="button"
-              aria-label={`응답 ${index + 1}로 이동: ${item.preview}`}
+              aria-label={`질문 ${index + 1}로 이동: ${item.preview}`}
               aria-describedby={activeIndex === index ? tooltipId : undefined}
               style={markerStyle}
               onMouseEnter={() => setActiveIndex(index)}
               onFocus={() => setActiveIndex(index)}
-              onClick={() => navigateToResponse(item)}
+              onClick={() => navigateToQuestion(item)}
               key={item.anchorId}
             >
               {activeIndex === index && (
-                <span className="response-navigator-tooltip" id={tooltipId} role="tooltip">
-                  <strong>응답 {index + 1}</strong>
+                <span className="question-navigator-tooltip" id={tooltipId} role="tooltip">
+                  <strong>질문 {index + 1}</strong>
                   <span>{item.preview}</span>
                 </span>
               )}

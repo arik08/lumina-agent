@@ -1374,7 +1374,7 @@ export function AssistantTurn({
   return (
     <div className="turn-set" data-run-id={turnSet.runId ?? undefined}>
       {userMessages.map((message) => (
-        <div className="user-message-group" key={message.id}>
+        <div className="user-message-group" data-question-anchor={message.id} key={message.id}>
           {message.attachments?.length > 0 && (
             <div className="user-message-attachments">
               {message.attachments.map((attachment, attachmentIndex) => attachment.kind === "image" ? (
@@ -1465,7 +1465,7 @@ export function AssistantTurn({
         </div>
       )}
       {(assistantText || tools.length > 0 || artifacts.length > 0 || snapshot) && (
-        <section className="assistant-turn" data-response-anchor={turnSet.id}>
+        <section className="assistant-turn">
           <div className="assistant-content">
             {assistantText && <MarkdownResponse text={displayedText} sources={sources} citations={citations} streaming={revealing} />}
             {snapshot?.artifactProgress && artifactProgress && (

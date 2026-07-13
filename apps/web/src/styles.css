@@ -1670,17 +1670,17 @@ button:disabled { cursor: default; opacity: 0.5; }
 .conversation-scroll::-webkit-scrollbar-track { background: transparent; }
 .conversation-scroll::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 999px; background: var(--scrollbar-thumb); background-clip: padding-box; }
 .conversation-scroll::-webkit-scrollbar-button { display: none; }
-.response-navigator { position: absolute; z-index: 7; top: 50%; left: 10px; width: 36px; transform: translateY(-50%); }
-.response-navigator-track { display: grid; width: 100%; }
-.response-navigator-marker { position: relative; display: block; width: 36px; height: clamp(5px, calc((100svh - 220px) / var(--response-count)), 12px); padding: 0; border: 0; outline: 0; background: transparent; cursor: pointer; }
-.response-navigator-marker::before { position: absolute; top: 50%; left: 0; width: 28px; height: 2px; border-radius: 999px; background: color-mix(in srgb, var(--muted) 76%, transparent); content: ""; opacity: var(--response-marker-opacity); transform: translateY(-50%) scaleX(var(--response-marker-scale)); transform-origin: left center; transition: transform 180ms var(--ease-out-quint), opacity 160ms var(--ease-out-quart), background-color 160ms var(--ease-out-quart); }
-.response-navigator-marker:hover::before, .response-navigator-marker:focus-visible::before { background: var(--cobalt); }
-.response-navigator-marker:focus-visible { outline: 2px solid color-mix(in srgb, var(--cobalt) 52%, transparent); outline-offset: 1px; }
-.response-navigator-tooltip { position: absolute; z-index: 2; top: 50%; left: 38px; display: grid; width: min(360px, calc(100vw - 98px)); gap: 5px; padding: 11px 13px 12px; border: 1px solid color-mix(in srgb, var(--tooltip-color) 12%, transparent); border-radius: 10px; background: var(--tooltip-background); box-shadow: var(--tooltip-shadow); color: var(--tooltip-color); pointer-events: none; text-align: left; transform: translateY(-50%); animation: response-tooltip-enter 140ms var(--ease-out-quint) both; }
-.response-navigator-tooltip strong { font-size: 12px; font-weight: 680; line-height: 1.25; }
-.response-navigator-tooltip > span { display: -webkit-box; overflow: hidden; color: color-mix(in srgb, var(--tooltip-color) 72%, transparent); font-size: 12.5px; line-height: 1.55; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
-.response-navigator-marker.is-tooltip-start .response-navigator-tooltip { top: 0; transform: none; }
-.response-navigator-marker.is-tooltip-end .response-navigator-tooltip { top: auto; bottom: 0; transform: none; }
+.question-navigator { position: absolute; z-index: 7; top: 50%; left: 10px; width: 36px; transform: translateY(-50%); }
+.question-navigator-track { display: grid; width: 100%; }
+.question-navigator-marker { position: relative; display: block; width: 36px; height: clamp(5px, calc((100svh - 220px) / var(--question-count)), 12px); padding: 0; border: 0; outline: 0; background: transparent; cursor: pointer; }
+.question-navigator-marker::before { position: absolute; top: 50%; left: 0; width: 28px; height: 2px; border-radius: 999px; background: color-mix(in srgb, var(--muted) 76%, transparent); content: ""; opacity: var(--question-marker-opacity); transform: translateY(-50%) scaleX(var(--question-marker-scale)); transform-origin: left center; transition: transform 180ms var(--ease-out-quint), opacity 160ms var(--ease-out-quart), background-color 160ms var(--ease-out-quart); }
+.question-navigator-marker:hover::before, .question-navigator-marker:focus-visible::before { background: var(--cobalt); }
+.question-navigator-marker:focus-visible { outline: 2px solid color-mix(in srgb, var(--cobalt) 52%, transparent); outline-offset: 1px; }
+.question-navigator-tooltip { position: absolute; z-index: 2; top: 50%; left: 38px; display: grid; width: min(360px, calc(100vw - 98px)); gap: 5px; padding: 11px 13px 12px; border: 1px solid color-mix(in srgb, var(--tooltip-color) 12%, transparent); border-radius: 10px; background: var(--tooltip-background); box-shadow: var(--tooltip-shadow); color: var(--tooltip-color); pointer-events: none; text-align: left; transform: translateY(-50%); animation: question-tooltip-enter 140ms var(--ease-out-quint) both; }
+.question-navigator-tooltip strong { font-size: 12px; font-weight: 680; line-height: 1.25; }
+.question-navigator-tooltip > span { display: -webkit-box; overflow: hidden; color: color-mix(in srgb, var(--tooltip-color) 72%, transparent); font-size: 12.5px; line-height: 1.55; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.question-navigator-marker.is-tooltip-start .question-navigator-tooltip { top: 0; transform: none; }
+.question-navigator-marker.is-tooltip-end .question-navigator-tooltip { top: auto; bottom: 0; transform: none; }
 .conversation { width: min(780px, calc(100% - 40px)); margin: 0 auto; padding: 28px 0 calc(var(--dock-height, 140px) + 42px); }
 .conversation-loading, .conversation-error { display: flex; min-height: 58px; align-items: center; justify-content: center; gap: 8px; color: var(--muted); font-size: 13px; }
 .conversation-error { color: var(--danger); }
@@ -2714,10 +2714,10 @@ button:disabled { cursor: default; opacity: 0.5; }
 @keyframes activity-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes activity-expand { from { opacity: 0; transform: translateY(-4px) scaleY(.985); } to { opacity: 1; transform: translateY(0) scaleY(1); } }
 @keyframes artifact-pane-enter { from { opacity: 0; transform: translateX(18px); } to { opacity: 1; transform: translateX(0); } }
-@keyframes response-tooltip-enter { from { opacity: 0; } to { opacity: 1; } }
+@keyframes question-tooltip-enter { from { opacity: 0; } to { opacity: 1; } }
 
 @container chat-pane (max-width: 660px) {
-  .response-navigator { display: none; }
+  .question-navigator { display: none; }
 }
 
 @media (max-width: 1399px) {
@@ -2901,7 +2901,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 
 @media (hover: none) {
   .session-options-button { opacity: 1; pointer-events: auto; transform: none; }
-  .response-navigator { display: none; }
+  .question-navigator { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

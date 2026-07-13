@@ -98,7 +98,7 @@ import { ProjectFilesView } from "./components/ProjectFilesView";
 import { SchedulesView } from "./components/SchedulesView";
 import { SharedSnapshotViewer } from "./components/SharedSnapshotViewer";
 import { ConversationSearchDialog } from "./components/ConversationSearchDialog";
-import { ConversationResponseNavigator } from "./components/ConversationResponseNavigator";
+import { ConversationQuestionNavigator } from "./components/ConversationQuestionNavigator";
 import { type RunControlAction, useLuminaWorkspace } from "./use-lumina-workspace";
 import { useConversationAutoFollow } from "./streaming-ui";
 import {
@@ -2355,9 +2355,8 @@ function App() {
           </div>
         </header>
 
-        <ConversationResponseNavigator
+        <ConversationQuestionNavigator
           turnSets={activeRuntime.turnSets}
-          snapshots={activeRuntime.snapshots}
           scrollContainerRef={conversationFollow.containerRef}
           onNavigateStart={conversationFollow.onUserIntent}
         />
