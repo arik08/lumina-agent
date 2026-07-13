@@ -32,3 +32,13 @@ test("send button tooltip uses the shared global layer", async () => {
   assert.match(app, /data-tooltip=\{composerShowsStop \? "중지" : "Enter 반영 · Ctrl\+Enter 대기"\}/);
   assert.doesNotMatch(styles, /send-button::after/);
 });
+
+test("Skill and MCP suggestions use compact single-line rows", async () => {
+  const [app, styles] = await Promise.all([readFile(appUrl, "utf8"), readFile(stylesUrl, "utf8")]);
+
+  assert.match(app, /composerTrigger\.trigger === "\$" \? "is-extension-list" : ""/);
+  assert.match(app, /composerTrigger\.trigger === "@" && <small>\{suggestion\.subtitle\}<\/small>/);
+  assert.doesNotMatch(app, /suggestion\.kind === "mcp" \? `MCP ·/);
+  assert.match(styles, /\.composer-suggestions\.is-extension-list > button \{[^}]*min-height: 29px;[^}]*padding-block: 2px;/);
+  assert.match(styles, /\.composer-suggestions\.is-extension-list \.composer-suggestion-copy \{ display: block; \}/);
+});

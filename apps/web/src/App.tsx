@@ -2497,7 +2497,7 @@ function App() {
                 </div>
               )}
               {composerTrigger && (
-                <div className="composer-suggestions" id="composer-suggestions" role="listbox" aria-label={composerTrigger.trigger === "@" ? "파일 및 Artifact 후보" : "Skill 및 MCP 후보"}>
+                <div className={`composer-suggestions ${composerTrigger.trigger === "$" ? "is-extension-list" : ""}`} id="composer-suggestions" role="listbox" aria-label={composerTrigger.trigger === "@" ? "파일 및 Artifact 후보" : "Skill 및 MCP 후보"}>
                   <div className="composer-suggestions-heading">
                     <span>{composerTrigger.trigger === "@" ? "Context 연결" : "Skill / MCP 호출"}</span>
                     <small>{composerTrigger.query ? `'${composerTrigger.query}' 검색` : "사용 가능한 항목"}</small>
@@ -2524,8 +2524,8 @@ function App() {
                         onClick={() => selectComposerSuggestion(suggestion)}
                       >
                         <span className="composer-suggestion-icon">{suggestionIcon(suggestion.kind)}</span>
-                        <span className="composer-suggestion-copy"><strong>{suggestion.name}</strong><small>{suggestion.subtitle}</small></span>
-                        <span className="composer-suggestion-kind">{unavailable ? "사용 불가" : disabled ? attached ? "첨부됨" : "선택됨" : suggestion.kind === "mcp" ? `MCP · ${String(suggestion.displaySnapshot.configurationRevision ? `r${suggestion.displaySnapshot.configurationRevision}` : "revision")}` : referenceKindLabel(suggestion.kind)}</span>
+                        <span className="composer-suggestion-copy"><strong>{suggestion.name}</strong>{composerTrigger.trigger === "@" && <small>{suggestion.subtitle}</small>}</span>
+                        <span className="composer-suggestion-kind">{unavailable ? "사용 불가" : disabled ? attached ? "첨부됨" : "선택됨" : referenceKindLabel(suggestion.kind)}</span>
                       </button>
                     );
                   })}

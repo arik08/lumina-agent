@@ -2198,8 +2198,11 @@ button:disabled { cursor: default; opacity: 0.5; }
 .composer-suggestions > button { display: grid; width: 100%; min-height: 38px; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 7px; padding: 4px 13px; border: 0; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
 .composer-suggestions > button:hover, .composer-suggestions > button.is-active { background: var(--cobalt-pale); }
 .composer-suggestions > button:disabled { cursor: default; opacity: 0.5; }
+.composer-suggestions.is-extension-list > button { min-height: 29px; grid-template-columns: 21px minmax(0, 1fr) auto; gap: 6px; padding-block: 2px; }
 .composer-suggestion-icon { display: inline-grid; width: 22px; height: 22px; place-items: center; color: var(--cobalt); }
+.composer-suggestions.is-extension-list .composer-suggestion-icon { width: 20px; height: 20px; }
 .composer-suggestion-copy { display: grid; min-width: 0; gap: 1px; }
+.composer-suggestions.is-extension-list .composer-suggestion-copy { display: block; }
 .composer-suggestion-copy strong, .composer-suggestion-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer-suggestion-copy strong { font-size: 12.5px; font-weight: 620; }
 .composer-suggestion-copy small { color: var(--muted); font-size: 10.5px; }
