@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import { AppErrorBoundary } from "./AppErrorBoundary";
 import { BackendConnectionGuard } from "./BackendConnectionGuard";
+import "./components/ArtifactLibraryView.css";
 import { GlobalTooltipProvider } from "./components/GlobalTooltip";
 import { installScrollbarActivity } from "./scrollbar-activity";
 import "./styles.css";

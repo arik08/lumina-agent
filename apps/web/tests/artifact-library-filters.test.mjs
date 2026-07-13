@@ -4,11 +4,13 @@ import test from "node:test";
 
 const viewPath = new URL("../src/components/ArtifactLibraryView.tsx", import.meta.url);
 const stylesPath = new URL("../src/styles.css", import.meta.url);
+const compactStylesPath = new URL("../src/components/ArtifactLibraryView.css", import.meta.url);
 
 test("artifact library filters by available file extensions and sorts the visible rows", async () => {
-  const [view, styles] = await Promise.all([
+  const [view, styles, compactStyles] = await Promise.all([
     readFile(viewPath, "utf8"),
     readFile(stylesPath, "utf8"),
+    readFile(compactStylesPath, "utf8"),
   ]);
 
   assert.match(view, /import \{ SelectMenu, type SelectMenuOption \} from "\.\/SelectMenu";/);
@@ -21,6 +23,8 @@ test("artifact library filters by available file extensions and sorts the visibl
   assert.match(view, /Date\.parse\(right\.updatedAt\) - Date\.parse\(left\.updatedAt\)/);
   assert.match(styles, /\.artifact-library-toolbar \.feature-search \{[^}]*flex: 1 1 360px;/);
   assert.match(styles, /\.artifact-library-controls \{[^}]*margin-left: auto;/);
-  assert.match(styles, /\.lumina-select\.artifact-extension-select \{[^}]*min-width: 88px;/);
-  assert.match(styles, /\.lumina-select\.artifact-sort-select \{[^}]*min-width: 104px;/);
+  assert.match(compactStyles, /\.lumina-select\.artifact-extension-select \{[^}]*min-width: 64px;/);
+  assert.match(compactStyles, /\.lumina-select\.artifact-sort-select \{[^}]*min-width: 80px;/);
+  assert.match(compactStyles, /\.artifact-library-controls \.lumina-select\.size-small \.lumina-select-trigger,[\s\S]*?font-size: 14px;/);
+  assert.match(compactStyles, /\.artifact-library-controls \.lumina-select\.size-small \.lumina-select-trigger \{[^}]*padding-right: 4px;[^}]*padding-left: 4px;/);
 });

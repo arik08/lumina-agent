@@ -1,0 +1,12 @@
+.lumina-select.artifact-extension-select { min-width: 64px; }
+.lumina-select.artifact-sort-select { min-width: 80px; }
+
+.artifact-library-controls .lumina-select.size-small .lumina-select-trigger,
+.artifact-library-controls .lumina-select.size-small .lumina-select-menu > button {
+  font-size: 14px;
+}
+
+.artifact-library-controls .lumina-select.size-small .lumina-select-trigger {
+  padding-right: 4px;
+  padding-left: 4px;
+}
