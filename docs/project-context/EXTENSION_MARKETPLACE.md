@@ -15,7 +15,7 @@
 3. 대화에서 생성·수정한 Skill Draft는 소유자의 실제 Agent Run에서 즉시 사용할 수 있습니다. Draft 변경은 내부 `draft_revision`과 digest를 갱신하지만 공개 version 번호를 만들지 않습니다.
 4. 사용자가 명시적으로 `저장`하면 현재 Draft package 전체를 불변 snapshot으로 복사해 `v1`, `v2`, `v3`처럼 단조 증가하는 새 SkillVersion을 만듭니다.
 5. Run은 Draft 사용 시 `draft_id + draft_revision + digest`, 저장 version 사용 시 `extension_id + version_id + digest`를 정확히 고정합니다. Draft가 바뀌어도 이미 시작한 Run은 바뀌지 않습니다.
-6. 삭제는 Draft 폐기, 설치 해제, 카탈로그 숨김과 version 폐기의 서로 다른 작업으로 구분합니다. Run 재현과 감사에 사용된 snapshot은 물리 삭제하지 않습니다.
+6. 설치 해제와 Skill 삭제를 구분합니다. Skill 삭제는 30일 보관함 이동이며 그 전에는 복원할 수 있습니다. 보존 기간 뒤 catalog·Draft·version·installation 원본은 정리하되, 이미 완료된 Run의 고정 snapshot과 감사 기록은 유지합니다.
 7. Frontend가 보낸 소유자, 조직, 경로, 권한과 비밀값을 신뢰하지 않습니다. Backend가 인증 주체와 정책으로 다시 결정합니다.
 8. Skill은 서버에서 직접 실행되는 code가 아닌 지침 package로 취급합니다. Plugin과 MCP는 실행·network 위험이 있으므로 검증과 permission policy를 통과하기 전에는 Worker에 노출하지 않습니다.
 9. `creator_user_id`는 최초 기여 기록으로 고정하고, 현재 관리 책임은 복수 `SkillOwnership`의 Owner·Maintainer로 분리합니다. 소유권 변경은 Creator 기록을 바꾸지 않습니다.
@@ -28,7 +28,7 @@
 - 카드/목록과 상세 화면, README 렌더링과 원문 전환
 - 패키지 파일 트리와 파일별 Preview
 - 내 설치 목록과 내 Draft/Fork 목록
-- 설치·설치 해제, Fork, 새 항목 작성, 본인 Draft 삭제
+- 설치·설치 해제, Fork, 대화의 Skill Creator 기반 작성, Owner·관리자의 보관함 이동과 복원
 - 기본 정보 → 파일 구성 → 입력 계약 → 테스트 → 보안 확인 → 검토/게시의 작성 흐름
 - Official, Verified, Beta, Draft와 같은 신뢰 상태 표시
 - 실제 사용 중인 WorkingDraft에는 `Draft · rN · 저장 안 됨` badge와 `v1로 저장` 또는 `새 버전으로 저장` action 표시
@@ -208,11 +208,12 @@ Fork는 원본과 다른 새 `extension_id`와 Private WorkingDraft를 만들고
 
 ### 삭제
 
-- 사용자의 “삭제” 기본 동작은 자신의 설치 해제입니다.
-- Draft 삭제는 카탈로그에서 숨기되 감사·복구 보존 기간 동안 tombstone을 유지합니다.
-- 게시된 version, Run에서 사용된 version, 다른 version의 부모, 설치 또는 dependency가 남은 package는 물리 삭제하지 않습니다.
+- `미사용`은 현재 계정의 설치 연결만 해제하고, `삭제`는 Owner 또는 관리자가 Skill 전체를 보관함으로 이동하는 별도 동작입니다.
+- 삭제한 Skill은 카탈로그, Composer candidate와 신규 Run resolver에서 즉시 제외하지만 Draft·version·installation·Folder placement는 30일 동안 그대로 보존합니다.
+- Marketplace의 `삭제됨` 탭에서 보관 항목과 자동 삭제 예정일을 확인하고 30일 안에는 원래 ID와 상태를 유지한 채 복원할 수 있습니다. ⓘ tooltip으로 이 보존 정책을 안내합니다.
+- 삭제 control은 같은 자리의 2단계 확인을 사용하며 표시 문구는 `삭제 → 경고`로 짧게 유지합니다.
+- 30일이 지나면 catalog·Draft·version·installation과 정리 metadata를 물리 삭제합니다. 완료된 Run에 이미 고정된 Skill snapshot과 Audit Log는 삭제하지 않습니다.
 - 보안 사고에는 Revoked 처리로 즉시 신규 실행을 막고, 영향을 받은 설치와 Run을 관리자에게 표시합니다.
-- 보존 기간이 끝난 미사용 Draft의 물리 삭제만 별도 background lifecycle 작업으로 허용합니다.
 
 ## 작성과 검증 흐름
 

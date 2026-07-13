@@ -1080,6 +1080,10 @@ export async function listExtensions(query?: string, signal?: AbortSignal) {
   return request<SkillExtension[]>("/extensions", { query: { query }, signal });
 }
 
+export async function listTrashedExtensions(query?: string, signal?: AbortSignal) {
+  return request<SkillExtension[]>("/extensions/trash", { query: { query }, signal });
+}
+
 export async function getExtensionVersion(versionId: string, signal?: AbortSignal) {
   return request<SkillVersion>(`/extension-versions/${encodeURIComponent(versionId)}`, { signal });
 }
@@ -1106,6 +1110,13 @@ export async function updateExtensionMetadata(
 export async function deleteExtension(extensionId: string, signal?: AbortSignal) {
   await request<void>(`/extensions/${encodeURIComponent(extensionId)}`, {
     method: "DELETE",
+    signal,
+  });
+}
+
+export async function restoreExtension(extensionId: string, signal?: AbortSignal) {
+  return request<SkillExtension>(`/extensions/${encodeURIComponent(extensionId)}/restore`, {
+    method: "POST",
     signal,
   });
 }
@@ -1701,10 +1712,12 @@ export const api = {
   },
   extensions: {
     list: listExtensions,
+    listTrash: listTrashedExtensions,
     getVersion: getExtensionVersion,
     checkoutDraft: checkoutSkillDraft,
     updateMetadata: updateExtensionMetadata,
     delete: deleteExtension,
+    restore: restoreExtension,
     createSkill,
     updateDraft: updateSkillDraft,
     saveVersion: saveSkillVersion,

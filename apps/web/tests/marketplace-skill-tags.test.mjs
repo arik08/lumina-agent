@@ -33,6 +33,14 @@ test("skill visibility and draft state use clear Korean labels", async () => {
   assert.doesNotMatch(view, /WorkingDraft/);
 });
 
+test("marketplace keeps Skill creation in the chat Skill Creator flow", async () => {
+  const view = await readFile(viewPath, "utf8");
+
+  assert.doesNotMatch(view, /새 Skill<\/button>/);
+  assert.doesNotMatch(view, /새 Skill 작업 초안/);
+  assert.doesNotMatch(view, /const createSkill = async/);
+});
+
 test("skill rows use a dedicated install and unused toggle without status badges", async () => {
   const [view, styles] = await Promise.all([readFile(viewPath, "utf8"), readFile(stylesPath, "utf8")]);
 
@@ -95,7 +103,7 @@ test("skill metadata stays in place while editing", async () => {
   assert.match(styles, /\.marketplace-inline-editor:focus \{[^}]*box-shadow: inset 0 -1px var\(--cobalt\);/);
 });
 
-test("owners and administrators get a distinct two-step Skill delete action", async () => {
+test("owners and administrators get a compact two-step Skill trash action", async () => {
   const [view, api, types] = await Promise.all([
     readFile(viewPath, "utf8"),
     readFile(apiPath, "utf8"),
@@ -106,8 +114,25 @@ test("owners and administrators get a distinct two-step Skill delete action", as
   assert.match(api, /method: "DELETE"/);
   assert.match(view, /selected\.canDelete && <button/);
   assert.match(view, /deleteConfirmId !== selected\.id/);
-  assert.match(view, /"한 번 더 눌러 삭제" : "Skill 삭제"/);
-  assert.match(view, /api\.extensions\.delete\(selected\.id\)/);
+  assert.match(view, /deleteConfirmId === selected\.id \? "경고" : "삭제"/);
+  assert.match(view, /api\.extensions\.delete\(deletedId\)/);
+});
+
+test("trashed Skills explain 30-day retention and can be restored", async () => {
+  const [view, api, types] = await Promise.all([
+    readFile(viewPath, "utf8"),
+    readFile(apiPath, "utf8"),
+    readFile(new URL("../src/api-types.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(view, /삭제한 Skill은 30일 동안 보관되며 그 전에 복원할 수 있습니다\./);
+  assert.match(view, /<Info size=\{12\} aria-hidden="true" \/>/);
+  assert.match(view, /api\.extensions\.listTrash\(\)/);
+  assert.match(view, /api\.extensions\.restore\(selected\.id\)/);
+  assert.match(view, / 복원<\/button>/);
+  assert.match(api, /\/extensions\/trash/);
+  assert.match(api, /\/extensions\/\$\{encodeURIComponent\(extensionId\)\}\/restore/);
+  assert.match(types, /purgesAt: IsoDateTime \| null/);
 });
 
 test("skill file edits do not retain a released React event", async () => {

@@ -525,7 +525,7 @@ def test_published_skill_has_isolated_personal_drafts_and_multiple_owners(
         assert "skill_ownership_removed" in set(db.scalars(select(AuditEvent.action)))
 
 
-def test_skill_delete_requires_owner_or_admin_and_removes_active_state(
+def test_skill_trash_requires_owner_or_admin_and_supports_restore_and_expiry(
     tmp_path: Path,
 ) -> None:
     app, _settings = _test_app(tmp_path)
@@ -623,7 +623,49 @@ def test_skill_delete_requires_owner_or_admin_and_removes_active_state(
         )
         assert deleted.status_code == 204, deleted.text
         assert client.get(f"/api/extensions/{skill['id']}").status_code == 404
-        assert skill["id"] not in {item["id"] for item in client.get("/api/extensions").json()}
+        assert skill["id"] not in {
+            item["id"] for item in client.get("/api/extensions").json()
+        }
+        trashed = client.get("/api/extensions/trash")
+        assert trashed.status_code == 200, trashed.text
+        trashed_skill = next(
+            item for item in trashed.json() if item["id"] == skill["id"]
+        )
+        assert trashed_skill["archivedAt"] is not None
+        assert trashed_skill["purgesAt"] is not None
+        assert datetime.fromisoformat(
+            trashed_skill["purgesAt"]
+        ) - datetime.fromisoformat(trashed_skill["archivedAt"]) == timedelta(days=30)
+
+        with SessionLocal() as db:
+            extension = db.get(Extension, skill["id"])
+            draft_row = db.get(ExtensionDraft, draft["id"])
+            installation = db.get(ExtensionInstallation, installed.json()["id"])
+            bindings = list(
+                db.scalars(
+                    select(ExtensionDraftBinding).where(
+                        ExtensionDraftBinding.draft_id == draft["id"]
+                    )
+                )
+            )
+            assert extension is not None and extension.archived_at is not None
+            assert draft_row is not None and draft_row.status == "active"
+            assert installation is not None
+            assert installation.enabled is True and installation.removed_at is None
+            assert bindings and all(binding.enabled is True for binding in bindings)
+
+        restored = client.post(
+            f"/api/extensions/{skill['id']}/restore",
+            headers={"X-CSRF-Token": owner_csrf},
+        )
+        assert restored.status_code == 200, restored.text
+        assert restored.json()["archivedAt"] is None
+        assert skill["id"] in {
+            item["id"] for item in client.get("/api/extensions").json()
+        }
+        assert skill["id"] not in {
+            item["id"] for item in client.get("/api/extensions/trash").json()
+        }
 
         admin_deletable = client.post(
             "/api/extensions",
@@ -642,25 +684,23 @@ def test_skill_delete_requires_owner_or_admin_and_removes_active_state(
             headers={"X-CSRF-Token": admin_csrf},
         )
         assert admin_deleted.status_code == 204, admin_deleted.text
+        expired_skill_id = admin_deletable.json()["id"]
+
+        with SessionLocal() as db:
+            expired = db.get(Extension, expired_skill_id)
+            assert expired is not None
+            expired.archived_at = datetime.now(UTC) - timedelta(days=31)
+            db.commit()
+
+        assert client.get("/api/extensions").status_code == 200
 
     with SessionLocal() as db:
         extension = db.get(Extension, skill["id"])
-        draft_row = db.get(ExtensionDraft, draft["id"])
-        installation = db.get(ExtensionInstallation, installed.json()["id"])
-        bindings = list(
-            db.scalars(
-                select(ExtensionDraftBinding).where(
-                    ExtensionDraftBinding.draft_id == draft["id"]
-                )
-            )
-        )
-        assert extension is not None and extension.archived_at is not None
-        assert draft_row is not None and draft_row.status == "deleted"
-        assert installation is not None
-        assert installation.enabled is False and installation.removed_at is not None
-        assert bindings and all(binding.enabled is False for binding in bindings)
+        assert extension is not None and extension.archived_at is None
+        assert db.get(Extension, expired_skill_id) is None
         assert owner_id == extension.owner_user_id
-        assert "extension_deleted" in set(db.scalars(select(AuditEvent.action)))
+        actions = set(db.scalars(select(AuditEvent.action)))
+        assert {"extension_trashed", "extension_restored"} <= actions
 
 
 def test_schedule_run_now_enable_disable_and_due_dispatch(tmp_path: Path) -> None:

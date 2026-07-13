@@ -960,6 +960,8 @@ export interface SkillExtension {
   draft?: SkillDraft;
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
+  archivedAt: IsoDateTime | null;
+  purgesAt: IsoDateTime | null;
 }
 
 export interface ExtensionInstallation {

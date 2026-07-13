@@ -3,10 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from datetime import datetime, timedelta
 from pathlib import PurePosixPath
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from ..api.errors import ApiProblem
@@ -37,6 +38,8 @@ _SECRET_ASSIGNMENT = re.compile(
 )
 _FORBIDDEN_PACKAGE_NAMES = {".env", "credentials", "secrets"}
 _FORBIDDEN_PACKAGE_SUFFIXES = {".key", ".p12", ".pfx", ".pem"}
+SKILL_TRASH_RETENTION_DAYS = 30
+_SKILL_TRASH_RETENTION = timedelta(days=SKILL_TRASH_RETENTION_DAYS)
 
 
 def normalize_package(files: dict[str, str]) -> dict[str, str]:
@@ -224,41 +227,81 @@ def delete_skill(db: Session, *, user: User, extension_id: str) -> Extension:
             403, "extension_delete_forbidden", "Skill을 삭제할 권한이 없습니다."
         )
 
-    deleted_at = utc_now()
-    installations = list(
+    trashed_at = utc_now()
+    extension.archived_at = trashed_at
+    extension.updated_at = trashed_at
+    db.flush()
+    return extension
+
+
+def purge_expired_trashed_skills(db: Session, *, now: datetime | None = None) -> int:
+    cutoff = (now or utc_now()) - _SKILL_TRASH_RETENTION
+    expired_ids = list(
         db.scalars(
-            select(ExtensionInstallation).where(
-                ExtensionInstallation.extension_id == extension.id,
-                ExtensionInstallation.removed_at.is_(None),
+            select(Extension.id).where(
+                Extension.kind == "skill",
+                Extension.archived_at.is_not(None),
+                Extension.archived_at <= cutoff,
             )
         )
     )
-    for installation in installations:
-        installation.enabled = False
-        installation.removed_at = deleted_at
-
-    drafts = list(
-        db.scalars(
-            select(ExtensionDraft).where(ExtensionDraft.extension_id == extension.id)
+    if not expired_ids:
+        return 0
+    db.execute(
+        delete(ExtensionInstallation).where(
+            ExtensionInstallation.extension_id.in_(expired_ids)
         )
     )
-    for draft in drafts:
-        if draft.status == "active":
-            draft.status = "deleted"
-            draft.updated_at = deleted_at
+    db.execute(delete(Extension).where(Extension.id.in_(expired_ids)))
+    db.flush()
+    return len(expired_ids)
 
-    draft_ids = [draft.id for draft in drafts]
-    if draft_ids:
-        for binding in db.scalars(
-            select(ExtensionDraftBinding).where(
-                ExtensionDraftBinding.draft_id.in_(draft_ids),
-                ExtensionDraftBinding.enabled.is_(True),
+
+def trashed_extension_access_query(user: User):
+    if user.role == "admin":
+        return select(Extension).where(Extension.archived_at.is_not(None))
+    owned_skill_ids = select(SkillOwnership.skill_id).where(
+        SkillOwnership.principal_type == "user",
+        SkillOwnership.principal_id == user.id,
+        SkillOwnership.role == "owner",
+    )
+    return select(Extension).where(
+        Extension.archived_at.is_not(None),
+        or_(
+            Extension.owner_user_id == user.id,
+            Extension.id.in_(owned_skill_ids),
+        ),
+    )
+
+
+def list_trashed_extensions(
+    db: Session, *, user: User, query: str | None = None
+) -> list[Extension]:
+    statement = trashed_extension_access_query(user)
+    if query:
+        normalized = f"%{' '.join(query.split()).casefold()}%"
+        statement = statement.where(
+            or_(
+                func.lower(Extension.name).like(normalized),
+                func.lower(Extension.slug).like(normalized),
             )
-        ):
-            binding.enabled = False
+        )
+    return list(
+        db.scalars(statement.order_by(Extension.archived_at.desc(), Extension.id))
+    )
 
-    extension.archived_at = deleted_at
-    extension.updated_at = deleted_at
+
+def restore_skill(db: Session, *, user: User, extension_id: str) -> Extension:
+    purge_expired_trashed_skills(db)
+    extension = db.scalar(
+        trashed_extension_access_query(user).where(Extension.id == extension_id)
+    )
+    if extension is None:
+        raise ApiProblem(
+            404, "trashed_extension_not_found", "복원할 Skill을 찾을 수 없습니다."
+        )
+    extension.archived_at = None
+    extension.updated_at = utc_now()
     db.flush()
     return extension
 
@@ -1421,6 +1464,12 @@ def extension_payload(
         ],
         "createdAt": extension.created_at,
         "updatedAt": extension.updated_at,
+        "archivedAt": extension.archived_at,
+        "purgesAt": (
+            extension.archived_at + _SKILL_TRASH_RETENTION
+            if extension.archived_at is not None
+            else None
+        ),
         "canEdit": can_manage,
         "canCreateDraft": extension.visibility != "private" or can_manage,
         "canDelete": role == "owner",

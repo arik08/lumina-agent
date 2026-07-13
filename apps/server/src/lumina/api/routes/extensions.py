@@ -41,11 +41,14 @@ from ...extensions.service import (
     list_extensions,
     list_folders,
     list_installations,
+    list_trashed_extensions,
     move_folder,
     move_skill_to_folder,
+    purge_expired_trashed_skills,
     publish_version,
     require_extension,
     remove_skill_ownership,
+    restore_skill,
     save_draft_version,
     set_installation_enabled,
     uninstall,
@@ -72,6 +75,8 @@ def get_extensions(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[dict[str, Any]]:
+    if purge_expired_trashed_skills(db):
+        db.commit()
     return [
         extension_payload(
             db,
@@ -79,6 +84,20 @@ def get_extensions(
             user=user,
         )
         for extension in list_extensions(db, user=user, query=query)
+    ]
+
+
+@router.get("/extensions/trash")
+def get_trashed_extensions(
+    query: str | None = Query(default=None, max_length=200),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict[str, Any]]:
+    if purge_expired_trashed_skills(db):
+        db.commit()
+    return [
+        extension_payload(db, extension, user=user)
+        for extension in list_trashed_extensions(db, user=user, query=query)
     ]
 
 
@@ -163,7 +182,7 @@ def delete_extension(
     extension = delete_skill(db, user=context.user, extension_id=extension_id)
     record_audit(
         db,
-        action="extension_deleted",
+        action="extension_trashed",
         target_type="extension",
         target_id=extension.id,
         result="success",
@@ -173,6 +192,28 @@ def delete_extension(
     )
     db.commit()
     return Response(status_code=204)
+
+
+@router.post("/extensions/{extension_id}/restore")
+def post_extension_restore(
+    extension_id: str,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    extension = restore_skill(db, user=context.user, extension_id=extension_id)
+    record_audit(
+        db,
+        action="extension_restored",
+        target_type="extension",
+        target_id=extension.id,
+        result="success",
+        actor=context.user,
+        request_id=_request_id(request),
+        metadata={"kind": extension.kind},
+    )
+    db.commit()
+    return extension_payload(db, extension, user=context.user)
 
 
 @router.post("/extensions/{extension_id}/draft")
