@@ -2222,7 +2222,9 @@ button:disabled { cursor: default; opacity: 0.5; }
 .composer-suggestion-icon { display: inline-grid; width: 22px; height: 22px; place-items: center; color: var(--cobalt); }
 .composer-suggestions.is-extension-list .composer-suggestion-icon { width: 20px; height: 20px; }
 .composer-suggestion-copy { display: grid; min-width: 0; gap: 1px; }
-.composer-suggestions.is-extension-list .composer-suggestion-copy { display: block; }
+.composer-suggestions.is-extension-list .composer-suggestion-copy { display: flex; align-items: center; gap: 6px; overflow: hidden; white-space: nowrap; }
+.composer-suggestions.is-extension-list .composer-suggestion-copy strong { max-width: 42%; flex: 0 1 auto; }
+.composer-suggestions.is-extension-list .composer-suggestion-description { min-width: 0; flex: 1 1 0; }
 .composer-suggestion-copy strong, .composer-suggestion-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer-suggestion-copy strong { font-size: 12.5px; font-weight: 620; }
 .composer-suggestion-copy small { color: var(--muted); font-size: 10.5px; }

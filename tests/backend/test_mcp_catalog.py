@@ -393,6 +393,7 @@ def test_mcp_catalog_binding_snapshot_and_cross_user_isolation(
         )
         assert mcp_candidate["referenceId"] == definition["id"]
         assert mcp_candidate["versionOrDigest"] == revision_one["digest"]
+        assert mcp_candidate["description"] == "승인된 사내 문서를 검색합니다."
 
         with SessionLocal() as db:
             admin = db.get(User, ids["admin_id"])

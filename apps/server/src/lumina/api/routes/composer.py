@@ -224,7 +224,7 @@ def _skill_candidates(db: Session, user: User, project_id: str) -> list[dict[str
                 "name": snapshot["name"],
                 "displayName": snapshot["name"],
                 "subtitle": label,
-                "description": label,
+                "description": snapshot.get("description", ""),
                 "insertText": (
                     f"${snapshot.get('kind', 'skill')}:{snapshot.get('slug', snapshot['name'])}"
                 ),
@@ -268,7 +268,7 @@ def _extension_candidates(
                 "name": snapshot["name"],
                 "displayName": snapshot["name"],
                 "subtitle": label,
-                "description": label,
+                "description": snapshot.get("description", ""),
                 "insertText": f"$mcp:{snapshot['slug']}",
                 "status": "available",
                 "versionOrDigest": snapshot["digest"],

@@ -1103,6 +1103,7 @@ def resolve_mcp_snapshot(
             "kind": "mcp",
             "slug": definition.slug,
             "name": definition.name,
+            "description": definition.description,
             "installation_id": installation.id,
             "configuration_revision_id": revision.id,
             "configuration_revision": revision.revision_number,

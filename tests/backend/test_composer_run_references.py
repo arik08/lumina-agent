@@ -445,6 +445,7 @@ def test_composer_candidates_are_project_scoped_and_version_pinned(
         assert skill["referenceId"] == ids["skill_id"]
         assert skill["versionOrDigest"] == ids["draft_digest"]
         assert skill["subtitle"] == "Draft r1 · 저장 안 됨"
+        assert skill["description"] == "설비 점검 보고서를 작성합니다."
         assert skill["insertText"] == "$skill:inspection-report"
         assert skill["scope"] == {
             "type": "project",
