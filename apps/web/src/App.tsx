@@ -2020,8 +2020,12 @@ function App() {
         <nav
           className="sidebar-collapsed-navigation"
           aria-label="축소된 Lumina 탐색"
-          onClick={(event) => {
+          onMouseDown={(event) => {
+            if (event.detail > 1 && event.target === event.currentTarget) event.preventDefault();
+          }}
+          onDoubleClick={(event) => {
             if (event.target !== event.currentTarget) return;
+            event.preventDefault();
             sidebarAutoCollapsedRef.current = false;
             setSidebarCollapsed(false);
           }}
