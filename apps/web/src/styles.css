@@ -1691,6 +1691,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .announcement-empty > span { display: block !important; font-size: 11.5px; line-height: 1.5; }
 
 .conversation-scroll { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable both-edges; scrollbar-color: var(--scrollbar-thumb) transparent; scrollbar-width: thin; }
+.conversation-scroll:focus, .artifact-body:focus { outline: none; }
 .conversation-scroll::-webkit-scrollbar { width: 8px; }
 .conversation-scroll::-webkit-scrollbar-track { background: transparent; }
 .conversation-scroll::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 999px; background: var(--scrollbar-thumb); background-clip: padding-box; }

@@ -120,6 +120,24 @@ const artifactPaneMinWidth = 360;
 const artifactSplitPaneMinViewport = 1024;
 const chatPaneMinWidth = 440;
 
+function focusSelectableRegion(event: ReactPointerEvent<HTMLElement>) {
+  if (event.target instanceof Element && event.target.closest("a, button, input, textarea, select, [contenteditable='true']")) return;
+  event.currentTarget.focus({ preventScroll: true });
+}
+
+function selectAllInRegion(event: import("react").KeyboardEvent<HTMLElement>) {
+  if (!(event.ctrlKey || event.metaKey) || event.altKey || event.key.toLowerCase() !== "a") return;
+  const target = event.target;
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || (target instanceof HTMLElement && target.isContentEditable)) return;
+  const selection = window.getSelection();
+  if (!selection) return;
+  const range = document.createRange();
+  range.selectNodeContents(event.currentTarget);
+  event.preventDefault();
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
 const artifactCitationMarkers = [
   "①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩",
   "⑪", "⑫", "⑬", "⑭", "⑮", "⑯", "⑰", "⑱", "⑲", "⑳",
@@ -2469,9 +2487,14 @@ function App() {
         <div
           className="conversation-scroll"
           ref={conversationFollow.containerRef}
+          tabIndex={-1}
+          onKeyDown={selectAllInRegion}
           onScroll={conversationFollow.onScroll}
           onWheel={(event) => conversationFollow.onWheel(event.deltaY)}
-          onPointerDown={conversationFollow.onPointerDown}
+          onPointerDown={(event) => {
+            conversationFollow.onPointerDown();
+            focusSelectableRegion(event);
+          }}
           onTouchStart={conversationFollow.onPointerDown}
           onDoubleClick={() => { if (artifactOpen) closeArtifact(); }}
         >
@@ -2951,7 +2974,7 @@ function App() {
               {artifactAiStatus && <p className="artifact-ai-status" role="status">{artifactAiStatus}</p>}
             </section>
           )}
-          <div className={`artifact-body artifact-${artifactTab} ${artifactVersion?.mimeType === "application/pdf" ? "is-pdf" : ""} ${artifactVersion?.mimeType === "text/html" ? "is-html" : ""} ${artifactVersion && artifactHasTextSource && (artifactVersion.mimeType === "text/markdown" || artifactSummary?.kind === "markdown") ? "is-markdown" : ""}`}>
+          <div className={`artifact-body artifact-${artifactTab} ${artifactVersion?.mimeType === "application/pdf" ? "is-pdf" : ""} ${artifactVersion?.mimeType === "text/html" ? "is-html" : ""} ${artifactVersion && artifactHasTextSource && (artifactVersion.mimeType === "text/markdown" || artifactSummary?.kind === "markdown") ? "is-markdown" : ""}`} tabIndex={-1} onPointerDown={focusSelectableRegion} onKeyDown={selectAllInRegion}>
             {artifactLoading && <div className="artifact-loading"><LoaderCircle className="is-running" size={17} /> Artifact를 불러오고 있습니다.</div>}
             {!artifactLoading && artifactVersion?.mimeType === "application/pdf" && artifactPreviewUrl && (
               <div className="artifact-pdf-preview">
