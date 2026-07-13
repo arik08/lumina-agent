@@ -546,10 +546,15 @@ if (-not (Test-Path -LiteralPath (Join-Path $RepositoryRoot ".env"))) {
     & (Join-Path $PSScriptRoot "install_lumina.ps1")
 }
 
-Confirm-LuminaRuntimePrepared
-Stop-PreviousSupervisor
-Set-SupervisorPid
 $env:LUMINA_ENVIRONMENT = if ($Development) { "development" } else { "production" }
+if (-not $Development) {
+    Confirm-LuminaRuntimePrepared
+}
+Stop-PreviousSupervisor
+if ($Development) {
+    Confirm-LuminaRuntimePrepared
+}
+Set-SupervisorPid
 $resetReason = "initial startup"
 $automaticRestartCount = 0
 
@@ -563,9 +568,9 @@ try {
             Stop-ManagedProcesses -PreserveFrontend:$preserveFrontend
             Start-LuminaProcesses -PreserveFrontend:$preserveFrontend
             if (-not (Wait-LuminaReady)) {
-                $manualResetRequested = $true
                 $preserveFrontend = $false
                 $resetReason = "manual request"
+                $manualResetRequested = $true
                 continue
             }
             $preserveFrontend = $Development
@@ -592,9 +597,9 @@ try {
             while ($true) {
                 Write-NewBackendActivity
                 if (Test-HardResetKey) {
-                    $manualResetRequested = $true
                     $preserveFrontend = $false
                     $resetReason = "manual request"
+                    $manualResetRequested = $true
                     break
                 }
                 $exited = Get-ExitedManagedProcess

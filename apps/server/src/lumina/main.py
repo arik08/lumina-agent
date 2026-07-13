@@ -187,7 +187,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     @application.get("/api/health/ready", tags=["health"])
-    def readiness() -> dict[str, str] | JSONResponse:
+    def readiness() -> JSONResponse:
         with SessionLocal() as db:
             db.execute(text("SELECT 1"))
         if not local_run_executor.started:
@@ -199,7 +199,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "executor": "stopped",
                 },
             )
-        return {"status": "ok", "database": "ready", "executor": "ready"}
+        return JSONResponse(
+            content={"status": "ok", "database": "ready", "executor": "ready"}
+        )
 
     frontend_dist = REPOSITORY_ROOT / "apps" / "web" / "dist"
     if frontend_dist.is_dir():
