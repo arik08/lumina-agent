@@ -20,20 +20,18 @@ test("scheduled tasks expose an inline two-step delete control", async () => {
   assert.match(styles, /\.detail-actions \.is-danger\.is-confirming\s*\{/);
 });
 
-test("schedule creation and refresh actions stay with the left task list", async () => {
-  const [view, styles] = await Promise.all([
-    read("../src/components/SchedulesView.tsx"),
-    read("../src/styles.css"),
-  ]);
+test("schedule creation and refresh actions stay at the right of the header", async () => {
+  const view = await read("../src/components/SchedulesView.tsx");
 
   const headerStart = view.indexOf('className="feature-header"');
   const headerEnd = view.indexOf("</header>", headerStart);
   const listStart = view.indexOf('className="feature-list schedule-list"');
-  const toolbarStart = view.indexOf('className="feature-toolbar schedule-list-toolbar"');
+  const createAction = view.indexOf('className="feature-primary-action lumina-primary-action"', headerStart);
+  const refreshAction = view.indexOf('className="schedule-list-refresh"', headerStart);
   const emptyState = view.indexOf("예약 작업이 없습니다.");
 
   assert.ok(headerStart >= 0 && headerEnd > headerStart);
-  assert.doesNotMatch(view.slice(headerStart, headerEnd), /새 예약|새로 고침/);
-  assert.ok(listStart >= 0 && listStart < toolbarStart && toolbarStart < emptyState);
-  assert.match(styles, /\.schedule-list-toolbar\s*\{[^}]*position:\s*sticky;/);
+  assert.ok(headerStart < createAction && createAction < refreshAction && refreshAction < headerEnd);
+  assert.ok(listStart >= 0 && listStart < emptyState);
+  assert.doesNotMatch(view.slice(listStart, emptyState), /새 예약|새로 고침|schedule-list-toolbar/);
 });
