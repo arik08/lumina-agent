@@ -13,12 +13,13 @@ from pptx.text.text import TextFrame
 from pptx.util import Inches, Pt
 
 from .model import ReportDocument
+from .theme import COBALT_HEX, INK_HEX, LIGHT_BLUE_HEX, MUTED_HEX, hex_rgb
 
 
-_COBALT = RGBColor(49, 95, 189)
-_INK = RGBColor(32, 38, 49)
-_MUTED = RGBColor(107, 114, 128)
-_LIGHT_BLUE = RGBColor(234, 240, 251)
+_COBALT = RGBColor(*hex_rgb(COBALT_HEX))
+_INK = RGBColor(*hex_rgb(INK_HEX))
+_MUTED = RGBColor(*hex_rgb(MUTED_HEX))
+_LIGHT_BLUE = RGBColor(*hex_rgb(LIGHT_BLUE_HEX))
 
 
 def generate_pptx(report: ReportDocument) -> bytes:

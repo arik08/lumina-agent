@@ -10,17 +10,11 @@ import httpx
 
 from lumina.attachments import sniff_mime
 from lumina.http_client import TrustManager, TrustProfile, create_http_client
+from lumina.image_formats import IMAGE_MIME_BY_FORMAT
 
 from ..errors import ProviderConfigurationError, ProviderRequestError
 from ..openai import DEFAULT_OPENAI_BASE_URL
 from ..openai.adapter import _validated_base_url
-
-
-_MIME_BY_FORMAT = {
-    "png": "image/png",
-    "jpeg": "image/jpeg",
-    "webp": "image/webp",
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,7 +172,7 @@ def _generated_image(body: object, *, max_output_bytes: int) -> GeneratedImage:
     output_format = next(
         (
             name
-            for name, expected_mime in _MIME_BY_FORMAT.items()
+            for name, expected_mime in IMAGE_MIME_BY_FORMAT.items()
             if expected_mime == mime_type
         ),
         None,

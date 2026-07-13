@@ -6,10 +6,7 @@ from sqlalchemy.orm import Session
 from ..api.errors import ApiProblem
 from ..authorization import require_project
 from ..models import Project, ProjectMembership, User, utc_now
-
-
-PROJECT_ROLES = frozenset({"owner", "admin", "member", "viewer"})
-MEMBERSHIP_STATUSES = frozenset({"active", "revoked"})
+from .schemas import MEMBERSHIP_STATUSES, PROJECT_ROLES
 
 
 def require_membership_manager(db: Session, user: User, project_id: str) -> Project:

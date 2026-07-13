@@ -31,10 +31,10 @@ from ..models import (
 from ..notifications import create_scheduled_run_result_notification
 from ..runs.service import apply_run_action, create_run, resolve_execution
 from ..runs.state import TERMINAL_STATUSES
+from ..secret_policy import reject_secret_key_names
 from .schemas import CONTEXT_MODES, EXTENSION_SNAPSHOT_POLICIES, SCHEDULE_KINDS
 
 
-_SECRET_PARTS = ("password", "secret", "token", "api_key", "apikey", "credential")
 _ACTIVE_SCHEDULED_RUN_STATUSES = {"queued", "running", "retry_waiting"}
 _RETRYABLE_RUN_STATUSES = {"failed", "interrupted", "limit_reached"}
 _SCHEDULED_TIMEOUT_CODE = "scheduled_timeout"
@@ -45,18 +45,7 @@ _MAX_ATTEMPTS = 10
 
 
 def _reject_secrets(value: Any, path: str) -> None:
-    if isinstance(value, dict):
-        for key, item in value.items():
-            if any(part in key.casefold() for part in _SECRET_PARTS):
-                raise ApiProblem(
-                    422,
-                    "secret_setting_forbidden",
-                    f"{path}.{key}에는 비밀값을 저장할 수 없습니다.",
-                )
-            _reject_secrets(item, f"{path}.{key}")
-    elif isinstance(value, list):
-        for index, item in enumerate(value):
-            _reject_secrets(item, f"{path}[{index}]")
+    reject_secret_key_names(value, path=path)
 
 
 def _timezone(name: str) -> ZoneInfo:

@@ -20,6 +20,7 @@ from ..models import (
     User,
     utc_now,
 )
+from .policy import APPROVABLE_PRIVATE_NETWORKS, SECRET_NAME_PATTERN
 
 
 ALLOWED_STDIO_EXECUTABLES = frozenset(
@@ -36,7 +37,6 @@ _HOST_RE = re.compile(
     r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*"
     r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
 )
-_SECRET_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]{1,79}$")
 _SECRET_REF_RE = re.compile(r"^(?:env|secret|vault)://[A-Za-z0-9_./:@-]{1,470}$")
 _SECRET_PLACEHOLDER_RE = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
 _INLINE_SECRET_RE = re.compile(
@@ -46,17 +46,6 @@ _SECRET_LITERAL_RE = re.compile(
     r"(?i)(?:\bbearer\s+|\bsk-[a-z0-9_-]{12,}|\bghp_[a-z0-9]{12,}|"
     r"\bgithub_pat_[a-z0-9_]{12,}|\bxox[baprs]-[a-z0-9-]{12,}|"
     r"\beyJ[a-z0-9_-]{8,}\.[a-z0-9_-]{8,}\.[a-z0-9_-]{8,})"
-)
-_APPROVABLE_PRIVATE_NETWORKS = tuple(
-    ipaddress.ip_network(value)
-    for value in (
-        "10.0.0.0/8",
-        "172.16.0.0/12",
-        "192.168.0.0/16",
-        "127.0.0.0/8",
-        "fc00::/7",
-        "::1/128",
-    )
 )
 
 
@@ -468,11 +457,11 @@ def _network_is_approvable(
     if isinstance(network, ipaddress.IPv4Network):
         return any(
             isinstance(parent, ipaddress.IPv4Network) and network.subnet_of(parent)
-            for parent in _APPROVABLE_PRIVATE_NETWORKS
+            for parent in APPROVABLE_PRIVATE_NETWORKS
         )
     return any(
         isinstance(parent, ipaddress.IPv6Network) and network.subnet_of(parent)
-        for parent in _APPROVABLE_PRIVATE_NETWORKS
+        for parent in APPROVABLE_PRIVATE_NETWORKS
     )
 
 
@@ -569,7 +558,7 @@ def _normalize_secret_names(values: Any) -> list[str]:
     names: list[str] = []
     for value in values:
         name = str(value).strip()
-        if not _SECRET_NAME_RE.fullmatch(name):
+        if not SECRET_NAME_PATTERN.fullmatch(name):
             raise ApiProblem(
                 422,
                 "mcp_secret_slot_invalid",

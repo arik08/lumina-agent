@@ -8,10 +8,11 @@ from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
 from .model import ReportDocument
+from .theme import COBALT_HEX, MUTED_HEX, hex_rgb
 
 
-_COBALT = RGBColor(49, 95, 189)
-_MUTED = RGBColor(107, 114, 128)
+_COBALT = RGBColor(*hex_rgb(COBALT_HEX))
+_MUTED = RGBColor(*hex_rgb(MUTED_HEX))
 
 
 def generate_docx(report: ReportDocument) -> bytes:

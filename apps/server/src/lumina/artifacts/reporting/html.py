@@ -1,9 +1,8 @@
-from __future__ import annotations
-
-import html
 import base64
+import html
 
 from .model import ReportDocument, ReportSection
+from .theme import COBALT_HEX, INK_HEX, MUTED_HEX
 
 
 def generate_html(document: ReportDocument) -> bytes:
@@ -48,7 +47,7 @@ def generate_html(document: ReportDocument) -> bytes:
   <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
   <title>{html.escape(document.title)}</title>
   <style>
-    :root {{ color-scheme: light; --blue:#315fbd; --ink:#202631; --muted:#6b7280; }}
+    :root {{ color-scheme: light; --blue:#{COBALT_HEX}; --ink:#{INK_HEX}; --muted:#{MUTED_HEX}; }}
     body {{ margin:0; padding:48px; font-family:Arial,'Noto Sans KR',sans-serif; color:var(--ink); background:#fff; }}
     header {{ border-bottom:2px solid var(--blue); padding-bottom:24px; }}
     h1 {{ margin:8px 0; font-size:30px; }} h2 {{ margin-top:32px; font-size:18px; }}

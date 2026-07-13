@@ -27,20 +27,13 @@ from ..models import (
     new_uuid,
     utc_now,
 )
+from ..secret_policy import reject_secret_key_names
 
 
 _SAFE_SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _SECRET_ASSIGNMENT = re.compile(
     r"(?im)^\s*(?:api[_-]?key|access[_-]?token|password|secret)\s*[:=]\s*"
     r"(?:['\"])?(?!<|\$\{|your[_-]|replace[_-]|example)[A-Za-z0-9_./+=-]{8,}"
-)
-_FORBIDDEN_SETTING_PARTS = (
-    "password",
-    "secret",
-    "token",
-    "api_key",
-    "apikey",
-    "credential",
 )
 _FORBIDDEN_PACKAGE_NAMES = {".env", "credentials", "secrets"}
 _FORBIDDEN_PACKAGE_SUFFIXES = {".key", ".p12", ".pfx", ".pem"}
@@ -141,19 +134,7 @@ def _slug(value: str | None, name: str, extension_id: str) -> str:
 
 
 def _ensure_no_secrets(value: Any, *, path: str = "settings") -> None:
-    if isinstance(value, dict):
-        for key, item in value.items():
-            lowered = key.casefold()
-            if any(part in lowered for part in _FORBIDDEN_SETTING_PARTS):
-                raise ApiProblem(
-                    422,
-                    "secret_setting_forbidden",
-                    f"{path}.{key}에는 비밀값을 저장할 수 없습니다.",
-                )
-            _ensure_no_secrets(item, path=f"{path}.{key}")
-    elif isinstance(value, list):
-        for index, item in enumerate(value):
-            _ensure_no_secrets(item, path=f"{path}[{index}]")
+    reject_secret_key_names(value, path=path)
 
 
 def extension_access_query(user: User):

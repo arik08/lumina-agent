@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import inspect
 import ipaddress
+import inspect
 import json
 import os
 import re
@@ -30,6 +30,7 @@ from ..models import (
     Run,
 )
 from .service import ALLOWED_SECRET_HEADER_NAMES, ALLOWED_STDIO_EXECUTABLES
+from .policy import APPROVABLE_PRIVATE_NETWORKS, SECRET_NAME_PATTERN
 
 
 PROTOCOL_VERSION = "2025-11-25"
@@ -53,18 +54,6 @@ _SAFE_ENV_NAMES = (
 )
 _TOOL_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$")
 _ENV_SECRET_REF_RE = re.compile(r"^env://([A-Za-z_][A-Za-z0-9_]*)$")
-_SECRET_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]{1,79}$")
-_APPROVABLE_PRIVATE_NETWORKS = tuple(
-    ipaddress.ip_network(value)
-    for value in (
-        "10.0.0.0/8",
-        "172.16.0.0/12",
-        "192.168.0.0/16",
-        "127.0.0.0/8",
-        "fc00::/7",
-        "::1/128",
-    )
-)
 
 
 class McpRuntimeError(RuntimeError):
@@ -280,7 +269,7 @@ class McpRuntime:
     def _resolve_secrets(self, config: McpServerConfig) -> dict[str, str]:
         resolved: dict[str, str] = {}
         for secret_name in config.required_secret_names:
-            if not _SECRET_NAME_RE.fullmatch(secret_name):
+            if not SECRET_NAME_PATTERN.fullmatch(secret_name):
                 raise _runtime_error("mcp_secret_binding_invalid", "credential")
             secret_ref = config.secret_refs.get(secret_name, "")
             match = _ENV_SECRET_REF_RE.fullmatch(secret_ref)
@@ -1027,11 +1016,11 @@ def _runtime_network_is_approvable(
     if isinstance(network, ipaddress.IPv4Network):
         return any(
             isinstance(parent, ipaddress.IPv4Network) and network.subnet_of(parent)
-            for parent in _APPROVABLE_PRIVATE_NETWORKS
+            for parent in APPROVABLE_PRIVATE_NETWORKS
         )
     return any(
         isinstance(parent, ipaddress.IPv6Network) and network.subnet_of(parent)
-        for parent in _APPROVABLE_PRIVATE_NETWORKS
+        for parent in APPROVABLE_PRIVATE_NETWORKS
     )
 
 

@@ -35,9 +35,8 @@ import { OrganizationInstructionsPanel } from "./OrganizationInstructionsPanel";
 
 type AdminTab = "users" | "usage" | "conversations" | "audit" | "safety" | "policy";
 type UsageMetric = "activeUsers" | "loginCount" | "runCount";
-type AuditViewMode = "recent" | "user";
+type AdminHistoryViewMode = "recent" | "user";
 type AdminListLimit = 50 | 120 | 250 | 500;
-type ConversationViewMode = "recent" | "user";
 
 interface AdminViewProps {
   onOpenNavigation: () => void;
@@ -214,14 +213,14 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
   const [userTotal, setUserTotal] = useState(0);
   const [conversations, setConversations] = useState<AdminConversationSummary[]>([]);
   const [conversationTotal, setConversationTotal] = useState(0);
-  const [conversationViewMode, setConversationViewMode] = useState<ConversationViewMode>("recent");
+  const [conversationViewMode, setConversationViewMode] = useState<AdminHistoryViewMode>("recent");
   const [conversationLimit, setConversationLimit] = useState<AdminListLimit>(120);
   const [collapsedConversationUsers, setCollapsedConversationUsers] = useState<Set<string>>(new Set());
   const [feedbackOnly, setFeedbackOnly] = useState(false);
   const [auditEvents, setAuditEvents] = useState<AdminAuditEvent[]>([]);
   const [auditTotal, setAuditTotal] = useState(0);
   const [auditLimit, setAuditLimit] = useState<AdminListLimit>(120);
-  const [auditViewMode, setAuditViewMode] = useState<AuditViewMode>("recent");
+  const [auditViewMode, setAuditViewMode] = useState<AdminHistoryViewMode>("recent");
   const [collapsedAuditUsers, setCollapsedAuditUsers] = useState<Set<string>>(new Set());
   const [selectedUser, setSelectedUser] = useState<AdminUser | null>(null);
   const [userDisplayName, setUserDisplayName] = useState("");

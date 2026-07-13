@@ -26,12 +26,13 @@ from reportlab.platypus import (
 )
 
 from .model import ReportDocument
+from .theme import COBALT_HEX, INK_HEX, LIGHT_BLUE_HEX, MUTED_HEX
 
 
-_COBALT = colors.HexColor("#315FBD")
-_INK = colors.HexColor("#202631")
-_MUTED = colors.HexColor("#6B7280")
-_LIGHT_BLUE = colors.HexColor("#EAF0FB")
+_COBALT = colors.HexColor(f"#{COBALT_HEX}")
+_INK = colors.HexColor(f"#{INK_HEX}")
+_MUTED = colors.HexColor(f"#{MUTED_HEX}")
+_LIGHT_BLUE = colors.HexColor(f"#{LIGHT_BLUE_HEX}")
 
 
 def generate_pdf(report: ReportDocument) -> bytes:

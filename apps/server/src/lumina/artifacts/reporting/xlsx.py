@@ -9,11 +9,12 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.worksheet.worksheet import Worksheet
 
 from .model import ReportDocument
+from .theme import COBALT_HEX, INK_HEX, LIGHT_BLUE_HEX
 
 
-_COBALT = "315FBD"
-_LIGHT_BLUE = "EAF0FB"
-_INK = "202631"
+_COBALT = COBALT_HEX
+_LIGHT_BLUE = LIGHT_BLUE_HEX
+_INK = INK_HEX
 _WHITE = "FFFFFF"
 _THIN = Side(style="thin", color="DCE3EF")
 

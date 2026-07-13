@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, get_args
 
 from pydantic import Field, model_validator
 from pydantic_core import PydanticCustomError
@@ -10,6 +10,8 @@ from ..api.schemas import ApiModel
 
 ProjectRole = Literal["owner", "admin", "member", "viewer"]
 ProjectMembershipStatus = Literal["active", "revoked"]
+PROJECT_ROLES = frozenset(get_args(ProjectRole))
+MEMBERSHIP_STATUSES = frozenset(get_args(ProjectMembershipStatus))
 
 
 class ProjectMembershipCreate(ApiModel):

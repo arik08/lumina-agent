@@ -16,6 +16,7 @@ from ..artifacts.service import (
 )
 from ..attachments import sniff_mime
 from ..authorization import require_conversation
+from ..image_formats import IMAGE_FORMAT_BY_MIME, IMAGE_MIME_BY_FORMAT
 from ..models import Attachment, Run, User, utc_now
 from ..providers.codex import GeneratedImage, ImageGenerationRequest
 from ..storage import ManagedLocalStorage, StorageError
@@ -75,12 +76,6 @@ GENERATE_IMAGE_TOOL_SCHEMA = {
     },
 }
 
-_MIME_BY_FORMAT = {
-    "png": "image/png",
-    "jpeg": "image/jpeg",
-    "webp": "image/webp",
-}
-_FORMAT_BY_MIME = {value: key for key, value in _MIME_BY_FORMAT.items()}
 _SIZE = re.compile(r"^(\d{3,4})x(\d{3,4})$")
 
 
@@ -194,7 +189,9 @@ def parse_generate_image_input(arguments: dict[str, Any]) -> GenerateImageInput:
     size = _option(arguments, "size", "auto", None)
     _validate_size(size)
     quality = _option(arguments, "quality", "auto", {"auto", "low", "medium", "high"})
-    output_format = _option(arguments, "output_format", "png", set(_MIME_BY_FORMAT))
+    output_format = _option(
+        arguments, "output_format", "png", set(IMAGE_MIME_BY_FORMAT)
+    )
     background = _option(
         arguments,
         "background",
@@ -333,7 +330,7 @@ def prepare_image_tool(
                 "대상 이미지 Artifact를 사용할 수 없습니다.",
                 stage="authorization",
             )
-        expected_mime = _MIME_BY_FORMAT[parsed.output_format]
+        expected_mime = IMAGE_MIME_BY_FORMAT[parsed.output_format]
         if artifact.mime_type != expected_mime:
             raise ImageToolError(
                 "image_destination_format_conflict",
@@ -384,7 +381,7 @@ def persist_generated_image(
             "Run의 Provider 또는 Model snapshot이 변경되었습니다.",
             stage="storage",
         )
-    actual_format = _FORMAT_BY_MIME.get(generated.mime_type)
+    actual_format = IMAGE_FORMAT_BY_MIME.get(generated.mime_type)
     if actual_format is None:
         raise ImageToolError("invalid_image_mime", "지원하지 않는 이미지 형식입니다.")
 

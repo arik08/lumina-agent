@@ -19,6 +19,7 @@ from ..models import (
     User,
     utc_now,
 )
+from ..runs.state import TERMINAL_STATUSES
 
 
 _RUN_NOTIFICATION_COPY = {
@@ -42,13 +43,6 @@ _RUN_NOTIFICATION_COPY = {
         "작업 승인이 필요합니다.",
         "작업 화면에서 승인 요청의 범위를 확인해 주세요.",
     ),
-}
-_SCHEDULED_TERMINAL_STATUSES = {
-    "completed",
-    "failed",
-    "cancelled",
-    "interrupted",
-    "limit_reached",
 }
 _DEEP_LINK_KEYS = frozenset(
     {
@@ -238,7 +232,9 @@ def create_run_transition_notification(
     )
 
 
-def delete_notification(db: Session, *, user: User, notification_id: str) -> Notification:
+def delete_notification(
+    db: Session, *, user: User, notification_id: str
+) -> Notification:
     notification = db.scalar(
         select(Notification).where(
             Notification.id == notification_id,
@@ -259,7 +255,7 @@ def delete_all_notifications(db: Session, *, user: User) -> int:
 def create_scheduled_run_result_notification(
     db: Session, scheduled_run: ScheduledRun
 ) -> tuple[Notification | None, bool]:
-    if scheduled_run.status not in _SCHEDULED_TERMINAL_STATUSES:
+    if scheduled_run.status not in TERMINAL_STATUSES:
         return None, False
     task = db.get(ScheduledTask, scheduled_run.scheduled_task_id)
     run = db.get(Run, scheduled_run.run_id) if scheduled_run.run_id else None
