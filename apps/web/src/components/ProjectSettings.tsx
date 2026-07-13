@@ -1,8 +1,9 @@
-import { AlertTriangle, Archive, Check, ChevronDown, FileText, Folder, FolderPlus, LoaderCircle, Menu, Save, Trash2, UserPlus, Users } from "lucide-react";
-import { type FormEvent, type KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, Archive, Check, FileText, Folder, FolderPlus, LoaderCircle, Menu, Save, Trash2, UserPlus, Users } from "lucide-react";
+import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import type { ProjectMembership, ProjectRole, ProjectSummary } from "../api-types";
 import { InstructionEditor } from "./InstructionEditor";
+import { SelectMenu } from "./SelectMenu";
 import "./ProjectSettings.css";
 
 type AssignableRole = Exclude<ProjectRole, "owner">;
@@ -14,112 +15,8 @@ const roleLabels: Record<ProjectRole, string> = {
   viewer: "조회자",
 };
 
-const assignableRoles: AssignableRole[] = ["member", "viewer", "admin"];
-
-interface RolePickerProps {
-  value: AssignableRole;
-  ariaLabel: string;
-  disabled?: boolean;
-  onChange: (role: AssignableRole) => void;
-}
-
-function RolePicker({ value, ariaLabel, disabled = false, onChange }: RolePickerProps) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
-
-  useEffect(() => {
-    if (!open) return;
-    const selectedIndex = assignableRoles.indexOf(value);
-    const frame = window.requestAnimationFrame(() => optionRefs.current[selectedIndex]?.focus());
-    const closeOnOutsideClick = (event: PointerEvent) => {
-      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) setOpen(false);
-    };
-    document.addEventListener("pointerdown", closeOnOutsideClick);
-    return () => {
-      window.cancelAnimationFrame(frame);
-      document.removeEventListener("pointerdown", closeOnOutsideClick);
-    };
-  }, [open, value]);
-
-  useEffect(() => {
-    if (disabled) setOpen(false);
-  }, [disabled]);
-
-  const choose = (role: AssignableRole) => {
-    setOpen(false);
-    if (role !== value) onChange(role);
-    triggerRef.current?.focus();
-  };
-
-  const moveOptionFocus = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    const currentIndex = optionRefs.current.findIndex((option) => option === document.activeElement);
-    if (event.key === "Escape") {
-      event.preventDefault();
-      setOpen(false);
-      triggerRef.current?.focus();
-      return;
-    }
-    if (event.key === "Tab") {
-      setOpen(false);
-      return;
-    }
-    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
-    event.preventDefault();
-    const lastIndex = assignableRoles.length - 1;
-    const nextIndex = event.key === "Home"
-      ? 0
-      : event.key === "End"
-        ? lastIndex
-        : event.key === "ArrowDown"
-          ? (currentIndex + 1) % assignableRoles.length
-          : (currentIndex - 1 + assignableRoles.length) % assignableRoles.length;
-    optionRefs.current[nextIndex]?.focus();
-  };
-
-  return (
-    <div className={`project-role-picker ${open ? "is-open" : ""}`} ref={rootRef}>
-      <button
-        className="project-role-trigger"
-        type="button"
-        aria-label={ariaLabel}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        disabled={disabled}
-        ref={triggerRef}
-        onClick={() => setOpen((current) => !current)}
-        onKeyDown={(event) => {
-          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-            event.preventDefault();
-            setOpen(true);
-          }
-        }}
-      >
-        <span>{roleLabels[value]}</span>
-        <ChevronDown size={13} aria-hidden="true" />
-      </button>
-      {open && (
-        <div className="project-role-menu" role="menu" aria-label={`${ariaLabel} 목록`} onKeyDown={moveOptionFocus}>
-          {assignableRoles.map((role, index) => (
-            <button
-              className={role === value ? "is-selected" : ""}
-              type="button"
-              role="menuitemradio"
-              aria-checked={role === value}
-              key={role}
-              ref={(element) => { optionRefs.current[index] = element; }}
-              onClick={() => choose(role)}
-            >
-              <span>{roleLabels[role]}</span>
-              {role === value && <Check size={12} aria-hidden="true" />}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
+const assignableRoleOptions = (["member", "viewer", "admin"] as AssignableRole[])
+  .map((role) => ({ value: role, label: roleLabels[role] }));
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "요청을 처리하지 못했습니다.";
@@ -346,7 +243,7 @@ export function ProjectSettings({ projects, project, onOpenNavigation, onSelect,
               {canManageMembers && (
                 <form className="project-member-add" onSubmit={(event) => void addMember(event)}>
                   <label><span>계정명</span><input type="email" value={accountLoginId} placeholder="name@posco.com" autoComplete="off" onChange={(event) => setAccountLoginId(event.currentTarget.value)} /></label>
-                  <div className="project-role-field"><span>권한</span><RolePicker value={newRole} ariaLabel="새 구성원 권한" disabled={memberActionId !== null} onChange={setNewRole} /></div>
+                  <div className="project-role-field"><span>권한</span><SelectMenu value={newRole} options={assignableRoleOptions} ariaLabel="새 구성원 권한" disabled={memberActionId !== null} onChange={(role) => setNewRole(role as AssignableRole)} /></div>
                   <button className="primary-compact" type="submit" disabled={!accountLoginId.trim() || memberActionId !== null}>{memberActionId === "add" ? <LoaderCircle className="is-running" size={14} /> : <UserPlus size={14} />} 계정 추가</button>
                 </form>
               )}
@@ -360,7 +257,7 @@ export function ProjectSettings({ projects, project, onOpenNavigation, onSelect,
                       <span className="project-member-avatar" aria-hidden="true">{membership.displayName.trim().charAt(0).toUpperCase() || "?"}</span>
                       <span className="project-member-identity"><strong>{membership.displayName}</strong><small>{membership.loginId}</small></span>
                       {protectedOwner ? <span className="project-member-owner">소유자</span> : canManageMembers ? (
-                        <RolePicker value={membership.role as AssignableRole} ariaLabel={`${membership.displayName} 권한`} disabled={actionBusy} onChange={(role) => void changeMemberRole(membership, role)} />
+                        <SelectMenu className="project-member-role-select" size="small" align="end" value={membership.role} options={assignableRoleOptions} ariaLabel={`${membership.displayName} 권한`} disabled={actionBusy} onChange={(role) => void changeMemberRole(membership, role as AssignableRole)} />
                       ) : <span className="project-member-role">{roleLabels[membership.role]}</span>}
                       {!protectedOwner && canManageMembers && <button className={removalArmed ? "is-delete-armed" : ""} type="button" aria-label={removalArmed ? `${membership.displayName} 제거 확인, 한 번 더 누르면 제거` : `${membership.displayName} 제거`} disabled={actionBusy} onClick={() => void removeMember(membership)}>{actionBusy ? <LoaderCircle className="is-running" size={14} /> : removalArmed ? <AlertTriangle size={14} /> : <Trash2 size={14} />}<span>{removalArmed ? "한 번 더 눌러 제거" : "제거"}</span></button>}
                     </article>

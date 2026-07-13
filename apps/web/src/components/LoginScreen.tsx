@@ -2,7 +2,13 @@ import { ArrowRight, AtSign, KeyRound, LoaderCircle, ShieldCheck, Sparkles, User
 import { type FormEvent, useRef, useState } from "react";
 import { ApiError, login, registerAccount } from "../api";
 import type { AuthSession, UserRole } from "../api-types";
+import { SelectMenu } from "./SelectMenu";
 import "../login.css";
+
+const registrationRoleOptions = [
+  { value: "user", label: "사용자" },
+  { value: "admin", label: "관리자" },
+];
 
 export interface LoginScreenProps {
   onAuthenticated: (session: AuthSession) => void;
@@ -131,13 +137,13 @@ export function LoginScreen({ onAuthenticated, initialDomain = "posco.com" }: Lo
                 className="login-dev-account"
                 type="button"
                 aria-label="개발 계정 admin@posco.com 채우기"
+                data-tooltip="개발 계정 admin@posco.com 채우기"
                 disabled={submitting}
                 onClick={() => {
                   setLoginName("admin");
                   setLoginDomain("posco.com");
                   passwordRef.current?.focus();
                 }}
-                data-tooltip="개발 계정 admin@posco.com 채우기"
               >
                 <UserPlus size={16} strokeWidth={1.8} aria-hidden="true" />
               </button>
@@ -234,7 +240,7 @@ export function LoginScreen({ onAuthenticated, initialDomain = "posco.com" }: Lo
               <label className="login-field"><span>이메일</span><input aria-label="가입 이메일" type="email" autoComplete="email" placeholder="account@posco.com" value={registrationEmail} onChange={(event) => setRegistrationEmail(event.currentTarget.value)} /></label>
               <label className="login-field"><span>이름</span><input aria-label="이름" autoComplete="name" value={registrationName} onChange={(event) => setRegistrationName(event.currentTarget.value)} /></label>
               <label className="login-field"><span>소속</span><input aria-label="소속" value={registrationAffiliation} onChange={(event) => setRegistrationAffiliation(event.currentTarget.value)} /></label>
-              <label className="login-field"><span>권한</span><select aria-label="신청 역할" value={registrationRole} onChange={(event) => setRegistrationRole(event.currentTarget.value as UserRole)}><option value="user">사용자</option><option value="admin">관리자</option></select></label>
+              <div className="login-field"><span>권한</span><SelectMenu className="login-role-select" value={registrationRole} options={registrationRoleOptions} ariaLabel="신청 역할" onChange={(value) => setRegistrationRole(value as UserRole)} /></div>
               <div className="login-registration-passwords">
                 <label className="login-field"><span>비밀번호</span><input aria-label="가입 비밀번호" type="password" autoComplete="new-password" value={registrationPassword} onChange={(event) => setRegistrationPassword(event.currentTarget.value)} /></label>
                 <label className="login-field"><span>비밀번호 확인</span><input aria-label="비밀번호 확인" type="password" autoComplete="new-password" value={registrationPasswordConfirm} onChange={(event) => setRegistrationPasswordConfirm(event.currentTarget.value)} /></label>

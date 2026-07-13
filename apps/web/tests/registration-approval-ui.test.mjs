@@ -13,7 +13,7 @@ test("login screen exposes registration request fields without the session note"
   assert.match(screen, /placeholder="POSCO_계정명"/);
   assert.match(screen, />\s*회원가입\s*</);
   for (const label of ["가입 이메일", "이름", "소속", "신청 역할", "가입 비밀번호", "비밀번호 확인"]) {
-    assert.match(screen, new RegExp(`aria-label="${label}"`));
+    assert.match(screen, new RegExp(`aria(?:-label|Label)="${label}"`));
   }
   assert.match(api, /"\/auth\/register"/);
 });

@@ -191,8 +191,7 @@
 }
 
 .login-field input,
-.login-domain-value input,
-.login-field select {
+.login-domain-value input {
   width: 100%;
   height: 46px;
   border: 1px solid var(--login-line);
@@ -204,7 +203,23 @@
   transition: border-color 150ms ease, box-shadow 150ms ease;
 }
 
-.login-field select { padding: 0 11px; }
+.login-role-select .lumina-select-trigger {
+  height: 46px;
+  padding: 0 11px;
+  border-color: var(--login-line);
+  border-radius: 9px;
+  background: #fff;
+  color: var(--login-ink);
+  font-size: 15px;
+}
+
+.login-role-select .lumina-select-trigger:focus-visible,
+.login-role-select.is-open .lumina-select-trigger {
+  border-color: color-mix(in srgb, var(--login-cobalt) 76%, white);
+  box-shadow: 0 0 0 3px rgba(63, 102, 201, 0.11);
+}
+
+.login-role-select .lumina-select-menu { border-color: var(--login-line); }
 
 .login-field input { padding: 0 13px; }
 

@@ -15,6 +15,7 @@ import {
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "../api";
 import type { ExecutionSelection, ScheduleKind, ScheduledRun, ScheduledTask } from "../api-types";
+import { SelectMenu } from "./SelectMenu";
 
 interface SchedulesViewProps {
   projectId: string | null;
@@ -29,6 +30,9 @@ const kindLabels: Record<ScheduleKind, string> = {
   weekdays: "평일",
   manual: "수동",
 };
+
+const scheduleKindOptions = Object.entries(kindLabels).map(([value, label]) => ({ value, label }));
+const weekdayOptions = ["월", "화", "수", "목", "금", "토", "일"].map((label, index) => ({ value: String(index), label }));
 
 function scheduleText(task: ScheduledTask) {
   const hour = task.scheduleConfig.hour;
@@ -298,9 +302,9 @@ export function SchedulesView({ projectId, execution, onOpenNavigation }: Schedu
             <label><span>이름</span><input autoFocus value={name} onChange={(event) => setName(event.currentTarget.value)} /></label>
             <label><span>작업 지시</span><textarea rows={6} value={instructions} onChange={(event) => setInstructions(event.currentTarget.value)} /></label>
             <div className="schedule-form-row">
-              <label><span>주기</span><select value={kind} onChange={(event) => setKind(event.currentTarget.value as ScheduleKind)}>{Object.entries(kindLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+              <div className="lumina-select-field"><span>주기</span><SelectMenu value={kind} options={scheduleKindOptions} ariaLabel="예약 주기" onChange={(value) => setKind(value as ScheduleKind)} /></div>
               {kind !== "manual" && kind !== "hourly" && <label><span>시</span><input type="number" min={0} max={23} value={hour} onChange={(event) => setHour(Number(event.currentTarget.value))} /></label>}
-              {kind === "weekly" && <label><span>요일</span><select value={weekday} onChange={(event) => setWeekday(Number(event.currentTarget.value))}>{["월", "화", "수", "목", "금", "토", "일"].map((day, index) => <option key={day} value={index}>{day}</option>)}</select></label>}
+              {kind === "weekly" && <div className="lumina-select-field"><span>요일</span><SelectMenu value={String(weekday)} options={weekdayOptions} ariaLabel="예약 요일" onChange={(value) => setWeekday(Number(value))} /></div>}
               {kind !== "manual" && <label><span>분</span><input type="number" min={0} max={59} value={minute} onChange={(event) => setMinute(Number(event.currentTarget.value))} /></label>}
             </div>
             <p className="form-help">현재 선택한 Provider, Model과 Effort가 실행 설정으로 고정됩니다.</p>

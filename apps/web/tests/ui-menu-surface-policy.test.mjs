@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const stylesPath = new URL("../src/styles.css", import.meta.url);
+const selectStylesPath = new URL("../src/components/SelectMenu.css", import.meta.url);
 
 const menuSurfaceSelectors = [
   ".sidebar",
@@ -13,12 +14,11 @@ const menuSurfaceSelectors = [
   ".settings-section-nav",
   ".project-manager-list",
   ".project-manager-list > header",
-  ".admin-limit-menu",
   ".notification-panel",
   ".answer-usage-popover",
   ".composer-suggestions",
   ".composer-picker-menu",
-  ".artifact-version-menu",
+  ".lumina-select-menu",
 ];
 
 function escapeRegExp(value) {
@@ -26,7 +26,7 @@ function escapeRegExp(value) {
 }
 
 test("navigation and menu surfaces share one neutral color token", async () => {
-  const styles = await readFile(stylesPath, "utf8");
+  const styles = (await Promise.all([readFile(stylesPath, "utf8"), readFile(selectStylesPath, "utf8")])).join("\n");
 
   assert.match(styles, /--menu-surface:\s*oklch\(97\.2% 0\.002 255\);/);
   assert.match(styles, /--menu-surface:\s*#121417;/);

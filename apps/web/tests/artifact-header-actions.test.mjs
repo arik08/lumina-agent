@@ -17,7 +17,8 @@ test("artifact header keeps its actions visible above the preview", async () => 
   assert.match(stylesheet, /\.artifact-header\s*\{[^}]*position:\s*relative[^}]*z-index:\s*4[^}]*background:\s*var\(--surface\)/s);
   assert.match(stylesheet, /\.artifact-header button\s*\{[^}]*color:\s*var\(--muted\)/s);
   assert.match(stylesheet, /\.artifact-header button:disabled\s*\{[^}]*color:\s*var\(--muted\)[^}]*opacity:\s*1/s);
-  assert.match(stylesheet, /\.artifact-header \.artifact-version-trigger\s*\{[^}]*width:\s*auto[^}]*min-width:\s*60px/s);
+  assert.match(stylesheet, /\.artifact-version-select\s*\{[^}]*min-width:\s*60px/s);
+  assert.match(app, /<SelectMenu className="artifact-version-select"/);
   assert.match(app, /const artifactDownloadVersion = artifactVersion\?\.version \?\? artifactSummary\?\.currentVersion \?\? null/);
   assert.match(app, /const \[summary, initialVersion, savedDraft\] = await Promise\.all\(\[\s*api\.artifacts\.get\(artifact\.id\),\s*api\.artifacts\.getVersion\(artifact\.id, artifact\.currentVersion\),\s*api\.artifacts\.getDraft\(artifact\.id\),\s*\]\)/s);
   assert.match(app, /aria-label="Artifact 공유 링크 복사"[^>]*disabled=\{!artifactSummary\?\.conversationId\}/);

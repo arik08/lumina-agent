@@ -97,6 +97,7 @@ import { MemoryView } from "./components/MemoryView";
 import { ProjectSettings } from "./components/ProjectSettings";
 import { ProjectFilesView } from "./components/ProjectFilesView";
 import { SchedulesView } from "./components/SchedulesView";
+import { SelectMenu } from "./components/SelectMenu";
 import { SharedSnapshotViewer } from "./components/SharedSnapshotViewer";
 import { ConversationSearchDialog } from "./components/ConversationSearchDialog";
 import { ConversationQuestionNavigator } from "./components/ConversationQuestionNavigator";
@@ -690,7 +691,6 @@ function App() {
   const [adminSettingsBusy, setAdminSettingsBusy] = useState(false);
   const [adminSettingsError, setAdminSettingsError] = useState<string | null>(null);
   const [artifactOpen, setArtifactOpen] = useState(false);
-  const [artifactVersionMenuOpen, setArtifactVersionMenuOpen] = useState(false);
   const [artifactPaneWidth, setArtifactPaneWidth] = useState(() => {
     const saved = Number(localStorage.getItem("lumina:artifactPaneWidth"));
     return Number.isFinite(saved) && saved >= 360 ? saved : Math.max(520, Math.round(window.innerWidth * 0.42));
@@ -842,7 +842,6 @@ function App() {
     artifactOpenRequestRef.current += 1;
     artifactHistoryOpenRef.current = false;
     setArtifactLoading(false);
-    setArtifactVersionMenuOpen(false);
     setArtifactOpen(false);
     setArtifactFullscreen(false);
     if (sidebarAutoCollapsedRef.current) {
@@ -1323,8 +1322,7 @@ function App() {
       }
       if (event.key !== "Escape") return;
       if (artifactSaveBusy) return;
-      if (artifactVersionMenuOpen) setArtifactVersionMenuOpen(false);
-      else if (notificationOpen) setNotificationOpen(false);
+      if (notificationOpen) setNotificationOpen(false);
       else if (conversationSearchOpen) setConversationSearchOpen(false);
       else if (sessionTitleEditing) setSessionTitleEditing(false);
       else if (artifactEditing) setArtifactEditing(false);
@@ -1338,7 +1336,7 @@ function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [accountMenuOpen, artifactEditing, artifactFullscreen, artifactOpen, artifactSaveBusy, artifactVersionMenuOpen, closeArtifact, conversationSearchOpen, isAdmin, notificationOpen, openAdmin, openSettings, providerMenuOpen, providerModelMenuId, sessionMenuId, sessionTitleEditing, sidebarOpen, startNewConversation, workspace.toggleTheme]);
+  }, [accountMenuOpen, artifactEditing, artifactFullscreen, artifactOpen, artifactSaveBusy, closeArtifact, conversationSearchOpen, isAdmin, notificationOpen, openAdmin, openSettings, providerMenuOpen, providerModelMenuId, sessionMenuId, sessionTitleEditing, sidebarOpen, startNewConversation, workspace.toggleTheme]);
 
   const showToast = useCallback((message: string) => setToast(message), []);
 
@@ -1988,7 +1986,6 @@ function App() {
         setMoveMenuId(null);
         setAccountMenuOpen(false);
         setProjectMenuOpen(false);
-        setArtifactVersionMenuOpen(false);
       }}
     >
       <button className={`sidebar-backdrop ${sidebarOpen ? "is-visible" : ""}`} type="button" aria-label="사이드바 닫기" onClick={() => setSidebarOpen(false)} />
@@ -2688,16 +2685,16 @@ function App() {
                 </section>
                 <section className="settings-card" aria-labelledby="execution-settings-title">
                   <header><h2 id="execution-settings-title">기본 실행 옵션</h2></header>
-                  <label className="settings-row"><span><strong>Provider</strong><small>새 Run에서 기본으로 사용할 Provider입니다.</small></span><select value={workspace.settings?.execution.providerId ?? ""} onChange={(event) => void workspace.selectProvider(event.currentTarget.value)}>{accountProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.displayName}</option>)}</select></label>
-                  <label className="settings-row"><span><strong>Model</strong><small>선택한 Provider의 기본 Model입니다.</small></span><select value={workspace.settings?.execution.modelKey ?? ""} onChange={(event) => void workspace.selectModel(event.currentTarget.value)}>{workspace.models.map((model) => <option key={model.modelKey} value={model.modelKey}>{model.displayName}</option>)}</select></label>
-                  <label className="settings-row"><span><strong>Effort</strong><small>지원되는 경우 기본 추론 강도를 선택합니다.</small></span><select value={workspace.settings?.execution.effortId ?? ""} onChange={(event) => void workspace.selectEffort(event.currentTarget.value || null)}><option value="">기본값</option>{effortOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>
+                  <div className="settings-row"><span><strong>Provider</strong><small>새 Run에서 기본으로 사용할 Provider입니다.</small></span><SelectMenu className="settings-select" align="end" value={workspace.settings?.execution.providerId ?? ""} options={accountProviders.map((provider) => ({ value: provider.id, label: provider.displayName }))} ariaLabel="기본 Provider" onChange={(value) => void workspace.selectProvider(value)} /></div>
+                  <div className="settings-row"><span><strong>Model</strong><small>선택한 Provider의 기본 Model입니다.</small></span><SelectMenu className="settings-select" align="end" value={workspace.settings?.execution.modelKey ?? ""} options={workspace.models.map((model) => ({ value: model.modelKey, label: model.displayName }))} ariaLabel="기본 Model" onChange={(value) => void workspace.selectModel(value)} /></div>
+                  <div className="settings-row"><span><strong>Effort</strong><small>지원되는 경우 기본 추론 강도를 선택합니다.</small></span><SelectMenu className="settings-select" align="end" value={workspace.settings?.execution.effortId ?? ""} options={[{ value: "", label: "기본값" }, ...effortOptions.map((option) => ({ value: option.id, label: option.label }))]} ariaLabel="기본 Effort" onChange={(value) => void workspace.selectEffort(value || null)} /></div>
                 </section>
                 </>}
                 {isAdmin && settingsSection === "admin" && (<>
                   <section className="settings-card settings-admin-card" aria-labelledby="admin-model-settings-title">
                     <header><span><ShieldCheck size={15} /><h2 id="admin-model-settings-title">관리자 설정</h2></span><small>모든 사용자에게 적용</small></header>
-                    <label className="settings-row"><span><strong>Provider</strong><small>최대 토큰을 변경할 Provider입니다.</small></span><select value={adminSettingsProviderId} disabled={adminSettingsBusy} onChange={(event) => setAdminSettingsProviderId(event.currentTarget.value)}>{accountProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.displayName}</option>)}</select></label>
-                    <label className="settings-row"><span><strong>Model</strong><small>설정값은 선택한 Model에만 적용됩니다.</small></span><select value={adminSettingsModelKey} disabled={adminSettingsBusy} onChange={(event) => setAdminSettingsModelKey(event.currentTarget.value)}>{adminSettingsModels.map((model) => <option key={model.modelKey} value={model.modelKey}>{model.displayName}</option>)}</select></label>
+                    <div className="settings-row"><span><strong>Provider</strong><small>최대 토큰을 변경할 Provider입니다.</small></span><SelectMenu className="settings-select" align="end" value={adminSettingsProviderId} options={accountProviders.map((provider) => ({ value: provider.id, label: provider.displayName }))} ariaLabel="관리자 설정 Provider" disabled={adminSettingsBusy} onChange={setAdminSettingsProviderId} /></div>
+                    <div className="settings-row"><span><strong>Model</strong><small>설정값은 선택한 Model에만 적용됩니다.</small></span><SelectMenu className="settings-select" align="end" value={adminSettingsModelKey} options={adminSettingsModels.map((model) => ({ value: model.modelKey, label: model.displayName }))} ariaLabel="관리자 설정 Model" disabled={adminSettingsBusy} onChange={setAdminSettingsModelKey} /></div>
                     <div className="settings-row"><span><strong>최대 컨텍스트 토큰</strong><small>Run의 입력 예산 계산에 사용하는 모델별 최대 토큰입니다.{selectedAdminSettingsModel?.defaultContextWindow ? ` 기본값 ${selectedAdminSettingsModel.defaultContextWindow.toLocaleString()} 토큰.` : " 등록된 기본값이 없습니다."}</small></span><div className="settings-inline-control"><input type="text" inputMode="numeric" value={adminMaxTokens} disabled={adminSettingsBusy || !selectedAdminSettingsModel} onChange={(event) => setAdminMaxTokens(event.currentTarget.value.replace(/\D/g, "").replace(/\B(?=(\d{3})+(?!\d))/g, ","))} /><button className="is-secondary" type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel?.defaultContextWindow} onClick={() => void resetAdminMaxTokens()}>초기화</button><button type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel} onClick={() => void saveAdminMaxTokens()}>{adminSettingsBusy ? "저장 중" : "저장"}</button></div></div>
                     <div className="settings-row settings-output-token-row">
                       <span>
@@ -2764,26 +2761,7 @@ function App() {
           <header className="artifact-header">
             <div>
               {artifactSummary && artifactVersionOptions.length > 0 && (
-                <div className="artifact-version-control">
-                  <button className="artifact-version-trigger" type="button" aria-label="Artifact 버전 선택" aria-haspopup="menu" aria-expanded={artifactVersionMenuOpen} disabled={artifactLoading || artifactEditing || artifactSaveBusy !== null} onClick={(event) => {
-                    event.stopPropagation();
-                    setArtifactVersionMenuOpen((open) => !open);
-                  }}>
-                    <span>{(artifactVersion?.version ?? artifactSummary.currentVersion) === 1 ? "원본" : `v${artifactVersion?.version ?? artifactSummary.currentVersion}`}</span>
-                    <ChevronDown size={13} aria-hidden="true" />
-                  </button>
-                  {artifactVersionMenuOpen && (
-                    <div className="artifact-version-menu" role="menu" aria-label="Artifact 버전 목록" onClick={(event) => event.stopPropagation()}>
-                      {artifactVersionOptions.map((version) => {
-                        const selected = version === (artifactVersion?.version ?? artifactSummary.currentVersion);
-                        return <button className={selected ? "is-selected" : ""} type="button" role="menuitemradio" aria-checked={selected} key={version} onClick={() => {
-                          setArtifactVersionMenuOpen(false);
-                          void selectArtifactVersion(version);
-                        }}>{version === 1 ? "원본" : `v${version}`}</button>;
-                      })}
-                    </div>
-                  )}
-                </div>
+                <SelectMenu className="artifact-version-select" size="small" width="auto" value={String(artifactVersion?.version ?? artifactSummary.currentVersion)} options={artifactVersionOptions.map((version) => ({ value: String(version), label: version === 1 ? "원본" : `v${version}` }))} ariaLabel="Artifact 버전 선택" disabled={artifactLoading || artifactEditing || artifactSaveBusy !== null} onChange={(value) => void selectArtifactVersion(Number(value))} />
               )}
               <strong>{artifactSummary?.displayName ?? "Artifact"}</strong>
             </div>

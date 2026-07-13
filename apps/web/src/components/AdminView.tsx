@@ -1,7 +1,6 @@
 import {
   AlertTriangle,
   BarChart3,
-  Check,
   ChevronDown,
   FileText,
   KeyRound,
@@ -17,7 +16,7 @@ import {
   ShieldCheck,
   Users,
 } from "lucide-react";
-import { type FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import type {
   AdminAuditEvent,
@@ -30,6 +29,7 @@ import type {
 } from "../api-types";
 import { AdminTrafficChart } from "./AdminTrafficChart";
 import { OrganizationInstructionsPanel } from "./OrganizationInstructionsPanel";
+import { SelectMenu } from "./SelectMenu";
 
 type AdminTab = "users" | "usage" | "conversations" | "audit" | "policy";
 type UsageMetric = "activeUsers" | "loginCount" | "runCount";
@@ -69,102 +69,9 @@ const usageMetricLabels: Record<UsageMetric, string> = {
 };
 
 const adminListLimits: AdminListLimit[] = [50, 120, 250, 500];
-
-function AdminLimitSelect({
-  value,
-  onChange,
-  ariaLabel,
-}: {
-  value: AdminListLimit;
-  onChange: (value: AdminListLimit) => void;
-  ariaLabel: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const [activeIndex, setActiveIndex] = useState(() => adminListLimits.indexOf(value));
-  const rootRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const listId = useId();
-
-  useEffect(() => {
-    if (!open) return;
-    const closeOnOutsidePointer = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener("pointerdown", closeOnOutsidePointer);
-    return () => document.removeEventListener("pointerdown", closeOnOutsidePointer);
-  }, [open]);
-
-  const openMenu = () => {
-    setActiveIndex(Math.max(adminListLimits.indexOf(value), 0));
-    setOpen(true);
-  };
-
-  const choose = (nextValue: AdminListLimit) => {
-    onChange(nextValue);
-    setOpen(false);
-    triggerRef.current?.focus();
-  };
-
-  return (
-    <div className={`admin-limit-select ${open ? "is-open" : ""}`} ref={rootRef}>
-      <button
-        ref={triggerRef}
-        type="button"
-        aria-label={ariaLabel}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-controls={open ? listId : undefined}
-        aria-activedescendant={open ? `${listId}-${activeIndex}` : undefined}
-        onClick={() => open ? setOpen(false) : openMenu()}
-        onKeyDown={(event) => {
-          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-            event.preventDefault();
-            if (!open) {
-              openMenu();
-              return;
-            }
-            const direction = event.key === "ArrowDown" ? 1 : -1;
-            setActiveIndex((current) => (current + direction + adminListLimits.length) % adminListLimits.length);
-          } else if (event.key === "Home" && open) {
-            event.preventDefault();
-            setActiveIndex(0);
-          } else if (event.key === "End" && open) {
-            event.preventDefault();
-            setActiveIndex(adminListLimits.length - 1);
-          } else if ((event.key === "Enter" || event.key === " ") && open) {
-            event.preventDefault();
-            choose(adminListLimits[activeIndex]);
-          } else if (event.key === "Escape" && open) {
-            event.preventDefault();
-            setOpen(false);
-          }
-        }}
-      >
-        <span>{value}건</span>
-        <ChevronDown size={13} aria-hidden="true" />
-      </button>
-      {open && (
-        <div className="admin-limit-menu" id={listId} role="listbox" aria-label={ariaLabel}>
-          {adminListLimits.map((limit, index) => (
-            <button
-              id={`${listId}-${index}`}
-              className={`${limit === value ? "is-selected" : ""} ${index === activeIndex ? "is-active" : ""}`}
-              type="button"
-              role="option"
-              aria-selected={limit === value}
-              key={limit}
-              onMouseEnter={() => setActiveIndex(index)}
-              onClick={() => choose(limit)}
-            >
-              <span>{limit}건</span>
-              <Check size={13} aria-hidden="true" />
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
+const adminListLimitOptions = adminListLimits.map((limit) => ({ value: String(limit), label: `${limit}건` }));
+const userRoleOptions = [{ value: "user", label: "사용자" }, { value: "admin", label: "관리자" }];
+const usagePeriodOptions = [{ value: "30", label: "최근 30일" }, { value: "90", label: "최근 90일" }, { value: "0", label: "전체" }];
 
 function UsageTrendChart({ statistics, metric }: { statistics: AdminUsageStatistics; metric: UsageMetric }) {
   const values = statistics.trend.map((item) => item[metric]);
@@ -453,7 +360,7 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
               <input aria-label="표시 이름" placeholder="표시 이름 (선택)" value={createDisplayName} onChange={(event) => setCreateDisplayName(event.currentTarget.value)} />
               <input aria-label="소속" placeholder="소속 (선택)" value={createAffiliation} onChange={(event) => setCreateAffiliation(event.currentTarget.value)} />
               <input aria-label="초기 비밀번호" type="password" autoComplete="new-password" placeholder="초기 비밀번호" value={createPassword} onChange={(event) => setCreatePassword(event.currentTarget.value)} required />
-              <select aria-label="새 사용자 역할" value={createRole} onChange={(event) => setCreateRole(event.currentTarget.value as UserRole)}><option value="user">사용자</option><option value="admin">관리자</option></select>
+              <SelectMenu className="admin-form-select" size="small" value={createRole} options={userRoleOptions} ariaLabel="새 사용자 역할" onChange={(value) => setCreateRole(value as UserRole)} />
               <button type="submit" disabled={saving}>{saving ? <LoaderCircle className="is-running" size={14} /> : <Plus size={14} />} 생성</button>
             </form>
           )}
@@ -466,8 +373,8 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
                     <strong title={user.loginId}>{user.loginId}</strong>
                     <input aria-label="표시 이름" value={userDisplayName} onChange={(event) => setUserDisplayName(event.currentTarget.value)} />
                     <input aria-label="소속" value={userAffiliation} onChange={(event) => setUserAffiliation(event.currentTarget.value)} />
-                    <select aria-label="역할" value={userRole} onChange={(event) => { setUserRole(event.currentTarget.value as UserRole); setUserChangeArmed(false); }}><option value="user">사용자</option><option value="admin">관리자</option></select>
-                    <select aria-label="상태" value={userStatus} onChange={(event) => { setUserStatus(event.currentTarget.value as UserStatus); setUserChangeArmed(false); }}>{userStatuses.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select>
+                    <SelectMenu className="admin-user-select" size="small" value={userRole} options={userRoleOptions} ariaLabel="역할" onChange={(value) => { setUserRole(value as UserRole); setUserChangeArmed(false); }} />
+                    <SelectMenu className="admin-user-select" size="small" value={userStatus} options={userStatuses} ariaLabel="상태" onChange={(value) => { setUserStatus(value as UserStatus); setUserChangeArmed(false); }} />
                     <button className={userChangeArmed ? "is-confirm-armed" : ""} type="submit" disabled={saving}>{userChangeArmed ? <AlertTriangle size={14} /> : <Save size={14} />} {userChangeArmed ? "한 번 더 눌러 변경" : "변경"}</button>
                   </form>
                 ) : (
@@ -502,7 +409,7 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
         <section className="admin-section admin-usage" aria-label="사용 통계">
           <div className="admin-usage-heading">
             <div><strong>조직 사용 현황</strong><small>활동 사용자는 해당 날짜에 로그인했거나 Agent Run을 시작한 고유 사용자입니다. · {usageStatistics?.timezone ?? "Asia/Seoul"}</small></div>
-            <label>조회 기간<select value={usagePeriod} onChange={(event) => setUsagePeriod(Number(event.currentTarget.value) as 0 | 30 | 90)}><option value={30}>최근 30일</option><option value={90}>최근 90일</option><option value={0}>전체</option></select></label>
+            <div className="admin-usage-period"><span>조회 기간</span><SelectMenu className="admin-usage-period-select" size="small" width="auto" align="end" value={String(usagePeriod)} options={usagePeriodOptions} ariaLabel="조회 기간" onChange={(value) => setUsagePeriod(Number(value) as 0 | 30 | 90)} /></div>
           </div>
           {usageStatistics && <>
             <div className="admin-usage-kpis">
@@ -533,7 +440,7 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
             <div className="admin-conversation-heading">
               <div className="admin-count">대화 {conversations.length} / {conversationTotal}건</div>
               <div className="admin-conversation-controls">
-                <div className="admin-control-label"><span>조회 한도</span><AdminLimitSelect value={conversationLimit} onChange={setConversationLimit} ariaLabel="대화 조회 한도" /></div>
+                <div className="admin-control-label"><span>조회 한도</span><SelectMenu className="admin-limit-select" size="small" width="auto" align="end" value={String(conversationLimit)} options={adminListLimitOptions} ariaLabel="대화 조회 한도" onChange={(value) => setConversationLimit(Number(value) as AdminListLimit)} /></div>
                 <div className="admin-conversation-view-toggle" role="group" aria-label="대화 목록 보기 방식">
                   <button className="tooltip-control" type="button" aria-label="메시지순" data-tooltip="메시지순" aria-pressed={conversationViewMode === "recent"} onClick={() => setConversationViewMode("recent")}><MessageSquare size={14} /></button>
                   <button className="tooltip-control" type="button" aria-label="사용자별" data-tooltip="사용자별" aria-pressed={conversationViewMode === "user"} onClick={() => setConversationViewMode("user")}><Users size={14} /></button>
@@ -582,7 +489,7 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
           <div className="admin-audit-heading">
             <div className="admin-count">최근 모니터링 이벤트 {auditEvents.length} / {auditTotal}건</div>
             <div className="admin-audit-controls">
-              <div className="admin-control-label"><span>조회 한도</span><AdminLimitSelect value={auditLimit} onChange={setAuditLimit} ariaLabel="모니터링 로그 조회 한도" /></div>
+              <div className="admin-control-label"><span>조회 한도</span><SelectMenu className="admin-limit-select" size="small" width="auto" align="end" value={String(auditLimit)} options={adminListLimitOptions} ariaLabel="모니터링 로그 조회 한도" onChange={(value) => setAuditLimit(Number(value) as AdminListLimit)} /></div>
               <div className="admin-audit-view-toggle" role="group" aria-label="모니터링 로그 보기 방식">
                 <button className="tooltip-control" type="button" aria-label="이벤트순" data-tooltip="이벤트순" aria-pressed={auditViewMode === "recent"} onClick={() => setAuditViewMode("recent")}><List size={14} /></button>
                 <button className="tooltip-control" type="button" aria-label="사용자 ID별" data-tooltip="사용자 ID별" aria-pressed={auditViewMode === "user"} onClick={() => setAuditViewMode("user")}><Users size={14} /></button>
