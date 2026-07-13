@@ -18,8 +18,9 @@ from lumina.agent.executor import local_run_executor
 from lumina.api.dependencies import AuthContext
 from lumina.api.routes.runs import stream_run
 from lumina.auth.service import create_user
-from lumina.config import Settings
+from lumina.config import REPOSITORY_ROOT, Settings
 from lumina.db import SessionLocal, configure_database, create_schema
+from lumina.http_client import TrustManager
 from lumina.main import create_app
 from lumina.models import (
     AuthSession,
@@ -261,9 +262,14 @@ def test_health_ready_reports_stopped_executor(tmp_path: Path) -> None:
         }
 
 
-def test_health_startup_reports_completed_backend_phases(tmp_path: Path) -> None:
+def test_health_startup_reports_completed_backend_phases(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
     with TestClient(create_app(_settings(tmp_path, "startup-phases.db"))) as client:
         response = client.get("/api/health/startup")
+        pgpt_trust = local_run_executor.pgpt_provider._trust_profile
+        mcp_trust = local_run_executor.mcp_runtime._trust_profile
 
     assert response.status_code == 200
     payload = response.json()
@@ -273,9 +279,21 @@ def test_health_startup_reports_completed_backend_phases(tmp_path: Path) -> None
     assert payload["errorCode"] is None
     assert payload["elapsedMs"] >= 0
     assert payload["startedAt"].endswith("+00:00")
+    assert payload["trust"] is not None
+    assert set(payload["trust"]) == {
+        "source",
+        "companyCaConfigured",
+        "bundleConfigured",
+        "tlsCompatMode",
+    }
+    assert pgpt_trust is not None
+    assert pgpt_trust is mcp_trust
+    assert TrustManager(env={}).repo_root == REPOSITORY_ROOT
+    assert Path(Settings.model_config["env_file"]).resolve() == REPOSITORY_ROOT / ".env"
     completed = payload["completedPhases"]
     assert [item["phase"] for item in completed] == [
         "created",
+        "initializing_trust",
         "configuring_database",
         "bootstrapping_database",
         "recovering_worker",

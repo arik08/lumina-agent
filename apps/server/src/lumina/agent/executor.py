@@ -39,6 +39,7 @@ from .report_assets import resolve_report_images
 from ..config import Settings, get_settings
 from ..citations import resolve_inline_citations
 from ..db import SessionLocal, session_scope
+from ..http_client import TrustProfile
 from ..memories.service import (
     MemorySourceMessage,
     learn_memories_for_run,
@@ -265,9 +266,14 @@ class LocalRunExecutor:
         self.settings = settings or get_settings()
         self.storage = ManagedLocalStorage(_artifact_root(self.settings))
         self.file_storage = ManagedLocalStorage(_file_root(self.settings))
-        self.mcp_runtime = McpRuntime(self.settings)
+        self.trust_profile: TrustProfile | None = None
+        self.mcp_runtime = McpRuntime(
+            self.settings, trust_profile=self.trust_profile
+        )
         self.codex_provider = CodexResponsesAdapter()
-        self.pgpt_provider = PgptAdapter(env=_pgpt_environment(self.settings))
+        self.pgpt_provider = PgptAdapter(
+            env=_pgpt_environment(self.settings), trust_profile=self.trust_profile
+        )
         self._worker_lock = _DatabaseWorkerLock(self.settings.database_url)
         self._worker_id = new_uuid()
         self._started = False
@@ -277,14 +283,22 @@ class LocalRunExecutor:
         self._reenqueue_after_task: set[str] = set()
         self._codex_warmup_task: asyncio.Task[None] | None = None
 
-    def configure(self, settings: Settings) -> None:
+    def configure(
+        self,
+        settings: Settings,
+        *,
+        trust_profile: TrustProfile | None = None,
+    ) -> None:
         if self._started:
             raise RuntimeError("Cannot reconfigure the executor while it is running")
         self.settings = settings
+        self.trust_profile = trust_profile
         self.storage = ManagedLocalStorage(_artifact_root(settings))
         self.file_storage = ManagedLocalStorage(_file_root(settings))
-        self.mcp_runtime = McpRuntime(settings)
-        self.pgpt_provider = PgptAdapter(env=_pgpt_environment(settings))
+        self.mcp_runtime = McpRuntime(settings, trust_profile=trust_profile)
+        self.pgpt_provider = PgptAdapter(
+            env=_pgpt_environment(settings), trust_profile=trust_profile
+        )
         self._worker_lock = _DatabaseWorkerLock(settings.database_url)
 
     @property
@@ -1981,6 +1995,7 @@ class LocalRunExecutor:
             return OpenAIResponsesAdapter(
                 api_key=api_key.get_secret_value(),
                 base_url=self.settings.openai_base_url,
+                trust_profile=self.trust_profile,
             )
         if provider_id == "codex":
             return self.codex_provider
@@ -1993,6 +2008,7 @@ class LocalRunExecutor:
             return AnthropicMessagesAdapter(
                 api_key=api_key.get_secret_value(),
                 base_url=self.settings.anthropic_base_url,
+                trust_profile=self.trust_profile,
             )
         if provider_id == "google":
             api_key = self.settings.google_api_key
@@ -2003,6 +2019,7 @@ class LocalRunExecutor:
             return GoogleGeminiAdapter(
                 api_key=api_key.get_secret_value(),
                 base_url=self.settings.google_base_url,
+                trust_profile=self.trust_profile,
             )
         if provider_id == "openai_compatible":
             api_key = self.settings.openai_compatible_api_key
@@ -2022,6 +2039,7 @@ class LocalRunExecutor:
                 provider_id="openai_compatible",
                 base_url=base_url,
                 headers={"Authorization": f"Bearer {api_key.get_secret_value()}"},
+                trust_profile=self.trust_profile,
             )
         raise ProviderConfigurationError(
             f"{provider_id} Provider는 catalog 계약만 활성화되어 있고 credential adapter가 설정되지 않았습니다."
@@ -2183,6 +2201,7 @@ class LocalRunExecutor:
                     tool_execution_id=tool_id,
                     result_limit=result_limit,
                     policy=_web_policy(),
+                    trust_profile=self.trust_profile,
                 )
                 payload = search_result.to_dict()
             except (WebToolError, TypeError, ValueError) as exc:
@@ -2206,6 +2225,7 @@ class LocalRunExecutor:
                     tool_execution_id=tool_id,
                     query_ids=[str(item) for item in raw_query_ids],
                     policy=_web_policy(),
+                    trust_profile=self.trust_profile,
                 )
                 payload = fetch_result.to_dict()
             except (WebToolError, TypeError, ValueError) as exc:

@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     """Process configuration loaded from environment variables and ``.env``."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=REPOSITORY_ROOT / ".env",
         env_file_encoding="utf-8",
         env_prefix="LUMINA_",
         populate_by_name=True,

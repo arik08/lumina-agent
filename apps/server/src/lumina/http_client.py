@@ -12,6 +12,8 @@ from pathlib import Path
 import httpx
 from dotenv import dotenv_values
 
+from .config import REPOSITORY_ROOT
+
 try:
     import certifi
 except ImportError:  # pragma: no cover - ssl defaults remain available
@@ -98,7 +100,7 @@ class TrustManager:
         runtime_dir: Path | None = None,
         env: Mapping[str, str] | None = None,
     ) -> None:
-        self.repo_root = (repo_root or Path.cwd()).expanduser().resolve()
+        self.repo_root = (repo_root or REPOSITORY_ROOT).expanduser().resolve()
         if env is None:
             file_values = dotenv_values(self.repo_root / ".env")
             self._env = {

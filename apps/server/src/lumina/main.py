@@ -47,6 +47,7 @@ from .api.routes import (
 from .auth import bootstrap_database
 from .config import REPOSITORY_ROOT, Settings, get_settings
 from .db import SessionLocal, configure_database, create_schema
+from .http_client import TrustManager, TrustProfile
 from .observability import request_log_path, structured_event
 from .schedules.service import local_scheduler
 
@@ -65,6 +66,7 @@ class StartupTracker:
         self.status = "starting"
         self.phase = "created"
         self.error_code: str | None = None
+        self.trust: dict[str, bool | str] | None = None
         self.completed_phases: list[dict[str, float | str]] = []
 
     def enter(self, phase: str) -> None:
@@ -90,6 +92,14 @@ class StartupTracker:
         self._phase_started_clock = now
         self._finished_clock = now
 
+    def record_trust(self, profile: TrustProfile) -> None:
+        self.trust = {
+            "source": profile.source,
+            "companyCaConfigured": profile.company_ca_path is not None,
+            "bundleConfigured": profile.bundle_path is not None,
+            "tlsCompatMode": profile.tls_compat_mode,
+        }
+
     def snapshot(self, *, executor_started: bool) -> dict[str, Any]:
         now = self._finished_clock or perf_counter()
         return {
@@ -99,6 +109,7 @@ class StartupTracker:
             "elapsedMs": round((now - self._started_clock) * 1000, 3),
             "errorCode": self.error_code,
             "executor": "ready" if executor_started else "stopped",
+            "trust": dict(self.trust) if self.trust is not None else None,
             "completedPhases": [dict(item) for item in self.completed_phases],
         }
 
@@ -137,6 +148,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         scheduler_task: asyncio.Task[None] | None = None
         try:
+            startup_tracker.enter("initializing_trust")
+            trust_profile = TrustManager(repo_root=REPOSITORY_ROOT).initialize()
+            startup_tracker.record_trust(trust_profile)
             startup_tracker.enter("configuring_database")
             configure_database(config.database_url)
             if config.environment == "test":
@@ -144,7 +158,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             startup_tracker.enter("bootstrapping_database")
             bootstrap_database(settings=config)
             startup_tracker.enter("recovering_worker")
-            local_run_executor.configure(config)
+            local_run_executor.configure(config, trust_profile=trust_profile)
             await local_run_executor.start()
             startup_tracker.enter("starting_scheduler")
             if config.environment != "test":
