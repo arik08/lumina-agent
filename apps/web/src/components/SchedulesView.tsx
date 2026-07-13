@@ -230,14 +230,14 @@ export function SchedulesView({ projectId, execution, onOpenNavigation }: Schedu
     <div className="feature-view">
       <header className="feature-header">
         <div><button className="feature-mobile-menu" type="button" aria-label="사이드바 열기" onClick={onOpenNavigation}><Menu size={17} /></button><CalendarClock size={17} /><h1>예약 작업</h1><span>{tasks.length}개</span></div>
-        <div>
-          <button type="button" aria-label="새로 고침" onClick={() => void refresh()}><RefreshCw size={15} /></button>
-          <button className="feature-primary-action lumina-primary-action" type="button" disabled={!projectId || !execution} onClick={() => setCreateOpen(true)}><Plus size={15} /> 새 예약</button>
-        </div>
       </header>
       {error && <div className="feature-error" role="alert">{error}</div>}
       <div className="split-feature">
         <aside className="feature-list schedule-list" aria-label="예약 작업 목록">
+          <div className="feature-toolbar schedule-list-toolbar">
+            <button className="feature-primary-action lumina-primary-action" type="button" disabled={!projectId || !execution} onClick={() => setCreateOpen(true)}><Plus size={15} /> 새 예약</button>
+            <button className="schedule-list-refresh" type="button" aria-label="새로 고침" onClick={() => void refresh()}><RefreshCw size={15} /></button>
+          </div>
           {loading ? <div className="feature-state"><LoaderCircle className="is-running" size={16} /> 불러오는 중</div> : tasks.length === 0 ? <div className="feature-state">예약 작업이 없습니다.</div> : tasks.map((task) => (
             <button className={task.id === selected?.id ? "is-selected" : ""} type="button" key={task.id} onClick={() => setSelectedId(task.id)}>
               <span><strong>{task.name}</strong><small>{scheduleText(task)}</small></span>
