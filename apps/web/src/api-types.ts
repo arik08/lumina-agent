@@ -261,6 +261,20 @@ export interface AdminProviderModel {
   outputTokenStep: number;
 }
 
+export type RuntimePromptKey = "system" | "agent_default";
+
+export interface RuntimePromptDocument {
+  key: RuntimePromptKey;
+  name: string;
+  description: string;
+  content: string;
+  defaultContent: string;
+  revision: number;
+  digest: string;
+  overridden: boolean;
+  updatedAt: IsoDateTime | null;
+}
+
 export interface ProjectMembership {
   id: UUID;
   projectId: UUID;

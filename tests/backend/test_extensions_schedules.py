@@ -843,6 +843,7 @@ def test_scheduled_run_applies_frozen_skill_snapshot_to_hash_and_prompt(
             "execution": snapshot["execution"],
             "output_mode": snapshot["output_mode"],
             "instructions": snapshot["instructions"],
+            "runtime_prompts": snapshot["runtime_prompts"],
             "extensions": frozen_extensions,
             "extension_application": "all_snapshot",
             "environment_type": snapshot["environment_type"],

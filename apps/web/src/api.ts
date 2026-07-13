@@ -26,6 +26,8 @@ import type {
   RegistrationRequest,
   RegistrationResponse,
   InstructionDocument,
+  RuntimePromptDocument,
+  RuntimePromptKey,
   UpdateInstructionRequest,
   MemoryLearningMode,
   MemoryOptimizationResult,
@@ -783,6 +785,21 @@ export function openRunEventStream(
 
 export async function getArtifact(artifactId: string, signal?: AbortSignal) {
   return request<ArtifactSummary>(`/artifacts/${encodeURIComponent(artifactId)}`, { signal });
+}
+
+export async function listRuntimePrompts(signal?: AbortSignal) {
+  return request<RuntimePromptDocument[]>("/admin/runtime-prompts", { signal });
+}
+
+export async function updateRuntimePrompt(
+  promptKey: RuntimePromptKey,
+  payload: UpdateInstructionRequest,
+  signal?: AbortSignal,
+) {
+  return request<RuntimePromptDocument>(
+    `/admin/runtime-prompts/${encodeURIComponent(promptKey)}`,
+    { method: "PATCH", body: payload, signal },
+  );
 }
 
 export async function listProjectMemberships(
@@ -1629,6 +1646,8 @@ export const api = {
     updateProject: updateProjectInstructions,
     getOrganization: getOrganizationInstructions,
     updateOrganization: updateOrganizationInstructions,
+    listRuntimePrompts,
+    updateRuntimePrompt,
     getOrganizationRevision: getOrganizationInstructionRevision,
     updateOrganizationRevision: updateOrganizationInstructionRevision,
     updateOrganizationRevisionLabel: updateOrganizationInstructionRevisionLabel,
