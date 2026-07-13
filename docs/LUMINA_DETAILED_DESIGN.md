@@ -81,7 +81,7 @@
 |---|---|---|
 | 인증·가입 | idempotent Bootstrap admin과 기본 catalog seed, login ID 정규화, 사용자별 Default Project 자동 생성, 로그인 실패 count·잠금 복구, 다음 Asia/Seoul 자정 만료 server session, CSRF, production secure cookie, idempotent logout, `invited` 가입 신청과 관리자 승인 알림 | `auth/service.py`, `routes/auth.py`, `test_auth_core.py`, `test_registration_approval.py` |
 | 관리자 | 사용자 생성·조회·수정·비밀번호 reset·role/status 변경, 마지막 active admin 보호, 조직 범위 사용량 통계, 다른 사용자 대화·Turn Set 감사 조회, audit event 검색, 공유 링크 목록과 token 비노출 강제 revoke, 조직 Run 안전 한도 설정과 비상 전체 중단 | `routes/admin.py`, `test_admin_api.py`, `test_admin_share_revoke.py`, `test_run_safety.py` |
-| Project·지침 | Project CRUD와 Default 삭제 방지, owner·editor·viewer membership 생명주기와 조직 격리, Organization→Agent default→Project→Personal 지침 합성, 사용자에게 노출하지 않는 revision·digest·ETag 동시성, 프로젝트 쓰기 구성원의 지침 편집, 조직 지침 과거 revision label·내용 수정, Secret 패턴 차단 | `projects/`, `routes/project_memberships.py`, `instructions/`, `test_project_memberships.py`, `test_instruction_hierarchy.py` |
+| Project·지침 | Project CRUD와 Default 삭제 방지, owner·editor·viewer membership 생명주기와 조직 격리, Organization→Agent default→Project→Personal 지침 합성, 관리자용 고정 system·Agent 기본 프롬프트 override와 기본값 복원, Run snapshot 고정, 사용자에게 노출하지 않는 revision·digest·ETag 동시성, 프로젝트 쓰기 구성원의 지침 편집, 조직 지침 과거 revision label·내용 수정, Secret 패턴 차단 | `projects/`, `routes/project_memberships.py`, `instructions/`, `test_project_memberships.py`, `test_instruction_hierarchy.py` |
 | Project File·Workspace | Project 파일 upload·목록·상세·rename·새 version·download·삭제, 안전한 상대 경로, content hash와 immutable version, DB commit 실패 시 storage cleanup, Composer와 Run의 exact file version 고정, `read_file`·`write_file`·`glob` Project scope 강제 | `project_files/`, `tools/workspace.py`, `test_project_workspace.py`, `test_workspace_tools.py` |
 | Conversation | favorite 우선 cursor 목록, 좋아요 filter·보존, whitespace-tolerant 제목 검색, Message 본문 검색과 snippet, Turn Set 역방향 pagination, first Run 임시·모델 제목, Project 이동과 Session-owned asset 이동, 특정 Message 기준 분기, JSON·Markdown 내보내기 | `routes/conversations.py`, `conversations/service.py`, `test_conversation_listing.py`, `test_conversation_branch_export.py`, `test_conversation_move_assets.py` |
 | 공유·Message 상호작용 | 특정 Message까지의 immutable snapshot 공유, attachment·Artifact version 고정, token hash 저장, owner·admin revoke와 공유 download 권한, Message reference 조회, like/dislike upsert·취소, 문제 신고, 선택 문장 Comment CRUD와 stale anchor | `routes/sharing.py`, `routes/messages.py`, `test_conversation_sharing_api.py`, `test_message_memory_interactions.py` |
@@ -1933,7 +1933,7 @@ tool_approvals                                     one-shot Tool approval 결정
 organizations.run_safety_settings_json             조직별 Run 안전 한도 설정
 ```
 
-현재 migration head는 `0022_run_safety_settings`입니다. `0009`, `0013`~`0018`, `0020`~`0022`는 기존 table에 MCP runtime header, instruction hierarchy·revision, 공개 share link, 사용자 소속, 알림 compact metadata, Skill 개인 Draft·소유권, 대화 좋아요, Codex OAuth catalog와 조직별 Run 안전 설정을 증분 추가합니다. 따라서 위 객체는 더 이상 미래 설계용 이름이 아니라 현재 ORM·migration이 관리하는 물리 table입니다.
+현재 migration head는 `0023_runtime_prompt_overrides`입니다. `0009`, `0013`~`0018`, `0020`~`0023`은 기존 table에 MCP runtime header, instruction hierarchy·revision, 공개 share link, 사용자 소속, 알림 compact metadata, Skill 개인 Draft·소유권, 대화 좋아요, Codex OAuth catalog, 조직별 Run 안전 설정과 내부 프롬프트 override를 증분 추가합니다. 따라서 위 객체는 더 이상 미래 설계용 이름이 아니라 현재 ORM·migration이 관리하는 물리 table입니다.
 
 ### 21.3 후속 기능에서 추가할 table
 
@@ -2146,6 +2146,8 @@ GET    /api/projects/{project_id}/instructions
 PATCH  /api/projects/{project_id}/instructions
 GET    /api/admin/organization/instructions
 PATCH  /api/admin/organization/instructions
+GET    /api/admin/runtime-prompts
+PATCH  /api/admin/runtime-prompts/{prompt_key}
 GET    /api/admin/organization/instructions/revisions/{revision}
 PATCH  /api/admin/organization/instructions/revisions/{revision}
 PATCH  /api/admin/organization/instructions/revisions/{revision}/label
@@ -2275,6 +2277,7 @@ project_created / project_settings_changed
 project_membership_added / project_membership_changed / project_membership_revoked
 personal_instructions_changed / project_instructions_changed
 organization_instruction_revision_labeled / organization_instruction_revision_content_changed
+runtime_prompt_changed / runtime_prompt_unchanged
 memory_created / edited / dismissed / deleted
 project_learning_proposed / project_learning_approved / project_learning_rejected
 project_learning_stale / project_learning_applied / project_learning_rolled_back

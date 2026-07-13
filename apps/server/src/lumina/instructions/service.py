@@ -11,15 +11,57 @@ from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from ..api.errors import ApiProblem
-from ..models import Organization, Project, User, utc_now
+from ..models import Organization, Project, RuntimePromptOverride, User, utc_now
 
 
 InstructionScope = Literal["organization", "agent", "project", "personal"]
+RuntimePromptKey = Literal["system", "agent_default"]
 MAX_INSTRUCTION_CHARS = 40_000
 DEFAULT_AGENT_INSTRUCTIONS = (
     "Follow the current Project scope, preserve source facts, clearly distinguish "
     "assumptions, and never weaken organization security policy."
 )
+DEFAULT_SYSTEM_PROMPT = (
+    "You are Lumina, a company AI work agent."
+    "\n\nUser-visible progress update contract: Whenever you are about to call one "
+    "or more tools, first output exactly one `<progress>...</progress>` line. "
+    "Write the text inside the tag yourself in the user's language, in one or "
+    "two concise natural sentences. Describe the concrete purpose of this tool "
+    "step and what you will verify or do next, using the current task context. "
+    "Vary the wording naturally; do not repeat a stock template or merely restate "
+    "the tool name. Do not reveal chain-of-thought, secrets, credentials, or raw "
+    "arguments. Do not emit the tag when returning the final answer without tools."
+    "\n\nUser-visible work plan contract: For work that needs multiple meaningful "
+    "actions, investigation, or verification, call `update_plan` before the first "
+    "substantive tool. Write 3-7 concrete steps in the user's language that name the "
+    "actual target and intended outcome. Never use generic filler such as merely "
+    "analyzing the request, performing the work, checking the result, or delivering "
+    "the answer. When writing Korean steps, use polite declarative sentences ending "
+    "in forms such as `...합니다`, for example `관련 자료를 조사합니다` or `근거를 "
+    "분류합니다`; never use plain-style endings such as `...한다`. Keep exactly one "
+    "step `in_progress` while working, update the plan whenever the active step "
+    "changes, and mark every finished step `completed` before the final answer. "
+    "Do not create a plan for a trivial single-action reply."
+    "\n\nUser-visible answer contract: Never expose internal Artifact IDs, UUIDs, "
+    "storage keys, server paths, content hashes, digests, or raw tool-result metadata "
+    "in progress updates or final answers. Do not print labels such as `Artifact:` or "
+    "`Artifact ID:` followed by an internal identifier. When a file was created, refer "
+    "to it only by its user-visible display name and briefly describe the result; the "
+    "application renders the authoritative open/download card from structured Artifact "
+    "metadata. Do not invent a text link from an internal identifier."
+)
+RUNTIME_PROMPT_DEFAULTS: dict[RuntimePromptKey, dict[str, str]] = {
+    "system": {
+        "name": "Lumina 고정 system prompt",
+        "description": "모든 대화 Run에 가장 먼저 적용되는 제품 동작 계약입니다.",
+        "content": DEFAULT_SYSTEM_PROMPT,
+    },
+    "agent_default": {
+        "name": "내장 Agent 기본 지침",
+        "description": "관리자 정책 다음에 적용되는 Lumina의 기본 작업 원칙입니다.",
+        "content": DEFAULT_AGENT_INSTRUCTIONS,
+    },
+}
 
 _PRIVATE_KEY_RE = re.compile(
     r"-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----",
@@ -80,6 +122,116 @@ class ResolvedInstructionStack:
 
 def instruction_digest(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def runtime_prompt_document(
+    db: Session, organization: Organization, prompt_key: RuntimePromptKey
+) -> dict[str, object]:
+    definition = RUNTIME_PROMPT_DEFAULTS[prompt_key]
+    stored = db.get(RuntimePromptOverride, (organization.id, prompt_key))
+    content = stored.content if stored is not None else definition["content"]
+    return {
+        "key": prompt_key,
+        "name": definition["name"],
+        "description": definition["description"],
+        "content": content,
+        "defaultContent": definition["content"],
+        "revision": stored.revision if stored is not None else 1,
+        "digest": stored.digest if stored is not None else instruction_digest(content),
+        "overridden": stored.is_overridden if stored is not None else False,
+        "updatedAt": stored.updated_at if stored is not None else None,
+    }
+
+
+def runtime_prompt_documents(
+    db: Session, organization: Organization
+) -> list[dict[str, object]]:
+    return [
+        runtime_prompt_document(db, organization, prompt_key)
+        for prompt_key in RUNTIME_PROMPT_DEFAULTS
+    ]
+
+
+def runtime_prompt_snapshot(
+    db: Session, organization: Organization
+) -> dict[str, dict[str, object]]:
+    return {
+        str(document["key"]): {
+            "content": document["content"],
+            "revision": document["revision"],
+            "digest": document["digest"],
+            "overridden": document["overridden"],
+        }
+        for document in runtime_prompt_documents(db, organization)
+    }
+
+
+def update_runtime_prompt(
+    db: Session,
+    organization: Organization,
+    *,
+    prompt_key: RuntimePromptKey,
+    content: str,
+    expected_revision: int,
+    expected_digest: str,
+    updated_by_user_id: str,
+) -> tuple[dict[str, object], bool]:
+    current = runtime_prompt_document(db, organization, prompt_key)
+    _check_precondition(
+        int(current["revision"]),
+        str(current["digest"]),
+        expected_revision,
+        expected_digest,
+    )
+    normalized = normalize_instruction_content(content)
+    if not normalized:
+        raise ApiProblem(
+            422,
+            "runtime_prompt_empty",
+            "내부 프롬프트는 비워 둘 수 없습니다. 기본값 복원을 사용해 주세요.",
+        )
+    if normalized == current["content"]:
+        return current, False
+    default_content = RUNTIME_PROMPT_DEFAULTS[prompt_key]["content"]
+    stored = db.get(RuntimePromptOverride, (organization.id, prompt_key))
+    next_revision = expected_revision + 1
+    next_digest = instruction_digest(normalized)
+    if stored is None:
+        stored = RuntimePromptOverride(
+            organization_id=organization.id,
+            prompt_key=prompt_key,
+            content=normalized,
+            revision=next_revision,
+            digest=next_digest,
+            is_overridden=normalized != default_content,
+            updated_by_user_id=updated_by_user_id,
+        )
+        db.add(stored)
+        db.flush()
+    else:
+        result = db.execute(
+            update(RuntimePromptOverride)
+            .where(
+                RuntimePromptOverride.organization_id == organization.id,
+                RuntimePromptOverride.prompt_key == prompt_key,
+                RuntimePromptOverride.revision == expected_revision,
+                RuntimePromptOverride.digest == expected_digest,
+            )
+            .values(
+                content=normalized,
+                revision=next_revision,
+                digest=next_digest,
+                is_overridden=normalized != default_content,
+                updated_by_user_id=updated_by_user_id,
+                updated_at=utc_now(),
+            )
+            .execution_options(synchronize_session=False)
+        )
+        db.expire(stored)
+        db.refresh(stored)
+        if getattr(result, "rowcount", 0) != 1:
+            raise _instruction_conflict(stored.revision, stored.digest)
+    return runtime_prompt_document(db, organization, prompt_key), True
 
 
 def normalize_instruction_content(content: str) -> str:
@@ -377,8 +529,10 @@ def instruction_payload(
 
 __all__ = [
     "DEFAULT_AGENT_INSTRUCTIONS",
+    "DEFAULT_SYSTEM_PROMPT",
     "InstructionSnapshot",
     "ResolvedInstructionStack",
+    "RuntimePromptKey",
     "instruction_digest",
     "instruction_payload",
     "normalize_instruction_content",
@@ -387,7 +541,11 @@ __all__ = [
     "project_instruction_snapshot",
     "resolve_instruction_stack",
     "resolve_instruction_stack_from_models",
+    "runtime_prompt_document",
+    "runtime_prompt_documents",
+    "runtime_prompt_snapshot",
     "update_organization_instructions",
     "update_personal_instructions",
     "update_project_instructions",
+    "update_runtime_prompt",
 ]

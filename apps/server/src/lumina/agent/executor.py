@@ -115,6 +115,7 @@ from ..runs.subtasks import (
     mark_tool_subtask_approval,
 )
 from ..context import compact_runtime_messages, prepare_context
+from ..instructions import DEFAULT_SYSTEM_PROMPT
 from ..runs.state import (
     ACTIVE_STATUSES,
     AWAITING_APPROVAL,
@@ -1561,39 +1562,17 @@ class LocalRunExecutor:
                     .order_by(Message.created_at, Message.id)
                 )
             )
-        system = "You are Lumina, a company AI work agent."
-        system += (
-            "\n\nUser-visible progress update contract: Whenever you are about to call one "
-            "or more tools, first output exactly one `<progress>...</progress>` line. "
-            "Write the text inside the tag yourself in the user's language, in one or "
-            "two concise natural sentences. Describe the concrete purpose of this tool "
-            "step and what you will verify or do next, using the current task context. "
-            "Vary the wording naturally; do not repeat a stock template or merely restate "
-            "the tool name. Do not reveal chain-of-thought, secrets, credentials, or raw "
-            "arguments. Do not emit the tag when returning the final answer without tools."
+        runtime_prompts = run.snapshot_json.get("runtime_prompts", {})
+        system_document = (
+            runtime_prompts.get("system", {})
+            if isinstance(runtime_prompts, dict)
+            else {}
         )
-        system += (
-            "\n\nUser-visible work plan contract: For work that needs multiple meaningful "
-            "actions, investigation, or verification, call `update_plan` before the first "
-            "substantive tool. Write 3-7 concrete steps in the user's language that name the "
-            "actual target and intended outcome. Never use generic filler such as merely "
-            "analyzing the request, performing the work, checking the result, or delivering "
-            "the answer. When writing Korean steps, use polite declarative sentences ending "
-            "in forms such as `...합니다`, for example `관련 자료를 조사합니다` or `근거를 "
-            "분류합니다`; never use plain-style endings such as `...한다`. Keep exactly one "
-            "step `in_progress` while working, update the plan "
-            "whenever the active step changes, and mark every finished step `completed` "
-            "before the final answer. Do not create a plan for a trivial single-action reply."
-        )
-        system += (
-            "\n\nUser-visible answer contract: Never expose internal Artifact IDs, UUIDs, "
-            "storage keys, server paths, content hashes, digests, or raw tool-result metadata "
-            "in progress updates or final answers. Do not print labels such as `Artifact:` or "
-            "`Artifact ID:` followed by an internal identifier. When a file was created, refer "
-            "to it only by its user-visible display name and briefly describe the result; the "
-            "application renders the authoritative open/download card from structured Artifact "
-            "metadata. Do not invent a text link from an internal identifier."
-        )
+        system = (
+            str(system_document.get("content", "")).strip()
+            if isinstance(system_document, dict)
+            else ""
+        ) or DEFAULT_SYSTEM_PROMPT
         turn_system_parts: list[str] = []
         output_mode = run.snapshot_json.get("output_mode", "auto")
         if output_mode == "chat":

@@ -10,17 +10,21 @@ from ...instructions.schemas import (
     InstructionRevisionContentUpdate,
     InstructionRevisionLabelUpdate,
     InstructionUpdate,
+    RuntimePromptUpdate,
 )
 from ...instructions.service import (
     InstructionSnapshot,
+    RuntimePromptKey,
     instruction_payload,
     normalize_instruction_content,
     organization_instruction_snapshot,
     personal_instruction_snapshot,
     project_instruction_snapshot,
+    runtime_prompt_documents,
     update_organization_instructions,
     update_personal_instructions,
     update_project_instructions,
+    update_runtime_prompt,
 )
 from ...models import Organization, User
 from ...projects.memberships import effective_project_role
@@ -213,6 +217,54 @@ def patch_organization_instructions(
     )
     result["revisionLabels"] = organization.policy_revision_labels
     return result
+
+
+@router.get("/admin/runtime-prompts")
+def get_runtime_prompts(
+    response: Response,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict[str, object]]:
+    require_admin(user)
+    response.headers["Cache-Control"] = "no-store"
+    return runtime_prompt_documents(db, _organization(db, user))
+
+
+@router.patch("/admin/runtime-prompts/{prompt_key}")
+def patch_runtime_prompt(
+    prompt_key: RuntimePromptKey,
+    payload: RuntimePromptUpdate,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    require_admin(context.user)
+    document, changed = update_runtime_prompt(
+        db,
+        _organization(db, context.user),
+        prompt_key=prompt_key,
+        content=payload.content,
+        expected_revision=payload.expected_revision,
+        expected_digest=payload.expected_digest,
+        updated_by_user_id=context.user.id,
+    )
+    record_audit(
+        db,
+        action="runtime_prompt_changed" if changed else "runtime_prompt_unchanged",
+        target_type="runtime_prompt",
+        target_id=f"{context.user.organization_id}:{prompt_key}",
+        result="success" if changed else "unchanged",
+        actor=context.user,
+        request_id=getattr(request.state, "request_id", None),
+        metadata={
+            "prompt_key": prompt_key,
+            "revision": document["revision"],
+            "digest": document["digest"],
+            "overridden": document["overridden"],
+        },
+    )
+    db.commit()
+    return document
 
 
 @router.patch("/admin/organization/instructions/revisions/{revision}/label")

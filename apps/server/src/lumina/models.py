@@ -97,6 +97,22 @@ class Organization(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
 
+class RuntimePromptOverride(TimestampMixin, Base):
+    __tablename__ = "runtime_prompt_overrides"
+
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), primary_key=True
+    )
+    prompt_key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, default=2, nullable=False)
+    digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    is_overridden: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    updated_by_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+
+
 class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "users"
 

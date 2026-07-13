@@ -22,10 +22,7 @@ from ..config import Settings, get_settings
 from ..audit import record_audit
 from ..authorization import require_conversation
 from ..extensions.service import resolve_skill_snapshot
-from ..instructions import (
-    DEFAULT_AGENT_INSTRUCTIONS,
-    resolve_instruction_stack_from_models,
-)
+from ..instructions import resolve_instruction_stack_from_models, runtime_prompt_snapshot
 from ..mcp.service import resolve_mcp_snapshot
 from ..models import (
     Artifact,
@@ -399,11 +396,12 @@ def create_run(
             409, "organization_missing", "사용자의 조직을 찾을 수 없습니다."
         )
     limits = run_limit_snapshot(organization.run_safety_settings_json)
+    runtime_prompts = runtime_prompt_snapshot(db, organization)
     instruction_stack = resolve_instruction_stack_from_models(
         organization=organization,
         project=project,
         user=user,
-        agent_default=DEFAULT_AGENT_INSTRUCTIONS,
+        agent_default=str(runtime_prompts["agent_default"]["content"]),
     )
     instruction_snapshot = {
         "prompt_text": instruction_stack.prompt_text,
@@ -457,6 +455,7 @@ def create_run(
         "execution": execution,
         "output_mode": payload.message.output_mode,
         "instructions": instruction_snapshot,
+        "runtime_prompts": runtime_prompts,
         "extensions": extensions,
         "extension_application": extension_application,
         "environment_type": "local_worker",
@@ -508,6 +507,7 @@ def create_run(
             },
             "project": stable_prefix["project"],
             "instructions": instruction_snapshot,
+            "runtime_prompts": runtime_prompts,
             "extensions": extensions,
             "extension_application": extension_application,
             "prompt_prefix_hash": prefix_hash,

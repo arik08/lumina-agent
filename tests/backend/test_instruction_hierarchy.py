@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from lumina.agent.executor import LocalRunExecutor
 from lumina.config import Settings
 from lumina.db import SessionLocal
 from lumina.instructions.service import (
@@ -96,6 +97,35 @@ def test_instruction_api_permissions_concurrency_and_secret_guard(
         assert client.get("/api/admin/organization/instructions").json()[
             "revisionLabels"
         ] == {"2": "운영 기준"}
+        runtime_prompts = client.get("/api/admin/runtime-prompts")
+        assert runtime_prompts.status_code == 200, runtime_prompts.text
+        assert runtime_prompts.headers["cache-control"] == "no-store"
+        prompt_by_key = {item["key"]: item for item in runtime_prompts.json()}
+        assert set(prompt_by_key) == {"system", "agent_default"}
+        system_prompt = prompt_by_key["system"]
+        updated_system_prompt = client.patch(
+            "/api/admin/runtime-prompts/system",
+            headers=admin_headers,
+            json=_patch_payload(
+                system_prompt,
+                system_prompt["content"] + "\n\nSYSTEM_OVERRIDE_MARKER",
+            ),
+        )
+        assert updated_system_prompt.status_code == 200, updated_system_prompt.text
+        assert updated_system_prompt.json()["overridden"] is True
+        agent_prompt = prompt_by_key["agent_default"]
+        updated_agent_prompt = client.patch(
+            "/api/admin/runtime-prompts/agent_default",
+            headers=admin_headers,
+            json=_patch_payload(agent_prompt, "AGENT_OVERRIDE_MARKER"),
+        )
+        assert updated_agent_prompt.status_code == 200, updated_agent_prompt.text
+        stale_prompt = client.patch(
+            "/api/admin/runtime-prompts/agent_default",
+            headers=admin_headers,
+            json=_patch_payload(agent_prompt, "stale agent prompt"),
+        )
+        assert stale_prompt.status_code == 409
         edited_history = client.patch(
             "/api/admin/organization/instructions/revisions/1",
             headers=admin_headers,
@@ -199,6 +229,45 @@ def test_instruction_api_permissions_concurrency_and_secret_guard(
             assert "설비 명칭은 원문 표기" in pinned["prompt_text"]
             assert private_marker not in pinned["prompt_text"]
             assert all(layer["digest"] for layer in pinned["layers"])
+            assert (
+                run.snapshot_json["runtime_prompts"]["system"]["content"]
+                .endswith("SYSTEM_OVERRIDE_MARKER")
+            )
+            assert (
+                run.snapshot_json["runtime_prompts"]["agent_default"]["content"]
+                == "AGENT_OVERRIDE_MARKER"
+            )
+        provider_messages = LocalRunExecutor(_settings(tmp_path))._conversation_messages(
+            run_id, "지침 적용 상태를 확인해 주세요."
+        )
+        assert provider_messages[0].role == "system"
+        assert provider_messages[0].content is not None
+        assert provider_messages[0].content.startswith("You are Lumina")
+        assert "SYSTEM_OVERRIDE_MARKER" in provider_messages[0].content
+        assert "AGENT_OVERRIDE_MARKER" in provider_messages[0].content
+
+        restored_system_prompt = client.patch(
+            "/api/admin/runtime-prompts/system",
+            headers=owner_headers,
+            json=_patch_payload(
+                updated_system_prompt.json(),
+                updated_system_prompt.json()["defaultContent"],
+            ),
+        )
+        assert restored_system_prompt.status_code == 403
+
+        client.cookies.clear()
+        admin_headers = _login(client, "admin", "1")
+        restored_system_prompt = client.patch(
+            "/api/admin/runtime-prompts/system",
+            headers=admin_headers,
+            json=_patch_payload(
+                updated_system_prompt.json(),
+                updated_system_prompt.json()["defaultContent"],
+            ),
+        )
+        assert restored_system_prompt.status_code == 200
+        assert restored_system_prompt.json()["overridden"] is False
 
         client.cookies.clear()
         member_headers = _login(client, "instruction-member", "test-password")
@@ -219,6 +288,7 @@ def test_instruction_api_permissions_concurrency_and_secret_guard(
         assert private_marker not in member_personal.text
         assert private_marker not in client.get("/api/projects").text
         assert client.get("/api/admin/organization/instructions").status_code == 403
+        assert client.get("/api/admin/runtime-prompts").status_code == 403
 
         client.cookies.clear()
         _login(client, "instruction-outsider", "test-password")
