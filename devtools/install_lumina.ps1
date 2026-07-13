@@ -19,6 +19,7 @@ $WebRoot = Join-Path $RepositoryRoot "apps/web"
 $EnvFile = Join-Path $RepositoryRoot ".env"
 . (Join-Path $PSScriptRoot "LuminaCache.Env.ps1") -RepositoryRoot $RepositoryRoot
 . (Join-Path $PSScriptRoot "LuminaInstall.Env.ps1")
+. (Join-Path $PSScriptRoot "LuminaInstall.Frontend.ps1")
 
 function Assert-Command {
     param(
@@ -107,13 +108,28 @@ function Resolve-ConfiguredPath {
 }
 
 function Set-TrustEnvironment {
-    param([Parameter(Mandatory = $true)][string]$BundlePath)
+    param(
+        [Parameter(Mandatory = $true)][string]$BundlePath,
+        [string]$CompanyCaPath,
+        [switch]$TlsCompatMode
+    )
     $env:SSL_CERT_FILE = $BundlePath
     $env:REQUESTS_CA_BUNDLE = $BundlePath
     $env:CURL_CA_BUNDLE = $BundlePath
     $env:PIP_CERT = $BundlePath
-    $env:NODE_EXTRA_CA_CERTS = $BundlePath
+    $env:NODE_EXTRA_CA_CERTS = if ([string]::IsNullOrWhiteSpace($CompanyCaPath)) {
+        $BundlePath
+    }
+    else {
+        $CompanyCaPath
+    }
     $env:npm_config_cafile = $BundlePath
+    if ($TlsCompatMode) {
+        $cipherOption = "--tls-cipher-list=DEFAULT@SECLEVEL=1"
+        if (($env:NODE_OPTIONS -split '\s+') -notcontains $cipherOption) {
+            $env:NODE_OPTIONS = (($env:NODE_OPTIONS, $cipherOption) -join " ").Trim()
+        }
+    }
 }
 
 if ($ConfigurePgpt -and $SkipPgpt) {
@@ -299,6 +315,7 @@ if (-not [string]::IsNullOrWhiteSpace($resolvedCa)) {
         throw "Combined CA bundle was not generated."
     }
     Set-LuminaDotEnvValue -Path $EnvFile -Key "LUMINA_CA_BUNDLE" -Value $resolvedBundle
+    Set-LuminaDotEnvValue -Path $EnvFile -Key "LUMINA_TLS_COMPAT_MODE" -Value "true"
 }
 else {
     $configuredBundle = Get-ConfiguredValue -Key "LUMINA_CA_BUNDLE"
@@ -319,11 +336,16 @@ else {
     }
 }
 if (-not [string]::IsNullOrWhiteSpace($resolvedBundle)) {
-    Set-TrustEnvironment -BundlePath $resolvedBundle
+    $tlsCompatMode = (Get-ConfiguredValue -Key "LUMINA_TLS_COMPAT_MODE") -match '^(?i:1|true|yes|on)$'
+    Set-TrustEnvironment `
+        -BundlePath $resolvedBundle `
+        -CompanyCaPath $resolvedCa `
+        -TlsCompatMode:$tlsCompatMode
 }
 
 if (-not $SkipDependencyInstall) {
     Write-Host "[Lumina] Installing frontend dependencies..."
+    Assert-LuminaFrontendNativeModulesUnlocked -WebRoot $WebRoot
     $frontendInstallArguments = @("ci", "--prefix", $WebRoot)
     if ($NoNetwork) {
         $frontendInstallArguments += @("--offline", "--no-audit")

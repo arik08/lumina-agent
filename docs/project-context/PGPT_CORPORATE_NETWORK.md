@@ -188,7 +188,8 @@ def build_pgpt_auth_token(
 - Tool schema를 OpenAI function 형식으로 변환
 - streaming text와 Tool Call delta 누적
 - Tool Call ID와 Tool Result 연결
-- Provider별 token limit parameter 선택
+- P-GPT가 거부하는 `response_format`은 제외하고 interactive output은 `max_completion_tokens` 42,000 이하로 제한
+- `stream_options.include_usage`, 안정적인 `prompt_cache_key`와 retention 전달
 - usage와 cached token 정규화
 - retry 가능한 timeout·network·429·5xx 분류
 - 인증·권한·rate limit·일반 요청 오류 구분
@@ -260,7 +261,7 @@ Lumina가 지원할 인증서 환경변수:
 ```text
 LUMINA_CA_CERT                 # 회사 CA 또는 chain 파일
 LUMINA_CA_BUNDLE              # 미리 생성된 combined bundle 선택값
-LUMINA_TLS_COMPAT_MODE        # 기본 false, 관리자 제한 옵션
+LUMINA_TLS_COMPAT_MODE        # 회사 CA 설치 시 true, 그 외 기본 false
 HTTPS_PROXY                   # 직접 신뢰하지 않고 명시 proxy profile로 가져올 후보
 NO_PROXY                      # 관리자 검증 후 적용
 ```
@@ -293,16 +294,16 @@ Trust Manager는 Provider, MCP, Web Search와 외부 HTTP client가 생성되기
 
 ### 구형 회사 TLS 호환
 
-MyHarness에는 일부 회사 인증서 chain과 OpenSSL 3의 엄격 모드 충돌을 피하기 위해 security level과 strict verify flag를 완화하는 호환 경로가 있습니다. Lumina에서는 이를 기본 동작으로 채택하지 않습니다.
+POSCO TLS inspection chain은 OpenSSL 3 strict verification에서 `Missing Authority Key Identifier`로 실패할 수 있습니다. 회사 CA를 발견한 설치에서는 해당 trust profile에 한해 MyHarness와 같은 호환 경로를 활성화합니다.
 
 우선순위는 다음과 같습니다.
 
-1. 올바른 회사 root·intermediate CA chain 제공
-2. 인증서 만료, hostname과 server chain 수정
-3. 회사 proxy 또는 Landing Zone 설정 수정
-4. 불가피한 경우에만 특정 trust profile에 제한된 compatibility mode 사용
+1. public CA와 승인된 회사 CA chain을 결합
+2. 해당 trust profile의 cipher list를 `DEFAULT@SECLEVEL=1`로 설정
+3. `VERIFY_X509_STRICT`만 해제하고 hostname·유효기간·서명 검증은 유지
+4. Python HTTP client와 허용된 Node subprocess에 같은 profile 전달
 
-Compatibility mode는 관리자 명시 설정, 대상 domain allowlist, 경고, 감사 로그와 운영 문서가 있어야 합니다. 전체 프로세스의 TLS 보안을 전역으로 낮추지 않습니다.
+Compatibility mode는 회사 CA가 실제로 구성된 profile에만 적용합니다. 회사 CA가 없는 일반 설치는 public CA 기본 context를 유지하며, 어떤 경우에도 `verify=False`로 재시도하지 않습니다. 진단 결과에는 compatibility mode 활성 여부를 표시합니다.
 
 ## Web Search와 Corporate HTTP Client
 

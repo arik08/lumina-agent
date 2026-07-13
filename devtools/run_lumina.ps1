@@ -111,6 +111,19 @@ function Invoke-Checked {
 function Stop-ProcessTree {
     param([Parameter(Mandatory = $true)][int]$ProcessId)
 
+    $taskkillPath = Join-Path $env:SystemRoot "System32\taskkill.exe"
+    if (Test-Path -LiteralPath $taskkillPath) {
+        try {
+            & $taskkillPath /PID ([string]$ProcessId) /T /F 2>$null | Out-Null
+        }
+        catch {
+            # Fall back to the PowerShell tree walk below.
+        }
+        if ($null -eq (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) {
+            return
+        }
+    }
+
     $processes = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
     $queue = [System.Collections.Generic.Queue[int]]::new()
     $tree = [System.Collections.Generic.List[int]]::new()
@@ -131,28 +144,42 @@ function Stop-ProcessTree {
 }
 
 function Test-LuminaCommandLine {
-    param([AllowEmptyString()][string]$CommandLine)
+    param(
+        [AllowEmptyString()][string]$ProcessName,
+        [AllowEmptyString()][string]$CommandLine
+    )
 
     if ([string]::IsNullOrWhiteSpace($CommandLine)) {
         return $false
     }
+    $executable = [System.IO.Path]::GetFileName($ProcessName).ToLowerInvariant()
+    $supervisorScript = Join-Path $RepositoryRoot "devtools\run_lumina.ps1"
+    $viteScript = Join-Path $RepositoryRoot "apps\web\node_modules\vite\bin\vite.js"
     return (
-        $CommandLine.IndexOf($RepositoryRoot, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-        $CommandLine -match 'lumina\.main:app'
+        ($executable -in @("powershell.exe", "pwsh.exe") -and
+            $CommandLine.IndexOf($supervisorScript, [StringComparison]::OrdinalIgnoreCase) -ge 0) -or
+        $CommandLine -match 'lumina\.main:app' -or
+        ($executable -eq "node.exe" -and
+            $CommandLine.IndexOf($viteScript, [StringComparison]::OrdinalIgnoreCase) -ge 0)
     )
 }
 
 function Get-LuminaProcessRootId {
-    param([Parameter(Mandatory = $true)][int]$ProcessId)
+    param(
+        [Parameter(Mandatory = $true)][int]$ProcessId,
+        [Parameter(Mandatory = $true)][hashtable]$ProcessesById
+    )
 
     $currentId = $ProcessId
     $rootId = 0
     for ($depth = 0; $depth -lt 12 -and $currentId -gt 0; $depth++) {
-        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $currentId" -ErrorAction SilentlyContinue
+        $process = $ProcessesById[$currentId]
         if ($null -eq $process) {
             break
         }
-        if (Test-LuminaCommandLine -CommandLine ([string]$process.CommandLine)) {
+        if (Test-LuminaCommandLine `
+            -ProcessName ([string]$process.Name) `
+            -CommandLine ([string]$process.CommandLine)) {
             $rootId = $currentId
         }
         $currentId = [int]$process.ParentProcessId
@@ -166,10 +193,16 @@ function Stop-ExistingLuminaListeners {
     $connections = @(
         Get-NetTCPConnection -State Listen -LocalPort $Ports -ErrorAction SilentlyContinue
     )
+    $processesById = @{}
+    if ($connections.Count -gt 0) {
+        foreach ($process in @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)) {
+            $processesById[[int]$process.ProcessId] = $process
+        }
+    }
     $rootIds = [System.Collections.Generic.HashSet[int]]::new()
     foreach ($connection in $connections) {
         $ownerId = [int]$connection.OwningProcess
-        $rootId = Get-LuminaProcessRootId -ProcessId $ownerId
+        $rootId = Get-LuminaProcessRootId -ProcessId $ownerId -ProcessesById $processesById
         if ($rootId -le 0) {
             $owner = Get-Process -Id $ownerId -ErrorAction SilentlyContinue
             $ownerName = if ($null -eq $owner) { "unknown" } else { $owner.ProcessName }
@@ -180,9 +213,6 @@ function Stop-ExistingLuminaListeners {
     foreach ($rootId in $rootIds) {
         Write-Host "[Lumina] Stopping previous Lumina process tree (PID $rootId)..."
         Stop-ProcessTree -ProcessId $rootId
-    }
-    if ($rootIds.Count -gt 0) {
-        Start-Sleep -Milliseconds 800
     }
     $remaining = @(
         Get-NetTCPConnection -State Listen -LocalPort $Ports -ErrorAction SilentlyContinue
@@ -215,31 +245,61 @@ function Stop-PreviousSupervisor {
         return
     }
     $previousPidText = [System.IO.File]::ReadAllText($SupervisorPidPath).Trim()
+    $identityParts = $previousPidText -split '\|', 2
     $previousPid = 0
-    if (-not [int]::TryParse($previousPidText, [ref]$previousPid) -or $previousPid -eq $PID) {
+    if (-not [int]::TryParse($identityParts[0], [ref]$previousPid) -or $previousPid -eq $PID) {
         return
     }
-    $previous = Get-CimInstance Win32_Process -Filter "ProcessId = $previousPid" -ErrorAction SilentlyContinue
-    if (
-        $null -ne $previous -and
-        (Test-LuminaCommandLine -CommandLine ([string]$previous.CommandLine))
-    ) {
+    $previous = Get-Process -Id $previousPid -ErrorAction SilentlyContinue
+    if ($null -eq $previous) {
+        return
+    }
+
+    $matchesSupervisorIdentity = $false
+    if ($identityParts.Count -eq 2) {
+        $expectedStartTimeTicks = [long]0
+        if ([long]::TryParse($identityParts[1], [ref]$expectedStartTimeTicks)) {
+            try {
+                $matchesSupervisorIdentity = (
+                    $previous.StartTime.ToUniversalTime().Ticks -eq $expectedStartTimeTicks
+                )
+            }
+            catch {
+                $matchesSupervisorIdentity = $false
+            }
+        }
+    }
+    else {
+        $legacyProcess = Get-CimInstance `
+            Win32_Process `
+            -Filter "ProcessId = $previousPid" `
+            -ErrorAction SilentlyContinue
+        $matchesSupervisorIdentity = (
+            $null -ne $legacyProcess -and
+            (Test-LuminaCommandLine `
+                -ProcessName ([string]$legacyProcess.Name) `
+                -CommandLine ([string]$legacyProcess.CommandLine))
+        )
+    }
+    if ($matchesSupervisorIdentity) {
         Write-Host "[Lumina] Replacing the previous supervisor (PID $previousPid)..."
         Stop-ProcessTree -ProcessId $previousPid
-        Start-Sleep -Milliseconds 800
     }
 }
 
 function Set-SupervisorPid {
     $utf8 = New-Object System.Text.UTF8Encoding($false)
-    [System.IO.File]::WriteAllText($SupervisorPidPath, [string]$PID, $utf8)
+    $current = Get-Process -Id $PID -ErrorAction Stop
+    $identity = "$PID|$($current.StartTime.ToUniversalTime().Ticks)"
+    [System.IO.File]::WriteAllText($SupervisorPidPath, $identity, $utf8)
 }
 
 function Remove-SupervisorPid {
     if (-not (Test-Path -LiteralPath $SupervisorPidPath)) {
         return
     }
-    if ([System.IO.File]::ReadAllText($SupervisorPidPath).Trim() -eq [string]$PID) {
+    $storedPid = ([System.IO.File]::ReadAllText($SupervisorPidPath).Trim() -split '\|', 2)[0]
+    if ($storedPid -eq [string]$PID) {
         Remove-Item -LiteralPath $SupervisorPidPath -Force -ErrorAction SilentlyContinue
     }
 }
@@ -333,35 +393,52 @@ function Test-LuminaHealthy {
     return Test-Endpoint -Uri $frontendUri
 }
 
+function Test-HardResetInput {
+    param(
+        [char]$Character = [char]0,
+        [int]$VirtualKeyCode = 0
+    )
+
+    return (
+        $VirtualKeyCode -eq [int][ConsoleKey]::R -or
+        $Character -ceq 'r' -or
+        $Character -ceq 'R' -or
+        [int]$Character -eq 0x3131
+    )
+}
+
 function Test-HardResetKey {
-    $keyCharacter = $null
+    $keyCharacter = [char]0
+    $virtualKeyCode = 0
+    $keyWasRead = $false
     try {
         if ([Console]::KeyAvailable) {
-            $keyCharacter = [Console]::ReadKey($true).KeyChar
+            $keyInfo = [Console]::ReadKey($true)
+            $keyCharacter = $keyInfo.KeyChar
+            $virtualKeyCode = [int]$keyInfo.Key
+            $keyWasRead = $true
         }
     }
     catch {
-        $keyCharacter = $null
+        $keyWasRead = $false
     }
-    if ($null -eq $keyCharacter) {
+    if (-not $keyWasRead) {
         try {
             if ($Host.UI.RawUI.KeyAvailable) {
                 $options = (
                     [System.Management.Automation.Host.ReadKeyOptions]::NoEcho -bor
                     [System.Management.Automation.Host.ReadKeyOptions]::IncludeKeyDown
                 )
-                $keyCharacter = $Host.UI.RawUI.ReadKey($options).Character
+                $keyInfo = $Host.UI.RawUI.ReadKey($options)
+                $keyCharacter = $keyInfo.Character
+                $virtualKeyCode = $keyInfo.VirtualKeyCode
             }
         }
         catch {
-            $keyCharacter = $null
+            return $false
         }
     }
-    return (
-        $keyCharacter -eq 'r' -or
-        $keyCharacter -eq 'R' -or
-        [int]$keyCharacter -eq 0x3131
-    )
+    return Test-HardResetInput -Character $keyCharacter -VirtualKeyCode $virtualKeyCode
 }
 
 function Start-LuminaProcesses {
@@ -419,14 +496,14 @@ function Wait-LuminaReady {
     $deadline = [DateTime]::UtcNow.AddSeconds($StartupTimeoutSeconds)
     while ([DateTime]::UtcNow -lt $deadline) {
         if (Test-HardResetKey) {
-            throw "Manual hard reset requested during startup."
+            return $false
         }
         $exited = Get-ExitedManagedProcess
         if ($null -ne $exited) {
             throw "$($exited.Name) exited during startup. See $($exited.ErrorLog)"
         }
         if (Test-LuminaHealthy) {
-            return
+            return $true
         }
         Start-Sleep -Milliseconds 500
     }
@@ -454,7 +531,10 @@ try {
             Write-Host "[Lumina] Hard reset: $resetReason"
             Stop-ManagedProcesses -PreserveFrontend:$preserveFrontend
             Start-LuminaProcesses -PreserveFrontend:$preserveFrontend
-            Wait-LuminaReady
+            if (-not (Wait-LuminaReady)) {
+                $preserveFrontend = $false
+                throw "Manual hard reset requested during startup."
+            }
             $preserveFrontend = $Development
             Write-Host ""
 
@@ -469,7 +549,8 @@ try {
             else {
                 Write-Host "[Lumina] Service: http://127.0.0.1:$BackendPort"
             }
-            Write-Host "[Lumina] Press  R to hard reset."
+            $koreanResetKey = [char]0x3131
+            Write-Host "[Lumina] Press r, R, or $koreanResetKey to hard reset Frontend and Backend."
             Write-Host "[Lumina] Logs: $LogRoot"
 
             $healthFailures = 0
@@ -477,6 +558,7 @@ try {
             while ($true) {
                 Write-NewBackendActivity
                 if (Test-HardResetKey) {
+                    $preserveFrontend = $false
                     $resetReason = "manual request"
                     break
                 }

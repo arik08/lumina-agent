@@ -32,6 +32,7 @@ CODEX_CONTEXT_WINDOW = 272_000
 CODEX_COMPACTION_THRESHOLD = 0.85
 STANDARD_GPT_CONTEXT_WINDOW = 1_050_000
 STANDARD_GPT_MINI_CONTEXT_WINDOW = 400_000
+PGPT_TOKEN_ESTIMATION_PADDING = 4 / 3
 GEMINI_CONTEXT_WINDOW = 1_000_000
 CLAUDE_LARGE_CONTEXT_WINDOW = 1_000_000
 CLAUDE_HAIKU_CONTEXT_WINDOW = 200_000
@@ -182,6 +183,8 @@ def compact_runtime_messages(
     run: Run,
     messages: Sequence[ProviderMessage],
     tool_schemas: Sequence[Mapping[str, Any]],
+    *,
+    force: bool = False,
 ) -> RuntimeContextPreparation:
     """Compact an in-flight tool loop while preserving recent tool-call pairs.
 
@@ -191,9 +194,12 @@ def compact_runtime_messages(
     """
 
     _, effective_budget = _context_budget(run, tool_schemas)
-    estimated_before = _estimate_provider_messages(messages, tool_schemas)
+    estimated_before = _padded_estimate(
+        run,
+        _estimate_provider_messages(messages, tool_schemas),
+    )
     threshold = _compaction_threshold(run, effective_budget)
-    if estimated_before <= threshold:
+    if not force and estimated_before <= threshold:
         return RuntimeContextPreparation(
             messages=tuple(messages),
             compacted=False,
@@ -216,7 +222,8 @@ def compact_runtime_messages(
         body_start = index + 1
 
     units = _provider_message_units(messages[body_start:])
-    preserve_count = min(RUNTIME_RECENT_UNITS_TO_PRESERVE, len(units))
+    preserve_target = 1 if force else RUNTIME_RECENT_UNITS_TO_PRESERVE
+    preserve_count = min(preserve_target, len(units))
     compacted_units = units[:-preserve_count] if preserve_count else units
     retained_units = units[-preserve_count:] if preserve_count else []
     if not compacted_units:
@@ -314,13 +321,16 @@ def prepare_context(
     retained_tools = _tools_for_messages(tools, retained)
     retained_tool_context = _tool_context(retained_tools)
     context_window, effective_budget = _context_budget(run, tool_schemas)
-    estimated_before = _estimate_context(
-        prefix_texts,
-        active.summary if active else None,
-        retained,
-        content_by_message_id,
-        tool_schemas,
-        retained_tool_context,
+    estimated_before = _padded_estimate(
+        run,
+        _estimate_context(
+            prefix_texts,
+            active.summary if active else None,
+            retained,
+            content_by_message_id,
+            tool_schemas,
+            retained_tool_context,
+        ),
     )
     actual_input = run.usage_json.get("input_tokens", 0)
     if isinstance(actual_input, int) and not isinstance(actual_input, bool):
@@ -459,13 +469,16 @@ def prepare_context(
     ]
     retained_tools_after = _tools_for_messages(tools, retained_after)
     retained_tool_context_after = _tool_context(retained_tools_after)
-    estimated_after = _estimate_context(
-        prefix_texts,
-        result.summary,
-        retained_after,
-        content_by_message_id,
-        tool_schemas,
-        retained_tool_context_after,
+    estimated_after = _padded_estimate(
+        run,
+        _estimate_context(
+            prefix_texts,
+            result.summary,
+            retained_after,
+            content_by_message_id,
+            tool_schemas,
+            retained_tool_context_after,
+        ),
     )
     effective = estimated_after <= int(estimated_before * 0.9)
     previous_ineffective = latest.ineffective_count if latest is not None else 0
@@ -615,6 +628,12 @@ def _compaction_threshold(run: Run, effective_budget: int) -> int:
         else SOFT_THRESHOLD
     )
     return max(1, int(effective_budget * ratio))
+
+
+def _padded_estimate(run: Run, estimated_tokens: int) -> int:
+    if run.provider_id == "pgpt":
+        return math.ceil(estimated_tokens * PGPT_TOKEN_ESTIMATION_PADDING)
+    return estimated_tokens
 
 
 def _is_codex_large_context_model(run: Run) -> bool:

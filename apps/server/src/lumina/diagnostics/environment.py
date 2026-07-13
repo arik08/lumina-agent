@@ -24,6 +24,7 @@ class DiagnosticEnvironment(BaseSettings):
     pgpt_diagnostic_model: str = "gpt-5.4"
     lumina_ca_cert: str = ""
     lumina_ca_bundle: str = ""
+    lumina_tls_compat_mode: bool = False
 
     @classmethod
     def load(cls, env_file: Path | None) -> "DiagnosticEnvironment":

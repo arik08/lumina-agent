@@ -450,6 +450,65 @@ def test_context_window_budget_avoids_character_only_compaction(tmp_path: Path) 
         assert db.scalar(select(func.count(CompactedContextEntry.id))) == 0
 
 
+def test_pgpt_gpt54_uses_myharness_large_context_budget(
+    tmp_path: Path,
+) -> None:
+    user, project, conversation = _configure(tmp_path, "pgpt-context-budget")
+    with SessionLocal() as db:
+        run = _run(
+            db,
+            user=db.merge(user),
+            project=db.merge(project),
+            conversation=db.merge(conversation),
+            sequence=1,
+            context_window=1_050_000,
+        )
+        run.provider_id = "pgpt"
+        run.runtime_model_id = "gpt-5.4"
+        prepared = compact_runtime_messages(
+            run,
+            (ProviderMessage(role="user", content="short context"),),
+            (),
+        )
+
+    assert prepared.compacted is False
+    assert prepared.effective_input_budget >= 990_000
+    assert prepared.estimated_tokens_before == 16
+
+
+def test_reactive_runtime_compaction_forces_recovery_below_soft_threshold(
+    tmp_path: Path,
+) -> None:
+    user, project, conversation = _configure(tmp_path, "reactive-context-recovery")
+    with SessionLocal() as db:
+        run = _run(
+            db,
+            user=db.merge(user),
+            project=db.merge(project),
+            conversation=db.merge(conversation),
+            sequence=1,
+            context_window=1_050_000,
+        )
+        run.provider_id = "pgpt"
+        run.runtime_model_id = "gpt-5.4"
+        messages = tuple(
+            ProviderMessage(
+                role="user" if index % 2 == 0 else "assistant",
+                content=f"turn {index}: " + ("context " * 200),
+            )
+            for index in range(8)
+        )
+
+        automatic = compact_runtime_messages(run, messages, ())
+        reactive = compact_runtime_messages(run, messages, (), force=True)
+
+    assert automatic.compacted is False
+    assert reactive.compacted is True
+    assert reactive.compacted_message_count == 7
+    assert reactive.preserved_message_count == 1
+    assert reactive.estimated_tokens_after < reactive.estimated_tokens_before
+
+
 @pytest.mark.parametrize(
     "model_id",
     ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"),
@@ -586,7 +645,6 @@ def test_codex_context_keeps_raw_prefix_past_default_75_percent_threshold(
 @pytest.mark.parametrize(
     ("provider_id", "model_id", "minimum_budget"),
     [
-        ("pgpt", "gpt-5.4", 1_000_000),
         ("openai", "gpt-5.6-terra", 1_000_000),
         ("google", "gemini-3.1-pro", 900_000),
         ("anthropic", "claude-sonnet-5", 850_000),

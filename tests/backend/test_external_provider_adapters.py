@@ -35,6 +35,12 @@ from lumina.providers.openai_compatible import (
     build_chat_completions_payload,
 )
 from lumina.providers.codex import CodexResponsesAdapter
+from lumina.providers.pgpt import (
+    PgptAdapter,
+    PgptCredentials,
+    PgptProfile,
+    build_pgpt_payload,
+)
 
 
 _TOOL = {
@@ -741,8 +747,13 @@ def test_provider_settings_ready_status_executor_and_codex_boundary(
         openai_compatible_api_key="compatible-secret",
         openai_compatible_base_url="https://compatible.test/v1",
         openai_api_key="",
+        pgpt_api_key="pgpt-secret",
+        pgpt_employee_no="employee-secret",
+        pgpt_company_code="30",
+        pgpt_base_url="https://pgpt.test/v1",
     )
 
+    assert _provider_status("pgpt", settings) == "ready"
     assert _provider_status("anthropic", settings) == "ready"
     assert _provider_status("google", settings) == "ready"
     assert _provider_status("openai_compatible", settings) == "ready"
@@ -751,6 +762,10 @@ def test_provider_settings_ready_status_executor_and_codex_boundary(
     )
     assert _provider_status("codex", settings) == "ready"
     executor = LocalRunExecutor(settings)
+    assert isinstance(
+        executor._provider("pgpt", wants_artifact=False, first_turn=True),
+        PgptAdapter,
+    )
     assert isinstance(
         executor._provider("anthropic", wants_artifact=False, first_turn=True),
         AnthropicMessagesAdapter,
@@ -775,10 +790,144 @@ def test_provider_settings_ready_status_executor_and_codex_boundary(
     assert "anthropic-secret" not in representation
     assert "google-secret" not in representation
     assert "compatible-secret" not in representation
+    assert "pgpt-secret" not in representation
+    assert "employee-secret" not in representation
     invalid = settings.model_copy(
         update={"openai_compatible_base_url": "https://user:pass@example.test/v1"}
     )
     assert _provider_status("openai_compatible", invalid) == "needs_setup"
+
+
+def test_pgpt_settings_load_from_dotenv_for_status_and_execution(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "PGPT_API_KEY=dotenv-key\n"
+        "PGPT_EMPLOYEE_NO=dotenv-employee\n"
+        "PGPT_COMPANY_CODE=30\n",
+        encoding="utf-8",
+    )
+    settings = Settings(
+        _env_file=env_file,
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'dotenv.db').as_posix()}",
+        data_dir=tmp_path,
+    )
+
+    assert _provider_status("pgpt", settings) == "ready"
+    assert isinstance(
+        LocalRunExecutor(settings)._provider(
+            "pgpt", wants_artifact=False, first_turn=True
+        ),
+        PgptAdapter,
+    )
+
+
+@pytest.mark.asyncio
+async def test_pgpt_adapter_uses_streaming_cache_payload_and_normalizes_response() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url == "https://pgpt.test/v1/chat/completions"
+        assert request.headers["accept"] == "text/event-stream"
+        payload = json.loads(request.content)
+        assert payload["stream"] is True
+        assert payload["stream_options"] == {"include_usage": True}
+        assert payload["prompt_cache_key"] == "lumina:user:v1:opaque"
+        assert payload["prompt_cache_retention"] == "24h"
+        assert payload["max_completion_tokens"] == 10
+        assert "response_format" not in payload
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "text/event-stream"},
+            content=_openai_sse(
+                {
+                    "choices": [
+                        {"delta": {"content": "OK"}, "finish_reason": "stop"}
+                    ]
+                },
+                {"usage": {"prompt_tokens": 4, "completion_tokens": 1}},
+            )
+            + b"data: [DONE]\n\n",
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        profile = PgptProfile(base_url="https://pgpt.test/v1")
+        assert profile.timeout_seconds == 180.0
+        adapter = PgptAdapter(
+            profile=profile,
+            credentials=PgptCredentials(
+                api_key="pgpt-key",
+                employee_no="employee-no",
+                company_code="30",
+            ),
+            client=client,
+        )
+        events = [
+            event
+            async for event in adapter.stream(
+                ProviderRequest(
+                    model="gpt-5.4",
+                    messages=(ProviderMessage(role="user", content="Hello"),),
+                    max_output_tokens=10,
+                    response_format={"type": "json_object"},
+                    metadata={
+                        "prompt_cache_key": "lumina:user:v1:opaque",
+                        "prompt_cache_retention": "24h",
+                    },
+                )
+            )
+        ]
+
+    assert [event.text for event in events if event.type == "text_delta"] == ["OK"]
+    assert next(event for event in events if event.type == "usage").usage.input_tokens == 4
+
+
+def test_pgpt_payload_uses_myharness_interactive_output_cap_by_default() -> None:
+    payload = build_pgpt_payload(
+        ProviderRequest(
+            model="gpt-5.4",
+            messages=(ProviderMessage(role="user", content="Hello"),),
+        )
+    )
+
+    assert payload["max_completion_tokens"] == 42_000
+
+
+@pytest.mark.asyncio
+async def test_pgpt_adapter_classifies_context_overflow_without_exposing_body() -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={
+                "error": {
+                    "code": "context_length_exceeded",
+                    "message": "input exceeds the context window",
+                }
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        adapter = PgptAdapter(
+            profile=PgptProfile(base_url="https://pgpt.test/v1"),
+            credentials=PgptCredentials(
+                api_key="pgpt-key",
+                employee_no="employee-no",
+                company_code="30",
+            ),
+            client=client,
+        )
+        with pytest.raises(ProviderRequestError) as captured:
+            _ = [
+                event
+                async for event in adapter.stream(
+                    ProviderRequest(
+                        model="gpt-5.4",
+                        messages=(ProviderMessage(role="user", content="Hello"),),
+                    )
+                )
+            ]
+
+    assert captured.value.stage == "context"
+    assert captured.value.status_code == 400
+    assert "input exceeds" not in str(captured.value)
 
 
 def test_openai_compatible_discovery_never_auto_activates(

@@ -77,6 +77,18 @@ def test_company_ca_relative_path_and_invalid_ca_are_reported(tmp_path: Path) ->
     assert valid.ok
     assert (tmp_path / "data" / "certs" / "runtime" / "combined-ca.pem").is_file()
 
+    compatible = run_diagnostics(
+        environment=DiagnosticEnvironment(
+            lumina_ca_cert="certs/company-ca.crt",
+            lumina_tls_compat_mode=True,
+        ),
+        repo_root=tmp_path,
+        network=False,
+        require_company_ca=True,
+    )
+    trust_step = next(step for step in compatible.steps if step.stage == "trust_bundle")
+    assert "compatibility mode is active" in trust_step.message
+
     invalid_ca = certificate_dir / "invalid.crt"
     invalid_ca.write_text("not a PEM certificate", encoding="utf-8")
     invalid = run_diagnostics(
@@ -273,6 +285,73 @@ def test_powershell_env_update_preserves_unrelated_values(tmp_path: Path) -> Non
     updated = env_file.read_text(encoding="utf-8")
     assert "KEEP_ME=original" in updated
     assert 'PGPT_API_KEY="new-fake$secret with space"' in updated
+
+
+def test_powershell_env_reader_does_not_consume_the_next_key(tmp_path: Path) -> None:
+    powershell = shutil.which("pwsh") or shutil.which("powershell")
+    if powershell is None:
+        pytest.skip("PowerShell is not installed")
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "LUMINA_CA_CERT=\nLUMINA_CA_BUNDLE=C:/runtime/combined-ca.pem\n",
+        encoding="utf-8",
+    )
+    helper = Path(__file__).resolve().parents[2] / "devtools" / "LuminaInstall.Env.ps1"
+    command = (
+        f". '{helper}'; "
+        f"$value = Get-LuminaDotEnvValue -Path '{env_file}' -Key 'LUMINA_CA_CERT'; "
+        "Write-Output ('<' + $value + '>')"
+    )
+    completed = subprocess.run(
+        [powershell, "-NoProfile", "-Command", command],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "<>"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows native module locks")
+def test_installer_frontend_lock_check_reports_locked_native_module(
+    tmp_path: Path,
+) -> None:
+    powershell = shutil.which("pwsh") or shutil.which("powershell")
+    if powershell is None:
+        pytest.skip("PowerShell is not installed")
+    native_module = tmp_path / "node_modules" / "binding.node"
+    native_module.parent.mkdir()
+    native_module.write_bytes(b"fixture")
+    helper = (
+        Path(__file__).resolve().parents[2]
+        / "devtools"
+        / "LuminaInstall.Frontend.ps1"
+    )
+    command = (
+        f". '{helper}'; "
+        f"$lock = [System.IO.File]::Open('{native_module}', 'Open', 'Read', 'None'); "
+        f"try {{ Assert-LuminaFrontendNativeModulesUnlocked -WebRoot '{tmp_path}' }} "
+        "finally { $lock.Dispose() }"
+    )
+    completed = subprocess.run(
+        [powershell, "-NoProfile", "-Command", command],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    output = completed.stdout + completed.stderr
+    assert completed.returncode != 0
+    assert "locked native module" in output
+    assert "binding.node" in output
+
+
+def test_codegraph_update_does_not_require_git_metadata() -> None:
+    script = (
+        Path(__file__).resolve().parents[2] / "devtools" / "update_codegraph.ps1"
+    ).read_text(encoding="utf-8")
+
+    assert "git rev-parse" not in script
+    assert "codegraph.Source sync" in script
 
 
 def test_installer_validate_only_forces_offline_uv(tmp_path: Path) -> None:

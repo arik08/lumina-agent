@@ -16,7 +16,7 @@ class PgptProfile:
     base_url: str = DEFAULT_PGPT_BASE_URL
     api_mode: str = "chat_completions"
     deployment_mapping: Mapping[str, str] = field(default_factory=dict)
-    timeout_seconds: float = 60.0
+    timeout_seconds: float = 180.0
 
     def __post_init__(self) -> None:
         base_url = self.base_url.strip().rstrip("/")

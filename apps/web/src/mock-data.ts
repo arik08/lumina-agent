@@ -127,7 +127,7 @@ export const artifactHtml = `<!doctype html>
       header { border-bottom: 2px solid #3f66c9; padding-bottom: 24px; }
       table { width: 100%; border-collapse: collapse; margin-top: 24px; }
       th, td { border-bottom: 1px solid #dfe3e8; padding: 12px; text-align: left; }
-      th { color: #646c78; font-size: 13px; }
+      th { color: #646c78; font-size: 14px; }
     </style>
   </head>
   <body>

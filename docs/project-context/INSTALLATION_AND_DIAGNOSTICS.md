@@ -39,7 +39,9 @@ $env:PGPT_COMPANY_CODE = "30"
 installer.bat -NonInteractive -ConfigurePgpt -NoNetwork -CompanyCaPath "C:\approved\company-ca.crt"
 ```
 
-회사 CA가 필수인 profile은 `-RequireCompanyCa`를 함께 사용합니다. 설정된 파일이 없거나 PEM 검증에 실패하면 설치기는 성공처럼 종료하지 않습니다. 공개 CA와 회사 CA가 결합된 bundle은 `data/certs/runtime/combined-ca.pem`에 atomic write되고 Python, Node, curl, pip용 CA 환경에 동일하게 적용됩니다.
+회사 CA가 필수인 profile은 `-RequireCompanyCa`를 함께 사용합니다. 설정된 파일이 없거나 PEM 검증에 실패하면 설치기는 성공처럼 종료하지 않습니다. 공개 CA와 회사 CA가 결합된 bundle은 `data/certs/runtime/combined-ca.pem`에 atomic write되고 Python, Node, curl, pip용 CA 환경에 적용됩니다. 회사 CA가 발견되면 설치기는 `LUMINA_TLS_COMPAT_MODE=true`를 저장하고 Node에는 company CA와 `DEFAULT@SECLEVEL=1`을 전달합니다. TLS 인증서 검증은 계속 활성 상태로 유지합니다.
+
+Windows에서 실행 중인 Vite가 `node_modules`의 native `.node` 파일을 점유하면 `npm ci`를 실행하기 전에 설치를 중단하고 잠긴 파일 경로와 해당 workspace의 Node PID를 표시합니다. Lumina Frontend를 닫은 뒤 설치를 다시 실행해야 하며, installer가 임의로 사용자 process를 종료하지 않습니다.
 
 P-GPT 연결 검사는 명시적 opt-in입니다.
 

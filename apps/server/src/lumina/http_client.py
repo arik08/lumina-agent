@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
+from dotenv import dotenv_values
 
 try:
     import certifi
@@ -25,6 +26,7 @@ _PEM_CERTIFICATE = re.compile(
     rb"-----BEGIN CERTIFICATE-----\s+.*?-----END CERTIFICATE-----",
     re.DOTALL,
 )
+_TLS_COMPAT_CIPHER_LIST = "DEFAULT@SECLEVEL=1"
 _AUTHORIZATION = re.compile(r"(?i)(authorization\s*[:=]\s*bearer\s+)([^\s,;]+)")
 _NAMED_SECRET = re.compile(
     r'(?i)(["\']?(?:api[_-]?key|pgpt[_-]?api[_-]?key|token|'
@@ -49,6 +51,7 @@ class TrustProfile:
     bundle_path: Path | None
     company_ca_path: Path | None
     source: str
+    tls_compat_mode: bool = False
 
     def subprocess_environment(
         self,
@@ -58,16 +61,22 @@ class TrustProfile:
         if self.bundle_path is None:
             return result
         bundle = str(self.bundle_path)
+        node_ca = str(self.company_ca_path or self.bundle_path)
         result.update(
             {
                 "SSL_CERT_FILE": bundle,
                 "REQUESTS_CA_BUNDLE": bundle,
                 "CURL_CA_BUNDLE": bundle,
                 "PIP_CERT": bundle,
-                "NODE_EXTRA_CA_CERTS": bundle,
+                "NODE_EXTRA_CA_CERTS": node_ca,
                 "npm_config_cafile": bundle,
             }
         )
+        if self.tls_compat_mode:
+            option = f"--tls-cipher-list={_TLS_COMPAT_CIPHER_LIST}"
+            existing = result.get("NODE_OPTIONS", "").strip()
+            if option not in existing.split():
+                result["NODE_OPTIONS"] = f"{existing} {option}".strip()
         return result
 
 
@@ -90,7 +99,22 @@ class TrustManager:
         env: Mapping[str, str] | None = None,
     ) -> None:
         self.repo_root = (repo_root or Path.cwd()).expanduser().resolve()
-        self._env = dict(os.environ if env is None else env)
+        if env is None:
+            file_values = dotenv_values(self.repo_root / ".env")
+            self._env = {
+                key: value
+                for key, value in file_values.items()
+                if isinstance(value, str)
+            }
+            self._env.update(os.environ)
+        else:
+            self._env = dict(env)
+        self._tls_compat_mode = self._env.get("LUMINA_TLS_COMPAT_MODE", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
         self._ca_cert = ca_cert
         self._ca_bundle = ca_bundle
         self.runtime_dir = (
@@ -106,11 +130,16 @@ class TrustManager:
         )
         if configured_bundle is not None:
             self._require_file(configured_bundle, "combined CA bundle")
+            company_ca = self._discover_optional_company_ca()
             return TrustProfile(
-                ssl_context=self._context_from_bundle(configured_bundle),
+                ssl_context=self._context_from_bundle(
+                    configured_bundle,
+                    tls_compat_mode=self._tls_compat_mode,
+                ),
                 bundle_path=configured_bundle,
-                company_ca_path=None,
+                company_ca_path=company_ca,
                 source="configured_bundle",
+                tls_compat_mode=self._tls_compat_mode,
             )
 
         company_ca = self._discover_company_ca()
@@ -124,6 +153,7 @@ class TrustManager:
                 bundle_path=None,
                 company_ca_path=None,
                 source="public_ca_only",
+                tls_compat_mode=False,
             )
 
         public_ca = self._public_ca_bundle()
@@ -133,10 +163,14 @@ class TrustManager:
             )
         combined = self._write_combined_bundle(public_ca, company_ca)
         return TrustProfile(
-            ssl_context=self._context_from_bundle(combined),
+            ssl_context=self._context_from_bundle(
+                combined,
+                tls_compat_mode=self._tls_compat_mode,
+            ),
             bundle_path=combined,
             company_ca_path=company_ca,
             source="public_and_company_ca",
+            tls_compat_mode=self._tls_compat_mode,
         )
 
     def _configured_path(
@@ -171,6 +205,12 @@ class TrustManager:
             (candidate.resolve() for candidate in candidates if candidate.is_file()),
             None,
         )
+
+    def _discover_optional_company_ca(self) -> Path | None:
+        try:
+            return self._discover_company_ca()
+        except TrustConfigurationError:
+            return None
 
     @staticmethod
     def _require_file(path: Path, label: str) -> None:
@@ -223,13 +263,26 @@ class TrustManager:
         finally:
             temporary.unlink(missing_ok=True)
 
-        self._context_from_bundle(destination)
+        self._context_from_bundle(
+            destination,
+            tls_compat_mode=self._tls_compat_mode,
+        )
         return destination
 
     @staticmethod
-    def _context_from_bundle(path: Path) -> ssl.SSLContext:
+    def _context_from_bundle(
+        path: Path,
+        *,
+        tls_compat_mode: bool = False,
+    ) -> ssl.SSLContext:
         try:
-            return ssl.create_default_context(cafile=str(path))
+            context = ssl.create_default_context()
+            if tls_compat_mode:
+                context.set_ciphers(_TLS_COMPAT_CIPHER_LIST)
+                if hasattr(ssl, "VERIFY_X509_STRICT"):
+                    context.verify_flags &= ~ssl.VERIFY_X509_STRICT
+            context.load_verify_locations(cafile=str(path))
+            return context
         except (OSError, ssl.SSLError) as exc:
             raise TrustConfigurationError(
                 f"CA bundle validation failed: {path}"

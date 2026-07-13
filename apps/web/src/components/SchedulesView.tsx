@@ -9,6 +9,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  Trash2,
   X,
 } from "lucide-react";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
@@ -58,6 +59,8 @@ export function SchedulesView({ projectId, execution, onOpenNavigation }: Schedu
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [deleteErrorId, setDeleteErrorId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [instructions, setInstructions] = useState("");
   const [kind, setKind] = useState<ScheduleKind>("daily");
@@ -66,6 +69,11 @@ export function SchedulesView({ projectId, execution, onOpenNavigation }: Schedu
   const [weekday, setWeekday] = useState(0);
 
   const selected = tasks.find((task) => task.id === selectedId) ?? tasks[0] ?? null;
+
+  useEffect(() => {
+    setDeleteConfirmId(null);
+    setDeleteErrorId(null);
+  }, [projectId, selected?.id]);
 
   const refresh = async (preferredId?: string) => {
     if (!projectId) {
@@ -193,6 +201,31 @@ export function SchedulesView({ projectId, execution, onOpenNavigation }: Schedu
     }
   };
 
+  const deleteTask = async () => {
+    if (!selected || busy) return;
+    if (deleteConfirmId !== selected.id) {
+      setDeleteConfirmId(selected.id);
+      setDeleteErrorId(null);
+      setError(null);
+      return;
+    }
+    setBusy(true);
+    setDeleteErrorId(null);
+    setError(null);
+    try {
+      await api.schedules.delete(selected.id);
+      const remaining = tasks.filter((task) => task.id !== selected.id);
+      setTasks(remaining);
+      setSelectedId(remaining[0]?.id ?? null);
+      setDeleteConfirmId(null);
+    } catch (caught) {
+      setDeleteErrorId(selected.id);
+      setError(caught instanceof ApiError ? caught.message : "예약 작업을 삭제하지 못했습니다.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="feature-view">
       <header className="feature-header">
@@ -227,6 +260,22 @@ export function SchedulesView({ projectId, execution, onOpenNavigation }: Schedu
               <div className="detail-actions schedule-actions">
                 <button type="button" disabled={busy} onClick={() => void toggleEnabled()}>{selected.enabled ? <Pause size={14} /> : <Play size={14} />}{selected.enabled ? "중지" : "사용"}</button>
                 <button className="is-primary lumina-primary-action" type="button" disabled={busy} onClick={() => void runNow()}><Play size={14} /> 지금 실행</button>
+                <button
+                  className={`is-danger ${deleteConfirmId === selected.id ? "is-confirming" : ""}`}
+                  type="button"
+                  disabled={busy}
+                  aria-label={deleteErrorId === selected.id ? "예약 작업 삭제 실패, 다시 시도" : undefined}
+                  onClick={() => void deleteTask()}
+                >
+                  {busy && deleteConfirmId === selected.id ? <LoaderCircle className="is-running" size={14} /> : <Trash2 size={14} />}
+                  {busy && deleteConfirmId === selected.id
+                    ? "삭제 중"
+                    : deleteErrorId === selected.id
+                      ? "삭제 실패, 다시 시도"
+                      : deleteConfirmId === selected.id
+                        ? "한 번 더 눌러 삭제"
+                        : "삭제"}
+                </button>
               </div>
               <section className="schedule-history">
                 <h3><History size={15} /> 실행 이력</h3>

@@ -541,6 +541,7 @@ class LocalRunExecutor:
         )
         artifact_created = False
         artifact_completion_reminded = False
+        reactive_context_recovery_attempted = False
         while True:
             messages = await self._compact_runtime_context(
                 run_id, messages, tool_schemas
@@ -586,6 +587,7 @@ class LocalRunExecutor:
             active_call_id: str | None = None
             interrupted_by_steer = False
             limit_violation: RunLimitViolation | None = None
+            provider_request_error: ProviderRequestError | None = None
             try:
                 async with asyncio.timeout(self._remaining_run_seconds(run_id)):
                     async for event in provider.stream(request):
@@ -721,12 +723,34 @@ class LocalRunExecutor:
                             )
                             if limit_violation is not None:
                                 break
+            except ProviderRequestError as exc:
+                provider_request_error = exc
             except TimeoutError:
                 limit_violation = self._deadline_violation(run_id)
             with session_scope() as db:
                 active_run = db.get(Run, run_id)
                 if active_run is not None:
                     clear_model_turn_inflight(db, active_run)
+
+            if provider_request_error is not None:
+                if (
+                    not reactive_context_recovery_attempted
+                    and not round_text
+                    and not tool_calls
+                    and _is_context_overflow_error(provider_request_error)
+                ):
+                    reactive_context_recovery_attempted = True
+                    recovered_messages = await self._compact_runtime_context(
+                        run_id,
+                        messages,
+                        tool_schemas,
+                        force=True,
+                        trigger="reactive",
+                    )
+                    if recovered_messages is not messages:
+                        messages = recovered_messages
+                        continue
+                raise provider_request_error
 
             if title_control_buffer:
                 generated_title = _parse_session_title_line(title_control_buffer)
@@ -883,7 +907,7 @@ class LocalRunExecutor:
                         role="tool",
                         name=call["name"],
                         tool_call_id=call["id"],
-                        content=json.dumps(result, ensure_ascii=False),
+                        content=_provider_tool_result_content(call["name"], result),
                         provider_metadata=call["provider_metadata"],
                     )
                 )
@@ -1104,7 +1128,7 @@ class LocalRunExecutor:
                     role="tool",
                     name=str(call["name"]),
                     tool_call_id=str(call["id"]),
-                    content=json.dumps(result, ensure_ascii=False),
+                    content=_provider_tool_result_content(str(call["name"]), result),
                     provider_metadata=_safe_provider_metadata(
                         call.get("provider_metadata")
                     ),
@@ -1772,7 +1796,19 @@ class LocalRunExecutor:
                 )
             )
         if provider_id == "pgpt":
-            return PgptAdapter()
+            pgpt_environment = {
+                "PGPT_API_KEY": self.settings.pgpt_api_key.get_secret_value().strip()
+                if self.settings.pgpt_api_key is not None
+                else "",
+                "PGPT_EMPLOYEE_NO": self.settings.pgpt_employee_no.get_secret_value().strip()
+                if self.settings.pgpt_employee_no is not None
+                else "",
+                "PGPT_COMPANY_CODE": self.settings.pgpt_company_code.get_secret_value().strip()
+                if self.settings.pgpt_company_code is not None
+                else "",
+                "PGPT_BASE_URL": self.settings.pgpt_base_url.strip(),
+            }
+            return PgptAdapter(env=pgpt_environment)
         if provider_id == "openai":
             api_key = self.settings.openai_api_key
             if api_key is None or not api_key.get_secret_value().strip():
@@ -2600,12 +2636,20 @@ class LocalRunExecutor:
         run_id: str,
         messages: list[ProviderMessage],
         tool_schemas: tuple[Mapping[str, Any], ...],
+        *,
+        force: bool = False,
+        trigger: str = "auto",
     ) -> list[ProviderMessage]:
         with SessionLocal() as db:
             run = db.get(Run, run_id)
             if run is None or run.status in TERMINAL_STATUSES:
                 return messages
-            prepared = compact_runtime_messages(run, messages, tool_schemas)
+            prepared = compact_runtime_messages(
+                run,
+                messages,
+                tool_schemas,
+                force=force,
+            )
         if not prepared.compacted:
             return messages
 
@@ -2631,6 +2675,7 @@ class LocalRunExecutor:
                 "effectiveInputBudget": prepared.effective_input_budget,
                 "compactedMessageCount": prepared.compacted_message_count,
                 "preservedMessageCount": prepared.preserved_message_count,
+                "trigger": trigger,
             }
             run.snapshot_json = {
                 **run.snapshot_json,
@@ -3546,6 +3591,65 @@ def _bounded_text(value: str, limit: int) -> str:
     tail = min(limit // 3, 40_000)
     head = limit - tail
     return value[:head] + "\n\n[... context truncated ...]\n\n" + value[-tail:]
+
+
+def _provider_tool_result_content(tool_name: str, result: Any) -> str:
+    """Serialize a bounded provider preview while preserving the stored Tool result."""
+    if not isinstance(result, Mapping):
+        return _bounded_text(
+            json.dumps(result, ensure_ascii=False, default=str),
+            24_000,
+        )
+
+    preview = dict(result)
+    if tool_name == "web_fetch" and isinstance(preview.get("text"), str):
+        original_text = preview["text"]
+        preview["text"] = _bounded_text(original_text, 12_000)
+        if len(original_text) > len(preview["text"]):
+            preview["providerContextTruncated"] = True
+    elif tool_name == "web_search" and isinstance(preview.get("sources"), list):
+        sources: list[Any] = []
+        for source in preview["sources"][:8]:
+            if not isinstance(source, Mapping):
+                continue
+            source_preview = dict(source)
+            excerpt = source_preview.get("verbatimExcerpt")
+            if isinstance(excerpt, str):
+                source_preview["verbatimExcerpt"] = _bounded_text(excerpt, 1_200)
+            sources.append(source_preview)
+        if len(preview["sources"]) > len(sources):
+            preview["providerContextTruncated"] = True
+        preview["sources"] = sources
+
+    serialized = json.dumps(preview, ensure_ascii=False, default=str)
+    if len(serialized) <= 24_000:
+        return serialized
+    return json.dumps(
+        {
+            "providerContextPreview": _bounded_text(serialized, 20_000),
+            "providerContextTruncated": True,
+        },
+        ensure_ascii=False,
+    )
+
+
+def _is_context_overflow_error(exc: ProviderRequestError) -> bool:
+    if exc.stage == "context":
+        return True
+    message = str(exc).lower()
+    return any(
+        marker in message
+        for marker in (
+            "prompt too long",
+            "context_length_exceeded",
+            "input exceeds",
+            "context length",
+            "maximum context",
+            "context window",
+            "too many tokens",
+            "too large for the model",
+        )
+    )
 
 
 def _web_source_metadata(db: Session, run_id: str) -> dict[str, Any]:

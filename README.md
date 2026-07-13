@@ -124,7 +124,7 @@ Lumina는 다음 순서로 회사 CA 인증서를 찾습니다.
 installer.bat -CompanyCaPath "C:\approved\company-ca.crt"
 ```
 
-설치기는 public CA와 회사 CA를 결합한 `data\certs\runtime\combined-ca.pem`을 생성하고 `.env`의 `LUMINA_CA_BUNDLE`에 기록합니다. 따라서 일반 공개 사이트와 회사 내부 사이트를 모두 TLS 검증을 유지한 채 연결할 수 있습니다. 생성된 bundle을 직접 편집하거나 TLS 오류를 `verify=False`로 우회하지 마십시오.
+설치기는 public CA와 회사 CA를 결합한 `data\certs\runtime\combined-ca.pem`을 생성하고 `.env`의 `LUMINA_CA_BUNDLE`에 기록합니다. 회사 CA가 발견된 Windows 설치에서는 OpenSSL 3와 사내 TLS inspection chain의 호환을 위해 `LUMINA_TLS_COMPAT_MODE=true`도 저장합니다. 이 모드는 해당 trust profile에서 security level과 strict chain flag만 제한적으로 완화하며 TLS 인증서 검증 자체는 유지합니다. 생성된 bundle을 직접 편집하거나 TLS 오류를 `verify=False`로 우회하지 마십시오.
 
 실제 인증서, combined bundle과 private key는 Git에 커밋하지 않습니다. 회사 CA가 반드시 필요한 설치에서는 `-RequireCompanyCa`를 함께 사용하면 인증서를 찾지 못하거나 검증에 실패할 때 설치가 중단됩니다.
 

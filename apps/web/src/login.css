@@ -80,7 +80,7 @@
 .login-eyebrow {
   margin: 0 0 20px;
   color: #a9c0ff;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 720;
   letter-spacing: 0.1em;
   line-height: 1.5;
@@ -109,7 +109,7 @@
   align-items: center;
   gap: 9px;
   color: rgba(239, 243, 255, 0.68);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .login-form-area {
@@ -151,7 +151,7 @@
 .login-session-note {
   margin: 0;
   color: var(--login-muted);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .login-form { display: grid; gap: 21px; }
@@ -190,7 +190,7 @@
   background: #202a3d;
   box-shadow: 0 8px 20px rgba(22, 31, 52, 0.16);
   color: #fff;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 550;
   line-height: 1.35;
   opacity: 0;
@@ -216,7 +216,7 @@
 .login-field > span,
 .login-domain-label {
   color: #454b55;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 650;
 }
 
@@ -262,7 +262,7 @@
   align-items: center;
   gap: 3px;
   color: #323842;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .login-domain-value svg { color: #8b929d; }
@@ -274,7 +274,7 @@
   background: transparent;
   color: var(--login-cobalt);
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 650;
   cursor: pointer;
 }
@@ -285,7 +285,7 @@
   min-height: 19px;
   margin-top: -6px;
   color: #b4484a;
-  font-size: 12.5px;
+  font-size: 13.5px;
 }
 
 .login-submit {
@@ -315,7 +315,7 @@
   background: transparent;
   color: var(--login-cobalt);
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 650;
   cursor: pointer;
 }
@@ -324,9 +324,9 @@
 .login-registration-form { gap: 14px; }
 .login-registration-heading { display: grid; gap: 4px; }
 .login-registration-heading strong { font-size: 16px; }
-.login-registration-heading span { color: var(--login-muted); font-size: 12px; }
+.login-registration-heading span { color: var(--login-muted); font-size: 13px; }
 .login-registration-passwords { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.login-registration-success { margin: 0; color: #237a4b; font-size: 12px; line-height: 1.5; }
+.login-registration-success { margin: 0; color: #237a4b; font-size: 13px; line-height: 1.5; }
 
 .login-spinner { animation: login-spin 900ms linear infinite; }
 .login-session-note { margin-top: 20px; text-align: center; }

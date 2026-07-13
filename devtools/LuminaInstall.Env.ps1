@@ -7,7 +7,8 @@ function Get-LuminaDotEnvValue {
         return ""
     }
     $content = [System.IO.File]::ReadAllText($Path)
-    $pattern = "(?m)^\s*" + [regex]::Escape($Key) + "\s*=\s*(.*)$"
+    $inlineSpace = "[^\S\r\n]*"
+    $pattern = "(?m)^" + $inlineSpace + [regex]::Escape($Key) + $inlineSpace + "=" + $inlineSpace + "(.*)$"
     $match = [regex]::Match($content, $pattern)
     if (-not $match.Success) {
         return ""
@@ -41,7 +42,8 @@ function Set-LuminaDotEnvValue {
     else {
         ""
     }
-    $pattern = "(?m)^(\s*" + [regex]::Escape($Key) + "\s*=).*$"
+    $inlineSpace = "[^\S\r\n]*"
+    $pattern = "(?m)^(" + $inlineSpace + [regex]::Escape($Key) + $inlineSpace + "=).*$"
     if ([regex]::IsMatch($content, $pattern)) {
         $content = [regex]::Replace(
             $content,

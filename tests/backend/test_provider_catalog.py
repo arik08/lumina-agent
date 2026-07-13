@@ -146,21 +146,30 @@ def test_pgpt_redaction_hides_envelope_and_raw_fields() -> None:
 
 
 def test_trust_manager_combines_ca_and_exports_subprocess_environment(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("LUMINA_TLS_COMPAT_MODE", raising=False)
+    (tmp_path / ".env").write_text(
+        "LUMINA_TLS_COMPAT_MODE=true\n",
+        encoding="utf-8",
+    )
     profile = TrustManager(
         repo_root=tmp_path,
         ca_cert=Path(certifi.where()),
         runtime_dir=tmp_path / "runtime",
-        env={},
     ).initialize(require_company_ca=True)
 
     assert isinstance(profile.ssl_context, ssl.SSLContext)
     assert profile.bundle_path is not None and profile.bundle_path.is_file()
     assert profile.company_ca_path == Path(certifi.where()).resolve()
+    assert profile.tls_compat_mode is True
+    assert profile.ssl_context.security_level == 1
+    if hasattr(ssl, "VERIFY_X509_STRICT"):
+        assert profile.ssl_context.verify_flags & ssl.VERIFY_X509_STRICT == 0
     environment = profile.subprocess_environment()
     assert environment["SSL_CERT_FILE"] == str(profile.bundle_path)
-    assert environment["NODE_EXTRA_CA_CERTS"] == str(profile.bundle_path)
+    assert environment["NODE_EXTRA_CA_CERTS"] == str(profile.company_ca_path)
+    assert environment["NODE_OPTIONS"] == "--tls-cipher-list=DEFAULT@SECLEVEL=1"
 
 
 def test_trust_manager_never_silently_ignores_bad_config(tmp_path: Path) -> None:

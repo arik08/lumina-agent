@@ -9,6 +9,8 @@ import httpx
 
 from ..http_client import TrustConfigurationError, TrustManager, TrustProfile
 from ..providers.errors import ProviderConfigurationError
+from ..providers.types import ProviderMessage, ProviderRequest
+from ..providers.pgpt.adapter import build_pgpt_payload
 from ..providers.pgpt.auth import (
     PgptCredentials,
     build_pgpt_authorization_header,
@@ -90,7 +92,11 @@ def _check_trust(
             ca_cert=configured_ca,
             ca_bundle=configured_bundle,
             runtime_dir=trust_runtime_dir,
-            env={},
+            env={
+                "LUMINA_TLS_COMPAT_MODE": (
+                    "true" if environment.lumina_tls_compat_mode else "false"
+                )
+            },
         ).initialize(require_company_ca=require_company_ca)
     except TrustConfigurationError:
         report.add(
@@ -115,7 +121,16 @@ def _check_trust(
             "skipped",
             "No company CA was configured; public CA trust remains active.",
         )
-    report.add("trust_bundle", "passed", "TLS verification remains enabled.")
+    compatibility = (
+        " POSCO TLS compatibility mode is active."
+        if profile.tls_compat_mode
+        else ""
+    )
+    report.add(
+        "trust_bundle",
+        "passed",
+        "TLS verification remains enabled." + compatibility,
+    )
     return profile
 
 
@@ -265,17 +280,17 @@ def _pgpt_probe(
         "Accept": "application/json",
         "Content-Type": "application/json",
     }
-    payload = {
-        "model": profile.resolve_runtime_model(model),
-        "messages": [{"role": "user", "content": "Reply with OK."}],
-        "stream": False,
-        "max_tokens": 1,
-    }
+    payload = build_pgpt_payload(
+        ProviderRequest(
+            model=profile.resolve_runtime_model(model),
+            messages=(ProviderMessage(role="user", content="Reply with OK."),),
+        )
+    )
     with httpx.Client(
         verify=trust_profile.ssl_context,
         timeout=httpx.Timeout(timeout_seconds),
         trust_env=False,
-        follow_redirects=False,
+        follow_redirects=True,
     ) as client:
         return client.post(profile.chat_completions_url, headers=headers, json=payload)
 

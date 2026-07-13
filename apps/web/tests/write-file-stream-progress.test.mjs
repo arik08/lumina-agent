@@ -6,7 +6,7 @@ const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
 test("write file shows a filename and token-proportional cumulative meter", async () => {
   const [app, types, workspace, stylesheet] = await Promise.all([
-    read("../src/App.tsx"),
+    read("../src/components/ConversationTurn.tsx"),
     read("../src/api-types.ts"),
     read("../src/use-lumina-workspace.ts"),
     read("../src/styles.css"),

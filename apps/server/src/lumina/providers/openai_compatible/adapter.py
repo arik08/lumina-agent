@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
 
-from lumina.http_client import TrustManager, TrustProfile, create_http_client
+from lumina.http_client import (
+    HttpClientOptions,
+    TrustManager,
+    TrustProfile,
+    create_http_client,
+)
 
 from ..errors import ProviderConfigurationError, ProviderRequestError
 from ..types import (
@@ -113,12 +118,16 @@ class OpenAICompatibleAdapter:
         require_authorization: bool = True,
         client: httpx.AsyncClient | None = None,
         trust_profile: TrustProfile | None = None,
+        http_options: HttpClientOptions | None = None,
+        payload_builder: Callable[[ProviderRequest], dict[str, Any]] | None = None,
     ) -> None:
         self.provider_id = provider_id
         self.base_url = _validated_base_url(base_url)
         self._headers = dict(headers or {})
         self._client = client
         self._trust_profile = trust_profile
+        self._http_options = http_options
+        self._payload_builder = payload_builder or build_chat_completions_payload
         if require_authorization and not any(
             key.casefold() == "authorization" and value.strip()
             for key, value in self._headers.items()
@@ -132,7 +141,7 @@ class OpenAICompatibleAdapter:
         owns_client = client is None
         if client is None:
             profile = self._trust_profile or TrustManager().initialize()
-            client = create_http_client(profile)
+            client = create_http_client(profile, options=self._http_options)
 
         tool_states: dict[int, _ToolState] = {}
         stop_reason: str | None = None
@@ -142,7 +151,7 @@ class OpenAICompatibleAdapter:
                 "POST",
                 f"{self.base_url}/chat/completions",
                 headers=self._headers,
-                json=build_chat_completions_payload(request),
+                json=self._payload_builder(request),
             ) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
@@ -170,10 +179,15 @@ class OpenAICompatibleAdapter:
                         )
 
                     if isinstance(chunk.get("error"), Mapping):
+                        stage = (
+                            "context"
+                            if _is_context_overflow_payload(chunk["error"])
+                            else "stream"
+                        )
                         raise ProviderRequestError(
                             f"{self.provider_id} returned a streaming error.",
                             retryable=False,
-                            stage="stream",
+                            stage=stage,
                         )
 
                     usage = chunk.get("usage")
@@ -232,7 +246,12 @@ class OpenAICompatibleAdapter:
                             terminal_received = True
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code
-            stage = _stage_for_status(status)
+            stage = (
+                "context"
+                if status in {400, 413, 422}
+                and _is_context_overflow_response(exc.response)
+                else _stage_for_status(status)
+            )
             raise ProviderRequestError(
                 f"{self.provider_id} request failed during {stage} (HTTP {status}).",
                 retryable=status in {408, 409, 425, 429} or status >= 500,
@@ -264,7 +283,6 @@ class OpenAICompatibleAdapter:
                 arguments_json=state.arguments,
             )
         yield ProviderEvent(type="completed", stop_reason=stop_reason or "stop")
-
     async def discover_models(self) -> tuple[str, ...]:
         """Return remote candidates only; activation remains an admin DB action."""
         client = self._client
@@ -323,6 +341,37 @@ class OpenAICompatibleAdapter:
         finally:
             if owns_client:
                 await client.aclose()
+
+
+def _is_context_overflow_response(response: httpx.Response) -> bool:
+    """Classify only known context errors without exposing the response body."""
+    try:
+        payload = response.json()
+        text = json.dumps(payload, ensure_ascii=False, default=str)
+    except (json.JSONDecodeError, ValueError):
+        text = response.text
+    return _is_context_overflow_payload(text)
+
+
+def _is_context_overflow_payload(value: object) -> bool:
+    normalized = (
+        value.lower()
+        if isinstance(value, str)
+        else json.dumps(value, ensure_ascii=False, default=str).lower()
+    )
+    return any(
+        marker in normalized
+        for marker in (
+            "prompt too long",
+            "context_length_exceeded",
+            "input exceeds",
+            "context length",
+            "maximum context",
+            "context window",
+            "too many tokens",
+            "too large for the model",
+        )
+    )
 
 
 def _validated_base_url(value: str) -> str:

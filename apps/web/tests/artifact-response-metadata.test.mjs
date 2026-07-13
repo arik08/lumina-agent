@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const appSource = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+const appSource = await readFile(new URL("../src/components/ConversationTurn.tsx", import.meta.url), "utf8");
 const sanitizerSource = await readFile(new URL("../src/assistant-response.ts", import.meta.url), "utf8");
 const sharedViewerSource = await readFile(new URL("../src/components/SharedSnapshotViewer.tsx", import.meta.url), "utf8");
 

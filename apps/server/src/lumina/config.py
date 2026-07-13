@@ -72,6 +72,22 @@ class Settings(BaseSettings):
     # the Lumina-prefixed environment contract to avoid colliding with SDK globals.
     openai_compatible_api_key: SecretStr | None = None
     openai_compatible_base_url: str | None = None
+    pgpt_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("PGPT_API_KEY", "LUMINA_PGPT_API_KEY"),
+    )
+    pgpt_employee_no: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("PGPT_EMPLOYEE_NO", "LUMINA_PGPT_EMPLOYEE_NO"),
+    )
+    pgpt_company_code: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("PGPT_COMPANY_CODE", "LUMINA_PGPT_COMPANY_CODE"),
+    )
+    pgpt_base_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("PGPT_BASE_URL", "LUMINA_PGPT_BASE_URL"),
+    )
 
     auth_cookie_name: str = "lumina_session"
     csrf_cookie_name: str = "lumina_csrf"

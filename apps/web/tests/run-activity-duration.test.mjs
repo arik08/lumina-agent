@@ -39,7 +39,7 @@ test("an invalid run start falls back to the first persisted stage timestamp", (
 });
 
 test("group wall time is shown once while expanded tools keep their own execution time", async () => {
-  const app = await read("../src/App.tsx");
+  const app = await read("../src/components/ConversationTurn.tsx");
 
   assert.match(app, /tool-call-group-duration" title="단계 전체 소요 시간"/);
   assert.doesNotMatch(app, /displayDurationMs=\{/);
@@ -62,7 +62,7 @@ test("parallel tool intervals are merged before calculating non-tool model time"
 });
 
 test("non-tool time is rendered as a model processing row with a clear explanation", async () => {
-  const app = await read("../src/App.tsx");
+  const app = await read("../src/components/ConversationTurn.tsx");
 
   assert.match(app, /<ModelProcessingRow[\s\S]*durationMs=\{modelProcessingDurationMs\}/);
   assert.match(app, /Provider 요청 전송 · 응답 수신/);
@@ -70,7 +70,7 @@ test("non-tool time is rendered as a model processing row with a clear explanati
 });
 
 test("model processing expands to the actual persisted exchange instead of token totals", async () => {
-  const app = await read("../src/App.tsx");
+  const app = await read("../src/components/ConversationTurn.tsx");
 
   assert.match(app, /className=\{`tool-call-trigger model-processing-row/);
   assert.match(app, /aria-expanded=\{isOpen\}/);

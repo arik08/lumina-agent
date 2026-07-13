@@ -6,6 +6,7 @@
 
 # Local development caches
 .cache/
+.vite/
 .playwright-mcp/
 /.tmp-comment-selection-verify.*
 

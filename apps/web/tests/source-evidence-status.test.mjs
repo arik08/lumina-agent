@@ -6,7 +6,7 @@ const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
 test("source evidence distinguishes cited, reviewed, and search-only material", async () => {
   const [app, apiTypes, stylesheet] = await Promise.all([
-    read("../src/App.tsx"),
+    read("../src/components/ConversationTurn.tsx"),
     read("../src/api-types.ts"),
     read("../src/styles.css"),
   ]);

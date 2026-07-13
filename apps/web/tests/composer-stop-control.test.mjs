@@ -1,0 +1,24 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+const appUrl = new URL("../src/App.tsx", import.meta.url);
+const stylesUrl = new URL("../src/styles.css", import.meta.url);
+
+test("the composer primary action becomes a working stop control during an active run", async () => {
+  const app = await readFile(appUrl, "utf8");
+
+  assert.match(app, /const runIsActive = Boolean\([\s\S]*?activeRun[\s\S]*?cancelled[\s\S]*?interrupted/);
+  assert.match(app, /const composerShowsStop = Boolean\(runIsActive && !composerHasPayload\)/);
+  assert.match(app, /className=\{`send-button tooltip-control \$\{composerShowsStop \? "is-stop" : ""\}`\}/);
+  assert.match(app, /aria-label=\{composerShowsStop \? "작업 중단"/);
+  assert.match(app, /composerShowsStop[\s\S]*?controlRun\("cancel"\)/);
+  assert.match(app, /composerShowsStop[\s\S]*?<Square/);
+});
+
+test("the stop control has a distinct visible state in light and dark themes", async () => {
+  const styles = await readFile(stylesUrl, "utf8");
+
+  assert.match(styles, /\.composer-footer \.send-button\.is-stop\s*\{[^}]*background:\s*var\(--danger\)/);
+  assert.match(styles, /\.theme-dark \.composer-footer \.send-button\.is-stop\s*\{/);
+});

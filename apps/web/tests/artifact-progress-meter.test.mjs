@@ -6,7 +6,7 @@ const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
 test("artifact progress uses a full-width indeterminate meter without a fake token ceiling", async () => {
   const [app, stylesheet] = await Promise.all([
-    read("../src/App.tsx"),
+    read("../src/components/ConversationTurn.tsx"),
     read("../src/styles.css"),
   ]);
 

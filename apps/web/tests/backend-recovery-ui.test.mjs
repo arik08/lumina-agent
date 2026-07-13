@@ -38,7 +38,7 @@ test("the React root renders a recoverable top-level error screen", async () => 
 
 test("terminal runs expose their reason and keep the copy action meaningful", async () => {
   const [app, apiTypes, runService, stylesheet] = await Promise.all([
-    read("../src/App.tsx"),
+    read("../src/components/ConversationTurn.tsx"),
     read("../src/api-types.ts"),
     read("../../server/src/lumina/runs/service.py"),
     read("../src/styles.css"),

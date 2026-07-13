@@ -2,7 +2,6 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 
-git -C $repoRoot rev-parse --verify HEAD *> $null
 $databasePath = Join-Path $repoRoot ".codegraph\codegraph.db"
 $codegraph = Get-Command codegraph -ErrorAction SilentlyContinue
 if (-not $codegraph) {

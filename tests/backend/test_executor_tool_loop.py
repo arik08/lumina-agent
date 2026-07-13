@@ -67,6 +67,22 @@ def test_tool_progress_fallback_does_not_expose_arguments() -> None:
     assert "도구 작업" in summary
 
 
+def test_large_web_fetch_result_is_truncated_only_for_provider_context() -> None:
+    result = {
+        "source": {"sourceId": "src-large", "normalizedUrl": "https://example.com"},
+        "text": "본문" * 20_000,
+        "untrustedExternalContent": True,
+    }
+
+    content = executor_module._provider_tool_result_content("web_fetch", result)
+    provider_result = json.loads(content)
+
+    assert len(result["text"]) == 40_000
+    assert len(provider_result["text"]) < len(result["text"])
+    assert provider_result["source"] == result["source"]
+    assert provider_result["providerContextTruncated"] is True
+
+
 def test_write_file_progress_counts_streamed_tokens_and_lines() -> None:
     streamed = executor_module._write_file_tool_progress(
         {

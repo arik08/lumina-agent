@@ -5,7 +5,7 @@ import test from "node:test";
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
 test("the latest tool group remains expanded while the assistant writes its response", async () => {
-  const app = await read("../src/App.tsx");
+  const app = await read("../src/components/ConversationTurn.tsx");
 
   assert.match(app, /keepLatestToolGroupOpen=\{status === "model_streaming"\}/);
   assert.match(app, /const latestToolGroupSummaryId = activityGroups\.reduce/);
@@ -37,19 +37,22 @@ test("single-tool stage durations use the same duration and chevron columns as t
   assert.match(styles, /\.progress-summary-text \{[^}]*grid-template-columns: minmax\(0, 1fr\) 46px 16px;[^}]*gap: 5px;[^}]*padding-right: 6px;[^}]*scrollbar-gutter: stable;[^}]*scrollbar-width: thin;/s);
 });
 
-test("model processing spinner follows its label while duration and chevron stay rightmost", async () => {
-  const app = await read("../src/App.tsx");
+test("every running tool spinner follows its label while duration and chevron stay rightmost", async () => {
+  const app = await read("../src/components/ConversationTurn.tsx");
   const styles = await read("../src/styles.css");
 
-  assert.match(app, /<span className="model-processing-label">\s*<span className="tool-call-label">AI 내부 추론<\/span>\s*\{running\s*\? <LoaderCircle/s);
+  assert.match(app, /<span className="tool-call-label-with-status">\s*<span className="tool-call-label">\{execution\.label \|\| execution\.toolName\}<\/span>\s*\{running \? \(\s*<LoaderCircle/s);
+  assert.match(app, /<span className="tool-call-label-with-status model-processing-label">\s*<span className="tool-call-label">AI 내부 추론<\/span>\s*\{running\s*\? <LoaderCircle/s);
+  assert.match(styles, /\.tool-call-trigger \{[^}]*grid-template-columns: 17px minmax\(90px, \.65fr\) minmax\(0, 1\.35fr\) auto 46px 16px;/s);
   assert.match(styles, /\.model-processing-row \{[^}]*grid-template-columns: 17px minmax\(90px, \.65fr\) minmax\(0, 1\.35fr\) auto 46px 16px;/s);
-  assert.match(styles, /\.model-processing-label \{[^}]*display: inline-flex;[^}]*gap: 5px;/s);
+  assert.match(styles, /\.tool-call-label-with-status \{[^}]*display: inline-flex;[^}]*gap: 5px;/s);
+  assert.match(styles, /@media \(max-width: 720px\)[\s\S]*\.tool-call-trigger \{[^}]*grid-template-columns: 17px minmax\(0, 1fr\) 16px;/s);
   assert.match(styles, /@media \(max-width: 720px\)[\s\S]*\.model-processing-row \{[^}]*grid-template-columns: 17px minmax\(0, 1fr\) 16px;/s);
   assert.match(app, /isOpen \? <ChevronDown size=\{15\}/);
 });
 
 test("tool icons use distinct semantic colors", async () => {
-  const app = await read("../src/App.tsx");
+  const app = await read("../src/components/ConversationTurn.tsx");
   const styles = await read("../src/styles.css");
 
   for (const className of ["is-web-search", "is-web-fetch", "is-file-browse", "is-read-file", "is-write-file", "is-report", "is-image"]) {

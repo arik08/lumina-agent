@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -38,10 +37,16 @@ def _provider_status(provider_id: str, settings: Settings) -> str:
     if provider_id == "mock":
         return "ready" if settings.environment != "production" else "unavailable"
     if provider_id == "pgpt":
-        required = ("PGPT_API_KEY", "PGPT_EMPLOYEE_NO", "PGPT_COMPANY_CODE")
         return (
             "ready"
-            if all(os.getenv(key, "").strip() for key in required)
+            if all(
+                _has_secret(value)
+                for value in (
+                    settings.pgpt_api_key,
+                    settings.pgpt_employee_no,
+                    settings.pgpt_company_code,
+                )
+            )
             else "needs_setup"
         )
     if provider_id == "codex":

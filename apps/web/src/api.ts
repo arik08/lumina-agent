@@ -1280,6 +1280,13 @@ export async function setScheduledTaskEnabled(taskId: string, enabled: boolean, 
   });
 }
 
+export async function deleteScheduledTask(taskId: string, signal?: AbortSignal) {
+  return request<void>(`/scheduled-tasks/${encodeURIComponent(taskId)}`, {
+    method: "DELETE",
+    signal,
+  });
+}
+
 export async function runScheduledTaskNow(taskId: string, signal?: AbortSignal) {
   return request<ScheduledRun>(`/scheduled-tasks/${encodeURIComponent(taskId)}/run-now`, {
     method: "POST",
@@ -1595,6 +1602,7 @@ export const api = {
     list: listScheduledTasks,
     create: createScheduledTask,
     setEnabled: setScheduledTaskEnabled,
+    delete: deleteScheduledTask,
     runNow: runScheduledTaskNow,
     listRuns: listScheduledRuns,
   },
