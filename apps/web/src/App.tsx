@@ -2584,7 +2584,7 @@ function App() {
                 aria-activedescendant={composerTrigger && composerSuggestions[suggestionIndex] ? `composer-suggestion-${suggestionIndex}` : undefined}
                 value={draft}
                 placeholder="메시지 보내기"
-                rows={2}
+                rows={1}
                 onChange={(event) => updateDraft(event.currentTarget.value, event.currentTarget.selectionStart)}
                 onClick={(event) => setComposerTrigger(findComposerTrigger(event.currentTarget.value, event.currentTarget.selectionStart))}
                 onKeyUp={(event) => {

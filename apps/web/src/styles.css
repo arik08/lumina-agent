@@ -2221,7 +2221,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .step-retry { display: inline-flex; min-height: 23px; align-items: center; gap: 4px; margin-left: 7px; padding: 0 5px; border: 0; border-radius: 4px; background: transparent; color: var(--cobalt); font-size: 10.5px; cursor: pointer; }
 .step-retry:hover { background: var(--cobalt-pale); }
 
-.composer { position: relative; z-index: 5; min-height: 102px; padding: 9px 13px 11px; border-top: 1px solid var(--line); background: var(--surface); container: composer / inline-size; }
+.composer { position: relative; z-index: 5; padding: var(--space-1) var(--space-3) var(--space-2); border-top: 1px solid var(--line); background: var(--surface); container: composer / inline-size; }
 .visually-hidden { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .composer-attachments { display: flex; flex-wrap: wrap; gap: 5px; margin: 0 0 6px; }
 .composer-attachments > span { display: inline-flex; max-width: 100%; align-items: center; gap: 5px; min-height: 25px; padding: 2px 4px 2px 7px; border: 1px solid var(--line); border-radius: 5px; color: var(--ink); font-size: 12.5px; }
@@ -2274,7 +2274,7 @@ button:disabled { cursor: default; opacity: 0.5; }
   cursor: pointer;
 }
 
-.composer textarea { width: 100%; min-height: 38px; resize: none; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: 14px; line-height: 1.5; }
+.composer textarea { display: block; width: 100%; min-height: var(--control-height-sm); max-height: 120px; margin: 0; overflow-y: auto; field-sizing: content; resize: none; border: 0; outline: 0; padding: var(--space-1) 0; background: transparent; color: var(--ink); font-size: 14px; line-height: 1.5; }
 .composer textarea::placeholder { color: #a4aab3; }
 .composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .composer-footer > div { display: flex; align-items: center; gap: 3px; }
