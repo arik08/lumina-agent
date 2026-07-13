@@ -673,8 +673,11 @@ class LocalRunExecutor:
                                 ),
                                 "artifact_progress": None,
                             }
-                            if tool_calls[call_id]["name"] == "write_file":
-                                await self._start_streaming_write_file(
+                            if tool_calls[call_id]["name"] in {
+                                "create_report",
+                                "write_file",
+                            }:
+                                await self._start_streaming_artifact_tool(
                                     run_id, tool_calls[call_id]
                                 )
                             if tool_calls[call_id]["name"] == "create_report":
@@ -2657,9 +2660,12 @@ class LocalRunExecutor:
             append_event(db, run, "artifact_progress", progress)
         await event_broker.notify(run_id)
 
-    async def _start_streaming_write_file(
+    async def _start_streaming_artifact_tool(
         self, run_id: str, tool_call: dict[str, Any]
     ) -> None:
+        tool_name = str(tool_call["name"])
+        if tool_name not in {"create_report", "write_file"}:
+            raise ValueError(f"Unsupported streaming artifact tool: {tool_name}")
         with session_scope() as db:
             run = db.get(Run, run_id)
             if run is None or run.status in TERMINAL_STATUSES:
@@ -2675,11 +2681,15 @@ class LocalRunExecutor:
             tool = ToolExecution(
                 run_id=run.id,
                 tool_call_id=str(tool_call["id"]),
-                tool_name="write_file",
-                validated_input_json={
-                    "__lumina_stream_tokens": 0,
-                    "__lumina_stream_lines": 0,
-                },
+                tool_name=tool_name,
+                validated_input_json=(
+                    {
+                        "__lumina_stream_tokens": 0,
+                        "__lumina_stream_lines": 0,
+                    }
+                    if tool_name == "write_file"
+                    else {}
+                ),
                 status="streaming",
                 started_at=utc_now(),
             )

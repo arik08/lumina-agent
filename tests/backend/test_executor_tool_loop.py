@@ -270,6 +270,15 @@ def test_report_request_recovers_when_model_tries_to_finish_without_artifact(
     provider_turn = 0
     observed_system_prompts: list[str] = []
     observed_stable_prefixes: list[str] = []
+    report_stream_resumed_at: list[datetime] = []
+
+    class DelayedReportProvider(MockProvider):
+        async def stream(self, request):
+            async for event in super().stream(request):
+                yield event
+                if event.type == "tool_call_started":
+                    report_stream_resumed_at.append(datetime.now(UTC))
+                    await asyncio.sleep(0.05)
 
     def provider(
         _provider_id: str, *, wants_artifact: bool, first_turn: bool
@@ -282,7 +291,7 @@ def test_report_request_recovers_when_model_tries_to_finish_without_artifact(
             return MockProvider(text_chunks=("조사 결과를 정리했습니다.",))
         if provider_turn > 2:
             return MockProvider(text_chunks=("HTML 보고서를 생성했습니다.",))
-        return MockProvider(
+        return DelayedReportProvider(
             text_chunks=("HTML 보고서를 생성하겠습니다.",),
             tool_call=MockToolCall(
                 name="create_report",
@@ -344,6 +353,11 @@ def test_report_request_recovers_when_model_tries_to_finish_without_artifact(
     assert [tool["toolName"] for tool in snapshot["toolExecutions"]] == [
         "create_report"
     ]
+    report_tool_started_at = datetime.fromisoformat(
+        snapshot["toolExecutions"][0]["startedAt"].replace("Z", "+00:00")
+    )
+    assert report_stream_resumed_at
+    assert report_tool_started_at <= report_stream_resumed_at[0]
     assert len(snapshot["artifacts"]) == 1
     assert "must call `create_report`" in observed_system_prompts[0]
     assert "`html_source` argument" in observed_system_prompts[0]
