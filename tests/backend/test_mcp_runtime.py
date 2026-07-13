@@ -97,12 +97,14 @@ async def test_stdio_lifecycle_allowlist_call_and_secret_redaction(
     assert "hello" in encoded
     assert "top-secret-value" not in encoded
     assert "[REDACTED]" in encoded
+    assert (await runtime.prepare_servers((_stdio_config(tmp_path),)))[0] == tool
 
     methods = (tmp_path / "mcp.log").read_text(encoding="utf-8").splitlines()
-    assert methods.count("initialize") == 2
-    assert methods.count("notifications/initialized") == 2
-    assert methods.count("tools/list") == 2
+    assert methods.count("initialize") == 1
+    assert methods.count("notifications/initialized") == 1
+    assert methods.count("tools/list") == 1
     assert methods.count("tools/call") == 1
+    await runtime.close()
 
 
 @pytest.mark.asyncio
@@ -280,6 +282,13 @@ async def test_streamable_http_headers_session_sse_and_timeout_cancellation(
     )
     assert server.headers[initialized_index]["mcp-protocol-version"] == "2025-11-25"
     assert server.headers[initialized_index]["mcp-session-id"] == "session-123"
+    assert (
+        sum(message.get("method") == "initialize" for message in server.messages) == 1
+    )
+    assert (
+        sum(message.get("method") == "tools/list" for message in server.messages) == 1
+    )
+    await runtime.close()
 
     delayed = _HttpMcpServer(delay_call=True)
     timeout_runtime = McpRuntime(
@@ -324,6 +333,8 @@ async def test_streamable_http_headers_session_sse_and_timeout_cancellation(
         message.get("method") == "notifications/cancelled"
         for message in cancelled_server.messages
     )
+    await timeout_runtime.close()
+    await cancel_runtime.close()
 
 
 @pytest.mark.asyncio
@@ -450,6 +461,7 @@ async def test_streamable_http_allows_only_explicit_private_ranges(
     )
     assert len(tools) == 1
     assert server.messages[0]["method"] == "initialize"
+    await runtime.close()
 
 
 @pytest.mark.asyncio

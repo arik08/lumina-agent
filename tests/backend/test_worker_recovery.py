@@ -6,7 +6,7 @@ from pathlib import Path
 from sqlalchemy import select
 
 from lumina.api.schemas import RunCreate, RunMessageInput
-from lumina.agent.executor import LocalRunExecutor, _parse_session_title_line
+from lumina.agent.executor import LocalRunExecutor
 from lumina.auth import bootstrap_database
 from lumina.config import Settings
 from lumina.db import SessionLocal, configure_database, create_schema
@@ -38,14 +38,6 @@ from lumina.runs.state import (
     TOOLS_RUNNING,
 )
 from lumina.runs.subtasks import bind_tool_subtask, ensure_tool_subtasks
-
-
-def test_session_title_control_line_parser_is_strict_and_bounded() -> None:
-    assert _parse_session_title_line('{"session_title":"  검색   품질 개선  "}') == "검색 품질 개선"
-    assert _parse_session_title_line('{"session_title":"' + "가" * 80 + '"}') == "가" * 60
-    assert _parse_session_title_line('{"session_title":""}') is None
-    assert _parse_session_title_line('{"session_title":"제목","answer":"본문"}') is None
-    assert _parse_session_title_line("일반 답변") is None
 
 
 def test_worker_recovery_rewinds_only_the_inflight_model_draft(tmp_path: Path) -> None:

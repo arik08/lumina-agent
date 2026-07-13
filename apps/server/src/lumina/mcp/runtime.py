@@ -114,6 +114,13 @@ class PreparedMcpTool:
         }
 
 
+@dataclass(slots=True)
+class _CachedMcpConnection:
+    connection: "_McpConnection"
+    negotiated_tools: tuple[dict[str, Any], ...]
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+
 class DnsResolver(Protocol):
     def __call__(self, host: str, port: int) -> Awaitable[set[str]] | set[str]: ...
 
@@ -200,6 +207,8 @@ class McpRuntime:
         self._http_transport = http_transport
         self._dns_resolver = dns_resolver or _resolve_host
         self._environment = dict(os.environ if environment is None else environment)
+        self._connections: dict[str, _CachedMcpConnection] = {}
+        self._connection_locks: dict[str, asyncio.Lock] = {}
 
     async def prepare_run(self, run_id: str) -> tuple[PreparedMcpTool, ...]:
         with SessionLocal() as db:
@@ -214,11 +223,10 @@ class McpRuntime:
     ) -> tuple[PreparedMcpTool, ...]:
         prepared: list[PreparedMcpTool] = []
         names: set[str] = set()
-        for config in configs:
-            secrets = self._resolve_secrets(config)
-            async with self._connection(config, secrets) as connection:
-                negotiated = await connection.initialize_and_list_tools()
-            tools = _intersect_tools(config, negotiated)
+        server_tools = await asyncio.gather(
+            *(self._prepare_server(config) for config in configs)
+        )
+        for config, tools in zip(configs, server_tools, strict=True):
             for tool in tools:
                 provider_name = _provider_tool_name(config, str(tool["name"]))
                 if provider_name in names:
@@ -240,15 +248,28 @@ class McpRuntime:
         self, tool: PreparedMcpTool, arguments: Mapping[str, Any]
     ) -> dict[str, Any]:
         secrets = self._resolve_secrets(tool.config)
-        async with self._connection(tool.config, secrets) as connection:
-            negotiated = await connection.initialize_and_list_tools()
-            current = {
-                str(item["name"]): item
-                for item in _intersect_tools(tool.config, negotiated)
-            }
-            if tool.original_name not in current:
-                raise _runtime_error("mcp_tool_schema_drift", "schema")
-            raw_result = await connection.call_tool(tool.original_name, dict(arguments))
+        cache_key, cached = await self._ready_connection(tool.config, secrets)
+        current = {
+            str(item["name"]): item
+            for item in _intersect_tools(tool.config, cached.negotiated_tools)
+        }
+        current_tool = current.get(tool.original_name)
+        if current_tool is None or current_tool.get("inputSchema") != dict(
+            tool.input_schema
+        ):
+            raise _runtime_error("mcp_tool_schema_drift", "schema")
+        try:
+            async with cached.lock:
+                raw_result = await cached.connection.call_tool(
+                    tool.original_name, dict(arguments)
+                )
+        except asyncio.CancelledError:
+            await asyncio.shield(self._discard_connection(cache_key, cached))
+            raise
+        except McpRuntimeError as exc:
+            if exc.retryable or exc.stage in {"network", "transport"}:
+                await self._discard_connection(cache_key, cached)
+            raise
         safe_result = _redact_value(raw_result, tuple(secrets.values()))
         if not isinstance(safe_result, dict):
             raise _runtime_error("mcp_response_invalid", "result")
@@ -265,6 +286,60 @@ class McpRuntime:
             ),
             "isError": False,
         }
+
+    async def close(self) -> None:
+        cached_connections = list(self._connections.values())
+        self._connections.clear()
+        self._connection_locks.clear()
+        for cached in cached_connections:
+            async with cached.lock:
+                await cached.connection.__aexit__(None, None, None)
+
+    async def _prepare_server(
+        self, config: McpServerConfig
+    ) -> tuple[dict[str, Any], ...]:
+        secrets = self._resolve_secrets(config)
+        cache_key, cached = await self._ready_connection(config, secrets)
+        try:
+            return tuple(_intersect_tools(config, cached.negotiated_tools))
+        except BaseException:
+            await self._discard_connection(cache_key, cached)
+            raise
+
+    async def _ready_connection(
+        self, config: McpServerConfig, secrets: Mapping[str, str]
+    ) -> tuple[str, _CachedMcpConnection]:
+        cache_key = _connection_cache_key(config, secrets)
+        cached = self._connections.get(cache_key)
+        if cached is not None:
+            return cache_key, cached
+        lock = self._connection_locks.setdefault(cache_key, asyncio.Lock())
+        async with lock:
+            cached = self._connections.get(cache_key)
+            if cached is not None:
+                return cache_key, cached
+            connection = self._connection(config, secrets)
+            await connection.__aenter__()
+            try:
+                negotiated = await connection.initialize_and_list_tools()
+            except BaseException:
+                await connection.__aexit__(None, None, None)
+                raise
+            cached = _CachedMcpConnection(
+                connection=connection,
+                negotiated_tools=tuple(negotiated),
+            )
+            self._connections[cache_key] = cached
+            return cache_key, cached
+
+    async def _discard_connection(
+        self, cache_key: str, cached: _CachedMcpConnection
+    ) -> None:
+        if self._connections.get(cache_key) is not cached:
+            return
+        self._connections.pop(cache_key, None)
+        async with cached.lock:
+            await cached.connection.__aexit__(None, None, None)
 
     def _resolve_secrets(self, config: McpServerConfig) -> dict[str, str]:
         resolved: dict[str, str] = {}
@@ -317,6 +392,21 @@ def _string_tuple(value: Any) -> tuple[str, ...]:
     if not isinstance(value, list):
         raise _runtime_error("mcp_snapshot_invalid", "snapshot")
     return tuple(str(item) for item in value)
+
+
+def _connection_cache_key(config: McpServerConfig, secrets: Mapping[str, str]) -> str:
+    material = json.dumps(
+        {
+            "installation_id": config.installation_id,
+            "configuration_revision_id": config.configuration_revision_id,
+            "digest": config.digest,
+            "secrets": sorted(secrets.items()),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
 def _runtime_error(
@@ -550,9 +640,15 @@ class _StdioTransport:
                 except TimeoutError:
                     process.kill()
                     await process.wait()
-        if self._stderr_task is not None:
-            self._stderr_task.cancel()
-            await asyncio.gather(self._stderr_task, return_exceptions=True)
+        stderr_task = self._stderr_task
+        if stderr_task is not None:
+            try:
+                await asyncio.wait_for(asyncio.shield(stderr_task), timeout=1.0)
+            except TimeoutError:
+                stderr_task.cancel()
+                await asyncio.gather(stderr_task, return_exceptions=True)
+        self._stderr_task = None
+        self._process = None
 
     async def _write(self, payload: Mapping[str, Any]) -> None:
         process = self._process

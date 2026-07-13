@@ -753,7 +753,9 @@ def test_steer_and_queue_next_validate_and_persist_stable_references(
         assert db.scalar(select(func.count(RunCommand.id))) == command_count
 
 
-def test_first_run_assigns_provisional_title_only_to_untitled_conversation(tmp_path: Path) -> None:
+def test_first_run_assigns_message_title_only_to_untitled_conversation(
+    tmp_path: Path,
+) -> None:
     _app, ids = _setup(tmp_path)
     with SessionLocal() as db:
         admin = db.get(User, ids["admin_id"])
@@ -773,7 +775,9 @@ def test_first_run_assigns_provisional_title_only_to_untitled_conversation(tmp_p
         db.add_all([untitled, named])
         db.flush()
 
-        long_prompt = "  분기별   매출 보고서를 분석하고 " + "핵심 지표를 정리해 주세요 " * 5
+        long_prompt = (
+            "  분기별   매출 보고서를 분석하고 " + "핵심 지표를 정리해 주세요 " * 5
+        )
         untitled_run, _message, created = create_run(
             db,
             user=admin,
@@ -783,14 +787,16 @@ def test_first_run_assigns_provisional_title_only_to_untitled_conversation(tmp_p
         )
         assert created is True
         assert len(untitled.title) == 60
-        assert untitled.title.startswith("분기별 매출 보고서를 분석하고 핵심 지표를 정리해 주세요")
+        assert untitled.title.startswith(
+            "분기별 매출 보고서를 분석하고 핵심 지표를 정리해 주세요"
+        )
         assert untitled.title.endswith("…")
         assert "  " not in untitled.title
         snapshot = run_snapshot(db, untitled_run)
         assert snapshot["conversationTitle"] == untitled.title
         assert snapshot["conversationRevision"] == untitled.revision
         assert untitled_run.snapshot_json["conversation_title"] == {
-            "status": "provisional",
+            "status": "generated",
             "value": untitled.title,
             "revision": untitled.revision,
         }
@@ -799,7 +805,9 @@ def test_first_run_assigns_provisional_title_only_to_untitled_conversation(tmp_p
             db,
             user=admin,
             conversation_id=named.id,
-            payload=RunCreate(message=RunMessageInput(text="이 문장으로 바꾸지 마세요")),
+            payload=RunCreate(
+                message=RunMessageInput(text="이 문장으로 바꾸지 마세요")
+            ),
             idempotency_key="automatic-title-2",
         )
         assert named.title == "사용자가 정한 제목"

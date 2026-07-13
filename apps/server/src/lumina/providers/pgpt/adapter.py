@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import replace
@@ -8,7 +9,12 @@ import httpx
 
 from typing import Any
 
-from lumina.http_client import HttpClientOptions, TrustProfile
+from lumina.http_client import (
+    HttpClientOptions,
+    TrustManager,
+    TrustProfile,
+    create_http_client,
+)
 
 from ..constants import PGPT_PROVIDER_ID
 from ..openai_compatible import OpenAICompatibleAdapter, build_chat_completions_payload
@@ -60,29 +66,58 @@ class PgptAdapter:
         self._credentials = credentials
         self._client = client
         self._trust_profile = trust_profile
+        self._transport: OpenAICompatibleAdapter | None = None
+        self._transport_lock = asyncio.Lock()
+        self._owns_client = False
 
     async def stream(self, request: ProviderRequest) -> AsyncIterator[ProviderEvent]:
-        credentials = self._credentials or PgptCredentials.from_env(self._env)
-        authorization = build_pgpt_authorization_header(credentials)
-        transport = OpenAICompatibleAdapter(
-            provider_id=self.provider_id,
-            base_url=self.profile.base_url,
-            headers={
-                "Authorization": authorization,
-                "Accept": "text/event-stream",
-                "Content-Type": "application/json",
-            },
-            client=self._client,
-            trust_profile=self._trust_profile,
-            http_options=HttpClientOptions(
-                timeout_seconds=self.profile.timeout_seconds,
-                follow_redirects=True,
-            ),
-            payload_builder=build_pgpt_payload,
-        )
+        transport = await self._get_transport()
         resolved_request = replace(
             request,
             model=self.profile.resolve_runtime_model(request.model),
         )
         async for event in transport.stream(resolved_request):
             yield event
+
+    async def close(self) -> None:
+        async with self._transport_lock:
+            client = self._client
+            owns_client = self._owns_client
+            self._transport = None
+            self._client = None
+            self._owns_client = False
+        if owns_client and client is not None:
+            await client.aclose()
+
+    async def _get_transport(self) -> OpenAICompatibleAdapter:
+        if self._transport is not None:
+            return self._transport
+        async with self._transport_lock:
+            if self._transport is not None:
+                return self._transport
+            credentials = self._credentials or PgptCredentials.from_env(self._env)
+            authorization = build_pgpt_authorization_header(credentials)
+            client = self._client
+            if client is None:
+                profile = self._trust_profile or TrustManager().initialize()
+                client = create_http_client(
+                    profile,
+                    options=HttpClientOptions(
+                        timeout_seconds=self.profile.timeout_seconds,
+                        follow_redirects=True,
+                    ),
+                )
+                self._client = client
+                self._owns_client = True
+            self._transport = OpenAICompatibleAdapter(
+                provider_id=self.provider_id,
+                base_url=self.profile.base_url,
+                headers={
+                    "Authorization": authorization,
+                    "Accept": "text/event-stream",
+                    "Content-Type": "application/json",
+                },
+                client=client,
+                payload_builder=build_pgpt_payload,
+            )
+            return self._transport

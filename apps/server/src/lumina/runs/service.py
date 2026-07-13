@@ -85,14 +85,14 @@ PLAN_STEP_CANCELLED = "cancelled"
 
 
 UNTITLED_CONVERSATION_TITLES = {"제목 없음", "새 작업"}
-PROVISIONAL_CONVERSATION_TITLE_MAX_LENGTH = 60
+CONVERSATION_TITLE_MAX_LENGTH = 60
 
 
-def _provisional_conversation_title(message_text: str) -> str:
+def _conversation_title_from_message(message_text: str) -> str:
     normalized = " ".join(message_text.split())
-    if len(normalized) <= PROVISIONAL_CONVERSATION_TITLE_MAX_LENGTH:
+    if len(normalized) <= CONVERSATION_TITLE_MAX_LENGTH:
         return normalized
-    return normalized[: PROVISIONAL_CONVERSATION_TITLE_MAX_LENGTH - 1].rstrip() + "…"
+    return normalized[: CONVERSATION_TITLE_MAX_LENGTH - 1].rstrip() + "…"
 
 
 _PLAN_STEP_TRANSITIONS = {
@@ -550,18 +550,18 @@ def create_run(
     db.add(message)
     db.flush()
     _persist_message_references(db, message, references)
-    provisional_title_assigned = (
+    automatic_title_assigned = (
         turn_index == 1 and conversation.title in UNTITLED_CONVERSATION_TITLES
     )
-    if provisional_title_assigned:
-        conversation.title = _provisional_conversation_title(payload.message.text)
+    if automatic_title_assigned:
+        conversation.title = _conversation_title_from_message(payload.message.text)
     conversation.last_activity_at = utc_now()
     conversation.revision += 1
-    if provisional_title_assigned:
+    if automatic_title_assigned:
         run.snapshot_json = {
             **run.snapshot_json,
             "conversation_title": {
-                "status": "provisional",
+                "status": "generated",
                 "value": conversation.title,
                 "revision": conversation.revision,
             },
@@ -1314,7 +1314,7 @@ def change_plan_step(
     step.updated_at = now
     _refresh_plan_status(plan, steps)
     db.flush()
-    snapshot = _sync_plan_snapshot(db, run)
+    _sync_plan_snapshot(db, run)
     append_event(
         db,
         run,
@@ -1324,7 +1324,6 @@ def change_plan_step(
             "planStatus": plan.status,
             "step": _plan_step_payload(db, step),
             "reason": reason,
-            "plan": snapshot,
         },
     )
     return step

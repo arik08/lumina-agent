@@ -272,15 +272,16 @@ def test_project_memory_revision_snapshot_delete_and_rollback(tmp_path: Path) ->
             "베어링 점검 주기를 알려 주세요.",
         )
         assert any(
-            message.role == "user"
+            message.role == "system"
             and f"project_memory_id={memory_v1['id']}" in str(message.content)
             and "revision=1" in str(message.content)
             and "개인 UserMemory" in str(message.content)
             for message in prompt_messages
         )
-        assert not any(
-            message.role == "system"
-            and (
+        assert any(
+            message.role == "user"
+            and message.content == "베어링 점검 주기를 알려 주세요."
+            and not (
                 f"project_memory_id={memory_v1['id']}" in str(message.content)
                 or "개인 UserMemory" in str(message.content)
             )

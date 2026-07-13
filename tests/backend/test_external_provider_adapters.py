@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import ssl
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -17,6 +18,7 @@ from lumina.agent.executor import (
 from lumina.api.routes.providers import _provider_status
 from lumina.config import Settings
 from lumina.main import create_app
+from lumina.http_client import TrustProfile
 from lumina.providers import (
     ProviderCapabilities,
     ProviderEvent,
@@ -766,6 +768,9 @@ def test_provider_settings_ready_status_executor_and_codex_boundary(
         executor._provider("pgpt", wants_artifact=False, first_turn=True),
         PgptAdapter,
     )
+    assert executor._provider(
+        "pgpt", wants_artifact=False, first_turn=True
+    ) is executor._provider("pgpt", wants_artifact=False, first_turn=False)
     assert isinstance(
         executor._provider("anthropic", wants_artifact=False, first_turn=True),
         AnthropicMessagesAdapter,
@@ -798,7 +803,9 @@ def test_provider_settings_ready_status_executor_and_codex_boundary(
     assert _provider_status("openai_compatible", invalid) == "needs_setup"
 
 
-def test_pgpt_settings_load_from_dotenv_for_status_and_execution(tmp_path: Path) -> None:
+def test_pgpt_settings_load_from_dotenv_for_status_and_execution(
+    tmp_path: Path,
+) -> None:
     env_file = tmp_path / ".env"
     env_file.write_text(
         "PGPT_API_KEY=dotenv-key\n"
@@ -823,7 +830,9 @@ def test_pgpt_settings_load_from_dotenv_for_status_and_execution(tmp_path: Path)
 
 
 @pytest.mark.asyncio
-async def test_pgpt_adapter_uses_streaming_cache_payload_and_normalizes_response() -> None:
+async def test_pgpt_adapter_uses_streaming_cache_payload_and_normalizes_response() -> (
+    None
+):
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.url == "https://pgpt.test/v1/chat/completions"
         assert request.headers["accept"] == "text/event-stream"
@@ -838,11 +847,7 @@ async def test_pgpt_adapter_uses_streaming_cache_payload_and_normalizes_response
             200,
             headers={"Content-Type": "text/event-stream"},
             content=_openai_sse(
-                {
-                    "choices": [
-                        {"delta": {"content": "OK"}, "finish_reason": "stop"}
-                    ]
-                },
+                {"choices": [{"delta": {"content": "OK"}, "finish_reason": "stop"}]},
                 {"usage": {"prompt_tokens": 4, "completion_tokens": 1}},
             )
             + b"data: [DONE]\n\n",
@@ -877,7 +882,66 @@ async def test_pgpt_adapter_uses_streaming_cache_payload_and_normalizes_response
         ]
 
     assert [event.text for event in events if event.type == "text_delta"] == ["OK"]
-    assert next(event for event in events if event.type == "usage").usage.input_tokens == 4
+    assert (
+        next(event for event in events if event.type == "usage").usage.input_tokens == 4
+    )
+
+
+@pytest.mark.asyncio
+async def test_pgpt_adapter_reuses_owned_http_client_until_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request_count = 0
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal request_count
+        request_count += 1
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "text/event-stream"},
+            content=_openai_sse(
+                {"choices": [{"delta": {"content": "OK"}, "finish_reason": "stop"}]}
+            ),
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    created_clients: list[httpx.AsyncClient] = []
+
+    def create_client(*_args: object, **_kwargs: object) -> httpx.AsyncClient:
+        created_clients.append(client)
+        return client
+
+    monkeypatch.setattr(
+        "lumina.providers.pgpt.adapter.create_http_client", create_client
+    )
+    adapter = PgptAdapter(
+        profile=PgptProfile(base_url="https://pgpt.test/v1"),
+        credentials=PgptCredentials(
+            api_key="pgpt-key",
+            employee_no="employee-no",
+            company_code="30",
+        ),
+        trust_profile=TrustProfile(
+            ssl_context=ssl.create_default_context(),
+            bundle_path=None,
+            company_ca_path=None,
+            source="test",
+        ),
+    )
+    request = ProviderRequest(
+        model="gpt-5.4",
+        messages=(ProviderMessage(role="user", content="Hello"),),
+    )
+
+    for _attempt in range(2):
+        assert [event.type async for event in adapter.stream(request)][
+            -1
+        ] == "completed"
+
+    assert request_count == 2
+    assert created_clients == [client]
+    await adapter.close()
+    assert client.is_closed is True
 
 
 def test_pgpt_payload_uses_myharness_interactive_output_cap_by_default() -> None:

@@ -305,6 +305,11 @@ def test_executor_persists_db_owned_plan_timeline_and_events(tmp_path: Path) -> 
             for event in events
             if event["type"] == "plan_step_changed"
         ]
+        assert all(
+            "plan" not in event["payload"]
+            for event in events
+            if event["type"] == "plan_step_changed"
+        )
         for expected in (
             ("prepare", "running"),
             ("prepare", "completed"),

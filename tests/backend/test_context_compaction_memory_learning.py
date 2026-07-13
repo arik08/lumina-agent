@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from lumina.agent.executor import LocalRunExecutor
 from lumina.auth import bootstrap_database
 from lumina.config import Settings
 from lumina.context import compact_runtime_messages, prepare_context
@@ -149,6 +150,117 @@ def _message(
     db.add(message)
     db.flush()
     return message
+
+
+def test_memory_context_is_pinned_per_turn_without_mutating_user_text(
+    tmp_path: Path,
+) -> None:
+    name = "memory-prefix"
+    user, project, conversation = _configure(tmp_path, name)
+    with SessionLocal() as db:
+        user = db.merge(user)
+        project = db.merge(project)
+        conversation = db.merge(conversation)
+        first = _run(
+            db,
+            user=user,
+            project=project,
+            conversation=conversation,
+            sequence=1,
+        )
+        first.snapshot_json = {
+            **first.snapshot_json,
+            "user_memories": [
+                {
+                    "id": "memory-one",
+                    "category": "preference",
+                    "display_text": "첫 번째 턴 메모리",
+                }
+            ],
+        }
+        _message(
+            db,
+            run=first,
+            user=user,
+            role="user",
+            text="첫 번째 질문",
+            turn_index=1,
+            offset=0,
+        )
+        _message(
+            db,
+            run=first,
+            user=user,
+            role="assistant",
+            text="첫 번째 답변",
+            turn_index=1,
+            offset=1,
+        )
+        second = _run(
+            db,
+            user=user,
+            project=project,
+            conversation=conversation,
+            sequence=2,
+        )
+        second.snapshot_json = {
+            **second.snapshot_json,
+            "user_memories": [
+                {
+                    "id": "memory-two",
+                    "category": "preference",
+                    "display_text": "두 번째 턴 메모리",
+                }
+            ],
+        }
+        _message(
+            db,
+            run=second,
+            user=user,
+            role="user",
+            text="두 번째 질문",
+            turn_index=2,
+            offset=0,
+        )
+        second_id = second.id
+        db.commit()
+
+    root = tmp_path / name
+    messages = LocalRunExecutor(
+        Settings(
+            environment="test",
+            database_url=f"sqlite:///{(root / 'lumina.db').as_posix()}",
+            data_dir=root,
+            files_dir=root / "files",
+            artifacts_dir=root / "artifacts",
+        )
+    )._conversation_messages(second_id, "두 번째 질문")
+    relevant = [
+        (message.role, str(message.content))
+        for message in messages
+        if any(
+            marker in str(message.content)
+            for marker in (
+                "memory-one",
+                "memory-two",
+                "첫 번째 질문",
+                "첫 번째 답변",
+                "두 번째 질문",
+            )
+        )
+    ]
+
+    assert [role for role, _content in relevant] == [
+        "system",
+        "user",
+        "assistant",
+        "system",
+        "user",
+    ]
+    assert relevant[1][1] == "첫 번째 질문"
+    assert relevant[4][1] == "두 번째 질문"
+    assert "memory-one" in relevant[0][1]
+    assert "memory-two" in relevant[3][1]
 
 
 def test_compaction_is_recoverable_and_preserves_tool_side_effects(
