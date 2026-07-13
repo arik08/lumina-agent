@@ -18,9 +18,12 @@ test("source evidence distinguishes cited, reviewed, and search-only material", 
   assert.match(app, /before === "\*\*" \|\| before === "__"/);
   assert.match(app, /streaming \? text : normalizeCitationPositions\(text, targets\)/);
   assert.match(app, /"본문 확인" : "검색 참고"/);
-  assert.match(app, /answer-source-count is-reviewed"> · 본문 확인 \{reviewedSourceCount\}/);
-  assert.match(app, /answer-source-count is-reference-only"> · 검색 참고 \{referenceSourceCount\}/);
-  assert.match(app, /aria-label=\{`검색 및 참고 출처, 인용 \$\{citedSourceCount\}, 본문 확인 \$\{reviewedSourceCount\}, 검색 참고 \$\{referenceSourceCount\}`\}/);
+  assert.match(app, /sourceCountLabels = \[/);
+  assert.match(app, /sourceCountLabels\.length > 0/);
+  assert.match(app, /citedSourceCount > 0 && <span className="answer-source-count is-cited"> · 인용 \{citedSourceCount\}<\/span>/);
+  assert.match(app, /reviewedSourceCount > 0 && <span className="answer-source-count is-reviewed"> · 본문 확인 \{reviewedSourceCount\}<\/span>/);
+  assert.match(app, /referenceSourceCount > 0 && <span className="answer-source-count is-reference-only"> · 검색 참고 \{referenceSourceCount\}<\/span>/);
+  assert.match(app, /aria-label=\{`검색 및 참고 출처, \$\{sourceCountLabels\.join\(", "\)\}`\}/);
   assert.match(stylesheet, /\.is-reviewed[^}]*background:[^}]*var\(--success\)/s);
   assert.match(stylesheet, /\.is-reference-only[^}]*background: var\(--surface-soft\)/s);
   assert.match(stylesheet, /\.inline-citation \{[^}]*font-size: 1em;[^}]*vertical-align: baseline;/s);

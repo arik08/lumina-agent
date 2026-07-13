@@ -1195,6 +1195,11 @@ export function AssistantTurn({
   const citedSourceCount = sourceTargets.filter((target) => target.cited).length;
   const reviewedSourceCount = sourceTargets.filter((target) => !target.cited && target.reviewed).length;
   const referenceSourceCount = sources.length - citedSourceCount - reviewedSourceCount;
+  const sourceCountLabels = [
+    citedSourceCount > 0 ? `인용 ${citedSourceCount}` : null,
+    reviewedSourceCount > 0 ? `본문 확인 ${reviewedSourceCount}` : null,
+    referenceSourceCount > 0 ? `검색 참고 ${referenceSourceCount}` : null,
+  ].filter((label): label is string => label !== null);
   const tools = snapshot?.toolExecutions ?? turnSet.toolExecutions;
   const activities: RunActivity[] = snapshot?.activities?.length
     ? snapshot.activities
@@ -1525,19 +1530,19 @@ export function AssistantTurn({
                     <button className={`tooltip-control ${reportOpen ? "is-active" : ""}`} type="button" aria-label="의견 게시" aria-expanded={reportOpen} data-tooltip="의견 게시" disabled={!finalMessage} onClick={() => { setReportOpen((open) => !open); setReportError(null); }}><MessageSquarePlus size={16} /></button>
                   </div>
                   <time className="answer-completed-time" dateTime={snapshot?.finishedAt ?? finalMessage?.completedAt ?? undefined}>{formatCompletedAt(snapshot?.finishedAt ?? finalMessage?.completedAt)}</time>
-                  {sources.length > 0 && (
+                  {sourceCountLabels.length > 0 && (
                     <div className="answer-sources">
                       <button
                         className="answer-sources-trigger"
                         type="button"
-                        aria-label={`검색 및 참고 출처, 인용 ${citedSourceCount}, 본문 확인 ${reviewedSourceCount}, 검색 참고 ${referenceSourceCount}`}
+                        aria-label={`검색 및 참고 출처, ${sourceCountLabels.join(", ")}`}
                         aria-expanded={sourcesOpen}
                         onClick={() => { if (sourcesOpen) closeSources(); else setSourcesOpen(true); }}
                       >
                         <span>검색 및 참고 출처</span>
-                        <span className="answer-source-count is-cited"> · 인용 {citedSourceCount}</span>
-                        <span className="answer-source-count is-reviewed"> · 본문 확인 {reviewedSourceCount}</span>
-                        <span className="answer-source-count is-reference-only"> · 검색 참고 {referenceSourceCount}</span>
+                        {citedSourceCount > 0 && <span className="answer-source-count is-cited"> · 인용 {citedSourceCount}</span>}
+                        {reviewedSourceCount > 0 && <span className="answer-source-count is-reviewed"> · 본문 확인 {reviewedSourceCount}</span>}
+                        {referenceSourceCount > 0 && <span className="answer-source-count is-reference-only"> · 검색 참고 {referenceSourceCount}</span>}
                       </button>
                       {sourcesOpen && (
                         <>
