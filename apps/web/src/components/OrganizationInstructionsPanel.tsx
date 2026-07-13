@@ -475,34 +475,6 @@ export function OrganizationInstructionsPanel() {
           <small>Project·개인 레이어는 여기서 읽기만 합니다.</small>
         </div>
 
-        {showComposition && (
-          <section className="admin-prompt-composition" aria-labelledby="admin-prompt-composition-title">
-            <header>
-              <button
-                className="admin-prompt-composition-toggle"
-                type="button"
-                aria-label="전체 프롬프트 합성 구조 닫기"
-                aria-expanded="true"
-                onClick={() => setShowComposition(false)}
-              >
-                <span><CircleHelp size={15} /><span id="admin-prompt-composition-title" className="admin-prompt-composition-title">실제 Run 프롬프트 합성 구조</span></span>
-                <span><ChevronUp size={14} /> 접기</span>
-              </button>
-            </header>
-            <ol>
-              <li><strong>고정 system</strong><span>Lumina의 기본 행동, 진행 표시, Plan과 사용자 노출 안전 계약</span></li>
-              <li><strong>저장 지침 계층</strong><span>관리자 → Agent 기본 → 프로젝트 지침 → 개인 지침 순서, 공유 프로젝트는 개인 지침 제외</span></li>
-              <li><strong>프로젝트 Context</strong><span>선택 Project의 Concept과 고정된 revision</span></li>
-              <li><strong>선택 Skill</strong><span>명시 선택·자동 선택·예약 작업에서 고정된 Skill 지침</span></li>
-              <li><strong>현재 Turn 계약</strong><span>Chat/File 출력 모드, Skill 활성화, Artifact 형식·길이 조건</span></li>
-              <li><strong>복구 Context</strong><span>압축 요약, 보존 Tool 결과와 미완료 작업 상태</span></li>
-              <li><strong>대화와 Memory</strong><span>대화 이력 뒤 현재 사용자 Message에 관련 Memory와 첨부 Context 결합</span></li>
-              <li><strong>Provider 경계</strong><span>Provider별 protocol로 변환하며 Codex는 별도 base instructions와 구조화 출력 계약 적용</span></li>
-            </ol>
-            <p>모든 변경은 새 Run부터 적용되고, 시작된 Run은 revision·digest snapshot을 계속 사용합니다.</p>
-          </section>
-        )}
-
         {selectedLayer === "system" && systemPrompt && <RuntimePromptEditor document={systemPrompt} onUpdated={updateRuntimePrompt} />}
         {selectedLayer === "agent_default" && agentPrompt && <RuntimePromptEditor document={agentPrompt} onUpdated={updateRuntimePrompt} />}
         {selectedLayer === "concept" && <ReadOnlyPrompt heading="프로젝트 Concept" description={`${selectedProject?.name ?? "선택된 프로젝트"}의 목적, 용어와 업무 배경입니다.`} content={selectedProject?.concept ?? ""} note="프로젝트 설정의 업무 Concept에서 수정합니다." applied={Boolean(selectedProject)} />}
@@ -546,7 +518,35 @@ export function OrganizationInstructionsPanel() {
             )}
           </>
         )}
-        {!showComposition && <button className="admin-prompt-composition-shortcut" type="button" onClick={() => setShowComposition(true)}><ChevronDown size={13} /> 전체 프롬프트가 어떻게 합쳐지는지 보기</button>}
+        {showComposition ? (
+          <section className="admin-prompt-composition" aria-labelledby="admin-prompt-composition-title">
+            <header>
+              <button
+                className="admin-prompt-composition-toggle"
+                type="button"
+                aria-label="전체 프롬프트 합성 구조 닫기"
+                aria-expanded="true"
+                onClick={() => setShowComposition(false)}
+              >
+                <span><CircleHelp size={15} /><span id="admin-prompt-composition-title" className="admin-prompt-composition-title">실제 Run 프롬프트 합성 구조</span></span>
+                <span><ChevronUp size={14} /> 접기</span>
+              </button>
+            </header>
+            <ol>
+              <li><strong>고정 system</strong><span>Lumina의 기본 행동, 진행 표시, Plan과 사용자 노출 안전 계약</span></li>
+              <li><strong>저장 지침 계층</strong><span>관리자 → Agent 기본 → 프로젝트 지침 → 개인 지침 순서, 공유 프로젝트는 개인 지침 제외</span></li>
+              <li><strong>프로젝트 Context</strong><span>선택 Project의 Concept과 고정된 revision</span></li>
+              <li><strong>선택 Skill</strong><span>명시 선택·자동 선택·예약 작업에서 고정된 Skill 지침</span></li>
+              <li><strong>현재 Turn 계약</strong><span>Chat/File 출력 모드, Skill 활성화, Artifact 형식·길이 조건</span></li>
+              <li><strong>복구 Context</strong><span>압축 요약, 보존 Tool 결과와 미완료 작업 상태</span></li>
+              <li><strong>대화와 Memory</strong><span>대화 이력 뒤 현재 사용자 Message에 관련 Memory와 첨부 Context 결합</span></li>
+              <li><strong>Provider 경계</strong><span>Provider별 protocol로 변환하며 Codex는 별도 base instructions와 구조화 출력 계약 적용</span></li>
+            </ol>
+            <p>모든 변경은 새 Run부터 적용되고, 시작된 Run은 revision·digest snapshot을 계속 사용합니다.</p>
+          </section>
+        ) : (
+          <button className="admin-prompt-composition-shortcut" type="button" onClick={() => setShowComposition(true)}><ChevronDown size={13} /> 전체 프롬프트가 어떻게 합쳐지는지 보기</button>
+        )}
       </div>
     </div>
   );

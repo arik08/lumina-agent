@@ -43,3 +43,10 @@ test("prompt composition controls stay visually quiet and collapse from the full
   assert.match(panelStyles, /\.admin-prompt-sidebar > header > button\.tooltip-control \{[^}]*border: 0;[^}]*background: transparent;/);
   assert.match(panelStyles, /\.admin-prompt-composition-toggle \{[^}]*width: 100%;/);
 });
+
+test("prompt composition expands in the same lower slot as its shortcut", () => {
+  assert.match(
+    panelSource,
+    /\{showComposition \? \(\s*<section className="admin-prompt-composition"[\s\S]*<\/section>\s*\) : \(\s*<button className="admin-prompt-composition-shortcut"/,
+  );
+});
