@@ -1139,6 +1139,7 @@ export function AssistantTurn({
   onToggleCall,
   onCopyTool,
   onOpenArtifact,
+  onBranch,
   onShare,
   onToast,
   onVisibleGrowth,
@@ -1149,6 +1150,7 @@ export function AssistantTurn({
   onToggleCall: (id: string) => void;
   onCopyTool: (execution: ToolExecution) => void;
   onOpenArtifact: (artifact: ArtifactSummary) => void;
+  onBranch: (anchorMessageId: string) => Promise<void>;
   onShare: (anchorMessageId: string | null) => void;
   onToast: (message: string) => void;
   onVisibleGrowth: () => void;
@@ -1186,6 +1188,7 @@ export function AssistantTurn({
   const { visibleText: displayedText, revealing } = useStreamingText(sanitizedAssistantText, streaming);
   const [reportOpen, setReportOpen] = useState(false);
   const [markdownSaving, setMarkdownSaving] = useState(false);
+  const [branching, setBranching] = useState(false);
   const [reportText, setReportText] = useState("");
   const [reportSubmitting, setReportSubmitting] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
@@ -1300,6 +1303,15 @@ export function AssistantTurn({
       onToast("답변을 Markdown Artifact로 저장하지 못했습니다.");
     } finally {
       setMarkdownSaving(false);
+    }
+  };
+  const branchAnswer = async () => {
+    if (!finalMessage || branching) return;
+    setBranching(true);
+    try {
+      await onBranch(finalMessage.id);
+    } finally {
+      setBranching(false);
     }
   };
   const rateAnswer = async (value: "like" | "dislike") => {
@@ -1448,14 +1460,15 @@ export function AssistantTurn({
                     {status === "completed" ? "작성 완료" : runStatusLabel(status)}
                   </div>
                   <div className="answer-actions" role="group" aria-label="답변 작업">
-                    <button className="tooltip-control" type="button" aria-label="답변 복사" data-tooltip="복사" disabled={!copyableAnswerText} onClick={() => void copyAnswer()}><Copy size={16} /></button>
-                    <button className="tooltip-control" type="button" aria-label="답변을 Markdown Artifact로 저장" data-tooltip="Markdown 저장" disabled={!finalMessage || !sanitizedAssistantText || markdownSaving} onClick={() => void saveAnswerAsMarkdown()}>{markdownSaving ? <LoaderCircle className="is-running" size={16} /> : <Download size={16} />}</button>
-                    <button className="tooltip-control" type="button" aria-label="답변 공유" data-tooltip="공유" disabled={!assistantText} onClick={() => onShare(finalMessage?.id ?? null)}><Share2 size={16} /></button>
                     <UsageCostPopover
                       usage={finalMessage?.metadata?.usage ?? snapshot?.usage}
                       model={snapshot?.execution.runtimeModelId}
                       provider={snapshot?.execution.providerId}
                     />
+                    <button className="tooltip-control" type="button" aria-label="답변 복사" data-tooltip="복사" disabled={!copyableAnswerText} onClick={() => void copyAnswer()}><Copy size={16} /></button>
+                    <button className="tooltip-control" type="button" aria-label="답변을 Markdown Artifact로 저장" data-tooltip="Markdown 저장" disabled={!finalMessage || !sanitizedAssistantText || markdownSaving} onClick={() => void saveAnswerAsMarkdown()}>{markdownSaving ? <LoaderCircle className="is-running" size={16} /> : <Download size={16} />}</button>
+                    <button className="tooltip-control" type="button" aria-label="이 답변까지 새 채팅으로 분기" data-tooltip="여기서 분기" disabled={!finalMessage || branching} onClick={() => void branchAnswer()}>{branching ? <LoaderCircle className="is-running" size={16} /> : <GitBranch size={16} />}</button>
+                    <button className="tooltip-control" type="button" aria-label="답변 공유" data-tooltip="공유" disabled={!assistantText} onClick={() => onShare(finalMessage?.id ?? null)}><Share2 size={16} /></button>
                     <button className="tooltip-control" type="button" aria-label="좋아요" data-tooltip="좋아요" disabled={!finalMessage} onClick={() => void rateAnswer("like")}><ThumbsUp size={16} /></button>
                     <button className="tooltip-control" type="button" aria-label="싫어요" data-tooltip="싫어요" disabled={!finalMessage} onClick={() => void rateAnswer("dislike")}><ThumbsDown size={16} /></button>
                     <button className={`tooltip-control ${reportOpen ? "is-active" : ""}`} type="button" aria-label="의견 게시" aria-expanded={reportOpen} data-tooltip="의견 게시" disabled={!finalMessage} onClick={() => { setReportOpen((open) => !open); setReportError(null); }}><MessageSquarePlus size={16} /></button>

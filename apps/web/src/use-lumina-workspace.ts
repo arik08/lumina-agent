@@ -938,23 +938,27 @@ export function useLuminaWorkspace() {
     return succeeded;
   }, [refreshConversations]);
 
-  const branchConversation = useCallback(async (conversationId: string) => {
+  const branchConversation = useCallback(async (conversationId: string, anchorMessageId?: string | null) => {
     try {
-      let messages = runtimesRef.current[conversationId]?.turnSets.flatMap((turnSet) => turnSet.messages) ?? [];
-      if (!messages.some((message) => message.role === "assistant" && message.status === "completed")) {
-        const page = await api.conversations.getTurnSets(conversationId, undefined, 20);
-        messages = page.turnSets.flatMap((turnSet) => turnSet.messages);
+      let resolvedAnchorMessageId = anchorMessageId;
+      if (!resolvedAnchorMessageId) {
+        let messages = runtimesRef.current[conversationId]?.turnSets.flatMap((turnSet) => turnSet.messages) ?? [];
+        if (!messages.some((message) => message.role === "assistant" && message.status === "completed")) {
+          const page = await api.conversations.getTurnSets(conversationId, undefined, 20);
+          messages = page.turnSets.flatMap((turnSet) => turnSet.messages);
+        }
+        const anchor = [...messages].reverse().find((message) => message.role === "assistant" && message.status === "completed");
+        if (!anchor) {
+          setNotice("분기할 완료 답변이 없습니다.");
+          return null;
+        }
+        resolvedAnchorMessageId = anchor.id;
       }
-      const anchor = [...messages].reverse().find((message) => message.role === "assistant" && message.status === "completed");
-      if (!anchor) {
-        setNotice("분기할 완료 답변이 없습니다.");
-        return null;
-      }
-      const created = await api.conversations.branch(conversationId, anchor.id);
+      const created = await api.conversations.branch(conversationId, resolvedAnchorMessageId);
       setConversations((items) => [created, ...items.filter((item) => item.id !== created.id)]);
       setRuntimes((current) => ({ ...current, [created.id]: emptyRuntime() }));
       setActiveConversationId(created.id);
-      setNotice("최신 완료 답변 지점에서 새 세션을 분기했습니다.");
+      setNotice(anchorMessageId ? "선택한 답변 지점에서 새 세션을 분기했습니다." : "최신 완료 답변 지점에서 새 세션을 분기했습니다.");
       return created;
     } catch (error) {
       setNotice(apiMessage(error));

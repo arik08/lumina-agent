@@ -2329,6 +2329,10 @@ function App() {
                 onToggleCall={(id) => toggleSetItem(setOpenCalls, id)}
                 onCopyTool={(execution) => void copyTool(execution)}
                 onOpenArtifact={(artifact) => void openArtifact(artifact)}
+                onBranch={async (anchorMessageId) => {
+                  if (!workspace.activeConversationId) return;
+                  await workspace.branchConversation(workspace.activeConversationId, anchorMessageId);
+                }}
                 onShare={(anchorMessageId) => {
                   if (!workspace.activeConversationId) return;
                   void api.sharing.create(workspace.activeConversationId, anchorMessageId)
