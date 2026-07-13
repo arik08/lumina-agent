@@ -63,7 +63,7 @@ run_lumina.ps1 실행
 | Startup 측정 | 1차 완료 | 회사망·저사양 PC baseline과 SLO 조정 |
 | Provider retry | 1차 완료 | `Retry-After`와 adapter별 중복 retry 정리 |
 | Supervisor 복구 | 1차 완료 | 오류 분류 확대와 doctor 연결 |
-| Profile·path·trust | 미구현 | Slice 2 전체 |
+| Profile·path·trust | 1차 구현 | `home/corporate` profile과 required capability 정책 |
 | Doctor·support bundle | 미구현 | Slice 4 전체 |
 
 Launcher state 파일은 비밀값을 저장하지 않으며 임시 파일을 같은 디렉터리에 쓴 뒤 원자적으로 교체한다. `status`, `phase`, `attempt`, `elapsedMs`, `errorCode`, `helpAction`, `lastError`를 제공하고 인증 header와 secret 형태의 값은 기록 전에 마스킹한다. 운영 런처는 `data/logs/run_lumina.state.json`, 개발 런처는 `data/logs/run_lumina_dev.state.json`을 사용한다.
@@ -213,6 +213,8 @@ Launcher state 파일은 비밀값을 저장하지 않으며 임시 파일을 �
 
 ### P0-4. 집과 회사의 차이가 명시적 profile이 아니라 파일·환경 변수 발견 순서에 의존한다
 
+**상태: 부분 구현**
+
 **확인 근거**
 
 - `apps/server/src/lumina/config.py`의 단일 Settings가 runtime 동작, Provider 선택값, secret 환경 변수를 함께 읽는다.
@@ -243,6 +245,8 @@ Launcher state 파일은 비밀값을 저장하지 않으며 임시 파일을 �
 | 실패 fallback | public CA로 정상 진행 | required CA/P-GPT 실패를 숨기지 않고 not-ready |
 
 corporate에서 home으로 조용히 fallback하거나, stale CA 경로 오류를 “회사 CA 없음”으로 삼켜서는 안 된다.
+
+현재 `Settings`의 `.env`와 `TrustManager()`의 기본 root는 더 이상 process CWD를 사용하지 않고 `REPOSITORY_ROOT`로 고정된다. Backend startup의 `initializing_trust` phase에서 trust를 한 번 초기화하고 같은 `TrustProfile` 객체를 P-GPT, OpenAI, Anthropic, Google, OpenAI Compatible, Web Search/Fetch와 MCP runtime에 전달한다. `/api/health/startup`은 경로와 인증서 내용 대신 trust source, company CA·bundle 구성 여부와 TLS compatibility mode만 반환한다. `home/corporate` profile schema와 required capability 정책은 아직 Slice 2에 남아 있다.
 
 ### P0-5. 선택 Provider와 무관하게 Codex warmup이 전체 Backend 시작 경로를 점유한다
 
@@ -505,6 +509,8 @@ API key, token, employee number, 전체 `.env`, 사용자 문서 내용과 원�
 
 ### Slice 2 — deployment profile·path·trust를 단일화한다
 
+**상태: 1차 구현 진행 중 — CWD 비의존 root와 startup trust snapshot 반영**
+
 **변경 후보**
 
 - `apps/server/src/lumina/config.py`
@@ -661,4 +667,4 @@ HERMES에서 취할 것은 단일 resolver, 실제 import/연결 probe, 명시�
 9. 사용자는 첫 화면 또는 한 번의 `lumina doctor`로 실패 단계와 해결 action을 확인할 수 있다.
 10. 관련 운영 문서와 구현 계약 테스트가 같은 변경에 포함된다.
 
-첫 기반인 **`ready`의 진실성, run에서 build/migration 제거, restart budget, startup phase 측정**은 1차 구현됐다. 다음 우선순위는 Slice 2의 `LuminaPaths`와 `home/corporate` deployment profile, startup trust 초기화다. 이 경계를 먼저 닫아야 회사 CA·proxy·P-GPT 실패를 집 설정으로 조용히 fallback하지 않고 정확히 설명할 수 있다.
+첫 기반인 **`ready`의 진실성, run에서 build/migration 제거, restart budget, startup phase 측정**과 CWD 비의존 startup trust snapshot은 1차 구현됐다. 다음 우선순위는 Slice 2의 `home/corporate` deployment profile과 required capability 정책이다. 이 경계를 닫아야 회사 CA·proxy·P-GPT 실패를 집 설정으로 조용히 fallback하지 않고 정확히 설명할 수 있다.
