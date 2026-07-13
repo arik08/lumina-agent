@@ -2340,6 +2340,7 @@ button:disabled { cursor: default; opacity: 0.5; }
   transition: opacity 120ms ease, transform 120ms ease;
   white-space: nowrap;
 }
+.tooltip-control:not([data-tooltip])::after { content: none; }
 .tooltip-control:hover::after, .tooltip-control:focus-visible::after { opacity: 1; transform: translate(-50%, 0); }
 .sidebar-header .tooltip-control::after { top: calc(100% + 7px); bottom: auto; transform: translate(-50%, -2px); }
 .sidebar-header .tooltip-control:hover::after, .sidebar-header .tooltip-control:focus-visible::after { transform: translate(-50%, 0); }

@@ -34,3 +34,13 @@ test("notification receipt shows more compact title-only rows", async () => {
   assert.match(stylesheet, /\.notification-list \{[^}]*scrollbar-gutter: stable/s);
   assert.match(stylesheet, /\.notification-item \{[^}]*min-height: 40px/s);
 });
+
+test("notification trigger does not render an empty tooltip while the panel is open", async () => {
+  const [app, stylesheet] = await Promise.all([
+    read("../src/App.tsx"),
+    read("../src/styles.css"),
+  ]);
+
+  assert.match(app, /data-tooltip=\{notificationOpen \? undefined : "알림"\}/);
+  assert.match(stylesheet, /\.tooltip-control:not\(\[data-tooltip\]\)::after \{ content: none; \}/);
+});
