@@ -16,7 +16,7 @@ test("repository skills display searchable hashtag metadata instead of a source 
 
   assert.deepEqual(tags["visual-artifact"], ["경영기획", "디자인"]);
   assert.ok(Object.values(tags).every((value) => Array.isArray(value) && value.length > 0));
-  assert.match(view, /className="marketplace-tags" aria-label="Skill 태그 및 버전"/);
+  assert.match(view, /className="marketplace-tags" aria-label="Skill 태그"/);
   assert.match(view, /tags\.map\(\(tag\) => `#\$\{tag\}`\)/);
   assert.doesNotMatch(view, /Lumina 기본 제공/);
 });
@@ -34,15 +34,19 @@ test("marketplace detects repository changes and keeps manual full refresh as fa
 
 test("skill visibility and version use the reviewed Publish.Merge.Feedback display", async () => {
   const view = await readFile(viewPath, "utf8");
+  const listStart = view.indexOf('<aside className="feature-list"');
+  const listEnd = view.indexOf('</aside>', listStart);
+  const list = view.slice(listStart, listEnd);
 
   assert.match(view, /if \(visibility === "organization"\) return "조직"/);
   assert.match(view, /if \(visibility === "project"\) return "프로젝트"/);
   assert.match(view, /function skillDisplayVersion\(item: SkillExtension\)/);
   assert.match(view, /return `v\$\{publish\}\.\$\{merge\}\.\$\{feedback\}`/);
-  assert.match(view, /aria-label="Skill 태그 및 버전"/);
-  assert.match(view, /className="is-version">\{skillDisplayVersion\(item\)\}/);
+  assert.match(view, /aria-label="Skill 태그"/);
   assert.match(view, /`버전 \$\{skillDisplayVersion\(selected\)\}`/);
   assert.match(view, /nextSavedSkillDisplayVersion\(selected\)/);
+  assert.doesNotMatch(list, /skillDisplayVersion\(item\)/);
+  assert.doesNotMatch(list, /className="is-version"/);
   assert.doesNotMatch(view, /<span>\{selected\.visibility\}<\/span>/);
   assert.doesNotMatch(view, /초안 r/);
   assert.doesNotMatch(view, /내 작업 초안 r/);

@@ -443,7 +443,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
             const itemInstallationPending = pendingInstallationSurfaceById[item.id] === "list";
             return <div className={`marketplace-skill-row ${item.id === selected?.id ? "is-selected" : ""}`} key={item.id}>
               <button className="marketplace-skill-select" type="button" onClick={() => setSelectedId(item.id)}>
-                <span><strong>{item.name}</strong><small>{item.description || item.slug}</small>{skillView === "trash" && <small>{trashRetentionLabel(item.purgesAt)}</small>}<small className="marketplace-tags" aria-label="Skill 태그 및 버전">{skillTags(item).map((tag) => <span key={tag}>#{tag}</span>)}<span className="is-version">{skillDisplayVersion(item)}</span></small></span>
+                <span><strong>{item.name}</strong><small>{item.description || item.slug}</small>{skillView === "trash" && <small>{trashRetentionLabel(item.purgesAt)}</small>}<small className="marketplace-tags" aria-label="Skill 태그">{skillTags(item).map((tag) => <span key={tag}>#{tag}</span>)}</small></span>
               </button>
               {skillView !== "trash" && <button className={`marketplace-install-toggle ${itemInstallation ? "is-installed" : ""}`} type="button" aria-label={`${item.name} ${itemInstallation ? "미사용" : "설치"}`} aria-pressed={Boolean(itemInstallation)} aria-busy={itemInstallationPending} disabled={!itemVersion || itemInstallationPending} onClick={() => void toggleInstallation(item, "list")}>{itemInstallationPending ? <LoaderCircle className="is-running" size={12} /> : itemInstallation ? <><span className="install-toggle-rest">설치됨</span><span className="install-toggle-hover">미사용</span></> : <span>설치</span>}</button>}
             </div>;
