@@ -1,7 +1,7 @@
 import { ArrowRight, AtSign, KeyRound, LoaderCircle, ShieldCheck, Sparkles, UserPlus } from "lucide-react";
 import { type FormEvent, useRef, useState } from "react";
 import { ApiError, login, registerAccount } from "../api";
-import type { AuthSession, UserRole } from "../api-types";
+import type { AuthSession, LoginRequest, UserRole } from "../api-types";
 import { SelectMenu } from "./SelectMenu";
 import "../login.css";
 
@@ -32,26 +32,11 @@ export function LoginScreen({ onAuthenticated, initialDomain = "posco.com" }: Lo
   const [registrationMessage, setRegistrationMessage] = useState<string | null>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
 
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (submitting) return;
-
-    const normalizedName = loginName.trim();
-    const normalizedDomain = loginDomain.trim().replace(/^@+/, "");
-    if (!normalizedName || !normalizedDomain || !password) {
-      setError("아이디, 주소와 비밀번호를 모두 입력해 주세요.");
-      if (!password) passwordRef.current?.focus();
-      return;
-    }
-
+  const authenticate = async (credentials: LoginRequest) => {
     setSubmitting(true);
     setError(null);
     try {
-      const session = await login({
-        loginName: normalizedName,
-        loginDomain: normalizedDomain,
-        password,
-      });
+      const session = await login(credentials);
       onAuthenticated(session);
     } catch (caught) {
       setPassword("");
@@ -64,6 +49,33 @@ export function LoginScreen({ onAuthenticated, initialDomain = "posco.com" }: Lo
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (submitting) return;
+
+    const normalizedName = loginName.trim();
+    const normalizedDomain = loginDomain.trim().replace(/^@+/, "");
+    if (!normalizedName || !normalizedDomain || !password) {
+      setError("아이디, 주소와 비밀번호를 모두 입력해 주세요.");
+      if (!password) passwordRef.current?.focus();
+      return;
+    }
+
+    await authenticate({
+      loginName: normalizedName,
+      loginDomain: normalizedDomain,
+      password,
+    });
+  };
+
+  const loginAsDevelopmentAdmin = async () => {
+    if (submitting) return;
+    setLoginName("admin");
+    setLoginDomain("posco.com");
+    setPassword("");
+    await authenticate({ loginName: "admin", loginDomain: "posco.com", password: "1" });
   };
 
   const submitRegistration = async (event: FormEvent<HTMLFormElement>) => {
@@ -136,14 +148,9 @@ export function LoginScreen({ onAuthenticated, initialDomain = "posco.com" }: Lo
               <button
                 className="login-dev-account"
                 type="button"
-                aria-label="개발 계정 admin@posco.com 채우기"
-                data-tooltip="개발 계정 admin@posco.com 채우기"
+                aria-label="개발 관리자 계정으로 로그인"
                 disabled={submitting}
-                onClick={() => {
-                  setLoginName("admin");
-                  setLoginDomain("posco.com");
-                  passwordRef.current?.focus();
-                }}
+                onClick={() => void loginAsDevelopmentAdmin()}
               >
                 <UserPlus size={16} strokeWidth={1.8} aria-hidden="true" />
               </button>
