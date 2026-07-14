@@ -2904,6 +2904,13 @@ button:disabled { cursor: default; opacity: 0.5; }
   color: var(--danger);
   box-shadow: 0 9px 26px var(--danger-shadow);
 }
+.theme-dark .toast:not(.is-error) {
+  border-color: color-mix(in srgb, var(--cobalt) 24%, var(--line));
+  background: var(--cobalt-pale);
+  color: var(--cobalt);
+  box-shadow: var(--shadow-overlay);
+  font-weight: 650;
+}
 .backend-disconnected {
   position: fixed;
   z-index: 120;

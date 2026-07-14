@@ -11,3 +11,9 @@ test("error toasts share the outlined danger alert treatment", () => {
   assert.match(stylesheet, /\.backend-disconnected \{[^}]*border: 1px solid var\(--danger-border\)[^}]*background: var\(--danger-surface\)/s);
   assert.doesNotMatch(stylesheet, /\.toast\.is-error \{[^}]*background:\s*#[0-9a-f]{3,8}/i);
 });
+
+test("dark informational toasts use the same quiet cobalt wash as selected navigation", () => {
+  assert.match(stylesheet, /\.primary-navigation button\.is-active \{[^}]*background: var\(--cobalt-pale\)[^}]*color: var\(--cobalt\)/s);
+  assert.match(stylesheet, /\.theme-dark \.toast:not\(\.is-error\) \{[^}]*background: var\(--cobalt-pale\)[^}]*color: var\(--cobalt\)[^}]*box-shadow: var\(--shadow-overlay\)/s);
+  assert.doesNotMatch(stylesheet, /\.theme-dark \.toast:not\(\.is-error\) \{[^}]*background: var\(--cobalt\)[^}]*color: white/s);
+});

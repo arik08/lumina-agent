@@ -257,7 +257,9 @@ Lumina는 flat by default입니다. 일반 section과 row는 surface tone과 1px
 - **Tooltip:** 모든 tooltip은 body portal의 공용 layer를 사용합니다. browser title과 clipping container 내부 pseudo-element는 금지합니다.
 - **Scrollbar:** 모든 사용자 노출 scroll surface는 공용 thin scrollbar를 사용합니다. Track은 투명하게 유지하고 thumb는 accent 색이 아닌 `ink` 기반의 중성 회색으로 계산합니다. 기본 상태는 11% 강도로 은은하게 보이며, 스크롤 조작 중에는 30%로 선명해지고 마지막 조작 650ms 후 520ms 동안 서서히 흐려집니다. Light와 Dark, Artifact Library, 채팅, Marketplace, 파일 Workspace, 예약 작업, 설정, popover와 선택 메뉴에 같은 token과 idle-fade 동작을 적용하며 화면별 색상 예외를 만들지 않습니다.
 
-### Warning and Error Messages
+### Status, Warning and Error Messages
+
+- **Informational Toast:** 저장, 접수와 대기열 추가 같은 일반 상태 toast는 cobalt wash 배경과 cobalt text를 사용합니다. 특히 Dark theme에서 밝은 cobalt 단색 배경과 흰색 text 조합은 금지하며, 선택된 `에이전트` navigation과 같은 조용한 accent 대비를 유지합니다.
 
 - **Warning / Error Standard:** 실패, 연결 끊김, 재시도가 필요한 경고 메시지는 `danger-border` 1px 전체 테두리, `danger-surface`의 연한 분홍 배경과 `danger` 텍스트를 사용합니다. 진한 빨간색 단색 배경이나 cobalt 정보 알림 스타일을 사용하지 않습니다.
 - **Shared Visual Language:** 화면 상단 연결 경고와 우측 하단 오류 toast는 위치와 크기가 달라도 같은 semantic token을 사용합니다. 공용 token을 바꾸면 두 표현이 함께 갱신되어야 합니다.
