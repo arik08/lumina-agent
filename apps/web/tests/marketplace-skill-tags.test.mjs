@@ -79,7 +79,7 @@ test("skill rows use a dedicated install and unused toggle without status badges
   assert.match(button, /const action = installed \? "Delete" : "Install"/);
   assert.match(styles, /\.skill-install-toggle\.is-installed:hover:not\(:disabled\) \.install-toggle-rest/);
   assert.match(styles, /\.skill-install-toggle\.is-installed:focus-visible:not\(:disabled\) \.install-toggle-hover/);
-  assert.match(styles, /\.skill-install-toggle \{[^}]*width: 96px; min-width: 96px; max-width: 96px;[^}]*height: 26px; min-height: 26px; max-height: 26px;/);
+  assert.match(styles, /\.feature-view\.feature-view \.skill-install-toggle \{[^}]*width: 80px; min-width: 80px; max-width: 80px;[^}]*height: 26px; min-height: 26px; max-height: 26px;/);
   assert.match(styles, /\.skill-install-toggle:active \{ transform: none; \}/);
   assert.match(styles, /\.skill-install-toggle\.is-installed \{[^}]*background: color-mix\(in oklab, var\(--success\) 8%, var\(--surface\)\)/);
   assert.match(styles, /\.skill-install-toggle\.is-installed:hover:not\(:disabled\)[^\{]*\{[^}]*background: color-mix\(in oklab, var\(--danger\) 12%, var\(--surface\)\)/);
