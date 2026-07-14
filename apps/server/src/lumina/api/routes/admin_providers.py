@@ -14,7 +14,12 @@ from ...config import Settings, get_settings
 from ...db import get_db
 from ...models import ProviderModel
 from ...providers import ProviderConfigurationError, ProviderRequestError
-from ...providers.catalog import ModelCatalogSeed, catalog_model, initial_model_catalog
+from ...providers.catalog import (
+    DEFAULT_CONTEXT_COMPACTION_THRESHOLD,
+    ModelCatalogSeed,
+    catalog_model,
+    initial_model_catalog,
+)
 from ...providers.openai_compatible import OpenAICompatibleAdapter
 from ..dependencies import AuthContext, get_current_user, require_csrf
 from ..errors import ApiProblem
@@ -89,6 +94,11 @@ def _payload(model: ProviderModel) -> dict[str, Any]:
         "defaultContextWindow": (
             catalog_entry.capabilities.context_window if catalog_entry else None
         ),
+        "defaultContextUsageRatio": (
+            catalog_entry.context_compaction_threshold
+            if catalog_entry and catalog_entry.context_compaction_threshold is not None
+            else DEFAULT_CONTEXT_COMPACTION_THRESHOLD
+        ),
         "maxOutputTokens": hard_max,
         "defaultMaxOutputTokens": default_max,
         "configuredMaxOutputTokens": configured_max,
@@ -112,6 +122,20 @@ def _validate_capabilities(
             422,
             "invalid_model_context_window",
             "최대 컨텍스트 토큰은 1 이상의 정수여야 합니다.",
+        )
+    context_usage_ratio = capabilities.get(
+        "context_compaction_threshold",
+        capabilities.get("contextCompactionThreshold"),
+    )
+    if context_usage_ratio is not None and (
+        isinstance(context_usage_ratio, bool)
+        or not isinstance(context_usage_ratio, (int, float))
+        or not 0 < context_usage_ratio <= 1
+    ):
+        raise ApiProblem(
+            422,
+            "invalid_context_usage_ratio",
+            "실제 사용 가능 비율은 1% 이상 100% 이하이어야 합니다.",
         )
     stored_hard_max = capabilities.get(
         "max_output_tokens", capabilities.get("maxOutputTokens")

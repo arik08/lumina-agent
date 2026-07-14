@@ -10,6 +10,7 @@ from .types import ProviderCapabilities
 CATALOG_REVISION = "2026-07-13.2-single-source"
 CATALOG_VERIFIED_AT = date(2026, 7, 13)
 PUBLIC_PRICING_VERSION = "public-list-2026-07-12"
+DEFAULT_CONTEXT_COMPACTION_THRESHOLD = 0.75
 
 
 @dataclass(frozen=True, slots=True)

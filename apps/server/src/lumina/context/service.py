@@ -22,13 +22,16 @@ from ..models import (
     utc_now,
 )
 from ..providers import ProviderMessage
-from ..providers.catalog import model_operational_profile
+from ..providers.catalog import (
+    DEFAULT_CONTEXT_COMPACTION_THRESHOLD,
+    model_operational_profile,
+)
 from ..runs.service import append_event
 
 
 PROMPT_VERSION = "context-compaction-v1"
 DEFAULT_CONTEXT_WINDOW = 32_000
-SOFT_THRESHOLD = 0.75
+SOFT_THRESHOLD = DEFAULT_CONTEXT_COMPACTION_THRESHOLD
 PGPT_TOKEN_ESTIMATION_PADDING = 4 / 3
 RECENT_MESSAGES_TO_PRESERVE = 4
 RUNTIME_RECENT_UNITS_TO_PRESERVE = 3
