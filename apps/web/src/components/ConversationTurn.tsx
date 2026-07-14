@@ -934,12 +934,19 @@ function RunActivityTimeline({
   );
 }
 
-function pendingMessageLabel(message: ChatMessage, commands: RunCommand[]) {
+function messageDeliveryLabel(message: ChatMessage, commands: RunCommand[]) {
   const command = commands.find((item) => item.messageId === message.id);
-  if (!command) return message.status === "pending" ? "접수 중" : null;
-  if (command.type === "queue_next") return command.queuePosition ? `Queue ${command.queuePosition}번` : "다음 요청으로 대기";
-  if (command.status === "waiting_safe_boundary") return "현재 Run에 반영 대기";
-  return "현재 Run에 반영됨";
+  const commandType = command?.type ?? message.metadata?.command_type;
+  if (commandType === "queue_next") {
+    if (command?.queuePosition) return `Queue · ${command.queuePosition}번 대기`;
+    return message.status === "pending" ? "Queue · 대기 중" : "Queue · 실행됨";
+  }
+  if (commandType === "steer") {
+    return command?.status === "waiting_safe_boundary" || message.status === "pending"
+      ? "Steering · 반영 대기"
+      : "Steering · 반영됨";
+  }
+  return message.status === "pending" ? "접수 중" : null;
 }
 
 interface CitationTarget {
@@ -1541,7 +1548,7 @@ export function AssistantTurn({
           )}
           <div className="user-message">
             {message.text && <div className="user-message-text">{message.text}</div>}
-            {pendingMessageLabel(message, pendingCommands) && <small className="message-state">{pendingMessageLabel(message, pendingCommands)}</small>}
+            {messageDeliveryLabel(message, pendingCommands) && <small className="message-state">{messageDeliveryLabel(message, pendingCommands)}</small>}
           </div>
         </div>
       ))}
