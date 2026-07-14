@@ -2012,6 +2012,8 @@ button:disabled { cursor: default; opacity: 0.5; }
 .syntax-editor > textarea { position: relative; z-index: 1; resize: none; outline: 0; background: transparent; color: transparent; caret-color: var(--ink); -webkit-text-fill-color: transparent; }
 .syntax-editor > textarea::selection { background: color-mix(in srgb, var(--cobalt) 28%, transparent); }
 .syntax-editor > textarea:disabled { caret-color: transparent; }
+.syntax-editor.syntax-editor > pre > .hljs,
+.syntax-editor.syntax-editor > pre > .hljs * { font-family: inherit; font-size: inherit; font-style: inherit; font-weight: inherit; line-height: inherit; letter-spacing: inherit; }
 .markdown-table-scroll { max-width: 100%; overflow-x: auto; margin: 0 0 1em; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .markdown-table-scroll table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
 .markdown-table-scroll :is(th, td) { min-width: 110px; padding: 7px 9px; border-bottom: 1px solid color-mix(in srgb, var(--line) 75%, transparent); text-align: left; vertical-align: top; }

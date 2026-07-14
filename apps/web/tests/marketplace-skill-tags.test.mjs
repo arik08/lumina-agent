@@ -38,7 +38,7 @@ test("skill visibility and version use the reviewed Publish.Merge.Feedback displ
   const listEnd = view.indexOf('</aside>', listStart);
   const list = view.slice(listStart, listEnd);
 
-  assert.match(view, /if \(visibility === "organization"\) return "조직"/);
+  assert.match(view, /if \(visibility === "organization"\) return "기본"/);
   assert.match(view, /if \(visibility === "project"\) return "프로젝트"/);
   assert.match(view, /function skillDisplayVersion\(item: SkillExtension\)/);
   assert.match(view, /return `v\$\{publish\}\.\$\{merge\}\.\$\{feedback\}`/);
