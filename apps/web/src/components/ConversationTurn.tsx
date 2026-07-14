@@ -1551,8 +1551,8 @@ export function AssistantTurn({
           )}
           <div className="user-message">
             {message.text && <div className="user-message-text">{message.text}</div>}
-            {messageDeliveryLabel(message, pendingCommands) && <small className="message-state">{messageDeliveryLabel(message, pendingCommands)}</small>}
           </div>
+          {messageDeliveryLabel(message, pendingCommands) && <small className="message-state">{messageDeliveryLabel(message, pendingCommands)}</small>}
         </div>
       ))}
       {hasWorkDetails && (
