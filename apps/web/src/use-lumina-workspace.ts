@@ -737,6 +737,29 @@ export function useLuminaWorkspace() {
     return () => controller.abort();
   }, [activeProjectId, providers]);
 
+  const refreshProviderCatalog = useCallback(async () => {
+    const projectId = activeProjectIdRef.current;
+    if (!projectId) return;
+    try {
+      const providerItems = await api.providers.list(projectId);
+      const entries = await Promise.all(
+        providerItems
+          .filter((provider) => provider.id !== "mock")
+          .map(async (provider) => [
+            provider.id,
+            await api.providers.listModels(provider.id, projectId),
+          ] as const),
+      );
+      const nextProviderModels = Object.fromEntries(entries);
+      setProviders(providerItems);
+      setProviderModels(nextProviderModels);
+      const selectedProviderId = settingsRef.current?.execution.providerId;
+      if (selectedProviderId) setModels(nextProviderModels[selectedProviderId] ?? []);
+    } catch (error) {
+      setNotice(apiMessage(error));
+    }
+  }, []);
+
   const persistSettings = useCallback(async (patch:
     Pick<CurrentSettings, "theme">
     | Pick<CurrentSettings, "outputMode">
@@ -1318,6 +1341,7 @@ export function useLuminaWorkspace() {
     providers,
     models,
     providerModels,
+    refreshProviderCatalog,
     selectedModel,
     selectProvider,
     selectModel,

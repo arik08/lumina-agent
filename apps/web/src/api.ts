@@ -9,6 +9,7 @@ import type {
   AdminConversationList,
   AdminEmergencyStopResult,
   AdminProviderModel,
+  AdminProviderSummary,
   AdminRunSafetySettings,
   AdminUsageStatistics,
   AdminUser,
@@ -620,15 +621,27 @@ export async function listAdminProviderModels(providerId: string, signal?: Abort
   return request<AdminProviderModel[]>(`/admin/providers/${encodeURIComponent(providerId)}/models`, { signal });
 }
 
+export async function listAdminProviders(signal?: AbortSignal) {
+  return request<AdminProviderSummary[]>("/admin/providers", { signal });
+}
+
+export async function updateAdminProviderAvailability(providerId: string, enabled: boolean, signal?: AbortSignal) {
+  return request<AdminProviderSummary>(`/admin/providers/${encodeURIComponent(providerId)}`, {
+    method: "PATCH",
+    body: { enabled },
+    signal,
+  });
+}
+
 export async function updateAdminProviderModel(
   providerId: string,
   modelKey: string,
-  capabilities: Record<string, unknown>,
+  patch: { enabled?: boolean; capabilities?: Record<string, unknown> },
   signal?: AbortSignal,
 ) {
   return request<AdminProviderModel>(`/admin/providers/${encodeURIComponent(providerId)}/models/${encodeURIComponent(modelKey)}`, {
     method: "PATCH",
-    body: { capabilities },
+    body: patch,
     signal,
   });
 }
@@ -1780,7 +1793,12 @@ export const api = {
   },
   settings: { getCurrent: getCurrentSettings, updateCurrent: updateCurrentSettings },
   providers: { list: listProviders, listModels: listProviderModels },
-  adminProviders: { listModels: listAdminProviderModels, updateModel: updateAdminProviderModel },
+  adminProviders: {
+    list: listAdminProviders,
+    listModels: listAdminProviderModels,
+    updateAvailability: updateAdminProviderAvailability,
+    updateModel: updateAdminProviderModel,
+  },
   conversations: {
     list: listConversations,
     searchContent: searchConversationContent,

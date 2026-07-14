@@ -79,6 +79,7 @@ import { isTerminalRunStatus } from "./run-status";
 import { SyntaxCode, SyntaxTextarea } from "./components/SyntaxCode";
 import type {
   AdminProviderModel,
+  AdminProviderSummary,
   ArtifactSummary,
   ArtifactVersion,
   ComposerSuggestion,
@@ -461,6 +462,8 @@ const accountProviderOrder: Record<string, number> = {
   google: 1,
   codex: 2,
   anthropic: 3,
+  openai: 4,
+  openai_compatible: 5,
 };
 
 function findComposerTrigger(text: string, caret: number): ComposerTriggerState | null {
@@ -866,6 +869,9 @@ function App() {
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [providerMenuOpen, setProviderMenuOpen] = useState(false);
   const [providerModelMenuId, setProviderModelMenuId] = useState<string | null>(null);
+  const [adminFooterProviders, setAdminFooterProviders] = useState<AdminProviderSummary[]>([]);
+  const [adminFooterModels, setAdminFooterModels] = useState<Record<string, AdminProviderModel[]>>({});
+  const [adminFooterBusyId, setAdminFooterBusyId] = useState<string | null>(null);
   const [modelNameTooltip, setModelNameTooltip] = useState<{ name: string; left: number; top: number } | null>(null);
   const [conversationSearchOpen, setConversationSearchOpen] = useState(false);
   const [notificationOpen, setNotificationOpen] = useState(false);
@@ -1120,6 +1126,64 @@ function App() {
   const selectedAdminSettingsModel = adminSettingsModels.find((model) => model.modelKey === adminSettingsModelKey) ?? null;
 
   useEffect(() => {
+    if (!isAdmin || !providerMenuOpen) return;
+    const controller = new AbortController();
+    api.adminProviders.list(controller.signal)
+      .then(async (providers) => {
+        const models = await Promise.all(
+          providers.map(async (provider) => [
+            provider.id,
+            await api.adminProviders.listModels(provider.id, controller.signal),
+          ] as const),
+        );
+        if (controller.signal.aborted) return;
+        setAdminFooterProviders(providers);
+        setAdminFooterModels(Object.fromEntries(models));
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) showToast(error instanceof Error ? error.message : "Provider 설정을 불러오지 못했습니다.");
+      });
+    return () => controller.abort();
+  }, [isAdmin, providerMenuOpen]);
+
+  const setAdminFooterProviderEnabled = async (providerId: string, enabled: boolean) => {
+    setAdminFooterBusyId(providerId);
+    try {
+      const provider = await api.adminProviders.updateAvailability(providerId, enabled);
+      const models = await api.adminProviders.listModels(providerId);
+      setAdminFooterProviders((items) => items.map((item) => item.id === providerId ? provider : item));
+      setAdminFooterModels((items) => ({ ...items, [providerId]: models }));
+      await workspace.refreshProviderCatalog();
+      showToast(`${provider.displayName}을(를) ${enabled ? "사용 가능" : "사용 중지"} 상태로 변경했습니다.`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Provider 설정을 변경하지 못했습니다.");
+    } finally {
+      setAdminFooterBusyId(null);
+    }
+  };
+
+  const setAdminFooterModelEnabled = async (providerId: string, modelKey: string, enabled: boolean) => {
+    const busyId = `${providerId}:${modelKey}`;
+    setAdminFooterBusyId(busyId);
+    try {
+      await api.adminProviders.updateModel(providerId, modelKey, { enabled });
+      const [providers, models] = await Promise.all([
+        api.adminProviders.list(),
+        api.adminProviders.listModels(providerId),
+      ]);
+      setAdminFooterProviders(providers);
+      setAdminFooterModels((items) => ({ ...items, [providerId]: models }));
+      await workspace.refreshProviderCatalog();
+      const model = models.find((item) => item.modelKey === modelKey);
+      showToast(`${model?.displayName ?? modelKey}을(를) ${enabled ? "사용 가능" : "사용 중지"} 상태로 변경했습니다.`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Model 설정을 변경하지 못했습니다.");
+    } finally {
+      setAdminFooterBusyId(null);
+    }
+  };
+
+  useEffect(() => {
     if (mainView !== "settings" || !isAdmin) return;
     const providerId = adminSettingsProviderId || accountProviders[0]?.id;
     if (!providerId) return;
@@ -1163,7 +1227,7 @@ function App() {
     try {
       const capabilities: Record<string, unknown> = { ...selectedAdminSettingsModel.capabilities, context_window: contextWindow };
       delete capabilities.contextWindow;
-      const updated = await api.adminProviders.updateModel(adminSettingsProviderId, selectedAdminSettingsModel.modelKey, capabilities);
+      const updated = await api.adminProviders.updateModel(adminSettingsProviderId, selectedAdminSettingsModel.modelKey, { capabilities });
       setAdminSettingsModels((models) => models.map((model) => model.modelKey === updated.modelKey ? updated : model));
       showToast(`${updated.displayName} 최대 토큰을 저장했습니다.`);
     } catch (error) {
@@ -1182,7 +1246,7 @@ function App() {
         context_window: selectedAdminSettingsModel.defaultContextWindow,
       };
       delete capabilities.contextWindow;
-      const updated = await api.adminProviders.updateModel(adminSettingsProviderId, selectedAdminSettingsModel.modelKey, capabilities);
+      const updated = await api.adminProviders.updateModel(adminSettingsProviderId, selectedAdminSettingsModel.modelKey, { capabilities });
       setAdminSettingsModels((models) => models.map((model) => model.modelKey === updated.modelKey ? updated : model));
       showToast(`${updated.displayName} 최대 토큰을 기본값으로 초기화했습니다.`);
     } catch (error) {
@@ -1208,7 +1272,7 @@ function App() {
       const updated = await api.adminProviders.updateModel(
         adminSettingsProviderId,
         selectedAdminSettingsModel.modelKey,
-        capabilities,
+        { capabilities },
       );
       setAdminSettingsModels((models) => models.map((model) => model.modelKey === updated.modelKey ? updated : model));
       showToast(`${updated.displayName} 출력 토큰 상한을 ${value.toLocaleString()}으로 저장했습니다.`);
@@ -1226,7 +1290,6 @@ function App() {
   };
   const candidateModelOptions = accountProviders.flatMap((provider) =>
     (workspace.providerModels[provider.id] ?? [])
-      .filter((model) => workspace.settings?.modelCandidates[provider.id]?.includes(model.modelKey))
       .map((model) => ({
         id: `${provider.id}:${model.modelKey}`,
         label: `${model.displayName} · ${provider.displayName}`,
@@ -2388,47 +2451,49 @@ function App() {
             <div className="account-menu" role="menu" aria-label="계정 설정">
               {isAdmin && <button className="account-menu-admin" type="button" role="menuitem" onClick={openAdmin}><ShieldCheck size={15} /><span><strong>시스템 관리</strong></span><kbd aria-hidden="true">Ctrl + Shift + X</kbd></button>}
               <button className="account-menu-shortcut" type="button" role="menuitem" onClick={openSettings}><Settings size={15} /><span><strong>설정</strong></span><kbd aria-hidden="true">Ctrl + Shift + S</kbd></button>
-              <div className="account-menu-separator" />
-              <button className="account-menu-provider-trigger" type="button" role="menuitem" aria-expanded={providerMenuOpen} onClick={() => setProviderMenuOpen((open) => !open)}>
-                <Bot size={15} />
-                <span><strong>Provider</strong></span>
-                {providerMenuOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-              </button>
-              {providerMenuOpen && (
-                <div className="account-provider-list" role="group" aria-label="Provider 목록">
-                  {accountProviders.map((provider) => {
-                    const providerIsOpen = providerModelMenuId === provider.id;
-                    const providerModels = workspace.providerModels[provider.id] ?? [];
-                    const providerIsChecked = (workspace.settings?.modelCandidates[provider.id]?.length ?? 0) > 0;
-                    return (
-                      <div className={`account-provider-group ${provider.connectionStatus === "ready" ? "" : "is-needs-setup"}`} key={provider.id}>
-                        <div className="account-provider-row">
-                          <button className={`account-provider-checkbox ${providerIsChecked ? "is-checked" : ""}`} type="button" role="checkbox" aria-checked={providerIsChecked} aria-label={`${provider.displayName} 모델 ${providerIsChecked ? "숨기기" : "표시하기"}`} onClick={() => void workspace.setModelCandidates(provider.id, providerIsChecked ? [] : providerModels.map((model) => model.modelKey))}>
-                            {providerIsChecked && <Check size={12} strokeWidth={3} />}
-                          </button>
-                          <button className="account-provider-toggle" type="button" role="menuitem" aria-expanded={providerIsOpen} onClick={() => setProviderModelMenuId((current) => current === provider.id ? null : provider.id)}>
-                            <span><strong>{provider.displayName}</strong></span>
-                            {providerIsOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                          </button>
-                        </div>
-                        {providerIsOpen && (
-                          <div className="account-model-checklist" role="group" aria-label={`${provider.displayName} 모델 목록`}>
-                            {providerModels.map((model) => {
-                              const checked = workspace.settings?.modelCandidates[provider.id]?.includes(model.modelKey) ?? false;
-                              return (
-                                <button type="button" role="menuitemcheckbox" aria-checked={checked} key={model.modelKey} onMouseEnter={(event) => scheduleModelNameTooltip(event, model.displayName)} onMouseLeave={hideModelNameTooltip} onClick={() => { hideModelNameTooltip(); void workspace.toggleModelCandidate(provider.id, model.modelKey); }}>
-                                  <span className={`account-model-checkbox ${checked ? "is-checked" : ""}`}>{checked && <Check size={11} strokeWidth={3} />}</span>
-                                  <span className="account-model-name">{model.displayName}</span>
-                                </button>
-                              );
-                            })}
+              {isAdmin && <>
+                <div className="account-menu-separator" />
+                <button className="account-menu-provider-trigger" type="button" role="menuitem" aria-expanded={providerMenuOpen} onClick={() => setProviderMenuOpen((open) => !open)}>
+                  <Bot size={15} />
+                  <span><strong>Provider</strong><small>사용자 모델 허용 관리</small></span>
+                  {providerMenuOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                </button>
+                {providerMenuOpen && (
+                  <div className="account-provider-list" role="group" aria-label="사용 가능한 Provider 관리">
+                    {[...adminFooterProviders].sort((left, right) => (accountProviderOrder[left.id] ?? Number.MAX_SAFE_INTEGER) - (accountProviderOrder[right.id] ?? Number.MAX_SAFE_INTEGER) || left.displayName.localeCompare(right.displayName)).map((provider) => {
+                      const providerIsOpen = providerModelMenuId === provider.id;
+                      const providerModels = adminFooterModels[provider.id] ?? [];
+                      const providerBusy = adminFooterBusyId === provider.id;
+                      return (
+                        <div className="account-provider-group" key={provider.id}>
+                          <div className="account-provider-row">
+                            <button className={`account-provider-checkbox ${provider.enabled ? "is-checked" : ""}`} type="button" role="checkbox" aria-checked={provider.enabled} aria-label={`${provider.displayName} 사용자 사용 ${provider.enabled ? "중지" : "허용"}`} disabled={providerBusy} onClick={() => void setAdminFooterProviderEnabled(provider.id, !provider.enabled)}>
+                              {provider.enabled && <Check size={12} strokeWidth={3} />}
+                            </button>
+                            <button className="account-provider-toggle" type="button" role="menuitem" aria-expanded={providerIsOpen} onClick={() => setProviderModelMenuId((current) => current === provider.id ? null : provider.id)}>
+                              <span><strong>{provider.displayName}</strong></span>
+                              {providerIsOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                            </button>
                           </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+                          {providerIsOpen && (
+                            <div className="account-model-checklist" role="group" aria-label={`${provider.displayName} 사용자 모델 허용 목록`}>
+                              {providerModels.map((model) => {
+                                const busy = adminFooterBusyId === `${provider.id}:${model.modelKey}`;
+                                return (
+                                  <button type="button" role="menuitemcheckbox" aria-checked={model.enabled} disabled={busy} key={model.modelKey} onMouseEnter={(event) => scheduleModelNameTooltip(event, model.displayName)} onMouseLeave={hideModelNameTooltip} onClick={() => { hideModelNameTooltip(); void setAdminFooterModelEnabled(provider.id, model.modelKey, !model.enabled); }}>
+                                    <span className={`account-model-checkbox ${model.enabled ? "is-checked" : ""}`}>{model.enabled && <Check size={11} strokeWidth={3} />}</span>
+                                    <span className="account-model-name">{model.displayName}</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </>}
               <div className="account-menu-separator" />
               <button type="button" role="menuitem" onClick={() => void workspace.logout()}><LogOut size={15} /><span><strong>로그아웃</strong><small>현재 서버 세션 종료</small></span></button>
             </div>

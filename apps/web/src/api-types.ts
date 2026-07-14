@@ -291,6 +291,14 @@ export interface AdminProviderModel {
   outputTokenStep: number;
 }
 
+export interface AdminProviderSummary {
+  id: string;
+  displayName: string;
+  enabled: boolean;
+  enabledModelCount: number;
+  modelCount: number;
+}
+
 export type RuntimePromptKey = "system" | "agent_default";
 
 export interface RuntimePromptDocument {

@@ -19,6 +19,7 @@ from ...providers.openai_compatible import OpenAICompatibleAdapter
 from ..dependencies import AuthContext, get_current_user, require_csrf
 from ..errors import ApiProblem
 from ..schemas import ApiModel
+from .providers import PROVIDER_NAMES
 
 
 router = APIRouter(prefix="/admin/providers", tags=["admin", "providers"])
@@ -49,6 +50,10 @@ class ProviderModelPatch(ApiModel):
         if not self.model_fields_set:
             raise ValueError("At least one model field is required")
         return self
+
+
+class ProviderAvailabilityPatch(ApiModel):
+    enabled: bool
 
 
 def _payload(model: ProviderModel) -> dict[str, Any]:
@@ -147,6 +152,94 @@ def _positive_int(value: Any) -> int | None:
     if isinstance(value, int) and not isinstance(value, bool) and value > 0:
         return value
     return None
+
+
+def _provider_payload(provider_id: str, models: list[ProviderModel]) -> dict[str, Any]:
+    return {
+        "id": provider_id,
+        "displayName": PROVIDER_NAMES.get(provider_id, provider_id),
+        "enabled": any(model.enabled for model in models),
+        "enabledModelCount": sum(1 for model in models if model.enabled),
+        "modelCount": len(models),
+    }
+
+
+@router.get("")
+def list_admin_providers(
+    actor=Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict[str, Any]]:
+    require_admin(actor)
+    models = list(
+        db.scalars(
+            select(ProviderModel).order_by(
+                ProviderModel.provider_id,
+                ProviderModel.sort_order,
+                ProviderModel.model_key,
+            )
+        )
+    )
+    grouped: dict[str, list[ProviderModel]] = {}
+    for model in models:
+        grouped.setdefault(model.provider_id, []).append(model)
+    return [_provider_payload(provider_id, items) for provider_id, items in grouped.items()]
+
+
+@router.patch("/{provider_id}")
+def patch_provider_availability(
+    provider_id: str,
+    payload: ProviderAvailabilityPatch,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    require_admin(context.user)
+    models = list(
+        db.scalars(
+            select(ProviderModel)
+            .where(ProviderModel.provider_id == provider_id)
+            .order_by(ProviderModel.sort_order, ProviderModel.model_key)
+        )
+    )
+    if not models:
+        raise ApiProblem(404, "not_found", "Provider를 찾을 수 없습니다.")
+
+    if payload.enabled:
+        enabled_models = [model for model in models if model.enabled]
+        if not enabled_models:
+            preferred = next(
+                (
+                    model
+                    for model in models
+                    if (entry := catalog_model(provider_id, model.model_key))
+                    and entry.is_default
+                ),
+                models[0],
+            )
+            preferred.enabled = True
+            enabled_models = [preferred]
+        default_model = next(
+            (model for model in enabled_models if model.is_default), enabled_models[0]
+        )
+        for model in models:
+            model.is_default = model.id == default_model.id
+    else:
+        for model in models:
+            model.enabled = False
+            model.is_default = False
+
+    record_audit(
+        db,
+        action="provider_availability_updated",
+        target_type="provider",
+        target_id=provider_id,
+        result="success",
+        actor=context.user,
+        request_id=getattr(request.state, "request_id", None),
+        metadata={"enabled": payload.enabled},
+    )
+    db.commit()
+    return _provider_payload(provider_id, models)
 
 
 @router.get("/{provider_id}/models")
@@ -365,6 +458,15 @@ def patch_model(
     values = payload.model_dump(exclude_unset=True)
     enabled = values.get("enabled", model.enabled)
     becoming_default = values.get("is_default") is True
+    if values.get("enabled") is True and not db.scalar(
+        select(ProviderModel.id).where(
+            ProviderModel.provider_id == provider_id,
+            ProviderModel.enabled.is_(True),
+            ProviderModel.is_default.is_(True),
+        )
+    ):
+        values["is_default"] = True
+        becoming_default = True
     if becoming_default and not enabled:
         raise ApiProblem(
             422, "default_model_must_be_enabled", "기본 Model은 활성 상태여야 합니다."
@@ -385,11 +487,16 @@ def patch_model(
                 "다른 기본 Model을 먼저 지정해 주세요.",
             )
     if values.get("enabled") is False and model.is_default and not becoming_default:
-        raise ApiProblem(
-            409,
-            "cannot_disable_default_model",
-            "다른 기본 Model을 먼저 지정해 주세요.",
+        replacement = db.scalar(
+            select(ProviderModel).where(
+                ProviderModel.provider_id == provider_id,
+                ProviderModel.model_key != model_key,
+                ProviderModel.enabled.is_(True),
+            ).order_by(ProviderModel.sort_order, ProviderModel.model_key)
         )
+        model.is_default = False
+        if replacement is not None:
+            replacement.is_default = True
     if becoming_default:
         db.execute(
             update(ProviderModel)

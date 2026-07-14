@@ -49,13 +49,15 @@ test("running a scheduled task refreshes the sidebar conversation list immediate
   assert.match(workspace, /return\s*\{[\s\S]*?refreshConversations,/);
 });
 
-test("new schedules choose an independent execution from the checked chat models", async () => {
+test("new schedules choose an independent execution from admin-enabled models", async () => {
   const [view, app] = await Promise.all([
     read("../src/components/SchedulesView.tsx"),
     read("../src/App.tsx"),
   ]);
 
-  assert.match(app, /\.filter\(\(model\) => workspace\.settings\?\.modelCandidates\[provider\.id\]\?\.includes\(model\.modelKey\)\)/);
+  const candidateBlock = app.slice(app.indexOf("const candidateModelOptions"), app.indexOf("const selectedCandidateId"));
+  assert.match(candidateBlock, /workspace\.providerModels\[provider\.id\]/);
+  assert.doesNotMatch(candidateBlock, /modelCandidates/);
   assert.match(app, /<SchedulesView[\s\S]*?executionOptions=\{candidateModelOptions\}/);
   assert.match(view, /setDraftExecution\(defaultScheduleExecution\(execution, executionOptions\)\)/);
   assert.match(view, /ariaLabel="예약 Provider"/);

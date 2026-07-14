@@ -92,13 +92,69 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
         assert activated.json()["enabled"] is True
         assert activated.json()["isDefault"] is True
 
-        rejected = client.patch(
+        disabled = client.patch(
             "/api/admin/providers/internal/models/internal-analysis-v1",
             headers={"X-CSRF-Token": csrf},
             json={"enabled": False},
         )
-        assert rejected.status_code == 409
-        assert rejected.json()["code"] == "cannot_disable_default_model"
+        assert disabled.status_code == 200, disabled.text
+        assert disabled.json()["enabled"] is False
+        assert disabled.json()["isDefault"] is False
+        assert all(item["id"] != "internal" for item in client.get("/api/providers").json())
+
+        enabled_provider = client.patch(
+            "/api/admin/providers/internal",
+            headers={"X-CSRF-Token": csrf},
+            json={"enabled": True},
+        )
+        assert enabled_provider.status_code == 200, enabled_provider.text
+        assert enabled_provider.json()["enabled"] is True
+        assert enabled_provider.json()["enabledModelCount"] == 1
+
+        admin_providers = client.get("/api/admin/providers")
+        assert admin_providers.status_code == 200
+        internal = next(item for item in admin_providers.json() if item["id"] == "internal")
+        assert internal["enabled"] is True
+        assert internal["modelCount"] == 1
+
+
+def test_provider_availability_management_requires_admin(tmp_path: Path) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'lumina.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    with TestClient(create_app(settings)) as client:
+        admin_csrf = _login_admin(client)
+        created = client.post(
+            "/api/admin/users",
+            headers={"X-CSRF-Token": admin_csrf},
+            json={
+                "loginName": "general-user",
+                "loginDomain": "posco.com",
+                "password": "pw",
+                "role": "user",
+                "status": "active",
+            },
+        )
+        assert created.status_code == 201, created.text
+        client.post("/api/auth/logout", headers={"X-CSRF-Token": admin_csrf})
+        login = client.post(
+            "/api/auth/login",
+            json={"loginName": "general-user", "loginDomain": "posco.com", "password": "pw"},
+        )
+        assert login.status_code == 200
+        csrf = login.json()["csrfToken"]
+
+        assert client.get("/api/admin/providers").status_code == 403
+        assert client.patch(
+            "/api/admin/providers/codex",
+            headers={"X-CSRF-Token": csrf},
+            json={"enabled": False},
+        ).status_code == 403
 
 
 def _login_admin(client: TestClient) -> str:
