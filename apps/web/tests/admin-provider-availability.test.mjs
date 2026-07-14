@@ -6,7 +6,8 @@ const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const api = readFileSync(new URL("../src/api.ts", import.meta.url), "utf8");
 
 test("footer provider availability controls are admin-only", () => {
-  assert.match(app, /\{isAdmin && <>[\s\S]*사용자 모델 허용 관리[\s\S]*setAdminFooterProviderEnabled/);
+  assert.match(app, /\{isAdmin && <>[\s\S]*account-menu-provider-trigger[\s\S]*setAdminFooterProviderEnabled/);
+  assert.doesNotMatch(app, />사용자 모델 허용 관리</);
   assert.match(app, /setAdminFooterModelEnabled\(provider\.id, model\.modelKey, !model\.enabled\)/);
 });
 

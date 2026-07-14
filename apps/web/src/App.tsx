@@ -2455,7 +2455,7 @@ function App() {
                 <div className="account-menu-separator" />
                 <button className="account-menu-provider-trigger" type="button" role="menuitem" aria-expanded={providerMenuOpen} onClick={() => setProviderMenuOpen((open) => !open)}>
                   <Bot size={15} />
-                  <span><strong>Provider</strong><small>사용자 모델 허용 관리</small></span>
+                  <span><strong>Provider</strong></span>
                   {providerMenuOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                 </button>
                 {providerMenuOpen && (
