@@ -45,8 +45,9 @@
 
 ## CodeGraph
 
-- 코드 작업 시작 시 `codegraph_status`와 `.codegraph/codegraph.db` 수정 시각을 확인합니다. graph가 없거나 source/Git HEAD보다 오래됐으면 `powershell -ExecutionPolicy Bypass -File devtools/update_codegraph.ps1`로 갱신하고 다시 확인합니다.
-- 코드 수정·리뷰·리팩터링·영향 조사에는 CodeGraph를 우선합니다. 순수 문구 수정이나 영향이 명백한 국소 변경은 생략할 수 있습니다.
+- 코드 작업 시작 시 `codegraph status --json .`과 `.codegraph/codegraph.db` 수정 시각을 확인합니다. graph가 없거나 pending change가 있거나 `reindexRecommended`가 true이면 `powershell -ExecutionPolicy Bypass -File devtools/update_codegraph.ps1`로 갱신하고 다시 확인합니다.
+- 코드 수정·리뷰·리팩터링·영향 조사에는 MCP의 `codegraph_explore`를 우선합니다. MCP가 현재 세션에 없으면 `codegraph explore "<질문 또는 심볼>"` CLI를 사용합니다. 순수 문구 수정이나 영향이 명백한 국소 변경은 생략할 수 있습니다.
+- 최신 CodeGraph MCP는 기본적으로 `codegraph_explore` 하나만 노출합니다. 과거의 `codegraph_status`, `codegraph_search`, `codegraph_node` 등 개별 도구가 없다는 이유로 연결 실패로 판단하지 않습니다.
 - `.examples/`, `data/`, 비밀 정보와 생성 산출물은 인덱스에 포함하지 않습니다.
 
 ## Git 체크포인트

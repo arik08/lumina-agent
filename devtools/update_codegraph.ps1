@@ -9,7 +9,23 @@ if (-not $codegraph) {
 }
 
 if (Test-Path -LiteralPath $databasePath) {
-    & $codegraph.Source sync $repoRoot
+    $statusJson = & $codegraph.Source status --json $repoRoot
+    if ($LASTEXITCODE -ne 0) {
+        throw "CodeGraph pre-update status check failed with exit code $LASTEXITCODE."
+    }
+
+    try {
+        $status = ($statusJson -join [Environment]::NewLine) | ConvertFrom-Json
+    } catch {
+        throw "CodeGraph pre-update status returned invalid JSON: $($_.Exception.Message)"
+    }
+
+    if ($status.index -and $status.index.reindexRecommended -eq $true) {
+        Write-Host "CodeGraph extraction version changed; rebuilding the project index."
+        & $codegraph.Source index $repoRoot
+    } else {
+        & $codegraph.Source sync $repoRoot
+    }
 } else {
     & $codegraph.Source init -i $repoRoot
 }

@@ -345,13 +345,21 @@ def test_installer_frontend_lock_check_reports_locked_native_module(
     assert "binding.node" in output
 
 
-def test_codegraph_update_does_not_require_git_metadata() -> None:
+def test_codegraph_update_is_portable_and_reindexes_after_cli_upgrades() -> None:
     script = (
         Path(__file__).resolve().parents[2] / "devtools" / "update_codegraph.ps1"
     ).read_text(encoding="utf-8")
 
     assert "git rev-parse" not in script
     assert "codegraph.Source sync" in script
+    assert "reindexRecommended" in script
+    assert "codegraph.Source index" in script
+
+    agent_guidance = (
+        Path(__file__).resolve().parents[2] / "AGENTS.md"
+    ).read_text(encoding="utf-8")
+    assert "codegraph_explore" in agent_guidance
+    assert "개별 도구가 없다는 이유로 연결 실패로 판단하지 않습니다" in agent_guidance
 
 
 def test_installer_validate_only_forces_offline_uv(tmp_path: Path) -> None:
