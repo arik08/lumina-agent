@@ -801,7 +801,7 @@ export function ProjectFilesView({ projectId, onOpenNavigation, onToast }: Proje
         >
           <button type="button" disabled={!projectId || busy} onClick={() => uploadInputRef.current?.click()}><FilePlus2 size={13} /> 파일 선택</button>
           <button type="button" disabled={!projectId || busy} onClick={() => folderInputRef.current?.click()}><FolderOpen size={13} /> 폴더 선택</button>
-          <span className="file-drop-hint"><Upload size={14} /><span>파일·폴더를 놓아 업로드</span></span>
+          <span className="file-drop-hint" aria-hidden="true"><Upload size={14} /></span>
         </div>
         <label className="feature-search"><Search size={14} /><input value={query} placeholder="파일명 또는 폴더 경로 검색" onChange={(event) => setQuery(event.currentTarget.value)} /></label>
       </div>

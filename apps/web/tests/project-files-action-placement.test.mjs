@@ -29,6 +29,10 @@ test("file workspace keeps refresh at the far right of the header", async () => 
   assert.doesNotMatch(view.slice(headerStart, headerEnd), /업로드/);
   assert.ok(toolbarStart >= 0 && toolbarStart < dropTarget && dropTarget < searchField && searchField < toolbarEnd);
   assert.doesNotMatch(view.slice(toolbarStart, toolbarEnd), /새로 고침|file-workspace-refresh/);
+  assert.doesNotMatch(dropTargetMarkup, /파일·폴더를 놓아 업로드/);
+  assert.match(dropTargetMarkup, /onDragEnter=/);
+  assert.match(dropTargetMarkup, /onDragOver=/);
+  assert.match(dropTargetMarkup, /onDrop=/);
   assert.doesNotMatch(view, /file-workspace-list-toolbar|file-workspace-list-refresh/);
   assert.doesNotMatch(styles, /\.file-workspace-list-toolbar/);
   assert.match(styles, /\.file-workspace-toolbar \.feature-search\s*\{[^}]*flex:\s*1;/);
