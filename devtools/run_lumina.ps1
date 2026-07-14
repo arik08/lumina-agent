@@ -18,6 +18,7 @@ $script:LauncherStartedAt = [DateTime]::UtcNow
 $script:StartupStateSequence = 0
 $script:StartupStateStatus = "starting"
 . (Join-Path $PSScriptRoot "LuminaCache.Env.ps1") -RepositoryRoot $RepositoryRoot
+. (Join-Path $PSScriptRoot "LuminaLauncher.Input.ps1")
 
 function Get-ConfiguredPort {
     param(
@@ -580,20 +581,6 @@ function Test-LuminaHealthy {
         "http://127.0.0.1:$BackendPort/"
     }
     return Test-Endpoint -Uri $frontendUri
-}
-
-function Test-HardResetInput {
-    param(
-        [char]$Character = [char]0,
-        [int]$VirtualKeyCode = 0
-    )
-
-    return (
-        $VirtualKeyCode -eq [int][ConsoleKey]::R -or
-        $Character -ceq 'r' -or
-        $Character -ceq 'R' -or
-        [int]$Character -eq 0x3131
-    )
 }
 
 function Test-HardResetKey {

@@ -11,7 +11,18 @@ if ($errors.Count -gt 0) {
     throw "run_lumina.ps1 has parser errors: $($errors.Message -join '; ')"
 }
 
-$inputFunction = $ast.Find(
+$inputSourcePath = Join-Path $PSScriptRoot "LuminaLauncher.Input.ps1"
+$inputTokens = $null
+$inputErrors = $null
+$inputAst = [System.Management.Automation.Language.Parser]::ParseFile(
+    $inputSourcePath,
+    [ref]$inputTokens,
+    [ref]$inputErrors
+)
+if ($inputErrors.Count -gt 0) {
+    throw "LuminaLauncher.Input.ps1 has parser errors: $($inputErrors.Message -join '; ')"
+}
+$inputFunction = $inputAst.Find(
     {
         param($node)
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
@@ -23,6 +34,23 @@ if ($null -eq $inputFunction) {
     throw "Test-HardResetInput was not found."
 }
 . ([scriptblock]::Create($inputFunction.Extent.Text))
+
+$repositoryRoot = Split-Path -Parent $PSScriptRoot
+$developmentLauncherPath = Join-Path $repositoryRoot "run_lumina_dev.bat"
+$developmentLauncherSource = Get-Content -Raw -LiteralPath $developmentLauncherPath
+$restartPromptPath = Join-Path $PSScriptRoot "Wait-LuminaLauncherRestart.ps1"
+$restartPromptSource = Get-Content -Raw -LiteralPath $restartPromptPath
+if (
+    $developmentLauncherSource -notmatch '(?m)^:run_lumina\s*$' -or
+    $developmentLauncherSource -notmatch 'Wait-LuminaLauncherRestart\.ps1' -or
+    $developmentLauncherSource -notmatch 'if "%ERRORLEVEL%"=="75"' -or
+    $developmentLauncherSource -notmatch 'goto run_lumina' -or
+    $restartPromptSource -notmatch 'LuminaLauncher\.Input\.ps1' -or
+    $restartPromptSource -notmatch 'Test-HardResetInput' -or
+    $restartPromptSource -notmatch 'exit 75'
+) {
+    throw "The development launcher failure prompt must restart on the shared hard-reset input contract."
+}
 
 $startManagedProcessFunction = $ast.Find(
     {
