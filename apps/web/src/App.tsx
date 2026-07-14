@@ -114,6 +114,7 @@ import { useBackendConnectionState } from "./BackendConnectionGuard";
 import { useConversationAutoFollow } from "./streaming-ui";
 import {
   AssistantTurn,
+  cumulativeSessionUsageByTurnSet,
   MarkdownResponse,
   pastedTextAttachmentLabel,
   runStatusLabel,
@@ -1098,6 +1099,10 @@ function App() {
   const artifactPaneVisible = artifactOpen && artifactPaneViews.has(mainView);
   const activeRuntime = workspace.activeRuntime;
   const activeRun = workspace.activeRun;
+  const cumulativeUsageByTurnSetId = useMemo(
+    () => cumulativeSessionUsageByTurnSet(activeRuntime.turnSets, activeRuntime.snapshots),
+    [activeRuntime.snapshots, activeRuntime.turnSets],
+  );
   const activeProject = workspace.projects.find((project) => project.id === workspace.activeProjectId) ?? null;
   const restoringActiveConversation = Boolean(
     workspace.activeConversationId && !activeRuntime.loaded && !activeRuntime.error,
@@ -2757,6 +2762,7 @@ function App() {
                 key={turnSet.id}
                 turnSet={turnSet}
                 snapshot={turnSet.runId ? activeRuntime.snapshots[turnSet.runId] ?? null : null}
+                sessionUsage={cumulativeUsageByTurnSetId[turnSet.id]}
                 openCalls={openCalls}
                 onToggleCall={(id) => toggleSetItem(setOpenCalls, id)}
                 onCopyTool={(execution) => void copyTool(execution)}

@@ -133,6 +133,71 @@ function usageNumber(usage: Record<string, unknown> | undefined, key: string) {
   return Number.isFinite(value) && value >= 0 ? value : 0;
 }
 
+function optionalUsageNumber(usage: Record<string, unknown> | undefined, key: string) {
+  if (usage?.[key] === undefined || usage?.[key] === null) return undefined;
+  const value = Number(usage[key]);
+  return Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function usageHasData(usage: Record<string, unknown> | undefined) {
+  return Boolean(usage && (
+    usageNumber(usage, "input_tokens")
+    || usageNumber(usage, "output_tokens")
+    || usageNumber(usage, "cached_input_tokens")
+    || optionalUsageNumber(usage, "cost_usd") !== undefined
+    || usage.estimated_cost_breakdown_usd
+  ));
+}
+
+function normalizedUsage(usage: Record<string, unknown>): Record<string, unknown> {
+  const input = usageNumber(usage, "input_tokens");
+  const cached = usageNumber(usage, "cached_input_tokens");
+  return {
+    ...usage,
+    input_tokens: input,
+    cached_input_tokens: cached,
+    uncached_input_tokens: usage.uncached_input_tokens === undefined
+      ? Math.max(0, input - cached)
+      : usageNumber(usage, "uncached_input_tokens"),
+    output_tokens: usageNumber(usage, "output_tokens"),
+  };
+}
+
+function addUsage(left: Record<string, unknown> | undefined, right: Record<string, unknown>) {
+  const normalizedRight = normalizedUsage(right);
+  if (!left) return normalizedRight;
+  const normalizedLeft = normalizedUsage(left);
+  const result: Record<string, unknown> = {
+    ...normalizedRight,
+    input_tokens: usageNumber(normalizedLeft, "input_tokens") + usageNumber(normalizedRight, "input_tokens"),
+    cached_input_tokens: usageNumber(normalizedLeft, "cached_input_tokens") + usageNumber(normalizedRight, "cached_input_tokens"),
+    uncached_input_tokens: usageNumber(normalizedLeft, "uncached_input_tokens") + usageNumber(normalizedRight, "uncached_input_tokens"),
+    output_tokens: usageNumber(normalizedLeft, "output_tokens") + usageNumber(normalizedRight, "output_tokens"),
+  };
+  const leftCost = optionalUsageNumber(normalizedLeft, "cost_usd");
+  const rightCost = optionalUsageNumber(normalizedRight, "cost_usd");
+  if (leftCost !== undefined && rightCost !== undefined) result.cost_usd = leftCost + rightCost;
+  else delete result.cost_usd;
+
+  const leftBreakdown = estimatedModelCostParts(normalizedLeft);
+  const rightBreakdown = estimatedModelCostParts(normalizedRight);
+  if (leftBreakdown && rightBreakdown) {
+    result.estimated_cost_breakdown_usd = {
+      cached_input: leftBreakdown.cachedInput + rightBreakdown.cachedInput,
+      input: leftBreakdown.input + rightBreakdown.input,
+      output: leftBreakdown.output + rightBreakdown.output,
+      total: leftBreakdown.total + rightBreakdown.total,
+      uncached_input: leftBreakdown.uncachedInput + rightBreakdown.uncachedInput,
+    };
+  } else {
+    delete result.estimated_cost_breakdown_usd;
+  }
+  result.cost_basis = normalizedLeft.cost_basis === normalizedRight.cost_basis
+    ? normalizedRight.cost_basis
+    : "mixed";
+  return result;
+}
+
 function cacheRateTone(rate: number) {
   if (rate <= 50) return "cache-rate-critical";
   if (rate <= 70) return "cache-rate-low";
@@ -154,7 +219,35 @@ function estimatedModelCostParts(usage: Record<string, unknown> | undefined) {
   };
 }
 
-function UsageCostPopover({ usage, model, provider }: { usage: Record<string, unknown> | undefined; model?: string; provider?: string }) {
+export function cumulativeSessionUsageByTurnSet(
+  turnSets: TurnSet[],
+  snapshots: Record<string, RunSnapshot>,
+) {
+  const usageByTurnSetId: Record<string, Record<string, unknown>> = {};
+  let cumulativeUsage: Record<string, unknown> | undefined;
+  for (const turnSet of turnSets) {
+    const finalAssistantMessage = turnSet.messages.filter((message) => message.role === "assistant").at(-1);
+    const snapshot = turnSet.runId ? snapshots[turnSet.runId] : undefined;
+    const answerUsage = finalAssistantMessage?.metadata?.usage ?? snapshot?.usage;
+    if (usageHasData(answerUsage)) cumulativeUsage = addUsage(cumulativeUsage, answerUsage!);
+    if (cumulativeUsage) usageByTurnSetId[turnSet.id] = cumulativeUsage;
+  }
+  return usageByTurnSetId;
+}
+
+type UsageRow = {
+  cost: string;
+  label: string;
+  tokens: string;
+  tone?: string;
+};
+
+function UsageCostPopover({ usage, sessionUsage, model, provider }: {
+  usage: Record<string, unknown> | undefined;
+  sessionUsage: Record<string, unknown> | undefined;
+  model?: string;
+  provider?: string;
+}) {
   const controlRef = useRef<HTMLSpanElement>(null);
   const popoverId = useId();
   const [popoverOpen, setPopoverOpen] = useState(false);
@@ -175,21 +268,6 @@ function UsageCostPopover({ usage, model, provider }: { usage: Record<string, un
       });
     return () => { active = false; };
   }, []);
-  const input = usageNumber(usage, "input_tokens");
-  const cached = usageNumber(usage, "cached_input_tokens");
-  const uncached = usage?.uncached_input_tokens === undefined
-    ? Math.max(0, input - cached)
-    : usageNumber(usage, "uncached_input_tokens");
-  const output = usageNumber(usage, "output_tokens");
-  const total = input + output;
-  const cacheRatePercent = input > 0 ? (cached / input) * 100 : 0;
-  const cacheRate = `${cacheRatePercent.toFixed(1)}%`;
-  const cacheRateClass = cacheRateTone(cacheRatePercent);
-  const reportedCost = Number(usage?.cost_usd);
-  const hasReportedCost = Number.isFinite(reportedCost) && reportedCost >= 0;
-  const estimatedCosts = estimatedModelCostParts(usage);
-  const estimatedCost = estimatedCosts?.total;
-  const cost = hasReportedCost ? reportedCost : estimatedCost;
   const formatCost = (value: number | undefined) => {
     if (value === undefined) return "—";
     if (usdKrwRate === undefined) return "…";
@@ -197,21 +275,29 @@ function UsageCostPopover({ usage, model, provider }: { usage: Record<string, un
       ? value.toFixed(3)
       : new Intl.NumberFormat("ko-KR").format(Math.round(value * usdKrwRate));
   };
-  const totalCost = formatCost(cost);
   const currencySymbol = usdKrwRate === null ? "$" : "₩";
-  const costHeading = isSubscriptionUsage
-    ? `예상비용(${currencySymbol})`
-    : (!hasReportedCost && estimatedCost !== undefined) || usage?.cost_basis === "price_table_estimate"
-      ? `예상비용(${currencySymbol})`
-      : `비용(${currencySymbol})`;
-  const rows = [
-    ["Input", input.toLocaleString(), formatCost(estimatedCosts?.input)],
-    ["Cached", cached.toLocaleString(), formatCost(estimatedCosts?.cachedInput)],
-    ["Uncached", uncached.toLocaleString(), formatCost(estimatedCosts?.uncachedInput)],
-    ["Cache rate", cacheRate, "-"],
-    ["Output", output.toLocaleString(), formatCost(estimatedCosts?.output)],
-    ["Total", total.toLocaleString(), totalCost],
-  ];
+  const usageRows = (summary: Record<string, unknown> | undefined): UsageRow[] => {
+    const input = usageNumber(summary, "input_tokens");
+    const cached = usageNumber(summary, "cached_input_tokens");
+    const uncached = summary?.uncached_input_tokens === undefined
+      ? Math.max(0, input - cached)
+      : usageNumber(summary, "uncached_input_tokens");
+    const output = usageNumber(summary, "output_tokens");
+    const cacheRatePercent = input > 0 ? (cached / input) * 100 : 0;
+    const estimatedCosts = estimatedModelCostParts(summary);
+    const reportedCost = optionalUsageNumber(summary, "cost_usd");
+    return [
+      { label: "Input", tokens: input.toLocaleString(), cost: formatCost(estimatedCosts?.input) },
+      { label: "Cached", tokens: cached.toLocaleString(), cost: formatCost(estimatedCosts?.cachedInput) },
+      { label: "Uncached", tokens: uncached.toLocaleString(), cost: formatCost(estimatedCosts?.uncachedInput) },
+      { label: "Cache rate", tokens: `${cacheRatePercent.toFixed(1)}%`, cost: "-", tone: cacheRateTone(cacheRatePercent) },
+      { label: "Output", tokens: output.toLocaleString(), cost: formatCost(estimatedCosts?.output) },
+      { label: "Total", tokens: (input + output).toLocaleString(), cost: formatCost(reportedCost ?? estimatedCosts?.total) },
+    ];
+  };
+  const answerRows = usageRows(usage);
+  const cumulativeRows = usageRows(sessionUsage);
+  const costHeading = `예상비용(${currencySymbol})`;
   return (
     <span
       className="answer-usage-control"
@@ -225,14 +311,21 @@ function UsageCostPopover({ usage, model, provider }: { usage: Record<string, un
     >
       <button className="answer-usage-button" type="button" aria-label={isSubscriptionUsage ? "토큰 및 예상 비용 확인" : "토큰 비용 확인"} aria-describedby={popoverOpen ? popoverId : undefined}><Coins size={16} /></button>
       <GlobalTooltipLayer anchor={controlRef.current} className="answer-usage-popover" id={popoverId} open={popoverOpen}>
-        <table aria-label={isSubscriptionUsage ? "이번 답변 토큰 및 예상 비용" : "이번 답변 토큰 및 비용"}>
+        <table aria-label="이번 답변과 세션 누적 토큰 및 예상 비용">
+          <colgroup>
+            <col className="answer-usage-label-column" />
+            <col /><col /><col /><col />
+          </colgroup>
           <thead>
-            <tr><th>{model || "사용량"}</th><th>토큰</th><th>{costHeading}</th></tr>
+            <tr><th rowSpan={2}>{model || "사용량"}</th><th colSpan={2}>이번 답변</th><th colSpan={2}>세션 누적</th></tr>
+            <tr><th>토큰</th><th>{costHeading}</th><th>토큰</th><th>{costHeading}</th></tr>
           </thead>
           <tbody>
-            {rows.map(([label, tokens, cost]) => (
-              <tr className={label === "Total" ? "is-total" : label === "Cached" || label === "Uncached" || label === "Cache rate" ? "is-child" : ""} key={label}>
-                <th scope="row">{label}</th><td className={label === "Cache rate" ? cacheRateClass : undefined}>{tokens}</td><td>{cost}</td>
+            {answerRows.map((row, index) => (
+              <tr className={row.label === "Total" ? "is-total" : row.label === "Cached" || row.label === "Uncached" || row.label === "Cache rate" ? "is-child" : ""} key={row.label}>
+                <th scope="row">{row.label}</th>
+                <td className={row.tone}>{row.tokens}</td><td>{row.cost}</td>
+                <td className={cumulativeRows[index]?.tone}>{cumulativeRows[index]?.tokens ?? "0"}</td><td>{cumulativeRows[index]?.cost ?? "—"}</td>
               </tr>
             ))}
           </tbody>
@@ -1162,6 +1255,7 @@ export function MarkdownResponse({
 export function AssistantTurn({
   turnSet,
   snapshot,
+  sessionUsage,
   openCalls,
   onToggleCall,
   onCopyTool,
@@ -1173,6 +1267,7 @@ export function AssistantTurn({
 }: {
   turnSet: TurnSet;
   snapshot: RunSnapshot | null;
+  sessionUsage: Record<string, unknown> | undefined;
   openCalls: Set<string>;
   onToggleCall: (id: string) => void;
   onCopyTool: (execution: ToolExecution) => void;
@@ -1532,7 +1627,8 @@ export function AssistantTurn({
                   </div>
                   <div className="answer-actions" role="group" aria-label="답변 작업">
                     <UsageCostPopover
-                      usage={finalMessage?.metadata?.usage ?? snapshot?.usage}
+                      usage={runUsage}
+                      sessionUsage={sessionUsage}
                       model={snapshot?.execution.runtimeModelId}
                       provider={snapshot?.execution.providerId}
                     />

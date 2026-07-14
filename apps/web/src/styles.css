@@ -2246,7 +2246,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .answer-feedback-form > div button:disabled { cursor: not-allowed; opacity: 0.55; }
 .answer-usage-control { display: inline-flex; }
 .answer-usage-popover {
-  width: min(310px, calc(100vw - 32px));
+  width: min(520px, calc(100vw - 32px));
   padding: 10px;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
@@ -2256,8 +2256,11 @@ button:disabled { cursor: default; opacity: 0.5; }
 }
 .answer-usage-popover table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; font-size: 13px; line-height: 1.25; }
 .answer-usage-popover :is(th, td) { padding: 3px 7px; text-align: right; white-space: nowrap; }
-.answer-usage-popover th:first-child { width: 42%; text-align: left; }
-.answer-usage-popover thead th { padding-bottom: 6px; border-bottom: 1px solid var(--line); color: var(--cobalt); font-weight: 700; }
+.answer-usage-popover .answer-usage-label-column { width: 24%; }
+.answer-usage-popover th:first-child { text-align: left; }
+.answer-usage-popover thead th { padding-bottom: 5px; border-bottom: 1px solid var(--line); color: var(--cobalt); font-weight: 700; }
+.answer-usage-popover thead tr:first-child th:not(:first-child) { text-align: center; }
+.answer-usage-popover thead tr:nth-child(2) th { color: var(--muted); font-size: 11.5px; font-weight: 600; }
 .answer-usage-popover tbody th { font-weight: 650; }
 .answer-usage-popover tbody td { font-variant-numeric: tabular-nums; font-weight: 650; }
 .answer-usage-popover tr.is-child > * { color: var(--muted); font-weight: 500; }

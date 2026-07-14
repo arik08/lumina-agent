@@ -16,7 +16,9 @@ test("cache rate uses the agreed five color thresholds", async () => {
   assert.match(turn, /if \(rate <= 80\) return "cache-rate-moderate";/);
   assert.match(turn, /if \(rate <= 90\) return "cache-rate-good";/);
   assert.match(turn, /return "cache-rate-excellent";/);
-  assert.match(turn, /className=\{label === "Cache rate" \? cacheRateClass : undefined\}/);
+  assert.match(turn, /tone: cacheRateTone\(cacheRatePercent\)/);
+  assert.match(turn, /<td className=\{row\.tone\}>\{row\.tokens\}<\/td>/);
+  assert.match(turn, /<td className=\{cumulativeRows\[index\]\?\.tone\}>/);
 
   for (const tone of ["critical", "low", "moderate", "good", "excellent"]) {
     assert.match(styles, new RegExp(`--cache-rate-${tone}:`));
