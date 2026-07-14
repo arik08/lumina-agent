@@ -38,6 +38,7 @@ export interface ConversationRuntime {
 
 const UNTITLED_CONVERSATION_TITLES = new Set(["제목 없음", "새 작업"]);
 const PROVISIONAL_TITLE_MAX_LENGTH = 60;
+const ACTIVE_RUN_RECONCILIATION_INTERVAL_MS = 15_000;
 
 function isUntouchedConversation(conversation: ConversationListItem) {
   return UNTITLED_CONVERSATION_TITLES.has(conversation.title)
@@ -147,6 +148,7 @@ export function useLuminaWorkspace() {
   const creatingConversationRef = useRef(false);
   const streamsRef = useRef(new Map<string, () => void>());
   const hydratingRef = useRef(new Set<string>());
+  const reconcilingRunIdsRef = useRef(new Set<string>());
   const reconciliationTimersRef = useRef(new Set<number>());
 
   useEffect(() => {
@@ -169,6 +171,7 @@ export function useLuminaWorkspace() {
     streamsRef.current.forEach((close) => close());
     streamsRef.current.clear();
     hydratingRef.current.clear();
+    reconcilingRunIdsRef.current.clear();
     reconciliationTimersRef.current.forEach((timer) => window.clearTimeout(timer));
     reconciliationTimersRef.current.clear();
   }, []);
@@ -486,6 +489,74 @@ export function useLuminaWorkspace() {
     }
   }, [loadConversation, refreshConversations]);
 
+  const mergeAuthoritativeRunSnapshot = useCallback((snapshot: RunSnapshot) => {
+    const terminal = isTerminalRunStatus(snapshot.status);
+    setRuntimes((current) => {
+      const runtime = current[snapshot.conversationId] ?? emptyRuntime();
+      const existing = runtime.snapshots[snapshot.runId];
+      if (existing && !terminal && existing.lastSequence > snapshot.lastSequence) return current;
+      const snapshots = { ...runtime.snapshots, [snapshot.runId]: snapshot };
+      const turnSets = ensureTurnSet(runtime, snapshot.runId).map((turnSet) =>
+        turnSet.runId === snapshot.runId
+          ? {
+              ...turnSet,
+              plan: snapshot.plan,
+              toolExecutions: snapshot.toolExecutions,
+              artifacts: snapshot.artifacts,
+              completedAt: snapshot.finishedAt,
+            }
+          : turnSet,
+      );
+      const hasAnotherActiveRun = Object.values(snapshots).some(
+        (candidate) => candidate.runId !== snapshot.runId && !isTerminalRunStatus(candidate.status),
+      );
+      return {
+        ...current,
+        [snapshot.conversationId]: {
+          ...runtime,
+          turnSets,
+          snapshots,
+          lastSequences: {
+            ...runtime.lastSequences,
+            [snapshot.runId]: Math.max(runtime.lastSequences[snapshot.runId] ?? 0, snapshot.lastSequence),
+          },
+          streamState: terminal && !hasAnotherActiveRun ? "idle" : runtime.streamState,
+        },
+      };
+    });
+    setConversations((items) => items.map((item) =>
+      item.id === snapshot.conversationId
+        ? {
+            ...item,
+            activeRunId: terminal
+              ? (item.activeRunId === snapshot.runId ? null : item.activeRunId)
+              : (item.activeRunId ?? snapshot.runId),
+            lastRunStatus: item.activeRunId && item.activeRunId !== snapshot.runId
+              ? item.lastRunStatus
+              : sidebarStatus(snapshot.status),
+            lastSequence: Math.max(item.lastSequence, snapshot.lastSequence),
+          }
+        : item,
+    ));
+    if (terminal) {
+      streamsRef.current.get(snapshot.runId)?.();
+      streamsRef.current.delete(snapshot.runId);
+    }
+  }, []);
+
+  const reconcileRunSnapshot = useCallback(async (runId: string) => {
+    if (reconcilingRunIdsRef.current.has(runId)) return;
+    reconcilingRunIdsRef.current.add(runId);
+    try {
+      mergeAuthoritativeRunSnapshot(await api.runs.getSnapshot(runId));
+    } catch {
+      // The SSE reconnect path keeps retrying. A later interval or focus event
+      // will reconcile the authoritative state when the Backend is reachable.
+    } finally {
+      reconcilingRunIdsRef.current.delete(runId);
+    }
+  }, [mergeAuthoritativeRunSnapshot]);
+
   const openSnapshotStream = useCallback((snapshot: RunSnapshot) => {
     if (isTerminalRunStatus(snapshot.status) || streamsRef.current.has(snapshot.runId)) return;
     setRuntimes((current) => ({
@@ -504,16 +575,19 @@ export function useLuminaWorkspace() {
         },
       })),
       onEvent: applyRunEvent,
-      onError: () => setRuntimes((current) => ({
-        ...current,
-        [snapshot.conversationId]: {
-          ...(current[snapshot.conversationId] ?? emptyRuntime()),
-          streamState: "reconnecting",
-        },
-      })),
+      onError: () => {
+        setRuntimes((current) => ({
+          ...current,
+          [snapshot.conversationId]: {
+            ...(current[snapshot.conversationId] ?? emptyRuntime()),
+            streamState: "reconnecting",
+          },
+        }));
+        void reconcileRunSnapshot(snapshot.runId);
+      },
     });
     streamsRef.current.set(snapshot.runId, close);
-  }, [applyRunEvent]);
+  }, [applyRunEvent, reconcileRunSnapshot]);
 
   const hydrateRun = useCallback(async (runId: string, conversationId: string) => {
     if (streamsRef.current.has(runId) || hydratingRef.current.has(runId)) return;
@@ -549,6 +623,33 @@ export function useLuminaWorkspace() {
       if (conversation.activeRunId) void hydrateRun(conversation.activeRunId, conversation.id);
     });
   }, [conversations, hydrateRun]);
+
+  useEffect(() => {
+    if (!authSession) return;
+    const reconcileActiveRuns = () => {
+      const runIds = new Set<string>();
+      Object.values(runtimesRef.current).forEach((runtime) => {
+        Object.values(runtime.snapshots).forEach((snapshot) => {
+          if (!isTerminalRunStatus(snapshot.status)) runIds.add(snapshot.runId);
+        });
+      });
+      conversationsRef.current.forEach((conversation) => {
+        if (conversation.activeRunId) runIds.add(conversation.activeRunId);
+      });
+      runIds.forEach((runId) => void reconcileRunSnapshot(runId));
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") reconcileActiveRuns();
+    };
+    const interval = window.setInterval(reconcileActiveRuns, ACTIVE_RUN_RECONCILIATION_INTERVAL_MS);
+    window.addEventListener("focus", reconcileActiveRuns);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", reconcileActiveRuns);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [authSession, reconcileRunSnapshot]);
 
   useEffect(() => {
     if (!activeConversationId) return;
