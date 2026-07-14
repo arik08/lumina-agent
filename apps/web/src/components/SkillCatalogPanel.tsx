@@ -82,7 +82,7 @@ function CatalogCard({
       </div>
       <footer>
         <div className="skill-catalog-metrics">
-          <CatalogMetric icon={<UserRoundCheck size={13} />} label="설치 사용자 수" value={item.installCount} />
+          <CatalogMetric icon={<UserRoundCheck size={13} />} label="설치 사용자" value={item.installCount} />
           <CatalogMetric icon={<Play size={13} />} label="Skill 실행 횟수" value={item.runCount} />
           <button
             className={`skill-catalog-like ${item.likedByMe ? "is-liked" : ""}`}
@@ -90,7 +90,7 @@ function CatalogCard({
             aria-label={`${item.name} 좋아요${item.likedByMe ? " 취소" : ""}`}
             aria-pressed={item.likedByMe}
             aria-busy={likePending}
-            data-tooltip="좋아요 수"
+            data-tooltip="좋아요"
             disabled={likePending}
             onClick={() => onToggleLike(item)}
           >

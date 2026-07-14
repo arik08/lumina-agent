@@ -26,10 +26,10 @@ test("catalog uses a searchable filterable card grid without opening package det
   assert.match(panel, /사용자 설치 많은 순/);
   assert.match(panel, /실행 많은 순/);
   assert.match(panel, /좋아요 많은 순/);
-  assert.match(panel, /label="설치 사용자 수"/);
+  assert.match(panel, /label="설치 사용자"/);
   assert.match(panel, /label="Skill 실행 횟수"/);
   assert.match(panel, /data-tooltip=\{label\}/);
-  assert.match(panel, /data-tooltip="좋아요 수"/);
+  assert.match(panel, /data-tooltip="좋아요"/);
   assert.match(panel, /className=\{`skill-catalog-like/);
   assert.match(api, /request<SkillCatalogResponse>\("\/extensions\/catalog"/);
   assert.match(api, /method: liked \? "PUT" : "DELETE"/);
