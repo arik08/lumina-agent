@@ -11,6 +11,7 @@ from lumina.providers import (
     ProviderConfigurationError,
     ProviderMessage,
     ProviderRequest,
+    ProviderRequestError,
 )
 from lumina.providers.codex import CodexResponsesAdapter
 from lumina.providers.codex import adapter as codex_adapter
@@ -27,6 +28,15 @@ class _Account:
 
 class TransportClosedError(RuntimeError):
     pass
+
+
+def test_codex_transport_close_is_classified_as_retryable_stream_failure() -> None:
+    error = codex_adapter._request_error(
+        TransportClosedError("Codex process closed stdout")
+    )
+
+    assert error.retryable is True
+    assert error.stage == "stream"
 
 
 class _Thread:
@@ -219,6 +229,87 @@ async def test_codex_oauth_retries_transport_close_before_output(
     assert state["client_count"] == 2
     assert state["close_count"] == 1
     await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_codex_oauth_discards_dead_client_after_partial_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    discarded: list[object] = []
+
+    class PartialDelta:
+        def __init__(self, delta: str) -> None:
+            self.delta = delta
+
+    class InterruptedTurn:
+        async def stream(self):
+            yield SimpleNamespace(
+                payload=PartialDelta('{"kind":"final","text":"partial')
+            )
+            raise TransportClosedError("Codex process closed stdout")
+
+    class InterruptedThread:
+        async def turn(self, _prompt: str, **_kwargs: Any) -> InterruptedTurn:
+            return InterruptedTurn()
+
+    class InterruptedClient:
+        async def thread_start(self, **_kwargs: Any) -> InterruptedThread:
+            return InterruptedThread()
+
+    client = InterruptedClient()
+    adapter = CodexResponsesAdapter()
+
+    async def ready_client():
+        return client, frozenset({"gpt-5.5"}), "."
+
+    async def discard_client(expected: object) -> None:
+        discarded.append(expected)
+
+    monkeypatch.setattr(
+        codex_adapter, "AgentMessageDeltaNotification", PartialDelta
+    )
+    monkeypatch.setattr(adapter, "_ready_client", ready_client)
+    monkeypatch.setattr(adapter, "_discard_client", discard_client)
+
+    events = []
+    with pytest.raises(ProviderRequestError) as captured:
+        async for event in adapter.stream(
+            ProviderRequest(
+                model="gpt-5.5",
+                messages=(ProviderMessage(role="user", content="안녕"),),
+            )
+        ):
+            events.append(event)
+
+    assert [event.text for event in events] == ["partial"]
+    assert captured.value.retryable is True
+    assert captured.value.stage == "stream"
+    assert discarded == [client]
+
+
+@pytest.mark.asyncio
+async def test_codex_oauth_discard_tolerates_dead_process_close_error() -> None:
+    class DeadClient:
+        async def close(self) -> None:
+            raise OSError(22, "Invalid argument")
+
+    class Workspace:
+        cleaned = False
+
+        def cleanup(self) -> None:
+            self.cleaned = True
+
+    client = DeadClient()
+    workspace = Workspace()
+    adapter = CodexResponsesAdapter()
+    adapter._client = client  # type: ignore[assignment]
+    adapter._workspace = workspace  # type: ignore[assignment]
+
+    await adapter._discard_client(client)  # type: ignore[arg-type]
+
+    assert adapter._client is None
+    assert adapter._workspace is None
+    assert workspace.cleaned is True
 
 
 @pytest.mark.asyncio

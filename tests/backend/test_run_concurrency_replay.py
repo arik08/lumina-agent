@@ -264,32 +264,80 @@ class _ObservedContextThenCompletingProvider:
         yield ProviderEvent(type="completed", stop_reason="stop")
 
 
-class _PartialToolCallThenFailingProvider:
+class _PartialReportToolCallThenCompletingProvider:
     provider_id = "mock"
     capabilities = ProviderCapabilities(tools=True)
 
     def __init__(self) -> None:
         self.attempts = 0
 
-    async def stream(self, _request: ProviderRequest) -> AsyncIterator[ProviderEvent]:
+    async def stream(self, request: ProviderRequest) -> AsyncIterator[ProviderEvent]:
         self.attempts += 1
-        yield ProviderEvent(
-            type="tool_call_started",
-            tool_call_id="call_partial",
-            tool_name="web_search",
-        )
-        yield ProviderEvent(
-            type="tool_call_delta",
-            tool_call_id="call_partial",
-            tool_name="web_search",
-            arguments_delta='{"query":"incomplete',
-        )
-        raise ProviderRequestError(
-            "temporary upstream failure during a tool call",
-            retryable=True,
-            stage="stream",
-            status_code=503,
-        )
+        if self.attempts == 1:
+            yield ProviderEvent(
+                type="tool_call_started",
+                tool_call_id="call_partial_report",
+                tool_name="create_report",
+            )
+            yield ProviderEvent(
+                type="tool_call_delta",
+                tool_call_id="call_partial_report",
+                tool_name="create_report",
+                arguments_delta=(
+                    '{"format":"html","html_source":"<!doctype html><html>'
+                    "<body><h1>interrupted"
+                ),
+            )
+            raise ProviderRequestError(
+                "temporary upstream failure during a report tool call",
+                retryable=True,
+                stage="stream",
+                status_code=503,
+            )
+        if self.attempts == 2:
+            assert request.messages[-1] == ProviderMessage(
+                role="user",
+                content=executor_module._PARTIAL_TOOL_CALL_RETRY_PROMPT,
+            )
+            arguments = json.dumps(
+                {
+                    "format": "html",
+                    "title": "Recovered web research report",
+                    "executive_summary": "The interrupted report was regenerated.",
+                    "key_metrics": [],
+                    "sections": [],
+                    "action_items": [],
+                    "html_source": (
+                        "<!doctype html><html><head><meta charset='utf-8'>"
+                        "<title>Recovered report</title></head><body>"
+                        "<h1>Recovered report</h1><p>Verified evidence.</p>"
+                        "</body></html>"
+                    ),
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            yield ProviderEvent(
+                type="tool_call_started",
+                tool_call_id="call_partial_report",
+                tool_name="create_report",
+            )
+            yield ProviderEvent(
+                type="tool_call_delta",
+                tool_call_id="call_partial_report",
+                tool_name="create_report",
+                arguments_delta=arguments,
+            )
+            yield ProviderEvent(
+                type="tool_call_completed",
+                tool_call_id="call_partial_report",
+                tool_name="create_report",
+                arguments_json=arguments,
+            )
+            yield ProviderEvent(type="completed", stop_reason="tool_calls")
+            return
+        yield ProviderEvent(type="text_delta", text="Recovered HTML report created.")
+        yield ProviderEvent(type="completed", stop_reason="stop")
 
 
 class _TruncatingThenCompletingProvider:
@@ -576,10 +624,10 @@ def test_provider_context_error_lowers_run_window_before_recovery(
     assert adjustment.payload_json["observedContextWindow"] == 4_096
 
 
-def test_retryable_failure_never_replays_a_partial_tool_call(
+def test_retryable_failure_regenerates_unexecuted_partial_report_tool_call(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    provider = _PartialToolCallThenFailingProvider()
+    provider = _PartialReportToolCallThenCompletingProvider()
     monkeypatch.setattr(
         local_run_executor, "_provider", lambda *_args, **_kwargs: provider
     )
@@ -591,21 +639,25 @@ def test_retryable_failure_never_replays_a_partial_tool_call(
     )
 
     with TestClient(
-        create_app(_settings(tmp_path, "partial-tool-no-replay.db"))
+        create_app(_settings(tmp_path, "partial-report-regeneration.db"))
     ) as client:
         csrf = _login(client)
-        conversation_id = _conversation(client, csrf, "Partial tool no replay")
+        conversation_id = _conversation(client, csrf, "Partial report regeneration")
         run_id = _start_run(
             client,
             csrf,
             conversation_id,
-            text="do-not-replay-partial-tool-call",
-            idempotency_key="do-not-replay-partial-tool-call-0001",
+            text="인터넷 조사 결과를 HTML 보고서 파일로 만들어 주세요.",
+            idempotency_key="regenerate-partial-report-tool-0001",
         )
         snapshot = _wait_for_terminal(client, run_id)
 
-    assert snapshot["status"] == "failed"
-    assert provider.attempts == 1
+    assert snapshot["status"] == "completed"
+    assert provider.attempts == 3
+    assert len(snapshot["artifacts"]) == 1
+    assert [
+        (tool["toolName"], tool["status"]) for tool in snapshot["toolExecutions"]
+    ] == [("create_report", "completed")]
     with SessionLocal() as db:
         recovery_event = db.scalar(
             select(RunEvent).where(
@@ -613,14 +665,19 @@ def test_retryable_failure_never_replays_a_partial_tool_call(
                 RunEvent.event_type == "provider_partial_response_recovery_scheduled",
             )
         )
-        retry_event = db.scalar(
+        discarded_event = db.scalar(
             select(RunEvent).where(
                 RunEvent.run_id == run_id,
-                RunEvent.event_type == "provider_retry_scheduled",
+                RunEvent.event_type == "provider_partial_tool_calls_discarded",
             )
         )
-    assert recovery_event is None
-    assert retry_event is None
+    assert recovery_event is not None
+    assert recovery_event.payload_json["discardedToolCalls"] == 1
+    assert discarded_event is not None
+    assert discarded_event.payload_json == {
+        "toolCallCount": 1,
+        "toolNames": ["create_report"],
+    }
 
 
 def test_provider_retry_delay_prefers_retry_after_and_caps_it() -> None:

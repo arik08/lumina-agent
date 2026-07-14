@@ -164,6 +164,12 @@ _PARTIAL_RESPONSE_CONTINUATION_PROMPT = (
     "before this message was already delivered to the user. Continue exactly where it "
     "stopped. Do not repeat completed text, restart the answer, or summarize it."
 )
+_PARTIAL_TOOL_CALL_RETRY_PROMPT = (
+    "[Retry after a transient tool-call stream failure] The previous assistant tool "
+    "call was incomplete and was not executed. Generate the complete tool call again "
+    "from the beginning. Do not continue partial JSON, assume a tool side effect, or "
+    "repeat visible text."
+)
 _TRUNCATED_AFTER_CONTINUATIONS_NOTICE = (
     "\n\n[응답이 모델 출력 한도에 반복해서 도달하여 여기까지 보존했습니다. "
     "계속해 달라고 요청하면 이어서 진행할 수 있습니다.]"
@@ -1085,27 +1091,38 @@ class LocalRunExecutor:
                     if continuation_deduper.suppressed_chars
                     else ""
                 )
+                has_partial_tool_calls = provider_tool_output_started or bool(
+                    tool_calls
+                )
                 if (
-                    continuation_reference
-                    and await self._recover_partial_provider_response(
-                        run_id,
-                        provider_request_error,
-                        retry_index=partial_response_recovery_attempt,
-                        preserved_chars=len(continuation_reference),
-                        has_tool_calls=provider_tool_output_started or bool(tool_calls),
-                    )
+                    continuation_reference or has_partial_tool_calls
+                ) and await self._recover_partial_provider_response(
+                    run_id,
+                    provider_request_error,
+                    retry_index=partial_response_recovery_attempt,
+                    preserved_chars=len(continuation_reference),
+                    has_tool_calls=has_partial_tool_calls,
+                    tool_call_count=max(
+                        len(tool_calls), int(provider_tool_output_started)
+                    ),
                 ):
+                    if has_partial_tool_calls:
+                        await self._discard_partial_tool_calls(run_id, tool_calls)
                     if partial_text:
                         messages.append(
                             ProviderMessage(role="assistant", content=partial_text)
                         )
-                        messages.append(
-                            ProviderMessage(
-                                role="user",
-                                content=_PARTIAL_RESPONSE_CONTINUATION_PROMPT,
-                            )
+                    messages.append(
+                        ProviderMessage(
+                            role="user",
+                            content=(
+                                _PARTIAL_TOOL_CALL_RETRY_PROMPT
+                                if has_partial_tool_calls
+                                else _PARTIAL_RESPONSE_CONTINUATION_PROMPT
+                            ),
                         )
-                    pending_continuation_reference = continuation_reference
+                    )
+                    pending_continuation_reference = continuation_reference or None
                     partial_response_recovery_attempt += 1
                     provider_retry_attempt = 0
                     continue
@@ -3307,6 +3324,46 @@ class LocalRunExecutor:
             append_event(db, run, "tool_started", {"execution": _tool_event(tool)})
         await event_broker.notify(run_id)
 
+    async def _discard_partial_tool_calls(
+        self,
+        run_id: str,
+        tool_calls: Mapping[str, Mapping[str, Any]],
+    ) -> None:
+        call_ids = {
+            str(call.get("id") or "").strip()
+            for call in tool_calls.values()
+            if str(call.get("id") or "").strip()
+        }
+        tool_names = sorted(
+            {str(call.get("name") or "unknown")[:160] for call in tool_calls.values()}
+        )
+        with session_scope() as db:
+            run = db.get(Run, run_id)
+            if run is None or run.status in TERMINAL_STATUSES:
+                return
+            if call_ids:
+                interrupted = list(
+                    db.scalars(
+                        select(ToolExecution).where(
+                            ToolExecution.run_id == run.id,
+                            ToolExecution.tool_call_id.in_(call_ids),
+                            ToolExecution.status == "streaming",
+                        )
+                    )
+                )
+                for tool in interrupted:
+                    db.delete(tool)
+            append_event(
+                db,
+                run,
+                "provider_partial_tool_calls_discarded",
+                {
+                    "toolCallCount": max(1, len(call_ids)),
+                    "toolNames": tool_names,
+                },
+            )
+        await event_broker.notify(run_id)
+
     async def _update_streaming_write_file(
         self,
         run_id: str,
@@ -3476,11 +3533,11 @@ class LocalRunExecutor:
         retry_index: int,
         preserved_chars: int,
         has_tool_calls: bool,
+        tool_call_count: int,
     ) -> bool:
         if (
             not error.retryable
             or error.stage not in {"network", "response", "stream"}
-            or has_tool_calls
             or retry_index >= len(_PROVIDER_RETRY_DELAYS_SECONDS)
         ):
             return False
@@ -3489,33 +3546,43 @@ class LocalRunExecutor:
             run = db.get(Run, run_id)
             if run is None or run.status in TERMINAL_STATUSES:
                 return False
+            payload = {
+                "attempt": retry_index + 2,
+                "maxAttempts": len(_PROVIDER_RETRY_DELAYS_SECONDS) + 1,
+                "delaySeconds": delay_seconds,
+                "stage": error.stage,
+                "statusCode": error.status_code,
+                "preservedChars": preserved_chars,
+            }
+            if has_tool_calls:
+                payload["discardedToolCalls"] = max(1, tool_call_count)
             append_event(
                 db,
                 run,
                 "provider_partial_response_recovery_scheduled",
-                {
-                    "attempt": retry_index + 2,
-                    "maxAttempts": len(_PROVIDER_RETRY_DELAYS_SECONDS) + 1,
-                    "delaySeconds": delay_seconds,
-                    "stage": error.stage,
-                    "statusCode": error.status_code,
-                    "preservedChars": preserved_chars,
-                },
+                payload,
             )
         logger.warning(
-            "Continuing a text-only Provider response after a transient stream failure",
+            "Recovering a partial Provider response after a transient stream failure",
             extra={
                 "run_id": run_id,
                 "provider_stage": error.stage,
                 "provider_status_code": error.status_code,
                 "retry_attempt": retry_index + 2,
                 "preserved_chars": preserved_chars,
+                "discarded_tool_calls": tool_call_count if has_tool_calls else 0,
             },
         )
         await event_broker.notify(run_id)
         await self._publish_progress_summary(
             run_id,
-            "Provider 연결이 일시적으로 끊겨 이미 받은 답변을 보존한 채 이어서 작성합니다.",
+            (
+                "Provider 연결이 일시적으로 끊겨 실행 전이던 Tool Call을 폐기하고 "
+                "처음부터 안전하게 다시 생성합니다."
+                if has_tool_calls
+                else "Provider 연결이 일시적으로 끊겨 이미 받은 답변을 보존한 채 "
+                "이어서 작성합니다."
+            ),
             phase="recovering",
         )
         if delay_seconds > 0:

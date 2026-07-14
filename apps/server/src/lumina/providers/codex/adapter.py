@@ -6,6 +6,7 @@ import os
 import re
 import tempfile
 from collections.abc import AsyncIterator, Mapping
+from contextlib import suppress
 from functools import lru_cache
 from typing import Any
 
@@ -293,7 +294,11 @@ class CodexResponsesAdapter:
             self._client = None
             self._available_models = frozenset()
             self._workspace = None
-            await expected.close()
+            # A terminated App Server may reject closing its already-dead stdin.
+            # The original stream error is the actionable failure; cleanup must not
+            # mask it or prevent the executor from opening a fresh client.
+            with suppress(Exception):
+                await expected.close()
             if workspace is not None:
                 workspace.cleanup()
 
@@ -408,9 +413,10 @@ class CodexResponsesAdapter:
                 raise
             except Exception as exc:
                 error = _request_error(exc)
-                if attempt == 0 and error.retryable and not emitted_output:
+                if error.retryable:
                     await self._discard_client(client)
-                    continue
+                    if attempt == 0 and not emitted_output:
+                        continue
                 raise error from exc
 
 
@@ -558,7 +564,7 @@ def _request_error(exc: Exception) -> ProviderRequestError:
         return ProviderRequestError(
             "Codex App Server 연결이 일시적으로 종료되었습니다.",
             retryable=True,
-            stage="runtime",
+            stage="stream",
         )
     if "usage limit" in message or "rate limit" in message or "429" in message:
         return ProviderRequestError(
