@@ -71,7 +71,7 @@ function CatalogCard({
   onToggleLike: (item: SkillCatalogItem) => void;
 }) {
   return (
-    <article className="skill-catalog-card">
+    <article className={`skill-catalog-card ${item.likedByMe ? "is-liked" : ""}`.trim()}>
       <div className="skill-catalog-card-copy">
         <span className="skill-catalog-category">{item.category}</span>
         <h2>{item.name}</h2>
