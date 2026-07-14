@@ -43,6 +43,11 @@ function Assert-NodeVersion {
     }
 }
 
+function Enable-UvSystemCertificates {
+    $env:UV_SYSTEM_CERTS = "true"
+    Write-Host "[Lumina] uv will use the operating system certificate store."
+}
+
 function Invoke-Checked {
     param(
         [Parameter(Mandatory = $true)][string]$Command,
@@ -145,6 +150,7 @@ Assert-Command "uv" "Install uv with: powershell -ExecutionPolicy Bypass -c `"ir
 Assert-Command "node" "Install the current Node.js LTS from https://nodejs.org/en/download."
 Assert-Command "npm" "npm is included with Node.js; reinstall the current Node.js LTS from https://nodejs.org/en/download."
 Assert-NodeVersion
+Enable-UvSystemCertificates
 $NpmCommand = if ($env:OS -eq "Windows_NT") {
     (Get-Command "npm.cmd" -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 }

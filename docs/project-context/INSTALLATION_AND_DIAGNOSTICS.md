@@ -24,6 +24,8 @@ installer.bat -NonInteractive -SkipPgpt -NoNetwork
 
 `-NoNetwork`는 `uv`와 `npm`도 offline mode로 실행합니다. 필요한 dependency가 로컬 cache에 없으면 원격으로 조용히 전환하지 않고 설치가 실패합니다.
 
+installer는 첫 `uv` 네트워크 작업 전에 `UV_SYSTEM_CERTS=true`를 설정합니다. 회사 TLS inspection 인증서가 운영체제 인증서 저장소에 등록되어 있으면 Python runtime 다운로드와 dependency 설치 단계부터 해당 trust store를 사용하며, TLS 검증 자체는 유지합니다.
+
 파일·DB·dependency를 변경하지 않는 installer dry-run은 다음과 같습니다.
 
 ```powershell

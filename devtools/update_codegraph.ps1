@@ -3,9 +3,20 @@ $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 
 $databasePath = Join-Path $repoRoot ".codegraph\codegraph.db"
-$codegraph = Get-Command codegraph -ErrorAction SilentlyContinue
+$codegraph = if ($env:OS -eq "Windows_NT") {
+    Get-Command codegraph.cmd -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+}
+if (-not $codegraph -and $env:OS -eq "Windows_NT") {
+    $codegraph = Get-Command codegraph.exe -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+}
 if (-not $codegraph) {
-    throw "CodeGraph CLI was not found. Install it before updating the project index."
+    $codegraph = Get-Command codegraph -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+}
+if (-not $codegraph) {
+    throw "CodeGraph CLI was not found on PATH. Install it with 'npm.cmd install -g @colbymchenry/codegraph', open a new terminal, and run this script again."
 }
 
 if (Test-Path -LiteralPath $databasePath) {

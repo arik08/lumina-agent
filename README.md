@@ -151,6 +151,8 @@ installer.bat
 - Frontend production build
 - 선택적으로 P-GPT credential과 회사 CA 설정
 
+설치기는 첫 `uv` 네트워크 작업 전 `UV_SYSTEM_CERTS=true`를 적용합니다. 따라서 회사 TLS inspection 인증서가 Windows 인증서 저장소에 등록된 PC에서는 Python 3.13 다운로드와 Python dependency 설치도 시스템 trust store를 사용합니다. TLS 인증서 검증을 끄지는 않습니다.
+
 기존 `.env`는 통째로 덮어쓰지 않습니다. 비밀값은 `.env` 또는 Process Environment에만 저장하고 저장소에 커밋하지 마십시오.
 
 설치 전 조건만 확인하려면 파일과 DB를 변경하지 않는 검증 모드를 사용할 수 있습니다.

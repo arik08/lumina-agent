@@ -354,6 +354,13 @@ def test_codegraph_update_is_portable_and_reindexes_after_cli_upgrades() -> None
     assert "codegraph.Source sync" in script
     assert "reindexRecommended" in script
     assert "codegraph.Source index" in script
+    assert script.index("Get-Command codegraph.cmd") < script.index(
+        "Get-Command codegraph.exe"
+    )
+    assert script.index("Get-Command codegraph.exe") < script.index(
+        "Get-Command codegraph -ErrorAction"
+    )
+    assert "npm.cmd install -g @colbymchenry/codegraph" in script
 
     agent_guidance = (
         Path(__file__).resolve().parents[2] / "AGENTS.md"
@@ -519,6 +526,18 @@ def test_installer_missing_uv_error_includes_install_guidance(tmp_path: Path) ->
     assert completed.returncode != 0
     assert "Required command 'uv' was not found" in output
     assert "astral.sh/uv/install.ps1" in output
+
+
+def test_installer_enables_uv_system_certificates_before_uv_network_work() -> None:
+    installer = (
+        Path(__file__).resolve().parents[2] / "devtools" / "install_lumina.ps1"
+    ).read_text(encoding="utf-8")
+
+    assert '$env:UV_SYSTEM_CERTS = "true"' in installer
+    assert "Assert-NodeVersion\nEnable-UvSystemCertificates\n" in installer
+    assert installer.index("Enable-UvSystemCertificates\n$NpmCommand") < installer.index(
+        'Invoke-Checked -Command "uv"'
+    )
 
 
 def test_installer_rejects_node_version_too_old_for_vite(tmp_path: Path) -> None:
