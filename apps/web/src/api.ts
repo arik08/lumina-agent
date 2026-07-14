@@ -1117,6 +1117,13 @@ export async function listExtensions(query?: string, signal?: AbortSignal) {
   return request<SkillExtension[]>("/extensions", { query: { query }, signal });
 }
 
+export async function syncRepositorySkills(signal?: AbortSignal) {
+  return request<{ changed: number }>("/extensions/repository-sync", {
+    method: "POST",
+    signal,
+  });
+}
+
 export async function listTrashedExtensions(query?: string, signal?: AbortSignal) {
   return request<SkillExtension[]>("/extensions/trash", { query: { query }, signal });
 }
@@ -1786,6 +1793,7 @@ export const api = {
   },
   extensions: {
     list: listExtensions,
+    syncRepository: syncRepositorySkills,
     listTrash: listTrashedExtensions,
     getVersion: getExtensionVersion,
     checkoutDraft: checkoutSkillDraft,

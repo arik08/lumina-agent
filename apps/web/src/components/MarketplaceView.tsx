@@ -139,10 +139,11 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
   const activeFileIsMarkdown = activeFile.toLocaleLowerCase().endsWith(".md");
   const fileTree = useMemo(() => buildSkillFileTree(Object.keys(detailFiles)), [detailFiles]);
 
-  const refresh = async (preferredId?: string) => {
+  const refresh = async (preferredId?: string, syncRepository = false) => {
     setLoading(true);
     setError(null);
     try {
+      if (syncRepository) await api.extensions.syncRepository();
       const [extensions, trashed, installed] = await Promise.all([
         api.extensions.list(),
         api.extensions.listTrash(),
@@ -378,7 +379,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
 
   return (
     <div className="feature-view marketplace-view">
-      <header className="feature-header"><div><button className="feature-mobile-menu" type="button" aria-label="사이드바 열기" onClick={onOpenNavigation}><Menu size={17} /></button><Store size={17} /><h1>마켓스토어</h1>{marketKind === "mcp" && <span>승인 MCP · 설치 · Secret binding</span>}</div><div><button type="button" aria-label="새로 고침" onClick={() => marketKind === "skill" ? void refresh() : setMcpRefreshKey((value) => value + 1)}><RefreshCw size={15} /></button></div></header>
+      <header className="feature-header"><div><button className="feature-mobile-menu" type="button" aria-label="사이드바 열기" onClick={onOpenNavigation}><Menu size={17} /></button><Store size={17} /><h1>마켓스토어</h1>{marketKind === "mcp" && <span>승인 MCP · 설치 · Secret binding</span>}</div><div><button type="button" aria-label="새로 고침" onClick={() => marketKind === "skill" ? void refresh(undefined, true) : setMcpRefreshKey((value) => value + 1)}><RefreshCw size={15} /></button></div></header>
       <div className="feature-kind-tabs" role="tablist" aria-label="Marketplace 유형"><button type="button" role="tab" aria-selected={marketKind === "skill"} onClick={() => setMarketKind("skill")}><Sparkles size={14} /> Skill</button><button type="button" role="tab" aria-selected={marketKind === "mcp"} onClick={() => setMarketKind("mcp")}><Wrench size={14} /> MCP</button></div>
       {marketKind === "skill" && <div className="marketplace-toolbar">
         <div className="marketplace-scope-tabs" role="tablist" aria-label="Skill 보기">

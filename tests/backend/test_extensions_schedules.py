@@ -16,6 +16,7 @@ from lumina.agent.executor import LocalRunExecutor
 from lumina.auth import bootstrap_database, create_user
 from lumina.config import Settings, get_settings
 from lumina.db import SessionLocal, configure_database, create_schema
+from lumina.extensions import repository_catalog
 from lumina.models import (
     Artifact,
     AuditEvent,
@@ -116,6 +117,46 @@ def _create_manual_scheduled_run(
     )
     assert started.status_code == 202, started.text
     return task, started.json()
+
+
+def test_marketplace_refresh_syncs_new_repository_skill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository_root = tmp_path / "repository"
+    skills_root = repository_root / "extensions" / "skills"
+    skills_root.mkdir(parents=True)
+    monkeypatch.setattr(repository_catalog, "REPOSITORY_ROOT", repository_root)
+
+    app, _settings = _test_app(tmp_path)
+    with TestClient(app) as client:
+        csrf = _login(client)
+        assert client.get("/api/extensions").json() == []
+
+        skill_root = skills_root / "explorer-added"
+        skill_root.mkdir()
+        (skill_root / "SKILL.md").write_text(
+            "---\nname: explorer-added\ndescription: 탐색기로 추가한 Skill\n---\n\n# Explorer Added\n",
+            encoding="utf-8",
+        )
+
+        synced = client.post(
+            "/api/extensions/repository-sync",
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert synced.status_code == 200, synced.text
+        assert synced.json() == {"changed": 1}
+
+        catalog = client.get("/api/extensions").json()
+        assert [(item["slug"], item["description"]) for item in catalog] == [
+            ("explorer-added", "탐색기로 추가한 Skill")
+        ]
+
+        repeated = client.post(
+            "/api/extensions/repository-sync",
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert repeated.status_code == 200, repeated.text
+        assert repeated.json() == {"changed": 0}
 
 
 def test_skill_draft_versions_installation_and_folder_move(tmp_path: Path) -> None:

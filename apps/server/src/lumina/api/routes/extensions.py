@@ -7,7 +7,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ...audit import record_audit
+from ...auth import BOOTSTRAP_ADMIN_LOGIN_ID
 from ...db import get_db
+from ...extensions.repository_catalog import sync_repository_skills
 from ...extensions.schemas import (
     DraftActivation,
     DraftSaveVersion,
@@ -85,6 +87,30 @@ def get_extensions(
         )
         for extension in list_extensions(db, user=user, query=query)
     ]
+
+
+@router.post("/extensions/repository-sync")
+def post_extension_repository_sync(
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, int]:
+    admin = db.scalar(
+        select(User).where(
+            User.login_id == BOOTSTRAP_ADMIN_LOGIN_ID,
+            User.organization_id == context.user.organization_id,
+            User.role == "admin",
+            User.status == "active",
+        )
+    )
+    if admin is None:
+        raise ApiProblem(
+            409,
+            "repository_catalog_owner_unavailable",
+            "Repository Skill을 등록할 활성 관리자 계정을 찾을 수 없습니다.",
+        )
+    changed = sync_repository_skills(db, admin=admin)
+    db.commit()
+    return {"changed": changed}
 
 
 @router.get("/extensions/trash")

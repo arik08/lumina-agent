@@ -21,6 +21,15 @@ test("repository skills display searchable hashtag metadata instead of a source 
   assert.doesNotMatch(view, /Lumina 기본 제공/);
 });
 
+test("marketplace refresh rescans repository Skills before reloading the catalog", async () => {
+  const [view, api] = await Promise.all([readFile(viewPath, "utf8"), readFile(apiPath, "utf8")]);
+
+  assert.match(api, /request<\{ changed: number \}>\("\/extensions\/repository-sync"/);
+  assert.match(api, /syncRepository: syncRepositorySkills/);
+  assert.match(view, /if \(syncRepository\) await api\.extensions\.syncRepository\(\)/);
+  assert.match(view, /marketKind === "skill" \? void refresh\(undefined, true\)/);
+});
+
 test("skill visibility and draft state use clear Korean labels", async () => {
   const view = await readFile(viewPath, "utf8");
 
