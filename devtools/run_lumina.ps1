@@ -9,11 +9,6 @@ $RepositoryRoot = Split-Path -Parent $PSScriptRoot
 $ServerRoot = Join-Path $RepositoryRoot "apps/server"
 $WebRoot = Join-Path $RepositoryRoot "apps/web"
 $LogRoot = Join-Path $RepositoryRoot "data/logs"
-$BackendOutputLog = Join-Path $LogRoot "backend.out.log"
-$LauncherEventLogPath = Join-Path $LogRoot "launcher-events.jsonl"
-$StartupStatePath = Join-Path $LogRoot $(
-    if ($Development) { "run_lumina_dev.state.json" } else { "run_lumina.state.json" }
-)
 $script:LauncherStartedAt = [DateTime]::UtcNow
 $script:StartupStateSequence = 0
 $script:StartupStateStatus = "starting"
@@ -66,11 +61,122 @@ $HealthCheckIntervalSeconds = 5
 $HealthFailureThreshold = 3
 $StartupTimeoutSeconds = 90
 $RestartBudgetResetSeconds = 600
-$SupervisorPidPath = Join-Path $LogRoot $(
-    if ($Development) { "run_lumina_dev.pid" } else { "run_lumina.pid" }
-)
+function Get-LuminaRuntimeFileSuffix {
+    param(
+        [Parameter(Mandatory = $true)][bool]$IsDevelopment,
+        [Parameter(Mandatory = $true)][int]$FrontendPort,
+        [Parameter(Mandatory = $true)][int]$BackendPort
+    )
+
+    if ($IsDevelopment) {
+        if ($FrontendPort -eq 5252 -and $BackendPort -eq 5253) {
+            return ""
+        }
+        return ".$FrontendPort-$BackendPort"
+    }
+    if ($BackendPort -eq 5253) {
+        return ""
+    }
+    return ".$BackendPort"
+}
+
+function Set-LuminaQaIsolationEnvironment {
+    param(
+        [Parameter(Mandatory = $true)][bool]$IsDevelopment,
+        [Parameter(Mandatory = $true)][int]$FrontendPort,
+        [Parameter(Mandatory = $true)][int]$BackendPort,
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [AllowNull()][AllowEmptyString()][string]$RuntimeFileSuffix
+    )
+
+    $frontendOverride = [Environment]::GetEnvironmentVariable(
+        "LUMINA_FRONTEND_PORT",
+        "Process"
+    )
+    $backendOverride = [Environment]::GetEnvironmentVariable(
+        "LUMINA_BACKEND_PORT",
+        "Process"
+    )
+    $hasProcessPortOverride = (
+        -not [string]::IsNullOrWhiteSpace($frontendOverride) -or
+        -not [string]::IsNullOrWhiteSpace($backendOverride)
+    )
+    if (-not $IsDevelopment -or -not $hasProcessPortOverride -or -not $RuntimeFileSuffix) {
+        return
+    }
+
+    $runtimeKey = "$FrontendPort-$BackendPort"
+    $qaRoot = Join-Path $RepositoryRoot "data/qa-runtime/$runtimeKey"
+    $databasePath = Join-Path $qaRoot "database/lumina.db"
+    $changed = $false
+    $databaseUrl = [Environment]::GetEnvironmentVariable("DATABASE_URL", "Process")
+    $luminaDatabaseUrl = [Environment]::GetEnvironmentVariable(
+        "LUMINA_DATABASE_URL",
+        "Process"
+    )
+    if (
+        [string]::IsNullOrWhiteSpace($databaseUrl) -and
+        [string]::IsNullOrWhiteSpace($luminaDatabaseUrl)
+    ) {
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $databasePath) |
+            Out-Null
+        $databaseUrlPath = $databasePath.Replace('\', '/')
+        [Environment]::SetEnvironmentVariable(
+            "DATABASE_URL",
+            "sqlite:///$databaseUrlPath",
+            "Process"
+        )
+        $changed = $true
+    }
+    if ([string]::IsNullOrWhiteSpace(
+        [Environment]::GetEnvironmentVariable("LUMINA_FILES_DIR", "Process")
+    )) {
+        [Environment]::SetEnvironmentVariable(
+            "LUMINA_FILES_DIR",
+            (Join-Path $qaRoot "files"),
+            "Process"
+        )
+        $changed = $true
+    }
+    if ([string]::IsNullOrWhiteSpace(
+        [Environment]::GetEnvironmentVariable("LUMINA_ARTIFACTS_DIR", "Process")
+    )) {
+        [Environment]::SetEnvironmentVariable(
+            "LUMINA_ARTIFACTS_DIR",
+            (Join-Path $qaRoot "artifacts"),
+            "Process"
+        )
+        $changed = $true
+    }
+    if ($changed) {
+        Write-Host "[Lumina] Isolated QA runtime: data/qa-runtime/$runtimeKey"
+    }
+}
+
+$RuntimeFileSuffix = Get-LuminaRuntimeFileSuffix `
+    -IsDevelopment $Development.IsPresent `
+    -FrontendPort $FrontendPort `
+    -BackendPort $BackendPort
+$runtimeBaseName = if ($Development) { "run_lumina_dev" } else { "run_lumina" }
+$BackendOutputLog = Join-Path $LogRoot "backend$RuntimeFileSuffix.out.log"
+$BackendErrorLog = Join-Path $LogRoot "backend$RuntimeFileSuffix.err.log"
+$FrontendOutputLog = Join-Path $LogRoot "frontend$RuntimeFileSuffix.out.log"
+$FrontendErrorLog = Join-Path $LogRoot "frontend$RuntimeFileSuffix.err.log"
+$LauncherEventLogPath = Join-Path $LogRoot "launcher-events$RuntimeFileSuffix.jsonl"
+$StartupStatePath = Join-Path $LogRoot "$runtimeBaseName$RuntimeFileSuffix.state.json"
+$SupervisorPidPath = Join-Path $LogRoot "$runtimeBaseName$RuntimeFileSuffix.pid"
+Set-LuminaQaIsolationEnvironment `
+    -IsDevelopment $Development.IsPresent `
+    -FrontendPort $FrontendPort `
+    -BackendPort $BackendPort `
+    -RepositoryRoot $RepositoryRoot `
+    -RuntimeFileSuffix $RuntimeFileSuffix
 $script:ManagedProcesses = @()
 $script:BackendActivityLineCount = 0
+$script:LauncherPortLocks = @()
+$script:LauncherLockConflictPort = 0
+$LauncherAlreadyRunningExitCode = 76
+$DatabaseOwnershipExitCode = 77
 
 function Write-LuminaBanner {
     $template = @(
@@ -142,6 +248,12 @@ function Get-LuminaLauncherErrorDetails {
         return [pscustomobject]@{
             Code = "INSTALL_INCOMPLETE"
             HelpAction = "Run installer.bat, then start Lumina again."
+        }
+    }
+    if ($text -match 'Another Lumina Backend already owns this SQLite database') {
+        return [pscustomobject]@{
+            Code = "DATABASE_ALREADY_OWNED"
+            HelpAction = "Stop the existing Backend or configure an isolated DATABASE_URL."
         }
     }
     if ($Phase -eq "PREFLIGHT" -and $text -match 'alembic.*current.*--check-heads') {
@@ -258,6 +370,71 @@ function Invoke-Checked {
     & $Command @Arguments
     if ($LASTEXITCODE -ne 0) {
         throw "Command failed with exit code ${LASTEXITCODE}: $Command $($Arguments -join ' ')"
+    }
+}
+
+function Exit-LuminaPortLocks {
+    foreach ($portLock in @($script:LauncherPortLocks)) {
+        try {
+            $portLock.Dispose()
+        }
+        catch {
+            # Process exit still releases the operating-system file lock.
+        }
+    }
+    $script:LauncherPortLocks = @()
+}
+
+function Enter-LuminaPortLocks {
+    param([Parameter(Mandatory = $true)][int[]]$Ports)
+
+    Exit-LuminaPortLocks
+    $script:LauncherLockConflictPort = 0
+    New-Item -ItemType Directory -Force -Path $LogRoot | Out-Null
+    foreach ($port in @($Ports | Sort-Object -Unique)) {
+        $lockPath = Join-Path $LogRoot "run_lumina.port.$port.lock"
+        $portLock = $null
+        try {
+            $portLock = [System.IO.File]::Open(
+                $lockPath,
+                [System.IO.FileMode]::OpenOrCreate,
+                [System.IO.FileAccess]::ReadWrite,
+                [System.IO.FileShare]::None
+            )
+            $mode = if ($Development) { "development" } else { "production" }
+            $identity = "$PID|$mode|$($Ports -join ',')|$([DateTime]::UtcNow.ToString('o'))"
+            $identityBytes = [System.Text.Encoding]::UTF8.GetBytes($identity)
+            $portLock.SetLength(0)
+            $portLock.Write($identityBytes, 0, $identityBytes.Length)
+            $portLock.Flush()
+            $script:LauncherPortLocks += $portLock
+        }
+        catch [System.IO.IOException] {
+            if ($null -ne $portLock) {
+                $portLock.Dispose()
+            }
+            $script:LauncherLockConflictPort = $port
+            Exit-LuminaPortLocks
+            return $false
+        }
+    }
+    return $true
+}
+
+function Test-LuminaDatabaseOwnershipFailure {
+    param([Parameter(Mandatory = $true)][string]$ErrorLog)
+
+    if (-not (Test-Path -LiteralPath $ErrorLog -PathType Leaf)) {
+        return $false
+    }
+    try {
+        $errorText = [System.IO.File]::ReadAllText($ErrorLog)
+        return $errorText.Contains(
+            "Another Lumina Backend already owns this SQLite database."
+        )
+    }
+    catch {
+        return $false
     }
 }
 
@@ -672,7 +849,7 @@ function Start-LuminaProcesses {
         -Arguments $backendArguments `
         -WorkingDirectory $RepositoryRoot `
         -OutputLog $BackendOutputLog `
-        -ErrorLog (Join-Path $LogRoot "backend.err.log")
+        -ErrorLog $BackendErrorLog
     $script:ManagedProcesses = @($preservedProcesses) + @($backendProcess)
     if ($Development -and -not $PreserveFrontend) {
         $script:ManagedProcesses += Start-ManagedProcess `
@@ -685,8 +862,8 @@ function Start-LuminaProcesses {
                 "--strictPort"
             ) `
             -WorkingDirectory $WebRoot `
-            -OutputLog (Join-Path $LogRoot "frontend.out.log") `
-            -ErrorLog (Join-Path $LogRoot "frontend.err.log") `
+            -OutputLog $FrontendOutputLog `
+            -ErrorLog $FrontendErrorLog `
             -EnvironmentVariables @{ CI = "true" }
     }
 }
@@ -711,6 +888,19 @@ function Wait-LuminaReady {
 
 Set-Location -LiteralPath $RepositoryRoot
 New-Item -ItemType Directory -Force -Path $LogRoot | Out-Null
+$claimedPorts = if ($Development) {
+    @($FrontendPort, $BackendPort)
+}
+else {
+    @($BackendPort)
+}
+if (-not (Enter-LuminaPortLocks -Ports $claimedPorts)) {
+    Write-Warning (
+        "Another Lumina launcher already owns port " +
+        "$($script:LauncherLockConflictPort). The existing runtime was left running."
+    )
+    exit $LauncherAlreadyRunningExitCode
+}
 Write-LuminaBanner
 Write-LuminaStartupState -Status "starting" -Phase "PREFLIGHT"
 
@@ -741,6 +931,7 @@ catch {
         -ErrorCode $details.Code `
         -HelpAction $details.HelpAction `
         -LastError $preflightError
+    Exit-LuminaPortLocks
     throw
 }
 $resetReason = "initial startup"
@@ -860,6 +1051,24 @@ try {
                 -HelpAction "Manual reset requested."
             continue
         }
+        if (Test-LuminaDatabaseOwnershipFailure -ErrorLog $BackendErrorLog) {
+            $databaseOwnershipError = (
+                "Another Lumina Backend already owns this SQLite database. " +
+                "The launcher will stop instead of retrying in the background."
+            )
+            $details = Get-LuminaLauncherErrorDetails `
+                -Phase $currentPhase `
+                -Message $databaseOwnershipError
+            Write-LuminaStartupState `
+                -Status "failed" `
+                -Phase $currentPhase `
+                -Attempt $attemptNumber `
+                -ErrorCode $details.Code `
+                -HelpAction $details.HelpAction `
+                -LastError $databaseOwnershipError
+            Write-Host "[Lumina] $databaseOwnershipError" -ForegroundColor Red
+            exit $DatabaseOwnershipExitCode
+        }
         $details = Get-LuminaLauncherErrorDetails -Phase $currentPhase -Message $resetReason
         $automaticRestartCount++
         Write-LuminaMonitoringEvent `
@@ -883,6 +1092,7 @@ try {
 finally {
     Stop-ManagedProcesses
     Remove-SupervisorPid
+    Exit-LuminaPortLocks
     if ($script:StartupStateStatus -ne "failed") {
         Write-LuminaStartupState -Status "stopped" -Phase "STOPPED"
     }

@@ -3,6 +3,16 @@ setlocal
 :run_lumina
 call powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0devtools\run_lumina.ps1" -Development
 set "LUMINA_DEV_EXIT=%ERRORLEVEL%"
+if "%LUMINA_DEV_EXIT%"=="76" (
+    echo.
+    echo [Lumina] Another launcher is already using the configured port. The existing runtime was left running.
+    exit /b %LUMINA_DEV_EXIT%
+)
+if "%LUMINA_DEV_EXIT%"=="77" (
+    echo.
+    echo [Lumina] Another Backend owns the configured SQLite database. This launcher will close without retrying.
+    exit /b %LUMINA_DEV_EXIT%
+)
 echo.
 if not "%LUMINA_DEV_EXIT%"=="0" (
     echo [Lumina] Development launcher failed with exit code %LUMINA_DEV_EXIT%.

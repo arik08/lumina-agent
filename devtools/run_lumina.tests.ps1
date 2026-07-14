@@ -40,6 +40,14 @@ $developmentLauncherPath = Join-Path $repositoryRoot "run_lumina_dev.bat"
 $developmentLauncherSource = Get-Content -Raw -LiteralPath $developmentLauncherPath
 $restartPromptPath = Join-Path $PSScriptRoot "Wait-LuminaLauncherRestart.ps1"
 $restartPromptSource = Get-Content -Raw -LiteralPath $restartPromptPath
+$alreadyRunningBranch = [regex]::Match(
+    $developmentLauncherSource,
+    '(?s)if "%LUMINA_DEV_EXIT%"=="76" \(.*?exit /b %LUMINA_DEV_EXIT%.*?\)'
+)
+$databaseOwnershipBranch = [regex]::Match(
+    $developmentLauncherSource,
+    '(?s)if "%LUMINA_DEV_EXIT%"=="77" \(.*?exit /b %LUMINA_DEV_EXIT%.*?\)'
+)
 if (
     $developmentLauncherSource -notmatch '(?m)^:run_lumina\s*$' -or
     $developmentLauncherSource -notmatch 'Wait-LuminaLauncherRestart\.ps1' -or
@@ -47,9 +55,13 @@ if (
     $developmentLauncherSource -notmatch 'goto run_lumina' -or
     $restartPromptSource -notmatch 'LuminaLauncher\.Input\.ps1' -or
     $restartPromptSource -notmatch 'Test-HardResetInput' -or
-    $restartPromptSource -notmatch 'exit 75'
+    $restartPromptSource -notmatch 'exit 75' -or
+    -not $alreadyRunningBranch.Success -or
+    -not $databaseOwnershipBranch.Success -or
+    $alreadyRunningBranch.Index -gt $developmentLauncherSource.IndexOf('Wait-LuminaLauncherRestart.ps1') -or
+    $databaseOwnershipBranch.Index -gt $developmentLauncherSource.IndexOf('Wait-LuminaLauncherRestart.ps1')
 ) {
-    throw "The development launcher failure prompt must restart on the shared hard-reset input contract."
+    throw "The development launcher must close duplicate instances without leaving a restart prompt behind."
 }
 
 $startManagedProcessFunction = $ast.Find(
@@ -105,6 +117,63 @@ if ($null -eq $stopPreviousFunction) {
 }
 . ([scriptblock]::Create($stopPreviousFunction.Extent.Text))
 
+$enterPortLocksFunction = $ast.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq "Enter-LuminaPortLocks"
+    },
+    $true
+)
+$exitPortLocksFunction = $ast.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq "Exit-LuminaPortLocks"
+    },
+    $true
+)
+if ($null -eq $enterPortLocksFunction -or $null -eq $exitPortLocksFunction) {
+    throw "Port ownership lock functions were not found."
+}
+. ([scriptblock]::Create($exitPortLocksFunction.Extent.Text))
+. ([scriptblock]::Create($enterPortLocksFunction.Extent.Text))
+
+$runtimeFileSuffixFunction = $ast.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq "Get-LuminaRuntimeFileSuffix"
+    },
+    $true
+)
+if ($null -eq $runtimeFileSuffixFunction) {
+    throw "Get-LuminaRuntimeFileSuffix was not found."
+}
+. ([scriptblock]::Create($runtimeFileSuffixFunction.Extent.Text))
+
+$qaIsolationFunction = $ast.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq "Set-LuminaQaIsolationEnvironment"
+    },
+    $true
+)
+$databaseOwnershipFunction = $ast.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq "Test-LuminaDatabaseOwnershipFailure"
+    },
+    $true
+)
+if ($null -eq $qaIsolationFunction -or $null -eq $databaseOwnershipFunction) {
+    throw "QA isolation and database ownership detection functions were not found."
+}
+. ([scriptblock]::Create($qaIsolationFunction.Extent.Text))
+. ([scriptblock]::Create($databaseOwnershipFunction.Extent.Text))
+
 $cases = @(
     @{ Name = "lowercase r"; Character = [char]'r'; VirtualKeyCode = 0; Expected = $true },
     @{ Name = "uppercase R"; Character = [char]'R'; VirtualKeyCode = 0; Expected = $true },
@@ -119,6 +188,208 @@ foreach ($case in $cases) {
     if ($actual -ne $case.Expected) {
         throw "$($case.Name): expected $($case.Expected), got $actual"
     }
+}
+
+$runtimeFileCases = @(
+    @{
+        Development = $true
+        FrontendPort = 5252
+        BackendPort = 5253
+        ExpectedSuffix = ""
+        ExpectedPidFile = "run_lumina_dev.pid"
+    },
+    @{
+        Development = $true
+        FrontendPort = 15252
+        BackendPort = 15253
+        ExpectedSuffix = ".15252-15253"
+        ExpectedPidFile = "run_lumina_dev.15252-15253.pid"
+    },
+    @{
+        Development = $false
+        FrontendPort = 5252
+        BackendPort = 5253
+        ExpectedSuffix = ""
+        ExpectedPidFile = "run_lumina.pid"
+    },
+    @{
+        Development = $false
+        FrontendPort = 15252
+        BackendPort = 15253
+        ExpectedSuffix = ".15253"
+        ExpectedPidFile = "run_lumina.15253.pid"
+    }
+)
+foreach ($case in $runtimeFileCases) {
+    $actualSuffix = Get-LuminaRuntimeFileSuffix `
+        -IsDevelopment $case.Development `
+        -FrontendPort $case.FrontendPort `
+        -BackendPort $case.BackendPort
+    $baseName = if ($case.Development) { "run_lumina_dev" } else { "run_lumina" }
+    $actualPidFile = "$baseName$actualSuffix.pid"
+    if (
+        $actualSuffix -ne $case.ExpectedSuffix -or
+        $actualPidFile -ne $case.ExpectedPidFile
+    ) {
+        throw "Runtime file isolation did not preserve default and isolated port names."
+    }
+}
+
+$qaIsolationRoot = Join-Path $env:TEMP "lumina-qa-isolation-test-$([guid]::NewGuid())"
+$qaEnvironmentNames = @(
+    "LUMINA_FRONTEND_PORT",
+    "LUMINA_BACKEND_PORT",
+    "DATABASE_URL",
+    "LUMINA_DATABASE_URL",
+    "LUMINA_FILES_DIR",
+    "LUMINA_ARTIFACTS_DIR"
+)
+$originalQaEnvironment = @{}
+foreach ($name in $qaEnvironmentNames) {
+    $originalQaEnvironment[$name] = [Environment]::GetEnvironmentVariable(
+        $name,
+        "Process"
+    )
+}
+try {
+    [Environment]::SetEnvironmentVariable(
+        "LUMINA_FRONTEND_PORT",
+        "46252",
+        "Process"
+    )
+    [Environment]::SetEnvironmentVariable(
+        "LUMINA_BACKEND_PORT",
+        "46253",
+        "Process"
+    )
+    foreach ($name in @(
+        "DATABASE_URL",
+        "LUMINA_DATABASE_URL",
+        "LUMINA_FILES_DIR",
+        "LUMINA_ARTIFACTS_DIR"
+    )) {
+        [Environment]::SetEnvironmentVariable($name, $null, "Process")
+    }
+    Set-LuminaQaIsolationEnvironment `
+        -IsDevelopment $true `
+        -FrontendPort 46252 `
+        -BackendPort 46253 `
+        -RepositoryRoot $qaIsolationRoot `
+        -RuntimeFileSuffix ".46252-46253"
+    $expectedQaRoot = Join-Path $qaIsolationRoot "data/qa-runtime/46252-46253"
+    $expectedDatabasePath = (Join-Path $expectedQaRoot "database/lumina.db").Replace('\', '/')
+    if (
+        $env:DATABASE_URL -ne "sqlite:///$expectedDatabasePath" -or
+        $env:LUMINA_FILES_DIR -ne (Join-Path $expectedQaRoot "files") -or
+        $env:LUMINA_ARTIFACTS_DIR -ne (Join-Path $expectedQaRoot "artifacts")
+    ) {
+        throw "Process-level QA ports did not receive isolated runtime storage."
+    }
+
+    $explicitDatabaseUrl = "sqlite:///explicit-qa.db"
+    [Environment]::SetEnvironmentVariable(
+        "DATABASE_URL",
+        $explicitDatabaseUrl,
+        "Process"
+    )
+    Set-LuminaQaIsolationEnvironment `
+        -IsDevelopment $true `
+        -FrontendPort 47252 `
+        -BackendPort 47253 `
+        -RepositoryRoot $qaIsolationRoot `
+        -RuntimeFileSuffix ".47252-47253"
+    if ($env:DATABASE_URL -ne $explicitDatabaseUrl) {
+        throw "An explicit QA DATABASE_URL was overwritten by the launcher."
+    }
+
+    $ownershipLog = Join-Path $qaIsolationRoot "backend.err.log"
+    New-Item -ItemType Directory -Force -Path $qaIsolationRoot | Out-Null
+    [System.IO.File]::WriteAllText(
+        $ownershipLog,
+        "Another Lumina Backend already owns this SQLite database."
+    )
+    if (-not (Test-LuminaDatabaseOwnershipFailure -ErrorLog $ownershipLog)) {
+        throw "SQLite database ownership failure was not detected."
+    }
+    [System.IO.File]::WriteAllText($ownershipLog, "Unrelated startup failure")
+    if (Test-LuminaDatabaseOwnershipFailure -ErrorLog $ownershipLog) {
+        throw "An unrelated Backend failure was classified as database ownership."
+    }
+}
+finally {
+    foreach ($name in $qaEnvironmentNames) {
+        [Environment]::SetEnvironmentVariable(
+            $name,
+            $originalQaEnvironment[$name],
+            "Process"
+        )
+    }
+    Remove-Item -LiteralPath $qaIsolationRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+$lockTestRoot = Join-Path $env:TEMP "lumina-port-lock-test-$([guid]::NewGuid())"
+$originalLogRoot = $LogRoot
+$externalLock = $null
+try {
+    New-Item -ItemType Directory -Path $lockTestRoot -Force | Out-Null
+    $LogRoot = $lockTestRoot
+    $script:LauncherPortLocks = @()
+    $script:LauncherLockConflictPort = 0
+
+    if (-not (Enter-LuminaPortLocks -Ports @(45253, 45252))) {
+        throw "The first launcher could not claim free ports."
+    }
+    if ($script:LauncherPortLocks.Count -ne 2) {
+        throw "The launcher did not retain both port ownership locks."
+    }
+    $claimedLockPath = Join-Path $lockTestRoot "run_lumina.port.45252.lock"
+    $claimWasExclusive = $false
+    try {
+        $probe = [System.IO.File]::Open(
+            $claimedLockPath,
+            [System.IO.FileMode]::OpenOrCreate,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::None
+        )
+        $probe.Dispose()
+    }
+    catch [System.IO.IOException] {
+        $claimWasExclusive = $true
+    }
+    if (-not $claimWasExclusive) {
+        throw "A claimed Lumina port lock was not exclusive."
+    }
+    Exit-LuminaPortLocks
+
+    $partialLockPath = Join-Path $lockTestRoot "run_lumina.port.45255.lock"
+    $externalLock = [System.IO.File]::Open(
+        $partialLockPath,
+        [System.IO.FileMode]::OpenOrCreate,
+        [System.IO.FileAccess]::ReadWrite,
+        [System.IO.FileShare]::None
+    )
+    if (Enter-LuminaPortLocks -Ports @(45254, 45255)) {
+        throw "A second launcher claimed a port already owned by another launcher."
+    }
+    if ($script:LauncherLockConflictPort -ne 45255) {
+        throw "The conflicting launcher port was not reported."
+    }
+    $releasedPartialPath = Join-Path $lockTestRoot "run_lumina.port.45254.lock"
+    $releasedPartialLock = [System.IO.File]::Open(
+        $releasedPartialPath,
+        [System.IO.FileMode]::OpenOrCreate,
+        [System.IO.FileAccess]::ReadWrite,
+        [System.IO.FileShare]::None
+    )
+    $releasedPartialLock.Dispose()
+}
+finally {
+    Exit-LuminaPortLocks
+    if ($null -ne $externalLock) {
+        $externalLock.Dispose()
+    }
+    $LogRoot = $originalLogRoot
+    Remove-Item -LiteralPath $lockTestRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 $environmentTestRoot = Join-Path $env:TEMP "lumina-managed-env-test-$([guid]::NewGuid())"
@@ -424,6 +695,17 @@ if (
 ) {
     throw "Manual resets and automatic recoveries must be written as distinct monitoring events."
 }
+$databaseOwnershipStop = $source.LastIndexOf(
+    'if (Test-LuminaDatabaseOwnershipFailure'
+)
+$automaticRecoveryIncrement = $source.LastIndexOf('$automaticRestartCount++')
+if (
+    $databaseOwnershipStop -lt 0 -or
+    $automaticRecoveryIncrement -lt 0 -or
+    $databaseOwnershipStop -gt $automaticRecoveryIncrement
+) {
+    throw "SQLite ownership conflicts must stop before the automatic restart loop."
+}
 if ($source -notmatch '\$StartupTimeoutSeconds\s*=\s*90') {
     throw "The startup deadline must allow a 90-second Windows cold start."
 }
@@ -507,6 +789,12 @@ $foreignPort = Get-LuminaLauncherErrorDetails `
     -Message "Port 5253 is used by a non-Lumina process: sample.exe (PID 10)"
 if ($foreignPort.Code -ne "PORT_IN_USE_FOREIGN") {
     throw "Foreign port ownership must have a stable launcher error code."
+}
+$databaseOwned = Get-LuminaLauncherErrorDetails `
+    -Phase "WAITING_FOR_READINESS" `
+    -Message "Another Lumina Backend already owns this SQLite database."
+if ($databaseOwned.Code -ne "DATABASE_ALREADY_OWNED") {
+    throw "SQLite ownership conflicts must stop with a stable launcher error code."
 }
 $schemaMismatch = Get-LuminaLauncherErrorDetails `
     -Phase "PREFLIGHT" `

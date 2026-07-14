@@ -181,6 +181,8 @@ run_lumina_dev.bat
 
 Frontend와 Backend 포트는 루트 `.env`의 `LUMINA_FRONTEND_PORT`, `LUMINA_BACKEND_PORT`로 각각 바꿀 수 있습니다. 기본값은 `5252`, `5253`이며 서로 다른 번호를 사용해야 합니다. 값을 저장한 뒤 실행기를 다시 시작하면 Frontend 링크와 API proxy가 새 포트를 사용합니다. 다른 PC에서 접속하려면 같은 네트워크에 연결되어 있어야 하며 Windows 방화벽에서 Frontend TCP 포트의 인바운드 연결을 허용해야 합니다.
 
+이미 실행 중인 Lumina와 포트가 겹치면 새 실행기는 기존 runtime을 종료하지 않고 즉시 종료합니다. 개발·QA에서 Process Environment로 기본값이 아닌 포트를 지정하고 별도 `DATABASE_URL`을 주지 않으면 DB·파일·Artifact와 로그를 `data/qa-runtime/<frontend>-<backend>/` 및 포트별 로그로 자동 격리합니다. `DATABASE_URL`을 명시해 같은 SQLite DB를 두 Backend가 공유하려 하면 재시작을 반복하지 않고 충돌을 알린 뒤 종료합니다.
+
 실행 창에서 `r`, `R` 또는 `ㄱ`을 입력하면 Frontend와 Backend를 함께 재시작합니다.
 Backend나 Frontend process가 예기치 않게 종료되거나 health check가 연속 실패하면 실행기가 자동으로 다시 시작합니다. 반복 장애 때는 재시작 간격을 최대 30초까지 늘리며, 사용자가 실행기를 종료할 때까지 감시를 계속합니다. 직전 process 로그는 `data/logs/*.previous.log`에 보존됩니다.
 
