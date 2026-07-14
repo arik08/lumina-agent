@@ -496,6 +496,7 @@ export interface MessageMetadata {
     lines: number;
     estimated?: boolean;
     targetTokens?: number;
+    modelOutputTokens?: number;
   };
   sources?: SourceEvidence[];
   citations?: MessageCitation[];
@@ -1384,12 +1385,14 @@ export interface RunSnapshot {
     lines: number;
     estimated?: boolean;
     targetTokens?: number;
+    modelOutputTokens?: number;
   } | null;
   artifactUsage?: {
     tokens: number;
     lines: number;
     estimated?: boolean;
     targetTokens?: number;
+    modelOutputTokens?: number;
   } | null;
   outputIntent: {
     fileCreationRequested: boolean;

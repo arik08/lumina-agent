@@ -142,6 +142,14 @@ def test_write_file_progress_counts_streamed_tokens_and_lines() -> None:
     assert completed["lines"] == 2
 
 
+def test_artifact_progress_refreshes_at_100ms_with_live_model_output() -> None:
+    assert executor_module._ARTIFACT_PROGRESS_INTERVAL_SECONDS == 0.1
+    assert executor_module._artifact_progress_due(None, 10.0)
+    assert not executor_module._artifact_progress_due(10.0, 10.099)
+    assert executor_module._artifact_progress_due(10.0, 10.1)
+    assert executor_module._live_model_output_tokens(3_204, 400) == 3_304
+
+
 def test_streamed_write_file_name_extracts_only_the_target_name() -> None:
     arguments = '{"path":"reports\\\\quarterly_summary.html","content":"private'
 

@@ -21,7 +21,8 @@ test("artifact progress distinguishes document size, target, and model output us
   assert.match(app, /style=\{\{ width: `\$\{artifactProgress\.percent\}%` \}\}/);
   assert.match(app, /snapshot\?\.artifactProgress\s+\?\? snapshot\?\.artifactUsage\s+\?\? finalMessage\?\.metadata\?\.artifactUsage/);
   assert.match(app, /artifactUsage\.estimated === false \? "문서 약" : "작성 중 약"/);
-  assert.match(app, /모델 출력 누계 \{modelOutputTokens\.toLocaleString\(\)\}토큰/);
+  assert.match(app, /artifactUsage\?\.modelOutputTokens \?\? 0/);
+  assert.match(app, /모델 출력 누계 \{liveModelOutputTokens\.toLocaleString\(\)\}토큰/);
   assert.match(app, /aria-label="작성 중 토큰과 모델 출력 누계의 차이"/);
   assert.match(app, /data-tooltip="작성 중은 현재 문서 본문의 추정량이고, 모델 출력 누계는 이번 작업의 모든 모델 응답을 합산한 값입니다\."/);
   assert.match(app, /artifactUsage\.targetTokens \? ` · 목표/);
@@ -39,6 +40,6 @@ test("artifact progress distinguishes document size, target, and model output us
   assert.match(stylesheet, /\.artifact-progress-count\.is-green \{ --artifact-progress-color: var\(--success\); \}/);
   assert.match(stylesheet, /\.artifact-progress-count\.is-orange \{ --artifact-progress-color: var\(--warning\); \}/);
   assert.match(stylesheet, /\.artifact-progress-count\.is-red \{ --artifact-progress-color: var\(--danger\); \}/);
-  assert.match(stylesheet, /\.artifact-progress-fill \{[^}]*transition: width 180ms/s);
+  assert.match(stylesheet, /\.artifact-progress-fill \{[^}]*transition: width 100ms linear/s);
   assert.doesNotMatch(stylesheet, /stream-meter-sweep/);
 });

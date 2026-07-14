@@ -2189,7 +2189,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .artifact-model-output-help { margin-inline-start: var(--space-1); padding: 0; border: 0; background: transparent; color: inherit; font: inherit; line-height: 1; cursor: help; }
 .artifact-model-output-help:hover { color: var(--cobalt); }
 .artifact-progress-meter { position: relative; overflow: hidden; width: 100%; height: 7px; border: 1px solid color-mix(in srgb, var(--artifact-progress-color) 34%, var(--line)); border-radius: 2px; background: color-mix(in srgb, var(--artifact-progress-color) 9%, transparent); box-shadow: inset 0 1px 2px color-mix(in srgb, var(--ink) 12%, transparent); }
-.artifact-progress-fill { display: block; height: 100%; background: var(--artifact-progress-color); box-shadow: 0 0 7px color-mix(in srgb, var(--artifact-progress-color) 48%, transparent); transition: width 180ms cubic-bezier(.25, 1, .5, 1); }
+.artifact-progress-fill { display: block; height: 100%; background: var(--artifact-progress-color); box-shadow: 0 0 7px color-mix(in srgb, var(--artifact-progress-color) 48%, transparent); transition: width 100ms linear; }
 
 .tool-activity { margin: 16px 0 20px; }
 .tool-group-trigger, .tool-call-trigger {

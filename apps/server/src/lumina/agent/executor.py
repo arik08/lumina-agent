@@ -161,6 +161,7 @@ _ARTIFACT_TARGET_CEILING_RATIO = 1.05
 _ARTIFACT_FIRST_PASS_PREFERRED_FLOOR_RATIO = 0.9
 _ARTIFACT_HTML_CHARS_PER_FLOOR_TOKEN = 2
 _MAX_ARTIFACT_LENGTH_RETRIES = 2
+_ARTIFACT_PROGRESS_INTERVAL_SECONDS = 0.1
 _CONTINUATION_PROMPT = (
     "[Continuation after output limit] Continue exactly where the previous assistant "
     "text stopped. Do not repeat completed text, restart the answer, or summarize it."
@@ -891,6 +892,8 @@ class LocalRunExecutor:
             pending_text_chars = 0
             last_text_flush = time.monotonic()
             first_text_persisted = False
+            confirmed_output_tokens = self._confirmed_output_tokens(run_id)
+            streamed_output_chars = 0
             memory_stream = _InlineMemoryStream() if memory_learning_enabled else None
             continuation_deduper = _ContinuationDeduper(pending_continuation_reference)
             pending_continuation_reference = None
@@ -933,6 +936,14 @@ class LocalRunExecutor:
             try:
                 async with asyncio.timeout(self._remaining_run_seconds(run_id)):
                     async for event in provider.stream(request):
+                        if event.type == "text_delta" and event.text:
+                            streamed_output_chars += len(event.text)
+                        elif event.type == "tool_call_delta" and event.arguments_delta:
+                            streamed_output_chars += len(event.arguments_delta)
+                        estimated_model_output_tokens = _live_model_output_tokens(
+                            confirmed_output_tokens,
+                            streamed_output_chars,
+                        )
                         if event.type in {
                             "text_delta",
                             "tool_call_started",
@@ -984,7 +995,15 @@ class LocalRunExecutor:
                                     run_id, tool_calls[call_id]
                                 )
                             if tool_calls[call_id]["name"] == "create_report":
-                                await self._publish_artifact_progress(run_id, 0, 0)
+                                await self._publish_artifact_progress(
+                                    run_id,
+                                    0,
+                                    0,
+                                )
+                                tool_calls[call_id]["artifact_progress"] = (0, 0)
+                                tool_calls[call_id]["artifact_progress_published_at"] = (
+                                    time.monotonic()
+                                )
                         elif event.type == "tool_call_delta":
                             await flush_pending_text()
                             delta_call_id = event.tool_call_id or active_call_id
@@ -998,15 +1017,23 @@ class LocalRunExecutor:
                                         call["arguments"]
                                     )
                                     previous = call.get("artifact_progress")
-                                    if previous != progress and (
-                                        previous is None
-                                        or progress[0] >= previous[0] + 64
-                                        or progress[1] >= previous[1] + 8
+                                    now = time.monotonic()
+                                    last_published_at = call.get(
+                                        "artifact_progress_published_at"
+                                    )
+                                    if previous != progress and _artifact_progress_due(
+                                        last_published_at,
+                                        now,
                                     ):
                                         call["artifact_progress"] = progress
+                                        call["artifact_progress_published_at"] = now
                                         if call["name"] == "create_report":
                                             await self._publish_artifact_progress(
-                                                run_id, *progress
+                                                run_id,
+                                                *progress,
+                                                model_output_tokens=(
+                                                    estimated_model_output_tokens
+                                                ),
                                             )
                                         else:
                                             await self._update_streaming_write_file(
@@ -1033,7 +1060,11 @@ class LocalRunExecutor:
                                         call["artifact_progress"] = progress
                                         if call["name"] == "create_report":
                                             await self._publish_artifact_progress(
-                                                run_id, *progress
+                                                run_id,
+                                                *progress,
+                                                model_output_tokens=(
+                                                    estimated_model_output_tokens
+                                                ),
                                             )
                                         else:
                                             await self._update_streaming_write_file(
@@ -3325,6 +3356,13 @@ class LocalRunExecutor:
             )
         return _artifact_model_request_tokens(capabilities, target_tokens)
 
+    def _confirmed_output_tokens(self, run_id: str) -> int:
+        with SessionLocal() as db:
+            run = db.get(Run, run_id)
+            if run is None:
+                return 0
+            return _nonnegative_int(run.usage_json.get("output_tokens"))
+
     async def _publish_artifact_progress(
         self,
         run_id: str,
@@ -3332,6 +3370,7 @@ class LocalRunExecutor:
         lines: int,
         *,
         estimated: bool = True,
+        model_output_tokens: int | None = None,
     ) -> None:
         with session_scope() as db:
             run = db.get(Run, run_id)
@@ -3347,6 +3386,8 @@ class LocalRunExecutor:
             )
             if target_tokens is not None:
                 progress["targetTokens"] = target_tokens
+            if model_output_tokens is not None and model_output_tokens > 0:
+                progress["modelOutputTokens"] = max(0, model_output_tokens)
             run.snapshot_json = {
                 **run.snapshot_json,
                 "artifact_progress": progress,
@@ -4805,6 +4846,18 @@ def _artifact_argument_progress(arguments: str) -> tuple[int, int]:
     tokens = max(1, math.ceil(character_count / 4))
     lines = max(1, arguments.count("\\n") + 1, math.ceil(character_count / 80))
     return tokens, lines
+
+
+def _artifact_progress_due(last_published_at: Any, now: float) -> bool:
+    return not isinstance(last_published_at, (int, float)) or (
+        now - last_published_at + 1e-9 >= _ARTIFACT_PROGRESS_INTERVAL_SECONDS
+    )
+
+
+def _live_model_output_tokens(confirmed_tokens: int, streamed_chars: int) -> int:
+    return max(0, confirmed_tokens) + (
+        math.ceil(streamed_chars / 4) if streamed_chars > 0 else 0
+    )
 
 
 def _skill_activation_tool_schema(

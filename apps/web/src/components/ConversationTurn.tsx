@@ -1576,6 +1576,10 @@ export function AssistantTurn({
     : null;
   const runUsage = finalMessage?.metadata?.usage ?? snapshot?.usage;
   const modelOutputTokens = usageNumber(runUsage, "output_tokens");
+  const liveModelOutputTokens = Math.max(
+    modelOutputTokens,
+    artifactUsage?.modelOutputTokens ?? 0,
+  );
   return (
     <div className="turn-set" data-run-id={turnSet.runId ?? undefined}>
       {userMessages.map((message) => (
@@ -1674,12 +1678,12 @@ export function AssistantTurn({
           <div className="assistant-content">
             {assistantText && <MarkdownResponse text={displayedText} sources={sources} citations={citations} streaming={revealing} settling={settling} />}
             {artifactUsage && artifactProgress && (
-              <div className={`artifact-progress-count is-${artifactProgress.stage}`} role="status" aria-live={terminal ? undefined : "polite"} aria-label={`문서 ${artifactUsage.estimated === false ? "완성 분량" : "작성 중 추정 분량"} ${artifactUsage.tokens.toLocaleString()} 토큰 ${artifactUsage.lines.toLocaleString()}줄${modelOutputTokens > 0 ? `, 모델 출력 누계 ${modelOutputTokens.toLocaleString()} 토큰` : ""}`}>
+              <div className={`artifact-progress-count is-${artifactProgress.stage}`} role="status" aria-live={terminal ? undefined : "polite"} aria-label={`문서 ${artifactUsage.estimated === false ? "완성 분량" : "작성 중 추정 분량"} ${artifactUsage.tokens.toLocaleString()} 토큰 ${artifactUsage.lines.toLocaleString()}줄${liveModelOutputTokens > 0 ? `, 모델 출력 누계 ${liveModelOutputTokens.toLocaleString()} 토큰` : ""}`}>
                 <div className="artifact-progress-heading">
                   <span>{artifactUsage.estimated === false ? "문서 약" : "작성 중 약"} {artifactUsage.tokens.toLocaleString()}토큰 · {artifactUsage.lines.toLocaleString()}줄{artifactUsage.targetTokens ? ` · 목표 ${artifactUsage.targetTokens.toLocaleString()}토큰` : ""}</span>
-                  {modelOutputTokens > 0 && (
+                  {liveModelOutputTokens > 0 && (
                     <span className="artifact-model-output">
-                      모델 출력 누계 {modelOutputTokens.toLocaleString()}토큰
+                      모델 출력 누계 {liveModelOutputTokens.toLocaleString()}토큰
                       <button
                         className="artifact-model-output-help"
                         type="button"

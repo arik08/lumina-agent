@@ -1691,6 +1691,7 @@ def test_sse_disconnect_snapshot_and_last_event_id_replay_are_lossless(
             if event_type == "artifact_progress"
         ]
         assert progress[0] == {"tokens": 0, "lines": 0, "estimated": True}
+        assert any(item.get("modelOutputTokens", 0) > 0 for item in progress)
         assert progress[-1]["tokens"] > 0
         assert progress[-1]["lines"] > 0
         assert snapshot_json["artifactUsage"] == progress[-1]
