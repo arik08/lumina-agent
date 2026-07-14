@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "../api";
-import type { EffortOption, ExecutionSelection, ScheduleKind, ScheduledRun, ScheduledTask } from "../api-types";
+import type { EffortOption, ExecutionSelection, ProjectSummary, ScheduleKind, ScheduledRun, ScheduledTask } from "../api-types";
 import { SelectMenu } from "./SelectMenu";
 import { ResizableSplitPane } from "./ResizableSplitPane";
 
@@ -28,9 +28,11 @@ interface ScheduleExecutionOption {
 
 interface SchedulesViewProps {
   projectId: string | null;
+  projects: ProjectSummary[];
   execution: ExecutionSelection | null;
   executionOptions: ScheduleExecutionOption[];
   onOpenNavigation: () => void;
+  onProjectChange: (projectId: string) => void;
   onConversationsChanged: () => Promise<unknown>;
 }
 
@@ -89,7 +91,7 @@ function runStatusLabel(status: string) {
   return status;
 }
 
-export function SchedulesView({ projectId, execution, executionOptions, onOpenNavigation, onConversationsChanged }: SchedulesViewProps) {
+export function SchedulesView({ projectId, projects, execution, executionOptions, onOpenNavigation, onProjectChange, onConversationsChanged }: SchedulesViewProps) {
   const [tasks, setTasks] = useState<ScheduledTask[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [runs, setRuns] = useState<ScheduledRun[]>([]);
@@ -106,9 +108,12 @@ export function SchedulesView({ projectId, execution, executionOptions, onOpenNa
   const [hour, setHour] = useState(9);
   const [minute, setMinute] = useState(0);
   const [weekday, setWeekday] = useState(0);
+  const [draftProjectId, setDraftProjectId] = useState<string | null>(null);
   const [draftExecution, setDraftExecution] = useState<ExecutionSelection | null>(null);
 
   const selected = tasks.find((task) => task.id === selectedId) ?? tasks[0] ?? null;
+  const projectOptions = useMemo(() => projects.map((project) => ({ value: project.id, label: project.name })), [projects]);
+  const selectedProjectName = projects.find((project) => project.id === selected?.projectId)?.name ?? null;
   const providerOptions = useMemo(() => {
     const seen = new Set<string>();
     return executionOptions.flatMap((option) => {
@@ -209,12 +214,12 @@ export function SchedulesView({ projectId, execution, executionOptions, onOpenNa
 
   const createTask = async (event: FormEvent) => {
     event.preventDefault();
-    if (!projectId || !draftExecution || !name.trim() || !instructions.trim() || busy) return;
+    if (!draftProjectId || !draftExecution || !name.trim() || !instructions.trim() || busy) return;
     setBusy(true);
     setError(null);
     try {
       const created = await api.schedules.create({
-        projectId,
+        projectId: draftProjectId,
         name: name.trim(),
         instructions: instructions.trim(),
         scheduleKind: kind,
@@ -224,7 +229,13 @@ export function SchedulesView({ projectId, execution, executionOptions, onOpenNa
       setCreateOpen(false);
       setName("");
       setInstructions("");
-      await refresh(created.id);
+      if (created.projectId !== projectId) {
+        setTasks([created]);
+        setSelectedId(created.id);
+        onProjectChange(created.projectId);
+      } else {
+        await refresh(created.id);
+      }
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "예약 작업을 만들지 못했습니다.");
     } finally {
@@ -265,6 +276,7 @@ export function SchedulesView({ projectId, execution, executionOptions, onOpenNa
   };
 
   const openCreateDialog = () => {
+    setDraftProjectId(projectId ?? projects[0]?.id ?? null);
     setDraftExecution(defaultScheduleExecution(execution, executionOptions));
     setCreateOpen(true);
   };
@@ -344,6 +356,7 @@ export function SchedulesView({ projectId, execution, executionOptions, onOpenNa
               </header>
               <div className="schedule-summary">
                 <span><Clock3 size={14} /><strong>{scheduleText(selected)}</strong></span>
+                {selectedProjectName && <span>세션 저장 프로젝트 {selectedProjectName}</span>}
                 <span>다음 실행 {selected.nextRunAt ? new Date(selected.nextRunAt).toLocaleString("ko-KR") : "없음"}</span>
                 <span>{selected.execution.modelKey} · {selected.execution.effortId ?? "기본 Effort"}</span>
               </div>
@@ -387,6 +400,7 @@ export function SchedulesView({ projectId, execution, executionOptions, onOpenNa
             <header><strong id="new-schedule-title">새 예약 작업</strong><button type="button" aria-label="닫기" onClick={() => setCreateOpen(false)}><X size={16} /></button></header>
             <label><span>이름</span><input autoFocus value={name} onChange={(event) => setName(event.currentTarget.value)} /></label>
             <label><span>작업 지시</span><textarea rows={6} value={instructions} onChange={(event) => setInstructions(event.currentTarget.value)} /></label>
+            <div className="lumina-select-field"><span>세션 저장 프로젝트</span><SelectMenu value={draftProjectId ?? ""} options={projectOptions} ariaLabel="예약 작업 세션 저장 프로젝트" onChange={setDraftProjectId} /></div>
             <div className="schedule-form-row">
               <div className="lumina-select-field"><span>주기</span><SelectMenu value={kind} options={scheduleKindOptions} ariaLabel="예약 주기" onChange={(value) => setKind(value as ScheduleKind)} /></div>
               {kind === "weekly" && <div className="lumina-select-field"><span>요일</span><SelectMenu value={String(weekday)} options={weekdayOptions} ariaLabel="예약 요일" onChange={(value) => setWeekday(Number(value))} /></div>}
@@ -398,8 +412,8 @@ export function SchedulesView({ projectId, execution, executionOptions, onOpenNa
               <div className="lumina-select-field"><span>Model</span><SelectMenu value={draftExecution?.modelKey ?? ""} options={modelOptions} ariaLabel="예약 Model" onChange={selectScheduleModel} /></div>
               <div className="lumina-select-field"><span>Effort</span><SelectMenu value={draftExecution?.effortId ?? ""} options={scheduleEffortOptions} ariaLabel="예약 Effort" onChange={(value) => setDraftExecution((current) => current ? { ...current, effortId: value || null } : null)} /></div>
             </div>
-            <p className="form-help">일반 채팅의 현재 실행 설정을 기본값으로 사용합니다. 계정 메뉴에서 사용하도록 체크한 Provider와 Model만 선택할 수 있습니다.</p>
-            <div className="dialog-actions"><button type="button" onClick={() => setCreateOpen(false)}>취소</button><button className="is-primary lumina-primary-action" type="submit" disabled={!name.trim() || !instructions.trim() || !draftExecution || busy}>예약 생성</button></div>
+            <p className="form-help">예약 실행마다 선택한 프로젝트에 새 채팅을 만들고 결과를 저장합니다. 일반 채팅의 현재 실행 설정을 기본값으로 사용하며, 계정 메뉴에서 사용하도록 체크한 Provider와 Model만 선택할 수 있습니다.</p>
+            <div className="dialog-actions"><button type="button" onClick={() => setCreateOpen(false)}>취소</button><button className="is-primary lumina-primary-action" type="submit" disabled={!name.trim() || !instructions.trim() || !draftProjectId || !draftExecution || busy}>예약 생성</button></div>
           </form>
         </div>
       )}

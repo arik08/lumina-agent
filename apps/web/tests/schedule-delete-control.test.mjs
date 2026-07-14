@@ -66,6 +66,21 @@ test("new schedules choose an independent execution from admin-enabled models", 
   assert.match(view, /execution: draftExecution/);
 });
 
+test("new schedules choose the project where each session is saved", async () => {
+  const [view, app] = await Promise.all([
+    read("../src/components/SchedulesView.tsx"),
+    read("../src/App.tsx"),
+  ]);
+
+  assert.match(app, /<SchedulesView[\s\S]*?projects=\{workspace\.projects\}/);
+  assert.match(app, /<SchedulesView[\s\S]*?onProjectChange=\{workspace\.setActiveProjectId\}/);
+  assert.match(view, /setDraftProjectId\(projectId \?\? projects\[0\]\?\.id \?\? null\)/);
+  assert.match(view, /ariaLabel="예약 작업 세션 저장 프로젝트"/);
+  assert.match(view, /projectId: draftProjectId/);
+  assert.match(view, /created\.projectId !== projectId[\s\S]*?onProjectChange\(created\.projectId\)/);
+  assert.match(view, /선택한 프로젝트에 새 채팅을 만들고 결과를 저장합니다\./);
+});
+
 test("weekly schedule controls keep weekday before hour with balanced widths", async () => {
   const [view, styles] = await Promise.all([
     read("../src/components/SchedulesView.tsx"),

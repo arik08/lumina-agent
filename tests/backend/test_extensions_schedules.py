@@ -856,6 +856,7 @@ def test_schedule_run_now_enable_disable_and_due_dispatch(tmp_path: Path) -> Non
         scheduled_run = first.json()
         assert scheduled_run["runId"] is not None
         assert scheduled_run["inputSnapshot"]["scheduled_task_id"] == task_id
+        assert scheduled_run["inputSnapshot"]["project_id"] == project_id
         second = client.post(
             f"/api/scheduled-tasks/{task_id}/run-now", headers=run_now_headers
         )
@@ -883,6 +884,7 @@ def test_schedule_run_now_enable_disable_and_due_dispatch(tmp_path: Path) -> Non
         assert repeated == []
         linked_run = db.get(Run, due_run_id)
         assert linked_run is not None
+        assert linked_run.project_id == project_id
         assert linked_run.snapshot_json["scheduled_task_id"] == task_id
         assert linked_run.snapshot_json["extensions"] == []
         scheduled_rows = list(
