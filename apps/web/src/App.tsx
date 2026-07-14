@@ -77,6 +77,7 @@ import { createPortal } from "react-dom";
 import { api, ApiError, attachmentContentUrl } from "./api";
 import { isTerminalRunStatus } from "./run-status";
 import { SyntaxCode, SyntaxTextarea } from "./components/SyntaxCode";
+import { GlobalTooltipLayer } from "./components/GlobalTooltip";
 import type {
   AdminProviderModel,
   AdminProviderSummary,
@@ -574,6 +575,12 @@ interface ComposerPickerOption {
 
 const defaultArtifactOutputTokens = 10_000;
 
+const explicitArtifactRequestPattern = /(?:(?:보고서|report|html|artifact|문서|document|markdown|\.md|파일|file).{0,24}(?:만들|생성|작성|저장|create|generate|write)|(?:create|generate|write|만들|생성|작성|저장).{0,24}(?:보고서|report|html|artifact|문서|document|markdown|\.md|파일|file))/iu;
+
+function explicitlyRequestsArtifact(value: string) {
+  return explicitArtifactRequestPattern.test(value.trim());
+}
+
 const artifactLengthSteps = [
   { value: 8_000, label: "8k", warning: null },
   { value: 10_000, label: "10k", warning: null },
@@ -889,6 +896,7 @@ function App() {
   const [sessionTitleEditing, setSessionTitleEditing] = useState(false);
   const [sessionTitleDraft, setSessionTitleDraft] = useState("");
   const [draft, setDraft] = useState("");
+  const [fileModeNudgeOpen, setFileModeNudgeOpen] = useState(false);
   const [targetOutputTokens, setTargetOutputTokens] = useState<number | null>(defaultArtifactOutputTokens);
   const [composerTrigger, setComposerTrigger] = useState<ComposerTriggerState | null>(null);
   const [composerSuggestions, setComposerSuggestions] = useState<ComposerSuggestion[]>([]);
@@ -931,6 +939,7 @@ function App() {
   const titleCommitRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const composerInputRef = useRef<HTMLTextAreaElement>(null);
+  const fileModeButtonRef = useRef<HTMLButtonElement>(null);
   const previousConversationRef = useRef<string | null>(null);
   const artifactOpenRequestRef = useRef(0);
   const artifactHistoryOpenRef = useRef(false);
@@ -1398,7 +1407,26 @@ function App() {
   );
   const runIsPaused = activeRun?.status === "paused";
   const composerHasPayload = Boolean(draft.trim() || workspace.composerAttachments.length > 0);
-  const composerShowsStop = Boolean(runIsActive && !composerHasPayload);  const conversationFollow = useConversationAutoFollow(
+  const composerShowsStop = Boolean(runIsActive && !composerHasPayload);
+  const shouldNudgeFileMode = mainView === "chat"
+    && workspace.settings?.outputMode === "file"
+    && draft.trim().length > 0
+    && !explicitlyRequestsArtifact(draft);
+  useEffect(() => {
+    if (!shouldNudgeFileMode) {
+      setFileModeNudgeOpen(false);
+      return undefined;
+    }
+    const anchor = fileModeButtonRef.current;
+    const syncVisibility = () => setFileModeNudgeOpen(Boolean(anchor?.getClientRects().length));
+    const timer = window.setTimeout(syncVisibility, 420);
+    window.addEventListener("resize", syncVisibility);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("resize", syncVisibility);
+    };
+  }, [shouldNudgeFileMode]);
+  const conversationFollow = useConversationAutoFollow(
     runIsActive,
     workspace.activeConversationId,
     activeRuntime.loaded,
@@ -2978,15 +3006,30 @@ function App() {
                       <button
                         type="button"
                         key={value}
-                        className={workspace.settings?.outputMode === value ? "is-active" : ""}
+                        ref={value === "file" ? fileModeButtonRef : undefined}
+                        className={`${workspace.settings?.outputMode === value ? "is-active" : ""} ${value === "file" && fileModeNudgeOpen ? "is-file-mode-nudged" : ""}`.trim()}
                         aria-pressed={workspace.settings?.outputMode === value}
+                        aria-describedby={value === "file" && fileModeNudgeOpen ? "file-mode-nudge" : undefined}
                         onClick={() => {
                           setTargetOutputTokens((current) => value === "chat" ? null : current ?? defaultArtifactOutputTokens);
                           void workspace.selectOutputMode(value);
                         }}
                       >{label}</button>
                     ))}
-                  </div>                  <ArtifactLengthSlider
+                  </div>
+                  <GlobalTooltipLayer
+                    anchor={fileModeButtonRef.current}
+                    className="file-mode-nudge-layer"
+                    id="file-mode-nudge"
+                    open={fileModeNudgeOpen}
+                  >
+                    <AlertCircle size={17} aria-hidden="true" />
+                    <span>
+                      <strong>파일 모드가 선택되어 있습니다</strong>
+                      <small>일반 대화를 원하면 ‘채팅’을 선택하세요. 현재 요청은 파일로 만들어질 수 있습니다.</small>
+                    </span>
+                  </GlobalTooltipLayer>
+                  <ArtifactLengthSlider
                     value={targetOutputTokens}
                     onChange={setTargetOutputTokens}
                     disabled={workspace.settings?.outputMode === "chat"}
