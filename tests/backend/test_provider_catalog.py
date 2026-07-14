@@ -66,6 +66,8 @@ def test_initial_model_catalog_matches_detailed_design_section_12_3() -> None:
             item.sort_order for item in items
         )
 
+    assert [item.sort_order for item in initial_model_catalog("codex")] == [40, 50]
+
     pgpt = initial_model_catalog("pgpt")[0]
     assert pgpt.capabilities.context_window == 1_050_000
     assert pgpt.capabilities.max_output_tokens == 128_000

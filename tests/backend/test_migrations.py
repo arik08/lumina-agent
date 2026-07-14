@@ -94,7 +94,7 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
     } <= user_columns
     assert "creator_user_id" in extension_columns
     assert "is_liked" in conversation_columns
-    assert revision == "0025"
+    assert revision == "0026"
 
 
 def test_structured_plan_migration_round_trip(tmp_path: Path) -> None:
@@ -121,7 +121,7 @@ def test_structured_plan_migration_round_trip(tmp_path: Path) -> None:
     try:
         assert {"plans", "plan_steps"} <= set(inspect(engine).get_table_names())
         with engine.connect() as connection:
-            assert MigrationContext.configure(connection).get_current_revision() == "0025"
+            assert MigrationContext.configure(connection).get_current_revision() == "0026"
     finally:
         engine.dispose()
 
@@ -169,7 +169,7 @@ def test_context_compaction_memory_learning_migration_round_trip(
             column["name"] for column in inspector.get_columns("user_memories")
         }
         with engine.connect() as connection:
-            assert MigrationContext.configure(connection).get_current_revision() == "0025"
+            assert MigrationContext.configure(connection).get_current_revision() == "0026"
     finally:
         engine.dispose()
 
@@ -199,7 +199,7 @@ def test_context_migration_adopts_legacy_create_all_table(tmp_path: Path) -> Non
             column["name"] for column in inspector.get_columns("user_memories")
         }
         with engine.connect() as connection:
-            assert MigrationContext.configure(connection).get_current_revision() == "0025"
+            assert MigrationContext.configure(connection).get_current_revision() == "0026"
     finally:
         engine.dispose()
 
@@ -228,7 +228,7 @@ def test_recent_migrations_adopt_tables_precreated_by_runtime_schema(
     try:
         with engine.connect() as connection:
             revision = MigrationContext.configure(connection).get_current_revision()
-        assert revision == "0025"
+        assert revision == "0026"
     finally:
         engine.dispose()
 
