@@ -10,6 +10,7 @@ import os
 import re
 import time
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -156,6 +157,9 @@ _MAX_CONTINUATION_OVERLAP_CHARS = 4_000
 _MAX_AUTO_CONTINUATIONS = 4
 _MAX_EMPTY_RESPONSE_RETRIES = 1
 _ARTIFACT_TARGET_FLOOR_RATIO = 0.8
+_ARTIFACT_TARGET_CEILING_RATIO = 1.05
+_ARTIFACT_FIRST_PASS_PREFERRED_FLOOR_RATIO = 0.9
+_ARTIFACT_HTML_CHARS_PER_FLOOR_TOKEN = 2
 _MAX_ARTIFACT_LENGTH_RETRIES = 2
 _CONTINUATION_PROMPT = (
     "[Continuation after output limit] Continue exactly where the previous assistant "
@@ -799,7 +803,17 @@ class LocalRunExecutor:
             _UPDATE_PLAN_TOOL_SCHEMA,
             *((_FILE_OUTPUT_INTENT_TOOL_SCHEMA,) if output_mode == "file" else ()),
             *((skill_activation_schema,) if skill_activation_schema else ()),
-            *((_REPORT_TOOL_SCHEMA,) if artifact_tools_available else ()),
+            *(
+                (
+                    _report_tool_schema(
+                        _optional_positive_int(
+                            run.snapshot_json.get("target_output_tokens")
+                        )
+                    ),
+                )
+                if artifact_tools_available
+                else ()
+            ),
             *((ARTIFACT_WRITE_TOOL_SCHEMA,) if artifact_tools_available else ()),
             *((GENERATE_IMAGE_TOOL_SCHEMA,) if image_generation_capable else ()),
             _WEB_SEARCH_TOOL_SCHEMA,
@@ -2158,12 +2172,26 @@ class LocalRunExecutor:
             )
             if target_output_tokens is not None:
                 floor_tokens = int(target_output_tokens * _ARTIFACT_TARGET_FLOOR_RATIO)
+                ceiling_tokens = int(
+                    target_output_tokens * _ARTIFACT_TARGET_CEILING_RATIO
+                )
+                preferred_floor_tokens = int(
+                    target_output_tokens * _ARTIFACT_FIRST_PASS_PREFERRED_FLOOR_RATIO
+                )
                 turn_system_parts.append(
                     "Artifact length contract: The user selected a target of about "
                     f"{target_output_tokens:,} tokens for the Artifact content. Treat this "
-                    "as a substantive length target, not merely an upper cap; aim for 80-105% "
-                    f"of it and do not finish below about {floor_tokens:,} tokens unless the "
-                    "available source material genuinely cannot support that length."
+                    "as the first-pass writing target, not merely an upper cap. Before the first "
+                    "`create_report` call, allocate enough substantive coverage across the "
+                    "sections and submit the complete report in one call; do not submit a short "
+                    "draft for later expansion. The acceptable first-call range is 80-105% of "
+                    f"the selected target: about {floor_tokens:,} to {ceiling_tokens:,} tokens. "
+                    "Because token counts are estimates, plan and draft near 90-100%—about "
+                    f"{preferred_floor_tokens:,} to {target_output_tokens:,} tokens—so estimation "
+                    "error does not put the result below the acceptable floor. Do not plan near "
+                    "the lower boundary or intentionally exceed the upper bound. "
+                    "Add analysis, evidence, methodology, caveats, tables, "
+                    "and decision guidance as useful, without repetition or fabricated facts."
                 )
             else:
                 turn_system_parts.append(
@@ -5030,6 +5058,37 @@ _REPORT_TOOL_SCHEMA = {
         },
     },
 }
+
+
+def _report_tool_schema(target_output_tokens: int | None) -> dict[str, Any]:
+    target = _optional_positive_int(target_output_tokens)
+    if target is None:
+        return _REPORT_TOOL_SCHEMA
+    floor = int(target * _ARTIFACT_TARGET_FLOOR_RATIO)
+    ceiling = int(target * _ARTIFACT_TARGET_CEILING_RATIO)
+    preferred_floor = int(target * _ARTIFACT_FIRST_PASS_PREFERRED_FLOOR_RATIO)
+    minimum_html_characters = floor * _ARTIFACT_HTML_CHARS_PER_FLOOR_TOKEN
+    schema = deepcopy(_REPORT_TOOL_SCHEMA)
+    length_contract = (
+        f" For this Run, the selected document target is about {target:,} tokens and the "
+        f"validation floor is about {floor:,} tokens. Prepare the complete first-pass report "
+        f"before calling this tool. The acceptable range is about {floor:,} to {ceiling:,} "
+        f"tokens (80-105%), but plan near {preferred_floor:,} to {target:,} tokens (90-100%) "
+        "to absorb estimation error. Do not plan near the lower boundary, submit an abbreviated "
+        "draft for later expansion, or intentionally exceed the upper bound."
+    )
+    schema["function"]["description"] += length_contract
+    html_schema = schema["function"]["parameters"]["properties"]["html_source"]
+    html_schema["minLength"] = minimum_html_characters
+    html_schema["description"] += (
+        f" The html_source itself must carry the full report content for the about {target:,}-"
+        f"token target. Its acceptable range is about {floor:,} to {ceiling:,} tokens; for the "
+        f"first pass, prefer about {preferred_floor:,} to {target:,} tokens rather than aiming "
+        f"at the lower boundary. The schema requires at least {minimum_html_characters:,} "
+        "Unicode characters as an additional early-truncation guard; the document-token check "
+        "remains authoritative."
+    )
+    return schema
 
 
 def _unique_report_display_name(db: Session, project_id: str, display_name: str) -> str:

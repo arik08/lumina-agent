@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from lumina.agent.executor import (
     LocalRunExecutor,
+    _report_tool_schema,
     _safe_provider_metadata,
     local_run_executor,
 )
@@ -912,6 +913,23 @@ async def test_pgpt_adapter_uses_streaming_cache_payload_and_normalizes_response
         assert payload["prompt_cache_key"] == "lumina:user:v1:opaque"
         assert payload["prompt_cache_retention"] == "24h"
         assert payload["max_completion_tokens"] == 42_000
+        report_tool = payload["tools"][0]["function"]
+        assert (
+            "selected document target is about 10,000 tokens"
+            in report_tool["description"]
+        )
+        assert (
+            "acceptable range is about 8,000 to 10,500 tokens"
+            in report_tool["parameters"]["properties"]["html_source"]["description"]
+        )
+        assert (
+            "prefer about 9,000 to 10,000 tokens"
+            in report_tool["parameters"]["properties"]["html_source"]["description"]
+        )
+        assert (
+            report_tool["parameters"]["properties"]["html_source"]["minLength"]
+            == 16_000
+        )
         assert "response_format" not in payload
         return httpx.Response(
             200,
@@ -941,6 +959,7 @@ async def test_pgpt_adapter_uses_streaming_cache_payload_and_normalizes_response
                 ProviderRequest(
                     model="gpt-5.4",
                     messages=(ProviderMessage(role="user", content="Hello"),),
+                    tools=(_report_tool_schema(10_000),),
                     max_output_tokens=42_000,
                     response_format={"type": "json_object"},
                     metadata={

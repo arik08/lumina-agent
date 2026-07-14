@@ -378,6 +378,13 @@ def test_selected_artifact_target_retries_short_report_and_exposes_separate_coun
         + "</main></body></html>"
     )
     provider_turn = 0
+    requests = []
+
+    class RecordingProvider(MockProvider):
+        async def stream(self, request):
+            requests.append(request)
+            async for event in super().stream(request):
+                yield event
 
     def fake_provider(
         _provider_id: str, *, wants_artifact: bool, first_turn: bool
@@ -389,14 +396,14 @@ def test_selected_artifact_target_retries_short_report_and_exposes_separate_coun
         if provider_turn <= 3:
             arguments = _arguments("html")
             arguments["html_source"] = short_html if provider_turn <= 2 else long_html
-            return MockProvider(
+            return RecordingProvider(
                 tool_call=MockToolCall(
                     name="create_report",
                     arguments=arguments,
                     call_id=f"call_target_length_{provider_turn}",
                 )
             )
-        return MockProvider(text_chunks=("확장한 HTML 보고서를 저장했습니다.",))
+        return RecordingProvider(text_chunks=("확장한 HTML 보고서를 저장했습니다.",))
 
     monkeypatch.setattr(local_run_executor, "_provider", fake_provider)
     with TestClient(create_app(settings)) as client:
@@ -437,6 +444,39 @@ def test_selected_artifact_target_retries_short_report_and_exposes_separate_coun
     assert artifact_usage["estimated"] is False
     assert artifact_usage["targetTokens"] == 1_000
     assert artifact_usage["tokens"] >= 800
+    first_request = requests[0]
+    system_text = "\n".join(
+        str(message.content)
+        for message in first_request.messages
+        if message.role == "system"
+    )
+    assert "first-pass writing target" in system_text
+    assert "acceptable first-call range is 80-105%" in system_text
+    assert "about 800 to 1,050 tokens" in system_text
+    assert "plan and draft near 90-100%—about 900 to 1,000 tokens" in system_text
+    assert "Do not plan near the lower boundary" in system_text
+    report_schema = next(
+        schema
+        for schema in first_request.tools
+        if schema.get("function", {}).get("name") == "create_report"
+    )
+    assert (
+        "selected document target is about 1,000 tokens"
+        in report_schema["function"]["description"]
+    )
+    html_description = report_schema["function"]["parameters"]["properties"][
+        "html_source"
+    ]["description"]
+    assert "html_source itself must carry the full report content" in html_description
+    assert "acceptable range is about 800 to 1,050 tokens" in html_description
+    assert "prefer about 900 to 1,000 tokens" in html_description
+    assert "at least 1,600 Unicode characters" in html_description
+    assert (
+        report_schema["function"]["parameters"]["properties"]["html_source"][
+            "minLength"
+        ]
+        == 1_600
+    )
 
 
 def test_selected_artifact_target_fails_instead_of_saving_repeatedly_short_report(
