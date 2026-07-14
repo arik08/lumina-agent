@@ -1138,11 +1138,15 @@ export async function listExtensions(query?: string, signal?: AbortSignal) {
   return request<SkillExtension[]>("/extensions", { query: { query }, signal });
 }
 
-export async function syncRepositorySkills(signal?: AbortSignal) {
-  return request<{ changed: number }>("/extensions/repository-sync", {
+export async function syncRepositoryExtensions(signal?: AbortSignal) {
+  return request<{ skillsChanged: number; mcpChanged: number; revision: string }>("/extensions/repository-sync", {
     method: "POST",
     signal,
   });
+}
+
+export async function getRepositoryExtensionState(signal?: AbortSignal) {
+  return request<{ revision: string }>("/extensions/repository-state", { signal });
 }
 
 export async function listTrashedExtensions(query?: string, signal?: AbortSignal) {
@@ -1814,7 +1818,8 @@ export const api = {
   },
   extensions: {
     list: listExtensions,
-    syncRepository: syncRepositorySkills,
+    syncRepository: syncRepositoryExtensions,
+    getRepositoryState: getRepositoryExtensionState,
     listTrash: listTrashedExtensions,
     getVersion: getExtensionVersion,
     checkoutDraft: checkoutSkillDraft,

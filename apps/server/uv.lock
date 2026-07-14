@@ -484,6 +484,7 @@ dependencies = [
     { name = "tiktoken" },
     { name = "tzdata" },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "watchfiles" },
 ]
 
 [package.dev-dependencies]
@@ -517,6 +518,7 @@ requires-dist = [
     { name = "tiktoken", specifier = ">=0.9,<1" },
     { name = "tzdata", specifier = ">=2025.2" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.35,<1" },
+    { name = "watchfiles", specifier = ">=1.0,<2" },
 ]
 
 [package.metadata.requires-dev]

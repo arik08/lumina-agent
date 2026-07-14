@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Event
 
 import pytest
 from fastapi import FastAPI
@@ -144,7 +147,9 @@ def test_marketplace_refresh_syncs_new_repository_skill(
             headers={"X-CSRF-Token": csrf},
         )
         assert synced.status_code == 200, synced.text
-        assert synced.json() == {"changed": 1}
+        assert synced.json()["skillsChanged"] == 1
+        assert synced.json()["mcpChanged"] == 0
+        assert synced.json()["revision"]
 
         catalog = client.get("/api/extensions").json()
         assert [(item["slug"], item["description"]) for item in catalog] == [
@@ -156,7 +161,65 @@ def test_marketplace_refresh_syncs_new_repository_skill(
             headers={"X-CSRF-Token": csrf},
         )
         assert repeated.status_code == 200, repeated.text
-        assert repeated.json() == {"changed": 0}
+        assert repeated.json()["skillsChanged"] == 0
+        assert repeated.json()["mcpChanged"] == 0
+        assert repeated.json()["revision"] == synced.json()["revision"]
+
+
+def test_repository_watcher_accepts_supported_extension_paths(tmp_path: Path) -> None:
+    extensions_root = tmp_path / "extensions"
+
+    for relative_path in (
+        "skills/explorer-added/SKILL.md",
+        "mcp/explorer-added.json",
+        "plugins/explorer-added/.codex-plugin/plugin.json",
+    ):
+        assert repository_catalog._is_repository_catalog_path(
+            str(extensions_root / relative_path), root=extensions_root
+        )
+
+    for relative_path in (
+        "skills/explorer-added/node_modules/package.json",
+        "mcp/.temporary.json",
+        "unrelated/file.txt",
+    ):
+        assert not repository_catalog._is_repository_catalog_path(
+            str(extensions_root / relative_path), root=extensions_root
+        )
+
+
+def test_repository_watcher_detects_explorer_style_file_addition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository_root = tmp_path / "repository"
+    skills_root = repository_root / "extensions" / "skills"
+    skills_root.mkdir(parents=True)
+    synchronized = Event()
+    monkeypatch.setattr(
+        repository_catalog,
+        "_sync_repository_catalog_for_all_organizations",
+        lambda _root: synchronized.set(),
+    )
+
+    async def exercise_watcher() -> None:
+        watcher = asyncio.create_task(
+            repository_catalog.watch_repository_catalog(repository_root)
+        )
+        try:
+            await asyncio.sleep(0.1)
+            skill_root = skills_root / "explorer-added"
+            skill_root.mkdir()
+            (skill_root / "SKILL.md").write_text("# Explorer Added\n", encoding="utf-8")
+            detected = await asyncio.wait_for(
+                asyncio.to_thread(synchronized.wait), timeout=5
+            )
+            assert detected
+        finally:
+            watcher.cancel()
+            with suppress(asyncio.CancelledError):
+                await watcher
+
+    asyncio.run(exercise_watcher())
 
 
 def test_skill_draft_versions_installation_and_folder_move(tmp_path: Path) -> None:
@@ -523,7 +586,9 @@ def test_published_skill_has_isolated_personal_drafts_and_multiple_owners(
             headers=admin_headers,
         )
         assert primary_owner_rejected.status_code == 409
-        assert primary_owner_rejected.json()["code"] == "primary_owner_transfer_required"
+        assert (
+            primary_owner_rejected.json()["code"] == "primary_owner_transfer_required"
+        )
 
         client.cookies.clear()
         _login(client, "worker", "pw")
@@ -534,8 +599,7 @@ def test_published_skill_has_isolated_personal_drafts_and_multiple_owners(
         client.cookies.clear()
         admin_csrf = _login(client)
         removed = client.delete(
-            f"/api/skills/{skill['id']}/ownerships/"
-            f"{ownership_by_principal[worker_id]}",
+            f"/api/skills/{skill['id']}/ownerships/{ownership_by_principal[worker_id]}",
             headers={"X-CSRF-Token": admin_csrf},
         )
         assert removed.status_code == 204, removed.text

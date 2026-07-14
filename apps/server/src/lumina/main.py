@@ -48,6 +48,7 @@ from .auth import bootstrap_database
 from .config import REPOSITORY_ROOT, Settings, get_settings
 from .db import SessionLocal, configure_database, create_schema, session_scope
 from .http_client import TrustManager, TrustProfile
+from .extensions.repository_catalog import watch_repository_catalog
 from .observability import request_log_path, structured_event
 from .schedules.service import local_scheduler
 
@@ -147,6 +148,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         scheduler_task: asyncio.Task[None] | None = None
+        repository_watch_task: asyncio.Task[None] | None = None
         try:
             startup_tracker.enter("initializing_trust")
             trust_profile = TrustManager(repo_root=REPOSITORY_ROOT).initialize()
@@ -165,6 +167,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if config.environment != "test":
                 scheduler_task = asyncio.create_task(
                     _scheduler_loop(), name="lumina-local-scheduler"
+                )
+                repository_watch_task = asyncio.create_task(
+                    watch_repository_catalog(), name="lumina-extension-watcher"
                 )
             startup_tracker.ready()
         except BaseException:
@@ -185,6 +190,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 scheduler_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await scheduler_task
+            if repository_watch_task is not None:
+                repository_watch_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await repository_watch_task
             await local_run_executor.stop()
 
     application = FastAPI(

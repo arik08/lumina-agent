@@ -1,14 +1,20 @@
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
+import logging
 import re
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from watchfiles import Change, awatch
 
 from ..config import REPOSITORY_ROOT
+from ..db import session_scope
 from ..mcp.service import (
     add_configuration_revision,
     approve_revision,
@@ -18,6 +24,7 @@ from ..mcp.service import (
 )
 from ..models import (
     Extension,
+    ExtensionDraft,
     ExtensionVersion,
     McpConfigurationRevision,
     McpDefinition,
@@ -31,6 +38,8 @@ from .service import normalize_package, package_digest
 
 _FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 _IGNORED_PARTS = {".git", "__pycache__", "node_modules", "vendor", ".venv"}
+_REPOSITORY_SYNC_LOCK = Lock()
+logger = logging.getLogger(__name__)
 
 
 def _frontmatter(text: str) -> dict[str, str]:
@@ -285,7 +294,108 @@ def sync_repository_mcp(db: Session, *, admin: User, root: Path | None = None) -
 def sync_repository_catalog(
     db: Session, *, admin: User, root: Path | None = None
 ) -> tuple[int, int]:
-    return (
-        sync_repository_skills(db, admin=admin, root=root),
-        sync_repository_mcp(db, admin=admin, root=root),
+    with _REPOSITORY_SYNC_LOCK:
+        return (
+            sync_repository_skills(db, admin=admin, root=root),
+            sync_repository_mcp(db, admin=admin, root=root),
+        )
+
+
+def repository_catalog_admin(
+    db: Session, *, organization_id: str | None = None
+) -> User | None:
+    statement = select(User).where(User.role == "admin", User.status == "active")
+    if organization_id is not None:
+        statement = statement.where(User.organization_id == organization_id)
+    return db.scalar(statement.order_by(User.created_at, User.id))
+
+
+def repository_catalog_revision(db: Session, *, organization_id: str) -> str:
+    skill_count, skill_updated_at = db.execute(
+        select(func.count(Extension.id), func.max(Extension.updated_at)).where(
+            Extension.organization_id == organization_id
+        )
+    ).one()
+    draft_count, draft_updated_at = db.execute(
+        select(func.count(ExtensionDraft.id), func.max(ExtensionDraft.updated_at))
+        .join(Extension, Extension.id == ExtensionDraft.extension_id)
+        .where(Extension.organization_id == organization_id)
+    ).one()
+    mcp_count, mcp_updated_at = db.execute(
+        select(func.count(McpDefinition.id), func.max(McpDefinition.updated_at)).where(
+            McpDefinition.organization_id == organization_id
+        )
+    ).one()
+    values = (
+        skill_count,
+        skill_updated_at,
+        draft_count,
+        draft_updated_at,
+        mcp_count,
+        mcp_updated_at,
     )
+    serialized = "|".join(
+        value.isoformat() if hasattr(value, "isoformat") else str(value or "")
+        for value in values
+    )
+    return hashlib.sha256(serialized.encode()).hexdigest()[:16]
+
+
+def _is_repository_catalog_path(path: str, *, root: Path) -> bool:
+    candidate = Path(path)
+    try:
+        relative = candidate.relative_to(root)
+    except ValueError:
+        return False
+    return (
+        bool(relative.parts)
+        and relative.parts[0] in {"skills", "mcp", "plugins"}
+        and not any(part in _IGNORED_PARTS for part in relative.parts)
+        and not candidate.name.startswith(".")
+        and not candidate.name.endswith(("~", ".tmp"))
+    )
+
+
+def _sync_repository_catalog_for_all_organizations(repository_root: Path) -> None:
+    with session_scope() as db:
+        admins = list(
+            db.scalars(
+                select(User)
+                .where(User.role == "admin", User.status == "active")
+                .order_by(User.organization_id, User.created_at, User.id)
+            )
+        )
+        synchronized_organizations: set[str] = set()
+        for admin in admins:
+            if admin.organization_id in synchronized_organizations:
+                continue
+            sync_repository_catalog(db, admin=admin, root=repository_root)
+            synchronized_organizations.add(admin.organization_id)
+
+
+async def watch_repository_catalog(root: Path | None = None) -> None:
+    repository_root = root or REPOSITORY_ROOT
+    extensions_root = repository_root / "extensions"
+    if not extensions_root.is_dir():
+        return
+    async for changes in awatch(
+        extensions_root,
+        debounce=750,
+        watch_filter=lambda _change, path: _is_repository_catalog_path(
+            path, root=extensions_root
+        ),
+    ):
+        if not any(
+            change in {Change.added, Change.modified, Change.deleted}
+            for change, _ in changes
+        ):
+            continue
+        try:
+            await asyncio.to_thread(
+                _sync_repository_catalog_for_all_organizations, repository_root
+            )
+        except Exception:
+            logger.exception(
+                "Repository extension catalog synchronization failed",
+                extra={"extension_change_count": len(changes)},
+            )

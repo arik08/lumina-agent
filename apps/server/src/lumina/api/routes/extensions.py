@@ -7,9 +7,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ...audit import record_audit
-from ...auth import BOOTSTRAP_ADMIN_LOGIN_ID
 from ...db import get_db
-from ...extensions.repository_catalog import sync_repository_skills
+from ...extensions.repository_catalog import (
+    repository_catalog_admin,
+    repository_catalog_revision,
+    sync_repository_catalog,
+)
 from ...extensions.schemas import (
     DraftActivation,
     DraftSaveVersion,
@@ -93,24 +96,35 @@ def get_extensions(
 def post_extension_repository_sync(
     context: AuthContext = Depends(require_csrf),
     db: Session = Depends(get_db),
-) -> dict[str, int]:
-    admin = db.scalar(
-        select(User).where(
-            User.login_id == BOOTSTRAP_ADMIN_LOGIN_ID,
-            User.organization_id == context.user.organization_id,
-            User.role == "admin",
-            User.status == "active",
-        )
-    )
+) -> dict[str, int | str]:
+    admin = repository_catalog_admin(db, organization_id=context.user.organization_id)
     if admin is None:
         raise ApiProblem(
             409,
             "repository_catalog_owner_unavailable",
-            "Repository Skill을 등록할 활성 관리자 계정을 찾을 수 없습니다.",
+            "Repository 확장을 등록할 활성 관리자 계정을 찾을 수 없습니다.",
         )
-    changed = sync_repository_skills(db, admin=admin)
+    skills_changed, mcp_changed = sync_repository_catalog(db, admin=admin)
     db.commit()
-    return {"changed": changed}
+    return {
+        "skillsChanged": skills_changed,
+        "mcpChanged": mcp_changed,
+        "revision": repository_catalog_revision(
+            db, organization_id=context.user.organization_id
+        ),
+    }
+
+
+@router.get("/extensions/repository-state")
+def get_extension_repository_state(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    return {
+        "revision": repository_catalog_revision(
+            db, organization_id=user.organization_id
+        )
+    }
 
 
 @router.get("/extensions/trash")

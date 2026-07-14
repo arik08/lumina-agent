@@ -26,6 +26,7 @@ dependencies = [
   "tiktoken>=0.9,<1",
   "tzdata>=2025.2",
   "uvicorn[standard]>=0.35,<1",
+  "watchfiles>=1.0,<2",
   "reportlab>=4.4,<5",
 ]
 

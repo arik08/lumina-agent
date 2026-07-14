@@ -86,6 +86,7 @@ function trashRetentionLabel(purgesAt: string | null): string {
 
 export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceViewProps) {
   const skillContentRef = useRef<HTMLDivElement>(null);
+  const repositoryRevisionRef = useRef<string | null>(null);
   const [marketKind, setMarketKind] = useState<"skill" | "mcp">("skill");
   const [mcpRefreshKey, setMcpRefreshKey] = useState(0);
   const [items, setItems] = useState<SkillExtension[]>([]);
@@ -139,11 +140,10 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
   const activeFileIsMarkdown = activeFile.toLocaleLowerCase().endsWith(".md");
   const fileTree = useMemo(() => buildSkillFileTree(Object.keys(detailFiles)), [detailFiles]);
 
-  const refresh = async (preferredId?: string, syncRepository = false) => {
+  const refresh = async (preferredId?: string) => {
     setLoading(true);
     setError(null);
     try {
-      if (syncRepository) await api.extensions.syncRepository();
       const [extensions, trashed, installed] = await Promise.all([
         api.extensions.list(),
         api.extensions.listTrash(),
@@ -163,6 +163,37 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
   useEffect(() => {
     void refresh();
   }, [projectId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const pollRepositoryState = () => {
+      void api.extensions.getRepositoryState(controller.signal).then((state) => {
+        const previousRevision = repositoryRevisionRef.current;
+        repositoryRevisionRef.current = state.revision;
+        if (!previousRevision || previousRevision === state.revision) return;
+        if (marketKind === "skill") void refresh();
+        else setMcpRefreshKey((value) => value + 1);
+      }).catch(() => undefined);
+    };
+    pollRepositoryState();
+    const timer = window.setInterval(pollRepositoryState, 3_000);
+    return () => {
+      window.clearInterval(timer);
+      controller.abort();
+    };
+  }, [marketKind, projectId]);
+
+  const refreshRepository = async () => {
+    setError(null);
+    try {
+      const state = await api.extensions.syncRepository();
+      repositoryRevisionRef.current = state.revision;
+      if (marketKind === "skill") await refresh();
+      else setMcpRefreshKey((value) => value + 1);
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : "Repository 확장을 다시 찾지 못했습니다.");
+    }
+  };
 
   useEffect(() => {
     const versionId = selected?.latestPublishedVersionId;
@@ -379,7 +410,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
 
   return (
     <div className="feature-view marketplace-view">
-      <header className="feature-header"><div><button className="feature-mobile-menu" type="button" aria-label="사이드바 열기" onClick={onOpenNavigation}><Menu size={17} /></button><Store size={17} /><h1>마켓스토어</h1>{marketKind === "mcp" && <span>승인 MCP · 설치 · Secret binding</span>}</div><div><button type="button" aria-label="새로 고침" onClick={() => marketKind === "skill" ? void refresh(undefined, true) : setMcpRefreshKey((value) => value + 1)}><RefreshCw size={15} /></button></div></header>
+      <header className="feature-header"><div><button className="feature-mobile-menu" type="button" aria-label="사이드바 열기" onClick={onOpenNavigation}><Menu size={17} /></button><Store size={17} /><h1>마켓스토어</h1>{marketKind === "mcp" && <span>승인 MCP · 설치 · Secret binding</span>}</div><div><button type="button" aria-label="새로 고침" onClick={() => void refreshRepository()}><RefreshCw size={15} /></button></div></header>
       <div className="feature-kind-tabs" role="tablist" aria-label="Marketplace 유형"><button type="button" role="tab" aria-selected={marketKind === "skill"} onClick={() => setMarketKind("skill")}><Sparkles size={14} /> Skill</button><button type="button" role="tab" aria-selected={marketKind === "mcp"} onClick={() => setMarketKind("mcp")}><Wrench size={14} /> MCP</button></div>
       {marketKind === "skill" && <div className="marketplace-toolbar">
         <div className="marketplace-scope-tabs" role="tablist" aria-label="Skill 보기">
@@ -390,7 +421,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
         </div>
         <label className="marketplace-search"><Search size={14} /><input aria-label="Skill 검색" placeholder="Skill 이름 또는 설명 검색" value={query} onChange={(event) => setQuery(event.currentTarget.value)} /></label>
       </div>}
-      {marketKind === "skill" && error && <div className="feature-error" role="alert">{error}</div>}
+      {error && <div className="feature-error" role="alert">{error}</div>}
       {marketKind === "mcp" ? <McpMarketplacePanel key={`${projectId ?? "none"}:${mcpRefreshKey}`} projectId={projectId} /> : <ResizableSplitPane storageKey="lumina:marketplace-list-width" ariaLabel="Skill 목록 너비 조절" className="marketplace-split">
         <aside className="feature-list" aria-label={skillView === "trash" ? "삭제된 Skill 목록" : "Skill 목록"}>
           {loading ? <div className="feature-state"><LoaderCircle className="is-running" size={16} /> 불러오는 중</div> : visibleItems.length === 0 ? <div className="feature-state">조건에 맞는 Skill이 없습니다.</div> : visibleItems.map((item) => {
