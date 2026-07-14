@@ -38,6 +38,7 @@ test("announcement management lives in Help instead of System Admin", async () =
   assert.match(helpView, /api\.admin\.updateAnnouncement/);
   assert.match(helpView, /api\.admin\.deleteAnnouncement/);
   assert.match(helpView, /한 번 더 눌러 삭제/);
+  assert.match(helpView, /aria-label="사용 안내 자료 유형">\s*<button[^>]+announcements[^>]+>.*?공지사항.*?<button[^>]+manuals[^>]+>.*?매뉴얼/s);
   assert.match(api, /\/admin\/announcements/);
   assert.match(stylesheet, /\.help-announcement-form/);
   assert.match(stylesheet, /\.help-announcement-row/);

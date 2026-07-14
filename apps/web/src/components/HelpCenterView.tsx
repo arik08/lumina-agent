@@ -358,8 +358,8 @@ export function HelpCenterView({ canManage, initialAnnouncementId = null, onOpen
         <div><button className="file-workspace-refresh tooltip-control" type="button" aria-label="사용 안내 새로 고침" data-tooltip="새로 고침" disabled={loading} onClick={() => void load()}>{loading ? <LoaderCircle className="is-running" size={15} /> : <RefreshCw size={15} />}</button></div>
       </header>
       <div className="help-section-tabs" role="tablist" aria-label="사용 안내 자료 유형">
-        <button type="button" role="tab" aria-selected={section === "manuals"} onClick={() => switchSection("manuals")}><FileText size={14} />매뉴얼 <span>{documentCount}</span></button>
         <button type="button" role="tab" aria-selected={section === "announcements"} onClick={() => switchSection("announcements")}><Megaphone size={14} />공지사항 <span>{announcementTotal}</span></button>
+        <button type="button" role="tab" aria-selected={section === "manuals"} onClick={() => switchSection("manuals")}><FileText size={14} />매뉴얼 <span>{documentCount}</span></button>
       </div>
       <div className="feature-toolbar help-center-toolbar">
         <label className="feature-search"><Search size={14} /><input value={query} placeholder={section === "manuals" ? "매뉴얼 제목이나 내용 검색" : "공지 제목이나 내용 검색"} onChange={(event) => setQuery(event.currentTarget.value)} /></label>
