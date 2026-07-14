@@ -123,7 +123,11 @@ from ..runs.subtasks import (
     mark_tool_subtask_approval,
 )
 from ..context import compact_runtime_messages, prepare_context
-from ..instructions import CORE_AGENT_EXECUTION_CONTRACT, DEFAULT_SYSTEM_PROMPT
+from ..instructions import (
+    CORE_AGENT_EXECUTION_CONTRACT,
+    DEFAULT_SYSTEM_PROMPT,
+    RICH_CHAT_RENDERING_CONTRACT,
+)
 from ..runs.state import (
     ACTIVE_STATUSES,
     AWAITING_APPROVAL,
@@ -1910,6 +1914,10 @@ class LocalRunExecutor:
             # editable. Keep this reliability invariant active for existing
             # installations without overwriting their stored prompt.
             system += f"\n\n{CORE_AGENT_EXECUTION_CONTRACT}"
+        if RICH_CHAT_RENDERING_CONTRACT not in system:
+            # Keep message-native visual rendering available for organizations
+            # whose administrator prompt predates this product capability.
+            system += f"\n\n{RICH_CHAT_RENDERING_CONTRACT}"
         turn_system_parts: list[str] = []
         user_message = str(run.snapshot_json.get("user_message_text", ""))
         output_mode = _normalized_output_mode(

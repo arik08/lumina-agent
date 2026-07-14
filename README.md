@@ -20,6 +20,7 @@ React 기반 Frontend와 FastAPI 기반 Backend를 한 서비스처럼 제공하
 - OpenAI, Codex, P-GPT, Anthropic, Gemini 및 OpenAI Compatible Provider
 - `@파일명`·`@폴더명` Context 연결과 `$Skill`·`$MCP` 명시 호출
 - Tool 실행 상태, 승인 요청, Plan과 단계별 진행 상황 표시
+- 채팅 안의 인라인 이미지, 확대 가능한 Mermaid와 구조화된 인터랙티브 데이터 차트
 - DOCX, XLSX, PPTX, PDF, HTML, Markdown 산출물 생성과 검증
 - 대화 검색, 분기, 내보내기와 읽기 전용 공유
 - 계정별 설치, 사용자별 WorkingDraft와 복수 Owner를 지원하는 Skill·MCP Marketplace

@@ -12,6 +12,7 @@ from lumina.db import SessionLocal
 from lumina.instructions.service import (
     CORE_AGENT_EXECUTION_CONTRACT,
     DEFAULT_SYSTEM_PROMPT,
+    RICH_CHAT_RENDERING_CONTRACT,
     InstructionSnapshot,
     InstructionScope,
     instruction_digest,
@@ -26,6 +27,13 @@ def test_default_system_prompt_contains_core_agent_execution_contract() -> None:
     assert "independent Tool calls together" in DEFAULT_SYSTEM_PROMPT
     assert "Never repeat a side-effecting Tool call" in DEFAULT_SYSTEM_PROMPT
     assert "across retries, recovery, and context compaction" in DEFAULT_SYSTEM_PROMPT
+
+
+def test_default_system_prompt_describes_rich_chat_rendering_contract() -> None:
+    assert RICH_CHAT_RENDERING_CONTRACT in DEFAULT_SYSTEM_PROMPT
+    assert "fenced `mermaid` block" in RICH_CHAT_RENDERING_CONTRACT
+    assert "fenced `lumina-chart` block" in RICH_CHAT_RENDERING_CONTRACT
+    assert "Markdown image syntax renders an inline expandable image" in RICH_CHAT_RENDERING_CONTRACT
 
 
 def _settings(tmp_path: Path) -> Settings:
@@ -256,6 +264,10 @@ def test_instruction_api_permissions_concurrency_and_secret_guard(
         assert "AGENT_OVERRIDE_MARKER" in provider_messages[0].content
         assert any(
             CORE_AGENT_EXECUTION_CONTRACT in (message.content or "")
+            for message in provider_messages
+        )
+        assert any(
+            RICH_CHAT_RENDERING_CONTRACT in (message.content or "")
             for message in provider_messages
         )
 

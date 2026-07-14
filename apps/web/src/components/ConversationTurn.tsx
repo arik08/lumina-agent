@@ -82,6 +82,11 @@ import {
 import { useStreamingText } from "../streaming-ui";
 import { SyntaxCode, SyntaxCodeContent } from "./SyntaxCode";
 import { BranchFromHereIcon, ShareActionIcon } from "./ActionIcons";
+import {
+  InlineMarkdownImage,
+  InteractiveChart,
+  MermaidDiagram,
+} from "./InteractiveResponse";
 
 function toolCallIcon(toolName: string, size = 15) {
   const normalizedName = toolName.toLowerCase().replace(/[\s-]+/g, "_");
@@ -1002,7 +1007,7 @@ function normalizeKoreanMarkdownEmphasis(text: string) {
   return text.replace(/(\*\*[^*\n]+?\*\*)(?=[가-힣])/gu, "$1<!-- -->");
 }
 
-type StreamingPendingKind = "mermaid" | "table" | null;
+type StreamingPendingKind = "mermaid" | "chart" | "table" | null;
 
 function splitStreamingMarkdown(text: string) {
   const source = text.replace(/\r\n/g, "\n");
@@ -1060,6 +1065,7 @@ function pendingStreamingKind(liveTail: string): StreamingPendingKind {
     });
     const language = String(fence[2] || "").toLowerCase();
     if (!closed && (language === "mermaid" || language === "mmd")) return "mermaid";
+    if (!closed && language === "lumina-chart") return "chart";
   }
   for (let index = 1; index < lines.length; index += 1) {
     if (isMarkdownTableRow(lines[index - 1]) && isMarkdownTableDivider(lines[index])) return "table";
@@ -1067,36 +1073,12 @@ function pendingStreamingKind(liveTail: string): StreamingPendingKind {
   return null;
 }
 
-let mermaidRenderSequence = 0;
-
-function MermaidDiagram({ source }: { source: string }) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const [error, setError] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    setError(false);
-    void import("mermaid").then(async ({ default: mermaid }) => {
-      mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "base" });
-      const { svg, bindFunctions } = await mermaid.render(`lumina-mermaid-${++mermaidRenderSequence}`, source.trim());
-      if (cancelled || !containerRef.current) return;
-      containerRef.current.innerHTML = svg;
-      bindFunctions?.(containerRef.current);
-    }).catch(() => {
-      if (!cancelled) setError(true);
-    });
-    return () => { cancelled = true; };
-  }, [source]);
-
-  if (error) return <SyntaxCode className="mermaid-render-error" value={source} language="mermaid" />;
-  return <div ref={containerRef} className="mermaid-diagram" role="img" aria-label="Mermaid 다이어그램"><span>다이어그램 렌더링 중…</span></div>;
-}
-
 function StreamingBlockPending({ kind }: { kind: Exclude<StreamingPendingKind, null> }) {
+  const label = kind === "mermaid" ? "다이어그램 작성 중" : kind === "chart" ? "인터랙티브 차트 작성 중" : "표 작성 중";
   return (
     <div className={`stream-block-pending is-${kind}`} role="status">
       {kind === "mermaid" ? <GitBranch size={18} /> : <Table2 size={18} />}
-      <span>{kind === "mermaid" ? "다이어그램 작성 중" : "표 작성 중"}</span>
+      <span>{label}</span>
       <LoaderCircle className="is-running" size={15} />
     </div>
   );
@@ -1150,7 +1132,7 @@ export function MarkdownResponse({
     img: ({ src, alt }) => {
       const safeSrc = src ? defaultUrlTransform(src) : "";
       return safeSrc
-        ? <a className="markdown-image-link" href={safeSrc} target="_blank" rel="noreferrer noopener">이미지: {alt || safeSrc}</a>
+        ? <InlineMarkdownImage src={safeSrc} alt={alt || ""} />
         : <span>{alt || "이미지"}</span>;
     },
     table: ({ children }) => <div className="markdown-table-scroll"><table>{children}</table></div>,
@@ -1159,6 +1141,8 @@ export function MarkdownResponse({
       const source = String(children).replace(/\n$/, "");
       return language === "mermaid" || language === "mmd"
         ? <MermaidDiagram source={source} />
+        : language === "lumina-chart"
+          ? <InteractiveChart source={source} />
         : language
           ? <SyntaxCodeContent value={source} language={language} className={className} />
           : <code className={className}>{children}</code>;
