@@ -23,3 +23,12 @@ test("file mode emphasis does not alter composer layout and respects reduced mot
   assert.doesNotMatch(styles, /button\.is-file-mode-nudged\s*\{[^}]*(?:width|height|margin|padding):/);
   assert.match(styles, /prefers-reduced-motion:\s*reduce[^}]*is-file-mode-nudged[^}]*animation:\s*none/s);
 });
+
+test("file mode returns to auto only after a message is accepted", () => {
+  const sendMessage = app.match(/const sendMessage = async \(queueNext = false\) => \{([\s\S]*?)\n  \};/)?.[1] ?? "";
+  const accepted = sendMessage.indexOf("if (!mode) return;");
+  const reset = sendMessage.indexOf('if (resetFileModeAfterSend) void workspace.selectOutputMode("auto");');
+
+  assert.match(sendMessage, /const resetFileModeAfterSend = workspace\.settings\?\.outputMode === "file";/);
+  assert.ok(accepted >= 0 && reset > accepted, "file mode should reset only after sendMessage succeeds");
+});

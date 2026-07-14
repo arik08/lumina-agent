@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 
 const streamStartBufferMs = 180;
 const streamRevealDurationMs = 420;
-const visibleFrameIntervalMs = 50;
+const visibleFrameIntervalMs = 16;
 const frameFallbackMs = 100;
 const streamCatchUpDeadlineMs = 1_200;
 const streamSettleDurationMs = 180;

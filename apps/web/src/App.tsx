@@ -2228,6 +2228,7 @@ function App() {
       if (tokenStart < 0) return [];
       return [{ ...reference, tokenStart, tokenEnd: tokenStart + token.length }];
     });
+    const resetFileModeAfterSend = workspace.settings?.outputMode === "file";
     const mode = await workspace.sendMessage(
       value,
       queueNext,
@@ -2235,6 +2236,7 @@ function App() {
       targetOutputTokens ?? undefined,
     );
     if (!mode) return;
+    if (resetFileModeAfterSend) void workspace.selectOutputMode("auto");
     setDraft("");
     setSelectedReferences([]);
     setTargetOutputTokens(defaultArtifactOutputTokens);
