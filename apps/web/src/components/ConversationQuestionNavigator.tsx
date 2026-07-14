@@ -7,6 +7,7 @@ import {
   type RefObject,
 } from "react";
 import type { TurnSet } from "../api-types";
+import { GlobalTooltipLayer } from "./GlobalTooltip";
 
 interface QuestionNavigatorItem {
   anchorId: string;
@@ -71,6 +72,7 @@ export function ConversationQuestionNavigator({
   const items = useMemo(() => questionItems(turnSets), [turnSets]);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  const markerRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const itemKey = items.map((item) => item.anchorId).join("|");
 
   const cancelScrollAnimation = () => {
@@ -147,21 +149,31 @@ export function ConversationQuestionNavigator({
       <div className="question-navigator-track" style={{ "--question-count": items.length } as NavigatorStyle}>
         {items.map((item, index) => {
           const distance = activeIndex === null ? Number.POSITIVE_INFINITY : Math.abs(activeIndex - index);
+          const tooltipId = `question-navigator-tooltip-${item.anchorId}`;
           const markerStyle = {
             "--question-marker-scale": markerScaleForDistance(distance),
             "--question-marker-opacity": distance === 0 ? 1 : distance <= 3 ? 0.72 : 0.42,
           } as NavigatorStyle;
           return (
             <button
-              className="question-navigator-marker"
+              className={`question-navigator-marker ${index < 2 ? "is-tooltip-start" : ""} ${index >= items.length - 2 ? "is-tooltip-end" : ""}`}
               type="button"
+              ref={(node) => { markerRefs.current[index] = node; }}
               aria-label={`질문 ${index + 1}로 이동: ${item.preview}`}
+              aria-describedby={activeIndex === index ? tooltipId : undefined}
               style={markerStyle}
               onMouseEnter={() => setActiveIndex(index)}
               onFocus={() => setActiveIndex(index)}
               onClick={() => navigateToQuestion(item)}
               key={item.anchorId}
-            />
+            >
+              {activeIndex === index && (
+                <GlobalTooltipLayer anchor={markerRefs.current[index]} className="question-navigator-tooltip" id={tooltipId} open>
+                  <strong>질문 {index + 1}</strong>
+                  <span>{item.preview}</span>
+                </GlobalTooltipLayer>
+              )}
+            </button>
           );
         })}
       </div>
