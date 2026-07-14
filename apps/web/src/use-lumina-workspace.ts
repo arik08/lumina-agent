@@ -1310,6 +1310,7 @@ export function useLuminaWorkspace() {
     moveConversations,
     deleteConversations,
     branchConversation,
+    refreshConversations,
     activeRuntime,
     activeRun,
     loadConversation,

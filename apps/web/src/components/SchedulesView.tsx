@@ -22,6 +22,7 @@ interface SchedulesViewProps {
   projectId: string | null;
   execution: ExecutionSelection | null;
   onOpenNavigation: () => void;
+  onConversationsChanged: () => Promise<unknown>;
 }
 
 const kindLabels: Record<ScheduleKind, string> = {
@@ -55,7 +56,7 @@ function runStatusLabel(status: string) {
   return status;
 }
 
-export function SchedulesView({ projectId, execution, onOpenNavigation }: SchedulesViewProps) {
+export function SchedulesView({ projectId, execution, onOpenNavigation, onConversationsChanged }: SchedulesViewProps) {
   const [tasks, setTasks] = useState<ScheduledTask[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [runs, setRuns] = useState<ScheduledRun[]>([]);
@@ -198,6 +199,11 @@ export function SchedulesView({ projectId, execution, onOpenNavigation }: Schedu
     try {
       const created = await api.schedules.runNow(selected.id);
       setRuns((current) => [created, ...current.filter((run) => run.id !== created.id)]);
+      try {
+        await onConversationsChanged();
+      } catch {
+        setError("실행은 시작됐지만 최근 항목을 갱신하지 못했습니다.");
+      }
       await refresh(selected.id);
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "예약 작업을 실행하지 못했습니다.");

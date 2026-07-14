@@ -35,3 +35,16 @@ test("schedule creation and refresh actions stay at the right of the header", as
   assert.ok(listStart >= 0 && listStart < emptyState);
   assert.doesNotMatch(view.slice(listStart, emptyState), /새 예약|새로 고침|schedule-list-toolbar/);
 });
+
+test("running a scheduled task refreshes the sidebar conversation list immediately", async () => {
+  const [view, app, workspace] = await Promise.all([
+    read("../src/components/SchedulesView.tsx"),
+    read("../src/App.tsx"),
+    read("../src/use-lumina-workspace.ts"),
+  ]);
+
+  assert.match(view, /onConversationsChanged:\s*\(\)\s*=>\s*Promise<unknown>/);
+  assert.match(view, /await api\.schedules\.runNow\(selected\.id\)[\s\S]*?await onConversationsChanged\(\)/);
+  assert.match(app, /<SchedulesView[\s\S]*?onConversationsChanged=\{workspace\.refreshConversations\}/);
+  assert.match(workspace, /return\s*\{[\s\S]*?refreshConversations,/);
+});
