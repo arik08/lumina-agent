@@ -230,6 +230,44 @@ class _RetryableProvider:
         yield ProviderEvent(type="completed", stop_reason="stop")
 
 
+class _TruncatingThenCompletingProvider:
+    provider_id = "mock"
+    capabilities = ProviderCapabilities(tools=True)
+
+    def __init__(self) -> None:
+        self.attempts = 0
+
+    async def stream(self, request: ProviderRequest) -> AsyncIterator[ProviderEvent]:
+        self.attempts += 1
+        if self.attempts == 1:
+            yield ProviderEvent(type="text_delta", text="first part ")
+            yield ProviderEvent(type="completed", stop_reason="length")
+            return
+        assert request.messages[-2].role == "assistant"
+        assert request.messages[-2].content == "first part "
+        assert request.messages[-1].role == "user"
+        assert "Continue exactly where" in str(request.messages[-1].content)
+        yield ProviderEvent(type="text_delta", text="second part")
+        yield ProviderEvent(type="completed", stop_reason="stop")
+
+
+class _EmptyThenCompletingProvider:
+    provider_id = "mock"
+    capabilities = ProviderCapabilities(tools=True)
+
+    def __init__(self, *, always_empty: bool = False) -> None:
+        self.attempts = 0
+        self.always_empty = always_empty
+
+    async def stream(self, _request: ProviderRequest) -> AsyncIterator[ProviderEvent]:
+        self.attempts += 1
+        if self.attempts == 1 or self.always_empty:
+            yield ProviderEvent(type="completed", stop_reason="stop")
+            return
+        yield ProviderEvent(type="text_delta", text="recovered from empty turn")
+        yield ProviderEvent(type="completed", stop_reason="stop")
+
+
 class _ConnectedRequest:
     async def is_disconnected(self) -> bool:
         return False
@@ -420,6 +458,94 @@ def test_retryable_provider_failure_does_not_replay_partial_output(
             )
         )
     assert retry_event is None
+
+
+def test_output_limit_continues_without_losing_or_repeating_partial_text(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    provider = _TruncatingThenCompletingProvider()
+    monkeypatch.setattr(
+        local_run_executor, "_provider", lambda *_args, **_kwargs: provider
+    )
+    monkeypatch.setattr(
+        local_run_executor, "_learn_memory_background", _skip_memory_extraction
+    )
+
+    with TestClient(create_app(_settings(tmp_path, "output-continuation.db"))) as client:
+        csrf = _login(client)
+        conversation_id = _conversation(client, csrf, "Output continuation")
+        run_id = _start_run(
+            client,
+            csrf,
+            conversation_id,
+            text="continue-output-limit",
+            idempotency_key="continue-output-limit-0001",
+        )
+        snapshot = _wait_for_terminal(client, run_id)
+
+    assert snapshot["status"] == "completed"
+    assert snapshot["assistantDraft"]["text"] == "first part second part"
+    assert provider.attempts == 2
+
+
+def test_empty_provider_turn_retries_instead_of_completing_blank_response(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    provider = _EmptyThenCompletingProvider()
+    monkeypatch.setattr(
+        local_run_executor, "_provider", lambda *_args, **_kwargs: provider
+    )
+    monkeypatch.setattr(
+        local_run_executor, "_learn_memory_background", _skip_memory_extraction
+    )
+
+    with TestClient(create_app(_settings(tmp_path, "empty-turn-retry.db"))) as client:
+        csrf = _login(client)
+        conversation_id = _conversation(client, csrf, "Empty turn retry")
+        run_id = _start_run(
+            client,
+            csrf,
+            conversation_id,
+            text="retry-empty-provider-turn",
+            idempotency_key="retry-empty-provider-turn-0001",
+        )
+        snapshot = _wait_for_terminal(client, run_id)
+
+    assert snapshot["status"] == "completed"
+    assert snapshot["assistantDraft"]["text"] == "recovered from empty turn"
+    assert provider.attempts == 2
+
+
+def test_repeated_empty_provider_turn_fails_visibly_instead_of_completing_blank(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    provider = _EmptyThenCompletingProvider(always_empty=True)
+    monkeypatch.setattr(
+        local_run_executor, "_provider", lambda *_args, **_kwargs: provider
+    )
+    monkeypatch.setattr(
+        local_run_executor, "_learn_memory_background", _skip_memory_extraction
+    )
+
+    with TestClient(create_app(_settings(tmp_path, "repeated-empty-turn.db"))) as client:
+        csrf = _login(client)
+        conversation_id = _conversation(client, csrf, "Repeated empty turn")
+        run_id = _start_run(
+            client,
+            csrf,
+            conversation_id,
+            text="fail-repeated-empty-provider-turn",
+            idempotency_key="fail-repeated-empty-provider-turn-0001",
+        )
+        snapshot = _wait_for_terminal(client, run_id)
+
+    assert snapshot["status"] == "failed"
+    assert snapshot["assistantDraft"] is None
+    assert provider.attempts == 2
+    with SessionLocal() as db:
+        failed_run = db.get(Run, run_id)
+        assert failed_run is not None
+        assert "내용 없는 응답" in str(failed_run.error_message)
 
 
 def test_different_conversations_for_one_user_execute_in_parallel(

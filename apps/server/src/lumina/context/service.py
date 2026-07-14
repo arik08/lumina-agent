@@ -5,7 +5,7 @@ import json
 import math
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 
@@ -33,6 +33,9 @@ PGPT_TOKEN_ESTIMATION_PADDING = 4 / 3
 RECENT_MESSAGES_TO_PRESERVE = 4
 RUNTIME_RECENT_UNITS_TO_PRESERVE = 3
 RUNTIME_SUMMARY_MARKER = "[Compacted runtime context]"
+RUNTIME_TOOL_ARGUMENT_STRING_LIMIT = 240
+RUNTIME_TOOL_RESULT_HEAD_CHARS = 1_200
+RUNTIME_TOOL_RESULT_TAIL_CHARS = 600
 _CJK = re.compile(r"[\u3400-\u9fff\uac00-\ud7a3]")
 _WORD = re.compile(r"[A-Za-z0-9_]+")
 
@@ -171,6 +174,7 @@ class RuntimeContextPreparation:
     effective_input_budget: int
     compacted_message_count: int = 0
     preserved_message_count: int = 0
+    compacted_payload_count: int = 0
 
 
 def compact_runtime_messages(
@@ -220,7 +224,45 @@ def compact_runtime_messages(
     preserve_count = min(preserve_target, len(units))
     compacted_units = units[:-preserve_count] if preserve_count else units
     retained_units = units[-preserve_count:] if preserve_count else []
-    if not compacted_units:
+    retained = [message for unit in retained_units for message in unit]
+    compacted_messages = [message for unit in compacted_units for message in unit]
+    summary_message: tuple[ProviderMessage, ...] = ()
+    if compacted_units:
+        summary_parts = [
+            RUNTIME_SUMMARY_MARKER,
+            "Earlier in-flight work was compacted. Treat this as prior context, not a new user request.",
+        ]
+        if previous_summaries:
+            summary_parts.append(_bounded("\n".join(previous_summaries), 3_000))
+        for unit in compacted_units:
+            for message in unit:
+                summary_parts.append(_runtime_message_summary(message))
+        summary = _bounded(
+            "\n".join(summary_parts),
+            max(1_500, min(8_000, effective_budget * 3)),
+        )
+        summary_message = (ProviderMessage(role="system", content=summary),)
+    elif previous_summaries:
+        summary_message = tuple(
+            ProviderMessage(role="system", content=summary)
+            for summary in previous_summaries
+        )
+
+    prepared_messages = (*head, *summary_message, *retained)
+    estimated_after = _padded_estimate(
+        run,
+        _estimate_provider_messages(prepared_messages, tool_schemas),
+    )
+    compacted_payload_count = 0
+    if estimated_after > threshold:
+        prepared_messages, compacted_payload_count = _compact_runtime_payloads(
+            prepared_messages
+        )
+        estimated_after = _padded_estimate(
+            run,
+            _estimate_provider_messages(prepared_messages, tool_schemas),
+        )
+    if not compacted_units and compacted_payload_count == 0:
         return RuntimeContextPreparation(
             messages=tuple(messages),
             compacted=False,
@@ -228,27 +270,6 @@ def compact_runtime_messages(
             estimated_tokens_after=estimated_before,
             effective_input_budget=effective_budget,
         )
-
-    summary_parts = [
-        RUNTIME_SUMMARY_MARKER,
-        "Earlier in-flight work was compacted. Treat this as prior context, not a new user request.",
-    ]
-    if previous_summaries:
-        summary_parts.append(_bounded("\n".join(previous_summaries), 3_000))
-    for unit in compacted_units:
-        for message in unit:
-            summary_parts.append(_runtime_message_summary(message))
-    summary = _bounded(
-        "\n".join(summary_parts), max(1_500, min(8_000, effective_budget * 3))
-    )
-    retained = [message for unit in retained_units for message in unit]
-    compacted_messages = [message for unit in compacted_units for message in unit]
-    prepared_messages = (
-        *head,
-        ProviderMessage(role="system", content=summary),
-        *retained,
-    )
-    estimated_after = _estimate_provider_messages(prepared_messages, tool_schemas)
     return RuntimeContextPreparation(
         messages=tuple(prepared_messages),
         compacted=True,
@@ -257,6 +278,7 @@ def compact_runtime_messages(
         effective_input_budget=effective_budget,
         compacted_message_count=len(compacted_messages),
         preserved_message_count=len(retained),
+        compacted_payload_count=compacted_payload_count,
     )
 
 
@@ -758,6 +780,83 @@ def _provider_message_units(
     return units
 
 
+def _compact_runtime_payloads(
+    messages: Sequence[ProviderMessage],
+) -> tuple[tuple[ProviderMessage, ...], int]:
+    """Shrink recoverable Tool payloads without breaking provider JSON contracts."""
+
+    compacted: list[ProviderMessage] = []
+    changed_count = 0
+    for message in messages:
+        updated = message
+        if message.tool_calls and not message.provider_metadata:
+            tool_calls: list[Mapping[str, Any]] = []
+            changed = False
+            for raw_call in message.tool_calls:
+                call = dict(raw_call)
+                function = call.get("function")
+                if isinstance(function, Mapping):
+                    arguments = function.get("arguments")
+                    compacted_arguments = _compact_tool_arguments(arguments)
+                    if compacted_arguments != arguments:
+                        call["function"] = {
+                            **function,
+                            "arguments": compacted_arguments,
+                        }
+                        changed = True
+                tool_calls.append(call)
+            if changed:
+                updated = replace(updated, tool_calls=tuple(tool_calls))
+                changed_count += 1
+        if updated.role == "tool" and len(updated.content or "") > (
+            RUNTIME_TOOL_RESULT_HEAD_CHARS + RUNTIME_TOOL_RESULT_TAIL_CHARS
+        ):
+            content = updated.content or ""
+            updated = replace(
+                updated,
+                content=(
+                    "[Tool result compacted for the provider context; the full result "
+                    "remains stored in the Run and is recoverable by tool call ID.]\n"
+                    f"{content[:RUNTIME_TOOL_RESULT_HEAD_CHARS]}\n"
+                    "...[context compacted]...\n"
+                    f"{content[-RUNTIME_TOOL_RESULT_TAIL_CHARS:]}"
+                ),
+            )
+            changed_count += 1
+        compacted.append(updated)
+    return tuple(compacted), changed_count
+
+
+def _compact_tool_arguments(arguments: Any) -> Any:
+    if not isinstance(arguments, str):
+        return arguments
+    try:
+        parsed = json.loads(arguments)
+    except (TypeError, ValueError):
+        return arguments
+
+    changed = False
+
+    def shrink(value: Any) -> Any:
+        nonlocal changed
+        if isinstance(value, str) and len(value) > RUNTIME_TOOL_ARGUMENT_STRING_LIMIT:
+            changed = True
+            return (
+                value[:RUNTIME_TOOL_ARGUMENT_STRING_LIMIT]
+                + "...[context compacted]"
+            )
+        if isinstance(value, dict):
+            return {key: shrink(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [shrink(item) for item in value]
+        return value
+
+    compacted = shrink(parsed)
+    if not changed:
+        return arguments
+    return json.dumps(compacted, ensure_ascii=False, separators=(",", ":"))
+
+
 def _runtime_message_summary(message: ProviderMessage) -> str:
     label = message.role
     metadata: list[str] = []
@@ -767,7 +866,15 @@ def _runtime_message_summary(message: ProviderMessage) -> str:
         metadata.append(f"call={message.tool_call_id}")
     if message.tool_calls:
         names = [
-            str(call.get("name", "tool"))
+            str(
+                call.get("name")
+                or (
+                    call.get("function", {}).get("name")
+                    if isinstance(call.get("function"), Mapping)
+                    else None
+                )
+                or "tool"
+            )
             for call in message.tool_calls
             if isinstance(call, Mapping)
         ]

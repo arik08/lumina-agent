@@ -53,6 +53,8 @@ queued
 9. `post_tool_use` hook과 artifact 저장을 처리한 뒤 Tool Result를 대화에 추가합니다.
 10. 갱신된 Context로 다음 모델 Turn을 실행합니다.
 
+Provider가 `max_tokens`, `length` 같은 출력 한도 종료를 보고하면 해당 응답을 최종 답변으로 확정하지 않습니다. 이미 저장한 assistant text를 Context tail에 그대로 두고 짧은 이어쓰기 지시만 추가하여 제한된 횟수 안에서 자동으로 계속하며, 완료 시 누적 draft와 최종 Message가 한 번만 이어진 동일한 text로 수렴해야 합니다. 내용도 Tool Call도 없는 정상 종료는 빈 답변으로 완료하지 않고 한 번 재시도하며, 반복되면 부분 draft와 이벤트를 보존한 채 명시적인 Provider 오류로 종료합니다. 출력 한도에 걸린 Tool Call은 인자가 완전하다고 증명할 수 없으므로 실행하지 않습니다.
+
 Tool 실패는 가능한 경우 전체 Loop를 즉시 중단하지 않고 구조화된 오류 결과로 모델에 돌려보냅니다. 모델이 대안 행동을 선택하거나 사용자에게 실패 원인을 설명할 수 있게 합니다.
 
 ## Tool 실행
@@ -64,6 +66,7 @@ Tool 실패는 가능한 경우 전체 Loop를 즉시 중단하지 않고 구조
 - 병렬 실행 중 하나가 실패해도 다른 결과를 취소하거나 잃지 않습니다.
 - 모든 Tool Call에는 대응하는 Tool Result를 생성하여 대화 상태가 깨지지 않게 합니다.
 - 큰 출력은 메시지에 전부 넣지 않고 artifact로 저장한 뒤 요약과 참조만 Context에 넣습니다.
+- 완료된 Tool Call의 큰 문자열 인자와 결과 preview는 다음 model Turn 전에 유효한 JSON과 Tool Call/Result ID 관계를 유지한 채 축약합니다. 전체 입력과 결과는 DB·Artifact 원본에 남기고, Context에는 경로 같은 짧은 식별 정보와 head/tail preview, 복구 가능 marker만 보존합니다. Provider가 Tool Call에 검증용 서명을 붙인 경우에는 서명된 호출 인자를 바꾸지 않습니다.
 - Tool Result의 Artifact ID, storage key, 서버 경로, content hash와 digest는 Agent Loop 내부의 구조화 참조로만 사용합니다. 공통 System Prompt는 모델이 이 값을 진행 메시지나 최종 답변에 출력하지 못하게 명시해야 합니다.
 - 생성 파일은 최종 답변에서 사용자 표시명과 결과 요약으로만 안내합니다. 열기·다운로드 동작은 문자열 링크를 모델이 만들지 않고 Backend의 구조화 Artifact metadata를 Frontend 카드가 렌더링합니다.
 - Frontend의 내부 식별자 제거는 과거 응답과 Provider 지침 이탈을 위한 최종 안전망이며, 모델 출력 규칙을 대신하는 주 처리 방식으로 사용하지 않습니다.

@@ -147,6 +147,16 @@ from ..api.schemas import (
 
 logger = logging.getLogger(__name__)
 _PROVIDER_RETRY_DELAYS_SECONDS = (1.0, 2.0)
+_MAX_AUTO_CONTINUATIONS = 4
+_MAX_EMPTY_RESPONSE_RETRIES = 1
+_CONTINUATION_PROMPT = (
+    "[Continuation after output limit] Continue exactly where the previous assistant "
+    "text stopped. Do not repeat completed text, restart the answer, or summarize it."
+)
+_TRUNCATED_AFTER_CONTINUATIONS_NOTICE = (
+    "\n\n[응답이 모델 출력 한도에 반복해서 도달하여 여기까지 보존했습니다. "
+    "계속해 달라고 요청하면 이어서 진행할 수 있습니다.]"
+)
 ClaimResult = Literal["claimed", "wait", "stop"]
 
 
@@ -691,6 +701,8 @@ class LocalRunExecutor:
         artifact_completion_reminded = False
         reactive_context_recovery_attempted = False
         provider_retry_attempt = 0
+        empty_response_retry_attempt = 0
+        output_continuation_count = 0
         while True:
             messages = await self._compact_runtime_context(
                 run_id, messages, tool_schemas
@@ -732,6 +744,7 @@ class LocalRunExecutor:
             limit_violation: RunLimitViolation | None = None
             provider_request_error: ProviderRequestError | None = None
             provider_output_started = False
+            provider_stop_reason: str | None = None
             pending_text: list[str] = []
             pending_text_chars = 0
             last_text_flush = time.monotonic()
@@ -880,6 +893,8 @@ class LocalRunExecutor:
                             )
                             if limit_violation is not None:
                                 break
+                        elif event.type == "completed":
+                            provider_stop_reason = event.stop_reason
             except ProviderRequestError as exc:
                 provider_request_error = exc
             except TimeoutError:
@@ -962,6 +977,64 @@ class LocalRunExecutor:
                         for text in steer_messages
                     )
                     continue
+                output_truncated = _is_output_truncated_stop_reason(
+                    provider_stop_reason
+                )
+                if output_truncated and round_text:
+                    empty_response_retry_attempt = 0
+                    if output_continuation_count < _MAX_AUTO_CONTINUATIONS:
+                        messages.append(
+                            ProviderMessage(
+                                role="assistant", content="".join(round_text)
+                            )
+                        )
+                        messages.append(
+                            ProviderMessage(role="user", content=_CONTINUATION_PROMPT)
+                        )
+                        output_continuation_count += 1
+                        await self._publish_progress_summary(
+                            run_id,
+                            "응답이 출력 한도에 도달해 중복 없이 자동으로 이어서 작성합니다.",
+                            phase="continuing",
+                        )
+                        continue
+                    await self._append_text(
+                        run_id,
+                        assistant_message_id,
+                        _TRUNCATED_AFTER_CONTINUATIONS_NOTICE,
+                    )
+                    round_text.append(_TRUNCATED_AFTER_CONTINUATIONS_NOTICE)
+                elif not round_text:
+                    if empty_response_retry_attempt < _MAX_EMPTY_RESPONSE_RETRIES:
+                        empty_response_retry_attempt += 1
+                        with session_scope() as db:
+                            active_run = db.get(Run, run_id)
+                            if active_run is not None:
+                                append_event(
+                                    db,
+                                    active_run,
+                                    "provider_empty_response_retry_scheduled",
+                                    {
+                                        "attempt": empty_response_retry_attempt + 1,
+                                        "maxAttempts": _MAX_EMPTY_RESPONSE_RETRIES + 1,
+                                        "stopReason": provider_stop_reason,
+                                    },
+                                )
+                        await event_broker.notify(run_id)
+                        await self._publish_progress_summary(
+                            run_id,
+                            "Provider가 빈 응답을 반환해 대화를 종료하지 않고 한 번 더 요청합니다.",
+                            phase="retrying",
+                        )
+                        continue
+                    raise ProviderRequestError(
+                        "Provider가 내용 없는 응답을 반복해 빈 답변으로 완료하지 않았습니다.",
+                        retryable=False,
+                        stage="response",
+                    )
+                else:
+                    empty_response_retry_attempt = 0
+                    output_continuation_count = 0
                 if (
                     wants_artifact
                     and not artifact_created
@@ -992,6 +1065,15 @@ class LocalRunExecutor:
                 await self._enter_final_plan(run_id)
                 await self._complete_run(run_id, assistant_message_id)
                 return
+
+            if _is_output_truncated_stop_reason(provider_stop_reason):
+                raise ProviderRequestError(
+                    "Provider 출력 한도 때문에 Tool Call이 완전히 생성되지 않아 실행하지 않았습니다.",
+                    retryable=False,
+                    stage="response",
+                )
+            empty_response_retry_attempt = 0
+            output_continuation_count = 0
 
             execution_calls = [
                 call
@@ -3008,6 +3090,7 @@ class LocalRunExecutor:
                 "effectiveInputBudget": prepared.effective_input_budget,
                 "compactedMessageCount": prepared.compacted_message_count,
                 "preservedMessageCount": prepared.preserved_message_count,
+                "compactedPayloadCount": prepared.compacted_payload_count,
                 "trigger": trigger,
             }
             run.snapshot_json = {
@@ -4109,6 +4192,16 @@ def _is_context_overflow_error(exc: ProviderRequestError) -> bool:
             "too large for the model",
         )
     )
+
+
+def _is_output_truncated_stop_reason(stop_reason: str | None) -> bool:
+    return str(stop_reason or "").strip().casefold() in {
+        "length",
+        "max_tokens",
+        "max_output_tokens",
+        "max_completion_tokens",
+        "incomplete",
+    }
 
 
 def _web_source_metadata(db: Session, run_id: str) -> dict[str, Any]:

@@ -518,6 +518,79 @@ def test_runtime_compaction_preserves_recent_tool_pairs_and_marks_summary(
         assert tool.tool_call_id == assistant.tool_calls[0]["id"]
 
 
+def test_runtime_compaction_shrinks_oversized_recent_tool_pair_as_valid_json(
+    tmp_path: Path,
+) -> None:
+    user, project, conversation = _configure(tmp_path, "runtime-large-tool-pair")
+    with SessionLocal() as db:
+        run = _run(
+            db,
+            user=db.merge(user),
+            project=db.merge(project),
+            conversation=db.merge(conversation),
+            sequence=1,
+            context_window=2_500,
+        )
+        call_id = "call-large-write"
+        messages = [
+            ProviderMessage(role="system", content="System contract"),
+            ProviderMessage(
+                role="system",
+                content="[Compacted runtime context]\nEarlier verified decision.",
+            ),
+            ProviderMessage(role="user", content="Create the requested file."),
+            ProviderMessage(
+                role="assistant",
+                tool_calls=(
+                    {
+                        "id": call_id,
+                        "type": "function",
+                        "function": {
+                            "name": "write_file",
+                            "arguments": json.dumps(
+                                {
+                                    "path": "outputs/report.html",
+                                    "content": "large generated document " * 1_500,
+                                }
+                            ),
+                        },
+                    },
+                ),
+            ),
+            ProviderMessage(
+                role="tool",
+                name="write_file",
+                tool_call_id=call_id,
+                content="stored file result " * 1_500,
+            ),
+        ]
+
+        prepared = compact_runtime_messages(run, messages, ({"name": "write_file"},))
+
+    assert prepared.compacted is True
+    assert prepared.compacted_payload_count == 2
+    assert prepared.estimated_tokens_after < prepared.estimated_tokens_before
+    assert prepared.estimated_tokens_after <= int(
+        prepared.effective_input_budget * 0.75
+    )
+    assert any(
+        "Earlier verified decision" in str(message.content)
+        for message in prepared.messages
+    )
+    assert [message.role for message in prepared.messages[-3:]] == [
+        "user",
+        "assistant",
+        "tool",
+    ]
+    assistant = prepared.messages[-2]
+    tool = prepared.messages[-1]
+    assert tool.tool_call_id == assistant.tool_calls[0]["id"]
+    arguments = json.loads(assistant.tool_calls[0]["function"]["arguments"])
+    assert arguments["path"] == "outputs/report.html"
+    assert arguments["content"].endswith("...[context compacted]")
+    assert "full result remains stored" in str(tool.content)
+
+
 def test_context_window_budget_avoids_character_only_compaction(tmp_path: Path) -> None:
     user, project, conversation = _configure(tmp_path, "large-context-window")
     with SessionLocal() as db:
