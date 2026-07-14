@@ -45,7 +45,7 @@ test("schedule creation lives in the left list and replaces the detail panel", a
   assert.doesNotMatch(view, /feature-inline-dialog" role="dialog"/);
   assert.match(view, /setSelectedId\(task\.id\);\s*setCreateOpen\(false\);/);
   assert.match(styles, /\.schedule-list-toolbar\s*\{[^}]*justify-content:\s*flex-end;/);
-  assert.match(styles, /\.schedule-list-toolbar \.feature-primary-action\s*\{[^}]*width:\s*auto;[^}]*justify-content:\s*center;/);
+  assert.match(styles, /\.schedule-list-toolbar \.feature-primary-action\s*\{[^}]*width:\s*100%;[^}]*justify-content:\s*center;/);
   assert.match(styles, /\.schedule-form\.schedule-detail-form\s*\{[^}]*padding:\s*0;/);
 });
 
