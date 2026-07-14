@@ -10,24 +10,28 @@ import {
   FolderPlus,
   Info,
   LoaderCircle,
+  Megaphone,
   Menu,
   Pencil,
+  Plus,
   RefreshCw,
   Search,
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { api } from "../api";
-import type { HelpItem, HelpItemKind } from "../api-types";
+import type { AnnouncementItem, HelpItem, HelpItemKind } from "../api-types";
 import { ResizableSplitPane } from "./ResizableSplitPane";
 
+type HelpSection = "manuals" | "announcements";
 
 interface HelpCenterViewProps {
   canManage: boolean;
+  initialAnnouncementId?: string | null;
   onOpenNavigation: () => void;
   onToast: (message: string) => void;
 }
@@ -77,10 +81,18 @@ function formatDate(value: string) {
   return new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
 
-export function HelpCenterView({ canManage, onOpenNavigation, onToast }: HelpCenterViewProps) {
+function announcementWasEdited(announcement: AnnouncementItem) {
+  return new Date(announcement.updatedAt).getTime() - new Date(announcement.createdAt).getTime() >= 1000;
+}
+
+export function HelpCenterView({ canManage, initialAnnouncementId = null, onOpenNavigation, onToast }: HelpCenterViewProps) {
+  const [section, setSection] = useState<HelpSection>(initialAnnouncementId ? "announcements" : "manuals");
   const [items, setItems] = useState<HelpItem[]>([]);
+  const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
+  const [announcementTotal, setAnnouncementTotal] = useState(0);
   const [serverCanManage, setServerCanManage] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedAnnouncementId, setSelectedAnnouncementId] = useState<string | null>(initialAnnouncementId);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
@@ -92,9 +104,14 @@ export function HelpCenterView({ canManage, onOpenNavigation, onToast }: HelpCen
   const [draftTitle, setDraftTitle] = useState("");
   const [draftContent, setDraftContent] = useState("");
   const [deleteArmed, setDeleteArmed] = useState(false);
+  const [announcementMode, setAnnouncementMode] = useState<"idle" | "create" | "edit">("idle");
+  const [announcementTitle, setAnnouncementTitle] = useState("");
+  const [announcementBody, setAnnouncementBody] = useState("");
+  const [announcementDeleteArmed, setAnnouncementDeleteArmed] = useState(false);
 
   const effectiveCanManage = canManage && serverCanManage;
   const selected = items.find((item) => item.id === selectedId) ?? null;
+  const selectedAnnouncement = announcements.find((item) => item.id === selectedAnnouncementId) ?? null;
   const selectedParent = selected?.kind === "folder" ? selected : items.find((item) => item.id === selected?.parentId) ?? null;
   const createParentId = selectedParent?.kind === "folder" ? selectedParent.id : null;
   const documentCount = items.filter((item) => item.kind === "document").length;
@@ -103,13 +120,21 @@ export function HelpCenterView({ canManage, onOpenNavigation, onToast }: HelpCen
     setLoading(true);
     setError(null);
     try {
-      const response = await api.help.list(signal);
-      setItems(response.items);
-      setServerCanManage(response.canManage);
-      setExpanded((current) => current.size > 0 ? current : new Set(response.items.filter((item) => item.kind === "folder").map((item) => item.id)));
-      setSelectedId((current) => response.items.some((item) => item.id === current)
+      const [helpResponse, announcementResponse] = await Promise.all([
+        api.help.list(signal),
+        api.notifications.listAnnouncements(100, 0, signal),
+      ]);
+      setItems(helpResponse.items);
+      setAnnouncements(announcementResponse.items);
+      setAnnouncementTotal(announcementResponse.total);
+      setServerCanManage(helpResponse.canManage);
+      setExpanded((current) => current.size > 0 ? current : new Set(helpResponse.items.filter((item) => item.kind === "folder").map((item) => item.id)));
+      setSelectedId((current) => helpResponse.items.some((item) => item.id === current)
         ? current
-        : response.items.find((item) => item.kind === "document")?.id ?? response.items[0]?.id ?? null);
+        : helpResponse.items.find((item) => item.kind === "document")?.id ?? helpResponse.items[0]?.id ?? null);
+      setSelectedAnnouncementId((current) => announcementResponse.items.some((item) => item.id === current)
+        ? current
+        : announcementResponse.items[0]?.id ?? null);
     } catch (loadError) {
       if ((loadError as { name?: string }).name !== "AbortError") setError(errorMessage(loadError));
     } finally {
@@ -123,7 +148,31 @@ export function HelpCenterView({ canManage, onOpenNavigation, onToast }: HelpCen
     return () => controller.abort();
   }, [load]);
 
+  useEffect(() => {
+    if (!initialAnnouncementId) return;
+    setSection("announcements");
+    setSelectedAnnouncementId(initialAnnouncementId);
+    setAnnouncementMode("idle");
+  }, [initialAnnouncementId]);
+
   const tree = useMemo(() => filterTree(buildTree(items), query), [items, query]);
+  const filteredAnnouncements = useMemo(() => {
+    const normalized = query.trim().toLocaleLowerCase("ko-KR");
+    if (!normalized) return announcements;
+    return announcements.filter((announcement) => announcement.title.toLocaleLowerCase("ko-KR").includes(normalized)
+      || announcement.body.toLocaleLowerCase("ko-KR").includes(normalized));
+  }, [announcements, query]);
+
+  const switchSection = (next: HelpSection) => {
+    setSection(next);
+    setQuery("");
+    setCreating(null);
+    setEditing(false);
+    setDeleteArmed(false);
+    setAnnouncementMode("idle");
+    setAnnouncementDeleteArmed(false);
+    setError(null);
+  };
 
   const beginCreate = (kind: HelpItemKind) => {
     setCreating(kind);
@@ -137,12 +186,7 @@ export function HelpCenterView({ canManage, onOpenNavigation, onToast }: HelpCen
     setBusy(true);
     setError(null);
     try {
-      const created = await api.help.create({
-        kind: creating,
-        title: newTitle.trim(),
-        parentId: createParentId,
-        markdownContent: "",
-      });
+      const created = await api.help.create({ kind: creating, title: newTitle.trim(), parentId: createParentId, markdownContent: "" });
       setItems((current) => [...current, created]);
       setSelectedId(created.id);
       setCreating(null);
@@ -211,6 +255,71 @@ export function HelpCenterView({ canManage, onOpenNavigation, onToast }: HelpCen
     }
   };
 
+  const beginAnnouncementCreate = () => {
+    setSelectedAnnouncementId(null);
+    setAnnouncementTitle("");
+    setAnnouncementBody("");
+    setAnnouncementDeleteArmed(false);
+    setAnnouncementMode("create");
+  };
+
+  const beginAnnouncementEdit = () => {
+    if (!selectedAnnouncement) return;
+    setAnnouncementTitle(selectedAnnouncement.title);
+    setAnnouncementBody(selectedAnnouncement.body);
+    setAnnouncementDeleteArmed(false);
+    setAnnouncementMode("edit");
+  };
+
+  const saveAnnouncement = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!announcementTitle.trim() || !announcementBody.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const saved = announcementMode === "create"
+        ? await api.admin.createAnnouncement({ title: announcementTitle.trim(), body: announcementBody.trim() })
+        : selectedAnnouncement
+          ? await api.admin.updateAnnouncement(selectedAnnouncement.id, { title: announcementTitle.trim(), body: announcementBody.trim() })
+          : null;
+      if (!saved) return;
+      setAnnouncements((current) => announcementMode === "create"
+        ? [saved, ...current]
+        : current.map((item) => item.id === saved.id ? saved : item));
+      if (announcementMode === "create") setAnnouncementTotal((current) => current + 1);
+      setSelectedAnnouncementId(saved.id);
+      setAnnouncementMode("idle");
+      onToast(announcementMode === "create" ? "공지사항을 게시했습니다." : "공지사항을 수정했습니다.");
+    } catch (saveError) {
+      setError(errorMessage(saveError));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeAnnouncement = async () => {
+    if (!selectedAnnouncement) return;
+    if (!announcementDeleteArmed) {
+      setAnnouncementDeleteArmed(true);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await api.admin.deleteAnnouncement(selectedAnnouncement.id);
+      const remaining = announcements.filter((item) => item.id !== selectedAnnouncement.id);
+      setAnnouncements(remaining);
+      setAnnouncementTotal((current) => Math.max(0, current - 1));
+      setSelectedAnnouncementId(remaining[0]?.id ?? null);
+      setAnnouncementDeleteArmed(false);
+      onToast("공지사항을 삭제했습니다.");
+    } catch (deleteError) {
+      setError(errorMessage(deleteError));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const renderTree = (nodes: HelpTreeNode[], depth = 0): React.ReactNode => nodes.map((node) => {
     const isFolder = node.item.kind === "folder";
     const isExpanded = query.trim() ? true : expanded.has(node.item.id);
@@ -245,35 +354,48 @@ export function HelpCenterView({ canManage, onOpenNavigation, onToast }: HelpCen
   return (
     <main className="feature-view help-center-view" aria-label="사용 안내">
       <header className="feature-header">
-        <div><button className="feature-mobile-menu" type="button" aria-label="사이드바 열기" onClick={onOpenNavigation}><Menu size={17} /></button><Info size={17} /><h1>사용 안내</h1><span>{documentCount}개 문서 · 모든 사용자 열람{effectiveCanManage ? " · 관리자 편집" : ""}</span></div>
+        <div><button className="feature-mobile-menu" type="button" aria-label="사이드바 열기" onClick={onOpenNavigation}><Menu size={17} /></button><Info size={17} /><h1>사용 안내</h1><span>{documentCount}개 매뉴얼 · 공지 {announcementTotal}건 · 모든 사용자 열람{effectiveCanManage ? " · 관리자 편집" : ""}</span></div>
         <div><button className="file-workspace-refresh tooltip-control" type="button" aria-label="사용 안내 새로 고침" data-tooltip="새로 고침" disabled={loading} onClick={() => void load()}>{loading ? <LoaderCircle className="is-running" size={15} /> : <RefreshCw size={15} />}</button></div>
       </header>
+      <div className="help-section-tabs" role="tablist" aria-label="사용 안내 자료 유형">
+        <button type="button" role="tab" aria-selected={section === "manuals"} onClick={() => switchSection("manuals")}><FileText size={14} />매뉴얼 <span>{documentCount}</span></button>
+        <button type="button" role="tab" aria-selected={section === "announcements"} onClick={() => switchSection("announcements")}><Megaphone size={14} />공지사항 <span>{announcementTotal}</span></button>
+      </div>
       <div className="feature-toolbar help-center-toolbar">
-        <label className="feature-search"><Search size={14} /><input value={query} placeholder="안내 제목이나 내용 검색" onChange={(event) => setQuery(event.currentTarget.value)} /></label>
-        {effectiveCanManage ? <div className="help-create-actions"><button type="button" disabled={busy} onClick={() => beginCreate("folder")}><FolderPlus size={14} />폴더</button><button type="button" disabled={busy} onClick={() => beginCreate("document")}><FilePlus2 size={14} />문서</button></div> : null}
+        <label className="feature-search"><Search size={14} /><input value={query} placeholder={section === "manuals" ? "매뉴얼 제목이나 내용 검색" : "공지 제목이나 내용 검색"} onChange={(event) => setQuery(event.currentTarget.value)} /></label>
+        {effectiveCanManage && section === "manuals" ? <div className="help-create-actions"><button type="button" disabled={busy} onClick={() => beginCreate("folder")}><FolderPlus size={14} />폴더</button><button type="button" disabled={busy} onClick={() => beginCreate("document")}><FilePlus2 size={14} />문서</button></div> : null}
+        {effectiveCanManage && section === "announcements" ? <div className="help-create-actions"><button className="lumina-primary-action" type="button" disabled={busy} onClick={beginAnnouncementCreate}><Plus size={14} />공지 작성</button></div> : null}
       </div>
       {error ? <div className="feature-error" role="alert">{error}</div> : null}
       <ResizableSplitPane storageKey="lumina:help-explorer-width" ariaLabel="사용 안내 탐색기 너비 조절" className="file-workspace-split help-center-split">
-        <aside className="file-workspace-explorer" aria-label="사용 안내 탐색기">
-          <div className="file-explorer-heading"><FolderOpen size={14} /><strong>안내 목차</strong>{effectiveCanManage ? <small>관리자 편집</small> : null}</div>
-          {creating ? (
+        <aside className="file-workspace-explorer" aria-label={section === "manuals" ? "매뉴얼 탐색기" : "공지사항 목록"}>
+          <div className="file-explorer-heading">{section === "manuals" ? <FolderOpen size={14} /> : <Megaphone size={14} />}<strong>{section === "manuals" ? "매뉴얼 목차" : "공지사항"}</strong>{effectiveCanManage ? <small>관리자 편집</small> : null}</div>
+          {section === "manuals" && creating ? (
             <form className="help-create-form" onSubmit={(event) => { event.preventDefault(); void createItem(); }}>
               <span>{creating === "folder" ? <FolderPlus size={14} /> : <FilePlus2 size={14} />}{createParentId ? `${selectedParent?.title} 안에` : "최상위에"} {creating === "folder" ? "폴더" : "문서"} 추가</span>
               <div><input autoFocus value={newTitle} maxLength={160} placeholder={creating === "folder" ? "폴더 이름" : "문서 제목"} onChange={(event) => setNewTitle(event.currentTarget.value)} /><button type="submit" aria-label="추가" disabled={busy || !newTitle.trim()}><Check size={14} /></button><button type="button" aria-label="취소" onClick={() => setCreating(null)}><X size={14} /></button></div>
             </form>
           ) : null}
           <div className="file-tree thin-scrollbar">
-            {loading && items.length === 0 ? <div className="feature-state"><LoaderCircle className="is-running" size={15} /> 불러오는 중</div> : tree.length === 0 ? <div className="file-tree-empty"><Info size={22} /><strong>{query ? "검색 결과가 없습니다." : "아직 안내 문서가 없습니다."}</strong><span>{effectiveCanManage ? "위의 폴더 또는 문서 버튼으로 시작해 주세요." : "관리자가 안내를 준비하면 여기에 표시됩니다."}</span></div> : renderTree(tree)}
+            {loading && items.length === 0 && announcements.length === 0 ? <div className="feature-state"><LoaderCircle className="is-running" size={15} /> 불러오는 중</div> : section === "manuals" ? (
+              tree.length === 0 ? <div className="file-tree-empty"><Info size={22} /><strong>{query ? "검색 결과가 없습니다." : "아직 매뉴얼이 없습니다."}</strong><span>{effectiveCanManage ? "위의 폴더 또는 문서 버튼으로 시작해 주세요." : "관리자가 매뉴얼을 준비하면 여기에 표시됩니다."}</span></div> : renderTree(tree)
+            ) : filteredAnnouncements.length === 0 ? (
+              <div className="file-tree-empty"><Megaphone size={22} /><strong>{query ? "검색 결과가 없습니다." : "게시된 공지사항이 없습니다."}</strong><span>{effectiveCanManage ? "공지 작성 버튼으로 새 소식을 게시해 주세요." : "새 공지가 게시되면 여기에 표시됩니다."}</span></div>
+            ) : filteredAnnouncements.map((announcement) => (
+              <button className={`help-announcement-row ${selectedAnnouncementId === announcement.id && announcementMode === "idle" ? "is-selected" : ""}`} type="button" key={announcement.id} onClick={() => { setSelectedAnnouncementId(announcement.id); setAnnouncementMode("idle"); setAnnouncementDeleteArmed(false); }}>
+                <Megaphone size={14} aria-hidden="true" /><span><strong>{announcement.title}</strong><small>{formatDate(announcement.createdAt)}</small></span>
+              </button>
+            ))}
           </div>
         </aside>
         <section className="feature-detail file-workspace-viewer help-center-viewer" aria-live="polite">
-          {!selected ? (
-            <div className="file-viewer-empty"><Info size={28} /><strong>읽을 안내 문서를 선택해 주세요.</strong><span>왼쪽 목차에서 Lumina 사용법과 팁을 찾아볼 수 있습니다.</span></div>
+          {section === "manuals" ? (!selected ? (
+            <div className="file-viewer-empty"><Info size={28} /><strong>읽을 매뉴얼을 선택해 주세요.</strong><span>왼쪽 목차에서 Lumina 사용법과 팁을 찾아볼 수 있습니다.</span></div>
           ) : (
             <div className="file-viewer-document">
               <header className="file-viewer-heading help-viewer-heading">
                 <span className="file-viewer-icon">{selected.kind === "folder" ? <FolderOpen size={22} /> : <FileText size={22} />}</span>
-                <div>{editing ? <input className="help-title-input" value={draftTitle} maxLength={160} aria-label="안내 제목" onChange={(event) => setDraftTitle(event.currentTarget.value)} /> : <><h2>{selected.title}</h2><p>{selected.kind === "folder" ? "안내 폴더" : `마지막 수정 ${formatDate(selected.updatedAt)}`}</p></>}</div>
+                <div>{editing ? <input className="help-title-input" value={draftTitle} maxLength={160} aria-label="안내 제목" onChange={(event) => setDraftTitle(event.currentTarget.value)} /> : <><h2>{selected.title}</h2><p>{selected.kind === "folder" ? "매뉴얼 폴더" : `마지막 수정 ${formatDate(selected.updatedAt)}`}</p></>}</div>
                 {effectiveCanManage ? <div className="file-viewer-actions">
                   {editing ? <><button type="button" disabled={busy || !draftTitle.trim()} onClick={() => void save()}>{busy ? <LoaderCircle className="is-running" size={14} /> : <Check size={14} />}저장</button><button type="button" disabled={busy} onClick={() => setEditing(false)}><X size={14} />취소</button></> : <button type="button" disabled={busy} onClick={beginEdit}><Pencil size={14} />편집</button>}
                   {!editing ? <button className={`is-danger ${deleteArmed ? "is-confirming" : ""}`} type="button" disabled={busy} onClick={() => void remove()}>{deleteArmed ? <AlertCircle size={14} /> : <Trash2 size={14} />}{deleteArmed ? "한 번 더 눌러 삭제" : "삭제"}</button> : null}
@@ -285,9 +407,27 @@ export function HelpCenterView({ canManage, onOpenNavigation, onToast }: HelpCen
                 <div className="help-markdown-editor"><div><strong>Markdown</strong><span>제목, 목록, 표, 링크와 코드 블록을 사용할 수 있습니다.</span></div><textarea className="thin-scrollbar" value={draftContent} spellCheck={false} aria-label="안내 Markdown 편집" placeholder="# 시작하기\n\n사용 방법과 팁을 Markdown으로 작성해 주세요." onChange={(event) => setDraftContent(event.currentTarget.value)} /></div>
               ) : (
                 <article className="help-markdown thin-scrollbar">
-                  {selected.markdownContent.trim() ? <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: (props) => <a {...props} target="_blank" rel="noreferrer" /> }}>{selected.markdownContent}</ReactMarkdown> : <div className="file-viewer-empty"><FileText size={28} /><strong>아직 내용이 없습니다.</strong><span>{effectiveCanManage ? "편집을 눌러 Markdown 안내를 작성해 주세요." : "관리자가 내용을 준비하고 있습니다."}</span></div>}
+                  {selected.markdownContent.trim() ? <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: (props) => <a {...props} target="_blank" rel="noreferrer" /> }}>{selected.markdownContent}</ReactMarkdown> : <div className="file-viewer-empty"><FileText size={28} /><strong>아직 내용이 없습니다.</strong><span>{effectiveCanManage ? "편집을 눌러 Markdown 매뉴얼을 작성해 주세요." : "관리자가 내용을 준비하고 있습니다."}</span></div>}
                 </article>
               )}
+            </div>
+          )) : announcementMode !== "idle" ? (
+            <form className="help-announcement-form" onSubmit={(event) => void saveAnnouncement(event)}>
+              <header><span className="file-viewer-icon"><Megaphone size={22} /></span><div><h2>{announcementMode === "create" ? "새 공지 작성" : "공지사항 수정"}</h2><p>게시하면 조직의 모든 사용자가 알림과 사용 안내에서 볼 수 있습니다.</p></div></header>
+              <label><span>제목</span><input autoFocus maxLength={240} value={announcementTitle} onChange={(event) => setAnnouncementTitle(event.currentTarget.value)} placeholder="공지 제목" required /></label>
+              <label><span>내용</span><textarea className="thin-scrollbar" maxLength={20000} value={announcementBody} onChange={(event) => setAnnouncementBody(event.currentTarget.value)} placeholder="사용자에게 전달할 상세 내용을 입력하세요." required /></label>
+              <footer><button type="button" onClick={() => { setAnnouncementMode("idle"); if (!selectedAnnouncementId) setSelectedAnnouncementId(announcements[0]?.id ?? null); }}><X size={14} />취소</button><button className="lumina-primary-action" type="submit" disabled={busy || !announcementTitle.trim() || !announcementBody.trim()}>{busy ? <LoaderCircle className="is-running" size={14} /> : <Check size={14} />}{announcementMode === "create" ? "게시" : "저장"}</button></footer>
+            </form>
+          ) : !selectedAnnouncement ? (
+            <div className="file-viewer-empty"><Megaphone size={28} /><strong>읽을 공지사항을 선택해 주세요.</strong><span>알림에서는 요약을 보고, 이곳에서 전체 내용을 확인할 수 있습니다.</span></div>
+          ) : (
+            <div className="file-viewer-document help-announcement-detail">
+              <header className="file-viewer-heading help-viewer-heading">
+                <span className="file-viewer-icon"><Megaphone size={22} /></span>
+                <div><h2>{selectedAnnouncement.title}</h2><p>{selectedAnnouncement.author?.displayName || selectedAnnouncement.author?.loginId || "관리자"} · {formatDate(selectedAnnouncement.createdAt)}{announcementWasEdited(selectedAnnouncement) ? " · 수정됨" : ""}</p></div>
+                {effectiveCanManage ? <div className="file-viewer-actions"><button type="button" disabled={busy} onClick={beginAnnouncementEdit}><Pencil size={14} />편집</button><button className={`is-danger ${announcementDeleteArmed ? "is-confirming" : ""}`} type="button" disabled={busy} onClick={() => void removeAnnouncement()}>{announcementDeleteArmed ? <AlertCircle size={14} /> : <Trash2 size={14} />}{announcementDeleteArmed ? "한 번 더 눌러 삭제" : "삭제"}</button></div> : null}
+              </header>
+              <article className="help-announcement-body thin-scrollbar">{selectedAnnouncement.body}</article>
             </div>
           )}
         </section>

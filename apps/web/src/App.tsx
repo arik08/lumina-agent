@@ -885,6 +885,7 @@ function App() {
   const [notificationTab, setNotificationTab] = useState<NotificationTab>("notifications");
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
+  const [helpAnnouncementId, setHelpAnnouncementId] = useState<string | null>(null);
   const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
   const [notificationLoading, setNotificationLoading] = useState(false);
   const [notificationError, setNotificationError] = useState<string | null>(null);
@@ -2306,6 +2307,13 @@ function App() {
     setNotificationBusyId(null);
   };
 
+  const openAnnouncementInHelp = (announcementId: string | null) => {
+    setHelpAnnouncementId(announcementId);
+    setNotificationOpen(false);
+    setMainView("help");
+    setSidebarOpen(false);
+  };
+
   if (workspace.authSession === undefined) {
     return <div className="app-boot"><Sparkles size={22} /><span>Lumina를 준비하고 있습니다.</span><LoaderCircle className="is-running" size={18} /></div>;
   }
@@ -2381,7 +2389,7 @@ function App() {
             <button className="tooltip-control" type="button" aria-label={theme === "dark" ? "Light 테마로 변경" : "Dark 테마로 변경"} data-tooltip={theme === "dark" ? "Light 테마" : "Dark 테마"} onClick={() => void workspace.toggleTheme()}>
               {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
             </button>
-            <button className="tooltip-control" type="button" aria-label="사용 안내 열기" data-tooltip="사용 안내" onClick={() => { setMainView("help"); setSidebarOpen(false); }}><Info size={17} /></button>
+            <button className="tooltip-control" type="button" aria-label="사용 안내 열기" data-tooltip="사용 안내" onClick={() => openAnnouncementInHelp(null)}><Info size={17} /></button>
             <button type="button" aria-label="사이드바 접기" onClick={() => {
               if (window.innerWidth < 1024) setSidebarOpen(false);
               else {
@@ -2722,7 +2730,7 @@ function App() {
                     >
                       {!notificationLoading && notificationError && <div className="notification-state is-error"><AlertCircle size={15} /> {notificationError}</div>}
                       {!notificationLoading && !notificationError && announcements.length === 0 && <div className="announcement-empty"><Megaphone size={18} /><strong>게시된 공지사항이 없습니다.</strong><span>새 공지가 등록되면 이곳에서 확인할 수 있습니다.</span></div>}
-                      {announcements.map((announcement) => <article className="announcement-item" key={announcement.id}><Megaphone size={16} aria-hidden="true" /><div><strong>{announcement.title}</strong><p>{announcement.body}</p><span>{announcement.author?.displayName || announcement.author?.loginId || "관리자"} · {formatNotificationTime(announcement.createdAt)}</span></div></article>)}
+                      {announcements.map((announcement) => <button className="announcement-item" type="button" key={announcement.id} onClick={() => openAnnouncementInHelp(announcement.id)}><Megaphone size={16} aria-hidden="true" /><span><strong>{announcement.title}</strong><p>{announcement.body}</p><small>{announcement.author?.displayName || announcement.author?.loginId || "관리자"} · {formatNotificationTime(announcement.createdAt)}</small></span></button>)}
                     </div>
                   )}
                 </section>
@@ -3074,7 +3082,7 @@ function App() {
         {mainView === "marketplace" && <MarketplaceView projectId={workspace.activeProjectId} onOpenNavigation={() => setSidebarOpen(true)} />}
         {mainView === "library" && <ArtifactLibraryView projectId={workspace.activeProjectId} onOpenArtifact={(artifact) => void openArtifact(artifact)} onOpenNavigation={() => setSidebarOpen(true)} />}
         {mainView === "files" && <ProjectFilesView projectId={workspace.activeProjectId} onOpenNavigation={() => setSidebarOpen(true)} onToast={showToast} />}
-        {mainView === "help" && <HelpCenterView canManage={isAdmin} onOpenNavigation={() => setSidebarOpen(true)} onToast={showToast} />}
+        {mainView === "help" && <HelpCenterView canManage={isAdmin} initialAnnouncementId={helpAnnouncementId} onOpenNavigation={() => setSidebarOpen(true)} onToast={showToast} />}
         {mainView === "schedules" && <SchedulesView projectId={workspace.activeProjectId} execution={workspace.settings?.execution ?? null} executionOptions={candidateModelOptions} onOpenNavigation={() => setSidebarOpen(true)} onConversationsChanged={workspace.refreshConversations} />}
         {mainView === "memory" && <MemoryView project={activeProject} completedRunId={completedProjectLearningRunId} canReviewProjectLearning={canReviewProjectLearning} onOpenNavigation={() => setSidebarOpen(true)} />}
         {mainView === "admin" && isAdmin && <AdminView onOpenNavigation={() => setSidebarOpen(true)} onToast={showToast} onUserUpdated={() => void workspace.refreshAuthSession()} />}

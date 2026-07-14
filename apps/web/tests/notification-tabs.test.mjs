@@ -23,22 +23,38 @@ test("notification panel separates notifications and announcements with accessib
   assert.match(stylesheet, /\.announcement-empty/);
 });
 
-test("admin view provides inline announcement create edit and two-step delete", async () => {
-  const [view, api, stylesheet] = await Promise.all([
+test("announcement management lives in Help instead of System Admin", async () => {
+  const [adminView, helpView, api, stylesheet] = await Promise.all([
     read("../src/components/AdminView.tsx"),
+    read("../src/components/HelpCenterView.tsx"),
     read("../src/api.ts"),
     read("../src/styles.css"),
   ]);
 
-  assert.match(view, /공지 작성/);
-  assert.match(view, /api\.admin\.createAnnouncement/);
-  assert.match(view, /api\.admin\.updateAnnouncement/);
-  assert.match(view, /announcementDeleteArmedId !== announcement\.id/);
-  assert.match(view, /한 번 더 눌러 삭제/);
+  assert.doesNotMatch(adminView, /공지사항/);
+  assert.doesNotMatch(adminView, /api\.admin\.(?:list|create|update|delete)Announcement/);
+  assert.match(helpView, /공지 작성/);
+  assert.match(helpView, /api\.admin\.createAnnouncement/);
+  assert.match(helpView, /api\.admin\.updateAnnouncement/);
+  assert.match(helpView, /api\.admin\.deleteAnnouncement/);
+  assert.match(helpView, /한 번 더 눌러 삭제/);
   assert.match(api, /\/admin\/announcements/);
-  assert.match(stylesheet, /\.admin-announcement-form/);
-  assert.match(stylesheet, /\.admin-announcement-row/);
+  assert.match(stylesheet, /\.help-announcement-form/);
+  assert.match(stylesheet, /\.help-announcement-row/);
   assert.match(stylesheet, /\.announcement-item/);
+});
+
+test("announcement summaries link to the selected Help detail", async () => {
+  const [app, stylesheet] = await Promise.all([
+    read("../src/App.tsx"),
+    read("../src/styles.css"),
+  ]);
+
+  assert.match(app, /openAnnouncementInHelp\(announcement\.id\)/);
+  assert.match(app, /setHelpAnnouncementId\(announcementId\)/);
+  assert.match(app, /initialAnnouncementId=\{helpAnnouncementId\}/);
+  assert.doesNotMatch(app, /사용 안내에서 자세히 보기/);
+  assert.match(stylesheet, /\.chat-actions \.announcement-item \{[^}]*height: auto;[^}]*min-height: 78px/s);
 });
 
 test("notification receipt shows more compact title-only rows", async () => {
