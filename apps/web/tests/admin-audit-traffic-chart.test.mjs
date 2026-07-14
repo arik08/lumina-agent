@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const componentUrl = new URL("../src/components/AdminTrafficChart.tsx", import.meta.url);
+const adminViewUrl = new URL("../src/components/AdminView.tsx", import.meta.url);
+const stylesUrl = new URL("../src/styles.css", import.meta.url);
 const apiUrl = new URL("../src/api.ts", import.meta.url);
 
 test("monitoring renders a full-width minute traffic chart from the aggregate endpoint", async () => {
@@ -22,4 +24,16 @@ test("monitoring renders a full-width minute traffic chart from the aggregate en
   assert.match(component, /onPointerMove=\{selectFromPointer\}/);
   assert.match(component, /event\.key !== "ArrowLeft"/);
   assert.match(component, /className="admin-traffic-chart"/);
+});
+
+test("monitoring highlights non-success event rows with the danger palette", async () => {
+  const [adminView, styles] = await Promise.all([
+    readFile(adminViewUrl, "utf8"),
+    readFile(stylesUrl, "utf8"),
+  ]);
+
+  assert.equal([...adminView.matchAll(/className=\{event\.result === "success" \? undefined : "is-abnormal"\}/g)].length, 2);
+  assert.match(styles, /\.admin-audit-list article\.is-abnormal \{ background: var\(--danger-surface\); \}/);
+  assert.match(styles, /\.admin-audit-list article\.is-abnormal time, \.admin-audit-list article\.is-abnormal small \{ color: var\(--danger\);/);
+  assert.match(styles, /\.app-shell\.theme-dark,[\s\S]*--danger-surface: color-mix\(in srgb, var\(--surface\) 92%, var\(--danger\)\);/);
 });

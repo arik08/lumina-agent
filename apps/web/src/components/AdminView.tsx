@@ -589,7 +589,7 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
             </div>
           </div>
           <div className="admin-audit-list">
-            {auditViewMode === "recent" && auditEvents.map((event) => <article key={event.id}><time>{formatDate(event.createdAt)}</time><strong>{event.actorLoginId ?? event.actorUserId ?? "시스템"}</strong><strong>{event.action}</strong><span>{event.targetType}{event.targetId ? ` · ${event.targetId.slice(0, 8)}` : ""}</span><small>{event.result} · request {event.requestId?.slice(0, 8) ?? "-"}</small></article>)}
+            {auditViewMode === "recent" && auditEvents.map((event) => <article className={event.result === "success" ? undefined : "is-abnormal"} key={event.id}><time>{formatDate(event.createdAt)}</time><strong>{event.actorLoginId ?? event.actorUserId ?? "시스템"}</strong><strong>{event.action}</strong><span>{event.targetType}{event.targetId ? ` · ${event.targetId.slice(0, 8)}` : ""}</span><small>{event.result} · request {event.requestId?.slice(0, 8) ?? "-"}</small></article>)}
             {auditViewMode === "user" && auditEventsByUser.map(([userId, events]) => {
               const expanded = !collapsedAuditUsers.has(userId);
               return (
@@ -602,7 +602,7 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
                   })}>
                     <strong>{userId}</strong><span>{events.length}건</span><ChevronDown size={14} />
                   </button>
-                  {expanded && events.map((event) => <article key={event.id}><time>{formatDate(event.createdAt)}</time><strong>{event.action}</strong><span>{event.targetType}{event.targetId ? ` · ${event.targetId.slice(0, 8)}` : ""}</span><small>{event.result} · request {event.requestId?.slice(0, 8) ?? "-"}</small></article>)}
+                  {expanded && events.map((event) => <article className={event.result === "success" ? undefined : "is-abnormal"} key={event.id}><time>{formatDate(event.createdAt)}</time><strong>{event.action}</strong><span>{event.targetType}{event.targetId ? ` · ${event.targetId.slice(0, 8)}` : ""}</span><small>{event.result} · request {event.requestId?.slice(0, 8) ?? "-"}</small></article>)}
                 </section>
               );
             })}
