@@ -89,6 +89,7 @@ import type {
   PromptReference,
   ReferenceKind,
   RunSnapshot,
+  RunCommand,
   ToolExecution,
 } from "./api-types";
 
@@ -109,7 +110,7 @@ import { SelectMenu } from "./components/SelectMenu";
 import { SharedSnapshotViewer } from "./components/SharedSnapshotViewer";
 import { ConversationSearchDialog } from "./components/ConversationSearchDialog";
 import { ConversationQuestionNavigator } from "./components/ConversationQuestionNavigator";
-import { type RunControlAction, useLuminaWorkspace } from "./use-lumina-workspace";
+import { type PendingCommandAction, type RunControlAction, useLuminaWorkspace } from "./use-lumina-workspace";
 import { useBackendConnectionState } from "./BackendConnectionGuard";
 import { useConversationAutoFollow } from "./streaming-ui";
 import {
@@ -900,6 +901,7 @@ function App() {
   const [selectedReferences, setSelectedReferences] = useState<SelectedComposerReference[]>([]);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [pendingCommandAction, setPendingCommandAction] = useState<{ id: string; action: PendingCommandAction } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [adminSettingsProviderId, setAdminSettingsProviderId] = useState("");
   const [adminSettingsModels, setAdminSettingsModels] = useState<AdminProviderModel[]>([]);
@@ -1409,6 +1411,12 @@ function App() {
   const runIsPaused = activeRun?.status === "paused";
   const composerHasPayload = Boolean(draft.trim() || workspace.composerAttachments.length > 0);
   const composerShowsStop = Boolean(runIsActive && !composerHasPayload);
+  const queuedComposerCommands = useMemo(
+    () => (activeRun?.pendingCommands ?? [])
+      .filter((command): command is RunCommand => command.type === "queue_next" && command.status === "queued")
+      .sort((left, right) => (left.queuePosition ?? Number.MAX_SAFE_INTEGER) - (right.queuePosition ?? Number.MAX_SAFE_INTEGER)),
+    [activeRun?.pendingCommands],
+  );
   const shouldNudgeFileMode = mainView === "chat"
     && workspace.settings?.outputMode === "file"
     && draft.trim().length === 0
@@ -1915,6 +1923,15 @@ function App() {
     const succeeded = await workspace.runAction(activeRun.runId, action, targetId);
     if (!succeeded) return;
     showToast(action === "pause" ? "Run을 일시 정지했습니다." : action === "resume" ? "Run을 재개했습니다." : action === "cancel" ? "Run을 취소했습니다." : action === "approve" ? "위험 작업을 승인했습니다." : action === "reject" ? "위험 작업을 거부했습니다." : "실패한 단계를 다시 실행합니다.");
+  };
+
+  const controlPendingCommand = async (action: PendingCommandAction, commandId: string) => {
+    if (!activeRun || pendingCommandAction) return;
+    setPendingCommandAction({ id: commandId, action });
+    const succeeded = await workspace.runPendingCommandAction(activeRun.runId, action, commandId);
+    setPendingCommandAction(null);
+    if (!succeeded) return;
+    showToast(action === "steer_queued" ? "Queue 요청을 현재 작업 조정으로 전환했습니다." : "Queue 요청을 취소했습니다.");
   };
 
   const copyTool = async (execution: ToolExecution) => {
@@ -2866,6 +2883,41 @@ function App() {
               </div>
             )}
             <div className="composer">
+              {queuedComposerCommands.length > 0 && (
+                <div className="composer-pending-commands thin-scrollbar" aria-label={`${queuedComposerCommands.length}개의 Queue 요청`} aria-live="polite">
+                  {queuedComposerCommands.map((command, index) => {
+                    const busyAction = pendingCommandAction?.id === command.id ? pendingCommandAction.action : null;
+                    const position = command.queuePosition ?? index + 1;
+                    return (
+                      <div className="composer-pending-command" key={command.id}>
+                        <span className="composer-command-sequence" aria-label={`Queue ${position}번`}>{position}</span>
+                        <span className="composer-command-text">{command.messageText || "대기 중인 요청"}</span>
+                        <div className="composer-command-actions">
+                          <button
+                            className="composer-command-steer"
+                            type="button"
+                            disabled={workspace.runActionBusy}
+                            onClick={() => void controlPendingCommand("steer_queued", command.id)}
+                          >
+                            {busyAction === "steer_queued" ? <LoaderCircle className="is-running" size={14} /> : <Undo2 size={14} aria-hidden="true" />}
+                            <span>현재 작업 조정</span>
+                          </button>
+                          <button
+                            className="composer-command-cancel tooltip-control"
+                            type="button"
+                            aria-label={`Queue ${position}번 요청 취소`}
+                            data-tooltip="Queue 취소"
+                            disabled={workspace.runActionBusy}
+                            onClick={() => void controlPendingCommand("cancel_command", command.id)}
+                          >
+                            {busyAction === "cancel_command" ? <LoaderCircle className="is-running" size={14} /> : <Trash2 size={14} />}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
               {workspace.composerAttachments.length > 0 && (
                 <div className="composer-attachments" aria-label="첨부 Context">
                   {workspace.composerAttachments.map((attachment, attachmentIndex) => (

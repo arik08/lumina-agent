@@ -713,6 +713,74 @@ def test_steer_and_queue_next_validate_and_persist_stable_references(
             )
             == 3
         )
+        _run, second_queue_command, second_queue_message, second_queued_changed = (
+            apply_run_action(
+                db,
+                user=admin,
+                run_id=run.id,
+                payload=RunActionRequest(
+                    type="queue_next",
+                    message=RunMessageInput(text="세 번째 요청도 순서대로 실행해 주세요."),
+                ),
+                idempotency_key="queue-2",
+            )
+        )
+        assert second_queued_changed is True and second_queue_message is not None
+        pending_queue = [
+            command
+            for command in run_snapshot(db, run)["pendingCommands"]
+            if command["type"] == "queue_next"
+        ]
+        assert [command["queuePosition"] for command in pending_queue] == [1, 2]
+        assert [command["messageText"] for command in pending_queue] == [
+            "다음 보고서에서는 파일을 다시 사용해 주세요.",
+            "세 번째 요청도 순서대로 실행해 주세요.",
+        ]
+
+        _run, steer_queued_action, converted_message, converted_changed = (
+            apply_run_action(
+                db,
+                user=admin,
+                run_id=run.id,
+                payload=RunActionRequest(
+                    type="steer_queued", command_id=queue_command.id
+                ),
+                idempotency_key="steer-queued-1",
+            )
+        )
+        assert converted_changed is True and converted_message is queue_message
+        assert steer_queued_action.status == "applied"
+        assert queue_command.command_type == "steer"
+        assert queue_command.status == "waiting_safe_boundary"
+        assert queue_message.run_id == run.id
+        assert queue_message.metadata_json["command_type"] == "steer"
+        assert queued.status == "cancelled"
+        second_queued = db.scalar(
+            select(QueuedMessage).where(QueuedMessage.idempotency_key == "queue-2")
+        )
+        assert second_queued is not None
+        assert second_queued.position == 1
+        assert second_queue_command.payload_json["queue_position"] == 1
+
+        _run, cancel_action, cancelled_message, cancelled_changed = apply_run_action(
+            db,
+            user=admin,
+            run_id=run.id,
+            payload=RunActionRequest(
+                type="cancel_command", command_id=second_queue_command.id
+            ),
+            idempotency_key="cancel-queued-2",
+        )
+        assert cancelled_changed is True and cancelled_message is None
+        assert cancel_action.status == "applied"
+        assert second_queue_command.status == "cancelled"
+        assert second_queue_message.status == "interrupted"
+        assert second_queue_message.metadata_json["command_status"] == "cancelled"
+        assert second_queued.status == "cancelled"
+        assert not any(
+            command["type"] == "queue_next"
+            for command in run_snapshot(db, run)["pendingCommands"]
+        )
         command_count = db.scalar(select(func.count(RunCommand.id)))
 
         with pytest.raises(ApiProblem) as attachment_error:

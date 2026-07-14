@@ -2387,6 +2387,18 @@ button:disabled { cursor: default; opacity: 0.5; }
 .step-retry:hover { background: var(--cobalt-pale); }
 
 .composer { position: relative; z-index: 5; padding: var(--space-1) var(--space-3) var(--space-2); border-top: 1px solid var(--line); background: var(--surface); container: composer / inline-size; }
+.composer-pending-commands { display: grid; max-height: 156px; margin: 0 0 7px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-soft); }
+.composer-pending-command { display: grid; min-height: 42px; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 4px 6px 4px 9px; }
+.composer-pending-command + .composer-pending-command { border-top: 1px solid var(--line); }
+.composer-command-sequence { display: inline-grid; width: 20px; height: 20px; place-items: center; border: 1px solid var(--line-strong); border-radius: 50%; background: var(--surface); color: var(--muted); font-size: 10.5px; font-weight: 650; }
+.composer-command-text { min-width: 0; overflow: hidden; color: var(--ink); font-size: 12.5px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
+.composer-command-actions { display: flex; align-items: center; gap: 2px; }
+.composer-command-actions button { display: inline-flex; min-width: 28px; height: 28px; align-items: center; justify-content: center; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
+.composer-command-actions button:hover { background: var(--surface); color: var(--ink); }
+.composer-command-actions button:disabled { cursor: wait; opacity: 0.55; }
+.composer-command-actions .composer-command-steer { gap: 5px; padding: 0 7px; font-size: 11.5px; font-weight: 600; }
+.composer-command-actions .composer-command-steer:hover { color: var(--cobalt); }
+.composer-command-actions .composer-command-cancel:hover { color: var(--danger); }
 .visually-hidden { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .composer-attachments { display: flex; flex-wrap: wrap; gap: 5px; margin: 0 0 6px; }
 .composer-attachments > span { display: inline-flex; max-width: 100%; align-items: center; gap: 5px; min-height: 25px; padding: 2px 4px 2px 7px; border: 1px solid var(--line); border-radius: 5px; color: var(--ink); font-size: 12.5px; }
@@ -2573,6 +2585,9 @@ button:disabled { cursor: default; opacity: 0.5; }
 .composer-footer .send-button:disabled { cursor: wait; opacity: 0.65; }
 @container composer (max-width: 460px) {
   .composer-footer .output-mode-toggle { display: none; }
+}
+@container composer (max-width: 460px) {
+  .composer-command-actions .composer-command-steer span { display: none; }
 }
 
 @container composer (max-width: 680px) {

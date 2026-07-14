@@ -266,7 +266,7 @@ steer       → 현재 Run의 목표·제약·우선순위를 수정
 queue_next  → 현재 Run이 끝난 뒤 새 Run으로 순차 실행
 ```
 
-Frontend는 실행 중 Composer에 현재 전송 동작을 표시합니다. Run 실행 중 기본 전송은 `steer`이며 `Enter` 또는 기본 전송 버튼은 `현재 작업에 반영`, `Ctrl+Enter`는 `다음 요청으로 대기(queue_next)`, `Shift+Enter`는 줄바꿈으로 동작합니다. 전송 버튼 주변에 `Ctrl+Enter로 다음 요청 대기` 안내를 제공하고, 키보드 입력과 동일한 동작을 선택할 수 있는 보조 메뉴를 둡니다. 전송 직후 메시지에 실제 적용 방식을 표시하고 아직 적용되지 않은 steer나 queued message는 사용자가 취소할 수 있게 합니다. Queue 항목에는 순번을 표시하며 drag reorder 같은 복잡한 편집은 초기 범위에서 제외합니다.
+Frontend는 실행 중 Composer에 현재 전송 동작을 표시합니다. Run 실행 중 기본 전송은 `steer`이며 `Enter` 또는 기본 전송 버튼은 `현재 작업에 반영`, `Ctrl+Enter`는 `다음 요청으로 대기(queue_next)`, `Shift+Enter`는 줄바꿈으로 동작합니다. 전송 버튼 주변에 `Ctrl+Enter로 다음 요청 대기` 안내를 제공하고, 키보드 입력과 동일한 동작을 선택할 수 있는 보조 메뉴를 둡니다. 전송 직후 메시지에 실제 적용 방식을 표시합니다. 아직 적용되지 않은 Queue는 Composer 입력란 바로 위에 접수 순서대로 누적해 표시하며 각 항목에서 `현재 작업 조정`으로 steer 전환하거나 취소할 수 있습니다. Queue 항목에는 순번을 표시하며 drag reorder 같은 복잡한 편집은 초기 범위에서 제외합니다.
 
 `steer`의 처리 계약은 다음과 같습니다.
 

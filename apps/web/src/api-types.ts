@@ -817,6 +817,8 @@ export type RunCommandType =
   | "pause"
   | "resume"
   | "cancel"
+  | "steer_queued"
+  | "cancel_command"
   | "retry_step"
   | "approve"
   | "reject";
@@ -835,6 +837,7 @@ export interface RunCommand {
   type: RunCommandType;
   status: RunCommandStatus;
   messageId: UUID | null;
+  messageText: string | null;
   queuePosition: number | null;
   createdAt: IsoDateTime;
 }
@@ -1434,6 +1437,11 @@ export type RunActionRequest =
   | {
       idempotencyKey: string;
       type: "pause" | "resume" | "cancel";
+    }
+  | {
+      idempotencyKey: string;
+      type: "steer_queued" | "cancel_command";
+      commandId: UUID;
     }
   | {
       idempotencyKey: string;

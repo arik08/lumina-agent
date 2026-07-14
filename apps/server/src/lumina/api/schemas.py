@@ -210,6 +210,8 @@ class RunActionRequest(ApiModel):
         "pause",
         "resume",
         "cancel",
+        "steer_queued",
+        "cancel_command",
         "retry_step",
         "approve",
         "reject",
@@ -217,6 +219,7 @@ class RunActionRequest(ApiModel):
     message: RunMessageInput | None = None
     step_id: str | None = None
     approval_id: str | None = None
+    command_id: str | None = None
     note: str | None = Field(default=None, max_length=2000)
     payload: dict[str, Any] = Field(default_factory=dict)
 

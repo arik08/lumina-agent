@@ -3798,6 +3798,10 @@ class LocalRunExecutor:
                         ],
                     }
                     message.status = "completed"
+                    message.metadata_json = {
+                        **message.metadata_json,
+                        "command_status": "applied",
+                    }
                 command.status = "applied"
                 command.applied_at = utc_now()
                 append_event(
@@ -4081,6 +4085,7 @@ class LocalRunExecutor:
                             original_message.metadata_json = {
                                 **run_message.metadata_json,
                                 "command_type": "queue_next",
+                                "command_status": "promoted",
                             }
                             db.delete(run_message)
                             run_message = original_message

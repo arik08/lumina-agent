@@ -25,6 +25,7 @@ import { isTerminalRunEvent, isTerminalRunStatus } from "./run-status";
 
 export type StreamState = "idle" | "connecting" | "connected" | "reconnecting";
 export type RunControlAction = "pause" | "resume" | "cancel" | "retry_step" | "approve" | "reject";
+export type PendingCommandAction = "steer_queued" | "cancel_command";
 
 export interface ConversationRuntime {
   turnSets: TurnSet[];
@@ -257,7 +258,12 @@ export function useLuminaWorkspace() {
     const { run, message } = mutation;
     setRuntimes((current) => {
       const runtime = current[run.conversationId] ?? emptyRuntime();
-      const turnSets = ensureTurnSet(runtime, run.runId, message);
+      const turnSets = ensureTurnSet(runtime, run.runId, message).map((turnSet) => ({
+        ...turnSet,
+        messages: turnSet.messages.filter((item) => !(
+          item.status === "pending" && item.metadata?.command_type === "queue_next"
+        )),
+      }));
       return {
         ...current,
         [run.conversationId]: {
@@ -1270,6 +1276,30 @@ export function useLuminaWorkspace() {
     }
   }, [mergeRunMutation, openSnapshotStream, runActionBusy]);
 
+  const runPendingCommandAction = useCallback(async (
+    runId: string,
+    action: PendingCommandAction,
+    commandId: string,
+  ) => {
+    if (runActionBusy) return false;
+    setRunActionBusy(true);
+    try {
+      const mutation = await api.runs.action(runId, {
+        idempotencyKey: createClientId(),
+        type: action,
+        commandId,
+      });
+      mergeRunMutation(mutation);
+      openSnapshotStream(mutation.run);
+      return true;
+    } catch (error) {
+      setNotice(apiMessage(error));
+      return false;
+    } finally {
+      setRunActionBusy(false);
+    }
+  }, [mergeRunMutation, openSnapshotStream, runActionBusy]);
+
   const logout = useCallback(async () => {
     try {
       await api.auth.logout();
@@ -1357,6 +1387,7 @@ export function useLuminaWorkspace() {
     sending,
     runAction,
     runActionBusy,
+    runPendingCommandAction,
     composerAttachments: composerAttachments.filter((item) => item.conversationId === activeConversationId),
     uploadingAttachments,
     uploadFiles,

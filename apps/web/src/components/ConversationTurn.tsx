@@ -937,12 +937,15 @@ function RunActivityTimeline({
 function messageDeliveryLabel(message: ChatMessage, commands: RunCommand[]) {
   const command = commands.find((item) => item.messageId === message.id);
   const commandType = command?.type ?? message.metadata?.command_type;
+  const commandStatus = command?.status ?? message.metadata?.command_status;
   if (commandType === "queue_next") {
+    if (commandStatus === "cancelled") return "Queue · 취소됨";
     if (command?.queuePosition) return `Queue · ${command.queuePosition}번 대기`;
     return message.status === "pending" ? "Queue · 대기 중" : "Queue · 실행됨";
   }
   if (commandType === "steer") {
-    return command?.status === "waiting_safe_boundary" || message.status === "pending"
+    if (commandStatus === "cancelled") return "Steering · 취소됨";
+    return commandStatus === "waiting_safe_boundary" || message.status === "pending"
       ? "Steering · 반영 대기"
       : "Steering · 반영됨";
   }
