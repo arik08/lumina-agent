@@ -5,6 +5,7 @@ const streamRevealDurationMs = 420;
 const visibleFrameIntervalMs = 50;
 const frameFallbackMs = 100;
 const streamCatchUpDeadlineMs = 1_200;
+const streamSettleDurationMs = 180;
 const minRevealRate = 1 / 96;
 const maxRevealRate = 0.5;
 const chunkSampleSize = 3;
@@ -57,6 +58,7 @@ function smoothRevealCount(pendingLength: number, desiredCount: number) {
 
 export function useStreamingText(targetText: string, streaming: boolean) {
   const [visibleText, setVisibleText] = useState(() => (streaming ? "" : targetText));
+  const [settling, setSettling] = useState(false);
   const visibleRef = useRef(visibleText);
   const pendingRef = useRef("");
   const startTimerRef = useRef<number | null>(null);
@@ -70,6 +72,7 @@ export function useStreamingText(targetText: string, streaming: boolean) {
   const displayStartedRef = useRef(false);
   const recentChunksRef = useRef<Array<{ chars: number; intervalMs: number }>>([]);
   const lastChunkAtRef = useRef<number | null>(null);
+  const settleTimerRef = useRef<number | null>(null);
 
   const clearScheduled = useCallback(() => {
     if (startTimerRef.current !== null) window.clearTimeout(startTimerRef.current);
@@ -252,7 +255,26 @@ export function useStreamingText(targetText: string, streaming: boolean) {
 
   useEffect(() => clearScheduled, [clearScheduled]);
 
-  return { visibleText, revealing: streaming || visibleText !== targetText };
+  useEffect(() => {
+    if (streaming || visibleText !== targetText || !displayStartedRef.current) {
+      if (settleTimerRef.current !== null) window.clearTimeout(settleTimerRef.current);
+      settleTimerRef.current = null;
+      setSettling(false);
+      return;
+    }
+    setSettling(true);
+    settleTimerRef.current = window.setTimeout(() => {
+      settleTimerRef.current = null;
+      displayStartedRef.current = false;
+      setSettling(false);
+    }, streamSettleDurationMs);
+    return () => {
+      if (settleTimerRef.current !== null) window.clearTimeout(settleTimerRef.current);
+      settleTimerRef.current = null;
+    };
+  }, [streaming, targetText, visibleText]);
+
+  return { visibleText, revealing: streaming || visibleText !== targetText || settling, settling };
 }
 
 export function useConversationAutoFollow(

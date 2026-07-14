@@ -1111,6 +1111,75 @@ function normalizeKoreanMarkdownEmphasis(text: string) {
 }
 
 type StreamingPendingKind = "mermaid" | "chart" | "table" | null;
+const streamingLeadingEdgeLength = 24;
+const streamingLeadingEdgeRankSize = 4;
+const streamingLeadingEdgeRanks = 6;
+const streamingLeadingEdgeExcludedParents = new Set(["link", "linkReference"]);
+const graphemeSegmenter = typeof Intl.Segmenter === "function"
+  ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
+  : null;
+
+function streamingGraphemes(value: string) {
+  return graphemeSegmenter
+    ? Array.from(graphemeSegmenter.segment(value), ({ segment }) => segment)
+    : Array.from(value);
+}
+
+function isVisibleStreamingGrapheme(value: string) {
+  return !/^\s+$/u.test(value);
+}
+
+function rankedStreamingText(value: string, rank: number): Text {
+  return {
+    type: "text",
+    value,
+    data: {
+      hName: "span",
+      hProperties: {
+        className: ["streaming-leading-edge"],
+        dataStreamRank: String(rank),
+      },
+    },
+  };
+}
+
+function remarkStreamingLeadingEdge() {
+  return (tree: Root) => {
+    let visibleCount = 0;
+    visit(tree, "text", (node: Text, _index: number | undefined, parent: Parent | undefined) => {
+      if (!parent || streamingLeadingEdgeExcludedParents.has(parent.type)) return;
+      visibleCount += streamingGraphemes(node.value).filter(isVisibleStreamingGrapheme).length;
+    });
+    const leadingEdgeStart = Math.max(0, visibleCount - streamingLeadingEdgeLength);
+    let visibleIndex = 0;
+
+    visit(tree, "text", (node: Text, index: number | undefined, parent: Parent | undefined) => {
+      if (index === undefined || !parent || streamingLeadingEdgeExcludedParents.has(parent.type)) return;
+      const parts: Array<{ value: string; rank: number | null }> = [];
+      for (const grapheme of streamingGraphemes(node.value)) {
+        let rank: number | null = null;
+        if (isVisibleStreamingGrapheme(grapheme)) {
+          if (visibleIndex >= leadingEdgeStart) {
+            rank = Math.min(
+              streamingLeadingEdgeRanks,
+              Math.floor((visibleCount - visibleIndex - 1) / streamingLeadingEdgeRankSize) + 1,
+            );
+          }
+          visibleIndex += 1;
+        }
+        const previous = parts.at(-1);
+        if (previous?.rank === rank) previous.value += grapheme;
+        else parts.push({ value: grapheme, rank });
+      }
+      if (!parts.some(({ rank }) => rank !== null)) return;
+      const replacement = parts.map(({ value, rank }) => rank === null
+        ? ({ type: "text", value } satisfies Text)
+        : rankedStreamingText(value, rank));
+      parent.children.splice(index, 1, ...replacement);
+      return index + replacement.length;
+    });
+  };
+}
 
 function splitStreamingMarkdown(text: string) {
   const source = text.replace(/\r\n/g, "\n");
@@ -1197,12 +1266,14 @@ export function MarkdownResponse({
   sources = emptySources,
   citations = emptyCitations,
   streaming = false,
+  settling = false,
   artifact = false,
 }: {
   text: string;
   sources?: SourceEvidence[];
   citations?: MessageCitation[];
   streaming?: boolean;
+  settling?: boolean;
   artifact?: boolean;
 }) {
   const targets = useMemo(() => citationTargets(text, sources, citations), [citations, sources, text]);
@@ -1215,6 +1286,10 @@ export function MarkdownResponse({
   const remarkPlugins = useMemo<NonNullable<ReactMarkdownOptions["remarkPlugins"]>>(
     () => [remarkGfm, [remarkCitationLinks, { targets }]],
     [targets],
+  );
+  const tailRemarkPlugins = useMemo<NonNullable<ReactMarkdownOptions["remarkPlugins"]>>(
+    () => [...remarkPlugins, remarkStreamingLeadingEdge],
+    [remarkPlugins],
   );
   const components = useMemo<Components>(() => ({
     a: ({ href, children }) => {
@@ -1253,11 +1328,11 @@ export function MarkdownResponse({
   }), [targetById]);
 
   return (
-    <div className={`markdown-response ${streaming ? "streaming-text" : ""} ${artifact ? "artifact-markdown-content" : ""}`}>
+    <div className={`markdown-response ${streaming ? "streaming-text" : ""} ${settling ? "streaming-text-settling" : ""} ${artifact ? "artifact-markdown-content" : ""}`}>
       {prefixText && <ReactMarkdown skipHtml remarkPlugins={remarkPlugins} components={components} urlTransform={defaultUrlTransform}>{prefixText}</ReactMarkdown>}
       {pendingKind
         ? <StreamingBlockPending kind={pendingKind} />
-        : tailText && <ReactMarkdown skipHtml remarkPlugins={remarkPlugins} components={components} urlTransform={defaultUrlTransform}>{tailText}</ReactMarkdown>}
+        : tailText && <ReactMarkdown skipHtml remarkPlugins={tailRemarkPlugins} components={components} urlTransform={defaultUrlTransform}>{tailText}</ReactMarkdown>}
     </div>
   );
 }
@@ -1322,7 +1397,7 @@ export function AssistantTurn({
     : "";
   const copyableAnswerText = sanitizedAssistantText || terminalReason;
   const streaming = !finalMessage && Boolean(snapshot?.assistantDraft);
-  const { visibleText: displayedText, revealing } = useStreamingText(sanitizedAssistantText, streaming);
+  const { visibleText: displayedText, revealing, settling } = useStreamingText(sanitizedAssistantText, streaming);
   const [reportOpen, setReportOpen] = useState(false);
   const [markdownSaving, setMarkdownSaving] = useState(false);
   const [branching, setBranching] = useState(false);
@@ -1597,7 +1672,7 @@ export function AssistantTurn({
       {(assistantText || tools.length > 0 || artifacts.length > 0 || snapshot) && (
         <section className="assistant-turn">
           <div className="assistant-content">
-            {assistantText && <MarkdownResponse text={displayedText} sources={sources} citations={citations} streaming={revealing} />}
+            {assistantText && <MarkdownResponse text={displayedText} sources={sources} citations={citations} streaming={revealing} settling={settling} />}
             {artifactUsage && artifactProgress && (
               <div className={`artifact-progress-count is-${artifactProgress.stage}`} role="status" aria-live={terminal ? undefined : "polite"} aria-label={`문서 ${artifactUsage.estimated === false ? "완성 분량" : "작성 중 추정 분량"} ${artifactUsage.tokens.toLocaleString()} 토큰 ${artifactUsage.lines.toLocaleString()}줄${modelOutputTokens > 0 ? `, 모델 출력 누계 ${modelOutputTokens.toLocaleString()} 토큰` : ""}`}>
                 <div className="artifact-progress-heading">

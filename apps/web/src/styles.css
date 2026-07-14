@@ -1997,6 +1997,23 @@ button:disabled { cursor: default; opacity: 0.5; }
 .assistant-content { min-width: 0; font-size: 14.5px; line-height: 1.68; }
 .assistant-content > p { margin: 0 0 18px; }
 .markdown-response { min-width: 0; overflow-wrap: anywhere; color: var(--ink); }
+.streaming-leading-edge {
+  --stream-leading-1: color-mix(in oklch, var(--cobalt) 60%, var(--chat-canvas));
+  --stream-leading-2: color-mix(in oklch, var(--ink) 32%, var(--stream-leading-1));
+  --stream-leading-3: color-mix(in oklch, var(--ink) 58%, var(--stream-leading-1));
+  --stream-leading-4: color-mix(in oklch, var(--ink) 76%, var(--stream-leading-1));
+  --stream-leading-5: color-mix(in oklch, var(--ink) 90%, var(--stream-leading-1));
+  --stream-leading-6: color-mix(in oklch, var(--ink) 97%, var(--stream-leading-1));
+  color: var(--stream-leading-color);
+  transition: color 180ms var(--ease-out-quart);
+}
+.streaming-leading-edge[data-stream-rank="1"] { --stream-leading-color: var(--stream-leading-1); }
+.streaming-leading-edge[data-stream-rank="2"] { --stream-leading-color: var(--stream-leading-2); }
+.streaming-leading-edge[data-stream-rank="3"] { --stream-leading-color: var(--stream-leading-3); }
+.streaming-leading-edge[data-stream-rank="4"] { --stream-leading-color: var(--stream-leading-4); }
+.streaming-leading-edge[data-stream-rank="5"] { --stream-leading-color: var(--stream-leading-5); }
+.streaming-leading-edge[data-stream-rank="6"] { --stream-leading-color: var(--stream-leading-6); }
+.streaming-text-settling .streaming-leading-edge { color: var(--ink); }
 .markdown-response > :first-child { margin-top: 0; }
 .markdown-response > :last-child { margin-bottom: 18px; }
 .markdown-response :is(h1, h2, h3, h4) { margin: 1.45em 0 0.55em; color: var(--ink); font-weight: 680; line-height: 1.28; letter-spacing: -0.018em; }
@@ -3196,4 +3213,9 @@ button:disabled { cursor: default; opacity: 0.5; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+  .streaming-leading-edge { color: var(--ink); }
+}
+
+@media (forced-colors: active) {
+  .streaming-leading-edge { color: CanvasText; }
 }
