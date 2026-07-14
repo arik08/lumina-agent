@@ -24,6 +24,19 @@ if ($null -eq $inputFunction) {
 }
 . ([scriptblock]::Create($inputFunction.Extent.Text))
 
+$startManagedProcessFunction = $ast.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq "Start-ManagedProcess"
+    },
+    $true
+)
+if ($null -eq $startManagedProcessFunction) {
+    throw "Start-ManagedProcess was not found."
+}
+. ([scriptblock]::Create($startManagedProcessFunction.Extent.Text))
+
 $processMatcherFunction = $ast.Find(
     {
         param($node)
@@ -80,6 +93,36 @@ foreach ($case in $cases) {
     }
 }
 
+$environmentTestRoot = Join-Path $env:TEMP "lumina-managed-env-test-$([guid]::NewGuid())"
+$environmentOutputLog = Join-Path $environmentTestRoot "stdout.log"
+$environmentErrorLog = Join-Path $environmentTestRoot "stderr.log"
+$originalCi = [Environment]::GetEnvironmentVariable("CI", "Process")
+try {
+    New-Item -ItemType Directory -Path $environmentTestRoot -Force | Out-Null
+    [Environment]::SetEnvironmentVariable("CI", "parent-value", "Process")
+    $environmentProcess = Start-ManagedProcess `
+        -Name "Environment fixture" `
+        -FilePath $env:ComSpec `
+        -Arguments @('/d', '/c', 'echo %CI%') `
+        -WorkingDirectory $environmentTestRoot `
+        -OutputLog $environmentOutputLog `
+        -ErrorLog $environmentErrorLog `
+        -EnvironmentVariables @{ CI = "true" }
+    $environmentProcess.Process.WaitForExit()
+    if ((Get-Content -Raw $environmentOutputLog).Trim() -ne "true") {
+        throw "Managed child process did not inherit its isolated environment."
+    }
+    if ([Environment]::GetEnvironmentVariable("CI", "Process") -ne "parent-value") {
+        throw "Managed child process environment leaked into the launcher."
+    }
+}
+finally {
+    [Environment]::SetEnvironmentVariable("CI", $originalCi, "Process")
+    Get-ChildItem -LiteralPath $environmentTestRoot -File -ErrorAction SilentlyContinue |
+        Remove-Item -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $environmentTestRoot -Force -ErrorAction SilentlyContinue
+}
+
 $supervisorScript = Join-Path $RepositoryRoot "devtools\run_lumina.ps1"
 $viteScript = Join-Path $RepositoryRoot "apps\web\node_modules\vite\bin\vite.js"
 if (-not (Test-LuminaCommandLine -ProcessName "powershell.exe" -CommandLine "powershell -File `"$supervisorScript`"")) {
@@ -125,6 +168,21 @@ $runningResetRestartsBoth = $source -match
     '(?s)if \(Test-HardResetKey\) \{\s*\$preserveFrontend = \$false\s*\$resetReason = "manual request"'
 if (-not $startupResetRestartsBoth -or -not $runningResetRestartsBoth) {
     throw "Both startup and running manual reset paths must restart Frontend and Backend."
+}
+
+$startLuminaProcessesFunction = $ast.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq "Start-LuminaProcesses"
+    },
+    $true
+)
+if (
+    $null -eq $startLuminaProcessesFunction -or
+    $startLuminaProcessesFunction.Extent.Text -notmatch '(?s)-Name "Frontend".*-EnvironmentVariables\s+@\{\s*CI\s*=\s*"true"\s*\}'
+) {
+    throw "Vite must not inherit the launcher console input or consume the hard-reset key."
 }
 
 $treeParent = $null

@@ -438,17 +438,41 @@ function Start-ManagedProcess {
         [Parameter(Mandatory = $true)][string[]]$Arguments,
         [Parameter(Mandatory = $true)][string]$WorkingDirectory,
         [Parameter(Mandatory = $true)][string]$OutputLog,
-        [Parameter(Mandatory = $true)][string]$ErrorLog
+        [Parameter(Mandatory = $true)][string]$ErrorLog,
+        [hashtable]$EnvironmentVariables = @{}
     )
 
-    $process = Start-Process `
-        -FilePath $FilePath `
-        -ArgumentList $Arguments `
-        -WorkingDirectory $WorkingDirectory `
-        -WindowStyle Hidden `
-        -RedirectStandardOutput $OutputLog `
-        -RedirectStandardError $ErrorLog `
-        -PassThru
+    $originalEnvironment = @{}
+    try {
+        foreach ($variableName in $EnvironmentVariables.Keys) {
+            $originalEnvironment[$variableName] = [Environment]::GetEnvironmentVariable(
+                $variableName,
+                "Process"
+            )
+            [Environment]::SetEnvironmentVariable(
+                $variableName,
+                [string]$EnvironmentVariables[$variableName],
+                "Process"
+            )
+        }
+        $process = Start-Process `
+            -FilePath $FilePath `
+            -ArgumentList $Arguments `
+            -WorkingDirectory $WorkingDirectory `
+            -WindowStyle Hidden `
+            -RedirectStandardOutput $OutputLog `
+            -RedirectStandardError $ErrorLog `
+            -PassThru
+    }
+    finally {
+        foreach ($variableName in $EnvironmentVariables.Keys) {
+            [Environment]::SetEnvironmentVariable(
+                $variableName,
+                $originalEnvironment[$variableName],
+                "Process"
+            )
+        }
+    }
     return [pscustomobject]@{
         Name = $Name
         Process = $process
@@ -637,7 +661,8 @@ function Start-LuminaProcesses {
             ) `
             -WorkingDirectory $WebRoot `
             -OutputLog (Join-Path $LogRoot "frontend.out.log") `
-            -ErrorLog (Join-Path $LogRoot "frontend.err.log")
+            -ErrorLog (Join-Path $LogRoot "frontend.err.log") `
+            -EnvironmentVariables @{ CI = "true" }
     }
 }
 
