@@ -43,6 +43,7 @@
 - 테스트 중 사용자 포트 `5252`, `5253`을 점유·종료하지 말고, 격리 포트 없이 `run_lumina.bat` 또는 `run_lumina_dev.bat`를 실행하지 않습니다. 종료할 때는 직접 시작한 process만 종료합니다.
 - UI/API 검증은 선택한 테스트 URL에서 수행합니다. 작업 완료 후 재시작이 필요한 변경을 실제 환경에 반영할 때만 사용자 runtime을 재시작하고 포트와 결과를 알립니다.
 - UI 점검용 screenshot·trace 등 임시 산출물은 저장소 루트가 아니라 `.lumina-ui-checks/` 아래에만 저장합니다. `artifact-output-*` 같은 점검 파일을 루트에 만들지 않으며, 직접 생성한 임시 산출물은 검증 후 정리합니다.
+- UI 점검에서 Playwright·Chrome을 직접 실행하는 fallback은 browser/context 종료를 `finally`에서 보장하고, 바깥 실행기에도 제한시간을 둡니다. 정상 완료·오류·시간 초과 뒤에는 이번 점검에서 시작한 root PID의 process tree가 남지 않았는지 확인하고, 남아 있으면 그 tree만 종료합니다. 이름만으로 모든 `chrome.exe`를 일괄 종료하지 않습니다.
 
 ## CodeGraph
 
