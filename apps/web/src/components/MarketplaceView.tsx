@@ -625,7 +625,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
           <button type="button" role="tab" aria-selected={skillView === "catalog"} onClick={() => setSkillView("catalog")}><Package size={14} /> 카탈로그 <span>{catalog.total || items.length}</span></button>
           <button type="button" role="tab" aria-selected={skillView === "installed"} onClick={() => setSkillView("installed")}><Download size={14} /> 설치됨 <span>{counts.installed}</span></button>
           <button type="button" role="tab" aria-selected={skillView === "drafts"} onClick={() => setSkillView("drafts")}><Sparkles size={14} /> 내 초안 <span>{counts.drafts}</span></button>
-          <button className="tooltip-control" type="button" role="tab" aria-selected={skillView === "trash"} data-tooltip="삭제한 Skill은 30일 동안 보관되며 그 전에 복원할 수 있습니다." onClick={() => setSkillView("trash")}><Trash2 size={14} /> 삭제됨 <Info size={12} aria-hidden="true" /> <span>{counts.trashed}</span></button>
+          <button className="tooltip-control" type="button" role="tab" aria-selected={skillView === "trash"} data-tooltip="삭제한 Skill은 30일 동안 보관되며 그 전에 복원할 수 있습니다." onClick={() => setSkillView("trash")}><Trash2 size={14} /> 삭제됨 <span>{counts.trashed}</span></button>
         </div>
         {skillView !== "catalog" && <label className="marketplace-search"><Search size={14} /><input aria-label="Skill 검색" placeholder="Skill 이름 또는 설명 검색" value={query} onChange={(event) => setQuery(event.currentTarget.value)} /></label>}
       </div>}
