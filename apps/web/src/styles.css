@@ -1211,8 +1211,9 @@ button:disabled { cursor: default; opacity: 0.5; }
 .skill-catalog-tags button { height: 25px; padding: 0 7px; border: 0; border-radius: 5px; background: var(--surface-soft); color: color-mix(in srgb, var(--cobalt) 78%, var(--muted)); cursor: pointer; }
 .skill-catalog-tags button:hover { background: var(--cobalt-pale); color: var(--cobalt); }
 .skill-catalog-card > footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 16px; padding-top: 12px; border-top: 1px solid color-mix(in srgb, var(--line) 82%, transparent); }
-.skill-catalog-metrics { display: flex; min-width: 0; align-items: center; gap: 11px; color: var(--muted); }
+.skill-catalog-metrics { display: flex; min-width: 0; align-items: center; gap: var(--space-5); color: var(--muted); }
 .skill-catalog-metric, .skill-catalog-like { display: inline-flex; height: 26px; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
+.skill-catalog-metric { cursor: help; }
 .skill-catalog-like { padding: 0 4px; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
 .skill-catalog-like:not(:disabled):hover, .skill-catalog-like.is-liked { color: var(--cobalt); }
 .skill-catalog-more { display: flex; min-width: 112px; height: 32px; align-items: center; justify-content: center; gap: 6px; margin: 18px auto 0; padding: 0 12px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); color: var(--ink); cursor: pointer; }

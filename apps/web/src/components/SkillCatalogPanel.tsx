@@ -46,7 +46,11 @@ function CatalogMetric({
   label: string;
   value: number;
 }) {
-  return <span className="skill-catalog-metric" aria-label={`${label} ${countFormatter.format(value)}`}>
+  return <span
+    className="skill-catalog-metric"
+    aria-label={`${label} ${countFormatter.format(value)}`}
+    data-tooltip={label}
+  >
     {icon}<span>{countFormatter.format(value)}</span>
   </span>;
 }
@@ -78,14 +82,15 @@ function CatalogCard({
       </div>
       <footer>
         <div className="skill-catalog-metrics">
-          <CatalogMetric icon={<UserRoundCheck size={13} />} label="사용자 설치" value={item.installCount} />
-          <CatalogMetric icon={<Play size={13} />} label="실행" value={item.runCount} />
+          <CatalogMetric icon={<UserRoundCheck size={13} />} label="설치 사용자 수" value={item.installCount} />
+          <CatalogMetric icon={<Play size={13} />} label="Skill 실행 횟수" value={item.runCount} />
           <button
             className={`skill-catalog-like ${item.likedByMe ? "is-liked" : ""}`}
             type="button"
             aria-label={`${item.name} 좋아요${item.likedByMe ? " 취소" : ""}`}
             aria-pressed={item.likedByMe}
             aria-busy={likePending}
+            data-tooltip="좋아요 수"
             disabled={likePending}
             onClick={() => onToggleLike(item)}
           >
