@@ -1156,7 +1156,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .marketplace-install-toggle:disabled { cursor: default; opacity: .45; }
 
 .feature-view.feature-view .skill-install-toggle { display: inline-grid; width: 80px; min-width: 80px; max-width: 80px; height: 26px; min-height: 26px; max-height: 26px; box-sizing: border-box; place-items: center; align-self: center; margin: 0; padding: 0 6px; border: 1px solid color-mix(in oklab, var(--cobalt) 28%, var(--line)); border-radius: 6px; background: color-mix(in oklab, var(--cobalt) 8%, var(--surface)); color: var(--cobalt); font-size: 11px; font-weight: 680; line-height: 1; white-space: nowrap; cursor: pointer; transform: none; transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease; }
-.marketplace-skill-row > .skill-install-toggle { align-self: start; margin: 7px 9px 0 0; }
+.feature-view.feature-view .marketplace-skill-row > .skill-install-toggle { align-self: start; margin: 7px var(--space-3) 0 0; }
 .skill-install-toggle:not(.is-installed):hover:not(:disabled), .skill-install-toggle:not(.is-installed):focus-visible { border-color: color-mix(in oklab, var(--cobalt) 42%, var(--line)); background: color-mix(in oklab, var(--cobalt) 14%, var(--surface)); }
 .skill-install-toggle.is-installed { border-color: color-mix(in oklab, var(--success) 24%, var(--line)); background: color-mix(in oklab, var(--success) 8%, var(--surface)); color: var(--success); }
 .skill-install-toggle.is-installed:hover:not(:disabled), .skill-install-toggle.is-installed:focus-visible { border-color: color-mix(in oklab, var(--danger) 30%, var(--line)); background: color-mix(in oklab, var(--danger) 12%, var(--surface)); color: var(--danger); }

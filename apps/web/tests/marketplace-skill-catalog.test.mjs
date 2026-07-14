@@ -56,6 +56,7 @@ test("shared Skill lifecycle button keeps English states and invariant geometry"
   assert.match(button, /<LoaderCircle className="is-running" size=\{13\} \/>/);
   assert.match(styles, /\.feature-view\.feature-view \.skill-install-toggle \{[^}]*width: 80px; min-width: 80px; max-width: 80px;[^}]*height: 26px; min-height: 26px; max-height: 26px;/);
   assert.match(styles, /\.feature-view\.feature-view \.skill-install-toggle \{[^}]*padding: 0 6px;[^}]*font-size: 11px;/);
+  assert.match(styles, /\.feature-view\.feature-view \.marketplace-skill-row > \.skill-install-toggle \{[^}]*margin: 7px var\(--space-3\) 0 0;/);
   assert.match(styles, /\.marketplace-install-icon \{[^}]*width: 13px; min-width: 13px; height: 13px;/);
   assert.match(styles, /\.skill-install-toggle:active \{ transform: none; \}/);
 
