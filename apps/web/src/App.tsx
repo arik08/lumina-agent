@@ -103,6 +103,7 @@ import { SharedSnapshotViewer } from "./components/SharedSnapshotViewer";
 import { ConversationSearchDialog } from "./components/ConversationSearchDialog";
 import { ConversationQuestionNavigator } from "./components/ConversationQuestionNavigator";
 import { type RunControlAction, useLuminaWorkspace } from "./use-lumina-workspace";
+import { useBackendConnectionState } from "./BackendConnectionGuard";
 import { useConversationAutoFollow } from "./streaming-ui";
 import {
   AssistantTurn,
@@ -841,6 +842,7 @@ function ComposerPicker({
 
 function App() {
   const workspace = useLuminaWorkspace();
+  const backendConnectionState = useBackendConnectionState();
   const [mainView, setMainView] = useState<MainView>("chat");
   const [settingsSection, setSettingsSection] = useState<"personal" | "admin">("personal");
   const [progressOpen, setProgressOpen] = useState(false);
@@ -2188,11 +2190,20 @@ function App() {
       />
     );
   }
-  const streamLabel = activeRuntime.streamState === "reconnecting"
-    ? "재연결 중"
-    : activeRuntime.streamState === "connecting"
-      ? "연결 중"
-      : "Online";
+  const streamLabel = backendConnectionState === "offline"
+    ? "연결 끊김"
+    : backendConnectionState === "recovering"
+      ? "복구 확인 중"
+      : backendConnectionState === "checking"
+        ? "연결 확인 중"
+        : activeRuntime.streamState === "reconnecting"
+          ? "재연결 중"
+          : activeRuntime.streamState === "connecting"
+            ? "연결 중"
+            : "Online";
+  const connectionIndicatorState = backendConnectionState === "online"
+    ? activeRuntime.streamState
+    : backendConnectionState;
 
   return (
     <div
@@ -2444,7 +2455,7 @@ function App() {
             )}
           </div>
           <div className="chat-actions">
-            <span className={`connection-state state-${activeRuntime.streamState}`}>{streamLabel} <i /></span>
+            <span className={`connection-state state-${connectionIndicatorState}`}>{streamLabel} <i /></span>
             <div className="notification-menu" ref={notificationMenuRef}>
               <button
                 className={`notification-trigger tooltip-control ${notificationOpen ? "is-active" : ""}`}

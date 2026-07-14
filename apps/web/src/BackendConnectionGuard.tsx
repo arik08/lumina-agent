@@ -1,11 +1,21 @@
-import { useEffect, useRef, useState, type PropsWithChildren } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type PropsWithChildren } from "react";
 import { AlertCircle, LoaderCircle } from "lucide-react";
+import { subscribeBackendTransportFailures } from "./api";
 
 const HEALTH_CHECK_INTERVAL_MS = 1_500;
 const RECOVERY_SUCCESS_THRESHOLD = 3;
 
+export type BackendConnectionState = "checking" | "online" | "recovering" | "offline";
+
+const BackendConnectionContext = createContext<BackendConnectionState>("checking");
+
+export function useBackendConnectionState() {
+  return useContext(BackendConnectionContext);
+}
+
 export function BackendConnectionGuard({ children }: PropsWithChildren) {
   const [disconnected, setDisconnected] = useState(false);
+  const [connectionState, setConnectionState] = useState<BackendConnectionState>("checking");
   const disconnectedRef = useRef(false);
   const recoverySuccessCountRef = useRef(0);
   const reloadRequestedRef = useRef(false);
@@ -14,6 +24,15 @@ export function BackendConnectionGuard({ children }: PropsWithChildren) {
     let stopped = false;
     let timer: number | null = null;
     let controller: AbortController | null = null;
+
+    const markDisconnected = () => {
+      recoverySuccessCountRef.current = 0;
+      disconnectedRef.current = true;
+      setDisconnected(true);
+      setConnectionState("offline");
+    };
+
+    const unsubscribeTransportFailures = subscribeBackendTransportFailures(markDisconnected);
 
     const check = async () => {
       controller = new AbortController();
@@ -26,6 +45,7 @@ export function BackendConnectionGuard({ children }: PropsWithChildren) {
         if (!response.ok) throw new Error(`Backend readiness returned ${response.status}.`);
         if (disconnectedRef.current) {
           recoverySuccessCountRef.current += 1;
+          setConnectionState("recovering");
           if (recoverySuccessCountRef.current < RECOVERY_SUCCESS_THRESHOLD) {
             // Keep polling until readiness has remained stable across multiple checks.
           } else if (!reloadRequestedRef.current) {
@@ -35,12 +55,11 @@ export function BackendConnectionGuard({ children }: PropsWithChildren) {
           }
         } else {
           recoverySuccessCountRef.current = 0;
+          setConnectionState("online");
         }
       } catch {
         if (stopped || controller.signal.aborted) return;
-        recoverySuccessCountRef.current = 0;
-        disconnectedRef.current = true;
-        setDisconnected(true);
+        markDisconnected();
       }
       if (!stopped) timer = window.setTimeout(check, HEALTH_CHECK_INTERVAL_MS);
     };
@@ -50,11 +69,12 @@ export function BackendConnectionGuard({ children }: PropsWithChildren) {
       stopped = true;
       if (timer !== null) window.clearTimeout(timer);
       controller?.abort();
+      unsubscribeTransportFailures();
     };
   }, []);
 
   return (
-    <>
+    <BackendConnectionContext.Provider value={connectionState}>
       {children}
       {disconnected && (
         <div className="backend-disconnected" role="alert" aria-live="assertive">
@@ -66,6 +86,6 @@ export function BackendConnectionGuard({ children }: PropsWithChildren) {
           <LoaderCircle className="is-running" size={17} aria-hidden="true" />
         </div>
       )}
-    </>
+    </BackendConnectionContext.Provider>
   );
 }

@@ -19,6 +19,28 @@ test("backend recovery waits for consecutive readiness checks before reloading",
   assert.match(stylesheet, /\.backend-disconnected > \.is-running \{[^}]*color: var\(--danger\)/);
 });
 
+test("the global connection label follows readiness and API transport failures", async () => {
+  const [app, api, guard, stylesheet] = await Promise.all([
+    read("../src/App.tsx"),
+    read("../src/api.ts"),
+    read("../src/BackendConnectionGuard.tsx"),
+    read("../src/styles.css"),
+  ]);
+
+  assert.match(api, /async function fetchBackend/);
+  assert.match(api, /reportBackendTransportFailure\(error\)/);
+  assert.match(api, /subscribeBackendTransportFailures/);
+  assert.match(api, /error instanceof DOMException && error\.name === "AbortError"/);
+  assert.match(guard, /createContext<BackendConnectionState>\("checking"\)/);
+  assert.match(guard, /subscribeBackendTransportFailures\(markDisconnected\)/);
+  assert.match(guard, /setConnectionState\("online"\)/);
+  assert.match(guard, /setConnectionState\("offline"\)/);
+  assert.match(app, /backendConnectionState === "offline"[\s\S]*?"연결 끊김"/);
+  assert.match(app, /backendConnectionState === "checking"[\s\S]*?"연결 확인 중"/);
+  assert.match(app, /state-\$\{connectionIndicatorState\}/);
+  assert.match(stylesheet, /\.connection-state\.state-offline/);
+});
+
 test("the React root renders a recoverable top-level error screen", async () => {
   const [main, boundary, stylesheet] = await Promise.all([
     read("../src/main.tsx"),

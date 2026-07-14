@@ -1739,8 +1739,10 @@ button:disabled { cursor: default; opacity: 0.5; }
 .chat-actions button { gap: 6px; width: auto; padding: 0 8px; font-size: 14px; }
 .connection-state { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 14px; }
 .connection-state i { width: 6px; height: 6px; border-radius: 50%; background: #27a369; }
-.connection-state.state-connecting i, .connection-state.state-reconnecting i { background: var(--warning); }
-.connection-state.state-connecting i { animation: pulse 1.2s ease-in-out infinite; }
+.connection-state.state-checking i, .connection-state.state-connecting i, .connection-state.state-reconnecting i, .connection-state.state-recovering i { background: var(--warning); }
+.connection-state.state-checking i, .connection-state.state-connecting i, .connection-state.state-recovering i { animation: pulse 1.2s ease-in-out infinite; }
+.connection-state.state-offline { color: var(--danger); }
+.connection-state.state-offline i { background: var(--danger); }
 .mobile-menu-button { display: none; }
 
 .notification-menu { position: relative; display: flex; align-items: center; margin-left: 6px; }

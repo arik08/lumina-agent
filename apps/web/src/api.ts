@@ -106,6 +106,27 @@ export function attachmentContentUrl(attachmentId: string) {
 let csrfToken: string | null = null;
 let csrfBootstrap: Promise<void> | null = null;
 
+const BACKEND_TRANSPORT_FAILURE_EVENT = "lumina:backend-transport-failure";
+
+function reportBackendTransportFailure(error: unknown) {
+  if (error instanceof DOMException && error.name === "AbortError") return;
+  window.dispatchEvent(new Event(BACKEND_TRANSPORT_FAILURE_EVENT));
+}
+
+async function fetchBackend(input: RequestInfo | URL, init?: RequestInit) {
+  try {
+    return await fetch(input, init);
+  } catch (error) {
+    reportBackendTransportFailure(error);
+    throw error;
+  }
+}
+
+export function subscribeBackendTransportFailures(listener: () => void) {
+  window.addEventListener(BACKEND_TRANSPORT_FAILURE_EVENT, listener);
+  return () => window.removeEventListener(BACKEND_TRANSPORT_FAILURE_EVENT, listener);
+}
+
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
@@ -185,7 +206,7 @@ async function bootstrapCsrfToken() {
   if (csrfToken) return;
   if (!csrfBootstrap) {
     csrfBootstrap = (async () => {
-      const response = await fetch(buildUrl(apiBase, "/auth/session"), {
+      const response = await fetchBackend(buildUrl(apiBase, "/auth/session"), {
         credentials: "include",
         headers: { Accept: "application/json" },
       });
@@ -234,7 +255,7 @@ async function fetchApi(path: string, options: ApiRequestOptions = {}) {
     body = JSON.stringify(requestBody);
   }
 
-  const response = await fetch(buildUrl(apiBase, path, query), {
+  const response = await fetchBackend(buildUrl(apiBase, path, query), {
     ...requestInit,
     body,
     credentials: "include",
