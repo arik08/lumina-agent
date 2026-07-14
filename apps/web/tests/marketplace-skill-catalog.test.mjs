@@ -58,6 +58,7 @@ test("shared Skill lifecycle button keeps English states and invariant geometry"
   assert.match(styles, /\.feature-view\.feature-view \.skill-install-toggle \{[^}]*padding: 0 6px;[^}]*font-size: 11px;/);
   assert.match(styles, /\.feature-view\.feature-view \.marketplace-skill-row > \.skill-install-toggle \{[^}]*margin: 7px var\(--space-3\) 0 0;/);
   assert.match(styles, /\.marketplace-install-icon \{[^}]*width: 13px; min-width: 13px; height: 13px;/);
+  assert.match(styles, /\.feature-view\.feature-view \.skill-install-toggle\.is-installed \{[^}]*border-color: color-mix\(in oklab, var\(--success\) 24%, var\(--line\)\);[^}]*background: color-mix\(in oklab, var\(--success\) 8%, var\(--surface\)\);[^}]*color: var\(--success\);/);
   assert.match(styles, /\.skill-install-toggle:active \{ transform: none; \}/);
 
   // The existing detail actions remain Korean and use their original control.
