@@ -88,6 +88,15 @@ PLAN_STEP_COMPLETED = "completed"
 PLAN_STEP_FAILED = "failed"
 PLAN_STEP_CANCELLED = "cancelled"
 
+WORK_PLAN_PHASES = {
+    "planning",
+    "research",
+    "analysis",
+    "drafting",
+    "validation",
+    "other",
+}
+
 
 UNTITLED_CONVERSATION_TITLES = {"제목 없음", "새 작업"}
 CONVERSATION_TITLE_MAX_LENGTH = 60
@@ -1203,6 +1212,13 @@ def update_work_plan(
         and item.get("id")
         and isinstance(item.get("order"), int)
     }
+    previous_phases_by_order = {
+        int(item.get("order")): str(item.get("phase"))
+        for item in previous
+        if isinstance(item, dict)
+        and isinstance(item.get("order"), int)
+        and item.get("phase") in WORK_PLAN_PHASES
+    }
     normalized: list[dict[str, Any]] = []
     active_count = 0
     for order, item in enumerate(steps, start=1):
@@ -1214,6 +1230,13 @@ def update_work_plan(
         status = str(item.get("status", "pending"))
         if status not in {"pending", "in_progress", "completed"}:
             raise ValueError("업무 계획 상태가 올바르지 않습니다.")
+        phase = item.get("phase")
+        if phase is None:
+            phase = previous_phases_by_order.get(order) or _infer_work_plan_phase(
+                label
+            )
+        if phase not in WORK_PLAN_PHASES:
+            raise ValueError("업무 계획 단계 성격이 올바르지 않습니다.")
         if status == "in_progress":
             active_count += 1
         normalized.append(
@@ -1224,6 +1247,7 @@ def update_work_plan(
                 "step": label,
                 "status": status,
                 "order": order,
+                "phase": phase,
             }
         )
     if active_count > 1:
@@ -1233,6 +1257,101 @@ def update_work_plan(
     append_event(db, run, "work_plan_updated", {"steps": normalized})
     db.flush()
     return normalized
+
+
+def _infer_work_plan_phase(label: str) -> str:
+    """Classify legacy plan rows that predate explicit phase metadata."""
+    normalized = " ".join(label.casefold().split())
+    report_nouns = ("보고서", "report")
+    drafting_actions = (
+        "작성",
+        "생성",
+        "제작",
+        "구성",
+        "write",
+        "draft",
+        "create",
+        "compose",
+        "generate",
+        "produce",
+    )
+    if any(noun in normalized for noun in report_nouns) and any(
+        action in normalized for action in drafting_actions
+    ):
+        return "drafting"
+    return "other"
+
+
+def align_work_plan_for_tool_start(
+    db: Session,
+    run: Run,
+    *,
+    tool_name: str,
+) -> list[dict[str, Any]] | None:
+    """Align the user-visible plan with an authoritative streaming tool phase."""
+    target_phase = {"create_report": "drafting"}.get(tool_name)
+    if target_phase is None:
+        return None
+
+    previous = run.snapshot_json.get("work_plan", [])
+    if not isinstance(previous, list) or not previous:
+        return None
+    steps = [dict(item) for item in previous if isinstance(item, dict)]
+    if len(steps) != len(previous):
+        return None
+
+    active_index = next(
+        (
+            index
+            for index, item in enumerate(steps)
+            if item.get("status") == "in_progress"
+        ),
+        None,
+    )
+    if active_index is not None and (
+        steps[active_index].get("phase")
+        or _infer_work_plan_phase(str(steps[active_index].get("step", "")))
+    ) == target_phase:
+        return None
+
+    target_index = next(
+        (
+            index
+            for index, item in enumerate(steps)
+            if item.get("status") != "completed"
+            and (
+                item.get("phase")
+                or _infer_work_plan_phase(str(item.get("step", "")))
+            )
+            == target_phase
+            and (active_index is None or index > active_index)
+        ),
+        None,
+    )
+    if target_index is None:
+        return None
+
+    changed = False
+    for index, item in enumerate(steps):
+        current_status = item.get("status")
+        if index < target_index:
+            next_status = "completed"
+        elif index == target_index:
+            next_status = "in_progress"
+        elif current_status == "in_progress":
+            next_status = "pending"
+        else:
+            next_status = current_status
+        if next_status != current_status:
+            item["status"] = next_status
+            changed = True
+    if not changed:
+        return None
+
+    run.snapshot_json = {**run.snapshot_json, "work_plan": steps}
+    append_event(db, run, "work_plan_updated", {"steps": steps})
+    db.flush()
+    return steps
 
 
 def _plan_step_payload(db: Session, step: PlanStep) -> dict[str, Any]:

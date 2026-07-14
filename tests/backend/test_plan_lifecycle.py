@@ -33,6 +33,7 @@ from lumina.models import (
 )
 from lumina.providers import ProviderConfigurationError
 from lumina.runs.service import (
+    align_work_plan_for_tool_start,
     apply_run_action,
     complete_plan_step,
     create_run,
@@ -191,6 +192,117 @@ def test_model_authored_work_plan_is_persisted_with_stable_step_ids(
         )
         assert len(events) == 2
         assert events[-1].payload_json["steps"] == updated
+
+
+def test_create_report_start_aligns_legacy_work_plan_to_report_drafting(
+    tmp_path: Path,
+) -> None:
+    run_id, _user_id = _direct_run(tmp_path, key="report-plan-alignment")
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        assert run is not None
+        update_work_plan(
+            db,
+            run,
+            steps=[
+                {"step": "국내외 기사 원문 근거를 확인합니다", "status": "completed"},
+                {
+                    "step": "보도 이슈를 리스크 관점으로 분류합니다",
+                    "status": "in_progress",
+                },
+                {
+                    "step": "확인된 자료로 HTML 보고서를 작성합니다",
+                    "status": "pending",
+                },
+                {
+                    "step": "보고서의 근거와 누락 여부를 점검합니다",
+                    "status": "pending",
+                },
+            ],
+        )
+        db.commit()
+
+    asyncio.run(
+        local_run_executor._start_streaming_artifact_tool(
+            run_id,
+            {"id": "call-create-report", "name": "create_report", "arguments": ""},
+        )
+    )
+
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        assert run is not None
+        assert [item["status"] for item in run.snapshot_json["work_plan"]] == [
+            "completed",
+            "completed",
+            "in_progress",
+            "pending",
+        ]
+        assert run.snapshot_json["work_plan"][2]["phase"] == "drafting"
+        events = list(
+            db.scalars(
+                select(RunEvent)
+                .where(
+                    RunEvent.run_id == run_id,
+                    RunEvent.event_type.in_(["work_plan_updated", "tool_started"]),
+                )
+                .order_by(RunEvent.sequence)
+            )
+        )
+        assert [event.event_type for event in events[-2:]] == [
+            "work_plan_updated",
+            "tool_started",
+        ]
+        assert events[-1].payload_json["execution"]["toolName"] == "create_report"
+
+
+def test_create_report_alignment_does_not_advance_past_active_drafting(
+    tmp_path: Path,
+) -> None:
+    run_id, _user_id = _direct_run(tmp_path, key="report-plan-already-drafting")
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        assert run is not None
+        initial = update_work_plan(
+            db,
+            run,
+            steps=[
+                {
+                    "step": "자료를 분석합니다",
+                    "status": "completed",
+                    "phase": "analysis",
+                },
+                {
+                    "step": "HTML 보고서를 작성합니다",
+                    "status": "in_progress",
+                    "phase": "drafting",
+                },
+                {
+                    "step": "완성된 보고서를 검수합니다",
+                    "status": "pending",
+                    "phase": "validation",
+                },
+            ],
+        )
+        event_count = db.scalar(
+            select(func.count(RunEvent.id)).where(
+                RunEvent.run_id == run_id,
+                RunEvent.event_type == "work_plan_updated",
+            )
+        )
+
+        aligned = align_work_plan_for_tool_start(
+            db, run, tool_name="create_report"
+        )
+
+        assert aligned is None
+        assert run.snapshot_json["work_plan"] == initial
+        assert db.scalar(
+            select(func.count(RunEvent.id)).where(
+                RunEvent.run_id == run_id,
+                RunEvent.event_type == "work_plan_updated",
+            )
+        ) == event_count
 
 
 def test_tool_calls_are_durable_plan_subtasks_without_raw_arguments(

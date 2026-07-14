@@ -106,6 +106,7 @@ from ..runs.approvals import (
 from ..runs.service import (
     _skill_activities,
     activate_run_skill,
+    align_work_plan_for_tool_start,
     append_event,
     change_plan_step,
     command_payload,
@@ -3414,6 +3415,7 @@ class LocalRunExecutor:
             )
             if existing is not None:
                 return
+            align_work_plan_for_tool_start(db, run, tool_name=tool_name)
             tool = ToolExecution(
                 run_id=run.id,
                 tool_call_id=str(tool_call["id"]),
@@ -4962,8 +4964,24 @@ _UPDATE_PLAN_TOOL_SCHEMA = {
                                 "type": "string",
                                 "enum": ["pending", "in_progress", "completed"],
                             },
+                            "phase": {
+                                "type": "string",
+                                "enum": [
+                                    "planning",
+                                    "research",
+                                    "analysis",
+                                    "drafting",
+                                    "validation",
+                                    "other",
+                                ],
+                                "description": (
+                                    "The execution phase represented by this step. Use drafting "
+                                    "for the step where create_report or write_file creates the "
+                                    "requested deliverable, and validation for checks after it."
+                                ),
+                            },
                         },
-                        "required": ["step", "status"],
+                        "required": ["step", "status", "phase"],
                         "additionalProperties": False,
                     },
                 }

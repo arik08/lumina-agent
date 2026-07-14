@@ -78,6 +78,16 @@ def test_file_output_mode_is_a_preference_until_artifact_intent_is_explicit() ->
     )
 
 
+def test_update_plan_schema_identifies_the_report_drafting_phase() -> None:
+    item_schema = executor_module._UPDATE_PLAN_TOOL_SCHEMA["function"]["parameters"][
+        "properties"
+    ]["plan"]["items"]
+
+    assert "phase" in item_schema["required"]
+    assert "drafting" in item_schema["properties"]["phase"]["enum"]
+    assert "create_report" in item_schema["properties"]["phase"]["description"]
+
+
 def test_tool_progress_fallback_does_not_expose_arguments() -> None:
     summary = executor_module._tool_progress_fallback(
         [{"name": "write_file", "arguments": '{"content":"secret"}'}]
