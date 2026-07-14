@@ -487,6 +487,55 @@ def test_installer_batch_keeps_success_visible_until_keypress(tmp_path: Path) ->
     assert "Press any key" in completed.stdout
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows batch entrypoint")
+def test_development_launcher_keeps_failure_visible_and_preserves_exit_code(
+    tmp_path: Path,
+) -> None:
+    repository_root = Path(__file__).resolve().parents[2]
+    launcher = repository_root / "run_lumina_dev.bat"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "powershell.cmd").write_text(
+        "@echo off\r\necho simulated development failure\r\nexit /b 9\r\n",
+        encoding="utf-8",
+    )
+
+    environment = os.environ.copy()
+    environment["PATH"] = f"{fake_bin}{os.pathsep}{environment.get('PATH', '')}"
+    completed = subprocess.run(
+        ["cmd", "/d", "/c", str(launcher)],
+        input="\n",
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+        env=environment,
+    )
+
+    assert completed.returncode == 9
+    assert "simulated development failure" in completed.stdout
+    assert "Development launcher failed with exit code 9" in completed.stdout
+    assert "run_lumina_dev.state.json" in completed.stdout
+    assert "Press any key" in completed.stdout
+
+
+def test_runtime_bootstrap_uses_migrated_schema_without_create_all() -> None:
+    source = (
+        Path(__file__).resolve().parents[2]
+        / "apps"
+        / "server"
+        / "src"
+        / "lumina"
+        / "main.py"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        "with session_scope() as db:\n                bootstrap_database(db, settings=config)"
+        in source
+    )
+
+
 def test_installer_missing_uv_offline_error_includes_install_guidance(
     tmp_path: Path,
 ) -> None:

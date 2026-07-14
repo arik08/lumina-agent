@@ -9,7 +9,12 @@ from sqlalchemy import create_engine, inspect
 
 from lumina.db import Base
 from lumina.migrations import SERVER_ROOT, upgrade_database
-from lumina.models import CompactedContextEntry  # noqa: F401
+from lumina.models import (
+    CompactedContextEntry,  # noqa: F401
+    HelpItem,
+    ProjectFolder,
+    RuntimePromptOverride,
+)
 
 
 def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
@@ -195,6 +200,35 @@ def test_context_migration_adopts_legacy_create_all_table(tmp_path: Path) -> Non
         }
         with engine.connect() as connection:
             assert MigrationContext.configure(connection).get_current_revision() == "0025"
+    finally:
+        engine.dispose()
+
+
+def test_recent_migrations_adopt_tables_precreated_by_runtime_schema(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "precreated-runtime-tables.db"
+    database_url = f"sqlite:///{database.as_posix()}"
+    upgrade_database(database_url, "0022")
+
+    engine = create_engine(database_url)
+    try:
+        for table in (
+            RuntimePromptOverride.__table__,
+            ProjectFolder.__table__,
+            HelpItem.__table__,
+        ):
+            table.create(engine)
+    finally:
+        engine.dispose()
+
+    upgrade_database(database_url)
+
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            revision = MigrationContext.configure(connection).get_current_revision()
+        assert revision == "0025"
     finally:
         engine.dispose()
 

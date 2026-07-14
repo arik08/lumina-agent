@@ -46,7 +46,7 @@ from .api.routes import (
 )
 from .auth import bootstrap_database
 from .config import REPOSITORY_ROOT, Settings, get_settings
-from .db import SessionLocal, configure_database, create_schema
+from .db import SessionLocal, configure_database, create_schema, session_scope
 from .http_client import TrustManager, TrustProfile
 from .observability import request_log_path, structured_event
 from .schedules.service import local_scheduler
@@ -156,7 +156,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if config.environment == "test":
                 create_schema()
             startup_tracker.enter("bootstrapping_database")
-            bootstrap_database(settings=config)
+            with session_scope() as db:
+                bootstrap_database(db, settings=config)
             startup_tracker.enter("recovering_worker")
             local_run_executor.configure(config, trust_profile=trust_profile)
             await local_run_executor.start()

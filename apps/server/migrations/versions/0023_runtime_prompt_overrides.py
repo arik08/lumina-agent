@@ -4,7 +4,7 @@ Revision ID: 0023
 Revises: 0022
 """
 
-from alembic import op
+from alembic import context, op
 import sqlalchemy as sa
 
 
@@ -15,6 +15,11 @@ depends_on = None
 
 
 def upgrade() -> None:
+    if not context.is_offline_mode():
+        inspector = sa.inspect(op.get_bind())
+        if inspector.has_table("runtime_prompt_overrides"):
+            _validate_existing_table(inspector)
+            return
     op.create_table(
         "runtime_prompt_overrides",
         sa.Column("organization_id", sa.String(length=36), nullable=False),
@@ -34,6 +39,35 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("organization_id", "prompt_key"),
     )
+
+
+def _validate_existing_table(inspector: sa.Inspector) -> None:
+    expected_columns = {
+        "organization_id",
+        "prompt_key",
+        "content",
+        "revision",
+        "digest",
+        "is_overridden",
+        "updated_by_user_id",
+        "created_at",
+        "updated_at",
+    }
+    actual_columns = {
+        str(column["name"])
+        for column in inspector.get_columns("runtime_prompt_overrides")
+    }
+    missing = sorted(expected_columns - actual_columns)
+    primary_key = tuple(
+        str(column)
+        for column in inspector.get_pk_constraint("runtime_prompt_overrides").get(
+            "constrained_columns", ()
+        )
+    )
+    if missing or primary_key != ("organization_id", "prompt_key"):
+        raise RuntimeError(
+            "Existing runtime_prompt_overrides schema is incompatible with migration 0023."
+        )
 
 
 def downgrade() -> None:
