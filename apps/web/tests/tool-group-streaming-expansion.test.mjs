@@ -77,6 +77,19 @@ test("frequent tool icons stay neutral while important tools keep semantic color
   }
   assert.match(styles, /\.skill-activity > svg \{ color: var\(--cobalt\); \}/);
   assert.match(styles, /\.skill-activity-kind \{ color: var\(--cobalt\);/);
+  assert.match(styles, /--tool-common: var\(--faint\);/);
+  assert.match(styles, /\.skill-activity strong \{[^}]*color: var\(--cobalt\);/s);
   assert.match(styles, /\.theme-dark \.tool-kind-icon \{ color: var\(--tool-icon-color, var\(--tool-common\)\); \}/);
   assert.match(styles, /\.tool-call-group-summary > svg:first-child \{ color: var\(--tool-icon-color, var\(--tool-common\)\); \}/);
+});
+
+test("LLM summaries stay prominent while an open tool row uses a quiet neutral surface", async () => {
+  const styles = await read("../src/styles.css");
+
+  assert.match(styles, /--tool-row-selected-surface: color-mix\(in srgb, var\(--ink\) 3%, var\(--chat-canvas\)\);/);
+  assert.match(styles, /--tool-row-selected-surface: color-mix\(in srgb, var\(--ink\) 5%, var\(--chat-canvas\)\);\s*--tool-common: var\(--faint\);/);
+  assert.match(styles, /\.progress-summary-text \{[^}]*color: inherit;[^}]*font-size: 14px;[^}]*font-weight: 500;/s);
+  assert.match(styles, /\.tool-call-trigger \{[^}]*color: var\(--muted\);/s);
+  assert.match(styles, /\.tool-call\.is-open > \.tool-call-trigger \{ background: var\(--tool-row-selected-surface\); color: var\(--ink\); \}/);
+  assert.doesNotMatch(styles, /\.tool-call\.is-open > \.tool-call-trigger \{[^}]*background: var\(--cobalt-pale\);/s);
 });

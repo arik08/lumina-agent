@@ -31,6 +31,7 @@
   --cobalt: #3f66c9;
   --cobalt-hover: #3158b8;
   --cobalt-pale: #edf2fb;
+  --tool-row-selected-surface: color-mix(in srgb, var(--ink) 3%, var(--chat-canvas));
   --skill-accent: oklch(54% 0.15 290);
   --mcp-accent: oklch(48% 0.1 175);
   --success: #2f9765;
@@ -52,7 +53,7 @@
   --syntax-number: #0550ae;
   --syntax-function: #8250df;
   --syntax-property: #953800;
-  --tool-common: var(--muted);
+  --tool-common: var(--faint);
   --tool-report: #0f8a78;
   --tool-image: #c94f86;
   --tooltip-background: #292d34;
@@ -2040,14 +2041,14 @@ button:disabled { cursor: default; opacity: 0.5; }
 .skill-activity { display: grid; min-height: 30px; grid-template-columns: 17px auto minmax(0, auto) minmax(0, 1fr) auto; align-items: center; gap: 7px; margin-left: 30px; padding: 3px 6px 3px 4px; color: var(--muted); font-size: 13.4px; }
 .skill-activity > svg { color: var(--cobalt); }
 .skill-activity-kind { color: var(--cobalt); font-size: 11.5px; font-weight: 700; text-transform: uppercase; }
-.skill-activity strong { overflow: hidden; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.skill-activity strong { overflow: hidden; color: var(--cobalt); font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .skill-activity-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .progress-group-toggle { display: block; width: 100%; padding: 0; border: 0; border-radius: 4px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
 .progress-group-toggle:hover { background: var(--cobalt-pale); }
 .progress-group-toggle:focus-visible { outline-color: var(--line-strong); }
 .progress-group-toggle:hover:focus-visible { outline-color: color-mix(in srgb, var(--cobalt) 58%, transparent); }
 .progress-summary { padding: 8px 9px; border-left: 2px solid color-mix(in srgb, var(--cobalt) 55%, transparent); color: var(--ink); }
-.progress-summary-text { display: grid; width: 100%; grid-template-columns: minmax(0, 1fr) 46px 16px; align-items: flex-start; gap: 5px; padding-right: 6px; overflow-y: auto; color: inherit; font-size: 14px; line-height: 1.55; scrollbar-color: transparent transparent; scrollbar-gutter: stable; scrollbar-width: thin; text-align: left; }
+.progress-summary-text { display: grid; width: 100%; grid-template-columns: minmax(0, 1fr) 46px 16px; align-items: flex-start; gap: 5px; padding-right: 6px; overflow-y: auto; color: inherit; font-size: 14px; font-weight: 500; line-height: 1.55; scrollbar-color: transparent transparent; scrollbar-gutter: stable; scrollbar-width: thin; text-align: left; }
 .progress-summary-text::-webkit-scrollbar { width: 7px; }
 .progress-summary-text::-webkit-scrollbar-track,
 .progress-summary-text::-webkit-scrollbar-thumb { background: transparent; }
@@ -2227,13 +2228,13 @@ button:disabled { cursor: default; opacity: 0.5; }
   gap: 5px;
   padding: 0 6px 0 4px;
   border-radius: 4px;
-  color: #49505a;
+  color: var(--muted);
 }
 .tool-call-trigger.without-status-icon { grid-template-columns: 17px minmax(90px, .65fr) minmax(0, 1.35fr) auto 46px 16px; }
 .tool-call-trigger.has-summary { padding-top: 5px; padding-bottom: 2px; }
 .tool-call-summary-text { grid-column: 1 / -1; color: var(--ink); font-size: 14px; line-height: 1.55; text-align: left; white-space: normal; }
 
-.tool-call.is-open > .tool-call-trigger { background: var(--cobalt-pale); color: #252a32; }
+.tool-call.is-open > .tool-call-trigger { background: var(--tool-row-selected-surface); color: var(--ink); }
 .tool-kind-icon { color: var(--tool-icon-color, var(--tool-common)); }
 .tool-kind-icon:is(.is-web-search, .is-web-fetch, .is-file-browse, .is-read-file, .is-write-file, .is-model-processing) { --tool-icon-color: var(--tool-common); }
 .tool-kind-icon.is-report { --tool-icon-color: var(--tool-report); }
@@ -2880,6 +2881,8 @@ button:disabled { cursor: default; opacity: 0.5; }
   --cobalt: #7e9ce5;
   --cobalt-hover: #6f91df;
   --cobalt-pale: #26334d;
+  --tool-row-selected-surface: color-mix(in srgb, var(--ink) 5%, var(--chat-canvas));
+  --tool-common: var(--faint);
   --danger: #e37b7d;
   --danger-border: color-mix(in srgb, var(--danger) 55%, var(--line));
   --danger-surface: color-mix(in srgb, var(--surface) 92%, var(--danger));
@@ -2998,7 +3001,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .theme-dark .tool-group-icon,
 .theme-dark .tool-call-trigger { color: #b4bbc5; }
 .theme-dark .tool-calls { border-left-color: #3a414b; }
-.theme-dark .tool-call.is-open > .tool-call-trigger { background: var(--cobalt-pale); color: #eef1f5; }
+.theme-dark .tool-call.is-open > .tool-call-trigger { background: var(--tool-row-selected-surface); color: var(--ink); }
 .theme-dark .tool-kind-icon { color: var(--tool-icon-color, var(--tool-common)); }
 .theme-dark .tool-message { border-left-color: #7189c2; background: #1f2329; }
 .theme-dark .model-exchange { background: color-mix(in srgb, var(--cobalt) 8%, var(--panel)); }
