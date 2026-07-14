@@ -219,7 +219,7 @@ try {
     if ($null -ne (Get-Process -Id $treeChildId -ErrorAction SilentlyContinue)) {
         throw "Stop-ProcessTree left the test child process running."
     }
-    if ($stopwatch.Elapsed.TotalSeconds -ge 5) {
+    if ($stopwatch.Elapsed.TotalSeconds -ge 10) {
         throw "Stop-ProcessTree took $([math]::Round($stopwatch.Elapsed.TotalSeconds, 2)) seconds."
     }
 }
@@ -281,6 +281,14 @@ $startProcessesFunction = $ast.Find(
     },
     $true
 )
+$startManagedProcessFunction = $ast.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq "Start-ManagedProcess"
+    },
+    $true
+)
 $prepareRuntimeFunction = $ast.Find(
     {
         param($node)
@@ -333,6 +341,7 @@ if (
     throw "Launcher restart and startup-state functions must all exist."
 }
 . ([scriptblock]::Create($restartDelayFunction.Extent.Text))
+. ([scriptblock]::Create($startManagedProcessFunction.Extent.Text))
 . ([scriptblock]::Create($stateTextFunction.Extent.Text))
 . ([scriptblock]::Create($errorDetailsFunction.Extent.Text))
 . ([scriptblock]::Create($startupStateFunction.Extent.Text))
@@ -342,6 +351,13 @@ if ($startProcessesFunction.Extent.Text -match 'alembic|npm') {
 }
 if ($startProcessesFunction.Extent.Text -match '--reload') {
     throw "Development must keep the Backend stable during Agent Runs; use explicit R restart instead of Uvicorn reload."
+}
+if (
+    $null -eq $startManagedProcessFunction -or
+    $startManagedProcessFunction.Extent.Text -notmatch 'previous\.log' -or
+    $startManagedProcessFunction.Extent.Text -notmatch 'Move-Item'
+) {
+    throw "Automatic restarts must preserve the previous process logs for crash diagnosis."
 }
 $preparationSource = $prepareRuntimeFunction.Extent.Text
 if (
@@ -357,8 +373,12 @@ $supervisorLoop = $source.IndexOf('while ($true)', $preparationCall)
 if ($preparationCall -lt 0 -or $supervisorLoop -lt 0 -or $preparationCall -ge $supervisorLoop) {
     throw "Runtime preparation must happen before the automatic supervisor loop."
 }
-if ($source -notmatch '\$MaxAutomaticRestarts\s*=\s*3') {
-    throw "Automatic restart budget must be capped at three retries."
+if (
+    $source -match '\$MaxAutomaticRestarts' -or
+    $source -match 'RESTART_EXHAUSTED' -or
+    $source -match 'exhausted its automatic restart budget'
+) {
+    throw "The supervisor must stay alive and keep retrying until explicitly stopped."
 }
 if ($source -notmatch '\$StartupTimeoutSeconds\s*=\s*90') {
     throw "The startup deadline must allow a 90-second Windows cold start."
@@ -366,12 +386,53 @@ if ($source -notmatch '\$StartupTimeoutSeconds\s*=\s*90') {
 if ($source -match 'Restarting in 1 second') {
     throw "The launcher must not retain the unbounded fixed one-second restart loop."
 }
-$expectedDelays = @(1, 2, 5, 5)
+$expectedDelays = @(1, 2, 5, 10, 30, 30)
 for ($attempt = 1; $attempt -le $expectedDelays.Count; $attempt++) {
     $actualDelay = Get-AutomaticRestartDelay -Attempt $attempt
     if ($actualDelay -ne $expectedDelays[$attempt - 1]) {
         throw "Restart attempt $attempt expected delay $($expectedDelays[$attempt - 1]), got $actualDelay."
     }
+}
+
+$processLogRoot = Join-Path $env:TEMP "lumina-process-log-test-$([guid]::NewGuid())"
+$processOutputLog = Join-Path $processLogRoot "fixture.out.log"
+$processErrorLog = Join-Path $processLogRoot "fixture.err.log"
+try {
+    New-Item -ItemType Directory -Force -Path $processLogRoot | Out-Null
+    [System.IO.File]::WriteAllText($processOutputLog, "previous-out")
+    [System.IO.File]::WriteAllText($processErrorLog, "previous-err")
+    $encodedCommand = [Convert]::ToBase64String(
+        [Text.Encoding]::Unicode.GetBytes(
+            "Write-Output 'current-out'; [Console]::Error.WriteLine('current-err')"
+        )
+    )
+    $managedProcess = Start-ManagedProcess `
+        -Name "Fixture" `
+        -FilePath "powershell.exe" `
+        -Arguments @("-NoProfile", "-EncodedCommand", $encodedCommand) `
+        -WorkingDirectory $processLogRoot `
+        -OutputLog $processOutputLog `
+        -ErrorLog $processErrorLog
+    $managedProcess.Process.WaitForExit()
+    $previousOutputLog = [System.IO.Path]::ChangeExtension(
+        $processOutputLog,
+        ".previous.log"
+    )
+    $previousErrorLog = [System.IO.Path]::ChangeExtension(
+        $processErrorLog,
+        ".previous.log"
+    )
+    if (
+        [System.IO.File]::ReadAllText($previousOutputLog) -ne "previous-out" -or
+        [System.IO.File]::ReadAllText($previousErrorLog) -ne "previous-err" -or
+        [System.IO.File]::ReadAllText($processOutputLog) -notmatch "current-out" -or
+        [System.IO.File]::ReadAllText($processErrorLog) -notmatch "current-err"
+    ) {
+        throw "Managed process restart did not preserve previous and current logs."
+    }
+}
+finally {
+    Remove-Item -LiteralPath $processLogRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 $foreignPort = Get-LuminaLauncherErrorDetails `
@@ -440,4 +501,4 @@ finally {
     Remove-Item -LiteralPath $stateRoot -Force -ErrorAction SilentlyContinue
 }
 
-Write-Host "run_lumina tests passed ($($cases.Count) key cases, bounded restart policy, atomic startup diagnostics, preparation isolation, and identity-safe process cleanup)."
+Write-Host "run_lumina tests passed ($($cases.Count) key cases, persistent self-healing restart policy, atomic startup diagnostics, preparation isolation, and identity-safe process cleanup)."

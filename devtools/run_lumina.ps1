@@ -63,7 +63,6 @@ if ($FrontendPort -eq $BackendPort) {
 $HealthCheckIntervalSeconds = 5
 $HealthFailureThreshold = 3
 $StartupTimeoutSeconds = 90
-$MaxAutomaticRestarts = 3
 $RestartBudgetResetSeconds = 600
 $SupervisorPidPath = Join-Path $LogRoot $(
     if ($Development) { "run_lumina_dev.pid" } else { "run_lumina.pid" }
@@ -442,6 +441,19 @@ function Start-ManagedProcess {
         [hashtable]$EnvironmentVariables = @{}
     )
 
+    foreach ($logPath in @($OutputLog, $ErrorLog)) {
+        if (Test-Path -LiteralPath $logPath) {
+            $previousLogPath = [System.IO.Path]::ChangeExtension(
+                $logPath,
+                ".previous.log"
+            )
+            Move-Item `
+                -LiteralPath $logPath `
+                -Destination $previousLogPath `
+                -Force
+        }
+    }
+
     $originalEnvironment = @{}
     try {
         foreach ($variableName in $EnvironmentVariables.Keys) {
@@ -619,9 +631,9 @@ function Confirm-LuminaRuntimePrepared {
 }
 
 function Get-AutomaticRestartDelay {
-    param([Parameter(Mandatory = $true)][int]$Attempt)
+    param([Parameter(Mandatory = $true)][long]$Attempt)
 
-    $delays = @(1, 2, 5)
+    $delays = @(1, 2, 5, 10, 30)
     $index = [Math]::Min([Math]::Max($Attempt, 1) - 1, $delays.Count - 1)
     return $delays[$index]
 }
@@ -835,20 +847,6 @@ try {
             continue
         }
         $details = Get-LuminaLauncherErrorDetails -Phase $currentPhase -Message $resetReason
-        if ($automaticRestartCount -ge $MaxAutomaticRestarts) {
-            Write-LuminaStartupState `
-                -Status "exhausted" `
-                -Phase $currentPhase `
-                -Attempt $attemptNumber `
-                -ErrorCode "RESTART_EXHAUSTED" `
-                -HelpAction $details.HelpAction `
-                -LastError $resetReason
-            throw (
-                "Lumina exhausted its automatic restart budget after " +
-                "$MaxAutomaticRestarts retries. Last failure: $resetReason. " +
-                "See logs in $LogRoot."
-            )
-        }
         $automaticRestartCount++
         $restartDelay = Get-AutomaticRestartDelay -Attempt $automaticRestartCount
         Write-LuminaStartupState `
@@ -860,7 +858,7 @@ try {
             -LastError $resetReason
         Write-Host (
             "[Lumina] Restarting in $restartDelay second(s) " +
-            "($automaticRestartCount/$MaxAutomaticRestarts)..."
+            "(automatic recovery attempt $automaticRestartCount)..."
         )
         Start-Sleep -Seconds $restartDelay
     }
@@ -868,7 +866,7 @@ try {
 finally {
     Stop-ManagedProcesses
     Remove-SupervisorPid
-    if ($script:StartupStateStatus -notin @("failed", "exhausted")) {
+    if ($script:StartupStateStatus -ne "failed") {
         Write-LuminaStartupState -Status "stopped" -Phase "STOPPED"
     }
 }

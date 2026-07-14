@@ -171,6 +171,7 @@ CI에 전용 PostgreSQL이 있을 때만 `LUMINA_TEST_POSTGRES_URL`과 `LUMINA_T
 - `GET /api/health/ready`: DB `SELECT 1`과 실제 local executor 준비 상태. executor가 멈췄으면 503을 반환합니다.
 - `GET /api/health/startup`: `initializing_trust`, DB 구성, bootstrap, Worker recovery와 scheduler 시작의 단계별 소요 시간 및 trust 요약을 반환합니다. CA 경로나 인증서 내용은 반환하지 않습니다.
 - Windows 운영 런처는 마지막 상태를 `data/logs/run_lumina.state.json`, 개발 런처는 `data/logs/run_lumina_dev.state.json`에 원자적으로 기록합니다. `phase`, `attempt`, `elapsedMs`, stable error code와 해결 action을 먼저 확인하십시오.
+- 두 Windows 런처는 Backend 또는 Frontend process 종료와 연속 health check 실패를 감지하면 사용자가 실행기를 종료할 때까지 자동 복구를 계속합니다. 재시작 지연은 1, 2, 5, 10, 최대 30초로 늘어나며 10분간 안정적으로 동작하면 다시 초기화됩니다. 재시작 직전 stdout/stderr는 같은 이름의 `*.previous.log`에 보존합니다.
 - Backend의 `.env`, company CA fallback과 generated bundle root는 현재 작업 폴더가 아니라 repository root를 기준으로 해석됩니다. 따라서 서비스나 다른 폴더에서 실행해도 공식 런처와 같은 trust source를 사용합니다.
 - HTTP log는 request ID와 route template을 구조화 JSON으로 남기고 password, token, employee/company identifier와 Secret reference를 redaction합니다.
 - P-GPT와 PostgreSQL 진단은 URL, header, credential과 원문 응답을 log 또는 Run event에 넣지 않습니다.
