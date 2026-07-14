@@ -61,11 +61,13 @@ def test_progress_control_leaves_final_answer_text_visible() -> None:
 def test_file_output_mode_is_a_preference_until_artifact_intent_is_explicit() -> None:
     assert executor_module._normalized_output_mode("file") == "file"
     assert executor_module._ARTIFACT_CREATION_REQUEST.search(
-        "내 고향은 서산이야, 기억해"
+        "이 문장의 의미를 한 줄로 설명해 줘"
     ) is None
-    assert executor_module._ARTIFACT_CREATION_REQUEST.search("내 이름이 뭐지?") is None
     assert executor_module._ARTIFACT_CREATION_REQUEST.search(
-        "내 고향은 서산이야, 기억해. 보고서 파일도 만들어"
+        "앞으로 답변은 간결하게 해 줘"
+    ) is None
+    assert executor_module._ARTIFACT_CREATION_REQUEST.search(
+        "이번 분석을 보고서 파일로 만들어 줘"
     )
 
 
@@ -294,7 +296,7 @@ def test_agent_loop_persists_web_evidence_and_returns_to_model(
         )
 
 
-def test_file_mode_allows_model_to_keep_obvious_requests_in_chat(
+def test_file_mode_is_a_general_delivery_preference_not_a_file_command(
     monkeypatch, tmp_path: Path
 ) -> None:
     settings = Settings(
@@ -326,7 +328,8 @@ def test_file_mode_allows_model_to_keep_obvious_requests_in_chat(
         project_id = client.get("/api/projects").json()[0]["id"]
         snapshots = []
         for index, message_text in enumerate(
-            ("내 이름은 오명철이야, 기억해", "내 이름이 뭐지?"), start=1
+            ("이 문장의 의미를 한 줄로 설명해 줘", "앞으로 답변은 간결하게 해 줘"),
+            start=1,
         ):
             conversation = client.post(
                 "/api/conversations",
@@ -367,12 +370,90 @@ def test_file_mode_allows_model_to_keep_obvious_requests_in_chat(
             if message.role == "system"
         )
         assert "Output mode: File preference." in system_text
-        assert "not an unconditional command to create a file" in system_text
+        assert "delivery preference, not proof" in system_text
+        assert "Never infer file intent solely" in system_text
         assert "Artifact opportunity contract" in system_text
         assert "Do not call `create_report` or `write_file`" in system_text
+        assert "Memory capture contract" in system_text
         assert (
             "Artifact contract: The user requested a reusable file." not in system_text
         )
+
+
+def test_final_answer_captures_memory_inline_without_a_second_model_call(
+    monkeypatch, tmp_path: Path
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'inline-memory.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    requests = []
+    envelope = json.dumps(
+        {
+            "candidates": [
+                {
+                    "category": "recurring_rule",
+                    "fact": "사용자는 주말마다 등산합니다.",
+                    "confidence": 0.95,
+                    "conflictKey": "weekend_activity",
+                }
+            ]
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+    class RecordingProvider(MockProvider):
+        async def stream(self, request):
+            requests.append(request)
+            async for event in super().stream(request):
+                yield event
+
+    def provider(
+        _provider_id: str, *, wants_artifact: bool, first_turn: bool
+    ) -> MockProvider:
+        assert wants_artifact is False
+        assert first_turn is True
+        return RecordingProvider(
+            text_chunks=(
+                "기억했습니다.\n<lum",
+                f"ina_memory>{envelope}</lumina_",
+                "memory>",
+            )
+        )
+
+    monkeypatch.setattr(local_run_executor, "_provider", provider)
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "Inline Memory"},
+        ).json()
+        started = client.post(
+            f"/api/conversations/{conversation['id']}/runs",
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": "inline-memory-0001",
+            },
+            json={"message": {"text": "저는 주말마다 등산을 합니다."}},
+        )
+        assert started.status_code == 202, started.text
+        snapshot = _wait_for_terminal(client, started.json()["run"]["runId"])
+        memories = client.get("/api/memories").json()
+
+    assert snapshot["status"] == "completed"
+    assert snapshot["assistantDraft"]["text"] == "기억했습니다.\n"
+    assert len(requests) == 1
+    assert [memory["displayText"] for memory in memories] == [
+        "사용자는 주말마다 등산합니다."
+    ]
+    assert memories[0]["extractorVersion"] == "llm-inline-v1"
 
 
 def test_file_mode_accepts_model_selected_artifact_without_explicit_file_words(

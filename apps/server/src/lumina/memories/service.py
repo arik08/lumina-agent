@@ -22,53 +22,20 @@ from .policy import (
 )
 
 
-EXTRACTOR_VERSION = "offline-conservative-v2"
-LLM_EXTRACTOR_VERSION = "llm-structured-v1"
+INLINE_LLM_EXTRACTOR_VERSION = "llm-inline-v1"
 LLM_OPTIMIZER_VERSION = "llm-memory-optimizer-v1"
-_STABLE_MARKER = re.compile(
-    r"(?i)(?:항상|앞으로|매번|선호|기억해|기억해\s*주세요|원칙|반드시|"
-    r"always|from\s+now\s+on|every\s+time|prefer|remember|must)"
-)
-_KOREAN_LANGUAGE = re.compile(
-    r"(?i)(?:답변|응답|대답).{0,40}?(한국어|영어).{0,12}?(?:로|으로)"
-)
-_ENGLISH_LANGUAGE = re.compile(
-    r"(?i)(?:respond|answer|reply).{0,40}?\b(korean|english)\b"
-)
-_KOREAN_ROLE = re.compile(
-    r"(?:제|내)\s*(?:역할|직무|업무)\s*(?:은|는|이|가)?\s*"
-    r"(.{2,80}?)(?:입니다|이에요|예요)(?:[.!?]|$)"
-)
-_ENGLISH_ROLE = re.compile(r"(?i)\b(?:my\s+role\s+is|i\s+work\s+as)\s+([^.!?\n]{2,80})")
-_KOREAN_NAME = re.compile(
-    r"(?:제|내)\s*이름\s*(?:은|는|이|가)?\s*"
-    r"([가-힣A-Za-z][가-힣A-Za-z0-9 ._-]{0,79}?)"
-    r"(?:이라고|라고|이야|야|입니다|이에요|예요)(?=[,.!?，。！？\s]|$)"
-)
-_ENGLISH_NAME = re.compile(
-    r"(?i)\bmy\s+name\s+is\s+([A-Za-z][A-Za-z0-9 .'-]{0,79}?)"
-    r"(?=[.!?]|\s+(?:and\s+)?remember\b|$)"
-)
-_MEMORY_COMMAND_ONLY = re.compile(
-    r"(?i)^(?:(?:앞으로|항상)\s*)?(?:이걸?|그걸?|이것|그것)?\s*"
-    r"(?:기억해(?:\s*줘|\s*주세요)?|remember(?:\s+it|\s+this)?)[.!?。！？]*$"
-)
-_EXPLICIT_MEMORY_REQUEST = re.compile(
-    r"(?i)(?:기억해(?:\s*줘|\s*주세요)?|remember(?:\s+it|\s+this)?)"
-    r"(?=[,.!?，。！？\s]|$)"
-)
-_MEMORY_RECALL_REQUEST = re.compile(
-    r"(?i)(?:"
-    r"(?:내|제)\s*(?:이름|직업|역할|고향|생일|취향|선호(?:사항)?|말투)"
-    r"\s*(?:은|는|이|가)?\s*(?:뭐|무엇|뭔지|뭐였|무엇이었)"
-    r"|(?:나|저)에?\s*대해\s*(?:뭘|무엇을|뭐를)?\s*(?:기억|알고)"
-    r"|(?:나|저)를?\s*(?:어떻게|뭐라고)\s*(?:기억|알고)"
-    r"|what(?:'s|\s+is)\s+my\s+(?:name|job|role|hometown|birthday|preference)"
-    r"|what\s+do\s+you\s+(?:remember|know)\s+about\s+me"
-    r")"
-)
-_SENTENCE_SPLIT = re.compile(r"(?<=[.!?。！？])\s+|[\r\n]+")
 _MEMORY_TERM = re.compile(r"[A-Za-z0-9_]{2,}|[가-힣]{2,}")
+_MEMORY_CATEGORIES = frozenset(
+    {
+        "user_identity",
+        "user_role",
+        "communication_preference",
+        "output_preference",
+        "recurring_rule",
+        "long_term_goal",
+        "terminology",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,57 +78,8 @@ class MemoryExtractor(Protocol):
     ) -> Sequence[MemoryCandidate]: ...
 
 
-class ConservativeMemoryExtractor:
-    """Extract only explicit, stable user-authored preferences and roles."""
-
-    version = EXTRACTOR_VERSION
-
-    def extract(
-        self, messages: Sequence[MemorySourceMessage]
-    ) -> Sequence[MemoryCandidate]:
-        candidates: list[MemoryCandidate] = []
-        seen: set[tuple[str, str]] = set()
-        for message in messages:
-            identity_candidate = _explicit_identity_candidate(message.text, message.id)
-            if identity_candidate is not None:
-                key = (
-                    identity_candidate.conflict_key or "",
-                    normalize_fact(identity_candidate.fact),
-                )
-                seen.add(key)
-                candidates.append(identity_candidate)
-            for sentence in _sentences(message.text):
-                if _contains_sensitive(sentence):
-                    continue
-                if identity_candidate is not None and (
-                    _KOREAN_NAME.search(sentence) or _ENGLISH_NAME.search(sentence)
-                ):
-                    continue
-                candidate = _candidate_from_sentence(sentence, message.id)
-                if candidate is None:
-                    continue
-                key = (candidate.conflict_key or "", normalize_fact(candidate.fact))
-                if key in seen:
-                    continue
-                seen.add(key)
-                candidates.append(candidate)
-        return candidates
-
-
-def is_explicit_memory_request(value: str) -> bool:
-    """Return whether the user explicitly asks Lumina to remember something."""
-
-    return bool(_EXPLICIT_MEMORY_REQUEST.search(value))
-
-
-def is_memory_interaction_request(value: str) -> bool:
-    """Return whether the request writes or directly recalls personal memory."""
-
-    return is_explicit_memory_request(value) or bool(_MEMORY_RECALL_REQUEST.search(value))
-
-
 class PreparedMemoryExtractor:
-    version = LLM_EXTRACTOR_VERSION
+    version = INLINE_LLM_EXTRACTOR_VERSION
 
     def __init__(self, candidates: Sequence[MemoryCandidate]) -> None:
         self._candidates = tuple(candidates)
@@ -172,170 +90,43 @@ class PreparedMemoryExtractor:
         return self._candidates
 
 
-async def prepare_memory_extractor(
-    provider: ProviderAdapter | None,
+def memory_candidates_from_inline_json(
+    raw_json: str | None,
     *,
-    model: str,
-    messages: Sequence[MemorySourceMessage],
-) -> MemoryExtractor:
-    """Prefer the deterministic path and call an LLM only when it adds value."""
-
-    local_extractor = ConservativeMemoryExtractor()
-    local_candidates = local_extractor.extract(messages)
-    if (
-        local_candidates
-        or provider is None
-        or not messages
-        or any(_contains_sensitive(message.text) for message in messages)
-    ):
-        return local_extractor
-    candidates = await extract_memory_candidates_with_llm(
-        provider,
-        model=model,
-        messages=messages,
-    )
-    return PreparedMemoryExtractor(candidates)
-
-
-async def extract_memory_candidates_with_llm(
-    provider: ProviderAdapter,
-    *,
-    model: str,
-    messages: Sequence[MemorySourceMessage],
+    source_message_ids: Sequence[str],
 ) -> tuple[MemoryCandidate, ...]:
-    if not messages:
+    """Validate model-authored inline Memory JSON without deriving facts locally."""
+
+    if not raw_json or not source_message_ids:
         return ()
-    source_payload = [
-        {"messageId": message.id, "text": message.text} for message in messages
-    ]
-    schema = {
-        "type": "json_schema",
-        "json_schema": {
-            "name": "user_memory_candidates",
-            "strict": True,
-            "schema": {
-                "type": "object",
-                "properties": {
-                    "candidates": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "category": {
-                                    "type": "string",
-                                    "enum": [
-                                        "user_identity",
-                                        "user_role",
-                                        "communication_preference",
-                                        "output_preference",
-                                        "recurring_rule",
-                                        "long_term_goal",
-                                        "terminology",
-                                    ],
-                                },
-                                "fact": {"type": "string"},
-                                "displayText": {"type": "string"},
-                                "confidence": {
-                                    "type": "number",
-                                    "minimum": 0,
-                                    "maximum": 1,
-                                },
-                                "conflictKey": {
-                                    "type": ["string", "null"]
-                                },
-                                "sourceMessageIds": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                    "minItems": 1,
-                                },
-                            },
-                            "required": [
-                                "category",
-                                "fact",
-                                "displayText",
-                                "confidence",
-                                "conflictKey",
-                                "sourceMessageIds",
-                            ],
-                            "additionalProperties": False,
-                        },
-                    }
-                },
-                "required": ["candidates"],
-                "additionalProperties": False,
-            },
-        },
-    }
-    prompt = (
-        "Extract only explicit, stable facts the user stated about themselves or "
-        "their lasting preferences. Preserve the meaning across sentence boundaries. "
-        "A request such as 'remember this' is evidence of intent, never a fact by "
-        "itself. For 'My name is Alex. Remember it', extract the name, not the word "
-        "'remember'. Do not infer facts from assistant text, tools, or documents. "
-        "Exclude passwords, tokens, certificates, government or employee identifiers, "
-        "health, politics, union membership, one-time codes, temporary approvals, "
-        "third-party secrets, and transient requests. Use a stable conflictKey such as "
-        "user_name, user_role, response_language, response_tone, or null when facts can "
-        "coexist. Write fact and displayText as the same concise Korean sentence. "
-        "Do not add an English translation; keep only proper nouns and established "
-        "technical terms when needed. Return no candidate when there is no useful "
-        "durable fact.\n\n"
-        f"User-authored messages:\n{json.dumps(source_payload, ensure_ascii=False)}"
-    )
-    chunks: list[str] = []
-    async for event in provider.stream(
-        ProviderRequest(
-            model=model,
-            messages=(
-                ProviderMessage(
-                    role="system",
-                    content=(
-                        "You are a conservative user-memory extraction component. "
-                        "Return only the requested JSON."
-                    ),
-                ),
-                ProviderMessage(role="user", content=prompt),
-            ),
-            response_format=schema,
-            effort="low",
-            max_output_tokens=800,
-            metadata={"purpose": "user_memory_extraction"},
-        )
-    ):
-        if event.type == "text_delta" and event.text:
-            chunks.append(event.text)
-    raw = "".join(chunks).strip()
-    if raw.startswith("```"):
-        raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.IGNORECASE)
-    parsed = json.loads(raw)
+    try:
+        parsed = json.loads(raw_json)
+    except (TypeError, json.JSONDecodeError):
+        return ()
     rows = parsed.get("candidates") if isinstance(parsed, dict) else None
     if not isinstance(rows, list):
-        raise ValueError("Memory extractor response is missing candidates")
-    allowed_ids = {message.id for message in messages}
+        return ()
+    source_ids = tuple(dict.fromkeys(source_message_ids))
     candidates: list[MemoryCandidate] = []
     for row in rows:
         if not isinstance(row, dict):
             continue
-        source_ids = tuple(
-            dict.fromkeys(
-                source_id
-                for source_id in row.get("sourceMessageIds", [])
-                if isinstance(source_id, str) and source_id in allowed_ids
-            )
-        )
-        if not source_ids:
-            continue
+        category = str(row.get("category", "")).strip()
+        fact = str(row.get("fact", "")).strip()
         conflict_key = row.get("conflictKey")
-        display_text = str(row.get("displayText", "")).strip()
+        try:
+            confidence = float(row.get("confidence", 0))
+        except (TypeError, ValueError):
+            continue
         candidate = MemoryCandidate(
-            category=str(row.get("category", "")),
-            fact=display_text,
-            display_text=display_text,
-            confidence=float(row.get("confidence", 0)),
+            category=category,
+            fact=fact,
+            display_text=fact,
+            confidence=confidence,
             conflict_key=conflict_key if isinstance(conflict_key, str) else None,
             source_message_ids=source_ids,
         )
-        if _candidate_is_valid(candidate):
+        if category in _MEMORY_CATEGORIES and _candidate_is_valid(candidate):
             candidates.append(candidate)
     return tuple(candidates)
 
@@ -384,9 +175,20 @@ async def optimize_memories_with_llm(
                                 "fact": {"type": "string"},
                                 "displayText": {"type": "string"},
                                 "conflictKey": {"type": ["string", "null"]},
-                                "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                                "confidence": {
+                                    "type": "number",
+                                    "minimum": 0,
+                                    "maximum": 1,
+                                },
                             },
-                            "required": ["sourceMemoryIds", "category", "fact", "displayText", "conflictKey", "confidence"],
+                            "required": [
+                                "sourceMemoryIds",
+                                "category",
+                                "fact",
+                                "displayText",
+                                "conflictKey",
+                                "confidence",
+                            ],
                             "additionalProperties": False,
                         },
                     }
@@ -411,7 +213,10 @@ async def optimize_memories_with_llm(
         ProviderRequest(
             model=model,
             messages=(
-                ProviderMessage(role="system", content="You conservatively optimize a user's memory store. Return only JSON."),
+                ProviderMessage(
+                    role="system",
+                    content="You conservatively optimize a user's memory store. Return only JSON.",
+                ),
                 ProviderMessage(role="user", content=prompt),
             ),
             response_format=schema,
@@ -434,15 +239,26 @@ async def optimize_memories_with_llm(
         if not isinstance(merge, dict):
             continue
         source_ids = tuple(dict.fromkeys(merge.get("sourceMemoryIds", [])))
-        if len(source_ids) < 2 or any(source_id not in by_id or source_id in used for source_id in source_ids):
+        if len(source_ids) < 2 or any(
+            source_id not in by_id or source_id in used for source_id in source_ids
+        ):
             continue
         category = str(merge.get("category", "")).strip()
         display_text = str(merge.get("displayText", "")).strip()
         fact = display_text
         conflict_key = merge.get("conflictKey")
         confidence = float(merge.get("confidence", 0))
-        candidate = MemoryCandidate(category, fact, display_text, confidence, conflict_key if isinstance(conflict_key, str) else None, ())
-        if not _candidate_is_valid(candidate) or _contains_sensitive("\n".join((fact, display_text))):
+        candidate = MemoryCandidate(
+            category,
+            fact,
+            display_text,
+            confidence,
+            conflict_key if isinstance(conflict_key, str) else None,
+            (),
+        )
+        if not _candidate_is_valid(candidate) or _contains_sensitive(
+            "\n".join((fact, display_text))
+        ):
             continue
         sources = [by_id[source_id] for source_id in source_ids]
         combined = UserMemory(
@@ -451,8 +267,18 @@ async def optimize_memories_with_llm(
             normalized_fact=normalize_fact(fact),
             display_text=display_text,
             conflict_key=candidate.conflict_key,
-            source_message_ids_json=list(dict.fromkeys(item for source in sources for item in source.source_message_ids_json)),
-            source_run_ids_json=list(dict.fromkeys(item for source in sources for item in source.source_run_ids_json)),
+            source_message_ids_json=list(
+                dict.fromkeys(
+                    item
+                    for source in sources
+                    for item in source.source_message_ids_json
+                )
+            ),
+            source_run_ids_json=list(
+                dict.fromkeys(
+                    item for source in sources for item in source.source_run_ids_json
+                )
+            ),
             confidence=confidence,
             evidence_count=sum(source.evidence_count for source in sources),
             status="active",
@@ -617,7 +443,7 @@ def learn_memories_for_run(
         )
         for message in source_rows
     )
-    selected_extractor = extractor or ConservativeMemoryExtractor()
+    selected_extractor = extractor or PreparedMemoryExtractor(())
     if not selected_extractor.version or len(selected_extractor.version) > 80:
         raise ValueError("Memory extractor version must be 1-80 characters")
     candidates = selected_extractor.extract(sources)
@@ -1017,14 +843,6 @@ def memory_payload(memory: UserMemory) -> dict[str, Any]:
     }
 
 
-def _sentences(value: str) -> list[str]:
-    return [
-        sentence.strip()
-        for sentence in _SENTENCE_SPLIT.split(value)
-        if sentence.strip()
-    ]
-
-
 def _candidate_is_valid(candidate: MemoryCandidate) -> bool:
     return (
         0 < len(candidate.category) <= 80
@@ -1042,114 +860,6 @@ def _memory_terms(value: str) -> set[str]:
         if any("가" <= character <= "힣" for character in match):
             result.update(match[index : index + 2] for index in range(len(match) - 1))
     return result
-
-
-def _explicit_identity_candidate(
-    value: str, message_id: str
-) -> MemoryCandidate | None:
-    if not _STABLE_MARKER.search(value) or _contains_sensitive(value):
-        return None
-    match = _KOREAN_NAME.search(value) or _ENGLISH_NAME.search(value)
-    if match is None:
-        return None
-    name = " ".join(match.group(1).split()).strip(" ._-'")
-    if not name or _contains_sensitive(name):
-        return None
-    return MemoryCandidate(
-        category="user_identity",
-        fact=f"사용자 이름은 {name}입니다.",
-        display_text=f"사용자 이름은 {name}입니다.",
-        confidence=0.99,
-        conflict_key="user_name",
-        source_message_ids=(message_id,),
-    )
-
-
-def _candidate_from_sentence(sentence: str, message_id: str) -> MemoryCandidate | None:
-    if _MEMORY_COMMAND_ONLY.fullmatch(sentence.strip()):
-        return None
-    language_match = _KOREAN_LANGUAGE.search(sentence) or _ENGLISH_LANGUAGE.search(
-        sentence
-    )
-    if language_match is not None and _STABLE_MARKER.search(sentence):
-        language = language_match.group(1).casefold()
-        display_language = "한국어" if language in {"한국어", "korean"} else "영어"
-        memory_text = f"답변 언어로 {display_language}를 선호합니다."
-        return MemoryCandidate(
-            category="communication_preference",
-            fact=memory_text,
-            display_text=memory_text,
-            confidence=0.98,
-            conflict_key="response_language",
-            source_message_ids=(message_id,),
-        )
-    role_match = _KOREAN_ROLE.search(sentence) or _ENGLISH_ROLE.search(sentence)
-    if role_match is not None:
-        role = " ".join(role_match.group(1).split()).strip(" .")
-        if role and not _contains_sensitive(role):
-            memory_text = f"사용자 역할은 {role}입니다."
-            return MemoryCandidate(
-                category="user_role",
-                fact=memory_text,
-                display_text=memory_text,
-                confidence=0.9,
-                conflict_key="user_role",
-                source_message_ids=(message_id,),
-            )
-    if not _STABLE_MARKER.search(sentence):
-        return None
-    lowered = sentence.casefold()
-    if any(
-        token in lowered
-        for token in ("간결", "짧게", "concise")
-    ):
-        category = "communication_preference"
-        conflict_key = "response_detail"
-        memory_text = "답변은 간결하게 작성하는 것을 선호합니다."
-    elif any(token in lowered for token in ("자세", "상세", "detailed")):
-        category = "communication_preference"
-        conflict_key = "response_detail"
-        memory_text = "답변은 상세하게 작성하는 것을 선호합니다."
-    elif any(token in lowered for token in ("존댓말", "반말", "formal", "casual")):
-        category = "communication_preference"
-        conflict_key = "response_tone"
-        memory_text = (
-            "존댓말 사용을 선호합니다."
-            if any(token in lowered for token in ("존댓말", "formal"))
-            else "반말 사용을 선호합니다."
-        )
-    elif any(
-        token in lowered for token in ("보고서", "report", "html", "markdown", "pdf")
-    ):
-        category = "output_preference"
-        conflict_key = "report_output"
-        format_name = next(
-            (
-                display
-                for token, display in (
-                    ("markdown", "Markdown"),
-                    ("html", "HTML"),
-                    ("pdf", "PDF"),
-                )
-                if token in lowered
-            ),
-            None,
-        )
-        memory_text = (
-            f"보고서는 {format_name} 형식을 선호합니다."
-            if format_name
-            else "출력은 보고서 형식을 선호합니다."
-        )
-    else:
-        return None
-    return MemoryCandidate(
-        category=category,
-        fact=memory_text,
-        display_text=memory_text,
-        confidence=0.82,
-        conflict_key=conflict_key,
-        source_message_ids=(message_id,),
-    )
 
 
 def _mode_for_run(db: Session, run: Run, user: User) -> str:

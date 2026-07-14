@@ -15,8 +15,9 @@ from lumina.config import Settings
 from lumina.context import compact_runtime_messages, prepare_context
 from lumina.db import SessionLocal, configure_database, create_schema
 from lumina.memories.service import (
-    ConservativeMemoryExtractor,
+    MemoryCandidate,
     MemoryExtractionResult,
+    PreparedMemoryExtractor,
     learn_memories_for_run,
     optimize_memories_with_llm,
     patch_memory,
@@ -37,6 +38,28 @@ from lumina.models import (
 from lumina.providers import ProviderMessage
 from lumina.runs.service import run_snapshot
 from lumina.providers.types import ProviderCapabilities, ProviderEvent
+
+
+def _inline_extractor(
+    message: Message,
+    *,
+    category: str,
+    fact: str,
+    conflict_key: str | None,
+    confidence: float = 0.98,
+) -> PreparedMemoryExtractor:
+    return PreparedMemoryExtractor(
+        (
+            MemoryCandidate(
+                category=category,
+                fact=fact,
+                display_text=fact,
+                confidence=confidence,
+                conflict_key=conflict_key,
+                source_message_ids=(message.id,),
+            ),
+        )
+    )
 
 
 def _configure(tmp_path: Path, name: str) -> tuple[User, Project, Conversation]:
@@ -968,7 +991,16 @@ def test_automatic_memory_learning_merge_conflict_delete_and_modes(
             turn_index=1,
             offset=2,
         )
-        first = learn_memories_for_run(db, first_run.id)
+        first = learn_memories_for_run(
+            db,
+            first_run.id,
+            extractor=_inline_extractor(
+                first_message,
+                category="communication_preference",
+                fact="답변 언어로 한국어를 선호합니다.",
+                conflict_key="response_language",
+            ),
+        )
         assert first.mode == "auto"
         assert len(first.created_ids) == 1
         korean = db.get(UserMemory, first.created_ids[0])
@@ -983,9 +1015,7 @@ def test_automatic_memory_learning_merge_conflict_delete_and_modes(
             )
         )
         assert extraction_event is not None
-        assert extraction_event.payload_json["extractorVersion"] == (
-            "offline-conservative-v2"
-        )
+        assert extraction_event.payload_json["extractorVersion"] == "llm-inline-v1"
         assert extraction_event.payload_json["createdIds"] == [korean.id]
 
         repeated_run = _run(
@@ -1004,11 +1034,21 @@ def test_automatic_memory_learning_merge_conflict_delete_and_modes(
             turn_index=2,
             offset=1,
         )
-        repeated = learn_memories_for_run(db, repeated_run.id)
+        repeated_extractor = _inline_extractor(
+            repeated_message,
+            category="communication_preference",
+            fact="답변 언어로 한국어를 선호합니다.",
+            conflict_key="response_language",
+        )
+        repeated = learn_memories_for_run(
+            db, repeated_run.id, extractor=repeated_extractor
+        )
         assert repeated.updated_ids == (korean.id,)
         assert korean.evidence_count == 2
         assert repeated_message.id in korean.source_message_ids_json
-        again = learn_memories_for_run(db, repeated_run.id)
+        again = learn_memories_for_run(
+            db, repeated_run.id, extractor=repeated_extractor
+        )
         assert again.updated_ids == ()
         assert korean.evidence_count == 2
 
@@ -1019,7 +1059,7 @@ def test_automatic_memory_learning_merge_conflict_delete_and_modes(
             conversation=conversation,
             sequence=3,
         )
-        _message(
+        conflict_message = _message(
             db,
             run=conflict_run,
             user=user,
@@ -1028,7 +1068,16 @@ def test_automatic_memory_learning_merge_conflict_delete_and_modes(
             turn_index=3,
             offset=1,
         )
-        conflict = learn_memories_for_run(db, conflict_run.id)
+        conflict = learn_memories_for_run(
+            db,
+            conflict_run.id,
+            extractor=_inline_extractor(
+                conflict_message,
+                category="communication_preference",
+                fact="답변 언어로 영어를 선호합니다.",
+                conflict_key="response_language",
+            ),
+        )
         english = db.get(UserMemory, conflict.created_ids[0])
         assert english is not None
         assert english.status == "active"
@@ -1043,7 +1092,7 @@ def test_automatic_memory_learning_merge_conflict_delete_and_modes(
             sequence=4,
             memory_mode="confirm",
         )
-        _message(
+        confirm_conflict_message = _message(
             db,
             run=confirm_conflict_run,
             user=user,
@@ -1052,7 +1101,16 @@ def test_automatic_memory_learning_merge_conflict_delete_and_modes(
             turn_index=4,
             offset=1,
         )
-        confirm_conflict = learn_memories_for_run(db, confirm_conflict_run.id)
+        confirm_conflict = learn_memories_for_run(
+            db,
+            confirm_conflict_run.id,
+            extractor=_inline_extractor(
+                confirm_conflict_message,
+                category="communication_preference",
+                fact="답변 언어로 한국어를 선호합니다.",
+                conflict_key="response_language",
+            ),
+        )
         pending_language = db.get(UserMemory, confirm_conflict.pending_ids[0])
         assert pending_language is not None
         assert pending_language.status == "pending"
@@ -1075,7 +1133,7 @@ def test_automatic_memory_learning_merge_conflict_delete_and_modes(
             conversation=conversation,
             sequence=5,
         )
-        _message(
+        deleted_message = _message(
             db,
             run=deleted_run,
             user=user,
@@ -1084,7 +1142,16 @@ def test_automatic_memory_learning_merge_conflict_delete_and_modes(
             turn_index=5,
             offset=1,
         )
-        deleted_repeat = learn_memories_for_run(db, deleted_run.id)
+        deleted_repeat = learn_memories_for_run(
+            db,
+            deleted_run.id,
+            extractor=_inline_extractor(
+                deleted_message,
+                category="communication_preference",
+                fact="답변 언어로 영어를 선호합니다.",
+                conflict_key="response_language",
+            ),
+        )
         assert deleted_repeat.created_ids == ()
         assert english.status == "deleted"
 
@@ -1096,7 +1163,7 @@ def test_automatic_memory_learning_merge_conflict_delete_and_modes(
             sequence=6,
             memory_mode="confirm",
         )
-        _message(
+        confirm_message = _message(
             db,
             run=confirm_run,
             user=user,
@@ -1105,7 +1172,16 @@ def test_automatic_memory_learning_merge_conflict_delete_and_modes(
             turn_index=6,
             offset=1,
         )
-        pending_result = learn_memories_for_run(db, confirm_run.id)
+        pending_result = learn_memories_for_run(
+            db,
+            confirm_run.id,
+            extractor=_inline_extractor(
+                confirm_message,
+                category="output_preference",
+                fact="보고서는 HTML 형식을 선호합니다.",
+                conflict_key="report_output",
+            ),
+        )
         assert pending_result.mode == "confirm"
         pending = db.get(UserMemory, pending_result.pending_ids[0])
         assert pending is not None and pending.status == "pending"
@@ -1147,26 +1223,8 @@ def test_automatic_memory_learning_merge_conflict_delete_and_modes(
         )
 
 
-def test_conservative_memory_extractor_blocks_prohibited_sensitive_topics() -> None:
-    extractor = ConservativeMemoryExtractor()
-    from lumina.memories.service import MemorySourceMessage
-
-    sensitive = (
-        "앞으로 제 사번은 123456으로 기억해 주세요.",
-        "항상 제 건강 진단 결과를 기억해 주세요.",
-        "앞으로 제가 지지하는 정당을 기억해 주세요.",
-        "항상 제 노조 가입 여부를 기억해 주세요.",
-        "항상 api_key=abcdef123456 값을 사용해 주세요.",
-        "Always remember that password is abcdef123456.",
-        "항상 -----BEGIN PRIVATE KEY----- 값을 기억해 주세요.",
-    )
-    for index, text in enumerate(sensitive):
-        candidates = extractor.extract((MemorySourceMessage(str(index), "run", text),))
-        assert not candidates, text
-
-
-def test_explicit_name_is_stored_by_offline_extractor(tmp_path: Path) -> None:
-    user, project, conversation = _configure(tmp_path, "explicit-name-memory")
+def test_general_inline_llm_fact_is_stored_without_local_extraction(tmp_path: Path) -> None:
+    user, project, conversation = _configure(tmp_path, "inline-memory")
     with SessionLocal() as db:
         user = db.merge(user)
         project = db.merge(project)
@@ -1183,7 +1241,7 @@ def test_explicit_name_is_stored_by_offline_extractor(tmp_path: Path) -> None:
             run=run,
             user=user,
             role="user",
-            text="내 이름은 오명철이야. 기억해",
+            text="저는 주말마다 등산을 합니다.",
             turn_index=1,
             offset=1,
         )
@@ -1191,17 +1249,23 @@ def test_explicit_name_is_stored_by_offline_extractor(tmp_path: Path) -> None:
         result = learn_memories_for_run(
             db,
             run.id,
-            extractor=ConservativeMemoryExtractor(),
+            extractor=_inline_extractor(
+                source,
+                category="recurring_rule",
+                fact="사용자는 주말마다 등산합니다.",
+                conflict_key="weekend_activity",
+                confidence=0.94,
+            ),
         )
         assert len(result.created_ids) == 1
         memory = db.get(UserMemory, result.created_ids[0])
         assert memory is not None
-        assert memory.category == "user_identity"
-        assert memory.normalized_fact == "사용자 이름은 오명철입니다."
-        assert memory.display_text == "사용자 이름은 오명철입니다."
-        assert memory.conflict_key == "user_name"
+        assert memory.category == "recurring_rule"
+        assert memory.normalized_fact == "사용자는 주말마다 등산합니다."
+        assert memory.display_text == "사용자는 주말마다 등산합니다."
+        assert memory.conflict_key == "weekend_activity"
         assert memory.source_message_ids_json == [source.id]
-        assert memory.extractor_version == "offline-conservative-v2"
+        assert memory.extractor_version == "llm-inline-v1"
 
 
 def test_memory_retrieval_selects_relevant_subset_with_core_preferences(

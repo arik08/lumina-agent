@@ -136,10 +136,6 @@ def _wait_for_terminal(
     raise AssertionError(f"Run {run_id} did not reach a terminal state")
 
 
-async def _skip_memory_extraction(_run_id: str) -> None:
-    return None
-
-
 class _GateProvider:
     provider_id = "mock"
     capabilities = ProviderCapabilities(tools=True)
@@ -375,9 +371,6 @@ def test_retryable_provider_failure_retries_only_before_output(
         local_run_executor, "_provider", lambda *_args, **_kwargs: provider
     )
     monkeypatch.setattr(
-        local_run_executor, "_learn_memory_background", _skip_memory_extraction
-    )
-    monkeypatch.setattr(
         executor_module,
         "_PROVIDER_RETRY_DELAYS_SECONDS",
         (0.0, 0.0),
@@ -427,9 +420,6 @@ def test_retryable_provider_failure_does_not_replay_partial_output(
         local_run_executor, "_provider", lambda *_args, **_kwargs: provider
     )
     monkeypatch.setattr(
-        local_run_executor, "_learn_memory_background", _skip_memory_extraction
-    )
-    monkeypatch.setattr(
         executor_module,
         "_PROVIDER_RETRY_DELAYS_SECONDS",
         (0.0, 0.0),
@@ -467,9 +457,6 @@ def test_output_limit_continues_without_losing_or_repeating_partial_text(
     monkeypatch.setattr(
         local_run_executor, "_provider", lambda *_args, **_kwargs: provider
     )
-    monkeypatch.setattr(
-        local_run_executor, "_learn_memory_background", _skip_memory_extraction
-    )
 
     with TestClient(create_app(_settings(tmp_path, "output-continuation.db"))) as client:
         csrf = _login(client)
@@ -495,9 +482,6 @@ def test_empty_provider_turn_retries_instead_of_completing_blank_response(
     monkeypatch.setattr(
         local_run_executor, "_provider", lambda *_args, **_kwargs: provider
     )
-    monkeypatch.setattr(
-        local_run_executor, "_learn_memory_background", _skip_memory_extraction
-    )
 
     with TestClient(create_app(_settings(tmp_path, "empty-turn-retry.db"))) as client:
         csrf = _login(client)
@@ -522,9 +506,6 @@ def test_repeated_empty_provider_turn_fails_visibly_instead_of_completing_blank(
     provider = _EmptyThenCompletingProvider(always_empty=True)
     monkeypatch.setattr(
         local_run_executor, "_provider", lambda *_args, **_kwargs: provider
-    )
-    monkeypatch.setattr(
-        local_run_executor, "_learn_memory_background", _skip_memory_extraction
     )
 
     with TestClient(create_app(_settings(tmp_path, "repeated-empty-turn.db"))) as client:
@@ -553,9 +534,6 @@ def test_different_conversations_for_one_user_execute_in_parallel(
 ) -> None:
     provider = _GateProvider(("parallel-A", "parallel-B"))
     monkeypatch.setattr(local_run_executor, "_provider", _gate_factory(provider))
-    monkeypatch.setattr(
-        local_run_executor, "_learn_memory_background", _skip_memory_extraction
-    )
 
     with TestClient(create_app(_settings(tmp_path, "parallel-runs.db"))) as client:
         try:
@@ -622,9 +600,6 @@ def test_same_conversation_second_run_stays_queued_until_first_finishes(
 
     monkeypatch.setattr(local_run_executor, "_provider", _gate_factory(provider))
     monkeypatch.setattr(local_run_executor, "_claim", tracked_claim)
-    monkeypatch.setattr(
-        local_run_executor, "_learn_memory_background", _skip_memory_extraction
-    )
 
     with TestClient(create_app(_settings(tmp_path, "serial-runs.db"))) as client:
         try:
@@ -685,9 +660,6 @@ def test_queue_next_promotes_to_new_run_only_after_terminal(
 ) -> None:
     provider = _GateProvider(("queue-current", "queue-next"))
     monkeypatch.setattr(local_run_executor, "_provider", _gate_factory(provider))
-    monkeypatch.setattr(
-        local_run_executor, "_learn_memory_background", _skip_memory_extraction
-    )
 
     with TestClient(create_app(_settings(tmp_path, "queue-next.db"))) as client:
         try:
@@ -807,9 +779,6 @@ def test_queue_next_is_promoted_after_provider_failure(
     monkeypatch.setattr(
         local_run_executor, "_provider", lambda *_args, **_kwargs: provider
     )
-    monkeypatch.setattr(
-        local_run_executor, "_learn_memory_background", _skip_memory_extraction
-    )
 
     with TestClient(
         create_app(_settings(tmp_path, "queue-provider-failure.db"))
@@ -879,9 +848,6 @@ def test_queued_message_is_recovered_once_after_executor_restart(
     settings = _settings(tmp_path, "queue-restart.db")
     provider = _GateProvider(("restart-current", "restart-next"))
     monkeypatch.setattr(local_run_executor, "_provider", _gate_factory(provider))
-    monkeypatch.setattr(
-        local_run_executor, "_learn_memory_background", _skip_memory_extraction
-    )
 
     with TestClient(create_app(settings)) as first_client:
         csrf = _login(first_client)
@@ -1014,9 +980,6 @@ def test_queue_promotion_fails_safe_when_access_is_no_longer_valid(
 ) -> None:
     provider = _GateProvider((f"failure-current-{failure_mode}",))
     monkeypatch.setattr(local_run_executor, "_provider", _gate_factory(provider))
-    monkeypatch.setattr(
-        local_run_executor, "_learn_memory_background", _skip_memory_extraction
-    )
 
     with TestClient(
         create_app(_settings(tmp_path, f"queue-{failure_mode}.db"))
@@ -1209,9 +1172,6 @@ def test_sse_stops_before_delivering_events_after_session_revocation(
 ) -> None:
     provider = _GateProvider(("stream-session-revocation",))
     monkeypatch.setattr(local_run_executor, "_provider", _gate_factory(provider))
-    monkeypatch.setattr(
-        local_run_executor, "_learn_memory_background", _skip_memory_extraction
-    )
 
     async def no_wait(_run_id: str, timeout: float = 15.0) -> None:
         del timeout
@@ -1301,9 +1261,6 @@ def test_sse_disconnect_snapshot_and_last_event_id_replay_are_lossless(
         return MockProvider(text_chunks=("final-after-artifact",))
 
     monkeypatch.setattr(local_run_executor, "_provider", fake_provider)
-    monkeypatch.setattr(
-        local_run_executor, "_learn_memory_background", _skip_memory_extraction
-    )
 
     with TestClient(create_app(_settings(tmp_path, "sse-replay.db"))) as client:
         csrf = _login(client)

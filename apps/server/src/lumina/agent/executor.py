@@ -41,9 +41,9 @@ from ..citations import resolve_inline_citations
 from ..db import SessionLocal, session_scope
 from ..http_client import TrustProfile
 from ..memories.service import (
-    MemorySourceMessage,
+    PreparedMemoryExtractor,
     learn_memories_for_run,
-    prepare_memory_extractor,
+    memory_candidates_from_inline_json,
 )
 from ..mcp.runtime import McpRuntime, McpRuntimeError, PreparedMcpTool
 from ..models import (
@@ -158,6 +158,8 @@ _TRUNCATED_AFTER_CONTINUATIONS_NOTICE = (
     "계속해 달라고 요청하면 이어서 진행할 수 있습니다.]"
 )
 ClaimResult = Literal["claimed", "wait", "stop"]
+_MEMORY_ENVELOPE_OPEN = "<lumina_memory>"
+_MEMORY_ENVELOPE_CLOSE = "</lumina_memory>"
 
 
 def _recalled_memory_context(snapshot: Mapping[str, Any]) -> str:
@@ -209,6 +211,89 @@ class RunLimitViolation:
             "limit": self.limit,
             "observed": self.observed,
         }
+
+
+class _InlineMemoryStream:
+    """Hide and collect a model-authored Memory envelope across stream chunks."""
+
+    def __init__(self) -> None:
+        self._pending = ""
+        self._payload_parts: list[str] = []
+        self._capturing = False
+        self._closed = False
+
+    @property
+    def payload(self) -> str | None:
+        if not self._closed:
+            return None
+        return "".join(self._payload_parts).strip()
+
+    def feed(self, chunk: str) -> str:
+        if not chunk:
+            return ""
+        if self._closed:
+            return chunk
+        self._pending += chunk
+        visible: list[str] = []
+        while self._pending:
+            if self._capturing:
+                close_at = self._pending.find(_MEMORY_ENVELOPE_CLOSE)
+                if close_at < 0:
+                    retained = _matching_prefix_suffix(
+                        self._pending, _MEMORY_ENVELOPE_CLOSE
+                    )
+                    if retained:
+                        self._payload_parts.append(self._pending[:-retained])
+                        self._pending = self._pending[-retained:]
+                    else:
+                        self._payload_parts.append(self._pending)
+                        self._pending = ""
+                    break
+                self._payload_parts.append(self._pending[:close_at])
+                self._pending = self._pending[
+                    close_at + len(_MEMORY_ENVELOPE_CLOSE) :
+                ]
+                self._capturing = False
+                self._closed = True
+                visible.append(self._pending)
+                self._pending = ""
+                break
+
+            open_at = self._pending.find(_MEMORY_ENVELOPE_OPEN)
+            if open_at >= 0:
+                visible.append(self._pending[:open_at])
+                self._pending = self._pending[
+                    open_at + len(_MEMORY_ENVELOPE_OPEN) :
+                ]
+                self._capturing = True
+                continue
+
+            retained = _matching_prefix_suffix(
+                self._pending, _MEMORY_ENVELOPE_OPEN
+            )
+            if retained:
+                visible.append(self._pending[:-retained])
+                self._pending = self._pending[-retained:]
+            else:
+                visible.append(self._pending)
+                self._pending = ""
+            break
+        return "".join(visible)
+
+    def finish(self) -> str:
+        if self._capturing:
+            self._pending = ""
+            return ""
+        visible = self._pending
+        self._pending = ""
+        return visible
+
+
+def _matching_prefix_suffix(value: str, prefix: str) -> int:
+    for size in range(min(len(value), len(prefix) - 1), 0, -1):
+        if value.endswith(prefix[:size]):
+            return size
+    return 0
 
 
 class _DatabaseWorkerLock:
@@ -648,6 +733,9 @@ class LocalRunExecutor:
         output_mode = _normalized_output_mode(
             run.snapshot_json.get("output_mode", "auto")
         )
+        memory_learning_enabled = (
+            run.snapshot_json.get("memory_learning_mode", "auto") != "off"
+        )
         artifact_required = retry_step_key != "final" and bool(
             _ARTIFACT_CREATION_REQUEST.search(user_message)
         )
@@ -735,6 +823,7 @@ class LocalRunExecutor:
             pending_text_chars = 0
             last_text_flush = time.monotonic()
             first_text_persisted = False
+            memory_stream = _InlineMemoryStream() if memory_learning_enabled else None
 
             async def flush_pending_text() -> None:
                 nonlocal pending_text_chars, last_text_flush, first_text_persisted
@@ -746,6 +835,30 @@ class LocalRunExecutor:
                 await self._append_text(run_id, assistant_message_id, text)
                 last_text_flush = time.monotonic()
                 first_text_persisted = True
+
+            async def accept_visible_text(text: str) -> None:
+                nonlocal progress_control_buffer, model_progress_summary
+                nonlocal pending_text_chars
+                if not text:
+                    return
+                (
+                    progress_control_buffer,
+                    visible_text,
+                    parsed_progress,
+                ) = _consume_progress_control(progress_control_buffer, text)
+                if parsed_progress is not None:
+                    model_progress_summary = parsed_progress
+                if not visible_text:
+                    return
+                round_text.append(visible_text)
+                pending_text.append(visible_text)
+                pending_text_chars += len(visible_text)
+                if (
+                    not first_text_persisted
+                    or pending_text_chars >= 512
+                    or time.monotonic() - last_text_flush >= 0.05
+                ):
+                    await flush_pending_text()
 
             try:
                 async with asyncio.timeout(self._remaining_run_seconds(run_id)):
@@ -764,27 +877,12 @@ class LocalRunExecutor:
                             interrupted_by_steer = True
                             break
                         if event.type == "text_delta" and event.text:
-                            visible_text = event.text
-                            if visible_text:
-                                (
-                                    progress_control_buffer,
-                                    visible_text,
-                                    parsed_progress,
-                                ) = _consume_progress_control(
-                                    progress_control_buffer, visible_text
-                                )
-                                if parsed_progress is not None:
-                                    model_progress_summary = parsed_progress
-                            if visible_text:
-                                round_text.append(visible_text)
-                                pending_text.append(visible_text)
-                                pending_text_chars += len(visible_text)
-                                if (
-                                    not first_text_persisted
-                                    or pending_text_chars >= 512
-                                    or time.monotonic() - last_text_flush >= 0.05
-                                ):
-                                    await flush_pending_text()
+                            visible_text = (
+                                memory_stream.feed(event.text)
+                                if memory_stream is not None
+                                else event.text
+                            )
+                            await accept_visible_text(visible_text)
                         elif event.type == "tool_call_started":
                             await flush_pending_text()
                             call_id = event.tool_call_id or new_uuid()
@@ -886,6 +984,8 @@ class LocalRunExecutor:
             except TimeoutError:
                 limit_violation = self._deadline_violation(run_id)
             finally:
+                if memory_stream is not None:
+                    await accept_visible_text(memory_stream.finish())
                 await flush_pending_text()
             with session_scope() as db:
                 active_run = db.get(Run, run_id)
@@ -1049,7 +1149,11 @@ class LocalRunExecutor:
                     artifact_completion_reminded = True
                     continue
                 await self._enter_final_plan(run_id)
-                await self._complete_run(run_id, assistant_message_id)
+                await self._complete_run(
+                    run_id,
+                    assistant_message_id,
+                    memory_json=memory_stream.payload if memory_stream else None,
+                )
                 return
 
             if _is_output_truncated_stop_reason(provider_stop_reason):
@@ -1819,16 +1923,32 @@ class LocalRunExecutor:
             )
         elif output_mode == "file":
             turn_system_parts.append(
-                "Output mode: File preference. Treat this as a strong preference for a "
-                "reusable artifact when the user's task would benefit from a document, "
-                "report, code file, or other saved deliverable. It is not an unconditional "
-                "command to create a file. For an obviously conversational request such as "
-                "a greeting, a short factual question, a confirmation, or a direct Memory "
-                "recall, answer in chat and do not create an artifact. When the user "
-                "explicitly asks for a file, create it. When intent is less explicit, use "
-                "semantic judgment and favor a file if it would be meaningfully useful, not "
-                "merely because this mode is selected. If you create one, keep the chat "
-                "response concise and refer to the file by its display name only."
+                "Output mode: File preference. This is a delivery preference, not proof "
+                "that the current request needs a file. Use artifact tools only when the "
+                "request's meaning or useful outcome calls for a reusable deliverable. "
+                "Otherwise answer normally in chat. Never infer file intent solely from "
+                "this selected mode. If you create a file, keep the chat response concise "
+                "and refer to the file by its display name only."
+            )
+        if run.snapshot_json.get("memory_learning_mode", "auto") != "off":
+            turn_system_parts.append(
+                "Memory capture contract: In the same final response, after all user-visible "
+                "answer text, append exactly one hidden Memory envelope in this form: "
+                '<lumina_memory>{"candidates":[]}</lumina_memory>. Populate candidates by '
+                "semantic judgment from only user-authored statements in the current Run; "
+                "do not use keyword or phrase matching. Include only explicit, durable facts "
+                "about the user, their lasting preferences, recurring rules, long-term goals, "
+                "roles, or terminology. Exclude transient requests, assistant/tool/document "
+                "content, inferences, secrets, credentials, identifiers, health, politics, "
+                "union membership, and other sensitive data. Each candidate must contain "
+                "exactly category, fact, confidence, and conflictKey. category must be one of "
+                "user_identity, user_role, communication_preference, output_preference, "
+                "recurring_rule, long_term_goal, terminology. Write fact as one short, "
+                "standalone Korean factual sentence; omit conversational commands and "
+                "explanations. confidence is 0-1. Use a stable conflictKey when a newer fact "
+                "should replace an older value, otherwise null. Return an empty candidates "
+                "array when there is nothing worth remembering. Never mention the envelope "
+                "or its contents in the visible answer."
             )
         if any(
             isinstance(schema.get("function"), dict)
@@ -3416,7 +3536,13 @@ class LocalRunExecutor:
             await event_broker.notify(run_id)
         return steer_messages
 
-    async def _complete_run(self, run_id: str, assistant_message_id: str) -> None:
+    async def _complete_run(
+        self,
+        run_id: str,
+        assistant_message_id: str,
+        *,
+        memory_json: str | None = None,
+    ) -> None:
         completed = False
         with session_scope() as db:
             run = db.get(Run, run_id)
@@ -3460,16 +3586,32 @@ class LocalRunExecutor:
                 reason="final_response_completed",
             )
             transition_run(db, run, COMPLETED, event_type="run_completed")
+            if run.snapshot_json.get("memory_learning_mode", "auto") != "off":
+                source_ids = tuple(
+                    db.scalars(
+                        select(Message.id)
+                        .where(
+                            Message.run_id == run.id,
+                            Message.role == "user",
+                            Message.author_user_id == run.user_id,
+                            Message.status == "completed",
+                        )
+                        .order_by(Message.created_at, Message.id)
+                    )
+                )
+                candidates = memory_candidates_from_inline_json(
+                    memory_json,
+                    source_message_ids=source_ids,
+                )
+                learn_memories_for_run(
+                    db,
+                    run.id,
+                    extractor=PreparedMemoryExtractor(candidates),
+                )
             completed = True
         if completed:
             self._emit_run_activity(run_id, "completed")
         await event_broker.notify(run_id)
-        task = asyncio.create_task(
-            self._learn_memory_background(run_id),
-            name=f"lumina-memory-{run_id}",
-        )
-        self._background_tasks.add(task)
-        task.add_done_callback(self._background_tasks.discard)
 
     def _emit_run_activity(self, run_id: str, state: str) -> None:
         with SessionLocal() as db:
@@ -3483,84 +3625,6 @@ class LocalRunExecutor:
                 state,
                 user_login_id=user.login_id,
             )
-
-    async def _learn_memory_background(self, run_id: str) -> None:
-        if self.settings.environment != "test":
-            await asyncio.sleep(1)
-            while self._started:
-                with SessionLocal() as db:
-                    completed_run = db.get(Run, run_id)
-                    if completed_run is None:
-                        return
-                    foreground_run_id = db.scalar(
-                        select(Run.id)
-                        .where(
-                            Run.user_id == completed_run.user_id,
-                            Run.id != run_id,
-                            ~Run.status.in_(TERMINAL_STATUSES),
-                        )
-                        .limit(1)
-                    )
-                if foreground_run_id is None:
-                    break
-                await asyncio.sleep(0.5)
-            if not self._started:
-                return
-        else:
-            await asyncio.sleep(0)
-        try:
-            with SessionLocal() as db:
-                run = db.get(Run, run_id)
-                if run is None or run.status != COMPLETED:
-                    return
-                provider_id = run.provider_id
-                runtime_model_id = run.runtime_model_id
-                source_rows = list(
-                    db.scalars(
-                        select(Message)
-                        .where(
-                            Message.run_id == run.id,
-                            Message.role == "user",
-                            Message.author_user_id == run.user_id,
-                            Message.status == "completed",
-                        )
-                        .order_by(Message.created_at, Message.id)
-                    )
-                )
-                sources = tuple(
-                    MemorySourceMessage(
-                        id=message.id,
-                        run_id=run.id,
-                        text=message.canonical_text,
-                    )
-                    for message in source_rows
-                )
-            provider = (
-                self._provider(provider_id, wants_artifact=False, first_turn=False)
-                if provider_id != "mock"
-                else None
-            )
-            extractor = await prepare_memory_extractor(
-                provider,
-                model=runtime_model_id,
-                messages=sources,
-            )
-            with session_scope() as db:
-                learn_memories_for_run(db, run_id, extractor=extractor)
-        except Exception:
-            logger.exception(
-                "Background Memory extraction failed", extra={"run_id": run_id}
-            )
-            with session_scope() as db:
-                run = db.get(Run, run_id)
-                if run is not None and run.status == COMPLETED:
-                    append_event(
-                        db,
-                        run,
-                        "memory_extraction_failed",
-                        {"reason": "extractor_failed"},
-                    )
-        await event_broker.notify(run_id)
 
     async def _fail_run(self, run_id: str, code: str, message: str) -> None:
         with session_scope() as db:
