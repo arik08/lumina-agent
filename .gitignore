@@ -10,7 +10,7 @@
 .playwright-mcp/
 .lumina-ui-checks/
 /.tmp-comment-selection-verify.*
-/artifact-output-length-composer.png
+/artifact-output-*
 /lumina-question-navigator.png
 
 # Runtime data and secrets
