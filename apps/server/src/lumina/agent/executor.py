@@ -2256,6 +2256,15 @@ class LocalRunExecutor:
                     f"({skill.get('digest', 'unknown')})\n"
                     f"{_bounded_text(instructions, 40_000)}"
                 )
+        for mcp_server in run.snapshot_json.get("mcp_servers", []):
+            wrapper = mcp_server.get("skill_wrapper", {})
+            instructions = str(wrapper.get("instructions", "")).strip()
+            if instructions:
+                system += (
+                    f"\n\nSelected MCP guidance: {mcp_server.get('name', 'MCP')} "
+                    f"({wrapper.get('digest', 'unknown')})\n"
+                    f"{_bounded_text(instructions, 40_000)}"
+                )
         messages: list[ProviderMessage] = [
             ProviderMessage(role="system", content=system)
         ]

@@ -53,7 +53,7 @@ def _frontmatter(text: str) -> dict[str, str]:
             result[active_key] = f"{result[active_key]} {raw_line.strip()}".strip()
             continue
         key, separator, value = raw_line.partition(":")
-        if separator and key.strip() in {"name", "description"}:
+        if separator and key.strip() in {"name", "description", "source"}:
             active_key = key.strip()
             cleaned = value.strip().strip("'\"")
             result[active_key] = "" if cleaned in {">", "|", ">-", "|-"} else cleaned
@@ -124,6 +124,12 @@ def sync_repository_skills(
             or folder.name
         )
         description = str(translations.get(slug) or metadata.get("description", ""))
+        wrapper_source = metadata.get("source", "")
+        mcp_slug = (
+            normalize_slug(wrapper_source.removeprefix("skill-mcp:"))
+            if wrapper_source.startswith("skill-mcp:")
+            else None
+        )
         manifest = {
             "source": "repository",
             "sourcePath": folder.relative_to(root or REPOSITORY_ROOT).as_posix(),
@@ -131,6 +137,11 @@ def sync_repository_skills(
             "tags": _catalog_tags(tags_by_slug.get(slug)),
             "publisher": "Lumina",
             "fileCount": len(package),
+            **(
+                {"classification": "mcp", "mcpSlug": mcp_slug}
+                if mcp_slug is not None
+                else {}
+            ),
         }
         extension = db.scalar(
             select(Extension).where(
@@ -139,7 +150,7 @@ def sync_repository_skills(
         )
         if extension is None:
             extension = Extension(
-                kind="skill",
+                kind="mcp" if mcp_slug is not None else "skill",
                 slug=slug,
                 name=metadata.get("name", folder.name),
                 description=description,
@@ -167,6 +178,7 @@ def sync_repository_skills(
         )
         extension.name = metadata.get("name", folder.name)
         extension.description = description
+        extension.kind = "mcp" if mcp_slug is not None else "skill"
         extension.visibility = "organization"
         extension.publisher_user_id = admin.id
         if (

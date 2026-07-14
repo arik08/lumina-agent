@@ -25,6 +25,7 @@
 - 사용자 데이터는 기본 격리하고 명시적으로 활성화한 공유 모드에서만 공유합니다. 사용자별 `AGENTS.md`는 루트 규칙을 대체할 수 없으며 비밀값·개인 계정 정보와 함께 공유하지 않습니다.
 - 서로 다른 Session의 Run은 병렬 실행할 수 있고 같은 Session은 한 Run만 실행하며 추가 요청은 Queue에 둡니다. 세션 이동·연결 종료가 Run을 중단하지 않으며, 재접속 시 Backend snapshot과 순번 event replay로 진행 상태를 복원합니다.
 - Frontend가 보낸 파일 경로와 Skill·MCP 이름을 신뢰하지 말고 Backend에서 사용자·조직·공유 범위와 권한을 재검증합니다.
+- 모든 MCP는 필요한 순간에만 사용 지침을 Context에 넣을 수 있도록 `extensions/skills/<wrapper>/SKILL.md`로 감싸고 frontmatter에 `source: skill-mcp:<mcp-slug>`를 둡니다. MCP wrapper는 저장·카탈로그·Composer에서 일반 Skill이 아니라 MCP로 분류하며 Skill과 MCP 양쪽에 중복 노출하지 않습니다. 새 MCP를 추가하거나 slug를 바꿀 때 manifest와 wrapper를 같은 변경에서 함께 갱신합니다.
 - Skill WorkingDraft는 실제 Run에 즉시 사용할 수 있어야 하고 Run은 정확한 revision과 digest를 고정합니다. 명시적 저장만 immutable version을 만들며 새 Skill은 기본 Private입니다. 활성 Draft는 관련 UI에 `Draft rN`과 저장 action을 표시합니다. Folder 이동은 배치 metadata만 바꾸고 stable ID·version·digest·installation·Run snapshot은 보존합니다.
 - 사용자가 형식을 지정하지 않은 보고서는 독립 실행형 HTML을 기본으로 생성합니다. 외부 연결은 전용 Connector/API → MCP → Browser 자동화 → Computer Use 순으로 우선합니다.
 - TLS 오류를 `verify=False`로 우회하지 않고 public CA와 company CA를 결합한 Trust Manager를 사용합니다. P-GPT 기본 endpoint는 MyHarness와 같게 유지하고 `PGPT_BASE_URL`은 관리자 override로만 제공합니다.

@@ -20,6 +20,7 @@ from lumina.auth import bootstrap_database, create_user
 from lumina.config import Settings, get_settings
 from lumina.db import SessionLocal, configure_database, create_schema
 from lumina.extensions import repository_catalog
+from lumina.mcp.service import install_definition, resolve_mcp_snapshot
 from lumina.models import (
     Artifact,
     AuditEvent,
@@ -29,6 +30,7 @@ from lumina.models import (
     ExtensionDraftBinding,
     ExtensionInstallation,
     ExtensionVersion,
+    McpDefinition,
     Organization,
     Project,
     Run,
@@ -167,6 +169,132 @@ def test_marketplace_refresh_syncs_new_repository_skill(
         assert repeated.json()["skillsChanged"] == 0
         assert repeated.json()["mcpChanged"] == 0
         assert repeated.json()["revision"] == synced.json()["revision"]
+
+
+def test_repository_mcp_wrapper_is_classified_and_attached_to_mcp_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository_root = tmp_path / "repository"
+    skills_root = repository_root / "extensions" / "skills"
+    mcp_root = repository_root / "extensions" / "mcp"
+    skills_root.mkdir(parents=True)
+    mcp_root.mkdir(parents=True)
+    monkeypatch.setattr(repository_catalog, "REPOSITORY_ROOT", repository_root)
+
+    app, _settings = _test_app(tmp_path)
+    with TestClient(app) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        wrapper_root = skills_root / "internal-search"
+        wrapper_root.mkdir()
+        (wrapper_root / "SKILL.md").write_text(
+            "---\n"
+            "name: internal-search\n"
+            "description: 승인된 사내 문서를 검색합니다.\n"
+            "source: skill-mcp:internal-search\n"
+            "---\n\n"
+            "# Internal Search\n\n반드시 MCP 검색 결과만 근거로 답합니다.\n",
+            encoding="utf-8",
+        )
+        (mcp_root / "internal-search.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "internal-search": {
+                            "type": "stdio",
+                            "command": "python",
+                            "args": ["internal_search.py"],
+                            "cwd": ".",
+                            "description": "승인된 사내 문서를 검색합니다.",
+                            "tools": [
+                                {
+                                    "name": "search_docs",
+                                    "description": "문서 검색",
+                                    "input_schema": {"type": "object"},
+                                }
+                            ],
+                        }
+                    }
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        synced = client.post(
+            "/api/extensions/repository-sync",
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert synced.status_code == 200, synced.text
+        assert client.get("/api/extensions").json() == []
+        assert client.get("/api/extensions/catalog").json()["items"] == []
+
+        with SessionLocal() as db:
+            extension = db.scalar(
+                select(Extension).where(Extension.slug == "internal-search")
+            )
+            definition = db.scalar(
+                select(McpDefinition).where(McpDefinition.slug == "internal-search")
+            )
+            admin = db.scalar(select(User).where(User.login_id == "admin@posco.com"))
+            assert (
+                extension is not None and definition is not None and admin is not None
+            )
+            assert extension.kind == "mcp"
+            version = db.get(ExtensionVersion, extension.latest_published_version_id)
+            assert version is not None
+            assert version.manifest_json["classification"] == "mcp"
+            assert version.manifest_json["mcpSlug"] == "internal-search"
+            install_definition(
+                db,
+                user=admin,
+                definition_id=definition.id,
+                revision_id=definition.current_revision_id,
+                scope_type="user",
+                scope_id=admin.id,
+                enabled=True,
+                tool_allowlist=["search_docs"],
+            )
+            snapshot = resolve_mcp_snapshot(db, user=admin, project_id=project_id)[0]
+            assert snapshot["skill_wrapper"]["extension_id"] == extension.id
+            assert "반드시 MCP 검색 결과만" in snapshot["skill_wrapper"]["instructions"]
+
+
+def test_selected_mcp_wrapper_guidance_enters_the_run_context(tmp_path: Path) -> None:
+    app, settings = _test_app(tmp_path)
+    with TestClient(app) as client:
+        csrf = _login(client)
+        _task, scheduled = _create_manual_scheduled_run(
+            client,
+            csrf=csrf,
+            name="MCP wrapper Context 점검",
+            idempotency_key="mcp-wrapper-context-0001",
+            max_attempts=1,
+        )
+
+    with SessionLocal() as db:
+        run = db.get(Run, str(scheduled["runId"]))
+        assert run is not None
+        run.snapshot_json = {
+            **run.snapshot_json,
+            "mcp_servers": [
+                {
+                    "name": "Internal Search",
+                    "skill_wrapper": {
+                        "digest": "wrapper-digest-v1",
+                        "instructions": "승인된 MCP 검색 결과만 근거로 사용합니다.",
+                    },
+                }
+            ],
+        }
+        run_id = run.id
+        db.commit()
+
+    messages = LocalRunExecutor(settings)._conversation_messages(
+        run_id, "사내 규정을 찾아주세요."
+    )
+    assert "Selected MCP guidance: Internal Search" in messages[0].content
+    assert "승인된 MCP 검색 결과만 근거로 사용합니다." in messages[0].content
 
 
 def test_repository_watcher_accepts_supported_extension_paths(tmp_path: Path) -> None:
@@ -589,8 +717,12 @@ def test_skill_catalog_counts_likes_and_protects_uninstalled_packages(
         with SessionLocal() as db:
             organization = db.scalar(select(Organization))
             admin = db.scalar(select(User).where(User.login_id == "admin@posco.com"))
-            project = db.scalar(select(Project).where(Project.owner_user_id == admin.id))
-            assert organization is not None and admin is not None and project is not None
+            project = db.scalar(
+                select(Project).where(Project.owner_user_id == admin.id)
+            )
+            assert (
+                organization is not None and admin is not None and project is not None
+            )
             conversation = Conversation(
                 organization_id=organization.id,
                 project_id=project.id,
@@ -726,7 +858,10 @@ def test_published_skill_has_isolated_personal_drafts_and_multiple_owners(
             json={"versionId": saved.json()["id"], "scopeType": "user"},
         )
         assert installed.status_code == 201, installed.text
-        assert client.get(f"/api/extensions/{skill['id']}").json()["canCreateDraft"] is True
+        assert (
+            client.get(f"/api/extensions/{skill['id']}").json()["canCreateDraft"]
+            is True
+        )
         checkout = client.post(
             f"/api/extensions/{skill['id']}/draft", headers=worker_headers
         )

@@ -142,7 +142,9 @@ def _ensure_no_secrets(value: Any, *, path: str = "settings") -> None:
 
 def extension_access_query(user: User):
     if user.role == "admin":
-        return select(Extension).where(Extension.archived_at.is_(None))
+        return select(Extension).where(
+            Extension.kind == "skill", Extension.archived_at.is_(None)
+        )
     project_ids = select(ProjectMembership.project_id).where(
         ProjectMembership.user_id == user.id,
         ProjectMembership.status == "active",
@@ -153,6 +155,7 @@ def extension_access_query(user: User):
         SkillOwnership.role.in_(("owner", "maintainer")),
     )
     return select(Extension).where(
+        Extension.kind == "skill",
         Extension.archived_at.is_(None),
         or_(
             Extension.owner_user_id == user.id,

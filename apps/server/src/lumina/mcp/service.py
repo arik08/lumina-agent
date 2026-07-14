@@ -13,6 +13,8 @@ from sqlalchemy.orm import Session
 from ..api.errors import ApiProblem
 from ..authorization import require_admin, require_project
 from ..models import (
+    Extension,
+    ExtensionVersion,
     McpConfigurationRevision,
     McpDefinition,
     McpInstallation,
@@ -1050,6 +1052,7 @@ def resolve_mcp_snapshot(
     db: Session, *, user: User, project_id: str
 ) -> list[dict[str, Any]]:
     require_project(db, user, project_id)
+    wrappers = _mcp_skill_wrappers(db, organization_id=user.organization_id)
     rows = list(
         db.execute(
             select(McpInstallation, McpConfigurationRevision, McpDefinition)
@@ -1118,11 +1121,56 @@ def resolve_mcp_snapshot(
             "schema_status": revision.schema_status,
             "scope_type": installation.scope_type,
             "scope_id": installation.scope_id,
+            **(
+                {"skill_wrapper": wrappers[definition.slug]}
+                if definition.slug in wrappers
+                else {}
+            ),
         }
     return sorted(
         resolved.values(),
         key=lambda item: (str(item["name"]), str(item["definition_id"])),
     )
+
+
+def _mcp_skill_wrappers(
+    db: Session, *, organization_id: str
+) -> dict[str, dict[str, Any]]:
+    wrappers: dict[str, dict[str, Any]] = {}
+    for extension, version in db.execute(
+        select(Extension, ExtensionVersion)
+        .join(
+            ExtensionVersion,
+            ExtensionVersion.id == Extension.latest_published_version_id,
+        )
+        .where(
+            Extension.organization_id == organization_id,
+            Extension.kind == "mcp",
+            Extension.archived_at.is_(None),
+            ExtensionVersion.status == "published",
+            ExtensionVersion.revoked_at.is_(None),
+        )
+    ):
+        mcp_slug = str(version.manifest_json.get("mcpSlug", "")).strip()
+        if not mcp_slug:
+            continue
+        instructions = next(
+            (
+                content
+                for path, content in version.package_json.items()
+                if path.casefold() == "skill.md"
+            ),
+            "",
+        ).strip()
+        if not instructions:
+            continue
+        wrappers[mcp_slug] = {
+            "extension_id": extension.id,
+            "name": extension.name,
+            "digest": version.package_digest,
+            "instructions": instructions,
+        }
+    return wrappers
 
 
 def _secret_resolution_status(
