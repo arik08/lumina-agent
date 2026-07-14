@@ -36,6 +36,9 @@
   --success: #2f9765;
   --warning: #b8771f;
   --danger: #c34f51;
+  --danger-border: color-mix(in srgb, var(--danger) 55%, var(--line));
+  --danger-surface: color-mix(in srgb, var(--surface) 94%, var(--danger));
+  --danger-shadow: color-mix(in srgb, var(--danger) 16%, transparent);
   --cache-rate-critical: var(--danger);
   --cache-rate-low: oklch(52% 0.14 48);
   --cache-rate-moderate: oklch(52% 0.11 80);
@@ -2839,7 +2842,12 @@ button:disabled { cursor: default; opacity: 0.5; }
 .theme-dark .mobile-menu-button { color: var(--ink); }
 
 .toast { position: fixed; z-index: 100; right: 22px; bottom: 10px; max-width: min(360px, calc(100vw - 44px)); padding: 10px 13px; border: 1px solid color-mix(in srgb, var(--cobalt) 82%, var(--ink)); border-radius: 7px; background: var(--cobalt); color: white; box-shadow: 0 9px 26px color-mix(in srgb, var(--cobalt) 24%, transparent); font-size: 12.5px; animation: toast-in 160ms ease-out; }
-.toast.is-error { border-color: #8b4143; background: #672f31; }
+.toast.is-error {
+  border-color: var(--danger-border);
+  background: var(--danger-surface);
+  color: var(--danger);
+  box-shadow: 0 9px 26px var(--danger-shadow);
+}
 .backend-disconnected {
   position: fixed;
   z-index: 120;
@@ -2850,9 +2858,9 @@ button:disabled { cursor: default; opacity: 0.5; }
   align-items: center;
   gap: 10px;
   padding: 10px 13px;
-  border: 1px solid color-mix(in srgb, var(--danger) 55%, var(--line));
+  border: 1px solid var(--danger-border);
   border-radius: 9px;
-  background: color-mix(in srgb, var(--surface) 94%, var(--danger));
+  background: var(--danger-surface);
   color: var(--danger);
   box-shadow: 0 10px 30px rgba(20, 24, 31, 0.18);
   transform: translateX(-50%);

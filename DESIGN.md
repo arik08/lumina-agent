@@ -19,6 +19,8 @@ colors:
   success: "#2f9765"
   warning: "#b8771f"
   danger: "#c34f51"
+  danger-border: "color-mix(in srgb, {colors.danger} 55%, {colors.line})"
+  danger-surface: "color-mix(in srgb, {colors.surface} 94%, {colors.danger})"
   dark-canvas: "#17191d"
   dark-menu-surface: "#121417"
   dark-surface: "#1d2025"
@@ -254,6 +256,13 @@ Lumina는 flat by default입니다. 일반 section과 row는 surface tone과 1px
 
 - **Tooltip:** 모든 tooltip은 body portal의 공용 layer를 사용합니다. browser title과 clipping container 내부 pseudo-element는 금지합니다.
 - **Scrollbar:** 모든 사용자 노출 scroll surface는 공용 thin scrollbar를 사용합니다. Track은 투명하게 유지하고 thumb는 accent 색이 아닌 `ink` 기반의 중성 회색으로 계산합니다. 기본 상태는 11% 강도로 은은하게 보이며, 스크롤 조작 중에는 30%로 선명해지고 마지막 조작 650ms 후 520ms 동안 서서히 흐려집니다. Light와 Dark, Artifact Library, 채팅, Marketplace, 파일 Workspace, 예약 작업, 설정, popover와 선택 메뉴에 같은 token과 idle-fade 동작을 적용하며 화면별 색상 예외를 만들지 않습니다.
+
+### Warning and Error Messages
+
+- **Warning / Error Standard:** 실패, 연결 끊김, 재시도가 필요한 경고 메시지는 `danger-border` 1px 전체 테두리, `danger-surface`의 연한 분홍 배경과 `danger` 텍스트를 사용합니다. 진한 빨간색 단색 배경이나 cobalt 정보 알림 스타일을 사용하지 않습니다.
+- **Shared Visual Language:** 화면 상단 연결 경고와 우측 하단 오류 toast는 위치와 크기가 달라도 같은 semantic token을 사용합니다. 공용 token을 바꾸면 두 표현이 함께 갱신되어야 합니다.
+- **Content and Accessibility:** 경고 icon 또는 명확한 실패 문구를 함께 표시하고, 긴 보조 설명은 `muted`로 낮춥니다. 긴급 오류는 `role="alert"`, 일반 상태 알림은 `role="status"`를 사용하며 색상만으로 의미를 전달하지 않습니다.
+- **Elevation:** toast와 고정 banner처럼 DOM 흐름 위에 뜨는 경고에만 낮은 danger-tinted shadow를 허용합니다. Shadow는 테두리보다 강하게 보이지 않아야 합니다.
 
 ## Do's and Don'ts
 
