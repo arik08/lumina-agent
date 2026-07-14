@@ -798,8 +798,7 @@ try {
             else {
                 Write-Host "[Lumina] Service: http://127.0.0.1:$BackendPort"
             }
-            $koreanResetKey = [char]0x3131
-            Write-Host "[Lumina] Press r, R, or $koreanResetKey to hard reset Frontend and Backend."
+            Write-Host "[Lumina] Press R to hard reset Frontend and Backend."
             Write-Host "[Lumina] Logs: $LogRoot"
 
             $healthFailures = 0

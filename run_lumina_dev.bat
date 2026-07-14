@@ -10,7 +10,7 @@ if not "%LUMINA_DEV_EXIT%"=="0" (
 ) else (
     echo [Lumina] Development launcher stopped.
 )
-echo [Lumina] Press r, R, or ㄱ to restart. Press any other key to close this window.
+echo [Lumina] Press R to restart. Press any other key to close this window.
 call powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0devtools\Wait-LuminaLauncherRestart.ps1"
 if "%ERRORLEVEL%"=="75" (
     echo.
