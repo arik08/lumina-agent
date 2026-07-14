@@ -841,7 +841,8 @@ button:disabled { cursor: default; opacity: 0.5; }
 .run-state.state-failed { color: var(--danger); }
 .run-state.state-running { color: var(--cobalt); }
 .schedule-form { width: min(520px, 100%); }
-.schedule-form-row { display: grid; grid-template-columns: minmax(110px, 1.6fr) repeat(3, minmax(58px, 0.7fr)); gap: 7px; }
+.schedule-form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 7px; }
+.schedule-execution-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; padding-top: 2px; }
 
 .memory-settings { display: flex; min-height: 56px; align-items: center; justify-content: space-between; gap: 18px; padding: 7px 18px; border-bottom: 1px solid var(--line); background: var(--surface); }
 .memory-setting-copy { display: grid; min-width: 0; gap: 2px; }
@@ -2978,7 +2979,7 @@ button:disabled { cursor: default; opacity: 0.5; }
   .artifact-library-row time { display: none; }
   .schedule-run-row { grid-template-columns: 76px minmax(0, 1fr); }
   .schedule-run-row small { display: none; }
-  .schedule-form-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .schedule-form-row, .schedule-execution-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .memory-settings { display: grid; gap: 7px; padding: 9px 10px; }
   .memory-mode-control { justify-content: flex-start; }
   .memory-toolbar { align-items: stretch; padding-right: 10px; padding-left: 10px; }

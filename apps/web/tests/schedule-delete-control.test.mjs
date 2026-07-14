@@ -48,3 +48,31 @@ test("running a scheduled task refreshes the sidebar conversation list immediate
   assert.match(app, /<SchedulesView[\s\S]*?onConversationsChanged=\{workspace\.refreshConversations\}/);
   assert.match(workspace, /return\s*\{[\s\S]*?refreshConversations,/);
 });
+
+test("new schedules choose an independent execution from the checked chat models", async () => {
+  const [view, app] = await Promise.all([
+    read("../src/components/SchedulesView.tsx"),
+    read("../src/App.tsx"),
+  ]);
+
+  assert.match(app, /\.filter\(\(model\) => workspace\.settings\?\.modelCandidates\[provider\.id\]\?\.includes\(model\.modelKey\)\)/);
+  assert.match(app, /<SchedulesView[\s\S]*?executionOptions=\{candidateModelOptions\}/);
+  assert.match(view, /setDraftExecution\(defaultScheduleExecution\(execution, executionOptions\)\)/);
+  assert.match(view, /ariaLabel="예약 Provider"/);
+  assert.match(view, /ariaLabel="예약 Model"/);
+  assert.match(view, /ariaLabel="예약 Effort"/);
+  assert.match(view, /execution: draftExecution/);
+});
+
+test("weekly schedule controls keep weekday before hour with balanced widths", async () => {
+  const [view, styles] = await Promise.all([
+    read("../src/components/SchedulesView.tsx"),
+    read("../src/styles.css"),
+  ]);
+
+  const timingStart = view.indexOf('className="schedule-form-row"');
+  const timingEnd = view.indexOf('className="schedule-execution-row"', timingStart);
+  const timingControls = view.slice(timingStart, timingEnd);
+  assert.ok(timingControls.indexOf("예약 요일") < timingControls.indexOf('<span>시</span>'));
+  assert.match(styles, /\.schedule-form-row\s*\{[^}]*repeat\(auto-fit, minmax\(92px, 1fr\)\)/);
+});

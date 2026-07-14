@@ -1232,7 +1232,10 @@ function App() {
         label: `${model.displayName} · ${provider.displayName}`,
         triggerLabel: model.displayName,
         providerId: provider.id,
+        providerLabel: provider.displayName,
         modelKey: model.modelKey,
+        modelLabel: model.displayName,
+        effortOptions: model.capabilities.effortOptions,
       })),
   );
   const selectedCandidateId = candidateModelOptions.find((option) =>
@@ -2923,7 +2926,7 @@ function App() {
         {mainView === "library" && <ArtifactLibraryView projectId={workspace.activeProjectId} onOpenArtifact={(artifact) => void openArtifact(artifact)} onOpenNavigation={() => setSidebarOpen(true)} />}
         {mainView === "files" && <ProjectFilesView projectId={workspace.activeProjectId} onOpenNavigation={() => setSidebarOpen(true)} onToast={showToast} />}
         {mainView === "help" && <HelpCenterView canManage={isAdmin} onOpenNavigation={() => setSidebarOpen(true)} onToast={showToast} />}
-        {mainView === "schedules" && <SchedulesView projectId={workspace.activeProjectId} execution={workspace.settings?.execution ?? null} onOpenNavigation={() => setSidebarOpen(true)} onConversationsChanged={workspace.refreshConversations} />}
+        {mainView === "schedules" && <SchedulesView projectId={workspace.activeProjectId} execution={workspace.settings?.execution ?? null} executionOptions={candidateModelOptions} onOpenNavigation={() => setSidebarOpen(true)} onConversationsChanged={workspace.refreshConversations} />}
         {mainView === "memory" && <MemoryView project={activeProject} completedRunId={completedProjectLearningRunId} canReviewProjectLearning={canReviewProjectLearning} onOpenNavigation={() => setSidebarOpen(true)} />}
         {mainView === "admin" && isAdmin && <AdminView onOpenNavigation={() => setSidebarOpen(true)} onToast={showToast} onUserUpdated={() => void workspace.refreshAuthSession()} />}
         {mainView === "settings" && (

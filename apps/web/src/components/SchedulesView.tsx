@@ -14,13 +14,22 @@ import {
 } from "lucide-react";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "../api";
-import type { ExecutionSelection, ScheduleKind, ScheduledRun, ScheduledTask } from "../api-types";
+import type { EffortOption, ExecutionSelection, ScheduleKind, ScheduledRun, ScheduledTask } from "../api-types";
 import { SelectMenu } from "./SelectMenu";
 import { ResizableSplitPane } from "./ResizableSplitPane";
+
+interface ScheduleExecutionOption {
+  providerId: string;
+  providerLabel: string;
+  modelKey: string;
+  modelLabel: string;
+  effortOptions: EffortOption[];
+}
 
 interface SchedulesViewProps {
   projectId: string | null;
   execution: ExecutionSelection | null;
+  executionOptions: ScheduleExecutionOption[];
   onOpenNavigation: () => void;
   onConversationsChanged: () => Promise<unknown>;
 }
@@ -35,6 +44,30 @@ const kindLabels: Record<ScheduleKind, string> = {
 
 const scheduleKindOptions = Object.entries(kindLabels).map(([value, label]) => ({ value, label }));
 const weekdayOptions = ["월", "화", "수", "목", "금", "토", "일"].map((label, index) => ({ value: String(index), label }));
+
+function effortForOption(option: ScheduleExecutionOption, preferred: string | null | undefined) {
+  if (preferred === null) return null;
+  const effortIds = option.effortOptions.map((item) => item.id);
+  if (preferred && effortIds.includes(preferred)) return preferred;
+  return effortIds.find((item) => item === "medium") ?? effortIds[0] ?? null;
+}
+
+function defaultScheduleExecution(
+  execution: ExecutionSelection | null,
+  options: ScheduleExecutionOption[],
+): ExecutionSelection | null {
+  const option = options.find((item) => (
+    item.providerId === execution?.providerId && item.modelKey === execution.modelKey
+  )) ?? options[0];
+  if (!option) return null;
+  return {
+    providerId: option.providerId,
+    modelKey: option.modelKey,
+    effortId: effortForOption(option, option.providerId === execution?.providerId && option.modelKey === execution.modelKey
+      ? execution.effortId
+      : undefined),
+  };
+}
 
 function scheduleText(task: ScheduledTask) {
   const hour = task.scheduleConfig.hour;
@@ -56,7 +89,7 @@ function runStatusLabel(status: string) {
   return status;
 }
 
-export function SchedulesView({ projectId, execution, onOpenNavigation, onConversationsChanged }: SchedulesViewProps) {
+export function SchedulesView({ projectId, execution, executionOptions, onOpenNavigation, onConversationsChanged }: SchedulesViewProps) {
   const [tasks, setTasks] = useState<ScheduledTask[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [runs, setRuns] = useState<ScheduledRun[]>([]);
@@ -73,8 +106,27 @@ export function SchedulesView({ projectId, execution, onOpenNavigation, onConver
   const [hour, setHour] = useState(9);
   const [minute, setMinute] = useState(0);
   const [weekday, setWeekday] = useState(0);
+  const [draftExecution, setDraftExecution] = useState<ExecutionSelection | null>(null);
 
   const selected = tasks.find((task) => task.id === selectedId) ?? tasks[0] ?? null;
+  const providerOptions = useMemo(() => {
+    const seen = new Set<string>();
+    return executionOptions.flatMap((option) => {
+      if (seen.has(option.providerId)) return [];
+      seen.add(option.providerId);
+      return [{ value: option.providerId, label: option.providerLabel }];
+    });
+  }, [executionOptions]);
+  const modelOptions = useMemo(() => executionOptions
+    .filter((option) => option.providerId === draftExecution?.providerId)
+    .map((option) => ({ value: option.modelKey, label: option.modelLabel })), [draftExecution?.providerId, executionOptions]);
+  const selectedExecutionOption = executionOptions.find((option) => (
+    option.providerId === draftExecution?.providerId && option.modelKey === draftExecution.modelKey
+  )) ?? null;
+  const scheduleEffortOptions = [
+    { value: "", label: "기본값" },
+    ...(selectedExecutionOption?.effortOptions.map((option) => ({ value: option.id, label: option.label })) ?? []),
+  ];
 
   useEffect(() => {
     setDeleteConfirmId(null);
@@ -157,7 +209,7 @@ export function SchedulesView({ projectId, execution, onOpenNavigation, onConver
 
   const createTask = async (event: FormEvent) => {
     event.preventDefault();
-    if (!projectId || !execution || !name.trim() || !instructions.trim() || busy) return;
+    if (!projectId || !draftExecution || !name.trim() || !instructions.trim() || busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -167,7 +219,7 @@ export function SchedulesView({ projectId, execution, onOpenNavigation, onConver
         instructions: instructions.trim(),
         scheduleKind: kind,
         scheduleConfig,
-        execution,
+        execution: draftExecution,
       });
       setCreateOpen(false);
       setName("");
@@ -212,6 +264,33 @@ export function SchedulesView({ projectId, execution, onOpenNavigation, onConver
     }
   };
 
+  const openCreateDialog = () => {
+    setDraftExecution(defaultScheduleExecution(execution, executionOptions));
+    setCreateOpen(true);
+  };
+
+  const selectScheduleProvider = (providerId: string) => {
+    const option = executionOptions.find((item) => item.providerId === providerId);
+    if (!option) return;
+    setDraftExecution({
+      providerId,
+      modelKey: option.modelKey,
+      effortId: effortForOption(option, undefined),
+    });
+  };
+
+  const selectScheduleModel = (modelKey: string) => {
+    const option = executionOptions.find((item) => (
+      item.providerId === draftExecution?.providerId && item.modelKey === modelKey
+    ));
+    if (!option) return;
+    setDraftExecution((current) => current ? {
+      ...current,
+      modelKey,
+      effortId: effortForOption(option, current.effortId),
+    } : null);
+  };
+
   const deleteTask = async () => {
     if (!selected || busy) return;
     if (deleteConfirmId !== selected.id) {
@@ -242,7 +321,7 @@ export function SchedulesView({ projectId, execution, onOpenNavigation, onConver
       <header className="feature-header">
         <div><button className="feature-mobile-menu" type="button" aria-label="사이드바 열기" onClick={onOpenNavigation}><Menu size={17} /></button><CalendarClock size={17} /><h1>예약 작업</h1><span>{tasks.length}개</span></div>
         <div>
-          <button className="feature-primary-action lumina-primary-action" type="button" disabled={!projectId || !execution} onClick={() => setCreateOpen(true)}><Plus size={15} /> 새 예약</button>
+          <button className="feature-primary-action lumina-primary-action" type="button" disabled={!projectId || !execution || executionOptions.length === 0} onClick={openCreateDialog}><Plus size={15} /> 새 예약</button>
           <button className="schedule-list-refresh" type="button" aria-label="새로 고침" onClick={() => void refresh()}><RefreshCw size={15} /></button>
         </div>
       </header>
@@ -310,12 +389,17 @@ export function SchedulesView({ projectId, execution, onOpenNavigation, onConver
             <label><span>작업 지시</span><textarea rows={6} value={instructions} onChange={(event) => setInstructions(event.currentTarget.value)} /></label>
             <div className="schedule-form-row">
               <div className="lumina-select-field"><span>주기</span><SelectMenu value={kind} options={scheduleKindOptions} ariaLabel="예약 주기" onChange={(value) => setKind(value as ScheduleKind)} /></div>
-              {kind !== "manual" && kind !== "hourly" && <label><span>시</span><input type="number" min={0} max={23} value={hour} onChange={(event) => setHour(Number(event.currentTarget.value))} /></label>}
               {kind === "weekly" && <div className="lumina-select-field"><span>요일</span><SelectMenu value={String(weekday)} options={weekdayOptions} ariaLabel="예약 요일" onChange={(value) => setWeekday(Number(value))} /></div>}
+              {kind !== "manual" && kind !== "hourly" && <label><span>시</span><input type="number" min={0} max={23} value={hour} onChange={(event) => setHour(Number(event.currentTarget.value))} /></label>}
               {kind !== "manual" && <label><span>분</span><input type="number" min={0} max={59} value={minute} onChange={(event) => setMinute(Number(event.currentTarget.value))} /></label>}
             </div>
-            <p className="form-help">현재 선택한 Provider, Model과 Effort가 실행 설정으로 고정됩니다.</p>
-            <div className="dialog-actions"><button type="button" onClick={() => setCreateOpen(false)}>취소</button><button className="is-primary lumina-primary-action" type="submit" disabled={!name.trim() || !instructions.trim() || busy}>예약 생성</button></div>
+            <div className="schedule-execution-row">
+              <div className="lumina-select-field"><span>Provider</span><SelectMenu value={draftExecution?.providerId ?? ""} options={providerOptions} ariaLabel="예약 Provider" onChange={selectScheduleProvider} /></div>
+              <div className="lumina-select-field"><span>Model</span><SelectMenu value={draftExecution?.modelKey ?? ""} options={modelOptions} ariaLabel="예약 Model" onChange={selectScheduleModel} /></div>
+              <div className="lumina-select-field"><span>Effort</span><SelectMenu value={draftExecution?.effortId ?? ""} options={scheduleEffortOptions} ariaLabel="예약 Effort" onChange={(value) => setDraftExecution((current) => current ? { ...current, effortId: value || null } : null)} /></div>
+            </div>
+            <p className="form-help">일반 채팅의 현재 실행 설정을 기본값으로 사용합니다. 계정 메뉴에서 사용하도록 체크한 Provider와 Model만 선택할 수 있습니다.</p>
+            <div className="dialog-actions"><button type="button" onClick={() => setCreateOpen(false)}>취소</button><button className="is-primary lumina-primary-action" type="submit" disabled={!name.trim() || !instructions.trim() || !draftExecution || busy}>예약 생성</button></div>
           </form>
         </div>
       )}
