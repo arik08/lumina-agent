@@ -1013,6 +1013,10 @@ button:disabled { cursor: default; opacity: 0.5; }
 .settings-admin-card { border-color: color-mix(in srgb, var(--cobalt) 30%, var(--line)); }
 .settings-inline-control { display: flex; align-items: center; gap: 7px; }
 .settings-inline-control input { width: 150px; }
+.settings-percent-control .settings-suffixed-input { position: relative; display: inline-flex; align-items: center; }
+.settings-percent-control .settings-suffixed-input input { width: 86px; padding-right: 27px; text-align: right; }
+.settings-percent-control .settings-suffixed-input > span { position: absolute; right: 10px; color: var(--muted); font-size: 12px; pointer-events: none; }
+.settings-context-budget-row output { min-width: 150px; color: var(--cobalt); font-size: 14px; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
 .settings-inline-control button { height: 32px; padding: 0 12px; border: 1px solid var(--cobalt); border-radius: 7px; appearance: none; box-shadow: none; background: var(--cobalt-pale); color: var(--cobalt); font-size: 12px; font-weight: 650; }
 .settings-inline-control button.is-secondary { border: 1px solid var(--line); background: var(--canvas); color: var(--ink); }
 .settings-inline-control :is(input, button):disabled { cursor: not-allowed; opacity: 0.55; }

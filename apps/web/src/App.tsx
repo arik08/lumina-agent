@@ -89,6 +89,10 @@ import type {
   RunSnapshot,
   ToolExecution,
 } from "./api-types";
+
+type AdminProviderModelWithContextUsageRatio = AdminProviderModel & {
+  defaultContextUsageRatio?: number;
+};
 import LoginScreen from "./components/LoginScreen";
 import { AdminView } from "./components/AdminView";
 import { AdminRunSafetySettings } from "./components/AdminRunSafetySettings";
@@ -896,6 +900,7 @@ function App() {
   const [adminSettingsModels, setAdminSettingsModels] = useState<AdminProviderModel[]>([]);
   const [adminSettingsModelKey, setAdminSettingsModelKey] = useState("");
   const [adminMaxTokens, setAdminMaxTokens] = useState("");
+  const [adminContextUsagePercent, setAdminContextUsagePercent] = useState("");
   const [adminOutputTokens, setAdminOutputTokens] = useState(0);
   const [adminSettingsBusy, setAdminSettingsBusy] = useState(false);
   const [adminSettingsError, setAdminSettingsError] = useState<string | null>(null);
@@ -1124,6 +1129,9 @@ function App() {
     .sort((left, right) => (accountProviderOrder[left.id] ?? Number.MAX_SAFE_INTEGER) - (accountProviderOrder[right.id] ?? Number.MAX_SAFE_INTEGER)
       || left.displayName.localeCompare(right.displayName));
   const selectedAdminSettingsModel = adminSettingsModels.find((model) => model.modelKey === adminSettingsModelKey) ?? null;
+  const adminDefaultContextUsageRatio = (
+    selectedAdminSettingsModel as AdminProviderModelWithContextUsageRatio | null
+  )?.defaultContextUsageRatio ?? 0.75;
 
   useEffect(() => {
     if (!isAdmin || !providerMenuOpen) return;
@@ -1207,13 +1215,30 @@ function App() {
     const value = selectedAdminSettingsModel?.capabilities.context_window
       ?? selectedAdminSettingsModel?.capabilities.contextWindow
       ?? selectedAdminSettingsModel?.defaultContextWindow;
+    const ratio = selectedAdminSettingsModel?.capabilities.context_compaction_threshold
+      ?? selectedAdminSettingsModel?.capabilities.contextCompactionThreshold
+      ?? adminDefaultContextUsageRatio;
     setAdminMaxTokens(typeof value === "number" ? value.toLocaleString("en-US") : "");
+    setAdminContextUsagePercent(typeof ratio === "number" ? String(Math.round(ratio * 100)) : "75");
     setAdminOutputTokens(
       selectedAdminSettingsModel?.configuredMaxOutputTokens
       ?? selectedAdminSettingsModel?.defaultMaxOutputTokens
       ?? 0,
     );
-  }, [selectedAdminSettingsModel]);
+  }, [adminDefaultContextUsageRatio, selectedAdminSettingsModel]);
+
+  const parsedAdminContextWindow = Number(adminMaxTokens.replaceAll(",", ""));
+  const parsedAdminContextUsagePercent = Number(adminContextUsagePercent);
+  const adminBaseUsableContext = (() => {
+    if (!Number.isSafeInteger(parsedAdminContextWindow) || parsedAdminContextWindow < 1) return null;
+    if (!Number.isFinite(parsedAdminContextUsagePercent) || parsedAdminContextUsagePercent < 1 || parsedAdminContextUsagePercent > 100) return null;
+    const reservedOutput = adminOutputTokens > 0
+      ? adminOutputTokens
+      : Math.max(512, Math.min(4_096, Math.floor(parsedAdminContextWindow / 8)));
+    const safetyMargin = Math.max(256, Math.min(4_096, Math.floor(parsedAdminContextWindow / 20)));
+    const inputBudgetBeforeRatio = Math.max(256, parsedAdminContextWindow - reservedOutput - safetyMargin);
+    return Math.max(1, Math.floor(inputBudgetBeforeRatio * parsedAdminContextUsagePercent / 100));
+  })();
 
   const saveAdminMaxTokens = async () => {
     if (!selectedAdminSettingsModel) return;
@@ -1254,6 +1279,34 @@ function App() {
     } finally {
       setAdminSettingsBusy(false);
     }
+  };
+  const saveAdminContextUsagePercent = async (nextPercent = parsedAdminContextUsagePercent) => {
+    if (!selectedAdminSettingsModel) return;
+    if (!Number.isInteger(nextPercent) || nextPercent < 1 || nextPercent > 100) {
+      setAdminSettingsError("실제 사용 가능 비율은 1% 이상 100% 이하의 정수로 입력해 주세요.");
+      return;
+    }
+    setAdminSettingsBusy(true);
+    setAdminSettingsError(null);
+    try {
+      const capabilities: Record<string, unknown> = {
+        ...selectedAdminSettingsModel.capabilities,
+        context_compaction_threshold: nextPercent / 100,
+      };
+      delete capabilities.contextCompactionThreshold;
+      const updated = await api.adminProviders.updateModel(adminSettingsProviderId, selectedAdminSettingsModel.modelKey, { capabilities });
+      setAdminSettingsModels((models) => models.map((model) => model.modelKey === updated.modelKey ? updated : model));
+      setAdminContextUsagePercent(String(nextPercent));
+      showToast(`${updated.displayName} 실제 사용 가능 비율을 저장했습니다.`);
+    } catch (error) {
+      setAdminSettingsError(error instanceof Error ? error.message : "실제 사용 가능 비율을 저장하지 못했습니다.");
+    } finally {
+      setAdminSettingsBusy(false);
+    }
+  };
+  const resetAdminContextUsagePercent = async () => {
+    if (!selectedAdminSettingsModel) return;
+    await saveAdminContextUsagePercent(Math.round(adminDefaultContextUsageRatio * 100));
   };
   const saveAdminOutputTokens = async (value = adminOutputTokens) => {
     if (!selectedAdminSettingsModel?.maxOutputTokens) return;
@@ -1345,8 +1398,7 @@ function App() {
   );
   const runIsPaused = activeRun?.status === "paused";
   const composerHasPayload = Boolean(draft.trim() || workspace.composerAttachments.length > 0);
-  const composerShowsStop = Boolean(runIsActive && !composerHasPayload);
-  const conversationFollow = useConversationAutoFollow(
+  const composerShowsStop = Boolean(runIsActive && !composerHasPayload);  const conversationFollow = useConversationAutoFollow(
     runIsActive,
     workspace.activeConversationId,
     activeRuntime.loaded,
@@ -2934,8 +2986,7 @@ function App() {
                         }}
                       >{label}</button>
                     ))}
-                  </div>
-                  <ArtifactLengthSlider
+                  </div>                  <ArtifactLengthSlider
                     value={targetOutputTokens}
                     onChange={setTargetOutputTokens}
                     disabled={workspace.settings?.outputMode === "chat"}
@@ -3022,7 +3073,9 @@ function App() {
                     <header><span><ShieldCheck size={15} /><h2 id="admin-model-settings-title">관리자 설정</h2></span><small>모든 사용자에게 적용</small></header>
                     <div className="settings-row"><span><strong>Provider</strong><small>최대 토큰을 변경할 Provider입니다.</small></span><SelectMenu className="settings-select" align="end" value={adminSettingsProviderId} options={accountProviders.map((provider) => ({ value: provider.id, label: provider.displayName }))} ariaLabel="관리자 설정 Provider" disabled={adminSettingsBusy} onChange={setAdminSettingsProviderId} /></div>
                     <div className="settings-row"><span><strong>Model</strong><small>설정값은 선택한 Model에만 적용됩니다.</small></span><SelectMenu className="settings-select" align="end" value={adminSettingsModelKey} options={adminSettingsModels.map((model) => ({ value: model.modelKey, label: model.displayName }))} ariaLabel="관리자 설정 Model" disabled={adminSettingsBusy} onChange={setAdminSettingsModelKey} /></div>
-                    <div className="settings-row"><span><strong>최대 컨텍스트 토큰</strong><small>Run의 입력 예산 계산에 사용하는 모델별 최대 토큰입니다.{selectedAdminSettingsModel?.defaultContextWindow ? ` 기본값 ${selectedAdminSettingsModel.defaultContextWindow.toLocaleString()} 토큰.` : " 등록된 기본값이 없습니다."}</small></span><div className="settings-inline-control"><input type="text" inputMode="numeric" value={adminMaxTokens} disabled={adminSettingsBusy || !selectedAdminSettingsModel} onChange={(event) => setAdminMaxTokens(event.currentTarget.value.replace(/\D/g, "").replace(/\B(?=(\d{3})+(?!\d))/g, ","))} /><button className="is-secondary" type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel?.defaultContextWindow} onClick={() => void resetAdminMaxTokens()}>초기화</button><button type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel} onClick={() => void saveAdminMaxTokens()}>{adminSettingsBusy ? "저장 중" : "저장"}</button></div></div>
+                    <div className="settings-row"><span><strong>스펙상 최대 컨텍스트</strong><small>Provider가 명시한 입력과 출력의 전체 컨텍스트 윈도우입니다.{selectedAdminSettingsModel?.defaultContextWindow ? ` 기본값 ${selectedAdminSettingsModel.defaultContextWindow.toLocaleString()} 토큰.` : " 등록된 기본값이 없습니다."}</small></span><div className="settings-inline-control"><input aria-label="스펙상 최대 컨텍스트 토큰" type="text" inputMode="numeric" value={adminMaxTokens} disabled={adminSettingsBusy || !selectedAdminSettingsModel} onChange={(event) => setAdminMaxTokens(event.currentTarget.value.replace(/\D/g, "").replace(/\B(?=(\d{3})+(?!\d))/g, ","))} /><button className="is-secondary" type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel?.defaultContextWindow} onClick={() => void resetAdminMaxTokens()}>초기화</button><button type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel} onClick={() => void saveAdminMaxTokens()}>{adminSettingsBusy ? "저장 중" : "저장"}</button></div></div>
+                    <div className="settings-row"><span><strong>실제 사용 가능 비율</strong><small>오버헤드와 자동 압축 여유를 위해 입력 예산에 적용합니다. MyHarness와 같은 기본값은 {Math.round(adminDefaultContextUsageRatio * 100)}%입니다.</small></span><div className="settings-inline-control settings-percent-control"><span className="settings-suffixed-input"><input aria-label="실제 사용 가능 비율" type="text" inputMode="numeric" value={adminContextUsagePercent} disabled={adminSettingsBusy || !selectedAdminSettingsModel} onChange={(event) => setAdminContextUsagePercent(event.currentTarget.value.replace(/\D/g, "").slice(0, 3))} /><span aria-hidden="true">%</span></span><button className="is-secondary" type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel} onClick={() => void resetAdminContextUsagePercent()}>초기화</button><button type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel} onClick={() => void saveAdminContextUsagePercent()}>{adminSettingsBusy ? "저장 중" : "저장"}</button></div></div>
+                    <div className="settings-row settings-context-budget-row"><span><strong>실제 사용 가능 컨텍스트</strong><small>최대 출력 토큰과 안전 여유를 먼저 빼고 위 비율을 적용한 기본 입력 예산입니다. Run마다 Tool schema 예약분은 추가로 차감됩니다.</small></span><output aria-live="polite">{adminBaseUsableContext === null ? "계산할 수 없음" : `${adminBaseUsableContext.toLocaleString()} 토큰`}</output></div>
                     <div className="settings-row settings-output-token-row">
                       <span>
                         <strong>최대 출력 토큰</strong>
