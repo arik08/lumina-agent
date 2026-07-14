@@ -44,6 +44,15 @@ def test_artifact_target_gets_myharness_style_headroom_within_hard_max() -> None
     )
 
 
+def test_ten_thousand_artifact_target_keeps_pgpt_configured_headroom() -> None:
+    pgpt_capabilities = {
+        "configured_max_output_tokens": 42_000,
+        "max_output_tokens": 128_000,
+    }
+
+    assert _artifact_model_request_tokens(pgpt_capabilities, 10_000) == 42_000
+
+
 def test_context_budget_reserves_configured_output_limit() -> None:
     run = SimpleNamespace(
         snapshot_json={

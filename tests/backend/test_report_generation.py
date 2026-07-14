@@ -386,9 +386,9 @@ def test_selected_artifact_target_retries_short_report_and_exposes_separate_coun
         del first_turn
         assert wants_artifact is True
         provider_turn += 1
-        if provider_turn <= 2:
+        if provider_turn <= 3:
             arguments = _arguments("html")
-            arguments["html_source"] = short_html if provider_turn == 1 else long_html
+            arguments["html_source"] = short_html if provider_turn <= 2 else long_html
             return MockProvider(
                 tool_call=MockToolCall(
                     name="create_report",
@@ -424,16 +424,90 @@ def test_selected_artifact_target_retries_short_report_and_exposes_separate_coun
         snapshot = _wait_for_terminal(client, started.json()["run"]["runId"])
 
     assert snapshot["status"] == "completed"
-    assert provider_turn == 3
+    assert provider_turn == 4
     assert len(snapshot["artifacts"]) == 1
-    assert len(snapshot["toolExecutions"]) == 2
-    first_result = snapshot["toolExecutions"][0]["result"]
-    assert first_result["status"] == "needs_expansion"
-    assert first_result["documentTokens"] < first_result["minimumTokens"]
+    assert len(snapshot["toolExecutions"]) == 3
+    for attempt, execution in enumerate(snapshot["toolExecutions"][:2], start=1):
+        result = execution["result"]
+        assert result["status"] == "needs_expansion"
+        assert result["documentTokens"] < result["minimumTokens"]
+        assert result["expansionAttempt"] == attempt
+        assert result["maxExpansionAttempts"] == 2
     artifact_usage = snapshot["artifactUsage"]
     assert artifact_usage["estimated"] is False
     assert artifact_usage["targetTokens"] == 1_000
     assert artifact_usage["tokens"] >= 800
+
+
+def test_selected_artifact_target_fails_instead_of_saving_repeatedly_short_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'target-length-failure.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    short_html = (
+        "<!doctype html><html lang='ko'><head><title>짧은 보고서</title></head>"
+        "<body><main><h1>짧은 보고서</h1><p>요약입니다.</p></main></body></html>"
+    )
+    provider_turn = 0
+
+    def fake_provider(
+        _provider_id: str, *, wants_artifact: bool, first_turn: bool
+    ) -> MockProvider:
+        nonlocal provider_turn
+        del first_turn
+        assert wants_artifact is True
+        provider_turn += 1
+        arguments = _arguments("html")
+        arguments["html_source"] = short_html
+        return MockProvider(
+            tool_call=MockToolCall(
+                name="create_report",
+                arguments=arguments,
+                call_id=f"call_target_length_failure_{provider_turn}",
+            )
+        )
+
+    monkeypatch.setattr(local_run_executor, "_provider", fake_provider)
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "보고서 목표 분량 실패"},
+        ).json()
+        started = client.post(
+            f"/api/conversations/{conversation['id']}/runs",
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": "target-length-report-failure-0001",
+            },
+            json={
+                "message": {
+                    "text": "분석 보고서를 HTML로 만들어 주세요.",
+                    "targetOutputTokens": 1_000,
+                }
+            },
+        )
+        assert started.status_code == 202, started.text
+        snapshot = _wait_for_terminal(client, started.json()["run"]["runId"])
+
+    assert snapshot["status"] == "failed"
+    assert snapshot["errorCode"] == "artifact_target_not_met"
+    assert provider_turn == 3
+    assert snapshot["artifacts"] == []
+    assert len(snapshot["toolExecutions"]) == 3
+    assert [
+        execution["result"]["status"] for execution in snapshot["toolExecutions"][:2]
+    ] == ["needs_expansion", "needs_expansion"]
+    assert snapshot["toolExecutions"][2]["status"] == "failed"
+    assert "최소 허용 분량" in snapshot["toolExecutions"][2]["error"]
 
 
 def _assert_reopened(report_format: str, content: bytes) -> None:

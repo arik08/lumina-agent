@@ -155,6 +155,8 @@ _MAX_PROVIDER_RETRY_AFTER_SECONDS = 600.0
 _MAX_CONTINUATION_OVERLAP_CHARS = 4_000
 _MAX_AUTO_CONTINUATIONS = 4
 _MAX_EMPTY_RESPONSE_RETRIES = 1
+_ARTIFACT_TARGET_FLOOR_RATIO = 0.8
+_MAX_ARTIFACT_LENGTH_RETRIES = 2
 _CONTINUATION_PROMPT = (
     "[Continuation after output limit] Continue exactly where the previous assistant "
     "text stopped. Do not repeat completed text, restart the answer, or summarize it."
@@ -2155,7 +2157,7 @@ class LocalRunExecutor:
                 run.snapshot_json.get("target_output_tokens")
             )
             if target_output_tokens is not None:
-                floor_tokens = int(target_output_tokens * 0.8)
+                floor_tokens = int(target_output_tokens * _ARTIFACT_TARGET_FLOOR_RATIO)
                 turn_system_parts.append(
                     "Artifact length contract: The user selected a target of about "
                     f"{target_output_tokens:,} tokens for the Artifact content. Treat this "
@@ -2780,7 +2782,7 @@ class LocalRunExecutor:
         )
         document_lines = report_text.count("\n") + 1 if report_text else 0
         target_floor = (
-            int(target_output_tokens * 0.8)
+            int(target_output_tokens * _ARTIFACT_TARGET_FLOOR_RATIO)
             if target_output_tokens is not None
             else None
         )
@@ -2789,29 +2791,57 @@ class LocalRunExecutor:
             and target_output_tokens is not None
             and target_floor is not None
             and document_tokens < target_floor
-            and length_retry_count < 1
         ):
             missing_tokens = max(0, target_output_tokens - document_tokens)
+            if length_retry_count >= _MAX_ARTIFACT_LENGTH_RETRIES:
+                failure_message = (
+                    "선택한 문서 출력 목표를 반복해서 충족하지 못했습니다. "
+                    f"마지막 결과는 약 {document_tokens:,}토큰이며, "
+                    f"최소 허용 분량은 약 {target_floor:,}토큰입니다."
+                )
+                failure = await self._fail_tool_execution(
+                    run_id,
+                    tool_id,
+                    WebToolError(
+                        "artifact_target_not_met",
+                        failure_message,
+                        stage="validation",
+                        retryable=False,
+                    ),
+                )
+                await self._fail_run(
+                    run_id,
+                    "artifact_target_not_met",
+                    failure_message,
+                )
+                return failure
+            expansion_attempt = length_retry_count + 1
             with session_scope() as db:
                 run = db.get(Run, run_id)
                 if run is not None:
                     run.snapshot_json = {
                         **run.snapshot_json,
                         "artifact_progress": None,
-                        "artifact_length_retry_count": length_retry_count + 1,
+                        "artifact_length_retry_count": expansion_attempt,
                     }
             length_check = {
                 "status": "needs_expansion",
                 "documentTokens": document_tokens,
                 "targetTokens": target_output_tokens,
                 "minimumTokens": target_floor,
+                "expansionAttempt": expansion_attempt,
+                "maxExpansionAttempts": _MAX_ARTIFACT_LENGTH_RETRIES,
                 "targetLengthCheck": (
                     "The report file has not been saved because its Artifact content is only "
                     f"about {document_tokens:,} tokens, below the selected minimum of about "
-                    f"{target_floor:,} tokens. Call `create_report` again with the complete "
-                    "revised document and add about "
+                    f"{target_floor:,} tokens. Expansion check {expansion_attempt} of "
+                    f"{_MAX_ARTIFACT_LENGTH_RETRIES} failed. Call `create_report` again with "
+                    "the complete revised document in one tool call. Preserve the useful "
+                    "analysis already written instead of replacing it with a shorter rewrite, "
+                    "and add about "
                     f"{missing_tokens:,} tokens of substantive analysis, explanations, tables, "
-                    "source notes, and interpretation. Do not finish with chat text only."
+                    "source notes, and interpretation. The next report must contain at least "
+                    f"about {target_floor:,} document tokens. Do not finish with chat text only."
                 ),
             }
             await self._complete_tool_execution(

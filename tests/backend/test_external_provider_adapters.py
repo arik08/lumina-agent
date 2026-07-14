@@ -911,7 +911,7 @@ async def test_pgpt_adapter_uses_streaming_cache_payload_and_normalizes_response
         assert payload["stream_options"] == {"include_usage": True}
         assert payload["prompt_cache_key"] == "lumina:user:v1:opaque"
         assert payload["prompt_cache_retention"] == "24h"
-        assert payload["max_completion_tokens"] == 10
+        assert payload["max_completion_tokens"] == 42_000
         assert "response_format" not in payload
         return httpx.Response(
             200,
@@ -941,7 +941,7 @@ async def test_pgpt_adapter_uses_streaming_cache_payload_and_normalizes_response
                 ProviderRequest(
                     model="gpt-5.4",
                     messages=(ProviderMessage(role="user", content="Hello"),),
-                    max_output_tokens=10,
+                    max_output_tokens=42_000,
                     response_format={"type": "json_object"},
                     metadata={
                         "prompt_cache_key": "lumina:user:v1:opaque",
