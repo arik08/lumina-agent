@@ -1,4 +1,5 @@
 import { LoaderCircle, PackageCheck, PackagePlus, Trash2 } from "lucide-react";
+import { useLayoutEffect, useRef, useState } from "react";
 
 
 interface MarketplaceInstallButtonProps {
@@ -17,15 +18,32 @@ export function MarketplaceInstallButton({
   disabled = false,
   onClick,
 }: MarketplaceInstallButtonProps) {
+  const previousInstalled = useRef(installed);
+  const [holdInstalledConfirmation, setHoldInstalledConfirmation] = useState(false);
+  const justInstalled = installed && !previousInstalled.current;
+  const keepInstalledVisible = installed && (justInstalled || holdInstalledConfirmation);
+
+  useLayoutEffect(() => {
+    if (justInstalled) {
+      setHoldInstalledConfirmation(true);
+    } else if (!installed) {
+      setHoldInstalledConfirmation(false);
+    }
+    previousInstalled.current = installed;
+  }, [installed, justInstalled]);
+
   const action = installed ? "Delete" : "Install";
+  const releaseInstalledConfirmation = () => setHoldInstalledConfirmation(false);
   return (
     <button
-      className={`skill-install-toggle ${installed ? "is-installed" : ""} ${pending ? "is-pending" : ""}`.trim()}
+      className={`skill-install-toggle ${installed ? "is-installed" : ""} ${pending ? "is-pending" : ""} ${keepInstalledVisible ? "keep-installed-visible" : ""}`.trim()}
       type="button"
       aria-label={`${name} ${action}`}
       aria-pressed={installed}
       aria-busy={pending}
       disabled={disabled || pending}
+      onMouseMove={releaseInstalledConfirmation}
+      onMouseLeave={releaseInstalledConfirmation}
       onClick={onClick}
     >
       {pending ? (

@@ -1169,6 +1169,9 @@ button:disabled { cursor: default; opacity: 0.5; }
 .skill-install-toggle .install-toggle-hover { opacity: 0; pointer-events: none; }
 .skill-install-toggle.is-installed:hover:not(:disabled) .install-toggle-rest, .skill-install-toggle.is-installed:focus-visible:not(:disabled) .install-toggle-rest { opacity: 0; }
 .skill-install-toggle.is-installed:hover:not(:disabled) .install-toggle-hover, .skill-install-toggle.is-installed:focus-visible:not(:disabled) .install-toggle-hover { opacity: 1; }
+.skill-install-toggle.is-installed.keep-installed-visible:hover:not(:focus-visible) { border-color: color-mix(in oklab, var(--success) 24%, var(--line)); background: color-mix(in oklab, var(--success) 8%, var(--surface)); color: var(--success); }
+.skill-install-toggle.is-installed.keep-installed-visible:hover:not(:focus-visible) .install-toggle-rest { opacity: 1; }
+.skill-install-toggle.is-installed.keep-installed-visible:hover:not(:focus-visible) .install-toggle-hover { opacity: 0; }
 .skill-install-toggle.is-pending .marketplace-install-state { opacity: 1; }
 .skill-install-toggle:active { transform: none; }
 .skill-install-toggle:disabled { cursor: default; opacity: .45; }

@@ -56,12 +56,18 @@ test("shared Skill lifecycle button keeps English states and invariant geometry"
   assert.match(button, /<span>Installed<\/span>/);
   assert.match(button, /<span>Delete<\/span>/);
   assert.match(button, /<LoaderCircle className="is-running" size=\{13\} \/>/);
+  assert.match(button, /const justInstalled = installed && !previousInstalled\.current/);
+  assert.match(button, /keepInstalledVisible \? "keep-installed-visible" : ""/);
+  assert.match(button, /onMouseMove=\{releaseInstalledConfirmation\}/);
+  assert.match(button, /onMouseLeave=\{releaseInstalledConfirmation\}/);
   assert.match(styles, /\.feature-view\.feature-view \.skill-install-toggle \{[^}]*width: 80px; min-width: 80px; max-width: 80px;[^}]*height: 26px; min-height: 26px; max-height: 26px;/);
   assert.match(styles, /\.feature-view\.feature-view \.skill-install-toggle \{[^}]*padding: 0 6px;[^}]*font-size: 11px;/);
   assert.match(styles, /\.feature-view\.feature-view \.marketplace-skill-row > \.skill-install-toggle \{[^}]*margin: 7px var\(--space-3\) 0 0;/);
   assert.match(styles, /\.marketplace-install-icon \{[^}]*width: 13px; min-width: 13px; height: 13px;/);
   assert.match(styles, /\.feature-view\.feature-view \.skill-install-toggle\.is-installed \{[^}]*border-color: color-mix\(in oklab, var\(--success\) 24%, var\(--line\)\);[^}]*background: color-mix\(in oklab, var\(--success\) 8%, var\(--surface\)\);[^}]*color: var\(--success\);/);
   assert.match(styles, /\.skill-install-toggle:active \{ transform: none; \}/);
+  assert.match(styles, /\.skill-install-toggle\.is-installed\.keep-installed-visible:hover:not\(:focus-visible\) \.install-toggle-rest \{ opacity: 1; \}/);
+  assert.match(styles, /\.skill-install-toggle\.is-installed\.keep-installed-visible:hover:not\(:focus-visible\) \.install-toggle-hover \{ opacity: 0; \}/);
 
   // The existing detail actions remain Korean and use their original control.
   assert.match(view, /\{selected\.canEdit \? "편집" : "내 버전으로 수정"\}/);
