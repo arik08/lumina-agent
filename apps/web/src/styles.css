@@ -1180,7 +1180,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .skill-catalog-filters > header button:not(:disabled):hover { color: var(--ink); }
 .skill-catalog-search { display: grid; gap: 7px; }
 .skill-catalog-search > span:first-child, .skill-catalog-filters section h2 { color: var(--muted); font-size: 11px; font-weight: 650; }
-.skill-catalog-search > span:last-child { display: flex; height: 32px; align-items: center; gap: 7px; padding: 0 9px; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); background: var(--canvas); }
+.skill-catalog-search > span:last-child { display: flex; min-width: 0; height: 32px; align-items: center; gap: 7px; margin-inline-end: var(--space-2); padding: 0 9px; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); background: var(--canvas); }
 .skill-catalog-search > span:last-child:focus-within { border-color: var(--cobalt); box-shadow: 0 0 0 2px color-mix(in srgb, var(--cobalt) 12%, transparent); }
 .skill-catalog-search input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: var(--ink); font: inherit; }
 .skill-catalog-filters section { display: grid; gap: 8px; margin-top: 18px; }
@@ -1191,10 +1191,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .skill-catalog-filter-grid button small { font-variant-numeric: tabular-nums; }
 .skill-catalog-filter-grid button:hover { background: var(--surface-soft); color: var(--ink); }
 .skill-catalog-filter-grid button[aria-pressed="true"] { border-color: color-mix(in srgb, var(--cobalt) 28%, var(--line)); background: var(--cobalt-pale); color: var(--cobalt); font-weight: 650; }
-.skill-catalog-filter-tags { display: flex; flex-wrap: wrap; gap: 5px; }
-.skill-catalog-filter-tags button, .skill-catalog-active-filters button { display: inline-flex; min-height: 26px; align-items: center; gap: 4px; padding: 0 7px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--muted); cursor: pointer; }
-.skill-catalog-filter-tags button small { color: color-mix(in srgb, currentColor 72%, transparent); font-variant-numeric: tabular-nums; }
-.skill-catalog-filter-tags button:hover, .skill-catalog-filter-tags button[aria-pressed="true"] { border-color: color-mix(in srgb, var(--cobalt) 32%, var(--line)); background: var(--cobalt-pale); color: var(--cobalt); }
+.skill-catalog-active-filters button { display: inline-flex; min-height: 26px; align-items: center; gap: 4px; padding: 0 7px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--muted); cursor: pointer; }
 .skill-catalog-results { display: grid; min-width: 0; min-height: 0; grid-template-rows: auto minmax(0, 1fr); }
 .skill-catalog-results-toolbar { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 14px; padding: 7px 18px; border-bottom: 1px solid var(--line); background: var(--surface); }
 .skill-catalog-results-toolbar > div { display: flex; min-width: 0; align-items: center; gap: 10px; }

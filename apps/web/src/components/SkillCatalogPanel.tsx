@@ -142,8 +142,8 @@ export function SkillCatalogPanel({
         </section>
         {catalog.facets.tags.length > 0 && <section>
           <h2>태그</h2>
-          <div className="skill-catalog-filter-tags">
-            {catalog.facets.tags.map((item) => <button type="button" aria-pressed={tag === item.value} key={item.value} onClick={() => onTagChange(tag === item.value ? "" : item.value)}>#{item.value}<small>{item.count}</small></button>)}
+          <div className="skill-catalog-filter-grid">
+            {catalog.facets.tags.map((item) => <button type="button" aria-pressed={tag === item.value} key={item.value} onClick={() => onTagChange(tag === item.value ? "" : item.value)}><span>#{item.value}</span><small>{item.count}</small></button>)}
           </div>
         </section>}
       </aside>

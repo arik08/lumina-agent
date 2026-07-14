@@ -21,6 +21,8 @@ test("catalog uses a searchable filterable card grid without opening package det
   assert.match(panel, /placeholder="이름, 설명, 태그 검색"/);
   assert.match(panel, /catalog\.facets\.categories\.map/);
   assert.match(panel, /catalog\.facets\.tags\.map/);
+  assert.equal(panel.match(/className="skill-catalog-filter-grid"/g)?.length, 2);
+  assert.match(panel, /<span>#\{item\.value\}<\/span><small>\{item\.count\}<\/small>/);
   assert.match(panel, /사용자 설치 많은 순/);
   assert.match(panel, /실행 많은 순/);
   assert.match(panel, /좋아요 많은 순/);
@@ -30,6 +32,7 @@ test("catalog uses a searchable filterable card grid without opening package det
   assert.match(api, /request<SkillCatalogResponse>\("\/extensions\/catalog"/);
   assert.match(api, /method: liked \? "PUT" : "DELETE"/);
   assert.match(styles, /\.skill-catalog-layout \{[^}]*grid-template-columns: 248px minmax\(0, 1fr\)/);
+  assert.match(styles, /\.skill-catalog-search > span:last-child \{[^}]*min-width: 0;[^}]*margin-inline-end: var\(--space-2\)/);
   assert.match(styles, /\.skill-catalog-grid \{[^}]*repeat\(auto-fill, minmax\(300px, 1fr\)\)/);
   assert.doesNotMatch(panel, /SKILL\.md|package|상세보기|QA|신뢰/);
 });
