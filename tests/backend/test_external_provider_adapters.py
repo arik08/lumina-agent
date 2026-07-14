@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import ssl
 import time
@@ -731,7 +732,76 @@ async def test_openai_compatible_rejects_non_object_stream_events() -> None:
             ]
 
     assert captured.value.stage == "stream"
-    assert captured.value.retryable is False
+    assert captured.value.retryable is True
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_accepts_multiline_sse_and_raw_json_lines() -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "text/event-stream"},
+            content=(
+                b'data: {"choices":[\n'
+                b'data: {"delta":{"content":"multi"},"finish_reason":null}]}\n\n'
+                b'{"choices":[{"delta":{"content":"line"},"finish_reason":"stop"}]}\n'
+                b'data: [DONE]\n\n'
+            ),
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        adapter = OpenAICompatibleAdapter(
+            provider_id="openai_compatible",
+            base_url="https://compatible.test/v1",
+            headers={"Authorization": "Bearer local-secret"},
+            client=client,
+        )
+        events = [
+            event
+            async for event in adapter.stream(
+                ProviderRequest(
+                    model="model-a",
+                    messages=(ProviderMessage(role="user", content="Hello"),),
+                )
+            )
+        ]
+
+    assert [event.text for event in events if event.type == "text_delta"] == [
+        "multi",
+        "line",
+    ]
+    assert events[-1].type == "completed"
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_marks_transient_stream_error_retryable() -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "text/event-stream"},
+            content=b'data: {"error":{"code":"rate_limit","status":429}}\n\n',
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        adapter = OpenAICompatibleAdapter(
+            provider_id="openai_compatible",
+            base_url="https://compatible.test/v1",
+            headers={"Authorization": "Bearer local-secret"},
+            client=client,
+        )
+        with pytest.raises(ProviderRequestError) as captured:
+            _ = [
+                event
+                async for event in adapter.stream(
+                    ProviderRequest(
+                        model="model-a",
+                        messages=(ProviderMessage(role="user", content="Hello"),),
+                    )
+                )
+            ]
+
+    assert captured.value.stage == "stream"
+    assert captured.value.retryable is True
 
 
 def test_provider_settings_ready_status_executor_and_codex_boundary(
@@ -885,6 +955,110 @@ async def test_pgpt_adapter_uses_streaming_cache_payload_and_normalizes_response
     assert (
         next(event for event in events if event.type == "usage").usage.input_tokens == 4
     )
+
+
+@pytest.mark.asyncio
+async def test_pgpt_adapter_negotiates_rejected_optional_cache_fields() -> None:
+    payloads: list[dict[str, object]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.content))
+        if len(payloads) == 1:
+            return httpx.Response(
+                400,
+                json={"error": {"message": "Unsupported parameter: prompt_cache_key"}},
+            )
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "text/event-stream"},
+            content=_openai_sse(
+                {"choices": [{"delta": {"content": "OK"}, "finish_reason": "stop"}]}
+            ),
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        adapter = PgptAdapter(
+            profile=PgptProfile(base_url="https://pgpt.test/v1"),
+            credentials=PgptCredentials(
+                api_key="pgpt-key",
+                employee_no="employee-no",
+                company_code="30",
+            ),
+            client=client,
+        )
+        events = [
+            event
+            async for event in adapter.stream(
+                ProviderRequest(
+                    model="gpt-5.4",
+                    messages=(ProviderMessage(role="user", content="Hello"),),
+                    metadata={
+                        "prompt_cache_key": "lumina:user:v1:opaque",
+                        "prompt_cache_retention": "24h",
+                    },
+                )
+            )
+        ]
+
+    assert len(payloads) == 2
+    assert payloads[0]["prompt_cache_key"] == "lumina:user:v1:opaque"
+    assert "prompt_cache_key" not in payloads[1]
+    assert "prompt_cache_retention" not in payloads[1]
+    assert events[-1].type == "completed"
+
+
+@pytest.mark.asyncio
+async def test_pgpt_optional_negotiation_is_safe_for_concurrent_runs() -> None:
+    first_wave = 0
+    all_initial_requests_started = asyncio.Event()
+    payloads: list[dict[str, object]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal first_wave
+        payload = json.loads(request.content)
+        payloads.append(payload)
+        if "prompt_cache_key" in payload:
+            first_wave += 1
+            if first_wave == 2:
+                all_initial_requests_started.set()
+            await asyncio.wait_for(all_initial_requests_started.wait(), timeout=1)
+            return httpx.Response(
+                400,
+                json={"error": {"message": "Unsupported parameter: prompt_cache_key"}},
+            )
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "text/event-stream"},
+            content=_openai_sse(
+                {"choices": [{"delta": {"content": "OK"}, "finish_reason": "stop"}]}
+            ),
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        adapter = PgptAdapter(
+            profile=PgptProfile(base_url="https://pgpt.test/v1"),
+            credentials=PgptCredentials(
+                api_key="pgpt-key",
+                employee_no="employee-no",
+                company_code="30",
+            ),
+            client=client,
+        )
+        request = ProviderRequest(
+            model="gpt-5.4",
+            messages=(ProviderMessage(role="user", content="Hello"),),
+            metadata={"prompt_cache_key": "lumina:user:v1:opaque"},
+        )
+
+        async def collect() -> list[ProviderEvent]:
+            return [event async for event in adapter.stream(request)]
+
+        results = await asyncio.gather(collect(), collect())
+
+    assert first_wave == 2
+    assert len(payloads) == 4
+    assert all(events[-1].type == "completed" for events in results)
+    assert all("prompt_cache_key" not in payload for payload in payloads[2:])
 
 
 @pytest.mark.asyncio

@@ -225,6 +225,48 @@ def compact_runtime_messages(
     compacted_units = units[:-preserve_count] if preserve_count else units
     retained_units = units[-preserve_count:] if preserve_count else []
     retained = [message for unit in retained_units for message in unit]
+    previous_summary_messages = tuple(
+        ProviderMessage(role="system", content=summary)
+        for summary in previous_summaries
+    )
+
+    # Keep the provider-native assistant/tool structure whenever reducing only old
+    # bulky payloads is enough. This is cheaper and less lossy than replacing whole
+    # execution units with prose, while recent units remain byte-for-byte intact.
+    if compacted_units:
+        payload_compacted_units: list[list[ProviderMessage]] = []
+        payload_compacted_count = 0
+        for unit in compacted_units:
+            compacted_unit, changed_count = _compact_runtime_payloads(unit)
+            payload_compacted_units.append(list(compacted_unit))
+            payload_compacted_count += changed_count
+        if payload_compacted_count:
+            payload_compacted_messages = [
+                message
+                for unit in payload_compacted_units
+                for message in unit
+            ]
+            payload_prepared = (
+                *head,
+                *previous_summary_messages,
+                *payload_compacted_messages,
+                *retained,
+            )
+            payload_estimated_after = _padded_estimate(
+                run,
+                _estimate_provider_messages(payload_prepared, tool_schemas),
+            )
+            if payload_estimated_after <= threshold:
+                return RuntimeContextPreparation(
+                    messages=tuple(payload_prepared),
+                    compacted=True,
+                    estimated_tokens_before=estimated_before,
+                    estimated_tokens_after=payload_estimated_after,
+                    effective_input_budget=effective_budget,
+                    preserved_message_count=len(retained),
+                    compacted_payload_count=payload_compacted_count,
+                )
+
     compacted_messages = [message for unit in compacted_units for message in unit]
     summary_message: tuple[ProviderMessage, ...] = ()
     if compacted_units:
@@ -243,10 +285,7 @@ def compact_runtime_messages(
         )
         summary_message = (ProviderMessage(role="system", content=summary),)
     elif previous_summaries:
-        summary_message = tuple(
-            ProviderMessage(role="system", content=summary)
-            for summary in previous_summaries
-        )
+        summary_message = previous_summary_messages
 
     prepared_messages = (*head, *summary_message, *retained)
     estimated_after = _padded_estimate(

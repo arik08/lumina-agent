@@ -10,6 +10,8 @@ from lumina.agent.executor import LocalRunExecutor
 from lumina.config import Settings
 from lumina.db import SessionLocal
 from lumina.instructions.service import (
+    CORE_AGENT_EXECUTION_CONTRACT,
+    DEFAULT_SYSTEM_PROMPT,
     InstructionSnapshot,
     InstructionScope,
     instruction_digest,
@@ -17,6 +19,13 @@ from lumina.instructions.service import (
 )
 from lumina.main import create_app
 from lumina.models import AuditEvent, Run
+
+
+def test_default_system_prompt_contains_core_agent_execution_contract() -> None:
+    assert "Complete the user's requested outcome" in DEFAULT_SYSTEM_PROMPT
+    assert "independent Tool calls together" in DEFAULT_SYSTEM_PROMPT
+    assert "Never repeat a side-effecting Tool call" in DEFAULT_SYSTEM_PROMPT
+    assert "across retries, recovery, and context compaction" in DEFAULT_SYSTEM_PROMPT
 
 
 def _settings(tmp_path: Path) -> Settings:
@@ -245,6 +254,10 @@ def test_instruction_api_permissions_concurrency_and_secret_guard(
         assert provider_messages[0].content.startswith("You are Lumina")
         assert "SYSTEM_OVERRIDE_MARKER" in provider_messages[0].content
         assert "AGENT_OVERRIDE_MARKER" in provider_messages[0].content
+        assert any(
+            CORE_AGENT_EXECUTION_CONTRACT in (message.content or "")
+            for message in provider_messages
+        )
 
         restored_system_prompt = client.patch(
             "/api/admin/runtime-prompts/system",

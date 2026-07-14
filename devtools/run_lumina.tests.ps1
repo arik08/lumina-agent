@@ -282,6 +282,9 @@ if (
 if ($startProcessesFunction.Extent.Text -match 'alembic|npm') {
     throw "Automatic process restart must not run migration or Frontend build commands."
 }
+if ($startProcessesFunction.Extent.Text -match '--reload') {
+    throw "Development must keep the Backend stable during Agent Runs; use explicit R restart instead of Uvicorn reload."
+}
 $preparationSource = $prepareRuntimeFunction.Extent.Text
 if (
     $preparationSource -notmatch 'current' -or

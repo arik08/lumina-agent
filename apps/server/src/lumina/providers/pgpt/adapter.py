@@ -119,5 +119,10 @@ class PgptAdapter:
                 },
                 client=client,
                 payload_builder=build_pgpt_payload,
+                optional_payload_fields=(
+                    "stream_options",
+                    "prompt_cache_key",
+                    "prompt_cache_retention",
+                ),
             )
             return self._transport

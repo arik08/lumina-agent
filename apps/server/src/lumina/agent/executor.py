@@ -123,7 +123,7 @@ from ..runs.subtasks import (
     mark_tool_subtask_approval,
 )
 from ..context import compact_runtime_messages, prepare_context
-from ..instructions import DEFAULT_SYSTEM_PROMPT
+from ..instructions import CORE_AGENT_EXECUTION_CONTRACT, DEFAULT_SYSTEM_PROMPT
 from ..runs.state import (
     ACTIVE_STATUSES,
     AWAITING_APPROVAL,
@@ -1815,6 +1815,11 @@ class LocalRunExecutor:
             if isinstance(system_document, dict)
             else ""
         ) or DEFAULT_SYSTEM_PROMPT
+        if CORE_AGENT_EXECUTION_CONTRACT not in system:
+            # Runtime prompts are intentionally version-pinned and administrator
+            # editable. Keep this reliability invariant active for existing
+            # installations without overwriting their stored prompt.
+            system += f"\n\n{CORE_AGENT_EXECUTION_CONTRACT}"
         turn_system_parts: list[str] = []
         output_mode = run.snapshot_json.get("output_mode", "auto")
         if output_mode == "chat":

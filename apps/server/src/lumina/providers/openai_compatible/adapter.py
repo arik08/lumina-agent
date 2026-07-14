@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -23,6 +24,9 @@ from ..types import (
     ProviderRequest,
     ProviderUsage,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 def _message_payload(message: ProviderMessage) -> dict[str, Any]:
@@ -102,6 +106,10 @@ class _ToolState:
     arguments: str = ""
 
 
+class _OptionalPayloadFallback(RuntimeError):
+    """Retry once the rejected optional fields have been removed."""
+
+
 class OpenAICompatibleAdapter:
     capabilities = ProviderCapabilities(
         tools=True,
@@ -120,6 +128,7 @@ class OpenAICompatibleAdapter:
         trust_profile: TrustProfile | None = None,
         http_options: HttpClientOptions | None = None,
         payload_builder: Callable[[ProviderRequest], dict[str, Any]] | None = None,
+        optional_payload_fields: tuple[str, ...] = (),
     ) -> None:
         self.provider_id = provider_id
         self.base_url = _validated_base_url(base_url)
@@ -128,6 +137,8 @@ class OpenAICompatibleAdapter:
         self._trust_profile = trust_profile
         self._http_options = http_options
         self._payload_builder = payload_builder or build_chat_completions_payload
+        self._optional_payload_fields = frozenset(optional_payload_fields)
+        self._disabled_optional_payload_fields: set[str] = set()
         if require_authorization and not any(
             key.casefold() == "authorization" and value.strip()
             for key, value in self._headers.items()
@@ -147,17 +158,19 @@ class OpenAICompatibleAdapter:
         stop_reason: str | None = None
         terminal_received = False
         try:
+            payload = self._request_payload(request)
             async with client.stream(
                 "POST",
                 f"{self.base_url}/chat/completions",
                 headers=self._headers,
-                json=self._payload_builder(request),
+                json=payload,
             ) as response:
+                if response.status_code >= 400:
+                    body = await response.aread()
+                    if self._disable_rejected_optional_fields(body, payload):
+                        raise _OptionalPayloadFallback
                 response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line.startswith("data:"):
-                        continue
-                    data = line[5:].strip()
+                async for data in _iter_sse_payloads(response):
                     if not data:
                         continue
                     if data == "[DONE]":
@@ -168,13 +181,13 @@ class OpenAICompatibleAdapter:
                     except json.JSONDecodeError as exc:
                         raise ProviderRequestError(
                             f"{self.provider_id} returned an invalid streaming event.",
-                            retryable=False,
+                            retryable=True,
                             stage="stream",
                         ) from exc
                     if not isinstance(chunk, Mapping):
                         raise ProviderRequestError(
                             f"{self.provider_id} returned an invalid streaming event.",
-                            retryable=False,
+                            retryable=True,
                             stage="stream",
                         )
 
@@ -186,7 +199,7 @@ class OpenAICompatibleAdapter:
                         )
                         raise ProviderRequestError(
                             f"{self.provider_id} returned a streaming error.",
-                            retryable=False,
+                            retryable=_is_retryable_stream_error(chunk["error"]),
                             stage=stage,
                         )
 
@@ -244,6 +257,10 @@ class OpenAICompatibleAdapter:
                         if choice.get("finish_reason") is not None:
                             stop_reason = str(choice["finish_reason"])
                             terminal_received = True
+        except _OptionalPayloadFallback:
+            async for event in self.stream(request):
+                yield event
+            return
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code
             stage = (
@@ -283,6 +300,36 @@ class OpenAICompatibleAdapter:
                 arguments_json=state.arguments,
             )
         yield ProviderEvent(type="completed", stop_reason=stop_reason or "stop")
+
+    def _request_payload(self, request: ProviderRequest) -> dict[str, Any]:
+        payload = self._payload_builder(request)
+        for field in self._disabled_optional_payload_fields:
+            payload.pop(field, None)
+        if "prompt_cache_key" in self._disabled_optional_payload_fields:
+            payload.pop("prompt_cache_retention", None)
+        return payload
+
+    def _disable_rejected_optional_fields(
+        self, body: bytes, sent_payload: Mapping[str, Any]
+    ) -> bool:
+        rejected = _unsupported_optional_fields(body, self._optional_payload_fields)
+        sent_rejected = rejected.intersection(sent_payload)
+        if not sent_rejected:
+            return False
+        new_fields = rejected - self._disabled_optional_payload_fields
+        if new_fields:
+            self._disabled_optional_payload_fields.update(new_fields)
+            if "prompt_cache_key" in new_fields:
+                self._disabled_optional_payload_fields.add("prompt_cache_retention")
+            logger.warning(
+                "%s rejected optional request fields; retrying without %s",
+                self.provider_id,
+                ", ".join(sorted(self._disabled_optional_payload_fields)),
+            )
+        # Another concurrent Run may already have disabled the same field after
+        # this request was built. This request still needs its own clean retry.
+        return True
+
     async def discover_models(self) -> tuple[str, ...]:
         """Return remote candidates only; activation remains an admin DB action."""
         client = self._client
@@ -370,6 +417,75 @@ def _is_context_overflow_payload(value: object) -> bool:
             "context window",
             "too many tokens",
             "too large for the model",
+        )
+    )
+
+
+async def _iter_sse_payloads(response: httpx.Response) -> AsyncIterator[str]:
+    """Yield complete SSE data payloads, including multi-line gateway events."""
+
+    data_lines: list[str] = []
+    async for line in response.aiter_lines():
+        if line == "":
+            if data_lines:
+                yield "\n".join(data_lines).strip()
+                data_lines.clear()
+            continue
+        if line.startswith(":"):
+            continue
+        if line.startswith("data:"):
+            data_lines.append(line[5:].strip())
+            continue
+        stripped = line.strip()
+        if not data_lines and stripped.startswith("{") and stripped.endswith("}"):
+            yield stripped
+    if data_lines:
+        yield "\n".join(data_lines).strip()
+
+
+def _unsupported_optional_fields(
+    body: bytes, candidates: frozenset[str]
+) -> set[str]:
+    if not body or not candidates:
+        return set()
+    text = body.decode("utf-8", errors="replace").casefold()
+    if not any(
+        marker in text
+        for marker in (
+            "unsupported",
+            "unknown parameter",
+            "unrecognized",
+            "not permitted",
+            "extra inputs",
+        )
+    ):
+        return set()
+    return {
+        field
+        for field in candidates
+        if field.casefold() in text
+        or field.replace("_", "-").casefold() in text
+    }
+
+
+def _is_retryable_stream_error(error: Mapping[str, Any]) -> bool:
+    status = error.get("status") or error.get("status_code")
+    if isinstance(status, int) and (
+        status in {408, 409, 425, 429} or status >= 500
+    ):
+        return True
+    normalized = json.dumps(error, ensure_ascii=False, default=str).casefold()
+    return any(
+        marker in normalized
+        for marker in (
+            "rate_limit",
+            "rate limit",
+            "overload",
+            "server_error",
+            "service_unavailable",
+            "temporarily unavailable",
+            "timeout",
+            "timed out",
         )
     )
 

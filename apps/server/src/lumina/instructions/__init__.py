@@ -1,4 +1,5 @@
 from .service import (
+    CORE_AGENT_EXECUTION_CONTRACT,
     DEFAULT_AGENT_INSTRUCTIONS,
     DEFAULT_SYSTEM_PROMPT,
     InstructionSnapshot,
@@ -17,6 +18,7 @@ from .service import (
 )
 
 __all__ = [
+    "CORE_AGENT_EXECUTION_CONTRACT",
     "DEFAULT_AGENT_INSTRUCTIONS",
     "DEFAULT_SYSTEM_PROMPT",
     "InstructionSnapshot",

@@ -591,6 +591,75 @@ def test_runtime_compaction_shrinks_oversized_recent_tool_pair_as_valid_json(
     assert "full result remains stored" in str(tool.content)
 
 
+def test_runtime_compaction_microcompacts_old_tool_payload_before_summarizing(
+    tmp_path: Path,
+) -> None:
+    user, project, conversation = _configure(tmp_path, "runtime-microcompact")
+    with SessionLocal() as db:
+        run = _run(
+            db,
+            user=db.merge(user),
+            project=db.merge(project),
+            conversation=db.merge(conversation),
+            sequence=1,
+            context_window=12_000,
+        )
+        messages = [ProviderMessage(role="system", content="System contract")]
+        for index in range(4):
+            call_id = f"call-{index}"
+            messages.extend(
+                (
+                    ProviderMessage(
+                        role="assistant",
+                        content=f"Round {index}",
+                        tool_calls=(
+                            {
+                                "id": call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": "web_search",
+                                    "arguments": json.dumps({"query": f"topic {index}"}),
+                                },
+                            },
+                        ),
+                    ),
+                    ProviderMessage(
+                        role="tool",
+                        name="web_search",
+                        tool_call_id=call_id,
+                        content=(
+                            ("old oversized evidence " * 1_500)
+                            if index == 0
+                            else f"short result {index}"
+                        ),
+                    ),
+                )
+            )
+
+        prepared = compact_runtime_messages(run, messages, ({"name": "web_search"},))
+
+    assert prepared.compacted is True
+    assert prepared.compacted_message_count == 0
+    assert prepared.compacted_payload_count == 1
+    assert prepared.estimated_tokens_after < prepared.estimated_tokens_before
+    assert [message.role for message in prepared.messages] == [
+        "system",
+        "assistant",
+        "tool",
+        "assistant",
+        "tool",
+        "assistant",
+        "tool",
+        "assistant",
+        "tool",
+    ]
+    assert not any(
+        str(message.content or "").startswith("[Compacted runtime context]")
+        for message in prepared.messages
+    )
+    assert "full result remains stored" in str(prepared.messages[2].content)
+
+
 def test_context_window_budget_avoids_character_only_compaction(tmp_path: Path) -> None:
     user, project, conversation = _configure(tmp_path, "large-context-window")
     with SessionLocal() as db:

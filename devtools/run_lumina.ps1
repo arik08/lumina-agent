@@ -615,9 +615,6 @@ function Start-LuminaProcesses {
         "--host", "127.0.0.1",
         "--port", [string]$BackendPort
     )
-    if ($Development) {
-        $backendArguments += "--reload"
-    }
     $script:BackendActivityLineCount = 0
     $preservedProcesses = @($script:ManagedProcesses)
     $backendProcess = Start-ManagedProcess `
