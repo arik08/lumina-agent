@@ -1154,6 +1154,9 @@ button:disabled { cursor: default; opacity: 0.5; }
 .marketplace-package-summary button.is-primary { border-color: transparent; background: var(--cobalt); color: white; }
 .marketplace-package-summary button.is-danger { color: var(--danger); }
 .marketplace-file-browser { display: grid; min-height: 390px; grid-template-columns: minmax(170px, 26%) minmax(0, 1fr); overflow: hidden; border: 1px solid var(--line); border-radius: 7px; }
+.marketplace-file-browser.is-expanded { position: fixed; z-index: 80; inset: 20px; min-height: 0; grid-template-columns: minmax(200px, 20%) minmax(0, 1fr); border-radius: 10px; background: var(--surface); box-shadow: 0 0 0 100vmax color-mix(in srgb, var(--ink) 28%, transparent), var(--shadow-overlay); }
+.marketplace-file-browser.is-expanded > section { display: grid; grid-template-rows: 34px minmax(0, 1fr); }
+.marketplace-file-browser.is-expanded .skill-file-content { height: auto; max-height: none; }
 .marketplace-file-browser > aside { min-width: 0; overflow: auto; border-right: 1px solid var(--line); background: var(--surface-soft); }
 .marketplace-file-browser header { display: flex; height: 34px; align-items: center; gap: 6px; padding: 0 10px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px; font-weight: 650; }
 .marketplace-file-browser aside button { display: flex; width: 100%; min-height: 30px; align-items: center; gap: 6px; overflow: hidden; border: 0; padding: 5px 9px; background: transparent; color: var(--muted); font-size: 10.5px; text-align: left; cursor: pointer; text-overflow: ellipsis; white-space: nowrap; }
@@ -1200,14 +1203,18 @@ button:disabled { cursor: default; opacity: 0.5; }
 .marketplace-package-detail .marketplace-file-browser .skill-file-editor { display: block; width: 100%; height: 520px; min-height: 0; overflow: hidden; border: 0; outline: 0; padding: 0; background: var(--surface); color: var(--ink); font-family: var(--font-code); font-size: 12.5px; line-height: 1.65; letter-spacing: normal; }
 .marketplace-file-browser .skill-file-editor > :is(pre, textarea) { padding: 13px 15px; }
 .marketplace-file-browser > section > header { justify-content: space-between; }
-.skill-content-view-toggle { display: flex; align-items: center; gap: 2px; }
-.skill-content-view-toggle button { display: grid; width: 25px; height: 25px; place-items: center; border: 0; border-radius: 4px; background: transparent; color: var(--muted); cursor: pointer; }
-.skill-content-view-toggle button:hover { background: var(--surface-soft); color: var(--ink); }
-.skill-content-view-toggle button[aria-pressed="true"] { background: var(--cobalt-pale); color: var(--cobalt); }
+.skill-content-view-actions { display: flex; align-items: center; gap: 2px; }
+.skill-content-view-actions button { display: grid; width: 25px; height: 25px; place-items: center; border: 0; border-radius: 4px; background: transparent; color: var(--muted); cursor: pointer; }
+.skill-content-view-actions button:hover { background: var(--surface-soft); color: var(--ink); }
+.skill-content-view-actions button[aria-pressed="true"] { background: var(--cobalt-pale); color: var(--cobalt); }
 .skill-file-content { max-height: 520px; overflow: auto; overscroll-behavior: contain; }
 .marketplace-package-detail.is-editing .skill-file-content { overflow: hidden; }
 .skill-file-content > pre { margin: 0; padding: 13px 15px; color: var(--ink); font-family: inherit; font-size: inherit; line-height: 1.7; letter-spacing: normal; white-space: pre-wrap; word-break: break-word; }
 .skill-markdown-preview { padding: 18px 20px 28px; font-size: 12.5px; line-height: 1.65; }
+.skill-frontmatter-preview { margin: 0 0 1.35em; }
+.skill-frontmatter-preview hr { margin: 0.8em 0; }
+.skill-frontmatter-preview pre { margin: 0; border-left: 0; padding: 10px 12px; }
+.skill-markdown-preview .skill-frontmatter-preview pre code { white-space: pre-wrap; word-break: break-word; }
 
 .feature-scroll,
 .feature-list,

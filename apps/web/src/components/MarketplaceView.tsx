@@ -1,4 +1,4 @@
-import { AlertTriangle, Braces, Check, ChevronDown, ChevronRight, Code2, Download, Eye, FileCode2, FileJson, FileText, Folder, FolderOpen, Info, LoaderCircle, Menu, Package, Pencil, RefreshCw, Save, Search, Sparkles, Store, Trash2, Undo2, Wrench, X } from "lucide-react";
+import { AlertTriangle, Braces, Check, ChevronDown, ChevronRight, Code2, Download, Eye, FileCode2, FileJson, FileText, Folder, FolderOpen, Info, LoaderCircle, Maximize2, Menu, Minimize2, Package, Pencil, RefreshCw, Save, Search, Sparkles, Store, Trash2, Undo2, Wrench, X } from "lucide-react";
 import { type DragEvent, type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -7,7 +7,7 @@ import type { ExtensionInstallation, SkillExtension, SkillVersion } from "../api
 import { McpMarketplacePanel } from "./McpMarketplacePanel";
 import { ResizableSplitPane } from "./ResizableSplitPane";
 import { SyntaxCode, SyntaxTextarea } from "./SyntaxCode";
-import { stripMarkdownFrontmatter } from "./markdownFrontmatter";
+import { markdownBodyAfterFrontmatter, splitMarkdownFrontmatter } from "./markdownFrontmatter";
 
 interface MarketplaceViewProps {
   projectId: string | null;
@@ -98,6 +98,20 @@ function trashRetentionLabel(purgesAt: string | null): string {
   return `${new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium" }).format(date)} 자동 삭제`;
 }
 
+function SkillMarkdownPreview({ value }: { value: string }) {
+  const frontmatter = splitMarkdownFrontmatter(value);
+  const markdown = frontmatter ? markdownBodyAfterFrontmatter(frontmatter.body) : value;
+
+  return <div className="markdown-response skill-markdown-preview">
+    {frontmatter && <section className="skill-frontmatter-preview" aria-label="Skill 트리거 메타데이터">
+      <hr />
+      <SyntaxCode value={frontmatter.yaml} language="yaml" />
+      <hr />
+    </section>}
+    <ReactMarkdown skipHtml remarkPlugins={[remarkGfm]}>{markdown}</ReactMarkdown>
+  </div>;
+}
+
 export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceViewProps) {
   const skillContentRef = useRef<HTMLDivElement>(null);
   const repositoryRevisionRef = useRef<string | null>(null);
@@ -118,6 +132,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
   const [versionDetail, setVersionDetail] = useState<SkillVersion | null>(null);
   const [activeFile, setActiveFile] = useState("SKILL.md");
   const [skillContentView, setSkillContentView] = useState<"source" | "rendered">("source");
+  const [skillContentExpanded, setSkillContentExpanded] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [editMode, setEditMode] = useState(false);
   const [editableFiles, setEditableFiles] = useState<Record<string, string>>({});
@@ -230,11 +245,21 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
 
   useEffect(() => {
     setEditMode(false);
+    setSkillContentExpanded(false);
     setRenamingPath(null);
     setDraggedPath(null);
     setDropTarget(null);
     setDeleteConfirmId(null);
   }, [selected?.id, skillView]);
+
+  useEffect(() => {
+    if (!skillContentExpanded) return;
+    const closeExpandedView = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") setSkillContentExpanded(false);
+    };
+    window.addEventListener("keydown", closeExpandedView);
+    return () => window.removeEventListener("keydown", closeExpandedView);
+  }, [skillContentExpanded]);
 
   const saveVersion = async () => {
     if (!selected?.draft || busy) return;
@@ -469,19 +494,19 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
                     </>}
                   </div>
                 </div>
-                {skillView === "trash" ? <div className="feature-state">복원하면 Skill 파일과 버전을 다시 사용할 수 있습니다.</div> : <div className="marketplace-file-browser">
+                {skillView === "trash" ? <div className="feature-state">복원하면 Skill 파일과 버전을 다시 사용할 수 있습니다.</div> : <div className={`marketplace-file-browser ${skillContentExpanded ? "is-expanded" : ""}`}>
                     <aside className="skill-file-explorer" aria-label="Skill 파일"><header className={dropTarget === "" ? "is-drop-target" : ""} onDragOver={(event) => { if (!editMode) return; event.preventDefault(); setDropTarget(""); }} onDrop={(event) => { event.preventDefault(); moveDraggedPath(""); }}><FolderOpen size={14} /> 패키지 파일{editMode && <small>드래그하여 이동</small>}</header><div className="skill-tree" role="tree">{renderFileTree(fileTree)}</div></aside>
                     <section>
                       <header>
                         <span>{activeFile}</span>
-                        {!editMode && activeFileIsMarkdown && <div className="skill-content-view-toggle" role="group" aria-label="Skill 본문 보기 방식">
-                          <button className="tooltip-control" type="button" aria-label="원문 보기" aria-pressed={skillContentView === "source"} data-tooltip="원문 보기" onClick={() => setSkillContentView("source")}><Code2 size={14} /></button>
-                          <button className="tooltip-control" type="button" aria-label="렌더링 보기" aria-pressed={skillContentView === "rendered"} data-tooltip="렌더링 보기" onClick={() => setSkillContentView("rendered")}><Eye size={14} /></button>
-                        </div>}
+                        <div className="skill-content-view-actions">
+                          {!editMode && activeFileIsMarkdown && <button className="tooltip-control" type="button" aria-label={skillContentView === "source" ? "렌더링 보기" : "원문 보기"} aria-pressed={skillContentView === "rendered"} data-tooltip={skillContentView === "source" ? "렌더링 보기" : "원문 보기"} onClick={() => setSkillContentView((current) => current === "source" ? "rendered" : "source")}>{skillContentView === "source" ? <Eye size={14} /> : <Code2 size={14} />}</button>}
+                          <button className="tooltip-control" type="button" aria-label={skillContentExpanded ? "원래 크기로 보기" : "확대해서 보기"} aria-pressed={skillContentExpanded} data-tooltip={skillContentExpanded ? "원래 크기로 보기" : "확대해서 보기"} onClick={() => setSkillContentExpanded((current) => !current)}>{skillContentExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</button>
+                        </div>
                       </header>
                       <div className="skill-file-content" ref={skillContentRef}>
                         {editMode ? <SyntaxTextarea className="skill-file-editor" ariaLabel={`${activeFile} 내용`} fileName={activeFile} value={detailFiles[activeFile] ?? ""} onChange={(event) => { const nextValue = event.currentTarget.value; setEditableFiles((current) => ({ ...current, [activeFile]: nextValue })); }} /> : activeFileIsMarkdown && skillContentView === "rendered"
-                          ? <div className="markdown-response skill-markdown-preview"><ReactMarkdown skipHtml remarkPlugins={[remarkGfm]}>{stripMarkdownFrontmatter(detailFiles[activeFile] ?? "파일 내용을 불러오는 중입니다.")}</ReactMarkdown></div>
+                          ? <SkillMarkdownPreview value={detailFiles[activeFile] ?? "파일 내용을 불러오는 중입니다."} />
                           : <SyntaxCode value={detailFiles[activeFile] ?? "파일 내용을 불러오는 중입니다."} fileName={activeFile} />}
                       </div>
                     </section>

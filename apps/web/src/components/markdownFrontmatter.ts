@@ -15,7 +15,6 @@ export function splitMarkdownFrontmatter(value: string) {
   };
 }
 
-export function stripMarkdownFrontmatter(value: string) {
-  const frontmatter = splitMarkdownFrontmatter(value);
-  return frontmatter ? frontmatter.body.replace(/^(?:[ \t]*\r?\n)+/, "") : value;
+export function markdownBodyAfterFrontmatter(value: string) {
+  return value.replace(/^(?:[ \t]*\r?\n)+/, "");
 }
