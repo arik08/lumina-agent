@@ -42,6 +42,11 @@ test("composer opens the file-length slider on demand and sends a transient Arti
   assert.match(app, /warning: "장문"/);
   assert.match(app, /warning: "최대"/);
   assert.match(app, /selectedIndex >= 4/);
+  assert.match(app, /selectedIndex <= 1[\s\S]*?"muted"/);
+  assert.match(styles, /\.artifact-length-control\.is-muted \.artifact-length-value \{ color: var\(--muted\); \}/);
+  assert.match(styles, /\.artifact-length-popover\.is-muted output > span \{ color: var\(--muted\); \}/);
+  assert.match(styles, /--artifact-length-warning: oklch\(62% 0\.18 52\);/);
+  assert.match(styles, /\.artifact-length-control\.is-warning \{ --artifact-length-accent: var\(--artifact-length-warning\); \}/);
   assert.match(app, /targetOutputTokens \?\? undefined/);
   assert.match(app, /value === "chat" \? null : current \?\? defaultArtifactOutputTokens/);
   assert.match(app, /useState<number \| null>\(defaultArtifactOutputTokens\)/);
