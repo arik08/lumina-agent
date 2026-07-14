@@ -22,7 +22,7 @@ test("user questions expose compact preview markers and message anchors", async 
   assert.doesNotMatch(turn, /data-response-anchor/);
 });
 
-test("hovered marker tapers its neighbors and click scrolling accelerates then decelerates", async () => {
+test("hovered marker stays compact and click scrolling accelerates then decelerates", async () => {
   const [navigator, styles] = await Promise.all([
     read("../src/components/ConversationQuestionNavigator.tsx"),
     read("../src/styles.css"),
@@ -35,7 +35,8 @@ test("hovered marker tapers its neighbors and click scrolling accelerates then d
   assert.match(navigator, /window\.requestAnimationFrame\(step\)/);
   assert.match(navigator, /prefers-reduced-motion: reduce/);
   assert.match(styles, /\.question-navigator-marker::before \{[^}]*transform: translateY\(-50%\) scaleX\(var\(--question-marker-scale\)\)[^}]*transition:/s);
-  assert.match(navigator, /<GlobalTooltipLayer anchor=\{markerRefs\.current\[index\]\} className="question-navigator-tooltip"/);
-  assert.match(styles, /\.question-navigator-tooltip \{/);
+  assert.doesNotMatch(navigator, /GlobalTooltipLayer/);
+  assert.doesNotMatch(navigator, /aria-describedby/);
+  assert.doesNotMatch(styles, /\.question-navigator-tooltip/);
   assert.doesNotMatch(styles, /question-tooltip-enter/);
 });
