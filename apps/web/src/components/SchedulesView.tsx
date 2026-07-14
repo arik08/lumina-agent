@@ -331,7 +331,7 @@ export function SchedulesView({ projectId, projects, execution, executionOptions
   return (
     <div className="feature-view">
       <header className="feature-header">
-        <div><button className="feature-mobile-menu" type="button" aria-label="사이드바 열기" onClick={onOpenNavigation}><Menu size={17} /></button><CalendarClock size={17} /><h1>예약 작업</h1><span>{tasks.length}개</span></div>
+        <div><button className="feature-mobile-menu" type="button" aria-label="사이드바 열기" onClick={onOpenNavigation}><Menu size={17} /></button><CalendarClock size={17} /><h1>예약 작업</h1><span>{tasks.length}개 · 반복·지정 시각 작업 관리</span></div>
         <div>
           <button className="schedule-list-refresh" type="button" aria-label="새로 고침" onClick={() => void refresh()}><RefreshCw size={15} /></button>
         </div>

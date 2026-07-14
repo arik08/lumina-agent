@@ -80,7 +80,7 @@ export function ArtifactLibraryView({ projectId, onOpenArtifact, onOpenNavigatio
 
   return (
     <div className="feature-view">
-      <header className="feature-header"><div><button className="feature-mobile-menu" type="button" aria-label="사이드바 열기" onClick={onOpenNavigation}><Menu size={17} /></button><FileText size={17} /><h1>Artifact Library</h1><span>{items.length}개</span></div><button type="button" aria-label="새로 고침" onClick={() => setRefreshKey((value) => value + 1)}><RefreshCw size={15} /></button></header>
+      <header className="feature-header"><div><button className="feature-mobile-menu" type="button" aria-label="사이드바 열기" onClick={onOpenNavigation}><Menu size={17} /></button><FileText size={17} /><h1>Artifact Library</h1><span>{items.length}개 · 생성된 결과물 검색·미리보기</span></div><button type="button" aria-label="새로 고침" onClick={() => setRefreshKey((value) => value + 1)}><RefreshCw size={15} /></button></header>
       {error && <div className="feature-error" role="alert">{error}</div>}
       <div className="feature-toolbar artifact-library-toolbar">
         <label className="feature-search"><Search size={15} /><input placeholder="Artifact 검색" value={query} onChange={(event) => setQuery(event.currentTarget.value)} /></label>

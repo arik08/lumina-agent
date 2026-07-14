@@ -721,7 +721,7 @@ export function MemoryView({
   return (
     <div className="feature-view memory-view">
       <header className="feature-header">
-        <div><button className="feature-mobile-menu" type="button" aria-label="사이드바 열기" onClick={onOpenNavigation}><Menu size={17} /></button><Brain size={17} /><h1>Memory</h1>{tab !== "personal" && project && <span>{project.name}</span>}</div>
+        <div><button className="feature-mobile-menu" type="button" aria-label="사이드바 열기" onClick={onOpenNavigation}><Menu size={17} /></button><Brain size={17} /><h1>Memory</h1><span>개인·Project 학습 내용 검토{tab !== "personal" && project ? ` · ${project.name}` : ""}</span></div>
         <button type="button" aria-label="Memory 새로 고침" onClick={refresh}><RefreshCw size={15} /></button>
       </header>
       <nav className="memory-tabs" aria-label="Memory 영역">
