@@ -20,6 +20,7 @@ from ...authorization import require_admin
 from ...config import Settings, get_settings
 from ...db import get_db
 from ...models import (
+    Announcement,
     Artifact,
     AuthSession,
     AuditEvent,
@@ -37,7 +38,7 @@ from ...runs.safety import normalize_run_safety_settings, run_safety_payload
 from ...runs.service import cancel_organization_work, message_response, run_snapshot
 from ..dependencies import AuthContext, get_current_user, require_csrf
 from ..errors import ApiProblem
-from ..schemas import ApiModel
+from ..schemas import AnnouncementListResponse, AnnouncementResponse, ApiModel
 
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -88,8 +89,179 @@ class AdminEmergencyStop(ApiModel):
     reason: str = Field(default="관리자 비상 중단", max_length=1000)
 
 
+class AdminAnnouncementCreate(ApiModel):
+    title: str = Field(min_length=1, max_length=240)
+    body: str = Field(min_length=1, max_length=20_000)
+
+
+class AdminAnnouncementPatch(ApiModel):
+    title: str | None = Field(default=None, min_length=1, max_length=240)
+    body: str | None = Field(default=None, min_length=1, max_length=20_000)
+
+
 def _request_id(request: Request) -> str | None:
     return getattr(request.state, "request_id", None)
+
+
+def _announcement_payload(db: Session, announcement: Announcement) -> dict[str, object]:
+    author = db.get(User, announcement.creator_user_id) if announcement.creator_user_id else None
+    return {
+        "id": announcement.id,
+        "title": announcement.title,
+        "body": announcement.body,
+        "author": {
+            "id": author.id,
+            "loginId": author.login_id,
+            "displayName": author.display_name,
+        }
+        if author is not None
+        else None,
+        "createdAt": announcement.created_at,
+        "updatedAt": announcement.updated_at,
+    }
+
+
+def _require_announcement(db: Session, actor: User, announcement_id: str) -> Announcement:
+    require_admin(actor)
+    announcement = db.scalar(
+        select(Announcement).where(
+            Announcement.id == announcement_id,
+            Announcement.organization_id == actor.organization_id,
+        )
+    )
+    if announcement is None:
+        raise ApiProblem(404, "announcement_not_found", "공지사항을 찾을 수 없습니다.")
+    return announcement
+
+
+@router.get("/announcements", response_model=AnnouncementListResponse)
+def list_announcements(
+    request: Request,
+    query: str = "",
+    limit: int = Query(default=100, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    actor: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    require_admin(actor)
+    filters = [Announcement.organization_id == actor.organization_id]
+    normalized_query = query.strip().casefold()
+    if normalized_query:
+        pattern = f"%{normalized_query}%"
+        filters.append(
+            or_(
+                func.lower(Announcement.title).like(pattern),
+                func.lower(Announcement.body).like(pattern),
+            )
+        )
+    total = int(db.scalar(select(func.count(Announcement.id)).where(*filters)) or 0)
+    rows = list(
+        db.scalars(
+            select(Announcement)
+            .where(*filters)
+            .order_by(Announcement.created_at.desc(), Announcement.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+    )
+    record_audit(
+        db,
+        actor=actor,
+        action="admin_announcement_list_viewed",
+        target_type="announcement",
+        result="success",
+        request_id=_request_id(request),
+        metadata={"query": query, "limit": limit, "offset": offset},
+    )
+    db.commit()
+    return {"items": [_announcement_payload(db, row) for row in rows], "total": total}
+
+
+@router.post("/announcements", response_model=AnnouncementResponse, status_code=201)
+def create_announcement(
+    payload: AdminAnnouncementCreate,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    require_admin(context.user)
+    announcement = Announcement(
+        organization_id=context.user.organization_id,
+        creator_user_id=context.user.id,
+        title=payload.title.strip(),
+        body=payload.body.strip(),
+    )
+    if not announcement.title or not announcement.body:
+        raise ApiProblem(422, "invalid_announcement", "제목과 내용을 입력해 주세요.")
+    db.add(announcement)
+    db.flush()
+    record_audit(
+        db,
+        actor=context.user,
+        action="announcement_created",
+        target_type="announcement",
+        target_id=announcement.id,
+        result="success",
+        request_id=_request_id(request),
+        metadata={"title": announcement.title},
+    )
+    db.commit()
+    db.refresh(announcement)
+    return _announcement_payload(db, announcement)
+
+
+@router.patch("/announcements/{announcement_id}", response_model=AnnouncementResponse)
+def update_announcement(
+    announcement_id: str,
+    payload: AdminAnnouncementPatch,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    announcement = _require_announcement(db, context.user, announcement_id)
+    if payload.title is not None:
+        announcement.title = payload.title.strip()
+    if payload.body is not None:
+        announcement.body = payload.body.strip()
+    if not announcement.title or not announcement.body:
+        raise ApiProblem(422, "invalid_announcement", "제목과 내용을 입력해 주세요.")
+    announcement.updated_at = utc_now()
+    record_audit(
+        db,
+        actor=context.user,
+        action="announcement_updated",
+        target_type="announcement",
+        target_id=announcement.id,
+        result="success",
+        request_id=_request_id(request),
+        metadata={"title": announcement.title},
+    )
+    db.commit()
+    db.refresh(announcement)
+    return _announcement_payload(db, announcement)
+
+
+@router.delete("/announcements/{announcement_id}", status_code=204)
+def delete_announcement(
+    announcement_id: str,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> Response:
+    announcement = _require_announcement(db, context.user, announcement_id)
+    record_audit(
+        db,
+        actor=context.user,
+        action="announcement_deleted",
+        target_type="announcement",
+        target_id=announcement.id,
+        result="success",
+        request_id=_request_id(request),
+        metadata={"title": announcement.title},
+    )
+    db.delete(announcement)
+    db.commit()
+    return Response(status_code=204)
 
 
 def _launcher_monitoring_events(

@@ -8,17 +8,22 @@ import {
   LoaderCircle,
   Menu,
   MessageSquare,
+  Megaphone,
+  Pencil,
   PlayCircle,
   Plus,
   RefreshCcw,
   Save,
   Search,
   ShieldCheck,
+  Trash2,
+  X,
   Users,
 } from "lucide-react";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import type {
+  AnnouncementItem,
   AdminAuditEvent,
   AdminConversationDetail,
   AdminConversationSummary,
@@ -31,7 +36,7 @@ import { AdminTrafficChart } from "./AdminTrafficChart";
 import { OrganizationInstructionsPanel } from "./OrganizationInstructionsPanel";
 import { SelectMenu } from "./SelectMenu";
 
-type AdminTab = "users" | "usage" | "conversations" | "audit" | "policy";
+type AdminTab = "users" | "usage" | "conversations" | "audit" | "announcements" | "policy";
 type UsageMetric = "activeUsers" | "loginCount" | "runCount";
 type AdminHistoryViewMode = "recent" | "user";
 type AdminListLimit = 50 | 120 | 250 | 500;
@@ -60,6 +65,10 @@ function formatDate(value: string | null) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "요청을 처리하지 못했습니다.";
+}
+
+function announcementWasEdited(announcement: AnnouncementItem) {
+  return new Date(announcement.updatedAt).getTime() - new Date(announcement.createdAt).getTime() >= 1000;
 }
 
 const usageMetricLabels: Record<UsageMetric, string> = {
@@ -142,6 +151,15 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
   const [createPassword, setCreatePassword] = useState("");
   const [createRole, setCreateRole] = useState<UserRole>("user");
   const [saving, setSaving] = useState(false);
+  const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
+  const [announcementTotal, setAnnouncementTotal] = useState(0);
+  const [announcementCreateOpen, setAnnouncementCreateOpen] = useState(false);
+  const [announcementTitle, setAnnouncementTitle] = useState("");
+  const [announcementBody, setAnnouncementBody] = useState("");
+  const [editingAnnouncementId, setEditingAnnouncementId] = useState<string | null>(null);
+  const [editingAnnouncementTitle, setEditingAnnouncementTitle] = useState("");
+  const [editingAnnouncementBody, setEditingAnnouncementBody] = useState("");
+  const [announcementDeleteArmedId, setAnnouncementDeleteArmedId] = useState<string | null>(null);
 
   const auditEventsByUser = useMemo(() => {
     const groups = new Map<string, AdminAuditEvent[]>();
@@ -183,10 +201,15 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
               setConversations(page.items);
               setConversationTotal(page.total);
             })
-          : api.admin.listAuditEvents({ action: query, limit: auditLimit }, controller.signal).then((page) => {
-              setAuditEvents(page.items);
-              setAuditTotal(page.total);
-            });
+          : tab === "announcements"
+            ? api.admin.listAnnouncements(query, controller.signal).then((page) => {
+                setAnnouncements(page.items);
+                setAnnouncementTotal(page.total);
+              })
+            : api.admin.listAuditEvents({ action: query, limit: auditLimit }, controller.signal).then((page) => {
+                setAuditEvents(page.items);
+                setAuditTotal(page.total);
+              });
       request.catch((requestError) => {
         if (!controller.signal.aborted) setError(errorMessage(requestError));
       }).finally(() => {
@@ -324,7 +347,74 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
     </button>
   );
 
-  const placeholder = tab === "users" || tab === "usage" ? "ID 또는 표시 이름 검색" : tab === "conversations" ? "대화 제목 검색" : "정확한 audit action 검색";
+  const createAnnouncement = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!announcementTitle.trim() || !announcementBody.trim()) return;
+    setSaving(true);
+    try {
+      const created = await api.admin.createAnnouncement({
+        title: announcementTitle.trim(),
+        body: announcementBody.trim(),
+      });
+      setAnnouncements((items) => [created, ...items]);
+      setAnnouncementTotal((total) => total + 1);
+      setAnnouncementTitle("");
+      setAnnouncementBody("");
+      setAnnouncementCreateOpen(false);
+      onToast("공지사항을 게시했습니다.");
+    } catch (requestError) {
+      onToast(errorMessage(requestError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const beginAnnouncementEdit = (announcement: AnnouncementItem) => {
+    setEditingAnnouncementId(announcement.id);
+    setEditingAnnouncementTitle(announcement.title);
+    setEditingAnnouncementBody(announcement.body);
+    setAnnouncementDeleteArmedId(null);
+  };
+
+  const saveAnnouncement = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!editingAnnouncementId || !editingAnnouncementTitle.trim() || !editingAnnouncementBody.trim()) return;
+    setSaving(true);
+    try {
+      const updated = await api.admin.updateAnnouncement(editingAnnouncementId, {
+        title: editingAnnouncementTitle.trim(),
+        body: editingAnnouncementBody.trim(),
+      });
+      setAnnouncements((items) => items.map((item) => item.id === updated.id ? updated : item));
+      setEditingAnnouncementId(null);
+      onToast("공지사항을 수정했습니다.");
+    } catch (requestError) {
+      onToast(errorMessage(requestError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteAnnouncement = async (announcement: AnnouncementItem) => {
+    if (announcementDeleteArmedId !== announcement.id) {
+      setAnnouncementDeleteArmedId(announcement.id);
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.admin.deleteAnnouncement(announcement.id);
+      setAnnouncements((items) => items.filter((item) => item.id !== announcement.id));
+      setAnnouncementTotal((total) => Math.max(0, total - 1));
+      setAnnouncementDeleteArmedId(null);
+      onToast("공지사항을 삭제했습니다.");
+    } catch (requestError) {
+      onToast(errorMessage(requestError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const placeholder = tab === "users" || tab === "usage" ? "ID 또는 표시 이름 검색" : tab === "conversations" ? "대화 제목 검색" : tab === "announcements" ? "공지 제목 또는 내용 검색" : "정확한 audit action 검색";
   const filteredUsageUsers = usageStatistics?.users.filter((user) => {
     const term = query.trim().toLocaleLowerCase();
     return !term || [user.loginId, user.displayName, user.affiliation].some((value) => value?.toLocaleLowerCase().includes(term));
@@ -342,12 +432,14 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
           <button type="button" role="tab" aria-selected={tab === "usage"} onClick={() => setTab("usage")}><BarChart3 size={15} /> 사용통계</button>
           <button type="button" role="tab" aria-selected={tab === "conversations"} onClick={() => setTab("conversations")}><MessageSquare size={15} /> 대화</button>
           <button type="button" role="tab" aria-selected={tab === "audit"} onClick={() => setTab("audit")}><ShieldCheck size={15} /> 모니터링</button>
+          <button type="button" role="tab" aria-selected={tab === "announcements"} onClick={() => setTab("announcements")}><Megaphone size={15} /> 공지사항</button>
           <button type="button" role="tab" aria-selected={tab === "policy"} onClick={() => setTab("policy")}><FileText size={15} /> 기본 지침</button>
         </div>
         {tab !== "policy" && <label className="admin-search"><Search size={15} /><input value={query} placeholder={placeholder} onChange={(event) => setQuery(event.currentTarget.value)} /></label>}
         {tab !== "policy" && <button className="tooltip-control" type="button" aria-label="새로 고침" data-tooltip="새로 고침" onClick={() => setRefreshKey((value) => value + 1)}>{loading ? <LoaderCircle className="is-running" size={16} /> : <RefreshCcw size={16} />}</button>}
         {tab === "conversations" && <label className="admin-feedback-filter"><input type="checkbox" checked={feedbackOnly} onChange={(event) => setFeedbackOnly(event.currentTarget.checked)} /> 의견 있는 대화만</label>}
         {tab === "users" && <button className="primary-compact lumina-primary-action" type="button" onClick={() => setCreateOpen((open) => !open)}><Plus size={15} /> 사용자</button>}
+        {tab === "announcements" && <button className="primary-compact lumina-primary-action" type="button" onClick={() => { setAnnouncementCreateOpen((open) => !open); setEditingAnnouncementId(null); }}><Plus size={15} /> 공지 작성</button>}
       </div>
       {error && <p className="workspace-error" role="alert">{error}</p>}
 
@@ -514,6 +606,33 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
                 </section>
               );
             })}
+          </div>
+        </section>
+      )}
+      {tab === "announcements" && (
+        <section className="admin-section admin-announcements" aria-label="공지사항 관리">
+          {announcementCreateOpen && (
+            <form className="admin-announcement-form" onSubmit={(event) => void createAnnouncement(event)}>
+              <label><span>제목</span><input autoFocus maxLength={240} value={announcementTitle} onChange={(event) => setAnnouncementTitle(event.currentTarget.value)} placeholder="공지 제목" required /></label>
+              <label><span>내용</span><textarea maxLength={20000} value={announcementBody} onChange={(event) => setAnnouncementBody(event.currentTarget.value)} placeholder="모든 사용자에게 전달할 내용을 입력하세요." required /></label>
+              <footer><button className="is-secondary" type="button" onClick={() => setAnnouncementCreateOpen(false)}><X size={14} /> 취소</button><button type="submit" disabled={saving || !announcementTitle.trim() || !announcementBody.trim()}>{saving ? <LoaderCircle className="is-running" size={14} /> : <Megaphone size={14} />} 게시</button></footer>
+            </form>
+          )}
+          <div className="admin-count">공지사항 {announcementTotal}건</div>
+          <div className="admin-announcement-list">
+            {!loading && !error && announcements.length === 0 && <p className="workspace-empty">게시된 공지사항이 없습니다.</p>}
+            {announcements.map((announcement) => editingAnnouncementId === announcement.id ? (
+              <form className="admin-announcement-form is-editing" key={announcement.id} onSubmit={(event) => void saveAnnouncement(event)}>
+                <label><span>제목</span><input autoFocus maxLength={240} value={editingAnnouncementTitle} onChange={(event) => setEditingAnnouncementTitle(event.currentTarget.value)} required /></label>
+                <label><span>내용</span><textarea maxLength={20000} value={editingAnnouncementBody} onChange={(event) => setEditingAnnouncementBody(event.currentTarget.value)} required /></label>
+                <footer><button className="is-secondary" type="button" onClick={() => setEditingAnnouncementId(null)}><X size={14} /> 취소</button><button type="submit" disabled={saving || !editingAnnouncementTitle.trim() || !editingAnnouncementBody.trim()}>{saving ? <LoaderCircle className="is-running" size={14} /> : <Save size={14} />} 저장</button></footer>
+              </form>
+            ) : (
+              <article className="admin-announcement-row" key={announcement.id}>
+                <header><div><strong>{announcement.title}</strong><span>{announcement.author?.displayName || announcement.author?.loginId || "삭제된 사용자"} · {formatDate(announcement.createdAt)}{announcementWasEdited(announcement) ? " · 수정됨" : ""}</span></div><div><button className="tooltip-control" type="button" aria-label="공지사항 수정" data-tooltip="수정" onClick={() => beginAnnouncementEdit(announcement)}><Pencil size={14} /></button><button className={`tooltip-control ${announcementDeleteArmedId === announcement.id ? "is-confirm-armed" : ""}`} type="button" aria-label={announcementDeleteArmedId === announcement.id ? "공지사항 삭제 확인, 한 번 더 누르면 삭제" : "공지사항 삭제"} data-tooltip={announcementDeleteArmedId === announcement.id ? "한 번 더 눌러 삭제" : "삭제"} disabled={saving} onClick={() => void deleteAnnouncement(announcement)}>{announcementDeleteArmedId === announcement.id ? <AlertTriangle size={14} /> : <Trash2 size={14} />}</button></div></header>
+                <p>{announcement.body}</p>
+              </article>
+            ))}
           </div>
         </section>
       )}

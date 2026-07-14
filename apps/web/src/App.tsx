@@ -79,6 +79,7 @@ import { isTerminalRunStatus } from "./run-status";
 import { SyntaxCode, SyntaxTextarea } from "./components/SyntaxCode";
 import { GlobalTooltipLayer } from "./components/GlobalTooltip";
 import type {
+  AnnouncementItem,
   AdminProviderModel,
   AdminProviderSummary,
   ArtifactSummary,
@@ -888,6 +889,7 @@ function App() {
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [notificationTab, setNotificationTab] = useState<NotificationTab>("notifications");
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
   const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
   const [notificationLoading, setNotificationLoading] = useState(false);
   const [notificationError, setNotificationError] = useState<string | null>(null);
@@ -1488,6 +1490,7 @@ function App() {
       setNotificationOpen(false);
       setNotificationTab("notifications");
       setNotifications([]);
+      setAnnouncements([]);
       setNotificationUnreadCount(0);
       setNotificationError(null);
       return;
@@ -1500,9 +1503,13 @@ function App() {
         setNotificationUnreadCount(count.unreadCount);
         if (notificationOpen) {
           setNotificationLoading(true);
-          const page = await api.notifications.list(false, 50, 0, controller.signal);
+          const [page, announcementPage] = await Promise.all([
+            api.notifications.list(false, 50, 0, controller.signal),
+            api.notifications.listAnnouncements(50, 0, controller.signal),
+          ]);
           if (controller.signal.aborted) return;
           setNotifications(page.items);
+          setAnnouncements(announcementPage.items);
           setNotificationUnreadCount(page.unreadCount);
           setNotificationError(null);
         }
@@ -2729,11 +2736,9 @@ function App() {
                       role="tabpanel"
                       aria-labelledby="notification-tab-announcements"
                     >
-                      <div className="announcement-empty">
-                        <Megaphone size={18} />
-                        <strong>게시된 공지사항이 없습니다.</strong>
-                        <span>새 공지가 등록되면 이곳에서 확인할 수 있습니다.</span>
-                      </div>
+                      {!notificationLoading && notificationError && <div className="notification-state is-error"><AlertCircle size={15} /> {notificationError}</div>}
+                      {!notificationLoading && !notificationError && announcements.length === 0 && <div className="announcement-empty"><Megaphone size={18} /><strong>게시된 공지사항이 없습니다.</strong><span>새 공지가 등록되면 이곳에서 확인할 수 있습니다.</span></div>}
+                      {announcements.map((announcement) => <article className="announcement-item" key={announcement.id}><Megaphone size={16} aria-hidden="true" /><div><strong>{announcement.title}</strong><p>{announcement.body}</p><span>{announcement.author?.displayName || announcement.author?.loginId || "관리자"} · {formatNotificationTime(announcement.createdAt)}</span></div></article>)}
                     </div>
                   )}
                 </section>

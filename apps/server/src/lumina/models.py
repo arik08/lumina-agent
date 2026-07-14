@@ -1892,7 +1892,24 @@ class Notification(UUIDPrimaryKeyMixin, Base):
     )
 
 
+class Announcement(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "announcements"
+    __table_args__ = (
+        Index("ix_announcements_organization_created", "organization_id", "created_at"),
+    )
+
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    creator_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    title: Mapped[str] = mapped_column(String(240), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 __all__ = [
+    "Announcement",
     "Artifact",
     "ArtifactDraft",
     "ArtifactVersion",

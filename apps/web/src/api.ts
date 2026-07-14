@@ -1,4 +1,7 @@
 import type {
+  AnnouncementItem,
+  AnnouncementList,
+  AnnouncementMutationRequest,
   ArtifactDownload,
   ArtifactDraft,
   ArtifactSummary,
@@ -619,6 +622,13 @@ export async function listProviderModels(providerId: string, projectId?: string,
 
 export async function listAdminProviderModels(providerId: string, signal?: AbortSignal) {
   return request<AdminProviderModel[]>(`/admin/providers/${encodeURIComponent(providerId)}/models`, { signal });
+}
+
+export async function listAnnouncements(limit = 50, offset = 0, signal?: AbortSignal) {
+  return request<AnnouncementList>("/notifications/announcements", {
+    query: { limit, offset },
+    signal,
+  });
 }
 
 export async function listAdminProviders(signal?: AbortSignal) {
@@ -1517,6 +1527,40 @@ export async function listAdminUsers(
   return request<AdminUserList>("/admin/users", { query: filters, signal });
 }
 
+export async function listAdminAnnouncements(query = "", signal?: AbortSignal) {
+  return request<AnnouncementList>("/admin/announcements", {
+    query: { query, limit: 200 },
+    signal,
+  });
+}
+
+export async function createAdminAnnouncement(payload: AnnouncementMutationRequest, signal?: AbortSignal) {
+  return request<AnnouncementItem>("/admin/announcements", {
+    method: "POST",
+    body: payload,
+    signal,
+  });
+}
+
+export async function updateAdminAnnouncement(
+  announcementId: string,
+  payload: AnnouncementMutationRequest,
+  signal?: AbortSignal,
+) {
+  return request<AnnouncementItem>(`/admin/announcements/${encodeURIComponent(announcementId)}`, {
+    method: "PATCH",
+    body: payload,
+    signal,
+  });
+}
+
+export async function deleteAdminAnnouncement(announcementId: string, signal?: AbortSignal) {
+  return request<void>(`/admin/announcements/${encodeURIComponent(announcementId)}`, {
+    method: "DELETE",
+    signal,
+  });
+}
+
 export async function getAdminUsageStatistics(days: 0 | 30 | 90 = 30, signal?: AbortSignal) {
   return request<AdminUsageStatistics>("/admin/usage-statistics", { query: { days }, signal });
 }
@@ -1746,6 +1790,7 @@ export const api = {
   finance: { getUsdKrwExchangeRate },
   notifications: {
     list: listNotifications,
+    listAnnouncements,
     getUnreadCount: getNotificationUnreadCount,
     markRead: markNotificationRead,
     markAllRead: markAllNotificationsRead,
@@ -1888,6 +1933,10 @@ export const api = {
     rollbackProposal: rollbackProjectLearningProposal,
   },
   admin: {
+    listAnnouncements: listAdminAnnouncements,
+    createAnnouncement: createAdminAnnouncement,
+    updateAnnouncement: updateAdminAnnouncement,
+    deleteAnnouncement: deleteAdminAnnouncement,
     getUsageStatistics: getAdminUsageStatistics,
     getRunSafetySettings: getAdminRunSafetySettings,
     updateRunSafetySettings: updateAdminRunSafetySettings,

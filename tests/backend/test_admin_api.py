@@ -527,3 +527,86 @@ def test_admin_conversation_view_is_audited(tmp_path: Path) -> None:
         )
         assert audit.status_code == 200
         assert len(audit.json()["items"]) == 2
+
+
+def test_admin_announcements_are_managed_by_admins_and_visible_to_users(
+    tmp_path: Path,
+) -> None:
+    app = _test_app(tmp_path)
+    with TestClient(app) as admin_client:
+        admin_csrf = _login(admin_client, "admin", "1")
+        _create_user(admin_client, admin_csrf, login_name="announcement-reader")
+
+        user_client = TestClient(app)
+        try:
+            user_csrf = _login(
+                user_client,
+                "announcement-reader",
+                "initial-password",
+            )
+            assert user_client.get("/api/admin/announcements").status_code == 403
+            assert (
+                user_client.post(
+                    "/api/admin/announcements",
+                    headers={"X-CSRF-Token": user_csrf},
+                    json={"title": "권한 없음", "body": "게시할 수 없습니다."},
+                ).status_code
+                == 403
+            )
+
+            created = admin_client.post(
+                "/api/admin/announcements",
+                headers={"X-CSRF-Token": admin_csrf},
+                json={
+                    "title": "서비스 점검 안내",
+                    "body": "금요일 18시에 점검을 시작합니다.",
+                },
+            )
+            assert created.status_code == 201, created.text
+            announcement = created.json()
+            assert announcement["author"]["loginId"] == "admin@posco.com"
+
+            user_listing = user_client.get("/api/notifications/announcements")
+            assert user_listing.status_code == 200, user_listing.text
+            assert user_listing.json()["items"][0]["title"] == "서비스 점검 안내"
+            assert user_listing.json()["total"] == 1
+
+            updated = admin_client.patch(
+                f"/api/admin/announcements/{announcement['id']}",
+                headers={"X-CSRF-Token": admin_csrf},
+                json={
+                    "title": "서비스 점검 시간 변경",
+                    "body": "금요일 19시에 점검을 시작합니다.",
+                },
+            )
+            assert updated.status_code == 200, updated.text
+            assert updated.json()["title"] == "서비스 점검 시간 변경"
+
+            searched = admin_client.get(
+                "/api/admin/announcements?query=시간 변경"
+            )
+            assert searched.status_code == 200
+            assert [item["id"] for item in searched.json()["items"]] == [
+                announcement["id"]
+            ]
+
+            deleted = admin_client.delete(
+                f"/api/admin/announcements/{announcement['id']}",
+                headers={"X-CSRF-Token": admin_csrf},
+            )
+            assert deleted.status_code == 204
+            assert user_client.get("/api/notifications/announcements").json() == {
+                "items": [],
+                "total": 0,
+            }
+
+        finally:
+            user_client.close()
+
+        audit = admin_client.get("/api/admin/audit-events?target_id=" + announcement["id"])
+        assert audit.status_code == 200
+        assert {item["action"] for item in audit.json()["items"]} == {
+            "announcement_created",
+            "announcement_updated",
+            "announcement_deleted",
+        }

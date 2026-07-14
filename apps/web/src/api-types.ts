@@ -180,6 +180,25 @@ export interface ProjectFileDetail extends ProjectFileSummary {
   versions: ProjectFileVersion[];
 }
 
+export interface AnnouncementItem {
+  id: UUID;
+  title: string;
+  body: string;
+  author: { id: UUID; loginId: string; displayName: string | null } | null;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+export interface AnnouncementList {
+  items: AnnouncementItem[];
+  total: number;
+}
+
+export interface AnnouncementMutationRequest {
+  title: string;
+  body: string;
+}
+
 export interface ProjectFolderSummary {
   id: UUID;
   projectId: UUID;

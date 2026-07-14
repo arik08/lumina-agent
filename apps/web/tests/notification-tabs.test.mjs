@@ -16,9 +16,29 @@ test("notification panel separates notifications and announcements with accessib
   assert.match(app, /aria-controls="notification-panel-announcements"/);
   assert.match(app, /role="tabpanel"/);
   assert.match(app, /게시된 공지사항이 없습니다\./);
+  assert.match(app, /api\.notifications\.listAnnouncements/);
+  assert.match(app, /announcements\.map\(\(announcement\)/);
   assert.match(stylesheet, /\.notification-tabs/);
   assert.match(stylesheet, /button\[aria-selected="true"\]/);
   assert.match(stylesheet, /\.announcement-empty/);
+});
+
+test("admin view provides inline announcement create edit and two-step delete", async () => {
+  const [view, api, stylesheet] = await Promise.all([
+    read("../src/components/AdminView.tsx"),
+    read("../src/api.ts"),
+    read("../src/styles.css"),
+  ]);
+
+  assert.match(view, /공지 작성/);
+  assert.match(view, /api\.admin\.createAnnouncement/);
+  assert.match(view, /api\.admin\.updateAnnouncement/);
+  assert.match(view, /announcementDeleteArmedId !== announcement\.id/);
+  assert.match(view, /한 번 더 눌러 삭제/);
+  assert.match(api, /\/admin\/announcements/);
+  assert.match(stylesheet, /\.admin-announcement-form/);
+  assert.match(stylesheet, /\.admin-announcement-row/);
+  assert.match(stylesheet, /\.announcement-item/);
 });
 
 test("notification receipt shows more compact title-only rows", async () => {

@@ -400,6 +400,26 @@ class NotificationListResponse(ApiModel):
     has_more: bool
 
 
+class AnnouncementAuthorResponse(ApiModel):
+    id: str
+    login_id: str
+    display_name: str | None
+
+
+class AnnouncementResponse(ApiModel):
+    id: str
+    title: str
+    body: str
+    author: AnnouncementAuthorResponse | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AnnouncementListResponse(ApiModel):
+    items: list[AnnouncementResponse]
+    total: int
+
+
 class NotificationUnreadCountResponse(ApiModel):
     unread_count: int
 
