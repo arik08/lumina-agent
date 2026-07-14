@@ -329,6 +329,14 @@ $startupStateFunction = $ast.Find(
     },
     $true
 )
+$monitoringEventFunction = $ast.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq "Write-LuminaMonitoringEvent"
+    },
+    $true
+)
 if ($null -eq $startProcessesFunction -or $null -eq $prepareRuntimeFunction) {
     throw "Launcher preparation and process-start functions must both exist."
 }
@@ -336,15 +344,17 @@ if (
     $null -eq $restartDelayFunction -or
     $null -eq $stateTextFunction -or
     $null -eq $errorDetailsFunction -or
-    $null -eq $startupStateFunction
+    $null -eq $startupStateFunction -or
+    $null -eq $monitoringEventFunction
 ) {
-    throw "Launcher restart and startup-state functions must all exist."
+    throw "Launcher restart, monitoring-event, and startup-state functions must all exist."
 }
 . ([scriptblock]::Create($restartDelayFunction.Extent.Text))
 . ([scriptblock]::Create($startManagedProcessFunction.Extent.Text))
 . ([scriptblock]::Create($stateTextFunction.Extent.Text))
 . ([scriptblock]::Create($errorDetailsFunction.Extent.Text))
 . ([scriptblock]::Create($startupStateFunction.Extent.Text))
+. ([scriptblock]::Create($monitoringEventFunction.Extent.Text))
 
 if ($startProcessesFunction.Extent.Text -match 'alembic|npm') {
     throw "Automatic process restart must not run migration or Frontend build commands."
@@ -379,6 +389,12 @@ if (
     $source -match 'exhausted its automatic restart budget'
 ) {
     throw "The supervisor must stay alive and keep retrying until explicitly stopped."
+}
+if (
+    $source -notmatch 'Write-LuminaMonitoringEvent\s+-Event\s+"manual_restart"' -or
+    $source -notmatch '-Event\s+"automatic_recovery"'
+) {
+    throw "Manual resets and automatic recoveries must be written as distinct monitoring events."
 }
 if ($source -notmatch '\$StartupTimeoutSeconds\s*=\s*90') {
     throw "The startup deadline must allow a 90-second Windows cold start."
@@ -433,6 +449,29 @@ try {
 }
 finally {
     Remove-Item -LiteralPath $processLogRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+$LauncherEventLogPath = Join-Path $env:TEMP "lumina-launcher-events-test-$([guid]::NewGuid()).jsonl"
+$Development = $false
+try {
+    Write-LuminaMonitoringEvent -Event "automatic_recovery" -Attempt 2
+    Write-LuminaMonitoringEvent -Event "manual_restart" -Attempt 3
+    $monitoringEvents = @(
+        Get-Content -LiteralPath $LauncherEventLogPath -Encoding utf8 |
+            ForEach-Object { $_ | ConvertFrom-Json }
+    )
+    if (
+        $monitoringEvents.Count -ne 2 -or
+        $monitoringEvents[0].event -ne "automatic_recovery" -or
+        $monitoringEvents[1].event -ne "manual_restart" -or
+        $monitoringEvents[0].mode -ne "production" -or
+        $monitoringEvents[1].attempt -ne 3
+    ) {
+        throw "Launcher monitoring events did not preserve type, mode, and attempt."
+    }
+}
+finally {
+    Remove-Item -LiteralPath $LauncherEventLogPath -Force -ErrorAction SilentlyContinue
 }
 
 $foreignPort = Get-LuminaLauncherErrorDetails `

@@ -10,6 +10,7 @@ $ServerRoot = Join-Path $RepositoryRoot "apps/server"
 $WebRoot = Join-Path $RepositoryRoot "apps/web"
 $LogRoot = Join-Path $RepositoryRoot "data/logs"
 $BackendOutputLog = Join-Path $LogRoot "backend.out.log"
+$LauncherEventLogPath = Join-Path $LogRoot "launcher-events.jsonl"
 $StartupStatePath = Join-Path $LogRoot $(
     if ($Development) { "run_lumina_dev.state.json" } else { "run_lumina.state.json" }
 )
@@ -220,6 +221,31 @@ function Write-LuminaStartupState {
         Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
         # Diagnostics must never become the reason the launcher exits.
+    }
+}
+
+function Write-LuminaMonitoringEvent {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("automatic_recovery", "manual_restart")]
+        [string]$Event,
+        [Parameter(Mandatory = $true)][int]$Attempt
+    )
+
+    try {
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $LauncherEventLogPath) | Out-Null
+        $payload = [ordered]@{
+            timestamp = [DateTime]::UtcNow.ToString("o")
+            event = $Event
+            mode = if ($Development) { "development" } else { "production" }
+            attempt = $Attempt
+        }
+        $line = ($payload | ConvertTo-Json -Compress) + [Environment]::NewLine
+        $encoding = [System.Text.UTF8Encoding]::new($false)
+        [System.IO.File]::AppendAllText($LauncherEventLogPath, $line, $encoding)
+    }
+    catch {
+        # Monitoring must never become the reason the launcher exits.
     }
 }
 
@@ -762,6 +788,7 @@ try {
                     -Phase "MANUAL_RESET" `
                     -Attempt $attemptNumber `
                     -HelpAction "Manual reset requested."
+                Write-LuminaMonitoringEvent -Event "manual_restart" -Attempt $attemptNumber
                 continue
             }
             $preserveFrontend = $Development
@@ -839,6 +866,7 @@ try {
             Stop-ManagedProcesses -PreserveFrontend:$preserveFrontend
         }
         if ($manualResetRequested) {
+            Write-LuminaMonitoringEvent -Event "manual_restart" -Attempt $attemptNumber
             Write-LuminaStartupState `
                 -Status "restarting" `
                 -Phase "MANUAL_RESET" `
@@ -848,6 +876,9 @@ try {
         }
         $details = Get-LuminaLauncherErrorDetails -Phase $currentPhase -Message $resetReason
         $automaticRestartCount++
+        Write-LuminaMonitoringEvent `
+            -Event "automatic_recovery" `
+            -Attempt $automaticRestartCount
         $restartDelay = Get-AutomaticRestartDelay -Attempt $automaticRestartCount
         Write-LuminaStartupState `
             -Status "restarting" `

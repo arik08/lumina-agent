@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, datetime, time, timedelta
+from pathlib import Path
 from typing import Literal, get_args
 from zoneinfo import ZoneInfo
 
@@ -15,6 +17,7 @@ from ...agent.executor import local_run_executor
 from ...auth import create_user, revoke_user_sessions
 from ...auth.security import hash_password
 from ...authorization import require_admin
+from ...config import Settings, get_settings
 from ...db import get_db
 from ...models import (
     Artifact,
@@ -43,6 +46,7 @@ UserStatus = Literal["invited", "active", "locked", "disabled"]
 UserRole = Literal["user", "admin"]
 _USER_STATUSES = frozenset(get_args(UserStatus))
 _USER_ROLES = frozenset(get_args(UserRole))
+_LAUNCHER_EVENT_TYPES = frozenset({"automatic_recovery", "manual_restart"})
 _ANALYTICS_TIMEZONE = ZoneInfo("Asia/Seoul")
 
 
@@ -86,6 +90,29 @@ class AdminEmergencyStop(ApiModel):
 
 def _request_id(request: Request) -> str | None:
     return getattr(request.state, "request_id", None)
+
+
+def _launcher_monitoring_events(
+    path: Path, *, window_start: datetime, window_end: datetime
+) -> list[tuple[datetime, str]]:
+    events: list[tuple[datetime, str]] = []
+    try:
+        lines = path.read_text(encoding="utf-8-sig").splitlines()
+    except OSError:
+        return events
+    for line in lines:
+        try:
+            payload = json.loads(line)
+            event = payload.get("event")
+            timestamp = datetime.fromisoformat(str(payload.get("timestamp", "")))
+        except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if event not in _LAUNCHER_EVENT_TYPES or timestamp.tzinfo is None:
+            continue
+        timestamp = timestamp.astimezone(UTC)
+        if window_start <= timestamp < window_end:
+            events.append((timestamp, event))
+    return events
 
 
 def _user_payload(user: User) -> dict[str, object]:
@@ -1021,15 +1048,16 @@ def get_audit_traffic(
     minutes: int = Query(default=60, ge=15, le=1440),
     actor: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
     """Return complete minute buckets for recent organization audit activity."""
     require_admin(actor)
     now = utc_now()
     window_end = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
     window_start = window_end - timedelta(minutes=minutes)
-    event_times = list(
-        db.scalars(
-            select(AuditEvent.created_at).where(
+    event_rows = list(
+        db.execute(
+            select(AuditEvent.created_at, AuditEvent.result).where(
                 AuditEvent.organization_id == actor.organization_id,
                 AuditEvent.created_at >= window_start,
                 AuditEvent.created_at < window_end,
@@ -1037,12 +1065,27 @@ def get_audit_traffic(
         )
     )
     counts = {
-        window_start + timedelta(minutes=index): 0 for index in range(minutes)
+        window_start + timedelta(minutes=index): {
+            "normal": 0,
+            "abnormal_audit": 0,
+            "automatic_recovery": 0,
+            "manual_restart": 0,
+        }
+        for index in range(minutes)
     }
-    for event_time in event_times:
+    for event_time, result in event_rows:
         bucket = event_time.astimezone(UTC).replace(second=0, microsecond=0)
         if bucket in counts:
-            counts[bucket] += 1
+            key = "normal" if result == "success" else "abnormal_audit"
+            counts[bucket][key] += 1
+    for event_time, event in _launcher_monitoring_events(
+        settings.data_dir / "logs" / "launcher-events.jsonl",
+        window_start=window_start,
+        window_end=window_end,
+    ):
+        bucket = event_time.replace(second=0, microsecond=0)
+        if bucket in counts:
+            counts[bucket][event] += 1
 
     record_audit(
         db,
@@ -1054,17 +1097,47 @@ def get_audit_traffic(
         metadata={"minutes": minutes},
     )
     db.commit()
-    bucket_values = list(counts.values())
+    buckets = []
+    for minute, bucket in counts.items():
+        abnormal_count = (
+            bucket["abnormal_audit"]
+            + bucket["automatic_recovery"]
+            + bucket["manual_restart"]
+        )
+        buckets.append(
+            {
+                "minute": minute,
+                "count": bucket["normal"] + abnormal_count,
+                "normalCount": bucket["normal"],
+                "abnormalCount": abnormal_count,
+                "abnormalAuditCount": bucket["abnormal_audit"],
+                "automaticRecoveryCount": bucket["automatic_recovery"],
+                "manualRestartCount": bucket["manual_restart"],
+            }
+        )
+    bucket_values = [bucket["count"] for bucket in buckets]
+    normal_values = [bucket["normalCount"] for bucket in buckets]
+    abnormal_values = [bucket["abnormalCount"] for bucket in buckets]
     return {
         "generatedAt": now,
         "timezone": str(_ANALYTICS_TIMEZONE),
         "periodMinutes": minutes,
         "total": sum(bucket_values),
         "peak": max(bucket_values, default=0),
-        "buckets": [
-            {"minute": minute, "count": count}
-            for minute, count in counts.items()
-        ],
+        "normalTotal": sum(normal_values),
+        "normalPeak": max(normal_values, default=0),
+        "abnormalTotal": sum(abnormal_values),
+        "abnormalPeak": max(abnormal_values, default=0),
+        "abnormalAuditTotal": sum(
+            bucket["abnormalAuditCount"] for bucket in buckets
+        ),
+        "automaticRecoveryTotal": sum(
+            bucket["automaticRecoveryCount"] for bucket in buckets
+        ),
+        "manualRestartTotal": sum(
+            bucket["manualRestartCount"] for bucket in buckets
+        ),
+        "buckets": buckets,
     }
 
 

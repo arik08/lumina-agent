@@ -668,9 +668,21 @@ export interface AdminAuditTraffic {
   periodMinutes: number;
   total: number;
   peak: number;
+  normalTotal: number;
+  normalPeak: number;
+  abnormalTotal: number;
+  abnormalPeak: number;
+  abnormalAuditTotal: number;
+  automaticRecoveryTotal: number;
+  manualRestartTotal: number;
   buckets: Array<{
     minute: IsoDateTime;
     count: number;
+    normalCount: number;
+    abnormalCount: number;
+    abnormalAuditCount: number;
+    automaticRecoveryCount: number;
+    manualRestartCount: number;
   }>;
 }
 

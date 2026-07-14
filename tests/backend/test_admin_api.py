@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import timedelta
 from pathlib import Path
 
@@ -398,7 +399,46 @@ def test_admin_audit_traffic_returns_complete_minute_buckets(tmp_path: Path) -> 
                     created_at=now - timedelta(minutes=61),
                 )
             )
+            db.add(
+                AuditEvent(
+                    organization_id=admin_user.organization_id,
+                    actor_user_id=admin_user.id,
+                    action="failed_monitoring_probe",
+                    target_type="test",
+                    result="failure",
+                    created_at=now - timedelta(minutes=1),
+                )
+            )
             db.commit()
+
+        launcher_log = tmp_path / "logs" / "launcher-events.jsonl"
+        launcher_log.parent.mkdir(parents=True, exist_ok=True)
+        launcher_log.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "timestamp": (now - timedelta(minutes=1)).isoformat(),
+                            "event": "automatic_recovery",
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "timestamp": (now - timedelta(minutes=2)).isoformat(),
+                            "event": "manual_restart",
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "timestamp": (now - timedelta(hours=9)).isoformat(),
+                            "event": "automatic_recovery",
+                        }
+                    ),
+                    "not-json",
+                ]
+            ),
+            encoding="utf-8",
+        )
 
         response = admin_client.get("/api/admin/audit-traffic?minutes=60")
         assert response.status_code == 200, response.text
@@ -408,8 +448,21 @@ def test_admin_audit_traffic_returns_complete_minute_buckets(tmp_path: Path) -> 
         assert len(payload["buckets"]) == 60
         assert payload["total"] == sum(bucket["count"] for bucket in payload["buckets"])
         assert payload["peak"] == max(bucket["count"] for bucket in payload["buckets"])
+        assert payload["normalTotal"] == sum(
+            bucket["normalCount"] for bucket in payload["buckets"]
+        )
+        assert payload["abnormalTotal"] == sum(
+            bucket["abnormalCount"] for bucket in payload["buckets"]
+        )
+        assert payload["abnormalAuditTotal"] == 1
+        assert payload["automaticRecoveryTotal"] == 1
+        assert payload["manualRestartTotal"] == 1
+        assert payload["abnormalTotal"] == 3
         assert payload["peak"] >= 3
         assert payload["total"] >= 3
+        eight_hours = admin_client.get("/api/admin/audit-traffic?minutes=480")
+        assert eight_hours.status_code == 200
+        assert len(eight_hours.json()["buckets"]) == 480
         assert admin_client.get("/api/admin/audit-traffic?minutes=14").status_code == 422
 
 
