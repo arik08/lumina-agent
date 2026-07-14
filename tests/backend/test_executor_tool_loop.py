@@ -58,6 +58,18 @@ def test_progress_control_leaves_final_answer_text_visible() -> None:
     assert summary is None
 
 
+def test_explicit_memory_request_uses_chat_unless_a_file_is_also_requested() -> None:
+    assert executor_module._effective_output_mode(
+        "file", "내 고향은 서산이야, 기억해"
+    ) == "chat"
+    assert executor_module._effective_output_mode(
+        "file", "보고서는 HTML 형식을 선호한다고 기억해"
+    ) == "chat"
+    assert executor_module._effective_output_mode(
+        "file", "내 고향은 서산이야, 기억해. 보고서 파일도 만들어"
+    ) == "file"
+
+
 def test_tool_progress_fallback_does_not_expose_arguments() -> None:
     summary = executor_module._tool_progress_fallback(
         [{"name": "write_file", "arguments": '{"content":"secret"}'}]
@@ -276,6 +288,84 @@ def test_agent_loop_persists_web_evidence_and_returns_to_model(
         assert assistant["metadata"]["searchInvocations"][0]["query"] == (
             "설비 예방 정비 최신 동향"
         )
+
+
+def test_memory_interactions_override_persistent_file_output_mode(
+    monkeypatch, tmp_path: Path
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'memory-output-mode.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    requests = []
+
+    class RecordingProvider(MockProvider):
+        async def stream(self, request):
+            requests.append(request)
+            async for event in super().stream(request):
+                yield event
+
+    def provider(
+        _provider_id: str, *, wants_artifact: bool, first_turn: bool
+    ) -> MockProvider:
+        assert wants_artifact is False
+        assert first_turn is True
+        return RecordingProvider(text_chunks=("기억했습니다.",))
+
+    monkeypatch.setattr(local_run_executor, "_provider", provider)
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        snapshots = []
+        for index, message_text in enumerate(
+            ("내 이름은 오명철이야, 기억해", "내 이름이 뭐지?"), start=1
+        ):
+            conversation = client.post(
+                "/api/conversations",
+                headers={"X-CSRF-Token": csrf},
+                json={"projectId": project_id, "title": f"Memory 출력 모드 {index}"},
+            ).json()
+            started = client.post(
+                f"/api/conversations/{conversation['id']}/runs",
+                headers={
+                    "X-CSRF-Token": csrf,
+                    "Idempotency-Key": f"memory-output-mode-{index:04d}",
+                },
+                json={
+                    "message": {
+                        "text": message_text,
+                        "outputMode": "file",
+                    }
+                },
+            )
+            assert started.status_code == 202, started.text
+            snapshots.append(
+                _wait_for_terminal(client, started.json()["run"]["runId"])
+            )
+
+    assert all(snapshot["status"] == "completed" for snapshot in snapshots)
+    assert all(snapshot["artifacts"] == [] for snapshot in snapshots)
+    assert all(snapshot["toolExecutions"] == [] for snapshot in snapshots)
+    assert len(requests) == 2
+    for request in requests:
+        tool_names = {
+            schema["function"]["name"]
+            for schema in request.tools
+            if isinstance(schema.get("function"), dict)
+        }
+        assert "create_report" not in tool_names
+        assert "write_file" not in tool_names
+        system_text = "\n".join(
+            str(message.content)
+            for message in request.messages
+            if message.role == "system"
+        )
+        assert "Output mode: Chat." in system_text
+        assert "Output mode: File." not in system_text
 
 
 def test_report_request_recovers_when_model_tries_to_finish_without_artifact(

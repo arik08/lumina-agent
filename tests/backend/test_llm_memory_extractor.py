@@ -7,6 +7,8 @@ from lumina.memories.service import (
     ConservativeMemoryExtractor,
     MemorySourceMessage,
     extract_memory_candidates_with_llm,
+    is_explicit_memory_request,
+    is_memory_interaction_request,
     prepare_memory_extractor,
 )
 from lumina.providers.types import (
@@ -140,6 +142,36 @@ async def test_explicit_name_uses_local_extractor_without_second_model_call() ->
 
 
 @pytest.mark.asyncio
+async def test_explicit_name_with_comma_uses_concise_local_fact() -> None:
+    provider = _MemoryProvider('{"candidates": []}')
+    messages = (
+        MemorySourceMessage(
+            id="message-1",
+            run_id="run-1",
+            text="내 이름은 오명철이야, 기억해",
+        ),
+    )
+
+    extractor = await prepare_memory_extractor(
+        provider,
+        model="memory-test-model",
+        messages=messages,
+    )
+    candidates = extractor.extract(messages)
+
+    assert isinstance(extractor, ConservativeMemoryExtractor)
+    assert provider.request is None
+    assert [(candidate.category, candidate.display_text) for candidate in candidates] == [
+        ("user_identity", "사용자 이름은 오명철입니다.")
+    ]
+    assert is_explicit_memory_request(messages[0].text) is True
+    assert is_explicit_memory_request("내 고향은 서산이야, 기억해") is True
+    assert is_memory_interaction_request("내 이름이 뭐지?") is True
+    assert is_memory_interaction_request("What do you remember about me?") is True
+    assert is_memory_interaction_request("내 이름을 보고서로 만들어줘") is False
+
+
+@pytest.mark.asyncio
 async def test_unrecognized_stable_fact_falls_back_to_llm_extractor() -> None:
     provider = _MemoryProvider('{"candidates": []}')
     messages = (
@@ -158,3 +190,43 @@ async def test_unrecognized_stable_fact_falls_back_to_llm_extractor() -> None:
 
     assert provider.request is not None
     assert extractor.extract(messages) == ()
+
+
+@pytest.mark.asyncio
+async def test_explicit_unstructured_fact_is_normalized_by_llm_instead_of_raw_storage() -> None:
+    provider = _MemoryProvider(
+        json.dumps(
+            {
+                "candidates": [
+                    {
+                        "category": "user_identity",
+                        "fact": "사용자 고향은 서산입니다.",
+                        "displayText": "사용자 고향은 서산입니다.",
+                        "confidence": 0.96,
+                        "conflictKey": "user_hometown",
+                        "sourceMessageIds": ["message-1"],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+    )
+    messages = (
+        MemorySourceMessage(
+            id="message-1",
+            run_id="run-1",
+            text="내 고향은 서산이야, 기억해",
+        ),
+    )
+
+    extractor = await prepare_memory_extractor(
+        provider,
+        model="memory-test-model",
+        messages=messages,
+    )
+    candidates = extractor.extract(messages)
+
+    assert provider.request is not None
+    assert [(candidate.category, candidate.display_text) for candidate in candidates] == [
+        ("user_identity", "사용자 고향은 서산입니다.")
+    ]

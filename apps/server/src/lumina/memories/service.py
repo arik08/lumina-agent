@@ -43,7 +43,7 @@ _ENGLISH_ROLE = re.compile(r"(?i)\b(?:my\s+role\s+is|i\s+work\s+as)\s+([^.!?\n]{
 _KOREAN_NAME = re.compile(
     r"(?:제|내)\s*이름\s*(?:은|는|이|가)?\s*"
     r"([가-힣A-Za-z][가-힣A-Za-z0-9 ._-]{0,79}?)"
-    r"(?:이라고|라고|이야|야|입니다|이에요|예요)(?=[.!?。！？\s]|$)"
+    r"(?:이라고|라고|이야|야|입니다|이에요|예요)(?=[,.!?，。！？\s]|$)"
 )
 _ENGLISH_NAME = re.compile(
     r"(?i)\bmy\s+name\s+is\s+([A-Za-z][A-Za-z0-9 .'-]{0,79}?)"
@@ -52,6 +52,20 @@ _ENGLISH_NAME = re.compile(
 _MEMORY_COMMAND_ONLY = re.compile(
     r"(?i)^(?:(?:앞으로|항상)\s*)?(?:이걸?|그걸?|이것|그것)?\s*"
     r"(?:기억해(?:\s*줘|\s*주세요)?|remember(?:\s+it|\s+this)?)[.!?。！？]*$"
+)
+_EXPLICIT_MEMORY_REQUEST = re.compile(
+    r"(?i)(?:기억해(?:\s*줘|\s*주세요)?|remember(?:\s+it|\s+this)?)"
+    r"(?=[,.!?，。！？\s]|$)"
+)
+_MEMORY_RECALL_REQUEST = re.compile(
+    r"(?i)(?:"
+    r"(?:내|제)\s*(?:이름|직업|역할|고향|생일|취향|선호(?:사항)?|말투)"
+    r"\s*(?:은|는|이|가)?\s*(?:뭐|무엇|뭔지|뭐였|무엇이었)"
+    r"|(?:나|저)에?\s*대해\s*(?:뭘|무엇을|뭐를)?\s*(?:기억|알고)"
+    r"|(?:나|저)를?\s*(?:어떻게|뭐라고)\s*(?:기억|알고)"
+    r"|what(?:'s|\s+is)\s+my\s+(?:name|job|role|hometown|birthday|preference)"
+    r"|what\s+do\s+you\s+(?:remember|know)\s+about\s+me"
+    r")"
 )
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?。！？])\s+|[\r\n]+")
 _MEMORY_TERM = re.compile(r"[A-Za-z0-9_]{2,}|[가-힣]{2,}")
@@ -132,6 +146,18 @@ class ConservativeMemoryExtractor:
                 seen.add(key)
                 candidates.append(candidate)
         return candidates
+
+
+def is_explicit_memory_request(value: str) -> bool:
+    """Return whether the user explicitly asks Lumina to remember something."""
+
+    return bool(_EXPLICIT_MEMORY_REQUEST.search(value))
+
+
+def is_memory_interaction_request(value: str) -> bool:
+    """Return whether the request writes or directly recalls personal memory."""
+
+    return is_explicit_memory_request(value) or bool(_MEMORY_RECALL_REQUEST.search(value))
 
 
 class PreparedMemoryExtractor:
@@ -1073,26 +1099,53 @@ def _candidate_from_sentence(sentence: str, message_id: str) -> MemoryCandidate 
     if not _STABLE_MARKER.search(sentence):
         return None
     lowered = sentence.casefold()
-    conflict_key: str | None = None
-    category = "recurring_rule"
     if any(
         token in lowered
-        for token in ("간결", "짧게", "자세", "상세", "concise", "detailed")
+        for token in ("간결", "짧게", "concise")
     ):
         category = "communication_preference"
         conflict_key = "response_detail"
+        memory_text = "답변은 간결하게 작성하는 것을 선호합니다."
+    elif any(token in lowered for token in ("자세", "상세", "detailed")):
+        category = "communication_preference"
+        conflict_key = "response_detail"
+        memory_text = "답변은 상세하게 작성하는 것을 선호합니다."
     elif any(token in lowered for token in ("존댓말", "반말", "formal", "casual")):
         category = "communication_preference"
         conflict_key = "response_tone"
+        memory_text = (
+            "존댓말 사용을 선호합니다."
+            if any(token in lowered for token in ("존댓말", "formal"))
+            else "반말 사용을 선호합니다."
+        )
     elif any(
         token in lowered for token in ("보고서", "report", "html", "markdown", "pdf")
     ):
         category = "output_preference"
         conflict_key = "report_output"
+        format_name = next(
+            (
+                display
+                for token, display in (
+                    ("markdown", "Markdown"),
+                    ("html", "HTML"),
+                    ("pdf", "PDF"),
+                )
+                if token in lowered
+            ),
+            None,
+        )
+        memory_text = (
+            f"보고서는 {format_name} 형식을 선호합니다."
+            if format_name
+            else "출력은 보고서 형식을 선호합니다."
+        )
+    else:
+        return None
     return MemoryCandidate(
         category=category,
-        fact=sentence,
-        display_text=sentence,
+        fact=memory_text,
+        display_text=memory_text,
         confidence=0.82,
         conflict_key=conflict_key,
         source_message_ids=(message_id,),

@@ -42,6 +42,7 @@ from ..db import SessionLocal, session_scope
 from ..http_client import TrustProfile
 from ..memories.service import (
     MemorySourceMessage,
+    is_memory_interaction_request,
     learn_memories_for_run,
     prepare_memory_extractor,
 )
@@ -649,8 +650,12 @@ class LocalRunExecutor:
             prompt_references=prompt_references,
             extensions=extensions,
         )
-        output_mode = run.snapshot_json.get("output_mode", "auto")
-        wants_artifact = retry_step_key != "final" and (
+        output_mode = _effective_output_mode(
+            run.snapshot_json.get("output_mode", "auto"), user_message
+        )
+        wants_artifact = retry_step_key != "final" and not _memory_only_request(
+            user_message
+        ) and (
             output_mode == "file"
             or any(
                 token in user_message.casefold()
@@ -1821,7 +1826,10 @@ class LocalRunExecutor:
             # installations without overwriting their stored prompt.
             system += f"\n\n{CORE_AGENT_EXECUTION_CONTRACT}"
         turn_system_parts: list[str] = []
-        output_mode = run.snapshot_json.get("output_mode", "auto")
+        output_mode = _effective_output_mode(
+            run.snapshot_json.get("output_mode", "auto"),
+            str(run.snapshot_json.get("user_message_text", "")),
+        )
         if output_mode == "chat":
             turn_system_parts.append(
                 "Output mode: Chat. Return the final result in the chat response and do "
@@ -3849,6 +3857,27 @@ def _streamed_write_file_name(arguments: str) -> str | None:
         return None
     normalized = path.strip().replace("\\", "/").rstrip("/")
     return normalized.rsplit("/", 1)[-1] or None
+
+
+def _effective_output_mode(requested_mode: object, user_message: str) -> str:
+    if _memory_only_request(user_message):
+        return "chat"
+    return str(requested_mode) if requested_mode in {"auto", "chat", "file"} else "auto"
+
+
+_ARTIFACT_CREATION_REQUEST = re.compile(
+    r"(?i)(?:(?:보고서|report|html|artifact|문서|markdown|\.md|파일).{0,24}"
+    r"(?:만들|생성|작성|저장|create|generate|write)|"
+    r"(?:create|generate|write).{0,24}"
+    r"(?:보고서|report|html|artifact|document|markdown|\.md|file))"
+)
+
+
+def _memory_only_request(user_message: str) -> bool:
+    return bool(
+        is_memory_interaction_request(user_message)
+        and not _ARTIFACT_CREATION_REQUEST.search(user_message)
+    )
 
 
 def _consume_progress_control(
