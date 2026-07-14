@@ -1121,6 +1121,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .feature-list small.marketplace-tags { display: flex; flex-wrap: wrap; gap: 2px 6px; color: color-mix(in srgb, var(--cobalt) 76%, var(--muted)); font-size: 10px; }
 .marketplace-tags span { white-space: nowrap; }
 .marketplace-tags .is-draft { color: var(--warning); }
+.marketplace-tags .is-version { color: var(--muted); font-variant-numeric: tabular-nums; }
 .marketplace-skill-row { display: grid; min-height: 62px; grid-template-columns: minmax(0, 1fr) auto; border-bottom: 1px solid color-mix(in srgb, var(--line) 78%, transparent); }
 .marketplace-skill-row:hover { background: var(--surface-soft); }
 .marketplace-skill-row.is-selected { background: var(--cobalt-pale); box-shadow: inset 2px 0 var(--cobalt); }

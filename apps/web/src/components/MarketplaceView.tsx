@@ -77,6 +77,19 @@ function visibilityLabel(visibility: SkillExtension["visibility"]): string {
   return "개인";
 }
 
+function skillDisplayVersion(item: SkillExtension): string {
+  const publish = item.versions.filter((version) => version.status === "published" || version.publishedAt).length;
+  const merge = item.versions.filter((version) => version.status !== "published" && !version.publishedAt).length;
+  const feedback = item.draft?.dirty ? item.draft.revision : 0;
+  return `v${publish}.${merge}.${feedback}`;
+}
+
+function nextSavedSkillDisplayVersion(item: SkillExtension): string {
+  const publish = item.versions.filter((version) => version.status === "published" || version.publishedAt).length;
+  const merge = item.versions.filter((version) => version.status !== "published" && !version.publishedAt).length + 1;
+  return `v${publish}.${merge}.0`;
+}
+
 function trashRetentionLabel(purgesAt: string | null): string {
   if (!purgesAt) return "30일 후 자동 삭제";
   const date = new Date(purgesAt);
@@ -430,7 +443,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
             const itemInstallationPending = pendingInstallationSurfaceById[item.id] === "list";
             return <div className={`marketplace-skill-row ${item.id === selected?.id ? "is-selected" : ""}`} key={item.id}>
               <button className="marketplace-skill-select" type="button" onClick={() => setSelectedId(item.id)}>
-                <span><strong>{item.name}</strong><small>{item.description || item.slug}</small>{skillView === "trash" && <small>{trashRetentionLabel(item.purgesAt)}</small>}<small className="marketplace-tags" aria-label="Skill 태그">{skillTags(item).map((tag) => <span key={tag}>#{tag}</span>)}{item.draft && <span className="is-draft">초안 r{item.draft.revision}</span>}</small></span>
+                <span><strong>{item.name}</strong><small>{item.description || item.slug}</small>{skillView === "trash" && <small>{trashRetentionLabel(item.purgesAt)}</small>}<small className="marketplace-tags" aria-label="Skill 태그 및 버전">{skillTags(item).map((tag) => <span key={tag}>#{tag}</span>)}<span className="is-version">{skillDisplayVersion(item)}</span></small></span>
               </button>
               {skillView !== "trash" && <button className={`marketplace-install-toggle ${itemInstallation ? "is-installed" : ""}`} type="button" aria-label={`${item.name} ${itemInstallation ? "미사용" : "설치"}`} aria-pressed={Boolean(itemInstallation)} aria-busy={itemInstallationPending} disabled={!itemVersion || itemInstallationPending} onClick={() => void toggleInstallation(item, "list")}>{itemInstallationPending ? <LoaderCircle className="is-running" size={12} /> : itemInstallation ? <><span className="install-toggle-rest">설치됨</span><span className="install-toggle-hover">미사용</span></> : <span>설치</span>}</button>}
             </div>;
@@ -441,15 +454,15 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
             <>
               <header className="detail-heading">
                 <div>{editMode && selected.canEdit ? <><h2 className="marketplace-inline-editor" contentEditable="plaintext-only" suppressContentEditableWarning role="textbox" aria-label="Skill 이름" aria-multiline="false" onInput={(event) => setEditableName(event.currentTarget.textContent ?? "")} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }}>{editableName}</h2><p className="marketplace-inline-editor" contentEditable="plaintext-only" suppressContentEditableWarning role="textbox" aria-label="Skill 설명" aria-multiline="false" data-placeholder="설명 없음" onInput={(event) => setEditableDescription(event.currentTarget.textContent ?? "")} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }}>{editableDescription}</p></> : <><h2>{selected.name}</h2><p>{selected.description || "설명 없음"}</p></>}</div>
-                <div className="detail-badges"><span>{skillView === "trash" ? "보관함" : visibilityLabel(selected.visibility)}</span>{selected.draft && <span className="is-draft">초안 r{selected.draft.revision}{selected.draft.dirty ? " · 저장 안 됨" : ""}</span>}{latestVersion && <span>v{latestVersion.version}</span>}</div>
+                <div className="detail-badges"><span>{skillView === "trash" ? "보관함" : visibilityLabel(selected.visibility)}</span><span>{skillDisplayVersion(selected)}</span></div>
               </header>
               <div className={`marketplace-package-detail ${editMode ? "is-editing" : ""}`}>
                 <div className="marketplace-package-summary">
-                  <div><strong>{skillView === "trash" ? trashRetentionLabel(selected.purgesAt) : selected.draft ? `내 작업 초안 r${selected.draft.revision}` : skillTags(selected).map((tag) => `#${tag}`).join(" ")}</strong><span>Owner {selected.ownerships.filter((item) => item.role === "owner").map((item) => item.displayName).join(", ") || "미지정"}</span></div>
+                  <div><strong>{skillView === "trash" ? trashRetentionLabel(selected.purgesAt) : `버전 ${skillDisplayVersion(selected)}`}</strong><span>Owner {selected.ownerships.filter((item) => item.role === "owner").map((item) => item.displayName).join(", ") || "미지정"}</span></div>
                   <div className="marketplace-package-actions">
                     {skillView === "trash" ? <button className="lumina-primary-action" type="button" disabled={busy} onClick={() => void restoreSelectedSkill()}>{busy ? <LoaderCircle className="is-running" size={14} /> : <Undo2 size={14} />} 복원</button> : <>
                       {editMode ? <><button type="button" disabled={busy} onClick={() => { setEditMode(false); setRenamingPath(null); }}><X size={14} /> 취소</button><button className="lumina-primary-action" type="button" disabled={busy || (selected.canEdit && !editableName.trim())} onClick={() => void savePackageEdit()}><Save size={14} /> 초안 저장</button></> : selected.canCreateDraft && <button type="button" disabled={busy} onClick={() => void beginPackageEdit()}><Pencil size={14} /> {selected.canEdit ? "편집" : "내 버전으로 수정"}</button>}
-                      {!editMode && selected.draft?.dirty && <button type="button" disabled={busy} onClick={() => void saveVersion()}><Check size={14} /> v{selected.versions.length + 1}로 저장</button>}
+                      {!editMode && selected.draft?.dirty && <button type="button" disabled={busy} onClick={() => void saveVersion()}><Check size={14} /> {nextSavedSkillDisplayVersion(selected)}로 저장</button>}
                       {!editMode && <button className={installation ? "is-danger" : "is-primary lumina-primary-action"} type="button" aria-busy={pendingInstallationSurfaceById[selected.id] === "detail"} disabled={!latestVersion || busy || pendingInstallationSurfaceById[selected.id] === "detail"} onClick={() => selected && void toggleInstallation(selected, "detail")}>{pendingInstallationSurfaceById[selected.id] === "detail" ? <><LoaderCircle className="is-running" size={14} /> 처리 중</> : <>{installation ? <Trash2 size={14} /> : <Download size={14} />}{installation ? "미사용" : "설치"}</>}</button>}
                       {!editMode && selected.canDelete && <button className={`text-danger ${deleteConfirmId === selected.id ? "is-delete-armed" : ""}`} type="button" aria-label={deleteConfirmId === selected.id ? `${selected.name} 삭제 경고, 한 번 더 누르면 보관함으로 이동` : `${selected.name} 삭제`} disabled={busy} onClick={() => void deleteSelectedSkill()}>{busy && deleteConfirmId === selected.id ? <LoaderCircle className="is-running" size={14} /> : deleteConfirmId === selected.id ? <AlertTriangle size={14} /> : <Trash2 size={14} />} {deleteConfirmId === selected.id ? "경고" : "삭제"}</button>}
                     </>}
