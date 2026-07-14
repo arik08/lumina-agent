@@ -39,7 +39,9 @@ def test_artifact_target_gets_myharness_style_headroom_within_hard_max() -> None
     assert _artifact_model_request_tokens(capabilities, 12_000) == 15_000
     assert _artifact_model_request_tokens(capabilities, 40_000) == 50_000
     assert _artifact_model_request_tokens(capabilities, None) == 4_096
-    assert _artifact_model_request_tokens({"max_output_tokens": 45_000}, 40_000) == 45_000
+    assert (
+        _artifact_model_request_tokens({"max_output_tokens": 45_000}, 40_000) == 45_000
+    )
 
 
 def test_context_budget_reserves_configured_output_limit() -> None:
@@ -60,7 +62,7 @@ def test_context_budget_reserves_configured_output_limit() -> None:
     context_window, effective_input_budget = _context_budget(run, ())
 
     assert context_window == 100_000
-    assert effective_input_budget > 80_000
+    assert effective_input_budget == 85_904
 
 
 def test_context_policy_falls_back_to_catalog_metadata() -> None:

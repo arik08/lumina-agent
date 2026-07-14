@@ -22,9 +22,12 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
 
         pgpt_models = client.get("/api/admin/providers/pgpt/models")
         assert pgpt_models.status_code == 200
-        gpt_54 = next(model for model in pgpt_models.json() if model["modelKey"] == "gpt-5.4")
+        gpt_54 = next(
+            model for model in pgpt_models.json() if model["modelKey"] == "gpt-5.4"
+        )
         assert gpt_54["defaultContextWindow"] == 1_050_000
         assert gpt_54["defaultContextUsageRatio"] == 0.75
+        assert gpt_54["contextPolicyLocked"] is False
         assert gpt_54["maxOutputTokens"] == 128_000
         assert gpt_54["defaultMaxOutputTokens"] == 42_000
         assert gpt_54["configuredMaxOutputTokens"] == 42_000
@@ -54,7 +57,10 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
             },
         )
         assert configured_ratio.status_code == 200, configured_ratio.text
-        assert configured_ratio.json()["capabilities"]["context_compaction_threshold"] == 0.8
+        assert (
+            configured_ratio.json()["capabilities"]["context_compaction_threshold"]
+            == 0.8
+        )
 
         rejected_ratio = client.patch(
             "/api/admin/providers/pgpt/models/gpt-5.4",
@@ -81,9 +87,31 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
         )
         assert rejected_output_limit.status_code == 422
         assert (
-            rejected_output_limit.json()["code"]
-            == "model_output_token_limit_exceeded"
+            rejected_output_limit.json()["code"] == "model_output_token_limit_exceeded"
         )
+
+        codex_models = client.get("/api/admin/providers/codex/models")
+        assert codex_models.status_code == 200
+        codex_gpt_54 = next(
+            model for model in codex_models.json() if model["modelKey"] == "gpt-5.4"
+        )
+        assert codex_gpt_54["defaultContextWindow"] == 272_000
+        assert codex_gpt_54["defaultContextUsageRatio"] == 0.85
+        assert codex_gpt_54["contextPolicyLocked"] is True
+
+        rejected_codex_policy = client.patch(
+            "/api/admin/providers/codex/models/gpt-5.4",
+            headers={"X-CSRF-Token": csrf},
+            json={
+                "capabilities": {
+                    **codex_gpt_54["capabilities"],
+                    "context_window": 200_000,
+                    "context_compaction_threshold": 0.75,
+                }
+            },
+        )
+        assert rejected_codex_policy.status_code == 422
+        assert rejected_codex_policy.json()["code"] == "model_context_policy_locked"
 
         discovered = client.post(
             "/api/admin/providers/pgpt/models/discover",
@@ -127,7 +155,9 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
         assert disabled.status_code == 200, disabled.text
         assert disabled.json()["enabled"] is False
         assert disabled.json()["isDefault"] is False
-        assert all(item["id"] != "internal" for item in client.get("/api/providers").json())
+        assert all(
+            item["id"] != "internal" for item in client.get("/api/providers").json()
+        )
 
         enabled_provider = client.patch(
             "/api/admin/providers/internal",
@@ -140,7 +170,9 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
 
         admin_providers = client.get("/api/admin/providers")
         assert admin_providers.status_code == 200
-        internal = next(item for item in admin_providers.json() if item["id"] == "internal")
+        internal = next(
+            item for item in admin_providers.json() if item["id"] == "internal"
+        )
         assert internal["enabled"] is True
         assert internal["modelCount"] == 1
 
@@ -171,17 +203,24 @@ def test_provider_availability_management_requires_admin(tmp_path: Path) -> None
         client.post("/api/auth/logout", headers={"X-CSRF-Token": admin_csrf})
         login = client.post(
             "/api/auth/login",
-            json={"loginName": "general-user", "loginDomain": "posco.com", "password": "pw"},
+            json={
+                "loginName": "general-user",
+                "loginDomain": "posco.com",
+                "password": "pw",
+            },
         )
         assert login.status_code == 200
         csrf = login.json()["csrfToken"]
 
         assert client.get("/api/admin/providers").status_code == 403
-        assert client.patch(
-            "/api/admin/providers/codex",
-            headers={"X-CSRF-Token": csrf},
-            json={"enabled": False},
-        ).status_code == 403
+        assert (
+            client.patch(
+                "/api/admin/providers/codex",
+                headers={"X-CSRF-Token": csrf},
+                json={"enabled": False},
+            ).status_code
+            == 403
+        )
 
 
 def _login_admin(client: TestClient) -> str:

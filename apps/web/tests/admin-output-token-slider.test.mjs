@@ -17,7 +17,14 @@ test("admin model settings expose the configured and hard output token limits", 
   assert.match(app, /최대 출력 토큰/);
   assert.match(app, /모델 최대/);
   assert.match(app, /configured_max_output_tokens/);
+  assert.match(app, /모델 전체 컨텍스트/);
+  assert.match(app, /기본 최대 입력 컨텍스트/);
+  assert.match(app, /자동 압축 시작 비율/);
+  assert.match(app, /기본 자동 압축 시작점/);
+  assert.match(app, /contextPolicyLocked/);
+  assert.doesNotMatch(app, /실제 사용 가능 컨텍스트/);
   assert.match(types, /configuredMaxOutputTokens: number \| null/);
   assert.match(types, /maxOutputTokens: number \| null/);
+  assert.match(types, /contextPolicyLocked: boolean/);
   assert.match(styles, /\.settings-token-slider input\[type="range"\]/);
 });

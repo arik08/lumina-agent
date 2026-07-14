@@ -304,6 +304,7 @@ export interface AdminProviderModel {
   isDefault: boolean;
   capabilities: Record<string, unknown>;
   defaultContextWindow: number | null;
+  contextPolicyLocked: boolean;
   maxOutputTokens: number | null;
   defaultMaxOutputTokens: number | null;
   configuredMaxOutputTokens: number | null;

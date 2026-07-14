@@ -245,9 +245,7 @@ def compact_runtime_messages(
             payload_compacted_count += changed_count
         if payload_compacted_count:
             payload_compacted_messages = [
-                message
-                for unit in payload_compacted_units
-                for message in unit
+                message for unit in payload_compacted_units for message in unit
             ]
             payload_prepared = (
                 *head,
@@ -685,8 +683,14 @@ def _context_budget(
         ),
         max(512, min(4_096, context_window // 8)),
     )
-    tool_tokens = estimate_text_tokens(
-        json.dumps(list(tool_schemas), ensure_ascii=False, sort_keys=True, default=str)
+    tool_tokens = (
+        estimate_text_tokens(
+            json.dumps(
+                list(tool_schemas), ensure_ascii=False, sort_keys=True, default=str
+            )
+        )
+        if tool_schemas
+        else 0
     )
     safety_margin = max(256, min(4_096, context_window // 20))
     return context_window, max(
@@ -883,10 +887,7 @@ def _compact_tool_arguments(arguments: Any) -> Any:
         nonlocal changed
         if isinstance(value, str) and len(value) > RUNTIME_TOOL_ARGUMENT_STRING_LIMIT:
             changed = True
-            return (
-                value[:RUNTIME_TOOL_ARGUMENT_STRING_LIMIT]
-                + "...[context compacted]"
-            )
+            return value[:RUNTIME_TOOL_ARGUMENT_STRING_LIMIT] + "...[context compacted]"
         if isinstance(value, dict):
             return {key: shrink(item) for key, item in value.items()}
         if isinstance(value, list):

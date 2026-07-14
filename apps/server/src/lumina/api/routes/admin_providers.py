@@ -63,6 +63,7 @@ class ProviderAvailabilityPatch(ApiModel):
 
 def _payload(model: ProviderModel) -> dict[str, Any]:
     catalog_entry = catalog_model(model.provider_id, model.model_key)
+    context_policy_locked = model.provider_id == "codex" and catalog_entry is not None
     hard_max = _positive_int(
         catalog_entry.capabilities.max_output_tokens
         if catalog_entry
@@ -99,6 +100,7 @@ def _payload(model: ProviderModel) -> dict[str, Any]:
             if catalog_entry and catalog_entry.context_compaction_threshold is not None
             else DEFAULT_CONTEXT_COMPACTION_THRESHOLD
         ),
+        "contextPolicyLocked": context_policy_locked,
         "maxOutputTokens": hard_max,
         "defaultMaxOutputTokens": default_max,
         "configuredMaxOutputTokens": configured_max,
@@ -112,7 +114,9 @@ def _payload(model: ProviderModel) -> dict[str, Any]:
 def _validate_capabilities(
     capabilities: dict[str, Any], *, catalog_entry: ModelCatalogSeed | None = None
 ) -> None:
-    context_window = capabilities.get("context_window", capabilities.get("contextWindow"))
+    context_window = capabilities.get(
+        "context_window", capabilities.get("contextWindow")
+    )
     if context_window is not None and (
         isinstance(context_window, bool)
         or not isinstance(context_window, int)
@@ -135,8 +139,25 @@ def _validate_capabilities(
         raise ApiProblem(
             422,
             "invalid_context_usage_ratio",
-            "실제 사용 가능 비율은 1% 이상 100% 이하이어야 합니다.",
+            "자동 압축 시작 비율은 1% 이상 100% 이하이어야 합니다.",
         )
+    if catalog_entry is not None and catalog_entry.provider_id == "codex":
+        catalog_context_window = catalog_entry.capabilities.context_window
+        catalog_threshold = catalog_entry.context_compaction_threshold
+        if (
+            context_window is not None
+            and catalog_context_window is not None
+            and context_window != catalog_context_window
+        ) or (
+            context_usage_ratio is not None
+            and catalog_threshold is not None
+            and context_usage_ratio != catalog_threshold
+        ):
+            raise ApiProblem(
+                422,
+                "model_context_policy_locked",
+                "Codex Context와 자동 압축 비율은 서비스 정책값으로 고정됩니다.",
+            )
     stored_hard_max = capabilities.get(
         "max_output_tokens", capabilities.get("maxOutputTokens")
     )
@@ -206,7 +227,9 @@ def list_admin_providers(
     grouped: dict[str, list[ProviderModel]] = {}
     for model in models:
         grouped.setdefault(model.provider_id, []).append(model)
-    return [_provider_payload(provider_id, items) for provider_id, items in grouped.items()]
+    return [
+        _provider_payload(provider_id, items) for provider_id, items in grouped.items()
+    ]
 
 
 @router.patch("/{provider_id}")
@@ -512,11 +535,13 @@ def patch_model(
             )
     if values.get("enabled") is False and model.is_default and not becoming_default:
         replacement = db.scalar(
-            select(ProviderModel).where(
+            select(ProviderModel)
+            .where(
                 ProviderModel.provider_id == provider_id,
                 ProviderModel.model_key != model_key,
                 ProviderModel.enabled.is_(True),
-            ).order_by(ProviderModel.sort_order, ProviderModel.model_key)
+            )
+            .order_by(ProviderModel.sort_order, ProviderModel.model_key)
         )
         model.is_default = False
         if replacement is not None:

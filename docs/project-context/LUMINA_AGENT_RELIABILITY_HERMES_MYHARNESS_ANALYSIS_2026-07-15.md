@@ -139,13 +139,13 @@ flowchart TD
 
 ### 7.1 선언값
 
-| Provider/Model | Context window | Max output | 기본 요청 output | 압축 임계값 |
+| Provider/Model | 모델 전체 Context | Max output | 기본 요청 output | 자동 압축 시작 비율 |
 |---|---:|---:|---:|---:|
-| P-GPT `gpt-5.4` | 1,050,000 | 128,000 | 42,000 | 기본 soft threshold |
-| P-GPT `gpt-5.4-mini` | 400,000 | 128,000 | 42,000 | 기본 soft threshold |
+| P-GPT `gpt-5.4` | 1,050,000 | 128,000 | 42,000 | 75% |
+| P-GPT `gpt-5.4-mini` | 400,000 | 128,000 | 42,000 | 75% |
 | Codex `gpt-5.4/5.5/5.6` 계열 | 272,000 | 모델 계약값 | 설정값 | 85% |
 
-P-GPT 1.05M/400K는 MyHarness 설정과 일치하고, Codex 272K·85%는 Hermes 계열의 운용 방향과 일치한다.
+P-GPT 1.05M/400K는 MyHarness의 **모델 전체 Context window**와 일치하고, Codex 272K·85%는 Hermes 계열의 운용 방향과 일치한다. 이 전체 window를 곧바로 입력 상한이나 자동 압축 시작점으로 해석하면 안 된다.
 
 ### 7.2 실제 입력 예산 계산
 
@@ -153,11 +153,21 @@ Lumina는 단순히 context window 전체를 입력으로 사용하지 않는다
 
 `effective input budget = context window - reserved output - tool schema tokens - safety margin`
 
-P-GPT는 tokenizer 차이와 gateway 오차를 완충하기 위해 추정 입력 token에 4/3 padding을 적용한다. tool 결과는 provider 전달 전에 크기를 제한하고, 오래된 큰 payload를 먼저 microcompact한 후 필요하면 이전 대화를 구조화 요약한다.
+현재 P-GPT `gpt-5.4` 설정을 Tool schema 적용 전 기준으로 대입하면 다음과 같다.
+
+- 모델 전체 Context: `1,050,000`
+- 운영 최대 출력: `42,000`
+- 안전 여유: `4,096`
+- 기본 최대 입력 Context: `1,050,000 - 42,000 - 4,096 = 1,003,904`
+- 기본 자동 압축 시작점: `floor(1,003,904 × 75%) = 752,928`
+
+즉 `752,928`은 실제 최대 입력 한도가 아니라 **선제 자동 압축을 시작하는 소프트 임계값**이다. 실제 Run의 최대 입력 Context와 압축 시작점은 활성 Tool schema token만큼 더 낮아진다. P-GPT는 MyHarness와 마찬가지로 tokenizer 차이와 gateway 오차를 완충하기 위해 추정 입력 token에 4/3 padding도 적용한다. tool 결과는 provider 전달 전에 크기를 제한하고, 오래된 큰 payload를 먼저 microcompact한 후 필요하면 이전 대화를 구조화 요약한다.
+
+관리자 화면은 이 차이를 `모델 전체 컨텍스트`, `기본 최대 입력 컨텍스트`, `자동 압축 시작 비율`, `기본 자동 압축 시작점`으로 분리해 표시한다. Codex의 272K·85%는 서비스 정책값이므로 화면과 API 모두 변경을 막고 실제 Run 정책과 동일하게 유지한다.
 
 ### 7.3 최종 판단
 
-- 선언 한도: 기준 구현과 일치한다.
+- 선언 한도: 기준 구현과 일치하며, 모델 전체 Context와 입력/압축 예산을 구분해 표시한다.
 - 수정 전 운용 한도: Provider가 실제로 더 작은 수치를 알려도 반영하지 않아 불완전했다.
 - 수정 후 운용 한도: 명시적으로 관측한 더 작은 수치를 현재 Run에 즉시 반영한다.
 - 남은 제한: Provider가 한도 숫자를 구조화 field나 인식 가능한 문구로 주지 않으면 기존 reactive compaction만 수행한다.
