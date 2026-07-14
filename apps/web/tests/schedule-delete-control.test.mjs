@@ -44,9 +44,15 @@ test("schedule creation lives in the left list and replaces the detail panel", a
   assert.ok(detailStart < createBranch && createBranch < formStart);
   assert.doesNotMatch(view, /feature-inline-dialog" role="dialog"/);
   assert.match(view, /setSelectedId\(task\.id\);\s*setCreateOpen\(false\);/);
+  assert.match(view, /<label><span>작업명<\/span><input/);
+  assert.match(view, /<label><span>지시사항<\/span><textarea/);
+  assert.doesNotMatch(view, /<label><span>(?:이름|작업이름)<\/span><input|<label><span>작업 지시<\/span><textarea/);
+  assert.match(view, /className="schedule-detail-field"><span>작업명<\/span><h2>\{selected\.name\}<\/h2>/);
+  assert.match(view, /className="schedule-detail-field"><span>지시사항<\/span><p>\{selected\.instructions\}<\/p>/);
   assert.match(styles, /\.schedule-list-toolbar\s*\{[^}]*justify-content:\s*flex-end;/);
   assert.match(styles, /\.schedule-list-toolbar \.feature-primary-action\s*\{[^}]*width:\s*100%;[^}]*justify-content:\s*center;/);
   assert.match(styles, /\.schedule-form\.schedule-detail-form\s*\{[^}]*padding:\s*0;/);
+  assert.match(styles, /\.schedule-detail-field\s*\{[^}]*grid-template-columns:\s*52px minmax\(0, 1fr\);/);
 });
 
 test("running a scheduled task refreshes the sidebar conversation list immediately", async () => {

@@ -768,6 +768,10 @@ button:disabled { cursor: default; opacity: 0.5; }
 .detail-heading > div:first-child { min-width: 0; flex: 1; }
 .detail-heading h2 { margin: 0 0 5px; font-size: 18px; letter-spacing: -0.02em; }
 .detail-heading p { margin: 0; color: var(--muted); font-size: 12.5px; line-height: 1.55; }
+.schedule-detail-fields { display: grid; gap: 8px; }
+.schedule-detail-field { display: grid; grid-template-columns: 52px minmax(0, 1fr); align-items: baseline; gap: 10px; }
+.schedule-detail-field > span { color: var(--muted); font-size: 11.5px; font-weight: 650; white-space: nowrap; }
+.detail-heading .schedule-detail-field :is(h2, p) { min-width: 0; margin: 0; }
 .detail-badges { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
 .detail-badges span { padding: 3px 6px; border-radius: 4px; background: var(--surface-soft); color: var(--muted); font-size: 10.5px; }
 .detail-badges .is-draft { background: color-mix(in srgb, var(--warning) 10%, transparent); color: var(--warning); }

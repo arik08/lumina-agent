@@ -356,8 +356,8 @@ export function SchedulesView({ projectId, projects, execution, executionOptions
                 <div><h2 id="new-schedule-title">새 예약 작업</h2><p>예약 결과가 저장될 프로젝트와 실행 설정을 정합니다.</p></div>
                 <button className="schedule-form-close" type="button" aria-label="예약 작성 닫기" onClick={() => setCreateOpen(false)}><X size={16} /></button>
               </header>
-              <label><span>이름</span><input autoFocus value={name} onChange={(event) => setName(event.currentTarget.value)} /></label>
-              <label><span>작업 지시</span><textarea rows={6} value={instructions} onChange={(event) => setInstructions(event.currentTarget.value)} /></label>
+              <label><span>작업명</span><input autoFocus value={name} onChange={(event) => setName(event.currentTarget.value)} /></label>
+              <label><span>지시사항</span><textarea rows={6} value={instructions} onChange={(event) => setInstructions(event.currentTarget.value)} /></label>
               <div className="lumina-select-field"><span>세션 저장 프로젝트</span><SelectMenu value={draftProjectId ?? ""} options={projectOptions} ariaLabel="예약 작업 세션 저장 프로젝트" onChange={setDraftProjectId} /></div>
               <div className="schedule-form-row">
                 <div className="lumina-select-field"><span>주기</span><SelectMenu value={kind} options={scheduleKindOptions} ariaLabel="예약 주기" onChange={(value) => setKind(value as ScheduleKind)} /></div>
@@ -376,7 +376,10 @@ export function SchedulesView({ projectId, projects, execution, executionOptions
           ) : !selected ? <div className="feature-state">예약 작업을 선택해 주세요.</div> : (
             <>
               <header className="detail-heading">
-                <div><h2>{selected.name}</h2><p>{selected.instructions}</p></div>
+                <div className="schedule-detail-fields">
+                  <div className="schedule-detail-field"><span>작업명</span><h2>{selected.name}</h2></div>
+                  <div className="schedule-detail-field"><span>지시사항</span><p>{selected.instructions}</p></div>
+                </div>
                 <div className="detail-badges"><span>{kindLabels[selected.scheduleKind]}</span><span>{selected.timezone}</span></div>
               </header>
               <div className="schedule-summary">
