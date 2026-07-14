@@ -22,6 +22,11 @@ test("monitoring renders a full-width minute traffic chart from the aggregate en
   assert.match(component, /오류 .*자동 .*수동/);
   assert.match(component, /admin-traffic-axis-right/);
   assert.match(component, /onPointerMove=\{selectFromPointer\}/);
+  assert.match(component, /getScreenCTM\(\)/);
+  assert.match(component, /createSVGPoint\(\)/);
+  assert.match(component, /matrixTransform\(screenMatrix\.inverse\(\)\)/);
+  assert.match(component, /\(chartPoint\.x - chart\.inset\.left\) \/ chart\.plotWidth/);
+  assert.doesNotMatch(component, /\(event\.clientX - bounds\.left\) \/ bounds\.width/);
   assert.match(component, /event\.key !== "ArrowLeft"/);
   assert.match(component, /className="admin-traffic-chart"/);
 });

@@ -90,8 +90,13 @@ export function AdminTrafficChart({ refreshKey }: AdminTrafficChartProps) {
 
   const selectFromPointer = (event: PointerEvent<SVGSVGElement>) => {
     if (!chart.points.length) return;
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const ratio = Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width));
+    const screenMatrix = event.currentTarget.getScreenCTM();
+    if (!screenMatrix) return;
+    const pointer = event.currentTarget.createSVGPoint();
+    pointer.x = event.clientX;
+    pointer.y = event.clientY;
+    const chartPoint = pointer.matrixTransform(screenMatrix.inverse());
+    const ratio = Math.min(1, Math.max(0, (chartPoint.x - chart.inset.left) / chart.plotWidth));
     setActiveIndex(Math.round(ratio * (chart.points.length - 1)));
   };
 
