@@ -205,6 +205,38 @@ def can_manage_skill(db: Session, user: User, extension: Extension) -> bool:
     return skill_role(db, user, extension) in {"owner", "maintainer"}
 
 
+def can_view_skill_package(db: Session, user: User, extension: Extension) -> bool:
+    if can_manage_skill(db, user, extension):
+        return True
+    project_ids = select(ProjectMembership.project_id).where(
+        ProjectMembership.user_id == user.id,
+        ProjectMembership.status == "active",
+    )
+    installation_id = db.scalar(
+        select(ExtensionInstallation.id)
+        .where(
+            ExtensionInstallation.extension_id == extension.id,
+            ExtensionInstallation.removed_at.is_(None),
+            or_(
+                (
+                    (ExtensionInstallation.scope_type == "user")
+                    & (ExtensionInstallation.scope_id == user.id)
+                ),
+                (
+                    (ExtensionInstallation.scope_type == "organization")
+                    & (ExtensionInstallation.scope_id == user.organization_id)
+                ),
+                (
+                    (ExtensionInstallation.scope_type == "project")
+                    & (ExtensionInstallation.scope_id.in_(project_ids))
+                ),
+            ),
+        )
+        .limit(1)
+    )
+    return installation_id is not None
+
+
 def update_extension_metadata(
     db: Session, *, user: User, extension_id: str, name: str, description: str
 ) -> Extension:
@@ -320,6 +352,12 @@ def checkout_draft(db: Session, *, user: User, extension_id: str) -> ExtensionDr
                 409, "draft_not_active", "활성 상태의 Skill Draft가 아닙니다."
             )
         return draft
+    if not can_view_skill_package(db, user, extension):
+        raise ApiProblem(
+            404,
+            "version_not_found",
+            "설치된 Skill version만 편집할 수 있습니다.",
+        )
     version_query = select(ExtensionVersion).where(
         ExtensionVersion.extension_id == extension.id
     )
@@ -1471,7 +1509,7 @@ def extension_payload(
             else None
         ),
         "canEdit": can_manage,
-        "canCreateDraft": extension.visibility != "private" or can_manage,
+        "canCreateDraft": can_manage or can_view_skill_package(db, user, extension),
         "canDelete": role == "owner",
     }
     if draft is not None:

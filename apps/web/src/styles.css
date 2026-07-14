@@ -1154,6 +1154,82 @@ button:disabled { cursor: default; opacity: 0.5; }
 .marketplace-install-toggle.is-installed:hover .install-toggle-rest, .marketplace-install-toggle.is-installed:focus-visible .install-toggle-rest { display: none; }
 .marketplace-install-toggle.is-installed:hover .install-toggle-hover, .marketplace-install-toggle.is-installed:focus-visible .install-toggle-hover { display: inline; }
 .marketplace-install-toggle:disabled { cursor: default; opacity: .45; }
+
+.skill-install-toggle { display: inline-grid; width: 96px; min-width: 96px; max-width: 96px; height: 26px; min-height: 26px; max-height: 26px; box-sizing: border-box; place-items: center; align-self: center; margin: 0; padding: 0 7px; border: 1px solid color-mix(in oklab, var(--cobalt) 28%, var(--line)); border-radius: 6px; background: color-mix(in oklab, var(--cobalt) 8%, var(--surface)); color: var(--cobalt); font-size: 10.5px; font-weight: 680; line-height: 1; white-space: nowrap; cursor: pointer; transform: none; transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease; }
+.marketplace-skill-row > .skill-install-toggle { align-self: start; margin: 7px 9px 0 0; }
+.skill-install-toggle:not(.is-installed):hover:not(:disabled), .skill-install-toggle:not(.is-installed):focus-visible { border-color: color-mix(in oklab, var(--cobalt) 42%, var(--line)); background: color-mix(in oklab, var(--cobalt) 14%, var(--surface)); }
+.skill-install-toggle.is-installed { border-color: color-mix(in oklab, var(--success) 24%, var(--line)); background: color-mix(in oklab, var(--success) 8%, var(--surface)); color: var(--success); }
+.skill-install-toggle.is-installed:hover:not(:disabled), .skill-install-toggle.is-installed:focus-visible { border-color: color-mix(in oklab, var(--danger) 30%, var(--line)); background: color-mix(in oklab, var(--danger) 12%, var(--surface)); color: var(--danger); }
+.marketplace-install-state-stack { display: grid; width: 100%; place-items: center; }
+.marketplace-install-state { display: grid; width: 100%; grid-template-columns: 13px minmax(0, 1fr); grid-area: 1 / 1; align-items: center; gap: 5px; }
+.marketplace-install-state > span:last-child { overflow: hidden; text-align: center; text-overflow: clip; }
+.marketplace-install-icon { display: grid; width: 13px; min-width: 13px; height: 13px; place-items: center; }
+.skill-install-toggle .install-toggle-rest, .skill-install-toggle .install-toggle-hover { transition: opacity 90ms ease; }
+.skill-install-toggle .install-toggle-hover { opacity: 0; pointer-events: none; }
+.skill-install-toggle.is-installed:hover:not(:disabled) .install-toggle-rest, .skill-install-toggle.is-installed:focus-visible:not(:disabled) .install-toggle-rest { opacity: 0; }
+.skill-install-toggle.is-installed:hover:not(:disabled) .install-toggle-hover, .skill-install-toggle.is-installed:focus-visible:not(:disabled) .install-toggle-hover { opacity: 1; }
+.skill-install-toggle.is-pending .marketplace-install-state { opacity: 1; }
+.skill-install-toggle:active { transform: none; }
+.skill-install-toggle:disabled { cursor: default; opacity: .45; }
+
+.skill-catalog-layout { display: grid; min-width: 0; min-height: 0; flex: 1; grid-template-columns: 248px minmax(0, 1fr); overflow: hidden; background: var(--canvas); }
+.skill-catalog-filters { min-width: 0; min-height: 0; overflow-y: auto; border-right: 1px solid var(--line); padding: 14px 12px 28px; background: var(--surface); }
+.skill-catalog-filters > header { display: flex; min-height: 28px; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 14px; }
+.skill-catalog-filters > header > span { display: inline-flex; align-items: center; gap: 6px; font-weight: 680; }
+.skill-catalog-filters > header button { display: inline-flex; height: 26px; align-items: center; gap: 4px; padding: 0 5px; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+.skill-catalog-filters > header button:not(:disabled):hover { color: var(--ink); }
+.skill-catalog-search { display: grid; gap: 7px; }
+.skill-catalog-search > span:first-child, .skill-catalog-filters section h2 { color: var(--muted); font-size: 11px; font-weight: 650; }
+.skill-catalog-search > span:last-child { display: flex; height: 32px; align-items: center; gap: 7px; padding: 0 9px; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); background: var(--canvas); }
+.skill-catalog-search > span:last-child:focus-within { border-color: var(--cobalt); box-shadow: 0 0 0 2px color-mix(in srgb, var(--cobalt) 12%, transparent); }
+.skill-catalog-search input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: var(--ink); font: inherit; }
+.skill-catalog-filters section { display: grid; gap: 8px; margin-top: 18px; }
+.skill-catalog-filters section h2 { margin: 0; }
+.skill-catalog-filter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+.skill-catalog-filter-grid button { display: flex; min-width: 0; height: 30px; align-items: center; justify-content: space-between; gap: 5px; padding: 0 7px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--muted); cursor: pointer; }
+.skill-catalog-filter-grid button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skill-catalog-filter-grid button small { font-variant-numeric: tabular-nums; }
+.skill-catalog-filter-grid button:hover { background: var(--surface-soft); color: var(--ink); }
+.skill-catalog-filter-grid button[aria-pressed="true"] { border-color: color-mix(in srgb, var(--cobalt) 28%, var(--line)); background: var(--cobalt-pale); color: var(--cobalt); font-weight: 650; }
+.skill-catalog-filter-tags { display: flex; flex-wrap: wrap; gap: 5px; }
+.skill-catalog-filter-tags button, .skill-catalog-active-filters button { display: inline-flex; min-height: 26px; align-items: center; gap: 4px; padding: 0 7px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--muted); cursor: pointer; }
+.skill-catalog-filter-tags button small { color: color-mix(in srgb, currentColor 72%, transparent); font-variant-numeric: tabular-nums; }
+.skill-catalog-filter-tags button:hover, .skill-catalog-filter-tags button[aria-pressed="true"] { border-color: color-mix(in srgb, var(--cobalt) 32%, var(--line)); background: var(--cobalt-pale); color: var(--cobalt); }
+.skill-catalog-results { display: grid; min-width: 0; min-height: 0; grid-template-rows: auto minmax(0, 1fr); }
+.skill-catalog-results-toolbar { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 14px; padding: 7px 18px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.skill-catalog-results-toolbar > div { display: flex; min-width: 0; align-items: center; gap: 10px; }
+.skill-catalog-results-toolbar > div > span { color: var(--muted); white-space: nowrap; }
+.skill-catalog-results-toolbar strong { color: var(--cobalt); font-variant-numeric: tabular-nums; }
+.skill-catalog-active-filters { display: flex; min-width: 0; align-items: center; gap: 5px; overflow: hidden; }
+.skill-catalog-active-filters button { flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--cobalt); text-overflow: ellipsis; white-space: nowrap; }
+.skill-catalog-scroll { min-height: 0; overflow-y: auto; padding: 14px 16px 32px; }
+.skill-catalog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.skill-catalog-card { display: grid; min-width: 0; min-height: 220px; grid-template-rows: minmax(0, 1fr) auto; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.skill-catalog-card:hover { border-color: var(--line-strong); }
+.skill-catalog-card-copy { display: grid; align-content: start; gap: 8px; }
+.skill-catalog-category { color: var(--muted); font-size: 10.5px; font-weight: 680; letter-spacing: .02em; }
+.skill-catalog-card h2 { overflow: hidden; margin: 0; font-size: 15px; font-weight: 700; letter-spacing: -.015em; text-overflow: ellipsis; white-space: nowrap; }
+.skill-catalog-card p { display: -webkit-box; min-height: 42px; overflow: hidden; margin: 0; color: var(--muted); line-height: 1.55; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.skill-catalog-tags { display: flex; flex-wrap: wrap; gap: 5px; padding-top: 2px; }
+.skill-catalog-tags button { height: 25px; padding: 0 7px; border: 0; border-radius: 5px; background: var(--surface-soft); color: color-mix(in srgb, var(--cobalt) 78%, var(--muted)); cursor: pointer; }
+.skill-catalog-tags button:hover { background: var(--cobalt-pale); color: var(--cobalt); }
+.skill-catalog-card > footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 16px; padding-top: 12px; border-top: 1px solid color-mix(in srgb, var(--line) 82%, transparent); }
+.skill-catalog-metrics { display: flex; min-width: 0; align-items: center; gap: 11px; color: var(--muted); }
+.skill-catalog-metric, .skill-catalog-like { display: inline-flex; height: 26px; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
+.skill-catalog-like { padding: 0 4px; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+.skill-catalog-like:not(:disabled):hover, .skill-catalog-like.is-liked { color: var(--cobalt); }
+.skill-catalog-more { display: flex; min-width: 112px; height: 32px; align-items: center; justify-content: center; gap: 6px; margin: 18px auto 0; padding: 0 12px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); color: var(--ink); cursor: pointer; }
+.skill-catalog-more:not(:disabled):hover { background: var(--surface-soft); }
+.skill-catalog-empty { display: grid; min-height: 300px; place-content: center; justify-items: center; gap: 7px; color: var(--muted); text-align: center; }
+.skill-catalog-empty strong { color: var(--ink); }
+.skill-catalog-empty button { min-height: 30px; margin-top: 5px; padding: 0 9px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); color: var(--ink); cursor: pointer; }
+.skill-catalog-skeleton { display: grid; min-height: 220px; align-content: start; gap: 10px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.skill-catalog-skeleton > * { display: block; height: 13px; border-radius: 4px; background: var(--surface-soft); }
+.skill-catalog-skeleton > span { width: 28%; height: 10px; }
+.skill-catalog-skeleton > strong { width: 64%; height: 18px; }
+.skill-catalog-skeleton > p { width: 100%; margin: 0; }
+.skill-catalog-skeleton > p + p { width: 82%; }
+.skill-catalog-skeleton > footer { height: 40px; margin-top: 26px; border-radius: 0; border-top: 1px solid var(--line); background: transparent; }
 .feature-detail.has-skill-package { display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
 .marketplace-package-detail { display: grid; min-height: 0; grid-template-rows: auto minmax(0, 1fr); gap: 14px; padding-top: 16px; }
 .marketplace-package-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -3180,6 +3256,14 @@ button:disabled { cursor: default; opacity: 0.5; }
   .marketplace-toolbar { align-items: stretch; flex-direction: column; gap: 7px; padding: 8px 10px; }
   .marketplace-scope-tabs { overflow-x: auto; }
   .marketplace-search { width: 100%; }
+  .skill-catalog-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .skill-catalog-filters { max-height: 255px; border-right: 0; border-bottom: 1px solid var(--line); padding: 10px; }
+  .skill-catalog-filters > header { margin-bottom: 9px; }
+  .skill-catalog-filters section { margin-top: 12px; }
+  .skill-catalog-results-toolbar { align-items: flex-start; flex-direction: column; gap: 7px; padding: 8px 10px; }
+  .skill-catalog-results-toolbar > div { width: 100%; flex-wrap: wrap; }
+  .skill-catalog-scroll { padding: 10px 10px 28px; }
+  .skill-catalog-grid { grid-template-columns: minmax(0, 1fr); }
   .marketplace-file-browser { grid-template-columns: minmax(0, 1fr); grid-template-rows: 145px minmax(0, 1fr); }
   .marketplace-file-browser > aside { border-right: 0; border-bottom: 1px solid var(--line); }
   .mcp-tool-list { grid-template-columns: minmax(0, 1fr); }

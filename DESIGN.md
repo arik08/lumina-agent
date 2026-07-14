@@ -214,6 +214,8 @@ Lumina는 flat by default입니다. 일반 section과 row는 surface tone과 1px
 - **Hover / Focus:** hover는 cobalt-hover 또는 surface-soft로 한 단계만 이동합니다. keyboard focus는 2px cobalt 계열 indicator를 유지하되 밝은 흰 아우라로 보이면 안 됩니다.
 - **Secondary / Ghost / Tertiary:** secondary는 surface와 line border, ghost는 transparent와 hover surface만 사용합니다. 삭제는 danger text를 쓰며 별도 과장된 red fill을 만들지 않습니다.
 - **Disabled / Loading:** disabled는 geometry를 유지하고 opacity만 낮춥니다. loading은 같은 자리에서 icon을 spinner로 교체하며 label과 width를 유지합니다.
+- **State Geometry Invariance:** default, loading, installed, destructive-hover처럼 상태가 바뀌어도 button의 width, height, padding, border, font, icon slot은 고정합니다. 상태 전환 중 label 길이나 icon 차이로 주변 layout이 움직이거나 press 시 scale이 변하는 구현은 금지합니다.
+- **Shared Lifecycle Action:** 설치처럼 여러 화면에 반복되는 lifecycle action은 하나의 공용 component와 semantic state로 관리합니다. Marketplace의 `Install`, `Installed`, `Delete` 상태는 목록과 카탈로그가 같은 primitive를 사용하며 화면별 label·spinner·hover 규칙을 따로 만들지 않습니다.
 
 ### Chips
 

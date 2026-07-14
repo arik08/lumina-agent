@@ -1,11 +1,13 @@
 import { AlertTriangle, Braces, Check, ChevronDown, ChevronRight, Code2, Download, Eye, FileCode2, FileJson, FileText, Folder, FolderOpen, Info, LoaderCircle, Maximize2, Menu, Minimize2, Package, Pencil, RefreshCw, Save, Search, Sparkles, Store, Trash2, Undo2, Wrench, X } from "lucide-react";
-import { type DragEvent, type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type DragEvent, type KeyboardEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api, ApiError } from "../api";
-import type { ExtensionInstallation, SkillExtension, SkillVersion } from "../api-types";
+import type { ExtensionInstallation, SkillCatalogItem, SkillCatalogResponse, SkillExtension, SkillVersion } from "../api-types";
 import { McpMarketplacePanel } from "./McpMarketplacePanel";
+import { MarketplaceInstallButton } from "./MarketplaceInstallButton";
 import { ResizableSplitPane } from "./ResizableSplitPane";
+import { SkillCatalogPanel, type SkillCatalogSort } from "./SkillCatalogPanel";
 import { SyntaxCode, SyntaxTextarea } from "./SyntaxCode";
 import { markdownBodyAfterFrontmatter, splitMarkdownFrontmatter } from "./markdownFrontmatter";
 
@@ -61,6 +63,14 @@ function skillFileIcon(path: string): ReactNode {
   return <FileText className={extension === "md" ? "is-markdown" : "is-text"} size={13} />;
 }
 
+const EMPTY_SKILL_CATALOG: SkillCatalogResponse = {
+  items: [],
+  total: 0,
+  offset: 0,
+  hasMore: false,
+  facets: { categories: [], tags: [] },
+};
+
 function skillTags(item: SkillExtension): string[] {
   const manifest = item.versions.at(-1)?.manifest;
   const configured = Array.isArray(manifest?.tags)
@@ -115,6 +125,7 @@ function SkillMarkdownPreview({ value }: { value: string }) {
 export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceViewProps) {
   const skillContentRef = useRef<HTMLDivElement>(null);
   const repositoryRevisionRef = useRef<string | null>(null);
+  const catalogRequestIdRef = useRef(0);
   const [marketKind, setMarketKind] = useState<"skill" | "mcp">("skill");
   const [mcpRefreshKey, setMcpRefreshKey] = useState(0);
   const [items, setItems] = useState<SkillExtension[]>([]);
@@ -124,11 +135,19 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const pendingInstallationIdsRef = useRef<Set<string>>(new Set());
-  const [pendingInstallationSurfaceById, setPendingInstallationSurfaceById] = useState<Record<string, "list" | "detail">>({});
+  const [pendingInstallationSurfaceById, setPendingInstallationSurfaceById] = useState<Record<string, "catalog" | "list" | "detail">>({});
+  const [pendingLikeIds, setPendingLikeIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [skillView, setSkillView] = useState<"catalog" | "installed" | "drafts" | "trash">("catalog");
 
   const [query, setQuery] = useState("");
+  const [catalog, setCatalog] = useState<SkillCatalogResponse>(EMPTY_SKILL_CATALOG);
+  const [catalogLoading, setCatalogLoading] = useState(true);
+  const [catalogLoadingMore, setCatalogLoadingMore] = useState(false);
+  const [catalogQuery, setCatalogQuery] = useState("");
+  const [catalogCategory, setCatalogCategory] = useState("");
+  const [catalogTag, setCatalogTag] = useState("");
+  const [catalogSort, setCatalogSort] = useState<SkillCatalogSort>("popular");
   const [versionDetail, setVersionDetail] = useState<SkillVersion | null>(null);
   const [activeFile, setActiveFile] = useState("SKILL.md");
   const [skillContentView, setSkillContentView] = useState<"source" | "rendered">("source");
@@ -189,9 +208,53 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
     }
   };
 
+  const refreshCatalog = useCallback(async ({
+    offset = 0,
+    append = false,
+    signal,
+  }: {
+    offset?: number;
+    append?: boolean;
+    signal?: AbortSignal;
+  } = {}) => {
+    const requestId = ++catalogRequestIdRef.current;
+    if (append) setCatalogLoadingMore(true);
+    else setCatalogLoading(true);
+    try {
+      const response = await api.extensions.listCatalog({
+        query: catalogQuery.trim() || undefined,
+        category: catalogCategory || undefined,
+        tag: catalogTag || undefined,
+        sort: catalogSort,
+        offset,
+        limit: 60,
+      }, signal);
+      if (requestId !== catalogRequestIdRef.current) return;
+      setCatalog((current) => append ? { ...response, items: [...current.items, ...response.items] } : response);
+    } catch (caught) {
+      if (signal?.aborted || requestId !== catalogRequestIdRef.current) return;
+      setError(caught instanceof ApiError ? caught.message : "Skill 카탈로그를 불러오지 못했습니다.");
+    } finally {
+      if (requestId === catalogRequestIdRef.current) {
+        setCatalogLoading(false);
+        setCatalogLoadingMore(false);
+      }
+    }
+  }, [catalogCategory, catalogQuery, catalogSort, catalogTag]);
+
   useEffect(() => {
     void refresh();
   }, [projectId]);
+
+  useEffect(() => {
+    if (marketKind !== "skill" || skillView !== "catalog") return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => void refreshCatalog({ signal: controller.signal }), 180);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [marketKind, refreshCatalog, skillView]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -200,7 +263,10 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
         const previousRevision = repositoryRevisionRef.current;
         repositoryRevisionRef.current = state.revision;
         if (!previousRevision || previousRevision === state.revision) return;
-        if (marketKind === "skill") void refresh();
+        if (marketKind === "skill") {
+          void refresh();
+          void refreshCatalog();
+        }
         else setMcpRefreshKey((value) => value + 1);
       }).catch(() => undefined);
     };
@@ -217,7 +283,9 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
     try {
       const state = await api.extensions.syncRepository();
       repositoryRevisionRef.current = state.revision;
-      if (marketKind === "skill") await refresh();
+      if (marketKind === "skill") {
+        await Promise.all([refresh(), refreshCatalog()]);
+      }
       else setMcpRefreshKey((value) => value + 1);
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "Repository 확장을 다시 찾지 못했습니다.");
@@ -228,7 +296,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
     const versionId = selected?.latestPublishedVersionId;
     setVersionDetail(null);
     setActiveFile("SKILL.md");
-    if (skillView === "trash" || !versionId || selected?.draft) return;
+    if (skillView === "catalog" || skillView === "trash" || !versionId || selected?.draft) return;
     const controller = new AbortController();
     void api.extensions.getVersion(versionId, controller.signal).then(setVersionDetail).catch(() => setVersionDetail(null));
     return () => controller.abort();
@@ -301,7 +369,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
     try {
       const restored = await api.extensions.restore(selected.id);
       setSkillView("catalog");
-      await refresh(restored.id);
+      await Promise.all([refresh(restored.id), refreshCatalog()]);
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "Skill을 복원하지 못했습니다.");
     } finally {
@@ -309,29 +377,101 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
     }
   };
 
-  const toggleInstallation = async (target: SkillExtension, surface: "list" | "detail") => {
-    if (busy || pendingInstallationIdsRef.current.has(target.id)) return;
-    const targetInstallation = installations.find((entry) => entry.extensionId === target.id) ?? null;
-    const targetVersion = target.versions.at(-1) ?? null;
-    if (!targetInstallation && !targetVersion) return;
-    pendingInstallationIdsRef.current.add(target.id);
-    setPendingInstallationSurfaceById((current) => ({ ...current, [target.id]: surface }));
+  const changeInstallation = async ({
+    extensionId,
+    versionId,
+    installationId,
+    surface,
+  }: {
+    extensionId: string;
+    versionId: string | null;
+    installationId: string | null;
+    surface: "catalog" | "list" | "detail";
+  }) => {
+    if (pendingInstallationIdsRef.current.has(extensionId)) return;
+    const currentInstallation = installations.find((entry) => entry.extensionId === extensionId) ?? null;
+    const currentInstallationId = currentInstallation?.id ?? installationId;
+    if (!currentInstallationId && !versionId) return;
+    pendingInstallationIdsRef.current.add(extensionId);
+    setPendingInstallationSurfaceById((current) => ({ ...current, [extensionId]: surface }));
     setError(null);
     try {
-      if (targetInstallation) {
-        await api.extensions.uninstall(targetInstallation.id);
-        setInstallations((current) => current.filter((entry) => entry.extensionId !== target.id));
-      } else if (targetVersion) {
-        const installed = await api.extensions.install(targetVersion.id);
-        setInstallations((current) => [...current.filter((entry) => entry.extensionId !== target.id), installed]);
+      if (currentInstallationId) {
+        await api.extensions.uninstall(currentInstallationId);
+        setInstallations((current) => current.filter((entry) => entry.extensionId !== extensionId));
+        setCatalog((current) => ({
+          ...current,
+          items: current.items.map((item) => item.id === extensionId ? {
+            ...item,
+            installed: false,
+            installationId: null,
+            installCount: Math.max(0, item.installCount - 1),
+          } : item),
+        }));
+      } else if (versionId) {
+        const installed = await api.extensions.install(versionId);
+        setInstallations((current) => [...current.filter((entry) => entry.extensionId !== extensionId), installed]);
+        setCatalog((current) => ({
+          ...current,
+          items: current.items.map((item) => item.id === extensionId ? {
+            ...item,
+            installed: true,
+            installationId: installed.id,
+            installCount: item.installCount + 1,
+          } : item),
+        }));
       }
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "설치 상태를 변경하지 못했습니다.");
     } finally {
-      pendingInstallationIdsRef.current.delete(target.id);
+      pendingInstallationIdsRef.current.delete(extensionId);
       setPendingInstallationSurfaceById((current) => {
         const next = { ...current };
-        delete next[target.id];
+        delete next[extensionId];
+        return next;
+      });
+    }
+  };
+
+  const toggleInstallation = async (target: SkillExtension, surface: "list" | "detail") => {
+    const targetInstallation = installations.find((entry) => entry.extensionId === target.id) ?? null;
+    await changeInstallation({
+      extensionId: target.id,
+      versionId: target.versions.at(-1)?.id ?? null,
+      installationId: targetInstallation?.id ?? null,
+      surface,
+    });
+  };
+
+  const toggleCatalogInstallation = async (target: SkillCatalogItem) => {
+    await changeInstallation({
+      extensionId: target.id,
+      versionId: target.latestVersionId,
+      installationId: target.installationId,
+      surface: "catalog",
+    });
+  };
+
+  const toggleCatalogLike = async (target: SkillCatalogItem) => {
+    if (pendingLikeIds.has(target.id)) return;
+    setPendingLikeIds((current) => new Set(current).add(target.id));
+    setError(null);
+    try {
+      const result = await api.extensions.setLike(target.id, !target.likedByMe);
+      setCatalog((current) => ({
+        ...current,
+        items: current.items.map((item) => item.id === target.id ? {
+          ...item,
+          likedByMe: result.liked,
+          likeCount: result.likeCount,
+        } : item),
+      }));
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : "좋아요 상태를 변경하지 못했습니다.");
+    } finally {
+      setPendingLikeIds((current) => {
+        const next = new Set(current);
+        next.delete(target.id);
         return next;
       });
     }
@@ -430,6 +570,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
   };
 
   const counts = useMemo(() => ({ drafts: items.filter((item) => item.draft).length, installed: installations.filter((entry) => items.some((item) => item.id === entry.extensionId)).length, trashed: trashedItems.length }), [installations, items, trashedItems.length]);
+  const pendingCatalogInstallIds = useMemo(() => new Set(Object.entries(pendingInstallationSurfaceById).filter(([, surface]) => surface === "catalog").map(([id]) => id)), [pendingInstallationSurfaceById]);
 
   const renderFileTree = (nodes: SkillFileNode[]): ReactNode => nodes.map((node) => {
     if (node.kind === "folder") {
@@ -481,15 +622,33 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
       <header className="feature-header"><div><button className="feature-mobile-menu" type="button" aria-label="사이드바 열기" onClick={onOpenNavigation}><Menu size={17} /></button><Store size={17} /><h1>마켓스토어</h1><div className="feature-kind-tabs" role="tablist" aria-label="Marketplace 유형"><button type="button" role="tab" aria-selected={marketKind === "skill"} onClick={() => setMarketKind("skill")}><Sparkles size={14} /> Skill</button><button type="button" role="tab" aria-selected={marketKind === "mcp"} onClick={() => setMarketKind("mcp")}><Wrench size={14} /> MCP</button></div></div><div><button type="button" aria-label="새로 고침" onClick={() => void refreshRepository()}><RefreshCw size={15} /></button></div></header>
       {marketKind === "skill" && <div className="marketplace-toolbar">
         <div className="marketplace-scope-tabs" role="tablist" aria-label="Skill 보기">
-          <button type="button" role="tab" aria-selected={skillView === "catalog"} onClick={() => setSkillView("catalog")}><Package size={14} /> 카탈로그 <span>{items.length}</span></button>
+          <button type="button" role="tab" aria-selected={skillView === "catalog"} onClick={() => setSkillView("catalog")}><Package size={14} /> 카탈로그 <span>{catalog.total || items.length}</span></button>
           <button type="button" role="tab" aria-selected={skillView === "installed"} onClick={() => setSkillView("installed")}><Download size={14} /> 설치됨 <span>{counts.installed}</span></button>
           <button type="button" role="tab" aria-selected={skillView === "drafts"} onClick={() => setSkillView("drafts")}><Sparkles size={14} /> 내 초안 <span>{counts.drafts}</span></button>
           <button className="tooltip-control" type="button" role="tab" aria-selected={skillView === "trash"} data-tooltip="삭제한 Skill은 30일 동안 보관되며 그 전에 복원할 수 있습니다." onClick={() => setSkillView("trash")}><Trash2 size={14} /> 삭제됨 <Info size={12} aria-hidden="true" /> <span>{counts.trashed}</span></button>
         </div>
-        <label className="marketplace-search"><Search size={14} /><input aria-label="Skill 검색" placeholder="Skill 이름 또는 설명 검색" value={query} onChange={(event) => setQuery(event.currentTarget.value)} /></label>
+        {skillView !== "catalog" && <label className="marketplace-search"><Search size={14} /><input aria-label="Skill 검색" placeholder="Skill 이름 또는 설명 검색" value={query} onChange={(event) => setQuery(event.currentTarget.value)} /></label>}
       </div>}
       {error && <div className="feature-error" role="alert">{error}</div>}
-      {marketKind === "mcp" ? <McpMarketplacePanel key={`${projectId ?? "none"}:${mcpRefreshKey}`} projectId={projectId} /> : <ResizableSplitPane storageKey="lumina:marketplace-list-width" ariaLabel="Skill 목록 너비 조절" className="marketplace-split">
+      {marketKind === "mcp" ? <McpMarketplacePanel key={`${projectId ?? "none"}:${mcpRefreshKey}`} projectId={projectId} /> : skillView === "catalog" ? <SkillCatalogPanel
+        catalog={catalog}
+        loading={catalogLoading}
+        loadingMore={catalogLoadingMore}
+        query={catalogQuery}
+        category={catalogCategory}
+        tag={catalogTag}
+        sort={catalogSort}
+        pendingInstallIds={pendingCatalogInstallIds}
+        pendingLikeIds={pendingLikeIds}
+        onQueryChange={setCatalogQuery}
+        onCategoryChange={setCatalogCategory}
+        onTagChange={setCatalogTag}
+        onSortChange={setCatalogSort}
+        onReset={() => { setCatalogQuery(""); setCatalogCategory(""); setCatalogTag(""); }}
+        onToggleInstall={(item) => void toggleCatalogInstallation(item)}
+        onToggleLike={(item) => void toggleCatalogLike(item)}
+        onLoadMore={() => void refreshCatalog({ offset: catalog.items.length, append: true })}
+      /> : <ResizableSplitPane storageKey="lumina:marketplace-list-width" ariaLabel="Skill 목록 너비 조절" className="marketplace-split">
         <aside className="feature-list" aria-label={skillView === "trash" ? "삭제된 Skill 목록" : "Skill 목록"}>
           {loading ? <div className="feature-state"><LoaderCircle className="is-running" size={16} /> 불러오는 중</div> : visibleItems.length === 0 ? <div className="feature-state">조건에 맞는 Skill이 없습니다.</div> : visibleItems.map((item) => {
             const itemInstallation = installations.find((entry) => entry.extensionId === item.id) ?? null;
@@ -499,7 +658,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
               <button className="marketplace-skill-select" type="button" onClick={() => setSelectedId(item.id)}>
                 <span><strong>{item.name}</strong><small>{item.description || item.slug}</small>{skillView === "trash" && <small>{trashRetentionLabel(item.purgesAt)}</small>}<small className="marketplace-tags" aria-label="Skill 태그">{skillTags(item).map((tag) => <span key={tag}>#{tag}</span>)}</small></span>
               </button>
-              {skillView !== "trash" && <button className={`marketplace-install-toggle ${itemInstallation ? "is-installed" : ""}`} type="button" aria-label={`${item.name} ${itemInstallation ? "미사용" : "설치"}`} aria-pressed={Boolean(itemInstallation)} aria-busy={itemInstallationPending} disabled={!itemVersion || itemInstallationPending} onClick={() => void toggleInstallation(item, "list")}>{itemInstallationPending ? <LoaderCircle className="is-running" size={12} /> : itemInstallation ? <><span className="install-toggle-rest">설치됨</span><span className="install-toggle-hover">미사용</span></> : <span>설치</span>}</button>}
+              {skillView !== "trash" && <MarketplaceInstallButton name={item.name} installed={Boolean(itemInstallation)} pending={itemInstallationPending} disabled={!itemVersion} onClick={() => void toggleInstallation(item, "list")} />}
             </div>;
           })}
         </aside>

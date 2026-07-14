@@ -13,6 +13,7 @@ from ...extensions.repository_catalog import (
     repository_catalog_revision,
     sync_repository_catalog,
 )
+from ...extensions.catalog import list_skill_catalog, set_skill_catalog_like
 from ...extensions.schemas import (
     DraftActivation,
     DraftSaveVersion,
@@ -31,6 +32,7 @@ from ...extensions.schemas import (
 from ...extensions.service import (
     activate_draft,
     add_skill_ownership,
+    can_view_skill_package,
     can_manage_skill,
     create_folder,
     create_skill,
@@ -90,6 +92,55 @@ def get_extensions(
         )
         for extension in list_extensions(db, user=user, query=query)
     ]
+
+
+@router.get("/extensions/catalog")
+def get_skill_catalog(
+    query: str | None = Query(default=None, max_length=200),
+    category: str | None = Query(default=None, max_length=80),
+    tag: str | None = Query(default=None, max_length=40),
+    sort: Literal["popular", "runs", "likes", "recent", "name"] = "popular",
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=60, ge=1, le=100),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    return list_skill_catalog(
+        db,
+        user=user,
+        query=query,
+        category=category,
+        tag=tag,
+        sort=sort,
+        offset=offset,
+        limit=limit,
+    )
+
+
+@router.put("/extensions/{extension_id}/like")
+def put_skill_catalog_like(
+    extension_id: str,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    result = set_skill_catalog_like(
+        db, user=context.user, extension_id=extension_id, liked=True
+    )
+    db.commit()
+    return result
+
+
+@router.delete("/extensions/{extension_id}/like")
+def delete_skill_catalog_like(
+    extension_id: str,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    result = set_skill_catalog_like(
+        db, user=context.user, extension_id=extension_id, liked=False
+    )
+    db.commit()
+    return result
 
 
 @router.post("/extensions/repository-sync")
@@ -468,6 +519,12 @@ def get_extension_version(
         version.status != "published" and version.created_by_user_id != user.id
     ):
         raise ApiProblem(404, "version_not_found", "Skill version을 찾을 수 없습니다.")
+    if not can_view_skill_package(db, user, extension):
+        raise ApiProblem(
+            404,
+            "version_not_found",
+            "설치된 Skill version만 열 수 있습니다.",
+        )
     return version_payload(version, include_package=True)
 
 

@@ -76,6 +76,8 @@ import type {
   HelpItemKind,
   HelpItemList,
   SkillDraft,
+  SkillCatalogLikeResult,
+  SkillCatalogResponse,
   SkillExtension,
   SkillVersion,
   ProjectFileDetail,
@@ -1175,6 +1177,34 @@ export async function listExtensions(query?: string, signal?: AbortSignal) {
   return request<SkillExtension[]>("/extensions", { query: { query }, signal });
 }
 
+export async function listSkillCatalog(
+  filters: {
+    query?: string;
+    category?: string;
+    tag?: string;
+    sort?: "popular" | "runs" | "likes" | "recent" | "name";
+    offset?: number;
+    limit?: number;
+  } = {},
+  signal?: AbortSignal,
+) {
+  return request<SkillCatalogResponse>("/extensions/catalog", {
+    query: filters,
+    signal,
+  });
+}
+
+export async function setSkillCatalogLike(
+  extensionId: string,
+  liked: boolean,
+  signal?: AbortSignal,
+) {
+  return request<SkillCatalogLikeResult>(`/extensions/${encodeURIComponent(extensionId)}/like`, {
+    method: liked ? "PUT" : "DELETE",
+    signal,
+  });
+}
+
 export async function syncRepositoryExtensions(signal?: AbortSignal) {
   return request<{ skillsChanged: number; mcpChanged: number; revision: string }>("/extensions/repository-sync", {
     method: "POST",
@@ -1897,6 +1927,8 @@ export const api = {
   },
   extensions: {
     list: listExtensions,
+    listCatalog: listSkillCatalog,
+    setLike: setSkillCatalogLike,
     syncRepository: syncRepositoryExtensions,
     getRepositoryState: getRepositoryExtensionState,
     listTrash: listTrashedExtensions,

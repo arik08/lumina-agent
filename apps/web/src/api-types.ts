@@ -1042,6 +1042,44 @@ export interface SkillExtension {
   purgesAt: IsoDateTime | null;
 }
 
+export interface SkillCatalogItem {
+  id: UUID;
+  name: string;
+  description: string;
+  category: string;
+  tags: string[];
+  latestVersionId: UUID | null;
+  installed: boolean;
+  installationId: UUID | null;
+  canInstall: boolean;
+  installCount: number;
+  runCount: number;
+  likeCount: number;
+  likedByMe: boolean;
+  updatedAt: IsoDateTime;
+}
+
+export interface SkillCatalogFacet {
+  value: string;
+  count: number;
+}
+
+export interface SkillCatalogResponse {
+  items: SkillCatalogItem[];
+  total: number;
+  offset: number;
+  hasMore: boolean;
+  facets: {
+    categories: SkillCatalogFacet[];
+    tags: SkillCatalogFacet[];
+  };
+}
+
+export interface SkillCatalogLikeResult {
+  liked: boolean;
+  likeCount: number;
+}
+
 export interface ExtensionInstallation {
   id: UUID;
   extensionId: UUID;

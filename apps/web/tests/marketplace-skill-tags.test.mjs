@@ -66,17 +66,23 @@ test("marketplace keeps Skill creation in the chat Skill Creator flow", async ()
 });
 
 test("skill rows use a dedicated install and unused toggle without status badges", async () => {
-  const [view, styles] = await Promise.all([readFile(viewPath, "utf8"), readFile(stylesPath, "utf8")]);
+  const buttonPath = new URL("../src/components/MarketplaceInstallButton.tsx", import.meta.url);
+  const [view, button, styles] = await Promise.all([readFile(viewPath, "utf8"), readFile(buttonPath, "utf8"), readFile(stylesPath, "utf8")]);
 
-  assert.match(view, /className={`marketplace-install-toggle \$\{itemInstallation \? "is-installed" : ""}`}/);
-  assert.match(view, /aria-pressed=\{Boolean\(itemInstallation\)\}/);
-  assert.match(view, /className="install-toggle-rest">설치됨<\/span>/);
-  assert.match(view, /className="install-toggle-hover">미사용<\/span>/);
-  assert.match(styles, /\.marketplace-install-toggle\.is-installed:hover \.install-toggle-rest/);
-  assert.match(styles, /\.marketplace-install-toggle\.is-installed:focus-visible \.install-toggle-hover/);
-  assert.match(styles, /\.marketplace-install-toggle \{[^}]*background: color-mix\(in oklab, var\(--cobalt\) 8%, var\(--surface\)\)/);
-  assert.match(styles, /\.marketplace-install-toggle\.is-installed \{[^}]*background: color-mix\(in oklab, var\(--success\) 8%, var\(--surface\)\)/);
-  assert.match(styles, /\.marketplace-install-toggle\.is-installed:hover:not\(:disabled\)[^\{]*\{[^}]*background: color-mix\(in oklab, var\(--danger\) 12%, var\(--surface\)\)/);
+  assert.match(view, /<MarketplaceInstallButton name=\{item\.name\}/);
+  assert.match(button, /className=\{`skill-install-toggle/);
+  assert.match(button, /aria-pressed=\{installed\}/);
+  assert.match(button, /className="marketplace-install-state install-toggle-rest"/);
+  assert.match(button, /<span>Installed<\/span>/);
+  assert.match(button, /className="marketplace-install-state install-toggle-hover"/);
+  assert.match(button, /<span>Delete<\/span>/);
+  assert.match(button, /const action = installed \? "Delete" : "Install"/);
+  assert.match(styles, /\.skill-install-toggle\.is-installed:hover:not\(:disabled\) \.install-toggle-rest/);
+  assert.match(styles, /\.skill-install-toggle\.is-installed:focus-visible:not\(:disabled\) \.install-toggle-hover/);
+  assert.match(styles, /\.skill-install-toggle \{[^}]*width: 96px; min-width: 96px; max-width: 96px;[^}]*height: 26px; min-height: 26px; max-height: 26px;/);
+  assert.match(styles, /\.skill-install-toggle:active \{ transform: none; \}/);
+  assert.match(styles, /\.skill-install-toggle\.is-installed \{[^}]*background: color-mix\(in oklab, var\(--success\) 8%, var\(--surface\)\)/);
+  assert.match(styles, /\.skill-install-toggle\.is-installed:hover:not\(:disabled\)[^\{]*\{[^}]*background: color-mix\(in oklab, var\(--danger\) 12%, var\(--surface\)\)/);
   assert.match(styles, /\.marketplace-scope-tabs button span \{[^}]*min-width: 18px; height: 18px;[^}]*box-sizing: border-box;[^}]*justify-content: center;/);
   assert.doesNotMatch(view, />설치됨<\/em>/);
   assert.doesNotMatch(view, />공식<\/em>/);
@@ -94,17 +100,17 @@ test("skill installs are scoped to the signed-in account", async () => {
 
 test("install toggles update locally without replacing the marketplace list", async () => {
   const view = await readFile(viewPath, "utf8");
-  const toggleStart = view.indexOf("const toggleInstallation = async");
+  const toggleStart = view.indexOf("const changeInstallation = async");
   const toggleEnd = view.indexOf("const beginPackageEdit = async", toggleStart);
   const toggle = view.slice(toggleStart, toggleEnd);
 
-  assert.match(toggle, /const installed = await api\.extensions\.install\(targetVersion\.id\)/);
+  assert.match(toggle, /const installed = await api\.extensions\.install\(versionId\)/);
   assert.match(toggle, /setInstallations\(\(current\) => \[\.\.\.current\.filter/);
   assert.match(toggle, /setInstallations\(\(current\) => current\.filter/);
   assert.doesNotMatch(toggle, /refresh\(/);
   assert.doesNotMatch(toggle, /setLoading\(/);
   assert.match(view, /pendingInstallationSurfaceById\[item\.id\] === "list"/);
-  assert.match(view, /disabled=\{!itemVersion \|\| itemInstallationPending\}/);
+  assert.match(view, /disabled=\{!itemVersion\}/);
 });
 
 test("skill draft editor keeps one aligned scroll surface", async () => {

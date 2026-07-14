@@ -23,12 +23,14 @@ from lumina.extensions import repository_catalog
 from lumina.models import (
     Artifact,
     AuditEvent,
+    Conversation,
     Extension,
     ExtensionDraft,
     ExtensionDraftBinding,
     ExtensionInstallation,
     ExtensionVersion,
     Organization,
+    Project,
     Run,
     RunCommand,
     ScheduledRun,
@@ -36,6 +38,7 @@ from lumina.models import (
     SkillFolderPlacement,
     SkillOwnership,
     User,
+    utc_now,
 )
 from lumina.schedules.service import (
     dispatch_due_tasks,
@@ -476,6 +479,186 @@ def test_skill_draft_versions_installation_and_folder_move(tmp_path: Path) -> No
         } <= audit_actions
 
 
+def test_skill_catalog_counts_likes_and_protects_uninstalled_packages(
+    tmp_path: Path,
+) -> None:
+    app, _settings = _test_app(tmp_path)
+    with SessionLocal() as db:
+        organization = db.scalar(select(Organization))
+        admin = db.scalar(select(User).where(User.login_id == "admin@posco.com"))
+        assert organization is not None and admin is not None
+        create_user(
+            db,
+            login_name="catalog-worker",
+            password="pw",
+            organization_id=organization.id,
+            created_by_user_id=admin.id,
+        )
+        db.commit()
+
+    with TestClient(app) as client:
+        admin_csrf = _login(client)
+        created = client.post(
+            "/api/extensions",
+            headers={"X-CSRF-Token": admin_csrf},
+            json={
+                "name": "회의 액션 추출",
+                "slug": "meeting-actions",
+                "description": "회의록에서 담당자와 마감일을 추출합니다.",
+                "package": {
+                    "files": {
+                        "SKILL.md": "# 회의 액션 추출\n\n담당자와 마감일을 정리합니다."
+                    }
+                },
+            },
+        )
+        assert created.status_code == 201, created.text
+        skill = created.json()
+        draft = skill["draft"]
+        saved = client.post(
+            f"/api/skill-drafts/{draft['id']}/save-version",
+            headers={"X-CSRF-Token": admin_csrf},
+            json={
+                "expectedRevision": draft["revision"],
+                "expectedDigest": draft["digest"],
+                "baseVersionId": None,
+                "manifest": {
+                    "category": "업무 관리",
+                    "tags": ["회의", "액션아이템"],
+                },
+            },
+        )
+        assert saved.status_code == 201, saved.text
+        version = saved.json()
+        published = client.post(
+            f"/api/extension-versions/{version['id']}/publish",
+            headers={"X-CSRF-Token": admin_csrf},
+            json={},
+        )
+        assert published.status_code == 200, published.text
+
+        client.cookies.clear()
+        worker_csrf = _login(client, "catalog-worker", "pw")
+        before = client.get(
+            "/api/extensions/catalog",
+            params={"query": "액션아이템", "category": "업무 관리"},
+        )
+        assert before.status_code == 200, before.text
+        before_item = next(
+            item for item in before.json()["items"] if item["id"] == skill["id"]
+        )
+        assert before_item == {
+            "id": skill["id"],
+            "name": "회의 액션 추출",
+            "description": "회의록에서 담당자와 마감일을 추출합니다.",
+            "category": "업무 관리",
+            "tags": ["회의", "액션아이템"],
+            "latestVersionId": version["id"],
+            "installed": False,
+            "installationId": None,
+            "canInstall": True,
+            "installCount": 0,
+            "runCount": 0,
+            "likeCount": 0,
+            "likedByMe": False,
+            "updatedAt": before_item["updatedAt"],
+        }
+        assert client.get(f"/api/extension-versions/{version['id']}").status_code == 404
+        blocked_draft = client.post(
+            f"/api/extensions/{skill['id']}/draft",
+            headers={"X-CSRF-Token": worker_csrf},
+        )
+        assert blocked_draft.status_code == 404
+
+        liked = client.put(
+            f"/api/extensions/{skill['id']}/like",
+            headers={"X-CSRF-Token": worker_csrf},
+        )
+        assert liked.status_code == 200, liked.text
+        assert liked.json() == {"liked": True, "likeCount": 1}
+
+        installed = client.post(
+            "/api/extension-installations",
+            headers={"X-CSRF-Token": worker_csrf},
+            json={"versionId": version["id"], "scopeType": "user"},
+        )
+        assert installed.status_code == 201, installed.text
+        installation_id = installed.json()["id"]
+        assert client.get(f"/api/extension-versions/{version['id']}").status_code == 200
+
+        with SessionLocal() as db:
+            organization = db.scalar(select(Organization))
+            admin = db.scalar(select(User).where(User.login_id == "admin@posco.com"))
+            project = db.scalar(select(Project).where(Project.owner_user_id == admin.id))
+            assert organization is not None and admin is not None and project is not None
+            conversation = Conversation(
+                organization_id=organization.id,
+                project_id=project.id,
+                owner_user_id=admin.id,
+                title="카탈로그 실행 집계",
+            )
+            db.add(conversation)
+            db.flush()
+            db.add(
+                Run(
+                    organization_id=organization.id,
+                    project_id=project.id,
+                    conversation_id=conversation.id,
+                    user_id=admin.id,
+                    status="completed",
+                    provider_id="mock",
+                    model_key="mock-agent",
+                    runtime_model_id="mock-agent",
+                    model_display_name="Mock Agent",
+                    snapshot_json={
+                        "extension_application": "explicit_and_auto",
+                        "prompt_references": [
+                            {"kind": "skill", "reference_id": skill["id"]}
+                        ],
+                        "auto_selected_skill_ids": [skill["id"]],
+                    },
+                    usage_json={},
+                    started_at=utc_now(),
+                    finished_at=utc_now(),
+                )
+            )
+            db.commit()
+
+        after = client.get("/api/extensions/catalog", params={"sort": "runs"})
+        assert after.status_code == 200, after.text
+        after_item = next(
+            item for item in after.json()["items"] if item["id"] == skill["id"]
+        )
+        assert after_item["installed"] is True
+        assert after_item["installationId"] == installation_id
+        assert after_item["installCount"] == 1
+        assert after_item["runCount"] == 1
+        assert after_item["likeCount"] == 1
+        assert after_item["likedByMe"] is True
+
+        removed = client.delete(
+            f"/api/extension-installations/{installation_id}",
+            headers={"X-CSRF-Token": worker_csrf},
+        )
+        assert removed.status_code == 204
+        assert client.get(f"/api/extension-versions/{version['id']}").status_code == 404
+        unliked = client.delete(
+            f"/api/extensions/{skill['id']}/like",
+            headers={"X-CSRF-Token": worker_csrf},
+        )
+        assert unliked.status_code == 200, unliked.text
+        assert unliked.json() == {"liked": False, "likeCount": 0}
+
+        final_item = next(
+            item
+            for item in client.get("/api/extensions/catalog").json()["items"]
+            if item["id"] == skill["id"]
+        )
+        assert final_item["installed"] is False
+        assert final_item["installCount"] == 0
+        assert final_item["runCount"] == 1
+
+
 def test_published_skill_has_isolated_personal_drafts_and_multiple_owners(
     tmp_path: Path,
 ) -> None:
@@ -534,9 +717,16 @@ def test_published_skill_has_isolated_personal_drafts_and_multiple_owners(
         worker_view = client.get(f"/api/extensions/{skill['id']}")
         assert worker_view.status_code == 200
         assert worker_view.json().get("draft") is None
-        assert worker_view.json()["canCreateDraft"] is True
+        assert worker_view.json()["canCreateDraft"] is False
         assert worker_view.json()["canEdit"] is False
 
+        installed = client.post(
+            "/api/extension-installations",
+            headers=worker_headers,
+            json={"versionId": saved.json()["id"], "scopeType": "user"},
+        )
+        assert installed.status_code == 201, installed.text
+        assert client.get(f"/api/extensions/{skill['id']}").json()["canCreateDraft"] is True
         checkout = client.post(
             f"/api/extensions/{skill['id']}/draft", headers=worker_headers
         )

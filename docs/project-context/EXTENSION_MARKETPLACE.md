@@ -24,16 +24,15 @@
 
 ## 목업에서 채택할 사용자 경험
 
-- 검색, 정렬, Category·상태·공개 범위·유형 필터
-- 카드/목록과 상세 화면, README 렌더링과 원문 전환
-- 패키지 파일 트리와 파일별 Preview
+- Skill 이름·설명·Category·tag 통합 검색, Category·tag 필터와 활용도·최근순 정렬
+- 카탈로그 카드에는 이름, 짧은 설명, Category·tag, 현재 사용자 설치 수, 실제 적용 Run 수와 좋아요만 표시
+- 패키지 파일 트리, README 렌더링과 원문 전환은 `설치됨` 또는 소유·관리 화면에서만 제공
 - 내 설치 목록과 내 Draft/Fork 목록
 - 설치·설치 해제, Fork, 대화의 Skill Creator 기반 작성, Owner·관리자의 보관함 이동과 복원
 - 기본 정보 → 파일 구성 → 입력 계약 → 테스트 → 보안 확인 → 검토/게시의 작성 흐름
-- Official, Verified, Beta, Draft와 같은 신뢰 상태 표시
 - 실제 사용 중인 WorkingDraft에는 `Draft · rN · 저장 안 됨` badge와 `v1로 저장` 또는 `새 버전으로 저장` action 표시
 
-좋아요, 다운로드, 실행 횟수와 성공률은 권한이나 품질 보증의 근거로 사용하지 않고 탐색 보조 지표로만 표시합니다.
+좋아요, 현재 사용자 설치 수와 실제 Skill 적용 Run 수는 선호도와 활용도를 찾기 위한 탐색 보조 지표로만 표시합니다. 누적 다운로드 수, 성공률, QA 점수나 모호한 신뢰도는 카탈로그에 표시하지 않으며 권한이나 품질 보증의 근거로 사용하지 않습니다.
 
 ## 자원 유형별 계약
 
@@ -193,6 +192,7 @@ Session/Run extension snapshot
 - Project가 허용한 version 범위와 사용자의 개인 설치가 충돌하면 더 제한적인 정책을 적용합니다.
 - Composer의 `$Skill`·`$MCP` 검색은 접근 가능한 카탈로그 전체가 아니라 현재 사용자의 활성 WorkingDraft와 현재 Project/사용자에 설치·활성화된 version만 반환합니다.
 - Run 시작 시 실제 Skill 파일 digest, MCP configuration revision, Plugin version과 권한 grant를 snapshot으로 고정합니다.
+- Catalog API는 패키지 본문 없이 탐색 metadata와 집계만 반환합니다. Published Skill의 package 조회는 현재 사용자·Project·Organization에 유효한 설치가 있거나 사용자가 해당 Skill의 Owner·Maintainer·관리자인 경우에만 허용하며, 권한이 없으면 존재 여부를 추가로 노출하지 않도록 404로 응답합니다.
 
 ## 수정, Fork와 삭제
 
@@ -324,7 +324,7 @@ Marketplace
 ├─ 탐색
 │  ├─ Skill / MCP / Plugin
 │  ├─ 검색·필터·정렬
-│  └─ 신뢰·권한·설치 가능 상태
+│  └─ 설명·tag·사용자 설치 수·실행 수·좋아요·설치 가능 상태
 ├─ Skill Folder Tree
 │  ├─ 개인 / Project / Organization scope
 │  ├─ breadcrumb / count / search
@@ -335,7 +335,7 @@ Marketplace
 │  ├─ 작성한 Draft/Fork
 │  ├─ 현재 Agent에 적용 중인 Draft와 revision
 │  └─ 업데이트·폐기 경고
-├─ 상세
+├─ 설치됨·소유 Skill 상세
 │  ├─ 설명·버전·계보·변경 diff
 │  ├─ 파일/manifest·권한·검증 결과
 │  └─ 설치·Fork·새 버전 작성
@@ -346,7 +346,7 @@ Marketplace
    └─ 감사·Revoked 영향 범위
 ```
 
-설치 버튼은 현재 scope와 version을 명시합니다. “삭제”는 설치 해제인지 Draft 폐기인지 문구를 구분하고, 영향 범위를 확인하기 전에는 파괴적 작업을 실행하지 않습니다.
+카탈로그와 Skill 목록의 공용 lifecycle 버튼은 `Install → Installed`, 설치된 상태의 hover·focus에서는 `Delete`로 표시합니다. 모든 상태는 가장 긴 label 기준의 고정 width, 동일 height·padding·border·font와 고정 icon slot을 사용하고 loading은 icon만 spinner로 바꿔 layout shift나 press scale을 만들지 않습니다. 이 `Delete`는 현재 계정의 설치 연결 해제이며, 상세 화면의 한글 `삭제`는 Skill 보관함 이동으로 서로 다른 기존 action을 유지합니다.
 
 WorkingDraft 상태는 Marketplace 안에서만 보이면 안 됩니다.
 
@@ -408,3 +408,6 @@ WorkingDraft 상태는 Marketplace 안에서만 보이면 안 됩니다.
 16. Skill과 Folder를 이동해도 Skill ID, Draft·version digest, installation과 과거 Run reference가 바뀌지 않습니다.
 17. Folder cycle, 이름 충돌과 scope 밖 이동은 차단되고 Folder 삭제 시 포함 Skill은 사용자가 정한 destination 또는 `미분류`로 안전하게 이동합니다.
 18. 같은 공용 Skill도 사용자마다 다른 개인 Folder에 배치할 수 있으며 다른 사용자의 Folder 구조를 변경하지 않습니다.
+19. 카탈로그 응답에는 Skill package 파일 본문이 없고, 설치 권한이 없거나 설치하지 않은 일반 사용자는 version package API로 본문을 읽을 수 없습니다.
+20. 카탈로그의 설치 수는 누적 다운로드가 아니라 현재 설치된 고유 사용자 수이며, 실행 수는 해당 Skill이 실제 적용된 시작 Run을 Run당 한 번만 집계합니다.
+21. 카탈로그 검색·Category·tag 필터·정렬·pagination 중 설치와 해제를 연속 실행해도 검색 조건과 scroll context를 유지하며 카드별 pending 상태가 다른 카드 조작을 막지 않습니다.
