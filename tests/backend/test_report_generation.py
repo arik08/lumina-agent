@@ -108,6 +108,12 @@ def test_create_report_schema_advertises_every_supported_format() -> None:
     ]["description"]
     assert "Artifact filename" in title_description
     assert "generic names" in title_description
+    html_description = _REPORT_TOOL_SCHEMA["function"]["parameters"]["properties"][
+        "html_source"
+    ]["description"]
+    assert "`.mermaid` element" in html_description
+    assert "expand/zoom controls" in html_description
+    assert "do not include a Mermaid CDN script" in html_description
 
 
 def test_html_source_preserves_visual_artifact_and_executable_javascript() -> None:

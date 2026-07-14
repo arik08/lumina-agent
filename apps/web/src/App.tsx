@@ -72,12 +72,13 @@ import {
 } from "lucide-react";
 import { createClientId } from "./client-id";
 import { copyText } from "./clipboard";
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type UIEvent as ReactUIEvent } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type RefObject, type UIEvent as ReactUIEvent } from "react";
 import { createPortal } from "react-dom";
 import { api, ApiError, attachmentContentUrl } from "./api";
 import { isTerminalRunStatus } from "./run-status";
 import { SyntaxCode, SyntaxTextarea } from "./components/SyntaxCode";
 import { GlobalTooltipLayer } from "./components/GlobalTooltip";
+import { renderMermaidSvg } from "./components/InteractiveResponse";
 import type {
   AnnouncementItem,
   AdminProviderModel,
@@ -156,9 +157,215 @@ const artifactCitationMarkers = [
   "⑪", "⑫", "⑬", "⑭", "⑮", "⑯", "⑰", "⑱", "⑲", "⑳",
 ];
 
+const artifactMermaidCodeSelector = "pre > code.language-mermaid, pre > code.lang-mermaid, pre > code.language-mmd, pre > code.lang-mmd";
+
+function hasRawArtifactMermaid(source: string) {
+  return /class=["'][^"']*\bmermaid\b/i.test(source)
+    || /class=["'][^"']*\b(?:language|lang)-(?:mermaid|mmd)\b/i.test(source);
+}
+
+function serializeArtifactHtml(document: Document, fullDocument: boolean, source: string) {
+  if (!fullDocument) return document.body.innerHTML;
+  const doctype = source.match(/<!doctype[^>]*>/i)?.[0] ?? "<!doctype html>";
+  return `${doctype}\n${document.documentElement.outerHTML}`;
+}
+
+async function renderArtifactMermaidHtml(source: string) {
+  if (!hasRawArtifactMermaid(source)) return source;
+  const fullDocument = /<(?:!doctype|html|head|body)\b/i.test(source);
+  const document = new DOMParser().parseFromString(source, "text/html");
+  const tasks: Array<{ source: string; target: HTMLElement; replaceTarget?: Element }> = [];
+
+  document.querySelectorAll<HTMLElement>(".mermaid").forEach((element) => {
+    if (element.querySelector("svg")) return;
+    const mermaidSource = (element.textContent ?? "").trim();
+    if (mermaidSource) tasks.push({ source: mermaidSource, target: element });
+  });
+  document.querySelectorAll<HTMLElement>(artifactMermaidCodeSelector).forEach((code) => {
+    if (code.closest(".mermaid")) return;
+    const mermaidSource = (code.textContent ?? "").trim();
+    const pre = code.closest("pre");
+    if (!mermaidSource || !pre) return;
+    const target = document.createElement("div");
+    target.className = "mermaid";
+    tasks.push({ source: mermaidSource, target, replaceTarget: pre });
+  });
+
+  await Promise.all(tasks.map(async (task) => {
+    try {
+      const { svg } = await renderMermaidSvg(task.source);
+      task.target.innerHTML = svg;
+      task.target.dataset.luminaRenderedMermaid = "true";
+      task.target.setAttribute("role", "img");
+      if (!task.target.getAttribute("aria-label")) task.target.setAttribute("aria-label", "Mermaid 다이어그램");
+      task.replaceTarget?.replaceWith(task.target);
+    } catch {
+      task.target.classList.add("lumina-mermaid-error");
+      task.target.textContent = "Mermaid 다이어그램을 렌더링하지 못했습니다.";
+    }
+  }));
+
+  return serializeArtifactHtml(document, fullDocument, source);
+}
+
+const artifactMermaidZoomLayer = `<style id="lumina-artifact-mermaid-zoom-style">
+.lumina-artifact-mermaid-host{position:relative!important}
+.lumina-artifact-mermaid-expand{position:absolute;top:10px;right:10px;z-index:20;display:grid;width:32px;height:32px;padding:0;place-items:center;border:1px solid rgba(32,36,44,.18);border-radius:6px;background:rgba(255,255,255,.96);color:#20242c;box-shadow:0 7px 20px rgba(20,31,54,.15);cursor:pointer}
+.lumina-artifact-mermaid-expand:hover,.lumina-artifact-mermaid-expand:focus-visible{border-color:#3f66c9;color:#315fbd;outline:2px solid rgba(63,102,201,.22);outline-offset:2px}
+.lumina-artifact-mermaid-expand svg,.lumina-artifact-mermaid-control svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.lumina-artifact-mermaid-backdrop{position:fixed;inset:0;z-index:2147483647;display:flex;flex-direction:column;background:rgba(248,250,252,.99);color:#20242c;font:13px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif}
+.lumina-artifact-mermaid-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-bottom:1px solid rgba(32,36,44,.14);background:#fff}
+.lumina-artifact-mermaid-controls{display:flex;align-items:center;gap:6px}
+.lumina-artifact-mermaid-value{min-width:48px;text-align:center;color:#626b78}
+.lumina-artifact-mermaid-control{display:grid;width:30px;height:30px;padding:0;place-items:center;border:1px solid rgba(32,36,44,.16);border-radius:6px;background:#fff;color:#20242c;cursor:pointer}
+.lumina-artifact-mermaid-control:hover,.lumina-artifact-mermaid-control:focus-visible{border-color:#3f66c9;color:#315fbd;outline:2px solid rgba(63,102,201,.22);outline-offset:1px}
+.lumina-artifact-mermaid-viewport{display:grid;flex:1;overflow:hidden;place-items:center;background:radial-gradient(circle,rgba(108,115,126,.22) 0 1px,transparent 1.2px),#eef1f5;background-size:18px 18px,auto;cursor:grab;touch-action:none;user-select:none}
+.lumina-artifact-mermaid-viewport.is-dragging{cursor:grabbing}
+.lumina-artifact-mermaid-canvas{transform-origin:center;transition:transform 100ms ease}
+.lumina-artifact-mermaid-canvas svg{display:block!important;width:auto!important;height:auto!important;max-width:calc(100vw - 48px)!important;max-height:calc(100vh - 92px)!important}
+@media print{.lumina-artifact-mermaid-expand,.lumina-artifact-mermaid-backdrop{display:none!important}}
+</style><script id="lumina-artifact-mermaid-zoom-bridge">
+(() => {
+  if (window.__luminaArtifactMermaidZoomReady) return;
+  window.__luminaArtifactMermaidZoomReady = true;
+  const expandIcon = '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M8 3H3v5"></path><path d="M3 3l7 7"></path><path d="M16 3h5v5"></path><path d="m21 3-7 7"></path><path d="M8 21H3v-5"></path><path d="m3 21 7-7"></path><path d="M16 21h5v-5"></path><path d="m21 21-7-7"></path></svg>';
+  const icons = {
+    close: '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>',
+    reset: '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 7v5h5"></path><path d="M5.7 12A7 7 0 0 1 17 6.5"></path><path d="M18.3 12A7 7 0 0 1 7 17.5"></path></svg>',
+    zoomIn: '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>',
+    zoomOut: '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 12h14"></path></svg>'
+  };
+  let activeViewer = null;
+
+  const closeViewer = () => {
+    if (!activeViewer) return;
+    activeViewer.close();
+    activeViewer = null;
+  };
+  const onEscape = (event) => { if (event.key === "Escape") closeViewer(); };
+  const control = (label, icon, action) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "lumina-artifact-mermaid-control";
+    button.setAttribute("aria-label", label);
+    button.innerHTML = icons[icon];
+    button.addEventListener("click", action);
+    return button;
+  };
+  const openViewer = (svg, trigger) => {
+    closeViewer();
+    const previousOverflow = document.body.style.overflow;
+    const backdrop = document.createElement("section");
+    backdrop.className = "lumina-artifact-mermaid-backdrop";
+    backdrop.setAttribute("role", "dialog");
+    backdrop.setAttribute("aria-modal", "true");
+    backdrop.setAttribute("aria-label", "Mermaid 다이어그램 크게 보기");
+    const header = document.createElement("header");
+    header.className = "lumina-artifact-mermaid-header";
+    const heading = document.createElement("strong");
+    heading.textContent = svg.closest("[aria-label]")?.getAttribute("aria-label") || "Mermaid";
+    const controls = document.createElement("div");
+    controls.className = "lumina-artifact-mermaid-controls";
+    const value = document.createElement("output");
+    value.className = "lumina-artifact-mermaid-value";
+    const viewport = document.createElement("div");
+    viewport.className = "lumina-artifact-mermaid-viewport";
+    const canvas = document.createElement("div");
+    canvas.className = "lumina-artifact-mermaid-canvas";
+    const clonedSvg = svg.cloneNode(true);
+    const viewBox = String(svg.getAttribute("viewBox") || "").split(/[\\s,]+/).map(Number);
+    if (viewBox.length >= 4 && Number.isFinite(viewBox[2]) && Number.isFinite(viewBox[3]) && viewBox[2] > 0 && viewBox[3] > 0) {
+      clonedSvg.setAttribute("width", String(viewBox[2]));
+      clonedSvg.setAttribute("height", String(viewBox[3]));
+    }
+    canvas.append(clonedSvg);
+    viewport.append(canvas);
+    let zoom = 1;
+    let offsetX = 0;
+    let offsetY = 0;
+    let drag = null;
+    const update = () => {
+      canvas.style.transform = "translate(" + offsetX + "px," + offsetY + "px) scale(" + zoom + ")";
+      value.textContent = Math.round(zoom * 100) + "%";
+    };
+    const changeZoom = (next) => { zoom = Math.min(4, Math.max(.5, next)); update(); };
+    const reset = () => { zoom = 1; offsetX = 0; offsetY = 0; update(); };
+    const close = () => {
+      backdrop.remove();
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", onEscape);
+      trigger.focus();
+    };
+    activeViewer = { close };
+    const closeButton = control("크게 보기 닫기", "close", closeViewer);
+    controls.append(
+      control("축소", "zoomOut", () => changeZoom(zoom / 1.2)),
+      value,
+      control("확대", "zoomIn", () => changeZoom(zoom * 1.2)),
+      control("보기 초기화", "reset", reset),
+      closeButton
+    );
+    header.append(heading, controls);
+    backdrop.append(header, viewport);
+    document.body.append(backdrop);
+    document.body.style.overflow = "hidden";
+    document.addEventListener("keydown", onEscape);
+    viewport.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      changeZoom(zoom * (event.deltaY > 0 ? .9 : 1.1));
+    }, { passive: false });
+    viewport.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      drag = { id: event.pointerId, x: event.clientX, y: event.clientY, offsetX, offsetY };
+      viewport.setPointerCapture?.(event.pointerId);
+      viewport.classList.add("is-dragging");
+    });
+    viewport.addEventListener("pointermove", (event) => {
+      if (!drag || drag.id !== event.pointerId) return;
+      offsetX = drag.offsetX + event.clientX - drag.x;
+      offsetY = drag.offsetY + event.clientY - drag.y;
+      update();
+    });
+    const finishDrag = (event) => {
+      if (!drag || drag.id !== event.pointerId) return;
+      drag = null;
+      viewport.classList.remove("is-dragging");
+    };
+    viewport.addEventListener("pointerup", finishDrag);
+    viewport.addEventListener("pointercancel", finishDrag);
+    closeButton.focus();
+    update();
+  };
+  const attach = (svg) => {
+    if (svg.closest(".lumina-artifact-mermaid-backdrop")) return;
+    const host = svg.closest("[data-lumina-rendered-mermaid],.mermaid,.mermaid-chart") || svg.parentElement;
+    if (!host || host.dataset.luminaMermaidZoomAttached === "true") return;
+    host.dataset.luminaMermaidZoomAttached = "true";
+    host.classList.add("lumina-artifact-mermaid-host");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "lumina-artifact-mermaid-expand";
+    button.setAttribute("aria-label", "Mermaid 다이어그램 크게 보기");
+    button.innerHTML = expandIcon;
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openViewer(svg, button);
+    });
+    host.prepend(button);
+  };
+  const enhance = () => document.querySelectorAll("[data-lumina-rendered-mermaid] svg,.mermaid svg,.mermaid-chart svg,svg[id^='mermaid-']").forEach(attach);
+  const schedule = () => requestAnimationFrame(enhance);
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", schedule, { once: true });
+  else schedule();
+  window.addEventListener("load", schedule);
+  new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
+})();
+</script>`;
+
 function previewArtifactHtml(source: string) {
-  if (!/class=["'][^"']*\bsource-ref\b/i.test(source)) return source;
-  const compatibilityLayer = `<style id="lumina-artifact-citation-style">
+  const layers: string[] = [];
+  if (/class=["'][^"']*\bsource-ref\b/i.test(source)) layers.push(`<style id="lumina-artifact-citation-style">
 sup.source-ref { display: inline; margin: 0 1px 0 2px; color: #315fbd; font-size: inherit; line-height: inherit; vertical-align: baseline; }
 a.source-ref, sup.source-ref > a { display: inline; width: auto; height: auto; margin: 0 1px 0 2px; padding: 0; border: 0; border-radius: 3px; background: transparent; color: #315fbd; font-family: inherit; font-size: 1em; font-weight: 720; line-height: inherit; text-decoration: none; vertical-align: baseline; }
 a.source-ref:hover, sup.source-ref > a:hover { text-decoration: none !important; }
@@ -201,10 +408,39 @@ a.source-ref:focus-visible, sup.source-ref > a:focus-visible { outline: 2px soli
     });
   });
 })();
-</script>`;
+</script>`);
+  if (hasRawArtifactMermaid(source) || /data-lumina-rendered-mermaid/i.test(source)) layers.push(artifactMermaidZoomLayer);
+  if (!layers.length) return source;
+  const compatibilityLayer = layers.join("");
   return /<\/body\s*>/i.test(source)
     ? source.replace(/<\/body\s*>/i, `${compatibilityLayer}</body>`)
     : `${source}${compatibilityLayer}`;
+}
+
+function ArtifactHtmlPreview({
+  frameRef,
+  source,
+  title,
+  renderMermaid,
+}: {
+  frameRef: RefObject<HTMLIFrameElement | null>;
+  source: string;
+  title: string;
+  renderMermaid: boolean;
+}) {
+  const [previewHtml, setPreviewHtml] = useState(() => previewArtifactHtml(source));
+  useEffect(() => {
+    let cancelled = false;
+    if (!renderMermaid || !hasRawArtifactMermaid(source)) {
+      setPreviewHtml(previewArtifactHtml(source));
+      return undefined;
+    }
+    void renderArtifactMermaidHtml(source).then((rendered) => {
+      if (!cancelled) setPreviewHtml(previewArtifactHtml(rendered));
+    });
+    return () => { cancelled = true; };
+  }, [renderMermaid, source]);
+  return <iframe ref={frameRef} className="artifact-preview-frame" title={title} sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock allow-downloads allow-popups allow-popups-to-escape-sandbox" srcDoc={previewHtml} />;
 }
 
 type ArtifactAiComment = {
@@ -3476,7 +3712,12 @@ function App() {
               artifactVersion.mimeType === "text/markdown" || artifactSummary?.kind === "markdown" ? (
                 <div className="artifact-markdown-preview"><MarkdownResponse text={artifactEditing ? artifactDraft : artifactVersion.sourceText ?? ""} artifact /></div>
               ) : artifactVersion.mimeType === "text/html" ? (
-                <iframe ref={artifactPreviewFrameRef} className="artifact-preview-frame" title={artifactSummary?.displayName ?? "Artifact 미리보기"} sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock allow-downloads allow-popups allow-popups-to-escape-sandbox" srcDoc={previewArtifactHtml(artifactEditing ? artifactEditablePreview : artifactVersion.sourceText ?? "")} />
+                <ArtifactHtmlPreview
+                  frameRef={artifactPreviewFrameRef}
+                  source={artifactEditing ? artifactEditablePreview : artifactVersion.sourceText ?? ""}
+                  title={artifactSummary?.displayName ?? "Artifact 미리보기"}
+                  renderMermaid={!artifactEditing}
+                />
               ) : (
                 <SyntaxCode className="artifact-text-preview" value={artifactEditing ? artifactDraft : artifactVersion.sourceText ?? ""} fileName={artifactSummary?.displayName} mimeType={artifactVersion.mimeType} />
               )

@@ -678,6 +678,7 @@ def test_report_request_recovers_when_model_tries_to_finish_without_artifact(
     assert len(snapshot["artifacts"]) == 1
     assert "must call `create_report`" in observed_system_prompts[0]
     assert "`html_source` argument" in observed_system_prompts[0]
+    assert "Lumina renders it and supplies the expand/zoom viewer" in observed_system_prompts[0]
     assert "around 10,000-12,000 tokens" in observed_system_prompts[0]
     assert "Never expose internal Artifact IDs" in observed_system_prompts[0]
     assert (

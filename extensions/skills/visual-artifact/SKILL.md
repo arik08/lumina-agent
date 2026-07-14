@@ -91,6 +91,14 @@ quarterly trends, sources, or a report:
 - For process maps and dense diagrams, use semantic color groups so the reader can scan the system at a glance: blue for standards/requests/reports, teal for operations/market/planning, orange for investment/CAPEX/strategic decisions, red for risk/issues, and purple for governance/approval. Prefer pale fills with crisp colored borders and readable dark text; use stronger fills only for start/end, warnings, or key status nodes.
 - Use accessible contrast and semantic HTML.
 
+## Mermaid in HTML artifacts
+
+- Use Mermaid when a process, sequence, architecture, dependency graph, decision path, state transition, timeline, or stakeholder relationship is materially easier to understand as a diagram. Keep numeric trends, proportions, and exact comparisons in charts or tables, and skip Mermaid for one-step facts or decorative filler.
+- In HTML artifacts, emit Mermaid source as `<div class="mermaid" aria-label="구체적인 다이어그램 설명">...</div>` or a `language-mermaid` code block. Do not add a CDN script or initialize Mermaid inside the artifact: Lumina renders these blocks with its bundled strict-security renderer so the saved file stays self-contained.
+- Lumina automatically adds a visible expand button to every rendered Mermaid diagram. The expanded view supports zoom, reset, drag-to-pan, Escape, and a close button; do not create a second custom expand control in generated HTML.
+- Keep each diagram focused and legible. Prefer short node labels, quote labels containing punctuation, use semantic subgraphs/color groups only when they aid scanning, and split an overcrowded diagram into two views instead of shrinking it until labels are unreadable.
+- Mermaid is a reading aid, not a substitute for the report narrative. State the takeaway in nearby text and ensure the essential conclusion remains understandable if diagram rendering fails.
+
 ## Layout Density And Whitespace QA
 
 - Treat large unused white space inside report panels as a layout defect, especially when a chart or table occupies only the top half of a bordered card. Do not leave a mostly empty card just because its sibling column is taller.

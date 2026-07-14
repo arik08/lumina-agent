@@ -134,25 +134,7 @@ function MermaidSurface({ source, expanded = false }: { source: string; expanded
   useEffect(() => {
     let cancelled = false;
     setError(false);
-    void import("mermaid").then(async ({ default: mermaid }) => {
-      const styles = getComputedStyle(document.documentElement);
-      const token = (name: string, fallback: string) => styles.getPropertyValue(name).trim() || fallback;
-      mermaid.initialize({
-        startOnLoad: false,
-        securityLevel: "strict",
-        theme: "base",
-        themeVariables: {
-          background: token("--surface", "#ffffff"),
-          primaryColor: token("--surface-soft", "#f5f6f7"),
-          primaryTextColor: token("--ink", "#20242c"),
-          primaryBorderColor: token("--line-strong", "#d4d8de"),
-          lineColor: token("--muted", "#6c737e"),
-          secondaryColor: token("--cobalt-pale", "#edf2fb"),
-          tertiaryColor: token("--surface", "#ffffff"),
-          fontFamily: token("--font-ui", "Segoe UI, sans-serif"),
-        },
-      });
-      const { svg, bindFunctions } = await mermaid.render(`lumina-mermaid-${++mermaidRenderSequence}`, source.trim());
+    void renderMermaidSvg(source).then(({ svg, bindFunctions }) => {
       if (cancelled || !containerRef.current) return;
       containerRef.current.innerHTML = svg;
       bindFunctions?.(containerRef.current);
@@ -164,6 +146,28 @@ function MermaidSurface({ source, expanded = false }: { source: string; expanded
 
   if (error) return <SyntaxCode className="mermaid-render-error" value={source} language="mermaid" />;
   return <div ref={containerRef} className={`mermaid-surface ${expanded ? "is-expanded" : ""}`} role="img" aria-label="Mermaid 다이어그램"><span>다이어그램 렌더링 중…</span></div>;
+}
+
+export async function renderMermaidSvg(source: string) {
+  const { default: mermaid } = await import("mermaid");
+  const styles = getComputedStyle(document.documentElement);
+  const token = (name: string, fallback: string) => styles.getPropertyValue(name).trim() || fallback;
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: "strict",
+    theme: "base",
+    themeVariables: {
+      background: token("--surface", "#ffffff"),
+      primaryColor: token("--surface-soft", "#f5f6f7"),
+      primaryTextColor: token("--ink", "#20242c"),
+      primaryBorderColor: token("--line-strong", "#d4d8de"),
+      lineColor: token("--muted", "#6c737e"),
+      secondaryColor: token("--cobalt-pale", "#edf2fb"),
+      tertiaryColor: token("--surface", "#ffffff"),
+      fontFamily: token("--font-ui", "Segoe UI, sans-serif"),
+    },
+  });
+  return mermaid.render(`lumina-mermaid-${++mermaidRenderSequence}`, source.trim());
 }
 
 export function MermaidDiagram({ source }: { source: string }) {

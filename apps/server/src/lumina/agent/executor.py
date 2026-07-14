@@ -2144,7 +2144,10 @@ class LocalRunExecutor:
                 "`html_source` argument. Give every report a short, specific title that names "
                 "its actual subject and deliverable in the user's language; avoid generic "
                 "titles such as 'Lumina report' or 'work report' because the title is also "
-                "used to create its filename. Keep the final chat response concise and refer to "
+                "used to create its filename. In HTML, use a `.mermaid` block when a process, "
+                "sequence, architecture, dependency, or decision path is materially clearer as "
+                "a diagram; Lumina renders it and supplies the expand/zoom viewer, so do not add "
+                "a CDN script or a duplicate expand control. Keep the final chat response concise and refer to "
                 "the single requested file by its display name only, without internal IDs or "
                 "raw tool-result fields."
             )
@@ -4899,6 +4902,8 @@ _REPORT_TOOL_SCHEMA = {
             "Artifact for the current Project. For HTML visual reports, provide a complete "
             "single-file document in html_source so the selected visual-artifact Skill's "
             "layout, typography, tables, charts, interactions, and print styles are preserved. "
+            "For relationship-heavy visuals, use raw `.mermaid` blocks; Lumina renders them "
+            "with its bundled strict-security renderer and adds expand, zoom, and pan controls. "
             "Inline JavaScript, script tags, and event handlers are supported for interactive "
             "documents, apps, demos, and games. Keep the HTML self-contained."
         ),
@@ -4930,7 +4935,11 @@ _REPORT_TOOL_SCHEMA = {
                         "Complete standalone HTML source for format=html. Include doctype, "
                         "html, head, non-empty title, body, responsive inline CSS, semantic "
                         "sections, and @media print when appropriate. Inline JavaScript and "
-                        "event handlers are supported for executable interactive HTML."
+                        "event handlers are supported for executable interactive HTML. Use a "
+                        "`.mermaid` element for process, sequence, architecture, dependency, or "
+                        "decision diagrams; do not include a Mermaid CDN script or duplicate "
+                        "expand button because the Artifact preview supplies both rendering and "
+                        "expand/zoom controls."
                     ),
                 },
                 "key_metrics": {
