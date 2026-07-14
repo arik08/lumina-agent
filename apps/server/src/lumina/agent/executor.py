@@ -42,7 +42,6 @@ from ..db import SessionLocal, session_scope
 from ..http_client import TrustProfile
 from ..memories.service import (
     MemorySourceMessage,
-    is_memory_interaction_request,
     learn_memories_for_run,
     prepare_memory_extractor,
 )
@@ -278,9 +277,7 @@ class LocalRunExecutor:
         self.storage = ManagedLocalStorage(_artifact_root(self.settings))
         self.file_storage = ManagedLocalStorage(_file_root(self.settings))
         self.trust_profile: TrustProfile | None = None
-        self.mcp_runtime = McpRuntime(
-            self.settings, trust_profile=self.trust_profile
-        )
+        self.mcp_runtime = McpRuntime(self.settings, trust_profile=self.trust_profile)
         self.codex_provider = CodexResponsesAdapter()
         self.pgpt_provider = PgptAdapter(
             env=_pgpt_environment(self.settings), trust_profile=self.trust_profile
@@ -380,9 +377,7 @@ class LocalRunExecutor:
             self._codex_warmup_task = asyncio.create_task(
                 self._warm_codex_provider(), name="lumina-codex-warmup"
             )
-            self._codex_warmup_task.add_done_callback(
-                self._clear_codex_warmup_task
-            )
+            self._codex_warmup_task.add_done_callback(self._clear_codex_warmup_task)
 
     async def _warm_codex_provider(self) -> None:
         try:
@@ -650,28 +645,14 @@ class LocalRunExecutor:
             prompt_references=prompt_references,
             extensions=extensions,
         )
-        output_mode = _effective_output_mode(
-            run.snapshot_json.get("output_mode", "auto"), user_message
+        output_mode = _normalized_output_mode(
+            run.snapshot_json.get("output_mode", "auto")
         )
-        wants_artifact = retry_step_key != "final" and not _memory_only_request(
-            user_message
-        ) and (
-            output_mode == "file"
-            or any(
-                token in user_message.casefold()
-                for token in (
-                    "보고서",
-                    "report",
-                    "html",
-                    "artifact",
-                    "문서",
-                    "markdown",
-                    ".md",
-                    "md로",
-                    "파일 만들어",
-                    "파일 생성",
-                )
-            )
+        artifact_required = retry_step_key != "final" and bool(
+            _ARTIFACT_CREATION_REQUEST.search(user_message)
+        )
+        artifact_tools_available = retry_step_key != "final" and (
+            output_mode == "file" or artifact_required
         )
         mcp_tools = await self.mcp_runtime.prepare_run(run_id)
         mcp_tools_by_name = {tool.provider_name: tool for tool in mcp_tools}
@@ -679,8 +660,8 @@ class LocalRunExecutor:
         tool_schemas = (
             _UPDATE_PLAN_TOOL_SCHEMA,
             *((skill_activation_schema,) if skill_activation_schema else ()),
-            *((_REPORT_TOOL_SCHEMA,) if wants_artifact else ()),
-            *((ARTIFACT_WRITE_TOOL_SCHEMA,) if wants_artifact else ()),
+            *((_REPORT_TOOL_SCHEMA,) if artifact_tools_available else ()),
+            *((ARTIFACT_WRITE_TOOL_SCHEMA,) if artifact_tools_available else ()),
             *((GENERATE_IMAGE_TOOL_SCHEMA,) if image_generation_capable else ()),
             _WEB_SEARCH_TOOL_SCHEMA,
             _WEB_FETCH_TOOL_SCHEMA,
@@ -721,7 +702,7 @@ class LocalRunExecutor:
             await self._set_status(run_id, MODEL_STREAMING)
             provider = self._provider(
                 provider_id,
-                wants_artifact=wants_artifact,
+                wants_artifact=artifact_required,
                 first_turn=round_index == 0,
             )
             request = ProviderRequest(
@@ -1041,7 +1022,7 @@ class LocalRunExecutor:
                     empty_response_retry_attempt = 0
                     output_continuation_count = 0
                 if (
-                    wants_artifact
+                    artifact_required
                     and not artifact_created
                     and not artifact_completion_reminded
                 ):
@@ -1826,9 +1807,9 @@ class LocalRunExecutor:
             # installations without overwriting their stored prompt.
             system += f"\n\n{CORE_AGENT_EXECUTION_CONTRACT}"
         turn_system_parts: list[str] = []
-        output_mode = _effective_output_mode(
-            run.snapshot_json.get("output_mode", "auto"),
-            str(run.snapshot_json.get("user_message_text", "")),
+        user_message = str(run.snapshot_json.get("user_message_text", ""))
+        output_mode = _normalized_output_mode(
+            run.snapshot_json.get("output_mode", "auto")
         )
         if output_mode == "chat":
             turn_system_parts.append(
@@ -1838,10 +1819,16 @@ class LocalRunExecutor:
             )
         elif output_mode == "file":
             turn_system_parts.append(
-                "Output mode: File. Create the final deliverable as an artifact file "
-                "using the available artifact tools. Keep the chat response to a concise "
-                "summary and refer to the created file by its display name only. The "
-                "application provides the open/download action from structured metadata."
+                "Output mode: File preference. Treat this as a strong preference for a "
+                "reusable artifact when the user's task would benefit from a document, "
+                "report, code file, or other saved deliverable. It is not an unconditional "
+                "command to create a file. For an obviously conversational request such as "
+                "a greeting, a short factual question, a confirmation, or a direct Memory "
+                "recall, answer in chat and do not create an artifact. When the user "
+                "explicitly asks for a file, create it. When intent is less explicit, use "
+                "semantic judgment and favor a file if it would be meaningfully useful, not "
+                "merely because this mode is selected. If you create one, keep the chat "
+                "response concise and refer to the file by its display name only."
             )
         if any(
             isinstance(schema.get("function"), dict)
@@ -1864,11 +1851,13 @@ class LocalRunExecutor:
             "tool calls can be chosen in the same response. Pair the plan update with those "
             "tool calls so planning does not add another model round trip."
         )
-        if any(
+        artifact_tool_available = any(
             isinstance(schema.get("function"), dict)
             and schema["function"].get("name") == "create_report"
             for schema in tool_schemas
-        ):
+        )
+        artifact_required = bool(_ARTIFACT_CREATION_REQUEST.search(user_message))
+        if artifact_tool_available and artifact_required:
             turn_system_parts.append(
                 "Artifact contract: The user requested a reusable file. Create exactly the "
                 "deliverable that matches the request before finishing; research and chat "
@@ -1905,6 +1894,14 @@ class LocalRunExecutor:
                     "tokens. This target applies to the report file, not to the concise final "
                     "chat response."
                 )
+        elif artifact_tool_available:
+            turn_system_parts.append(
+                "Artifact opportunity contract: Artifact tools are available because the "
+                "user selected File preference. Decide from the request's meaning whether a "
+                "saved deliverable is genuinely useful. Do not call `create_report` or "
+                "`write_file` for an obviously conversational request. If a file is useful, "
+                "create exactly one fitting deliverable; otherwise finish directly in chat."
+            )
         instruction_snapshot = run.snapshot_json.get("instructions", {})
         instruction_prompt = (
             str(instruction_snapshot.get("prompt_text", "")).strip()
@@ -3859,9 +3856,7 @@ def _streamed_write_file_name(arguments: str) -> str | None:
     return normalized.rsplit("/", 1)[-1] or None
 
 
-def _effective_output_mode(requested_mode: object, user_message: str) -> str:
-    if _memory_only_request(user_message):
-        return "chat"
+def _normalized_output_mode(requested_mode: object) -> str:
     return str(requested_mode) if requested_mode in {"auto", "chat", "file"} else "auto"
 
 
@@ -3871,13 +3866,6 @@ _ARTIFACT_CREATION_REQUEST = re.compile(
     r"(?:create|generate|write).{0,24}"
     r"(?:보고서|report|html|artifact|document|markdown|\.md|file))"
 )
-
-
-def _memory_only_request(user_message: str) -> bool:
-    return bool(
-        is_memory_interaction_request(user_message)
-        and not _ARTIFACT_CREATION_REQUEST.search(user_message)
-    )
 
 
 def _consume_progress_control(

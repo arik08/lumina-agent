@@ -58,16 +58,15 @@ def test_progress_control_leaves_final_answer_text_visible() -> None:
     assert summary is None
 
 
-def test_explicit_memory_request_uses_chat_unless_a_file_is_also_requested() -> None:
-    assert executor_module._effective_output_mode(
-        "file", "내 고향은 서산이야, 기억해"
-    ) == "chat"
-    assert executor_module._effective_output_mode(
-        "file", "보고서는 HTML 형식을 선호한다고 기억해"
-    ) == "chat"
-    assert executor_module._effective_output_mode(
-        "file", "내 고향은 서산이야, 기억해. 보고서 파일도 만들어"
-    ) == "file"
+def test_file_output_mode_is_a_preference_until_artifact_intent_is_explicit() -> None:
+    assert executor_module._normalized_output_mode("file") == "file"
+    assert executor_module._ARTIFACT_CREATION_REQUEST.search(
+        "내 고향은 서산이야, 기억해"
+    ) is None
+    assert executor_module._ARTIFACT_CREATION_REQUEST.search("내 이름이 뭐지?") is None
+    assert executor_module._ARTIFACT_CREATION_REQUEST.search(
+        "내 고향은 서산이야, 기억해. 보고서 파일도 만들어"
+    )
 
 
 def test_tool_progress_fallback_does_not_expose_arguments() -> None:
@@ -137,7 +136,9 @@ def test_write_file_progress_counts_streamed_tokens_and_lines() -> None:
 def test_streamed_write_file_name_extracts_only_the_target_name() -> None:
     arguments = '{"path":"reports\\\\quarterly_summary.html","content":"private'
 
-    assert executor_module._streamed_write_file_name(arguments) == "quarterly_summary.html"
+    assert (
+        executor_module._streamed_write_file_name(arguments) == "quarterly_summary.html"
+    )
     assert executor_module._streamed_write_file_name('{"content":"private"}') is None
 
 
@@ -272,7 +273,10 @@ def test_agent_loop_persists_web_evidence_and_returns_to_model(
             activity["sequence"] for activity in snapshot["activities"]
         )
         assert snapshot["activities"][2]["execution"]["status"] == "completed"
-        assert snapshot["plan"]["steps"][1]["label"] == "관련 자료를 탐색하고 근거를 수집합니다"
+        assert (
+            snapshot["plan"]["steps"][1]["label"]
+            == "관련 자료를 탐색하고 근거를 수집합니다"
+        )
 
         turn_sets = client.get(
             f"/api/conversations/{conversation['id']}/turn-sets"
@@ -290,7 +294,7 @@ def test_agent_loop_persists_web_evidence_and_returns_to_model(
         )
 
 
-def test_memory_interactions_override_persistent_file_output_mode(
+def test_file_mode_allows_model_to_keep_obvious_requests_in_chat(
     monkeypatch, tmp_path: Path
 ) -> None:
     settings = Settings(
@@ -343,9 +347,7 @@ def test_memory_interactions_override_persistent_file_output_mode(
                 },
             )
             assert started.status_code == 202, started.text
-            snapshots.append(
-                _wait_for_terminal(client, started.json()["run"]["runId"])
-            )
+            snapshots.append(_wait_for_terminal(client, started.json()["run"]["runId"]))
 
     assert all(snapshot["status"] == "completed" for snapshot in snapshots)
     assert all(snapshot["artifacts"] == [] for snapshot in snapshots)
@@ -357,15 +359,96 @@ def test_memory_interactions_override_persistent_file_output_mode(
             for schema in request.tools
             if isinstance(schema.get("function"), dict)
         }
-        assert "create_report" not in tool_names
-        assert "write_file" not in tool_names
+        assert "create_report" in tool_names
+        assert "write_file" in tool_names
         system_text = "\n".join(
             str(message.content)
             for message in request.messages
             if message.role == "system"
         )
-        assert "Output mode: Chat." in system_text
-        assert "Output mode: File." not in system_text
+        assert "Output mode: File preference." in system_text
+        assert "not an unconditional command to create a file" in system_text
+        assert "Artifact opportunity contract" in system_text
+        assert "Do not call `create_report` or `write_file`" in system_text
+        assert (
+            "Artifact contract: The user requested a reusable file." not in system_text
+        )
+
+
+def test_file_mode_accepts_model_selected_artifact_without_explicit_file_words(
+    monkeypatch, tmp_path: Path
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'file-preference.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    provider_turn = 0
+
+    def provider(
+        _provider_id: str, *, wants_artifact: bool, first_turn: bool
+    ) -> MockProvider:
+        nonlocal provider_turn
+        del first_turn
+        assert wants_artifact is False
+        provider_turn += 1
+        if provider_turn == 1:
+            return MockProvider(
+                tool_call=MockToolCall(
+                    name="create_report",
+                    arguments={
+                        "format": "html",
+                        "title": "분기 실적 분석",
+                        "executive_summary": "분기 실적의 핵심 흐름을 분석했습니다.",
+                        "key_metrics": [],
+                        "sections": [
+                            {
+                                "heading": "분석 결과",
+                                "body": "파일 모드 선호를 반영해 재사용 가능한 결과로 정리했습니다.",
+                                "bullets": [],
+                            }
+                        ],
+                        "action_items": [],
+                    },
+                    call_id="call_file_preference_report",
+                )
+            )
+        return MockProvider(text_chunks=("분기 실적 분석 파일을 만들었습니다.",))
+
+    monkeypatch.setattr(local_run_executor, "_provider", provider)
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "파일 선호 판단"},
+        ).json()
+        started = client.post(
+            f"/api/conversations/{conversation['id']}/runs",
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": "file-preference-0001",
+            },
+            json={
+                "message": {
+                    "text": "이번 분기 실적을 분석해줘",
+                    "outputMode": "file",
+                }
+            },
+        )
+        assert started.status_code == 202, started.text
+        snapshot = _wait_for_terminal(client, started.json()["run"]["runId"])
+
+    assert snapshot["status"] == "completed"
+    assert provider_turn == 2
+    assert [tool["toolName"] for tool in snapshot["toolExecutions"]] == [
+        "create_report"
+    ]
+    assert len(snapshot["artifacts"]) == 1
 
 
 def test_report_request_recovers_when_model_tries_to_finish_without_artifact(
@@ -475,8 +558,13 @@ def test_report_request_recovers_when_model_tries_to_finish_without_artifact(
     assert "`html_source` argument" in observed_system_prompts[0]
     assert "around 10,000-12,000 tokens" in observed_system_prompts[0]
     assert "Never expose internal Artifact IDs" in observed_system_prompts[0]
-    assert "refer to it only by its user-visible display name" in observed_system_prompts[0]
-    assert "without internal IDs or raw tool-result fields" in observed_system_prompts[0]
+    assert (
+        "refer to it only by its user-visible display name"
+        in observed_system_prompts[0]
+    )
+    assert (
+        "without internal IDs or raw tool-result fields" in observed_system_prompts[0]
+    )
     assert "must call `create_report`" not in observed_stable_prefixes[0]
 
 
