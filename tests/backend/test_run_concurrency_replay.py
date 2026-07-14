@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -40,9 +41,11 @@ from lumina.providers import (
     MockToolCall,
     ProviderCapabilities,
     ProviderEvent,
+    ProviderMessage,
     ProviderRequestError,
     ProviderRequest,
 )
+from lumina.providers.openai_compatible import OpenAICompatibleAdapter
 from lumina.runs.state import ACTIVE_STATUSES, TERMINAL_STATUSES
 from lumina.runs.broker import event_broker
 
@@ -210,9 +213,11 @@ class _RetryableProvider:
     def __init__(self, *, partial_output: bool = False) -> None:
         self.attempts = 0
         self.partial_output = partial_output
+        self.requests: list[ProviderRequest] = []
 
-    async def stream(self, _request: ProviderRequest) -> AsyncIterator[ProviderEvent]:
+    async def stream(self, request: ProviderRequest) -> AsyncIterator[ProviderEvent]:
         self.attempts += 1
+        self.requests.append(request)
         if self.attempts == 1:
             if self.partial_output:
                 yield ProviderEvent(type="text_delta", text="partial response")
@@ -222,8 +227,69 @@ class _RetryableProvider:
                 stage="response",
                 status_code=503,
             )
-        yield ProviderEvent(type="text_delta", text="recovered response")
+        if self.partial_output:
+            assert request.messages[-2:] == (
+                ProviderMessage(role="assistant", content="partial response"),
+                ProviderMessage(
+                    role="user",
+                    content=executor_module._PARTIAL_RESPONSE_CONTINUATION_PROMPT,
+                ),
+            )
+            yield ProviderEvent(
+                type="text_delta", text="partial response recovered response"
+            )
+        else:
+            yield ProviderEvent(type="text_delta", text="recovered response")
         yield ProviderEvent(type="completed", stop_reason="stop")
+
+
+class _ObservedContextThenCompletingProvider:
+    provider_id = "mock"
+    capabilities = ProviderCapabilities(tools=True)
+
+    def __init__(self) -> None:
+        self.attempts = 0
+
+    async def stream(self, _request: ProviderRequest) -> AsyncIterator[ProviderEvent]:
+        self.attempts += 1
+        if self.attempts == 1:
+            raise ProviderRequestError(
+                "request exceeded the Provider context window",
+                retryable=False,
+                stage="context",
+                status_code=400,
+                context_window_tokens=4_096,
+            )
+        yield ProviderEvent(type="text_delta", text="recovered after calibration")
+        yield ProviderEvent(type="completed", stop_reason="stop")
+
+
+class _PartialToolCallThenFailingProvider:
+    provider_id = "mock"
+    capabilities = ProviderCapabilities(tools=True)
+
+    def __init__(self) -> None:
+        self.attempts = 0
+
+    async def stream(self, _request: ProviderRequest) -> AsyncIterator[ProviderEvent]:
+        self.attempts += 1
+        yield ProviderEvent(
+            type="tool_call_started",
+            tool_call_id="call_partial",
+            tool_name="web_search",
+        )
+        yield ProviderEvent(
+            type="tool_call_delta",
+            tool_call_id="call_partial",
+            tool_name="web_search",
+            arguments_delta='{"query":"incomplete',
+        )
+        raise ProviderRequestError(
+            "temporary upstream failure during a tool call",
+            retryable=True,
+            stage="stream",
+            status_code=503,
+        )
 
 
 class _TruncatingThenCompletingProvider:
@@ -377,7 +443,9 @@ def test_retryable_provider_failure_retries_only_before_output(
         raising=False,
     )
 
-    with TestClient(create_app(_settings(tmp_path, "retry-before-output.db"))) as client:
+    with TestClient(
+        create_app(_settings(tmp_path, "retry-before-output.db"))
+    ) as client:
         csrf = _login(client)
         conversation_id = _conversation(client, csrf, "Provider retry")
         run_id = _start_run(
@@ -412,7 +480,7 @@ def test_retryable_provider_failure_retries_only_before_output(
     }
 
 
-def test_retryable_provider_failure_does_not_replay_partial_output(
+def test_retryable_provider_failure_continues_partial_text_without_replay(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     provider = _RetryableProvider(partial_output=True)
@@ -426,7 +494,9 @@ def test_retryable_provider_failure_does_not_replay_partial_output(
         raising=False,
     )
 
-    with TestClient(create_app(_settings(tmp_path, "no-replay-after-output.db"))) as client:
+    with TestClient(
+        create_app(_settings(tmp_path, "recover-after-output.db"))
+    ) as client:
         csrf = _login(client)
         conversation_id = _conversation(client, csrf, "No partial replay")
         run_id = _start_run(
@@ -438,16 +508,221 @@ def test_retryable_provider_failure_does_not_replay_partial_output(
         )
         snapshot = _wait_for_terminal(client, run_id)
 
-    assert snapshot["status"] == "failed"
-    assert provider.attempts == 1
+    assert snapshot["status"] == "completed"
+    assert snapshot["assistantDraft"]["text"] == "partial response recovered response"
+    assert provider.attempts == 2
     with SessionLocal() as db:
+        recovery_event = db.scalar(
+            select(RunEvent).where(
+                RunEvent.run_id == run_id,
+                RunEvent.event_type == "provider_partial_response_recovery_scheduled",
+            )
+        )
         retry_event = db.scalar(
             select(RunEvent).where(
                 RunEvent.run_id == run_id,
                 RunEvent.event_type == "provider_retry_scheduled",
             )
         )
+    assert recovery_event is not None
+    assert recovery_event.payload_json == {
+        "attempt": 2,
+        "maxAttempts": 3,
+        "delaySeconds": 0.0,
+        "stage": "response",
+        "statusCode": 503,
+        "preservedChars": 16,
+    }
     assert retry_event is None
+
+
+def test_provider_context_error_lowers_run_window_before_recovery(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    provider = _ObservedContextThenCompletingProvider()
+    monkeypatch.setattr(
+        local_run_executor, "_provider", lambda *_args, **_kwargs: provider
+    )
+
+    with TestClient(
+        create_app(_settings(tmp_path, "observed-context-window.db"))
+    ) as client:
+        csrf = _login(client)
+        conversation_id = _conversation(client, csrf, "Observed context window")
+        run_id = _start_run(
+            client,
+            csrf,
+            conversation_id,
+            text="calibrate-context-window",
+            idempotency_key="calibrate-context-window-0001",
+        )
+        snapshot = _wait_for_terminal(client, run_id)
+
+    assert snapshot["status"] == "completed"
+    assert provider.attempts == 2
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        assert run is not None
+        capabilities = run.snapshot_json["execution"]["capabilities"]
+        assert capabilities["context_window"] == 4_096
+        assert capabilities["observed_context_window"] == 4_096
+        adjustment = db.scalar(
+            select(RunEvent).where(
+                RunEvent.run_id == run_id,
+                RunEvent.event_type == "provider_context_window_adjusted",
+            )
+        )
+    assert adjustment is not None
+    assert adjustment.payload_json["observedContextWindow"] == 4_096
+
+
+def test_retryable_failure_never_replays_a_partial_tool_call(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    provider = _PartialToolCallThenFailingProvider()
+    monkeypatch.setattr(
+        local_run_executor, "_provider", lambda *_args, **_kwargs: provider
+    )
+    monkeypatch.setattr(
+        executor_module,
+        "_PROVIDER_RETRY_DELAYS_SECONDS",
+        (0.0, 0.0),
+        raising=False,
+    )
+
+    with TestClient(
+        create_app(_settings(tmp_path, "partial-tool-no-replay.db"))
+    ) as client:
+        csrf = _login(client)
+        conversation_id = _conversation(client, csrf, "Partial tool no replay")
+        run_id = _start_run(
+            client,
+            csrf,
+            conversation_id,
+            text="do-not-replay-partial-tool-call",
+            idempotency_key="do-not-replay-partial-tool-call-0001",
+        )
+        snapshot = _wait_for_terminal(client, run_id)
+
+    assert snapshot["status"] == "failed"
+    assert provider.attempts == 1
+    with SessionLocal() as db:
+        recovery_event = db.scalar(
+            select(RunEvent).where(
+                RunEvent.run_id == run_id,
+                RunEvent.event_type == "provider_partial_response_recovery_scheduled",
+            )
+        )
+        retry_event = db.scalar(
+            select(RunEvent).where(
+                RunEvent.run_id == run_id,
+                RunEvent.event_type == "provider_retry_scheduled",
+            )
+        )
+    assert recovery_event is None
+    assert retry_event is None
+
+
+def test_provider_retry_delay_prefers_retry_after_and_caps_it() -> None:
+    retry_after = ProviderRequestError(
+        "rate limited",
+        retryable=True,
+        stage="rate_limit",
+        retry_after_seconds=12.5,
+    )
+    excessive = ProviderRequestError(
+        "rate limited",
+        retryable=True,
+        stage="rate_limit",
+        retry_after_seconds=10_000,
+    )
+
+    assert executor_module._provider_retry_delay_seconds(retry_after, 0) == 12.5
+    assert executor_module._provider_retry_delay_seconds(excessive, 0) == 600.0
+
+
+def test_continuation_deduper_handles_overlap_split_across_stream_chunks() -> None:
+    deduper = executor_module._ContinuationDeduper("partial response")
+    visible = (
+        "".join(
+            deduper.feed(chunk)
+            for chunk in ("partial ", "response", " recovered", " response")
+        )
+        + deduper.finish()
+    )
+
+    assert visible == " recovered response"
+    assert deduper.suppressed_chars == len("partial response")
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_propagates_retry_after_without_leaking_body() -> None:
+    leaked = "provider-secret-body"
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            429,
+            headers={"Retry-After": "12.5"},
+            json={"error": {"message": leaked}},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        adapter = OpenAICompatibleAdapter(
+            provider_id="openai_compatible",
+            base_url="https://compatible.test/v1",
+            headers={"Authorization": "Bearer local-secret"},
+            client=client,
+        )
+        with pytest.raises(ProviderRequestError) as captured:
+            _ = [
+                event
+                async for event in adapter.stream(
+                    ProviderRequest(
+                        model="model-a",
+                        messages=(ProviderMessage(role="user", content="Hello"),),
+                    )
+                )
+            ]
+
+    assert captured.value.retry_after_seconds == 12.5
+    assert leaked not in str(captured.value)
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_extracts_actual_context_window_safely() -> None:
+    leaked = "provider-context-secret"
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={
+                "error": {
+                    "message": ("maximum context length is 400000 tokens; " + leaked)
+                }
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        adapter = OpenAICompatibleAdapter(
+            provider_id="openai_compatible",
+            base_url="https://compatible.test/v1",
+            headers={"Authorization": "Bearer local-secret"},
+            client=client,
+        )
+        with pytest.raises(ProviderRequestError) as captured:
+            _ = [
+                event
+                async for event in adapter.stream(
+                    ProviderRequest(
+                        model="model-a",
+                        messages=(ProviderMessage(role="user", content="Hello"),),
+                    )
+                )
+            ]
+
+    assert captured.value.stage == "context"
+    assert captured.value.context_window_tokens == 400_000
+    assert leaked not in str(captured.value)
 
 
 def test_output_limit_continues_without_losing_or_repeating_partial_text(
@@ -458,7 +733,9 @@ def test_output_limit_continues_without_losing_or_repeating_partial_text(
         local_run_executor, "_provider", lambda *_args, **_kwargs: provider
     )
 
-    with TestClient(create_app(_settings(tmp_path, "output-continuation.db"))) as client:
+    with TestClient(
+        create_app(_settings(tmp_path, "output-continuation.db"))
+    ) as client:
         csrf = _login(client)
         conversation_id = _conversation(client, csrf, "Output continuation")
         run_id = _start_run(
@@ -508,7 +785,9 @@ def test_repeated_empty_provider_turn_fails_visibly_instead_of_completing_blank(
         local_run_executor, "_provider", lambda *_args, **_kwargs: provider
     )
 
-    with TestClient(create_app(_settings(tmp_path, "repeated-empty-turn.db"))) as client:
+    with TestClient(
+        create_app(_settings(tmp_path, "repeated-empty-turn.db"))
+    ) as client:
         csrf = _login(client)
         conversation_id = _conversation(client, csrf, "Repeated empty turn")
         run_id = _start_run(

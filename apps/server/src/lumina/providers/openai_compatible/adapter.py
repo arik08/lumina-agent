@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -192,15 +193,27 @@ class OpenAICompatibleAdapter:
                         )
 
                     if isinstance(chunk.get("error"), Mapping):
+                        error_payload = chunk["error"]
                         stage = (
                             "context"
-                            if _is_context_overflow_payload(chunk["error"])
+                            if _is_context_overflow_payload(error_payload)
                             else "stream"
+                        )
+                        status_code = _integer(
+                            error_payload.get("status")
+                            or error_payload.get("status_code")
                         )
                         raise ProviderRequestError(
                             f"{self.provider_id} returned a streaming error.",
-                            retryable=_is_retryable_stream_error(chunk["error"]),
+                            retryable=_is_retryable_stream_error(error_payload),
                             stage=stage,
+                            status_code=status_code or None,
+                            retry_after_seconds=_retry_after_seconds(error_payload),
+                            context_window_tokens=(
+                                _context_window_tokens(error_payload)
+                                if stage == "context"
+                                else None
+                            ),
                         )
 
                     usage = chunk.get("usage")
@@ -274,6 +287,14 @@ class OpenAICompatibleAdapter:
                 retryable=status in {408, 409, 425, 429} or status >= 500,
                 stage=stage,
                 status_code=status,
+                retry_after_seconds=_retry_after_seconds(
+                    exc.response.headers.get("Retry-After")
+                ),
+                context_window_tokens=(
+                    _context_window_from_response(exc.response)
+                    if stage == "context"
+                    else None
+                ),
             ) from exc
         except httpx.RequestError as exc:
             raise ProviderRequestError(
@@ -421,6 +442,103 @@ def _is_context_overflow_payload(value: object) -> bool:
     )
 
 
+_CONTEXT_WINDOW_FIELD_NAMES = frozenset(
+    {
+        "contextlength",
+        "contextwindow",
+        "maxcontextlength",
+        "maxcontextwindow",
+        "maximumcontextlength",
+        "maximumcontextwindow",
+    }
+)
+_CONTEXT_WINDOW_PATTERNS = (
+    re.compile(
+        r"(?:maximum|max|actual)\s+context(?:\s+window|\s+length)?\s*"
+        r"(?:is|of|:|=)\s*([0-9][0-9_,]*)\s*tokens?\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"context(?:\s+window|\s+length)\s*(?:is|of|:|=)\s*"
+        r"([0-9][0-9_,]*)\s*tokens?\b",
+        re.IGNORECASE,
+    ),
+)
+
+
+def _retry_after_seconds(value: object) -> float | None:
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            normalized_key = re.sub(r"[^a-z]", "", str(key).casefold())
+            if normalized_key in {"retryafter", "retryafterseconds"}:
+                parsed = _retry_after_seconds(item)
+                if parsed is not None:
+                    return parsed
+        for item in value.values():
+            if isinstance(item, Mapping):
+                parsed = _retry_after_seconds(item)
+                if parsed is not None:
+                    return parsed
+        return None
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not 0 <= parsed < float("inf"):
+        return None
+    return min(parsed, 600.0)
+
+
+def _context_window_from_response(response: httpx.Response) -> int | None:
+    try:
+        payload: object = response.json()
+    except (json.JSONDecodeError, ValueError):
+        payload = response.text
+    return _context_window_tokens(payload)
+
+
+def _context_window_tokens(value: object) -> int | None:
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            normalized_key = re.sub(r"[^a-z]", "", str(key).casefold())
+            if normalized_key in _CONTEXT_WINDOW_FIELD_NAMES:
+                parsed = _context_token_count(item)
+                if parsed is not None:
+                    return parsed
+        for item in value.values():
+            parsed = _context_window_tokens(item)
+            if parsed is not None:
+                return parsed
+        return None
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            parsed = _context_window_tokens(item)
+            if parsed is not None:
+                return parsed
+        return None
+    if not isinstance(value, str):
+        return None
+    for pattern in _CONTEXT_WINDOW_PATTERNS:
+        match = pattern.search(value)
+        if match is not None:
+            parsed = _context_token_count(match.group(1))
+            if parsed is not None:
+                return parsed
+    return None
+
+
+def _context_token_count(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    normalized = str(value).replace(",", "").replace("_", "").strip()
+    if not normalized.isdigit():
+        return None
+    parsed = int(normalized)
+    return parsed if 1_024 <= parsed <= 10_000_000 else None
+
+
 async def _iter_sse_payloads(response: httpx.Response) -> AsyncIterator[str]:
     """Yield complete SSE data payloads, including multi-line gateway events."""
 
@@ -443,9 +561,7 @@ async def _iter_sse_payloads(response: httpx.Response) -> AsyncIterator[str]:
         yield "\n".join(data_lines).strip()
 
 
-def _unsupported_optional_fields(
-    body: bytes, candidates: frozenset[str]
-) -> set[str]:
+def _unsupported_optional_fields(body: bytes, candidates: frozenset[str]) -> set[str]:
     if not body or not candidates:
         return set()
     text = body.decode("utf-8", errors="replace").casefold()
@@ -463,16 +579,13 @@ def _unsupported_optional_fields(
     return {
         field
         for field in candidates
-        if field.casefold() in text
-        or field.replace("_", "-").casefold() in text
+        if field.casefold() in text or field.replace("_", "-").casefold() in text
     }
 
 
 def _is_retryable_stream_error(error: Mapping[str, Any]) -> bool:
     status = error.get("status") or error.get("status_code")
-    if isinstance(status, int) and (
-        status in {408, 409, 425, 429} or status >= 500
-    ):
+    if isinstance(status, int) and (status in {408, 409, 425, 429} or status >= 500):
         return True
     normalized = json.dumps(error, ensure_ascii=False, default=str).casefold()
     return any(

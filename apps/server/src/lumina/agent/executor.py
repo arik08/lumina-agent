@@ -151,11 +151,18 @@ from ..api.schemas import (
 
 logger = logging.getLogger(__name__)
 _PROVIDER_RETRY_DELAYS_SECONDS = (1.0, 2.0)
+_MAX_PROVIDER_RETRY_AFTER_SECONDS = 600.0
+_MAX_CONTINUATION_OVERLAP_CHARS = 4_000
 _MAX_AUTO_CONTINUATIONS = 4
 _MAX_EMPTY_RESPONSE_RETRIES = 1
 _CONTINUATION_PROMPT = (
     "[Continuation after output limit] Continue exactly where the previous assistant "
     "text stopped. Do not repeat completed text, restart the answer, or summarize it."
+)
+_PARTIAL_RESPONSE_CONTINUATION_PROMPT = (
+    "[Continuation after a transient stream failure] The assistant text immediately "
+    "before this message was already delivered to the user. Continue exactly where it "
+    "stopped. Do not repeat completed text, restart the answer, or summarize it."
 )
 _TRUNCATED_AFTER_CONTINUATIONS_NOTICE = (
     "\n\n[응답이 모델 출력 한도에 반복해서 도달하여 여기까지 보존했습니다. "
@@ -254,9 +261,7 @@ class _InlineMemoryStream:
                         self._pending = ""
                     break
                 self._payload_parts.append(self._pending[:close_at])
-                self._pending = self._pending[
-                    close_at + len(_MEMORY_ENVELOPE_CLOSE) :
-                ]
+                self._pending = self._pending[close_at + len(_MEMORY_ENVELOPE_CLOSE) :]
                 self._capturing = False
                 self._closed = True
                 visible.append(self._pending)
@@ -266,15 +271,11 @@ class _InlineMemoryStream:
             open_at = self._pending.find(_MEMORY_ENVELOPE_OPEN)
             if open_at >= 0:
                 visible.append(self._pending[:open_at])
-                self._pending = self._pending[
-                    open_at + len(_MEMORY_ENVELOPE_OPEN) :
-                ]
+                self._pending = self._pending[open_at + len(_MEMORY_ENVELOPE_OPEN) :]
                 self._capturing = True
                 continue
 
-            retained = _matching_prefix_suffix(
-                self._pending, _MEMORY_ENVELOPE_OPEN
-            )
+            retained = _matching_prefix_suffix(self._pending, _MEMORY_ENVELOPE_OPEN)
             if retained:
                 visible.append(self._pending[:-retained])
                 self._pending = self._pending[-retained:]
@@ -290,6 +291,41 @@ class _InlineMemoryStream:
             return ""
         visible = self._pending
         self._pending = ""
+        return visible
+
+
+class _ContinuationDeduper:
+    """Remove only a repeated suffix while a continuation stream establishes overlap."""
+
+    def __init__(self, reference: str | None) -> None:
+        self.reference = (reference or "")[-_MAX_CONTINUATION_OVERLAP_CHARS:]
+        self._pending = ""
+        self._resolved = not self.reference
+        self.suppressed_chars = 0
+
+    def feed(self, chunk: str) -> str:
+        if not chunk:
+            return ""
+        if self._resolved:
+            return chunk
+        self._pending += chunk
+        if self._pending in self.reference:
+            return ""
+        return self._resolve()
+
+    def finish(self) -> str:
+        return "" if self._resolved else self._resolve()
+
+    def _resolve(self) -> str:
+        overlap = 0
+        for size in range(min(len(self.reference), len(self._pending)), 0, -1):
+            if self._pending.startswith(self.reference[-size:]):
+                overlap = size
+                break
+        visible = self._pending[overlap:]
+        self.suppressed_chars += overlap
+        self._pending = ""
+        self._resolved = True
         return visible
 
 
@@ -782,8 +818,10 @@ class LocalRunExecutor:
         artifact_completion_reminded = False
         reactive_context_recovery_attempted = False
         provider_retry_attempt = 0
+        partial_response_recovery_attempt = 0
         empty_response_retry_attempt = 0
         output_continuation_count = 0
+        pending_continuation_reference: str | None = None
         while True:
             messages = await self._compact_runtime_context(
                 run_id, messages, tool_schemas
@@ -825,12 +863,15 @@ class LocalRunExecutor:
             limit_violation: RunLimitViolation | None = None
             provider_request_error: ProviderRequestError | None = None
             provider_output_started = False
+            provider_tool_output_started = False
             provider_stop_reason: str | None = None
             pending_text: list[str] = []
             pending_text_chars = 0
             last_text_flush = time.monotonic()
             first_text_persisted = False
             memory_stream = _InlineMemoryStream() if memory_learning_enabled else None
+            continuation_deduper = _ContinuationDeduper(pending_continuation_reference)
+            pending_continuation_reference = None
 
             async def flush_pending_text() -> None:
                 nonlocal pending_text_chars, last_text_flush, first_text_persisted
@@ -877,6 +918,12 @@ class LocalRunExecutor:
                             "tool_call_completed",
                         }:
                             provider_output_started = True
+                        if event.type in {
+                            "tool_call_started",
+                            "tool_call_delta",
+                            "tool_call_completed",
+                        }:
+                            provider_tool_output_started = True
                         if not await self._wait_until_runnable(run_id):
                             return
                         if await self._has_pending_steers(run_id):
@@ -889,7 +936,9 @@ class LocalRunExecutor:
                                 if memory_stream is not None
                                 else event.text
                             )
-                            await accept_visible_text(visible_text)
+                            await accept_visible_text(
+                                continuation_deduper.feed(visible_text)
+                            )
                         elif event.type == "tool_call_started":
                             await flush_pending_text()
                             call_id = event.tool_call_id or new_uuid()
@@ -992,7 +1041,10 @@ class LocalRunExecutor:
                 limit_violation = self._deadline_violation(run_id)
             finally:
                 if memory_stream is not None:
-                    await accept_visible_text(memory_stream.finish())
+                    await accept_visible_text(
+                        continuation_deduper.feed(memory_stream.finish())
+                    )
+                await accept_visible_text(continuation_deduper.finish())
                 await flush_pending_text()
             with session_scope() as db:
                 active_run = db.get(Run, run_id)
@@ -1000,6 +1052,14 @@ class LocalRunExecutor:
                     clear_model_turn_inflight(db, active_run)
 
             if provider_request_error is not None:
+                observed_context_window = await self._apply_observed_context_window(
+                    run_id, provider_request_error
+                )
+                if observed_context_window is not None:
+                    capabilities = {
+                        **capabilities,
+                        "context_window": observed_context_window,
+                    }
                 if (
                     not reactive_context_recovery_attempted
                     and not round_text
@@ -1014,9 +1074,41 @@ class LocalRunExecutor:
                         force=True,
                         trigger="reactive",
                     )
-                    if recovered_messages is not messages:
+                    context_compacted = recovered_messages is not messages
+                    if context_compacted:
                         messages = recovered_messages
+                    if context_compacted or observed_context_window is not None:
                         continue
+                partial_text = "".join(round_text)
+                continuation_reference = partial_text or (
+                    continuation_deduper.reference
+                    if continuation_deduper.suppressed_chars
+                    else ""
+                )
+                if (
+                    continuation_reference
+                    and await self._recover_partial_provider_response(
+                        run_id,
+                        provider_request_error,
+                        retry_index=partial_response_recovery_attempt,
+                        preserved_chars=len(continuation_reference),
+                        has_tool_calls=provider_tool_output_started or bool(tool_calls),
+                    )
+                ):
+                    if partial_text:
+                        messages.append(
+                            ProviderMessage(role="assistant", content=partial_text)
+                        )
+                        messages.append(
+                            ProviderMessage(
+                                role="user",
+                                content=_PARTIAL_RESPONSE_CONTINUATION_PROMPT,
+                            )
+                        )
+                    pending_continuation_reference = continuation_reference
+                    partial_response_recovery_attempt += 1
+                    provider_retry_attempt = 0
+                    continue
                 if await self._retry_provider_request(
                     run_id,
                     provider_request_error,
@@ -1028,6 +1120,7 @@ class LocalRunExecutor:
                     continue
                 raise provider_request_error
             provider_retry_attempt = 0
+            partial_response_recovery_attempt = 0
 
             if progress_control_buffer:
                 await self._append_text(
@@ -1084,6 +1177,7 @@ class LocalRunExecutor:
                         messages.append(
                             ProviderMessage(role="user", content=_CONTINUATION_PROMPT)
                         )
+                        pending_continuation_reference = "".join(round_text)
                         output_continuation_count += 1
                         await self._publish_progress_summary(
                             run_id,
@@ -1100,6 +1194,10 @@ class LocalRunExecutor:
                 elif not round_text:
                     if empty_response_retry_attempt < _MAX_EMPTY_RESPONSE_RETRIES:
                         empty_response_retry_attempt += 1
+                        if continuation_deduper.suppressed_chars:
+                            pending_continuation_reference = (
+                                continuation_deduper.reference
+                            )
                         with session_scope() as db:
                             active_run = db.get(Run, run_id)
                             if active_run is not None:
@@ -2363,7 +2461,9 @@ class LocalRunExecutor:
             with session_scope() as db:
                 active_run = db.get(Run, run_id)
                 if active_run is None:
-                    raise RuntimeError("Run disappeared during file output intent classification")
+                    raise RuntimeError(
+                        "Run disappeared during file output intent classification"
+                    )
                 existing = active_run.snapshot_json.get("output_intent")
                 if isinstance(existing, dict):
                     return dict(existing)
@@ -3332,7 +3432,7 @@ class LocalRunExecutor:
             or retry_index >= len(_PROVIDER_RETRY_DELAYS_SECONDS)
         ):
             return False
-        delay_seconds = _PROVIDER_RETRY_DELAYS_SECONDS[retry_index]
+        delay_seconds = _provider_retry_delay_seconds(error, retry_index)
         with session_scope() as db:
             run = db.get(Run, run_id)
             if run is None or run.status in TERMINAL_STATUSES:
@@ -3367,6 +3467,126 @@ class LocalRunExecutor:
         if delay_seconds > 0:
             await asyncio.sleep(delay_seconds)
         return True
+
+    async def _recover_partial_provider_response(
+        self,
+        run_id: str,
+        error: ProviderRequestError,
+        *,
+        retry_index: int,
+        preserved_chars: int,
+        has_tool_calls: bool,
+    ) -> bool:
+        if (
+            not error.retryable
+            or error.stage not in {"network", "response", "stream"}
+            or has_tool_calls
+            or retry_index >= len(_PROVIDER_RETRY_DELAYS_SECONDS)
+        ):
+            return False
+        delay_seconds = _provider_retry_delay_seconds(error, retry_index)
+        with session_scope() as db:
+            run = db.get(Run, run_id)
+            if run is None or run.status in TERMINAL_STATUSES:
+                return False
+            append_event(
+                db,
+                run,
+                "provider_partial_response_recovery_scheduled",
+                {
+                    "attempt": retry_index + 2,
+                    "maxAttempts": len(_PROVIDER_RETRY_DELAYS_SECONDS) + 1,
+                    "delaySeconds": delay_seconds,
+                    "stage": error.stage,
+                    "statusCode": error.status_code,
+                    "preservedChars": preserved_chars,
+                },
+            )
+        logger.warning(
+            "Continuing a text-only Provider response after a transient stream failure",
+            extra={
+                "run_id": run_id,
+                "provider_stage": error.stage,
+                "provider_status_code": error.status_code,
+                "retry_attempt": retry_index + 2,
+                "preserved_chars": preserved_chars,
+            },
+        )
+        await event_broker.notify(run_id)
+        await self._publish_progress_summary(
+            run_id,
+            "Provider 연결이 일시적으로 끊겨 이미 받은 답변을 보존한 채 이어서 작성합니다.",
+            phase="recovering",
+        )
+        if delay_seconds > 0:
+            await asyncio.sleep(delay_seconds)
+        return True
+
+    async def _apply_observed_context_window(
+        self,
+        run_id: str,
+        error: ProviderRequestError,
+    ) -> int | None:
+        observed = error.context_window_tokens
+        if not isinstance(observed, int) or isinstance(observed, bool) or observed <= 0:
+            return None
+        with session_scope() as db:
+            run = db.get(Run, run_id)
+            if run is None or run.status in TERMINAL_STATUSES:
+                return None
+            snapshot = dict(run.snapshot_json)
+            execution_value = snapshot.get("execution", {})
+            execution = (
+                dict(execution_value) if isinstance(execution_value, Mapping) else {}
+            )
+            capabilities_value = execution.get("capabilities", {})
+            capabilities = (
+                dict(capabilities_value)
+                if isinstance(capabilities_value, Mapping)
+                else {}
+            )
+            configured = capabilities.get(
+                "context_window", capabilities.get("contextWindow")
+            )
+            previous = (
+                configured
+                if isinstance(configured, int)
+                and not isinstance(configured, bool)
+                and configured > 0
+                else None
+            )
+            if previous is None:
+                profile = model_operational_profile(
+                    run.provider_id, run.model_key or run.runtime_model_id
+                )
+                previous = profile.context_window if profile is not None else None
+            if previous is not None and observed >= previous:
+                return None
+            capabilities["context_window"] = observed
+            capabilities["observed_context_window"] = observed
+            execution["capabilities"] = capabilities
+            snapshot["execution"] = execution
+            run.snapshot_json = snapshot
+            append_event(
+                db,
+                run,
+                "provider_context_window_adjusted",
+                {
+                    "previousContextWindow": previous,
+                    "observedContextWindow": observed,
+                    "stage": error.stage,
+                },
+            )
+        logger.warning(
+            "Lowered the Run context window after a Provider context error",
+            extra={
+                "run_id": run_id,
+                "previous_context_window": previous,
+                "observed_context_window": observed,
+            },
+        )
+        await event_broker.notify(run_id)
+        return observed
 
     def _current_limit_violation(self, run_id: str) -> RunLimitViolation | None:
         with SessionLocal() as db:
@@ -4339,6 +4559,20 @@ def _is_context_overflow_error(exc: ProviderRequestError) -> bool:
             "too large for the model",
         )
     )
+
+
+def _provider_retry_delay_seconds(
+    error: ProviderRequestError, retry_index: int
+) -> float:
+    retry_after = error.retry_after_seconds
+    if (
+        isinstance(retry_after, (int, float))
+        and not isinstance(retry_after, bool)
+        and math.isfinite(retry_after)
+        and retry_after >= 0
+    ):
+        return min(float(retry_after), _MAX_PROVIDER_RETRY_AFTER_SECONDS)
+    return _PROVIDER_RETRY_DELAYS_SECONDS[retry_index]
 
 
 def _is_output_truncated_stop_reason(stop_reason: str | None) -> bool:
