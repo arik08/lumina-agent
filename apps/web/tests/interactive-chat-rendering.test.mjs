@@ -8,13 +8,17 @@ const [turnSource, rendererSource, rendererStyles] = await Promise.all([
   readFile(new URL("../src/components/InteractiveResponse.css", import.meta.url), "utf8"),
 ]);
 
-test("chat renders Mermaid and structured charts as native interactive blocks", () => {
+test("chat renders Mermaid and full ECharts options as interactive blocks", () => {
   assert.match(turnSource, /language === "mermaid" \|\| language === "mmd"[\s\S]*?<MermaidDiagram source=\{source\}/);
   assert.match(turnSource, /language === "lumina-chart"[\s\S]*?<InteractiveChart source=\{source\}/);
   assert.match(rendererSource, /securityLevel: "strict"/);
   assert.match(rendererSource, /export function parseInteractiveChart/);
-  assert.match(rendererSource, /onPointerMove=\{selectFromPointer\}/);
-  assert.match(rendererSource, /event\.key !== "ArrowLeft" && event\.key !== "ArrowRight"/);
+  assert.match(rendererSource, /import\("echarts"\)/);
+  assert.match(rendererSource, /echarts\.init\(container/);
+  assert.match(rendererSource, /new ResizeObserver\(\(\) => chart\.resize\(\)\)/);
+  assert.match(rendererSource, /new MutationObserver\(applyOption\)/);
+  assert.match(rendererSource, /darkMode: Boolean\(container\.closest\("\.theme-dark"\)\)/);
+  assert.match(rendererSource, /legacyChartOption/);
 });
 
 test("Mermaid and structured charts expose a zoomable, pannable dialog", () => {

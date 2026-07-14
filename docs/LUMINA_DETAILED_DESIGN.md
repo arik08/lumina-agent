@@ -1695,7 +1695,7 @@ ArtifactVersion
 | Code | language label, syntax highlight, horizontal scroll, copy |
 | Math | KaTeX inline/block, 오류 시 원문 fallback |
 | Diagram | Mermaid 주요 diagram, SVG zoom·pan·fit |
-| Chart | Apache ECharts 5 계열, responsive Canvas/SVG |
+| Chart | Apache ECharts 6 계열, responsive Canvas/SVG |
 | PDF | page render, link와 글자 깨짐 검증 |
 
 HTML iframe은 app origin의 cookie, token, 상위 window, 다른 Project API와 filesystem에 접근할 수 없어야 합니다. network, navigation, popup, download와 clipboard 권한은 신뢰 수준과 정책에 따라 최소 허용합니다.

@@ -12,7 +12,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type KeyboardEvent,
   type PointerEvent,
   type ReactNode,
   type WheelEvent,
@@ -187,36 +186,11 @@ export function MermaidDiagram({ source }: { source: string }) {
   );
 }
 
-type ChartAxis = "left" | "right";
-type ChartSeriesType = "bar" | "line";
-type ChartColor = "cobalt" | "red" | "green" | "amber" | "slate";
-
-type InteractiveChartSeries = {
-  name: string;
-  type: ChartSeriesType;
-  values: number[];
-  axis: ChartAxis;
-  color: ChartColor;
-  unit: string;
-  unitPosition: "prefix" | "suffix";
-};
-
-export type InteractiveChartSpec = {
+type InteractiveChartSpec = {
   title: string;
-  subtitle: string;
-  categories: string[];
-  xLabel: string;
-  series: InteractiveChartSeries[];
+  option: Record<string, unknown>;
   metrics: Array<{ label: string; value: string }>;
   source: { label: string; url: string; asOf: string } | null;
-};
-
-const chartColors: Record<ChartColor, string> = {
-  cobalt: "var(--cobalt)",
-  red: "var(--danger)",
-  green: "var(--success)",
-  amber: "var(--warning)",
-  slate: "var(--muted)",
 };
 
 function shortText(value: unknown, maximum: number, fallback = "") {
@@ -238,31 +212,58 @@ function safeExternalUrl(value: unknown) {
   }
 }
 
+function isSafeChartJson(value: unknown, depth = 0): boolean {
+  if (depth > 50) return false;
+  if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (Array.isArray(value)) return value.every((item) => isSafeChartJson(item, depth + 1));
+  if (!isRecord(value)) return false;
+  return Object.entries(value).every(([key, item]) => (
+    key !== "__proto__" && key !== "prototype" && key !== "constructor" && isSafeChartJson(item, depth + 1)
+  ));
+}
+
+function chartTitle(option: Record<string, unknown>, fallback = "데이터 차트") {
+  const rawTitle = Array.isArray(option.title) ? option.title[0] : option.title;
+  return isRecord(rawTitle) ? shortText(rawTitle.text, 120, fallback) : fallback;
+}
+
+function legacyChartOption(raw: Record<string, unknown>) {
+  if (!Array.isArray(raw.categories) || !Array.isArray(raw.series)) return null;
+  const categories = raw.categories.map((value) => shortText(value, 100)).filter(Boolean);
+  if (!categories.length) return null;
+  const series = raw.series.flatMap((item, index) => {
+    if (!isRecord(item) || !Array.isArray(item.values) || item.values.length !== categories.length) return [];
+    const data = item.values.map(Number);
+    if (data.some((value) => !Number.isFinite(value))) return [];
+    return [{
+      name: shortText(item.name, 80, `Series ${index + 1}`),
+      type: item.type === "bar" ? "bar" : "line",
+      data,
+      yAxisIndex: item.axis === "right" ? 1 : 0,
+      smooth: item.type !== "bar",
+    }];
+  });
+  if (!series.length) return null;
+  const hasRightAxis = series.some((item) => item.yAxisIndex === 1);
+  return {
+    title: { text: shortText(raw.title, 120, "데이터 차트"), subtext: shortText(raw.subtitle, 180) },
+    tooltip: { trigger: "axis" },
+    legend: { top: 54 },
+    grid: { top: 92, right: hasRightAxis ? 62 : 28, bottom: 52, left: 58, containLabel: true },
+    xAxis: { type: "category", name: shortText(raw.xLabel, 50), data: categories },
+    yAxis: hasRightAxis ? [{ type: "value" }, { type: "value" }] : { type: "value" },
+    series,
+  };
+}
+
 export function parseInteractiveChart(source: string): InteractiveChartSpec | null {
   try {
     const raw: unknown = JSON.parse(source);
-    if (!isRecord(raw) || !Array.isArray(raw.categories) || !Array.isArray(raw.series)) return null;
-    const categories = raw.categories.map((value) => shortText(value, 48)).filter(Boolean).slice(0, 24);
-    if (categories.length < 2) return null;
-    const series: InteractiveChartSeries[] = raw.series.slice(0, 4).flatMap((item, index) => {
-      if (!isRecord(item) || !Array.isArray(item.values) || item.values.length !== categories.length) return [];
-      const values = item.values.map(Number);
-      if (values.some((value) => !Number.isFinite(value))) return [];
-      const type: ChartSeriesType = item.type === "bar" ? "bar" : "line";
-      const axis: ChartAxis = item.axis === "right" ? "right" : "left";
-      const availableColors: ChartColor[] = ["cobalt", "red", "green", "amber", "slate"];
-      const requestedColor = shortText(item.color, 16) as ChartColor;
-      return [{
-        name: shortText(item.name, 60, `Series ${index + 1}`),
-        type,
-        values,
-        axis,
-        color: availableColors.includes(requestedColor) ? requestedColor : availableColors[index % availableColors.length],
-        unit: shortText(item.unit, 12),
-        unitPosition: item.unitPosition === "prefix" ? "prefix" : "suffix",
-      }];
-    });
-    if (!series.length) return null;
+    if (!isRecord(raw) || !isSafeChartJson(raw)) return null;
+    const legacyOption = legacyChartOption(raw);
+    const candidate = isRecord(raw.option) ? raw.option : legacyOption ?? raw;
+    if (!isRecord(candidate) || !isSafeChartJson(candidate) || !Object.keys(candidate).length) return null;
     const metrics = Array.isArray(raw.metrics) ? raw.metrics.slice(0, 8).flatMap((item) => {
       if (!isRecord(item)) return [];
       const label = shortText(item.label, 50);
@@ -275,11 +276,8 @@ export function parseInteractiveChart(source: string): InteractiveChartSpec | nu
       asOf: shortText(raw.source.asOf, 80),
     } : null;
     return {
-      title: shortText(raw.title, 120, "데이터 차트"),
-      subtitle: shortText(raw.subtitle, 180),
-      categories,
-      xLabel: shortText(raw.xLabel, 50),
-      series,
+      title: shortText(raw.title, 120) || chartTitle(candidate),
+      option: candidate,
       metrics,
       source: sourceInfo && (sourceInfo.label || sourceInfo.asOf) ? sourceInfo : null,
     };
@@ -288,98 +286,55 @@ export function parseInteractiveChart(source: string): InteractiveChartSpec | nu
   }
 }
 
-function axisExtent(series: InteractiveChartSeries[], axis: ChartAxis) {
-  const selected = series.filter((item) => item.axis === axis);
-  const values = selected.flatMap((item) => item.values);
-  if (!values.length) return null;
-  let minimum = Math.min(...values);
-  let maximum = Math.max(...values);
-  if (selected.some((item) => item.type === "bar")) minimum = Math.min(0, minimum);
-  if (minimum === maximum) maximum = minimum + 1;
-  const padding = Math.max((maximum - minimum) * 0.08, 0.01);
-  return { minimum: minimum >= 0 ? Math.max(0, minimum - padding) : minimum - padding, maximum: maximum + padding };
-}
-
-function formatChartValue(value: number, series: InteractiveChartSeries) {
-  const formatted = new Intl.NumberFormat("ko-KR", { maximumFractionDigits: Math.abs(value) < 10 ? 2 : 1 }).format(value);
-  return series.unitPosition === "prefix" ? `${series.unit}${formatted}` : `${formatted}${series.unit}`;
-}
-
 function InteractiveChartContent({ spec, expanded = false }: { spec: InteractiveChartSpec; expanded?: boolean }) {
-  const [activeIndex, setActiveIndex] = useState(spec.categories.length - 1);
-  const width = 820;
-  const height = expanded ? 390 : 310;
-  const inset = { top: 28, right: 58, bottom: 48, left: 58 };
-  const plotWidth = width - inset.left - inset.right;
-  const plotHeight = height - inset.top - inset.bottom;
-  const leftExtent = axisExtent(spec.series, "left");
-  const rightExtent = axisExtent(spec.series, "right");
-  const xFor = (index: number) => inset.left + index / Math.max(1, spec.categories.length - 1) * plotWidth;
-  const yFor = (value: number, axis: ChartAxis) => {
-    const extent = (axis === "right" ? rightExtent : leftExtent) ?? leftExtent ?? rightExtent ?? { minimum: 0, maximum: 1 };
-    return inset.top + plotHeight - (value - extent.minimum) / (extent.maximum - extent.minimum) * plotHeight;
-  };
-  const barSeries = spec.series.filter((series) => series.type === "bar");
-  const categoryBand = plotWidth / Math.max(1, spec.categories.length);
-  const barWidth = Math.min(48, categoryBand * 0.68) / Math.max(1, barSeries.length);
-  const selectFromPointer = (event: PointerEvent<SVGSVGElement>) => {
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const ratio = clamp((event.clientX - bounds.left) / bounds.width, inset.left / width, (width - inset.right) / width);
-    setActiveIndex(clamp(Math.round(((ratio * width) - inset.left) / plotWidth * (spec.categories.length - 1)), 0, spec.categories.length - 1));
-  };
-  const selectFromKeyboard = (event: KeyboardEvent<SVGSVGElement>) => {
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-    event.preventDefault();
-    setActiveIndex((current) => clamp(current + (event.key === "ArrowLeft" ? -1 : 1), 0, spec.categories.length - 1));
-  };
-  const activeX = xFor(activeIndex);
-  const tooltipRatio = activeX / width;
-  const tooltipClassName = `native-chart-tooltip ${tooltipRatio < 0.22 ? "is-left" : tooltipRatio > 0.78 ? "is-right" : ""}`.trim();
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [error, setError] = useState(false);
 
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return undefined;
+    let cancelled = false;
+    let dispose = () => {};
+    setError(false);
+    void import("echarts").then((echarts) => {
+      if (cancelled) return;
+      const chart = echarts.init(container, undefined, { renderer: "canvas" });
+      const applyOption = () => {
+        const currentStyles = getComputedStyle(container);
+        const currentToken = (name: string, fallback: string) => currentStyles.getPropertyValue(name).trim() || fallback;
+        chart.setOption({
+          darkMode: Boolean(container.closest(".theme-dark")),
+          color: [currentToken("--cobalt", "#3f66c9"), currentToken("--danger", "#c34f51"), currentToken("--success", "#2f9765"), currentToken("--warning", "#b8771f"), currentToken("--muted", "#6c737e")],
+          backgroundColor: "transparent",
+          textStyle: { color: currentToken("--ink", "#20242c"), fontFamily: currentToken("--font-ui", "Segoe UI, sans-serif") },
+          ...spec.option,
+        }, { notMerge: true });
+      };
+      applyOption();
+      const observer = new ResizeObserver(() => chart.resize());
+      observer.observe(container);
+      const themeRoot = container.closest(".app-shell, .shared-viewer");
+      const themeObserver = themeRoot ? new MutationObserver(applyOption) : null;
+      if (themeRoot) themeObserver?.observe(themeRoot, { attributes: true, attributeFilter: ["class"] });
+      dispose = () => {
+        observer.disconnect();
+        themeObserver?.disconnect();
+        chart.dispose();
+      };
+    }).catch(() => {
+      if (!cancelled) setError(true);
+    });
+    return () => {
+      cancelled = true;
+      dispose();
+    };
+  }, [spec.option]);
+
+  if (error) return <SyntaxCode className="interactive-chart-error" value={JSON.stringify(spec.option, null, 2)} language="json" />;
   return (
-    <div className={`native-chart ${expanded ? "is-expanded" : ""}`}>
-      <div className="native-chart-heading"><strong>{spec.title}</strong>{spec.subtitle && <span>{spec.subtitle}</span>}</div>
-      <div className="native-chart-plot">
-        <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${spec.title} 인터랙티브 차트`} tabIndex={0} onPointerMove={selectFromPointer} onPointerDown={selectFromPointer} onKeyDown={selectFromKeyboard}>
-          {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
-            const y = inset.top + plotHeight * ratio;
-            return <line key={ratio} className="native-chart-grid" x1={inset.left} x2={width - inset.right} y1={y} y2={y} />;
-          })}
-          {leftExtent && [0, 0.5, 1].map((ratio) => {
-            const value = leftExtent.maximum - (leftExtent.maximum - leftExtent.minimum) * ratio;
-            return <text key={`left-${ratio}`} className="native-chart-axis-label" x={inset.left - 9} y={inset.top + plotHeight * ratio + 4} textAnchor="end">{new Intl.NumberFormat("ko-KR", { notation: "compact", maximumFractionDigits: 1 }).format(value)}</text>;
-          })}
-          {rightExtent && [0, 0.5, 1].map((ratio) => {
-            const value = rightExtent.maximum - (rightExtent.maximum - rightExtent.minimum) * ratio;
-            return <text key={`right-${ratio}`} className="native-chart-axis-label" x={width - inset.right + 9} y={inset.top + plotHeight * ratio + 4}>{new Intl.NumberFormat("ko-KR", { notation: "compact", maximumFractionDigits: 1 }).format(value)}</text>;
-          })}
-          {spec.series.map((series) => {
-            const color = chartColors[series.color];
-            if (series.type === "bar") {
-              const barIndex = barSeries.indexOf(series);
-              return <g key={series.name}>{series.values.map((value, index) => {
-                const zeroY = yFor(0, series.axis);
-                const valueY = yFor(value, series.axis);
-                return <rect key={index} className="native-chart-bar" x={xFor(index) - (barSeries.length * barWidth) / 2 + barIndex * barWidth + 1} y={Math.min(zeroY, valueY)} width={Math.max(2, barWidth - 2)} height={Math.max(1, Math.abs(zeroY - valueY))} rx="2" style={{ fill: color }} />;
-              })}</g>;
-            }
-            const path = series.values.map((value, index) => `${index ? "L" : "M"}${xFor(index).toFixed(1)},${yFor(value, series.axis).toFixed(1)}`).join(" ");
-            return <g key={series.name}><path className="native-chart-line" d={path} style={{ stroke: color }} />{series.values.map((value, index) => <circle key={index} className={index === activeIndex ? "native-chart-point is-active" : "native-chart-point"} cx={xFor(index)} cy={yFor(value, series.axis)} r={index === activeIndex ? 5 : 3} style={{ fill: color }} />)}</g>;
-          })}
-          <line className="native-chart-cursor" x1={activeX} x2={activeX} y1={inset.top} y2={inset.top + plotHeight} />
-          {spec.categories.map((category, index) => {
-            const show = spec.categories.length <= 8 || index === 0 || index === spec.categories.length - 1 || index % Math.ceil(spec.categories.length / 6) === 0;
-            return show ? <text key={category + index} className="native-chart-axis-label" x={xFor(index)} y={height - 20} textAnchor="middle">{category}</text> : null;
-          })}
-          {spec.xLabel && <text className="native-chart-x-label" x={width / 2} y={height - 2} textAnchor="middle">{spec.xLabel}</text>}
-        </svg>
-        <div className={tooltipClassName} style={{ left: `${tooltipRatio * 100}%` }}>
-          <strong>{spec.categories[activeIndex]}</strong>
-          {spec.series.map((series) => <span key={series.name}><i style={{ background: chartColors[series.color] }} />{series.name}<b>{formatChartValue(series.values[activeIndex], series)}</b></span>)}
-        </div>
-      </div>
-      <div className="native-chart-legend">{spec.series.map((series) => <span key={series.name}><i style={{ background: chartColors[series.color] }} />{series.name}</span>)}</div>
-      {spec.metrics.length > 0 && <dl className="native-chart-metrics">{spec.metrics.map((metric) => <div key={metric.label}><dt>{metric.label}</dt><dd>{metric.value}</dd></div>)}</dl>}
+    <div className={`echarts-chart ${expanded ? "is-expanded" : ""}`}>
+      <div ref={containerRef} className="echarts-chart-canvas" role="img" aria-label={`${spec.title} 인터랙티브 차트`} />
+      {spec.metrics.length > 0 && <dl className="echarts-chart-metrics">{spec.metrics.map((metric) => <div key={metric.label}><dt>{metric.label}</dt><dd>{metric.value}</dd></div>)}</dl>}
       {spec.source && <footer>{spec.source.url ? <a href={spec.source.url} target="_blank" rel="noreferrer noopener">{spec.source.label || "출처"}</a> : <span>{spec.source.label}</span>}{spec.source.asOf && <time>{spec.source.asOf}</time>}</footer>}
     </div>
   );
@@ -393,7 +348,7 @@ export function InteractiveChart({ source }: { source: string }) {
     <>
       <section className="interactive-response-block interactive-chart" aria-label={`${spec.title} 차트`}>
         <div className="interactive-response-toolbar">
-          <span>Interactive chart</span>
+          <span>Apache ECharts</span>
           <button type="button" aria-label={`${spec.title} 확대`} data-tooltip="확대해서 보기" onClick={() => setExpanded(true)}><Maximize2 size={15} /></button>
         </div>
         <InteractiveChartContent spec={spec} />

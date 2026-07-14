@@ -33,6 +33,8 @@ def test_default_system_prompt_describes_rich_chat_rendering_contract() -> None:
     assert RICH_CHAT_RENDERING_CONTRACT in DEFAULT_SYSTEM_PROMPT
     assert "fenced `mermaid` block" in RICH_CHAT_RENDERING_CONTRACT
     assert "fenced `lumina-chart` block" in RICH_CHAT_RENDERING_CONTRACT
+    assert "Apache ECharts option" in RICH_CHAT_RENDERING_CONTRACT
+    assert "pie, scatter, radar, graph, tree, treemap, sunburst, sankey" in RICH_CHAT_RENDERING_CONTRACT
     assert "Markdown image syntax renders an inline expandable image" in RICH_CHAT_RENDERING_CONTRACT
 
 
