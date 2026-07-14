@@ -275,7 +275,7 @@ export function SchedulesView({ projectId, projects, execution, executionOptions
     }
   };
 
-  const openCreateDialog = () => {
+  const openCreateForm = () => {
     setDraftProjectId(projectId ?? projects[0]?.id ?? null);
     setDraftExecution(defaultScheduleExecution(execution, executionOptions));
     setCreateOpen(true);
@@ -333,22 +333,47 @@ export function SchedulesView({ projectId, projects, execution, executionOptions
       <header className="feature-header">
         <div><button className="feature-mobile-menu" type="button" aria-label="사이드바 열기" onClick={onOpenNavigation}><Menu size={17} /></button><CalendarClock size={17} /><h1>예약 작업</h1><span>{tasks.length}개</span></div>
         <div>
-          <button className="feature-primary-action lumina-primary-action" type="button" disabled={!projectId || !execution || executionOptions.length === 0} onClick={openCreateDialog}><Plus size={15} /> 새 예약</button>
           <button className="schedule-list-refresh" type="button" aria-label="새로 고침" onClick={() => void refresh()}><RefreshCw size={15} /></button>
         </div>
       </header>
       {error && <div className="feature-error" role="alert">{error}</div>}
       <ResizableSplitPane storageKey="lumina:schedules-list-width" ariaLabel="예약 작업 목록 너비 조절" className="schedules-split">
         <aside className="feature-list schedule-list" aria-label="예약 작업 목록">
+          <div className="feature-toolbar schedule-list-toolbar">
+            <button className="feature-primary-action lumina-primary-action" type="button" disabled={!projectId || !execution || executionOptions.length === 0} onClick={openCreateForm}><Plus size={15} /> 새 예약</button>
+          </div>
           {loading ? <div className="feature-state"><LoaderCircle className="is-running" size={16} /> 불러오는 중</div> : tasks.length === 0 ? <div className="feature-state">예약 작업이 없습니다.</div> : tasks.map((task) => (
-            <button className={task.id === selected?.id ? "is-selected" : ""} type="button" key={task.id} onClick={() => setSelectedId(task.id)}>
+            <button className={task.id === selected?.id ? "is-selected" : ""} type="button" key={task.id} onClick={() => { setSelectedId(task.id); setCreateOpen(false); }}>
               <span><strong>{task.name}</strong><small>{scheduleText(task)}</small></span>
               <em className={task.enabled ? "is-enabled" : ""}>{task.enabled ? "사용" : "중지"}</em>
             </button>
           ))}
         </aside>
         <section className="feature-detail schedule-detail">
-          {!selected ? <div className="feature-state">예약 작업을 선택해 주세요.</div> : (
+          {createOpen ? (
+            <form className="compact-form schedule-form schedule-detail-form" aria-labelledby="new-schedule-title" onSubmit={(event) => void createTask(event)}>
+              <header className="detail-heading schedule-form-heading">
+                <div><h2 id="new-schedule-title">새 예약 작업</h2><p>예약 결과가 저장될 프로젝트와 실행 설정을 정합니다.</p></div>
+                <button className="schedule-form-close" type="button" aria-label="예약 작성 닫기" onClick={() => setCreateOpen(false)}><X size={16} /></button>
+              </header>
+              <label><span>이름</span><input autoFocus value={name} onChange={(event) => setName(event.currentTarget.value)} /></label>
+              <label><span>작업 지시</span><textarea rows={6} value={instructions} onChange={(event) => setInstructions(event.currentTarget.value)} /></label>
+              <div className="lumina-select-field"><span>세션 저장 프로젝트</span><SelectMenu value={draftProjectId ?? ""} options={projectOptions} ariaLabel="예약 작업 세션 저장 프로젝트" onChange={setDraftProjectId} /></div>
+              <div className="schedule-form-row">
+                <div className="lumina-select-field"><span>주기</span><SelectMenu value={kind} options={scheduleKindOptions} ariaLabel="예약 주기" onChange={(value) => setKind(value as ScheduleKind)} /></div>
+                {kind === "weekly" && <div className="lumina-select-field"><span>요일</span><SelectMenu value={String(weekday)} options={weekdayOptions} ariaLabel="예약 요일" onChange={(value) => setWeekday(Number(value))} /></div>}
+                {kind !== "manual" && kind !== "hourly" && <label><span>시</span><input type="number" min={0} max={23} value={hour} onChange={(event) => setHour(Number(event.currentTarget.value))} /></label>}
+                {kind !== "manual" && <label><span>분</span><input type="number" min={0} max={59} value={minute} onChange={(event) => setMinute(Number(event.currentTarget.value))} /></label>}
+              </div>
+              <div className="schedule-execution-row">
+                <div className="lumina-select-field"><span>Provider</span><SelectMenu value={draftExecution?.providerId ?? ""} options={providerOptions} ariaLabel="예약 Provider" onChange={selectScheduleProvider} /></div>
+                <div className="lumina-select-field"><span>Model</span><SelectMenu value={draftExecution?.modelKey ?? ""} options={modelOptions} ariaLabel="예약 Model" onChange={selectScheduleModel} /></div>
+                <div className="lumina-select-field"><span>Effort</span><SelectMenu value={draftExecution?.effortId ?? ""} options={scheduleEffortOptions} ariaLabel="예약 Effort" onChange={(value) => setDraftExecution((current) => current ? { ...current, effortId: value || null } : null)} /></div>
+              </div>
+              <p className="form-help">예약 실행마다 선택한 프로젝트에 새 채팅을 만들고 결과를 저장합니다. 일반 채팅의 현재 실행 설정을 기본값으로 사용하며, 계정 메뉴에서 사용하도록 체크한 Provider와 Model만 선택할 수 있습니다.</p>
+              <div className="dialog-actions"><button type="button" onClick={() => setCreateOpen(false)}>취소</button><button className="is-primary lumina-primary-action" type="submit" disabled={!name.trim() || !instructions.trim() || !draftProjectId || !draftExecution || busy}>예약 생성</button></div>
+            </form>
+          ) : !selected ? <div className="feature-state">예약 작업을 선택해 주세요.</div> : (
             <>
               <header className="detail-heading">
                 <div><h2>{selected.name}</h2><p>{selected.instructions}</p></div>
@@ -394,29 +419,6 @@ export function SchedulesView({ projectId, projects, execution, executionOptions
           )}
         </section>
       </ResizableSplitPane>
-      {createOpen && (
-        <div className="feature-inline-dialog" role="dialog" aria-modal="true" aria-labelledby="new-schedule-title">
-          <form className="compact-dialog compact-form schedule-form" onSubmit={(event) => void createTask(event)}>
-            <header><strong id="new-schedule-title">새 예약 작업</strong><button type="button" aria-label="닫기" onClick={() => setCreateOpen(false)}><X size={16} /></button></header>
-            <label><span>이름</span><input autoFocus value={name} onChange={(event) => setName(event.currentTarget.value)} /></label>
-            <label><span>작업 지시</span><textarea rows={6} value={instructions} onChange={(event) => setInstructions(event.currentTarget.value)} /></label>
-            <div className="lumina-select-field"><span>세션 저장 프로젝트</span><SelectMenu value={draftProjectId ?? ""} options={projectOptions} ariaLabel="예약 작업 세션 저장 프로젝트" onChange={setDraftProjectId} /></div>
-            <div className="schedule-form-row">
-              <div className="lumina-select-field"><span>주기</span><SelectMenu value={kind} options={scheduleKindOptions} ariaLabel="예약 주기" onChange={(value) => setKind(value as ScheduleKind)} /></div>
-              {kind === "weekly" && <div className="lumina-select-field"><span>요일</span><SelectMenu value={String(weekday)} options={weekdayOptions} ariaLabel="예약 요일" onChange={(value) => setWeekday(Number(value))} /></div>}
-              {kind !== "manual" && kind !== "hourly" && <label><span>시</span><input type="number" min={0} max={23} value={hour} onChange={(event) => setHour(Number(event.currentTarget.value))} /></label>}
-              {kind !== "manual" && <label><span>분</span><input type="number" min={0} max={59} value={minute} onChange={(event) => setMinute(Number(event.currentTarget.value))} /></label>}
-            </div>
-            <div className="schedule-execution-row">
-              <div className="lumina-select-field"><span>Provider</span><SelectMenu value={draftExecution?.providerId ?? ""} options={providerOptions} ariaLabel="예약 Provider" onChange={selectScheduleProvider} /></div>
-              <div className="lumina-select-field"><span>Model</span><SelectMenu value={draftExecution?.modelKey ?? ""} options={modelOptions} ariaLabel="예약 Model" onChange={selectScheduleModel} /></div>
-              <div className="lumina-select-field"><span>Effort</span><SelectMenu value={draftExecution?.effortId ?? ""} options={scheduleEffortOptions} ariaLabel="예약 Effort" onChange={(value) => setDraftExecution((current) => current ? { ...current, effortId: value || null } : null)} /></div>
-            </div>
-            <p className="form-help">예약 실행마다 선택한 프로젝트에 새 채팅을 만들고 결과를 저장합니다. 일반 채팅의 현재 실행 설정을 기본값으로 사용하며, 계정 메뉴에서 사용하도록 체크한 Provider와 Model만 선택할 수 있습니다.</p>
-            <div className="dialog-actions"><button type="button" onClick={() => setCreateOpen(false)}>취소</button><button className="is-primary lumina-primary-action" type="submit" disabled={!name.trim() || !instructions.trim() || !draftProjectId || !draftExecution || busy}>예약 생성</button></div>
-          </form>
-        </div>
-      )}
     </div>
   );
 }

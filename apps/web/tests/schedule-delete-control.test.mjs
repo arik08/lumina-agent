@@ -20,20 +20,33 @@ test("scheduled tasks expose an inline two-step delete control", async () => {
   assert.match(styles, /\.detail-actions \.is-danger\.is-confirming\s*\{/);
 });
 
-test("schedule creation and refresh actions stay at the right of the header", async () => {
-  const view = await read("../src/components/SchedulesView.tsx");
+test("schedule creation lives in the left list and replaces the detail panel", async () => {
+  const [view, styles] = await Promise.all([
+    read("../src/components/SchedulesView.tsx"),
+    read("../src/styles.css"),
+  ]);
 
   const headerStart = view.indexOf('className="feature-header"');
   const headerEnd = view.indexOf("</header>", headerStart);
   const listStart = view.indexOf('className="feature-list schedule-list"');
-  const createAction = view.indexOf('className="feature-primary-action lumina-primary-action"', headerStart);
+  const toolbarStart = view.indexOf('className="feature-toolbar schedule-list-toolbar"', listStart);
+  const toolbarEnd = view.indexOf("</div>", toolbarStart);
+  const createAction = view.indexOf('className="feature-primary-action lumina-primary-action"', toolbarStart);
   const refreshAction = view.indexOf('className="schedule-list-refresh"', headerStart);
-  const emptyState = view.indexOf("예약 작업이 없습니다.");
+  const detailStart = view.indexOf('className="feature-detail schedule-detail"');
+  const createBranch = view.indexOf("{createOpen ? (", detailStart);
+  const formStart = view.indexOf('className="compact-form schedule-form schedule-detail-form"', detailStart);
 
   assert.ok(headerStart >= 0 && headerEnd > headerStart);
-  assert.ok(headerStart < createAction && createAction < refreshAction && refreshAction < headerEnd);
-  assert.ok(listStart >= 0 && listStart < emptyState);
-  assert.doesNotMatch(view.slice(listStart, emptyState), /새 예약|새로 고침|schedule-list-toolbar/);
+  assert.ok(headerStart < refreshAction && refreshAction < headerEnd);
+  assert.ok(createAction > headerEnd);
+  assert.ok(listStart < toolbarStart && toolbarStart < createAction && createAction < toolbarEnd);
+  assert.ok(detailStart < createBranch && createBranch < formStart);
+  assert.doesNotMatch(view, /feature-inline-dialog" role="dialog"/);
+  assert.match(view, /setSelectedId\(task\.id\);\s*setCreateOpen\(false\);/);
+  assert.match(styles, /\.schedule-list-toolbar\s*\{[^}]*justify-content:\s*flex-end;/);
+  assert.match(styles, /\.schedule-list-toolbar \.feature-primary-action\s*\{[^}]*width:\s*auto;[^}]*justify-content:\s*center;/);
+  assert.match(styles, /\.schedule-form\.schedule-detail-form\s*\{[^}]*padding:\s*0;/);
 });
 
 test("running a scheduled task refreshes the sidebar conversation list immediately", async () => {
