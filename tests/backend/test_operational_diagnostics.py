@@ -487,7 +487,9 @@ def test_installer_batch_keeps_success_visible_until_keypress(tmp_path: Path) ->
     assert "Press any key" in completed.stdout
 
 
-def test_installer_missing_uv_error_includes_install_guidance(tmp_path: Path) -> None:
+def test_installer_missing_uv_offline_error_includes_install_guidance(
+    tmp_path: Path,
+) -> None:
     powershell = shutil.which("pwsh") or shutil.which("powershell")
     if powershell is None:
         pytest.skip("PowerShell is not installed")
@@ -512,6 +514,7 @@ def test_installer_missing_uv_error_includes_install_guidance(tmp_path: Path) ->
             str(installer),
             "-NonInteractive",
             "-SkipPgpt",
+            "-NoNetwork",
             "-ValidateOnly",
         ],
         capture_output=True,
@@ -524,8 +527,21 @@ def test_installer_missing_uv_error_includes_install_guidance(tmp_path: Path) ->
 
     output = completed.stdout + completed.stderr
     assert completed.returncode != 0
-    assert "Required command 'uv' was not found" in output
+    assert "uv was not found on PATH" in output
+    assert "cannot be installed while -NoNetwork is active" in output
     assert "astral.sh/uv/install.ps1" in output
+
+
+def test_installer_bootstraps_missing_uv_with_official_command() -> None:
+    installer = (
+        Path(__file__).resolve().parents[2] / "devtools" / "install_lumina.ps1"
+    ).read_text(encoding="utf-8")
+
+    assert 'Invoke-RestMethod -Uri "https://astral.sh/uv/install.ps1"' in installer
+    assert "Invoke-Expression $installScript" in installer
+    assert 'Join-Path $HOME ".local\\bin"' in installer
+    assert "$env:UV_INSTALL_DIR = $installDirectory" in installer
+    assert '$env:PATH = "$installDirectory;$env:PATH"' in installer
 
 
 def test_installer_enables_uv_system_certificates_before_uv_network_work() -> None:

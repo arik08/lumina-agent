@@ -82,19 +82,14 @@ flowchart LR
 |---|---|
 | Windows 10/11과 PowerShell | Windows에 기본 포함되어 있으므로 별도로 설치하지 않아도 됩니다. |
 | Python 3.13 | [`Python 공식 Windows 다운로드`](https://www.python.org/downloads/windows/)에서 최신 Python 3.13.x의 **Windows installer (64-bit)**를 설치합니다. 직접 설치하지 않아도 `uv`가 필요한 Python 3.13을 자동으로 내려받을 수 있습니다. |
-| `uv` | [`uv 공식 설치 안내`](https://docs.astral.sh/uv/getting-started/installation/)의 Windows 방법을 따르거나 PowerShell에서 아래 명령을 실행합니다. |
+| `uv` | 인터넷에 연결되어 있으면 `installer.bat`가 없을 때 Astral 공식 PowerShell 명령으로 자동 설치합니다. 실패한 경우 [`uv 공식 설치 안내`](https://docs.astral.sh/uv/getting-started/installation/)를 따릅니다. |
 | Node.js와 npm | [`Node.js 공식 다운로드`](https://nodejs.org/en/download)에서 **Node.js 20.19.0 이상인 LTS** 버전을 설치합니다. `npm`은 Node.js 설치에 포함되므로 따로 설치하지 않습니다. |
 
 처음 설치한다면 다음 순서가 가장 간단합니다.
 
-1. `uv`를 설치합니다. PowerShell을 열고 다음 명령을 실행합니다.
-
-   ```powershell
-   powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-   ```
-
-2. Node.js 공식 다운로드 페이지에서 **LTS** Windows Installer를 내려받아 기본 옵션으로 설치합니다. `npm`도 함께 설치됩니다.
-3. 열려 있던 PowerShell을 닫고 새 PowerShell을 연 다음 아래 명령으로 설치 상태를 확인합니다.
+1. Node.js 공식 다운로드 페이지에서 **LTS** Windows Installer를 내려받아 기본 옵션으로 설치합니다. `npm`도 함께 설치됩니다.
+2. 저장소 루트에서 `installer.bat`를 실행합니다. `uv`가 없고 인터넷에 연결되어 있으면 설치기가 Astral 공식 명령으로 사용자 폴더에 자동 설치합니다.
+3. 설치 후 아래 명령으로 설치 상태를 확인합니다.
 
    ```powershell
    uv --version

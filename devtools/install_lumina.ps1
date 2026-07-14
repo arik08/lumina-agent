@@ -31,6 +31,42 @@ function Assert-Command {
     }
 }
 
+function Install-UvIfMissing {
+    if (Get-Command "uv" -ErrorAction SilentlyContinue) {
+        return
+    }
+    $manualCommand = 'powershell -ExecutionPolicy Bypass -c "irm https://astral.sh/uv/install.ps1 | iex"'
+    if ($NoNetwork) {
+        throw "uv was not found on PATH and cannot be installed while -NoNetwork is active. Connect to the internet and run installer.bat again, or install uv manually with: $manualCommand"
+    }
+    if ($env:OS -ne "Windows_NT") {
+        throw "uv was not found on PATH. Install it manually with: $manualCommand"
+    }
+
+    $installDirectory = if ([string]::IsNullOrWhiteSpace($env:UV_INSTALL_DIR)) {
+        Join-Path $HOME ".local\bin"
+    }
+    else {
+        [Environment]::ExpandEnvironmentVariables($env:UV_INSTALL_DIR)
+    }
+    $env:UV_INSTALL_DIR = $installDirectory
+    Write-Host "[Lumina] uv was not found. Installing it with the official Astral installer..."
+    try {
+        $installScript = Invoke-RestMethod -Uri "https://astral.sh/uv/install.ps1"
+        Invoke-Expression $installScript
+    }
+    catch {
+        throw "Automatic uv installation failed. Check the network or company certificate settings, then run installer.bat again. Manual command: $manualCommand"
+    }
+
+    $uvExecutable = Join-Path $installDirectory "uv.exe"
+    if (-not (Test-Path -LiteralPath $uvExecutable -PathType Leaf)) {
+        throw "The uv installer completed, but uv.exe was not found at '$installDirectory'. Open a new terminal and run installer.bat again. Manual command: $manualCommand"
+    }
+    $env:PATH = "$installDirectory;$env:PATH"
+    Write-Host "[Lumina] uv installed successfully."
+}
+
 function Assert-NodeVersion {
     $rawVersion = (& node --version 2>$null).Trim().TrimStart("v")
     $parsedVersion = $null
@@ -146,7 +182,7 @@ if ($PgptNetworkCheck -and $NoNetwork) {
 
 Set-Location -LiteralPath $RepositoryRoot
 Write-Host "[Lumina] Checking required tools..."
-Assert-Command "uv" "Install uv with: powershell -ExecutionPolicy Bypass -c `"irm https://astral.sh/uv/install.ps1 | iex`"."
+Install-UvIfMissing
 Assert-Command "node" "Install the current Node.js LTS from https://nodejs.org/en/download."
 Assert-Command "npm" "npm is included with Node.js; reinstall the current Node.js LTS from https://nodejs.org/en/download."
 Assert-NodeVersion
