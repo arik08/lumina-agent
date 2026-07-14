@@ -73,7 +73,7 @@ function skillTags(item: SkillExtension): string[] {
 }
 
 function visibilityLabel(visibility: SkillExtension["visibility"]): string {
-  if (visibility === "organization") return "조직";
+  if (visibility === "organization") return "기본";
   if (visibility === "project") return "프로젝트";
   return "개인";
 }
