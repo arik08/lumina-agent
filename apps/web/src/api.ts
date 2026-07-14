@@ -11,6 +11,7 @@ import type {
   AdminConversationDetail,
   AdminConversationList,
   AdminEmergencyStopResult,
+  AdminInitialExecutionSettings,
   AdminProviderModel,
   AdminProviderSummary,
   AdminRunSafetySettings,
@@ -66,6 +67,7 @@ import type {
   ConversationSearchResponse,
   ConversationShareCreated,
   ExtensionInstallation,
+  ExecutionSelection,
   ScheduledRun,
   ScheduledTask,
   ScheduleKind,
@@ -622,6 +624,18 @@ export async function listProviderModels(providerId: string, projectId?: string,
 
 export async function listAdminProviderModels(providerId: string, signal?: AbortSignal) {
   return request<AdminProviderModel[]>(`/admin/providers/${encodeURIComponent(providerId)}/models`, { signal });
+}
+
+export async function getAdminInitialExecution(signal?: AbortSignal) {
+  return request<AdminInitialExecutionSettings>("/admin/providers/initial-execution", { signal });
+}
+
+export async function updateAdminInitialExecution(execution: ExecutionSelection, signal?: AbortSignal) {
+  return request<AdminInitialExecutionSettings>("/admin/providers/initial-execution", {
+    method: "PATCH",
+    body: { execution },
+    signal,
+  });
 }
 
 export async function listAnnouncements(limit = 50, offset = 0, signal?: AbortSignal) {
@@ -1841,6 +1855,8 @@ export const api = {
   adminProviders: {
     list: listAdminProviders,
     listModels: listAdminProviderModels,
+    getInitialExecution: getAdminInitialExecution,
+    updateInitialExecution: updateAdminInitialExecution,
     updateAvailability: updateAdminProviderAvailability,
     updateModel: updateAdminProviderModel,
   },

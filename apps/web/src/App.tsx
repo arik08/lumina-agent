@@ -85,6 +85,7 @@ import type {
   ArtifactSummary,
   ArtifactVersion,
   ComposerSuggestion,
+  ExecutionSelection,
   NotificationItem,
   PromptReference,
   ReferenceKind,
@@ -906,6 +907,9 @@ function App() {
   const [adminSettingsProviderId, setAdminSettingsProviderId] = useState("");
   const [adminSettingsModels, setAdminSettingsModels] = useState<AdminProviderModel[]>([]);
   const [adminSettingsModelKey, setAdminSettingsModelKey] = useState("");
+  const [adminInitialExecution, setAdminInitialExecution] = useState<ExecutionSelection | null>(null);
+  const [adminInitialExecutionBusy, setAdminInitialExecutionBusy] = useState(false);
+  const [adminInitialExecutionError, setAdminInitialExecutionError] = useState<string | null>(null);
   const [adminMaxTokens, setAdminMaxTokens] = useState("");
   const [adminContextUsagePercent, setAdminContextUsagePercent] = useState("");
   const [adminOutputTokens, setAdminOutputTokens] = useState(0);
@@ -1141,6 +1145,23 @@ function App() {
     .sort((left, right) => (accountProviderOrder[left.id] ?? Number.MAX_SAFE_INTEGER) - (accountProviderOrder[right.id] ?? Number.MAX_SAFE_INTEGER)
       || left.displayName.localeCompare(right.displayName));
   const selectedAdminSettingsModel = adminSettingsModels.find((model) => model.modelKey === adminSettingsModelKey) ?? null;
+  const adminInitialProviders = adminInitialExecution
+    && !accountProviders.some((provider) => provider.id === adminInitialExecution.providerId)
+    ? [
+        ...workspace.providers.filter((provider) => provider.id === adminInitialExecution.providerId),
+        ...accountProviders,
+      ]
+    : accountProviders;
+  const adminInitialExecutionModels = adminInitialExecution
+    ? (
+        workspace.providerModels[adminInitialExecution.providerId]
+        ?? (workspace.settings?.execution.providerId === adminInitialExecution.providerId ? workspace.models : [])
+      )
+    : [];
+  const selectedAdminInitialExecutionModel = adminInitialExecutionModels.find(
+    (model) => model.modelKey === adminInitialExecution?.modelKey,
+  ) ?? null;
+  const adminInitialEffortOptions = selectedAdminInitialExecutionModel?.capabilities.effortOptions ?? [];
   const adminDefaultContextUsageRatio = (
     selectedAdminSettingsModel as AdminProviderModelWithContextUsageRatio | null
   )?.defaultContextUsageRatio ?? 0.75;
@@ -1202,6 +1223,26 @@ function App() {
       setAdminFooterBusyId(null);
     }
   };
+
+  useEffect(() => {
+    if (mainView !== "settings" || settingsSection !== "admin" || !isAdmin) return;
+    const controller = new AbortController();
+    setAdminInitialExecutionBusy(true);
+    setAdminInitialExecutionError(null);
+    api.adminProviders.getInitialExecution(controller.signal)
+      .then((value) => {
+        if (!controller.signal.aborted) setAdminInitialExecution(value.execution);
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) {
+          setAdminInitialExecutionError(error instanceof Error ? error.message : "최초 실행 기본값을 불러오지 못했습니다.");
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setAdminInitialExecutionBusy(false);
+      });
+    return () => controller.abort();
+  }, [isAdmin, mainView, settingsSection]);
 
   useEffect(() => {
     if (mainView !== "settings" || !isAdmin) return;
@@ -1366,6 +1407,38 @@ function App() {
     if (!defaultValue) return;
     setAdminOutputTokens(defaultValue);
     void saveAdminOutputTokens(defaultValue);
+  };
+  const selectAdminInitialProvider = (providerId: string) => {
+    const models = workspace.providerModels[providerId] ?? [];
+    const model = models.find((item) => item.isDefault) ?? models[0];
+    if (!model) return;
+    const efforts = model.capabilities.effortOptions;
+    const effortId = efforts.find((item) => item.id === "medium")?.id ?? efforts[0]?.id ?? null;
+    setAdminInitialExecution({ providerId, modelKey: model.modelKey, effortId });
+  };
+  const selectAdminInitialModel = (modelKey: string) => {
+    if (!adminInitialExecution) return;
+    const model = adminInitialExecutionModels.find((item) => item.modelKey === modelKey);
+    if (!model) return;
+    const effortIds = model.capabilities.effortOptions.map((item) => item.id);
+    const effortId = adminInitialExecution.effortId && effortIds.includes(adminInitialExecution.effortId)
+      ? adminInitialExecution.effortId
+      : (effortIds.find((item) => item === "medium") ?? effortIds[0] ?? null);
+    setAdminInitialExecution({ ...adminInitialExecution, modelKey, effortId });
+  };
+  const saveAdminInitialExecution = async () => {
+    if (!adminInitialExecution) return;
+    setAdminInitialExecutionBusy(true);
+    setAdminInitialExecutionError(null);
+    try {
+      const updated = await api.adminProviders.updateInitialExecution(adminInitialExecution);
+      setAdminInitialExecution(updated.execution);
+      showToast("최초 사용자 실행 기본값을 저장했습니다.");
+    } catch (error) {
+      setAdminInitialExecutionError(error instanceof Error ? error.message : "최초 실행 기본값을 저장하지 못했습니다.");
+    } finally {
+      setAdminInitialExecutionBusy(false);
+    }
   };
   const candidateModelOptions = accountProviders.flatMap((provider) =>
     (workspace.providerModels[provider.id] ?? [])
@@ -3176,10 +3249,18 @@ function App() {
                 </section>
                 </>}
                 {isAdmin && settingsSection === "admin" && (<>
-                  <section className="settings-card settings-admin-card" aria-labelledby="admin-model-settings-title">
-                    <header><span><ShieldCheck size={15} /><h2 id="admin-model-settings-title">관리자 설정</h2></span><small>모든 사용자에게 적용</small></header>
-                    <div className="settings-row"><span><strong>Provider</strong><small>컨텍스트 실행 정책을 확인할 Provider입니다.</small></span><SelectMenu className="settings-select" align="end" value={adminSettingsProviderId} options={accountProviders.map((provider) => ({ value: provider.id, label: provider.displayName }))} ariaLabel="관리자 설정 Provider" disabled={adminSettingsBusy} onChange={setAdminSettingsProviderId} /></div>
-                    <div className="settings-row"><span><strong>Model</strong><small>설정값은 선택한 Model에만 적용됩니다.</small></span><SelectMenu className="settings-select" align="end" value={adminSettingsModelKey} options={adminSettingsModels.map((model) => ({ value: model.modelKey, label: model.displayName }))} ariaLabel="관리자 설정 Model" disabled={adminSettingsBusy} onChange={setAdminSettingsModelKey} /></div>
+                  <section className="settings-card settings-admin-card" aria-labelledby="admin-initial-execution-title" aria-busy={adminInitialExecutionBusy}>
+                    <header><span><Sparkles size={15} /><h2 id="admin-initial-execution-title">최초 사용자 실행 기본값</h2></span><small>모든 사용자에게 적용</small></header>
+                    <div className="settings-row"><span><strong>Provider</strong><small>사용 이력이 없는 사용자가 처음 보게 될 Provider입니다.</small></span><SelectMenu className="settings-select" align="end" value={adminInitialExecution?.providerId ?? ""} options={adminInitialProviders.map((provider) => ({ value: provider.id, label: provider.displayName }))} ariaLabel="최초 사용자 Provider" disabled={adminInitialExecutionBusy} onChange={selectAdminInitialProvider} /></div>
+                    <div className="settings-row"><span><strong>Model</strong><small>최초 실행에 선택되어 있을 Model입니다.</small></span><SelectMenu className="settings-select" align="end" value={adminInitialExecution?.modelKey ?? ""} options={adminInitialExecutionModels.map((model) => ({ value: model.modelKey, label: model.displayName }))} ariaLabel="최초 사용자 Model" disabled={adminInitialExecutionBusy || !adminInitialExecution} onChange={selectAdminInitialModel} /></div>
+                    <div className="settings-row"><span><strong>Effort</strong><small>최초 실행에 선택되어 있을 추론 강도입니다.</small></span><SelectMenu className="settings-select" align="end" value={adminInitialExecution?.effortId ?? ""} options={[{ value: "", label: "기본값" }, ...adminInitialEffortOptions.map((option) => ({ value: option.id, label: option.label }))]} ariaLabel="최초 사용자 Effort" disabled={adminInitialExecutionBusy || !adminInitialExecution} onChange={(value) => setAdminInitialExecution((current) => current ? { ...current, effortId: value || null } : current)} /></div>
+                    <div className="settings-row"><span><strong>적용 범위</strong><small>개인 실행 선택 이력이 없을 때만 사용하며, 이후에는 사용자의 마지막 선택값이 우선합니다.</small></span><div className="settings-inline-control"><button type="button" disabled={adminInitialExecutionBusy || !adminInitialExecution} onClick={() => void saveAdminInitialExecution()}>저장</button></div></div>
+                    {adminInitialExecutionError && <p className="settings-inline-error" role="alert">{adminInitialExecutionError}</p>}
+                  </section>
+                  <section className="settings-card settings-admin-card" aria-labelledby="admin-context-settings-title" aria-busy={adminSettingsBusy}>
+                    <header><span><ShieldCheck size={15} /><h2 id="admin-context-settings-title">컨텍스트 관리</h2></span><small>모든 사용자에게 적용</small></header>
+                    <div className="settings-row"><span><strong>Provider</strong><small>컨텍스트 실행 정책을 확인할 Provider입니다.</small></span><SelectMenu className="settings-select" align="end" value={adminSettingsProviderId} options={accountProviders.map((provider) => ({ value: provider.id, label: provider.displayName }))} ariaLabel="컨텍스트 관리 Provider" disabled={adminSettingsBusy} onChange={setAdminSettingsProviderId} /></div>
+                    <div className="settings-row"><span><strong>Model</strong><small>설정값은 선택한 Model에만 적용됩니다.</small></span><SelectMenu className="settings-select" align="end" value={adminSettingsModelKey} options={adminSettingsModels.map((model) => ({ value: model.modelKey, label: model.displayName }))} ariaLabel="컨텍스트 관리 Model" disabled={adminSettingsBusy} onChange={setAdminSettingsModelKey} /></div>
                     <div className="settings-row">
                       <span>
                         <strong>모델 전체 컨텍스트</strong>
@@ -3195,7 +3276,7 @@ function App() {
                       <div className="settings-inline-control">
                         <input aria-label="모델 전체 컨텍스트 토큰" type="text" inputMode="numeric" value={adminMaxTokens} disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked} onChange={(event) => setAdminMaxTokens(event.currentTarget.value.replace(/\D/g, "").replace(/\B(?=(\d{3})+(?!\d))/g, ","))} />
                         <button className="is-secondary" type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel?.defaultContextWindow || selectedAdminSettingsModel.contextPolicyLocked} onClick={() => void resetAdminMaxTokens()}>초기화</button>
-                        <button type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked} onClick={() => void saveAdminMaxTokens()}>{adminSettingsBusy ? "저장 중" : "저장"}</button>
+                        <button type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked} onClick={() => void saveAdminMaxTokens()}>저장</button>
                       </div>
                     </div>
                     <div className="settings-row settings-output-token-row">
@@ -3224,7 +3305,7 @@ function App() {
                         />
                         <output>{adminOutputTokens > 0 ? `${adminOutputTokens.toLocaleString()} 토큰` : "미설정"}</output>
                         <button className="is-secondary" type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel?.defaultMaxOutputTokens} onClick={resetAdminOutputTokens}>초기화</button>
-                        <button type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel?.maxOutputTokens || !adminOutputTokens} onClick={() => void saveAdminOutputTokens()}>{adminSettingsBusy ? "저장 중" : "저장"}</button>
+                        <button type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel?.maxOutputTokens || !adminOutputTokens} onClick={() => void saveAdminOutputTokens()}>저장</button>
                       </div>
                     </div>
                     <div className="settings-row settings-context-budget-row">
@@ -3241,13 +3322,13 @@ function App() {
                           위 최대 입력 컨텍스트의 몇 %에서 선제 압축할지 정합니다.
                           {selectedAdminSettingsModel?.contextPolicyLocked
                             ? ` Codex 서비스 정책은 ${Math.round(adminDefaultContextUsageRatio * 100)}%로 고정됩니다.`
-                            : ` MyHarness와 같은 기본값은 ${Math.round(adminDefaultContextUsageRatio * 100)}%입니다.`}
+                            : null}
                         </small>
                       </span>
                       <div className="settings-inline-control settings-percent-control">
                         <span className="settings-suffixed-input"><input aria-label="자동 압축 시작 비율" type="text" inputMode="numeric" value={adminContextUsagePercent} disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked} onChange={(event) => setAdminContextUsagePercent(event.currentTarget.value.replace(/\D/g, "").slice(0, 3))} /><span aria-hidden="true">%</span></span>
                         <button className="is-secondary" type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked} onClick={() => void resetAdminContextUsagePercent()}>초기화</button>
-                        <button type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked} onClick={() => void saveAdminContextUsagePercent()}>{adminSettingsBusy ? "저장 중" : "저장"}</button>
+                        <button type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked} onClick={() => void saveAdminContextUsagePercent()}>저장</button>
                       </div>
                     </div>
                     <div className="settings-row settings-context-budget-row">

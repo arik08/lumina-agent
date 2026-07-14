@@ -20,6 +20,81 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
     with TestClient(create_app(settings)) as client:
         csrf = _login_admin(client)
 
+        initial_execution = client.get("/api/admin/providers/initial-execution")
+        assert initial_execution.status_code == 200
+        assert initial_execution.json()["source"] == "application"
+
+        configured_initial_execution = client.patch(
+            "/api/admin/providers/initial-execution",
+            headers={"X-CSRF-Token": csrf},
+            json={
+                "execution": {
+                    "providerId": "pgpt",
+                    "modelKey": "gpt-5.4",
+                    "effortId": "high",
+                }
+            },
+        )
+        assert configured_initial_execution.status_code == 200
+        assert configured_initial_execution.json() == {
+            "execution": {
+                "providerId": "pgpt",
+                "modelKey": "gpt-5.4",
+                "effortId": "high",
+            },
+            "source": "organization",
+        }
+        current_settings = client.get("/api/settings/current").json()
+        assert (
+            current_settings["execution"]
+            == configured_initial_execution.json()["execution"]
+        )
+        assert current_settings["source"]["execution"] == "organization"
+
+        personal_execution = client.patch(
+            "/api/settings/current",
+            headers={"X-CSRF-Token": csrf},
+            json={
+                "execution": {
+                    "providerId": "pgpt",
+                    "modelKey": "gpt-5.4-mini",
+                    "effortId": "low",
+                },
+                "expectedRevision": current_settings["revision"],
+            },
+        )
+        assert personal_execution.status_code == 200
+        assert personal_execution.json()["source"]["execution"] == "user"
+        changed_organization_default = client.patch(
+            "/api/admin/providers/initial-execution",
+            headers={"X-CSRF-Token": csrf},
+            json={
+                "execution": {
+                    "providerId": "codex",
+                    "modelKey": "gpt-5.4",
+                    "effortId": "medium",
+                }
+            },
+        )
+        assert changed_organization_default.status_code == 200
+        restored_personal = client.get("/api/settings/current").json()
+        assert restored_personal["execution"] == personal_execution.json()["execution"]
+        assert restored_personal["source"]["execution"] == "user"
+
+        invalid_initial_effort = client.patch(
+            "/api/admin/providers/initial-execution",
+            headers={"X-CSRF-Token": csrf},
+            json={
+                "execution": {
+                    "providerId": "pgpt",
+                    "modelKey": "gpt-5.4",
+                    "effortId": "extreme",
+                }
+            },
+        )
+        assert invalid_initial_effort.status_code == 409
+        assert invalid_initial_effort.json()["code"] == "initial_execution_unavailable"
+
         pgpt_models = client.get("/api/admin/providers/pgpt/models")
         assert pgpt_models.status_code == 200
         gpt_54 = next(

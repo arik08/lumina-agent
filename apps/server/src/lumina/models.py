@@ -95,6 +95,9 @@ class Organization(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     run_safety_settings_json: Mapped[dict[str, Any]] = mapped_column(
         JSON, default=dict, nullable=False
     )
+    initial_execution_settings_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
 
 
 class RuntimePromptOverride(TimestampMixin, Base):

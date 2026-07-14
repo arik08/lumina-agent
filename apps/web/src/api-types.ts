@@ -238,6 +238,11 @@ export interface ExecutionSelection {
   effortId: string | null;
 }
 
+export interface AdminInitialExecutionSettings {
+  execution: ExecutionSelection;
+  source: "organization" | "application";
+}
+
 export interface CurrentSettings {
   theme: Theme;
   outputMode: OutputMode;
@@ -245,7 +250,7 @@ export interface CurrentSettings {
   modelCandidates: Record<string, string[]>;
   source: {
     theme: "user";
-    execution: "user" | "project" | "system" | "application";
+    execution: "user" | "project" | "organization" | "system" | "application";
   };
   revision: string;
   warnings: Array<{

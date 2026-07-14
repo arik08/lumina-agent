@@ -60,10 +60,10 @@ from ..project_files.folders import build_project_folder_references
 from ..project_memories import select_relevant_project_memories
 from ..projects.memberships import effective_project_role
 from ..providers.catalog import (
-    application_default_execution,
     catalog_model,
     estimate_model_cost_parts,
 )
+from ..providers.execution_defaults import initial_execution_selection
 from .approvals import approval_payload, pending_approval_payloads
 from .safety import run_limit_snapshot
 from .subtasks import list_step_subtasks
@@ -279,11 +279,19 @@ def _default_execution_selection(
     else:
         warning = ""
 
-    provider_id, model_key, effort_id = application_default_execution(
-        settings.environment
+    fallback_value, _fallback_source = initial_execution_selection(
+        db,
+        organization_id=user.organization_id,
+        environment=settings.environment,
     )
     fallback = ExecutionSelection(
-        provider_id=provider_id, model_key=model_key, effort_id=effort_id
+        provider_id=str(fallback_value["providerId"]),
+        model_key=str(fallback_value["modelKey"]),
+        effort_id=(
+            str(fallback_value["effortId"])
+            if fallback_value["effortId"] is not None
+            else None
+        ),
     )
     return fallback, [warning] if warning else []
 

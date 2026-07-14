@@ -12,7 +12,7 @@ from ...audit import record_audit
 from ...authorization import require_admin
 from ...config import Settings, get_settings
 from ...db import get_db
-from ...models import ProviderModel
+from ...models import Organization, ProviderModel
 from ...providers import ProviderConfigurationError, ProviderRequestError
 from ...providers.catalog import (
     DEFAULT_CONTEXT_COMPACTION_THRESHOLD,
@@ -21,9 +21,13 @@ from ...providers.catalog import (
     initial_model_catalog,
 )
 from ...providers.openai_compatible import OpenAICompatibleAdapter
+from ...providers.execution_defaults import (
+    initial_execution_selection,
+    normalize_initial_execution,
+)
 from ..dependencies import AuthContext, get_current_user, require_csrf
 from ..errors import ApiProblem
-from ..schemas import ApiModel
+from ..schemas import ApiModel, ExecutionSelection
 from .providers import PROVIDER_NAMES
 
 
@@ -59,6 +63,10 @@ class ProviderModelPatch(ApiModel):
 
 class ProviderAvailabilityPatch(ApiModel):
     enabled: bool
+
+
+class InitialExecutionPatch(ApiModel):
+    execution: ExecutionSelection
 
 
 def _payload(model: ProviderModel) -> dict[str, Any]:
@@ -230,6 +238,61 @@ def list_admin_providers(
     return [
         _provider_payload(provider_id, items) for provider_id, items in grouped.items()
     ]
+
+
+@router.get("/initial-execution")
+def get_initial_execution(
+    actor=Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    require_admin(actor)
+    execution, source = initial_execution_selection(
+        db,
+        organization_id=actor.organization_id,
+        environment=settings.environment,
+    )
+    return {"execution": execution, "source": source}
+
+
+@router.patch("/initial-execution")
+def patch_initial_execution(
+    payload: InitialExecutionPatch,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    require_admin(context.user)
+    value = payload.execution.model_dump(mode="json", by_alias=True)
+    normalized = normalize_initial_execution(
+        db,
+        value,
+        environment=settings.environment,
+    )
+    if normalized is None:
+        raise ApiProblem(
+            409,
+            "initial_execution_unavailable",
+            "사용 가능한 Provider, Model과 Effort 조합을 선택해 주세요.",
+        )
+    organization = db.get(Organization, context.user.organization_id)
+    if organization is None:
+        raise ApiProblem(404, "organization_not_found", "조직을 찾을 수 없습니다.")
+    previous = dict(organization.initial_execution_settings_json)
+    organization.initial_execution_settings_json = normalized
+    record_audit(
+        db,
+        action="organization_initial_execution_updated",
+        target_type="organization",
+        target_id=organization.id,
+        result="success",
+        actor=context.user,
+        request_id=getattr(request.state, "request_id", None),
+        metadata={"previous": previous, "current": normalized},
+    )
+    db.commit()
+    return {"execution": normalized, "source": "organization"}
 
 
 @router.patch("/{provider_id}")

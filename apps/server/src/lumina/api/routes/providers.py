@@ -15,7 +15,7 @@ from ...conversations.service import default_project
 from ...db import get_db
 from ...models import Project, ProjectSetting, ProviderModel, User, UserSetting
 from ...providers.codex import codex_oauth_available
-from ...providers.catalog import application_default_execution
+from ...providers.execution_defaults import initial_execution_selection
 from ..dependencies import AuthContext, get_current_user, require_csrf
 from ..errors import ApiProblem
 from ..schemas import SettingsPatch
@@ -256,14 +256,11 @@ def _resolved_settings(
     if execution_setting:
         execution = dict(execution_setting.value_json)
     else:
-        provider_id, model_key, effort_id = application_default_execution(
-            settings.environment
+        execution, execution_source = initial_execution_selection(
+            db,
+            organization_id=user.organization_id,
+            environment=settings.environment,
         )
-        execution = {
-            "providerId": provider_id,
-            "modelKey": model_key,
-            "effortId": effort_id,
-        }
     model_candidates_setting = _setting(db, user.id, "models.candidates")
     model_candidates = (
         dict(model_candidates_setting.value_json)
