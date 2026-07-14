@@ -512,7 +512,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
               </header>
               <div className={`marketplace-package-detail ${editMode ? "is-editing" : ""}`}>
                 <div className="marketplace-package-summary">
-                  <div><strong>{skillView === "trash" ? trashRetentionLabel(selected.purgesAt) : `버전 ${skillDisplayVersion(selected)}`}</strong><span>Owner {selected.ownerships.filter((item) => item.role === "owner").map((item) => item.displayName).join(", ") || "미지정"}</span></div>
+                  <div>{skillView === "trash" && <strong>{trashRetentionLabel(selected.purgesAt)}</strong>}<span>Owner {selected.ownerships.filter((item) => item.role === "owner").map((item) => item.displayName).join(", ") || "미지정"}</span></div>
                   <div className="marketplace-package-actions">
                     {skillView === "trash" ? <button className="lumina-primary-action" type="button" disabled={busy} onClick={() => void restoreSelectedSkill()}>{busy ? <LoaderCircle className="is-running" size={14} /> : <Undo2 size={14} />} 복원</button> : <>
                       {editMode ? <><button type="button" disabled={busy} onClick={() => { setEditMode(false); setRenamingPath(null); }}><X size={14} /> 취소</button><button className="lumina-primary-action" type="button" disabled={busy || (selected.canEdit && !editableName.trim())} onClick={() => void savePackageEdit()}><Save size={14} /> 초안 저장</button></> : selected.canCreateDraft && <button type="button" disabled={busy} onClick={() => void beginPackageEdit()}><Pencil size={14} /> {selected.canEdit ? "편집" : "내 버전으로 수정"}</button>}

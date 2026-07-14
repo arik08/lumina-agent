@@ -43,7 +43,8 @@ test("skill visibility and version use the reviewed Publish.Merge.Feedback displ
   assert.match(view, /function skillDisplayVersion\(item: SkillExtension\)/);
   assert.match(view, /return `v\$\{publish\}\.\$\{merge\}\.\$\{feedback\}`/);
   assert.match(view, /aria-label="Skill 태그"/);
-  assert.match(view, /`버전 \$\{skillDisplayVersion\(selected\)\}`/);
+  assert.match(view, /className="detail-badges"[^\n]*skillDisplayVersion\(selected\)/);
+  assert.doesNotMatch(view, /`버전 \$\{skillDisplayVersion\(selected\)\}`/);
   assert.match(view, /nextSavedSkillDisplayVersion\(selected\)/);
   assert.doesNotMatch(list, /skillDisplayVersion\(item\)/);
   assert.doesNotMatch(list, /className="is-version"/);
