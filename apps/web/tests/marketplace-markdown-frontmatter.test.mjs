@@ -40,7 +40,7 @@ test("Marketplace preview and source highlighting share the frontmatter boundary
   assert.match(styles, /\.skill-markdown-preview \.skill-frontmatter-preview pre code \{ white-space: pre-wrap; word-break: break-word; \}/);
 });
 
-test("Skill source and rendered views share one toggle beside an expanded-view control", async () => {
+test("Skill source and rendered views share a resizable inline expanded-view control", async () => {
   const [marketplace, styles] = await Promise.all([
     readFile(marketplacePath, "utf8"),
     readFile(stylesPath, "utf8"),
@@ -51,9 +51,30 @@ test("Skill source and rendered views share one toggle beside an expanded-view c
   assert.match(marketplace, /skillContentView === "source" \? <Eye size=\{14\} \/> : <Code2 size=\{14\} \/>/);
   assert.match(marketplace, /skillContentExpanded \? "원래 크기로 보기" : "확대해서 보기"/);
   assert.match(marketplace, /skillContentExpanded \? <Minimize2 size=\{14\} \/> : <Maximize2 size=\{14\} \/>/);
+  assert.match(marketplace, /storageKey="lumina:marketplace-file-explorer-width"/);
+  assert.match(marketplace, /ariaLabel="패키지 파일 탐색기 너비 조절"/);
+  assert.match(marketplace, /skillContentExpanded \? renderPackageBrowser\(\) : <>/);
+  assert.doesNotMatch(marketplace, /setEditMode\(false\);\s*setSkillContentExpanded\(false\);/);
   assert.doesNotMatch(marketplace, /className="skill-content-view-toggle"/);
-  assert.match(styles, /\.marketplace-file-browser\.is-expanded \{ position: fixed;/);
+  assert.doesNotMatch(styles, /\.marketplace-file-browser\.is-expanded \{[^}]*position: fixed;/);
+  assert.match(styles, /\.feature-detail\.is-skill-content-expanded \{ overflow: hidden; padding: 0; \}/);
+  assert.match(styles, /\.marketplace-file-browser\.is-expanded \{[^}]*height: 100%;/);
   assert.match(styles, /\.marketplace-file-browser\.is-expanded \.skill-file-content \{ height: auto; max-height: none; \}/);
+});
+
+test("Marketplace package browser uses viewport space and keeps scrolling inside the file panes", async () => {
+  const [marketplace, styles] = await Promise.all([
+    readFile(marketplacePath, "utf8"),
+    readFile(stylesPath, "utf8"),
+  ]);
+
+  assert.match(marketplace, /selected \? "has-skill-package" : ""/);
+  assert.match(styles, /\.feature-detail\.has-skill-package \{[^}]*grid-template-rows: auto minmax\(0, 1fr\);[^}]*overflow: hidden;/);
+  assert.match(styles, /\.marketplace-package-detail \{[^}]*min-height: 0;[^}]*grid-template-rows: auto minmax\(0, 1fr\);/);
+  assert.match(styles, /\.marketplace-file-browser > aside \{[^}]*min-height: 0;[^}]*overflow: auto;/);
+  assert.match(styles, /\.marketplace-file-browser > section \{[^}]*grid-template-rows: 34px minmax\(0, 1fr\);[^}]*overflow: hidden;/);
+  assert.match(styles, /\.skill-file-content \{ min-height: 0; max-height: none; overflow: auto;/);
+  assert.doesNotMatch(styles, /\.marketplace-file-browser \{[^}]*min-height: \d+px;/);
 });
 
 test("Marketplace type tabs live inside the top header", async () => {

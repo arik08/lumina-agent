@@ -1144,7 +1144,8 @@ button:disabled { cursor: default; opacity: 0.5; }
 .marketplace-install-toggle.is-installed:hover .install-toggle-rest, .marketplace-install-toggle.is-installed:focus-visible .install-toggle-rest { display: none; }
 .marketplace-install-toggle.is-installed:hover .install-toggle-hover, .marketplace-install-toggle.is-installed:focus-visible .install-toggle-hover { display: inline; }
 .marketplace-install-toggle:disabled { cursor: default; opacity: .45; }
-.marketplace-package-detail { display: grid; gap: 14px; padding-top: 16px; }
+.feature-detail.has-skill-package { display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
+.marketplace-package-detail { display: grid; min-height: 0; grid-template-rows: auto minmax(0, 1fr); gap: 14px; padding-top: 16px; }
 .marketplace-package-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .marketplace-package-summary > div { display: grid; gap: 3px; }
 .marketplace-package-summary > .marketplace-package-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
@@ -1153,11 +1154,11 @@ button:disabled { cursor: default; opacity: 0.5; }
 .marketplace-package-summary button { display: inline-flex; min-height: 30px; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 5px; padding: 0 10px; background: var(--surface); color: var(--ink); font-size: 11.5px; cursor: pointer; }
 .marketplace-package-summary button.is-primary { border-color: transparent; background: var(--cobalt); color: white; }
 .marketplace-package-summary button.is-danger { color: var(--danger); }
-.marketplace-file-browser { display: grid; min-height: 390px; grid-template-columns: minmax(170px, 26%) minmax(0, 1fr); overflow: hidden; border: 1px solid var(--line); border-radius: 7px; }
-.marketplace-file-browser.is-expanded { position: fixed; z-index: 80; inset: 20px; min-height: 0; grid-template-columns: minmax(200px, 20%) minmax(0, 1fr); border-radius: 10px; background: var(--surface); box-shadow: 0 0 0 100vmax color-mix(in srgb, var(--ink) 28%, transparent), var(--shadow-overlay); }
-.marketplace-file-browser.is-expanded > section { display: grid; grid-template-rows: 34px minmax(0, 1fr); }
+.marketplace-file-browser { min-height: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 7px; }
+.feature-detail.is-skill-content-expanded { overflow: hidden; padding: 0; }
+.marketplace-file-browser.is-expanded { width: 100%; height: 100%; min-height: 0; border: 0; border-radius: 0; background: var(--surface); }
 .marketplace-file-browser.is-expanded .skill-file-content { height: auto; max-height: none; }
-.marketplace-file-browser > aside { min-width: 0; overflow: auto; border-right: 1px solid var(--line); background: var(--surface-soft); }
+.marketplace-file-browser > aside { min-width: 0; min-height: 0; overflow: auto; background: var(--surface-soft); }
 .marketplace-file-browser header { display: flex; height: 34px; align-items: center; gap: 6px; padding: 0 10px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px; font-weight: 650; }
 .marketplace-file-browser aside button { display: flex; width: 100%; min-height: 30px; align-items: center; gap: 6px; overflow: hidden; border: 0; padding: 5px 9px; background: transparent; color: var(--muted); font-size: 10.5px; text-align: left; cursor: pointer; text-overflow: ellipsis; white-space: nowrap; }
 .marketplace-file-browser aside button:hover { background: color-mix(in srgb, var(--cobalt) 5%, transparent); color: var(--ink); }
@@ -1193,21 +1194,21 @@ button:disabled { cursor: default; opacity: 0.5; }
 .marketplace-file-browser .skill-tree-file > svg.is-text { color: var(--faint); }
 .marketplace-file-browser .skill-tree-children { position: relative; margin-left: 14px; }
 .marketplace-file-browser .skill-tree-children::before { position: absolute; top: 0; bottom: 0; left: 6px; width: 1px; background: color-mix(in srgb, var(--line) 70%, transparent); content: ""; pointer-events: none; }
-.marketplace-file-browser > section { min-width: 0; min-height: 0; overflow: hidden; background: var(--surface); }
+.marketplace-file-browser > section { display: grid; min-width: 0; min-height: 0; grid-template-rows: 34px minmax(0, 1fr); overflow: hidden; background: var(--surface); }
 .marketplace-inline-editor { border-radius: 3px; outline: 0; cursor: text; transition: background 140ms ease, box-shadow 140ms ease; }
 .marketplace-inline-editor:hover { background: color-mix(in srgb, var(--cobalt) 4%, transparent); }
 .marketplace-inline-editor:focus { background: color-mix(in srgb, var(--cobalt) 6%, transparent); box-shadow: inset 0 -1px var(--cobalt); }
 .marketplace-inline-editor[data-placeholder]:empty::before { color: var(--faint); content: attr(data-placeholder); }
 .marketplace-package-detail.is-editing .marketplace-file-browser { border-color: color-mix(in srgb, var(--cobalt) 42%, var(--line)); }
 .marketplace-file-browser .skill-file-explorer > header small { margin-left: auto; color: var(--faint); font-size: 10px; font-weight: 500; }
-.marketplace-package-detail .marketplace-file-browser .skill-file-editor { display: block; width: 100%; height: 520px; min-height: 0; overflow: hidden; border: 0; outline: 0; padding: 0; background: var(--surface); color: var(--ink); font-family: var(--font-code); font-size: 12.5px; line-height: 1.65; letter-spacing: normal; }
+.marketplace-package-detail .marketplace-file-browser .skill-file-editor { display: block; width: 100%; height: 100%; min-height: 0; overflow: hidden; border: 0; outline: 0; padding: 0; background: var(--surface); color: var(--ink); font-family: var(--font-code); font-size: 12.5px; line-height: 1.65; letter-spacing: normal; }
 .marketplace-file-browser .skill-file-editor > :is(pre, textarea) { padding: 13px 15px; }
 .marketplace-file-browser > section > header { justify-content: space-between; }
 .skill-content-view-actions { display: flex; align-items: center; gap: 2px; }
 .skill-content-view-actions button { display: grid; width: 25px; height: 25px; place-items: center; border: 0; border-radius: 4px; background: transparent; color: var(--muted); cursor: pointer; }
 .skill-content-view-actions button:hover { background: var(--surface-soft); color: var(--ink); }
 .skill-content-view-actions button[aria-pressed="true"] { background: var(--cobalt-pale); color: var(--cobalt); }
-.skill-file-content { max-height: 520px; overflow: auto; overscroll-behavior: contain; }
+.skill-file-content { min-height: 0; max-height: none; overflow: auto; overscroll-behavior: contain; }
 .marketplace-package-detail.is-editing .skill-file-content { overflow: hidden; }
 .skill-file-content > pre { margin: 0; padding: 13px 15px; color: var(--ink); font-family: inherit; font-size: inherit; line-height: 1.7; letter-spacing: normal; white-space: pre-wrap; word-break: break-word; }
 .skill-markdown-preview { padding: 18px 20px 28px; font-size: 12.5px; line-height: 1.65; }
@@ -3126,7 +3127,7 @@ button:disabled { cursor: default; opacity: 0.5; }
   .marketplace-toolbar { align-items: stretch; flex-direction: column; gap: 7px; padding: 8px 10px; }
   .marketplace-scope-tabs { overflow-x: auto; }
   .marketplace-search { width: 100%; }
-  .marketplace-file-browser { min-height: 340px; grid-template-columns: minmax(0, 1fr); grid-template-rows: 145px minmax(0, 1fr); }
+  .marketplace-file-browser { grid-template-columns: minmax(0, 1fr); grid-template-rows: 145px minmax(0, 1fr); }
   .marketplace-file-browser > aside { border-right: 0; border-bottom: 1px solid var(--line); }
   .mcp-tool-list { grid-template-columns: minmax(0, 1fr); }
   .mcp-tool-list label:nth-child(even) { padding-left: 3px; border-left: 0; }

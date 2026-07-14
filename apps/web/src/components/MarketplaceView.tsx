@@ -245,7 +245,6 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
 
   useEffect(() => {
     setEditMode(false);
-    setSkillContentExpanded(false);
     setRenamingPath(null);
     setDraggedPath(null);
     setDropTarget(null);
@@ -447,6 +446,36 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
     return <div className={`skill-tree-entry skill-tree-file ${node.path === activeFile ? "is-selected" : ""}`} role="treeitem" draggable={editMode && node.path !== "SKILL.md"} key={node.path} onDragStart={(event) => handleDragStart(event, node.path)} onClick={() => setActiveFile(node.path)}>{skillFileIcon(node.path)}{renamingPath === node.path ? <input autoFocus value={renameValue} onClick={(event) => event.stopPropagation()} onChange={(event) => setRenameValue(event.currentTarget.value)} onBlur={() => commitRename(node)} onKeyDown={(event) => handleRenameKey(event, node)} /> : <span>{node.name}</span>}{editMode && node.path !== "SKILL.md" && renamingPath !== node.path && <button className="skill-tree-rename tooltip-control" type="button" aria-label={`${node.name} 이름 변경`} data-tooltip="이름 변경" onClick={(event) => { event.stopPropagation(); setRenamingPath(node.path); setRenameValue(node.name); }}><Pencil size={11} /></button>}</div>;
   });
 
+  const renderPackageBrowser = () => (
+    <ResizableSplitPane
+      storageKey="lumina:marketplace-file-explorer-width"
+      ariaLabel="패키지 파일 탐색기 너비 조절"
+      className={`marketplace-file-browser ${skillContentExpanded ? "is-expanded" : ""}`}
+      defaultWidth={220}
+      minimumWidth={170}
+      maximumRatio={0.48}
+    >
+      <aside className="skill-file-explorer" aria-label="Skill 파일">
+        <header className={dropTarget === "" ? "is-drop-target" : ""} onDragOver={(event) => { if (!editMode) return; event.preventDefault(); setDropTarget(""); }} onDrop={(event) => { event.preventDefault(); moveDraggedPath(""); }}><FolderOpen size={14} /> 패키지 파일{editMode && <small>드래그하여 이동</small>}</header>
+        <div className="skill-tree" role="tree">{renderFileTree(fileTree)}</div>
+      </aside>
+      <section>
+        <header>
+          <span>{activeFile}</span>
+          <div className="skill-content-view-actions">
+            {!editMode && activeFileIsMarkdown && <button className="tooltip-control" type="button" aria-label={skillContentView === "source" ? "렌더링 보기" : "원문 보기"} aria-pressed={skillContentView === "rendered"} data-tooltip={skillContentView === "source" ? "렌더링 보기" : "원문 보기"} onClick={() => setSkillContentView((current) => current === "source" ? "rendered" : "source")}>{skillContentView === "source" ? <Eye size={14} /> : <Code2 size={14} />}</button>}
+            <button className="tooltip-control" type="button" aria-label={skillContentExpanded ? "원래 크기로 보기" : "확대해서 보기"} aria-pressed={skillContentExpanded} data-tooltip={skillContentExpanded ? "원래 크기로 보기" : "확대해서 보기"} onClick={() => setSkillContentExpanded((current) => !current)}>{skillContentExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</button>
+          </div>
+        </header>
+        <div className="skill-file-content" ref={skillContentRef}>
+          {editMode ? <SyntaxTextarea className="skill-file-editor" ariaLabel={`${activeFile} 내용`} fileName={activeFile} value={detailFiles[activeFile] ?? ""} onChange={(event) => { const nextValue = event.currentTarget.value; setEditableFiles((current) => ({ ...current, [activeFile]: nextValue })); }} /> : activeFileIsMarkdown && skillContentView === "rendered"
+            ? <SkillMarkdownPreview value={detailFiles[activeFile] ?? "파일 내용을 불러오는 중입니다."} />
+            : <SyntaxCode value={detailFiles[activeFile] ?? "파일 내용을 불러오는 중입니다."} fileName={activeFile} />}
+        </div>
+      </section>
+    </ResizableSplitPane>
+  );
+
   return (
     <div className="feature-view marketplace-view">
       <header className="feature-header"><div><button className="feature-mobile-menu" type="button" aria-label="사이드바 열기" onClick={onOpenNavigation}><Menu size={17} /></button><Store size={17} /><h1>마켓스토어</h1><div className="feature-kind-tabs" role="tablist" aria-label="Marketplace 유형"><button type="button" role="tab" aria-selected={marketKind === "skill"} onClick={() => setMarketKind("skill")}><Sparkles size={14} /> Skill</button><button type="button" role="tab" aria-selected={marketKind === "mcp"} onClick={() => setMarketKind("mcp")}><Wrench size={14} /> MCP</button></div></div><div><button type="button" aria-label="새로 고침" onClick={() => void refreshRepository()}><RefreshCw size={15} /></button></div></header>
@@ -474,9 +503,9 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
             </div>;
           })}
         </aside>
-        <section className="feature-detail">
+        <section className={`feature-detail ${skillContentExpanded ? "is-skill-content-expanded" : selected ? "has-skill-package" : ""}`}>
           {!selected ? <div className="feature-state">Skill을 선택해 주세요.</div> : (
-            <>
+            skillContentExpanded ? renderPackageBrowser() : <>
               <header className="detail-heading">
                 <div>{editMode && selected.canEdit ? <><h2 className="marketplace-inline-editor" contentEditable="plaintext-only" suppressContentEditableWarning role="textbox" aria-label="Skill 이름" aria-multiline="false" onInput={(event) => setEditableName(event.currentTarget.textContent ?? "")} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }}>{editableName}</h2><p className="marketplace-inline-editor" contentEditable="plaintext-only" suppressContentEditableWarning role="textbox" aria-label="Skill 설명" aria-multiline="false" data-placeholder="설명 없음" onInput={(event) => setEditableDescription(event.currentTarget.textContent ?? "")} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }}>{editableDescription}</p></> : <><h2>{selected.name}</h2><p>{selected.description || "설명 없음"}</p></>}</div>
                 <div className="detail-badges"><span>{skillView === "trash" ? "보관함" : visibilityLabel(selected.visibility)}</span><span>{skillDisplayVersion(selected)}</span></div>
@@ -493,23 +522,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
                     </>}
                   </div>
                 </div>
-                {skillView === "trash" ? <div className="feature-state">복원하면 Skill 파일과 버전을 다시 사용할 수 있습니다.</div> : <div className={`marketplace-file-browser ${skillContentExpanded ? "is-expanded" : ""}`}>
-                    <aside className="skill-file-explorer" aria-label="Skill 파일"><header className={dropTarget === "" ? "is-drop-target" : ""} onDragOver={(event) => { if (!editMode) return; event.preventDefault(); setDropTarget(""); }} onDrop={(event) => { event.preventDefault(); moveDraggedPath(""); }}><FolderOpen size={14} /> 패키지 파일{editMode && <small>드래그하여 이동</small>}</header><div className="skill-tree" role="tree">{renderFileTree(fileTree)}</div></aside>
-                    <section>
-                      <header>
-                        <span>{activeFile}</span>
-                        <div className="skill-content-view-actions">
-                          {!editMode && activeFileIsMarkdown && <button className="tooltip-control" type="button" aria-label={skillContentView === "source" ? "렌더링 보기" : "원문 보기"} aria-pressed={skillContentView === "rendered"} data-tooltip={skillContentView === "source" ? "렌더링 보기" : "원문 보기"} onClick={() => setSkillContentView((current) => current === "source" ? "rendered" : "source")}>{skillContentView === "source" ? <Eye size={14} /> : <Code2 size={14} />}</button>}
-                          <button className="tooltip-control" type="button" aria-label={skillContentExpanded ? "원래 크기로 보기" : "확대해서 보기"} aria-pressed={skillContentExpanded} data-tooltip={skillContentExpanded ? "원래 크기로 보기" : "확대해서 보기"} onClick={() => setSkillContentExpanded((current) => !current)}>{skillContentExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</button>
-                        </div>
-                      </header>
-                      <div className="skill-file-content" ref={skillContentRef}>
-                        {editMode ? <SyntaxTextarea className="skill-file-editor" ariaLabel={`${activeFile} 내용`} fileName={activeFile} value={detailFiles[activeFile] ?? ""} onChange={(event) => { const nextValue = event.currentTarget.value; setEditableFiles((current) => ({ ...current, [activeFile]: nextValue })); }} /> : activeFileIsMarkdown && skillContentView === "rendered"
-                          ? <SkillMarkdownPreview value={detailFiles[activeFile] ?? "파일 내용을 불러오는 중입니다."} />
-                          : <SyntaxCode value={detailFiles[activeFile] ?? "파일 내용을 불러오는 중입니다."} fileName={activeFile} />}
-                      </div>
-                    </section>
-                  </div>}
+                {skillView === "trash" ? <div className="feature-state">복원하면 Skill 파일과 버전을 다시 사용할 수 있습니다.</div> : renderPackageBrowser()}
                 </div>
             </>
           )}
