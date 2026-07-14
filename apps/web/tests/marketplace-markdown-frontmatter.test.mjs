@@ -55,3 +55,15 @@ test("Skill source and rendered views share one toggle beside an expanded-view c
   assert.match(styles, /\.marketplace-file-browser\.is-expanded \{ position: fixed;/);
   assert.match(styles, /\.marketplace-file-browser\.is-expanded \.skill-file-content \{ height: auto; max-height: none; \}/);
 });
+
+test("Marketplace type tabs live inside the top header", async () => {
+  const [marketplace, styles] = await Promise.all([
+    readFile(marketplacePath, "utf8"),
+    readFile(stylesPath, "utf8"),
+  ]);
+
+  assert.match(marketplace, /<header className="feature-header">[\s\S]*?<div className="feature-kind-tabs" role="tablist" aria-label="Marketplace 유형">[\s\S]*?<\/header>/);
+  assert.doesNotMatch(marketplace, /<\/header>\s*<div className="feature-kind-tabs"/);
+  assert.match(styles, /\.feature-header \.feature-kind-tabs \{ align-self: stretch;/);
+  assert.match(styles, /\.feature-kind-tabs button \{[^}]*height: 45px;/);
+});
