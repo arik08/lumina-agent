@@ -1,5 +1,6 @@
 import hljs from "highlight.js/lib/common";
 import { useMemo, useRef, type ChangeEvent, type CSSProperties, type UIEvent } from "react";
+import { splitMarkdownFrontmatter } from "./markdownFrontmatter";
 
 const aliases: Record<string, string> = {
   cjs: "javascript", htm: "xml", html: "xml", js: "javascript", jsx: "javascript", md: "markdown", mjs: "javascript",
@@ -21,10 +22,9 @@ export function codeLanguage(fileName?: string | null, mimeType?: string | null,
 
 function highlightedHtml(value: string, language: string) {
   if (language === "markdown") {
-    const frontmatter = value.match(/^(\uFEFF?---[ \t]*)(\r?\n)([\s\S]*?)(\r?\n)(---[ \t]*)(?=\r?\n|$)/);
+    const frontmatter = splitMarkdownFrontmatter(value);
     if (frontmatter) {
-      const [, opening, openingBreak, yaml, closingBreak, closing] = frontmatter;
-      const markdown = value.slice(frontmatter[0].length);
+      const { opening, openingBreak, yaml, closingBreak, closing, body: markdown } = frontmatter;
       return `<span class="hljs-meta">${opening}</span>${openingBreak}${hljs.highlight(yaml, { language: "yaml", ignoreIllegals: true }).value}${closingBreak}<span class="hljs-meta">${closing}</span>${hljs.highlight(markdown, { language: "markdown", ignoreIllegals: true }).value}`;
     }
   }

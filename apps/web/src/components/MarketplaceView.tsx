@@ -7,6 +7,7 @@ import type { ExtensionInstallation, SkillExtension, SkillVersion } from "../api
 import { McpMarketplacePanel } from "./McpMarketplacePanel";
 import { ResizableSplitPane } from "./ResizableSplitPane";
 import { SyntaxCode, SyntaxTextarea } from "./SyntaxCode";
+import { stripMarkdownFrontmatter } from "./markdownFrontmatter";
 
 interface MarketplaceViewProps {
   projectId: string | null;
@@ -480,7 +481,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
                       </header>
                       <div className="skill-file-content" ref={skillContentRef}>
                         {editMode ? <SyntaxTextarea className="skill-file-editor" ariaLabel={`${activeFile} 내용`} fileName={activeFile} value={detailFiles[activeFile] ?? ""} onChange={(event) => { const nextValue = event.currentTarget.value; setEditableFiles((current) => ({ ...current, [activeFile]: nextValue })); }} /> : activeFileIsMarkdown && skillContentView === "rendered"
-                          ? <div className="markdown-response skill-markdown-preview"><ReactMarkdown skipHtml remarkPlugins={[remarkGfm]}>{detailFiles[activeFile] ?? "파일 내용을 불러오는 중입니다."}</ReactMarkdown></div>
+                          ? <div className="markdown-response skill-markdown-preview"><ReactMarkdown skipHtml remarkPlugins={[remarkGfm]}>{stripMarkdownFrontmatter(detailFiles[activeFile] ?? "파일 내용을 불러오는 중입니다.")}</ReactMarkdown></div>
                           : <SyntaxCode value={detailFiles[activeFile] ?? "파일 내용을 불러오는 중입니다."} fileName={activeFile} />}
                       </div>
                     </section>
