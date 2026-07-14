@@ -1281,6 +1281,7 @@ function App() {
   const conversationFollow = useConversationAutoFollow(
     runIsActive,
     workspace.activeConversationId,
+    activeRuntime.loaded,
   );
   useEffect(() => {
     setOpenCalls(new Set());

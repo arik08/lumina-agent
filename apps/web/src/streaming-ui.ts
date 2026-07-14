@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 const streamStartBufferMs = 180;
 const streamRevealDurationMs = 420;
@@ -13,6 +13,33 @@ const maxChunkIntervalMs = 600;
 const nearBottomPx = 140;
 const streamingRejoinPx = 360;
 const jumpButtonThresholdPx = 40;
+const exactBottomPx = 2;
+const scrollPositionStoragePrefix = "lumina:conversation-scroll:";
+
+type ConversationScrollPosition = {
+  top: number;
+  atBottom: boolean;
+};
+
+function readConversationScrollPosition(conversationId: string) {
+  try {
+    const stored = sessionStorage.getItem(`${scrollPositionStoragePrefix}${conversationId}`);
+    if (!stored) return null;
+    const parsed = JSON.parse(stored) as Partial<ConversationScrollPosition>;
+    if (!Number.isFinite(parsed.top) || typeof parsed.atBottom !== "boolean") return null;
+    return { top: Math.max(0, parsed.top as number), atBottom: parsed.atBottom };
+  } catch {
+    return null;
+  }
+}
+
+function writeConversationScrollPosition(conversationId: string, position: ConversationScrollPosition) {
+  try {
+    sessionStorage.setItem(`${scrollPositionStoragePrefix}${conversationId}`, JSON.stringify(position));
+  } catch {
+    // Browsing modes that disable storage should not break conversation navigation.
+  }
+}
 
 function smoothRevealCount(pendingLength: number, desiredCount: number) {
   if (!pendingLength || desiredCount <= 0) return 0;
@@ -228,12 +255,41 @@ export function useStreamingText(targetText: string, streaming: boolean) {
   return { visibleText, revealing: streaming || visibleText !== targetText };
 }
 
-export function useConversationAutoFollow(active: boolean, conversationId: string | null) {
+export function useConversationAutoFollow(
+  active: boolean,
+  conversationId: string | null,
+  contentReady: boolean,
+) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const followingRef = useRef(true);
   const animationRef = useRef<number | null>(null);
   const userIntentUntilRef = useRef(0);
+  const activeRef = useRef(active);
+  const savedPositionsRef = useRef(new Map<string, ConversationScrollPosition>());
+  const saveTimersRef = useRef(new Map<string, number>());
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  activeRef.current = active;
+
+  const flushPosition = useCallback((targetConversationId: string) => {
+    const timer = saveTimersRef.current.get(targetConversationId);
+    if (timer !== undefined) window.clearTimeout(timer);
+    saveTimersRef.current.delete(targetConversationId);
+    const position = savedPositionsRef.current.get(targetConversationId);
+    if (position) writeConversationScrollPosition(targetConversationId, position);
+  }, []);
+
+  const rememberPosition = useCallback((targetConversationId: string, container: HTMLDivElement) => {
+    const distance = container.scrollHeight - container.clientHeight - container.scrollTop;
+    savedPositionsRef.current.set(targetConversationId, {
+      top: Math.max(0, container.scrollTop),
+      atBottom: distance <= exactBottomPx,
+    });
+    const existingTimer = saveTimersRef.current.get(targetConversationId);
+    if (existingTimer !== undefined) window.clearTimeout(existingTimer);
+    saveTimersRef.current.set(targetConversationId, window.setTimeout(() => {
+      flushPosition(targetConversationId);
+    }, 120));
+  }, [flushPosition]);
 
   const updateJumpVisibility = useCallback(() => {
     const container = containerRef.current;
@@ -248,9 +304,9 @@ export function useConversationAutoFollow(active: boolean, conversationId: strin
     animationRef.current = null;
   }, []);
 
-  const follow = useCallback((immediate = false, animateWhenHidden = false) => {
+  const follow = useCallback((immediate = false, animateWhenHidden = false, force = false) => {
     const container = containerRef.current;
-    if (!container || !followingRef.current) return;
+    if (!container || (!activeRef.current && !force) || !followingRef.current) return;
     if (animationRef.current !== null) return;
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
     if (immediate || reduceMotion || (document.hidden && !animateWhenHidden)) {
@@ -300,14 +356,34 @@ export function useConversationAutoFollow(active: boolean, conversationId: strin
     animationRef.current = window.requestAnimationFrame(step);
   }, []);
 
-  useEffect(() => {
-    followingRef.current = true;
+  useLayoutEffect(() => {
+    if (animationRef.current !== null) window.cancelAnimationFrame(animationRef.current);
+    animationRef.current = null;
+    followingRef.current = false;
     setShowJumpToLatest(false);
-    window.requestAnimationFrame(() => follow(true));
-  }, [conversationId, follow]);
+    if (!conversationId || !contentReady) return undefined;
+
+    const container = containerRef.current;
+    if (!container) return undefined;
+    const stored = savedPositionsRef.current.get(conversationId)
+      ?? readConversationScrollPosition(conversationId);
+    const maximumTop = Math.max(0, container.scrollHeight - container.clientHeight);
+    const targetTop = stored
+      ? stored.atBottom ? maximumTop : Math.min(stored.top, maximumTop)
+      : maximumTop;
+    container.scrollTop = targetTop;
+    const restoredPosition = {
+      top: targetTop,
+      atBottom: maximumTop - targetTop <= exactBottomPx,
+    };
+    savedPositionsRef.current.set(conversationId, restoredPosition);
+    followingRef.current = restoredPosition.atBottom;
+    setShowJumpToLatest(maximumTop - targetTop > jumpButtonThresholdPx);
+
+    return () => flushPosition(conversationId);
+  }, [contentReady, conversationId, flushPosition]);
 
   useEffect(() => {
-    if (active && Date.now() > userIntentUntilRef.current) followingRef.current = true;
     if (active) follow();
   }, [active, follow]);
 
@@ -316,6 +392,12 @@ export function useConversationAutoFollow(active: boolean, conversationId: strin
     const content = container?.firstElementChild;
     if (!container || !content || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
+      const remembered = conversationId ? savedPositionsRef.current.get(conversationId) : null;
+      if (!activeRef.current && conversationId && remembered?.atBottom) {
+        const maximumTop = Math.max(0, container.scrollHeight - container.clientHeight);
+        container.scrollTop = maximumTop;
+        savedPositionsRef.current.set(conversationId, { top: maximumTop, atBottom: true });
+      }
       updateJumpVisibility();
       follow();
     });
@@ -325,19 +407,21 @@ export function useConversationAutoFollow(active: boolean, conversationId: strin
 
   useEffect(() => () => {
     if (animationRef.current !== null) window.cancelAnimationFrame(animationRef.current);
+    for (const targetConversationId of savedPositionsRef.current.keys()) flushPosition(targetConversationId);
   }, []);
 
   const onScroll = useCallback(() => {
     const container = containerRef.current;
     if (!container) return;
     const distance = container.scrollHeight - container.clientHeight - container.scrollTop;
+    if (conversationId) rememberPosition(conversationId, container);
     updateJumpVisibility();
     if (distance <= nearBottomPx) {
       followingRef.current = true;
       return;
     }
     if (distance > streamingRejoinPx && Date.now() <= userIntentUntilRef.current) stop();
-  }, [stop, updateJumpVisibility]);
+  }, [conversationId, rememberPosition, stop, updateJumpVisibility]);
 
   const onUserIntent = useCallback(() => {
     userIntentUntilRef.current = Date.now() + 900;
@@ -354,7 +438,7 @@ export function useConversationAutoFollow(active: boolean, conversationId: strin
 
   const jumpToLatest = useCallback(() => {
     followingRef.current = true;
-    follow(false, true);
+    follow(false, true, true);
   }, [follow]);
 
   return {
