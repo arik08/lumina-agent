@@ -66,4 +66,6 @@ test("Marketplace type tabs live inside the top header", async () => {
   assert.doesNotMatch(marketplace, /<\/header>\s*<div className="feature-kind-tabs"/);
   assert.match(styles, /\.feature-header \.feature-kind-tabs \{ align-self: stretch;/);
   assert.match(styles, /\.feature-kind-tabs button \{[^}]*height: 45px;/);
+  assert.doesNotMatch(styles, /\.feature-kind-tabs button(?:\[aria-selected="true"\])? \{[^}]*border-bottom/);
+  assert.doesNotMatch(marketplace, /승인 MCP · 설치 · Secret binding/);
 });
