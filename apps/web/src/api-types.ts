@@ -1344,6 +1344,11 @@ export interface RunSnapshot {
     estimated?: boolean;
     targetTokens?: number;
   } | null;
+  outputIntent: {
+    fileCreationRequested: boolean;
+    confidence: number;
+    reason: string;
+  } | null;
   workPlan: WorkPlanStep[];
   plan: RunPlan | null;
   activities: RunActivity[];
@@ -1453,6 +1458,7 @@ export type RunEventType =
   | "run_status_changed"
   | "assistant_text_delta"
   | "progress_summary"
+  | "output_intent_classified"
   | "skill_selected"
   | "assistant_turn_completed"
   | "conversation_title_updated"
@@ -1492,6 +1498,7 @@ export type RunEvent =
   | RunEventEnvelope<"run_started" | "run_status_changed", { status: RunStatus }>
   | RunEventEnvelope<"assistant_text_delta", { messageId: UUID; delta: string }>
   | RunEventEnvelope<"progress_summary", { id: UUID; text: string; phase: string }>
+  | RunEventEnvelope<"output_intent_classified", NonNullable<RunSnapshot["outputIntent"]>>
   | RunEventEnvelope<"skill_selected", { activity: Extract<RunActivity, { type: "skill" }> }>
   | RunEventEnvelope<"assistant_turn_completed", { message: ChatMessage }>
   | RunEventEnvelope<"conversation_title_updated", { title: string; revision: number; source: "llm" }>

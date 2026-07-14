@@ -60,6 +60,13 @@ def test_progress_control_leaves_final_answer_text_visible() -> None:
 
 def test_file_output_mode_is_a_preference_until_artifact_intent_is_explicit() -> None:
     assert executor_module._normalized_output_mode("file") == "file"
+    intent_schema = executor_module._FILE_OUTPUT_INTENT_TOOL_SCHEMA["function"]
+    assert intent_schema["name"] == "classify_file_output_intent"
+    assert intent_schema["parameters"]["required"] == [
+        "fileCreationRequested",
+        "confidence",
+        "reason",
+    ]
     assert executor_module._ARTIFACT_CREATION_REQUEST.search(
         "이 문장의 의미를 한 줄로 설명해 줘"
     ) is None
@@ -319,7 +326,18 @@ def test_file_mode_is_a_general_delivery_preference_not_a_file_command(
         _provider_id: str, *, wants_artifact: bool, first_turn: bool
     ) -> MockProvider:
         assert wants_artifact is False
-        assert first_turn is True
+        if first_turn:
+            return RecordingProvider(
+                tool_call=MockToolCall(
+                    name="classify_file_output_intent",
+                    arguments={
+                        "fileCreationRequested": False,
+                        "confidence": 0.98,
+                        "reason": "일반적인 설명 또는 기억 확인 질문입니다.",
+                    },
+                    call_id="call_file_output_intent",
+                )
+            )
         return RecordingProvider(text_chunks=("기억했습니다.",))
 
     monkeypatch.setattr(local_run_executor, "_provider", provider)
@@ -353,10 +371,18 @@ def test_file_mode_is_a_general_delivery_preference_not_a_file_command(
             snapshots.append(_wait_for_terminal(client, started.json()["run"]["runId"]))
 
     assert all(snapshot["status"] == "completed" for snapshot in snapshots)
+    assert all(
+        snapshot["outputIntent"] == {
+            "fileCreationRequested": False,
+            "confidence": 0.98,
+            "reason": "일반적인 설명 또는 기억 확인 질문입니다.",
+        }
+        for snapshot in snapshots
+    )
     assert all(snapshot["artifacts"] == [] for snapshot in snapshots)
     assert all(snapshot["toolExecutions"] == [] for snapshot in snapshots)
-    assert len(requests) == 2
-    for request in requests:
+    assert len(requests) == 4
+    for request in requests[::2]:
         tool_names = {
             schema["function"]["name"]
             for schema in request.tools
@@ -364,6 +390,7 @@ def test_file_mode_is_a_general_delivery_preference_not_a_file_command(
         }
         assert "create_report" in tool_names
         assert "write_file" in tool_names
+        assert "classify_file_output_intent" in tool_names
         system_text = "\n".join(
             str(message.content)
             for message in request.messages
@@ -372,6 +399,7 @@ def test_file_mode_is_a_general_delivery_preference_not_a_file_command(
         assert "Output mode: File preference." in system_text
         assert "delivery preference, not proof" in system_text
         assert "Never infer file intent solely" in system_text
+        assert "File intent JSON contract" in system_text
         assert "Artifact opportunity contract" in system_text
         assert "Do not call `create_report` or `write_file`" in system_text
         assert "Memory capture contract" in system_text
@@ -474,9 +502,21 @@ def test_file_mode_accepts_model_selected_artifact_without_explicit_file_words(
     ) -> MockProvider:
         nonlocal provider_turn
         del first_turn
-        assert wants_artifact is False
         provider_turn += 1
         if provider_turn == 1:
+            return MockProvider(
+                tool_call=MockToolCall(
+                    name="classify_file_output_intent",
+                    arguments={
+                        "fileCreationRequested": True,
+                        "confidence": 0.91,
+                        "reason": "분석 결과를 재사용 가능한 파일로 제공하는 요청입니다.",
+                    },
+                    call_id="call_file_output_intent",
+                )
+            )
+        if provider_turn == 2:
+            assert wants_artifact is True
             return MockProvider(
                 tool_call=MockToolCall(
                     name="create_report",
@@ -525,7 +565,8 @@ def test_file_mode_accepts_model_selected_artifact_without_explicit_file_words(
         snapshot = _wait_for_terminal(client, started.json()["run"]["runId"])
 
     assert snapshot["status"] == "completed"
-    assert provider_turn == 2
+    assert snapshot["outputIntent"]["fileCreationRequested"] is True
+    assert provider_turn == 3
     assert [tool["toolName"] for tool in snapshot["toolExecutions"]] == [
         "create_report"
     ]
@@ -902,6 +943,7 @@ def _login(client: TestClient) -> str:
 
 def _wait_for_terminal(client: TestClient, run_id: str) -> dict[str, object]:
     deadline = time.monotonic() + 5
+    payload: dict[str, object] = {}
     while time.monotonic() < deadline:
         payload = client.get(f"/api/runs/{run_id}/snapshot").json()
         if payload["status"] in {
@@ -913,4 +955,4 @@ def _wait_for_terminal(client: TestClient, run_id: str) -> dict[str, object]:
         }:
             return payload
         time.sleep(0.02)
-    raise AssertionError("Run did not reach a terminal state")
+    raise AssertionError(f"Run did not reach a terminal state: {payload}")

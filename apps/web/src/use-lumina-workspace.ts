@@ -325,6 +325,8 @@ export function useLuminaWorkspace() {
             createdAt: event.createdAt,
           },
         ];
+      } else if (event.type === "output_intent_classified") {
+        nextSnapshot.outputIntent = event.payload;
       } else if (event.type === "skill_selected") {
         nextSnapshot.activities = [
           ...nextSnapshot.activities.filter((activity) => activity.id !== event.payload.activity.id),

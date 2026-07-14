@@ -17,6 +17,7 @@ const tooltipGap = 8;
 interface TooltipPosition {
   placement: "above" | "below";
   style: CSSProperties & {
+    "--global-tooltip-anchor-x": string;
     left: number;
     top: number;
     visibility: "hidden" | "visible";
@@ -69,7 +70,7 @@ export function GlobalTooltipLayer({
   const layerRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<TooltipPosition>({
     placement: "above",
-    style: { left: 0, top: 0, visibility: "hidden" },
+    style: { "--global-tooltip-anchor-x": "50%", left: 0, top: 0, visibility: "hidden" },
   });
 
   const updatePosition = useCallback(() => {
@@ -82,6 +83,7 @@ export function GlobalTooltipLayer({
       maximumLeft,
       Math.max(viewportPadding, anchorRect.left + (anchorRect.width - layerRect.width) / 2),
     );
+    const anchorX = `${Math.min(layerRect.width - 16, Math.max(16, anchorRect.left + anchorRect.width / 2 - left))}px`;
     const spaceAbove = anchorRect.top - viewportPadding - tooltipGap;
     const spaceBelow = window.innerHeight - anchorRect.bottom - viewportPadding - tooltipGap;
     const placement = spaceAbove < layerRect.height && spaceBelow > spaceAbove ? "below" : "above";
@@ -96,9 +98,10 @@ export function GlobalTooltipLayer({
       current.placement === placement
       && current.style.left === left
       && current.style.top === top
+      && current.style["--global-tooltip-anchor-x"] === anchorX
       && current.style.visibility === "visible"
         ? current
-        : { placement, style: { left, top, visibility: "visible" } }
+        : { placement, style: { "--global-tooltip-anchor-x": anchorX, left, top, visibility: "visible" } }
     ));
   }, [anchor, open]);
 

@@ -5,13 +5,17 @@ import test from "node:test";
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 
-test("file mode warns through a body-level anchored layer for conversational drafts", () => {
+test("file mode warning follows the LLM JSON decision through a body-level speech bubble", () => {
   assert.match(app, /workspace\.settings\?\.outputMode === "file"/);
-  assert.match(app, /!explicitlyRequestsArtifact\(draft\)/);
+  assert.match(app, /draft\.trim\(\)\.length === 0/);
+  assert.match(app, /activeRun\?\.outputIntent\?\.fileCreationRequested === false/);
+  assert.doesNotMatch(app, /explicitArtifactRequestPattern|setTimeout\(syncVisibility,\s*420\)/);
   assert.match(app, /<GlobalTooltipLayer[\s\S]*className="file-mode-nudge-layer"/);
   assert.match(app, /ref=\{value === "file" \? fileModeButtonRef : undefined\}/);
-  assert.match(app, /파일 모드가 선택되어 있습니다/);
+  assert.match(app, /파일 생성 요청이 아닌 것 같아요/);
   assert.doesNotMatch(styles, /\.file-mode-nudge-layer\s*\{[^}]*position:/, "layer positioning must remain owned by the global portal primitive");
+  assert.match(styles, /\.file-mode-nudge-layer::after\s*\{[^}]*left:\s*var\(--global-tooltip-anchor-x\)/);
+  assert.match(styles, /\.file-mode-nudge-layer\[data-placement="above"\]::after/);
 });
 
 test("file mode emphasis does not alter composer layout and respects reduced motion", () => {

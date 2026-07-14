@@ -1922,6 +1922,7 @@ def run_snapshot(db: Session, run: Run) -> dict[str, Any]:
         ),
         "artifactProgress": run.snapshot_json.get("artifact_progress"),
         "artifactUsage": artifact_usage,
+        "outputIntent": run.snapshot_json.get("output_intent"),
         "workPlan": run.snapshot_json.get("work_plan", []),
         "plan": plan_snapshot(db, run),
         "activities": activities,

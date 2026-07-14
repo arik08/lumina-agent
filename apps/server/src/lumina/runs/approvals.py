@@ -98,6 +98,7 @@ def classify_tool_risk(
         "list_dir",
         "update_plan",
         "activate_skill",
+        "classify_file_output_intent",
     }:
         return ToolRisk("read_only", "low", False)
     if tool_name in {"create_report", "generate_image", "write_file"}:

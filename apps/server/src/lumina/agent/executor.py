@@ -740,8 +740,10 @@ class LocalRunExecutor:
         memory_learning_enabled = (
             run.snapshot_json.get("memory_learning_mode", "auto") != "off"
         )
-        artifact_required = retry_step_key != "final" and bool(
-            _ARTIFACT_CREATION_REQUEST.search(user_message)
+        artifact_required = (
+            retry_step_key != "final"
+            and output_mode != "file"
+            and bool(_ARTIFACT_CREATION_REQUEST.search(user_message))
         )
         artifact_tools_available = retry_step_key != "final" and (
             output_mode == "file" or artifact_required
@@ -751,6 +753,7 @@ class LocalRunExecutor:
         skill_activation_schema = _skill_activation_tool_schema(run.snapshot_json)
         tool_schemas = (
             _UPDATE_PLAN_TOOL_SCHEMA,
+            *((_FILE_OUTPUT_INTENT_TOOL_SCHEMA,) if output_mode == "file" else ()),
             *((skill_activation_schema,) if skill_activation_schema else ()),
             *((_REPORT_TOOL_SCHEMA,) if artifact_tools_available else ()),
             *((ARTIFACT_WRITE_TOOL_SCHEMA,) if artifact_tools_available else ()),
@@ -1172,7 +1175,12 @@ class LocalRunExecutor:
             execution_calls = [
                 call
                 for call in calls
-                if call["name"] not in {"update_plan", "activate_skill"}
+                if call["name"]
+                not in {
+                    "update_plan",
+                    "activate_skill",
+                    "classify_file_output_intent",
+                }
             ]
             created_subtasks: list[dict[str, Any]] = []
             if execution_calls:
@@ -1234,6 +1242,17 @@ class LocalRunExecutor:
                 await self._limit_run(run_id, first_violation)
                 return
             for call, result in resolved_calls:
+                if call["name"] == "classify_file_output_intent":
+                    artifact_required = result.get("fileCreationRequested") is True
+                    tool_schemas = tuple(
+                        schema
+                        for schema in tool_schemas
+                        if not (
+                            isinstance(schema.get("function"), dict)
+                            and schema["function"].get("name")
+                            == "classify_file_output_intent"
+                        )
+                    )
                 if (
                     call["name"] in {"create_report", "write_file"}
                     and isinstance(result, dict)
@@ -1938,6 +1957,17 @@ class LocalRunExecutor:
                 "this selected mode. If you create a file, keep the chat response concise "
                 "and refer to the file by its display name only."
             )
+            turn_system_parts.append(
+                "File intent JSON contract: Before visible answer text, call "
+                "`classify_file_output_intent` exactly once. Judge semantically whether the "
+                "current user message explicitly asks to create, save, export, or deliver a "
+                "reusable file. The selected File mode is not evidence. Return false for "
+                "ordinary questions, conversation, explanations, memory checks, and requests "
+                "that only happen to mention a file. This is hidden UI control JSON, not a "
+                "user-visible tool. Pair it with `update_plan`, Skill activation, or substantive "
+                "tools in the same response when useful so the classification adds no avoidable "
+                "delay."
+            )
         if run.snapshot_json.get("memory_learning_mode", "auto") != "off":
             turn_system_parts.append(
                 "Memory capture contract: In the same final response, after all user-visible "
@@ -2321,6 +2351,29 @@ class LocalRunExecutor:
                 }
             except ApiProblem as exc:
                 return {"error": {"code": exc.code, "message": exc.message}}
+        if tool_call["name"] == "classify_file_output_intent":
+            payload = {
+                "fileCreationRequested": arguments.get("fileCreationRequested") is True,
+                "confidence": max(
+                    0.0,
+                    min(1.0, float(arguments.get("confidence", 0.0) or 0.0)),
+                ),
+                "reason": _bounded_text(str(arguments.get("reason", "")).strip(), 240),
+            }
+            with session_scope() as db:
+                active_run = db.get(Run, run_id)
+                if active_run is None:
+                    raise RuntimeError("Run disappeared during file output intent classification")
+                existing = active_run.snapshot_json.get("output_intent")
+                if isinstance(existing, dict):
+                    return dict(existing)
+                active_run.snapshot_json = {
+                    **active_run.snapshot_json,
+                    "output_intent": payload,
+                }
+                append_event(db, active_run, "output_intent_classified", payload)
+            await event_broker.notify(run_id)
+            return payload
         if tool_call["name"] == "update_plan":
             try:
                 raw_steps = arguments.get("plan", [])
@@ -4487,6 +4540,44 @@ _UPDATE_PLAN_TOOL_SCHEMA = {
                 }
             },
             "required": ["plan"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
+_FILE_OUTPUT_INTENT_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "classify_file_output_intent",
+        "description": (
+            "Emit hidden JSON for the UI indicating whether the current user message "
+            "semantically and explicitly requests creation or delivery of a reusable file. "
+            "The selected output mode must not influence this judgment."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "fileCreationRequested": {
+                    "type": "boolean",
+                    "description": (
+                        "True only when the user asks to create, save, export, or deliver a "
+                        "file or reusable artifact; false for ordinary conversation."
+                    ),
+                },
+                "confidence": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                },
+                "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 240,
+                    "description": "One concise reason in the user's language.",
+                },
+            },
+            "required": ["fileCreationRequested", "confidence", "reason"],
             "additionalProperties": False,
         },
     },
