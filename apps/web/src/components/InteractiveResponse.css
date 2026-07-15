@@ -64,26 +64,67 @@
 .mermaid-surface {
   display: grid;
   min-height: 90px;
-  place-items: center;
+  max-height: min(640px, 68vh);
+  place-items: start center;
   overflow: auto;
+  overscroll-behavior: contain;
   color: var(--muted);
   text-align: center;
 }
 
 .mermaid-surface svg {
   display: block;
-  width: 100%;
+  width: auto;
+  max-width: 100%;
   height: auto;
-  max-height: 660px;
   margin: auto;
+}
+
+.mermaid-surface svg .node[data-lumina-tone="blue"] {
+  --mermaid-node-fill: color-mix(in srgb, var(--cobalt) 11%, var(--surface));
+  --mermaid-node-stroke: color-mix(in srgb, var(--cobalt) 72%, var(--line-strong));
+}
+
+.mermaid-surface svg .node[data-lumina-tone="green"] {
+  --mermaid-node-fill: color-mix(in srgb, var(--success) 11%, var(--surface));
+  --mermaid-node-stroke: color-mix(in srgb, var(--success) 72%, var(--line-strong));
+}
+
+.mermaid-surface svg .node[data-lumina-tone="amber"] {
+  --mermaid-node-fill: color-mix(in srgb, var(--warning) 12%, var(--surface));
+  --mermaid-node-stroke: color-mix(in srgb, var(--warning) 74%, var(--line-strong));
+}
+
+.mermaid-surface svg .node[data-lumina-tone] :is(rect, circle, ellipse, polygon, path) {
+  fill: var(--mermaid-node-fill) !important;
+  stroke: var(--mermaid-node-stroke) !important;
+}
+
+.mermaid-surface svg :is(.cluster rect, .cluster polygon, .cluster path) {
+  fill: color-mix(in srgb, var(--surface-soft) 82%, var(--cobalt-pale) 18%) !important;
+  stroke: color-mix(in srgb, var(--line-strong) 76%, var(--cobalt) 24%) !important;
+}
+
+.mermaid-surface svg :is(.label, .nodeLabel, .edgeLabel, .cluster-label, text, tspan) {
+  color: var(--ink) !important;
+  fill: var(--ink) !important;
+}
+
+.mermaid-surface svg :is(.edgePath .path, .flowchart-link) {
+  stroke: color-mix(in srgb, var(--cobalt) 72%, var(--muted)) !important;
+}
+
+.mermaid-surface svg marker :is(path, polygon) {
+  fill: var(--cobalt) !important;
+  stroke: var(--cobalt) !important;
 }
 
 .mermaid-surface.is-expanded {
   width: min(1400px, 82vw);
   min-height: 55vh;
+  max-height: none;
 }
 
-.mermaid-surface.is-expanded svg { max-height: none; }
 .interactive-chart-error { border-color: var(--danger) !important; }
 
 .response-zoom-backdrop {

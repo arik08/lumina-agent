@@ -21,6 +21,31 @@ import { SyntaxCode } from "./SyntaxCode";
 import "./InteractiveResponse.css";
 
 let mermaidRenderSequence = 0;
+let mermaidModulePromise: Promise<typeof import("mermaid")> | null = null;
+const mermaidRenderJobs = new Map<string, ReturnType<(typeof import("mermaid"))["default"]["render"]>>();
+const mermaidNodeTones = ["blue", "green", "blue", "amber"] as const;
+
+async function loadMermaid() {
+  if (!mermaidModulePromise) {
+    mermaidModulePromise = import("mermaid").catch((error: unknown) => {
+      mermaidModulePromise = null;
+      throw error;
+    });
+  }
+  return mermaidModulePromise;
+}
+
+export function preloadMermaid() {
+  void loadMermaid().catch(() => undefined);
+}
+
+if (typeof window !== "undefined") {
+  if (typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(preloadMermaid, { timeout: 1500 });
+  } else {
+    window.setTimeout(preloadMermaid, 0);
+  }
+}
 
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(maximum, Math.max(minimum, value));
@@ -148,26 +173,72 @@ function MermaidSurface({ source, expanded = false }: { source: string; expanded
   return <div ref={containerRef} className={`mermaid-surface ${expanded ? "is-expanded" : ""}`} role="img" aria-label="Mermaid 다이어그램"><span>다이어그램 렌더링 중…</span></div>;
 }
 
-export async function renderMermaidSvg(source: string) {
-  const { default: mermaid } = await import("mermaid");
+function mermaidAppearance() {
   const styles = getComputedStyle(document.documentElement);
   const token = (name: string, fallback: string) => styles.getPropertyValue(name).trim() || fallback;
-  mermaid.initialize({
-    startOnLoad: false,
-    securityLevel: "strict",
-    theme: "base",
-    themeVariables: {
-      background: token("--surface", "#ffffff"),
-      primaryColor: token("--surface-soft", "#f5f6f7"),
-      primaryTextColor: token("--ink", "#20242c"),
-      primaryBorderColor: token("--line-strong", "#d4d8de"),
-      lineColor: token("--muted", "#6c737e"),
-      secondaryColor: token("--cobalt-pale", "#edf2fb"),
-      tertiaryColor: token("--surface", "#ffffff"),
-      fontFamily: token("--font-ui", "Segoe UI, sans-serif"),
+  const themeVariables = {
+    background: "transparent",
+    primaryColor: token("--cobalt-pale", "#edf2fb"),
+    primaryTextColor: token("--ink", "#20242c"),
+    primaryBorderColor: token("--cobalt", "#3f66c9"),
+    secondaryColor: token("--surface-soft", "#f5f6f7"),
+    secondaryTextColor: token("--ink", "#20242c"),
+    tertiaryColor: token("--surface", "#ffffff"),
+    tertiaryTextColor: token("--ink", "#20242c"),
+    lineColor: token("--cobalt", "#3f66c9"),
+    textColor: token("--ink", "#20242c"),
+    noteBkgColor: token("--surface-selected", "#edf2fb"),
+    noteTextColor: token("--ink", "#20242c"),
+    actorBkg: token("--surface", "#ffffff"),
+    actorBorder: token("--cobalt", "#3f66c9"),
+    actorTextColor: token("--ink", "#20242c"),
+    clusterBkg: token("--surface-soft", "#f5f6f7"),
+    clusterBorder: token("--line-strong", "#d4d8de"),
+    fontFamily: token("--font-ui", "Segoe UI, sans-serif"),
+  };
+  return {
+    signature: JSON.stringify(themeVariables),
+    config: {
+      startOnLoad: false,
+      securityLevel: "strict",
+      theme: "base",
+      themeVariables,
+      flowchart: {
+        htmlLabels: false,
+      },
     },
+  } as const;
+}
+
+function decorateMermaidSvg(svg: string) {
+  const template = document.createElement("template");
+  template.innerHTML = svg;
+  template.content.querySelectorAll<SVGGElement>("g.node").forEach((node, index) => {
+    const hasAuthoredClass = Array.from(node.classList).some((className) => className !== "node" && className !== "default");
+    if (hasAuthoredClass) return;
+    const isDecision = Array.from(node.children).some((child) => child.tagName.toLowerCase() === "polygon");
+    node.dataset.luminaTone = isDecision ? "amber" : mermaidNodeTones[index % mermaidNodeTones.length];
   });
-  return mermaid.render(`lumina-mermaid-${++mermaidRenderSequence}`, source.trim());
+  return template.innerHTML;
+}
+
+export async function renderMermaidSvg(source: string) {
+  const normalizedSource = source.trim();
+  const appearance = mermaidAppearance();
+  const cacheKey = `${appearance.signature}\u0000${normalizedSource}`;
+  const activeJob = mermaidRenderJobs.get(cacheKey);
+  if (activeJob) return activeJob;
+
+  const renderJob = loadMermaid().then(async ({ default: mermaid }) => {
+    mermaid.initialize(appearance.config);
+    const result = await mermaid.render(`lumina-mermaid-${++mermaidRenderSequence}`, normalizedSource);
+    return { ...result, svg: decorateMermaidSvg(result.svg) };
+  });
+  mermaidRenderJobs.set(cacheKey, renderJob);
+  void renderJob.finally(() => {
+    if (mermaidRenderJobs.get(cacheKey) === renderJob) mermaidRenderJobs.delete(cacheKey);
+  }).catch(() => undefined);
+  return renderJob;
 }
 
 export function MermaidDiagram({ source }: { source: string }) {

@@ -2144,8 +2144,6 @@ button:disabled { cursor: default; opacity: 0.5; }
 .stream-block-pending { display: flex; min-height: 58px; align-items: center; gap: 9px; margin: 4px 0 1em; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--cobalt) 22%, var(--line)); border-radius: 7px; background: color-mix(in srgb, var(--cobalt) 5%, var(--surface)); color: var(--muted); }
 .stream-block-pending > :first-child { color: var(--cobalt); }
 .stream-block-pending > span { flex: 1; font-size: 13.5px; font-weight: 650; }
-.mermaid-diagram { min-height: 90px; max-width: 100%; overflow: auto; margin: 0 0 1em; padding: 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--muted); text-align: center; }
-.mermaid-diagram svg { display: block; width: 100%; height: auto; max-height: 680px; margin: auto; }
 .mermaid-render-error { border-left-color: var(--danger) !important; }
 .markdown-response input[type="checkbox"] { margin: 0 6px 0 0; accent-color: var(--cobalt); }
 .markdown-image-link { display: inline-flex; align-items: center; gap: 5px; font-size: 0.9em; }

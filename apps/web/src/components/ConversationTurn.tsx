@@ -40,6 +40,7 @@ import { copyText } from "../clipboard";
 import { isTerminalRunStatus } from "../run-status";
 import type { Link, Parent, PhrasingContent, Root, Text } from "mdast";
 import {
+  memo,
   useCallback,
   useEffect,
   useId,
@@ -1261,35 +1262,36 @@ export function pastedTextAttachmentLabel(attachment: AttachmentSummary, index: 
   return `[텍스트 첨부 #${index + 1}${lineCount > 0 ? ` +${lineCount}줄` : ""}]`;
 }
 
-export function MarkdownResponse({
+const markdownCodeComponent: NonNullable<Components["code"]> = ({ className, children }) => {
+  const language = /language-([\w-]+)/.exec(className || "")?.[1]?.toLowerCase();
+  const source = String(children).replace(/\n$/, "");
+  return language === "mermaid" || language === "mmd"
+    ? <MermaidDiagram source={source} />
+    : language === "lumina-chart"
+      ? <InteractiveChart source={source} />
+      : language
+        ? <SyntaxCodeContent value={source} language={language} className={className} />
+        : <code className={className}>{children}</code>;
+};
+
+const MemoizedMarkdownChunk = memo(function MarkdownChunk({
   text,
-  sources = emptySources,
-  citations = emptyCitations,
-  streaming = false,
-  settling = false,
-  artifact = false,
+  sources,
+  citations,
+  leadingEdge,
 }: {
   text: string;
-  sources?: SourceEvidence[];
-  citations?: MessageCitation[];
-  streaming?: boolean;
-  settling?: boolean;
-  artifact?: boolean;
+  sources: SourceEvidence[];
+  citations: MessageCitation[];
+  leadingEdge: boolean;
 }) {
   const targets = useMemo(() => citationTargets(text, sources, citations), [citations, sources, text]);
-  const renderedText = useMemo(() => streaming ? text : normalizeCitationPositions(text, targets), [streaming, targets, text]);
-  const streamingParts = useMemo(() => streaming ? splitStreamingMarkdown(renderedText) : { prefix: renderedText, liveTail: "" }, [renderedText, streaming]);
-  const pendingKind = useMemo(() => streaming ? pendingStreamingKind(streamingParts.liveTail) : null, [streaming, streamingParts.liveTail]);
-  const prefixText = useMemo(() => normalizeKoreanMarkdownEmphasis(streamingParts.prefix), [streamingParts.prefix]);
-  const tailText = useMemo(() => normalizeKoreanMarkdownEmphasis(streamingParts.liveTail), [streamingParts.liveTail]);
   const targetById = useMemo(() => new Map(targets.map((target) => [target.source.sourceId, target])), [targets]);
   const remarkPlugins = useMemo<NonNullable<ReactMarkdownOptions["remarkPlugins"]>>(
-    () => [remarkGfm, [remarkCitationLinks, { targets }]],
-    [targets],
-  );
-  const tailRemarkPlugins = useMemo<NonNullable<ReactMarkdownOptions["remarkPlugins"]>>(
-    () => [...remarkPlugins, remarkStreamingLeadingEdge],
-    [remarkPlugins],
+    () => leadingEdge
+      ? [remarkGfm, [remarkCitationLinks, { targets }], remarkStreamingLeadingEdge]
+      : [remarkGfm, [remarkCitationLinks, { targets }]],
+    [leadingEdge, targets],
   );
   const components = useMemo<Components>(() => ({
     a: ({ href, children }) => {
@@ -1314,25 +1316,44 @@ export function MarkdownResponse({
         : <span>{alt || "이미지"}</span>;
     },
     table: ({ children }) => <div className="markdown-table-scroll"><table>{children}</table></div>,
-    code: ({ className, children }) => {
-      const language = /language-([\w-]+)/.exec(className || "")?.[1]?.toLowerCase();
-      const source = String(children).replace(/\n$/, "");
-      return language === "mermaid" || language === "mmd"
-        ? <MermaidDiagram source={source} />
-        : language === "lumina-chart"
-          ? <InteractiveChart source={source} />
-        : language
-          ? <SyntaxCodeContent value={source} language={language} className={className} />
-          : <code className={className}>{children}</code>;
-    },
+    code: markdownCodeComponent,
   }), [targetById]);
 
   return (
+    <ReactMarkdown skipHtml remarkPlugins={remarkPlugins} components={components} urlTransform={defaultUrlTransform}>
+      {text}
+    </ReactMarkdown>
+  );
+});
+
+export function MarkdownResponse({
+  text,
+  sources = emptySources,
+  citations = emptyCitations,
+  streaming = false,
+  settling = false,
+  artifact = false,
+}: {
+  text: string;
+  sources?: SourceEvidence[];
+  citations?: MessageCitation[];
+  streaming?: boolean;
+  settling?: boolean;
+  artifact?: boolean;
+}) {
+  const targets = useMemo(() => citationTargets(text, sources, citations), [citations, sources, text]);
+  const renderedText = useMemo(() => streaming ? text : normalizeCitationPositions(text, targets), [streaming, targets, text]);
+  const streamingParts = useMemo(() => streaming ? splitStreamingMarkdown(renderedText) : { prefix: renderedText, liveTail: "" }, [renderedText, streaming]);
+  const pendingKind = useMemo(() => streaming ? pendingStreamingKind(streamingParts.liveTail) : null, [streaming, streamingParts.liveTail]);
+  const prefixText = useMemo(() => normalizeKoreanMarkdownEmphasis(streamingParts.prefix), [streamingParts.prefix]);
+  const tailText = useMemo(() => normalizeKoreanMarkdownEmphasis(streamingParts.liveTail), [streamingParts.liveTail]);
+
+  return (
     <div className={`markdown-response ${streaming ? "streaming-text" : ""} ${settling ? "streaming-text-settling" : ""} ${artifact ? "artifact-markdown-content" : ""}`}>
-      {prefixText && <ReactMarkdown skipHtml remarkPlugins={remarkPlugins} components={components} urlTransform={defaultUrlTransform}>{prefixText}</ReactMarkdown>}
+      {prefixText && <MemoizedMarkdownChunk text={prefixText} sources={sources} citations={citations} leadingEdge={false} />}
       {pendingKind
         ? <StreamingBlockPending kind={pendingKind} />
-        : tailText && <ReactMarkdown skipHtml remarkPlugins={tailRemarkPlugins} components={components} urlTransform={defaultUrlTransform}>{tailText}</ReactMarkdown>}
+        : tailText && <MemoizedMarkdownChunk text={tailText} sources={sources} citations={citations} leadingEdge />}
     </div>
   );
 }
@@ -1365,8 +1386,8 @@ export function AssistantTurn({
   const userMessages = turnSet.messages.filter((message) => message.role === "user");
   const assistantMessages = turnSet.messages.filter((message) => message.role === "assistant");
   const finalMessage = assistantMessages.at(-1) ?? null;
-  const sources = finalMessage?.metadata?.sources ?? [];
-  const citations = finalMessage?.metadata?.citations ?? [];
+  const sources = finalMessage?.metadata?.sources ?? emptySources;
+  const citations = finalMessage?.metadata?.citations ?? emptyCitations;
   const searches = finalMessage?.metadata?.searchInvocations ?? [];
   const artifacts = snapshot?.artifacts ?? turnSet.artifacts;
   const assistantText = finalMessage?.text || snapshot?.assistantDraft?.text || "";
