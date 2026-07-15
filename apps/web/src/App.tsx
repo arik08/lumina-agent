@@ -813,10 +813,9 @@ interface ComposerPickerOption {
   triggerLabel?: string;
 }
 
-const defaultArtifactOutputTokens: number | null = null;
+const defaultArtifactOutputTokens = 10_000;
 
 const artifactLengthSteps = [
-  { value: null, label: "자동", warning: null },
   { value: 8_000, label: "8k", warning: null },
   { value: 10_000, label: "10k", warning: null },
   { value: 12_000, label: "12k", warning: null },
@@ -844,7 +843,7 @@ function ArtifactLengthSlider({
   const popoverId = useId();
   const selectedIndex = Math.max(
     0,
-    artifactLengthSteps.findIndex((option) => option.value === value),
+    artifactLengthSteps.findIndex((option) => option.value === (value ?? defaultArtifactOutputTokens)),
   );
   const selected = artifactLengthSteps[selectedIndex];
   const selectStep = (index: number) => {
@@ -856,12 +855,10 @@ function ArtifactLengthSlider({
     ? "danger"
     : selected.warning
       ? "warning"
-      : selected.value === null || selected.value <= 10_000
+      : selected.value <= 10_000
         ? "muted"
         : "normal";
-  const ariaValueText = selected.value === null
-    ? "자동, 요청 내용에 맞춰 생성 파일의 분량을 결정"
-    : `${selected.label}${selected.warning ? `, ${selected.warning}` : ""}, 채팅 답변이 아닌 생성 파일의 목표 분량`;
+  const ariaValueText = `${selected.label}${selected.warning ? `, ${selected.warning}` : ""}, 채팅 답변이 아닌 생성 파일의 목표 분량`;
 
   useEffect(() => {
     if (!open) return;
