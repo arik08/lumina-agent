@@ -162,6 +162,8 @@ $BackendOutputLog = Join-Path $LogRoot "backend$RuntimeFileSuffix.out.log"
 $BackendErrorLog = Join-Path $LogRoot "backend$RuntimeFileSuffix.err.log"
 $FrontendOutputLog = Join-Path $LogRoot "frontend$RuntimeFileSuffix.out.log"
 $FrontendErrorLog = Join-Path $LogRoot "frontend$RuntimeFileSuffix.err.log"
+$PreparationOutputLog = Join-Path $LogRoot "preflight$RuntimeFileSuffix.out.log"
+$PreparationErrorLog = Join-Path $LogRoot "preflight$RuntimeFileSuffix.err.log"
 $LauncherEventLogPath = Join-Path $LogRoot "launcher-events$RuntimeFileSuffix.jsonl"
 $StartupStatePath = Join-Path $LogRoot "$runtimeBaseName$RuntimeFileSuffix.state.json"
 $SupervisorPidPath = Join-Path $LogRoot "$runtimeBaseName$RuntimeFileSuffix.pid"
@@ -175,6 +177,8 @@ $script:ManagedProcesses = @()
 $script:BackendActivityLineCount = 0
 $script:LauncherPortLocks = @()
 $script:LauncherLockConflictPort = 0
+$script:StartupProgressStep = 0
+$script:StartupProgressVisible = $false
 $LauncherAlreadyRunningExitCode = 76
 $DatabaseOwnershipExitCode = 77
 $UserRequestedExitCode = 78
@@ -211,6 +215,46 @@ function Write-LuminaBanner {
     $sparkle = [char]0x2726
     Write-Host "$sparkle Language Understanding Meets Intelligent Navigation & Automation. $sparkle" -ForegroundColor Blue
     Write-Host ""
+}
+
+function Get-LuminaStartupProgressText {
+    param(
+        [Parameter(Mandatory = $true)][int]$Step,
+        [int]$Width = 10
+    )
+
+    $filledCount = (($Step - 1) % $Width) + 1
+    $filled = ([string][char]0x25A0) * $filledCount
+    $empty = ([string][char]0x25A1) * ($Width - $filledCount)
+    return "$filled$empty"
+}
+
+function Write-LuminaStartupProgress {
+    $script:StartupProgressStep++
+    $progressText = Get-LuminaStartupProgressText -Step $script:StartupProgressStep
+    Write-Host -NoNewline "`r[Lumina] Starting $progressText"
+    $script:StartupProgressVisible = $true
+}
+
+function Reset-LuminaStartupProgress {
+    $script:StartupProgressStep = 0
+    Write-LuminaStartupProgress
+}
+
+function Clear-LuminaStartupProgress {
+    if (-not $script:StartupProgressVisible) {
+        return
+    }
+    Write-Host -NoNewline ("`r" + (" " * 48) + "`r")
+    $script:StartupProgressVisible = $false
+}
+
+function Write-LuminaProblem {
+    param([Parameter(Mandatory = $true)][string]$Message)
+
+    Clear-LuminaStartupProgress
+    Write-Host "[Lumina] Problem: $Message" -ForegroundColor Red
+    Write-Host "[Lumina] Logs: $LogRoot" -ForegroundColor Yellow
 }
 
 function ConvertTo-LuminaStateText {
@@ -366,11 +410,40 @@ function Write-LuminaMonitoringEvent {
 function Invoke-Checked {
     param(
         [Parameter(Mandatory = $true)][string]$Command,
-        [Parameter(Mandatory = $true)][string[]]$Arguments
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [string]$OutputLog,
+        [string]$ErrorLog
     )
-    & $Command @Arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "Command failed with exit code ${LASTEXITCODE}: $Command $($Arguments -join ' ')"
+
+    if (-not $OutputLog -or -not $ErrorLog) {
+        & $Command @Arguments
+        if ($LASTEXITCODE -ne 0) {
+            throw "Command failed with exit code ${LASTEXITCODE}: $Command $($Arguments -join ' ')"
+        }
+        return
+    }
+
+    $process = Start-Process `
+        -FilePath $Command `
+        -ArgumentList $Arguments `
+        -WorkingDirectory $RepositoryRoot `
+        -WindowStyle Hidden `
+        -RedirectStandardOutput $OutputLog `
+        -RedirectStandardError $ErrorLog `
+        -PassThru
+    [void]$process.Handle
+    while (-not $process.HasExited) {
+        Write-LuminaStartupProgress
+        Start-Sleep -Milliseconds 250
+        $process.Refresh()
+    }
+    $process.WaitForExit()
+    $exitCode = $process.ExitCode
+    if ($exitCode -ne 0) {
+        throw (
+            "Command failed with exit code ${exitCode}: $Command " +
+            "$($Arguments -join ' '). See $ErrorLog"
+        )
     }
 }
 
@@ -803,12 +876,11 @@ function Get-LuminaControlKey {
 
 function Confirm-LuminaRuntimePrepared {
     if ($Development) {
-        Write-Host "[Lumina] Applying development database migrations once..."
         Invoke-Checked -Command "uv" -Arguments @(
             "run", "--project", $ServerRoot,
             "alembic", "-c", (Join-Path $ServerRoot "alembic.ini"),
             "upgrade", "head"
-        )
+        ) -OutputLog $PreparationOutputLog -ErrorLog $PreparationErrorLog
         return
     }
 
@@ -819,12 +891,11 @@ function Confirm-LuminaRuntimePrepared {
             "the production launcher."
         )
     }
-    Write-Host "[Lumina] Verifying the production database schema..."
     Invoke-Checked -Command "uv" -Arguments @(
         "run", "--project", $ServerRoot,
         "alembic", "-c", (Join-Path $ServerRoot "alembic.ini"),
         "current", "--check-heads"
-    )
+    ) -OutputLog $PreparationOutputLog -ErrorLog $PreparationErrorLog
 }
 
 function Get-AutomaticRestartDelay {
@@ -878,6 +949,7 @@ function Start-LuminaProcesses {
 function Wait-LuminaReady {
     $deadline = [DateTime]::UtcNow.AddSeconds($StartupTimeoutSeconds)
     while ([DateTime]::UtcNow -lt $deadline) {
+        Write-LuminaStartupProgress
         $controlAction = Get-LuminaControlKey
         if ($controlAction) {
             return $controlAction
@@ -921,6 +993,7 @@ try {
 
     $env:LUMINA_ENVIRONMENT = if ($Development) { "development" } else { "production" }
     Write-LuminaStartupState -Status "starting" -Phase "PREFLIGHT"
+    Reset-LuminaStartupProgress
     if (-not $Development) {
         Confirm-LuminaRuntimePrepared
     }
@@ -932,6 +1005,7 @@ try {
 }
 catch {
     $preflightError = $_.Exception.Message
+    Write-LuminaProblem -Message $preflightError
     $details = Get-LuminaLauncherErrorDetails -Phase "PREFLIGHT" -Message $preflightError
     Write-LuminaStartupState `
         -Status "failed" `
@@ -954,11 +1028,16 @@ try {
         $attemptNumber = $automaticRestartCount + 1
         $currentPhase = "STARTING_PROCESSES"
         try {
+            if ($script:StartupProgressVisible) {
+                Write-LuminaStartupProgress
+            }
+            else {
+                Reset-LuminaStartupProgress
+            }
             Write-LuminaStartupState `
                 -Status "starting" `
                 -Phase $currentPhase `
                 -Attempt $attemptNumber
-            Write-Host "[Lumina] Hard reset: $resetReason"
             Stop-ManagedProcesses -PreserveFrontend:$preserveFrontend
             Start-LuminaProcesses -PreserveFrontend:$preserveFrontend
             $currentPhase = "WAITING_FOR_READINESS"
@@ -991,6 +1070,7 @@ try {
                 -Status "ready" `
                 -Phase "READY" `
                 -Attempt $attemptNumber
+            Clear-LuminaStartupProgress
             Write-Host ""
 
             if ($Development) {
@@ -1005,7 +1085,6 @@ try {
                 Write-Host "[Lumina] Service: http://127.0.0.1:$BackendPort"
             }
             Write-Host "[Lumina] Press R to hard reset. Press Q to stop Lumina."
-            Write-Host "[Lumina] Logs: $LogRoot"
 
             $healthFailures = 0
             $nextHealthCheck = [DateTime]::UtcNow.AddSeconds($HealthCheckIntervalSeconds)
@@ -1067,6 +1146,8 @@ try {
             break
         }
         if ($manualResetRequested) {
+            Clear-LuminaStartupProgress
+            Write-Host "[Lumina] Restarting..."
             Write-LuminaMonitoringEvent -Event "manual_restart" -Attempt $attemptNumber
             Write-LuminaStartupState `
                 -Status "restarting" `
@@ -1091,8 +1172,10 @@ try {
                 -HelpAction $details.HelpAction `
                 -LastError $databaseOwnershipError
             Write-Host "[Lumina] $databaseOwnershipError" -ForegroundColor Red
+            Write-Host "[Lumina] Logs: $LogRoot" -ForegroundColor Yellow
             exit $DatabaseOwnershipExitCode
         }
+        Write-LuminaProblem -Message $resetReason
         $details = Get-LuminaLauncherErrorDetails -Phase $currentPhase -Message $resetReason
         $automaticRestartCount++
         Write-LuminaMonitoringEvent `
@@ -1114,6 +1197,7 @@ try {
     }
 }
 finally {
+    Clear-LuminaStartupProgress
     Stop-ManagedProcesses
     Remove-SupervisorPid
     Exit-LuminaPortLocks

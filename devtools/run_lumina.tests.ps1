@@ -498,7 +498,7 @@ $startupExitStopsBoth = $source -match
 $runningExitStopsBoth = $source -match
     '(?s)if \(\$controlAction -eq "exit"\) \{\s*\$preserveFrontend = \$false\s*\$userExitRequested = \$true'
 $exitUsesFinalCleanup = $source -match
-    '(?s)finally \{\s*Stop-ManagedProcesses\s*Remove-SupervisorPid\s*Exit-LuminaPortLocks.*?if \(\$userExitRequested\) \{\s*exit \$UserRequestedExitCode'
+    '(?s)finally \{\s*(?:Clear-LuminaStartupProgress\s*)?Stop-ManagedProcesses\s*Remove-SupervisorPid\s*Exit-LuminaPortLocks.*?if \(\$userExitRequested\) \{\s*exit \$UserRequestedExitCode'
 if (-not $startupExitStopsBoth -or -not $runningExitStopsBoth -or -not $exitUsesFinalCleanup) {
     throw "All user-requested shutdown paths must clean up every managed process before exiting."
 }
@@ -630,6 +630,22 @@ $prepareRuntimeFunction = $ast.Find(
     },
     $true
 )
+$progressTextFunction = $ast.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq "Get-LuminaStartupProgressText"
+    },
+    $true
+)
+$invokeCheckedFunction = $ast.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq "Invoke-Checked"
+    },
+    $true
+)
 $restartDelayFunction = $ast.Find(
     {
         param($node)
@@ -670,7 +686,12 @@ $monitoringEventFunction = $ast.Find(
     },
     $true
 )
-if ($null -eq $startProcessesFunction -or $null -eq $prepareRuntimeFunction) {
+if (
+    $null -eq $startProcessesFunction -or
+    $null -eq $prepareRuntimeFunction -or
+    $null -eq $progressTextFunction -or
+    $null -eq $invokeCheckedFunction
+) {
     throw "Launcher preparation and process-start functions must both exist."
 }
 if (
@@ -688,6 +709,52 @@ if (
 . ([scriptblock]::Create($errorDetailsFunction.Extent.Text))
 . ([scriptblock]::Create($startupStateFunction.Extent.Text))
 . ([scriptblock]::Create($monitoringEventFunction.Extent.Text))
+. ([scriptblock]::Create($progressTextFunction.Extent.Text))
+. ([scriptblock]::Create($invokeCheckedFunction.Extent.Text))
+
+$expectedProgress = @(
+    (([string][char]0x25A0) + (([string][char]0x25A1) * 9)),
+    (([string][char]0x25A0) * 10),
+    (([string][char]0x25A0) + (([string][char]0x25A1) * 9))
+)
+$actualProgress = @(
+    (Get-LuminaStartupProgressText -Step 1),
+    (Get-LuminaStartupProgressText -Step 10),
+    (Get-LuminaStartupProgressText -Step 11)
+)
+if (($actualProgress -join '|') -ne ($expectedProgress -join '|')) {
+    throw "Startup progress must fill ten cells and then begin again."
+}
+
+function Write-LuminaStartupProgress {}
+$quietCommandLogRoot = Join-Path $env:TEMP "lumina-quiet-command-$([guid]::NewGuid())"
+try {
+    New-Item -ItemType Directory -Force -Path $quietCommandLogRoot | Out-Null
+    $quietOutputLog = Join-Path $quietCommandLogRoot "fixture.out.log"
+    $quietErrorLog = Join-Path $quietCommandLogRoot "fixture.err.log"
+    Invoke-Checked `
+        -Command "cmd.exe" `
+        -Arguments @("/d", "/c", "exit 0") `
+        -OutputLog $quietOutputLog `
+        -ErrorLog $quietErrorLog
+    $failureMessage = ""
+    try {
+        Invoke-Checked `
+            -Command "cmd.exe" `
+            -Arguments @("/d", "/c", "exit 7") `
+            -OutputLog $quietOutputLog `
+            -ErrorLog $quietErrorLog
+    }
+    catch {
+        $failureMessage = $_.Exception.Message
+    }
+    if ($failureMessage -notmatch 'exit code 7' -or $failureMessage -notmatch 'fixture\.err\.log') {
+        throw "Quiet startup commands must preserve their exit code and error-log path."
+    }
+}
+finally {
+    Remove-Item -LiteralPath $quietCommandLogRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
 
 if ($startProcessesFunction.Extent.Text -match 'alembic|npm') {
     throw "Automatic process restart must not run migration or Frontend build commands."
@@ -710,6 +777,15 @@ if (
     $preparationSource -notmatch 'upgrade.*head'
 ) {
     throw "Runtime preparation must migrate development once and only validate production assets/schema."
+}
+if (
+    $preparationSource -notmatch 'PreparationOutputLog' -or
+    $preparationSource -notmatch 'PreparationErrorLog' -or
+    $source -match 'Applying development database migrations once' -or
+    $source -match '\[Lumina\] Hard reset:' -or
+    $source -match '\[Lumina\] Logs: \$LogRoot\s*\r?\n\s*\$healthFailures'
+) {
+    throw "Normal startup must stay quiet while failures retain log guidance."
 }
 $preparationCall = $source.LastIndexOf('Confirm-LuminaRuntimePrepared')
 $supervisorLoop = $source.IndexOf('while ($true)', $preparationCall)
