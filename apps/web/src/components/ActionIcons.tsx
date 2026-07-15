@@ -1,10 +1,11 @@
 import { createLucideIcon, Share2, type LucideProps } from "lucide-react";
 
 export const BranchFromHereIcon = createLucideIcon("BranchFromHere", [
-  ["path", { d: "M12 6h5a2 2 0 0 1 2 2v7", key: "upper-branch" }],
-  ["path", { d: "m15 9-3-3 3-3", key: "upper-arrow" }],
-  ["path", { d: "M12 18H7a2 2 0 0 1-2-2V9", key: "lower-branch" }],
-  ["path", { d: "m9 15 3 3-3 3", key: "lower-arrow" }],
+  ["path", { d: "M4 12h8", key: "branch-origin" }],
+  ["path", { d: "M12 12 22 2", key: "upper-branch" }],
+  ["path", { d: "M16 2h6v6", key: "upper-arrow" }],
+  ["path", { d: "m12 12 10 10", key: "lower-branch" }],
+  ["path", { d: "M16 22h6v-6", key: "lower-arrow" }],
 ]);
 
 export function ShareActionIcon({ style, ...props }: LucideProps) {

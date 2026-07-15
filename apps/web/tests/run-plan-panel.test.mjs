@@ -11,7 +11,7 @@ test("run plan opens when a plan appears and closes when the run finishes", () =
 
 test("the whole plan surface toggles without pause or cancel controls", () => {
   const panelStart = appSource.indexOf('className="progress-panel"');
-  const panelEnd = appSource.indexOf("</div>\n            )}", panelStart);
+  const panelEnd = appSource.indexOf('<div className="composer">', panelStart);
   const panelSource = appSource.slice(panelStart, panelEnd);
 
   assert.ok(panelStart >= 0 && panelEnd > panelStart);

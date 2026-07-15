@@ -38,18 +38,20 @@ test("an invalid run start falls back to the first persisted stage timestamp", (
   assert.equal(durations.get("one"), Date.parse(stages[1].createdAt) - Date.parse(stages[0].createdAt));
 });
 
-test("group wall time is shown once while expanded tools keep their own execution time", async () => {
+test("group heading shows only merged tool time while model time has its own row", async () => {
   const app = await read("../src/components/ConversationTurn.tsx");
 
-  assert.match(app, /tool-call-group-duration" title="단계 전체 소요 시간"/);
-  assert.doesNotMatch(app, /displayDurationMs=\{/);
+  assert.match(app, /const toolGroupDurationMs = stageTiming/);
+  assert.match(app, /tool-call-group-duration" title="도구 실행 시간"/);
+  assert.match(app, /formatDuration\(toolGroupDurationMs\)/);
+  assert.doesNotMatch(app, /formatDuration\(stageDurationMs \?\? toolCallGroupDuration/);
 });
 
-test("a stage with one timed child hides the duplicate parent duration", async () => {
+test("a stage hides its parent duration whenever timed child rows already account for it", async () => {
   const app = await read("../src/components/ConversationTurn.tsx");
 
   assert.match(app, /const timedChildCount = toolActivities\.length \+ \(hasModelProcessingRow \? 1 : 0\)/);
-  assert.match(app, /const showStageDuration = timedChildCount !== 1/);
+  assert.match(app, /const showStageDuration = timedChildCount === 0/);
   assert.match(app, /\{showStageDuration && <span className="progress-summary-duration"/);
 });
 
@@ -87,6 +89,17 @@ test("non-tool time is rendered as a model processing row with a clear explanati
   assert.match(app, /모델 판단 · 내부 실행 합계/);
   assert.match(app, /여러 모델 호출과 Skill·계획 처리, 재시도 시간을 합산한 값\(외부 도구 실행 제외\)/);
   assert.doesNotMatch(app, /Provider 요청 전송 · 응답 수신/);
+});
+
+test("cancelled runs stop active Thinking and tool rows with explicit feedback", async () => {
+  const app = await read("../src/components/ConversationTurn.tsx");
+
+  assert.match(app, /running \? "Thinking\.\.\." : "Thinking"/);
+  assert.match(app, /state === "stopped" \? "사용자 요청으로 모델 처리를 중지했습니다\."/);
+  assert.match(app, /state === "failed" \? "실패" : "중지됨"/);
+  assert.match(app, /const stoppedByRun = executionActive && \(runOutcome === "stopped" \|\| runOutcome === "failed"\)/);
+  assert.match(app, /stoppedByRun \? \(runOutcome === "failed" \? "실패" : "중지됨"\)/);
+  assert.match(app, /요청에 따라 작업을 중지했습니다\./);
 });
 
 test("model processing expands to the actual persisted exchange instead of token totals", async () => {

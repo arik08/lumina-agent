@@ -22,7 +22,6 @@ import {
   FilePenLine,
   FileText,
   FolderSearch,
-  GitBranch,
   Globe2,
   Image as ImageIcon,
   LoaderCircle,
@@ -37,7 +36,7 @@ import {
   X,
 } from "lucide-react";
 import { copyText } from "../clipboard";
-import { isTerminalRunStatus, shouldCollapseRunWorkDetails } from "../run-status";
+import { isTerminalRunStatus, runActivityOutcome, shouldCollapseRunWorkDetails, type RunActivityOutcome } from "../run-status";
 import type { Link, Parent, PhrasingContent, Root, Text } from "mdast";
 import {
   memo,
@@ -345,7 +344,7 @@ export function runStatusLabel(status: RunStatus | null | undefined) {
   if (status === "paused") return "일시 정지";
   if (status === "completed") return "완료";
   if (status === "failed") return "실패";
-  if (status === "cancelled") return "취소됨";
+  if (status === "cancelled") return "중지됨";
   if (status === "limit_reached") return "이전 버전에서 중단됨";
   if (status === "interrupted") return "중단됨";
   return "준비됨";
@@ -474,12 +473,16 @@ function httpStatusExplanation(text: string) {
 function ToolCallRow({
   execution,
   isOpen,
+  runOutcome,
+  terminalAtMs,
   summaryText,
   onToggle,
   onCopy,
 }: {
   execution: ToolExecution;
   isOpen: boolean;
+  runOutcome: RunActivityOutcome;
+  terminalAtMs: number;
   summaryText?: string;
   onToggle: () => void;
   onCopy: (execution: ToolExecution) => void;
@@ -524,7 +527,9 @@ function ToolCallRow({
   }, [isOpen, onToggle]);
   const contentId = `tool-call-${execution.id}`;
   const complete = execution.status === "completed";
-  const running = execution.status === "running" || execution.status === "streaming";
+  const executionActive = execution.status === "queued" || execution.status === "running" || execution.status === "streaming";
+  const stoppedByRun = executionActive && (runOutcome === "stopped" || runOutcome === "failed");
+  const running = executionActive && !stoppedByRun;
   const writeFileActive = execution.toolName === "write_file" && running;
   const [liveNow, setLiveNow] = useState(() => Date.now());
   useEffect(() => {
@@ -534,8 +539,8 @@ function ToolCallRow({
     return () => window.clearInterval(timer);
   }, [execution.startedAt, running]);
   const liveDurationMs = execution.durationMs ?? (
-    running && execution.startedAt
-      ? Math.max(0, liveNow - Date.parse(execution.startedAt))
+    (running || stoppedByRun) && execution.startedAt
+      ? Math.max(0, (stoppedByRun ? terminalAtMs : liveNow) - Date.parse(execution.startedAt))
       : null
   );
   const activeWriteFileName = writeFileName(execution);
@@ -550,13 +555,13 @@ function ToolCallRow({
         : "입력 없음";
     const rawResultText = execution.result
       ? JSON.stringify(execution.result, null, 2)
-      : execution.error || execution.resultSummary.join("\n") || (running ? "실행 중입니다." : "결과 요약 없음");
+      : execution.error || execution.resultSummary.join("\n") || (stoppedByRun ? "Run 중지로 도구 실행이 종료되었습니다." : running ? "실행 중입니다." : "결과 요약 없음");
     const statusExplanation = httpStatusExplanation(rawResultText);
     return {
       requestText,
       resultText: statusExplanation ? `${rawResultText}\n\n${statusExplanation}` : rawResultText,
     };
-  }, [execution.error, execution.input, execution.inputSummary, execution.result, execution.resultSummary, isOpen, running]);
+  }, [execution.error, execution.input, execution.inputSummary, execution.result, execution.resultSummary, isOpen, running, stoppedByRun]);
   return (
     <div className={`tool-call ${isOpen ? "is-open" : ""}`}>
       <button ref={triggerRef} className={`tool-call-trigger ${summaryText ? "has-summary" : ""}`} type="button" aria-expanded={isOpen} aria-controls={contentId} onClick={onToggle}>
@@ -566,14 +571,14 @@ function ToolCallRow({
           <span className="tool-call-label">{execution.label || execution.toolName}</span>
           {running ? (
             <LoaderCircle className="status-icon is-running" size={15} aria-hidden="true" />
-          ) : complete ? null : execution.status === "failed" ? (
+          ) : stoppedByRun || execution.status === "failed" ? (
             <AlertCircle className="status-icon status-warning" size={15} aria-hidden="true" />
-          ) : (
+          ) : complete ? null : (
             <Circle className="status-icon is-waiting" size={15} aria-hidden="true" />
           )}
         </span>
         <span className="tool-call-detail" title={headerDetail ?? undefined}>{headerDetail}</span>
-        <span className={`tool-call-status status-${running ? "running" : complete ? "complete" : "warning"}`}>{toolStatusLabel(execution.status)}</span>
+        <span className={`tool-call-status status-${running ? "running" : complete ? "complete" : "warning"}`}>{stoppedByRun ? (runOutcome === "failed" ? "실패" : "중지됨") : toolStatusLabel(execution.status)}</span>
         <span className="tool-call-duration" title={execution.toolName === "write_file" ? "파일 내용 생성 시작부터 디스크 저장 완료까지의 시간" : "도구 실행 시간"}>{formatDuration(liveDurationMs)}</span>
         {isOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
       </button>
@@ -595,7 +600,7 @@ function ToolCallRow({
             <SyntaxCode value={toolDetailText.requestText} language={execution.input ? "json" : "plaintext"} />
           </section>
           <section className="tool-message-section">
-            <div className="tool-message-heading"><span>도구 결과</span><span className="tool-message-state">{toolStatusLabel(execution.status)} · {formatDuration(execution.durationMs)}</span></div>
+            <div className="tool-message-heading"><span>도구 결과</span><span className="tool-message-state">{stoppedByRun ? (runOutcome === "failed" ? "실패" : "중지됨") : toolStatusLabel(execution.status)} · {formatDuration(liveDurationMs)}</span></div>
             <SyntaxCode value={toolDetailText.resultText} language={execution.result ? "json" : "plaintext"} />
           </section>
           <div className="tool-message-actions">
@@ -614,9 +619,9 @@ function modelExchangeText(value: unknown) {
   return formatModelExchangeValue(value);
 }
 
-function ModelProcessingRow({ durationMs, running, sent, received, model, provider }: {
+function ModelProcessingRow({ durationMs, state, sent, received, model, provider }: {
   durationMs: number;
-  running: boolean;
+  state: RunActivityOutcome;
   sent: ModelExchangeItem[];
   received: ModelExchangeItem[];
   model?: string;
@@ -624,9 +629,11 @@ function ModelProcessingRow({ durationMs, running, sent, received, model, provid
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const contentId = useId();
+  const running = state === "running";
+  const statusLabel = running ? "처리 중" : state === "completed" ? "완료" : state === "failed" ? "실패" : "중지됨";
   const exchangeSections = [
     { title: "Provider로 보냄", items: sent, empty: "이 단계에서 별도로 전달된 도구 결과가 없습니다." },
-    { title: "Provider에서 받음", items: received, empty: running ? "응답을 수신하고 있습니다." : "공개 가능한 응답 내용이 없습니다." },
+    { title: "Provider에서 받음", items: received, empty: running ? "응답을 수신하고 있습니다." : state === "stopped" ? "모델 응답이 완료되기 전에 작업을 중지했습니다." : "공개 가능한 응답 내용이 없습니다." },
   ];
 
   return (
@@ -640,11 +647,12 @@ function ModelProcessingRow({ durationMs, running, sent, received, model, provid
       >
         <Brain className="tool-kind-icon is-model-processing" size={15} aria-hidden="true" />
         <span className="tool-call-label-with-status model-processing-label">
-          <span className="tool-call-label">Thinking...</span>
+          <span className="tool-call-label">{running ? "Thinking..." : "Thinking"}</span>
           {running ? <LoaderCircle className="status-icon is-running" size={15} aria-hidden="true" /> : null}
+          {!running && state !== "completed" ? <AlertCircle className="status-icon status-warning" size={15} aria-hidden="true" /> : null}
         </span>
-        <span className="tool-call-detail">모델 판단 · 내부 실행 합계</span>
-        <span className={`tool-call-status status-${running ? "running" : "complete"}`}>{running ? "처리 중" : "완료"}</span>
+        <span className="tool-call-detail">{state === "stopped" ? "사용자 요청으로 모델 처리를 중지했습니다." : "모델 판단 · 내부 실행 합계"}</span>
+        <span className={`tool-call-status status-${running ? "running" : state === "completed" ? "complete" : "warning"}`}>{statusLabel}</span>
         <span className="tool-call-duration" title="여러 모델 호출과 Skill·계획 처리, 재시도 시간을 합산한 값(외부 도구 실행 제외)">{formatDuration(durationMs)}</span>
         {isOpen ? <ChevronDown size={15} aria-hidden="true" /> : <ChevronRight size={15} aria-hidden="true" />}
       </button>
@@ -745,6 +753,7 @@ function RunActivityTimeline({
   timelineStartedAtMs,
   timelineFinishedAtMs,
   timelineRunning,
+  runOutcome,
   keepLatestToolGroupOpen,
   userRequest,
   assistantResponse,
@@ -759,6 +768,7 @@ function RunActivityTimeline({
   timelineStartedAtMs: number;
   timelineFinishedAtMs: number;
   timelineRunning: boolean;
+  runOutcome: RunActivityOutcome;
   keepLatestToolGroupOpen: boolean;
   userRequest: string;
   assistantResponse: string;
@@ -868,8 +878,16 @@ function RunActivityTimeline({
           : null;
         const hasModelProcessingRow = modelProcessingDurationMs !== null && modelProcessingDurationMs >= 10;
         const timedChildCount = toolActivities.length + (hasModelProcessingRow ? 1 : 0);
-        const showStageDuration = timedChildCount !== 1;
+        const showStageDuration = timedChildCount === 0;
         const modelProcessingRunning = timelineRunning && summary?.id === latestProgressSummaryId;
+        const modelProcessingState = modelProcessingRunning
+          ? "running"
+          : summary?.id === latestProgressSummaryId
+            ? runOutcome
+            : "completed";
+        const toolGroupDurationMs = stageTiming && toolActivities.some((activity) => activity.execution.startedAt)
+          ? toolActiveDurationMs
+          : toolCallGroupDuration(toolActivities);
         const toolGroupId = summary ? `progress-tools-${summary.id}` : undefined;
         const toggleTools = (event: ReactMouseEvent<HTMLButtonElement>) => {
           preserveConversationScrollPosition(event.currentTarget, () => {
@@ -904,7 +922,7 @@ function RunActivityTimeline({
                 <div className="tool-call-group-summary">
                   {toolCallIcon(toolActivities[0].execution.toolName, 14)}
                   <span>{toolCallGroupSummary(toolActivities)}</span>
-                  <span className="tool-call-group-duration" title="단계 전체 소요 시간">{formatDuration(stageDurationMs ?? toolCallGroupDuration(toolActivities))}</span>
+                  <span className="tool-call-group-duration" title="도구 실행 시간">{formatDuration(toolGroupDurationMs)}</span>
                   {toolsOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
                 </div>
               </button>
@@ -918,6 +936,8 @@ function RunActivityTimeline({
                     execution={activity.execution}
                     isOpen={openCalls.has(activity.execution.id)}
                     key={activity.id}
+                    runOutcome={runOutcome}
+                    terminalAtMs={timelineFinishedAtMs}
                     onCopy={onCopy}
                     onToggle={() => onToggleCall(activity.execution.id)}
                   />
@@ -925,7 +945,7 @@ function RunActivityTimeline({
                 {hasModelProcessingRow && (
                   <ModelProcessingRow
                     durationMs={modelProcessingDurationMs}
-                    running={modelProcessingRunning}
+                    state={modelProcessingState}
                     sent={sent}
                     received={received}
                     model={model}
@@ -1256,7 +1276,7 @@ function StreamingBlockPending({ kind }: { kind: Exclude<StreamingPendingKind, n
   const label = kind === "mermaid" ? "다이어그램 작성 중" : kind === "chart" ? "인터랙티브 차트 작성 중" : "표 작성 중";
   return (
     <div className={`stream-block-pending is-${kind}`} role="status">
-      {kind === "mermaid" ? <GitBranch size={18} /> : <Table2 size={18} />}
+      {kind === "mermaid" ? <BranchFromHereIcon size={18} /> : <Table2 size={18} />}
       <span>{label}</span>
       <LoaderCircle className="is-running" size={15} />
     </div>
@@ -1419,9 +1439,10 @@ export function AssistantTurn({
   const pendingCommands = snapshot?.pendingCommands ?? [];
   const status = snapshot?.status ?? (finalMessage ? "completed" : null);
   const terminal = isTerminalRunStatus(status);
+  const activityOutcome = runActivityOutcome(status);
   const collapseWorkDetails = shouldCollapseRunWorkDetails(status);
   const terminalReason = status && status !== "completed"
-    ? snapshot?.errorMessage?.trim() || (status === "cancelled" ? "요청에 따라 작업을 취소했습니다." : "작업을 완료하지 못했습니다. 다시 실행해 주세요.")
+    ? snapshot?.errorMessage?.trim() || (status === "cancelled" ? "요청에 따라 작업을 중지했습니다." : "작업을 완료하지 못했습니다. 다시 실행해 주세요.")
     : "";
   const copyableAnswerText = sanitizedAssistantText || terminalReason;
   const streaming = !finalMessage && Boolean(snapshot?.assistantDraft);
@@ -1671,7 +1692,7 @@ export function AssistantTurn({
             aria-expanded={workDetailsOpen}
             onClick={(event) => preserveConversationScrollPosition(event.currentTarget, () => setWorkDetailsOpen((open) => !open))}
           >
-            <span>{workDuration} 동안 작업</span>
+            <span>{workDuration} 동안 작업{terminal && status !== "completed" ? ` · ${runStatusLabel(status)}` : ""}</span>
             <ChevronRight size={15} aria-hidden="true" />
           </button>
           {workDetailsOpen && (
@@ -1681,6 +1702,7 @@ export function AssistantTurn({
                 timelineStartedAtMs={workStartedAtMs}
                 timelineFinishedAtMs={workFinishedAtMs}
                 timelineRunning={!terminal}
+                runOutcome={activityOutcome}
                 keepLatestToolGroupOpen={status === "model_streaming"}
                 userRequest={userMessages.at(-1)?.text ?? ""}
                 assistantResponse={sanitizedAssistantText}

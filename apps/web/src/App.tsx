@@ -64,13 +64,13 @@ import {
   ThumbsUp,
   Trash2,
   Undo2,
-  GitBranch,
   Image as ImageIcon,
   Info,
   Wrench,
   X,
 } from "lucide-react";
 import { createClientId } from "./client-id";
+import { BranchFromHereIcon } from "./components/ActionIcons";
 import { copyText } from "./clipboard";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type RefObject, type UIEvent as ReactUIEvent } from "react";
 import { createPortal } from "react-dom";
@@ -642,7 +642,7 @@ const starterPrompts = [
   { category: "영상 분석", title: "유튜브 내용 분석", prompt: "[YouTube 링크]에서 설명하는 내용을 정리해줘", icon: Eye },
   { category: "데이터 분석", title: "표 데이터 보고서", prompt: "아래 숫자 데이터를 분석해서 주요 추세, 이상치, 원인 가설, 의사결정 포인트를 정리하고 HTML 보고서로 작성해줘.\n\n[표 데이터 붙여넣기]", icon: Table2 },
   { category: "엑셀 모델", title: "투자수익성 모델", prompt: "[포스코의 인도 일관제철소] 투자와 관련해 투자수익성 검토 모델을 엑셀로 만들어줘.", icon: Coins },
-  { category: "Workflow", title: "업무 흐름 다이어그램", prompt: "[포스코 투자관리그룹]의 주요 업무를 조사하고, workflow diagram을 포함하여 전반적인 업무 흐름과 세부 사항을 정리해줘.", icon: GitBranch },
+  { category: "Workflow", title: "업무 흐름 다이어그램", prompt: "[포스코 투자관리그룹]의 주요 업무를 조사하고, workflow diagram을 포함하여 전반적인 업무 흐름과 세부 사항을 정리해줘.", icon: BranchFromHereIcon },
   { category: "프로그램", title: "AI 지렁이 게임", prompt: "최신 최적화 알고리즘이 반영된 인공지능 지렁이 게임을 HTML로 만들어줘. 먹이는 5개, 이동속도는 정상 수준의 5배, 죽으면 1초 뒤 자동 재시작되게 해줘, 벽은 통과할 수 없어.", icon: Code2 },
   { category: "3D 모델", title: "태양계 시뮬레이터", prompt: "태양계 행성 궤도 3D 시뮬레이터를 HTML로 만들어줘. 행성들이 태양 주변을 공전하고, 속도 조절·일시정지·행성 이름 표시 기능을 포함해줘.", icon: Brain },
 ] as const;
@@ -2250,7 +2250,7 @@ function App() {
     if (!activeRun) return;
     const succeeded = await workspace.runAction(activeRun.runId, action, targetId);
     if (!succeeded) return;
-    showToast(action === "pause" ? "Run을 일시 정지했습니다." : action === "resume" ? "Run을 재개했습니다." : action === "cancel" ? "Run을 취소했습니다." : action === "approve" ? "위험 작업을 승인했습니다." : action === "reject" ? "위험 작업을 거부했습니다." : "실패한 단계를 다시 실행합니다.");
+    showToast(action === "pause" ? "Run을 일시 정지했습니다." : action === "resume" ? "Run을 재개했습니다." : action === "cancel" ? "작업을 중지했습니다." : action === "approve" ? "위험 작업을 승인했습니다." : action === "reject" ? "위험 작업을 거부했습니다." : "실패한 단계를 다시 실행합니다.");
   };
 
   const controlPendingCommand = async (action: PendingCommandAction, commandId: string) => {

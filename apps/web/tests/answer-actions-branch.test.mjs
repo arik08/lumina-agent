@@ -20,12 +20,20 @@ test("answer actions place usage first and branch immediately before share", () 
   assert.match(actions.slice(branchIndex, shareIndex), /BranchFromHereIcon size=\{16\}/);
 });
 
-test("branch icon uses Codex-style arrows and every share action uses the rotated shared icon", () => {
+test("branch icon uses the attached split-arrow shape and every share action uses the rotated shared icon", () => {
   assert.match(actionIconsSource, /createLucideIcon\("BranchFromHere"/);
+  assert.match(actionIconsSource, /d: "M4 12h8"/);
+  assert.match(actionIconsSource, /d: "M12 12 22 2"/);
+  assert.match(actionIconsSource, /d: "M16 2h6v6"/);
+  assert.match(actionIconsSource, /d: "m12 12 10 10"/);
+  assert.match(actionIconsSource, /d: "M16 22h6v-6"/);
   assert.doesNotMatch(actionIconsSource, /\["circle"/);
   assert.match(actionIconsSource, /transform: "rotate\(90deg\)"/);
   assert.match(turnSource, /aria-label="답변 공유"[\s\S]*?<ShareActionIcon size=\{16\}/);
   assert.match(appSource, /aria-label="Artifact 공유 링크 복사"[\s\S]*?<ShareActionIcon size=\{17\}/);
+  assert.match(turnSource, /kind === "mermaid" \? <BranchFromHereIcon size=\{18\}/);
+  assert.match(appSource, /title: "업무 흐름 다이어그램"[\s\S]*?icon: BranchFromHereIcon/);
+  assert.doesNotMatch(`${turnSource}\n${appSource}`, /\bGitBranch\b/);
   assert.doesNotMatch(`${turnSource}\n${appSource}`, /<Share2\b/);
 });
 

@@ -29,3 +29,12 @@ export function isTerminalRunEvent(event: RunEvent): event is TerminalRunEvent {
 export function shouldCollapseRunWorkDetails(status: RunStatus | null | undefined): boolean {
   return status === "completed";
 }
+
+export type RunActivityOutcome = "running" | "completed" | "stopped" | "failed";
+
+export function runActivityOutcome(status: RunStatus | null | undefined): RunActivityOutcome {
+  if (status === "completed") return "completed";
+  if (status === "failed") return "failed";
+  if (status === "cancelled" || status === "interrupted" || status === "limit_reached") return "stopped";
+  return "running";
+}

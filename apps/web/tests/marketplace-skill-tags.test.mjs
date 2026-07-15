@@ -116,7 +116,7 @@ test("install toggles update locally without replacing the marketplace list", as
 test("skill draft editor keeps one aligned scroll surface", async () => {
   const styles = await readFile(stylesPath, "utf8");
 
-  assert.match(styles, /\.marketplace-package-detail \.marketplace-file-browser \.skill-file-editor \{[^}]*height: 520px;[^}]*min-height: 0;[^}]*overflow: hidden;[^}]*padding: 0;[^}]*font-family: var\(--font-code\);[^}]*font-size: 12\.5px;/);
+  assert.match(styles, /\.marketplace-package-detail \.marketplace-file-browser \.skill-file-editor \{[^}]*height: 100%;[^}]*min-height: 0;[^}]*overflow: hidden;[^}]*padding: 0;[^}]*font-family: var\(--font-code\);[^}]*font-size: 12\.5px;/);
   assert.match(styles, /\.marketplace-file-browser \.skill-file-editor > :is\(pre, textarea\) \{ padding: 13px 15px; \}/);
   assert.match(styles, /\.marketplace-package-detail\.is-editing \.skill-file-content \{ overflow: hidden; \}/);
   assert.match(styles, /\.syntax-editor > pre \{[^}]*overflow: hidden;[^}]*pointer-events: none;/);
@@ -156,7 +156,8 @@ test("trashed Skills explain 30-day retention and can be restored", async () => 
   ]);
 
   assert.match(view, /삭제한 Skill은 30일 동안 보관되며 그 전에 복원할 수 있습니다\./);
-  assert.match(view, /<Info size=\{12\} aria-hidden="true" \/>/);
+  assert.match(view, /data-tooltip="삭제한 Skill은 30일 동안 보관되며 그 전에 복원할 수 있습니다\."/);
+  assert.doesNotMatch(view, /<Info size=\{12\} aria-hidden="true" \/>/);
   assert.match(view, /api\.extensions\.listTrash\(\)/);
   assert.match(view, /api\.extensions\.restore\(selected\.id\)/);
   assert.match(view, / 복원<\/button>/);
