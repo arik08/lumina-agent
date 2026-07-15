@@ -181,6 +181,7 @@ _MAX_PROVIDER_RETRY_AFTER_SECONDS = 600.0
 _MAX_CONTINUATION_OVERLAP_CHARS = 4_000
 _MAX_AUTO_CONTINUATIONS = 4
 _MAX_EMPTY_RESPONSE_RETRIES = 1
+_MAX_USER_INPUT_QUESTIONS = 10
 _ARTIFACT_TARGET_FLOOR_RATIO = 0.8
 _ARTIFACT_TARGET_CEILING_RATIO = 1.05
 _ARTIFACT_FIRST_PASS_PREFERRED_FLOOR_RATIO = 0.9
@@ -1764,8 +1765,13 @@ class LocalRunExecutor:
             if not isinstance(arguments, dict):
                 raise ValueError("arguments must be an object")
             raw_questions = arguments.get("questions")
-            if not isinstance(raw_questions, list) or not 1 <= len(raw_questions) <= 4:
-                raise ValueError("questions must contain 1 to 4 items")
+            if (
+                not isinstance(raw_questions, list)
+                or not 1 <= len(raw_questions) <= _MAX_USER_INPUT_QUESTIONS
+            ):
+                raise ValueError(
+                    f"questions must contain 1 to {_MAX_USER_INPUT_QUESTIONS} items"
+                )
             questions: list[dict[str, Any]] = []
             question_ids: set[str] = set()
             for raw_question in raw_questions:
@@ -6345,7 +6351,7 @@ _REQUEST_USER_INPUT_TOOL_SCHEMA = {
                 "questions": {
                     "type": "array",
                     "minItems": 1,
-                    "maxItems": 4,
+                    "maxItems": _MAX_USER_INPUT_QUESTIONS,
                     "items": {
                         "type": "object",
                         "properties": {

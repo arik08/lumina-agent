@@ -498,6 +498,7 @@ Hermes의 slash command UX는 참고하되 Lumina에서는 Skill과 MCP의 명�
 @분기자료 지난 분기 자료 전체를 참고해줘
 @src/main.tsx 이 컴포넌트의 문제를 찾아줘
 $web-research 최신 자료를 조사해줘
+$ask-me 이 조사 요청에서 꼭 정해야 할 방향만 먼저 물어봐
 $internal-search 사내 규정을 찾아줘
 ```
 
