@@ -387,7 +387,28 @@ export function useLuminaWorkspace() {
       } else if (event.type === "approval_resolved") {
         nextSnapshot.pendingApprovals = nextSnapshot.pendingApprovals.filter((item) => item.id !== event.payload.approval.id);
       } else if (event.type === "input_requested" || event.type === "input_submitted") {
-        nextSnapshot.inputRequests = upsertById(nextSnapshot.inputRequests ?? [], event.payload.request);
+        const request = event.payload.request;
+        nextSnapshot.inputRequests = upsertById(nextSnapshot.inputRequests ?? [], request);
+        const existingActivity = nextSnapshot.activities.findIndex(
+          (activity) => activity.type === "input_request" && activity.request.id === request.id,
+        );
+        if (existingActivity >= 0) {
+          nextSnapshot.activities = nextSnapshot.activities.map((activity, index) =>
+            index === existingActivity && activity.type === "input_request"
+              ? { ...activity, request }
+              : activity,
+          );
+        } else {
+          nextSnapshot.activities = [
+            ...nextSnapshot.activities,
+            {
+              id: `input:${request.id}`,
+              type: "input_request",
+              sequence: event.sequence,
+              request,
+            },
+          ];
+        }
       } else if (event.type === "artifact_created") {
         nextSnapshot.artifacts = upsertById(nextSnapshot.artifacts, event.payload.artifact);
         nextSnapshot.artifactProgress = null;
