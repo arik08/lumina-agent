@@ -1045,11 +1045,13 @@ try {
                 -Attempt $attemptNumber
             $startupAction = Wait-LuminaReady
             if ($startupAction -eq "exit") {
+                Write-Host "[Lumina] Stop requested. Stopping current processes..."
                 $preserveFrontend = $false
                 $userExitRequested = $true
                 break
             }
             if ($startupAction -eq "restart") {
+                Write-Host "[Lumina] Restart requested. Stopping current processes..."
                 $preserveFrontend = $false
                 $resetReason = "manual request"
                 $manualResetRequested = $true
@@ -1090,12 +1092,14 @@ try {
                 Write-NewBackendActivity
                 $controlAction = Get-LuminaControlKey
                 if ($controlAction -eq "restart") {
+                    Write-Host "[Lumina] Restart requested. Stopping current processes..."
                     $preserveFrontend = $false
                     $resetReason = "manual request"
                     $manualResetRequested = $true
                     break
                 }
                 if ($controlAction -eq "exit") {
+                    Write-Host "[Lumina] Stop requested. Stopping current processes..."
                     $preserveFrontend = $false
                     $userExitRequested = $true
                     break

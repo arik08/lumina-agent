@@ -487,16 +487,16 @@ if (-not $usesNativeTreeKill -or -not $usesFastSupervisorIdentity -or -not $uses
 }
 
 $startupResetRestartsBoth = $source -match
-    '(?s)if \(\$startupAction -eq "restart"\) \{\s*\$preserveFrontend = \$false'
+    '(?s)if \(\$startupAction -eq "restart"\) \{\s*Write-Host "\[Lumina\] Restart requested\..*?"\s*\$preserveFrontend = \$false'
 $runningResetRestartsBoth = $source -match
-    '(?s)if \(\$controlAction -eq "restart"\) \{\s*\$preserveFrontend = \$false\s*\$resetReason = "manual request"'
+    '(?s)if \(\$controlAction -eq "restart"\) \{\s*Write-Host "\[Lumina\] Restart requested\..*?"\s*\$preserveFrontend = \$false\s*\$resetReason = "manual request"'
 if (-not $startupResetRestartsBoth -or -not $runningResetRestartsBoth) {
     throw "Both startup and running manual reset paths must restart Frontend and Backend."
 }
 $startupExitStopsBoth = $source -match
-    '(?s)if \(\$startupAction -eq "exit"\) \{\s*\$preserveFrontend = \$false\s*\$userExitRequested = \$true'
+    '(?s)if \(\$startupAction -eq "exit"\) \{\s*Write-Host "\[Lumina\] Stop requested\..*?"\s*\$preserveFrontend = \$false\s*\$userExitRequested = \$true'
 $runningExitStopsBoth = $source -match
-    '(?s)if \(\$controlAction -eq "exit"\) \{\s*\$preserveFrontend = \$false\s*\$userExitRequested = \$true'
+    '(?s)if \(\$controlAction -eq "exit"\) \{\s*Write-Host "\[Lumina\] Stop requested\..*?"\s*\$preserveFrontend = \$false\s*\$userExitRequested = \$true'
 $exitUsesFinalCleanup = $source -match
     '(?s)finally \{\s*(?:Clear-LuminaStartupProgress\s*)?Stop-ManagedProcesses\s*Remove-SupervisorPid\s*Exit-LuminaPortLocks.*?if \(\$userExitRequested\) \{\s*exit \$UserRequestedExitCode'
 if (-not $startupExitStopsBoth -or -not $runningExitStopsBoth -or -not $exitUsesFinalCleanup) {
