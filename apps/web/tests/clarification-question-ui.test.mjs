@@ -42,6 +42,10 @@ test("awaiting clarification is shown as Q&A and freezes the model-work clock", 
   assert.match(turnSource, /확인 질문 · 사용자 답변 대기/);
   assert.match(turnSource, /awaitingInput && Number\.isFinite\(inputWaitStartedAtMs\)/);
   assert.match(turnSource, /timelineRunning=\{!terminal && !awaitingInput\}/);
+  assert.match(
+    workspaceSource,
+    /event\.type === "input_requested"[\s\S]*type: "input_request"[\s\S]*sequence: event\.sequence/,
+  );
 });
 
 test("clarification mode is an account setting available in settings and the question card", () => {
