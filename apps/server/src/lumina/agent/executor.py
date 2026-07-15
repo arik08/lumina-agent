@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from sqlalchemy import func, select
 from sqlalchemy.engine import make_url
@@ -164,11 +165,11 @@ _ARTIFACT_FIRST_PASS_PREFERRED_FLOOR_RATIO = 0.9
 _ARTIFACT_HTML_CHARS_PER_FLOOR_TOKEN = 2
 _MAX_ARTIFACT_LENGTH_RETRIES = 2
 _ARTIFACT_PROGRESS_INTERVAL_SECONDS = 0.1
-_ARTICLE_WEB_SEARCH_LIMIT = 3
-_ARTICLE_WEB_FETCH_LIMIT = 5
-_DEEP_ARTICLE_WEB_SEARCH_LIMIT = 6
-_DEEP_ARTICLE_WEB_FETCH_LIMIT = 10
-_ARTICLE_WEB_RESULT_LIMIT = 6
+_WEB_SEARCH_LIMIT = 3
+_WEB_FETCH_LIMIT = 5
+_DEEP_WEB_SEARCH_LIMIT = 6
+_DEEP_WEB_FETCH_LIMIT = 10
+_WEB_RESULT_LIMIT = 6
 _ARTICLE_RESEARCH_REQUEST = re.compile(
     r"(?:기사|언론|뉴스|보도|\bnews\b|\barticles?\b|press\s+coverage|media\s+coverage)",
     re.IGNORECASE,
@@ -177,6 +178,15 @@ _EXPLICIT_DEEP_WEB_RESEARCH = re.compile(
     r"(?:심층|철저|전수|광범위|종합적|deep\s+research|in[- ]depth|exhaustive|comprehensive)",
     re.IGNORECASE,
 )
+_EXPLICIT_BROAD_WEB_CONTEXT = re.compile(
+    r"(?:비교|교차\s*검증|팩트\s*체크|사실\s*확인|관련\s*(?:기사|보도|자료)|"
+    r"다른\s*(?:기사|보도|출처)|더\s*넓은\s*맥락|broader\s+context|compare|"
+    r"cross[- ]check|fact[- ]check|related\s+(?:coverage|sources?))",
+    re.IGNORECASE,
+)
+_WEB_URL = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+_WEB_QUERY_TOKEN = re.compile(r"[\w가-힣]+", re.UNICODE)
+_TRACKING_QUERY_KEYS = frozenset({"fbclid", "gclid", "mc_cid", "mc_eid"})
 _CONTINUATION_PROMPT = (
     "[Continuation after output limit] Continue exactly where the previous assistant "
     "text stopped. Do not repeat completed text, restart the answer, or summarize it."
@@ -201,22 +211,49 @@ _MEMORY_ENVELOPE_OPEN = "<lumina_memory>"
 _MEMORY_ENVELOPE_CLOSE = "</lumina_memory>"
 
 
-def _article_web_research_budget(user_message: str) -> tuple[int, int] | None:
-    if not _ARTICLE_RESEARCH_REQUEST.search(user_message):
-        return None
+def _web_research_budget(user_message: str) -> tuple[int, int]:
+    urls = tuple(dict.fromkeys(_WEB_URL.findall(user_message)))
+    if urls and not _EXPLICIT_BROAD_WEB_CONTEXT.search(user_message):
+        return (0, min(len(urls), _WEB_FETCH_LIMIT))
     if _EXPLICIT_DEEP_WEB_RESEARCH.search(user_message):
-        return (_DEEP_ARTICLE_WEB_SEARCH_LIMIT, _DEEP_ARTICLE_WEB_FETCH_LIMIT)
-    return (_ARTICLE_WEB_SEARCH_LIMIT, _ARTICLE_WEB_FETCH_LIMIT)
+        return (_DEEP_WEB_SEARCH_LIMIT, _DEEP_WEB_FETCH_LIMIT)
+    return (_WEB_SEARCH_LIMIT, _WEB_FETCH_LIMIT)
 
 
 def _web_call_signature(tool_name: str, arguments: Mapping[str, Any]) -> str:
     if tool_name == "web_search":
-        value = str(arguments.get("query", ""))
-    elif tool_name == "web_fetch":
-        value = str(arguments.get("url", ""))
-    else:
+        tokens = _WEB_QUERY_TOKEN.findall(str(arguments.get("query", "")).casefold())
+        return " ".join(sorted(set(tokens)))
+    if tool_name != "web_fetch":
         return ""
-    return " ".join(value.casefold().split())
+    value = str(arguments.get("url", "")).strip()
+    try:
+        parsed = urlsplit(value)
+        hostname = (parsed.hostname or "").casefold()
+        if not parsed.scheme or not hostname:
+            return " ".join(value.casefold().split())
+        if ":" in hostname and not hostname.startswith("["):
+            hostname = f"[{hostname}]"
+        port = parsed.port
+        netloc = f"{hostname}:{port}" if port else hostname
+        query = [
+            (key, item)
+            for key, item in parse_qsl(parsed.query, keep_blank_values=True)
+            if not key.casefold().startswith("utm_")
+            and key.casefold() not in _TRACKING_QUERY_KEYS
+        ]
+        path = parsed.path.rstrip("/") or "/"
+        return urlunsplit(
+            (
+                parsed.scheme.casefold(),
+                netloc,
+                path,
+                urlencode(sorted(query)),
+                "",
+            )
+        )
+    except ValueError:
+        return " ".join(value.casefold().split())
 
 
 def _recalled_memory_context(snapshot: Mapping[str, Any]) -> str:
@@ -833,6 +870,7 @@ class LocalRunExecutor:
         mcp_tools = await self.mcp_runtime.prepare_run(run_id)
         mcp_tools_by_name = {tool.provider_name: tool for tool in mcp_tools}
         skill_activation_schema = _skill_activation_tool_schema(run.snapshot_json)
+        web_research_budget = _web_research_budget(user_message)
         tool_schemas = (
             _UPDATE_PLAN_TOOL_SCHEMA,
             *((_FILE_OUTPUT_INTENT_TOOL_SCHEMA,) if output_mode == "file" else ()),
@@ -850,8 +888,8 @@ class LocalRunExecutor:
             ),
             *((ARTIFACT_WRITE_TOOL_SCHEMA,) if artifact_tools_available else ()),
             *((GENERATE_IMAGE_TOOL_SCHEMA,) if image_generation_capable else ()),
-            _WEB_SEARCH_TOOL_SCHEMA,
-            _WEB_FETCH_TOOL_SCHEMA,
+            *((_WEB_SEARCH_TOOL_SCHEMA,) if web_research_budget[0] > 0 else ()),
+            *((_WEB_FETCH_TOOL_SCHEMA,) if web_research_budget[1] > 0 else ()),
             *WORKSPACE_TOOL_SCHEMAS,
             *(tool.provider_schema for tool in mcp_tools),
         )
@@ -878,8 +916,13 @@ class LocalRunExecutor:
         empty_response_retry_attempt = 0
         output_continuation_count = 0
         pending_continuation_reference: str | None = None
-        article_web_budget = _article_web_research_budget(user_message)
-        retired_article_web_tools: set[str] = set()
+        retired_web_tools = {
+            tool_name
+            for tool_name, limit in zip(
+                ("web_search", "web_fetch"), web_research_budget, strict=True
+            )
+            if limit <= 0
+        }
         while True:
             messages = await self._compact_runtime_context(
                 run_id, messages, tool_schemas
@@ -1389,13 +1432,12 @@ class LocalRunExecutor:
                 for call in calls:
                     if call["name"] in {"create_report", "write_file"}:
                         call["blocked_error"] = "chat_mode_file_creation_forbidden"
-            if article_web_budget is not None:
-                self._apply_article_web_call_budget(
-                    run_id,
-                    calls,
-                    search_limit=article_web_budget[0],
-                    fetch_limit=article_web_budget[1],
-                )
+            self._apply_web_call_budget(
+                run_id,
+                calls,
+                search_limit=web_research_budget[0],
+                fetch_limit=web_research_budget[1],
+            )
             execution_calls = [
                 call
                 for call in calls
@@ -1493,36 +1535,35 @@ class LocalRunExecutor:
                         provider_metadata=call["provider_metadata"],
                     )
                 )
-            if article_web_budget is not None:
-                exhausted_tools = self._exhausted_article_web_tools(
-                    run_id,
-                    search_limit=article_web_budget[0],
-                    fetch_limit=article_web_budget[1],
+            exhausted_tools = self._exhausted_web_tools(
+                run_id,
+                search_limit=web_research_budget[0],
+                fetch_limit=web_research_budget[1],
+            )
+            newly_retired = exhausted_tools - retired_web_tools
+            if newly_retired:
+                retired_web_tools.update(newly_retired)
+                tool_schemas = tuple(
+                    schema
+                    for schema in tool_schemas
+                    if not (
+                        isinstance(schema.get("function"), dict)
+                        and schema["function"].get("name") in newly_retired
+                    )
                 )
-                newly_retired = exhausted_tools - retired_article_web_tools
-                if newly_retired:
-                    retired_article_web_tools.update(newly_retired)
-                    tool_schemas = tuple(
-                        schema
-                        for schema in tool_schemas
-                        if not (
-                            isinstance(schema.get("function"), dict)
-                            and schema["function"].get("name") in newly_retired
-                        )
+                messages.append(
+                    ProviderMessage(
+                        role="system",
+                        content=(
+                            "Bounded web research budget reached for: "
+                            + ", ".join(sorted(newly_retired))
+                            + ". These tools are no longer available in this Run. Do not "
+                            "attempt aliases or workarounds; synthesize the requested result "
+                            "from the evidence already collected and state any material gap "
+                            "briefly."
+                        ),
                     )
-                    messages.append(
-                        ProviderMessage(
-                            role="system",
-                            content=(
-                                "Bounded article research budget reached for: "
-                                + ", ".join(sorted(newly_retired))
-                                + ". These tools are no longer available in this Run. Do not "
-                                "attempt aliases or workarounds; synthesize the requested result "
-                                "from the evidence already collected and state any material gap "
-                                "briefly."
-                            ),
-                        )
-                    )
+                )
             if not await self._wait_until_runnable(run_id):
                 return
             steer_messages = await self._apply_pending_steers(run_id)
@@ -1752,7 +1793,7 @@ class LocalRunExecutor:
         )
         return True
 
-    def _article_web_attempt_state(
+    def _web_attempt_state(
         self, run_id: str
     ) -> tuple[dict[str, int], dict[str, set[str]]]:
         counts = {"web_search": 0, "web_fetch": 0}
@@ -1786,7 +1827,7 @@ class LocalRunExecutor:
                 signatures[tool_name].add(signature)
         return counts, signatures
 
-    def _apply_article_web_call_budget(
+    def _apply_web_call_budget(
         self,
         run_id: str,
         calls: list[dict[str, Any]],
@@ -1794,7 +1835,7 @@ class LocalRunExecutor:
         search_limit: int,
         fetch_limit: int,
     ) -> None:
-        counts, signatures = self._article_web_attempt_state(run_id)
+        counts, signatures = self._web_attempt_state(run_id)
         limits = {"web_search": search_limit, "web_fetch": fetch_limit}
         for call in calls:
             tool_name = str(call.get("name", ""))
@@ -1805,16 +1846,16 @@ class LocalRunExecutor:
             )
             signature = _web_call_signature(tool_name, arguments)
             if signature and signature in signatures[tool_name]:
-                call["blocked_error"] = "article_web_duplicate_request"
+                call["blocked_error"] = "web_duplicate_request"
                 call["blocked_message"] = (
-                    "같거나 겹치는 기사 탐색 요청은 다시 실행하지 않았습니다. "
+                    "같거나 겹치는 웹 탐색 요청은 다시 실행하지 않았습니다. "
                     "이미 수집한 근거를 재사용해 결과를 완성하세요."
                 )
                 continue
             if counts[tool_name] >= limits[tool_name]:
-                call["blocked_error"] = "article_web_research_budget_reached"
+                call["blocked_error"] = "web_research_budget_reached"
                 call["blocked_message"] = (
-                    "기본 기사 조사 예산에 도달해 추가 웹 호출을 실행하지 않았습니다. "
+                    "웹 조사 예산에 도달해 추가 호출을 실행하지 않았습니다. "
                     "이미 수집한 근거로 결과를 완성하고, 부족한 범위만 짧게 밝히세요."
                 )
                 continue
@@ -1822,14 +1863,14 @@ class LocalRunExecutor:
             if signature:
                 signatures[tool_name].add(signature)
 
-    def _exhausted_article_web_tools(
+    def _exhausted_web_tools(
         self,
         run_id: str,
         *,
         search_limit: int,
         fetch_limit: int,
     ) -> set[str]:
-        counts, _signatures = self._article_web_attempt_state(run_id)
+        counts, _signatures = self._web_attempt_state(run_id)
         exhausted: set[str] = set()
         if counts["web_search"] >= search_limit:
             exhausted.add("web_search")
@@ -2422,7 +2463,7 @@ class LocalRunExecutor:
                     "Add analysis, evidence, methodology, caveats, tables, "
                     "and decision guidance as useful, without repetition or fabricated facts."
                 )
-            elif _article_web_research_budget(user_message) is not None:
+            elif _ARTICLE_RESEARCH_REQUEST.search(user_message):
                 turn_system_parts.append(
                     "Artifact length contract: For a normal news or online-article report "
                     "without an explicit length selection, aim for a focused Artifact around "
@@ -2704,16 +2745,16 @@ class LocalRunExecutor:
                 raise ValueError("Tool arguments must be a JSON object")
         except (json.JSONDecodeError, ValueError):
             arguments = {}
-        article_web_budget = _article_web_research_budget(user_message)
-        if tool_call["name"] == "web_search" and article_web_budget is not None:
+        web_research_budget = _web_research_budget(user_message)
+        if tool_call["name"] == "web_search":
             requested_limit = arguments.get("result_limit", 5)
             if isinstance(requested_limit, int) and not isinstance(
                 requested_limit, bool
             ):
                 result_ceiling = (
                     10
-                    if article_web_budget[0] == _DEEP_ARTICLE_WEB_SEARCH_LIMIT
-                    else _ARTICLE_WEB_RESULT_LIMIT
+                    if web_research_budget[0] == _DEEP_WEB_SEARCH_LIMIT
+                    else _WEB_RESULT_LIMIT
                 )
                 arguments["result_limit"] = min(requested_limit, result_ceiling)
         if tool_call["name"] == "activate_skill":
@@ -2846,8 +2887,8 @@ class LocalRunExecutor:
         await asyncio.sleep(0.12)
 
         if tool_call.get("blocked_error") in {
-            "article_web_duplicate_request",
-            "article_web_research_budget_reached",
+            "web_duplicate_request",
+            "web_research_budget_reached",
         }:
             payload = {
                 "skipped": True,

@@ -141,24 +141,29 @@ def test_large_web_fetch_result_is_truncated_only_for_provider_context() -> None
     assert provider_result["providerContextTruncated"] is True
 
 
-def test_article_web_research_uses_bounded_default_and_explicit_deep_budget() -> None:
-    assert executor_module._article_web_research_budget(
+def test_web_research_uses_bounded_default_direct_url_and_explicit_deep_budget() -> None:
+    assert executor_module._web_research_budget(
         "포스코 관련 최근 3개월 언론기사 동향을 조사해줘"
     ) == (3, 5)
-    assert executor_module._article_web_research_budget(
+    assert executor_module._web_research_budget(
+        "최근 철강 시장과 경쟁사 전략을 인터넷에서 조사해줘"
+    ) == (3, 5)
+    assert executor_module._web_research_budget(
         "포스코 관련 언론기사 동향을 심층 조사해줘"
     ) == (6, 10)
-    assert (
-        executor_module._article_web_research_budget("프로젝트 파일 구조를 설명해줘")
-        is None
-    )
+    assert executor_module._web_research_budget(
+        "https://example.com/report 이 자료를 분석해줘"
+    ) == (0, 1)
+    assert executor_module._web_research_budget(
+        "https://example.com/report 내용을 다른 출처와 비교해줘"
+    ) == (3, 5)
 
 
-def test_article_web_budget_skips_duplicate_and_excess_calls(monkeypatch) -> None:
+def test_web_budget_skips_overlapping_duplicate_and_excess_calls(monkeypatch) -> None:
     executor = LocalRunExecutor()
     monkeypatch.setattr(
         executor,
-        "_article_web_attempt_state",
+        "_web_attempt_state",
         lambda _run_id: (
             {"web_search": 0, "web_fetch": 0},
             {"web_search": set(), "web_fetch": set()},
@@ -170,15 +175,15 @@ def test_article_web_budget_skips_duplicate_and_excess_calls(monkeypatch) -> Non
             "arguments": json.dumps({"query": query}),
         }
         for query in (
-            "POSCO news",
-            "POSCO news",
+            "POSCO steel market news",
+            "news market POSCO steel",
             "POSCO tariffs",
             "POSCO lithium",
             "POSCO labor",
         )
     ]
 
-    executor._apply_article_web_call_budget(
+    executor._apply_web_call_budget(
         "run-budget",
         calls,
         search_limit=3,
@@ -186,10 +191,23 @@ def test_article_web_budget_skips_duplicate_and_excess_calls(monkeypatch) -> Non
     )
 
     assert calls[0].get("blocked_error") is None
-    assert calls[1]["blocked_error"] == "article_web_duplicate_request"
+    assert calls[1]["blocked_error"] == "web_duplicate_request"
     assert calls[2].get("blocked_error") is None
     assert calls[3].get("blocked_error") is None
-    assert calls[4]["blocked_error"] == "article_web_research_budget_reached"
+    assert calls[4]["blocked_error"] == "web_research_budget_reached"
+
+
+def test_web_fetch_signature_ignores_fragment_and_tracking_parameters() -> None:
+    first = executor_module._web_call_signature(
+        "web_fetch",
+        {"url": "https://Example.com/report/?id=7&utm_source=news#summary"},
+    )
+    second = executor_module._web_call_signature(
+        "web_fetch",
+        {"url": "https://example.com/report?id=7"},
+    )
+
+    assert first == second
 
 
 def test_write_file_progress_counts_streamed_tokens_and_lines() -> None:
