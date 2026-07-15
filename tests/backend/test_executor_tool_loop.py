@@ -624,7 +624,7 @@ def test_artifact_progress_refreshes_at_100ms_with_live_model_output() -> None:
     assert executor_module._live_model_output_tokens(3_204, 400) == 3_304
 
 
-def test_report_progress_is_visible_before_first_provider_output(
+def test_report_progress_is_visible_without_provider_output_or_tool_call(
     monkeypatch, tmp_path: Path
 ) -> None:
     settings = Settings(
@@ -637,7 +637,6 @@ def test_report_progress_is_visible_before_first_provider_output(
     )
     provider_started = Event()
     release_provider = Event()
-    provider_turn = 0
 
     class WaitingReportProvider(MockProvider):
         async def stream(self, request):
@@ -648,30 +647,8 @@ def test_report_progress_is_visible_before_first_provider_output(
                 yield event
 
     def provider(*_args, **_kwargs):
-        nonlocal provider_turn
-        provider_turn += 1
-        if provider_turn > 1:
-            return MockProvider(text_chunks=("HTML 보고서를 생성했습니다.",))
         return WaitingReportProvider(
             text_chunks=("HTML 보고서를 생성했습니다.",),
-            tool_call=MockToolCall(
-                name="create_report",
-                arguments={
-                    "format": "html",
-                    "title": "대기 피드백 점검",
-                    "executive_summary": "보고서 진행 표시를 검증합니다.",
-                    "key_metrics": [],
-                    "sections": [
-                        {
-                            "heading": "점검 결과",
-                            "body": "Provider 첫 출력 전에도 진행 바가 표시됩니다.",
-                            "bullets": [],
-                        }
-                    ],
-                    "action_items": [],
-                },
-                call_id="call_report_progress_start",
-            ),
         )
 
     monkeypatch.setattr(local_run_executor, "_provider", provider)
@@ -713,6 +690,7 @@ def test_report_progress_is_visible_before_first_provider_output(
 
         terminal = _wait_for_terminal(client, started.json()["run"]["runId"])
         assert terminal["status"] == "completed"
+        assert terminal["toolExecutions"] == []
 
 
 def test_streamed_write_file_name_extracts_only_the_target_name() -> None:
