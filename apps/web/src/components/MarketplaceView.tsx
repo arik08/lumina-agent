@@ -147,7 +147,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
   const [catalogCategory, setCatalogCategory] = useState("");
   const [catalogTag, setCatalogTag] = useState("");
   const [catalogSort, setCatalogSort] = useState<SkillCatalogSort>("popular");
-  const catalogCacheKey = `${cacheKey}:catalog:${catalogQuery.trim().toLocaleLowerCase("ko-KR")}:${catalogCategory}:${catalogTag}:${catalogSort}`;
+  const catalogCacheKey = `${cacheKey}:catalog:${catalogQuery.trim().toLocaleLowerCase("ko-KR")}:${catalogCategory}:${catalogSort}`;
   const [catalog, setCatalog, hasCachedCatalog] = useCachedViewState<SkillCatalogResponse>(catalogCacheKey, EMPTY_SKILL_CATALOG);
   const [catalogLoading, setCatalogLoading] = useState(!hasCachedCatalog);
   const [catalogLoadingMore, setCatalogLoadingMore] = useState(false);

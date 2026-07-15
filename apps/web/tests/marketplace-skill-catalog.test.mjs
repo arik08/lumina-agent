@@ -18,6 +18,8 @@ test("catalog uses a searchable filterable card grid without opening package det
 
   assert.match(view, /skillView === "catalog" \? <SkillCatalogPanel/);
   assert.match(view, /if \(skillView === "catalog" \|\| skillView === "trash"/);
+  assert.match(view, /const catalogCacheKey = `\$\{cacheKey\}:catalog:\$\{catalogQuery[^`]+:\$\{catalogCategory\}:\$\{catalogSort\}`/);
+  assert.doesNotMatch(view, /const catalogCacheKey = `[^`]*\$\{catalogTag\}/);
   assert.match(panel, /placeholder="이름, 설명, 태그 검색"/);
   assert.match(panel, /catalog\.facets\.categories\.map/);
   assert.match(panel, /catalog\.facets\.tags\.map/);
