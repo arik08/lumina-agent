@@ -91,6 +91,10 @@ export function UserInputRequestCard({
     ])));
   };
 
+  const updateCustomText = (questionId: string, value: string) => {
+    setCustomText((current) => ({ ...current, [questionId]: value }));
+  };
+
   if (compact) {
     return (
       <button
@@ -119,16 +123,26 @@ export function UserInputRequestCard({
           <strong>확인 질문</strong>
         </span>
         {pending && (
-          <button
-            className="clarification-settings-trigger"
-            type="button"
-            aria-label="AI 확인 질문 설정"
-            aria-expanded={settingsOpen}
-            data-tooltip="질문 깊이 설정"
-            onClick={() => setSettingsOpen((open) => !open)}
-          >
-            <Settings size={16} />
-          </button>
+          <span className="clarification-header-actions">
+            <button
+              className="clarification-ai-judgment"
+              type="button"
+              disabled={busy}
+              onClick={useAiJudgment}
+            >
+              <Sparkles size={14} /> AI가 판단
+            </button>
+            <button
+              className="clarification-settings-trigger"
+              type="button"
+              aria-label="AI 확인 질문 설정"
+              aria-expanded={settingsOpen}
+              data-tooltip="질문 깊이 설정"
+              onClick={() => setSettingsOpen((open) => !open)}
+            >
+              <Settings size={16} />
+            </button>
+          </span>
         )}
       </header>
 
@@ -186,10 +200,7 @@ export function UserInputRequestCard({
                   value={customText[question.id] ?? ""}
                   placeholder="직접 답변하기"
                   aria-label={`${index + 1}번 질문에 직접 답변`}
-                  onChange={(event) => setCustomText((current) => ({
-                    ...current,
-                    [question.id]: event.currentTarget.value,
-                  }))}
+                  onChange={(event) => updateCustomText(question.id, event.currentTarget.value)}
                 />
                 <button type="submit" disabled={!pending || !customText[question.id]?.trim()}>
                   적용
@@ -206,11 +217,7 @@ export function UserInputRequestCard({
       </div>
 
       <footer className="clarification-footer">
-        {pending ? (
-          <button type="button" disabled={busy} onClick={useAiJudgment}>
-            <Sparkles size={15} /> 이번에는 AI가 판단
-          </button>
-        ) : (
+        {!pending && (
           <button type="button" onClick={() => setCompact(true)}>
             <ChevronUp size={15} /> 다시 접기
           </button>

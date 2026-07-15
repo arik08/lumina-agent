@@ -2774,7 +2774,15 @@ class LocalRunExecutor:
             )
             + " If clarification is needed, call `request_user_input` by itself before visible "
             "answer text. Ask all currently known questions together, up to four, and do not "
-            "ask again in this Run. Never use it for tool permission or approval."
+            "ask again in this Run. Never use it for tool permission or approval. If the user "
+            "explicitly asks you to interview them, ask follow-up or reverse questions, gather "
+            "facts or preferences through questions, or otherwise make questioning the requested "
+            "interaction, treat that request itself as sufficient reason to call "
+            "`request_user_input` under every clarification mode. More generally, whenever you "
+            "decide that you need to ask the person any question, you MUST use "
+            "`request_user_input`; never put questions for the person in visible answer text. If "
+            "you do not need an answer from the person, answer directly without asking. Put the "
+            "highest-value one to four questions in the single UI bundle."
         )
         output_mode = _normalized_output_mode(
             run.snapshot_json.get("output_mode", "auto")
@@ -6327,6 +6335,9 @@ _REQUEST_USER_INPUT_TOOL_SCHEMA = {
             "contract. Include every currently known material question in the same call. The UI "
             "automatically adds a free-form custom answer to every question, so provide only "
             "two to four useful objective options. Do not use this for tool approval."
+            " Whenever you decide to ask the person any question, including an interview, "
+            "follow-up, reverse question, clarification, or question-led intake, this UI is "
+            "mandatory. Never ask the person a question in visible answer text."
         ),
         "parameters": {
             "type": "object",

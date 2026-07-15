@@ -94,7 +94,7 @@ test("non-tool time is rendered as a model processing row with a clear explanati
 test("cancelled runs stop active Thinking and tool rows with explicit feedback", async () => {
   const app = await read("../src/components/ConversationTurn.tsx");
 
-  assert.match(app, /<span className="tool-call-label">Thinking<\/span>/);
+  assert.match(app, /awaitingInput \? "Q&A" : "Thinking"/);
   assert.match(app, /state === "stopped" \? "사용자 요청으로 모델 처리를 중지했습니다\."/);
   assert.match(app, /state === "failed" \? "실패" : "중지됨"/);
   assert.match(app, /const stoppedByRun = executionActive && \(runOutcome === "stopped" \|\| runOutcome === "failed"\)/);

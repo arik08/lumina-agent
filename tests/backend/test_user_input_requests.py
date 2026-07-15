@@ -124,6 +124,19 @@ def test_account_clarification_setting_and_durable_input_resume(
         assert started.status_code == 202, started.text
         run_id = started.json()["run"]["runId"]
         waiting = _wait_for_status(client, run_id, {"awaiting_input"})
+        provider_messages = local_run_executor._conversation_messages(
+            run_id, "역질문 여러 개를 던져 주세요."
+        )
+        provider_system_text = "\n".join(
+            str(message.content)
+            for message in provider_messages
+            if message.role == "system" and message.content
+        )
+        assert "whenever you decide that you need to ask the person" in provider_system_text
+        assert "MUST use `request_user_input`" in provider_system_text
+        assert "never put questions for the person in visible answer text" in (
+            provider_system_text
+        )
         assert len(waiting["inputRequests"]) == 1
         request = waiting["inputRequests"][0]
         assert request["status"] == "pending"

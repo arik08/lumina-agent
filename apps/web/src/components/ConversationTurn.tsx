@@ -25,6 +25,7 @@ import {
   Globe2,
   Image as ImageIcon,
   LoaderCircle,
+  MessageCircleQuestion,
   MessageSquarePlus,
   Play,
   RotateCcw,
@@ -623,9 +624,11 @@ function modelExchangeText(value: unknown) {
   return formatModelExchangeValue(value);
 }
 
+type ModelProcessingState = RunActivityOutcome | "awaiting_input";
+
 function ModelProcessingRow({ durationMs, state, sent, received, model, provider }: {
   durationMs: number;
-  state: RunActivityOutcome;
+  state: ModelProcessingState;
   sent: ModelExchangeItem[];
   received: ModelExchangeItem[];
   model?: string;
@@ -634,7 +637,8 @@ function ModelProcessingRow({ durationMs, state, sent, received, model, provider
   const [isOpen, setIsOpen] = useState(false);
   const contentId = useId();
   const running = state === "running";
-  const statusLabel = running ? "처리 중" : state === "completed" ? "완료" : state === "failed" ? "실패" : "중지됨";
+  const awaitingInput = state === "awaiting_input";
+  const statusLabel = running ? "처리 중" : awaitingInput ? "답변 대기" : state === "completed" ? "완료" : state === "failed" ? "실패" : "중지됨";
   const exchangeSections = [
     { title: "Provider로 보냄", items: sent, empty: "이 단계에서 별도로 전달된 도구 결과가 없습니다." },
     { title: "Provider에서 받음", items: received, empty: running ? "응답을 수신하고 있습니다." : state === "stopped" ? "모델 응답이 완료되기 전에 작업을 중지했습니다." : "공개 가능한 응답 내용이 없습니다." },
@@ -649,13 +653,15 @@ function ModelProcessingRow({ durationMs, state, sent, received, model, provider
         aria-controls={contentId}
         onClick={(event) => preserveConversationScrollPosition(event.currentTarget, () => setIsOpen((open) => !open))}
       >
-        <Brain className="tool-kind-icon is-model-processing" size={15} aria-hidden="true" />
+        {awaitingInput
+          ? <MessageCircleQuestion className="tool-kind-icon is-model-processing" size={15} aria-hidden="true" />
+          : <Brain className="tool-kind-icon is-model-processing" size={15} aria-hidden="true" />}
         <span className="tool-call-label-with-status model-processing-label">
-          <span className="tool-call-label">Thinking</span>
+          <span className="tool-call-label">{awaitingInput ? "Q&A" : "Thinking"}</span>
           {running ? <LoaderCircle className="status-icon is-running" size={15} aria-hidden="true" /> : null}
-          {!running && state !== "completed" ? <AlertCircle className="status-icon status-warning" size={15} aria-hidden="true" /> : null}
+          {!running && !awaitingInput && state !== "completed" ? <AlertCircle className="status-icon status-warning" size={15} aria-hidden="true" /> : null}
         </span>
-        <span className="tool-call-detail">{state === "stopped" ? "사용자 요청으로 모델 처리를 중지했습니다." : "모델 판단 · 내부 실행 합계"}</span>
+        <span className="tool-call-detail">{awaitingInput ? "확인 질문 · 사용자 답변 대기" : state === "stopped" ? "사용자 요청으로 모델 처리를 중지했습니다." : "모델 판단 · 내부 실행 합계"}</span>
         <span className={`tool-call-status status-${running ? "running" : state === "completed" ? "complete" : "warning"}`}>{statusLabel}</span>
         <span className="tool-call-duration" title="여러 모델 호출과 Skill·계획 처리, 재시도 시간을 합산한 값(외부 도구 실행 제외)">{formatDuration(durationMs)}</span>
         {isOpen ? <ChevronDown size={15} aria-hidden="true" /> : <ChevronRight size={15} aria-hidden="true" />}
@@ -761,6 +767,7 @@ function RunActivityTimeline({
   timelineStartedAtMs,
   timelineFinishedAtMs,
   timelineRunning,
+  awaitingInput,
   runOutcome,
   keepLatestToolGroupOpen,
   userRequest,
@@ -776,6 +783,7 @@ function RunActivityTimeline({
   timelineStartedAtMs: number;
   timelineFinishedAtMs: number;
   timelineRunning: boolean;
+  awaitingInput: boolean;
   runOutcome: RunActivityOutcome;
   keepLatestToolGroupOpen: boolean;
   userRequest: string;
@@ -964,7 +972,9 @@ function RunActivityTimeline({
         const timedChildCount = toolActivities.length + (hasModelProcessingRow ? 1 : 0);
         const showStageDuration = timedChildCount === 0;
         const modelProcessingRunning = timelineRunning && summary?.id === latestProgressSummaryId;
-        const modelProcessingState = modelProcessingRunning
+        const modelProcessingState: ModelProcessingState = awaitingInput && summary?.id === latestProgressSummaryId
+          ? "awaiting_input"
+          : modelProcessingRunning
           ? "running"
           : summary?.id === latestProgressSummaryId
             ? runOutcome
@@ -1551,6 +1561,8 @@ export function AssistantTurn({
   const pendingCommands = snapshot?.pendingCommands ?? [];
   const status = snapshot?.status ?? (finalMessage ? "completed" : null);
   const terminal = isTerminalRunStatus(status);
+  const pendingInputRequest = (snapshot?.inputRequests ?? []).find((request) => request.status === "pending") ?? null;
+  const awaitingInput = status === "awaiting_input" && pendingInputRequest !== null;
   const activityOutcome = runActivityOutcome(status);
   const collapseWorkDetails = shouldCollapseRunWorkDetails(status);
   const terminalReason = status && status !== "completed"
@@ -1579,7 +1591,12 @@ export function AssistantTurn({
   const workStartedAt = snapshot?.startedAt ?? turnSet.createdAt;
   const workFinishedAt = snapshot?.finishedAt ?? turnSet.completedAt;
   const workStartedAtMs = new Date(workStartedAt).getTime();
-  const workFinishedAtMs = workFinishedAt ? new Date(workFinishedAt).getTime() : workClock;
+  const inputWaitStartedAtMs = pendingInputRequest ? new Date(pendingInputRequest.createdAt).getTime() : Number.NaN;
+  const workFinishedAtMs = workFinishedAt
+    ? new Date(workFinishedAt).getTime()
+    : awaitingInput && Number.isFinite(inputWaitStartedAtMs)
+      ? inputWaitStartedAtMs
+      : workClock;
   const workDuration = Number.isFinite(workStartedAtMs) && Number.isFinite(workFinishedAtMs)
     ? formatWorkDuration(workFinishedAtMs - workStartedAtMs)
     : "0초";
@@ -1594,11 +1611,11 @@ export function AssistantTurn({
   }, [finalMessage?.id]);
 
   useEffect(() => {
-    if (terminal || !hasWorkDetails) return;
+    if (terminal || awaitingInput || !hasWorkDetails) return;
     setWorkClock(Date.now());
     const timer = window.setInterval(() => setWorkClock(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, [hasWorkDetails, terminal]);
+  }, [awaitingInput, hasWorkDetails, terminal]);
 
   const openSourceDetail = useCallback((sourceId: string) => {
     const currentDetail = window.history.state?.luminaSourceDetail;
@@ -1804,7 +1821,7 @@ export function AssistantTurn({
             aria-expanded={workDetailsOpen}
             onClick={(event) => preserveConversationScrollPosition(event.currentTarget, () => setWorkDetailsOpen((open) => !open))}
           >
-            <span>{workDuration} 동안 작업{terminal && status !== "completed" ? ` · ${runStatusLabel(status)}` : ""}</span>
+            <span>{workDuration} 동안 작업{awaitingInput ? " · 답변 대기" : terminal && status !== "completed" ? ` · ${runStatusLabel(status)}` : ""}</span>
             <ChevronRight size={15} aria-hidden="true" />
           </button>
           {workDetailsOpen && (
@@ -1813,7 +1830,8 @@ export function AssistantTurn({
                 activities={activities}
                 timelineStartedAtMs={workStartedAtMs}
                 timelineFinishedAtMs={workFinishedAtMs}
-                timelineRunning={!terminal}
+                timelineRunning={!terminal && !awaitingInput}
+                awaitingInput={awaitingInput}
                 runOutcome={activityOutcome}
                 keepLatestToolGroupOpen={status === "model_streaming"}
                 userRequest={userMessages.at(-1)?.text ?? ""}

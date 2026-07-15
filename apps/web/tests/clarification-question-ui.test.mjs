@@ -11,17 +11,32 @@ const workspaceSource = readFileSync(
   new URL("../src/use-lumina-workspace.ts", import.meta.url),
   "utf8",
 );
+const turnSource = readFileSync(
+  new URL("../src/components/ConversationTurn.tsx", import.meta.url),
+  "utf8",
+);
 
 test("clarification card identifies questions and supports objective, custom, and AI answers", () => {
   assert.match(cardSource, /MessageCircleQuestion/);
   assert.match(cardSource, /질문 \{index \+ 1\} \/ \{request\.questions\.length\}/);
   assert.match(cardSource, /직접 답변하기/);
-  assert.match(cardSource, /이번에는 AI가 판단/);
+  assert.match(cardSource, /clarification-header-actions[\s\S]*AI가 판단[\s\S]*clarification-settings-trigger/);
+  assert.doesNotMatch(cardSource, /이번에는 AI가 판단/);
+  assert.match(cardSource, /updateCustomText\(question\.id, event\.currentTarget\.value\)/);
+  assert.doesNotMatch(cardSource, /setCustomText\(\(current\)[\s\S]{0,120}event\.currentTarget\.value/);
   assert.match(cardSource, /request\.questions\.every/);
   assert.match(cardSource, /onSubmit\(orderedAnswers\)/);
   assert.match(cardSource, /is-collapsing/);
   assert.match(cardSource, /답변한 확인 질문 다시 보기/);
   assert.match(cardSource, /다시 접기/);
+});
+
+test("awaiting clarification is shown as Q&A and freezes the model-work clock", () => {
+  assert.match(turnSource, /status === "awaiting_input"/);
+  assert.match(turnSource, /awaitingInput \? "Q&A" : "Thinking"/);
+  assert.match(turnSource, /확인 질문 · 사용자 답변 대기/);
+  assert.match(turnSource, /awaitingInput && Number\.isFinite\(inputWaitStartedAtMs\)/);
+  assert.match(turnSource, /timelineRunning=\{!terminal && !awaitingInput\}/);
 });
 
 test("clarification mode is an account setting available in settings and the question card", () => {

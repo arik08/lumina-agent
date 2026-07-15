@@ -74,7 +74,7 @@ test("every running tool spinner follows its label while duration and chevron st
   const styles = await read("../src/styles.css");
 
   assert.match(app, /<span className="tool-call-label-with-status">\s*<span className="tool-call-label">\{execution\.label \|\| execution\.toolName\}<\/span>\s*\{running \? \(\s*<LoaderCircle/s);
-  assert.match(app, /<span className="tool-call-label-with-status model-processing-label">\s*<span className="tool-call-label">Thinking<\/span>\s*\{running \? <LoaderCircle/s);
+  assert.match(app, /<span className="tool-call-label-with-status model-processing-label">\s*<span className="tool-call-label">\{awaitingInput \? "Q&A" : "Thinking"\}<\/span>\s*\{running \? <LoaderCircle/s);
   assert.match(styles, /\.tool-call-trigger \{[^}]*grid-template-columns: 17px minmax\(90px, \.65fr\) minmax\(0, 1\.35fr\) auto 46px 16px;/s);
   assert.match(styles, /\.model-processing-row \{[^}]*grid-template-columns: 17px minmax\(90px, \.65fr\) minmax\(0, 1\.35fr\) auto 46px 16px;/s);
   assert.match(styles, /\.tool-call-label-with-status \{[^}]*display: inline-flex;[^}]*gap: 5px;/s);
