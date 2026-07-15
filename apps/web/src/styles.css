@@ -2174,6 +2174,14 @@ button:disabled { cursor: default; opacity: 0.5; }
 .markdown-response :not(pre) > code { padding: 1px 4px; border-radius: 3px; background: var(--surface-soft); color: var(--ink); font: 0.88em/1.5 var(--font-code); }
 .markdown-response pre { max-width: 100%; overflow: auto; margin: 0 0 1em; padding: 11px 13px; border-left: 2px solid #9db0db; background: var(--surface-soft); color: var(--ink); }
 .markdown-response pre code { font: 0.86em/1.62 var(--font-code); white-space: pre; }
+.markdown-code-block { position: relative; max-width: 100%; margin: 0 0 1em; }
+.markdown-code-block > pre { margin: 0; padding-top: 42px; }
+.markdown-code-copy { position: absolute; z-index: 1; top: 7px; right: 8px; display: inline-flex; width: 78px; height: 28px; align-items: center; justify-content: center; gap: 5px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); color: var(--muted); font: 500 11.5px/1 var(--font-ui); cursor: pointer; }
+.markdown-code-copy:hover { border-color: var(--line-strong); background: var(--surface-soft); color: var(--ink); }
+.markdown-code-copy:focus-visible { outline: 2px solid color-mix(in srgb, var(--cobalt) 55%, transparent); outline-offset: 2px; }
+.markdown-code-copy.is-copied { color: var(--success); }
+.markdown-code-copy.is-failed { color: var(--danger); }
+.markdown-code-copy:disabled { cursor: default; opacity: 0.55; }
 .hljs { color: var(--syntax-text, #24292f); background: transparent; }
 .hljs-comment, .hljs-quote { color: var(--syntax-comment, #6e7781); font-style: italic; }
 .hljs-keyword, .hljs-selector-tag { color: var(--syntax-keyword, #6f42c1); }

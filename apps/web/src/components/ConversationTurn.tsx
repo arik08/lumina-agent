@@ -40,6 +40,8 @@ import { copyText } from "../clipboard";
 import { isTerminalRunStatus, runActivityOutcome, shouldCollapseRunWorkDetails, type RunActivityOutcome } from "../run-status";
 import type { Link, Parent, PhrasingContent, Root, Text } from "mdast";
 import {
+  Children,
+  isValidElement,
   memo,
   useCallback,
   useEffect,
@@ -50,6 +52,7 @@ import {
   type CSSProperties,
   type FormEvent,
   type MouseEvent as ReactMouseEvent,
+  type ReactNode,
 } from "react";
 import ReactMarkdown, {
   defaultUrlTransform,
@@ -1424,6 +1427,61 @@ export function pastedTextAttachmentLabel(attachment: AttachmentSummary, index: 
   return `[텍스트 첨부 #${index + 1}${lineCount > 0 ? ` +${lineCount}줄` : ""}]`;
 }
 
+type CodeCopyState = "idle" | "copied" | "failed";
+
+function markdownNodeText(node: ReactNode): string {
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (isValidElement<{ children?: ReactNode }>(node)) return markdownNodeText(node.props.children);
+  return Children.toArray(node).map(markdownNodeText).join("");
+}
+
+function MarkdownCodeBlock({ children }: { children?: ReactNode }) {
+  const [copyState, setCopyState] = useState<CodeCopyState>("idle");
+  const resetTimerRef = useRef<number | null>(null);
+  const child = Children.toArray(children)[0];
+  const className = isValidElement<{ className?: string }>(child) ? child.props.className ?? "" : "";
+  const language = /language-([\w-]+)/.exec(className)?.[1]?.toLowerCase();
+  const source = markdownNodeText(children).replace(/\n$/, "");
+
+  useEffect(() => () => {
+    if (resetTimerRef.current !== null) window.clearTimeout(resetTimerRef.current);
+  }, []);
+
+  if (language === "mermaid" || language === "mmd" || language === "lumina-chart") {
+    return <pre>{children}</pre>;
+  }
+
+  const copyCode = async () => {
+    if (!source) return;
+    if (resetTimerRef.current !== null) window.clearTimeout(resetTimerRef.current);
+    try {
+      await copyText(source);
+      setCopyState("copied");
+    } catch {
+      setCopyState("failed");
+    }
+    resetTimerRef.current = window.setTimeout(() => setCopyState("idle"), 1800);
+  };
+  const copyLabel = copyState === "copied" ? "복사됨" : copyState === "failed" ? "복사 실패" : "복사";
+
+  return (
+    <div className="markdown-code-block">
+      <button
+        className={`markdown-code-copy is-${copyState}`}
+        type="button"
+        aria-label={copyState === "copied" ? "코드 복사 완료" : copyState === "failed" ? "코드 복사 실패" : "코드 내용 복사"}
+        data-tooltip={copyLabel}
+        disabled={!source}
+        onClick={() => void copyCode()}
+      >
+        {copyState === "copied" ? <Check size={14} /> : copyState === "failed" ? <AlertCircle size={14} /> : <Copy size={14} />}
+        <span aria-live="polite">{copyLabel}</span>
+      </button>
+      <pre>{children}</pre>
+    </div>
+  );
+}
+
 const markdownCodeComponent: NonNullable<Components["code"]> = ({ className, children }) => {
   const language = /language-([\w-]+)/.exec(className || "")?.[1]?.toLowerCase();
   const source = String(children).replace(/\n$/, "");
@@ -1478,6 +1536,7 @@ const MemoizedMarkdownChunk = memo(function MarkdownChunk({
         : <span>{alt || "이미지"}</span>;
     },
     table: ({ children }) => <div className="markdown-table-scroll"><table>{children}</table></div>,
+    pre: MarkdownCodeBlock,
     code: markdownCodeComponent,
   }), [targetById]);
 
