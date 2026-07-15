@@ -569,6 +569,7 @@ def create_run(
     )
     db.add(message)
     db.flush()
+    run.snapshot_json = {**run.snapshot_json, "user_message_id": message.id}
     _persist_message_references(db, message, references)
     automatic_title_assigned = (
         turn_index == 1 and conversation.title in UNTITLED_CONVERSATION_TITLES

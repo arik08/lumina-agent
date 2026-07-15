@@ -96,6 +96,8 @@ def classify_tool_risk(
         "grep",
         "read_file",
         "list_dir",
+        "search_source_document",
+        "read_source_document",
         "read_tool_result",
         "tool_search",
         "tool_describe",

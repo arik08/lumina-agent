@@ -14,7 +14,7 @@ from pypdf import PdfReader
 from ..document_limits import MAX_DOCUMENT_PAGES
 
 
-MAX_EXTRACTED_CHARS = 500_000
+MAX_EXTRACTED_CHARS = 2_000_000
 MAX_SPREADSHEET_CELLS = 50_000
 
 
