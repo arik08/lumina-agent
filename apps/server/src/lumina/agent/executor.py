@@ -949,6 +949,8 @@ class LocalRunExecutor:
         artifact_tools_available = retry_step_key != "final" and (
             output_mode == "file" or artifact_required
         )
+        if artifact_tools_available:
+            await self._ensure_artifact_progress_started(run_id)
         mcp_tools = await self.mcp_runtime.prepare_run(run_id)
         mcp_tools_by_name = {tool.provider_name: tool for tool in mcp_tools}
         skill_activation_schema = _skill_activation_tool_schema(run.snapshot_json)
@@ -3091,10 +3093,20 @@ class LocalRunExecutor:
                 existing = active_run.snapshot_json.get("output_intent")
                 if isinstance(existing, dict):
                     return dict(existing)
-                active_run.snapshot_json = {
+                snapshot = {
                     **active_run.snapshot_json,
                     "output_intent": payload,
                 }
+                if payload["fileCreationRequested"] is False:
+                    pending_progress = snapshot.get("artifact_progress")
+                    if (
+                        isinstance(pending_progress, Mapping)
+                        and pending_progress.get("tokens") == 0
+                        and pending_progress.get("lines") == 0
+                    ):
+                        snapshot["artifact_progress"] = None
+                        snapshot["artifact_usage"] = {}
+                active_run.snapshot_json = snapshot
                 append_event(db, active_run, "output_intent_classified", payload)
             await event_broker.notify(run_id)
             return payload
@@ -4072,6 +4084,18 @@ class LocalRunExecutor:
             }
             append_event(db, run, "artifact_progress", progress)
         await event_broker.notify(run_id)
+
+    async def _ensure_artifact_progress_started(self, run_id: str) -> None:
+        with SessionLocal() as db:
+            run = db.get(Run, run_id)
+            if (
+                run is None
+                or run.status in TERMINAL_STATUSES
+                or isinstance(run.snapshot_json.get("artifact_progress"), Mapping)
+                or isinstance(run.snapshot_json.get("artifact_usage"), Mapping)
+            ):
+                return
+        await self._publish_artifact_progress(run_id, 0, 0)
 
     async def _start_streaming_artifact_tool(
         self, run_id: str, tool_call: dict[str, Any]

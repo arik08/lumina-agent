@@ -5,6 +5,7 @@ import json
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Event
 
 from fastapi.testclient import TestClient
 
@@ -623,6 +624,97 @@ def test_artifact_progress_refreshes_at_100ms_with_live_model_output() -> None:
     assert executor_module._live_model_output_tokens(3_204, 400) == 3_304
 
 
+def test_report_progress_is_visible_before_first_provider_output(
+    monkeypatch, tmp_path: Path
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'report-progress-start.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    provider_started = Event()
+    release_provider = Event()
+    provider_turn = 0
+
+    class WaitingReportProvider(MockProvider):
+        async def stream(self, request):
+            provider_started.set()
+            while not release_provider.is_set():
+                await asyncio.sleep(0.01)
+            async for event in super().stream(request):
+                yield event
+
+    def provider(*_args, **_kwargs):
+        nonlocal provider_turn
+        provider_turn += 1
+        if provider_turn > 1:
+            return MockProvider(text_chunks=("HTML 보고서를 생성했습니다.",))
+        return WaitingReportProvider(
+            text_chunks=("HTML 보고서를 생성했습니다.",),
+            tool_call=MockToolCall(
+                name="create_report",
+                arguments={
+                    "format": "html",
+                    "title": "대기 피드백 점검",
+                    "executive_summary": "보고서 진행 표시를 검증합니다.",
+                    "key_metrics": [],
+                    "sections": [
+                        {
+                            "heading": "점검 결과",
+                            "body": "Provider 첫 출력 전에도 진행 바가 표시됩니다.",
+                            "bullets": [],
+                        }
+                    ],
+                    "action_items": [],
+                },
+                call_id="call_report_progress_start",
+            ),
+        )
+
+    monkeypatch.setattr(local_run_executor, "_provider", provider)
+
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "보고서 진행 시작"},
+        ).json()
+        started = client.post(
+            f"/api/conversations/{conversation['id']}/runs",
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": "report-progress-start-0001",
+            },
+            json={
+                "message": {
+                    "text": "대기 피드백 점검 결과를 HTML 보고서로 만들어 줘",
+                }
+            },
+        )
+        assert started.status_code == 202, started.text
+        try:
+            assert provider_started.wait(timeout=5)
+            snapshot = client.get(
+                f"/api/runs/{started.json()['run']['runId']}/snapshot"
+            ).json()
+            assert snapshot["status"] == "model_streaming"
+            assert snapshot["artifactProgress"] == {
+                "tokens": 0,
+                "lines": 0,
+                "estimated": True,
+            }
+        finally:
+            release_provider.set()
+
+        terminal = _wait_for_terminal(client, started.json()["run"]["runId"])
+        assert terminal["status"] == "completed"
+
+
 def test_streamed_write_file_name_extracts_only_the_target_name() -> None:
     arguments = '{"path":"reports\\\\quarterly_summary.html","content":"private'
 
@@ -863,6 +955,8 @@ def test_file_mode_is_a_general_delivery_preference_not_a_file_command(
     )
     assert all(snapshot["artifacts"] == [] for snapshot in snapshots)
     assert all(snapshot["toolExecutions"] == [] for snapshot in snapshots)
+    assert all(snapshot["artifactProgress"] is None for snapshot in snapshots)
+    assert all(snapshot["artifactUsage"] is None for snapshot in snapshots)
     assert len(requests) == 4
     assert {
         request.metadata["prompt_cache_key"] for request in requests

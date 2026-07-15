@@ -30,6 +30,9 @@ test("artifact progress distinguishes document size, target, and model output us
 
   const workspace = await read("../src/use-lumina-workspace.ts");
   assert.match(workspace, /nextSnapshot\.artifactUsage = event\.payload/);
+  assert.match(workspace, /event\.payload\.fileCreationRequested === false/);
+  assert.match(workspace, /nextSnapshot\.artifactProgress = null/);
+  assert.match(workspace, /nextSnapshot\.artifactUsage = null/);
 
   assert.match(stylesheet, /--artifact-progress-color: var\(--cobalt\)/);
   assert.match(stylesheet, /\.artifact-progress-count \{[^}]*width: 100%/s);

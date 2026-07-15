@@ -333,6 +333,10 @@ export function useLuminaWorkspace() {
         ];
       } else if (event.type === "output_intent_classified") {
         nextSnapshot.outputIntent = event.payload;
+        if (event.payload.fileCreationRequested === false) {
+          nextSnapshot.artifactProgress = null;
+          nextSnapshot.artifactUsage = null;
+        }
       } else if (event.type === "skill_selected") {
         nextSnapshot.activities = [
           ...nextSnapshot.activities.filter((activity) => activity.id !== event.payload.activity.id),
