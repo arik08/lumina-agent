@@ -90,6 +90,7 @@ flowchart LR
 
 1. Node.js 공식 다운로드 페이지에서 **LTS** Windows Installer를 내려받아 기본 옵션으로 설치합니다. `npm`도 함께 설치됩니다.
 2. 저장소 루트에서 `installer.bat`를 실행합니다. `uv`가 없고 인터넷에 연결되어 있으면 설치기가 Astral 공식 명령으로 사용자 폴더에 자동 설치합니다.
+   P-GPT 설정 질문에서는 `Y`를 누르면 설정을 진행하고 `N`을 누르면 건너뜁니다. Enter를 추가로 누를 필요가 없습니다.
 3. 설치 후 아래 명령으로 설치 상태를 확인합니다.
 
    ```powershell
@@ -185,6 +186,12 @@ Frontend와 Backend 포트는 루트 `.env`의 `LUMINA_FRONTEND_PORT`, `LUMINA_B
 
 실행 창에서 `r`, `R` 또는 `ㄱ`을 입력하면 Frontend와 Backend를 함께 재시작합니다. `q`, `Q` 또는 `ㅂ`을 입력하면 실행기가 시작한 모든 process를 정리하고 종료합니다.
 Backend나 Frontend process가 예기치 않게 종료되거나 health check가 연속 실패하면 실행기가 자동으로 다시 시작합니다. 반복 장애 때는 재시작 간격을 최대 30초까지 늘리며, 사용자가 실행기를 종료할 때까지 감시를 계속합니다. 직전 process 로그는 `data/logs/*.previous.log`에 보존됩니다.
+
+실행 창을 강제로 닫아 Lumina process가 백그라운드에 남았거나 저장소 폴더가 사용 중이라고 표시되면 다음 정리 도구를 실행합니다. 탐색기에서 `devtools\stop_lumina.bat`를 더블클릭해도 됩니다.
+
+```powershell
+devtools\stop_lumina.bat
+```
 
 ### 3. 로그인
 

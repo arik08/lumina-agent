@@ -6,7 +6,7 @@
 
 ```powershell
 # 실행 중인 이 저장소의 Lumina Frontend, Backend와 supervisor 모두 종료
-powershell -NoProfile -ExecutionPolicy Bypass -File devtools/stop_lumina.ps1
+devtools\stop_lumina.bat
 
 # 실제 종료 대상을 변경 없이 미리 확인
 powershell -NoProfile -ExecutionPolicy Bypass -File devtools/stop_lumina.ps1 -WhatIf
@@ -26,7 +26,15 @@ SQLite 개발 환경에서 PostgreSQL 이전 가능성을 확인하는 진단 �
 
 ### `install_lumina.ps1`
 
-`installer.bat`가 호출하는 실제 설치기입니다. Python 3.13·Node.js·npm·uv 요구 조건을 확인하고, `.env`와 데이터 디렉터리 준비, Python/Frontend 의존성 설치, 회사 CA trust bundle 생성, Alembic migration, Frontend build를 수행합니다. P-GPT 설정, 회사 CA 필수 여부, 네트워크 차단 설치, 파일을 바꾸지 않는 `-ValidateOnly` 같은 설치 옵션도 이 파일이 처리합니다. 일반 설치는 이 파일보다 루트의 `installer.bat` 사용을 권장합니다.
+`installer.bat`가 호출하는 실제 설치기입니다. Python 3.13·Node.js·npm·uv 요구 조건을 확인하고, `.env`와 데이터 디렉터리 준비, Python/Frontend 의존성 설치, 회사 CA trust bundle 생성, Alembic migration, Frontend build를 수행합니다. 대화형 설치에서 P-GPT 설정 여부는 Enter 없이 `Y`를 누르면 진행하고 `N`을 누르면 건너뜁니다. P-GPT 설정, 회사 CA 필수 여부, 네트워크 차단 설치, 파일을 바꾸지 않는 `-ValidateOnly` 같은 설치 옵션도 이 파일이 처리합니다. 일반 설치는 이 파일보다 루트의 `installer.bat` 사용을 권장합니다.
+
+### `install_lumina.tests.ps1`
+
+설치기의 대화형 선택 입력 회귀 테스트입니다. 대소문자 `Y`/`N`, 한글 IME가 켜진 상태의 물리 Y/N 키와 다른 키 무시 동작을 검사하며 실제 설치, 네트워크 요청이나 `.env` 변경은 수행하지 않습니다.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File devtools/install_lumina.tests.ps1
+```
 
 ### `LuminaCache.Env.ps1`
 
@@ -59,6 +67,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File devtools/run_lumina.tests.ps
 ### `stop_lumina.ps1`
 
 이 저장소에서 백그라운드로 실행 중인 Lumina production/development launcher, PowerShell supervisor, FastAPI Backend와 Vite Frontend를 모두 종료합니다. 포트 번호나 실행 파일 이름만으로 판단하지 않고 저장소의 정확한 launcher·server·Vite 경로와 명령행을 함께 확인하므로, 다른 프로젝트의 Python/Node 프로세스와 다른 프로그램이 소유한 포트는 건드리지 않습니다. 가장 위의 Lumina 부모 프로세스에서 자식 트리를 종료한 뒤 남은 프로세스를 다시 확인하고, 종료가 확인되면 오래된 supervisor PID 파일을 정리합니다. `-WhatIf`로 대상을 미리 볼 수 있습니다.
+
+### `stop_lumina.bat`
+
+탐색기에서 더블클릭하거나 명령 프롬프트에서 바로 실행하는 `stop_lumina.ps1` wrapper입니다. 먼저 현재 디렉터리를 `%TEMP%`로 옮겨 정리 도구 자체가 저장소 폴더를 잠그지 않게 한 뒤, 이 저장소의 Lumina process tree를 종료합니다. 정상 완료하면 즉시 닫히고, 실패할 때만 오류를 읽을 수 있도록 창을 유지합니다. 종료 대상을 미리 보려면 `devtools\stop_lumina.bat -WhatIf`를 사용합니다.
 
 ### `stop_lumina.tests.ps1`
 
