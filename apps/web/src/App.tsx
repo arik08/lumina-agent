@@ -3147,7 +3147,13 @@ function App() {
                 }}
               >
                 <div className="progress-header">
-                  <button className="progress-trigger" type="button" aria-expanded={progressOpen} aria-controls="active-run-progress-steps">
+                  <button
+                    className={`progress-trigger ${progressOpen ? "is-open" : "is-collapsed"}`}
+                    type="button"
+                    aria-label={progressOpen ? "작업 계획 접기" : `작업 계획 펼치기, ${progress.filter((item) => item.status === "complete").length} / ${progress.length}, ${runStatusLabel(activeRun.status)}`}
+                    aria-expanded={progressOpen}
+                    aria-controls="active-run-progress-steps"
+                  >
                     <div className="progress-title"><Sparkles size={15} /><strong>작업 계획</strong></div>
                     {!progressOpen && (
                       <span className="current-step" title={latestProgressSummary?.text}>
