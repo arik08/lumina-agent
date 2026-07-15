@@ -168,6 +168,7 @@ function ZoomViewer({
 
 function MermaidSurface({ source, expanded = false }: { source: string; expanded?: boolean }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{ pointerId: number; x: number; y: number; scrollLeft: number; scrollTop: number } | null>(null);
   const [error, setError] = useState(false);
 
   useEffect(() => {
@@ -184,7 +185,44 @@ function MermaidSurface({ source, expanded = false }: { source: string; expanded
   }, [source]);
 
   if (error) return <SyntaxCode className="mermaid-render-error" value={source} language="mermaid" />;
-  return <div ref={containerRef} className={`mermaid-surface ${expanded ? "is-expanded" : ""}`} role="img" aria-label="Mermaid 다이어그램"><span>다이어그램 렌더링 중…</span></div>;
+  const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (expanded || event.button !== 0) return;
+    dragRef.current = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      scrollLeft: event.currentTarget.scrollLeft,
+      scrollTop: event.currentTarget.scrollTop,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.currentTarget.classList.add("is-dragging");
+  };
+  const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.currentTarget.scrollLeft = drag.scrollLeft - (event.clientX - drag.x);
+    event.currentTarget.scrollTop = drag.scrollTop - (event.clientY - drag.y);
+  };
+  const finishDrag = (event: PointerEvent<HTMLDivElement>) => {
+    if (dragRef.current?.pointerId !== event.pointerId) return;
+    dragRef.current = null;
+    event.currentTarget.classList.remove("is-dragging");
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  };
+  return (
+    <div
+      ref={containerRef}
+      className={`mermaid-surface ${expanded ? "is-expanded" : ""}`}
+      role="img"
+      aria-label="Mermaid 다이어그램"
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={finishDrag}
+      onPointerCancel={finishDrag}
+    >
+      <span>다이어그램 렌더링 중…</span>
+    </div>
+  );
 }
 
 function mermaidAppearance() {
@@ -300,7 +338,6 @@ export function MermaidDiagram({ source }: { source: string }) {
           role="button"
           tabIndex={0}
           aria-label="Mermaid 다이어그램 확대"
-          data-tooltip="확대해서 보기"
           onClick={() => setExpanded(true)}
           onKeyDown={(event) => {
             if (event.key !== "Enter" && event.key !== " ") return;

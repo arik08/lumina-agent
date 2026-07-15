@@ -71,7 +71,6 @@
 
 .interactive-response-content {
   padding: 12px;
-  cursor: zoom-in;
 }
 
 .mermaid-surface {
@@ -93,6 +92,16 @@
   overscroll-behavior: contain;
   color: var(--muted);
   text-align: center;
+}
+
+.mermaid-surface:not(.is-expanded) {
+  cursor: grab;
+  touch-action: none;
+}
+
+.mermaid-surface.is-dragging {
+  cursor: grabbing;
+  user-select: none;
 }
 
 .mermaid-surface svg {

@@ -55,6 +55,8 @@ test("Mermaid uses the designated artifact palette without overriding authored c
 
 test("tall Mermaid workflows keep readable geometry inside a bounded scroll surface", () => {
   assert.match(rendererStyles, /\.mermaid-surface \{[\s\S]*max-height: min\(640px, 68vh\);[\s\S]*overflow: auto;[\s\S]*overscroll-behavior: contain;/);
+  assert.match(rendererStyles, /\.mermaid-surface:not\(\.is-expanded\) \{[^}]*cursor: grab;[^}]*touch-action: none;/);
+  assert.match(rendererStyles, /\.mermaid-surface\.is-dragging \{[^}]*cursor: grabbing;[^}]*user-select: none;/);
   assert.match(rendererStyles, /\.mermaid-surface svg \{[\s\S]*width: auto;[\s\S]*max-width: 100%;[\s\S]*height: auto;/);
   assert.match(rendererStyles, /\.mermaid-surface\.is-expanded \{[\s\S]*max-height: none;/);
   assert.doesNotMatch(rendererStyles, /\.mermaid-surface svg \{[\s\S]*max-height: 660px;/);
@@ -68,8 +70,13 @@ test("Mermaid and structured charts expose a zoomable, pannable dialog", () => {
   assert.match(globalStyles, /\.response-zoom-backdrop\.theme-dark,[\s\S]*?\.app-shell\.theme-dark/);
   assert.match(rendererSource, /aria-label="Mermaid 다이어그램 확대"/);
   assert.match(rendererSource, /<div[\s\S]*?className="interactive-response-toolbar interactive-response-expand-trigger"[\s\S]*?role="button"[\s\S]*?tabIndex=\{0\}[\s\S]*?onClick=\{\(\) => setExpanded\(true\)\}/);
+  assert.match(rendererSource, /aria-label="Mermaid 다이어그램 확대"\s+onClick/);
+  assert.match(rendererSource, /className="interactive-response-expand-icon" aria-hidden="true"><Maximize2 size=\{15\} \/><\/span>/);
   assert.match(rendererSource, /event\.key !== "Enter" && event\.key !== " "/);
+  assert.match(rendererSource, /event\.currentTarget\.scrollLeft = drag\.scrollLeft - \(event\.clientX - drag\.x\)/);
+  assert.match(rendererSource, /event\.currentTarget\.scrollTop = drag\.scrollTop - \(event\.clientY - drag\.y\)/);
   assert.match(rendererStyles, /\.interactive-response-expand-trigger \{[^}]*cursor: pointer;/);
+  assert.doesNotMatch(rendererStyles, /\.interactive-response-content \{[^}]*cursor: zoom-in;/);
   assert.doesNotMatch(rendererStyles, /\.interactive-response-expand-trigger \{[^}]*cursor: zoom-in;/);
   assert.match(rendererSource, /setPointerCapture/);
   assert.match(rendererSource, /changeZoom\(zoom \* \(event\.deltaY > 0 \? 0\.9 : 1\.1\)\)/);
