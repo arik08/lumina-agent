@@ -2874,6 +2874,15 @@ class LocalRunExecutor:
                 "the single requested file by its display name only, without internal IDs or "
                 "raw tool-result fields."
             )
+            turn_system_parts.append(
+                "Report tool timing contract: Finish the necessary research, source reading, "
+                "and analysis first. As soon as you transition from research to writing, start "
+                "the `create_report` tool call before drafting the report body, then stream the "
+                "complete report directly into its arguments. Do not compose the full report in "
+                "hidden reasoning or visible chat text and only call the tool afterward. A brief "
+                "outline is allowed, but report prose, tables, citations, and HTML belong inside "
+                "the active `create_report` call."
+            )
             target_output_tokens = _optional_positive_int(
                 run.snapshot_json.get("target_output_tokens")
             )
@@ -2888,9 +2897,9 @@ class LocalRunExecutor:
                 turn_system_parts.append(
                     "Artifact length contract: The user selected a target of about "
                     f"{target_output_tokens:,} tokens for the Artifact content. Treat this "
-                    "as the first-pass writing target, not merely an upper cap. Before the first "
-                    "`create_report` call, allocate enough substantive coverage across the "
-                    "sections and submit the complete report in one call; do not submit a short "
+                    "as the first-pass writing target, not merely an upper cap. Briefly allocate "
+                    "enough substantive coverage across the sections, then start `create_report` "
+                    "and draft the complete report directly inside that one call; do not submit a short "
                     "draft for later expansion. The acceptable first-call range is 80-105% of "
                     f"the selected target: about {floor_tokens:,} to {ceiling_tokens:,} tokens. "
                     "Because token counts are estimates, plan and draft near 90-100%—about "
@@ -6447,7 +6456,10 @@ _REPORT_TOOL_SCHEMA = {
             "for Mermaid, charts, SVG, and report accents unless the user explicitly supplies "
             "a different brand palette. "
             "Inline JavaScript, script tags, and event handlers are supported for interactive "
-            "documents, apps, demos, and games. Keep the HTML self-contained."
+            "documents, apps, demos, and games. Keep the HTML self-contained. Start this tool "
+            "call as soon as the necessary research and analysis are ready and generate the "
+            "report body directly in the arguments; do not pre-compose the full report before "
+            "selecting the tool."
         ),
         "parameters": {
             "type": "object",
@@ -6558,8 +6570,9 @@ def _report_tool_schema(target_output_tokens: int | None) -> dict[str, Any]:
     schema = deepcopy(_REPORT_TOOL_SCHEMA)
     length_contract = (
         f" For this Run, the selected document target is about {target:,} tokens and the "
-        f"validation floor is about {floor:,} tokens. Prepare the complete first-pass report "
-        f"before calling this tool. The acceptable range is about {floor:,} to {ceiling:,} "
+        f"validation floor is about {floor:,} tokens. Start this tool call as soon as research "
+        f"and analysis are ready, then draft the complete first-pass report directly in its "
+        f"arguments. The acceptable range is about {floor:,} to {ceiling:,} "
         f"tokens (80-105%), but plan near {preferred_floor:,} to {target:,} tokens (90-100%) "
         "to absorb estimation error. Do not plan near the lower boundary, submit an abbreviated "
         "draft for later expansion, or intentionally exceed the upper bound."

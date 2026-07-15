@@ -472,6 +472,8 @@ def test_selected_artifact_target_retries_short_report_and_exposes_separate_coun
     assert "about 800 to 1,050 tokens" in system_text
     assert "plan and draft near 90-100%—about 900 to 1,000 tokens" in system_text
     assert "Do not plan near the lower boundary" in system_text
+    assert "start the `create_report` tool call before drafting the report body" in system_text
+    assert "stream the complete report directly into its arguments" in system_text
     report_schema = next(
         schema
         for schema in first_request.tools
@@ -480,6 +482,12 @@ def test_selected_artifact_target_retries_short_report_and_exposes_separate_coun
     assert (
         "selected document target is about 1,000 tokens"
         in report_schema["function"]["description"]
+    )
+    assert "Start this tool call as soon as research and analysis are ready" in (
+        report_schema["function"]["description"]
+    )
+    assert "Prepare the complete first-pass report before calling this tool" not in (
+        report_schema["function"]["description"]
     )
     html_description = report_schema["function"]["parameters"]["properties"][
         "html_source"

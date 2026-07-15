@@ -10,6 +10,7 @@ Create browser-native visual deliverables that are polished enough to screenshot
 ## Default output
 
 - Prefer one self-contained `.html` file with inline CSS. Pass the complete document through `create_report.html_source` so the visual design reaches the saved Artifact unchanged.
+- After research and source analysis are complete, start `create_report` when report drafting begins and stream the complete document directly through `html_source`. Do not compose the full report in reasoning or chat text first and call the tool only after the document is already written. A short structure outline is fine; the actual report body, tables, citations, CSS, and HTML must be produced inside the active tool call.
 - Lumina HTML Artifacts support inline JavaScript, `script` tags, and event handlers. Use them when the requested result is interactive, executable, app-like, or game-like. Keep the document self-contained because relative external files can break in isolated previews.
 - If the user describes report length in tokens, including Korean forms such as `5000~8000 토큰`, `10000 토큰 수준`, `15000~20000 토큰 이상`, or `30000토큰 수준`, treat the number as an approximate output-size target that should be checked, not merely a style cue. Use the target to plan content depth, but do not crowd the page with walls of prose, cramped tables, or repetitive cards just to hit a length. Preserve visual rhythm with section summaries, charts, callouts, and source notes.
 - Use a short purpose-specific filename, not `index.html`, unless the user explicitly asks for it or an existing app requires it. Prefer concise readable Korean filenames with underscores for Korean-facing reports/previews; use English kebab-case or snake_case for code-heavy demos, games, or English-facing artifacts.
@@ -124,7 +125,7 @@ quarterly trends, sources, or a report:
 
 1. Infer audience, output type, size target, reuse goal, and visual archetype. For report requests, choose the visual archetype yourself and proceed; ask only when missing information prevents the factual work or the requested output format is genuinely unclear.
 2. Structure the content before styling: sections, data, charts, interactions, export needs. Decide which reader questions deserve interactive controls and which findings must remain visible by default.
-3. Build the single HTML artifact with responsive CSS and print/capture considerations.
+3. Start `create_report`, then build the single HTML artifact directly in `html_source` with responsive CSS and print/capture considerations.
 4. Include `@media print` for PDF-friendly output when the artifact is report-like or slide-like.
 5. If the user wants screenshots/PDF, use the `playwright-capture` skill after creating the HTML.
 6. For important or dense visuals, use the `visual-review` skill to inspect clipping, overflow, chart labels, and print layout.

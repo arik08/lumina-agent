@@ -52,3 +52,9 @@ test("HTML Artifact generation keeps the user-designated visual palette", () => 
   assert.match(visualArtifactSkillSource, /--viz-purple/);
   assert.match(visualArtifactSkillSource, /Do not silently replace it with Lumina's app cobalt or an all-gray theme/);
 });
+
+test("visual Artifact report drafting starts inside create_report", () => {
+  assert.match(visualArtifactSkillSource, /start `create_report` when report drafting begins/);
+  assert.match(visualArtifactSkillSource, /stream the complete document directly through `html_source`/);
+  assert.match(visualArtifactSkillSource, /Do not compose the full report in reasoning or chat text first/);
+});
