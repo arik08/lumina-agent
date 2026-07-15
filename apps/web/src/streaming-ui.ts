@@ -360,9 +360,9 @@ export function useConversationAutoFollow(
       const responseMs = 340;
       const omega = (1_000 / responseMs) * 2.25;
       const acceleration = distance * omega * omega - followVelocity * 2 * omega;
-      const maxAcceleration = Math.max(12_000, Math.min(42_000, current.clientHeight * 70));
+      const maxAcceleration = Math.max(18_000, Math.min(90_000, current.clientHeight * 110));
       followVelocity += Math.max(-maxAcceleration, Math.min(maxAcceleration, acceleration)) * dt;
-      const maxVelocity = Math.max(520, Math.min(4_200, current.clientHeight * 4 + Math.abs(distance) * 3));
+      const maxVelocity = Math.max(700, Math.min(9_000, current.clientHeight * 7 + Math.abs(distance) * 4));
       followVelocity = Math.max(0, Math.min(maxVelocity, followVelocity));
       const nextTop = current.scrollTop + followVelocity * dt;
       current.scrollTop = Math.max(current.scrollTop, Math.min(target, nextTop));

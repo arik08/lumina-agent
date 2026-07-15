@@ -22,3 +22,11 @@ test("conversation scroll position is restored per session without completed-run
   assert.match(streamingUi, /follow\(false, true, true\)/);
   assert.match(app, /useConversationAutoFollow\([\s\S]*?runIsActive,[\s\S]*?workspace\.activeConversationId,[\s\S]*?activeRuntime\.loaded,/);
 });
+
+test("jump to latest accelerates quickly across long conversations", async () => {
+  const streamingUi = await readFile(streamingUiUrl, "utf8");
+
+  assert.match(streamingUi, /const maxAcceleration = Math\.max\(18_000, Math\.min\(90_000, current\.clientHeight \* 110\)\)/);
+  assert.match(streamingUi, /const maxVelocity = Math\.max\(700, Math\.min\(9_000, current\.clientHeight \* 7 \+ Math\.abs\(distance\) \* 4\)\)/);
+  assert.match(streamingUi, /const acceleration = distance \* omega \* omega - followVelocity \* 2 \* omega/);
+});
