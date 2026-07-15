@@ -220,7 +220,7 @@ function Write-LuminaBanner {
 function Get-LuminaStartupProgressText {
     param(
         [Parameter(Mandatory = $true)][int]$Step,
-        [int]$Width = 10
+        [int]$Width = 20
     )
 
     $filledCount = (($Step - 1) % $Width) + 1
@@ -615,7 +615,6 @@ function Stop-ExistingLuminaListeners {
         [void]$rootIds.Add($rootId)
     }
     foreach ($rootId in $rootIds) {
-        Write-Host "[Lumina] Stopping previous Lumina process tree (PID $rootId)..."
         Stop-ProcessTree -ProcessId $rootId
     }
     $remaining = @(
@@ -686,7 +685,6 @@ function Stop-PreviousSupervisor {
         )
     }
     if ($matchesSupervisorIdentity) {
-        Write-Host "[Lumina] Replacing the previous supervisor (PID $previousPid)..."
         Stop-ProcessTree -ProcessId $previousPid
     }
 }

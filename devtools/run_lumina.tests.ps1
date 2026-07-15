@@ -713,17 +713,17 @@ if (
 . ([scriptblock]::Create($invokeCheckedFunction.Extent.Text))
 
 $expectedProgress = @(
-    (([string][char]0x25A0) + (([string][char]0x25A1) * 9)),
-    (([string][char]0x25A0) * 10),
-    (([string][char]0x25A0) + (([string][char]0x25A1) * 9))
+    (([string][char]0x25A0) + (([string][char]0x25A1) * 19)),
+    (([string][char]0x25A0) * 20),
+    (([string][char]0x25A0) + (([string][char]0x25A1) * 19))
 )
 $actualProgress = @(
     (Get-LuminaStartupProgressText -Step 1),
-    (Get-LuminaStartupProgressText -Step 10),
-    (Get-LuminaStartupProgressText -Step 11)
+    (Get-LuminaStartupProgressText -Step 20),
+    (Get-LuminaStartupProgressText -Step 21)
 )
 if (($actualProgress -join '|') -ne ($expectedProgress -join '|')) {
-    throw "Startup progress must fill ten cells and then begin again."
+    throw "Startup progress must fill twenty cells and then begin again."
 }
 
 function Write-LuminaStartupProgress {}
@@ -783,6 +783,8 @@ if (
     $preparationSource -notmatch 'PreparationErrorLog' -or
     $source -match 'Applying development database migrations once' -or
     $source -match '\[Lumina\] Hard reset:' -or
+    $source -match 'Stopping previous Lumina process tree' -or
+    $source -match 'Replacing the previous supervisor' -or
     $source -match '\[Lumina\] Logs: \$LogRoot\s*\r?\n\s*\$healthFailures'
 ) {
     throw "Normal startup must stay quiet while failures retain log guidance."
