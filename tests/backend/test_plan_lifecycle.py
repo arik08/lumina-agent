@@ -203,19 +203,35 @@ def test_work_plan_stays_active_until_the_run_completes(tmp_path: Path) -> None:
         transition_run(db, run, PREPARING)
         transition_run(db, run, MODEL_STREAMING)
 
+        initial_plan = update_work_plan(
+            db,
+            run,
+            steps=[
+                {"step": "근거를 확인합니다", "status": "in_progress"},
+                {"step": "최종 답변을 작성합니다", "status": "pending"},
+            ],
+        )
+
+        with pytest.raises(ValueError, match="최종 답변 작성"):
+            update_work_plan(
+                db,
+                run,
+                steps=[
+                    {"step": "근거를 확인합니다", "status": "completed"},
+                    {"step": "최종 답변을 작성합니다", "status": "completed"},
+                ],
+            )
+        assert run.snapshot_json["work_plan"] == initial_plan
+
         streaming_plan = update_work_plan(
             db,
             run,
             steps=[
                 {"step": "근거를 확인합니다", "status": "completed"},
-                {"step": "최종 답변을 작성합니다", "status": "completed"},
+                {"step": "최종 답변을 작성합니다", "status": "in_progress"},
             ],
         )
-
-        assert [item["status"] for item in streaming_plan] == [
-            "completed",
-            "in_progress",
-        ]
+        assert [item["status"] for item in streaming_plan] == ["completed", "in_progress"]
 
         transition_run(db, run, COMPLETED, event_type="run_completed")
 

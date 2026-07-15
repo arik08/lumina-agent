@@ -6003,7 +6003,10 @@ _UPDATE_PLAN_TOOL_SCHEMA = {
         "name": "update_plan",
         "description": (
             "Create or update the concise, user-visible work plan for the current task. "
-            "Use concrete task-specific steps and update their statuses as work progresses."
+            "Use concrete task-specific steps and update their statuses as work progresses. "
+            "When a plan exists, include composing the final answer as concrete work chosen "
+            "by you and keep that answer-writing step in_progress until the Run completes. "
+            "Never mark every step completed before streaming the final answer."
         ),
         "parameters": {
             "type": "object",
@@ -6042,7 +6045,8 @@ _UPDATE_PLAN_TOOL_SCHEMA = {
                                 "description": (
                                     "The execution phase represented by this step. Use drafting "
                                     "for the step where create_report or write_file creates the "
-                                    "requested deliverable, and validation for checks after it."
+                                    "requested deliverable or where you compose the final "
+                                    "user-visible answer, and validation for checks before it."
                                 ),
                             },
                         },

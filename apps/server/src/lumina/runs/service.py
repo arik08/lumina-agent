@@ -1258,7 +1258,11 @@ def update_work_plan(
         and normalized
         and all(item["status"] == "completed" for item in normalized)
     ):
-        normalized[-1]["status"] = "in_progress"
+        raise ValueError(
+            "Run이 진행 중일 때 업무 계획 전체를 완료할 수 없습니다. "
+            "최종 답변 작성도 실제 작업으로 판단하여 해당 단계를 직접 추가하거나 "
+            "선택하고 in_progress로 유지해 주세요."
+        )
 
     run.snapshot_json = {**run.snapshot_json, "work_plan": normalized}
     append_event(db, run, "work_plan_updated", {"steps": normalized})

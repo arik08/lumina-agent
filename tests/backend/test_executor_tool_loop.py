@@ -13,6 +13,7 @@ from lumina.agent.executor import LocalRunExecutor, local_run_executor
 from lumina.config import Settings
 from lumina.main import create_app
 from lumina.db import SessionLocal
+from lumina.instructions.service import DEFAULT_SYSTEM_PROMPT
 from lumina.models import RunEvent, ToolExecution
 from lumina.providers import (
     MockProvider,
@@ -328,13 +329,20 @@ def test_auto_effort_and_model_turn_metrics_are_persisted(
 
 
 def test_update_plan_schema_identifies_the_report_drafting_phase() -> None:
-    item_schema = executor_module._UPDATE_PLAN_TOOL_SCHEMA["function"]["parameters"][
+    tool_schema = executor_module._UPDATE_PLAN_TOOL_SCHEMA["function"]
+    item_schema = tool_schema["parameters"][
         "properties"
     ]["plan"]["items"]
 
+    assert "final answer" in tool_schema["description"]
+    assert "in_progress" in tool_schema["description"]
     assert "phase" in item_schema["required"]
     assert "drafting" in item_schema["properties"]["phase"]["enum"]
     assert "create_report" in item_schema["properties"]["phase"]["description"]
+    assert "final user-visible answer" in item_schema["properties"]["phase"]["description"]
+    assert "final user-visible answer" in DEFAULT_SYSTEM_PROMPT
+    assert "keep that step `in_progress`" in DEFAULT_SYSTEM_PROMPT
+    assert "runtime marks it `completed`" in DEFAULT_SYSTEM_PROMPT
 
 
 def test_tool_progress_fallback_does_not_expose_arguments() -> None:
@@ -1458,6 +1466,7 @@ def test_update_plan_tool_publishes_meaningful_plan_without_tool_activity(
         "CodeGraph에서 실행 이벤트와 화면 렌더링 경로를 확인합니다",
         "모델 계획 이벤트를 Run snapshot과 SSE에 연결합니다",
         "브라우저에서 단계 상태와 오류 여부를 검증합니다",
+        "확인 결과를 최종 답변으로 작성합니다",
     ]
 
     def provider(
@@ -1467,9 +1476,9 @@ def test_update_plan_tool_publishes_meaningful_plan_without_tool_activity(
         del wants_artifact, first_turn
         provider_turn += 1
         if provider_turn == 1:
-            statuses = ["in_progress", "pending", "pending"]
+            statuses = ["in_progress", "pending", "pending", "pending"]
         elif provider_turn == 2:
-            statuses = ["completed", "completed", "completed"]
+            statuses = ["completed", "completed", "completed", "in_progress"]
         else:
             return MockProvider(text_chunks=("계획한 검증까지 완료했습니다.",))
         return MockProvider(
