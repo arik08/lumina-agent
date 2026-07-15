@@ -14,7 +14,7 @@ test("streaming prose decorates the newest 24 visible graphemes in six four-char
   assert.match(source, /return !\/\^\\s\+\$\/u\.test\(value\);/);
   assert.match(source, /streamingLeadingEdgeExcludedParents = new Set\(\["link", "linkReference"\]\)/);
   assert.match(source, /dataStreamRank: String\(rank\)/);
-  assert.match(source, /tailRemarkPlugins[\s\S]*remarkStreamingLeadingEdge/);
+  assert.match(source, /\(\) => leadingEdge[\s\S]*remarkStreamingLeadingEdge/);
 });
 
 test("the newest rank is a 60 percent cobalt and 40 percent chat-canvas mix", async () => {
@@ -34,4 +34,26 @@ test("the leading edge settles before streaming markup is removed", async () => 
   assert.match(source, /const streamSettleDurationMs = 180;/);
   assert.match(source, /setSettling\(true\);/);
   assert.match(source, /revealing: streaming \|\| visibleText !== targetText \|\| settling, settling/);
+});
+
+test("streaming reparses only the changing markdown tail while keeping the 15ms cadence", async () => {
+  const [turnSource, streamingSource] = await Promise.all([
+    read("../src/components/ConversationTurn.tsx"),
+    read("../src/streaming-ui.ts"),
+  ]);
+
+  assert.match(streamingSource, /const visibleFrameIntervalMs = 15;/);
+  assert.match(turnSource, /const MemoizedMarkdownChunk = memo\(function MarkdownChunk/);
+  assert.match(turnSource, /prefixText && <MemoizedMarkdownChunk text=\{prefixText\}[\s\S]*?leadingEdge=\{false\}/);
+  assert.match(turnSource, /tailText && <MemoizedMarkdownChunk text=\{tailText\}[\s\S]*?leadingEdge \/>/);
+  assert.doesNotMatch(turnSource, /prefixText && <ReactMarkdown/);
+});
+
+test("closed tool rows defer hidden request and result serialization", async () => {
+  const source = await read("../src/components/ConversationTurn.tsx");
+
+  assert.match(source, /const toolDetailText = useMemo\(\(\) => \{\s*if \(!isOpen\) return null;/);
+  assert.match(source, /isOpen && overlayStyle && toolDetailText && createPortal/);
+  assert.match(source, /SyntaxCode value=\{toolDetailText\.requestText\}/);
+  assert.match(source, /SyntaxCode value=\{toolDetailText\.resultText\}/);
 });

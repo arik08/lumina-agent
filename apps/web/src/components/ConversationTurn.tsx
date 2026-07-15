@@ -541,16 +541,22 @@ function ToolCallRow({
   const activeWriteFileName = writeFileName(execution);
   const headerDetail = activeWriteFileName ?? webSearchQuery(execution) ?? webFetchSummary(execution) ?? createReportSummary(execution);
   const writeProgress = tokenBucketProgress(execution.progress?.tokens ?? 0);
-  const requestText = execution.input
-    ? JSON.stringify(execution.input, null, 2)
-    : execution.inputSummary.length
-      ? execution.inputSummary.join("\n")
-      : "입력 없음";
-  const rawResultText = execution.result
-    ? JSON.stringify(execution.result, null, 2)
-    : execution.error || execution.resultSummary.join("\n") || (running ? "실행 중입니다." : "결과 요약 없음");
-  const statusExplanation = httpStatusExplanation(rawResultText);
-  const resultText = statusExplanation ? `${rawResultText}\n\n${statusExplanation}` : rawResultText;
+  const toolDetailText = useMemo(() => {
+    if (!isOpen) return null;
+    const requestText = execution.input
+      ? JSON.stringify(execution.input, null, 2)
+      : execution.inputSummary.length
+        ? execution.inputSummary.join("\n")
+        : "입력 없음";
+    const rawResultText = execution.result
+      ? JSON.stringify(execution.result, null, 2)
+      : execution.error || execution.resultSummary.join("\n") || (running ? "실행 중입니다." : "결과 요약 없음");
+    const statusExplanation = httpStatusExplanation(rawResultText);
+    return {
+      requestText,
+      resultText: statusExplanation ? `${rawResultText}\n\n${statusExplanation}` : rawResultText,
+    };
+  }, [execution.error, execution.input, execution.inputSummary, execution.result, execution.resultSummary, isOpen, running]);
   return (
     <div className={`tool-call ${isOpen ? "is-open" : ""}`}>
       <button ref={triggerRef} className={`tool-call-trigger ${summaryText ? "has-summary" : ""}`} type="button" aria-expanded={isOpen} aria-controls={contentId} onClick={onToggle}>
@@ -582,15 +588,15 @@ function ToolCallRow({
           </div>
         </div>
       )}
-      {isOpen && overlayStyle && createPortal(
+      {isOpen && overlayStyle && toolDetailText && createPortal(
         <div ref={overlayRef} className="tool-message is-global" id={contentId} style={overlayStyle}>
           <section className="tool-message-section">
             <div className="tool-message-heading"><span>도구 요청</span><code>{execution.toolName}</code></div>
-            <SyntaxCode value={requestText} language={execution.input ? "json" : "plaintext"} />
+            <SyntaxCode value={toolDetailText.requestText} language={execution.input ? "json" : "plaintext"} />
           </section>
           <section className="tool-message-section">
             <div className="tool-message-heading"><span>도구 결과</span><span className="tool-message-state">{toolStatusLabel(execution.status)} · {formatDuration(execution.durationMs)}</span></div>
-            <SyntaxCode value={resultText} language={execution.result ? "json" : "plaintext"} />
+            <SyntaxCode value={toolDetailText.resultText} language={execution.result ? "json" : "plaintext"} />
           </section>
           <div className="tool-message-actions">
             <button type="button" onClick={() => onCopy(execution)}><Copy size={13} /> 복사</button>
