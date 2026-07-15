@@ -11,3 +11,10 @@ test("composer gutters pass middle-button hits through to the conversation scrol
   assert.match(dockAreaRule, /pointer-events:\s*none;/);
   assert.match(styles, /\.run-dock,\s*\.jump-to-latest \{\s*pointer-events:\s*auto;\s*\}/);
 });
+
+test("jump-to-latest stays flat without a surrounding shadow", async () => {
+  const styles = await readFile(stylesUrl, "utf8");
+  const jumpToLatestRule = styles.match(/\.jump-to-latest \{([^}]*)\}/)?.[1] ?? "";
+
+  assert.doesNotMatch(jumpToLatestRule, /box-shadow\s*:/);
+});
