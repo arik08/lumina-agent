@@ -11,7 +11,7 @@ test("user questions expose compact preview markers and message anchors", async 
     read("../src/components/ConversationTurn.tsx"),
   ]);
 
-  assert.match(app, /<ConversationQuestionNavigator[\s\S]*?turnSets=\{activeRuntime\.turnSets\}[\s\S]*?scrollContainerRef=\{conversationFollow\.containerRef\}[\s\S]*?onNavigateStart=\{conversationFollow\.onUserIntent\}/s);
+  assert.match(app, /<ConversationQuestionNavigator[\s\S]*?turnSets=\{activeRuntime\.turnSets\}[\s\S]*?theme=\{theme\}[\s\S]*?scrollContainerRef=\{conversationFollow\.containerRef\}[\s\S]*?onNavigateStart=\{conversationFollow\.onUserIntent\}/s);
   assert.doesNotMatch(app, /<ConversationQuestionNavigator[\s\S]*?snapshots=/s);
   assert.match(navigator, /message\.role !== "user"/);
   assert.match(navigator, /anchorId: message\.id, questionPreview, answerPreview/);
@@ -38,14 +38,17 @@ test("hovered marker tapers its neighbors and click scrolling accelerates then d
   assert.match(navigator, /window\.requestAnimationFrame\(step\)/);
   assert.match(navigator, /prefers-reduced-motion: reduce/);
   assert.match(styles, /\.question-navigator-marker::before \{[^}]*transform: translateY\(-50%\) scaleX\(var\(--question-marker-scale\)\)[^}]*transition:/s);
-  assert.match(navigator, /<GlobalTooltipLayer anchor=\{markerRefs\.current\[index\]\} className="question-navigator-tooltip"/);
+  assert.match(navigator, /<GlobalTooltipLayer anchor=\{markerRefs\.current\[index\]\} className=\{`question-navigator-tooltip is-\$\{theme\}`\}/);
   assert.match(navigator, /preferredPlacement="right"/);
+  assert.match(navigator, /className=\{`question-navigator-tooltip is-\$\{theme\}`\}/);
   assert.match(globalTooltip, /preferredPlacement\?: "vertical" \| "right"/);
   assert.match(globalTooltip, /spaceRight >= layerRect\.width \|\| spaceRight >= spaceLeft \? "right" : "left"/);
   assert.match(navigator, />질문<\/small>/);
   assert.match(navigator, />답변<\/small>/);
   assert.match(navigator, /item\.answerPreview \|\| "아직 답변이 없습니다\."/);
   assert.match(styles, /\.question-navigator-tooltip \{/);
+  assert.match(styles, /\.question-navigator-tooltip\.is-light \{[^}]*border-color:\s*var\(--line\);[^}]*background:\s*var\(--surface\);[^}]*box-shadow:\s*var\(--shadow-overlay\);[^}]*color:\s*var\(--ink\);/s);
+  assert.doesNotMatch(styles, /\.question-navigator-tooltip\.is-dark\s*\{/);
   assert.match(styles, /\.question-navigator-preview-row\.is-answer \{[^}]*border-top:/s);
   assert.doesNotMatch(styles, /question-tooltip-enter/);
 });

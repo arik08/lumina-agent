@@ -6,7 +6,7 @@ import {
   type CSSProperties,
   type RefObject,
 } from "react";
-import type { TurnSet } from "../api-types";
+import type { Theme, TurnSet } from "../api-types";
 import { GlobalTooltipLayer } from "./GlobalTooltip";
 
 interface QuestionNavigatorItem {
@@ -70,10 +70,12 @@ function questionItems(turnSets: TurnSet[]) {
 
 export function ConversationQuestionNavigator({
   turnSets,
+  theme,
   scrollContainerRef,
   onNavigateStart,
 }: {
   turnSets: TurnSet[];
+  theme: Theme;
   scrollContainerRef: RefObject<HTMLDivElement | null>;
   onNavigateStart: () => void;
 }) {
@@ -176,7 +178,7 @@ export function ConversationQuestionNavigator({
               key={item.anchorId}
             >
               {activeIndex === index && (
-                <GlobalTooltipLayer anchor={markerRefs.current[index]} className="question-navigator-tooltip" id={tooltipId} open preferredPlacement="right">
+                <GlobalTooltipLayer anchor={markerRefs.current[index]} className={`question-navigator-tooltip is-${theme}`} id={tooltipId} open preferredPlacement="right">
                   <strong>질문 {index + 1}</strong>
                   <span className="question-navigator-preview-row">
                     <small>질문</small>

@@ -3086,6 +3086,7 @@ function App() {
 
         <ConversationQuestionNavigator
           turnSets={activeRuntime.turnSets}
+          theme={theme}
           scrollContainerRef={conversationFollow.containerRef}
           onNavigateStart={conversationFollow.onUserIntent}
         />
