@@ -23,7 +23,20 @@ import "./InteractiveResponse.css";
 let mermaidRenderSequence = 0;
 let mermaidModulePromise: Promise<typeof import("mermaid")> | null = null;
 const mermaidRenderJobs = new Map<string, ReturnType<(typeof import("mermaid"))["default"]["render"]>>();
-const mermaidNodeTones = ["blue", "green", "blue", "amber"] as const;
+const artifactVisualPalette = {
+  blue: "#3288bd",
+  teal: "#66c2a5",
+  lime: "#e6f598",
+  red: "#d53e4f",
+  magenta: "#9e0142",
+  coral: "#f46d43",
+  amber: "#fdae61",
+  yellow: "#fee08b",
+  green: "#abdda4",
+  purple: "#5e4fa2",
+} as const;
+const artifactVisualPaletteSequence = Object.values(artifactVisualPalette);
+const mermaidNodeTones = ["blue", "teal", "orange", "red", "purple"] as const;
 
 async function loadMermaid() {
   if (!mermaidModulePromise) {
@@ -180,20 +193,55 @@ function mermaidAppearance() {
     background: "transparent",
     primaryColor: token("--cobalt-pale", "#edf2fb"),
     primaryTextColor: token("--ink", "#20242c"),
-    primaryBorderColor: token("--cobalt", "#3f66c9"),
+    primaryBorderColor: artifactVisualPalette.blue,
     secondaryColor: token("--surface-soft", "#f5f6f7"),
     secondaryTextColor: token("--ink", "#20242c"),
     tertiaryColor: token("--surface", "#ffffff"),
     tertiaryTextColor: token("--ink", "#20242c"),
-    lineColor: token("--cobalt", "#3f66c9"),
+    lineColor: artifactVisualPalette.purple,
     textColor: token("--ink", "#20242c"),
     noteBkgColor: token("--surface-selected", "#edf2fb"),
     noteTextColor: token("--ink", "#20242c"),
     actorBkg: token("--surface", "#ffffff"),
-    actorBorder: token("--cobalt", "#3f66c9"),
+    actorBorder: artifactVisualPalette.blue,
     actorTextColor: token("--ink", "#20242c"),
     clusterBkg: token("--surface-soft", "#f5f6f7"),
-    clusterBorder: token("--line-strong", "#d4d8de"),
+    clusterBorder: artifactVisualPalette.teal,
+    pie1: artifactVisualPalette.blue,
+    pie2: artifactVisualPalette.teal,
+    pie3: artifactVisualPalette.lime,
+    pie4: artifactVisualPalette.red,
+    pie5: artifactVisualPalette.magenta,
+    pie6: artifactVisualPalette.coral,
+    pie7: artifactVisualPalette.amber,
+    pie8: artifactVisualPalette.yellow,
+    pie9: artifactVisualPalette.green,
+    pie10: artifactVisualPalette.purple,
+    pie11: artifactVisualPalette.blue,
+    pie12: artifactVisualPalette.teal,
+    cScale0: artifactVisualPalette.blue,
+    cScale1: artifactVisualPalette.teal,
+    cScale2: artifactVisualPalette.lime,
+    cScale3: artifactVisualPalette.red,
+    cScale4: artifactVisualPalette.magenta,
+    cScale5: artifactVisualPalette.coral,
+    cScale6: artifactVisualPalette.amber,
+    cScale7: artifactVisualPalette.yellow,
+    cScale8: artifactVisualPalette.green,
+    cScale9: artifactVisualPalette.purple,
+    cScale10: artifactVisualPalette.blue,
+    cScale11: artifactVisualPalette.teal,
+    git0: artifactVisualPalette.blue,
+    git1: artifactVisualPalette.teal,
+    git2: artifactVisualPalette.lime,
+    git3: artifactVisualPalette.red,
+    git4: artifactVisualPalette.magenta,
+    git5: artifactVisualPalette.coral,
+    git6: artifactVisualPalette.amber,
+    git7: artifactVisualPalette.purple,
+    xyChart: {
+      plotColorPalette: artifactVisualPaletteSequence.join(","),
+    },
     fontFamily: token("--font-ui", "Segoe UI, sans-serif"),
   };
   return {
@@ -217,7 +265,7 @@ function decorateMermaidSvg(svg: string) {
     const hasAuthoredClass = Array.from(node.classList).some((className) => className !== "node" && className !== "default");
     if (hasAuthoredClass) return;
     const isDecision = Array.from(node.children).some((child) => child.tagName.toLowerCase() === "polygon");
-    node.dataset.luminaTone = isDecision ? "amber" : mermaidNodeTones[index % mermaidNodeTones.length];
+    node.dataset.luminaTone = isDecision ? "orange" : mermaidNodeTones[index % mermaidNodeTones.length];
   });
   return template.innerHTML;
 }

@@ -42,3 +42,13 @@ test("HTML Artifact Mermaid blocks use the bundled renderer and expandable viewe
   assert.match(visualArtifactSkillSource, /Lumina automatically adds a visible expand button/);
   assert.match(visualArtifactSkillSource, /Do not add a CDN script or initialize Mermaid/);
 });
+
+test("HTML Artifact generation keeps the user-designated visual palette", () => {
+  for (const color of ["#3288bd", "#66c2a5", "#e6f598", "#d53e4f", "#9e0142", "#f46d43", "#fdae61", "#fee08b", "#abdda4", "#5e4fa2"]) {
+    assert.match(visualArtifactSkillSource, new RegExp(color));
+  }
+  assert.match(visualArtifactSkillSource, /designated MyHarness palette as the required default visual palette/);
+  assert.match(visualArtifactSkillSource, /--viz-blue/);
+  assert.match(visualArtifactSkillSource, /--viz-purple/);
+  assert.match(visualArtifactSkillSource, /Do not silently replace it with Lumina's app cobalt or an all-gray theme/);
+});

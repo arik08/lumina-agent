@@ -6096,6 +6096,21 @@ _FILE_OUTPUT_INTENT_TOOL_SCHEMA = {
 }
 
 
+_REPORT_VISUAL_PALETTE = (
+    "#3288bd",
+    "#66c2a5",
+    "#e6f598",
+    "#d53e4f",
+    "#9e0142",
+    "#f46d43",
+    "#fdae61",
+    "#fee08b",
+    "#abdda4",
+    "#5e4fa2",
+)
+_REPORT_VISUAL_PALETTE_TEXT = ", ".join(_REPORT_VISUAL_PALETTE)
+
+
 _REPORT_TOOL_SCHEMA = {
     "type": "function",
     "function": {
@@ -6107,6 +6122,9 @@ _REPORT_TOOL_SCHEMA = {
             "layout, typography, tables, charts, interactions, and print styles are preserved. "
             "For relationship-heavy visuals, use raw `.mermaid` blocks; Lumina renders them "
             "with its bundled strict-security renderer and adds expand, zoom, and pan controls. "
+            f"Use the user's designated default visual palette ({_REPORT_VISUAL_PALETTE_TEXT}) "
+            "for Mermaid, charts, SVG, and report accents unless the user explicitly supplies "
+            "a different brand palette. "
             "Inline JavaScript, script tags, and event handlers are supported for interactive "
             "documents, apps, demos, and games. Keep the HTML self-contained."
         ),
@@ -6139,6 +6157,9 @@ _REPORT_TOOL_SCHEMA = {
                         "html, head, non-empty title, body, responsive inline CSS, semantic "
                         "sections, and @media print when appropriate. Inline JavaScript and "
                         "event handlers are supported for executable interactive HTML. Use a "
+                        f"reusable CSS-variable palette based on {_REPORT_VISUAL_PALETTE_TEXT}; "
+                        "apply it to charts, diagrams, data marks, and report highlights instead "
+                        "of substituting Lumina app cobalt or an all-gray scheme. Use a "
                         "`.mermaid` element for process, sequence, architecture, dependency, or "
                         "decision diagrams; do not include a Mermaid CDN script or duplicate "
                         "expand button because the Artifact preview supplies both rendering and "

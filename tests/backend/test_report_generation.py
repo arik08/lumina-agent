@@ -101,6 +101,7 @@ def test_report_formats_reopen_and_retain_korean_content(report_format: str) -> 
 
 
 def test_create_report_schema_advertises_every_supported_format() -> None:
+    report_description = _REPORT_TOOL_SCHEMA["function"]["description"]
     schema = _REPORT_TOOL_SCHEMA["function"]["parameters"]["properties"]["format"]
     assert schema["enum"] == list(REPORT_FORMATS)
     title_description = _REPORT_TOOL_SCHEMA["function"]["parameters"]["properties"][
@@ -114,6 +115,22 @@ def test_create_report_schema_advertises_every_supported_format() -> None:
     assert "`.mermaid` element" in html_description
     assert "expand/zoom controls" in html_description
     assert "do not include a Mermaid CDN script" in html_description
+    for color in (
+        "#3288bd",
+        "#66c2a5",
+        "#e6f598",
+        "#d53e4f",
+        "#9e0142",
+        "#f46d43",
+        "#fdae61",
+        "#fee08b",
+        "#abdda4",
+        "#5e4fa2",
+    ):
+        assert color in report_description
+        assert color in html_description
+    assert "user's designated default visual palette" in report_description
+    assert "substituting Lumina app cobalt or an all-gray scheme" in html_description
 
 
 def test_html_source_preserves_visual_artifact_and_executable_javascript() -> None:

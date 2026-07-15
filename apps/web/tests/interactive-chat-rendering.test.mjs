@@ -32,16 +32,25 @@ test("Mermaid preloads once, deduplicates active renders, and stays mounted whil
   assert.doesNotMatch(turnSource, /code: \(\{ className, children \}\) =>/);
 });
 
-test("Mermaid uses a restrained multi-color token palette without overriding authored classes", () => {
-  assert.match(rendererSource, /const mermaidNodeTones = \["blue", "green", "blue", "amber"\]/);
+test("Mermaid uses the designated artifact palette without overriding authored classes", () => {
+  for (const color of ["#3288bd", "#66c2a5", "#e6f598", "#d53e4f", "#9e0142", "#f46d43", "#fdae61", "#fee08b", "#abdda4", "#5e4fa2"]) {
+    assert.match(rendererSource, new RegExp(color));
+    assert.match(rendererStyles, new RegExp(color));
+  }
+  assert.match(rendererSource, /const mermaidNodeTones = \["blue", "teal", "orange", "red", "purple"\]/);
   assert.match(rendererSource, /const hasAuthoredClass = Array\.from\(node\.classList\)/);
-  assert.match(rendererSource, /node\.dataset\.luminaTone = isDecision \? "amber"/);
+  assert.match(rendererSource, /node\.dataset\.luminaTone = isDecision \? "orange"/);
+  assert.match(rendererSource, /pie10: artifactVisualPalette\.purple/);
+  assert.match(rendererSource, /cScale9: artifactVisualPalette\.purple/);
+  assert.match(rendererSource, /plotColorPalette: artifactVisualPaletteSequence\.join\(","\)/);
   assert.match(rendererStyles, /\.node\[data-lumina-tone="blue"\]/);
-  assert.match(rendererStyles, /\.node\[data-lumina-tone="green"\]/);
-  assert.match(rendererStyles, /\.node\[data-lumina-tone="amber"\]/);
-  assert.match(rendererStyles, /color-mix\(in srgb, var\(--cobalt\) 11%, var\(--surface\)\)/);
-  assert.match(rendererStyles, /color-mix\(in srgb, var\(--success\) 11%, var\(--surface\)\)/);
-  assert.match(rendererStyles, /color-mix\(in srgb, var\(--warning\) 12%, var\(--surface\)\)/);
+  assert.match(rendererStyles, /\.node\[data-lumina-tone="teal"\]/);
+  assert.match(rendererStyles, /\.node\[data-lumina-tone="orange"\]/);
+  assert.match(rendererStyles, /\.node\[data-lumina-tone="red"\]/);
+  assert.match(rendererStyles, /\.node\[data-lumina-tone="purple"\]/);
+  assert.match(rendererStyles, /var\(--mermaid-palette-blue\) 14%/);
+  assert.match(rendererStyles, /var\(--mermaid-palette-teal\) 16%/);
+  assert.match(rendererStyles, /var\(--mermaid-palette-amber\) 22%/);
 });
 
 test("tall Mermaid workflows keep readable geometry inside a bounded scroll surface", () => {

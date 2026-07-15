@@ -1712,6 +1712,8 @@ ECharts는 bar, line, area, pie/donut, scatter, stacked·combination chart를 �
 
 Mermaid는 완결된 fence만 parse하고 streaming 중에는 placeholder를 표시합니다. 큰 diagram은 zoom, pan, fit, reset과 keyboard close를 제공합니다. 오류는 다른 본문을 깨뜨리지 않습니다.
 
+Mermaid와 HTML Artifact의 chart·diagram·data accent는 사용자가 MyHarness에서 지정한 `#3288bd`, `#66c2a5`, `#e6f598`, `#d53e4f`, `#9e0142`, `#f46d43`, `#fdae61`, `#fee08b`, `#abdda4`, `#5e4fa2` palette를 기본으로 사용합니다. 별도 brand palette가 명시된 경우에만 이를 대체하며, 제품 UI의 단일 cobalt accent 규칙을 Artifact 시각화에 강제로 덮어쓰지 않습니다. Mermaid의 authored `classDef`는 보존하고, class가 없는 node와 pie·C4·gitGraph·XY chart 계열에는 이 기본 palette를 renderer가 적용합니다.
+
 같은 content는 중앙 채팅, Artifact Preview, 공유 viewer와 다운로드본에서 의미상 같은 결과여야 합니다. renderer 이름과 version을 metadata에 기록하고 upgrade 전 visual regression을 수행합니다.
 
 ### 17.6 편집
