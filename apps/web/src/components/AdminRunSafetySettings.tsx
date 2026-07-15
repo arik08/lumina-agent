@@ -42,7 +42,6 @@ export function AdminRunSafetySettings({ onToast }: AdminRunSafetySettingsProps)
     try {
       const updated = await api.admin.updateRunSafetySettings(runSafety);
       setRunSafety(updated);
-      onToast("Run 안전 한도를 저장했습니다. 새 Run부터 적용됩니다.");
     } catch (requestError) {
       setError(errorMessage(requestError));
     } finally {

@@ -30,7 +30,6 @@ import { ResizableSplitPane } from "./ResizableSplitPane";
 interface ProjectFilesViewProps {
   projectId: string | null;
   onOpenNavigation: () => void;
-  onToast: (message: string) => void;
 }
 
 interface UploadCandidate {
@@ -269,7 +268,7 @@ function renderFilePreview(preview: PreviewState, detail: ProjectFileDetail): Re
   return <audio src={preview.url} controls />;
 }
 
-export function ProjectFilesView({ projectId, onOpenNavigation, onToast }: ProjectFilesViewProps) {
+export function ProjectFilesView({ projectId, onOpenNavigation }: ProjectFilesViewProps) {
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const draggedNodeRef = useRef<FileTreeNode | null>(null);
@@ -451,7 +450,6 @@ export function ProjectFilesView({ projectId, onOpenNavigation, onToast }: Proje
       setSelectedFolderPath(null);
       setSelectedId(lastId ?? null);
       setRefreshKey((value) => value + 1);
-      onToast(`${unique.length}개 파일을 폴더 구조 그대로 업로드했습니다.`);
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -497,7 +495,6 @@ export function ProjectFilesView({ projectId, onOpenNavigation, onToast }: Proje
       }
       if (destinationPath) setExpandedFolders((current) => new Set(current).add(destinationPath));
       setRefreshKey((value) => value + 1);
-      onToast(`“${node.name}” 항목을 이동했습니다.`);
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -547,7 +544,6 @@ export function ProjectFilesView({ projectId, onOpenNavigation, onToast }: Proje
         await api.projectFiles.createFolder(projectId, path);
         setSelectedId(null);
         setSelectedFolderPath(path);
-        onToast(`“${name}” 폴더를 만들었습니다.`);
       } else {
         const { node } = treeEditor;
         const targetPath = childPath(parentPath(node.path), name);
@@ -560,7 +556,6 @@ export function ProjectFilesView({ projectId, onOpenNavigation, onToast }: Proje
           setSelectedId(null);
           setSelectedFolderPath(targetPath);
         }
-        onToast(`이름을 “${name}”(으)로 변경했습니다.`);
       }
       setTreeEditor(null);
       setRefreshKey((value) => value + 1);
@@ -599,7 +594,6 @@ export function ProjectFilesView({ projectId, onOpenNavigation, onToast }: Proje
       setContextMenu(null);
       setContextDeleteConfirming(null);
       setRefreshKey((value) => value + 1);
-      onToast(`“${node.name}” 항목을 삭제했습니다.`);
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -645,7 +639,6 @@ export function ProjectFilesView({ projectId, onOpenNavigation, onToast }: Proje
       setBulkDeleteArmed(false);
       setBulkSelectionMode(false);
       setRefreshKey((value) => value + 1);
-      onToast(`${selectedRoots.length}개 항목을 삭제했습니다.`);
     } catch (caught) {
       setError(errorMessage(caught));
       setBulkDeleteArmed(false);
@@ -680,7 +673,6 @@ export function ProjectFilesView({ projectId, onOpenNavigation, onToast }: Proje
       setSelectedId(null);
       setDeleteConfirming(false);
       setRefreshKey((value) => value + 1);
-      onToast("파일을 저장소에서 제거했습니다.");
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {

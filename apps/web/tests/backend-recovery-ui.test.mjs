@@ -71,7 +71,8 @@ test("terminal runs expose their reason and keep the copy action meaningful", as
   assert.match(apiTypes, /errorCode: string \| null;\s+errorMessage: string \| null;/);
   assert.match(app, /const terminalReason = status && status !== "completed"/);
   assert.match(app, /const copyableAnswerText = sanitizedAssistantText \|\| terminalReason/);
-  assert.match(app, /중단 사유를 복사했습니다/);
+  assert.match(app, /else await copyText\(terminalReason\)/);
+  assert.doesNotMatch(app, /중단 사유를 복사했습니다/);
   assert.match(app, /disabled=\{!copyableAnswerText\}/);
   assert.match(app, /className="final-answer-error" role="alert"/);
   assert.match(stylesheet, /\.final-answer-error/);

@@ -260,7 +260,6 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
       setUsers((items) => items.map((item) => item.id === updated.id ? updated : item));
       setUserChangeArmed(false);
       onUserUpdated();
-      onToast("사용자 정보를 변경했습니다.");
     } catch (requestError) {
       onToast(errorMessage(requestError));
     } finally {
@@ -274,7 +273,6 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
       const updated = await api.admin.updateUser(user.id, { status: "active" });
       setUsers((items) => items.map((item) => item.id === updated.id ? updated : item));
       onUserUpdated();
-      onToast(`${updated.loginId} 가입을 승인했습니다.`);
     } catch (requestError) {
       onToast(errorMessage(requestError));
     } finally {

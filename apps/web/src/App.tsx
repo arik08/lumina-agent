@@ -1435,7 +1435,6 @@ function App() {
       setAdminFooterProviders((items) => items.map((item) => item.id === providerId ? provider : item));
       setAdminFooterModels((items) => ({ ...items, [providerId]: models }));
       await workspace.refreshProviderCatalog();
-      showToast(`${provider.displayName}을(를) ${enabled ? "사용 가능" : "사용 중지"} 상태로 변경했습니다.`);
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Provider 설정을 변경하지 못했습니다.");
     } finally {
@@ -1455,8 +1454,6 @@ function App() {
       setAdminFooterProviders(providers);
       setAdminFooterModels((items) => ({ ...items, [providerId]: models }));
       await workspace.refreshProviderCatalog();
-      const model = models.find((item) => item.modelKey === modelKey);
-      showToast(`${model?.displayName ?? modelKey}을(를) ${enabled ? "사용 가능" : "사용 중지"} 상태로 변경했습니다.`);
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Model 설정을 변경하지 못했습니다.");
     } finally {
@@ -1557,7 +1554,6 @@ function App() {
       delete capabilities.contextWindow;
       const updated = await api.adminProviders.updateModel(adminSettingsProviderId, selectedAdminSettingsModel.modelKey, { capabilities });
       setAdminSettingsModels((models) => models.map((model) => model.modelKey === updated.modelKey ? updated : model));
-      showToast(`${updated.displayName} 최대 토큰을 저장했습니다.`);
     } catch (error) {
       setAdminSettingsError(error instanceof Error ? error.message : "최대 토큰을 저장하지 못했습니다.");
     } finally {
@@ -1576,7 +1572,6 @@ function App() {
       delete capabilities.contextWindow;
       const updated = await api.adminProviders.updateModel(adminSettingsProviderId, selectedAdminSettingsModel.modelKey, { capabilities });
       setAdminSettingsModels((models) => models.map((model) => model.modelKey === updated.modelKey ? updated : model));
-      showToast(`${updated.displayName} 최대 토큰을 기본값으로 초기화했습니다.`);
     } catch (error) {
       setAdminSettingsError(error instanceof Error ? error.message : "최대 토큰을 초기화하지 못했습니다.");
     } finally {
@@ -1604,7 +1599,6 @@ function App() {
       const updated = await api.adminProviders.updateModel(adminSettingsProviderId, selectedAdminSettingsModel.modelKey, { capabilities });
       setAdminSettingsModels((models) => models.map((model) => model.modelKey === updated.modelKey ? updated : model));
       setAdminContextUsagePercent(String(nextPercent));
-      showToast(`${updated.displayName} 자동 압축 시작 비율을 저장했습니다.`);
     } catch (error) {
       setAdminSettingsError(error instanceof Error ? error.message : "자동 압축 시작 비율을 저장하지 못했습니다.");
     } finally {
@@ -1635,7 +1629,6 @@ function App() {
         { capabilities },
       );
       setAdminSettingsModels((models) => models.map((model) => model.modelKey === updated.modelKey ? updated : model));
-      showToast(`${updated.displayName} 출력 토큰 상한을 ${value.toLocaleString()}으로 저장했습니다.`);
     } catch (error) {
       setAdminSettingsError(error instanceof Error ? error.message : "출력 토큰 상한을 저장하지 못했습니다.");
     } finally {
@@ -1673,7 +1666,6 @@ function App() {
     try {
       const updated = await api.adminProviders.updateInitialExecution(adminInitialExecution);
       setAdminInitialExecution(updated.execution);
-      showToast("최초 사용자 실행 기본값을 저장했습니다.");
     } catch (error) {
       setAdminInitialExecutionError(error instanceof Error ? error.message : "최초 실행 기본값을 저장하지 못했습니다.");
     } finally {
@@ -2214,9 +2206,8 @@ function App() {
       return;
     }
     titleCommitRef.current = true;
-    const updated = await workspace.renameConversation(workspace.activeConversation.id, nextTitle);
+    await workspace.renameConversation(workspace.activeConversation.id, nextTitle);
     titleCommitRef.current = false;
-    if (updated) showToast("세션명을 변경했습니다.");
   };
 
   const sendMessage = async (queueNext = false) => {
@@ -2244,23 +2235,18 @@ function App() {
     setTargetOutputTokens(defaultArtifactOutputTokens);
     setComposerTrigger(null);
     setComposerSuggestions([]);
-    showToast(mode === "queue_next" ? "다음 요청으로 대기열에 추가했습니다." : mode === "steer" ? "현재 Run에 반영할 지시를 접수했습니다." : "새 Run을 시작했습니다.");
   };
 
   const controlRun = async (action: RunControlAction, targetId?: string) => {
     if (!activeRun) return;
-    const succeeded = await workspace.runAction(activeRun.runId, action, targetId);
-    if (!succeeded) return;
-    showToast(action === "pause" ? "Run을 일시 정지했습니다." : action === "resume" ? "Run을 재개했습니다." : action === "cancel" ? "작업을 중지했습니다." : action === "approve" ? "위험 작업을 승인했습니다." : action === "reject" ? "위험 작업을 거부했습니다." : "실패한 단계를 다시 실행합니다.");
+    await workspace.runAction(activeRun.runId, action, targetId);
   };
 
   const controlPendingCommand = async (action: PendingCommandAction, commandId: string) => {
     if (!activeRun || pendingCommandAction) return;
     setPendingCommandAction({ id: commandId, action });
-    const succeeded = await workspace.runPendingCommandAction(activeRun.runId, action, commandId);
+    await workspace.runPendingCommandAction(activeRun.runId, action, commandId);
     setPendingCommandAction(null);
-    if (!succeeded) return;
-    showToast(action === "steer_queued" ? "Queue 요청을 현재 작업 조정으로 전환했습니다." : "Queue 요청을 취소했습니다.");
   };
 
   const copyTool = async (execution: ToolExecution) => {
@@ -2272,7 +2258,6 @@ function App() {
       : execution.error || execution.resultSummary.join("\n") || "결과 없음";
     try {
       await copyText([`[${execution.toolName}]`, "", "도구 요청", requestText, "", "도구 결과", resultText].join("\n"));
-      showToast("전체 Tool 로그를 복사했습니다.");
     } catch {
       showToast("Tool 메시지를 복사하지 못했습니다.");
     }
@@ -2357,7 +2342,6 @@ function App() {
       setArtifactDraftSaved(true);
       setArtifactDraftStale(false);
       setArtifactDraftNotice("편집 초안을 서버에 저장했습니다.");
-      showToast("편집 초안을 서버에 저장했습니다.");
     } catch (error) {
       if (error instanceof ApiError && ["draft_conflict", "artifact_draft_stale", "artifact_version_conflict"].includes(error.code)) {
         setArtifactDraftStale(true);
@@ -2441,7 +2425,6 @@ function App() {
         setArtifactDraftStale(true);
         setArtifactDraftNotice("서버의 다른 편집 초안은 보존되었으며 이제 이전 버전을 기준으로 합니다.");
       }
-      showToast(`Artifact v${version.version}을 저장했습니다.`);
     } catch (error) {
       if (error instanceof ApiError && ["artifact_etag_conflict", "artifact_version_conflict"].includes(error.code)) {
         setArtifactDraftStale(true);
@@ -2504,7 +2487,6 @@ function App() {
       anchor.download = download.fileName;
       anchor.click();
       URL.revokeObjectURL(url);
-      showToast("Artifact 다운로드를 시작했습니다.");
     } catch (error) {
       showToast(error instanceof Error ? error.message : "다운로드하지 못했습니다.");
     }
@@ -2519,7 +2501,6 @@ function App() {
       url.searchParams.set("artifact", artifactSummary.id);
       url.searchParams.set("version", String(artifactDownloadVersion ?? artifactSummary.currentVersion));
       await copyText(url.toString());
-      showToast("Artifact 공유 링크를 복사했습니다.");
     } catch (error) {
       showToast(error instanceof Error ? error.message : "공유 링크를 만들지 못했습니다.");
     }
@@ -2532,7 +2513,6 @@ function App() {
       const result = await api.notifications.markAllRead();
       setNotifications((items) => items.map((item) => item.readAt ? item : { ...item, readAt: result.readAt }));
       setNotificationUnreadCount(0);
-      showToast("모든 알림을 읽음으로 표시했습니다.");
     } catch (error) {
       showToast(error instanceof Error ? error.message : "알림 상태를 변경하지 못했습니다.");
     } finally {
@@ -2571,7 +2551,6 @@ function App() {
       setNotifications([]);
       setNotificationUnreadCount(0);
       setNotificationDeleteArmedId(null);
-      showToast("알림을 모두 삭제했습니다.");
     } catch (error) {
       showToast(error instanceof Error ? error.message : "알림을 삭제하지 못했습니다.");
     } finally {
@@ -3134,7 +3113,6 @@ function App() {
                       const themedUrl = new URL(url);
                       themedUrl.searchParams.set("theme", theme);
                       await copyText(themedUrl.toString());
-                      showToast("공유 링크를 복사했습니다.");
                     })
                     .catch((error) => {
                       showToast(error instanceof ApiError ? error.message : "공유 링크를 만들지 못했습니다.");
@@ -3467,8 +3445,8 @@ function App() {
 
         {mainView === "marketplace" && <MarketplaceView projectId={workspace.activeProjectId} onOpenNavigation={() => setSidebarOpen(true)} />}
         {mainView === "library" && <ArtifactLibraryView projectId={workspace.activeProjectId} onOpenArtifact={(artifact) => void openArtifact(artifact)} onOpenNavigation={() => setSidebarOpen(true)} />}
-        {mainView === "files" && <ProjectFilesView projectId={workspace.activeProjectId} onOpenNavigation={() => setSidebarOpen(true)} onToast={showToast} />}
-        {mainView === "help" && <HelpCenterView canManage={isAdmin} initialAnnouncementId={helpAnnouncementId} onOpenNavigation={() => setSidebarOpen(true)} onToast={showToast} />}
+        {mainView === "files" && <ProjectFilesView projectId={workspace.activeProjectId} onOpenNavigation={() => setSidebarOpen(true)} />}
+        {mainView === "help" && <HelpCenterView canManage={isAdmin} initialAnnouncementId={helpAnnouncementId} onOpenNavigation={() => setSidebarOpen(true)} />}
         {mainView === "schedules" && <SchedulesView projectId={workspace.activeProjectId} projects={workspace.projects} execution={workspace.settings?.execution ?? null} executionOptions={candidateModelOptions} onOpenNavigation={() => setSidebarOpen(true)} onProjectChange={workspace.setActiveProjectId} onConversationsChanged={workspace.refreshConversations} />}
         {mainView === "memory" && <MemoryView project={activeProject} completedRunId={completedProjectLearningRunId} canReviewProjectLearning={canReviewProjectLearning} onOpenNavigation={() => setSidebarOpen(true)} />}
         {mainView === "admin" && isAdmin && <AdminView onOpenNavigation={() => setSidebarOpen(true)} onToast={showToast} onUserUpdated={() => void workspace.refreshAuthSession()} />}

@@ -33,7 +33,6 @@ interface HelpCenterViewProps {
   canManage: boolean;
   initialAnnouncementId?: string | null;
   onOpenNavigation: () => void;
-  onToast: (message: string) => void;
 }
 
 interface HelpTreeNode {
@@ -85,7 +84,7 @@ function announcementWasEdited(announcement: AnnouncementItem) {
   return new Date(announcement.updatedAt).getTime() - new Date(announcement.createdAt).getTime() >= 1000;
 }
 
-export function HelpCenterView({ canManage, initialAnnouncementId = null, onOpenNavigation, onToast }: HelpCenterViewProps) {
+export function HelpCenterView({ canManage, initialAnnouncementId = null, onOpenNavigation }: HelpCenterViewProps) {
   const [section, setSection] = useState<HelpSection>(initialAnnouncementId ? "announcements" : "manuals");
   const [items, setItems] = useState<HelpItem[]>([]);
   const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
@@ -197,7 +196,6 @@ export function HelpCenterView({ canManage, initialAnnouncementId = null, onOpen
         setDraftContent("");
         setEditing(true);
       }
-      onToast(created.kind === "folder" ? "안내 폴더를 만들었습니다." : "안내 문서를 만들었습니다.");
     } catch (createError) {
       setError(errorMessage(createError));
     } finally {
@@ -225,7 +223,6 @@ export function HelpCenterView({ canManage, initialAnnouncementId = null, onOpen
       });
       setItems((current) => current.map((item) => item.id === updated.id ? updated : item));
       setEditing(false);
-      onToast("사용 안내를 저장했습니다.");
     } catch (saveError) {
       setError(errorMessage(saveError));
     } finally {
@@ -247,7 +244,6 @@ export function HelpCenterView({ canManage, initialAnnouncementId = null, onOpen
       setSelectedId(parentId);
       setDeleteArmed(false);
       await load();
-      onToast(selected.kind === "folder" ? "안내 폴더와 하위 항목을 삭제했습니다." : "안내 문서를 삭제했습니다.");
     } catch (deleteError) {
       setError(errorMessage(deleteError));
     } finally {
@@ -289,7 +285,6 @@ export function HelpCenterView({ canManage, initialAnnouncementId = null, onOpen
       if (announcementMode === "create") setAnnouncementTotal((current) => current + 1);
       setSelectedAnnouncementId(saved.id);
       setAnnouncementMode("idle");
-      onToast(announcementMode === "create" ? "공지사항을 게시했습니다." : "공지사항을 수정했습니다.");
     } catch (saveError) {
       setError(errorMessage(saveError));
     } finally {
@@ -312,7 +307,6 @@ export function HelpCenterView({ canManage, initialAnnouncementId = null, onOpen
       setAnnouncementTotal((current) => Math.max(0, current - 1));
       setSelectedAnnouncementId(remaining[0]?.id ?? null);
       setAnnouncementDeleteArmed(false);
-      onToast("공지사항을 삭제했습니다.");
     } catch (deleteError) {
       setError(errorMessage(deleteError));
     } finally {

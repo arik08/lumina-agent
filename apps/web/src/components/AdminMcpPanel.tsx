@@ -4,10 +4,6 @@ import { api, ApiError } from "../api";
 import type { McpConfiguration, McpDefinition, McpToolDefinition, McpTransport } from "../api-types";
 import { SyntaxTextarea } from "./SyntaxCode";
 
-interface AdminMcpPanelProps {
-  onToast: (message: string) => void;
-}
-
 const defaultConfiguration: McpConfiguration = {
   transport: "streamable_http",
   command: [],
@@ -61,7 +57,7 @@ function parseConfiguration(value: string): McpConfiguration {
   };
 }
 
-export function AdminMcpPanel({ onToast }: AdminMcpPanelProps) {
+export function AdminMcpPanel() {
   const [definitions, setDefinitions] = useState<McpDefinition[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -118,7 +114,6 @@ export function AdminMcpPanel({ onToast }: AdminMcpPanelProps) {
       setCreateOpen(false);
       setSelectedId(created.id);
       refresh();
-      onToast("MCP 정의와 첫 configuration revision을 등록했습니다.");
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -158,7 +153,6 @@ export function AdminMcpPanel({ onToast }: AdminMcpPanelProps) {
       await api.admin.createMcpRevision(selected.id, configuration);
       setRevisionOpen(false);
       refresh();
-      onToast("새 MCP configuration revision을 등록했습니다.");
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -172,7 +166,6 @@ export function AdminMcpPanel({ onToast }: AdminMcpPanelProps) {
     try {
       await api.admin.approveMcpRevision(selected.id, revisionId);
       refresh();
-      onToast(`MCP r${revision}을 승인했습니다.`);
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -186,7 +179,6 @@ export function AdminMcpPanel({ onToast }: AdminMcpPanelProps) {
     try {
       await api.admin.setMcpStatus(selected.id, "disabled", "관리자 UI에서 비활성화");
       refresh();
-      onToast("MCP 정의를 비활성화했습니다.");
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {

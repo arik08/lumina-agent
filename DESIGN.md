@@ -261,7 +261,8 @@ Lumina는 flat by default입니다. 일반 section과 row는 surface tone과 1px
 
 ### Status, Warning and Error Messages
 
-- **Informational Toast:** 저장, 접수와 대기열 추가 같은 일반 상태 toast는 cobalt wash 배경과 cobalt text를 사용합니다. 특히 Dark theme에서 밝은 cobalt 단색 배경과 흰색 text 조합은 금지하며, 선택된 `에이전트` navigation과 같은 조용한 accent 대비를 유지합니다.
+- **Routine Action Feedback:** Run 시작·제어, 저장, 생성, 이동, 복사, 다운로드, 읽음 처리와 삭제처럼 사용자가 방금 의도한 일반 동작은 우측 하단 toast를 띄우지 않습니다. 갱신된 화면 상태, 버튼 상태와 inline 결과가 완료 피드백을 담당합니다.
+- **Valuable Informational Toast:** 일부 실패가 섞인 일괄 처리, 대상 소실, 다시 표시되지 않는 credential이나 조직 전체 긴급 중단 결과처럼 별도 확인 가치가 있는 예외만 cobalt wash 배경과 cobalt text의 informational toast를 사용할 수 있습니다. 특히 Dark theme에서 밝은 cobalt 단색 배경과 흰색 text 조합은 금지하며, 선택된 `에이전트` navigation과 같은 조용한 accent 대비를 유지합니다.
 
 - **Warning / Error Standard:** 실패, 연결 끊김, 재시도가 필요한 경고 메시지는 `danger-border` 1px 전체 테두리, `danger-surface`의 연한 분홍 배경과 `danger` 텍스트를 사용합니다. 진한 빨간색 단색 배경이나 cobalt 정보 알림 스타일을 사용하지 않습니다.
 - **Shared Visual Language:** 화면 상단 연결 경고와 우측 하단 오류 toast는 위치와 크기가 달라도 같은 semantic token을 사용합니다. 공용 token을 바꾸면 두 표현이 함께 갱신되어야 합니다.

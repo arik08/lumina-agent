@@ -1706,7 +1706,6 @@ export function AssistantTurn({
     try {
       if (sanitizedAssistantText) await copyText(sanitizedAssistantText);
       else await copyText(terminalReason);
-      onToast(sanitizedAssistantText ? "답변을 복사했습니다." : "중단 사유를 복사했습니다.");
     } catch {
       onToast("답변을 복사하지 못했습니다.");
     }
@@ -1719,7 +1718,6 @@ export function AssistantTurn({
     setMarkdownSaving(true);
     try {
       const artifact = await api.artifacts.createFromMessage(finalMessage.id);
-      onToast("답변을 Markdown Artifact로 저장했습니다.");
       onOpenArtifact(artifact);
     } catch {
       onToast("답변을 Markdown Artifact로 저장하지 못했습니다.");
@@ -1764,7 +1762,6 @@ export function AssistantTurn({
       await api.messages.report(finalMessage.id, reportText.trim());
       setReportText("");
       setReportOpen(false);
-      onToast("의견을 게시했습니다.");
     } catch {
       setReportError("의견을 게시하지 못했습니다. 다시 시도해 주세요.");
     } finally {
@@ -1993,7 +1990,6 @@ export function AssistantTurn({
                                           <button className="source-excerpt" type="button" aria-label={`${source.title || source.domain} 확대해서 보기`} onClick={() => openSourceDetail(source.sourceId)}>{source.verbatimExcerpt}</button>
                                           <button type="button" aria-label={`${source.title || source.domain} 본문 복사`} onClick={() => {
                                             void copyText(source.verbatimExcerpt ?? "")
-                                              .then(() => onToast("전체 내용을 복사했습니다. 메모장에 붙여넣어 확인하세요."))
                                               .catch(() => onToast("전체 내용을 복사하지 못했습니다."));
                                           }}><Copy size={12} /></button>
                                         </div>

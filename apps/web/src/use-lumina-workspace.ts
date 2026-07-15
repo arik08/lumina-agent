@@ -944,7 +944,6 @@ export function useLuminaWorkspace() {
     try {
       const project = await api.projects.update(projectId, changes);
       setProjects((items) => items.map((item) => item.id === project.id ? project : item));
-      setNotice("프로젝트 설정을 저장했습니다.");
       return project;
     } catch (error) {
       setNotice(apiMessage(error));
@@ -960,7 +959,6 @@ export function useLuminaWorkspace() {
       setProjects(remaining);
       setActiveProjectIdState(next?.id ?? null);
       setActiveConversationId(null);
-      setNotice("프로젝트를 보관했습니다.");
       return true;
     } catch (error) {
       setNotice(apiMessage(error));
@@ -1032,7 +1030,6 @@ export function useLuminaWorkspace() {
         expectedRevision: conversation.revision,
       });
       await refreshConversations();
-      setNotice(updated.isFavorite ? "세션을 즐겨찾기에 고정했습니다." : "세션 즐겨찾기를 해제했습니다.");
       return updated;
     } catch (error) {
       setNotice(apiMessage(error));
@@ -1064,7 +1061,6 @@ export function useLuminaWorkspace() {
       const remaining = conversationsRef.current.filter((item) => item.id !== conversationId);
       setConversations(remaining);
       setActiveConversationId((current) => current === conversationId ? (remaining[0]?.id ?? null) : current);
-      setNotice("세션을 다른 프로젝트로 이동했습니다.");
       return true;
     } catch (error) {
       setNotice(apiMessage(error));
@@ -1078,7 +1074,6 @@ export function useLuminaWorkspace() {
       const remaining = conversationsRef.current.filter((item) => item.id !== conversationId);
       setConversations(remaining);
       setActiveConversationId((current) => current === conversationId ? (remaining[0]?.id ?? null) : current);
-      setNotice("세션을 삭제했습니다.");
       return true;
     } catch (error) {
       setNotice(apiMessage(error));
@@ -1098,7 +1093,7 @@ export function useLuminaWorkspace() {
     }
     await refreshConversations();
     const failedCount = conversationIds.length - succeeded.length;
-    setNotice(failedCount ? `${succeeded.length}개 세션을 이동했고 ${failedCount}개는 이동하지 못했습니다.` : `${succeeded.length}개 세션을 이동했습니다.`);
+    if (failedCount) setNotice(`${succeeded.length}개 세션을 이동했고 ${failedCount}개는 이동하지 못했습니다.`);
     return succeeded;
   }, [refreshConversations]);
 
@@ -1114,7 +1109,7 @@ export function useLuminaWorkspace() {
     }
     await refreshConversations();
     const failedCount = conversationIds.length - succeeded.length;
-    setNotice(failedCount ? `${succeeded.length}개 세션을 삭제했고 ${failedCount}개는 삭제하지 못했습니다.` : `${succeeded.length}개 세션을 삭제했습니다.`);
+    if (failedCount) setNotice(`${succeeded.length}개 세션을 삭제했고 ${failedCount}개는 삭제하지 못했습니다.`);
     return succeeded;
   }, [refreshConversations]);
 
@@ -1138,7 +1133,6 @@ export function useLuminaWorkspace() {
       setConversations((items) => [created, ...items.filter((item) => item.id !== created.id)]);
       setRuntimes((current) => ({ ...current, [created.id]: emptyRuntime() }));
       setActiveConversationId(created.id);
-      setNotice(anchorMessageId ? "선택한 답변 지점에서 새 세션을 분기했습니다." : "최신 완료 답변 지점에서 새 세션을 분기했습니다.");
       return created;
     } catch (error) {
       setNotice(apiMessage(error));
