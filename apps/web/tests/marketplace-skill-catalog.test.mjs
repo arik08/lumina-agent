@@ -20,6 +20,12 @@ test("catalog uses a searchable filterable card grid without opening package det
   assert.match(view, /if \(skillView === "catalog" \|\| skillView === "trash"/);
   assert.match(view, /const catalogCacheKey = `\$\{cacheKey\}:catalog:\$\{catalogQuery[^`]+:\$\{catalogCategory\}:\$\{catalogSort\}`/);
   assert.doesNotMatch(view, /const catalogCacheKey = `[^`]*\$\{catalogTag\}/);
+  assert.match(view, /const filteredCatalog = useMemo\(\(\) => \{/);
+  assert.match(view, /catalog\.items\.filter\(\(item\) => item\.tags\.some/);
+  assert.match(view, /\}, \[catalog, catalogTag\]\);/);
+  assert.match(view, /catalog=\{filteredCatalog\}/);
+  assert.doesNotMatch(view, /tag: catalogTag \|\| undefined/);
+  assert.doesNotMatch(view, /\[catalogCategory, catalogQuery, catalogSort, catalogTag\]/);
   assert.match(panel, /placeholder="이름, 설명, 태그 검색"/);
   assert.match(panel, /catalog\.facets\.categories\.map/);
   assert.match(panel, /catalog\.facets\.tags\.map/);

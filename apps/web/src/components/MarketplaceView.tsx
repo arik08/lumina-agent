@@ -151,6 +151,13 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
   const [catalog, setCatalog, hasCachedCatalog] = useCachedViewState<SkillCatalogResponse>(catalogCacheKey, EMPTY_SKILL_CATALOG);
   const [catalogLoading, setCatalogLoading] = useState(!hasCachedCatalog);
   const [catalogLoadingMore, setCatalogLoadingMore] = useState(false);
+  const filteredCatalog = useMemo(() => {
+    if (!catalogTag) return catalog;
+    const normalizedTag = catalogTag.toLocaleLowerCase("ko-KR");
+    const filteredItems = catalog.items.filter((item) => item.tags.some((tag) => tag.toLocaleLowerCase("ko-KR") === normalizedTag));
+    const total = catalog.facets.tags.find((item) => item.value.toLocaleLowerCase("ko-KR") === normalizedTag)?.count ?? filteredItems.length;
+    return { ...catalog, items: filteredItems, total, hasMore: catalog.hasMore && filteredItems.length < total };
+  }, [catalog, catalogTag]);
   const [versionDetail, setVersionDetail] = useState<SkillVersion | null>(null);
   const [activeFile, setActiveFile] = useState("SKILL.md");
   const [skillContentView, setSkillContentView] = useState<"source" | "rendered">("source");
@@ -227,7 +234,6 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
       const response = await api.extensions.listCatalog({
         query: catalogQuery.trim() || undefined,
         category: catalogCategory || undefined,
-        tag: catalogTag || undefined,
         sort: catalogSort,
         offset,
         limit: 60,
@@ -243,7 +249,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
         setCatalogLoadingMore(false);
       }
     }
-  }, [catalogCategory, catalogQuery, catalogSort, catalogTag]);
+  }, [catalogCategory, catalogQuery, catalogSort]);
 
   useEffect(() => {
     void refresh();
@@ -634,7 +640,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
       </div>}
       {error && <div className="feature-error" role="alert">{error}</div>}
       {marketKind === "mcp" ? <McpMarketplacePanel key={`${projectId ?? "none"}:${mcpRefreshKey}`} projectId={projectId} /> : skillView === "catalog" ? <SkillCatalogPanel
-        catalog={catalog}
+        catalog={filteredCatalog}
         loading={!hasCachedCatalog && (catalogLoading || !error)}
         loadingMore={catalogLoadingMore}
         query={catalogQuery}
