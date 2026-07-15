@@ -60,6 +60,7 @@ test("single-tool stage durations use the same duration and chevron columns as t
   const styles = await read("../src/styles.css");
 
   assert.match(styles, /\.progress-summary-text \{[^}]*grid-template-columns: minmax\(0, 1fr\) 46px 16px;[^}]*gap: 5px;[^}]*padding-right: 6px;[^}]*scrollbar-gutter: stable;[^}]*scrollbar-width: thin;/s);
+  assert.match(styles, /\.progress-summary-text > span:only-child \{ grid-column: 1 \/ -1; \}/);
 });
 
 test("narrative summaries keep a shared-token gap before grouped and single tool rows", async () => {
