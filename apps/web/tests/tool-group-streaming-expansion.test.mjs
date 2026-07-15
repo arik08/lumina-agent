@@ -49,6 +49,12 @@ test("single-tool stage durations use the same duration and chevron columns as t
   assert.match(styles, /\.progress-summary-text \{[^}]*grid-template-columns: minmax\(0, 1fr\) 46px 16px;[^}]*gap: 5px;[^}]*padding-right: 6px;[^}]*scrollbar-gutter: stable;[^}]*scrollbar-width: thin;/s);
 });
 
+test("narrative summaries keep a shared-token gap before grouped and single tool rows", async () => {
+  const styles = await read("../src/styles.css");
+
+  assert.match(styles, /\.turn-work-details \.progress-summary \+ :is\(\.tool-call-group-summary, \.progress-tools\) \{ margin-top: var\(--space-1\); \}/);
+});
+
 test("every running tool spinner follows its label while duration and chevron stay rightmost", async () => {
   const app = await read("../src/components/ConversationTurn.tsx");
   const styles = await read("../src/styles.css");

@@ -2037,6 +2037,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .turn-work-details.is-open .turn-work-trigger svg { transform: rotate(90deg); }
 .turn-tool-activity { padding: 4px 0 10px; transform-origin: top; animation: activity-expand var(--motion-medium) var(--ease-out-quint) both; }
 .turn-work-details .progress-summary { padding: 5px 0 0; border-left: 0; }
+.turn-work-details .progress-summary + :is(.tool-call-group-summary, .progress-tools) { margin-top: var(--space-1); }
 .turn-work-details .skill-activity { margin-left: 0; padding-left: 0; }
 .turn-work-details .tool-call-group-summary { width: 100%; margin-left: 0; padding-left: 0; }
 .turn-work-details .run-activity-timeline .tool-call { margin-left: 0; }
