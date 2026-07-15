@@ -67,12 +67,18 @@ def test_file_output_mode_is_a_preference_until_artifact_intent_is_explicit() ->
         "confidence",
         "reason",
     ]
-    assert executor_module._ARTIFACT_CREATION_REQUEST.search(
-        "이 문장의 의미를 한 줄로 설명해 줘"
-    ) is None
-    assert executor_module._ARTIFACT_CREATION_REQUEST.search(
-        "앞으로 답변은 간결하게 해 줘"
-    ) is None
+    assert (
+        executor_module._ARTIFACT_CREATION_REQUEST.search(
+            "이 문장의 의미를 한 줄로 설명해 줘"
+        )
+        is None
+    )
+    assert (
+        executor_module._ARTIFACT_CREATION_REQUEST.search(
+            "앞으로 답변은 간결하게 해 줘"
+        )
+        is None
+    )
     assert executor_module._ARTIFACT_CREATION_REQUEST.search(
         "이번 분석을 보고서 파일로 만들어 줘"
     )
@@ -441,7 +447,8 @@ def test_file_mode_is_a_general_delivery_preference_not_a_file_command(
 
     assert all(snapshot["status"] == "completed" for snapshot in snapshots)
     assert all(
-        snapshot["outputIntent"] == {
+        snapshot["outputIntent"]
+        == {
             "fileCreationRequested": False,
             "confidence": 0.98,
             "reason": "일반적인 설명 또는 기억 확인 질문입니다.",
@@ -475,6 +482,98 @@ def test_file_mode_is_a_general_delivery_preference_not_a_file_command(
         assert (
             "Artifact contract: The user requested a reusable file." not in system_text
         )
+
+
+def test_chat_mode_never_exposes_or_executes_artifact_tools(
+    monkeypatch, tmp_path: Path
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'chat-only-output.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    requests = []
+    provider_turn = 0
+
+    class RecordingProvider(MockProvider):
+        async def stream(self, request):
+            requests.append(request)
+            async for event in super().stream(request):
+                yield event
+
+    def provider(
+        _provider_id: str, *, wants_artifact: bool, first_turn: bool
+    ) -> MockProvider:
+        nonlocal provider_turn
+        del wants_artifact, first_turn
+        provider_turn += 1
+        if provider_turn == 1:
+            return RecordingProvider(
+                tool_call=MockToolCall(
+                    name="create_report",
+                    arguments={
+                        "format": "docx",
+                        "title": "주간 업무 보고서",
+                        "executive_summary": "주간 업무를 요약했습니다.",
+                        "key_metrics": [],
+                        "sections": [],
+                        "action_items": [],
+                    },
+                    call_id="call_forbidden_chat_report",
+                )
+            )
+        return RecordingProvider(
+            text_chunks=("주간 업무 보고서 내용을 채팅 응답으로 작성했습니다.",)
+        )
+
+    monkeypatch.setattr(local_run_executor, "_provider", provider)
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "채팅 전용 보고서"},
+        ).json()
+        started = client.post(
+            f"/api/conversations/{conversation['id']}/runs",
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": "chat-only-output-0001",
+            },
+            json={
+                "message": {
+                    "text": "이번 주 업무 보고서 써줘",
+                    "outputMode": "chat",
+                }
+            },
+        )
+        assert started.status_code == 202, started.text
+        snapshot = _wait_for_terminal(client, started.json()["run"]["runId"])
+
+    assert snapshot["status"] == "completed"
+    assert provider_turn == 2
+    assert snapshot["artifacts"] == []
+    assert snapshot["toolExecutions"] == []
+    assert len(requests) == 2
+    for request in requests:
+        tool_names = {
+            schema["function"]["name"]
+            for schema in request.tools
+            if isinstance(schema.get("function"), dict)
+        }
+        assert "create_report" not in tool_names
+        assert "write_file" not in tool_names
+    system_text = "\n".join(
+        str(message.content)
+        for message in requests[0].messages
+        if message.role == "system"
+    )
+    assert "Output mode: Chat." in system_text
+    assert "Never call `create_report` or `write_file`" in system_text
 
 
 def test_final_answer_captures_memory_inline_without_a_second_model_call(
@@ -747,7 +846,10 @@ def test_report_request_recovers_when_model_tries_to_finish_without_artifact(
     assert len(snapshot["artifacts"]) == 1
     assert "must call `create_report`" in observed_system_prompts[0]
     assert "`html_source` argument" in observed_system_prompts[0]
-    assert "Lumina renders it and supplies the expand/zoom viewer" in observed_system_prompts[0]
+    assert (
+        "Lumina renders it and supplies the expand/zoom viewer"
+        in observed_system_prompts[0]
+    )
     assert "around 10,000-12,000 tokens" in observed_system_prompts[0]
     assert "Never expose internal Artifact IDs" in observed_system_prompts[0]
     assert (

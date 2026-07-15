@@ -824,7 +824,7 @@ class LocalRunExecutor:
         )
         artifact_required = (
             retry_step_key != "final"
-            and output_mode != "file"
+            and output_mode == "auto"
             and bool(_ARTIFACT_CREATION_REQUEST.search(user_message))
         )
         artifact_tools_available = retry_step_key != "final" and (
@@ -1022,23 +1022,36 @@ class LocalRunExecutor:
                                 ),
                                 "artifact_progress": None,
                             }
-                            if tool_calls[call_id]["name"] in {
+                            if output_mode == "chat" and tool_calls[call_id][
+                                "name"
+                            ] in {
+                                "create_report",
+                                "write_file",
+                            }:
+                                tool_calls[call_id]["blocked_error"] = (
+                                    "chat_mode_file_creation_forbidden"
+                                )
+                            elif tool_calls[call_id]["name"] in {
                                 "create_report",
                                 "write_file",
                             }:
                                 await self._start_streaming_artifact_tool(
                                     run_id, tool_calls[call_id]
                                 )
-                            if tool_calls[call_id]["name"] == "create_report":
+                            if tool_calls[call_id][
+                                "name"
+                            ] == "create_report" and not tool_calls[call_id].get(
+                                "blocked_error"
+                            ):
                                 await self._publish_artifact_progress(
                                     run_id,
                                     0,
                                     0,
                                 )
                                 tool_calls[call_id]["artifact_progress"] = (0, 0)
-                                tool_calls[call_id]["artifact_progress_published_at"] = (
-                                    time.monotonic()
-                                )
+                                tool_calls[call_id][
+                                    "artifact_progress_published_at"
+                                ] = time.monotonic()
                         elif event.type == "tool_call_delta":
                             await flush_pending_text()
                             delta_call_id = event.tool_call_id or active_call_id
@@ -1047,7 +1060,10 @@ class LocalRunExecutor:
                                     event.arguments_delta or ""
                                 )
                                 call = tool_calls[delta_call_id]
-                                if call["name"] in {"create_report", "write_file"}:
+                                if call["name"] in {
+                                    "create_report",
+                                    "write_file",
+                                } and not call.get("blocked_error"):
                                     progress = _artifact_argument_progress(
                                         call["arguments"]
                                     )
@@ -1369,6 +1385,10 @@ class LocalRunExecutor:
             empty_response_retry_attempt = 0
             output_continuation_count = 0
 
+            if output_mode == "chat":
+                for call in calls:
+                    if call["name"] in {"create_report", "write_file"}:
+                        call["blocked_error"] = "chat_mode_file_creation_forbidden"
             if article_web_budget is not None:
                 self._apply_article_web_call_budget(
                     run_id,
@@ -1385,6 +1405,7 @@ class LocalRunExecutor:
                     "activate_skill",
                     "classify_file_output_intent",
                 }
+                and not call.get("blocked_error")
             ]
             created_subtasks: list[dict[str, Any]] = []
             if execution_calls:
@@ -1405,7 +1426,6 @@ class LocalRunExecutor:
                             "tools",
                             result={"subtask_count": len(created_subtasks)},
                             reason="tool_subtasks_created",
-                and not call.get("blocked_error")
                         )
             if created_subtasks:
                 await event_broker.notify(run_id)
@@ -1473,26 +1493,6 @@ class LocalRunExecutor:
                         provider_metadata=call["provider_metadata"],
                     )
                 )
-            if not await self._wait_until_runnable(run_id):
-                return
-            steer_messages = await self._apply_pending_steers(run_id)
-            messages.extend(
-                ProviderMessage(role="user", content=text) for text in steer_messages
-            )
-
-    async def _request_tool_approvals(
-        self,
-        run_id: str,
-        calls: list[dict[str, Any]],
-        *,
-        assistant_content: str | None,
-        mcp_tools: Mapping[str, PreparedMcpTool],
-    ) -> bool:
-        approval_ids: list[str] = []
-        checkpoint_calls: list[dict[str, Any]] = []
-        with session_scope() as db:
-            run = db.get(Run, run_id)
-            if run is None or run.status in TERMINAL_STATUSES:
             if article_web_budget is not None:
                 exhausted_tools = self._exhausted_article_web_tools(
                     run_id,
@@ -1523,6 +1523,26 @@ class LocalRunExecutor:
                             ),
                         )
                     )
+            if not await self._wait_until_runnable(run_id):
+                return
+            steer_messages = await self._apply_pending_steers(run_id)
+            messages.extend(
+                ProviderMessage(role="user", content=text) for text in steer_messages
+            )
+
+    async def _request_tool_approvals(
+        self,
+        run_id: str,
+        calls: list[dict[str, Any]],
+        *,
+        assistant_content: str | None,
+        mcp_tools: Mapping[str, PreparedMcpTool],
+    ) -> bool:
+        approval_ids: list[str] = []
+        checkpoint_calls: list[dict[str, Any]] = []
+        with session_scope() as db:
+            run = db.get(Run, run_id)
+            if run is None or run.status in TERMINAL_STATUSES:
                 return False
             for call in calls:
                 arguments, canonical, digest = normalized_tool_arguments(
@@ -1732,26 +1752,6 @@ class LocalRunExecutor:
         )
         return True
 
-    async def _run_tool_calls(
-        self,
-        run_id: str,
-        calls: list[dict[str, Any]],
-        user_message: str,
-        mcp_tools: Mapping[str, PreparedMcpTool],
-    ) -> tuple[
-        list[tuple[dict[str, Any], dict[str, Any]]],
-        RunLimitViolation | None,
-    ]:
-        tool_semaphore = asyncio.Semaphore(self.settings.tool_concurrency_limit)
-
-        async def execute_call(
-            call: dict[str, Any],
-        ) -> tuple[dict[str, Any] | None, RunLimitViolation | None]:
-            async with tool_semaphore:
-                violation = self._current_limit_violation(run_id)
-                if violation is not None:
-                    return None, violation
-                persisted = await self._persisted_tool_result(run_id, call)
     def _article_web_attempt_state(
         self, run_id: str
     ) -> tuple[dict[str, int], dict[str, set[str]]]:
@@ -1837,7 +1837,42 @@ class LocalRunExecutor:
             exhausted.add("web_fetch")
         return exhausted
 
-                if persisted is not None:
+    async def _run_tool_calls(
+        self,
+        run_id: str,
+        calls: list[dict[str, Any]],
+        user_message: str,
+        mcp_tools: Mapping[str, PreparedMcpTool],
+    ) -> tuple[
+        list[tuple[dict[str, Any], dict[str, Any]]],
+        RunLimitViolation | None,
+    ]:
+        tool_semaphore = asyncio.Semaphore(self.settings.tool_concurrency_limit)
+
+        async def execute_call(
+            call: dict[str, Any],
+        ) -> tuple[dict[str, Any] | None, RunLimitViolation | None]:
+            async with tool_semaphore:
+                violation = self._current_limit_violation(run_id)
+                if violation is not None:
+                    return None, violation
+                if call.get("blocked_error") == "chat_mode_file_creation_forbidden":
+                    result = {
+                        "error": {
+                            "code": "chat_mode_file_creation_forbidden",
+                            "message": (
+                                "채팅 모드에서는 파일이나 Artifact를 생성할 수 없습니다."
+                            ),
+                            "retryable": False,
+                        },
+                        "instruction": (
+                            "Do not retry any file-generation tool. Return the complete "
+                            "requested content directly in the chat response."
+                        ),
+                    }
+                elif (
+                    persisted := await self._persisted_tool_result(run_id, call)
+                ) is not None:
                     result = persisted
                 elif call.get("approval_status") == "rejected":
                     result = await self._record_tool_policy_failure(
@@ -2257,6 +2292,10 @@ class LocalRunExecutor:
             # Keep message-native visual rendering available for organizations
             # whose administrator prompt predates this product capability.
             system += f"\n\n{RICH_CHAT_RENDERING_CONTRACT}"
+        if WEB_RESEARCH_EFFICIENCY_CONTRACT not in system:
+            # Keep bounded web research active for administrator prompts saved
+            # before this cost and latency contract was introduced.
+            system += f"\n\n{WEB_RESEARCH_EFFICIENCY_CONTRACT}"
         turn_system_parts: list[str] = []
         user_message = str(run.snapshot_json.get("user_message_text", ""))
         output_mode = _normalized_output_mode(
@@ -2264,9 +2303,10 @@ class LocalRunExecutor:
         )
         if output_mode == "chat":
             turn_system_parts.append(
-                "Output mode: Chat. Return the final result in the chat response and do "
-                "not create an artifact unless the user explicitly requests a file in "
-                "their message."
+                "Output mode: Chat. Return the complete final result directly in the chat "
+                "response. Never call `create_report` or `write_file`, and never create or "
+                "save an Artifact or file, even when the user explicitly asks for a report, "
+                "document, or file. The selected Chat mode is an absolute delivery constraint."
             )
         elif output_mode == "file":
             turn_system_parts.append(
@@ -2292,10 +2332,6 @@ class LocalRunExecutor:
             turn_system_parts.append(
                 "Memory capture contract: In the same final response, after all user-visible "
                 "answer text, append exactly one hidden Memory envelope in this form: "
-        if WEB_RESEARCH_EFFICIENCY_CONTRACT not in system:
-            # Keep bounded web research active for administrator prompts saved
-            # before this cost and latency contract was introduced.
-            system += f"\n\n{WEB_RESEARCH_EFFICIENCY_CONTRACT}"
                 '<lumina_memory>{"candidates":[]}</lumina_memory>. Populate candidates by '
                 "semantic judgment from only user-authored statements in the current Run; "
                 "do not use keyword or phrase matching. Include only explicit, durable facts "
@@ -2386,6 +2422,14 @@ class LocalRunExecutor:
                     "Add analysis, evidence, methodology, caveats, tables, "
                     "and decision guidance as useful, without repetition or fabricated facts."
                 )
+            elif _article_web_research_budget(user_message) is not None:
+                turn_system_parts.append(
+                    "Artifact length contract: For a normal news or online-article report "
+                    "without an explicit length selection, aim for a focused Artifact around "
+                    "3,000-4,000 tokens. Prioritize the conclusion, representative evidence, "
+                    "material caveats, and actionable implications; do not pad the report to "
+                    "the general long-report default."
+                )
             else:
                 turn_system_parts.append(
                     "Artifact length contract: For a normal report without an explicit length "
@@ -2422,14 +2466,6 @@ class LocalRunExecutor:
         if extension_application == "all_snapshot":
             selected_skills = list(run.snapshot_json.get("extensions", []))
         else:
-            elif _article_web_research_budget(user_message) is not None:
-                turn_system_parts.append(
-                    "Artifact length contract: For a normal news or online-article report "
-                    "without an explicit length selection, aim for a focused Artifact around "
-                    "3,000-4,000 tokens. Prioritize the conclusion, representative evidence, "
-                    "material caveats, and actionable implications; do not pad the report to "
-                    "the general long-report default."
-                )
             selected_skill_ids = {
                 str(reference.get("reference_id"))
                 for reference in run.snapshot_json.get("prompt_references", [])
@@ -2668,6 +2704,18 @@ class LocalRunExecutor:
                 raise ValueError("Tool arguments must be a JSON object")
         except (json.JSONDecodeError, ValueError):
             arguments = {}
+        article_web_budget = _article_web_research_budget(user_message)
+        if tool_call["name"] == "web_search" and article_web_budget is not None:
+            requested_limit = arguments.get("result_limit", 5)
+            if isinstance(requested_limit, int) and not isinstance(
+                requested_limit, bool
+            ):
+                result_ceiling = (
+                    10
+                    if article_web_budget[0] == _DEEP_ARTICLE_WEB_SEARCH_LIMIT
+                    else _ARTICLE_WEB_RESULT_LIMIT
+                )
+                arguments["result_limit"] = min(requested_limit, result_ceiling)
         if tool_call["name"] == "activate_skill":
             try:
                 with session_scope() as db:
@@ -2704,18 +2752,6 @@ class LocalRunExecutor:
                     "slug": str(selected.get("slug", selected.get("name", "Skill"))),
                     "reason": str(selected.get("activation_reason", "")),
                     "instructions": _bounded_text(
-        article_web_budget = _article_web_research_budget(user_message)
-        if tool_call["name"] == "web_search" and article_web_budget is not None:
-            requested_limit = arguments.get("result_limit", 5)
-            if isinstance(requested_limit, int) and not isinstance(
-                requested_limit, bool
-            ):
-                result_ceiling = (
-                    10
-                    if article_web_budget[0] == _DEEP_ARTICLE_WEB_SEARCH_LIMIT
-                    else _ARTICLE_WEB_RESULT_LIMIT
-                )
-                arguments["result_limit"] = min(requested_limit, result_ceiling)
                         str(selected.get("instructions", "")).strip(), 40_000
                     ),
                 }
@@ -2809,6 +2845,27 @@ class LocalRunExecutor:
         await event_broker.notify(run_id)
         await asyncio.sleep(0.12)
 
+        if tool_call.get("blocked_error") in {
+            "article_web_duplicate_request",
+            "article_web_research_budget_reached",
+        }:
+            payload = {
+                "skipped": True,
+                "reason": str(tool_call["blocked_error"]),
+                "message": str(tool_call.get("blocked_message", "")),
+                "instruction": (
+                    "Do not retry this web call. Use the evidence already present and finish "
+                    "the requested analysis concisely."
+                ),
+            }
+            await self._complete_tool_execution(
+                run_id,
+                tool_id,
+                payload,
+                "중복 또는 기본 조사 예산을 넘는 웹 호출을 생략했습니다.",
+            )
+            return payload
+
         if mcp_tool is not None:
             try:
                 payload = await self.mcp_runtime.call_tool(mcp_tool, arguments)
@@ -2845,27 +2902,6 @@ class LocalRunExecutor:
                     query,
                     tool_execution_id=tool_id,
                     result_limit=result_limit,
-        if tool_call.get("blocked_error") in {
-            "article_web_duplicate_request",
-            "article_web_research_budget_reached",
-        }:
-            payload = {
-                "skipped": True,
-                "reason": str(tool_call["blocked_error"]),
-                "message": str(tool_call.get("blocked_message", "")),
-                "instruction": (
-                    "Do not retry this web call. Use the evidence already present and finish "
-                    "the requested analysis concisely."
-                ),
-            }
-            await self._complete_tool_execution(
-                run_id,
-                tool_id,
-                payload,
-                "중복 또는 기본 조사 예산을 넘는 웹 호출을 생략했습니다.",
-            )
-            return payload
-
                     policy=_web_policy(),
                     trust_profile=self.trust_profile,
                 )
