@@ -97,6 +97,14 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
 
         pgpt_models = client.get("/api/admin/providers/pgpt/models")
         assert pgpt_models.status_code == 200
+        assert [model["modelKey"] for model in pgpt_models.json()] == [
+            "gpt-5.4",
+            "gpt-5.4-mini",
+            "gpt-5.5",
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
+        ]
         gpt_54 = next(
             model for model in pgpt_models.json() if model["modelKey"] == "gpt-5.4"
         )

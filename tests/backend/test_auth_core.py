@@ -66,7 +66,7 @@ def test_bootstrap_is_idempotent_and_seeds_contract_data(
     db_session.commit()
 
     assert first.admin_created is True
-    assert first.provider_models_created == 12
+    assert first.provider_models_created == 16
     assert second.admin_created is False
     assert second.provider_models_created == 0
 
@@ -97,7 +97,7 @@ def test_bootstrap_is_idempotent_and_seeds_contract_data(
     organization = db_session.get(Organization, admin.organization_id)
     assert organization is not None
     assert organization.marketplace_permission_mode == "admin_review"
-    assert db_session.scalar(select(func.count()).select_from(ProviderModel)) == 12
+    assert db_session.scalar(select(func.count()).select_from(ProviderModel)) == 16
 
 
 def test_bootstrap_refreshes_contract_display_names_without_overwriting_admin_names(

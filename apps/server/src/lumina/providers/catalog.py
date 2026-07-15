@@ -7,8 +7,8 @@ from typing import Any
 
 from .types import ProviderCapabilities
 
-CATALOG_REVISION = "2026-07-13.2-single-source"
-CATALOG_VERIFIED_AT = date(2026, 7, 13)
+CATALOG_REVISION = "2026-07-15.1-pgpt-5.5-5.6"
+CATALOG_VERIFIED_AT = date(2026, 7, 15)
 PUBLIC_PRICING_VERSION = "public-list-2026-07-12"
 DEFAULT_CONTEXT_COMPACTION_THRESHOLD = 0.75
 
@@ -100,6 +100,74 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             structured_output=True,
             reasoning_effort=True,
             context_window=400_000,
+            max_output_tokens=128_000,
+        ),
+        default_max_output_tokens=42_000,
+    ),
+    ModelCatalogSeed(
+        provider_id="pgpt",
+        model_key="gpt-5.5",
+        display_name="GPT-5.5",
+        runtime_model_id="gpt-5.5",
+        is_default=False,
+        sort_order=30,
+        source="product_contract:user",
+        capabilities=ProviderCapabilities(
+            tools=True,
+            structured_output=True,
+            reasoning_effort=True,
+            context_window=1_050_000,
+            max_output_tokens=128_000,
+        ),
+        default_max_output_tokens=42_000,
+    ),
+    ModelCatalogSeed(
+        provider_id="pgpt",
+        model_key="gpt-5.6-sol",
+        display_name="GPT-5.6-Sol",
+        runtime_model_id="gpt-5.6-sol",
+        is_default=False,
+        sort_order=40,
+        source="product_contract:user",
+        capabilities=ProviderCapabilities(
+            tools=True,
+            structured_output=True,
+            reasoning_effort=True,
+            context_window=1_050_000,
+            max_output_tokens=128_000,
+        ),
+        default_max_output_tokens=42_000,
+    ),
+    ModelCatalogSeed(
+        provider_id="pgpt",
+        model_key="gpt-5.6-terra",
+        display_name="GPT-5.6-Terra",
+        runtime_model_id="gpt-5.6-terra",
+        is_default=False,
+        sort_order=50,
+        source="product_contract:user",
+        capabilities=ProviderCapabilities(
+            tools=True,
+            structured_output=True,
+            reasoning_effort=True,
+            context_window=1_050_000,
+            max_output_tokens=128_000,
+        ),
+        default_max_output_tokens=42_000,
+    ),
+    ModelCatalogSeed(
+        provider_id="pgpt",
+        model_key="gpt-5.6-luna",
+        display_name="GPT-5.6-Luna",
+        runtime_model_id="gpt-5.6-luna",
+        is_default=False,
+        sort_order=60,
+        source="product_contract:user",
+        capabilities=ProviderCapabilities(
+            tools=True,
+            structured_output=True,
+            reasoning_effort=True,
+            context_window=1_050_000,
             max_output_tokens=128_000,
         ),
         default_max_output_tokens=42_000,

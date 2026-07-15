@@ -1053,6 +1053,10 @@ apps/server/src/lumina/providers/
 |---|---|---|---|---|
 | `pgpt` | `GPT-5.4` | `gpt-5.4` | 예 | 사용자 지정 |
 | `pgpt` | `GPT-5.4-mini` | `gpt-5.4-mini` | 아니요 | 사용자 지정 |
+| `pgpt` | `GPT-5.5` | `gpt-5.5` | 아니요 | 사용자 지정 |
+| `pgpt` | `GPT-5.6-Sol` | `gpt-5.6-sol` | 아니요 | 사용자 지정 |
+| `pgpt` | `GPT-5.6-Terra` | `gpt-5.6-terra` | 아니요 | 사용자 지정 |
+| `pgpt` | `GPT-5.6-Luna` | `gpt-5.6-luna` | 아니요 | 사용자 지정 |
 | `codex` | `GPT-5.5` | `gpt-5.5` | 예 | ChatGPT OAuth App Server 공개 catalog |
 | `codex` | `GPT-5.4` | `gpt-5.4` | 아니요 | ChatGPT OAuth App Server 공개 catalog |
 | `google` | `Gemini-3.1-Pro` | `gemini-3.1-pro` | 예 | 사용자 지정 |
