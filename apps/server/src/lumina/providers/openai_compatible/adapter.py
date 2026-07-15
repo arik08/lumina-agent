@@ -569,8 +569,10 @@ def _unsupported_optional_fields(body: bytes, candidates: frozenset[str]) -> set
         marker in text
         for marker in (
             "unsupported",
+            "invalid parameter",
             "unknown parameter",
             "unrecognized",
+            "unexpected",
             "not permitted",
             "extra inputs",
         )

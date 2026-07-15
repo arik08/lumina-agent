@@ -696,6 +696,7 @@ def test_provider_retry_delay_prefers_retry_after_and_caps_it() -> None:
 
     assert executor_module._provider_retry_delay_seconds(retry_after, 0) == 12.5
     assert executor_module._provider_retry_delay_seconds(excessive, 0) == 600.0
+    assert executor_module._PROVIDER_RETRY_DELAYS_SECONDS == (1.0, 2.0, 4.0)
 
 
 def test_continuation_deduper_handles_overlap_split_across_stream_chunks() -> None:

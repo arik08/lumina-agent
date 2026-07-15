@@ -1027,6 +1027,56 @@ async def test_pgpt_adapter_negotiates_rejected_optional_cache_fields() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pgpt_adapter_negotiates_rejected_reasoning_effort() -> None:
+    payloads: list[dict[str, object]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.content))
+        if len(payloads) == 1:
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "message": "Invalid parameter: reasoning_effort is unexpected"
+                    }
+                },
+            )
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "text/event-stream"},
+            content=_openai_sse(
+                {"choices": [{"delta": {"content": "OK"}, "finish_reason": "stop"}]}
+            ),
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        adapter = PgptAdapter(
+            profile=PgptProfile(base_url="https://pgpt.test/v1"),
+            credentials=PgptCredentials(
+                api_key="pgpt-key",
+                employee_no="employee-no",
+                company_code="30",
+            ),
+            client=client,
+        )
+        events = [
+            event
+            async for event in adapter.stream(
+                ProviderRequest(
+                    model="gpt-5.4",
+                    messages=(ProviderMessage(role="user", content="Hello"),),
+                    effort="medium",
+                )
+            )
+        ]
+
+    assert len(payloads) == 2
+    assert payloads[0]["reasoning_effort"] == "medium"
+    assert "reasoning_effort" not in payloads[1]
+    assert events[-1].type == "completed"
+
+
+@pytest.mark.asyncio
 async def test_pgpt_optional_negotiation_is_safe_for_concurrent_runs() -> None:
     first_wave = 0
     all_initial_requests_started = asyncio.Event()
