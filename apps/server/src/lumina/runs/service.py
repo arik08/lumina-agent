@@ -1253,6 +1253,12 @@ def update_work_plan(
         )
     if active_count > 1:
         raise ValueError("동시에 진행 중인 업무 계획 단계는 하나만 허용됩니다.")
+    if (
+        run.status not in TERMINAL_STATUSES
+        and normalized
+        and all(item["status"] == "completed" for item in normalized)
+    ):
+        normalized[-1]["status"] = "in_progress"
 
     run.snapshot_json = {**run.snapshot_json, "work_plan": normalized}
     append_event(db, run, "work_plan_updated", {"steps": normalized})
@@ -1760,6 +1766,26 @@ def transition_run(
     db: Session, run: Run, target: str, *, event_type: str = "run_status_changed"
 ) -> RunEvent:
     ensure_transition(run.status, target)
+    if target == COMPLETED:
+        work_plan = run.snapshot_json.get("work_plan", [])
+        if isinstance(work_plan, list) and any(
+            isinstance(item, dict) and item.get("status") != "completed"
+            for item in work_plan
+        ):
+            completed_work_plan = [
+                {**item, "status": "completed"} if isinstance(item, dict) else item
+                for item in work_plan
+            ]
+            run.snapshot_json = {
+                **run.snapshot_json,
+                "work_plan": completed_work_plan,
+            }
+            append_event(
+                db,
+                run,
+                "work_plan_updated",
+                {"steps": completed_work_plan},
+            )
     run.status = target
     now = utc_now()
     if target == "preparing" and run.started_at is None:

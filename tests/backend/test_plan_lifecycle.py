@@ -45,6 +45,7 @@ from lumina.runs.service import (
 )
 from lumina.runs.state import (
     CANCELLED,
+    COMPLETED,
     FAILED,
     MODEL_STREAMING,
     PAUSED,
@@ -192,6 +193,44 @@ def test_model_authored_work_plan_is_persisted_with_stable_step_ids(
         )
         assert len(events) == 2
         assert events[-1].payload_json["steps"] == updated
+
+
+def test_work_plan_stays_active_until_the_run_completes(tmp_path: Path) -> None:
+    run_id, _user_id = _direct_run(tmp_path, key="work-plan-final-stream")
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        assert run is not None
+        transition_run(db, run, PREPARING)
+        transition_run(db, run, MODEL_STREAMING)
+
+        streaming_plan = update_work_plan(
+            db,
+            run,
+            steps=[
+                {"step": "근거를 확인합니다", "status": "completed"},
+                {"step": "최종 답변을 작성합니다", "status": "completed"},
+            ],
+        )
+
+        assert [item["status"] for item in streaming_plan] == [
+            "completed",
+            "in_progress",
+        ]
+
+        transition_run(db, run, COMPLETED, event_type="run_completed")
+
+        assert [item["status"] for item in run.snapshot_json["work_plan"]] == [
+            "completed",
+            "completed",
+        ]
+        event_types = list(
+            db.scalars(
+                select(RunEvent.event_type)
+                .where(RunEvent.run_id == run.id)
+                .order_by(RunEvent.sequence)
+            )
+        )
+        assert event_types[-2:] == ["work_plan_updated", "run_completed"]
 
 
 def test_create_report_start_aligns_legacy_work_plan_to_report_drafting(
