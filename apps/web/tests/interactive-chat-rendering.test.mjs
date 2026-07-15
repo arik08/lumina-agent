@@ -67,6 +67,8 @@ test("Mermaid and structured charts expose a zoomable, pannable dialog", () => {
   assert.match(rendererSource, /className=\{`response-zoom-backdrop\$\{themeClassName\}`\}/);
   assert.match(globalStyles, /\.response-zoom-backdrop\.theme-dark,[\s\S]*?\.app-shell\.theme-dark/);
   assert.match(rendererSource, /aria-label="Mermaid 다이어그램 확대"/);
+  assert.match(rendererSource, /className="interactive-response-toolbar interactive-response-expand-trigger"[\s\S]*?onClick=\{\(\) => setExpanded\(true\)\}/);
+  assert.match(rendererStyles, /\.interactive-response-expand-trigger \{[\s\S]*?cursor: zoom-in;/);
   assert.match(rendererSource, /setPointerCapture/);
   assert.match(rendererSource, /changeZoom\(zoom \* \(event\.deltaY > 0 \? 0\.9 : 1\.1\)\)/);
   assert.match(rendererStyles, /\.response-zoom-viewport[\s\S]*cursor: grab/);
