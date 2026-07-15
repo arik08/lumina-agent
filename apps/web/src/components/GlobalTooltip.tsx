@@ -15,7 +15,7 @@ const viewportPadding = 12;
 const tooltipGap = 8;
 
 interface TooltipPosition {
-  placement: "above" | "below";
+  placement: "above" | "below" | "right" | "left";
   style: CSSProperties & {
     "--global-tooltip-anchor-x": string;
     left: number;
@@ -60,12 +60,14 @@ export function GlobalTooltipLayer({
   children,
   className = "global-tooltip",
   id,
+  preferredPlacement = "vertical",
 }: {
   anchor: HTMLElement | null;
   open: boolean;
   children: ReactNode;
   className?: string;
   id?: string;
+  preferredPlacement?: "vertical" | "right";
 }) {
   const layerRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<TooltipPosition>({
@@ -78,18 +80,26 @@ export function GlobalTooltipLayer({
     if (!open || !anchor || !layer || !anchor.isConnected) return;
     const anchorRect = anchor.getBoundingClientRect();
     const layerRect = layer.getBoundingClientRect();
-    const maximumLeft = Math.max(viewportPadding, window.innerWidth - viewportPadding - layerRect.width);
-    const left = Math.min(
-      maximumLeft,
-      Math.max(viewportPadding, anchorRect.left + (anchorRect.width - layerRect.width) / 2),
-    );
-    const anchorX = `${Math.min(layerRect.width - 16, Math.max(16, anchorRect.left + anchorRect.width / 2 - left))}px`;
     const spaceAbove = anchorRect.top - viewportPadding - tooltipGap;
     const spaceBelow = window.innerHeight - anchorRect.bottom - viewportPadding - tooltipGap;
-    const placement = spaceAbove < layerRect.height && spaceBelow > spaceAbove ? "below" : "above";
+    const spaceRight = window.innerWidth - anchorRect.right - viewportPadding - tooltipGap;
+    const spaceLeft = anchorRect.left - viewportPadding - tooltipGap;
+    const placement = preferredPlacement === "right"
+      ? (spaceRight >= layerRect.width || spaceRight >= spaceLeft ? "right" : "left")
+      : (spaceAbove < layerRect.height && spaceBelow > spaceAbove ? "below" : "above");
+    const maximumLeft = Math.max(viewportPadding, window.innerWidth - viewportPadding - layerRect.width);
+    const requestedLeft = placement === "right"
+      ? anchorRect.right + tooltipGap
+      : placement === "left"
+        ? anchorRect.left - tooltipGap - layerRect.width
+        : anchorRect.left + (anchorRect.width - layerRect.width) / 2;
+    const left = Math.min(maximumLeft, Math.max(viewportPadding, requestedLeft));
+    const anchorX = `${Math.min(layerRect.width - 16, Math.max(16, anchorRect.left + anchorRect.width / 2 - left))}px`;
     const requestedTop = placement === "below"
       ? anchorRect.bottom + tooltipGap
-      : anchorRect.top - tooltipGap - layerRect.height;
+      : placement === "above"
+        ? anchorRect.top - tooltipGap - layerRect.height
+        : anchorRect.top + (anchorRect.height - layerRect.height) / 2;
     const top = Math.min(
       Math.max(viewportPadding, window.innerHeight - viewportPadding - layerRect.height),
       Math.max(viewportPadding, requestedTop),
@@ -103,7 +113,7 @@ export function GlobalTooltipLayer({
         ? current
         : { placement, style: { "--global-tooltip-anchor-x": anchorX, left, top, visibility: "visible" } }
     ));
-  }, [anchor, open]);
+  }, [anchor, open, preferredPlacement]);
 
   useLayoutEffect(() => {
     if (!open) return;

@@ -11,12 +11,15 @@ import { GlobalTooltipLayer } from "./GlobalTooltip";
 
 interface QuestionNavigatorItem {
   anchorId: string;
-  preview: string;
+  questionPreview: string;
+  answerPreview: string;
 }
 
 type NavigatorStyle = CSSProperties & Record<`--${string}`, string | number>;
 
 const previewCharacterLimit = 180;
+const questionPreviewCharacterLimit = 96;
+const answerPreviewCharacterLimit = 140;
 
 function plainTextPreview(text: string) {
   return text
@@ -30,10 +33,10 @@ function plainTextPreview(text: string) {
     .trim();
 }
 
-export function questionNavigatorPreview(text: string) {
+export function questionNavigatorPreview(text: string, characterLimit = previewCharacterLimit) {
   const preview = plainTextPreview(text);
-  if (preview.length <= previewCharacterLimit) return preview;
-  return `${preview.slice(0, previewCharacterLimit).trimEnd()}…`;
+  if (preview.length <= characterLimit) return preview;
+  return `${preview.slice(0, characterLimit).trimEnd()}…`;
 }
 
 export function markerScaleForDistance(distance: number) {
@@ -52,10 +55,15 @@ export function easeInOutCubic(progress: number) {
 
 function questionItems(turnSets: TurnSet[]) {
   return turnSets.flatMap<QuestionNavigatorItem>((turnSet) => (
-    turnSet.messages.flatMap((message) => {
+    turnSet.messages.flatMap((message, messageIndex) => {
       if (message.role !== "user") return [];
-      const preview = questionNavigatorPreview(message.text);
-      return preview ? [{ anchorId: message.id, preview }] : [];
+      const questionPreview = questionNavigatorPreview(message.text, questionPreviewCharacterLimit);
+      if (!questionPreview) return [];
+      const answer = turnSet.messages
+        .slice(messageIndex + 1)
+        .find((candidate) => candidate.role === "assistant");
+      const answerPreview = questionNavigatorPreview(answer?.text ?? "", answerPreviewCharacterLimit);
+      return [{ anchorId: message.id, questionPreview, answerPreview }];
     })
   ));
 }
@@ -159,7 +167,7 @@ export function ConversationQuestionNavigator({
               className={`question-navigator-marker ${index < 2 ? "is-tooltip-start" : ""} ${index >= items.length - 2 ? "is-tooltip-end" : ""}`}
               type="button"
               ref={(node) => { markerRefs.current[index] = node; }}
-              aria-label={`질문 ${index + 1}로 이동: ${item.preview}`}
+              aria-label={`질문 ${index + 1}로 이동: ${item.questionPreview}`}
               aria-describedby={activeIndex === index ? tooltipId : undefined}
               style={markerStyle}
               onMouseEnter={() => setActiveIndex(index)}
@@ -168,9 +176,16 @@ export function ConversationQuestionNavigator({
               key={item.anchorId}
             >
               {activeIndex === index && (
-                <GlobalTooltipLayer anchor={markerRefs.current[index]} className="question-navigator-tooltip" id={tooltipId} open>
+                <GlobalTooltipLayer anchor={markerRefs.current[index]} className="question-navigator-tooltip" id={tooltipId} open preferredPlacement="right">
                   <strong>질문 {index + 1}</strong>
-                  <span>{item.preview}</span>
+                  <span className="question-navigator-preview-row">
+                    <small>질문</small>
+                    <span>{item.questionPreview}</span>
+                  </span>
+                  <span className="question-navigator-preview-row is-answer">
+                    <small>답변</small>
+                    <span>{item.answerPreview || "아직 답변이 없습니다."}</span>
+                  </span>
                 </GlobalTooltipLayer>
               )}
             </button>
