@@ -139,6 +139,47 @@ def test_large_web_fetch_result_is_truncated_only_for_provider_context() -> None
     assert len(provider_result["text"]) < len(result["text"])
     assert provider_result["source"] == result["source"]
     assert provider_result["providerContextTruncated"] is True
+    assert provider_result["providerContextOriginalChars"] == 40_000
+    assert provider_result["providerContextIncludedChars"] <= 15_000
+
+
+def test_web_provider_context_limits_scale_with_model_window() -> None:
+    assert executor_module._web_provider_context_limits(None) == (15_000, 200_000)
+    assert executor_module._web_provider_context_limits({"context_window": 16_000}) == (
+        9_600,
+        19_200,
+    )
+    assert executor_module._web_provider_context_limits(
+        {"context_window": 1_000_000}
+    ) == (15_000, 200_000)
+
+
+def test_web_tool_results_share_one_turn_context_budget() -> None:
+    resolved_calls = [
+        (
+            {"name": "web_fetch"},
+            {
+                "source": {
+                    "sourceId": f"src-{index}",
+                    "normalizedUrl": f"https://example.com/{index}",
+                },
+                "text": "long evidence " * 4_000,
+                "untrustedExternalContent": True,
+            },
+        )
+        for index in range(3)
+    ]
+
+    contents = executor_module._provider_tool_result_contents(
+        resolved_calls,
+        capabilities={"context_window": 16_000},
+    )
+
+    assert len(contents) == 3
+    assert sum(map(len, contents)) <= 19_200
+    assert all(
+        json.loads(content)["providerContextTruncated"] is True for content in contents
+    )
 
 
 def test_web_research_uses_adaptive_guidance_with_separate_safety_limits() -> None:

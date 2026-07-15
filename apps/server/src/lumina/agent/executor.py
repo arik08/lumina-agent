@@ -9,7 +9,7 @@ import mimetypes
 import os
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -170,6 +170,14 @@ _WEB_FETCH_PAGE_SAFETY_LIMIT = 15
 _DEEP_WEB_SEARCH_CALL_SAFETY_LIMIT = 20
 _DEEP_WEB_FETCH_PAGE_SAFETY_LIMIT = 30
 _WEB_RESULT_LIMIT = 6
+_WEB_PROVIDER_PAGE_CHARS = 15_000
+_WEB_PROVIDER_PAGE_CHARS_FLOOR = 8_000
+_WEB_PROVIDER_TURN_CHARS = 200_000
+_WEB_PROVIDER_TURN_CHARS_FLOOR = 16_000
+_WEB_PROVIDER_PAGE_WINDOW_FRACTION = 0.15
+_WEB_PROVIDER_TURN_WINDOW_FRACTION = 0.30
+_WEB_PROVIDER_PREVIEW_CHARS = 1_500
+_ESTIMATED_CHARS_PER_TOKEN = 4
 _ARTICLE_RESEARCH_REQUEST = re.compile(
     r"(?:기사|언론|뉴스|보도|\bnews\b|\barticles?\b|press\s+coverage|media\s+coverage)",
     re.IGNORECASE,
@@ -1534,7 +1542,11 @@ class LocalRunExecutor:
             if first_violation is not None:
                 await self._limit_run(run_id, first_violation)
                 return
-            for call, result in resolved_calls:
+            provider_tool_contents = _provider_tool_result_contents(
+                resolved_calls,
+                capabilities=capabilities,
+            )
+            for resolved_index, (call, result) in enumerate(resolved_calls):
                 if call["name"] == "classify_file_output_intent":
                     artifact_required = result.get("fileCreationRequested") is True
                     tool_schemas = tuple(
@@ -1557,7 +1569,7 @@ class LocalRunExecutor:
                         role="tool",
                         name=call["name"],
                         tool_call_id=call["id"],
-                        content=_provider_tool_result_content(call["name"], result),
+                        content=provider_tool_contents[resolved_index],
                         provider_metadata=call["provider_metadata"],
                     )
                 )
@@ -2780,8 +2792,7 @@ class LocalRunExecutor:
             ):
                 result_ceiling = (
                     10
-                    if web_research_budget[0]
-                    == _DEEP_WEB_SEARCH_CALL_SAFETY_LIMIT
+                    if web_research_budget[0] == _DEEP_WEB_SEARCH_CALL_SAFETY_LIMIT
                     else _WEB_RESULT_LIMIT
                 )
                 arguments["result_limit"] = min(requested_limit, result_ceiling)
@@ -4998,17 +5009,102 @@ def _bounded_text(value: str, limit: int) -> str:
         return value
     if limit < 200:
         return value[:limit]
-    tail = min(limit // 3, 40_000)
-    head = limit - tail
-    return value[:head] + "\n\n[... context truncated ...]\n\n" + value[-tail:]
+    marker = "\n\n[... context truncated ...]\n\n"
+    content_budget = limit - len(marker)
+    tail = min(content_budget // 3, 40_000)
+    head = content_budget - tail
+    return value[:head] + marker + value[-tail:]
 
 
-def _provider_tool_result_content(tool_name: str, result: Any) -> str:
+def _web_provider_context_limits(
+    capabilities: Mapping[str, Any] | None,
+) -> tuple[int, int]:
+    context_window: int | None = None
+    if isinstance(capabilities, Mapping):
+        raw_context_window = capabilities.get(
+            "context_window", capabilities.get("contextWindow")
+        )
+        try:
+            parsed = int(raw_context_window)
+        except (TypeError, ValueError, OverflowError):
+            parsed = 0
+        if parsed > 0:
+            context_window = parsed
+    if context_window is None:
+        return _WEB_PROVIDER_PAGE_CHARS, _WEB_PROVIDER_TURN_CHARS
+
+    window_chars = context_window * _ESTIMATED_CHARS_PER_TOKEN
+    page_limit = max(
+        _WEB_PROVIDER_PAGE_CHARS_FLOOR,
+        min(
+            int(window_chars * _WEB_PROVIDER_PAGE_WINDOW_FRACTION),
+            _WEB_PROVIDER_PAGE_CHARS,
+        ),
+    )
+    turn_limit = max(
+        _WEB_PROVIDER_TURN_CHARS_FLOOR,
+        min(
+            int(window_chars * _WEB_PROVIDER_TURN_WINDOW_FRACTION),
+            _WEB_PROVIDER_TURN_CHARS,
+        ),
+    )
+    return page_limit, turn_limit
+
+
+def _provider_tool_result_contents(
+    resolved_calls: Sequence[tuple[Mapping[str, Any], Any]],
+    *,
+    capabilities: Mapping[str, Any] | None,
+) -> list[str]:
+    """Bound web evidence per page and across one tool-result turn."""
+
+    page_limit, turn_limit = _web_provider_context_limits(capabilities)
+    contents = [
+        _provider_tool_result_content(
+            str(call.get("name", "")),
+            result,
+            web_fetch_text_limit=page_limit,
+        )
+        for call, result in resolved_calls
+    ]
+    web_indices = [
+        index
+        for index, (call, _result) in enumerate(resolved_calls)
+        if str(call.get("name", "")) in {"web_search", "web_fetch"}
+    ]
+    if (
+        not web_indices
+        or sum(len(contents[index]) for index in web_indices) <= turn_limit
+    ):
+        return contents
+
+    per_call_limit = max(1_000, turn_limit // len(web_indices))
+    for index in web_indices:
+        call, result = resolved_calls[index]
+        contents[index] = _provider_tool_result_content(
+            str(call.get("name", "")),
+            result,
+            web_fetch_text_limit=min(
+                page_limit,
+                max(_WEB_PROVIDER_PREVIEW_CHARS, per_call_limit - 1_000),
+            ),
+            serialized_limit=per_call_limit,
+        )
+    return contents
+
+
+def _provider_tool_result_content(
+    tool_name: str,
+    result: Any,
+    *,
+    web_fetch_text_limit: int = _WEB_PROVIDER_PAGE_CHARS,
+    serialized_limit: int = 24_000,
+) -> str:
     """Serialize a bounded provider preview while preserving the stored Tool result."""
     if not isinstance(result, Mapping):
         return _bounded_text(
             json.dumps(result, ensure_ascii=False, default=str),
-            24_000,
+            serialized_limit,
         )
 
     preview = dict(result)
@@ -5019,9 +5115,11 @@ def _provider_tool_result_content(tool_name: str, result: Any) -> str:
         )
     if tool_name == "web_fetch" and isinstance(preview.get("text"), str):
         original_text = preview["text"]
-        preview["text"] = _bounded_text(original_text, 12_000)
+        preview["text"] = _bounded_text(original_text, web_fetch_text_limit)
         if len(original_text) > len(preview["text"]):
             preview["providerContextTruncated"] = True
+            preview["providerContextOriginalChars"] = len(original_text)
+            preview["providerContextIncludedChars"] = len(preview["text"])
     elif tool_name == "web_search" and isinstance(preview.get("sources"), list):
         sources: list[Any] = []
         for source in preview["sources"][:8]:
@@ -5037,11 +5135,12 @@ def _provider_tool_result_content(tool_name: str, result: Any) -> str:
         preview["sources"] = sources
 
     serialized = json.dumps(preview, ensure_ascii=False, default=str)
-    if len(serialized) <= 24_000:
+    if len(serialized) <= serialized_limit:
         return serialized
+    preview_limit = max(200, serialized_limit - 160)
     return json.dumps(
         {
-            "providerContextPreview": _bounded_text(serialized, 20_000),
+            "providerContextPreview": _bounded_text(serialized, preview_limit),
             "providerContextTruncated": True,
         },
         ensure_ascii=False,

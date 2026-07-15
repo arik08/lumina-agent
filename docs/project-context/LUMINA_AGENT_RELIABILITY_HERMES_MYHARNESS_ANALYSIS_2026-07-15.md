@@ -207,10 +207,14 @@ Lumina는 단순히 context window 전체를 입력으로 사용하지 않는다
 - 출력 전 transient Provider 요청은 `1s → 2s → 4s` backoff로 총 4회까지 시도해 MyHarness의 재시도 수준과 맞췄다.
 - 웹 조사 예산을 기사 키워드가 있는 요청에만 적용하던 조건을 제거했다. 일반 조사는 `검색 쿼리 호출 2-3회 / 페이지 fetch 1-2회`로 작게 시작하고 `쿼리 3회 / 실제 fetch 페이지 5개`를 소프트 가이드로 사용한다. 검색 호출 1회는 기본 5개, 일반 조사 최대 6개의 후보 URL을 반환할 수 있다. 근거가 부족·차단·상충·노후화됐거나 고위험·심층 요청이면 모델이 추가 조사할 수 있다.
 - 실제 차단은 조사 지침과 분리된 폭주 방지 안전 한도에서만 작동한다. 일반 조사는 `검색 쿼리 호출 10회 / 실제 fetch 페이지 15개`, 명시적 심층 조사는 `20회 / 30개`다.
+- 호출 횟수와 모델 컨텍스트 소비를 분리했다. fetch 원문은 Tool 실행 기록에 최대 200,000자까지 보존하되 모델에는 페이지당 기본 15,000자만 전달한다. 작은 모델에서는 페이지별 전달량을 context window의 15%, 같은 Turn의 전체 웹 결과를 30%로 축소하고 각각 8,000자·16,000자 floor, 15,000자·200,000자 ceiling을 적용한다.
+- HTML fetch는 `main`·`article` 본문을 우선하고 script, style, nav, header/footer/aside, form, 광고·쿠키·공유·관련글·sidebar 등 page chrome을 제거한 뒤 공백을 정규화한다. 긴 본문은 Provider 전달 시 앞·뒤 구간을 남기고 중간만 생략하며 저장된 Tool 원문은 바꾸지 않는다.
 - 사용자가 URL만 줘도 `web_search` schema를 유지한다. 직접 fetch를 우선하되 접근 실패 복구, 교차 확인, 유용한 맥락 보강이 필요하면 검색할 수 있다.
 - 검색어 단어 순서만 바꾸거나 URL fragment·`utm_*`·`fbclid`·`gclid`만 바꾼 호출은 중복으로 차단한다.
 - 최종 Provider 실패는 `authentication`, `rate_limit`, `network`, `stream`, `context`, `endpoint`, `response`로 분류한다. Run event에는 응답 본문이나 credential 없이 단계, 상태 코드, 재시도 여부, 실제 시도 횟수만 저장한다.
 - 회사망 P-GPT 실호출은 집에서 DNS 접근이 되지 않아 미검증 상태다. 위 항목은 `httpx.MockTransport` 기반 P-GPT 호환 fault injection과 로컬 Run 회귀 테스트로 검증했다.
+
+웹 본문 정제·컨텍스트 중량 예산 추가 후 전체 Backend suite는 **420 passed, 3 skipped, 1 failed**였다. 실패 1건은 9절에 기록한 Windows launcher 문구의 기존 계약 불일치와 동일하며 웹 Tool·Agent executor 회귀에는 실패가 없다.
 
 ## 10. 남은 과제와 우선순위
 

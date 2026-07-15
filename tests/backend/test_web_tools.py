@@ -121,6 +121,46 @@ async def test_web_fetch_extracts_readable_html_and_content_hash() -> None:
     assert result.to_dict()["text"].startswith(UNTRUSTED_CONTENT_BANNER)
 
 
+@pytest.mark.asyncio
+async def test_web_fetch_prefers_primary_content_and_removes_page_chrome() -> None:
+    html = b"""<!doctype html><html><head><title>Primary report</title></head><body>
+    <header>Global company navigation<br><img src="logo.png">and account links</header>
+    <div class="cookie-banner">Accept every cookie to continue</div>
+    <main><article>
+      <header><h1>Quarterly operating result</h1></header>
+      <p>The primary report contains enough substantive detail to be selected over
+      surrounding page chrome and retained as the readable body for model context.</p>
+      <div class="social share">Share this report everywhere</div>
+      <p>Production increased while the safety incident rate declined.</p>
+    </article></main>
+    <aside>Related articles and sponsored links</aside>
+    <footer>Copyright, privacy, careers, and repeated site navigation</footer>
+    </body></html>"""
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html; charset=utf-8"},
+            content=html,
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await web_fetch(
+            "https://example.com/quarterly-report",
+            tool_execution_id="tool-fetch-primary",
+            client=client,
+            resolver=_public_resolver,
+        )
+
+    assert "Quarterly operating result" in result.text
+    assert "Production increased" in result.text
+    assert "Global company navigation" not in result.text
+    assert "Accept every cookie" not in result.text
+    assert "Share this report" not in result.text
+    assert "Related articles" not in result.text
+    assert "Copyright, privacy" not in result.text
+
+
 @pytest.mark.parametrize(
     ("url", "expected_code"),
     [

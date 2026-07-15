@@ -481,6 +481,9 @@ def extract_readable_html(html: str) -> tuple[str, str]:
         ) from exc
     title = _normalize_readable_text(" ".join(parser.title_parts))
     body = _normalize_readable_text("".join(parser.body_parts))
+    primary = _normalize_readable_text("".join(parser.primary_parts))
+    if len(primary) >= 80:
+        body = primary
     return title, body
 
 
@@ -1047,7 +1050,72 @@ class _DuckDuckGoHTMLParser(HTMLParser):
 
 
 class _ReadableHTMLParser(HTMLParser):
-    _SKIP_TAGS = {"script", "style", "noscript", "template", "svg", "nav", "form"}
+    _VOID_TAGS = {
+        "area",
+        "base",
+        "br",
+        "col",
+        "embed",
+        "hr",
+        "img",
+        "input",
+        "link",
+        "meta",
+        "param",
+        "source",
+        "track",
+        "wbr",
+    }
+    _SKIP_TAGS = {
+        "aside",
+        "audio",
+        "button",
+        "canvas",
+        "dialog",
+        "embed",
+        "footer",
+        "form",
+        "header",
+        "iframe",
+        "menu",
+        "nav",
+        "noscript",
+        "object",
+        "script",
+        "style",
+        "svg",
+        "template",
+        "video",
+    }
+    _SKIP_ROLES = {
+        "banner",
+        "complementary",
+        "contentinfo",
+        "dialog",
+        "form",
+        "navigation",
+    }
+    _NOISE_TOKENS = {
+        "ad",
+        "ads",
+        "advert",
+        "advertisement",
+        "breadcrumb",
+        "comments",
+        "consent",
+        "cookie",
+        "modal",
+        "newsletter",
+        "pagination",
+        "popup",
+        "promo",
+        "related",
+        "share",
+        "sidebar",
+        "social",
+        "sponsor",
+        "subscription",
+    }
     _BLOCK_TAGS = {
         "article",
         "aside",
@@ -1079,21 +1147,49 @@ class _ReadableHTMLParser(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.title_parts: list[str] = []
         self.body_parts: list[str] = []
+        self.primary_parts: list[str] = []
         self._skip_depth = 0
         self._title_depth = 0
+        self._primary_depth = 0
 
-    def handle_starttag(self, tag: str, _attrs: list[tuple[str, str | None]]) -> None:
+    @classmethod
+    def _is_noise_container(cls, attrs: list[tuple[str, str | None]]) -> bool:
+        attributes = {key.casefold(): value or "" for key, value in attrs}
+        if (
+            "hidden" in attributes
+            or attributes.get("aria-hidden", "").casefold() == "true"
+        ):
+            return True
+        if attributes.get("role", "").casefold() in cls._SKIP_ROLES:
+            return True
+        label = " ".join((attributes.get("id", ""), attributes.get("class", "")))
+        tokens = {token for token in re.split(r"[^a-z0-9]+", label.casefold()) if token}
+        return bool(tokens & cls._NOISE_TOKENS)
+
+    def _append_body(self, value: str) -> None:
+        self.body_parts.append(value)
+        if self._primary_depth:
+            self.primary_parts.append(value)
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         normalized = tag.casefold()
         if self._skip_depth:
-            self._skip_depth += 1
+            if normalized not in self._VOID_TAGS:
+                self._skip_depth += 1
             return
-        if normalized in self._SKIP_TAGS:
-            self._skip_depth = 1
+        skip_semantic_tag = normalized in self._SKIP_TAGS and not (
+            normalized == "header" and self._primary_depth
+        )
+        if skip_semantic_tag or self._is_noise_container(attrs):
+            if normalized not in self._VOID_TAGS:
+                self._skip_depth = 1
             return
         if normalized == "title":
             self._title_depth += 1
+        if normalized in {"main", "article"}:
+            self._primary_depth += 1
         if normalized in self._BLOCK_TAGS:
-            self.body_parts.append("\n")
+            self._append_body("\n")
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self.handle_starttag(tag, attrs)
@@ -1107,7 +1203,9 @@ class _ReadableHTMLParser(HTMLParser):
         if normalized == "title" and self._title_depth:
             self._title_depth -= 1
         if normalized in self._BLOCK_TAGS:
-            self.body_parts.append("\n")
+            self._append_body("\n")
+        if normalized in {"main", "article"} and self._primary_depth:
+            self._primary_depth -= 1
 
     def handle_data(self, data: str) -> None:
         if self._skip_depth:
@@ -1115,7 +1213,7 @@ class _ReadableHTMLParser(HTMLParser):
         if self._title_depth:
             self.title_parts.append(data)
             return
-        self.body_parts.append(data)
+        self._append_body(data)
 
 
 __all__ = [
