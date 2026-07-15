@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "../api";
+import { useCachedViewState } from "../view-data-cache";
 import { SelectMenu } from "./SelectMenu";
 import { SyntaxCode } from "./SyntaxCode";
 import type {
@@ -107,11 +108,12 @@ function projectLearningError(caught: unknown, fallback: string) {
 }
 
 function PersonalMemoryPanel({ refreshKey }: { refreshKey: number }) {
-  const [items, setItems] = useState<UserMemory[]>([]);
-  const [settings, setSettings] = useState<MemorySettings | null>(null);
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<MemoryListStatus>("active");
-  const [loading, setLoading] = useState(true);
+  const personalCacheKey = `memory:personal:${status}:${query.trim().toLocaleLowerCase("ko-KR")}`;
+  const [items, setItems, hasCachedItems] = useCachedViewState<UserMemory[]>(personalCacheKey, []);
+  const [settings, setSettings] = useCachedViewState<MemorySettings | null>("memory:personal:settings", null);
+  const [loading, setLoading] = useState(!hasCachedItems);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -283,7 +285,7 @@ function PersonalMemoryPanel({ refreshKey }: { refreshKey: number }) {
       </div>
       {notice && <div className="feature-notice" role="status">{notice}</div>}
       <div className="feature-scroll memory-scroll">
-        {loading ? <div className="feature-state"><LoaderCircle className="is-running" size={17} /> Memory를 불러오고 있습니다.</div> : items.length === 0 ? <div className="feature-state">표시할 개인 Memory가 없습니다.</div> : (
+        {!hasCachedItems && (loading || !error) ? <div className="feature-state"><LoaderCircle className="is-running" size={17} /> Memory를 불러오고 있습니다.</div> : items.length === 0 ? <div className="feature-state">표시할 개인 Memory가 없습니다.</div> : (
           <div className="memory-list">
             {items.map((memory) => draft?.id === memory.id ? (
               <form className="memory-edit-form" key={memory.id} onSubmit={(event) => void saveEdit(event)}>
@@ -334,13 +336,13 @@ function ProjectMemoryPanel({
   refreshKey: number;
   onProposalCreated: () => void;
 }) {
-  const [items, setItems] = useState<ProjectMemory[]>([]);
+  const [items, setItems, hasCachedItems] = useCachedViewState<ProjectMemory[]>(`memory:project:${project?.id ?? "none"}`, []);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("all");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [history, setHistory] = useState<ProjectMemoryHistory | null>(null);
   const [draft, setDraft] = useState<ProjectProposalDraft | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(!hasCachedItems);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -480,7 +482,7 @@ function ProjectMemoryPanel({
       <div className="project-memory-layout">
         <section className="project-memory-list-pane" aria-label="활성 Project Memory">
           <div className="project-memory-section-title"><span>활성 Memory</span><small>{filteredItems.length}개</small></div>
-          {loading ? <div className="feature-state"><LoaderCircle className="is-running" size={16} /> 불러오는 중</div> : filteredItems.length === 0 ? <div className="feature-state">조건에 맞는 활성 Memory가 없습니다.</div> : filteredItems.map((memory) => (
+          {!hasCachedItems && (loading || !error) ? <div className="feature-state"><LoaderCircle className="is-running" size={16} /> 불러오는 중</div> : filteredItems.length === 0 ? <div className="feature-state">조건에 맞는 활성 Memory가 없습니다.</div> : filteredItems.map((memory) => (
             <article className={`project-memory-item ${selectedKey === memory.memoryKey ? "is-selected" : ""}`} key={memory.id}>
               <button className="project-memory-select" type="button" onClick={() => setSelectedKey(memory.memoryKey)}>
                 <span className="project-memory-category">{memory.category}</span>
@@ -531,9 +533,9 @@ function LearningProposalsPanel({
   refreshKey: number;
   onChanged: () => void;
 }) {
-  const [items, setItems] = useState<ProjectLearningProposal[]>([]);
   const [status, setStatus] = useState<ProposalFilter>("all");
-  const [loading, setLoading] = useState(false);
+  const [items, setItems, hasCachedItems] = useCachedViewState<ProjectLearningProposal[]>(`memory:proposals:${project?.id ?? "none"}:${status}`, []);
+  const [loading, setLoading] = useState(!hasCachedItems);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -657,7 +659,7 @@ function LearningProposalsPanel({
         </form>
       )}
       <div className="feature-scroll learning-proposal-scroll">
-        {loading ? <div className="feature-state"><LoaderCircle className="is-running" size={17} /> 메모리 반영 제안을 불러오고 있습니다.</div> : items.length === 0 ? <div className="feature-state">이 상태의 메모리 반영 제안이 없습니다.</div> : (
+        {!hasCachedItems && (loading || !error) ? <div className="feature-state"><LoaderCircle className="is-running" size={17} /> 메모리 반영 제안을 불러오고 있습니다.</div> : items.length === 0 ? <div className="feature-state">이 상태의 메모리 반영 제안이 없습니다.</div> : (
           <div className="learning-proposal-list">
             {items.map((proposal) => (
               <article className={`learning-proposal-row status-${proposal.status}`} key={proposal.id}>

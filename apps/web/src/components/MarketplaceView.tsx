@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api, ApiError } from "../api";
 import type { ExtensionInstallation, SkillCatalogItem, SkillCatalogResponse, SkillExtension, SkillVersion } from "../api-types";
+import { useCachedViewState } from "../view-data-cache";
 import { McpMarketplacePanel } from "./McpMarketplacePanel";
 import { MarketplaceInstallButton } from "./MarketplaceInstallButton";
 import { ResizableSplitPane } from "./ResizableSplitPane";
@@ -128,11 +129,12 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
   const catalogRequestIdRef = useRef(0);
   const [marketKind, setMarketKind] = useState<"skill" | "mcp">("skill");
   const [mcpRefreshKey, setMcpRefreshKey] = useState(0);
-  const [items, setItems] = useState<SkillExtension[]>([]);
-  const [trashedItems, setTrashedItems] = useState<SkillExtension[]>([]);
-  const [installations, setInstallations] = useState<ExtensionInstallation[]>([]);
+  const cacheKey = `marketplace:${projectId ?? "none"}`;
+  const [items, setItems, hasCachedItems] = useCachedViewState<SkillExtension[]>(`${cacheKey}:items`, []);
+  const [trashedItems, setTrashedItems, hasCachedTrash] = useCachedViewState<SkillExtension[]>(`${cacheKey}:trash`, []);
+  const [installations, setInstallations, hasCachedInstallations] = useCachedViewState<ExtensionInstallation[]>(`${cacheKey}:installations`, []);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!hasCachedItems || !hasCachedTrash || !hasCachedInstallations);
   const [busy, setBusy] = useState(false);
   const pendingInstallationIdsRef = useRef<Set<string>>(new Set());
   const [pendingInstallationSurfaceById, setPendingInstallationSurfaceById] = useState<Record<string, "catalog" | "list" | "detail">>({});
@@ -141,13 +143,14 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
   const [skillView, setSkillView] = useState<"catalog" | "installed" | "drafts" | "trash">("catalog");
 
   const [query, setQuery] = useState("");
-  const [catalog, setCatalog] = useState<SkillCatalogResponse>(EMPTY_SKILL_CATALOG);
-  const [catalogLoading, setCatalogLoading] = useState(true);
-  const [catalogLoadingMore, setCatalogLoadingMore] = useState(false);
   const [catalogQuery, setCatalogQuery] = useState("");
   const [catalogCategory, setCatalogCategory] = useState("");
   const [catalogTag, setCatalogTag] = useState("");
   const [catalogSort, setCatalogSort] = useState<SkillCatalogSort>("popular");
+  const catalogCacheKey = `${cacheKey}:catalog:${catalogQuery.trim().toLocaleLowerCase("ko-KR")}:${catalogCategory}:${catalogTag}:${catalogSort}`;
+  const [catalog, setCatalog, hasCachedCatalog] = useCachedViewState<SkillCatalogResponse>(catalogCacheKey, EMPTY_SKILL_CATALOG);
+  const [catalogLoading, setCatalogLoading] = useState(!hasCachedCatalog);
+  const [catalogLoadingMore, setCatalogLoadingMore] = useState(false);
   const [versionDetail, setVersionDetail] = useState<SkillVersion | null>(null);
   const [activeFile, setActiveFile] = useState("SKILL.md");
   const [skillContentView, setSkillContentView] = useState<"source" | "rendered">("source");
@@ -632,7 +635,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
       {error && <div className="feature-error" role="alert">{error}</div>}
       {marketKind === "mcp" ? <McpMarketplacePanel key={`${projectId ?? "none"}:${mcpRefreshKey}`} projectId={projectId} /> : skillView === "catalog" ? <SkillCatalogPanel
         catalog={catalog}
-        loading={catalogLoading}
+        loading={!hasCachedCatalog && (catalogLoading || !error)}
         loadingMore={catalogLoadingMore}
         query={catalogQuery}
         category={catalogCategory}
@@ -650,7 +653,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
         onLoadMore={() => void refreshCatalog({ offset: catalog.items.length, append: true })}
       /> : <ResizableSplitPane storageKey="lumina:marketplace-list-width" ariaLabel="Skill 목록 너비 조절" className="marketplace-split">
         <aside className="feature-list" aria-label={skillView === "trash" ? "삭제된 Skill 목록" : "Skill 목록"}>
-          {loading ? <div className="feature-state"><LoaderCircle className="is-running" size={16} /> 불러오는 중</div> : visibleItems.length === 0 ? <div className="feature-state">조건에 맞는 Skill이 없습니다.</div> : visibleItems.map((item) => {
+          {loading && (!hasCachedItems || !hasCachedTrash || !hasCachedInstallations) ? <div className="feature-state"><LoaderCircle className="is-running" size={16} /> 불러오는 중</div> : visibleItems.length === 0 ? <div className="feature-state">조건에 맞는 Skill이 없습니다.</div> : visibleItems.map((item) => {
             const itemInstallation = installations.find((entry) => entry.extensionId === item.id) ?? null;
             const itemVersion = item.versions.at(-1) ?? null;
             const itemInstallationPending = pendingInstallationSurfaceById[item.id] === "list";

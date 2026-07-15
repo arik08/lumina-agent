@@ -2,6 +2,7 @@ import { FileCode2, FileText, LoaderCircle, Menu, RefreshCw, Search } from "luci
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import type { ArtifactSummary } from "../api-types";
+import { useCachedViewState } from "../view-data-cache";
 import { SelectMenu, type SelectMenuOption } from "./SelectMenu";
 
 type ArtifactSortOrder = "latest" | "alphabetical";
@@ -25,11 +26,11 @@ interface ArtifactLibraryViewProps {
 }
 
 export function ArtifactLibraryView({ projectId, onOpenArtifact, onOpenNavigation }: ArtifactLibraryViewProps) {
-  const [items, setItems] = useState<ArtifactSummary[]>([]);
+  const [items, setItems, hasCachedItems] = useCachedViewState<ArtifactSummary[]>(`library:${projectId ?? "all"}`, []);
   const [query, setQuery] = useState("");
   const [extension, setExtension] = useState(ALL_EXTENSIONS);
   const [sortOrder, setSortOrder] = useState<ArtifactSortOrder>("latest");
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!hasCachedItems);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -108,7 +109,7 @@ export function ArtifactLibraryView({ projectId, onOpenArtifact, onOpenNavigatio
         </div>
       </div>
       <div className="feature-scroll">
-        {loading ? <div className="feature-state"><LoaderCircle className="is-running" size={17} /> Artifact를 불러오고 있습니다.</div> : filtered.length === 0 ? <div className="feature-state">표시할 Artifact가 없습니다.</div> : (
+        {loading && !hasCachedItems ? <div className="feature-state"><LoaderCircle className="is-running" size={17} /> Artifact를 불러오고 있습니다.</div> : filtered.length === 0 ? <div className="feature-state">표시할 Artifact가 없습니다.</div> : (
           <div className="artifact-library-list">
             {filtered.map((artifact) => (
               <button type="button" className="artifact-library-row" key={artifact.id} onClick={() => onOpenArtifact(artifact)}>

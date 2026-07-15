@@ -1,0 +1,37 @@
+import { createContext, type Dispatch, type ReactNode, type SetStateAction, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState } from "react";
+
+const ViewDataCacheContext = createContext<Map<string, unknown> | null>(null);
+
+export function ViewDataCacheProvider({ scope, children }: { scope: string; children: ReactNode }) {
+  const cacheRef = useRef<{ scope: string; values: Map<string, unknown> }>({ scope, values: new Map() });
+  if (cacheRef.current.scope !== scope) cacheRef.current = { scope, values: new Map() };
+  return <ViewDataCacheContext.Provider value={cacheRef.current.values}>{children}</ViewDataCacheContext.Provider>;
+}
+
+export function useCachedViewState<T>(key: string, initialValue: T): [T, Dispatch<SetStateAction<T>>, boolean] {
+  const cache = useContext(ViewDataCacheContext);
+  if (!cache) throw new Error("useCachedViewState must be used inside ViewDataCacheProvider");
+  const initialValueRef = useRef(initialValue);
+
+  const read = useCallback(() => ({
+    value: cache.has(key) ? cache.get(key) as T : initialValueRef.current,
+    hasValue: cache.has(key),
+  }), [cache, key]);
+  const [entry, setEntry] = useState(read);
+
+  useLayoutEffect(() => {
+    setEntry(read());
+  }, [read]);
+
+  const setValue = useCallback<Dispatch<SetStateAction<T>>>((next) => {
+    setEntry((current) => {
+      const value = typeof next === "function"
+        ? (next as (previous: T) => T)(current.value)
+        : next;
+      cache.set(key, value);
+      return { value, hasValue: true };
+    });
+  }, [cache, key]);
+
+  return useMemo(() => [entry.value, setValue, entry.hasValue], [entry.hasValue, entry.value, setValue]);
+}

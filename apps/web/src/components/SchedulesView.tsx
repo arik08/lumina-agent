@@ -15,6 +15,7 @@ import {
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "../api";
 import type { EffortOption, ExecutionSelection, ProjectSummary, ScheduleKind, ScheduledRun, ScheduledTask } from "../api-types";
+import { useCachedViewState } from "../view-data-cache";
 import { SelectMenu } from "./SelectMenu";
 import { ResizableSplitPane } from "./ResizableSplitPane";
 
@@ -92,10 +93,10 @@ function runStatusLabel(status: string) {
 }
 
 export function SchedulesView({ projectId, projects, execution, executionOptions, onOpenNavigation, onProjectChange, onConversationsChanged }: SchedulesViewProps) {
-  const [tasks, setTasks] = useState<ScheduledTask[]>([]);
+  const [tasks, setTasks, hasCachedTasks] = useCachedViewState<ScheduledTask[]>(`schedules:${projectId ?? "none"}`, []);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [runs, setRuns] = useState<ScheduledRun[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!hasCachedTasks);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -342,7 +343,7 @@ export function SchedulesView({ projectId, projects, execution, executionOptions
           <div className="feature-toolbar schedule-list-toolbar">
             <button className="feature-primary-action lumina-primary-action" type="button" disabled={!projectId || !execution || executionOptions.length === 0} onClick={openCreateForm}><Plus size={15} /> 새 예약</button>
           </div>
-          {loading ? <div className="feature-state"><LoaderCircle className="is-running" size={16} /> 불러오는 중</div> : tasks.length === 0 ? <div className="feature-state">예약 작업이 없습니다.</div> : tasks.map((task) => (
+          {loading && !hasCachedTasks ? <div className="feature-state"><LoaderCircle className="is-running" size={16} /> 불러오는 중</div> : tasks.length === 0 ? <div className="feature-state">예약 작업이 없습니다.</div> : tasks.map((task) => (
             <button className={task.id === selected?.id ? "is-selected" : ""} type="button" key={task.id} onClick={() => { setSelectedId(task.id); setCreateOpen(false); }}>
               <span><strong>{task.name}</strong><small>{scheduleText(task)}</small></span>
               <em className={task.enabled ? "is-enabled" : ""}>{task.enabled ? "사용" : "중지"}</em>

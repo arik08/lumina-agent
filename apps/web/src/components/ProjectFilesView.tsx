@@ -25,6 +25,7 @@ import { type CSSProperties, type DragEvent, type MouseEvent, type ReactNode, us
 import { createPortal } from "react-dom";
 import { api, ApiError } from "../api";
 import type { ArtifactDownload, ProjectFileDetail, ProjectFileSummary, ProjectFolderSummary } from "../api-types";
+import { useCachedViewState } from "../view-data-cache";
 import { ResizableSplitPane } from "./ResizableSplitPane";
 
 interface ProjectFilesViewProps {
@@ -272,13 +273,14 @@ export function ProjectFilesView({ projectId, onOpenNavigation }: ProjectFilesVi
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const draggedNodeRef = useRef<FileTreeNode | null>(null);
-  const [files, setFiles] = useState<ProjectFileSummary[]>([]);
-  const [folders, setFolders] = useState<ProjectFolderSummary[]>([]);
+  const [query, setQuery] = useState("");
+  const cacheKey = `files:${projectId ?? "none"}:${query.trim().toLocaleLowerCase("ko-KR")}`;
+  const [files, setFiles, hasCachedFiles] = useCachedViewState<ProjectFileSummary[]>(`${cacheKey}:items`, []);
+  const [folders, setFolders, hasCachedFolders] = useCachedViewState<ProjectFolderSummary[]>(`${cacheKey}:folders`, []);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedFolderPath, setSelectedFolderPath] = useState<string | null>(null);
   const [detail, setDetail] = useState<ProjectFileDetail | null>(null);
-  const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(!hasCachedFiles || !hasCachedFolders);
   const [detailLoading, setDetailLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [dropActive, setDropActive] = useState(false);
@@ -845,7 +847,7 @@ export function ProjectFilesView({ projectId, onOpenNavigation }: ProjectFilesVi
             </div>
             <div className="file-tree thin-scrollbar">
               {treeEditor?.mode === "create" && treeEditor.parentPath === "" ? renderTreeEditor(0) : null}
-              {loading && tree.length === 0 ? <div className="feature-state"><LoaderCircle className="is-running" size={15} /> 불러오는 중</div> : tree.length === 0 ? <div className="file-tree-empty"><Folder size={22} /><strong>아직 파일이 없습니다.</strong><span>우클릭해 폴더를 만들거나 파일을 놓아 주세요.</span></div> : renderTree(tree)}
+              {(!hasCachedFiles || !hasCachedFolders) && (loading || !error) ? <div className="feature-state"><LoaderCircle className="is-running" size={15} /> 불러오는 중</div> : tree.length === 0 ? <div className="file-tree-empty"><Folder size={22} /><strong>아직 파일이 없습니다.</strong><span>우클릭해 폴더를 만들거나 파일을 놓아 주세요.</span></div> : renderTree(tree)}
             </div>
           </aside>
           <section className="feature-detail file-workspace-viewer" aria-live="polite">

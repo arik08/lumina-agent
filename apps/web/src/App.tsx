@@ -109,6 +109,7 @@ import { ProjectSettings } from "./components/ProjectSettings";
 import { ProjectFilesView } from "./components/ProjectFilesView";
 import { HelpCenterView } from "./components/HelpCenterView";
 import { SchedulesView } from "./components/SchedulesView";
+import { ViewDataCacheProvider } from "./view-data-cache";
 import { SelectMenu } from "./components/SelectMenu";
 import { SharedSnapshotViewer } from "./components/SharedSnapshotViewer";
 import { ConversationSearchDialog } from "./components/ConversationSearchDialog";
@@ -3443,12 +3444,14 @@ function App() {
           </div>
         </div>
 
-        {mainView === "marketplace" && <MarketplaceView projectId={workspace.activeProjectId} onOpenNavigation={() => setSidebarOpen(true)} />}
-        {mainView === "library" && <ArtifactLibraryView projectId={workspace.activeProjectId} onOpenArtifact={(artifact) => void openArtifact(artifact)} onOpenNavigation={() => setSidebarOpen(true)} />}
-        {mainView === "files" && <ProjectFilesView projectId={workspace.activeProjectId} onOpenNavigation={() => setSidebarOpen(true)} />}
-        {mainView === "help" && <HelpCenterView canManage={isAdmin} initialAnnouncementId={helpAnnouncementId} onOpenNavigation={() => setSidebarOpen(true)} />}
-        {mainView === "schedules" && <SchedulesView projectId={workspace.activeProjectId} projects={workspace.projects} execution={workspace.settings?.execution ?? null} executionOptions={candidateModelOptions} onOpenNavigation={() => setSidebarOpen(true)} onProjectChange={workspace.setActiveProjectId} onConversationsChanged={workspace.refreshConversations} />}
-        {mainView === "memory" && <MemoryView project={activeProject} completedRunId={completedProjectLearningRunId} canReviewProjectLearning={canReviewProjectLearning} onOpenNavigation={() => setSidebarOpen(true)} />}
+        <ViewDataCacheProvider scope={workspace.authSession.user.id}>
+          {mainView === "marketplace" && <MarketplaceView key={workspace.activeProjectId ?? "none"} projectId={workspace.activeProjectId} onOpenNavigation={() => setSidebarOpen(true)} />}
+          {mainView === "library" && <ArtifactLibraryView key={workspace.activeProjectId ?? "all"} projectId={workspace.activeProjectId} onOpenArtifact={(artifact) => void openArtifact(artifact)} onOpenNavigation={() => setSidebarOpen(true)} />}
+          {mainView === "files" && <ProjectFilesView key={workspace.activeProjectId ?? "none"} projectId={workspace.activeProjectId} onOpenNavigation={() => setSidebarOpen(true)} />}
+          {mainView === "help" && <HelpCenterView canManage={isAdmin} initialAnnouncementId={helpAnnouncementId} onOpenNavigation={() => setSidebarOpen(true)} />}
+          {mainView === "schedules" && <SchedulesView key={workspace.activeProjectId ?? "none"} projectId={workspace.activeProjectId} projects={workspace.projects} execution={workspace.settings?.execution ?? null} executionOptions={candidateModelOptions} onOpenNavigation={() => setSidebarOpen(true)} onProjectChange={workspace.setActiveProjectId} onConversationsChanged={workspace.refreshConversations} />}
+          {mainView === "memory" && <MemoryView key={activeProject?.id ?? "none"} project={activeProject} completedRunId={completedProjectLearningRunId} canReviewProjectLearning={canReviewProjectLearning} onOpenNavigation={() => setSidebarOpen(true)} />}
+        </ViewDataCacheProvider>
         {mainView === "admin" && isAdmin && <AdminView onOpenNavigation={() => setSidebarOpen(true)} onToast={showToast} onUserUpdated={() => void workspace.refreshAuthSession()} />}
         {mainView === "settings" && (
           <main className="feature-view settings-view" aria-label="설정">
