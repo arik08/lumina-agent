@@ -55,7 +55,7 @@ import ReactMarkdown, {
   type Components,
   type Options as ReactMarkdownOptions,
 } from "react-markdown";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import remarkGfm from "remark-gfm";
 import { visit } from "unist-util-visit";
 import { api, attachmentContentUrl } from "../api";
@@ -715,6 +715,10 @@ function preserveConversationScrollPosition(target: HTMLElement, update: () => v
 }
 
 const runActivityRevealDelayMs = 85;
+const toolGroupCompletionSettleMs = 500;
+const toolGroupContentExitMs = 240;
+const toolGroupReflowMs = 350;
+const toolGroupReflowEasing = "cubic-bezier(0.22, 1, 0.36, 1)";
 
 function useStaggeredRunActivities(activities: RunActivity[], enabled: boolean) {
   const [visibleCount, setVisibleCount] = useState(activities.length);
@@ -780,7 +784,13 @@ function RunActivityTimeline({
   onVisibleGrowth?: () => void;
 }) {
   const [openSummaryIds, setOpenSummaryIds] = useState<Set<string>>(new Set());
+  const [collapsingSummaryIds, setCollapsingSummaryIds] = useState<Set<string>>(new Set());
   const previousAutoOpenSummaryIds = useRef<Set<string>>(new Set());
+  const manuallyOpenSummaryIds = useRef<Set<string>>(new Set());
+  const manuallyClosedSummaryIds = useRef<Set<string>>(new Set());
+  const summaryGroupElements = useRef<Map<string, HTMLDivElement>>(new Map());
+  const settleTimers = useRef<Map<string, number>>(new Map());
+  const collapseTimers = useRef<Map<string, number>>(new Map());
   const visibleActivities = useStaggeredRunActivities(activities, timelineRunning);
   const latestVisibleActivityId = visibleActivities.at(-1)?.id ?? "";
   const activityGroups = visibleActivities.reduce<RunActivity[][]>((groups, activity) => {
@@ -816,20 +826,90 @@ function RunActivityTimeline({
   if (keepLatestToolGroupOpen && latestToolGroupSummaryId) autoOpenSummaryIds.add(latestToolGroupSummaryId);
   const autoOpenSummaryKey = [...autoOpenSummaryIds].sort().join("|");
 
-  useEffect(() => {
-    const previous = previousAutoOpenSummaryIds.current;
-    setOpenSummaryIds((current) => {
+  const cancelScheduledCollapse = useCallback((id: string) => {
+    const settleTimer = settleTimers.current.get(id);
+    if (settleTimer !== undefined) window.clearTimeout(settleTimer);
+    settleTimers.current.delete(id);
+    const collapseTimer = collapseTimers.current.get(id);
+    if (collapseTimer !== undefined) window.clearTimeout(collapseTimer);
+    collapseTimers.current.delete(id);
+    setCollapsingSummaryIds((current) => {
+      if (!current.has(id)) return current;
       const next = new Set(current);
-      previous.forEach((id) => {
-        if (!autoOpenSummaryIds.has(id)) next.delete(id);
-      });
-      autoOpenSummaryIds.forEach((id) => {
-        if (!previous.has(id)) next.add(id);
-      });
+      next.delete(id);
       return next;
     });
+  }, []);
+
+  const finishAutoCollapse = useCallback((id: string) => {
+    if (manuallyOpenSummaryIds.current.has(id)) return;
+    const group = summaryGroupElements.current.get(id);
+    const followingGroups = group
+      ? Array.from(group.parentElement?.children ?? []).slice(Array.from(group.parentElement?.children ?? []).indexOf(group) + 1)
+          .filter((element): element is HTMLElement => element instanceof HTMLElement)
+      : [];
+    const previousTops = new Map(followingGroups.map((element) => [element, element.getBoundingClientRect().top]));
+    flushSync(() => {
+      setOpenSummaryIds((current) => {
+        if (!current.has(id)) return current;
+        const next = new Set(current);
+        next.delete(id);
+        return next;
+      });
+      setCollapsingSummaryIds((current) => {
+        if (!current.has(id)) return current;
+        const next = new Set(current);
+        next.delete(id);
+        return next;
+      });
+    });
+    collapseTimers.current.delete(id);
+    followingGroups.forEach((element) => {
+      const previousTop = previousTops.get(element);
+      if (previousTop === undefined) return;
+      const offset = previousTop - element.getBoundingClientRect().top;
+      if (Math.abs(offset) < 1 || typeof element.animate !== "function") return;
+      element.animate(
+        [
+          { transform: `translateY(${offset}px)`, opacity: 0.86 },
+          { transform: "translateY(0)", opacity: 1 },
+        ],
+        { duration: toolGroupReflowMs, easing: toolGroupReflowEasing },
+      );
+    });
+  }, []);
+
+  useEffect(() => {
+    const previous = previousAutoOpenSummaryIds.current;
+    autoOpenSummaryIds.forEach((id) => {
+      cancelScheduledCollapse(id);
+      if (manuallyClosedSummaryIds.current.has(id)) return;
+      setOpenSummaryIds((current) => current.has(id) ? current : new Set(current).add(id));
+    });
+    previous.forEach((id) => {
+      if (autoOpenSummaryIds.has(id) || manuallyOpenSummaryIds.current.has(id) || manuallyClosedSummaryIds.current.has(id)) return;
+      if (settleTimers.current.has(id) || collapseTimers.current.has(id)) return;
+      const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+      if (reduceMotion) {
+        finishAutoCollapse(id);
+        return;
+      }
+      const settleTimer = window.setTimeout(() => {
+        settleTimers.current.delete(id);
+        if (manuallyOpenSummaryIds.current.has(id)) return;
+        setCollapsingSummaryIds((current) => new Set(current).add(id));
+        const collapseTimer = window.setTimeout(() => finishAutoCollapse(id), toolGroupContentExitMs);
+        collapseTimers.current.set(id, collapseTimer);
+      }, toolGroupCompletionSettleMs);
+      settleTimers.current.set(id, settleTimer);
+    });
     previousAutoOpenSummaryIds.current = autoOpenSummaryIds;
-  }, [autoOpenSummaryKey]);
+  }, [autoOpenSummaryKey, cancelScheduledCollapse, finishAutoCollapse]);
+
+  useEffect(() => () => {
+    settleTimers.current.forEach((timer) => window.clearTimeout(timer));
+    collapseTimers.current.forEach((timer) => window.clearTimeout(timer));
+  }, []);
 
   useEffect(() => {
     if (timelineRunning && latestVisibleActivityId) onVisibleGrowth?.();
@@ -891,17 +971,33 @@ function RunActivityTimeline({
         const toolGroupId = summary ? `progress-tools-${summary.id}` : undefined;
         const toggleTools = (event: ReactMouseEvent<HTMLButtonElement>) => {
           preserveConversationScrollPosition(event.currentTarget, () => {
+            if (!summary) return;
+            cancelScheduledCollapse(summary.id);
             setOpenSummaryIds((current) => {
-              if (!summary) return current;
               const next = new Set(current);
-              if (next.has(summary.id)) next.delete(summary.id);
-              else next.add(summary.id);
+              if (toolsOpen) {
+                next.delete(summary.id);
+                manuallyOpenSummaryIds.current.delete(summary.id);
+                manuallyClosedSummaryIds.current.add(summary.id);
+              } else {
+                next.add(summary.id);
+                manuallyClosedSummaryIds.current.delete(summary.id);
+                manuallyOpenSummaryIds.current.add(summary.id);
+              }
               return next;
             });
           });
         };
         return (
-          <div className="progress-group" key={summary?.id ?? group[0]?.id}>
+          <div
+            className="progress-group"
+            key={summary?.id ?? group[0]?.id}
+            ref={(element) => {
+              if (!summary) return;
+              if (element) summaryGroupElements.current.set(summary.id, element);
+              else summaryGroupElements.current.delete(summary.id);
+            }}
+          >
             {skill && (
               <div className="skill-activity" aria-label={`사용 Skill ${skill.slug}`}>
                 <Sparkles size={14} aria-hidden="true" />
@@ -930,7 +1026,7 @@ function RunActivityTimeline({
               <div className={`progress-summary phase-${summary.phase}`}><div className="progress-summary-text"><span>{summary.text}</span>{showStageDuration && <span className="progress-summary-duration" title="단계 전체 소요 시간">{formatDuration(stageDurationMs)}</span>}</div></div>
             ))}
             {toolsOpen && summary && (
-              <div className="progress-tools" id={toolGroupId}>
+              <div className={`progress-tools ${summary && collapsingSummaryIds.has(summary.id) ? "is-collapsing" : ""}`} id={toolGroupId}>
                 {toolActivities.map((activity) => (
                   <ToolCallRow
                     execution={activity.execution}

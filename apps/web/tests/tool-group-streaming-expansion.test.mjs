@@ -4,13 +4,26 @@ import test from "node:test";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
-test("the latest tool group remains expanded while the assistant writes its response", async () => {
+test("auto-expanded tool groups settle before collapsing while manual expansion remains authoritative", async () => {
   const app = await read("../src/components/ConversationTurn.tsx");
 
   assert.match(app, /keepLatestToolGroupOpen=\{status === "model_streaming"\}/);
   assert.match(app, /const latestToolGroupSummaryId = activityGroups\.reduce/);
   assert.match(app, /if \(keepLatestToolGroupOpen && latestToolGroupSummaryId\) autoOpenSummaryIds\.add\(latestToolGroupSummaryId\)/);
-  assert.match(app, /if \(!autoOpenSummaryIds\.has\(id\)\) next\.delete\(id\)/);
+  assert.match(app, /const toolGroupCompletionSettleMs = 500/);
+  assert.match(app, /const toolGroupContentExitMs = 240/);
+  assert.match(app, /const toolGroupReflowMs = 350/);
+  assert.match(app, /manuallyOpenSummaryIds\.current\.has\(id\)/);
+  assert.match(app, /element\.animate\(/);
+});
+
+test("tool group collapse uses transform-based exit motion and respects reduced motion", async () => {
+  const app = await read("../src/components/ConversationTurn.tsx");
+  const styles = await read("../src/styles.css");
+
+  assert.match(app, /prefers-reduced-motion: reduce/);
+  assert.match(styles, /\.progress-tools\.is-collapsing \{[^}]*animation: tool-group-settle-out 240ms var\(--ease-out-quint\) both;/s);
+  assert.match(styles, /@keyframes tool-group-settle-out \{ from \{ opacity: 1; transform:/);
 });
 
 test("expanded tool groups only receive accent colors while hovered", async () => {
