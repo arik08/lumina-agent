@@ -39,11 +39,11 @@ def test_default_system_prompt_describes_rich_chat_rendering_contract() -> None:
     assert "Markdown image syntax renders an inline expandable image" in RICH_CHAT_RENDERING_CONTRACT
 
 
-def test_default_system_prompt_bounds_ordinary_web_research() -> None:
+def test_default_system_prompt_guides_adaptive_web_research() -> None:
     assert WEB_RESEARCH_EFFICIENCY_CONTRACT in DEFAULT_SYSTEM_PROMPT
-    assert "no more than three focused web searches" in WEB_RESEARCH_EFFICIENCY_CONTRACT
-    assert "fetch no more than five" in WEB_RESEARCH_EFFICIENCY_CONTRACT
-    assert "fetch that URL directly" in WEB_RESEARCH_EFFICIENCY_CONTRACT
+    assert "small, high-signal batch" in WEB_RESEARCH_EFFICIENCY_CONTRACT
+    assert "soft working guide, not a hard limit or a target" in WEB_RESEARCH_EFFICIENCY_CONTRACT
+    assert "fetch it first but keep search available" in WEB_RESEARCH_EFFICIENCY_CONTRACT
 
 
 def _settings(tmp_path: Path) -> Settings:

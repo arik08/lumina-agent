@@ -141,22 +141,22 @@ def test_large_web_fetch_result_is_truncated_only_for_provider_context() -> None
     assert provider_result["providerContextTruncated"] is True
 
 
-def test_web_research_uses_bounded_default_direct_url_and_explicit_deep_budget() -> None:
+def test_web_research_uses_adaptive_guidance_with_separate_safety_limits() -> None:
     assert executor_module._web_research_budget(
         "포스코 관련 최근 3개월 언론기사 동향을 조사해줘"
-    ) == (3, 5)
+    ) == (10, 15)
     assert executor_module._web_research_budget(
         "최근 철강 시장과 경쟁사 전략을 인터넷에서 조사해줘"
-    ) == (3, 5)
+    ) == (10, 15)
     assert executor_module._web_research_budget(
         "포스코 관련 언론기사 동향을 심층 조사해줘"
-    ) == (6, 10)
+    ) == (20, 30)
     assert executor_module._web_research_budget(
         "https://example.com/report 이 자료를 분석해줘"
-    ) == (0, 1)
+    ) == (10, 15)
     assert executor_module._web_research_budget(
         "https://example.com/report 내용을 다른 출처와 비교해줘"
-    ) == (3, 5)
+    ) == (10, 15)
 
 
 def test_web_budget_skips_overlapping_duplicate_and_excess_calls(monkeypatch) -> None:
@@ -194,7 +194,59 @@ def test_web_budget_skips_overlapping_duplicate_and_excess_calls(monkeypatch) ->
     assert calls[1]["blocked_error"] == "web_duplicate_request"
     assert calls[2].get("blocked_error") is None
     assert calls[3].get("blocked_error") is None
-    assert calls[4]["blocked_error"] == "web_research_budget_reached"
+    assert calls[4]["blocked_error"] == "web_research_safety_limit_reached"
+
+
+def test_direct_url_run_keeps_search_and_fetch_tools(
+    monkeypatch, tmp_path: Path
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'direct-url-tools.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    requests = []
+
+    class RecordingProvider(MockProvider):
+        async def stream(self, request):
+            requests.append(request)
+            async for event in super().stream(request):
+                yield event
+
+    monkeypatch.setattr(
+        local_run_executor,
+        "_provider",
+        lambda *_args, **_kwargs: RecordingProvider(text_chunks=("분석했습니다.",)),
+    )
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "직접 URL 분석"},
+        ).json()
+        started = client.post(
+            f"/api/conversations/{conversation['id']}/runs",
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": "direct-url-tools-0001",
+            },
+            json={"message": {"text": "https://example.com/report 분석해줘"}},
+        )
+        assert started.status_code == 202, started.text
+        snapshot = _wait_for_terminal(client, started.json()["run"]["runId"])
+
+    assert snapshot["status"] == "completed"
+    tool_names = {
+        schema["function"]["name"]
+        for schema in requests[0].tools
+        if isinstance(schema.get("function"), dict)
+    }
+    assert {"web_search", "web_fetch"} <= tool_names
 
 
 def test_web_fetch_signature_ignores_fragment_and_tracking_parameters() -> None:

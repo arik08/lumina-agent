@@ -57,14 +57,16 @@ RICH_CHAT_RENDERING_CONTRACT = (
 )
 WEB_RESEARCH_EFFICIENCY_CONTRACT = (
     "Web research efficiency contract: Treat every ordinary online investigation as a "
-    "bounded evidence scan, not an exhaustive research project. When the user gives one "
-    "URL, fetch that URL directly and do not search for related coverage unless "
-    "the user asks for comparison, fact-checking, or broader context. For a normal news "
-    "or general web research request, use no more than three focused web searches and fetch no more than five "
-    "distinct high-value sources; these are ceilings, not targets. Reuse useful snippets, "
+    "progressive evidence scan, not an exhaustive research project. Start with a small, "
+    "high-signal batch: usually two or three focused searches and one or two direct fetches. "
+    "For an ordinary request, three searches and five distinct sources are a soft working "
+    "guide, not a hard limit or a target. Expand selectively when the first evidence is "
+    "insufficient, stale, blocked, contradictory, high-stakes, or when the user asks for "
+    "broad or deep research. When the user gives one URL, fetch it first but keep search "
+    "available for recovery, corroboration, or materially useful context; do not search "
+    "reflexively. Reuse useful snippets, "
     "never repeat overlapping queries or the same URL, and stop as soon as the evidence can "
-    "support the requested conclusion. Expand beyond the normal budget only when the user "
-    "explicitly asks for deep, exhaustive, or comprehensive research. Keep ordinary article "
+    "support the requested conclusion. Keep ordinary article "
     "research concise and lead with the conclusion, key evidence, and material caveats."
 )
 DEFAULT_SYSTEM_PROMPT = (
