@@ -25,3 +25,7 @@ export function isTerminalRunStatus(status: RunStatus | null | undefined): statu
 export function isTerminalRunEvent(event: RunEvent): event is TerminalRunEvent {
   return TERMINAL_RUN_EVENT_TYPES.has(event.type);
 }
+
+export function shouldCollapseRunWorkDetails(status: RunStatus | null | undefined): boolean {
+  return status === "completed";
+}

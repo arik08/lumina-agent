@@ -37,7 +37,7 @@ import {
   X,
 } from "lucide-react";
 import { copyText } from "../clipboard";
-import { isTerminalRunStatus } from "../run-status";
+import { isTerminalRunStatus, shouldCollapseRunWorkDetails } from "../run-status";
 import type { Link, Parent, PhrasingContent, Root, Text } from "mdast";
 import {
   memo,
@@ -1419,6 +1419,7 @@ export function AssistantTurn({
   const pendingCommands = snapshot?.pendingCommands ?? [];
   const status = snapshot?.status ?? (finalMessage ? "completed" : null);
   const terminal = isTerminalRunStatus(status);
+  const collapseWorkDetails = shouldCollapseRunWorkDetails(status);
   const terminalReason = status && status !== "completed"
     ? snapshot?.errorMessage?.trim() || (status === "cancelled" ? "요청에 따라 작업을 취소했습니다." : "작업을 완료하지 못했습니다. 다시 실행해 주세요.")
     : "";
@@ -1439,7 +1440,7 @@ export function AssistantTurn({
   const [textPreviewAttachment, setTextPreviewAttachment] = useState<AttachmentSummary | null>(null);
   const [textPreviewContent, setTextPreviewContent] = useState("");
   const [textPreviewError, setTextPreviewError] = useState<string | null>(null);
-  const [workDetailsOpen, setWorkDetailsOpen] = useState(!terminal);
+  const [workDetailsOpen, setWorkDetailsOpen] = useState(!collapseWorkDetails);
   const [workClock, setWorkClock] = useState(() => Date.now());
   const expandedSourceTarget = sourceTargets.find(({ source }) => source.sourceId === expandedSourceId) ?? null;
   const workStartedAt = snapshot?.startedAt ?? turnSet.createdAt;
@@ -1452,8 +1453,8 @@ export function AssistantTurn({
   const hasWorkDetails = activities.length > 0;
 
   useEffect(() => {
-    setWorkDetailsOpen(!terminal);
-  }, [snapshot?.runId, terminal]);
+    setWorkDetailsOpen(!collapseWorkDetails);
+  }, [snapshot?.runId, collapseWorkDetails]);
 
   useEffect(() => {
     setAnswerRating(null);
