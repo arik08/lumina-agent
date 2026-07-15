@@ -13,6 +13,7 @@ if "%LUMINA_DEV_EXIT%"=="77" (
     echo [Lumina] Another Backend owns the configured SQLite database. This launcher will close without retrying.
     exit /b %LUMINA_DEV_EXIT%
 )
+if "%LUMINA_DEV_EXIT%"=="78" exit /b 0
 echo.
 if not "%LUMINA_DEV_EXIT%"=="0" (
     echo [Lumina] Development launcher failed with exit code %LUMINA_DEV_EXIT%.

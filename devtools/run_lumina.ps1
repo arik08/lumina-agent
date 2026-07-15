@@ -177,6 +177,7 @@ $script:LauncherPortLocks = @()
 $script:LauncherLockConflictPort = 0
 $LauncherAlreadyRunningExitCode = 76
 $DatabaseOwnershipExitCode = 77
+$UserRequestedExitCode = 78
 
 function Write-LuminaBanner {
     $template = @(
@@ -760,7 +761,7 @@ function Test-LuminaHealthy {
     return Test-Endpoint -Uri $frontendUri
 }
 
-function Test-HardResetKey {
+function Get-LuminaControlKey {
     $keyCharacter = [char]0
     $virtualKeyCode = 0
     $keyWasRead = $false
@@ -788,10 +789,16 @@ function Test-HardResetKey {
             }
         }
         catch {
-            return $false
+            return ""
         }
     }
-    return Test-HardResetInput -Character $keyCharacter -VirtualKeyCode $virtualKeyCode
+    if (Test-HardResetInput -Character $keyCharacter -VirtualKeyCode $virtualKeyCode) {
+        return "restart"
+    }
+    if (Test-LuminaExitInput -Character $keyCharacter -VirtualKeyCode $virtualKeyCode) {
+        return "exit"
+    }
+    return ""
 }
 
 function Confirm-LuminaRuntimePrepared {
@@ -871,15 +878,16 @@ function Start-LuminaProcesses {
 function Wait-LuminaReady {
     $deadline = [DateTime]::UtcNow.AddSeconds($StartupTimeoutSeconds)
     while ([DateTime]::UtcNow -lt $deadline) {
-        if (Test-HardResetKey) {
-            return $false
+        $controlAction = Get-LuminaControlKey
+        if ($controlAction) {
+            return $controlAction
         }
         $exited = Get-ExitedManagedProcess
         if ($null -ne $exited) {
             throw "$($exited.Name) exited during startup. See $($exited.ErrorLog)"
         }
         if (Test-LuminaHealthy) {
-            return $true
+            return "ready"
         }
         Start-Sleep -Milliseconds 500
     }
@@ -936,6 +944,7 @@ catch {
 }
 $resetReason = "initial startup"
 $automaticRestartCount = 0
+$userExitRequested = $false
 
 try {
     $preserveFrontend = $false
@@ -957,7 +966,13 @@ try {
                 -Status "starting" `
                 -Phase $currentPhase `
                 -Attempt $attemptNumber
-            if (-not (Wait-LuminaReady)) {
+            $startupAction = Wait-LuminaReady
+            if ($startupAction -eq "exit") {
+                $preserveFrontend = $false
+                $userExitRequested = $true
+                break
+            }
+            if ($startupAction -eq "restart") {
                 $preserveFrontend = $false
                 $resetReason = "manual request"
                 $manualResetRequested = $true
@@ -989,17 +1004,23 @@ try {
             else {
                 Write-Host "[Lumina] Service: http://127.0.0.1:$BackendPort"
             }
-            Write-Host "[Lumina] Press R to hard reset Frontend and Backend."
+            Write-Host "[Lumina] Press R to hard reset. Press Q to stop Lumina."
             Write-Host "[Lumina] Logs: $LogRoot"
 
             $healthFailures = 0
             $nextHealthCheck = [DateTime]::UtcNow.AddSeconds($HealthCheckIntervalSeconds)
             while ($true) {
                 Write-NewBackendActivity
-                if (Test-HardResetKey) {
+                $controlAction = Get-LuminaControlKey
+                if ($controlAction -eq "restart") {
                     $preserveFrontend = $false
                     $resetReason = "manual request"
                     $manualResetRequested = $true
+                    break
+                }
+                if ($controlAction -eq "exit") {
+                    $preserveFrontend = $false
+                    $userExitRequested = $true
                     break
                 }
                 $exited = Get-ExitedManagedProcess
@@ -1041,6 +1062,9 @@ try {
         }
         finally {
             Stop-ManagedProcesses -PreserveFrontend:$preserveFrontend
+        }
+        if ($userExitRequested) {
+            break
         }
         if ($manualResetRequested) {
             Write-LuminaMonitoringEvent -Event "manual_restart" -Attempt $attemptNumber
@@ -1096,4 +1120,7 @@ finally {
     if ($script:StartupStateStatus -ne "failed") {
         Write-LuminaStartupState -Status "stopped" -Phase "STOPPED"
     }
+}
+if ($userExitRequested) {
+    exit $UserRequestedExitCode
 }

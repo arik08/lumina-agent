@@ -22,18 +22,20 @@ $inputAst = [System.Management.Automation.Language.Parser]::ParseFile(
 if ($inputErrors.Count -gt 0) {
     throw "LuminaLauncher.Input.ps1 has parser errors: $($inputErrors.Message -join '; ')"
 }
-$inputFunction = $inputAst.Find(
+$inputFunctions = $inputAst.FindAll(
     {
         param($node)
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
-        $node.Name -eq "Test-HardResetInput"
+        $node.Name -in @("Test-HardResetInput", "Test-LuminaExitInput")
     },
     $true
 )
-if ($null -eq $inputFunction) {
-    throw "Test-HardResetInput was not found."
+if ($inputFunctions.Count -ne 2) {
+    throw "Lumina launcher input functions were not found."
 }
-. ([scriptblock]::Create($inputFunction.Extent.Text))
+foreach ($inputFunction in $inputFunctions) {
+    . ([scriptblock]::Create($inputFunction.Extent.Text))
+}
 
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $developmentLauncherPath = Join-Path $repositoryRoot "run_lumina_dev.bat"
@@ -62,6 +64,13 @@ if (
     $databaseOwnershipBranch.Index -gt $developmentLauncherSource.IndexOf('Wait-LuminaLauncherRestart.ps1')
 ) {
     throw "The development launcher must close duplicate instances without leaving a restart prompt behind."
+}
+if (
+    $developmentLauncherSource -notmatch 'if "%LUMINA_DEV_EXIT%"=="78" exit /b 0' -or
+    (Get-Content -Raw -LiteralPath (Join-Path $repositoryRoot "run_lumina.bat")) -notmatch
+        'if "%LUMINA_EXIT%"=="78" exit /b 0'
+) {
+    throw "A user-requested shutdown must close both Windows launchers cleanly."
 }
 
 $startManagedProcessFunction = $ast.Find(
@@ -183,6 +192,22 @@ $cases = @(
 )
 foreach ($case in $cases) {
     $actual = Test-HardResetInput `
+        -Character $case.Character `
+        -VirtualKeyCode $case.VirtualKeyCode
+    if ($actual -ne $case.Expected) {
+        throw "$($case.Name): expected $($case.Expected), got $actual"
+    }
+}
+
+$exitCases = @(
+    @{ Name = "lowercase q"; Character = [char]'q'; VirtualKeyCode = 0; Expected = $true },
+    @{ Name = "uppercase Q"; Character = [char]'Q'; VirtualKeyCode = 0; Expected = $true },
+    @{ Name = "Korean bieup"; Character = [char]0x3142; VirtualKeyCode = 0; Expected = $true },
+    @{ Name = "IME physical Q key"; Character = [char]0; VirtualKeyCode = [int][ConsoleKey]::Q; Expected = $true },
+    @{ Name = "unrelated key"; Character = [char]'x'; VirtualKeyCode = [int][ConsoleKey]::X; Expected = $false }
+)
+foreach ($case in $exitCases) {
+    $actual = Test-LuminaExitInput `
         -Character $case.Character `
         -VirtualKeyCode $case.VirtualKeyCode
     if ($actual -ne $case.Expected) {
@@ -461,12 +486,21 @@ if (-not $usesNativeTreeKill -or -not $usesFastSupervisorIdentity -or -not $uses
     throw "Process cleanup must use native tree termination, a versioned supervisor identity, and one process snapshot."
 }
 
-$startupResetRestartsBoth = $source -match 
-    '(?s)if \(-not \(Wait-LuminaReady\)\) \{\s*\$preserveFrontend = \$false'
+$startupResetRestartsBoth = $source -match
+    '(?s)if \(\$startupAction -eq "restart"\) \{\s*\$preserveFrontend = \$false'
 $runningResetRestartsBoth = $source -match
-    '(?s)if \(Test-HardResetKey\) \{\s*\$preserveFrontend = \$false\s*\$resetReason = "manual request"'
+    '(?s)if \(\$controlAction -eq "restart"\) \{\s*\$preserveFrontend = \$false\s*\$resetReason = "manual request"'
 if (-not $startupResetRestartsBoth -or -not $runningResetRestartsBoth) {
     throw "Both startup and running manual reset paths must restart Frontend and Backend."
+}
+$startupExitStopsBoth = $source -match
+    '(?s)if \(\$startupAction -eq "exit"\) \{\s*\$preserveFrontend = \$false\s*\$userExitRequested = \$true'
+$runningExitStopsBoth = $source -match
+    '(?s)if \(\$controlAction -eq "exit"\) \{\s*\$preserveFrontend = \$false\s*\$userExitRequested = \$true'
+$exitUsesFinalCleanup = $source -match
+    '(?s)finally \{\s*Stop-ManagedProcesses\s*Remove-SupervisorPid\s*Exit-LuminaPortLocks.*?if \(\$userExitRequested\) \{\s*exit \$UserRequestedExitCode'
+if (-not $startupExitStopsBoth -or -not $runningExitStopsBoth -or -not $exitUsesFinalCleanup) {
+    throw "All user-requested shutdown paths must clean up every managed process before exiting."
 }
 
 $startLuminaProcessesFunction = $ast.Find(
@@ -856,4 +890,4 @@ finally {
     Remove-Item -LiteralPath $stateRoot -Force -ErrorAction SilentlyContinue
 }
 
-Write-Host "run_lumina tests passed ($($cases.Count) key cases, persistent self-healing restart policy, atomic startup diagnostics, preparation isolation, and identity-safe process cleanup)."
+Write-Host "run_lumina tests passed ($($cases.Count) restart key cases, $($exitCases.Count) exit key cases, persistent self-healing restart policy, atomic startup diagnostics, preparation isolation, and identity-safe process cleanup)."

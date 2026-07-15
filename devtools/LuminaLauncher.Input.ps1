@@ -11,3 +11,17 @@ function Test-HardResetInput {
         [int]$Character -eq 0x3131
     )
 }
+
+function Test-LuminaExitInput {
+    param(
+        [char]$Character = [char]0,
+        [int]$VirtualKeyCode = 0
+    )
+
+    return (
+        $VirtualKeyCode -eq [int][ConsoleKey]::Q -or
+        $Character -ceq 'q' -or
+        $Character -ceq 'Q' -or
+        [int]$Character -eq 0x3142
+    )
+}
