@@ -16,6 +16,9 @@ test("conversation scroll position is restored per session without completed-run
   assert.match(streamingUi, /useLayoutEffect\(\(\) => \{[\s\S]*?container\.scrollTop = targetTop;/);
   assert.match(streamingUi, /\(!activeRef\.current && !force\)/);
   assert.match(streamingUi, /!activeRef\.current && conversationId && remembered\?\.atBottom/);
+  assert.match(streamingUi, /setShowJumpToLatest\(!followingRef\.current && distance > jumpButtonThresholdPx\)/);
+  assert.match(streamingUi, /if \(distance <= nearBottomPx\) \{[\s\S]*?followingRef\.current = true;[\s\S]*?setShowJumpToLatest\(false\);[\s\S]*?return;/);
+  assert.match(streamingUi, /const jumpToLatest = useCallback\(\(\) => \{[\s\S]*?followingRef\.current = true;[\s\S]*?setShowJumpToLatest\(false\);[\s\S]*?follow\(false, true, true\)/);
   assert.match(streamingUi, /follow\(false, true, true\)/);
   assert.match(app, /useConversationAutoFollow\([\s\S]*?runIsActive,[\s\S]*?workspace\.activeConversationId,[\s\S]*?activeRuntime\.loaded,/);
 });

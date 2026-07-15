@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 
 const streamStartBufferMs = 180;
 const streamRevealDurationMs = 420;
-const visibleFrameIntervalMs = 16;
+const visibleFrameIntervalMs = 15;
 const frameFallbackMs = 100;
 const streamCatchUpDeadlineMs = 1_200;
 const streamSettleDurationMs = 180;
@@ -317,7 +317,7 @@ export function useConversationAutoFollow(
     const container = containerRef.current;
     if (!container) return;
     const distance = container.scrollHeight - container.clientHeight - container.scrollTop;
-    setShowJumpToLatest(distance > jumpButtonThresholdPx);
+    setShowJumpToLatest(!followingRef.current && distance > jumpButtonThresholdPx);
   }, []);
 
   const stop = useCallback(() => {
@@ -437,12 +437,13 @@ export function useConversationAutoFollow(
     if (!container) return;
     const distance = container.scrollHeight - container.clientHeight - container.scrollTop;
     if (conversationId) rememberPosition(conversationId, container);
-    updateJumpVisibility();
     if (distance <= nearBottomPx) {
       followingRef.current = true;
+      setShowJumpToLatest(false);
       return;
     }
     if (distance > streamingRejoinPx && Date.now() <= userIntentUntilRef.current) stop();
+    updateJumpVisibility();
   }, [conversationId, rememberPosition, stop, updateJumpVisibility]);
 
   const onUserIntent = useCallback(() => {
@@ -460,6 +461,7 @@ export function useConversationAutoFollow(
 
   const jumpToLatest = useCallback(() => {
     followingRef.current = true;
+    setShowJumpToLatest(false);
     follow(false, true, true);
   }, [follow]);
 

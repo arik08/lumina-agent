@@ -7,7 +7,7 @@ const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 test("streamed text is visually paced near 60fps without changing event ingestion", async () => {
   const source = await read("../src/streaming-ui.ts");
 
-  assert.match(source, /const visibleFrameIntervalMs = 16;/);
+  assert.match(source, /const visibleFrameIntervalMs = 15;/);
   assert.match(source, /frameTimerRef\.current = window\.setTimeout\(\(\) => \{[\s\S]*?window\.requestAnimationFrame/s);
   assert.match(source, /function smoothRevealCount\(pendingLength: number, desiredCount: number\)/);
   assert.match(source, /Math\.max\(streamCatchUpDeadlineMs, streamRevealDurationMs \* 3\)/);
