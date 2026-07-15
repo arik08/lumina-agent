@@ -93,7 +93,7 @@ async def post_run_action(
     if changed:
         if payload.type == "cancel":
             local_run_executor.cancel(run.id)
-        if payload.type == "retry_step" or (
+        if payload.type in {"retry_step", "submit_user_input"} or (
             payload.type in {"approve", "reject"} and run.status == "queued"
         ):
             local_run_executor.enqueue(run.id)

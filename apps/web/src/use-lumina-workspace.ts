@@ -20,6 +20,7 @@ import type {
   SidebarRunStatus,
   ToolExecution,
   TurnSet,
+  UserInputAnswer,
 } from "./api-types";
 import { isTerminalRunEvent, isTerminalRunStatus } from "./run-status";
 
@@ -69,6 +70,7 @@ function emptyRuntime(): ConversationRuntime {
 function sidebarStatus(status: RunStatus): SidebarRunStatus {
   if (status === "queued") return "queued";
   if (status === "awaiting_approval") return "approval";
+  if (status === "awaiting_input") return "input";
   if (status === "completed") return "completed";
   if (status === "failed" || status === "limit_reached" || status === "interrupted") return "failed";
   if (status === "cancelled") return "cancelled";
@@ -384,6 +386,8 @@ export function useLuminaWorkspace() {
         nextSnapshot.pendingApprovals = upsertById(nextSnapshot.pendingApprovals, event.payload.approval);
       } else if (event.type === "approval_resolved") {
         nextSnapshot.pendingApprovals = nextSnapshot.pendingApprovals.filter((item) => item.id !== event.payload.approval.id);
+      } else if (event.type === "input_requested" || event.type === "input_submitted") {
+        nextSnapshot.inputRequests = upsertById(nextSnapshot.inputRequests ?? [], event.payload.request);
       } else if (event.type === "artifact_created") {
         nextSnapshot.artifacts = upsertById(nextSnapshot.artifacts, event.payload.artifact);
         nextSnapshot.artifactProgress = null;
@@ -775,6 +779,7 @@ export function useLuminaWorkspace() {
   const persistSettings = useCallback(async (patch:
     Pick<CurrentSettings, "theme">
     | Pick<CurrentSettings, "outputMode">
+    | Pick<CurrentSettings, "clarificationMode">
     | { execution: CurrentSettings["execution"] }
     | { modelCandidates: CurrentSettings["modelCandidates"] }
   ) => {
@@ -872,6 +877,10 @@ export function useLuminaWorkspace() {
   const selectOutputMode = useCallback(async (outputMode: CurrentSettings["outputMode"]) => {
     await persistSettings({ outputMode });
   }, [persistSettings]);
+
+  const selectClarificationMode = useCallback(async (
+    clarificationMode: CurrentSettings["clarificationMode"],
+  ) => persistSettings({ clarificationMode }), [persistSettings]);
 
   const toggleTheme = useCallback(async () => {
     const current = settingsRef.current;
@@ -1304,6 +1313,31 @@ export function useLuminaWorkspace() {
     }
   }, [mergeRunMutation, openSnapshotStream, runActionBusy]);
 
+  const submitUserInput = useCallback(async (
+    runId: string,
+    inputRequestId: string,
+    answers: UserInputAnswer[],
+  ) => {
+    if (runActionBusy) return false;
+    setRunActionBusy(true);
+    try {
+      const mutation = await api.runs.action(runId, {
+        idempotencyKey: createClientId(),
+        type: "submit_user_input",
+        inputRequestId,
+        answers,
+      });
+      mergeRunMutation(mutation);
+      openSnapshotStream(mutation.run);
+      return true;
+    } catch (error) {
+      setNotice(apiMessage(error));
+      return false;
+    } finally {
+      setRunActionBusy(false);
+    }
+  }, [mergeRunMutation, openSnapshotStream, runActionBusy]);
+
   const logout = useCallback(async () => {
     try {
       await api.auth.logout();
@@ -1386,12 +1420,14 @@ export function useLuminaWorkspace() {
     setModelCandidates,
     selectEffort,
     selectOutputMode,
+    selectClarificationMode,
     toggleTheme,
     sendMessage,
     sending,
     runAction,
     runActionBusy,
     runPendingCommandAction,
+    submitUserInput,
     composerAttachments: composerAttachments.filter((item) => item.conversationId === activeConversationId),
     uploadingAttachments,
     uploadFiles,

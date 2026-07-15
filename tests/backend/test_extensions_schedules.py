@@ -1320,6 +1320,7 @@ def test_scheduled_run_applies_frozen_skill_snapshot_to_hash_and_prompt(
             "extension_application": "all_snapshot",
             "environment_type": snapshot["environment_type"],
             "approval_mode": snapshot["approval_mode"],
+            "clarification_mode": snapshot["clarification_mode"],
             "prompt_cache_scope": snapshot["prompt_cache_scope"],
         }
         expected_hash = hashlib.sha256(

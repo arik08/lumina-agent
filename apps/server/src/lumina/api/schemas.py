@@ -203,6 +203,13 @@ class RunCreate(ApiModel):
     execution: ExecutionSelection | None = None
 
 
+class UserInputAnswer(ApiModel):
+    question_id: str = Field(min_length=1, max_length=80)
+    option_id: str | None = Field(default=None, min_length=1, max_length=80)
+    custom_text: str | None = Field(default=None, max_length=2000)
+    use_ai_judgment: bool = False
+
+
 class RunActionRequest(ApiModel):
     type: Literal[
         "steer",
@@ -215,11 +222,14 @@ class RunActionRequest(ApiModel):
         "retry_step",
         "approve",
         "reject",
+        "submit_user_input",
     ]
     message: RunMessageInput | None = None
     step_id: str | None = None
     approval_id: str | None = None
     command_id: str | None = None
+    input_request_id: str | None = None
+    answers: list[UserInputAnswer] = Field(default_factory=list, max_length=4)
     note: str | None = Field(default=None, max_length=2000)
     payload: dict[str, Any] = Field(default_factory=dict)
 
@@ -280,6 +290,7 @@ class RunSnapshotResponse(ApiModel):
     artifacts: list[ArtifactSummary]
     pending_commands: list[dict[str, Any]]
     pending_approvals: list[dict[str, Any]] = Field(default_factory=list)
+    input_requests: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class MessageResponse(ApiModel):
@@ -328,6 +339,7 @@ class ProviderResponse(ApiModel):
 class SettingsPatch(ApiModel):
     theme: Literal["light", "dark"] | None = None
     output_mode: Literal["auto", "chat", "file"] | None = None
+    clarification_mode: Literal["autonomous", "balanced", "confirming"] | None = None
     execution: ExecutionSelection | None = None
     model_candidates: dict[str, list[str]] | None = None
     expected_revision: str
@@ -336,6 +348,7 @@ class SettingsPatch(ApiModel):
 class SettingsResponse(ApiModel):
     theme: Literal["light", "dark"]
     output_mode: Literal["auto", "chat", "file"]
+    clarification_mode: Literal["autonomous", "balanced", "confirming"]
     execution: ExecutionSelection
     model_candidates: dict[str, list[str]]
     scope: Literal["user", "project"]

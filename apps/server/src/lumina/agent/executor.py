@@ -156,6 +156,7 @@ from ..instructions import (
 from ..runs.state import (
     ACTIVE_STATUSES,
     AWAITING_APPROVAL,
+    AWAITING_INPUT,
     COMPLETED,
     FAILED,
     LIMIT_REACHED,
@@ -215,6 +216,7 @@ _NON_PERSISTED_TOOL_RESULTS = frozenset(
     {
         "activate_skill",
         "classify_file_output_intent",
+        "request_user_input",
         "update_plan",
         "tool_search",
         "tool_describe",
@@ -885,8 +887,10 @@ class LocalRunExecutor:
                 and capabilities.get("image_generation")
             )
             retry_step_key = str(run.snapshot_json.get("retry", {}).get("step_key", ""))
-            resuming_approval = isinstance(
-                run.snapshot_json.get("tool_checkpoint"), dict
+            checkpoint = run.snapshot_json.get("tool_checkpoint")
+            resuming_checkpoint = isinstance(checkpoint, dict)
+            resuming_approval = (
+                resuming_checkpoint and checkpoint.get("kind") != "user_input"
             )
             prompt_cache_scope = str(
                 run.snapshot_json.get("prompt_cache_scope")
@@ -897,8 +901,17 @@ class LocalRunExecutor:
             run = db.get(Run, run_id)
             if run is None or run.status in TERMINAL_STATUSES:
                 return
-            if resuming_approval:
-                start_plan_step(db, run, "tools", reason="tool_approval_resumed")
+            if resuming_checkpoint:
+                start_plan_step(
+                    db,
+                    run,
+                    "tools",
+                    reason=(
+                        "tool_approval_resumed"
+                        if resuming_approval
+                        else "user_input_resumed"
+                    ),
+                )
             elif retry_step_key == "final":
                 start_plan_step(db, run, "final", reason="retry_started")
             else:
@@ -918,8 +931,12 @@ class LocalRunExecutor:
         await event_broker.notify(run_id)
         await self._publish_progress_summary(
             run_id,
-            "요청에 맞춰 작업 단계를 구성하고 필요한 정보와 실행 경로를 확인하고 있습니다.",
-            phase="planning",
+            (
+                "답변을 반영해 같은 작업을 이어가고 있습니다."
+                if resuming_checkpoint and not resuming_approval
+                else "요청에 맞춰 작업 단계를 구성하고 필요한 정보와 실행 경로를 확인하고 있습니다."
+            ),
+            phase="tools" if resuming_checkpoint else "planning",
         )
 
         context_window = _optional_positive_int(
@@ -957,6 +974,7 @@ class LocalRunExecutor:
         web_research_budget = _web_research_budget(user_message)
         core_tool_schemas = (
             _UPDATE_PLAN_TOOL_SCHEMA,
+            _REQUEST_USER_INPUT_TOOL_SCHEMA,
             _READ_TOOL_RESULT_TOOL_SCHEMA,
             *((_FILE_OUTPUT_INTENT_TOOL_SCHEMA,) if output_mode == "file" else ()),
             *((skill_activation_schema,) if skill_activation_schema else ()),
@@ -1007,7 +1025,7 @@ class LocalRunExecutor:
                         "prompt_cache_key": prompt_cache_key,
                         "prompt_cache_static_digest": prompt_cache_static_digest,
                     }
-        if resuming_approval:
+        if resuming_checkpoint:
             resumed = await self._resume_tool_checkpoint(
                 run_id,
                 messages,
@@ -1606,6 +1624,7 @@ class LocalRunExecutor:
                     "update_plan",
                     "activate_skill",
                     "classify_file_output_intent",
+                    "request_user_input",
                 }
                 and not call.get("blocked_error")
             ]
@@ -1632,6 +1651,12 @@ class LocalRunExecutor:
             if created_subtasks:
                 await event_broker.notify(run_id)
 
+            if await self._request_user_input(
+                run_id,
+                calls,
+                assistant_content="".join(round_text) or None,
+            ):
+                return
             if await self._request_tool_approvals(
                 run_id,
                 calls,
@@ -1719,6 +1744,123 @@ class LocalRunExecutor:
             messages.extend(
                 ProviderMessage(role="user", content=text) for text in steer_messages
             )
+
+    async def _request_user_input(
+        self,
+        run_id: str,
+        calls: list[dict[str, Any]],
+        *,
+        assistant_content: str | None,
+    ) -> bool:
+        request_calls = [call for call in calls if call.get("name") == "request_user_input"]
+        if not request_calls:
+            return False
+        if len(calls) != 1 or len(request_calls) != 1:
+            request_calls[0]["input_request_error"] = "request_user_input_must_be_called_alone"
+            return False
+        call = request_calls[0]
+        try:
+            arguments = json.loads(call.get("arguments") or "{}")
+            if not isinstance(arguments, dict):
+                raise ValueError("arguments must be an object")
+            raw_questions = arguments.get("questions")
+            if not isinstance(raw_questions, list) or not 1 <= len(raw_questions) <= 4:
+                raise ValueError("questions must contain 1 to 4 items")
+            questions: list[dict[str, Any]] = []
+            question_ids: set[str] = set()
+            for raw_question in raw_questions:
+                if not isinstance(raw_question, dict):
+                    raise ValueError("each question must be an object")
+                question_id = str(raw_question.get("id", "")).strip()
+                prompt = str(raw_question.get("prompt", "")).strip()
+                raw_options = raw_question.get("options")
+                if (
+                    not question_id
+                    or len(question_id) > 80
+                    or question_id in question_ids
+                    or not prompt
+                    or len(prompt) > 500
+                    or not isinstance(raw_options, list)
+                    or not 2 <= len(raw_options) <= 4
+                ):
+                    raise ValueError("question id, prompt, or options are invalid")
+                options: list[dict[str, str]] = []
+                option_ids: set[str] = set()
+                for raw_option in raw_options:
+                    if not isinstance(raw_option, dict):
+                        raise ValueError("each option must be an object")
+                    option_id = str(raw_option.get("id", "")).strip()
+                    label = str(raw_option.get("label", "")).strip()
+                    description = str(raw_option.get("description", "")).strip()
+                    if (
+                        not option_id
+                        or len(option_id) > 80
+                        or option_id in option_ids
+                        or not label
+                        or len(label) > 160
+                        or len(description) > 240
+                    ):
+                        raise ValueError("option id, label, or description are invalid")
+                    option_ids.add(option_id)
+                    option = {"id": option_id, "label": label}
+                    if description:
+                        option["description"] = description
+                    options.append(option)
+                question_ids.add(question_id)
+                questions.append({"id": question_id, "prompt": prompt, "options": options})
+        except (json.JSONDecodeError, ValueError) as exc:
+            call["input_request_error"] = str(exc)
+            return False
+
+        requested_at = utc_now()
+        request = {
+            "id": new_uuid(),
+            "runId": run_id,
+            "toolCallId": str(call["id"]),
+            "status": "pending",
+            "questions": questions,
+            "answers": [],
+            "createdAt": requested_at.isoformat(),
+        }
+        call["input_request_id"] = request["id"]
+        with session_scope() as db:
+            run = db.get(Run, run_id)
+            if run is None or run.status in TERMINAL_STATUSES:
+                return False
+            if any(
+                isinstance(item, dict)
+                for item in run.snapshot_json.get("input_requests", [])
+            ):
+                call["input_request_error"] = "user_input_already_requested"
+                return False
+            run.snapshot_json = {
+                **run.snapshot_json,
+                "input_requests": [
+                    *run.snapshot_json.get("input_requests", []),
+                    request,
+                ],
+                "tool_checkpoint": {
+                    "version": 1,
+                    "kind": "user_input",
+                    "assistant_content": assistant_content,
+                    "calls": [
+                        {
+                            "id": str(call["id"]),
+                            "name": "request_user_input",
+                            "arguments": json.dumps(arguments, ensure_ascii=False),
+                            "provider_metadata": _safe_provider_metadata(
+                                call.get("provider_metadata")
+                            ),
+                            "input_request_id": request["id"],
+                        }
+                    ],
+                    "created_at": requested_at.isoformat(),
+                },
+            }
+            append_event(db, run, "input_requested", {"request": request})
+            transition_run(db, run, AWAITING_INPUT)
+        await event_broker.notify(run_id)
+        return True
 
     async def _request_tool_approvals(
         self,
@@ -1832,6 +1974,7 @@ class LocalRunExecutor:
         capabilities: Mapping[str, Any] | None,
     ) -> bool:
         checkpoint_error: str | None = None
+        checkpoint_kind = "approval"
         assistant_content: str | None = None
         calls: list[dict[str, Any]] = []
         with SessionLocal() as db:
@@ -1840,6 +1983,7 @@ class LocalRunExecutor:
             if run is None or not isinstance(checkpoint, dict):
                 checkpoint_error = "저장된 Tool 승인 checkpoint를 찾을 수 없습니다."
             else:
+                checkpoint_kind = str(checkpoint.get("kind", "approval"))
                 raw_calls = checkpoint.get("calls")
                 if not isinstance(raw_calls, list):
                     checkpoint_error = (
@@ -1873,6 +2017,10 @@ class LocalRunExecutor:
                             call["provider_arguments"] = str(
                                 raw_call.get("provider_arguments", "{}")
                             )
+                        if raw_call.get("input_request_id"):
+                            call["input_request_id"] = str(
+                                raw_call["input_request_id"]
+                            )
                         approval_id = raw_call.get("approval_id")
                         if isinstance(approval_id, str):
                             approval = approval_rows.get(approval_id)
@@ -1897,7 +2045,9 @@ class LocalRunExecutor:
         if checkpoint_error is not None:
             await self._fail_run(
                 run_id,
-                "approval_checkpoint_invalid",
+                "input_checkpoint_invalid"
+                if checkpoint_kind == "user_input"
+                else "approval_checkpoint_invalid",
                 checkpoint_error,
             )
             return False
@@ -1933,8 +2083,14 @@ class LocalRunExecutor:
             append_event(
                 db,
                 run,
-                "approval_checkpoint_consumed",
-                {"toolCallIds": [str(call["id"]) for call, _ in resolved_calls]},
+                "input_checkpoint_consumed"
+                if checkpoint_kind == "user_input"
+                else "approval_checkpoint_consumed",
+                (
+                    {"inputRequestId": str(calls[0].get("input_request_id", ""))}
+                    if checkpoint_kind == "user_input"
+                    else {"toolCallIds": [str(call["id"]) for call, _ in resolved_calls]}
+                ),
             )
         await event_broker.notify(run_id)
         provider_tool_contents = _provider_tool_result_contents(
@@ -2592,6 +2748,34 @@ class LocalRunExecutor:
             system += f"\n\n{WEB_RESEARCH_EFFICIENCY_CONTRACT}"
         turn_system_parts: list[str] = []
         user_message = str(run.snapshot_json.get("user_message_text", ""))
+        clarification_mode = str(
+            run.snapshot_json.get("clarification_mode", "balanced")
+        )
+        clarification_contracts = {
+            "autonomous": (
+                "Clarification mode: Autonomous. Make reasonable, reversible assumptions and "
+                "continue without asking. Call `request_user_input` only when proceeding could "
+                "cause material harm, an irreversible action, or a fundamentally wrong result."
+            ),
+            "balanced": (
+                "Clarification mode: Balanced. Prefer reasonable assumptions for low-impact "
+                "ambiguity. Call `request_user_input` only when one compact answer bundle would "
+                "materially prevent a wrong, destructive, or wasteful result."
+            ),
+            "confirming": (
+                "Clarification mode: Confirming. Ask before important choices that materially "
+                "change scope, output, or irreversible actions, while still resolving trivial "
+                "details yourself."
+            ),
+        }
+        turn_system_parts.append(
+            clarification_contracts.get(
+                clarification_mode, clarification_contracts["balanced"]
+            )
+            + " If clarification is needed, call `request_user_input` by itself before visible "
+            "answer text. Ask all currently known questions together, up to four, and do not "
+            "ask again in this Run. Never use it for tool permission or approval."
+        )
         output_mode = _normalized_output_mode(
             run.snapshot_json.get("output_mode", "auto")
         )
@@ -3022,6 +3206,48 @@ class LocalRunExecutor:
                 raise ValueError("Tool arguments must be a JSON object")
         except (json.JSONDecodeError, ValueError):
             arguments = {}
+        if tool_call["name"] == "request_user_input":
+            request_error = tool_call.get("input_request_error")
+            if request_error:
+                return {
+                    "error": {
+                        "code": "invalid_user_input_request",
+                        "message": str(request_error),
+                    },
+                    "instruction": (
+                        "Call request_user_input by itself with one valid question bundle."
+                    ),
+                }
+            request_id = str(tool_call.get("input_request_id", ""))
+            with SessionLocal() as db:
+                active_run = db.get(Run, run_id)
+                request = next(
+                    (
+                        item
+                        for item in (
+                            active_run.snapshot_json.get("input_requests", [])
+                            if active_run is not None
+                            else []
+                        )
+                        if isinstance(item, dict) and item.get("id") == request_id
+                    ),
+                    None,
+                )
+            if request is None or request.get("status") != "submitted":
+                return {
+                    "error": {
+                        "code": "user_input_not_submitted",
+                        "message": "사용자 확인 답변이 아직 제출되지 않았습니다.",
+                    }
+                }
+            return {
+                "answers": request.get("answers", []),
+                "instruction": (
+                    "Continue the same task using these answers. For answers marked "
+                    "AI judgment, choose the most reasonable option and state any material "
+                    "assumption briefly. Do not ask the same question again."
+                ),
+            }
         web_research_budget = _web_research_budget(user_message)
         if tool_call["name"] == "web_search":
             requested_limit = arguments.get("result_limit", 5)
@@ -6076,6 +6302,77 @@ _UPDATE_PLAN_TOOL_SCHEMA = {
                 }
             },
             "required": ["plan"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
+_REQUEST_USER_INPUT_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "request_user_input",
+        "description": (
+            "Pause the Run for one compact bundle of user clarification questions. Call this "
+            "tool by itself, at most once per Run, and only under the active clarification-mode "
+            "contract. Include every currently known material question in the same call. The UI "
+            "automatically adds a free-form custom answer to every question, so provide only "
+            "two to four useful objective options. Do not use this for tool approval."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "questions": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 80,
+                                "description": "Stable short identifier within this bundle.",
+                            },
+                            "prompt": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 500,
+                            },
+                            "options": {
+                                "type": "array",
+                                "minItems": 2,
+                                "maxItems": 4,
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "id": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 80,
+                                        },
+                                        "label": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 160,
+                                        },
+                                        "description": {
+                                            "type": "string",
+                                            "maxLength": 240,
+                                        },
+                                    },
+                                    "required": ["id", "label"],
+                                    "additionalProperties": False,
+                                },
+                            },
+                        },
+                        "required": ["id", "prompt", "options"],
+                        "additionalProperties": False,
+                    },
+                }
+            },
+            "required": ["questions"],
             "additionalProperties": False,
         },
     },

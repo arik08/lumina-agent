@@ -36,6 +36,7 @@ import {
   Maximize2,
   Menu,
   MessageCircle,
+  MessageCircleQuestion,
   MessageSquarePlus,
   Megaphone,
   Minimize2,
@@ -2828,7 +2829,7 @@ function App() {
                   ) : (
                     <>
                       <button className="session-like-button" type="button" aria-label={`${conversation.title} ${conversation.isLiked ? "좋아요 취소" : "좋아요"}`} aria-pressed={conversation.isLiked} onClick={() => void workspace.toggleLikedConversation(conversation.id)}>
-                        {conversation.isLiked ? <Heart className="session-like" size={14} fill="currentColor" /> : conversation.lastRunStatus === "running" ? <LoaderCircle className="is-running" size={14} /> : conversation.lastRunStatus === "queued" ? <Clock3 size={14} /> : conversation.lastRunStatus === "failed" ? <AlertCircle size={14} /> : conversation.isFavorite ? <Pin className="session-pin" size={14} /> : <MessageCircle size={14} />}
+                        {conversation.isLiked ? <Heart className="session-like" size={14} fill="currentColor" /> : conversation.lastRunStatus === "running" ? <LoaderCircle className="is-running" size={14} /> : conversation.lastRunStatus === "queued" ? <Clock3 size={14} /> : conversation.lastRunStatus === "input" ? <MessageCircleQuestion size={14} /> : conversation.lastRunStatus === "failed" ? <AlertCircle size={14} /> : conversation.isFavorite ? <Pin className="session-pin" size={14} /> : <MessageCircle size={14} />}
                       </button>
                       <button className="session-row session-title-button" type="button" onClick={() => {
                         setSessionTitleEditing(false);
@@ -3141,6 +3142,10 @@ function App() {
                 }}
                 onToast={showToast}
                 onVisibleGrowth={conversationFollow.notifyGrowth}
+                clarificationMode={workspace.settings?.clarificationMode ?? "balanced"}
+                inputBusy={workspace.runActionBusy}
+                onSubmitUserInput={workspace.submitUserInput}
+                onClarificationModeChange={workspace.selectClarificationMode}
               />
             ))}
           </main>
@@ -3482,6 +3487,10 @@ function App() {
                 <section className="settings-card" aria-labelledby="appearance-settings-title">
                   <header><h2 id="appearance-settings-title">모양</h2></header>
                   <div className="settings-row"><span><strong>테마</strong><small>앱 화면의 밝기를 선택합니다.</small></span><button className="settings-value-button" type="button" onClick={() => void workspace.toggleTheme()}>{theme === "dark" ? "다크" : "라이트"}</button></div>
+                </section>
+                <section className="settings-card" aria-labelledby="clarification-settings-title">
+                  <header><h2 id="clarification-settings-title">대화 방식</h2></header>
+                  <div className="settings-row"><span><strong>AI 확인 질문</strong><small>모호한 요청에서 AI가 되묻는 정도입니다. 계정 기본값으로 계속 적용됩니다.</small></span><SelectMenu className="settings-select" align="end" value={workspace.settings?.clarificationMode ?? "balanced"} options={[{ value: "autonomous", label: "알아서 진행" }, { value: "balanced", label: "균형 있게" }, { value: "confirming", label: "먼저 확인" }]} ariaLabel="AI 확인 질문 정도" onChange={(value) => void workspace.selectClarificationMode(value as "autonomous" | "balanced" | "confirming")} /></div>
                 </section>
                 <section className="settings-card" aria-labelledby="execution-settings-title">
                   <header><h2 id="execution-settings-title">기본 실행 옵션</h2></header>

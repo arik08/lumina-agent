@@ -9,7 +9,14 @@ from sqlalchemy.orm import Session
 
 from ..models import Plan, PlanStep, PlanSubtask, Run, ToolExecution, utc_now
 from .service import append_event, plan_snapshot
-from .state import ACTIVE_STATUSES, AWAITING_APPROVAL, INTERRUPTED, PAUSED, QUEUED
+from .state import (
+    ACTIVE_STATUSES,
+    AWAITING_APPROVAL,
+    AWAITING_INPUT,
+    INTERRUPTED,
+    PAUSED,
+    QUEUED,
+)
 from .subtasks import finish_tool_subtask
 
 
@@ -40,7 +47,7 @@ def prepare_worker_recovery(db: Session) -> WorkerRecoveryBatch:
     for run in recovery_candidates:
         if run.status == INTERRUPTED and not _is_worker_recoverable(run):
             continue
-        if run.status in {AWAITING_APPROVAL, PAUSED}:
+        if run.status in {AWAITING_APPROVAL, AWAITING_INPUT, PAUSED}:
             waiting.append(run.id)
             continue
         _recover_run(db, run)
@@ -57,7 +64,11 @@ def mark_worker_shutdown_interrupted(
     active_runs = list(
         db.scalars(
             select(Run)
-            .where(Run.status.in_(ACTIVE_STATUSES - {AWAITING_APPROVAL, PAUSED}))
+            .where(
+                Run.status.in_(
+                    ACTIVE_STATUSES - {AWAITING_APPROVAL, AWAITING_INPUT, PAUSED}
+                )
+            )
             .order_by(Run.queued_at, Run.id)
         )
     )

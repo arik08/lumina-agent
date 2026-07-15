@@ -30,7 +30,7 @@ Agent Run은 최소한 다음 상태를 가집니다.
 queued
 → preparing
 → model_streaming
-→ awaiting_approval
+→ awaiting_approval | awaiting_input
 → tools_running
 → model_streaming
 → completed | failed | cancelled | interrupted
@@ -49,9 +49,12 @@ queued
 5. Tool Call이 없으면 assistant 메시지와 사용량을 저장하고 Run을 완료합니다.
 6. Tool Call이 있으면 각 입력을 schema로 검증하고 권한 정책과 `pre_tool_use` hook을 실행합니다.
 7. 승인이 필요한 Tool은 `awaiting_approval` 상태에서 사용자 또는 관리자의 결정을 기다립니다.
-8. Tool을 실행하고 성공 또는 실패 결과를 반드시 원래 Tool Call ID와 연결합니다.
-9. `post_tool_use` hook과 artifact 저장을 처리한 뒤 Tool Result를 대화에 추가합니다.
-10. 갱신된 Context로 다음 모델 Turn을 실행합니다.
+8. 결과를 크게 바꿀 모호함이 있으면 `request_user_input`을 단독 호출하여 최대 4개 질문을 한 묶음으로 저장하고 `awaiting_input`에서 계정 소유자의 답변을 기다립니다.
+9. Tool을 실행하고 성공 또는 실패 결과를 반드시 원래 Tool Call ID와 연결합니다.
+10. `post_tool_use` hook과 artifact 저장을 처리한 뒤 Tool Result를 대화에 추가합니다.
+11. 갱신된 Context로 다음 모델 Turn을 실행합니다.
+
+확인 질문의 기본 민감도는 계정별 `agent.clarification_mode`에 영구 저장하며 `autonomous`, `balanced`, `confirming` 중 하나를 사용합니다. 새 Run은 시작 시점의 값을 snapshot에 고정합니다. 질문 묶음은 Run당 한 번만 허용하고 각 질문은 2~4개의 객관식 선택지를 제공하며 Frontend가 직접 답변 입력을 항상 함께 표시합니다. 사용자는 현재 묶음에 한해 `이번에는 AI가 판단`을 선택할 수 있고 이 선택은 계정 기본값을 바꾸지 않습니다. 답변은 `input_submitted` 이벤트와 checkpoint에 저장한 뒤 같은 Run을 `queued`로 되돌려 재개합니다.
 
 Provider가 `max_tokens`, `length` 같은 출력 한도 종료를 보고하면 해당 응답을 최종 답변으로 확정하지 않습니다. 이미 저장한 assistant text를 Context tail에 그대로 두고 짧은 이어쓰기 지시만 추가하여 제한된 횟수 안에서 자동으로 계속하며, 완료 시 누적 draft와 최종 Message가 한 번만 이어진 동일한 text로 수렴해야 합니다. 내용도 Tool Call도 없는 정상 종료는 빈 답변으로 완료하지 않고 한 번 재시도하며, 반복되면 부분 draft와 이벤트를 보존한 채 명시적인 Provider 오류로 종료합니다. 출력 한도에 걸린 Tool Call은 인자가 완전하다고 증명할 수 없으므로 실행하지 않습니다.
 
@@ -336,6 +339,9 @@ work_plan_updated
 assistant_text_delta
 assistant_turn_completed
 approval_requested
+input_requested
+input_submitted
+input_checkpoint_consumed
 tool_started
 tool_completed
 context_compacted

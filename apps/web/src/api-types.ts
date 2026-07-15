@@ -231,6 +231,7 @@ export interface HelpItemList {
 
 export type Theme = "light" | "dark";
 export type OutputMode = "auto" | "chat" | "file";
+export type ClarificationMode = "autonomous" | "balanced" | "confirming";
 
 export interface ExecutionSelection {
   providerId: string;
@@ -246,6 +247,7 @@ export interface AdminInitialExecutionSettings {
 export interface CurrentSettings {
   theme: Theme;
   outputMode: OutputMode;
+  clarificationMode: ClarificationMode;
   execution: ExecutionSelection;
   modelCandidates: Record<string, string[]>;
   source: {
@@ -262,6 +264,7 @@ export interface CurrentSettings {
 export interface UpdateCurrentSettingsRequest {
   theme?: Theme;
   outputMode?: OutputMode;
+  clarificationMode?: ClarificationMode;
   execution?: ExecutionSelection;
   modelCandidates?: Record<string, string[]>;
   expectedRevision: string;
@@ -369,6 +372,7 @@ export type SidebarRunStatus =
   | "queued"
   | "running"
   | "approval"
+  | "input"
   | "completed"
   | "failed"
   | "cancelled";
@@ -731,6 +735,7 @@ export type RunStatus =
   | "preparing"
   | "model_streaming"
   | "awaiting_approval"
+  | "awaiting_input"
   | "tools_running"
   | "paused"
   | "completed"
@@ -1406,6 +1411,7 @@ export interface RunSnapshot {
   artifacts: ArtifactSummary[];
   pendingCommands: RunCommand[];
   pendingApprovals: ToolApproval[];
+  inputRequests: UserInputRequest[];
   execution: ExecutionSelection & {
     runtimeModelId: string;
     catalogRevision: string;
@@ -1479,6 +1485,38 @@ export interface ToolApproval {
   resolvedAt: IsoDateTime | null;
 }
 
+export interface UserInputOption {
+  id: string;
+  label: string;
+  description?: string;
+}
+
+export interface UserInputQuestion {
+  id: string;
+  prompt: string;
+  options: UserInputOption[];
+}
+
+export interface UserInputAnswer {
+  questionId: string;
+  optionId?: string;
+  customText?: string;
+  useAiJudgment?: boolean;
+  kind?: "option" | "custom" | "ai";
+  text?: string;
+}
+
+export interface UserInputRequest {
+  id: UUID;
+  runId: UUID;
+  toolCallId: string;
+  status: "pending" | "submitted" | "cancelled";
+  questions: UserInputQuestion[];
+  answers: UserInputAnswer[];
+  createdAt: IsoDateTime;
+  submittedAt?: IsoDateTime;
+}
+
 export interface RunMessageInput {
   text: string;
   attachmentIds: UUID[];
@@ -1518,6 +1556,12 @@ export type RunActionRequest =
       type: "approve" | "reject";
       approvalId: UUID;
       note?: string;
+    }
+  | {
+      idempotencyKey: string;
+      type: "submit_user_input";
+      inputRequestId: UUID;
+      answers: UserInputAnswer[];
     };
 
 export interface RunMutationResponse {
@@ -1545,6 +1589,9 @@ export type RunEventType =
   | "approval_requested"
   | "approval_resolved"
   | "approval_checkpoint_consumed"
+  | "input_requested"
+  | "input_submitted"
+  | "input_checkpoint_consumed"
   | "artifact_created"
   | "steer_received"
   | "steer_waiting_safe_boundary"
@@ -1585,6 +1632,9 @@ export type RunEvent =
   | RunEventEnvelope<"approval_requested", { approval: ToolApproval }>
   | RunEventEnvelope<"approval_resolved", { approval: ToolApproval; decision: ToolApproval["status"]; command?: RunCommand }>
   | RunEventEnvelope<"approval_checkpoint_consumed", { toolCallIds: string[] }>
+  | RunEventEnvelope<"input_requested", { request: UserInputRequest }>
+  | RunEventEnvelope<"input_submitted", { request: UserInputRequest; command?: RunCommand }>
+  | RunEventEnvelope<"input_checkpoint_consumed", { inputRequestId: UUID }>
   | RunEventEnvelope<"artifact_created", { artifact: ArtifactSummary }>
   | RunEventEnvelope<
       | "steer_received"

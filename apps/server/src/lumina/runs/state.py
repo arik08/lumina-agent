@@ -7,6 +7,7 @@ QUEUED = "queued"
 PREPARING = "preparing"
 MODEL_STREAMING = "model_streaming"
 AWAITING_APPROVAL = "awaiting_approval"
+AWAITING_INPUT = "awaiting_input"
 TOOLS_RUNNING = "tools_running"
 PAUSED = "paused"
 COMPLETED = "completed"
@@ -19,7 +20,7 @@ TERMINAL_STATUSES = frozenset(
     {COMPLETED, FAILED, CANCELLED, LIMIT_REACHED, INTERRUPTED}
 )
 ACTIVE_STATUSES = frozenset(
-    {PREPARING, MODEL_STREAMING, AWAITING_APPROVAL, TOOLS_RUNNING, PAUSED}
+    {PREPARING, MODEL_STREAMING, AWAITING_APPROVAL, AWAITING_INPUT, TOOLS_RUNNING, PAUSED}
 )
 
 ALLOWED_TRANSITIONS: Mapping[str, frozenset[str]] = {
@@ -30,6 +31,7 @@ ALLOWED_TRANSITIONS: Mapping[str, frozenset[str]] = {
     MODEL_STREAMING: frozenset(
         {
             AWAITING_APPROVAL,
+            AWAITING_INPUT,
             TOOLS_RUNNING,
             PAUSED,
             COMPLETED,
@@ -41,6 +43,9 @@ ALLOWED_TRANSITIONS: Mapping[str, frozenset[str]] = {
     ),
     AWAITING_APPROVAL: frozenset(
         {QUEUED, TOOLS_RUNNING, FAILED, CANCELLED, LIMIT_REACHED, INTERRUPTED}
+    ),
+    AWAITING_INPUT: frozenset(
+        {QUEUED, FAILED, CANCELLED, LIMIT_REACHED, INTERRUPTED}
     ),
     TOOLS_RUNNING: frozenset(
         {
@@ -78,6 +83,8 @@ def ensure_transition(current: str, target: str) -> None:
 def sidebar_status(status: str) -> str:
     if status == AWAITING_APPROVAL:
         return "approval"
+    if status == AWAITING_INPUT:
+        return "input"
     if status in ACTIVE_STATUSES:
         return "running"
     return status

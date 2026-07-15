@@ -70,6 +70,7 @@ from .subtasks import list_step_subtasks
 from .state import (
     ACTIVE_STATUSES,
     AWAITING_APPROVAL,
+    AWAITING_INPUT,
     CANCELLED,
     COMPLETED,
     INTERRUPTED,
@@ -374,6 +375,7 @@ def create_run(
         settings=config,
     )
     memory_learning_mode = _memory_learning_mode(db, user.id)
+    clarification_mode = _clarification_mode(db, user.id)
     from ..memories.service import select_relevant_memories
 
     user_memories = select_relevant_memories(
@@ -480,6 +482,7 @@ def create_run(
         "extension_application": extension_application,
         "environment_type": "local_worker",
         "approval_mode": "on_risk",
+        "clarification_mode": clarification_mode,
         "prompt_cache_scope": prompt_cache_scope,
     }
     if mcp_servers:
@@ -537,6 +540,7 @@ def create_run(
             "approval_mode": "on_risk",
             "limits": limits,
             "memory_learning_mode": memory_learning_mode,
+            "clarification_mode": clarification_mode,
             **({"mcp_servers": mcp_servers} if mcp_servers else {}),
         },
         idempotency_key=idempotency_key,
@@ -627,6 +631,17 @@ def _memory_learning_mode(db: Session, user_id: str) -> str:
         return "auto"
     mode = setting.value_json.get("mode")
     return mode if mode in {"auto", "confirm", "off"} else "auto"
+
+
+def _clarification_mode(db: Session, user_id: str) -> str:
+    setting = db.scalar(
+        select(UserSetting).where(
+            UserSetting.user_id == user_id,
+            UserSetting.key == "agent.clarification_mode",
+        )
+    )
+    mode = setting.value_json if setting is not None else "balanced"
+    return mode if mode in {"autonomous", "balanced", "confirming"} else "balanced"
 
 
 def _validate_references(
@@ -2100,6 +2115,7 @@ def run_snapshot(db: Session, run: Run) -> dict[str, Any]:
             if command.status not in {"applied", "cancelled", "failed", "promoted"}
         ],
         "pendingApprovals": pending_approval_payloads(db, run.id),
+        "inputRequests": run.snapshot_json.get("input_requests", []),
         "contextCompactions": [
             {
                 "id": entry.id,
@@ -2394,11 +2410,99 @@ def _cancel_run_state(
         append_event(db, run, "tool_completed", {"execution": tool_response(tool)})
 
     snapshot = dict(run.snapshot_json)
+    snapshot["input_requests"] = [
+        {
+            **item,
+            "status": "cancelled" if item.get("status") == "pending" else item.get("status"),
+            "cancelledAt": utc_now().isoformat() if item.get("status") == "pending" else item.get("cancelledAt"),
+        }
+        for item in snapshot.get("input_requests", [])
+        if isinstance(item, dict)
+    ]
     snapshot.pop("tool_checkpoint", None)
     snapshot["cancelReason"] = reason
     run.snapshot_json = snapshot
     transition_run(db, run, CANCELLED, event_type="run_cancelled")
     cancel_plan(db, run)
+
+
+def _input_request(run: Run, request_id: str | None) -> dict[str, Any]:
+    if not request_id:
+        raise ApiProblem(422, "input_request_id_required", "답변할 확인 질문을 선택해 주세요.")
+    request = next(
+        (
+            item
+            for item in run.snapshot_json.get("input_requests", [])
+            if isinstance(item, dict) and item.get("id") == request_id
+        ),
+        None,
+    )
+    if request is None:
+        raise ApiProblem(404, "input_request_not_found", "확인 질문을 찾을 수 없습니다.")
+    if request.get("status") != "pending" or run.status != AWAITING_INPUT:
+        raise ApiProblem(409, "input_request_not_pending", "이미 답변했거나 종료된 확인 질문입니다.")
+    return request
+
+
+def _normalized_user_input_answers(
+    request: Mapping[str, Any], answers: Iterable[Any]
+) -> list[dict[str, Any]]:
+    questions = {
+        str(question.get("id")): question
+        for question in request.get("questions", [])
+        if isinstance(question, dict) and question.get("id")
+    }
+    answer_items = list(answers)
+    supplied = {answer.question_id: answer for answer in answer_items}
+    if len(supplied) != len(answer_items):
+        raise ApiProblem(422, "input_answer_duplicate", "같은 질문에는 한 번만 답변해 주세요.")
+    if set(supplied) != set(questions):
+        raise ApiProblem(422, "input_answers_incomplete", "모든 확인 질문에 답변해 주세요.")
+    normalized: list[dict[str, Any]] = []
+    for question_id, question in questions.items():
+        answer = supplied[question_id]
+        selected_count = sum(
+            (
+                bool(answer.option_id),
+                bool(answer.custom_text and answer.custom_text.strip()),
+                answer.use_ai_judgment,
+            )
+        )
+        if selected_count != 1:
+            raise ApiProblem(422, "input_answer_invalid", "각 질문에는 하나의 답변만 선택해 주세요.")
+        if answer.use_ai_judgment:
+            normalized.append(
+                {"questionId": question_id, "kind": "ai", "text": "AI가 판단"}
+            )
+            continue
+        if answer.custom_text and answer.custom_text.strip():
+            normalized.append(
+                {
+                    "questionId": question_id,
+                    "kind": "custom",
+                    "text": answer.custom_text.strip(),
+                }
+            )
+            continue
+        option = next(
+            (
+                item
+                for item in question.get("options", [])
+                if isinstance(item, dict) and item.get("id") == answer.option_id
+            ),
+            None,
+        )
+        if option is None:
+            raise ApiProblem(422, "input_option_invalid", "선택한 답변 항목을 사용할 수 없습니다.")
+        normalized.append(
+            {
+                "questionId": question_id,
+                "kind": "option",
+                "optionId": answer.option_id,
+                "text": str(option.get("label", "")),
+            }
+        )
+    return normalized
 
 
 def apply_run_action(
@@ -2498,6 +2602,7 @@ def apply_run_action(
     if payload.type == "retry_step":
         _retryable_plan_step(db, run, payload.step_id)
     approval: ToolApproval | None = None
+    input_request: dict[str, Any] | None = None
     if payload.type in {"approve", "reject"}:
         if payload.approval_id is None:
             raise ApiProblem(
@@ -2519,6 +2624,9 @@ def apply_run_action(
                 "approval_already_resolved",
                 "Tool 승인 요청이 이미 처리되었습니다.",
             )
+    if payload.type == "submit_user_input":
+        input_request = _input_request(run, payload.input_request_id)
+        _require_approval_actor(db, run=run, user=user)
 
     canonical_message: dict[str, Any] | None = None
     if payload.type in {"steer", "queue_next"}:
@@ -2756,12 +2864,44 @@ def apply_run_action(
             **command.payload_json,
             "target_command_id": target_command.id,
         }
+    elif payload.type == "submit_user_input":
+        assert input_request is not None
+        normalized_answers = _normalized_user_input_answers(input_request, payload.answers)
+        resolved_at = utc_now()
+        resolved_request = {
+            **input_request,
+            "status": "submitted",
+            "answers": normalized_answers,
+            "answeredAt": resolved_at.isoformat(),
+            "answeredByUserId": user.id,
+        }
+        requests = [
+            resolved_request if item.get("id") == input_request["id"] else item
+            for item in run.snapshot_json.get("input_requests", [])
+            if isinstance(item, dict)
+        ]
+        run.snapshot_json = {**run.snapshot_json, "input_requests": requests}
+        command.status = "applied"
+        command.applied_at = resolved_at
+        command.payload_json = {
+            **command.payload_json,
+            "input_request_id": input_request["id"],
+            "answers": normalized_answers,
+        }
+        append_event(
+            db,
+            run,
+            "input_submitted",
+            {"request": resolved_request, "command": command_payload(command)},
+        )
+        run.queued_at = resolved_at
+        transition_run(db, run, QUEUED)
     elif payload.type == "pause":
-        if run.status == AWAITING_APPROVAL:
+        if run.status in {AWAITING_APPROVAL, AWAITING_INPUT}:
             raise ApiProblem(
                 409,
-                "approval_waiting",
-                "승인 대기 중인 Run은 이미 안전하게 정지되어 있습니다.",
+                "user_response_waiting",
+                "사용자 응답을 기다리는 Run은 이미 안전하게 정지되어 있습니다.",
             )
         if run.status not in ACTIVE_STATUSES - {PAUSED}:
             raise ApiProblem(
@@ -2893,6 +3033,7 @@ def command_payload(command: RunCommand) -> dict[str, Any]:
         "queuePosition": command.payload_json.get("queue_position"),
         "stepId": command.payload_json.get("step_id"),
         "approvalId": command.payload_json.get("approval_id"),
+        "inputRequestId": command.payload_json.get("input_request_id"),
         "createdAt": command.created_at,
     }
 

@@ -238,6 +238,7 @@ def _resolved_settings(
     UserSetting | None,
     UserSetting | ProjectSetting | None,
     UserSetting | None,
+    UserSetting | None,
 ]:
     theme_setting = _setting(db, user.id, "ui.theme")
     theme = theme_setting.value_json if theme_setting else "light"
@@ -271,6 +272,10 @@ def _resolved_settings(
         if model_candidates_setting
         else _default_model_candidates(db)
     )
+    clarification_setting = _setting(db, user.id, "agent.clarification_mode")
+    clarification_mode = (
+        clarification_setting.value_json if clarification_setting else "balanced"
+    )
     result: dict[str, Any] = {
         "theme": theme if theme in {"light", "dark"} else "light",
         "outputMode": output_mode
@@ -278,13 +283,26 @@ def _resolved_settings(
         else "auto",
         "execution": execution,
         "modelCandidates": model_candidates,
+        "clarificationMode": clarification_mode
+        if clarification_mode in {"autonomous", "balanced", "confirming"}
+        else "balanced",
         "source": {"theme": "user", "execution": execution_source},
         "warnings": [],
     }
     result["revision"] = _settings_revision(
-        result, theme_setting, execution_setting, model_candidates_setting
+        result,
+        theme_setting,
+        execution_setting,
+        model_candidates_setting,
+        clarification_setting,
     )
-    return result, theme_setting, execution_setting, model_candidates_setting
+    return (
+        result,
+        theme_setting,
+        execution_setting,
+        model_candidates_setting,
+        clarification_setting,
+    )
 
 
 def _default_model_candidates(db: Session) -> dict[str, list[str]]:
@@ -311,6 +329,7 @@ def _settings_revision(
     theme: UserSetting | None,
     execution: UserSetting | ProjectSetting | None,
     model_candidates: UserSetting | None,
+    clarification: UserSetting | None,
 ) -> str:
     payload = {
         "value": value,
@@ -319,6 +338,9 @@ def _settings_revision(
         "model_candidates_updated": (
             model_candidates.updated_at.isoformat() if model_candidates else None
         ),
+        "clarification_updated": clarification.updated_at.isoformat()
+        if clarification
+        else None,
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str).encode(
@@ -339,7 +361,7 @@ def get_current_settings(
         if project_id
         else default_project(db, user)
     )
-    result, _theme, _execution, _model_candidates = _resolved_settings(
+    result, _theme, _execution, _model_candidates, _clarification = _resolved_settings(
         db, user, project, settings
     )
     return result
@@ -358,7 +380,13 @@ def patch_current_settings(
         if project_id
         else default_project(db, context.user)
     )
-    current, theme_setting, execution_setting, model_candidates_setting = (
+    (
+        current,
+        theme_setting,
+        execution_setting,
+        model_candidates_setting,
+        clarification_setting,
+    ) = (
         _resolved_settings(db, context.user, project, settings)
     )
     if current["revision"] != payload.expected_revision:
@@ -434,8 +462,18 @@ def patch_current_settings(
             db.add(model_candidates_setting)
         else:
             model_candidates_setting.value_json = value
+    if payload.clarification_mode is not None:
+        if clarification_setting is None:
+            clarification_setting = UserSetting(
+                user_id=context.user.id,
+                key="agent.clarification_mode",
+                value_json=payload.clarification_mode,
+            )
+            db.add(clarification_setting)
+        else:
+            clarification_setting.value_json = payload.clarification_mode
     db.commit()
-    result, _theme, _execution, _model_candidates = _resolved_settings(
+    result, _theme, _execution, _model_candidates, _clarification = _resolved_settings(
         db, context.user, project, settings
     )
     return result

@@ -43,6 +43,11 @@ _RUN_NOTIFICATION_COPY = {
         "작업 승인이 필요합니다.",
         "작업 화면에서 승인 요청의 범위를 확인해 주세요.",
     ),
+    "awaiting_input": (
+        "run_input_required",
+        "확인할 내용이 있습니다.",
+        "작업 화면에서 질문에 답하면 같은 작업을 이어갑니다.",
+    ),
 }
 _DEEP_LINK_KEYS = frozenset(
     {
@@ -171,7 +176,10 @@ def create_run_transition_notification(
     if copy is None:
         return None, False
     scheduled_run_id = run.snapshot_json.get("scheduled_run_id")
-    if isinstance(scheduled_run_id, str) and target != "awaiting_approval":
+    if isinstance(scheduled_run_id, str) and target not in {
+        "awaiting_approval",
+        "awaiting_input",
+    }:
         return None, False
     scheduled_task_id = run.snapshot_json.get("scheduled_task_id")
     artifact_id = db.scalar(

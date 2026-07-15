@@ -63,6 +63,7 @@ import type {
   ArtifactSummary,
   AttachmentSummary,
   ChatMessage,
+  ClarificationMode,
   MessageCitation,
   RunActivity,
   RunCommand,
@@ -71,6 +72,7 @@ import type {
   SourceEvidence,
   ToolExecution,
   TurnSet,
+  UserInputAnswer,
 } from "../api-types";
 import { sanitizeAssistantResponse } from "../assistant-response";
 import { GlobalTooltipLayer } from "./GlobalTooltip";
@@ -87,6 +89,7 @@ import {
   InteractiveChart,
   MermaidDiagram,
 } from "./InteractiveResponse";
+import { UserInputRequestCard } from "./UserInputRequestCard";
 
 function toolCallIcon(toolName: string, size = 15) {
   const normalizedName = toolName.toLowerCase().replace(/[\s-]+/g, "_");
@@ -341,6 +344,7 @@ export function runStatusLabel(status: RunStatus | null | undefined) {
   if (status === "model_streaming") return "응답 작성 중";
   if (status === "tools_running") return "도구 실행 중";
   if (status === "awaiting_approval") return "승인 대기";
+  if (status === "awaiting_input") return "답변 대기";
   if (status === "paused") return "일시 정지";
   if (status === "completed") return "완료";
   if (status === "failed") return "실패";
@@ -1492,6 +1496,10 @@ export function AssistantTurn({
   onShare,
   onToast,
   onVisibleGrowth,
+  clarificationMode,
+  inputBusy,
+  onSubmitUserInput,
+  onClarificationModeChange,
 }: {
   turnSet: TurnSet;
   snapshot: RunSnapshot | null;
@@ -1504,6 +1512,14 @@ export function AssistantTurn({
   onShare: (anchorMessageId: string | null) => void;
   onToast: (message: string) => void;
   onVisibleGrowth: () => void;
+  clarificationMode: ClarificationMode;
+  inputBusy: boolean;
+  onSubmitUserInput: (
+    runId: string,
+    inputRequestId: string,
+    answers: UserInputAnswer[],
+  ) => Promise<boolean>;
+  onClarificationModeChange: (mode: ClarificationMode) => Promise<unknown>;
 }) {
   const userMessages = turnSet.messages.filter((message) => message.role === "user");
   const assistantMessages = turnSet.messages.filter((message) => message.role === "assistant");
@@ -1822,6 +1838,16 @@ export function AssistantTurn({
       {(assistantText || tools.length > 0 || artifacts.length > 0 || snapshot) && (
         <section className="assistant-turn">
           <div className="assistant-content">
+            {(snapshot?.inputRequests ?? []).map((request) => (
+              <UserInputRequestCard
+                key={request.id}
+                request={request}
+                clarificationMode={clarificationMode}
+                busy={inputBusy}
+                onSubmit={(answers) => onSubmitUserInput(request.runId, request.id, answers)}
+                onModeChange={onClarificationModeChange}
+              />
+            ))}
             {assistantText && <MarkdownResponse text={displayedText} sources={sources} citations={citations} streaming={revealing} settling={settling} />}
             {artifactUsage && artifactProgress && (
               <div className={`artifact-progress-count is-${artifactProgress.stage}`} role="status" aria-live={terminal ? undefined : "polite"} aria-label={`문서 ${artifactUsage.estimated === false ? "완성 분량" : "작성 중 추정 분량"} ${artifactUsage.tokens.toLocaleString()} 토큰 ${artifactUsage.lines.toLocaleString()}줄${liveModelOutputTokens > 0 ? `, 모델 출력 누계 ${liveModelOutputTokens.toLocaleString()} 토큰` : ""}`}>
