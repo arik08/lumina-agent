@@ -206,11 +206,6 @@ _AUTO_EFFORT_COMPLEX_PATTERN = re.compile(
     r"prove|optimi[sz])",
     re.IGNORECASE,
 )
-_AUTO_EFFORT_SIMPLE_PATTERN = re.compile(
-    r"(?:번역|맞춤법|문장\s*(?:다듬|수정)|짧게\s*요약|형식\s*변환|포맷|"
-    r"분류|매핑|린트|translate|rewrite|proofread|format|classif|mapping|lint)",
-    re.IGNORECASE,
-)
 _AUTO_EFFORT_RESEARCH_PATTERN = re.compile(
     r"(?:최신|검색|찾아|조사|뉴스|자료\s*확인|research|search|latest|current)",
     re.IGNORECASE,
@@ -1060,7 +1055,6 @@ class LocalRunExecutor:
                 attachment_count=len(attachment_ids),
                 reference_count=len(prompt_references),
                 web_research_budget=web_research_budget,
-                round_index=round_index,
             )
             request = ProviderRequest(
                 model=runtime_model_id,
@@ -5293,7 +5287,6 @@ def _effective_reasoning_effort(
     attachment_count: int,
     reference_count: int,
     web_research_budget: tuple[int, int],
-    round_index: int,
 ) -> str | None:
     normalized = (requested_effort or "").strip().casefold()
     if normalized != "auto":
@@ -5305,24 +5298,19 @@ def _effective_reasoning_effort(
 
     message = " ".join(user_message.split())
     if (
-        artifact_required
-        or attachment_count >= 3
-        or reference_count >= 3
-        or web_research_budget[0] >= _DEEP_WEB_SEARCH_CALL_SAFETY_LIMIT
+        web_research_budget[0] >= _DEEP_WEB_SEARCH_CALL_SAFETY_LIMIT
         or web_research_budget[1] >= _DEEP_WEB_FETCH_PAGE_SAFETY_LIMIT
-        or _AUTO_EFFORT_COMPLEX_PATTERN.search(message)
     ):
         return "high"
     if (
-        round_index > 0
-        or attachment_count > 0
-        or reference_count > 0
+        artifact_required
+        or attachment_count >= 3
+        or reference_count >= 3
+        or _AUTO_EFFORT_COMPLEX_PATTERN.search(message)
         or _AUTO_EFFORT_RESEARCH_PATTERN.search(message)
     ):
         return "medium"
-    if len(message) <= 160 or _AUTO_EFFORT_SIMPLE_PATTERN.search(message):
-        return "low"
-    return "medium"
+    return "low"
 
 
 def _provider_prompt_cache_key(

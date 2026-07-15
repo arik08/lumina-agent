@@ -153,7 +153,6 @@ def test_auto_effort_preserves_explicit_choice_and_classifies_task_shape() -> No
         attachment_count=0,
         reference_count=0,
         web_research_budget=(0, 0),
-        round_index=0,
     ) == "high"
     assert executor_module._effective_reasoning_effort(
         "auto",
@@ -163,7 +162,6 @@ def test_auto_effort_preserves_explicit_choice_and_classifies_task_shape() -> No
         attachment_count=0,
         reference_count=0,
         web_research_budget=(0, 0),
-        round_index=0,
     ) == "low"
     assert executor_module._effective_reasoning_effort(
         "auto",
@@ -173,8 +171,7 @@ def test_auto_effort_preserves_explicit_choice_and_classifies_task_shape() -> No
         attachment_count=0,
         reference_count=0,
         web_research_budget=(0, 0),
-        round_index=0,
-    ) == "high"
+    ) == "medium"
     assert executor_module._effective_reasoning_effort(
         "auto",
         provider_id="pgpt",
@@ -183,8 +180,61 @@ def test_auto_effort_preserves_explicit_choice_and_classifies_task_shape() -> No
         attachment_count=0,
         reference_count=0,
         web_research_budget=(0, 0),
-        round_index=1,
+    ) == "low"
+    assert executor_module._effective_reasoning_effort(
+        "auto",
+        provider_id="pgpt",
+        user_message="일반적인 업무 요청의 배경과 원하는 결과를 자세히 설명합니다. " * 10,
+        artifact_required=False,
+        attachment_count=0,
+        reference_count=0,
+        web_research_budget=(0, 0),
+    ) == "low"
+    assert executor_module._effective_reasoning_effort(
+        "auto",
+        provider_id="pgpt",
+        user_message="최신 자료를 조사해 줘",
+        artifact_required=False,
+        attachment_count=0,
+        reference_count=0,
+        web_research_budget=(10, 15),
     ) == "medium"
+    assert executor_module._effective_reasoning_effort(
+        "auto",
+        provider_id="pgpt",
+        user_message="첨부 내용을 확인해 줘",
+        artifact_required=False,
+        attachment_count=2,
+        reference_count=2,
+        web_research_budget=(0, 0),
+    ) == "low"
+    assert executor_module._effective_reasoning_effort(
+        "auto",
+        provider_id="pgpt",
+        user_message="여러 첨부 내용을 함께 검토해 줘",
+        artifact_required=False,
+        attachment_count=3,
+        reference_count=0,
+        web_research_budget=(0, 0),
+    ) == "medium"
+    assert executor_module._effective_reasoning_effort(
+        "auto",
+        provider_id="pgpt",
+        user_message="보고서를 작성해 줘",
+        artifact_required=True,
+        attachment_count=0,
+        reference_count=0,
+        web_research_budget=(10, 15),
+    ) == "medium"
+    assert executor_module._effective_reasoning_effort(
+        "auto",
+        provider_id="pgpt",
+        user_message="철저하게 전수 조사해 줘",
+        artifact_required=False,
+        attachment_count=0,
+        reference_count=0,
+        web_research_budget=(20, 30),
+    ) == "high"
     assert executor_module._effective_reasoning_effort(
         "auto",
         provider_id="google",
@@ -193,7 +243,6 @@ def test_auto_effort_preserves_explicit_choice_and_classifies_task_shape() -> No
         attachment_count=0,
         reference_count=0,
         web_research_budget=(0, 0),
-        round_index=0,
     ) is None
 
 

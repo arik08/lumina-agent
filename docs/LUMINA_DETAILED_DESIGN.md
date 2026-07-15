@@ -1039,7 +1039,7 @@ apps/server/src/lumina/providers/
 - 개인 mode: 사용자 설정
 - Project shared mode: 공유 Workspace 설정
 - Provider별 마지막 Model, Provider·Model별 마지막 Effort를 분리 저장
-- Effort의 초기 기본값은 `Auto`입니다. 사용자가 `low`·`medium`·`high`를 명시하면 Run 전체에서 그대로 유지하고, `Auto`이면 별도 분류 모델 호출 없이 현재 요청의 산출물·첨부·참조·조사 범위와 Agent Turn을 기준으로 `low`·`medium`·`high`를 결정합니다. Gemini는 `Auto`일 때 Provider의 동적 thinking 기본값을 사용하고 명시 Effort만 Model 계열에 맞는 `thinkingLevel` 또는 `thinkingBudget`으로 전달합니다.
+- Effort의 초기 기본값은 `Auto`입니다. 사용자가 `low`·`medium`·`high`를 명시하면 Run 전체에서 그대로 유지합니다. `Auto`는 별도 분류 모델 호출 없이 `low`를 기본으로 사용하며 일반 조사·복잡 작업·산출물 생성·첨부 또는 참조 3개 이상은 `medium`, 사용자가 심층·철저·전수 조사 범위를 명시한 경우만 `high`를 사용합니다. Agent Turn이 이어졌다는 이유만으로 Effort를 올리지 않습니다. Gemini는 `Auto`일 때 Provider의 동적 thinking 기본값을 사용하고 명시 Effort만 Model 계열에 맞는 `thinkingLevel` 또는 `thinkingBudget`으로 전달합니다.
 - 각 Model Turn은 요청 Effort, 실효 Effort, TTFT, 전체 소요 시간, cached·uncached input Token과 cache hit ratio를 `model_turn_completed` event와 Run snapshot에 남깁니다. Prompt·Tool Result 원문이나 cache key는 계측 payload에 넣지 않습니다.
 - 계정 메뉴의 Model 후보 체크리스트는 사용자 설정으로 저장하며 Provider별 복수 선택과 0개 선택을 허용합니다. 최초 사용자에게는 `Codex`와 `P-GPT`의 활성 Model만 후보로 제공하고, 이후에는 서버 DB에 저장된 마지막 후보 선택을 복원합니다. Composer의 Model 목록에는 체크된 후보만 표시하고, 현재 실행 Model이 후보에서 해제되면 자동 전환하지 않고 `재설정 필요`를 표시합니다.
 - Project Folder에 기본 Provider·Model·Effort가 있으면 해당 Project의 새 Session과 Run에 적용하고, 사용자의 다른 Project 마지막 선택을 덮어쓰지 않습니다.
