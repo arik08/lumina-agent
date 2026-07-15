@@ -37,7 +37,11 @@ class _ToolState:
 
 class GoogleGeminiAdapter:
     provider_id = PROVIDER_ID
-    capabilities = ProviderCapabilities(tools=True, structured_output=True)
+    capabilities = ProviderCapabilities(
+        tools=True,
+        structured_output=True,
+        reasoning_effort=True,
+    )
 
     def __init__(
         self,
@@ -282,9 +286,35 @@ def build_google_payload(request: ProviderRequest) -> dict[str, Any]:
         generation_config["temperature"] = request.temperature
     if request.response_format is not None:
         _apply_response_format(generation_config, request.response_format)
+    thinking_config = _google_thinking_config(request.model, request.effort)
+    if thinking_config is not None:
+        generation_config["thinkingConfig"] = thinking_config
     if generation_config:
         payload["generationConfig"] = generation_config
     return payload
+
+
+def _google_thinking_config(model: str, effort: str | None) -> dict[str, Any] | None:
+    normalized_effort = (effort or "").strip().casefold()
+    if normalized_effort in {"", "auto", "none"}:
+        return None
+    normalized_model = model.removeprefix("models/").strip().casefold()
+    if normalized_model.startswith("gemini-3"):
+        level = "high" if normalized_effort in {"xhigh", "max"} else normalized_effort
+        if level in {"minimal", "low", "medium", "high"}:
+            return {"thinkingLevel": level}
+        return None
+    if normalized_model.startswith("gemini-2.5"):
+        budget = {
+            "minimal": 0,
+            "low": 1_024,
+            "medium": 8_192,
+            "high": 24_576,
+            "xhigh": 24_576,
+            "max": 24_576,
+        }.get(normalized_effort)
+        return {"thinkingBudget": budget} if budget is not None else None
+    return None
 
 
 def normalize_google_usage(raw: Mapping[str, Any]) -> ProviderUsage:

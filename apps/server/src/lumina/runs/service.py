@@ -2099,6 +2099,7 @@ def run_snapshot(db: Session, run: Run) -> dict[str, Any]:
             "runtimeModelId": run.runtime_model_id,
             "catalogRevision": execution.get("catalog_revision", "unknown"),
         },
+        "modelTurnMetrics": run.snapshot_json.get("model_turn_metrics", []),
         "limits": run.snapshot_json.get("limits", {}),
         "usage": usage,
         "mcpServers": run.snapshot_json.get("mcp_servers", []),

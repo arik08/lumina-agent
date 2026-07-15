@@ -187,7 +187,7 @@ class MessageReferenceInput(ApiModel):
 class ExecutionSelection(ApiModel):
     provider_id: str = "mock"
     model_key: str = "mock-agent"
-    effort_id: str | None = "medium"
+    effort_id: str | None = "auto"
 
 
 class RunMessageInput(ApiModel):

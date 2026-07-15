@@ -803,7 +803,7 @@ export function useLuminaWorkspace() {
         return;
       }
       const efforts = model.capabilities.effortOptions;
-      const effortId = efforts.find((item) => item.id === "medium")?.id ?? efforts[0]?.id ?? null;
+      const effortId = efforts.find((item) => item.id === "auto")?.id ?? efforts[0]?.id ?? null;
       await persistSettings({ execution: { providerId, modelKey: model.modelKey, effortId } });
     } catch (error) {
       setNotice(apiMessage(error));
@@ -818,7 +818,7 @@ export function useLuminaWorkspace() {
     const effortIds = model.capabilities.effortOptions.map((item) => item.id);
     const effortId = current.execution.effortId && effortIds.includes(current.execution.effortId)
       ? current.execution.effortId
-      : (effortIds.find((item) => item === "medium") ?? effortIds[0] ?? null);
+      : (effortIds.find((item) => item === "auto") ?? effortIds[0] ?? null);
     await persistSettings({ execution: { ...current.execution, modelKey, effortId } });
   }, [models, persistSettings]);
 
@@ -833,7 +833,7 @@ export function useLuminaWorkspace() {
     const effortIds = providerModel.capabilities.effortOptions.map((item) => item.id);
     const effortId = current.execution.effortId && effortIds.includes(current.execution.effortId)
       ? current.execution.effortId
-      : (effortIds.find((item) => item === "medium") ?? effortIds[0] ?? null);
+      : (effortIds.find((item) => item === "auto") ?? effortIds[0] ?? null);
     setModels(providerModels[providerId] ?? models);
     await persistSettings({ execution: { providerId, modelKey, effortId } });
   }, [models, persistSettings, providerModels]);

@@ -93,12 +93,12 @@ def test_application_default_execution_tracks_the_catalog_default() -> None:
     assert application_default_execution("production") == (
         pgpt_default.provider_id,
         pgpt_default.model_key,
-        "medium",
+        "auto",
     )
     assert application_default_execution("development") == (
         "mock",
         "mock-agent",
-        "medium",
+        "auto",
     )
 
 

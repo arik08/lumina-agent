@@ -1655,7 +1655,7 @@ function App() {
     const model = models.find((item) => item.isDefault) ?? models[0];
     if (!model) return;
     const efforts = model.capabilities.effortOptions;
-    const effortId = efforts.find((item) => item.id === "medium")?.id ?? efforts[0]?.id ?? null;
+    const effortId = efforts.find((item) => item.id === "auto")?.id ?? efforts[0]?.id ?? null;
     setAdminInitialExecution({ providerId, modelKey: model.modelKey, effortId });
   };
   const selectAdminInitialModel = (modelKey: string) => {
@@ -1665,7 +1665,7 @@ function App() {
     const effortIds = model.capabilities.effortOptions.map((item) => item.id);
     const effortId = adminInitialExecution.effortId && effortIds.includes(adminInitialExecution.effortId)
       ? adminInitialExecution.effortId
-      : (effortIds.find((item) => item === "medium") ?? effortIds[0] ?? null);
+      : (effortIds.find((item) => item === "auto") ?? effortIds[0] ?? null);
     setAdminInitialExecution({ ...adminInitialExecution, modelKey, effortId });
   };
   const saveAdminInitialExecution = async () => {

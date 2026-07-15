@@ -51,7 +51,7 @@ function effortForOption(option: ScheduleExecutionOption, preferred: string | nu
   if (preferred === null) return null;
   const effortIds = option.effortOptions.map((item) => item.id);
   if (preferred && effortIds.includes(preferred)) return preferred;
-  return effortIds.find((item) => item === "medium") ?? effortIds[0] ?? null;
+  return effortIds.find((item) => item === "auto") ?? effortIds[0] ?? null;
 }
 
 function defaultScheduleExecution(

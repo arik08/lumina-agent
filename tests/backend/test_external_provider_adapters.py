@@ -115,6 +115,38 @@ def test_multimodal_payloads_include_attached_image() -> None:
     }
 
 
+def test_google_payload_maps_explicit_thinking_controls_by_model_family() -> None:
+    gemini_3 = build_google_payload(
+        ProviderRequest(
+            model="gemini-3.5-flash",
+            messages=(ProviderMessage(role="user", content="Answer briefly."),),
+            effort="low",
+        )
+    )
+    gemini_25 = build_google_payload(
+        ProviderRequest(
+            model="gemini-2.5-flash",
+            messages=(ProviderMessage(role="user", content="Solve carefully."),),
+            effort="high",
+        )
+    )
+    automatic = build_google_payload(
+        ProviderRequest(
+            model="gemini-3.5-flash",
+            messages=(ProviderMessage(role="user", content="Choose automatically."),),
+            effort="auto",
+        )
+    )
+
+    assert gemini_3["generationConfig"]["thinkingConfig"] == {
+        "thinkingLevel": "low"
+    }
+    assert gemini_25["generationConfig"]["thinkingConfig"] == {
+        "thinkingBudget": 24_576
+    }
+    assert "generationConfig" not in automatic
+
+
 def test_anthropic_payload_maps_system_tool_call_and_tool_result() -> None:
     payload = build_anthropic_payload(
         ProviderRequest(

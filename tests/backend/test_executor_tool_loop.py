@@ -12,8 +12,14 @@ from lumina.agent import executor as executor_module
 from lumina.agent.executor import LocalRunExecutor, local_run_executor
 from lumina.config import Settings
 from lumina.main import create_app
-from lumina.models import ToolExecution
-from lumina.providers import MockProvider, MockToolCall, ProviderMessage
+from lumina.db import SessionLocal
+from lumina.models import RunEvent, ToolExecution
+from lumina.providers import (
+    MockProvider,
+    MockToolCall,
+    ProviderMessage,
+    ProviderUsage,
+)
 from lumina.providers.codex.adapter import _CodexToolCallStream
 from lumina.tools.web import SearchInvocation, SourceEvidence, WebSearchResult
 
@@ -136,6 +142,140 @@ def test_prompt_cache_key_tracks_static_prefix_not_dynamic_messages() -> None:
     )
     assert other_user_key != first_key
     assert other_model_key != first_key
+
+
+def test_auto_effort_preserves_explicit_choice_and_classifies_task_shape() -> None:
+    assert executor_module._effective_reasoning_effort(
+        "high",
+        provider_id="pgpt",
+        user_message="짧게 답해 줘",
+        artifact_required=False,
+        attachment_count=0,
+        reference_count=0,
+        web_research_budget=(0, 0),
+        round_index=0,
+    ) == "high"
+    assert executor_module._effective_reasoning_effort(
+        "auto",
+        provider_id="pgpt",
+        user_message="이 문장을 영어로 번역해 줘",
+        artifact_required=False,
+        attachment_count=0,
+        reference_count=0,
+        web_research_budget=(0, 0),
+        round_index=0,
+    ) == "low"
+    assert executor_module._effective_reasoning_effort(
+        "auto",
+        provider_id="pgpt",
+        user_message="런타임 장애의 근본 원인을 분석하고 수정해 줘",
+        artifact_required=False,
+        attachment_count=0,
+        reference_count=0,
+        web_research_budget=(0, 0),
+        round_index=0,
+    ) == "high"
+    assert executor_module._effective_reasoning_effort(
+        "auto",
+        provider_id="pgpt",
+        user_message="도구 결과를 반영해 줘",
+        artifact_required=False,
+        attachment_count=0,
+        reference_count=0,
+        web_research_budget=(0, 0),
+        round_index=1,
+    ) == "medium"
+    assert executor_module._effective_reasoning_effort(
+        "auto",
+        provider_id="google",
+        user_message="복잡한 수학 문제를 증명해 줘",
+        artifact_required=False,
+        attachment_count=0,
+        reference_count=0,
+        web_research_budget=(0, 0),
+        round_index=0,
+    ) is None
+
+
+def test_auto_effort_and_model_turn_metrics_are_persisted(
+    monkeypatch, tmp_path: Path
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'auto-effort-metrics.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    observed_efforts: list[str | None] = []
+
+    class CapturingProvider(MockProvider):
+        async def stream(self, request):
+            observed_efforts.append(request.effort)
+            async for event in super().stream(request):
+                yield event
+
+    provider = CapturingProvider(
+        text_chunks=("The sentence is ready.",),
+        usage=ProviderUsage(
+            input_tokens=100,
+            cached_input_tokens=75,
+            uncached_input_tokens=25,
+            output_tokens=5,
+            raw={"provider": "mock"},
+        ),
+    )
+    monkeypatch.setattr(local_run_executor, "_provider", lambda *_args, **_kwargs: provider)
+
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "Auto Effort 계측"},
+        ).json()
+        started = client.post(
+            f"/api/conversations/{conversation['id']}/runs",
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": "auto-effort-metrics-0001",
+            },
+            json={
+                "message": {"text": "이 문장을 영어로 번역해 줘"},
+                "execution": {
+                    "providerId": "mock",
+                    "modelKey": "mock-agent",
+                    "effortId": "auto",
+                },
+            },
+        )
+        assert started.status_code == 202, started.text
+        run_id = started.json()["run"]["runId"]
+        snapshot = _wait_for_terminal(client, run_id)
+
+    assert observed_efforts[0] == "low"
+    assert snapshot["execution"]["effortId"] == "auto"
+    metrics = snapshot["modelTurnMetrics"]
+    assert metrics
+    first = metrics[0]
+    assert first["requestedEffort"] == "auto"
+    assert first["effectiveEffort"] == "low"
+    assert first["ttftMs"] is not None
+    assert first["durationMs"] >= first["ttftMs"] >= 0
+    assert first["cachedInputTokens"] == 75
+    assert first["uncachedInputTokens"] == 25
+    assert first["cacheHitRatio"] == 0.75
+    with SessionLocal() as db:
+        events = list(
+            db.query(RunEvent).filter(
+                RunEvent.run_id == run_id,
+                RunEvent.event_type == "model_turn_completed",
+            )
+        )
+    assert events
+    assert events[0].payload_json["effectiveEffort"] == "low"
 
 
 def test_update_plan_schema_identifies_the_report_drafting_phase() -> None:

@@ -39,7 +39,8 @@ def normalize_initial_execution(
         "high",
     )
     if effort_id is not None and (
-        not isinstance(effort_id, str) or effort_id not in effort_options
+        not isinstance(effort_id, str)
+        or (effort_id != "auto" and effort_id not in effort_options)
     ):
         return None
     return {

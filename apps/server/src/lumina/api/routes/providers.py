@@ -192,7 +192,8 @@ def get_provider_models(
 
 
 def _capabilities(raw: dict[str, Any]) -> dict[str, object]:
-    efforts = raw.get("effort_options") or ("low", "medium", "high")
+    provider_efforts = raw.get("effort_options") or ("low", "medium", "high")
+    efforts = ("auto", *(value for value in provider_efforts if value != "auto"))
     return {
         "toolCalling": bool(raw.get("tools", raw.get("tool_calling", True))),
         "structuredOutput": bool(raw.get("structured_output", True)),
@@ -202,9 +203,12 @@ def _capabilities(raw: dict[str, Any]) -> dict[str, object]:
         "effortOptions": [
             {
                 "id": value,
-                "label": {"low": "낮음", "medium": "중간", "high": "높음"}.get(
-                    value, value
-                ),
+                "label": {
+                    "auto": "자동",
+                    "low": "낮음",
+                    "medium": "중간",
+                    "high": "높음",
+                }.get(value, value),
             }
             for value in efforts
         ],

@@ -16,7 +16,7 @@ React 기반 Frontend와 FastAPI 기반 Backend를 한 서비스처럼 제공하
 
 - Project별 대화, 사용자 파일 저장소, 지침, Memory와 Artifact 관리
 - 세션을 이동하거나 다시 접속해도 이어지는 Background Agent Run
-- Provider·Model·Effort 선택과 사용자별 마지막 선택 복원
+- Provider·Model·Effort 선택, 요청 난이도 기반 `Auto` Effort와 사용자별 마지막 선택 복원
 - OpenAI, Codex, P-GPT, Anthropic, Gemini 및 OpenAI Compatible Provider
 - `@파일명`·`@폴더명` Context 연결과 `$Skill`·`$MCP` 명시 호출
 - Tool 실행 상태, 승인 요청, Plan과 단계별 진행 상황 표시

@@ -588,9 +588,9 @@ def default_catalog_model(provider_id: str) -> ModelCatalogSeed:
 
 def application_default_execution(environment: str) -> tuple[str, str, str]:
     if environment != "production":
-        return "mock", "mock-agent", "medium"
+        return "mock", "mock-agent", "auto"
     model = default_catalog_model("pgpt")
-    return model.provider_id, model.model_key, "medium"
+    return model.provider_id, model.model_key, "auto"
 
 
 validate_catalog(INITIAL_MODEL_CATALOG)

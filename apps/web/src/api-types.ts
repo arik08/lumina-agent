@@ -1410,6 +1410,7 @@ export interface RunSnapshot {
     runtimeModelId: string;
     catalogRevision: string;
   };
+  modelTurnMetrics: ModelTurnMetric[];
   limits: {
     deadline: IsoDateTime;
     tokenLimit: number | null;
@@ -1417,6 +1418,23 @@ export interface RunSnapshot {
     costAccounting: "provider_reported";
   };
   usage: Record<string, unknown>;
+}
+
+export interface ModelTurnMetric {
+  turnIndex: number;
+  attempt: number;
+  requestedEffort: string | null;
+  effectiveEffort: string | null;
+  startedAt: IsoDateTime;
+  durationMs: number;
+  ttftMs: number | null;
+  status: "completed" | "failed" | "limited" | "interrupted";
+  stopReason: string | null;
+  inputTokens: number;
+  cachedInputTokens: number;
+  uncachedInputTokens: number;
+  outputTokens: number;
+  cacheHitRatio: number;
 }
 
 export type RunActivity = {
@@ -1511,6 +1529,7 @@ export interface RunMutationResponse {
 export type RunEventType =
   | "run_started"
   | "run_status_changed"
+  | "model_turn_completed"
   | "assistant_text_delta"
   | "progress_summary"
   | "output_intent_classified"
@@ -1552,6 +1571,7 @@ interface RunEventEnvelope<TType extends RunEventType, TPayload> {
 
 export type RunEvent =
   | RunEventEnvelope<"run_started" | "run_status_changed", { status: RunStatus }>
+  | RunEventEnvelope<"model_turn_completed", ModelTurnMetric>
   | RunEventEnvelope<"assistant_text_delta", { messageId: UUID; delta: string }>
   | RunEventEnvelope<"progress_summary", { id: UUID; text: string; phase: string }>
   | RunEventEnvelope<"output_intent_classified", NonNullable<RunSnapshot["outputIntent"]>>

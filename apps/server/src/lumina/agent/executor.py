@@ -198,6 +198,23 @@ _WEB_PROVIDER_PAGE_WINDOW_FRACTION = 0.15
 _WEB_PROVIDER_TURN_WINDOW_FRACTION = 0.30
 _WEB_PROVIDER_PREVIEW_CHARS = 1_500
 _ESTIMATED_CHARS_PER_TOKEN = 4
+_AUTO_EFFORT_COMPLEX_PATTERN = re.compile(
+    r"(?:심층|전수|종합\s*분석|근본\s*원인|원인\s*분석|아키텍처|설계|구현|"
+    r"디버그|버그|리팩터|보안|취약점|재무|법률|의료|증명|최적화|"
+    r"deep\s+(?:analysis|research)|exhaustive|root\s+cause|architecture|"
+    r"implement|debug|refactor|security|vulnerabilit|financial|legal|medical|"
+    r"prove|optimi[sz])",
+    re.IGNORECASE,
+)
+_AUTO_EFFORT_SIMPLE_PATTERN = re.compile(
+    r"(?:번역|맞춤법|문장\s*(?:다듬|수정)|짧게\s*요약|형식\s*변환|포맷|"
+    r"분류|매핑|린트|translate|rewrite|proofread|format|classif|mapping|lint)",
+    re.IGNORECASE,
+)
+_AUTO_EFFORT_RESEARCH_PATTERN = re.compile(
+    r"(?:최신|검색|찾아|조사|뉴스|자료\s*확인|research|search|latest|current)",
+    re.IGNORECASE,
+)
 _NON_PERSISTED_TOOL_RESULTS = frozenset(
     {
         "activate_skill",
@@ -845,7 +862,7 @@ class LocalRunExecutor:
             user_message_id = str(run.snapshot_json.get("user_message_id", ""))
             provider_id = run.provider_id
             runtime_model_id = run.runtime_model_id
-            effort = run.effort
+            requested_effort = run.effort
             assistant_message_id = str(run.snapshot_json["assistant_message_id"])
             attachment_ids = list(run.snapshot_json.get("attachments", []))
             prompt_references = list(run.snapshot_json.get("prompt_references", []))
@@ -1035,11 +1052,21 @@ class LocalRunExecutor:
                 wants_artifact=artifact_required,
                 first_turn=round_index == 0,
             )
+            effective_effort = _effective_reasoning_effort(
+                requested_effort,
+                provider_id=provider_id,
+                user_message=user_message,
+                artifact_required=artifact_required,
+                attachment_count=len(attachment_ids),
+                reference_count=len(prompt_references),
+                web_research_budget=web_research_budget,
+                round_index=round_index,
+            )
             request = ProviderRequest(
                 model=runtime_model_id,
                 messages=tuple(messages),
                 tools=tool_schemas,
-                effort=effort,
+                effort=effective_effort,
                 max_output_tokens=self._model_request_output_tokens(
                     run_id, capabilities
                 ),
@@ -1069,6 +1096,10 @@ class LocalRunExecutor:
             first_text_persisted = False
             confirmed_output_tokens = self._confirmed_output_tokens(run_id)
             streamed_output_chars = 0
+            model_turn_started_at = utc_now()
+            model_turn_started = time.perf_counter()
+            first_provider_output_at: float | None = None
+            turn_usage: dict[str, Any] | None = None
             memory_stream = _InlineMemoryStream() if memory_learning_enabled else None
             continuation_deduper = _ContinuationDeduper(pending_continuation_reference)
             pending_continuation_reference = None
@@ -1126,6 +1157,8 @@ class LocalRunExecutor:
                             "tool_call_delta",
                             "tool_call_completed",
                         }:
+                            if first_provider_output_at is None:
+                                first_provider_output_at = time.perf_counter()
                             provider_output_started = True
                         if event.type in {
                             "tool_call_started",
@@ -1267,14 +1300,15 @@ class LocalRunExecutor:
                                 )
                         elif event.type == "usage" and event.usage:
                             await flush_pending_text()
+                            turn_usage = _usage_payload(
+                                event.usage,
+                                provider_id=provider_id,
+                                model=runtime_model_id,
+                                model_key=run.model_key,
+                            )
                             limit_violation = await self._store_usage(
                                 run_id,
-                                _usage_payload(
-                                    event.usage,
-                                    provider_id=provider_id,
-                                    model=runtime_model_id,
-                                    model_key=run.model_key,
-                                ),
+                                turn_usage,
                             )
                             if limit_violation is not None:
                                 break
@@ -1295,6 +1329,31 @@ class LocalRunExecutor:
                 active_run = db.get(Run, run_id)
                 if active_run is not None:
                     clear_model_turn_inflight(db, active_run)
+            await self._record_model_turn_metrics(
+                run_id,
+                turn_index=round_index,
+                attempt=provider_attempt_count,
+                requested_effort=requested_effort,
+                effective_effort=effective_effort,
+                started_at=model_turn_started_at,
+                duration_ms=round((time.perf_counter() - model_turn_started) * 1000, 3),
+                ttft_ms=(
+                    round((first_provider_output_at - model_turn_started) * 1000, 3)
+                    if first_provider_output_at is not None
+                    else None
+                ),
+                status=(
+                    "failed"
+                    if provider_request_error is not None
+                    else "limited"
+                    if limit_violation is not None
+                    else "interrupted"
+                    if interrupted_by_steer
+                    else "completed"
+                ),
+                stop_reason=provider_stop_reason,
+                usage=turn_usage,
+            )
 
             if provider_request_error is not None:
                 observed_context_window = await self._apply_observed_context_window(
@@ -4469,6 +4528,65 @@ class LocalRunExecutor:
             run.usage_json = previous
             return _run_limit_violation(run)
 
+    async def _record_model_turn_metrics(
+        self,
+        run_id: str,
+        *,
+        turn_index: int,
+        attempt: int,
+        requested_effort: str | None,
+        effective_effort: str | None,
+        started_at: datetime,
+        duration_ms: float,
+        ttft_ms: float | None,
+        status: str,
+        stop_reason: str | None,
+        usage: Mapping[str, Any] | None,
+    ) -> None:
+        observed_usage = usage or {}
+        cached_input_tokens = _nonnegative_int(
+            observed_usage.get("cached_input_tokens")
+        )
+        uncached_input_tokens = _nonnegative_int(
+            observed_usage.get("uncached_input_tokens")
+        )
+        cacheable_input_tokens = cached_input_tokens + uncached_input_tokens
+        payload = {
+            "turnIndex": turn_index,
+            "attempt": attempt,
+            "requestedEffort": requested_effort,
+            "effectiveEffort": effective_effort,
+            "startedAt": started_at.isoformat(),
+            "durationMs": max(0.0, duration_ms),
+            "ttftMs": max(0.0, ttft_ms) if ttft_ms is not None else None,
+            "status": status,
+            "stopReason": stop_reason,
+            "inputTokens": _nonnegative_int(observed_usage.get("input_tokens")),
+            "cachedInputTokens": cached_input_tokens,
+            "uncachedInputTokens": uncached_input_tokens,
+            "outputTokens": _nonnegative_int(observed_usage.get("output_tokens")),
+            "cacheHitRatio": (
+                round(cached_input_tokens / cacheable_input_tokens, 4)
+                if cacheable_input_tokens > 0
+                else 0.0
+            ),
+        }
+        with session_scope() as db:
+            run = db.get(Run, run_id)
+            if run is None:
+                return
+            previous_metrics = run.snapshot_json.get("model_turn_metrics", [])
+            metrics = (
+                list(previous_metrics) if isinstance(previous_metrics, list) else []
+            )
+            metrics.append(payload)
+            run.snapshot_json = {
+                **run.snapshot_json,
+                "model_turn_metrics": metrics[-512:],
+            }
+            append_event(db, run, "model_turn_completed", payload)
+        await event_broker.notify(run_id)
+
     async def _wait_until_runnable(self, run_id: str) -> bool:
         while self._started:
             with SessionLocal() as db:
@@ -5164,6 +5282,47 @@ def _usage_payload(
         if profile is not None and profile.token_pricing is not None:
             payload["pricing_version"] = profile.token_pricing.version
     return payload
+
+
+def _effective_reasoning_effort(
+    requested_effort: str | None,
+    *,
+    provider_id: str,
+    user_message: str,
+    artifact_required: bool,
+    attachment_count: int,
+    reference_count: int,
+    web_research_budget: tuple[int, int],
+    round_index: int,
+) -> str | None:
+    normalized = (requested_effort or "").strip().casefold()
+    if normalized != "auto":
+        return normalized or None
+    if provider_id.strip().casefold() == "google":
+        # Supported Gemini models already use provider-side dynamic thinking when
+        # no explicit thinking control is sent.
+        return None
+
+    message = " ".join(user_message.split())
+    if (
+        artifact_required
+        or attachment_count >= 3
+        or reference_count >= 3
+        or web_research_budget[0] >= _DEEP_WEB_SEARCH_CALL_SAFETY_LIMIT
+        or web_research_budget[1] >= _DEEP_WEB_FETCH_PAGE_SAFETY_LIMIT
+        or _AUTO_EFFORT_COMPLEX_PATTERN.search(message)
+    ):
+        return "high"
+    if (
+        round_index > 0
+        or attachment_count > 0
+        or reference_count > 0
+        or _AUTO_EFFORT_RESEARCH_PATTERN.search(message)
+    ):
+        return "medium"
+    if len(message) <= 160 or _AUTO_EFFORT_SIMPLE_PATTERN.search(message):
+        return "low"
+    return "medium"
 
 
 def _provider_prompt_cache_key(
