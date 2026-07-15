@@ -243,6 +243,24 @@ class _RetryableProvider:
         yield ProviderEvent(type="completed", stop_reason="stop")
 
 
+class _AlwaysRetryableProvider:
+    provider_id = "mock"
+    capabilities = ProviderCapabilities(tools=True)
+
+    def __init__(self) -> None:
+        self.attempts = 0
+
+    async def stream(self, _request: ProviderRequest) -> AsyncIterator[ProviderEvent]:
+        self.attempts += 1
+        raise ProviderRequestError(
+            "temporary network failure",
+            retryable=True,
+            stage="network",
+            status_code=503,
+        )
+        yield  # pragma: no cover - keeps this an async generator
+
+
 class _ObservedContextThenCompletingProvider:
     provider_id = "mock"
     capabilities = ProviderCapabilities(tools=True)
@@ -525,6 +543,53 @@ def test_retryable_provider_failure_retries_only_before_output(
         "delaySeconds": 0.0,
         "stage": "response",
         "statusCode": 503,
+    }
+
+
+def test_exhausted_provider_retries_preserve_safe_failure_taxonomy(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    provider = _AlwaysRetryableProvider()
+    monkeypatch.setattr(
+        local_run_executor, "_provider", lambda *_args, **_kwargs: provider
+    )
+    monkeypatch.setattr(
+        executor_module,
+        "_PROVIDER_RETRY_DELAYS_SECONDS",
+        (0.0, 0.0, 0.0),
+        raising=False,
+    )
+
+    with TestClient(create_app(_settings(tmp_path, "retry-exhausted.db"))) as client:
+        csrf = _login(client)
+        conversation_id = _conversation(client, csrf, "Provider retry exhausted")
+        run_id = _start_run(
+            client,
+            csrf,
+            conversation_id,
+            text="retry-until-exhausted",
+            idempotency_key="retry-until-exhausted-0001",
+        )
+        snapshot = _wait_for_terminal(client, run_id)
+
+    assert snapshot["status"] == "failed"
+    assert snapshot["errorCode"] == "provider_network"
+    assert provider.attempts == 4
+    with SessionLocal() as db:
+        failure = db.scalar(
+            select(RunEvent).where(
+                RunEvent.run_id == run_id,
+                RunEvent.event_type == "provider_failure_classified",
+            )
+        )
+    assert failure is not None
+    assert failure.payload_json == {
+        "code": "provider_network",
+        "stage": "network",
+        "statusCode": 503,
+        "retryable": True,
+        "attemptCount": 4,
+        "retryAfterSeconds": None,
     }
 
 

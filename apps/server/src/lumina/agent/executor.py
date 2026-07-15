@@ -187,6 +187,16 @@ _EXPLICIT_BROAD_WEB_CONTEXT = re.compile(
 _WEB_URL = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
 _WEB_QUERY_TOKEN = re.compile(r"[\w가-힣]+", re.UNICODE)
 _TRACKING_QUERY_KEYS = frozenset({"fbclid", "gclid", "mc_cid", "mc_eid"})
+_PROVIDER_FAILURE_CODES = {
+    "authentication": "provider_authentication",
+    "rate_limit": "provider_rate_limit",
+    "network": "provider_network",
+    "stream": "provider_stream",
+    "context": "provider_context",
+    "endpoint": "provider_endpoint",
+    "response": "provider_response",
+    "request": "provider_request",
+}
 _CONTINUATION_PROMPT = (
     "[Continuation after output limit] Continue exactly where the previous assistant "
     "text stopped. Do not repeat completed text, restart the answer, or summarize it."
@@ -691,18 +701,37 @@ class LocalRunExecutor:
             )
             await self._fail_run(run_id, exc.code, str(exc))
             await self._promote_next_message(run_id)
+        except ProviderConfigurationError as exc:
+            logger.warning(
+                "Provider run failed",
+                extra={"run_id": run_id, "provider_error": type(exc).__name__},
+            )
+            await self._fail_run(run_id, "provider_configuration", str(exc))
+            await self._promote_next_message(run_id)
+        except ProviderRequestError as exc:
+            logger.warning(
+                "Provider run failed",
+                extra={
+                    "run_id": run_id,
+                    "provider_error": type(exc).__name__,
+                    "provider_stage": exc.stage,
+                    "provider_status_code": exc.status_code,
+                    "provider_attempt_count": exc.attempt_count,
+                },
+            )
+            await self._fail_run(
+                run_id,
+                _provider_failure_code(exc),
+                str(exc),
+                provider_error=exc,
+            )
+            await self._promote_next_message(run_id)
         except ProviderError as exc:
             logger.warning(
                 "Provider run failed",
                 extra={"run_id": run_id, "provider_error": type(exc).__name__},
             )
-            await self._fail_run(
-                run_id,
-                "provider_configuration"
-                if isinstance(exc, ProviderConfigurationError)
-                else "provider_request",
-                str(exc),
-            )
+            await self._fail_run(run_id, "provider_request", str(exc))
             await self._promote_next_message(run_id)
         except Exception:
             logger.exception(
@@ -913,6 +942,7 @@ class LocalRunExecutor:
         reactive_context_recovery_attempted = False
         provider_retry_attempt = 0
         partial_response_recovery_attempt = 0
+        provider_attempt_count = 0
         empty_response_retry_attempt = 0
         output_continuation_count = 0
         pending_continuation_reference: str | None = None
@@ -1013,6 +1043,7 @@ class LocalRunExecutor:
 
             try:
                 async with asyncio.timeout(self._remaining_run_seconds(run_id)):
+                    provider_attempt_count += 1
                     async for event in provider.stream(request):
                         if event.type == "text_delta" and event.text:
                             streamed_output_chars += len(event.text)
@@ -1276,9 +1307,11 @@ class LocalRunExecutor:
                 ):
                     provider_retry_attempt += 1
                     continue
+                provider_request_error.attempt_count = provider_attempt_count
                 raise provider_request_error
             provider_retry_attempt = 0
             partial_response_recovery_attempt = 0
+            provider_attempt_count = 0
 
             if progress_control_buffer:
                 await self._append_text(
@@ -4370,7 +4403,14 @@ class LocalRunExecutor:
                 user_login_id=user.login_id,
             )
 
-    async def _fail_run(self, run_id: str, code: str, message: str) -> None:
+    async def _fail_run(
+        self,
+        run_id: str,
+        code: str,
+        message: str,
+        *,
+        provider_error: ProviderRequestError | None = None,
+    ) -> None:
         with session_scope() as db:
             run = db.get(Run, run_id)
             if run is None or run.status in TERMINAL_STATUSES:
@@ -4378,6 +4418,13 @@ class LocalRunExecutor:
             run.error_code = code
             run.error_message = message
             fail_plan(db, run, code=code, message=message)
+            if provider_error is not None:
+                append_event(
+                    db,
+                    run,
+                    "provider_failure_classified",
+                    _provider_failure_payload(provider_error),
+                )
             transition_run(db, run, FAILED, event_type="run_failed")
         await event_broker.notify(run_id)
 
@@ -5037,6 +5084,24 @@ def _provider_retry_delay_seconds(
     ):
         return min(float(retry_after), _MAX_PROVIDER_RETRY_AFTER_SECONDS)
     return _PROVIDER_RETRY_DELAYS_SECONDS[retry_index]
+
+
+def _provider_failure_code(error: ProviderRequestError) -> str:
+    return _PROVIDER_FAILURE_CODES.get(str(error.stage).casefold(), "provider_request")
+
+
+def _provider_failure_payload(error: ProviderRequestError) -> dict[str, Any]:
+    normalized_stage = str(error.stage).casefold()
+    if normalized_stage not in _PROVIDER_FAILURE_CODES:
+        normalized_stage = "request"
+    return {
+        "code": _provider_failure_code(error),
+        "stage": normalized_stage,
+        "statusCode": error.status_code,
+        "retryable": error.retryable,
+        "attemptCount": max(1, error.attempt_count or 1),
+        "retryAfterSeconds": error.retry_after_seconds,
+    }
 
 
 def _is_output_truncated_stop_reason(stop_reason: str | None) -> bool:

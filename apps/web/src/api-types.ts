@@ -1534,6 +1534,7 @@ export type RunEventType =
   | "queued_message_added"
   | "queued_message_cancelled"
   | "queued_message_promoted_to_run"
+  | "provider_failure_classified"
   | "run_completed"
   | "run_failed"
   | "run_limit_reached"
@@ -1574,6 +1575,17 @@ export type RunEvent =
       | "queued_message_cancelled"
       | "queued_message_promoted_to_run",
       { command?: RunCommand; queuedMessageId?: UUID; runId?: UUID }
+    >
+  | RunEventEnvelope<
+      "provider_failure_classified",
+      {
+        code: string;
+        stage: string;
+        statusCode: number | null;
+        retryable: boolean;
+        attemptCount: number;
+        retryAfterSeconds: number | null;
+      }
     >
   | RunEventEnvelope<
       "run_completed" | "run_failed" | "run_cancelled" | "run_interrupted",
