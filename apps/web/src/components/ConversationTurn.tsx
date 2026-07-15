@@ -647,7 +647,7 @@ function ModelProcessingRow({ durationMs, state, sent, received, model, provider
       >
         <Brain className="tool-kind-icon is-model-processing" size={15} aria-hidden="true" />
         <span className="tool-call-label-with-status model-processing-label">
-          <span className="tool-call-label">{running ? "Thinking..." : "Thinking"}</span>
+          <span className="tool-call-label">Thinking</span>
           {running ? <LoaderCircle className="status-icon is-running" size={15} aria-hidden="true" /> : null}
           {!running && state !== "completed" ? <AlertCircle className="status-icon status-warning" size={15} aria-hidden="true" /> : null}
         </span>
