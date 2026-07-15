@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
@@ -158,6 +158,11 @@ class OpenAIResponsesAdapter:
         base_url: str = DEFAULT_OPENAI_BASE_URL,
         client: httpx.AsyncClient | None = None,
         trust_profile: TrustProfile | None = None,
+        additional_headers: Mapping[str, str] | None = None,
+        payload_transform: (
+            Callable[[ProviderRequest, dict[str, Any]], dict[str, Any]] | None
+        ) = None,
+        service_name: str = "OpenAI Responses",
     ) -> None:
         secret = api_key.strip()
         if not secret:
@@ -168,6 +173,9 @@ class OpenAIResponsesAdapter:
         self._authorization = f"Bearer {secret}"
         self._client = client
         self._trust_profile = trust_profile
+        self._additional_headers = dict(additional_headers or {})
+        self._payload_transform = payload_transform
+        self._service_name = service_name
 
     async def stream(self, request: ProviderRequest) -> AsyncIterator[ProviderEvent]:
         client = self._client
@@ -179,14 +187,19 @@ class OpenAIResponsesAdapter:
         states_by_item: dict[str, _ToolState] = {}
         states_by_index: dict[int, _ToolState] = {}
         try:
+            payload = build_responses_payload(request)
+            if self._payload_transform is not None:
+                payload = self._payload_transform(request, payload)
+            headers = {
+                "Authorization": self._authorization,
+                "Accept": "text/event-stream",
+            }
+            headers.update(self._additional_headers)
             async with client.stream(
                 "POST",
                 f"{self.base_url}/responses",
-                headers={
-                    "Authorization": self._authorization,
-                    "Accept": "text/event-stream",
-                },
-                json=build_responses_payload(request),
+                headers=headers,
+                json=payload,
             ) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
@@ -306,14 +319,14 @@ class OpenAIResponsesAdapter:
             status = exc.response.status_code
             stage = _stage_for_status(status)
             raise ProviderRequestError(
-                f"OpenAI Responses request failed during {stage} (HTTP {status}).",
+                f"{self._service_name} request failed during {stage} (HTTP {status}).",
                 retryable=status in {408, 409, 425, 429} or status >= 500,
                 stage=stage,
                 status_code=status,
             ) from exc
         except httpx.RequestError as exc:
             raise ProviderRequestError(
-                "OpenAI Responses network request failed.",
+                f"{self._service_name} network request failed.",
                 retryable=True,
                 stage="network",
             ) from exc
@@ -322,7 +335,7 @@ class OpenAIResponsesAdapter:
                 await client.aclose()
 
         raise ProviderRequestError(
-            "OpenAI Responses stream ended before a terminal event.",
+            f"{self._service_name} stream ended before a terminal event.",
             retryable=True,
             stage="stream",
         )

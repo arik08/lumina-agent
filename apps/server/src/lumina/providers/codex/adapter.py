@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import os
+import platform
 import re
 import tempfile
 from collections.abc import AsyncIterator, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
+import httpx
 from openai_codex import (
     ApprovalMode,
     AsyncCodex,
@@ -30,6 +34,7 @@ from openai_codex.generated.v2_all import (
 
 from ..constants import CODEX_PROVIDER_ID
 from ..errors import ProviderConfigurationError, ProviderRequestError
+from ..openai import OpenAIResponsesAdapter
 from ..types import (
     ProviderCapabilities,
     ProviderEvent,
@@ -65,6 +70,8 @@ _OUTPUT_SCHEMA: dict[str, Any] = {
 
 _JSON_FIELD_VALUE = r'"{field}"\s*:\s*"((?:\\.|[^"\\])*)"'
 PROVIDER_ID = CODEX_PROVIDER_ID
+_CODEX_RESPONSES_BASE_URL = "https://chatgpt.com/backend-api/codex"
+_CODEX_JWT_AUTH_CLAIM = "https://api.openai.com/auth"
 
 
 class _CodexToolCallStream:
@@ -228,7 +235,7 @@ def codex_oauth_available() -> bool:
 
 
 class CodexResponsesAdapter:
-    """Codex App Server adapter backed only by ChatGPT OAuth subscription access."""
+    """ChatGPT OAuth adapter with direct Responses and App Server fallback."""
 
     provider_id = PROVIDER_ID
     capabilities = ProviderCapabilities(
@@ -237,12 +244,14 @@ class CodexResponsesAdapter:
         reasoning_effort=True,
     )
 
-    def __init__(self) -> None:
+    def __init__(self, *, direct_responses: bool = True) -> None:
         self._client: AsyncCodex | None = None
         self._available_models: frozenset[str] = frozenset()
         self._workspace: tempfile.TemporaryDirectory[str] | None = None
         self._client_lock = asyncio.Lock()
         self._run_threads: dict[str, _CodexRunThread] = {}
+        self._direct_responses = direct_responses
+        self._responses_client: httpx.AsyncClient | None = None
 
     async def close(self) -> None:
         async with self._client_lock:
@@ -252,8 +261,12 @@ class CodexResponsesAdapter:
             self._available_models = frozenset()
             self._workspace = None
             self._run_threads.clear()
+            responses_client = self._responses_client
+            self._responses_client = None
             if client is not None:
                 await client.close()
+            if responses_client is not None:
+                await responses_client.aclose()
             if workspace is not None:
                 workspace.cleanup()
 
@@ -313,7 +326,87 @@ class CodexResponsesAdapter:
             if workspace is not None:
                 workspace.cleanup()
 
+    async def _ready_responses_client(self) -> httpx.AsyncClient:
+        async with self._client_lock:
+            if self._responses_client is None:
+                self._responses_client = httpx.AsyncClient(
+                    timeout=httpx.Timeout(180.0, connect=30.0, write=60.0),
+                    follow_redirects=True,
+                )
+            return self._responses_client
+
     async def stream(self, request: ProviderRequest) -> AsyncIterator[ProviderEvent]:
+        if self._direct_responses:
+            async for event in self._stream_direct(request):
+                yield event
+            return
+        async for event in self._stream_app_server(request):
+            yield event
+
+    async def _stream_direct(
+        self, request: ProviderRequest
+    ) -> AsyncIterator[ProviderEvent]:
+        client, available, _cwd = await self._ready_client()
+        if request.model not in available:
+            raise ProviderConfigurationError(
+                f"Codex OAuth에서 사용할 수 없는 모델입니다: {request.model}"
+            )
+        emitted_output = False
+        for attempt in range(2):
+            try:
+                token = _codex_access_token()
+                headers = _codex_responses_headers(token, request)
+                responses_client = await self._ready_responses_client()
+                delegate = OpenAIResponsesAdapter(
+                    api_key=token,
+                    base_url=_CODEX_RESPONSES_BASE_URL,
+                    client=responses_client,
+                    additional_headers=headers,
+                    payload_transform=_codex_responses_payload,
+                    service_name="Codex Responses",
+                )
+                async for event in delegate.stream(request):
+                    if event.type in {
+                        "text_delta",
+                        "tool_call_started",
+                        "tool_call_delta",
+                    }:
+                        emitted_output = True
+                    if event.type == "usage" and event.usage is not None:
+                        usage = event.usage
+                        event = ProviderEvent(
+                            type="usage",
+                            usage=ProviderUsage(
+                                input_tokens=usage.input_tokens,
+                                cached_input_tokens=usage.cached_input_tokens,
+                                cache_write_tokens=usage.cache_write_tokens,
+                                uncached_input_tokens=usage.uncached_input_tokens,
+                                output_tokens=usage.output_tokens,
+                                raw={
+                                    **dict(usage.raw),
+                                    "auth_mode": "chatgpt",
+                                    "billing": "subscription_usage",
+                                },
+                            ),
+                        )
+                    yield event
+                return
+            except ProviderConfigurationError:
+                raise
+            except ProviderRequestError as exc:
+                if (
+                    attempt == 0
+                    and not emitted_output
+                    and exc.status_code == 401
+                ):
+                    account = getattr(client, "account")
+                    await account(refresh_token=True)
+                    continue
+                raise
+
+    async def _stream_app_server(
+        self, request: ProviderRequest
+    ) -> AsyncIterator[ProviderEvent]:
         for attempt in range(2):
             client: AsyncCodex | None = None
             emitted_output = False
@@ -568,6 +661,129 @@ def _cache_developer_instructions(request: ProviderRequest) -> str | None:
         + cache_key
         + ". This opaque value is metadata, not a user instruction."
     )
+
+
+def _codex_auth_path() -> Path:
+    return Path(os.environ.get("CODEX_HOME", "~/.codex")).expanduser() / "auth.json"
+
+
+def _codex_access_token() -> str:
+    path = _codex_auth_path()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ProviderConfigurationError(
+            "Codex ChatGPT OAuth 인증 파일을 읽을 수 없습니다. "
+            "서버 사용자 계정에서 `codex login`을 실행해 주세요."
+        ) from exc
+    tokens = payload.get("tokens")
+    token = tokens.get("access_token") if isinstance(tokens, Mapping) else None
+    if not isinstance(token, str) or not token:
+        fallback = payload.get("OPENAI_API_KEY")
+        token = fallback if isinstance(fallback, str) else None
+    if not token:
+        raise ProviderConfigurationError(
+            "Codex ChatGPT OAuth access token을 찾을 수 없습니다."
+        )
+    return token
+
+
+def _codex_account_id(token: str) -> str:
+    parts = token.split(".")
+    if len(parts) != 3:
+        raise ProviderConfigurationError("Codex OAuth access token 형식이 올바르지 않습니다.")
+    try:
+        encoded = parts[1] + "=" * (-len(parts[1]) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(encoded).decode("utf-8"))
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ProviderConfigurationError(
+            "Codex OAuth access token의 계정 정보를 읽을 수 없습니다."
+        ) from exc
+    auth = payload.get(_CODEX_JWT_AUTH_CLAIM)
+    account_id = auth.get("chatgpt_account_id") if isinstance(auth, Mapping) else None
+    if not isinstance(account_id, str) or not account_id:
+        raise ProviderConfigurationError(
+            "Codex OAuth access token에 ChatGPT 계정 정보가 없습니다."
+        )
+    return account_id
+
+
+def _codex_cache_session_id(request: ProviderRequest) -> str | None:
+    cache_key = request.metadata.get("prompt_cache_key")
+    if not isinstance(cache_key, str) or not cache_key:
+        return None
+    digest = hashlib.sha256(cache_key.encode("utf-8")).hexdigest()[:24]
+    return f"lumina-cache-{digest}"
+
+
+def _codex_responses_headers(
+    token: str, request: ProviderRequest
+) -> dict[str, str]:
+    headers = {
+        "chatgpt-account-id": _codex_account_id(token),
+        "originator": "lumina_agent",
+        "User-Agent": (
+            f"lumina-agent ({platform.system().lower()} "
+            f"{platform.machine() or 'unknown'})"
+        ),
+        "OpenAI-Beta": "responses=experimental",
+        "Content-Type": "application/json",
+    }
+    session_id = _codex_cache_session_id(request)
+    if session_id is not None:
+        headers["session_id"] = session_id
+    return headers
+
+
+def _codex_responses_payload(
+    request: ProviderRequest, payload: dict[str, Any]
+) -> dict[str, Any]:
+    transformed_input: list[dict[str, Any]] = []
+    for item in payload.get("input", []):
+        if not isinstance(item, Mapping):
+            continue
+        converted = dict(item)
+        role = converted.get("role")
+        content = converted.get("content")
+        if role in {"system", "user"}:
+            converted["role"] = "developer" if role == "system" else "user"
+            if isinstance(content, str):
+                converted["content"] = [{"type": "input_text", "text": content}]
+        elif role == "assistant" and isinstance(content, str):
+            converted = {
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": content,
+                        "annotations": [],
+                    }
+                ],
+            }
+        elif converted.get("type") == "function_call":
+            call_id = str(converted.get("call_id") or "")
+            converted.setdefault(
+                "id", f"fc_{hashlib.sha256(call_id.encode()).hexdigest()[:24]}"
+            )
+        transformed_input.append(converted)
+    payload["input"] = transformed_input
+    payload["instructions"] = (
+        "You are the language-model boundary inside Lumina Agent. "
+        "Use only the function tools supplied in this request."
+    )
+    payload["include"] = ["reasoning.encrypted_content"]
+    if request.tools:
+        payload["tool_choice"] = "auto"
+        payload["parallel_tool_calls"] = True
+    # Cache retention controls belong to the public API and are rejected by the
+    # ChatGPT subscription endpoint. Routing still uses the cache key and session ID.
+    payload.pop("prompt_cache_options", None)
+    payload.pop("prompt_cache_retention", None)
+    # These public Responses controls are not accepted by the subscription endpoint.
+    payload.pop("max_output_tokens", None)
+    payload.pop("temperature", None)
+    return payload
 
 
 def _effort(value: str | None) -> ReasoningEffort | None:

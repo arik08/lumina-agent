@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import base64
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 from openai_codex import ApprovalMode
 
@@ -29,6 +31,100 @@ class _Account:
 
 class TransportClosedError(RuntimeError):
     pass
+
+
+def _test_codex_token(account_id: str = "acct-test") -> str:
+    header = base64.urlsafe_b64encode(b'{}').decode().rstrip("=")
+    claims = base64.urlsafe_b64encode(
+        json.dumps(
+            {
+                "https://api.openai.com/auth": {
+                    "chatgpt_account_id": account_id
+                }
+            }
+        ).encode()
+    ).decode().rstrip("=")
+    return f"{header}.{claims}.signature"
+
+
+@pytest.mark.asyncio
+async def test_codex_direct_routes_same_prefix_across_new_run_sessions(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    (codex_home / "auth.json").write_text(
+        json.dumps({"tokens": {"access_token": _test_codex_token()}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    captured: list[tuple[httpx.Headers, dict[str, Any]]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        captured.append((request.headers, payload))
+        response = {
+            "type": "response.completed",
+            "response": {
+                "output": [],
+                "usage": {
+                    "input_tokens": 100,
+                    "input_tokens_details": {"cached_tokens": 85},
+                    "output_tokens": 4,
+                },
+            },
+        }
+        body = f"data: {json.dumps(response)}\n\n".encode()
+        return httpx.Response(200, content=body)
+
+    adapter = CodexResponsesAdapter()
+    adapter._responses_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler)
+    )
+    fake_client = SimpleNamespace()
+
+    async def ready_client():
+        return fake_client, frozenset({"gpt-5.5"}), "."
+
+    monkeypatch.setattr(adapter, "_ready_client", ready_client)
+    cache_key = "lumina:user:v2:shared-static-prefix"
+    for run_id, task in (("session-a", "first task"), ("session-b", "next task")):
+        events = [
+            event
+            async for event in adapter.stream(
+                ProviderRequest(
+                    model="gpt-5.5",
+                    messages=(
+                        ProviderMessage(role="system", content="stable system"),
+                        ProviderMessage(role="user", content=task),
+                    ),
+                    metadata={
+                        "prompt_cache_key": cache_key,
+                        "prompt_cache_retention": "24h",
+                        "codex_run_thread_id": run_id,
+                    },
+                    max_output_tokens=32,
+                    temperature=0.2,
+                )
+            )
+        ]
+        assert events[-2].usage is not None
+        assert events[-2].usage.cached_input_tokens == 85
+        assert events[-2].usage.raw["billing"] == "subscription_usage"
+
+    assert len(captured) == 2
+    assert captured[0][0]["session_id"] == captured[1][0]["session_id"]
+    assert captured[0][0]["chatgpt-account-id"] == "acct-test"
+    assert captured[0][1]["prompt_cache_key"] == cache_key
+    assert captured[1][1]["prompt_cache_key"] == cache_key
+    assert "max_output_tokens" not in captured[0][1]
+    assert "temperature" not in captured[0][1]
+    assert "prompt_cache_retention" not in captured[0][1]
+    assert captured[0][1]["input"][0] == {
+        "role": "developer",
+        "content": [{"type": "input_text", "text": "stable system"}],
+    }
+    await adapter.close()
 
 
 def test_codex_transport_close_is_classified_as_retryable_stream_failure() -> None:
@@ -189,7 +285,7 @@ async def test_codex_oauth_stream_removes_api_keys_and_maps_usage(
 
     events = [
         event
-        async for event in CodexResponsesAdapter().stream(
+        async for event in CodexResponsesAdapter(direct_responses=False).stream(
             ProviderRequest(
                 model="gpt-5.5",
                 messages=(ProviderMessage(role="user", content="안녕"),),
@@ -227,7 +323,7 @@ async def test_codex_oauth_reuses_warm_client_across_requests(
     monkeypatch.setattr(
         "lumina.providers.codex.adapter.AsyncCodex", _fake_async_codex(state)
     )
-    adapter = CodexResponsesAdapter()
+    adapter = CodexResponsesAdapter(direct_responses=False)
     request = ProviderRequest(
         model="gpt-5.5",
         messages=(ProviderMessage(role="user", content="안녕"),),
@@ -265,7 +361,7 @@ async def test_codex_oauth_reuses_run_thread_with_only_incremental_context(
     monkeypatch.setattr(
         "lumina.providers.codex.adapter.AsyncCodex", _fake_async_codex(state)
     )
-    adapter = CodexResponsesAdapter()
+    adapter = CodexResponsesAdapter(direct_responses=False)
     base_messages = (
         ProviderMessage(role="system", content="stable system"),
         ProviderMessage(role="user", content="inspect BF-01"),
@@ -328,7 +424,7 @@ async def test_codex_oauth_retries_transport_close_before_output(
     monkeypatch.setattr(
         "lumina.providers.codex.adapter.AsyncCodex", _fake_async_codex(state)
     )
-    adapter = CodexResponsesAdapter()
+    adapter = CodexResponsesAdapter(direct_responses=False)
 
     events = [
         event
@@ -372,7 +468,7 @@ async def test_codex_oauth_discards_dead_client_after_partial_output(
             return InterruptedThread()
 
     client = InterruptedClient()
-    adapter = CodexResponsesAdapter()
+    adapter = CodexResponsesAdapter(direct_responses=False)
 
     async def ready_client():
         return client, frozenset({"gpt-5.5"}), "."
@@ -416,7 +512,7 @@ async def test_codex_oauth_discard_tolerates_dead_process_close_error() -> None:
 
     client = DeadClient()
     workspace = Workspace()
-    adapter = CodexResponsesAdapter()
+    adapter = CodexResponsesAdapter(direct_responses=False)
     adapter._client = client  # type: ignore[assignment]
     adapter._workspace = workspace  # type: ignore[assignment]
 
@@ -460,7 +556,7 @@ async def test_codex_oauth_stream_maps_lumina_tool_calls(
 
     events = [
         event
-        async for event in CodexResponsesAdapter().stream(
+        async for event in CodexResponsesAdapter(direct_responses=False).stream(
             ProviderRequest(
                 model="gpt-5.5",
                 messages=(ProviderMessage(role="user", content="BF-01 확인"),),
@@ -510,7 +606,7 @@ async def test_codex_oauth_recovers_structural_tool_argument_suffix(
 
     events = [
         event
-        async for event in CodexResponsesAdapter().stream(
+        async for event in CodexResponsesAdapter(direct_responses=False).stream(
             ProviderRequest(
                 model="gpt-5.5",
                 messages=(ProviderMessage(role="user", content="검색"),),
@@ -551,7 +647,7 @@ async def test_codex_oauth_preserves_invalid_result_classification(
     with pytest.raises(codex_adapter.ProviderRequestError) as captured:
         _events = [
             event
-            async for event in CodexResponsesAdapter().stream(
+            async for event in CodexResponsesAdapter(direct_responses=False).stream(
                 ProviderRequest(
                     model="gpt-5.5",
                     messages=(ProviderMessage(role="user", content="검색"),),
@@ -580,7 +676,7 @@ async def test_codex_oauth_requires_chatgpt_account(
     with pytest.raises(ProviderConfigurationError, match="ChatGPT OAuth"):
         _events = [
             event
-            async for event in CodexResponsesAdapter().stream(
+            async for event in CodexResponsesAdapter(direct_responses=False).stream(
                 ProviderRequest(
                     model="gpt-5.5",
                     messages=(ProviderMessage(role="user", content="안녕"),),
