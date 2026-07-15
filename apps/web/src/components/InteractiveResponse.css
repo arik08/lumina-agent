@@ -20,7 +20,6 @@
 
 .interactive-response-toolbar {
   display: flex;
-  width: 100%;
   min-height: 34px;
   align-items: center;
   justify-content: space-between;
@@ -31,13 +30,7 @@
 }
 
 .interactive-response-expand-trigger {
-  color: inherit;
-  text-align: left;
-  cursor: zoom-in;
-}
-
-.interactive-response-expand-trigger:hover {
-  background: color-mix(in srgb, var(--surface-soft) 82%, var(--surface));
+  cursor: pointer;
 }
 
 .interactive-response-expand-trigger:focus-visible {
@@ -69,7 +62,7 @@
 }
 
 .interactive-response-toolbar button:hover,
-.interactive-response-expand-trigger:hover .interactive-response-expand-icon,
+.interactive-response-expand-icon:hover,
 .response-zoom-controls button:hover {
   border-color: var(--line);
   background: var(--surface);

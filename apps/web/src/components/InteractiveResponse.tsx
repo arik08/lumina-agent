@@ -295,16 +295,22 @@ export function MermaidDiagram({ source }: { source: string }) {
   return (
     <>
       <section className="interactive-response-block mermaid-diagram" aria-label="Mermaid 다이어그램">
-        <button
-          type="button"
+        <div
           className="interactive-response-toolbar interactive-response-expand-trigger"
+          role="button"
+          tabIndex={0}
           aria-label="Mermaid 다이어그램 확대"
           data-tooltip="확대해서 보기"
           onClick={() => setExpanded(true)}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            event.preventDefault();
+            setExpanded(true);
+          }}
         >
           <span>Mermaid</span>
           <span className="interactive-response-expand-icon" aria-hidden="true"><Maximize2 size={15} /></span>
-        </button>
+        </div>
         <div className="interactive-response-content" onDoubleClick={() => setExpanded(true)}>
           <MermaidSurface source={source} />
         </div>
