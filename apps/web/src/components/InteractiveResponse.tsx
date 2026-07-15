@@ -139,7 +139,15 @@ function ZoomViewer({
     <div className={`response-zoom-backdrop${themeClassName}`} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section className="response-zoom-dialog" role="dialog" aria-modal="true" aria-label={`${title} 확대 보기`}>
         <header className="response-zoom-header">
-          <strong>{title}</strong>
+          <button
+            type="button"
+            className="response-zoom-title"
+            aria-label={`${title} 확대 보기 닫기`}
+            data-tooltip="닫기"
+            onClick={onClose}
+          >
+            <strong>{title}</strong>
+          </button>
           <div className="response-zoom-controls" aria-label="확대 보기 조작">
             <button type="button" aria-label="축소" data-tooltip="축소" onClick={() => changeZoom(zoom / 1.2)}><Minus size={16} /></button>
             <output aria-live="polite">{Math.round(zoom * 100)}%</output>

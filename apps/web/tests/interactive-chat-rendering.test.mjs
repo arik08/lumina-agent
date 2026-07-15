@@ -70,6 +70,8 @@ test("Mermaid and structured charts expose a zoomable, pannable dialog", () => {
   assert.match(globalStyles, /\.response-zoom-backdrop\.theme-dark,[\s\S]*?\.app-shell\.theme-dark/);
   assert.match(rendererSource, /aria-label="Mermaid 다이어그램 확대"/);
   assert.match(rendererSource, /<div[\s\S]*?className="interactive-response-toolbar interactive-response-expand-trigger"[\s\S]*?role="button"[\s\S]*?tabIndex=\{0\}[\s\S]*?onClick=\{\(\) => setExpanded\(true\)\}/);
+  assert.match(rendererSource, /className="response-zoom-title"[\s\S]*?aria-label=\{`\$\{title\} 확대 보기 닫기`\}[\s\S]*?onClick=\{onClose\}/);
+  assert.match(rendererStyles, /\.response-zoom-title \{[^}]*cursor: pointer;/);
   assert.match(rendererSource, /aria-label="Mermaid 다이어그램 확대"\s+onClick/);
   assert.match(rendererSource, /className="interactive-response-expand-icon" aria-hidden="true"><Maximize2 size=\{15\} \/><\/span>/);
   assert.match(rendererSource, /event\.key !== "Enter" && event\.key !== " "/);
