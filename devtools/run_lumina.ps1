@@ -512,18 +512,171 @@ function Test-LuminaDatabaseOwnershipFailure {
     }
 }
 
-function Stop-ProcessTree {
-    param([Parameter(Mandatory = $true)][int]$ProcessId)
+function Get-LuminaNativeProcessTreeIds {
+    param([Parameter(Mandatory = $true)][int[]]$RootIds)
+
+    try {
+        if ($null -eq ("LuminaNativeProcessSnapshot" -as [type])) {
+            Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+
+public static class LuminaNativeProcessSnapshot
+{
+    private const uint ProcessSnapshot = 0x00000002;
+    private static readonly IntPtr InvalidHandle = new IntPtr(-1);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct ProcessEntry
+    {
+        public uint Size;
+        public uint Usage;
+        public uint ProcessId;
+        public IntPtr DefaultHeapId;
+        public uint ModuleId;
+        public uint ThreadCount;
+        public uint ParentProcessId;
+        public int BasePriority;
+        public uint Flags;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+        public string ExecutableName;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint processId);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool Process32FirstW(IntPtr snapshot, ref ProcessEntry entry);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool Process32NextW(IntPtr snapshot, ref ProcessEntry entry);
+
+    [DllImport("kernel32.dll")]
+    private static extern bool CloseHandle(IntPtr handle);
+
+    public static int[] GetTree(int[] roots)
+    {
+        var childrenByParent = new Dictionary<int, List<int>>();
+        var existingProcessIds = new HashSet<int>();
+        IntPtr snapshot = CreateToolhelp32Snapshot(ProcessSnapshot, 0);
+        if (snapshot == InvalidHandle)
+        {
+            return new int[0];
+        }
+
+        try
+        {
+            var entry = new ProcessEntry();
+            entry.Size = (uint)Marshal.SizeOf(typeof(ProcessEntry));
+            if (Process32FirstW(snapshot, ref entry))
+            {
+                do
+                {
+                    int processId = (int)entry.ProcessId;
+                    int parentId = (int)entry.ParentProcessId;
+                    existingProcessIds.Add(processId);
+
+                    List<int> childIds;
+                    if (!childrenByParent.TryGetValue(parentId, out childIds))
+                    {
+                        childIds = new List<int>();
+                        childrenByParent[parentId] = childIds;
+                    }
+                    childIds.Add(processId);
+                }
+                while (Process32NextW(snapshot, ref entry));
+            }
+        }
+        finally
+        {
+            CloseHandle(snapshot);
+        }
+
+        var queue = new Queue<int>();
+        foreach (int rootId in roots)
+        {
+            if (existingProcessIds.Contains(rootId))
+            {
+                queue.Enqueue(rootId);
+            }
+        }
+
+        var seen = new HashSet<int>();
+        var tree = new List<int>();
+        while (queue.Count > 0)
+        {
+            int currentId = queue.Dequeue();
+            if (!seen.Add(currentId))
+            {
+                continue;
+            }
+            tree.Add(currentId);
+
+            List<int> childIds;
+            if (childrenByParent.TryGetValue(currentId, out childIds))
+            {
+                foreach (int childId in childIds)
+                {
+                    queue.Enqueue(childId);
+                }
+            }
+        }
+        return tree.ToArray();
+    }
+}
+'@ -ErrorAction Stop
+        }
+        return @([LuminaNativeProcessSnapshot]::GetTree($RootIds))
+    }
+    catch {
+        return @()
+    }
+}
+
+function Stop-ProcessTrees {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [int[]]$ProcessIds
+    )
+
+    $rootIds = @($ProcessIds | Where-Object { $_ -gt 0 } | Sort-Object -Unique)
+    if ($rootIds.Count -eq 0) {
+        return
+    }
+
+    $treeIds = @(Get-LuminaNativeProcessTreeIds -RootIds $rootIds)
+    if ($treeIds.Count -gt 0) {
+        for ($index = $treeIds.Count - 1; $index -ge 0; $index--) {
+            Stop-Process -Id $treeIds[$index] -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    $remainingIds = @(
+        $(if ($treeIds.Count -gt 0) { $treeIds } else { $rootIds }) |
+            Where-Object { $null -ne (Get-Process -Id $_ -ErrorAction SilentlyContinue) }
+    )
+    if ($remainingIds.Count -eq 0) {
+        return
+    }
 
     $taskkillPath = Join-Path $env:SystemRoot "System32\taskkill.exe"
     if (Test-Path -LiteralPath $taskkillPath) {
-        try {
-            & $taskkillPath /PID ([string]$ProcessId) /T /F 2>$null | Out-Null
+        foreach ($processId in $remainingIds) {
+            try {
+                & $taskkillPath /PID ([string]$processId) /T /F 2>$null | Out-Null
+            }
+            catch {
+                # Fall back to the PowerShell tree walk below.
+            }
         }
-        catch {
-            # Fall back to the PowerShell tree walk below.
-        }
-        if ($null -eq (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) {
+        $remainingIds = @(
+            $remainingIds |
+                Where-Object { $null -ne (Get-Process -Id $_ -ErrorAction SilentlyContinue) }
+        )
+        if ($remainingIds.Count -eq 0) {
             return
         }
     }
@@ -531,7 +684,9 @@ function Stop-ProcessTree {
     $processes = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
     $queue = [System.Collections.Generic.Queue[int]]::new()
     $tree = [System.Collections.Generic.List[int]]::new()
-    $queue.Enqueue($ProcessId)
+    foreach ($processId in $remainingIds) {
+        $queue.Enqueue($processId)
+    }
     while ($queue.Count -gt 0) {
         $currentId = $queue.Dequeue()
         if ($tree.Contains($currentId)) {
@@ -545,6 +700,12 @@ function Stop-ProcessTree {
     for ($index = $tree.Count - 1; $index -ge 0; $index--) {
         Stop-Process -Id $tree[$index] -Force -ErrorAction SilentlyContinue
     }
+}
+
+function Stop-ProcessTree {
+    param([Parameter(Mandatory = $true)][int]$ProcessId)
+
+    Stop-ProcessTrees -ProcessIds @($ProcessId)
 }
 
 function Test-LuminaCommandLine {
@@ -614,9 +775,7 @@ function Stop-ExistingLuminaListeners {
         }
         [void]$rootIds.Add($rootId)
     }
-    foreach ($rootId in $rootIds) {
-        Stop-ProcessTree -ProcessId $rootId
-    }
+    Stop-ProcessTrees -ProcessIds @($rootIds)
     $remaining = @(
         Get-NetTCPConnection -State Listen -LocalPort $Ports -ErrorAction SilentlyContinue
     )
@@ -634,9 +793,7 @@ function Stop-ManagedProcesses {
             ForEach-Object { $_.Process.Id } |
             Sort-Object -Unique
     )
-    foreach ($processId in $processIds) {
-        Stop-ProcessTree -ProcessId $processId
-    }
+    Stop-ProcessTrees -ProcessIds $processIds
     $script:ManagedProcesses = @(
         $script:ManagedProcesses |
             Where-Object { $PreserveFrontend -and $_.Name -eq "Frontend" }
@@ -946,6 +1103,8 @@ function Start-LuminaProcesses {
 
 function Wait-LuminaReady {
     $deadline = [DateTime]::UtcNow.AddSeconds($StartupTimeoutSeconds)
+    Write-LuminaStartupProgress
+    [void](Get-LuminaNativeProcessTreeIds -RootIds @($PID))
     while ([DateTime]::UtcNow -lt $deadline) {
         Write-LuminaStartupProgress
         $controlAction = Get-LuminaControlKey

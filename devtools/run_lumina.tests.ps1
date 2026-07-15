@@ -100,6 +100,29 @@ if ($null -eq $processMatcherFunction) {
 . ([scriptblock]::Create($processMatcherFunction.Extent.Text))
 $RepositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 
+$nativeTreeFunction = $ast.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq "Get-LuminaNativeProcessTreeIds"
+    },
+    $true
+)
+$stopTreesFunction = $ast.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq "Stop-ProcessTrees"
+    },
+    $true
+)
+if ($null -eq $nativeTreeFunction -or $null -eq $stopTreesFunction) {
+    throw "Fast process-tree cleanup functions were not found."
+}
+. ([scriptblock]::Create($nativeTreeFunction.Extent.Text))
+. ([scriptblock]::Create($stopTreesFunction.Extent.Text))
+Stop-ProcessTrees -ProcessIds @()
+
 $stopTreeFunction = $ast.Find(
     {
         param($node)
@@ -464,8 +487,38 @@ if (Test-LuminaCommandLine -ProcessName "cmd.exe" -CommandLine $batchWrapper) {
 }
 
 $source = [System.IO.File]::ReadAllText($scriptPath)
-$usesNativeTreeKill = $stopTreeFunction.Extent.Text -match
-    '(?s)taskkill\.exe.*?/PID.*?/T.*?/F'
+$stopManagedProcessesFunction = $ast.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq "Stop-ManagedProcesses"
+    },
+    $true
+)
+$usesNativeTreeKill = (
+    $nativeTreeFunction.Extent.Text -match 'CreateToolhelp32Snapshot' -and
+    $nativeTreeFunction.Extent.Text -notmatch 'Get-CimInstance' -and
+    $stopTreesFunction.Extent.Text -match 'Get-LuminaNativeProcessTreeIds' -and
+    $stopTreesFunction.Extent.Text -match 'taskkill\.exe' -and
+    $stopTreesFunction.Extent.Text.IndexOf('Get-LuminaNativeProcessTreeIds') -lt
+        $stopTreesFunction.Extent.Text.IndexOf('taskkill.exe') -and
+    $null -ne $stopManagedProcessesFunction -and
+    $stopManagedProcessesFunction.Extent.Text -match
+        'Stop-ProcessTrees\s+-ProcessIds\s+\$processIds'
+)
+$waitReadyFunction = $ast.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq "Wait-LuminaReady"
+    },
+    $true
+)
+$warmsNativeSnapshotDuringProgress = (
+    $null -ne $waitReadyFunction -and
+    $waitReadyFunction.Extent.Text -match
+        '(?s)Write-LuminaStartupProgress.*?Get-LuminaNativeProcessTreeIds'
+)
 $usesFastSupervisorIdentity = $source -match
     '(?s)function Set-SupervisorPid.*?StartTime\.ToUniversalTime\(\)\.Ticks' -and
     $source -match '(?s)function Stop-PreviousSupervisor.*?-split ''\\\|'', 2'
@@ -482,8 +535,13 @@ $usesOneProcessSnapshot = (
     $rootLookupFunction.Extent.Text -match 'ProcessesById' -and
     $rootLookupFunction.Extent.Text -notmatch 'Get-CimInstance'
 )
-if (-not $usesNativeTreeKill -or -not $usesFastSupervisorIdentity -or -not $usesOneProcessSnapshot) {
-    throw "Process cleanup must use native tree termination, a versioned supervisor identity, and one process snapshot."
+if (
+    -not $usesNativeTreeKill -or
+    -not $warmsNativeSnapshotDuringProgress -or
+    -not $usesFastSupervisorIdentity -or
+    -not $usesOneProcessSnapshot
+) {
+    throw "Process cleanup must use the fast native tree snapshot before fallback, a versioned supervisor identity, and one listener snapshot."
 }
 
 $startupResetRestartsBoth = $source -match
@@ -552,7 +610,7 @@ try {
     if ($null -ne (Get-Process -Id $treeChildId -ErrorAction SilentlyContinue)) {
         throw "Stop-ProcessTree left the test child process running."
     }
-    if ($stopwatch.Elapsed.TotalSeconds -ge 10) {
+    if ($stopwatch.Elapsed.TotalSeconds -ge 5) {
         throw "Stop-ProcessTree took $([math]::Round($stopwatch.Elapsed.TotalSeconds, 2)) seconds."
     }
 }
@@ -562,6 +620,36 @@ finally {
     }
     if ($null -ne $treeParent) {
         Stop-Process -Id $treeParent.Id -Force -ErrorAction SilentlyContinue
+    }
+}
+
+$managedFixtureProcesses = @()
+try {
+    foreach ($index in 1..2) {
+        $managedFixtureProcesses += Start-Process `
+            -FilePath "powershell.exe" `
+            -ArgumentList @('-NoProfile', '-Command', 'Start-Sleep -Seconds 60') `
+            -WindowStyle Hidden `
+            -PassThru
+    }
+    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+    Stop-ProcessTrees -ProcessIds $managedFixtureProcesses.Id
+    $stopwatch.Stop()
+    if (
+        @(
+            $managedFixtureProcesses |
+                Where-Object { Get-Process -Id $_.Id -ErrorAction SilentlyContinue }
+        ).Count -gt 0
+    ) {
+        throw "Stop-ProcessTrees left a managed process running."
+    }
+    if ($stopwatch.Elapsed.TotalSeconds -ge 3) {
+        throw "Batched managed cleanup took $([math]::Round($stopwatch.Elapsed.TotalSeconds, 2)) seconds."
+    }
+}
+finally {
+    foreach ($process in $managedFixtureProcesses) {
+        Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
     }
 }
 
