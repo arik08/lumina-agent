@@ -50,7 +50,7 @@ test("Mermaid uses the designated artifact palette without overriding authored c
   assert.match(rendererStyles, /\.node\[data-lumina-tone="purple"\]/);
   assert.match(rendererStyles, /var\(--mermaid-palette-blue\) 14%/);
   assert.match(rendererStyles, /var\(--mermaid-palette-teal\) 16%/);
-  assert.match(rendererStyles, /var\(--mermaid-palette-amber\) 22%/);
+  assert.match(rendererStyles, /var\(--mermaid-palette-coral\) 16%/);
 });
 
 test("tall Mermaid workflows keep readable geometry inside a bounded scroll surface", () => {

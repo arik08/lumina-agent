@@ -123,7 +123,7 @@
 }
 
 .mermaid-surface svg .node[data-lumina-tone="orange"] {
-  --mermaid-node-fill: color-mix(in srgb, var(--mermaid-palette-amber) 22%, var(--surface));
+  --mermaid-node-fill: color-mix(in srgb, var(--mermaid-palette-coral) 16%, var(--surface));
   --mermaid-node-stroke: var(--mermaid-palette-coral);
 }
 
