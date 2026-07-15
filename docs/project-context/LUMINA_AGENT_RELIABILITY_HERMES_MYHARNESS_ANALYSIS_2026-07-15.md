@@ -197,9 +197,19 @@ Lumina는 단순히 context window 전체를 입력으로 사용하지 않는다
 - HTTP 오류 본문의 secret이 예외 문자열에 노출되지 않는다.
 - 기존 output-limit continuation, OpenAI-compatible SSE, reactive compaction이 회귀하지 않는다.
 
-관련 집중 테스트 결과: **69 passed**.
+관련 집중 테스트 결과: **73 passed**.
 
-전체 Backend suite 결과는 **394 passed, 3 skipped, 1 failed**였다. 실패 1건은 이번 변경 파일과 무관한 `test_development_launcher_keeps_failure_visible_and_preserves_exit_code`로, 현재 Windows 개발 launcher 출력의 `Press R ... Press any other key`와 테스트가 요구하는 대소문자 포함 `Press any key` 문구가 일치하지 않는 기존 계약 불일치다. Agent executor, Provider adapter, context compaction 회귀군에는 실패가 없다.
+전체 Backend suite 결과는 **415 passed, 3 skipped, 1 failed**였다. 실패 1건은 이번 변경 파일과 무관한 `test_development_launcher_keeps_failure_visible_and_preserves_exit_code`로, 현재 Windows 개발 launcher 출력의 `Press R ... Press any other key`와 테스트가 요구하는 대소문자 포함 `Press any key` 문구가 일치하지 않는 기존 계약 불일치다. Agent executor, Provider adapter, context compaction 회귀군에는 실패가 없다.
+
+### 9.1 집에서 추가로 검증한 hardening
+
+- P-GPT 요청의 `reasoning_effort`를 gateway 선택 필드로 협상한다. gateway가 `invalid parameter`, `unexpected`, `unsupported` 등으로 해당 필드를 거부하면 같은 요청에서 그 필드만 제거하고 재전송한다.
+- 출력 전 transient Provider 요청은 `1s → 2s → 4s` backoff로 총 4회까지 시도해 MyHarness의 재시도 수준과 맞췄다.
+- 웹 조사 예산을 기사 키워드가 있는 요청에만 적용하던 조건을 제거했다. 일반 웹 조사도 기본 `검색 3회 / fetch 5회`, 명시적 심층 조사는 `6회 / 10회`를 상한으로 사용한다.
+- 사용자가 URL만 주고 비교·팩트체크·관련 보도를 요구하지 않으면 첫 모델 요청에서 `web_search` schema를 제외하고 해당 URL fetch 수만 허용한다.
+- 검색어 단어 순서만 바꾸거나 URL fragment·`utm_*`·`fbclid`·`gclid`만 바꾼 호출은 중복으로 차단한다.
+- 최종 Provider 실패는 `authentication`, `rate_limit`, `network`, `stream`, `context`, `endpoint`, `response`로 분류한다. Run event에는 응답 본문이나 credential 없이 단계, 상태 코드, 재시도 여부, 실제 시도 횟수만 저장한다.
+- 회사망 P-GPT 실호출은 집에서 DNS 접근이 되지 않아 미검증 상태다. 위 항목은 `httpx.MockTransport` 기반 P-GPT 호환 fault injection과 로컬 Run 회귀 테스트로 검증했다.
 
 ## 10. 남은 과제와 우선순위
 
@@ -209,15 +219,11 @@ Lumina는 단순히 context window 전체를 입력으로 사용하지 않는다
 
    Provider가 보고한 input token과 사전 추정치의 비율을 endpoint·model별로 보수적으로 학습해 padding을 조정해야 한다. 과대 추정은 불필요한 압축, 과소 추정은 context 오류를 만든다.
 
-2. **Provider 오류 taxonomy 세분화**
-
-   `provider_request` 아래에 transport reset, idle timeout, rate limit, overload, authentication, context, malformed stream을 안전한 code로 분리해야 한다. 현재 redacted 오류 15건은 원인별 개선 효과 측정을 어렵게 한다.
-
-3. **fault-injection 장시간 benchmark**
+2. **fault-injection 장시간 benchmark**
 
    429, 503, 연결 중단, SSE 절단, 중복 chunk, context 축소, worker 재시작을 주입해 최소 100 Run의 완료율·중복률·평균 복구 시간을 비교해야 한다.
 
-4. **불완전 Tool Call 진단 강화**
+3. **불완전 Tool Call 진단 강화**
 
    자동 재실행은 금지하되, side effect 실행 전 잘린 JSON과 Provider 종료 원인을 별도 code로 구분하고 사용자 재개 가능성을 높여야 한다.
 
