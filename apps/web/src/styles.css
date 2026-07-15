@@ -2857,6 +2857,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 
 .artifact-length-popover.theme-dark,
 .lumina-select-menu.theme-dark,
+.response-zoom-backdrop.theme-dark,
 .app-shell.theme-dark,
 .shared-viewer.theme-dark,
 .shared-viewer-state.theme-dark {

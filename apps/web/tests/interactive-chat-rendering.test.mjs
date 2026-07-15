@@ -63,6 +63,9 @@ test("tall Mermaid workflows keep readable geometry inside a bounded scroll surf
 
 test("Mermaid and structured charts expose a zoomable, pannable dialog", () => {
   assert.match(rendererSource, /function ZoomViewer/);
+  assert.match(rendererSource, /document\.querySelector\("\.app-shell\.theme-dark"\) \? " theme-dark" : ""/);
+  assert.match(rendererSource, /className=\{`response-zoom-backdrop\$\{themeClassName\}`\}/);
+  assert.match(globalStyles, /\.response-zoom-backdrop\.theme-dark,[\s\S]*?\.app-shell\.theme-dark/);
   assert.match(rendererSource, /aria-label="Mermaid 다이어그램 확대"/);
   assert.match(rendererSource, /setPointerCapture/);
   assert.match(rendererSource, /changeZoom\(zoom \* \(event\.deltaY > 0 \? 0\.9 : 1\.1\)\)/);

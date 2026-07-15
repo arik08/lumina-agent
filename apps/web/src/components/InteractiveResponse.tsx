@@ -106,6 +106,7 @@ function ZoomViewer({
 
   if (!open) return null;
 
+  const themeClassName = document.querySelector(".app-shell.theme-dark") ? " theme-dark" : "";
   const changeZoom = (next: number) => setZoom(clamp(next, 0.5, 4));
   const reset = () => {
     setZoom(1);
@@ -135,7 +136,7 @@ function ZoomViewer({
   };
 
   return createPortal(
-    <div className="response-zoom-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <div className={`response-zoom-backdrop${themeClassName}`} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section className="response-zoom-dialog" role="dialog" aria-modal="true" aria-label={`${title} 확대 보기`}>
         <header className="response-zoom-header">
           <strong>{title}</strong>
