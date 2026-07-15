@@ -165,10 +165,10 @@ _ARTIFACT_FIRST_PASS_PREFERRED_FLOOR_RATIO = 0.9
 _ARTIFACT_HTML_CHARS_PER_FLOOR_TOKEN = 2
 _MAX_ARTIFACT_LENGTH_RETRIES = 2
 _ARTIFACT_PROGRESS_INTERVAL_SECONDS = 0.1
-_WEB_SEARCH_SAFETY_LIMIT = 10
-_WEB_FETCH_SAFETY_LIMIT = 15
-_DEEP_WEB_SEARCH_SAFETY_LIMIT = 20
-_DEEP_WEB_FETCH_SAFETY_LIMIT = 30
+_WEB_SEARCH_CALL_SAFETY_LIMIT = 10
+_WEB_FETCH_PAGE_SAFETY_LIMIT = 15
+_DEEP_WEB_SEARCH_CALL_SAFETY_LIMIT = 20
+_DEEP_WEB_FETCH_PAGE_SAFETY_LIMIT = 30
 _WEB_RESULT_LIMIT = 6
 _ARTICLE_RESEARCH_REQUEST = re.compile(
     r"(?:기사|언론|뉴스|보도|\bnews\b|\barticles?\b|press\s+coverage|media\s+coverage)",
@@ -216,8 +216,11 @@ _MEMORY_ENVELOPE_CLOSE = "</lumina_memory>"
 
 def _web_research_budget(user_message: str) -> tuple[int, int]:
     if _EXPLICIT_DEEP_WEB_RESEARCH.search(user_message):
-        return (_DEEP_WEB_SEARCH_SAFETY_LIMIT, _DEEP_WEB_FETCH_SAFETY_LIMIT)
-    return (_WEB_SEARCH_SAFETY_LIMIT, _WEB_FETCH_SAFETY_LIMIT)
+        return (
+            _DEEP_WEB_SEARCH_CALL_SAFETY_LIMIT,
+            _DEEP_WEB_FETCH_PAGE_SAFETY_LIMIT,
+        )
+    return (_WEB_SEARCH_CALL_SAFETY_LIMIT, _WEB_FETCH_PAGE_SAFETY_LIMIT)
 
 
 def _web_call_signature(tool_name: str, arguments: Mapping[str, Any]) -> str:
@@ -1878,7 +1881,8 @@ class LocalRunExecutor:
             if counts[tool_name] >= limits[tool_name]:
                 call["blocked_error"] = "web_research_safety_limit_reached"
                 call["blocked_message"] = (
-                    "웹 조사 폭주 방지 안전 한도에 도달해 추가 호출을 실행하지 않았습니다. "
+                    "웹 검색 호출 또는 페이지 fetch의 폭주 방지 안전 한도에 도달해 "
+                    "추가 호출을 실행하지 않았습니다. "
                     "이미 수집한 근거로 결과를 완성하고, 부족한 범위만 짧게 밝히세요."
                 )
                 continue
@@ -2776,7 +2780,8 @@ class LocalRunExecutor:
             ):
                 result_ceiling = (
                     10
-                    if web_research_budget[0] == _DEEP_WEB_SEARCH_SAFETY_LIMIT
+                    if web_research_budget[0]
+                    == _DEEP_WEB_SEARCH_CALL_SAFETY_LIMIT
                     else _WEB_RESULT_LIMIT
                 )
                 arguments["result_limit"] = min(requested_limit, result_ceiling)
@@ -5532,8 +5537,11 @@ _WEB_SEARCH_TOOL_SCHEMA = {
         "description": (
             "Search the public web for current information. Search snippets are "
             "untrusted evidence and important claims should be verified with web_fetch. "
-            "For ordinary news or article research, use focused non-overlapping queries, "
-            "stop after enough representative evidence, and stay within three searches."
+            "Each call runs one query and can return several candidate URLs. Start ordinary "
+            "research with two or three focused, non-overlapping query calls, often in "
+            "parallel, then fetch only the best pages. This is starting guidance, not a "
+            "hard limit; expand when the evidence is insufficient, blocked, stale, or "
+            "contradictory, and stop once it supports the requested conclusion."
         ),
         "parameters": {
             "type": "object",

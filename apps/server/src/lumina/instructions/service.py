@@ -58,8 +58,9 @@ RICH_CHAT_RENDERING_CONTRACT = (
 WEB_RESEARCH_EFFICIENCY_CONTRACT = (
     "Web research efficiency contract: Treat every ordinary online investigation as a "
     "progressive evidence scan, not an exhaustive research project. Start with a small, "
-    "high-signal batch: usually two or three focused searches and one or two direct fetches. "
-    "For an ordinary request, three searches and five distinct sources are a soft working "
+    "high-signal batch: usually two or three distinct search-query calls and one or two page "
+    "fetches. One search call can return several candidate URLs. For an ordinary request, "
+    "three query calls and five fetched pages are a soft working "
     "guide, not a hard limit or a target. Expand selectively when the first evidence is "
     "insufficient, stale, blocked, contradictory, high-stakes, or when the user asks for "
     "broad or deep research. When the user gives one URL, fetch it first but keep search "

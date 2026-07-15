@@ -197,7 +197,7 @@ Lumina는 단순히 context window 전체를 입력으로 사용하지 않는다
 - HTTP 오류 본문의 secret이 예외 문자열에 노출되지 않는다.
 - 기존 output-limit continuation, OpenAI-compatible SSE, reactive compaction이 회귀하지 않는다.
 
-관련 집중 테스트 결과: **74 passed**.
+관련 집중 테스트 결과: **75 passed**.
 
 전체 Backend suite 결과는 **416 passed, 3 skipped, 1 failed**였다. 실패 1건은 이번 변경 파일과 무관한 `test_development_launcher_keeps_failure_visible_and_preserves_exit_code`로, 현재 Windows 개발 launcher 출력의 `Press R ... Press any other key`와 테스트가 요구하는 대소문자 포함 `Press any key` 문구가 일치하지 않는 기존 계약 불일치다. Agent executor, Provider adapter, context compaction 회귀군에는 실패가 없다.
 
@@ -205,8 +205,8 @@ Lumina는 단순히 context window 전체를 입력으로 사용하지 않는다
 
 - P-GPT 요청의 `reasoning_effort`를 gateway 선택 필드로 협상한다. gateway가 `invalid parameter`, `unexpected`, `unsupported` 등으로 해당 필드를 거부하면 같은 요청에서 그 필드만 제거하고 재전송한다.
 - 출력 전 transient Provider 요청은 `1s → 2s → 4s` backoff로 총 4회까지 시도해 MyHarness의 재시도 수준과 맞췄다.
-- 웹 조사 예산을 기사 키워드가 있는 요청에만 적용하던 조건을 제거했다. 일반 조사는 `검색 2-3회 / fetch 1-2회`로 작게 시작하고 `3회 / 5개 출처`를 소프트 가이드로 사용한다. 근거가 부족·차단·상충·노후화됐거나 고위험·심층 요청이면 모델이 추가 조사할 수 있다.
-- 실제 차단은 조사 지침과 분리된 폭주 방지 안전 한도에서만 작동한다. 일반 조사는 `검색 10회 / fetch 15회`, 명시적 심층 조사는 `20회 / 30회`다.
+- 웹 조사 예산을 기사 키워드가 있는 요청에만 적용하던 조건을 제거했다. 일반 조사는 `검색 쿼리 호출 2-3회 / 페이지 fetch 1-2회`로 작게 시작하고 `쿼리 3회 / 실제 fetch 페이지 5개`를 소프트 가이드로 사용한다. 검색 호출 1회는 기본 5개, 일반 조사 최대 6개의 후보 URL을 반환할 수 있다. 근거가 부족·차단·상충·노후화됐거나 고위험·심층 요청이면 모델이 추가 조사할 수 있다.
+- 실제 차단은 조사 지침과 분리된 폭주 방지 안전 한도에서만 작동한다. 일반 조사는 `검색 쿼리 호출 10회 / 실제 fetch 페이지 15개`, 명시적 심층 조사는 `20회 / 30개`다.
 - 사용자가 URL만 줘도 `web_search` schema를 유지한다. 직접 fetch를 우선하되 접근 실패 복구, 교차 확인, 유용한 맥락 보강이 필요하면 검색할 수 있다.
 - 검색어 단어 순서만 바꾸거나 URL fragment·`utm_*`·`fbclid`·`gclid`만 바꾼 호출은 중복으로 차단한다.
 - 최종 Provider 실패는 `authentication`, `rate_limit`, `network`, `stream`, `context`, `endpoint`, `response`로 분류한다. Run event에는 응답 본문이나 credential 없이 단계, 상태 코드, 재시도 여부, 실제 시도 횟수만 저장한다.

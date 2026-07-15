@@ -159,6 +159,15 @@ def test_web_research_uses_adaptive_guidance_with_separate_safety_limits() -> No
     ) == (10, 15)
 
 
+def test_web_search_schema_distinguishes_query_calls_from_candidate_urls() -> None:
+    description = executor_module._WEB_SEARCH_TOOL_SCHEMA["function"]["description"]
+
+    assert "Each call runs one query" in description
+    assert "return several candidate URLs" in description
+    assert "starting guidance, not a hard limit" in description
+    assert "stay within three searches" not in description
+
+
 def test_web_budget_skips_overlapping_duplicate_and_excess_calls(monkeypatch) -> None:
     executor = LocalRunExecutor()
     monkeypatch.setattr(
