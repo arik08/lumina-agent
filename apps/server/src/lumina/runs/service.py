@@ -1823,6 +1823,11 @@ def event_response(event: RunEvent) -> dict[str, Any]:
     }
 
 
+def tool_display_name(tool_name: str) -> str:
+    """Keep the visible tool name identical across events and snapshots."""
+    return tool_name
+
+
 def tool_response(tool: ToolExecution) -> dict[str, Any]:
     duration_ms = None
     if tool.started_at and tool.finished_at:
@@ -1833,7 +1838,7 @@ def tool_response(tool: ToolExecution) -> dict[str, Any]:
         "callId": tool.tool_call_id,
         "artifactId": tool.artifact_id,
         "toolName": tool.tool_name,
-        "label": tool.tool_name.replace("_", " "),
+        "label": tool_display_name(tool.tool_name),
         "status": tool.status,
         "input": (
             {}

@@ -136,6 +136,7 @@ from ..runs.service import (
     create_run_plan,
     fail_plan,
     start_plan_step,
+    tool_display_name,
     transition_run,
     update_work_plan,
 )
@@ -5066,11 +5067,6 @@ def _tool_event(tool: ToolExecution) -> dict[str, Any]:
     duration = None
     if tool.started_at and tool.finished_at:
         duration = int((tool.finished_at - tool.started_at).total_seconds() * 1000)
-    label = "보고서 생성" if tool.tool_name == "create_report" else tool.tool_name
-    if tool.tool_name.startswith("mcp__"):
-        parts = tool.tool_name.split("__")
-        if len(parts) >= 3:
-            label = f"{parts[1]} · {parts[2]}"
     progress = _write_file_tool_progress(tool.validated_input_json)
     display_input = {
         key: value
@@ -5083,7 +5079,7 @@ def _tool_event(tool: ToolExecution) -> dict[str, Any]:
         "callId": tool.tool_call_id,
         "artifactId": tool.artifact_id,
         "toolName": tool.tool_name,
-        "label": label,
+        "label": tool_display_name(tool.tool_name),
         "status": tool.status,
         "input": display_input or None,
         "inputSummary": (
