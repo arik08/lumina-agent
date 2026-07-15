@@ -39,6 +39,14 @@ from .image_tool import (
     redacted_generate_image_input,
 )
 from .report_assets import resolve_report_images
+from .tool_runtime_policy import (
+    build_tool_surface,
+    describe_deferred_tool,
+    resolve_bridge_call,
+    search_deferred_tools,
+    should_parallelize_tool_calls,
+    wrap_untrusted_tool_result,
+)
 from ..config import Settings, get_settings
 from ..citations import resolve_inline_citations
 from ..db import SessionLocal, session_scope
@@ -179,6 +187,16 @@ _WEB_PROVIDER_PAGE_WINDOW_FRACTION = 0.15
 _WEB_PROVIDER_TURN_WINDOW_FRACTION = 0.30
 _WEB_PROVIDER_PREVIEW_CHARS = 1_500
 _ESTIMATED_CHARS_PER_TOKEN = 4
+_NON_PERSISTED_TOOL_RESULTS = frozenset(
+    {
+        "activate_skill",
+        "classify_file_output_intent",
+        "update_plan",
+        "tool_search",
+        "tool_describe",
+        "tool_call",
+    }
+)
 _ARTICLE_RESEARCH_REQUEST = re.compile(
     r"(?:기사|언론|뉴스|보도|\bnews\b|\barticles?\b|press\s+coverage|media\s+coverage)",
     re.IGNORECASE,
@@ -903,8 +921,9 @@ class LocalRunExecutor:
         mcp_tools_by_name = {tool.provider_name: tool for tool in mcp_tools}
         skill_activation_schema = _skill_activation_tool_schema(run.snapshot_json)
         web_research_budget = _web_research_budget(user_message)
-        tool_schemas = (
+        core_tool_schemas = (
             _UPDATE_PLAN_TOOL_SCHEMA,
+            _READ_TOOL_RESULT_TOOL_SCHEMA,
             *((_FILE_OUTPUT_INTENT_TOOL_SCHEMA,) if output_mode == "file" else ()),
             *((skill_activation_schema,) if skill_activation_schema else ()),
             *(
@@ -923,8 +942,18 @@ class LocalRunExecutor:
             *((_WEB_SEARCH_TOOL_SCHEMA,) if web_research_budget[0] > 0 else ()),
             *((_WEB_FETCH_TOOL_SCHEMA,) if web_research_budget[1] > 0 else ()),
             *WORKSPACE_TOOL_SCHEMAS,
-            *(tool.provider_schema for tool in mcp_tools),
         )
+        tool_surface = build_tool_surface(
+            core_tool_schemas,
+            mcp_tools,
+            context_window=_optional_positive_int(
+                capabilities.get("context_window")
+                if isinstance(capabilities, Mapping)
+                else None
+            ),
+        )
+        tool_schemas = tool_surface.schemas
+        deferred_tool_names = tool_surface.deferred_names
         messages = self._conversation_messages(
             run_id,
             model_user_message,
@@ -953,6 +982,8 @@ class LocalRunExecutor:
                 messages,
                 user_message,
                 mcp_tools_by_name,
+                deferred_tool_names,
+                capabilities,
             )
             if not resumed:
                 return
@@ -1481,6 +1512,10 @@ class LocalRunExecutor:
             empty_response_retry_attempt = 0
             output_continuation_count = 0
 
+            calls = [
+                resolve_bridge_call(call, mcp_tools_by_name, deferred_tool_names)
+                for call in calls
+            ]
             if output_mode == "chat":
                 for call in calls:
                     if call["name"] in {"create_report", "write_file"}:
@@ -1557,6 +1592,7 @@ class LocalRunExecutor:
                 calls,
                 user_message,
                 mcp_tools_by_name,
+                deferred_tool_names,
             )
             if first_violation is not None:
                 await self._limit_run(run_id, first_violation)
@@ -1564,6 +1600,7 @@ class LocalRunExecutor:
             provider_tool_contents = _provider_tool_result_contents(
                 resolved_calls,
                 capabilities=capabilities,
+                untrusted_tool_names=frozenset(mcp_tools_by_name),
             )
             for resolved_index, (call, result) in enumerate(resolved_calls):
                 if call["name"] == "classify_file_output_intent":
@@ -1577,7 +1614,7 @@ class LocalRunExecutor:
                 messages.append(
                     ProviderMessage(
                         role="tool",
-                        name=call["name"],
+                        name=str(call.get("provider_name", call["name"])),
                         tool_call_id=call["id"],
                         content=provider_tool_contents[resolved_index],
                         provider_metadata=call["provider_metadata"],
@@ -1646,6 +1683,11 @@ class LocalRunExecutor:
                         call.get("provider_metadata")
                     ),
                 }
+                if call.get("provider_name"):
+                    checkpoint_call["provider_name"] = str(call["provider_name"])
+                    checkpoint_call["provider_arguments"] = str(
+                        call.get("provider_arguments", "{}")
+                    )
                 if risk.approval_required and has_sensitive_tool_arguments(arguments):
                     checkpoint_call["arguments"] = "{}"
                     checkpoint_call["blocked_error"] = (
@@ -1714,6 +1756,8 @@ class LocalRunExecutor:
         messages: list[ProviderMessage],
         user_message: str,
         mcp_tools: Mapping[str, PreparedMcpTool],
+        deferred_tool_names: frozenset[str],
+        capabilities: Mapping[str, Any] | None,
     ) -> bool:
         checkpoint_error: str | None = None
         assistant_content: str | None = None
@@ -1752,6 +1796,11 @@ class LocalRunExecutor:
                         }
                         if raw_call.get("blocked_error"):
                             call["blocked_error"] = str(raw_call["blocked_error"])
+                        if raw_call.get("provider_name"):
+                            call["provider_name"] = str(raw_call["provider_name"])
+                            call["provider_arguments"] = str(
+                                raw_call.get("provider_arguments", "{}")
+                            )
                         approval_id = raw_call.get("approval_id")
                         if isinstance(approval_id, str):
                             approval = approval_rows.get(approval_id)
@@ -1797,6 +1846,7 @@ class LocalRunExecutor:
             calls,
             user_message,
             mcp_tools,
+            deferred_tool_names,
         )
         if violation is not None:
             await self._limit_run(run_id, violation)
@@ -1815,13 +1865,18 @@ class LocalRunExecutor:
                 {"toolCallIds": [str(call["id"]) for call, _ in resolved_calls]},
             )
         await event_broker.notify(run_id)
-        for call, result in resolved_calls:
+        provider_tool_contents = _provider_tool_result_contents(
+            resolved_calls,
+            capabilities=capabilities,
+            untrusted_tool_names=frozenset(mcp_tools),
+        )
+        for resolved_index, (call, _result) in enumerate(resolved_calls):
             messages.append(
                 ProviderMessage(
                     role="tool",
-                    name=str(call["name"]),
+                    name=str(call.get("provider_name", call["name"])),
                     tool_call_id=str(call["id"]),
-                    content=_provider_tool_result_content(str(call["name"]), result),
+                    content=provider_tool_contents[resolved_index],
                     provider_metadata=_safe_provider_metadata(
                         call.get("provider_metadata")
                     ),
@@ -1925,6 +1980,7 @@ class LocalRunExecutor:
         calls: list[dict[str, Any]],
         user_message: str,
         mcp_tools: Mapping[str, PreparedMcpTool],
+        deferred_tool_names: frozenset[str],
     ) -> tuple[
         list[tuple[dict[str, Any], dict[str, Any]]],
         RunLimitViolation | None,
@@ -1983,12 +2039,18 @@ class LocalRunExecutor:
                                 call,
                                 user_message,
                                 mcp_tools=mcp_tools,
+                                deferred_tool_names=deferred_tool_names,
                             )
                     except TimeoutError:
                         return None, self._deadline_violation(run_id)
                 return result, self._current_limit_violation(run_id)
 
-        tool_results = await asyncio.gather(*(execute_call(call) for call in calls))
+        if should_parallelize_tool_calls(calls, mcp_tools):
+            tool_results = await asyncio.gather(*(execute_call(call) for call in calls))
+        else:
+            tool_results = []
+            for call in calls:
+                tool_results.append(await execute_call(call))
         first_violation = next(
             (violation for _result, violation in tool_results if violation), None
         )
@@ -2778,6 +2840,7 @@ class LocalRunExecutor:
         user_message: str,
         *,
         mcp_tools: Mapping[str, PreparedMcpTool] | None = None,
+        deferred_tool_names: frozenset[str] = frozenset(),
     ) -> dict[str, Any]:
         arguments: dict[str, Any]
         try:
@@ -2878,6 +2941,45 @@ class LocalRunExecutor:
                 return {"plan": work_plan}
             except (TypeError, ValueError) as exc:
                 return {"error": "invalid_work_plan", "message": str(exc)}
+        if tool_call["name"] == "tool_search":
+            limit = arguments.get("limit", 5)
+            if not isinstance(limit, int) or isinstance(limit, bool):
+                limit = 5
+            matches = search_deferred_tools(
+                str(arguments.get("query", "")),
+                mcp_tools or {},
+                deferred_tool_names,
+                limit=limit,
+            )
+            return {
+                "tools": matches,
+                "returned": len(matches),
+                "deferredToolCount": len(deferred_tool_names),
+            }
+        if tool_call["name"] == "tool_describe":
+            described = describe_deferred_tool(
+                str(arguments.get("name", "")),
+                mcp_tools or {},
+                deferred_tool_names,
+            )
+            if described is None:
+                return {
+                    "error": {
+                        "code": "deferred_tool_not_found",
+                        "message": "이 Run에서 사용할 수 있는 MCP Tool이 아닙니다.",
+                    }
+                }
+            return described
+        if tool_call["name"] == "tool_call":
+            return {
+                "error": {
+                    "code": "invalid_tool_bridge_call",
+                    "message": (
+                        "tool_call의 name과 arguments는 tool_search 또는 tool_describe로 "
+                        "확인한 MCP Tool과 일치해야 합니다."
+                    ),
+                }
+            }
         mcp_tool = (mcp_tools or {}).get(str(tool_call["name"]))
         stored_arguments = (
             _mcp_input_metadata(arguments)
@@ -2927,6 +3029,64 @@ class LocalRunExecutor:
         await event_broker.notify(run_id)
         await asyncio.sleep(0.12)
 
+        if tool_call["name"] == "read_tool_result":
+            source_call_id = str(arguments.get("tool_call_id", "")).strip()
+            offset = arguments.get("offset", 0)
+            limit = arguments.get("limit", 8_000)
+            if not isinstance(offset, int) or isinstance(offset, bool):
+                offset = 0
+            if not isinstance(limit, int) or isinstance(limit, bool):
+                limit = 8_000
+            offset = max(0, offset)
+            limit = max(500, min(limit, 20_000))
+            with session_scope() as db:
+                source_execution = db.scalar(
+                    select(ToolExecution).where(
+                        ToolExecution.run_id == run_id,
+                        ToolExecution.tool_call_id == source_call_id,
+                    )
+                )
+                if (
+                    source_execution is None
+                    or source_execution.tool_call_id == str(tool_call["id"])
+                    or source_execution.status not in {"completed", "failed", "cancelled"}
+                ):
+                    payload = {
+                        "error": {
+                            "code": "tool_result_not_available",
+                            "message": "같은 Run에서 완료된 Tool 결과를 찾을 수 없습니다.",
+                        }
+                    }
+                else:
+                    serialized = json.dumps(
+                        source_execution.result_json or {},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        default=str,
+                    )
+                    page = serialized[offset : offset + limit]
+                    next_offset = offset + len(page)
+                    payload = {
+                        "toolCallId": source_execution.tool_call_id,
+                        "toolName": source_execution.tool_name,
+                        "offset": offset,
+                        "nextOffset": next_offset,
+                        "hasMore": next_offset < len(serialized),
+                        "totalChars": len(serialized),
+                        "content": page,
+                        "untrustedExternalContent": (
+                            source_execution.tool_name in (mcp_tools or {})
+                            or source_execution.tool_name in {"web_search", "web_fetch"}
+                        ),
+                    }
+            await self._complete_tool_execution(
+                run_id,
+                tool_id,
+                payload,
+                f"저장된 Tool 결과 {len(str(payload.get('content', ''))):,}자를 읽었습니다.",
+            )
+            return payload
+
         if tool_call.get("blocked_error") in {
             "web_duplicate_request",
             "web_research_safety_limit_reached",
@@ -2959,11 +3119,7 @@ class LocalRunExecutor:
             await self._complete_tool_execution(
                 run_id,
                 tool_id,
-                {
-                    "server": mcp_tool.server_slug,
-                    "tool": mcp_tool.original_name,
-                    "isError": False,
-                },
+                payload,
                 f"{mcp_tool.server_slug} MCP 도구 실행을 완료했습니다.",
             )
             return payload
@@ -4792,8 +4948,8 @@ def _provider_tool_call(call: dict[str, Any]) -> dict[str, Any]:
         "id": call["id"],
         "type": "function",
         "function": {
-            "name": call["name"],
-            "arguments": call["arguments"],
+            "name": call.get("provider_name", call["name"]),
+            "arguments": call.get("provider_arguments", call["arguments"]),
         },
     }
 
@@ -5104,8 +5260,9 @@ def _provider_tool_result_contents(
     resolved_calls: Sequence[tuple[Mapping[str, Any], Any]],
     *,
     capabilities: Mapping[str, Any] | None,
+    untrusted_tool_names: frozenset[str] = frozenset(),
 ) -> list[str]:
-    """Bound web evidence per page and across one tool-result turn."""
+    """Bound every Tool result individually and across one provider turn."""
 
     page_limit, turn_limit = _web_provider_context_limits(capabilities)
     contents = [
@@ -5113,33 +5270,90 @@ def _provider_tool_result_contents(
             str(call.get("name", "")),
             result,
             web_fetch_text_limit=page_limit,
+            tool_call_id=str(call.get("id", "")),
+            recoverable=str(call.get("name", "")) not in _NON_PERSISTED_TOOL_RESULTS,
+            untrusted=_should_wrap_untrusted_result(
+                str(call.get("name", "")), result, untrusted_tool_names
+            ),
         )
         for call, result in resolved_calls
     ]
-    web_indices = [
-        index
-        for index, (call, _result) in enumerate(resolved_calls)
-        if str(call.get("name", "")) in {"web_search", "web_fetch"}
-    ]
-    if (
-        not web_indices
-        or sum(len(contents[index]) for index in web_indices) <= turn_limit
-    ):
+    total_size = sum(len(content) for content in contents)
+    if total_size <= turn_limit:
         return contents
 
-    per_call_limit = max(1_000, turn_limit // len(web_indices))
-    for index in web_indices:
+    candidates = sorted(
+        range(len(contents)), key=lambda index: len(contents[index]), reverse=True
+    )
+    for index in candidates:
+        if total_size <= turn_limit:
+            break
         call, result = resolved_calls[index]
-        contents[index] = _provider_tool_result_content(
-            str(call.get("name", "")),
+        tool_name = str(call.get("name", ""))
+        previous_size = len(contents[index])
+        replacement = _provider_tool_result_reference_content(
+            tool_name,
             result,
-            web_fetch_text_limit=min(
-                page_limit,
-                max(_WEB_PROVIDER_PREVIEW_CHARS, per_call_limit - 1_000),
+            tool_call_id=str(call.get("id", "")),
+            recoverable=tool_name not in _NON_PERSISTED_TOOL_RESULTS,
+            untrusted=_should_wrap_untrusted_result(
+                tool_name, result, untrusted_tool_names
             ),
-            serialized_limit=per_call_limit,
+            include_preview=True,
         )
+        contents[index] = replacement
+        total_size += len(replacement) - previous_size
+
+    if total_size > turn_limit:
+        for index in candidates:
+            if total_size <= turn_limit:
+                break
+            call, result = resolved_calls[index]
+            tool_name = str(call.get("name", ""))
+            previous_size = len(contents[index])
+            replacement = _provider_tool_result_reference_content(
+                tool_name,
+                result,
+                tool_call_id=str(call.get("id", "")),
+                recoverable=tool_name not in _NON_PERSISTED_TOOL_RESULTS,
+                untrusted=_should_wrap_untrusted_result(
+                    tool_name, result, untrusted_tool_names
+                ),
+                include_preview=False,
+            )
+            contents[index] = replacement
+            total_size += len(replacement) - previous_size
+    if total_size > turn_limit:
+        contents = [
+            json.dumps(
+                (
+                    {
+                        "providerContextOmitted": True,
+                        "toolResultReference": {"toolCallId": str(call.get("id", ""))},
+                    }
+                    if str(call.get("name", "")) not in _NON_PERSISTED_TOOL_RESULTS
+                    else {"providerContextOmitted": True}
+                ),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            for call, _result in resolved_calls
+        ]
     return contents
+
+
+def _should_wrap_untrusted_result(
+    tool_name: str,
+    result: Any,
+    untrusted_tool_names: frozenset[str],
+) -> bool:
+    if tool_name in untrusted_tool_names:
+        return True
+    return (
+        tool_name not in {"web_search", "web_fetch"}
+        and isinstance(result, Mapping)
+        and result.get("untrustedExternalContent") is True
+    )
 
 
 def _provider_tool_result_content(
@@ -5148,19 +5362,32 @@ def _provider_tool_result_content(
     *,
     web_fetch_text_limit: int = _WEB_PROVIDER_PAGE_CHARS,
     serialized_limit: int = 24_000,
+    tool_call_id: str = "",
+    recoverable: bool = True,
+    untrusted: bool = False,
 ) -> str:
     """Serialize a bounded provider preview while preserving the stored Tool result."""
     if not isinstance(result, Mapping):
-        return _bounded_text(
+        serialized = _bounded_text(
             json.dumps(result, ensure_ascii=False, default=str),
             serialized_limit,
+        )
+        return (
+            wrap_untrusted_tool_result(serialized, source=tool_name)
+            if untrusted
+            else serialized
         )
 
     preview = dict(result)
     if tool_name == "activate_skill":
-        return _bounded_text(
+        serialized = _bounded_text(
             json.dumps(preview, ensure_ascii=False, default=str),
             48_000,
+        )
+        return (
+            wrap_untrusted_tool_result(serialized, source=tool_name)
+            if untrusted
+            else serialized
         )
     if tool_name == "web_fetch" and isinstance(preview.get("text"), str):
         original_text = preview["text"]
@@ -5185,14 +5412,60 @@ def _provider_tool_result_content(
 
     serialized = json.dumps(preview, ensure_ascii=False, default=str)
     if len(serialized) <= serialized_limit:
-        return serialized
+        return (
+            wrap_untrusted_tool_result(serialized, source=tool_name)
+            if untrusted
+            else serialized
+        )
     preview_limit = max(200, serialized_limit - 160)
-    return json.dumps(
-        {
-            "providerContextPreview": _bounded_text(serialized, preview_limit),
-            "providerContextTruncated": True,
-        },
-        ensure_ascii=False,
+    bounded = {
+        "providerContextPreview": _bounded_text(serialized, preview_limit),
+        "providerContextTruncated": True,
+    }
+    if recoverable and tool_call_id:
+        bounded["toolResultReference"] = {
+            "toolCallId": tool_call_id,
+            "instruction": "Use read_tool_result with this Tool Call ID to read more.",
+        }
+    bounded_serialized = json.dumps(bounded, ensure_ascii=False)
+    return (
+        wrap_untrusted_tool_result(bounded_serialized, source=tool_name)
+        if untrusted
+        else bounded_serialized
+    )
+
+
+def _provider_tool_result_reference_content(
+    tool_name: str,
+    result: Any,
+    *,
+    tool_call_id: str,
+    recoverable: bool,
+    untrusted: bool,
+    include_preview: bool,
+) -> str:
+    serialized = json.dumps(result, ensure_ascii=False, sort_keys=True, default=str)
+    payload: dict[str, Any] = {
+        "providerContextTruncated": True,
+        "originalChars": len(serialized),
+    }
+    if recoverable and tool_call_id:
+        payload["toolResultReference"] = {
+            "toolCallId": tool_call_id,
+            "toolName": tool_name,
+            "instruction": "Use read_tool_result with offset and limit to read the stored result.",
+        }
+    else:
+        payload["instruction"] = "The complete result is not replayable; use this bounded summary."
+    if include_preview:
+        payload["providerContextPreview"] = _bounded_text(
+            serialized, _WEB_PROVIDER_PREVIEW_CHARS
+        )
+    bounded = json.dumps(payload, ensure_ascii=False)
+    return (
+        wrap_untrusted_tool_result(bounded, source=tool_name)
+        if untrusted
+        else bounded
     )
 
 
@@ -5676,6 +5949,34 @@ def _unique_report_display_name(db: Session, project_id: str, display_name: str)
         if candidate.casefold() not in existing_names:
             return candidate
     return f"{path.stem}_{new_uuid()[:8]}{path.suffix}"
+
+
+_READ_TOOL_RESULT_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "read_tool_result",
+        "description": (
+            "Read a bounded page from a Tool result previously stored in this Run. Use this "
+            "only when a Tool result preview says that the full result is available by Tool "
+            "Call ID. Continue with nextOffset while hasMore is true."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "tool_call_id": {"type": "string", "minLength": 1, "maxLength": 200},
+                "offset": {"type": "integer", "minimum": 0, "default": 0},
+                "limit": {
+                    "type": "integer",
+                    "minimum": 500,
+                    "maximum": 20_000,
+                    "default": 8_000,
+                },
+            },
+            "required": ["tool_call_id"],
+            "additionalProperties": False,
+        },
+    },
+}
 
 
 _WEB_SEARCH_TOOL_SCHEMA = {

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 import json
 from pathlib import Path
@@ -13,6 +14,7 @@ from lumina.agent.executor import LocalRunExecutor
 from lumina.auth import bootstrap_database
 from lumina.config import Settings
 from lumina.context import compact_runtime_messages, prepare_context
+from lumina.context import service as context_service
 from lumina.db import SessionLocal, configure_database, create_schema
 from lumina.memories.service import (
     MemoryCandidate,
@@ -35,8 +37,8 @@ from lumina.models import (
     UserMemory,
     utc_now,
 )
-from lumina.providers import ProviderMessage
-from lumina.runs.service import run_snapshot
+from lumina.providers import ProviderImage, ProviderMessage
+from lumina.runs.service import create_run_plan, run_snapshot
 from lumina.providers.types import ProviderCapabilities, ProviderEvent
 
 
@@ -681,6 +683,118 @@ def test_runtime_compaction_microcompacts_old_tool_payload_before_summarizing(
         for message in prepared.messages
     )
     assert "full result remains stored" in str(prepared.messages[2].content)
+
+
+def test_runtime_payload_compaction_deduplicates_old_results_and_removes_images() -> None:
+    repeated = "same external result " * 200
+    messages = (
+        ProviderMessage(
+            role="tool",
+            name="browser_capture",
+            tool_call_id="older",
+            content=repeated,
+            images=(ProviderImage(mime_type="image/png", data_base64="aGVsbG8="),),
+        ),
+        ProviderMessage(
+            role="tool",
+            name="browser_capture",
+            tool_call_id="newer",
+            content=repeated,
+        ),
+    )
+
+    compacted, changed = context_service._compact_runtime_payloads(
+        messages, strip_images=True
+    )
+
+    assert changed >= 2
+    assert "Duplicate Tool result" in str(compacted[0].content)
+    assert "historical image" in str(compacted[0].content)
+    assert compacted[0].images == ()
+    assert "full result remains stored" in str(compacted[1].content)
+
+
+def test_provider_message_estimate_counts_provider_metadata() -> None:
+    plain = ProviderMessage(role="assistant", content="tool call")
+    signed = ProviderMessage(
+        role="assistant",
+        content="tool call",
+        provider_metadata={"call-1": {"thought_signature": "s" * 8_000}},
+    )
+
+    plain_tokens = context_service._estimate_provider_messages((plain,), ())
+    signed_tokens = context_service._estimate_provider_messages((signed,), ())
+
+    assert signed_tokens > plain_tokens + 1_000
+
+
+def test_read_tool_result_pages_full_result_from_same_run(tmp_path: Path) -> None:
+    name = "tool-result-readback"
+    user, project, conversation = _configure(tmp_path, name)
+    with SessionLocal() as db:
+        run = _run(
+            db,
+            user=db.merge(user),
+            project=db.merge(project),
+            conversation=db.merge(conversation),
+            sequence=1,
+            status="tools_running",
+        )
+        create_run_plan(db, run, goal="read stored Tool result")
+        db.add(
+            ToolExecution(
+                run_id=run.id,
+                tool_call_id="source-call",
+                tool_name="mcp_get_records",
+                status="completed",
+                result_json={"content": "record " * 3_000},
+                result_summary="records",
+                started_at=utc_now(),
+                finished_at=utc_now(),
+            )
+        )
+        db.commit()
+        run_id = run.id
+
+    root = tmp_path / name
+    executor = LocalRunExecutor(
+        Settings(
+            environment="test",
+            database_url=f"sqlite:///{(root / 'lumina.db').as_posix()}",
+            data_dir=root,
+            files_dir=root / "files",
+            artifacts_dir=root / "artifacts",
+            cookie_secure=False,
+        )
+    )
+    result = asyncio.run(
+        executor._execute_tool(
+            run_id,
+            {
+                "id": "readback-call",
+                "name": "read_tool_result",
+                "arguments": json.dumps(
+                    {"tool_call_id": "source-call", "offset": 0, "limit": 1_000}
+                ),
+            },
+            "read stored result",
+            mcp_tools={"mcp_get_records": object()},
+        )
+    )
+
+    assert result["toolCallId"] == "source-call"
+    assert result["hasMore"] is True
+    assert result["nextOffset"] == 1_000
+    assert len(result["content"]) == 1_000
+    assert result["untrustedExternalContent"] is True
+    with SessionLocal() as db:
+        readback = db.scalar(
+            select(ToolExecution).where(
+                ToolExecution.run_id == run_id,
+                ToolExecution.tool_call_id == "readback-call",
+            )
+        )
+        assert readback is not None and readback.status == "completed"
 
 
 def test_context_window_budget_avoids_character_only_compaction(tmp_path: Path) -> None:

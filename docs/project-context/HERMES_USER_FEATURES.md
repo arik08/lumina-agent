@@ -659,12 +659,15 @@ SSE 또는 WebSocket은 화면 전달 수단일 뿐 실행 상태의 원본이 �
 - 자동 Skill 자기개선: 다중 사용자 감사·승인·rollback이 준비되기 전에는 도입하지 않습니다.
 - 게임화와 Achievement: 핵심 업무 생산성에 직접 기여하지 않으므로 초기 범위에서 제외합니다.
 - 대규모 Tool 기본 노출: Tool schema는 비용과 Context를 차지하므로 필요한 Tool만 capability와 정책에 따라 노출합니다.
+- 설치된 MCP schema가 모델 Context의 10%를 넘는 Run은 core Tool과 `tool_search`·`tool_describe`·`tool_call`만 모델에 노출하고, Run snapshot에 고정된 허용 catalog를 필요할 때 검색합니다. bridge 호출도 직접 MCP 호출과 동일한 권한·승인·감사 경계를 우회할 수 없습니다.
 
 ## Hermes에서 가져갈 설계 원칙
 
 ### 긴 대화의 Context를 불필요하게 흔들지 않기
 
 대화 도중 system prompt와 Tool 목록을 계속 재구성하면 Provider prompt cache가 깨지고 속도와 비용이 악화될 수 있습니다. Run 시작 시 옵션 snapshot을 고정하고 필요한 변경은 다음 Run부터 적용합니다.
+
+Tool 결과도 개별 호출 제한만으로는 충분하지 않습니다. 여러 중간 크기 결과가 한 Turn에 합쳐질 때 전체 합계 예산을 적용하고, 원문은 Run에 보존한 채 bounded preview와 같은 Run 전용 readback 참조만 Provider에 전달합니다.
 
 ### 핵심은 좁게, 기능은 확장 영역에 두기
 

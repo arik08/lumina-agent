@@ -236,6 +236,41 @@ def test_web_tool_results_share_one_turn_context_budget() -> None:
     )
 
 
+def test_all_tool_results_share_one_turn_context_budget_and_keep_readback_ids() -> None:
+    resolved_calls = [
+        (
+            {"id": f"mcp-call-{index}", "name": "mcp_read_records"},
+            {"content": "large MCP evidence " * 4_000, "isError": False},
+        )
+        for index in range(5)
+    ]
+
+    contents = executor_module._provider_tool_result_contents(
+        resolved_calls,
+        capabilities={"context_window": 16_000},
+        untrusted_tool_names=frozenset({"mcp_read_records"}),
+    )
+
+    assert sum(map(len, contents)) <= 19_200
+    assert all("<untrusted_tool_result" in content for content in contents)
+    assert all("read_tool_result" in content for content in contents)
+    assert all(f"mcp-call-{index}" in contents[index] for index in range(5))
+
+
+def test_individual_truncated_tool_result_exposes_recoverable_reference() -> None:
+    content = executor_module._provider_tool_result_content(
+        "mcp_read_records",
+        {"content": "x" * 50_000},
+        serialized_limit=2_000,
+        tool_call_id="mcp-call-large",
+    )
+
+    payload = json.loads(content)
+    assert payload["providerContextTruncated"] is True
+    assert payload["toolResultReference"]["toolCallId"] == "mcp-call-large"
+    assert "read_tool_result" in payload["toolResultReference"]["instruction"]
+
+
 def test_web_research_uses_adaptive_guidance_with_separate_safety_limits() -> None:
     assert executor_module._web_research_budget(
         "포스코 관련 최근 3개월 언론기사 동향을 조사해줘"

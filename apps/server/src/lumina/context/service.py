@@ -237,16 +237,13 @@ def compact_runtime_messages(
     # bulky payloads is enough. This is cheaper and less lossy than replacing whole
     # execution units with prose, while recent units remain byte-for-byte intact.
     if compacted_units:
-        payload_compacted_units: list[list[ProviderMessage]] = []
-        payload_compacted_count = 0
-        for unit in compacted_units:
-            compacted_unit, changed_count = _compact_runtime_payloads(unit)
-            payload_compacted_units.append(list(compacted_unit))
-            payload_compacted_count += changed_count
+        compacted_messages = [
+            message for unit in compacted_units for message in unit
+        ]
+        payload_compacted_messages, payload_compacted_count = (
+            _compact_runtime_payloads(compacted_messages, strip_images=True)
+        )
         if payload_compacted_count:
-            payload_compacted_messages = [
-                message for unit in payload_compacted_units for message in unit
-            ]
             payload_prepared = (
                 *head,
                 *previous_summary_messages,
@@ -789,6 +786,15 @@ def _estimate_provider_messages(
                     default=str,
                 )
             )
+        if message.provider_metadata:
+            total += estimate_text_tokens(
+                json.dumps(
+                    dict(message.provider_metadata),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    default=str,
+                )
+            )
         if message.images:
             # Do not count base64 bytes as text tokens, but reserve meaningful
             # space for the provider's image representation.
@@ -828,13 +834,21 @@ def _provider_message_units(
 
 def _compact_runtime_payloads(
     messages: Sequence[ProviderMessage],
+    *,
+    strip_images: bool = False,
 ) -> tuple[tuple[ProviderMessage, ...], int]:
     """Shrink recoverable Tool payloads without breaking provider JSON contracts."""
 
-    compacted: list[ProviderMessage] = []
+    compacted_reversed: list[ProviderMessage] = []
     changed_count = 0
-    for message in messages:
+    seen_tool_hashes: set[str] = set()
+    for message in reversed(messages):
         updated = message
+        original_tool_digest = (
+            hashlib.sha256((message.content or "").encode("utf-8")).hexdigest()
+            if message.role == "tool" and len(message.content or "") >= 200
+            else None
+        )
         if message.tool_calls and not message.provider_metadata:
             tool_calls: list[Mapping[str, Any]] = []
             changed = False
@@ -869,8 +883,31 @@ def _compact_runtime_payloads(
                 ),
             )
             changed_count += 1
-        compacted.append(updated)
-    return tuple(compacted), changed_count
+        if original_tool_digest is not None:
+            if original_tool_digest in seen_tool_hashes:
+                updated = replace(
+                    updated,
+                    content=(
+                        "[Duplicate Tool result compacted; the same content appears in a "
+                        "more recent Tool call.]"
+                    ),
+                )
+                changed_count += 1
+            else:
+                seen_tool_hashes.add(original_tool_digest)
+        if strip_images and updated.images:
+            image_note = f"[{len(updated.images)} historical image(s) removed from context]"
+            updated = replace(
+                updated,
+                content=(
+                    f"{updated.content}\n{image_note}" if updated.content else image_note
+                ),
+                images=(),
+            )
+            changed_count += 1
+        compacted_reversed.append(updated)
+    compacted_reversed.reverse()
+    return tuple(compacted_reversed), changed_count
 
 
 def _compact_tool_arguments(arguments: Any) -> Any:
