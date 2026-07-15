@@ -1,5 +1,6 @@
 $ErrorActionPreference = "Stop"
 $scriptPath = Join-Path $PSScriptRoot "stop_lumina.ps1"
+$batchPath = Join-Path $PSScriptRoot "stop_lumina.bat"
 $tokens = $null
 $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile(
@@ -9,6 +10,17 @@ $ast = [System.Management.Automation.Language.Parser]::ParseFile(
 )
 if ($errors.Count -gt 0) {
     throw "stop_lumina.ps1 has parser errors: $($errors.Message -join '; ')"
+}
+
+$batchContent = Get-Content -LiteralPath $batchPath -Raw
+foreach ($expectedBatchFragment in @(
+    'pushd "%TEMP%"',
+    '"%~dp0stop_lumina.ps1" %*',
+    'exit /b %LUMINA_STOP_EXIT%'
+)) {
+    if ($batchContent.IndexOf($expectedBatchFragment, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
+        throw "stop_lumina.bat is missing required fragment: $expectedBatchFragment"
+    }
 }
 
 $functionNames = @(
@@ -100,6 +112,10 @@ foreach ($case in $cases) {
 
 # The public preview path must remain runnable without changing process state.
 & $scriptPath -WhatIf | Out-Null
+& $batchPath -WhatIf | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "stop_lumina.bat -WhatIf failed with exit code $LASTEXITCODE."
+}
 
 $fakeProcesses = @(
     [pscustomobject]@{
@@ -186,4 +202,4 @@ finally {
     }
 }
 
-Write-Host "stop_lumina tests passed ($($cases.Count) matcher cases, root deduplication, and process-tree cleanup)."
+Write-Host "stop_lumina tests passed ($($cases.Count) matcher cases, batch wrapper, root deduplication, and process-tree cleanup)."
