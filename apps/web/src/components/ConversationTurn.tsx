@@ -640,7 +640,7 @@ function ModelProcessingRow({ durationMs, running, sent, received, model, provid
       >
         <Brain className="tool-kind-icon is-model-processing" size={15} aria-hidden="true" />
         <span className="tool-call-label-with-status model-processing-label">
-          <span className="tool-call-label">AI 내부 추론</span>
+          <span className="tool-call-label">Thinking...</span>
           {running ? <LoaderCircle className="status-icon is-running" size={15} aria-hidden="true" /> : null}
         </span>
         <span className="tool-call-detail">모델 판단 · 내부 실행 합계</span>
