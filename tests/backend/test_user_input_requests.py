@@ -169,6 +169,14 @@ def test_account_clarification_setting_and_durable_input_resume(
         assert submitted.status_code == 200, submitted.text
         completed = _wait_for_status(client, run_id, {"completed"})
         assert completed["inputRequests"][0]["status"] == "submitted"
+        input_activities = [
+            activity
+            for activity in completed["activities"]
+            if activity["type"] == "input_request"
+        ]
+        assert len(input_activities) == 1
+        assert input_activities[0]["request"]["id"] == request["id"]
+        assert input_activities[0]["request"]["status"] == "submitted"
 
         with SessionLocal() as db:
             run = db.get(Run, run_id)

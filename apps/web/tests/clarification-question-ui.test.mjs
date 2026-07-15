@@ -15,6 +15,7 @@ const turnSource = readFileSync(
   new URL("../src/components/ConversationTurn.tsx", import.meta.url),
   "utf8",
 );
+const stylesheet = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 
 test("clarification card identifies questions and supports objective, custom, and AI answers", () => {
   assert.match(cardSource, /MessageCircleQuestion/);
@@ -29,6 +30,10 @@ test("clarification card identifies questions and supports objective, custom, an
   assert.match(cardSource, /is-collapsing/);
   assert.match(cardSource, /답변한 확인 질문 다시 보기/);
   assert.match(cardSource, /다시 접기/);
+  assert.match(turnSource, /inputRequestActivity[\s\S]*<UserInputRequestCard/);
+  assert.doesNotMatch(turnSource, /assistant-content">[\s\S]{0,300}inputRequests/);
+  assert.match(stylesheet, /\.run-activity-timeline \.clarification-card \{[^}]*margin: 3px 0 1px/);
+  assert.match(stylesheet, /\.clarification-question:disabled :is\(button, input\) \{ opacity: 0\.78; \}/);
 });
 
 test("awaiting clarification is shown as Q&A and freezes the model-work clock", () => {

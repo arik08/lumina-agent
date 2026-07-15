@@ -1465,6 +1465,11 @@ export type RunActivity = {
   type: "tool";
   sequence: number;
   execution: ToolExecution;
+} | {
+  id: string;
+  type: "input_request";
+  sequence: number;
+  request: UserInputRequest;
 };
 
 export interface ToolApproval {

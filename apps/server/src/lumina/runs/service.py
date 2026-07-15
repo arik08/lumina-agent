@@ -2000,7 +2000,12 @@ def run_snapshot(db: Session, run: Run) -> dict[str, Any]:
             .where(
                 RunEvent.run_id == run.id,
                 RunEvent.event_type.in_(
-                    ("progress_summary", "skill_selected", "tool_started")
+                    (
+                        "progress_summary",
+                        "skill_selected",
+                        "tool_started",
+                        "input_requested",
+                    )
                 ),
             )
             .order_by(RunEvent.sequence)
@@ -2027,6 +2032,26 @@ def run_snapshot(db: Session, run: Run) -> dict[str, Any]:
                     "text": str(event.payload_json.get("text", "")),
                     "phase": str(event.payload_json.get("phase", "working")),
                     "createdAt": event.created_at,
+                }
+            )
+            continue
+        if event.event_type == "input_requested":
+            requested = event.payload_json.get("request", {})
+            request_id = str(requested.get("id", ""))
+            current_request = next(
+                (
+                    item
+                    for item in run.snapshot_json.get("input_requests", [])
+                    if isinstance(item, dict) and str(item.get("id", "")) == request_id
+                ),
+                requested,
+            )
+            activities.append(
+                {
+                    "id": f"input:{request_id or event.id}",
+                    "type": "input_request",
+                    "sequence": event.sequence,
+                    "request": current_request,
                 }
             )
             continue

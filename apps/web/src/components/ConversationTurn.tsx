@@ -778,6 +778,10 @@ function RunActivityTimeline({
   onToggleCall,
   onCopy,
   onVisibleGrowth,
+  clarificationMode,
+  inputBusy,
+  onSubmitUserInput,
+  onClarificationModeChange,
 }: {
   activities: RunActivity[];
   timelineStartedAtMs: number;
@@ -794,6 +798,14 @@ function RunActivityTimeline({
   onToggleCall: (id: string) => void;
   onCopy: (execution: ToolExecution) => void;
   onVisibleGrowth?: () => void;
+  clarificationMode: ClarificationMode;
+  inputBusy: boolean;
+  onSubmitUserInput: (
+    runId: string,
+    inputRequestId: string,
+    answers: UserInputAnswer[],
+  ) => Promise<boolean>;
+  onClarificationModeChange: (mode: ClarificationMode) => Promise<unknown>;
 }) {
   const [openSummaryIds, setOpenSummaryIds] = useState<Set<string>>(new Set());
   const [collapsingSummaryIds, setCollapsingSummaryIds] = useState<Set<string>>(new Set());
@@ -933,6 +945,7 @@ function RunActivityTimeline({
         const summary = group[0]?.type === "progress_summary" ? group[0] : null;
         const skill = group[0]?.type === "skill" ? group[0] : null;
         const toolActivities = group.filter((activity) => activity.type === "tool");
+        const inputRequestActivity = group.find((activity) => activity.type === "input_request") ?? null;
         const nextGroup = activityGroups[groupIndex + 1] ?? null;
         const nextSummary = nextGroup?.[0]?.type === "progress_summary" ? nextGroup[0] : null;
         const nextToolActivities = nextGroup?.filter((activity) => activity.type === "tool") ?? [];
@@ -1063,6 +1076,19 @@ function RunActivityTimeline({
                   />
                 )}
               </div>
+            )}
+            {inputRequestActivity && (
+              <UserInputRequestCard
+                request={inputRequestActivity.request}
+                clarificationMode={clarificationMode}
+                busy={inputBusy}
+                onSubmit={(answers) => onSubmitUserInput(
+                  inputRequestActivity.request.runId,
+                  inputRequestActivity.request.id,
+                  answers,
+                )}
+                onModeChange={onClarificationModeChange}
+              />
             )}
           </div>
         );
@@ -1842,6 +1868,10 @@ export function AssistantTurn({
                 onCopy={onCopyTool}
                 onToggleCall={onToggleCall}
                 onVisibleGrowth={onVisibleGrowth}
+                clarificationMode={clarificationMode}
+                inputBusy={inputBusy}
+                onSubmitUserInput={onSubmitUserInput}
+                onClarificationModeChange={onClarificationModeChange}
               />
             </div>
           )}
@@ -1856,16 +1886,6 @@ export function AssistantTurn({
       {(assistantText || tools.length > 0 || artifacts.length > 0 || snapshot) && (
         <section className="assistant-turn">
           <div className="assistant-content">
-            {(snapshot?.inputRequests ?? []).map((request) => (
-              <UserInputRequestCard
-                key={request.id}
-                request={request}
-                clarificationMode={clarificationMode}
-                busy={inputBusy}
-                onSubmit={(answers) => onSubmitUserInput(request.runId, request.id, answers)}
-                onModeChange={onClarificationModeChange}
-              />
-            ))}
             {assistantText && <MarkdownResponse text={displayedText} sources={sources} citations={citations} streaming={revealing} settling={settling} />}
             {artifactUsage && artifactProgress && (
               <div className={`artifact-progress-count is-${artifactProgress.stage}`} role="status" aria-live={terminal ? undefined : "polite"} aria-label={`문서 ${artifactUsage.estimated === false ? "완성 분량" : "작성 중 추정 분량"} ${artifactUsage.tokens.toLocaleString()} 토큰 ${artifactUsage.lines.toLocaleString()}줄${liveModelOutputTokens > 0 ? `, 모델 출력 누계 ${liveModelOutputTokens.toLocaleString()} 토큰` : ""}`}>
