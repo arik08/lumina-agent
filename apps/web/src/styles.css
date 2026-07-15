@@ -1221,8 +1221,10 @@ button:disabled { cursor: default; opacity: 0.5; }
 .skill-catalog-metrics { display: flex; min-width: 0; align-items: center; gap: var(--space-5); color: var(--muted); }
 .skill-catalog-metric, .skill-catalog-like { display: inline-flex; height: 26px; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
 .skill-catalog-metric { cursor: help; }
-.skill-catalog-like { padding: 0 4px; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
-.skill-catalog-like:not(:disabled):hover, .skill-catalog-like.is-liked { color: var(--cobalt); }
+.skill-catalog-like { padding: 0 6px; border: 0; border-radius: 5px; background: transparent; color: var(--muted); cursor: pointer; transition: background-color 140ms cubic-bezier(0.25, 1, 0.5, 1), color 140ms cubic-bezier(0.25, 1, 0.5, 1); }
+.skill-catalog-like:not(:disabled):not(.is-liked):hover { background: var(--surface-soft); color: var(--cobalt); }
+.skill-catalog-like.is-liked { background: var(--cobalt); color: white; }
+.skill-catalog-like.is-liked:not(:disabled):hover { background: var(--cobalt-hover); color: white; }
 .skill-catalog-more { display: flex; min-width: 112px; height: 32px; align-items: center; justify-content: center; gap: 6px; margin: 18px auto 0; padding: 0 12px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); color: var(--ink); cursor: pointer; }
 .skill-catalog-more:not(:disabled):hover { background: var(--surface-soft); }
 .skill-catalog-empty { display: grid; min-height: 300px; place-content: center; justify-items: center; gap: 7px; color: var(--muted); text-align: center; }

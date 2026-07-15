@@ -39,6 +39,9 @@ test("catalog uses a searchable filterable card grid without opening package det
   assert.match(styles, /\.skill-catalog-grid \{[^}]*repeat\(auto-fill, minmax\(300px, 1fr\)\)/);
   assert.match(styles, /\.skill-catalog-card\.is-liked \{[^}]*var\(--surface-selected\)/);
   assert.match(styles, /\.skill-catalog-metrics \{[^}]*gap: var\(--space-5\)/);
+  assert.match(styles, /\.skill-catalog-like\.is-liked \{[^}]*background: var\(--cobalt\);[^}]*color: white;/);
+  assert.match(styles, /\.skill-catalog-like\.is-liked:not\(:disabled\):hover \{[^}]*background: var\(--cobalt-hover\);[^}]*color: white;/);
+  assert.doesNotMatch(styles, /\.skill-catalog-like\.is-liked \{[^}]*(?:box-shadow|transform):/);
   assert.doesNotMatch(panel, /SKILL\.md|package|상세보기|QA|신뢰/);
 });
 
