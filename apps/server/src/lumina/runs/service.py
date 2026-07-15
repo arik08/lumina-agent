@@ -444,7 +444,7 @@ def create_run(
         "excluded_scopes": list(instruction_stack.excluded_scopes),
     }
     normalized_login_id = user.login_id.strip().casefold()
-    prompt_cache_key = (
+    prompt_cache_scope = (
         "lumina:user:v1:"
         + hashlib.sha256(normalized_login_id.encode("utf-8")).hexdigest()[:48]
     )
@@ -480,7 +480,7 @@ def create_run(
         "extension_application": extension_application,
         "environment_type": "local_worker",
         "approval_mode": "on_risk",
-        "prompt_cache_key": prompt_cache_key,
+        "prompt_cache_scope": prompt_cache_scope,
     }
     if mcp_servers:
         stable_prefix["mcp_servers"] = mcp_servers
@@ -531,7 +531,7 @@ def create_run(
             "extensions": extensions,
             "extension_application": extension_application,
             "prompt_prefix_hash": prefix_hash,
-            "prompt_cache_key": prompt_cache_key,
+            "prompt_cache_scope": prompt_cache_scope,
             "contract_version": stable_prefix["contract_version"],
             "environment_type": "local_worker",
             "approval_mode": "on_risk",

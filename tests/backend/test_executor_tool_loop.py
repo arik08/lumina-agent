@@ -13,7 +13,7 @@ from lumina.agent.executor import LocalRunExecutor, local_run_executor
 from lumina.config import Settings
 from lumina.main import create_app
 from lumina.models import ToolExecution
-from lumina.providers import MockProvider, MockToolCall
+from lumina.providers import MockProvider, MockToolCall, ProviderMessage
 from lumina.providers.codex.adapter import _CodexToolCallStream
 from lumina.tools.web import SearchInvocation, SourceEvidence, WebSearchResult
 
@@ -82,6 +82,60 @@ def test_file_output_mode_is_a_preference_until_artifact_intent_is_explicit() ->
     assert executor_module._ARTIFACT_CREATION_REQUEST.search(
         "이번 분석을 보고서 파일로 만들어 줘"
     )
+
+
+def test_prompt_cache_key_tracks_static_prefix_not_dynamic_messages() -> None:
+    tools = (
+        executor_module._UPDATE_PLAN_TOOL_SCHEMA,
+        executor_module._WEB_SEARCH_TOOL_SCHEMA,
+    )
+    first_messages = [
+        ProviderMessage(role="system", content="stable system"),
+        ProviderMessage(role="system", content="turn contract"),
+        ProviderMessage(role="user", content="first task"),
+    ]
+    later_messages = [
+        *first_messages,
+        ProviderMessage(role="assistant", content="working"),
+        ProviderMessage(role="tool", name="web_search", content="new evidence"),
+    ]
+
+    first_key, first_digest = executor_module._provider_prompt_cache_key(
+        user_scope="lumina:user:v1:user-a",
+        provider_id="codex",
+        model="gpt-5.5",
+        messages=first_messages,
+        tools=tools,
+    )
+    later_key, later_digest = executor_module._provider_prompt_cache_key(
+        user_scope="lumina:user:v1:user-a",
+        provider_id="codex",
+        model="gpt-5.5",
+        messages=later_messages,
+        tools=tuple(reversed(tools)),
+    )
+
+    assert first_key == later_key
+    assert first_digest == later_digest
+    assert first_key.startswith("lumina:user:v2:")
+    assert len(first_key) == 63
+
+    other_user_key, _ = executor_module._provider_prompt_cache_key(
+        user_scope="lumina:user:v1:user-b",
+        provider_id="codex",
+        model="gpt-5.5",
+        messages=first_messages,
+        tools=tools,
+    )
+    other_model_key, _ = executor_module._provider_prompt_cache_key(
+        user_scope="lumina:user:v1:user-a",
+        provider_id="codex",
+        model="gpt-5.6-sol",
+        messages=first_messages,
+        tools=tools,
+    )
+    assert other_user_key != first_key
+    assert other_model_key != first_key
 
 
 def test_update_plan_schema_identifies_the_report_drafting_phase() -> None:
@@ -578,7 +632,16 @@ def test_file_mode_is_a_general_delivery_preference_not_a_file_command(
     assert all(snapshot["artifacts"] == [] for snapshot in snapshots)
     assert all(snapshot["toolExecutions"] == [] for snapshot in snapshots)
     assert len(requests) == 4
-    for request in requests[::2]:
+    assert {
+        request.metadata["prompt_cache_key"] for request in requests
+    } == {requests[0].metadata["prompt_cache_key"]}
+    assert requests[0].metadata["prompt_cache_key"].startswith("lumina:user:v2:")
+    run_thread_ids = [request.metadata["codex_run_thread_id"] for request in requests]
+    assert run_thread_ids[0] == run_thread_ids[1]
+    assert run_thread_ids[2] == run_thread_ids[3]
+    assert run_thread_ids[0] != run_thread_ids[2]
+    first_tool_names = None
+    for request in requests:
         tool_names = {
             schema["function"]["name"]
             for schema in request.tools
@@ -587,6 +650,10 @@ def test_file_mode_is_a_general_delivery_preference_not_a_file_command(
         assert "create_report" in tool_names
         assert "write_file" in tool_names
         assert "classify_file_output_intent" in tool_names
+        if first_tool_names is None:
+            first_tool_names = tool_names
+        else:
+            assert tool_names == first_tool_names
         system_text = "\n".join(
             str(message.content)
             for message in request.messages

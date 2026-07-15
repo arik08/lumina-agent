@@ -886,7 +886,7 @@ append-only tail
 ```
 
 - Run 시작 시 system prompt, 지침, Tool schema, Provider·Model capability와 workspace snapshot을 canonical serialization하고 hash를 저장합니다. 동일 Run 안에서는 바이트 단위로 재사용하며 timestamp, request ID, 경과 시간, 무작위 순서와 live 상태를 stable prefix에 넣지 않습니다.
-- 서로 다른 채팅 Session도 같은 인증 사용자라면 캐시 라우팅을 재사용할 수 있도록 정규화한 로그인 ID(email)의 비가역 hash를 사용자 단위 `prompt_cache_key`로 사용합니다. 이메일 원문은 Provider 요청이나 로그에 넣지 않으며, 요청별 output mode·현재 Message·recall 같은 변동 정보는 안정된 system prefix 뒤에 둡니다.
+- 서로 다른 채팅 Session도 같은 인증 사용자와 동일한 고정 prompt prefix라면 캐시 라우팅을 재사용합니다. 정규화한 로그인 ID(email)의 비가역 hash를 사용자 scope로 만들고, Provider·Model·고정 system prompt·정렬된 Tool schema의 내용 hash를 결합한 `prompt_cache_key`를 모델 요청 시 생성합니다. 이메일 원문은 Provider 요청이나 로그에 넣지 않으며, 요청별 output mode·현재 Message·recall 같은 변동 정보는 안정된 system·Tool prefix 뒤에 둡니다. 한 Run이 시작된 뒤에는 Tool schema를 제거하거나 재정렬하지 않고 호출 상한은 실행 단계에서 거부하여 prefix를 유지합니다. Codex는 같은 Run의 App Server thread를 재사용해 후속 Turn에는 새 Tool Result·사용자 지시만 증분 전달합니다. Backend·App Server 재시작, context compaction 또는 prefix 불일치로 thread를 재사용할 수 없으면 snapshot의 전체 요청을 새 ephemeral thread에 재구축합니다.
 - OpenAI GPT-5.6 이상은 `prompt_cache_options.ttl=30m`을 사용하고 이전 지원 Model은 `prompt_cache_retention=24h`를 사용합니다. Provider가 지원하지 않는 cache control을 공통 옵션처럼 강제로 전송하지 않습니다.
 - Tool·Skill·MCP의 검색과 선택은 Run 시작 전에 끝내고 snapshot으로 고정합니다. 설치·활성화·지침 변경은 기본적으로 다음 Run부터 적용하며, 사용자가 즉시 적용을 선택하면 cache 무효화와 비용 영향을 알리고 새 Run snapshot을 만듭니다.
 - 이전 message와 Tool Call JSON은 append-only로 유지하고 key 순서·whitespace·role 배열을 매 호출마다 다시 쓰지 않습니다. Provider 제약에 따른 정규화는 저장 원본이 아닌 전송용 copy에 결정론적으로 적용합니다.

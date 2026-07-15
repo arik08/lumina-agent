@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 import math
@@ -844,8 +845,9 @@ class LocalRunExecutor:
             resuming_approval = isinstance(
                 run.snapshot_json.get("tool_checkpoint"), dict
             )
-            prompt_cache_key = str(
-                run.snapshot_json.get("prompt_cache_key", "")
+            prompt_cache_scope = str(
+                run.snapshot_json.get("prompt_cache_scope")
+                or run.snapshot_json.get("prompt_cache_key", "")
             ).strip()
 
         with session_scope() as db:
@@ -929,6 +931,22 @@ class LocalRunExecutor:
             images=self._provider_images(attachment_ids),
             tool_schemas=tool_schemas,
         )
+        prompt_cache_key, prompt_cache_static_digest = _provider_prompt_cache_key(
+            user_scope=prompt_cache_scope,
+            provider_id=provider_id,
+            model=runtime_model_id,
+            messages=messages,
+            tools=tool_schemas,
+        )
+        if prompt_cache_key:
+            with session_scope() as db:
+                active_run = db.get(Run, run_id)
+                if active_run is not None:
+                    active_run.snapshot_json = {
+                        **active_run.snapshot_json,
+                        "prompt_cache_key": prompt_cache_key,
+                        "prompt_cache_static_digest": prompt_cache_static_digest,
+                    }
         if resuming_approval:
             resumed = await self._resume_tool_checkpoint(
                 run_id,
@@ -981,6 +999,7 @@ class LocalRunExecutor:
                 metadata={
                     "prompt_cache_key": prompt_cache_key,
                     "prompt_cache_retention": "24h",
+                    "codex_run_thread_id": run_id,
                 }
                 if prompt_cache_key
                 else {},
@@ -1549,15 +1568,6 @@ class LocalRunExecutor:
             for resolved_index, (call, result) in enumerate(resolved_calls):
                 if call["name"] == "classify_file_output_intent":
                     artifact_required = result.get("fileCreationRequested") is True
-                    tool_schemas = tuple(
-                        schema
-                        for schema in tool_schemas
-                        if not (
-                            isinstance(schema.get("function"), dict)
-                            and schema["function"].get("name")
-                            == "classify_file_output_intent"
-                        )
-                    )
                 if (
                     call["name"] in {"create_report", "write_file"}
                     and isinstance(result, dict)
@@ -1581,23 +1591,15 @@ class LocalRunExecutor:
             newly_retired = exhausted_tools - retired_web_tools
             if newly_retired:
                 retired_web_tools.update(newly_retired)
-                tool_schemas = tuple(
-                    schema
-                    for schema in tool_schemas
-                    if not (
-                        isinstance(schema.get("function"), dict)
-                        and schema["function"].get("name") in newly_retired
-                    )
-                )
                 messages.append(
                     ProviderMessage(
                         role="system",
                         content=(
                             "Bounded web research budget reached for: "
                             + ", ".join(sorted(newly_retired))
-                            + ". These tools are no longer available in this Run. Do not "
-                            "attempt aliases or workarounds; synthesize the requested result "
-                            "from the evidence already collected and state any material gap "
+                            + ". Further calls to these tools will be rejected in this Run. "
+                            "Do not attempt aliases or workarounds; synthesize the requested "
+                            "result from the evidence already collected and state any material gap "
                             "briefly."
                         ),
                     )
@@ -4848,6 +4850,53 @@ def _usage_payload(
         if profile is not None and profile.token_pricing is not None:
             payload["pricing_version"] = profile.token_pricing.version
     return payload
+
+
+def _provider_prompt_cache_key(
+    *,
+    user_scope: str,
+    provider_id: str,
+    model: str,
+    messages: Sequence[ProviderMessage],
+    tools: Sequence[Mapping[str, Any]],
+) -> tuple[str, str]:
+    if not user_scope:
+        return "", ""
+    stable_system = next(
+        (
+            message.content or ""
+            for message in messages
+            if message.role == "system"
+        ),
+        "",
+    )
+    stable_tools = sorted(
+        (dict(tool) for tool in tools),
+        key=lambda tool: str(
+            tool.get("function", {}).get("name", "")
+            if isinstance(tool.get("function"), Mapping)
+            else tool.get("name", "")
+        ),
+    )
+    static_payload = {
+        "provider": provider_id.strip().casefold(),
+        "model": model.strip().casefold(),
+        "system": stable_system,
+        "tools": stable_tools,
+    }
+    static_digest = hashlib.sha256(
+        json.dumps(
+            static_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+    ).hexdigest()
+    cache_digest = hashlib.sha256(
+        f"{user_scope}\0{static_digest}".encode("utf-8")
+    ).hexdigest()[:48]
+    return f"lumina:user:v2:{cache_digest}", static_digest
 
 
 def _nonnegative_int(value: Any) -> int:

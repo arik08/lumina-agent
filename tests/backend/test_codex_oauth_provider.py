@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from types import SimpleNamespace
 from typing import Any
 
@@ -48,6 +49,7 @@ class _Thread:
             self.state["transport_failures"] -= 1
             raise TransportClosedError("Codex process closed stdout")
         self.state["prompt"] = prompt
+        self.state.setdefault("prompts", []).append(prompt)
         self.state["run_kwargs"] = kwargs
         return SimpleNamespace(
             final_response=self.state["response"],
@@ -89,6 +91,7 @@ def _fake_async_codex(state: dict[str, Any]) -> type:
 
         async def thread_start(self, **kwargs: Any) -> _Thread:
             state["thread_kwargs"] = kwargs
+            state["thread_start_count"] = state.get("thread_start_count", 0) + 1
             return _Thread(state)
 
     return FakeAsyncCodex
@@ -128,6 +131,44 @@ def test_codex_structured_tool_arguments_stream_incrementally() -> None:
     )
     assert deltas == arguments
     assert len([event for event in events if event.type == "tool_call_delta"]) > 1
+
+
+def test_codex_prompt_keeps_static_system_and_tools_before_dynamic_history() -> None:
+    tool = {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": "Search",
+            "parameters": {"type": "object"},
+        },
+    }
+    first = ProviderRequest(
+        model="gpt-5.5",
+        messages=(
+            ProviderMessage(role="system", content="stable system"),
+            ProviderMessage(role="system", content="turn contract"),
+            ProviderMessage(role="user", content="first task"),
+        ),
+        tools=(tool,),
+    )
+    later = ProviderRequest(
+        model="gpt-5.5",
+        messages=(
+            *first.messages,
+            ProviderMessage(role="assistant", content="working"),
+            ProviderMessage(role="tool", name="web_search", content="new evidence"),
+        ),
+        tools=(tool,),
+    )
+
+    first_prompt = codex_adapter._prompt(first)
+    later_prompt = codex_adapter._prompt(later)
+    common_prefix = os.path.commonprefix((first_prompt, later_prompt))
+
+    assert first_prompt.index('"system"') < first_prompt.index('"tools"')
+    assert first_prompt.index('"tools"') < first_prompt.index('"conversation"')
+    assert '"name":"web_search"' in common_prefix
+    assert '"content":"turn contract"' in common_prefix
 
 
 @pytest.mark.asyncio
@@ -200,6 +241,80 @@ async def test_codex_oauth_reuses_warm_client_across_requests(
     assert state["models_count"] == 1
     await adapter.close()
     assert state["close_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_codex_oauth_reuses_run_thread_with_only_incremental_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state: dict[str, Any] = {
+        "response": json.dumps(
+            {
+                "kind": "tool_calls",
+                "text": "",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "name": "lookup_asset",
+                        "arguments_json": '{"asset":"BF-01"}',
+                    }
+                ],
+            }
+        )
+    }
+    monkeypatch.setattr(
+        "lumina.providers.codex.adapter.AsyncCodex", _fake_async_codex(state)
+    )
+    adapter = CodexResponsesAdapter()
+    base_messages = (
+        ProviderMessage(role="system", content="stable system"),
+        ProviderMessage(role="user", content="inspect BF-01"),
+    )
+    metadata = {
+        "prompt_cache_key": "lumina:user:v2:opaque",
+        "codex_run_thread_id": "run-1",
+    }
+    first = ProviderRequest(
+        model="gpt-5.5",
+        messages=base_messages,
+        metadata=metadata,
+    )
+
+    assert [event.type async for event in adapter.stream(first)][-1] == "completed"
+    state["response"] = '{"kind":"final","text":"done","tool_calls":[]}'
+    second = ProviderRequest(
+        model="gpt-5.5",
+        messages=(
+            *base_messages,
+            ProviderMessage(
+                role="assistant",
+                tool_calls=(
+                    {
+                        "id": "call_1",
+                        "name": "lookup_asset",
+                        "arguments_json": '{"asset":"BF-01"}',
+                    },
+                ),
+            ),
+            ProviderMessage(
+                role="tool",
+                name="lookup_asset",
+                tool_call_id="call_1",
+                content='{"temperature":1200}',
+            ),
+        ),
+        metadata=metadata,
+    )
+
+    assert [event.type async for event in adapter.stream(second)][-1] == "completed"
+
+    assert state["thread_start_count"] == 1
+    assert len(state["prompts"]) == 2
+    assert "conversation_delta" in state["prompts"][1]
+    assert '"role":"tool"' in state["prompts"][1]
+    assert '"role":"assistant"' not in state["prompts"][1]
+    assert "static_prefix" not in state["prompts"][1]
+    await adapter.close()
 
 
 @pytest.mark.asyncio
@@ -364,7 +479,10 @@ async def test_codex_oauth_stream_maps_lumina_tool_calls(
     assert events[2].arguments_json == '{"asset":"BF-01"}'
     assert events[-1].stop_reason == "tool_calls"
     prompt_payload = json.loads(state["prompt"].split("\n", 1)[1])
-    assert prompt_payload["tools"][0]["function"]["name"] == "lookup_asset"
+    assert (
+        prompt_payload["static_prefix"]["tools"][0]["function"]["name"]
+        == "lookup_asset"
+    )
 
 
 @pytest.mark.asyncio
