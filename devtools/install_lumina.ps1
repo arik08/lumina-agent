@@ -173,6 +173,34 @@ function Set-TrustEnvironment {
     }
 }
 
+function Read-LuminaYesNoChoice {
+    param(
+        [Parameter(Mandatory = $true)][string]$Prompt,
+        [scriptblock]$ReadKey = { [Console]::ReadKey($true) }
+    )
+
+    Write-Host -NoNewline "$Prompt [Y/N] "
+    while ($true) {
+        $key = & $ReadKey
+        $keyName = [string]$key.Key
+        $keyCharacter = [string]$key.KeyChar
+        if (
+            $keyName.Equals("Y", [StringComparison]::OrdinalIgnoreCase) -or
+            $keyCharacter.Equals("y", [StringComparison]::OrdinalIgnoreCase)
+        ) {
+            Write-Host "Y"
+            return $true
+        }
+        if (
+            $keyName.Equals("N", [StringComparison]::OrdinalIgnoreCase) -or
+            $keyCharacter.Equals("n", [StringComparison]::OrdinalIgnoreCase)
+        ) {
+            Write-Host "N"
+            return $false
+        }
+    }
+}
+
 if ($ConfigurePgpt -and $SkipPgpt) {
     throw "ConfigurePgpt and SkipPgpt cannot be used together."
 }
@@ -255,8 +283,8 @@ if (-not (Test-Path -LiteralPath $EnvFile)) {
 
 $enablePgpt = [bool]$ConfigurePgpt
 if (-not $ConfigurePgpt -and -not $SkipPgpt -and -not $NonInteractive) {
-    $choice = Read-Host "Configure the optional P-GPT provider now? [y/N]"
-    $enablePgpt = $choice -match '^(?i)y(?:es)?$'
+    $enablePgpt = Read-LuminaYesNoChoice `
+        -Prompt "Configure the optional P-GPT provider now?"
 }
 
 if ($enablePgpt) {
@@ -414,8 +442,8 @@ if (-not $SkipFrontendBuild) {
 
 $runPgptNetworkCheck = [bool]$PgptNetworkCheck
 if ($enablePgpt -and -not $NonInteractive -and -not $NoNetwork -and -not $PgptNetworkCheck) {
-    $choice = Read-Host "Run the opt-in P-GPT connection diagnostic now? [y/N]"
-    $runPgptNetworkCheck = $choice -match '^(?i)y(?:es)?$'
+    $runPgptNetworkCheck = Read-LuminaYesNoChoice `
+        -Prompt "Run the opt-in P-GPT connection diagnostic now?"
 }
 if ($runPgptNetworkCheck) {
     Write-Host "[Lumina] Running opt-in P-GPT network diagnostics..."
