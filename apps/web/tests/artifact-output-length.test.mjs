@@ -4,7 +4,7 @@ import test from "node:test";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
-test("composer opens the file-length slider on demand and sends a transient Artifact target", async () => {
+test("composer defaults file length to auto and sends only an explicitly selected target", async () => {
   const [app, styles, workspace, types] = await Promise.all([
     read("../src/App.tsx"),
     read("../src/styles.css"),
@@ -12,9 +12,9 @@ test("composer opens the file-length slider on demand and sends a transient Arti
     read("../src/api-types.ts"),
   ]);
 
-  assert.match(app, /defaultArtifactOutputTokens = 10_000/);
+  assert.match(app, /defaultArtifactOutputTokens: number \| null = null/);
+  assert.match(app, /value: null, label: "자동"/);
   assert.match(app, /label: "10k"/);
-  assert.doesNotMatch(app, /label: "자동 10–12k"/);
   assert.match(app, /문서 출력 토큰/);
   assert.doesNotMatch(app, />파일 분량</);
   assert.doesNotMatch(app, /className="artifact-length-label"/);
@@ -35,14 +35,15 @@ test("composer opens the file-length slider on demand and sends a transient Arti
     assert.match(app, new RegExp(`event\\.key.{0,80}${key}|${key}.{0,80}event\\.key`, "s"));
   }
   assert.match(app, /data-testid="artifact-length-slider"/);
+  assert.match(app, /요청 내용에 맞춰 생성 파일의 분량을 결정/);
   assert.match(app, /채팅 답변이 아닌 생성 파일의 목표 분량/);
   for (const target of ["8_000", "10_000", "12_000", "15_000", "20_000", "30_000", "40_000"]) {
     assert.match(app, new RegExp(`value: ${target}`));
   }
   assert.match(app, /warning: "장문"/);
   assert.match(app, /warning: "최대"/);
-  assert.match(app, /selectedIndex >= 4/);
-  assert.match(app, /selectedIndex <= 1[\s\S]*?"muted"/);
+  assert.match(app, /selected\.warning === "최대"/);
+  assert.match(app, /selected\.value === null \|\| selected\.value <= 10_000/);
   assert.match(styles, /\.artifact-length-control\.is-muted \.artifact-length-value \{ color: var\(--muted\); \}/);
   assert.match(styles, /\.artifact-length-popover\.is-muted output > span \{ color: var\(--muted\); \}/);
   assert.match(styles, /--artifact-length-warning: oklch\(62% 0\.18 52\);/);

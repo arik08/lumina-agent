@@ -9,7 +9,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from lumina.agent import executor as executor_module
-from lumina.agent.executor import local_run_executor
+from lumina.agent.executor import LocalRunExecutor, local_run_executor
 from lumina.config import Settings
 from lumina.main import create_app
 from lumina.models import ToolExecution
@@ -133,6 +133,57 @@ def test_large_web_fetch_result_is_truncated_only_for_provider_context() -> None
     assert len(provider_result["text"]) < len(result["text"])
     assert provider_result["source"] == result["source"]
     assert provider_result["providerContextTruncated"] is True
+
+
+def test_article_web_research_uses_bounded_default_and_explicit_deep_budget() -> None:
+    assert executor_module._article_web_research_budget(
+        "포스코 관련 최근 3개월 언론기사 동향을 조사해줘"
+    ) == (3, 5)
+    assert executor_module._article_web_research_budget(
+        "포스코 관련 언론기사 동향을 심층 조사해줘"
+    ) == (6, 10)
+    assert (
+        executor_module._article_web_research_budget("프로젝트 파일 구조를 설명해줘")
+        is None
+    )
+
+
+def test_article_web_budget_skips_duplicate_and_excess_calls(monkeypatch) -> None:
+    executor = LocalRunExecutor()
+    monkeypatch.setattr(
+        executor,
+        "_article_web_attempt_state",
+        lambda _run_id: (
+            {"web_search": 0, "web_fetch": 0},
+            {"web_search": set(), "web_fetch": set()},
+        ),
+    )
+    calls = [
+        {
+            "name": "web_search",
+            "arguments": json.dumps({"query": query}),
+        }
+        for query in (
+            "POSCO news",
+            "POSCO news",
+            "POSCO tariffs",
+            "POSCO lithium",
+            "POSCO labor",
+        )
+    ]
+
+    executor._apply_article_web_call_budget(
+        "run-budget",
+        calls,
+        search_limit=3,
+        fetch_limit=5,
+    )
+
+    assert calls[0].get("blocked_error") is None
+    assert calls[1]["blocked_error"] == "article_web_duplicate_request"
+    assert calls[2].get("blocked_error") is None
+    assert calls[3].get("blocked_error") is None
+    assert calls[4]["blocked_error"] == "article_web_research_budget_reached"
 
 
 def test_write_file_progress_counts_streamed_tokens_and_lines() -> None:

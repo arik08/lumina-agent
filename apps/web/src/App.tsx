@@ -813,9 +813,10 @@ interface ComposerPickerOption {
   triggerLabel?: string;
 }
 
-const defaultArtifactOutputTokens = 10_000;
+const defaultArtifactOutputTokens: number | null = null;
 
 const artifactLengthSteps = [
+  { value: null, label: "자동", warning: null },
   { value: 8_000, label: "8k", warning: null },
   { value: 10_000, label: "10k", warning: null },
   { value: 12_000, label: "12k", warning: null },
@@ -843,21 +844,24 @@ function ArtifactLengthSlider({
   const popoverId = useId();
   const selectedIndex = Math.max(
     0,
-    artifactLengthSteps.findIndex((option) => option.value === (value ?? defaultArtifactOutputTokens)),
+    artifactLengthSteps.findIndex((option) => option.value === value),
   );
   const selected = artifactLengthSteps[selectedIndex];
   const selectStep = (index: number) => {
     const boundedIndex = Math.min(artifactLengthSteps.length - 1, Math.max(0, index));
-    onChange(artifactLengthSteps[boundedIndex]?.value ?? defaultArtifactOutputTokens);
+    const option = artifactLengthSteps[boundedIndex];
+    onChange(option ? option.value : defaultArtifactOutputTokens);
   };
-  const tone = selectedIndex === artifactLengthSteps.length - 1
+  const tone = selected.warning === "최대"
     ? "danger"
-    : selectedIndex >= 4
+    : selected.warning
       ? "warning"
-      : selectedIndex <= 1
+      : selected.value === null || selected.value <= 10_000
         ? "muted"
         : "normal";
-  const ariaValueText = `${selected.label}${selected.warning ? `, ${selected.warning}` : ""}, 채팅 답변이 아닌 생성 파일의 목표 분량`;
+  const ariaValueText = selected.value === null
+    ? "자동, 요청 내용에 맞춰 생성 파일의 분량을 결정"
+    : `${selected.label}${selected.warning ? `, ${selected.warning}` : ""}, 채팅 답변이 아닌 생성 파일의 목표 분량`;
 
   useEffect(() => {
     if (!open) return;

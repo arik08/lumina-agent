@@ -13,6 +13,7 @@ from lumina.instructions.service import (
     CORE_AGENT_EXECUTION_CONTRACT,
     DEFAULT_SYSTEM_PROMPT,
     RICH_CHAT_RENDERING_CONTRACT,
+    WEB_RESEARCH_EFFICIENCY_CONTRACT,
     InstructionSnapshot,
     InstructionScope,
     instruction_digest,
@@ -36,6 +37,13 @@ def test_default_system_prompt_describes_rich_chat_rendering_contract() -> None:
     assert "Apache ECharts option" in RICH_CHAT_RENDERING_CONTRACT
     assert "pie, scatter, radar, graph, tree, treemap, sunburst, sankey" in RICH_CHAT_RENDERING_CONTRACT
     assert "Markdown image syntax renders an inline expandable image" in RICH_CHAT_RENDERING_CONTRACT
+
+
+def test_default_system_prompt_bounds_ordinary_web_research() -> None:
+    assert WEB_RESEARCH_EFFICIENCY_CONTRACT in DEFAULT_SYSTEM_PROMPT
+    assert "no more than three focused web searches" in WEB_RESEARCH_EFFICIENCY_CONTRACT
+    assert "fetch no more than five" in WEB_RESEARCH_EFFICIENCY_CONTRACT
+    assert "fetch that URL directly" in WEB_RESEARCH_EFFICIENCY_CONTRACT
 
 
 def _settings(tmp_path: Path) -> Settings:
@@ -270,6 +278,10 @@ def test_instruction_api_permissions_concurrency_and_secret_guard(
         )
         assert any(
             RICH_CHAT_RENDERING_CONTRACT in (message.content or "")
+            for message in provider_messages
+        )
+        assert any(
+            WEB_RESEARCH_EFFICIENCY_CONTRACT in (message.content or "")
             for message in provider_messages
         )
 
