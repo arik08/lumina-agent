@@ -504,7 +504,7 @@ def test_selected_artifact_target_retries_short_report_and_exposes_separate_coun
     )
 
 
-def test_selected_artifact_target_fails_instead_of_saving_repeatedly_short_report(
+def test_selected_artifact_target_saves_repeatedly_short_report_with_warning(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     settings = Settings(
@@ -528,6 +528,8 @@ def test_selected_artifact_target_fails_instead_of_saving_repeatedly_short_repor
         del first_turn
         assert wants_artifact is True
         provider_turn += 1
+        if provider_turn > 3:
+            return MockProvider(text_chunks=("목표 분량에는 못 미쳤지만 생성된 보고서를 저장했습니다.",))
         arguments = _arguments("html")
         arguments["html_source"] = short_html
         return MockProvider(
@@ -563,16 +565,29 @@ def test_selected_artifact_target_fails_instead_of_saving_repeatedly_short_repor
         assert started.status_code == 202, started.text
         snapshot = _wait_for_terminal(client, started.json()["run"]["runId"])
 
-    assert snapshot["status"] == "failed"
-    assert snapshot["errorCode"] == "artifact_target_not_met"
-    assert provider_turn == 3
-    assert snapshot["artifacts"] == []
+    assert snapshot["status"] == "completed"
+    assert snapshot["errorCode"] is None
+    assert provider_turn == 4
+    assert len(snapshot["artifacts"]) == 1
     assert len(snapshot["toolExecutions"]) == 3
     assert [
         execution["result"]["status"] for execution in snapshot["toolExecutions"][:2]
     ] == ["needs_expansion", "needs_expansion"]
-    assert snapshot["toolExecutions"][2]["status"] == "failed"
-    assert "최소 허용 분량" in snapshot["toolExecutions"][2]["error"]
+    completed = snapshot["toolExecutions"][2]
+    assert completed["status"] == "completed"
+    assert completed["artifactId"] == snapshot["artifacts"][0]["id"]
+    assert completed["result"]["target_met"] is False
+    assert "최소 허용 분량" in completed["result"]["warnings"][0]
+    assert "Artifact로 저장했습니다" in completed["resultSummary"][0]
+
+    artifact = snapshot["artifacts"][0]
+    with TestClient(create_app(settings)) as client:
+        _login(client)
+        version = client.get(
+            f"/api/artifacts/{artifact['id']}/versions/{artifact['currentVersion']}"
+        )
+    assert version.status_code == 200, version.text
+    assert version.json()["sourceText"] == short_html
 
 
 def _assert_reopened(report_format: str, content: bytes) -> None:

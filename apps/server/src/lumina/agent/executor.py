@@ -3792,6 +3792,7 @@ class LocalRunExecutor:
             if target_output_tokens is not None
             else None
         )
+        target_warning: str | None = None
         if (
             report_text
             and target_output_tokens is not None
@@ -3800,63 +3801,49 @@ class LocalRunExecutor:
         ):
             missing_tokens = max(0, target_output_tokens - document_tokens)
             if length_retry_count >= _MAX_ARTIFACT_LENGTH_RETRIES:
-                failure_message = (
+                target_warning = (
                     "선택한 문서 출력 목표를 반복해서 충족하지 못했습니다. "
                     f"마지막 결과는 약 {document_tokens:,}토큰이며, "
-                    f"최소 허용 분량은 약 {target_floor:,}토큰입니다."
+                    f"최소 허용 분량은 약 {target_floor:,}토큰입니다. "
+                    "생성된 마지막 결과를 확인할 수 있도록 Artifact로 저장했습니다."
                 )
-                failure = await self._fail_tool_execution(
+            else:
+                expansion_attempt = length_retry_count + 1
+                with session_scope() as db:
+                    run = db.get(Run, run_id)
+                    if run is not None:
+                        run.snapshot_json = {
+                            **run.snapshot_json,
+                            "artifact_progress": None,
+                            "artifact_length_retry_count": expansion_attempt,
+                        }
+                length_check = {
+                    "status": "needs_expansion",
+                    "documentTokens": document_tokens,
+                    "targetTokens": target_output_tokens,
+                    "minimumTokens": target_floor,
+                    "expansionAttempt": expansion_attempt,
+                    "maxExpansionAttempts": _MAX_ARTIFACT_LENGTH_RETRIES,
+                    "targetLengthCheck": (
+                        "The report file has not been saved because its Artifact content is only "
+                        f"about {document_tokens:,} tokens, below the selected minimum of about "
+                        f"{target_floor:,} tokens. Expansion check {expansion_attempt} of "
+                        f"{_MAX_ARTIFACT_LENGTH_RETRIES} failed. Call `create_report` again with "
+                        "the complete revised document in one tool call. Preserve the useful "
+                        "analysis already written instead of replacing it with a shorter rewrite, "
+                        "and add about "
+                        f"{missing_tokens:,} tokens of substantive analysis, explanations, tables, "
+                        "source notes, and interpretation. The next report must contain at least "
+                        f"about {target_floor:,} document tokens. Do not finish with chat text only."
+                    ),
+                }
+                await self._complete_tool_execution(
                     run_id,
                     tool_id,
-                    WebToolError(
-                        "artifact_target_not_met",
-                        failure_message,
-                        stage="validation",
-                        retryable=False,
-                    ),
+                    length_check,
+                    "선택한 목표 분량보다 짧아 보고서 확장 작성을 요청했습니다.",
                 )
-                await self._fail_run(
-                    run_id,
-                    "artifact_target_not_met",
-                    failure_message,
-                )
-                return failure
-            expansion_attempt = length_retry_count + 1
-            with session_scope() as db:
-                run = db.get(Run, run_id)
-                if run is not None:
-                    run.snapshot_json = {
-                        **run.snapshot_json,
-                        "artifact_progress": None,
-                        "artifact_length_retry_count": expansion_attempt,
-                    }
-            length_check = {
-                "status": "needs_expansion",
-                "documentTokens": document_tokens,
-                "targetTokens": target_output_tokens,
-                "minimumTokens": target_floor,
-                "expansionAttempt": expansion_attempt,
-                "maxExpansionAttempts": _MAX_ARTIFACT_LENGTH_RETRIES,
-                "targetLengthCheck": (
-                    "The report file has not been saved because its Artifact content is only "
-                    f"about {document_tokens:,} tokens, below the selected minimum of about "
-                    f"{target_floor:,} tokens. Expansion check {expansion_attempt} of "
-                    f"{_MAX_ARTIFACT_LENGTH_RETRIES} failed. Call `create_report` again with "
-                    "the complete revised document in one tool call. Preserve the useful "
-                    "analysis already written instead of replacing it with a shorter rewrite, "
-                    "and add about "
-                    f"{missing_tokens:,} tokens of substantive analysis, explanations, tables, "
-                    "source notes, and interpretation. The next report must contain at least "
-                    f"about {target_floor:,} document tokens. Do not finish with chat text only."
-                ),
-            }
-            await self._complete_tool_execution(
-                run_id,
-                tool_id,
-                length_check,
-                "선택한 목표 분량보다 짧아 보고서 확장 작성을 요청했습니다.",
-            )
-            return length_check
+                return length_check
         with session_scope() as db:
             run = db.get(Run, run_id)
             completed_tool = db.get(ToolExecution, tool_id)
@@ -3895,8 +3882,9 @@ class LocalRunExecutor:
                 "document_tokens": document_tokens,
                 "target_tokens": target_output_tokens,
                 "target_met": (target_floor is None or document_tokens >= target_floor),
+                "warnings": [target_warning] if target_warning else [],
             }
-            completed_tool.result_summary = (
+            completed_tool.result_summary = target_warning or (
                 f"{report.format.upper()} 보고서를 Artifact로 저장하고 형식을 검증했습니다."
                 if version.validation_status == "passed"
                 else (
@@ -3960,6 +3948,7 @@ class LocalRunExecutor:
             "documentTokens": document_tokens,
             "targetTokens": target_output_tokens,
             "targetMet": target_floor is None or document_tokens >= target_floor,
+            "warnings": [target_warning] if target_warning else [],
         }
 
     async def _execute_generate_image(
