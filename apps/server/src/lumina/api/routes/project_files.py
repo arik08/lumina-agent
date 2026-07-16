@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import suppress
 from pathlib import PurePosixPath
 from urllib.parse import quote
 
@@ -13,6 +14,7 @@ from ...config import Settings, get_settings
 from ...db import get_db
 from ...models import ProjectFile, ProjectFileVersion, ProjectFolder, User
 from ...project_files import (
+    cleanup_project_file_version_storage,
     create_project_folder,
     create_project_file,
     create_project_file_version,
@@ -150,6 +152,7 @@ async def post_project_file(
     content = await file.read(settings.max_upload_bytes + 1)
     original_filename = _safe_original_filename(file.filename)
     target_path = normalize_logical_path(logical_path or original_filename)
+    storage = _storage(settings)
     project_file, version = create_project_file(
         db,
         user=context.user,
@@ -159,24 +162,30 @@ async def post_project_file(
         content=content,
         change_reason=change_reason,
         max_upload_bytes=settings.max_upload_bytes,
-        storage=_storage(settings),
+        storage=storage,
     )
-    record_audit(
-        db,
-        action="project_file_created",
-        target_type="project_file",
-        target_id=project_file.id,
-        result="success",
-        actor=context.user,
-        request_id=getattr(request.state, "request_id", None),
-        metadata={
-            "project_id": project_id,
-            "logical_path": project_file.logical_path,
-            "version": version.version_number,
-            "content_hash": version.content_hash,
-        },
-    )
-    db.commit()
+    try:
+        record_audit(
+            db,
+            action="project_file_created",
+            target_type="project_file",
+            target_id=project_file.id,
+            result="success",
+            actor=context.user,
+            request_id=getattr(request.state, "request_id", None),
+            metadata={
+                "project_id": project_id,
+                "logical_path": project_file.logical_path,
+                "version": version.version_number,
+                "content_hash": version.content_hash,
+            },
+        )
+        db.commit()
+    except BaseException:
+        with suppress(Exception):
+            db.rollback()
+        cleanup_project_file_version_storage(storage, version)
+        raise
     return _file_payload(project_file, version)
 
 
@@ -353,6 +362,7 @@ async def post_project_file_version(
     settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
     content = await file.read(settings.max_upload_bytes + 1)
+    storage = _storage(settings)
     project_file, version = create_project_file_version(
         db,
         user=context.user,
@@ -364,24 +374,30 @@ async def post_project_file_version(
         change_reason=change_reason,
         source_run_id=source_run_id,
         max_upload_bytes=settings.max_upload_bytes,
-        storage=_storage(settings),
+        storage=storage,
     )
-    record_audit(
-        db,
-        action="project_file_version_created",
-        target_type="project_file",
-        target_id=project_file.id,
-        result="success",
-        actor=context.user,
-        request_id=getattr(request.state, "request_id", None),
-        metadata={
-            "project_id": project_id,
-            "version": version.version_number,
-            "content_hash": version.content_hash,
-            "source_run_id": source_run_id,
-        },
-    )
-    db.commit()
+    try:
+        record_audit(
+            db,
+            action="project_file_version_created",
+            target_type="project_file",
+            target_id=project_file.id,
+            result="success",
+            actor=context.user,
+            request_id=getattr(request.state, "request_id", None),
+            metadata={
+                "project_id": project_id,
+                "version": version.version_number,
+                "content_hash": version.content_hash,
+                "source_run_id": source_run_id,
+            },
+        )
+        db.commit()
+    except BaseException:
+        with suppress(Exception):
+            db.rollback()
+        cleanup_project_file_version_storage(storage, version)
+        raise
     return _file_payload(project_file, version)
 
 

@@ -11,6 +11,7 @@ from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, inspect, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from lumina.agent.executor import LocalRunExecutor
 from lumina.api.errors import ApiProblem
@@ -573,6 +574,109 @@ def test_failed_database_commit_cleans_managed_storage_objects(tmp_path: Path) -
     ] == []
     with SessionLocal() as db:
         assert db.scalar(select(ProjectFile)) is None
+
+
+def test_unexpected_database_flush_cleans_managed_storage_objects(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path, "unexpected-flush-cleanup.db")
+    configure_database(settings.database_url)
+    create_schema()
+    bootstrap_database(settings=settings)
+    storage = ManagedLocalStorage(settings.files_dir or tmp_path / "files")
+
+    with SessionLocal() as db:
+        admin = db.scalar(select(User).where(User.login_id == "admin@posco.com"))
+        assert admin is not None
+        project = db.scalar(select(Project).where(Project.owner_user_id == admin.id))
+        assert project is not None
+        original_flush = db.flush
+
+        def fail_project_file_flush(*args, **kwargs):
+            if any(isinstance(item, ProjectFile) for item in db.new):
+                raise RuntimeError("forced project file flush failure")
+            return original_flush(*args, **kwargs)
+
+        with patch.object(db, "flush", side_effect=fail_project_file_flush):
+            with pytest.raises(RuntimeError, match="forced project file flush failure"):
+                create_project_file(
+                    db,
+                    user=admin,
+                    project_id=project.id,
+                    logical_path="cleanup/unexpected.md",
+                    original_filename="unexpected.md",
+                    content="unexpected cleanup".encode(),
+                    change_reason="cleanup test",
+                    max_upload_bytes=settings.max_upload_bytes,
+                    storage=storage,
+                )
+
+    assert not [path for path in storage.root.rglob("*") if path.is_file()]
+
+
+def test_project_file_commit_failures_clean_only_new_storage_objects(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path, "route-commit-cleanup.db")
+    with TestClient(create_app(settings)) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+
+        with patch.object(
+            Session, "commit", side_effect=RuntimeError("forced create commit failure")
+        ):
+            with pytest.raises(RuntimeError, match="forced create commit failure"):
+                _upload(
+                    client,
+                    headers,
+                    project_id,
+                    logical_path="cleanup/create.md",
+                    content="uncommitted create",
+                )
+
+        assert client.get(f"/api/projects/{project_id}/files").json() == []
+        assert not [
+            path for path in settings.files_dir.rglob("*") if path.is_file()
+        ]
+
+        created = _upload(
+            client,
+            headers,
+            project_id,
+            logical_path="cleanup/version.md",
+            content="committed version one",
+        )
+        assert created.status_code == 201, created.text
+        project_file = created.json()
+        committed_files = {
+            path for path in settings.files_dir.rglob("*") if path.is_file()
+        }
+
+        with patch.object(
+            Session, "commit", side_effect=RuntimeError("forced version commit failure")
+        ):
+            with pytest.raises(RuntimeError, match="forced version commit failure"):
+                client.post(
+                    f"/api/projects/{project_id}/files/{project_file['id']}/versions",
+                    headers=headers,
+                    data={"baseVersion": 1, "changeReason": "forced failure"},
+                    files={
+                        "file": (
+                            "version.md",
+                            b"uncommitted version two",
+                            "text/markdown",
+                        )
+                    },
+                )
+
+        detail = client.get(
+            f"/api/projects/{project_id}/files/{project_file['id']}"
+        )
+        assert detail.status_code == 200
+        assert detail.json()["currentVersion"] == 1
+        assert {
+            path for path in settings.files_dir.rglob("*") if path.is_file()
+        } == committed_files
 
 
 def test_project_workspace_migration_round_trip(tmp_path: Path) -> None:

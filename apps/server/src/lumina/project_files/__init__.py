@@ -1,4 +1,5 @@
 from .service import (
+    cleanup_project_file_version_storage,
     create_project_file,
     create_project_file_version,
     get_project_file,
@@ -16,6 +17,7 @@ from .folders import (
 )
 
 __all__ = [
+    "cleanup_project_file_version_storage",
     "create_project_file",
     "create_project_file_version",
     "get_project_file",

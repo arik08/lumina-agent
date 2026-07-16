@@ -339,8 +339,8 @@ def create_project_file(
         created_by_user_id=user.id,
         created_at=now,
     )
-    db.add_all((project_file, version))
     try:
+        db.add_all((project_file, version))
         db.flush()
     except IntegrityError as exc:
         _cleanup_storage(
@@ -354,6 +354,13 @@ def create_project_file(
             "project_file_path_exists",
             "같은 경로의 Project 파일이 이미 있습니다.",
         ) from exc
+    except BaseException:
+        _cleanup_storage(
+            storage,
+            stored.key,
+            extraction_metadata.get("extractedStorageKey"),
+        )
+        raise
     return project_file, version
 
 
@@ -419,20 +426,28 @@ def create_project_file_version(
         _cleanup_storage(storage, stored.key)
         raise
     now = utc_now()
-    result = db.execute(
-        update(ProjectFile)
-        .where(
-            ProjectFile.id == project_file.id,
-            ProjectFile.current_version_number == base_version,
-            ProjectFile.deleted_at.is_(None),
+    try:
+        result = db.execute(
+            update(ProjectFile)
+            .where(
+                ProjectFile.id == project_file.id,
+                ProjectFile.current_version_number == base_version,
+                ProjectFile.deleted_at.is_(None),
+            )
+            .values(
+                current_version_number=next_version,
+                revision=ProjectFile.revision + 1,
+                updated_at=now,
+            )
+            .execution_options(synchronize_session=False)
         )
-        .values(
-            current_version_number=next_version,
-            revision=ProjectFile.revision + 1,
-            updated_at=now,
+    except BaseException:
+        _cleanup_storage(
+            storage,
+            stored.key,
+            extraction_metadata.get("extractedStorageKey"),
         )
-        .execution_options(synchronize_session=False)
-    )
+        raise
     if getattr(result, "rowcount", 0) != 1:
         _cleanup_storage(
             storage,
@@ -477,8 +492,23 @@ def create_project_file_version(
         )
         db.rollback()
         raise _version_conflict(base_version) from exc
-    db.expire(project_file)
-    db.refresh(project_file)
+    except BaseException:
+        _cleanup_storage(
+            storage,
+            stored.key,
+            extraction_metadata.get("extractedStorageKey"),
+        )
+        raise
+    try:
+        db.expire(project_file)
+        db.refresh(project_file)
+    except BaseException:
+        _cleanup_storage(
+            storage,
+            stored.key,
+            extraction_metadata.get("extractedStorageKey"),
+        )
+        raise
     return project_file, version
 
 
@@ -663,6 +693,16 @@ def _cleanup_storage(storage: ManagedStorage, *keys: object) -> None:
             storage.delete(key)
         except StorageError:
             continue
+
+
+def cleanup_project_file_version_storage(
+    storage: ManagedStorage, version: ProjectFileVersion
+) -> None:
+    _cleanup_storage(
+        storage,
+        version.storage_key,
+        version.metadata_json.get("extractedStorageKey"),
+    )
 
 
 def _version_conflict(current_version: int) -> ApiProblem:
