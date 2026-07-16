@@ -10,7 +10,8 @@ test("composer gutters pass middle-button hits through to the conversation scrol
 
   assert.match(dockAreaRule, /pointer-events:\s*none;/);
   assert.match(dockAreaRule, /background:\s*transparent;/);
-  assert.match(styles, /\.dock-area::after \{[^}]*height:\s*max\(16px, env\(safe-area-inset-bottom\)\);[^}]*background:\s*var\(--chat-canvas\);[^}]*content:\s*"";/);
+  assert.match(dockAreaRule, /isolation:\s*isolate;/);
+  assert.match(styles, /\.dock-area::after \{[^}]*z-index:\s*-1;[^}]*height:\s*calc\(max\(16px, env\(safe-area-inset-bottom\)\) \+ 14px\);[^}]*background:\s*var\(--chat-canvas\);[^}]*content:\s*"";/);
   assert.match(styles, /\.run-dock,\s*\.jump-to-latest \{\s*pointer-events:\s*auto;\s*\}/);
 });
 
