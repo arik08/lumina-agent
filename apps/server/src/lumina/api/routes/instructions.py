@@ -14,6 +14,7 @@ from ...instructions.schemas import (
 )
 from ...instructions.service import (
     InstructionSnapshot,
+    RuntimePromptDocument,
     RuntimePromptKey,
     instruction_payload,
     normalize_instruction_content,
@@ -224,7 +225,7 @@ def get_runtime_prompts(
     response: Response,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> list[dict[str, object]]:
+) -> list[RuntimePromptDocument]:
     require_admin(user)
     response.headers["Cache-Control"] = "no-store"
     return runtime_prompt_documents(db, _organization(db, user))
@@ -237,7 +238,7 @@ def patch_runtime_prompt(
     request: Request,
     context: AuthContext = Depends(require_csrf),
     db: Session = Depends(get_db),
-) -> dict[str, object]:
+) -> RuntimePromptDocument:
     require_admin(context.user)
     document, changed = update_runtime_prompt(
         db,
@@ -308,6 +309,7 @@ def get_organization_instruction_revision(
 ) -> dict[str, object]:
     require_admin(user)
     organization = _organization(db, user)
+    content: str | None
     if revision == organization.policy_revision:
         content = organization.policy_instructions
     else:

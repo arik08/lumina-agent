@@ -5,7 +5,7 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
+from typing import Literal, TypedDict
 
 from sqlalchemy import update
 from sqlalchemy.orm import Session
@@ -176,13 +176,25 @@ class ResolvedInstructionStack:
         )
 
 
+class RuntimePromptDocument(TypedDict):
+    key: RuntimePromptKey
+    name: str
+    description: str
+    content: str
+    defaultContent: str
+    revision: int
+    digest: str
+    overridden: bool
+    updatedAt: datetime | None
+
+
 def instruction_digest(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
 def runtime_prompt_document(
     db: Session, organization: Organization, prompt_key: RuntimePromptKey
-) -> dict[str, object]:
+) -> RuntimePromptDocument:
     definition = RUNTIME_PROMPT_DEFAULTS[prompt_key]
     stored = db.get(RuntimePromptOverride, (organization.id, prompt_key))
     content = stored.content if stored is not None else definition["content"]
@@ -201,7 +213,7 @@ def runtime_prompt_document(
 
 def runtime_prompt_documents(
     db: Session, organization: Organization
-) -> list[dict[str, object]]:
+) -> list[RuntimePromptDocument]:
     return [
         runtime_prompt_document(db, organization, prompt_key)
         for prompt_key in RUNTIME_PROMPT_DEFAULTS
@@ -231,11 +243,11 @@ def update_runtime_prompt(
     expected_revision: int,
     expected_digest: str,
     updated_by_user_id: str,
-) -> tuple[dict[str, object], bool]:
+) -> tuple[RuntimePromptDocument, bool]:
     current = runtime_prompt_document(db, organization, prompt_key)
     _check_precondition(
-        int(current["revision"]),
-        str(current["digest"]),
+        current["revision"],
+        current["digest"],
         expected_revision,
         expected_digest,
     )
