@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 from pptx import Presentation
 from pypdf import PdfReader
+from sqlalchemy.orm import Session
 
 from lumina.agent.executor import _REPORT_TOOL_SCHEMA, local_run_executor
 from lumina.artifacts.render_validation import LocalArtifactRenderBackend
@@ -17,6 +18,7 @@ from lumina.artifacts.reporting import REPORT_FORMATS, generate_report
 from lumina.artifacts.service import validate_artifact_content
 from lumina.config import Settings
 from lumina.main import create_app
+from lumina.models import ArtifactVersion
 from lumina.providers import MockProvider, MockToolCall
 
 
@@ -283,6 +285,8 @@ def test_create_report_tool_persists_and_downloads_selected_format(
 
         version = client.get(f"/api/artifacts/{artifact['id']}/versions/1")
         assert version.status_code == 200
+
+
         version_payload = version.json()
         if report_format != "markdown":
             assert version_payload["validation"]["renderVerified"] is False
@@ -371,6 +375,71 @@ def test_create_report_tool_persists_and_downloads_selected_format(
                 item["displayName"] == "광양_설비_점검_보고서_2.html"
                 for item in duplicate_snapshot["artifacts"]
             )
+
+
+def test_create_report_commit_failure_cleans_artifact_content(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'report-cleanup.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+
+    def fake_provider(
+        _provider_id: str, *, wants_artifact: bool, first_turn: bool
+    ) -> MockProvider:
+        del wants_artifact
+        if first_turn:
+            return MockProvider(
+                tool_call=MockToolCall(
+                    name="create_report",
+                    arguments=_arguments("markdown"),
+                    call_id="call_report_cleanup",
+                )
+            )
+        return MockProvider(text_chunks=("unexpected continuation",))
+
+    real_commit = Session.commit
+    artifact_commit_failed = False
+
+    def fail_artifact_commit(session: Session) -> None:
+        nonlocal artifact_commit_failed
+        has_artifact_version = any(
+            isinstance(item, ArtifactVersion) for item in session.identity_map.values()
+        )
+        if has_artifact_version and not artifact_commit_failed:
+            artifact_commit_failed = True
+            raise RuntimeError("forced create_report artifact commit failure")
+        real_commit(session)
+
+    monkeypatch.setattr(local_run_executor, "_provider", fake_provider)
+    monkeypatch.setattr(Session, "commit", fail_artifact_commit)
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "Report cleanup"},
+        ).json()
+        started = client.post(
+            f"/api/conversations/{conversation['id']}/runs",
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": "report-cleanup-0001",
+            },
+            json={"message": {"text": "Create a markdown report"}},
+        )
+        assert started.status_code == 202, started.text
+        snapshot = _wait_for_terminal(client, started.json()["run"]["runId"])
+
+    assert artifact_commit_failed is True
+    assert snapshot["status"] == "failed"
+    assert not [path for path in settings.artifacts_dir.rglob("*") if path.is_file()]
 
 
 def test_selected_artifact_target_retries_short_report_and_exposes_separate_counts(

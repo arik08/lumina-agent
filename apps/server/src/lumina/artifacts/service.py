@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import hashlib
-from contextlib import suppress
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from html.parser import HTMLParser
 from io import BytesIO
 import math
@@ -344,6 +345,19 @@ def _write_version(
 def discard_artifact_storage(storage: ManagedLocalStorage, key: str) -> None:
     with suppress(StorageError):
         storage.delete(key)
+
+
+@contextmanager
+def cleanup_artifact_storage_on_error(
+    storage: ManagedLocalStorage,
+) -> Iterator[list[str]]:
+    storage_keys: list[str] = []
+    try:
+        yield storage_keys
+    except BaseException:
+        for storage_key in storage_keys:
+            discard_artifact_storage(storage, storage_key)
+        raise
 
 
 def read_artifact_version(

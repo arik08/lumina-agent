@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from ..api.errors import ApiProblem
 from ..artifacts.service import (
     artifact_summary,
+    cleanup_artifact_storage_on_error,
     create_artifact,
     current_artifact_version,
     require_artifact,
@@ -3720,7 +3721,9 @@ class LocalRunExecutor:
                     ".txt": "text",
                 }.get(suffix, suffix.lstrip(".") or "text")
                 mime_type = mimetypes.guess_type(display_name)[0] or "text/plain"
-                with session_scope() as db:
+                with cleanup_artifact_storage_on_error(
+                    self.storage
+                ) as storage_keys, session_scope() as db:
                     workspace_run = db.get(Run, run_id)
                     workspace_user = (
                         db.get(User, workspace_run.user_id)
@@ -3745,6 +3748,7 @@ class LocalRunExecutor:
                         change_type="agent_generated",
                         change_summary="Agent가 생성한 Artifact",
                     )
+                    storage_keys.append(version.storage_key)
                     payload = {
                         "path": display_name,
                         "action": "created",
@@ -3889,7 +3893,9 @@ class LocalRunExecutor:
                 "선택한 목표 분량보다 짧아 보고서 확장 작성을 요청했습니다.",
             )
             return length_check
-        with session_scope() as db:
+        with cleanup_artifact_storage_on_error(
+            self.storage
+        ) as storage_keys, session_scope() as db:
             run = db.get(Run, run_id)
             completed_tool = db.get(ToolExecution, tool_id)
             user = db.get(User, run.user_id) if run else None
@@ -3913,6 +3919,7 @@ class LocalRunExecutor:
                 change_summary="사용자 요청에 따라 생성",
                 asset_manifest=list(report.asset_manifest),
             )
+            storage_keys.append(version.storage_key)
             completed_tool.status = "completed"
             completed_tool.result_json = {
                 "artifact_id": artifact.id,
@@ -4017,13 +4024,16 @@ class LocalRunExecutor:
             except asyncio.CancelledError:
                 await self._cancel_tool_execution(run_id, tool_id)
                 raise
-            with session_scope() as db:
+            with cleanup_artifact_storage_on_error(
+                self.storage
+            ) as storage_keys, session_scope() as db:
                 persisted = persist_generated_image(
                     db,
                     self.storage,
                     prepared=prepared,
                     generated=generated,
                 )
+                storage_keys.append(persisted.storage_key)
                 run = db.get(Run, run_id)
                 completed_tool = db.get(ToolExecution, tool_id)
                 if run is None or completed_tool is None:

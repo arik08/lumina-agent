@@ -8,6 +8,7 @@ from pathlib import Path
 from threading import Event
 
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
 
 from lumina.agent import executor as executor_module
 from lumina.agent.executor import LocalRunExecutor, local_run_executor
@@ -15,7 +16,7 @@ from lumina.config import Settings
 from lumina.main import create_app
 from lumina.db import SessionLocal
 from lumina.instructions.service import DEFAULT_SYSTEM_PROMPT
-from lumina.models import RunEvent, ToolExecution
+from lumina.models import ArtifactVersion, RunEvent, ToolExecution
 from lumina.providers import (
     MockProvider,
     MockToolCall,
@@ -1554,6 +1555,71 @@ def test_executable_html_write_file_satisfies_artifact_completion_gate(
     assert [tool["toolName"] for tool in snapshot["toolExecutions"]] == ["write_file"]
     assert len(snapshot["artifacts"]) == 1
     assert snapshot["artifacts"][0]["displayName"] == "game.html"
+
+
+def test_write_file_commit_failure_cleans_artifact_content(
+    monkeypatch, tmp_path: Path
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'write-file-cleanup.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+
+    def provider(
+        _provider_id: str, *, wants_artifact: bool, first_turn: bool
+    ) -> MockProvider:
+        del wants_artifact
+        if first_turn:
+            return MockProvider(
+                tool_call=MockToolCall(
+                    name="write_file",
+                    arguments={"path": "cleanup.md", "content": "uncommitted"},
+                    call_id="call_write_file_cleanup",
+                )
+            )
+        return MockProvider(text_chunks=("unexpected continuation",))
+
+    real_commit = Session.commit
+    artifact_commit_failed = False
+
+    def fail_artifact_commit(session: Session) -> None:
+        nonlocal artifact_commit_failed
+        has_artifact_version = any(
+            isinstance(item, ArtifactVersion) for item in session.identity_map.values()
+        )
+        if has_artifact_version and not artifact_commit_failed:
+            artifact_commit_failed = True
+            raise RuntimeError("forced write_file artifact commit failure")
+        real_commit(session)
+
+    monkeypatch.setattr(local_run_executor, "_provider", provider)
+    monkeypatch.setattr(Session, "commit", fail_artifact_commit)
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "write_file cleanup"},
+        ).json()
+        started = client.post(
+            f"/api/conversations/{conversation['id']}/runs",
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": "write-file-cleanup-0001",
+            },
+            json={"message": {"text": "Create cleanup.md"}},
+        )
+        assert started.status_code == 202, started.text
+        snapshot = _wait_for_terminal(client, started.json()["run"]["runId"])
+
+    assert artifact_commit_failed is True
+    assert snapshot["status"] == "failed"
+    assert not [path for path in settings.artifacts_dir.rglob("*") if path.is_file()]
 
 
 def test_independent_tool_calls_run_in_parallel_and_persist_subtasks(

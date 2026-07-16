@@ -139,6 +139,7 @@ class PreparedImageTool:
 class PersistedImage:
     artifact_id: str
     version: int
+    storage_key: str
     display_name: str
     mime_type: str
     content_hash: str
@@ -473,6 +474,7 @@ def persist_generated_image(
     return PersistedImage(
         artifact_id=artifact.id,
         version=version.version_number,
+        storage_key=version.storage_key,
         display_name=artifact.display_name,
         mime_type=artifact.mime_type,
         content_hash=version.content_hash,

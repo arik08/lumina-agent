@@ -526,6 +526,7 @@ def test_codex_image_tool_persists_immutable_versions_without_raw_payloads(
         destination_artifact_id = first_snapshot["artifacts"][0]["id"]
         first_tool = first_snapshot["toolExecutions"][0]
         assert first_tool["status"] == "completed"
+        assert "storage_key" not in first_tool["result"]
         first_tools_step = next(
             step for step in first_snapshot["plan"]["steps"] if step["key"] == "tools"
         )
