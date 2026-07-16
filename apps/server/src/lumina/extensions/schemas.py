@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from ..api.schemas import ApiModel
 
@@ -68,6 +68,14 @@ class FolderCreate(ApiModel):
 class FolderPatch(ApiModel):
     name: str | None = Field(default=None, min_length=1, max_length=160)
     sort_order: int | None = Field(default=None, ge=-1_000_000, le=1_000_000)
+
+    @model_validator(mode="after")
+    def require_change(self) -> "FolderPatch":
+        if not self.model_fields_set or (
+            self.name is None and self.sort_order is None
+        ):
+            raise ValueError("name or sortOrder is required")
+        return self
 
 
 class FolderMove(ApiModel):

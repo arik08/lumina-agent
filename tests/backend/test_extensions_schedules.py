@@ -483,6 +483,16 @@ def test_skill_draft_versions_installation_and_folder_move(tmp_path: Path) -> No
             json={"scopeType": "user", "name": "설비 관리"},
         )
         assert folder.status_code == 201, folder.text
+        for invalid_patch in ({}, {"name": None}, {"sortOrder": None}):
+            rejected_patch = client.patch(
+                f"/api/skill-folders/{folder.json()['id']}",
+                headers=headers,
+                json=invalid_patch,
+            )
+            assert rejected_patch.status_code == 422, (
+                invalid_patch,
+                rejected_patch.text,
+            )
         child_folder = client.post(
             "/api/skill-folders",
             headers=headers,
