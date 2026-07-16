@@ -372,6 +372,27 @@ def test_user_memory_ownership_events_and_settings(tmp_path: Path) -> None:
         assert edited.status_code == 200
         assert "표를 먼저" in edited.json()["displayText"]
 
+        for invalid_patch in (
+            {"category": None},
+            {"fact": None},
+            {"displayText": None},
+            {"confidence": None},
+            {"status": None},
+        ):
+            rejected_null = client.patch(
+                f"/api/memories/{memory_id}",
+                headers=headers,
+                json=invalid_patch,
+            )
+            assert rejected_null.status_code == 422, (
+                invalid_patch,
+                rejected_null.text,
+            )
+        unchanged = client.get("/api/memories?query=표를 먼저").json()[0]
+        assert unchanged["id"] == memory_id
+        assert unchanged["category"] == "output_preference"
+        assert unchanged["confidence"] == 0.9
+
         sensitive = client.post(
             "/api/memories",
             headers=headers,
