@@ -1234,7 +1234,7 @@ def get_audit_traffic(
             )
         )
     )
-    counts = {
+    counts: dict[datetime, dict[str, int]] = {
         window_start + timedelta(minutes=index): {
             "normal": 0,
             "abnormal_audit": 0,
@@ -1267,27 +1267,32 @@ def get_audit_traffic(
         metadata={"minutes": minutes},
     )
     db.commit()
-    buckets = []
+    buckets: list[dict[str, object]] = []
+    bucket_values: list[int] = []
+    normal_values: list[int] = []
+    abnormal_values: list[int] = []
     for minute, bucket in counts.items():
+        normal_count = bucket["normal"]
         abnormal_count = (
             bucket["abnormal_audit"]
             + bucket["automatic_recovery"]
             + bucket["manual_restart"]
         )
+        total_count = normal_count + abnormal_count
+        bucket_values.append(total_count)
+        normal_values.append(normal_count)
+        abnormal_values.append(abnormal_count)
         buckets.append(
             {
                 "minute": minute,
-                "count": bucket["normal"] + abnormal_count,
-                "normalCount": bucket["normal"],
+                "count": total_count,
+                "normalCount": normal_count,
                 "abnormalCount": abnormal_count,
                 "abnormalAuditCount": bucket["abnormal_audit"],
                 "automaticRecoveryCount": bucket["automatic_recovery"],
                 "manualRestartCount": bucket["manual_restart"],
             }
         )
-    bucket_values = [bucket["count"] for bucket in buckets]
-    normal_values = [bucket["normalCount"] for bucket in buckets]
-    abnormal_values = [bucket["abnormalCount"] for bucket in buckets]
     return {
         "generatedAt": now,
         "timezone": str(_ANALYTICS_TIMEZONE),
@@ -1299,13 +1304,13 @@ def get_audit_traffic(
         "abnormalTotal": sum(abnormal_values),
         "abnormalPeak": max(abnormal_values, default=0),
         "abnormalAuditTotal": sum(
-            bucket["abnormalAuditCount"] for bucket in buckets
+            bucket["abnormal_audit"] for bucket in counts.values()
         ),
         "automaticRecoveryTotal": sum(
-            bucket["automaticRecoveryCount"] for bucket in buckets
+            bucket["automatic_recovery"] for bucket in counts.values()
         ),
         "manualRestartTotal": sum(
-            bucket["manualRestartCount"] for bucket in buckets
+            bucket["manual_restart"] for bucket in counts.values()
         ),
         "buckets": buckets,
     }
