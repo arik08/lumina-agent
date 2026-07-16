@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Literal, get_args
 from zoneinfo import ZoneInfo
@@ -407,17 +407,19 @@ def get_usage_statistics(
         first_day = today - timedelta(days=days - 1)
     else:
         activity_dates = [
-            item.created_at.astimezone(_ANALYTICS_TIMEZONE).date()
-            for item in [*sessions, *runs]
+            session.created_at.astimezone(_ANALYTICS_TIMEZONE).date()
+            for session in sessions
+        ] + [
+            run.created_at.astimezone(_ANALYTICS_TIMEZONE).date() for run in runs
         ]
         first_day = min(activity_dates, default=today)
     period_days = (today - first_day).days + 1
 
     dates = [first_day + timedelta(days=index) for index in range(period_days)]
-    daily_users: dict[object, set[str]] = {day: set() for day in dates}
+    daily_users: dict[date, set[str]] = {day: set() for day in dates}
     daily_logins = {day: 0 for day in dates}
     daily_runs = {day: 0 for day in dates}
-    user_activity: dict[str, set[object]] = {user.id: set() for user in users}
+    user_activity: dict[str, set[date]] = {user.id: set() for user in users}
     user_logins = {user.id: 0 for user in users}
     user_runs = {user.id: 0 for user in users}
     user_input_tokens = {user.id: 0 for user in users}
@@ -471,49 +473,45 @@ def get_usage_statistics(
         *(daily_users[day] for day in dates if day >= today - timedelta(days=29))
     )
     new_users = sum(1 for user in users if user.created_at >= month_start)
-    per_user = []
+    per_user_rows: list[tuple[tuple[int, int, str], dict[str, object]]] = []
     for user in users:
         active_days = user_activity.get(user.id, set())
         last_active_day = max(active_days) if active_days else None
         cached_input_tokens = user_cached_input_tokens.get(user.id, 0)
         uncached_input_tokens = user_uncached_input_tokens.get(user.id, 0)
         cacheable_input_tokens = cached_input_tokens + uncached_input_tokens
-        per_user.append(
-            {
-                "userId": user.id,
-                "loginId": user.login_id,
-                "displayName": user.display_name,
-                "affiliation": user.affiliation,
-                "status": user.status,
-                "lastLoginAt": user.last_login_at,
-                "activeDays": len(active_days),
-                "loginCount": user_logins.get(user.id, 0),
-                "runCount": user_runs.get(user.id, 0),
-                "inputTokens": user_input_tokens.get(user.id, 0),
-                "cachedInputTokens": cached_input_tokens,
-                "cacheHitRatioPercent": round(
-                    cached_input_tokens / cacheable_input_tokens * 100, 1
-                )
-                if cacheable_input_tokens
-                else 0,
-                "outputTokens": user_output_tokens.get(user.id, 0),
-                "estimatedCostUsd": round(user_cost.get(user.id, 0.0), 6),
-                "lastActiveDate": last_active_day.isoformat()
-                if last_active_day
-                else None,
-                "inactiveDays": (today - last_active_day).days
-                if last_active_day
-                else None,
-            }
+        run_count = user_runs.get(user.id, 0)
+        row: dict[str, object] = {
+            "userId": user.id,
+            "loginId": user.login_id,
+            "displayName": user.display_name,
+            "affiliation": user.affiliation,
+            "status": user.status,
+            "lastLoginAt": user.last_login_at,
+            "activeDays": len(active_days),
+            "loginCount": user_logins.get(user.id, 0),
+            "runCount": run_count,
+            "inputTokens": user_input_tokens.get(user.id, 0),
+            "cachedInputTokens": cached_input_tokens,
+            "cacheHitRatioPercent": round(
+                cached_input_tokens / cacheable_input_tokens * 100, 1
+            )
+            if cacheable_input_tokens
+            else 0,
+            "outputTokens": user_output_tokens.get(user.id, 0),
+            "estimatedCostUsd": round(user_cost.get(user.id, 0.0), 6),
+            "lastActiveDate": last_active_day.isoformat()
+            if last_active_day
+            else None,
+            "inactiveDays": (today - last_active_day).days
+            if last_active_day
+            else None,
+        }
+        per_user_rows.append(
+            ((len(active_days), run_count, user.login_id), row)
         )
-    per_user.sort(
-        key=lambda item: (
-            int(item["activeDays"]),
-            int(item["runCount"]),
-            str(item["loginId"]),
-        ),
-        reverse=True,
-    )
+    per_user_rows.sort(key=lambda item: item[0], reverse=True)
+    per_user = [row for _sort_key, row in per_user_rows]
 
     record_audit(
         db,
