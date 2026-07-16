@@ -4,6 +4,7 @@ import test from "node:test";
 
 const panelPath = new URL("../src/components/McpMarketplacePanel.tsx", import.meta.url);
 const adminPanelPath = new URL("../src/components/AdminMcpPanel.tsx", import.meta.url);
+const adminViewPath = new URL("../src/components/AdminView.tsx", import.meta.url);
 const stylesPath = new URL("../src/styles.css", import.meta.url);
 
 test("MCP installs expose direct account and project actions with the Skill install-state toggle", async () => {
@@ -54,4 +55,13 @@ test("MCP destructive actions use inline same-button confirmation instead of pop
   assert.match(styles, /\.mcp-installation-row > header button\.mcp-uninstall-action\.is-delete-armed \{/);
   assert.match(styles, /\.mcp-secret-row > \.mcp-secret-action\.is-delete-armed \{/);
   assert.match(styles, /\.admin-mcp-detail button\.is-delete-armed/);
+});
+
+test("system management exposes the administrator MCP panel", async () => {
+  const adminView = await readFile(adminViewPath, "utf8");
+
+  assert.match(adminView, /import \{ AdminMcpPanel \} from "\.\/AdminMcpPanel"/);
+  assert.match(adminView, /aria-selected=\{tab === "mcp"\}[\s\S]*?<ServerCog size=\{15\} \/> MCP/);
+  assert.match(adminView, /tab === "mcp" && <AdminMcpPanel \/>/);
+  assert.match(adminView, /tab === "policy" \|\| tab === "mcp"/);
 });

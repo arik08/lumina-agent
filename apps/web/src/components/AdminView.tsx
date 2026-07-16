@@ -13,6 +13,7 @@ import {
   RefreshCcw,
   Save,
   Search,
+  ServerCog,
   ShieldCheck,
   Users,
 } from "lucide-react";
@@ -28,10 +29,11 @@ import type {
   UserStatus,
 } from "../api-types";
 import { AdminTrafficChart } from "./AdminTrafficChart";
+import { AdminMcpPanel } from "./AdminMcpPanel";
 import { OrganizationInstructionsPanel } from "./OrganizationInstructionsPanel";
 import { SelectMenu } from "./SelectMenu";
 
-type AdminTab = "users" | "usage" | "conversations" | "audit" | "policy";
+type AdminTab = "users" | "usage" | "conversations" | "audit" | "policy" | "mcp";
 type UsageMetric = "activeUsers" | "loginCount" | "runCount";
 type AdminHistoryViewMode = "recent" | "user";
 type AdminListLimit = 50 | 120 | 250 | 500;
@@ -161,7 +163,7 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
   }, [conversations]);
 
   useEffect(() => {
-    if (tab === "policy") {
+    if (tab === "policy" || tab === "mcp") {
       setLoading(false);
       setError(null);
       return;
@@ -340,9 +342,10 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
           <button type="button" role="tab" aria-selected={tab === "conversations"} onClick={() => setTab("conversations")}><MessageSquare size={15} /> 대화</button>
           <button type="button" role="tab" aria-selected={tab === "audit"} onClick={() => setTab("audit")}><ShieldCheck size={15} /> 모니터링</button>
           <button type="button" role="tab" aria-selected={tab === "policy"} onClick={() => setTab("policy")}><FileText size={15} /> 기본 지침</button>
+          <button type="button" role="tab" aria-selected={tab === "mcp"} onClick={() => setTab("mcp")}><ServerCog size={15} /> MCP</button>
         </div>
-        {tab !== "policy" && <label className="admin-search"><Search size={15} /><input value={query} placeholder={placeholder} onChange={(event) => setQuery(event.currentTarget.value)} /></label>}
-        {tab !== "policy" && <button className="tooltip-control" type="button" aria-label="새로 고침" data-tooltip="새로 고침" onClick={() => setRefreshKey((value) => value + 1)}>{loading ? <LoaderCircle className="is-running" size={16} /> : <RefreshCcw size={16} />}</button>}
+        {tab !== "policy" && tab !== "mcp" && <label className="admin-search"><Search size={15} /><input value={query} placeholder={placeholder} onChange={(event) => setQuery(event.currentTarget.value)} /></label>}
+        {tab !== "policy" && tab !== "mcp" && <button className="tooltip-control" type="button" aria-label="새로 고침" data-tooltip="새로 고침" onClick={() => setRefreshKey((value) => value + 1)}>{loading ? <LoaderCircle className="is-running" size={16} /> : <RefreshCcw size={16} />}</button>}
         {tab === "conversations" && <label className="admin-feedback-filter"><input type="checkbox" checked={feedbackOnly} onChange={(event) => setFeedbackOnly(event.currentTarget.checked)} /> 의견 있는 대화만</label>}
         {tab === "users" && <button className="primary-compact lumina-primary-action" type="button" onClick={() => setCreateOpen((open) => !open)}><Plus size={15} /> 사용자</button>}
       </div>
@@ -515,6 +518,7 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
         </section>
       )}
       {tab === "policy" && <OrganizationInstructionsPanel />}
+      {tab === "mcp" && <AdminMcpPanel />}
     </main>
   );
 }
