@@ -606,15 +606,15 @@ function ToolCallRow({
             <Circle className="status-icon is-waiting" size={15} aria-hidden="true" />
           )}
         </span>
-        <span className="tool-call-detail" title={headerDetail ?? undefined}>{headerDetail}</span>
+        <span className="tool-call-detail" data-tooltip={headerDetail ?? undefined}>{headerDetail}</span>
         <span className={`tool-call-status status-${running ? "running" : complete ? "complete" : "warning"}`}>{stoppedByRun ? (runOutcome === "failed" ? "실패" : "중지됨") : toolStatusLabel(execution.status)}</span>
-        <span className="tool-call-duration" title={execution.toolName === "write_file" ? "파일 내용 생성 시작부터 디스크 저장 완료까지의 시간" : "도구 실행 시간"}>{formatDuration(liveDurationMs)}</span>
+        <span className="tool-call-duration" data-tooltip={execution.toolName === "write_file" ? "파일 내용 생성 시작부터 디스크 저장 완료까지의 시간" : "도구 실행 시간"}>{formatDuration(liveDurationMs)}</span>
         {isOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
       </button>
       {writeFileActive && execution.progress && (
         <div className={`write-file-stream-progress is-${writeProgress.stage}`} role="status" aria-live="polite" aria-label={`${activeWriteFileName ?? "파일"} 작성 중 ${execution.progress.tokens.toLocaleString()} 토큰 ${execution.progress.lines.toLocaleString()}줄`}>
           <div className="write-file-stream-heading">
-            <strong title={activeWriteFileName ?? undefined}>WRITE FILE · {activeWriteFileName ?? "파일명 확인 중"}</strong>
+            <strong data-tooltip={activeWriteFileName ?? undefined}>WRITE FILE · {activeWriteFileName ?? "파일명 확인 중"}</strong>
             <span>{execution.progress.tokens.toLocaleString()} 토큰 · {execution.progress.lines.toLocaleString()}줄</span>
           </div>
           <div className="write-file-stream-meter" role="progressbar" aria-label="현재 5,000 토큰 구간의 생성량" aria-valuemin={0} aria-valuemax={TOKEN_PROGRESS_BUCKET_SIZE} aria-valuenow={writeProgress.bucketTokens}>
@@ -687,7 +687,7 @@ function ModelProcessingRow({ durationMs, state, sent, received, model, provider
         </span>
         <span className="tool-call-detail">{awaitingInput ? "확인 질문 · 사용자 답변 대기" : state === "stopped" ? "사용자 요청으로 모델 처리를 중지했습니다." : "모델 판단 · 내부 실행 합계"}</span>
         <span className={`tool-call-status status-${running ? "running" : state === "completed" ? "complete" : "warning"}`}>{statusLabel}</span>
-        <span className="tool-call-duration" title="여러 모델 호출과 Skill·계획 처리, 재시도 시간을 합산한 값(외부 도구 실행 제외)">{formatDuration(durationMs)}</span>
+        <span className="tool-call-duration" data-tooltip="여러 모델 호출과 Skill·계획 처리, 재시도 시간을 합산한 값(외부 도구 실행 제외)">{formatDuration(durationMs)}</span>
         {isOpen ? <ChevronDown size={15} aria-hidden="true" /> : <ChevronRight size={15} aria-hidden="true" />}
       </button>
       {isOpen && (
@@ -1069,12 +1069,12 @@ function RunActivityTimeline({
                 <div className="tool-call-group-summary">
                   {toolCallIcon(toolActivities[0].execution.toolName, 14)}
                   <span>{toolCallGroupSummary(toolActivities)}</span>
-                  <span className="tool-call-group-duration" title="도구 실행 시간">{formatDuration(toolGroupDurationMs)}</span>
+                  <span className="tool-call-group-duration" data-tooltip="도구 실행 시간">{formatDuration(toolGroupDurationMs)}</span>
                   {toolsOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
                 </div>
               </button>
             ) : (
-              <div className={`progress-summary phase-${summary.phase}`}><div className="progress-summary-text"><span>{summary.text}</span>{showStageDuration && <span className="progress-summary-duration" title="단계 전체 소요 시간">{formatDuration(stageDurationMs)}</span>}</div></div>
+              <div className={`progress-summary phase-${summary.phase}`}><div className="progress-summary-text"><span>{summary.text}</span>{showStageDuration && <span className="progress-summary-duration" data-tooltip="단계 전체 소요 시간">{formatDuration(stageDurationMs)}</span>}</div></div>
             ))}
             {toolsOpen && summary && (
               <div className={`progress-tools ${summary && collapsingSummaryIds.has(summary.id) ? "is-collapsing" : ""}`} id={toolGroupId}>

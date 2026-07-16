@@ -2712,10 +2712,10 @@ function App() {
             setSidebarCollapsed(false);
           }}
         >
-          <button type="button" aria-label="사이드바 펼치기" title="사이드바 펼치기" onClick={() => { sidebarAutoCollapsedRef.current = false; setSidebarCollapsed(false); }}><PanelLeftOpen size={17} /></button>
-          <button type="button" aria-label="새 채팅" title="새 채팅" onClick={startNewConversation}><SquarePen size={18} /></button>
+          <button type="button" aria-label="사이드바 펼치기" data-tooltip="사이드바 펼치기" onClick={() => { sidebarAutoCollapsedRef.current = false; setSidebarCollapsed(false); }}><PanelLeftOpen size={17} /></button>
+          <button type="button" aria-label="새 채팅" data-tooltip="새 채팅" onClick={startNewConversation}><SquarePen size={18} /></button>
           {navigation.map(({ id, label, icon: Icon }) => (
-            <button className={mainView === id ? "is-active" : ""} type="button" aria-label={label} title={label} key={id} onClick={() => setMainView(id)}><Icon size={18} /></button>
+            <button className={mainView === id ? "is-active" : ""} type="button" aria-label={label} data-tooltip={label} key={id} onClick={() => setMainView(id)}><Icon size={18} /></button>
           ))}
         </nav>
         <header className="sidebar-header">
@@ -3157,10 +3157,10 @@ function App() {
                 }}
               >
                 <div className="progress-header">
-                  <button className="progress-trigger" type="button" aria-expanded={progressOpen} aria-controls="active-run-progress-steps">
+                  <button className="progress-trigger" type="button" aria-expanded={progressOpen} aria-controls="active-run-progress-steps" data-tooltip={progressOpen ? undefined : latestProgressSummary?.text ?? runStatusLabel(activeRun.status)}>
                     <div className="progress-title"><Sparkles size={15} /><strong>작업 계획</strong></div>
                     {!progressOpen && (
-                      <span className="current-step" title={latestProgressSummary?.text}>
+                      <span className="current-step">
                         {latestProgressSummary?.text ?? runStatusLabel(activeRun.status)}
                       </span>
                     )}
@@ -3169,7 +3169,7 @@ function App() {
                   </button>
                   {runIsPaused && (
                     <div className="run-controls" role="group" aria-label="Run 실행 제어">
-                      {runIsPaused && <button type="button" aria-label="Run 재개" title="재개" disabled={workspace.runActionBusy} onClick={() => void controlRun("resume")}><Play size={14} /></button>}
+                      {runIsPaused && <button type="button" aria-label="Run 재개" data-tooltip="재개" disabled={workspace.runActionBusy} onClick={() => void controlRun("resume")}><Play size={14} /></button>}
                     </div>
                   )}
                 </div>

@@ -42,7 +42,7 @@ test("group heading shows only merged tool time while model time has its own row
   const app = await read("../src/components/ConversationTurn.tsx");
 
   assert.match(app, /const toolGroupDurationMs = stageTiming/);
-  assert.match(app, /tool-call-group-duration" title="도구 실행 시간"/);
+  assert.match(app, /tool-call-group-duration" data-tooltip="도구 실행 시간"/);
   assert.match(app, /formatDuration\(toolGroupDurationMs\)/);
   assert.doesNotMatch(app, /formatDuration\(stageDurationMs \?\? toolCallGroupDuration/);
 });

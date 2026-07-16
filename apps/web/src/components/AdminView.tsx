@@ -370,7 +370,7 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
               <article className={`admin-row ${selectedUser?.id === user.id ? "is-open" : ""}`} key={user.id}>
                 {selectedUser?.id === user.id ? (
                   <form className="admin-user-inline-edit" onSubmit={(event) => { event.preventDefault(); void saveUser(); }} onKeyDown={(event) => { if (event.key !== "Enter") return; event.preventDefault(); void saveUser(); }}>
-                    <strong title={user.loginId}>{user.loginId}</strong>
+                    <strong data-tooltip={user.loginId}>{user.loginId}</strong>
                     <input aria-label="표시 이름" value={userDisplayName} onChange={(event) => setUserDisplayName(event.currentTarget.value)} />
                     <input aria-label="소속" value={userAffiliation} onChange={(event) => setUserAffiliation(event.currentTarget.value)} />
                     <SelectMenu className="admin-user-select" size="small" value={userRole} options={userRoleOptions} ariaLabel="역할" onChange={(value) => { setUserRole(value as UserRole); setUserChangeArmed(false); }} />

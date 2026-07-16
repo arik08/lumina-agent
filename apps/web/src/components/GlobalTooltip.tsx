@@ -10,7 +10,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
-const tooltipSelector = "[data-tooltip], [data-global-tooltip-title], [title]:not(iframe)";
+const tooltipSelector = "[data-tooltip]";
 const viewportPadding = 12;
 const tooltipGap = 8;
 
@@ -34,24 +34,7 @@ function tooltipTarget(value: EventTarget | null) {
 }
 
 function tooltipText(target: HTMLElement) {
-  return target.dataset.tooltip?.trim()
-    || target.dataset.globalTooltipTitle?.trim()
-    || target.getAttribute("title")?.trim()
-    || "";
-}
-
-function suppressNativeTitle(target: HTMLElement) {
-  const title = target.getAttribute("title");
-  if (!title) return;
-  target.dataset.globalTooltipTitle = title;
-  target.removeAttribute("title");
-}
-
-function restoreNativeTitle(target: HTMLElement) {
-  const title = target.dataset.globalTooltipTitle;
-  if (title === undefined) return;
-  if (!target.hasAttribute("title")) target.setAttribute("title", title);
-  delete target.dataset.globalTooltipTitle;
+  return target.dataset.tooltip?.trim() || "";
 }
 
 export function GlobalTooltipLayer({
@@ -149,11 +132,8 @@ export function GlobalTooltipProvider({ children }: { children: ReactNode }) {
     const show = (event: Event) => {
       const target = tooltipTarget(event.target);
       if (!target) return;
-      suppressNativeTitle(target);
       const text = tooltipText(target);
       if (!text) return;
-      const previous = activeRef.current;
-      if (previous && previous.target !== target) restoreNativeTitle(previous.target);
       activeRef.current = { target, text };
       setActive({ target, text });
     };
@@ -162,7 +142,6 @@ export function GlobalTooltipProvider({ children }: { children: ReactNode }) {
       if (!current) return;
       const relatedTarget = "relatedTarget" in event ? event.relatedTarget : null;
       if (relatedTarget instanceof Node && current.target.contains(relatedTarget)) return;
-      restoreNativeTitle(current.target);
       activeRef.current = null;
       setActive(null);
     };
@@ -175,7 +154,6 @@ export function GlobalTooltipProvider({ children }: { children: ReactNode }) {
       document.removeEventListener("pointerout", hide, true);
       document.removeEventListener("focusin", show, true);
       document.removeEventListener("focusout", hide, true);
-      if (activeRef.current) restoreNativeTitle(activeRef.current.target);
     };
   }, []);
 
@@ -205,7 +183,7 @@ export function GlobalTooltipProvider({ children }: { children: ReactNode }) {
       activeRef.current = { target, text };
       setActive((current) => current?.target === target && current.text === text ? current : { target, text });
     });
-    observer.observe(target, { attributes: true, attributeFilter: ["data-tooltip", "title"] });
+    observer.observe(target, { attributes: true, attributeFilter: ["data-tooltip"] });
     return () => observer.disconnect();
   }, [active?.target]);
 
