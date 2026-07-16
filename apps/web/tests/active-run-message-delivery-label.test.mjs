@@ -5,7 +5,7 @@ import test from "node:test";
 const conversationTurnUrl = new URL("../src/components/ConversationTurn.tsx", import.meta.url);
 
 test("active-run user messages keep their Queue or Steering delivery label", async () => {
-  const source = await readFile(conversationTurnUrl, "utf8");
+  const source = (await readFile(conversationTurnUrl, "utf8")).replaceAll("\r\n", "\n");
   const helper = source.match(/function messageDeliveryLabel[\s\S]*?\n}\n/)?.[0] ?? "";
 
   assert.match(helper, /command\?\.type \?\? message\.metadata\?\.command_type/);
