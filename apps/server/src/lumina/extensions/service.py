@@ -8,6 +8,7 @@ from pathlib import PurePosixPath
 from typing import Any
 
 from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..api.errors import ApiProblem
@@ -747,10 +748,43 @@ def save_draft_version(
         created_by_user_id=user.id,
     )
     db.add(version)
-    db.flush()
-    draft.base_version_id = version.id
-    draft.updated_at = utc_now()
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        raise ApiProblem(
+            409,
+            "version_conflict",
+            "Skill version이 다른 작업에서 먼저 저장되었습니다.",
+        ) from exc
+    base_filter = (
+        ExtensionDraft.base_version_id.is_(None)
+        if base_version_id is None
+        else ExtensionDraft.base_version_id == base_version_id
+    )
+    result = db.execute(
+        update(ExtensionDraft)
+        .where(
+            ExtensionDraft.id == draft.id,
+            ExtensionDraft.current_revision == expected_revision,
+            ExtensionDraft.current_digest == expected_digest,
+            base_filter,
+        )
+        .values(base_version_id=version.id, updated_at=utc_now())
+        .execution_options(synchronize_session=False)
+    )
+    if getattr(result, "rowcount", 0) != 1:
+        db.expire(draft)
+        db.refresh(draft)
+        _check_draft_precondition(draft, expected_revision, expected_digest)
+        if draft.base_version_id != base_version_id:
+            raise ApiProblem(
+                409,
+                "base_version_conflict",
+                "Skill Draft의 base version이 변경되었습니다.",
+            )
+        raise RuntimeError("Skill version compare-and-swap failed without a conflict")
+    db.expire(draft)
+    db.refresh(draft)
     return version
 
 
