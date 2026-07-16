@@ -17,6 +17,7 @@ import {
   type WheelEvent,
 } from "react";
 import { createPortal } from "react-dom";
+import { repairMermaidSource } from "../mermaid-source";
 import { SyntaxCode } from "./SyntaxCode";
 import "./InteractiveResponse.css";
 
@@ -365,7 +366,14 @@ export async function renderMermaidSvg(source: string) {
 
   const renderJob = loadMermaid().then(async ({ default: mermaid }) => {
     mermaid.initialize(appearance.config);
-    const result = await mermaid.render(`lumina-mermaid-${++mermaidRenderSequence}`, normalizedSource);
+    let result;
+    try {
+      result = await mermaid.render(`lumina-mermaid-${++mermaidRenderSequence}`, normalizedSource);
+    } catch (error) {
+      const repairedSource = repairMermaidSource(normalizedSource);
+      if (repairedSource === normalizedSource) throw error;
+      result = await mermaid.render(`lumina-mermaid-${++mermaidRenderSequence}`, repairedSource);
+    }
     return { ...result, svg: decorateMermaidSvg(result.svg) };
   });
   mermaidRenderJobs.set(cacheKey, renderJob);
