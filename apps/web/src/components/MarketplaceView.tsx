@@ -155,7 +155,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
   const [catalogLoadingMore, setCatalogLoadingMore] = useState(false);
   const [versionDetail, setVersionDetail] = useState<SkillVersion | null>(null);
   const [activeFile, setActiveFile] = useState("SKILL.md");
-  const [skillContentView, setSkillContentView] = useState<"source" | "rendered">("source");
+  const [skillContentView, setSkillContentView] = useState<"source" | "rendered">("rendered");
   const [skillContentExpanded, setSkillContentExpanded] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [editMode, setEditMode] = useState(false);

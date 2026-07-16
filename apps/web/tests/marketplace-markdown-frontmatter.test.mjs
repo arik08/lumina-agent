@@ -49,6 +49,7 @@ test("Skill source and rendered views share a resizable inline expanded-view con
   assert.match(marketplace, /className="skill-content-view-actions"/);
   assert.match(marketplace, /current === "source" \? "rendered" : "source"/);
   assert.match(marketplace, /skillContentView === "source" \? <Eye size=\{14\} \/> : <Code2 size=\{14\} \/>/);
+  assert.match(marketplace, /useState<"source" \| "rendered">\("rendered"\)/);
   assert.match(marketplace, /skillContentExpanded \? "원래 크기로 보기" : "확대해서 보기"/);
   assert.match(marketplace, /skillContentExpanded \? <Minimize2 size=\{14\} \/> : <Maximize2 size=\{14\} \/>/);
   assert.match(marketplace, /storageKey="lumina:marketplace-file-explorer-width"/);
