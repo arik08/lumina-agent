@@ -296,21 +296,38 @@ export interface UsdKrwExchangeRate {
   rate: number | null;
   asOf: string | null;
   source: string | null;
+  status: "fresh" | "stale" | "unavailable";
 }
 
+const USD_KRW_FRESH_CACHE_MS = 6 * 60 * 60 * 1_000;
+const USD_KRW_RETRY_CACHE_MS = 5 * 60 * 1_000;
 let usdKrwExchangeRateRequest: Promise<UsdKrwExchangeRate> | null = null;
+let usdKrwExchangeRateExpiresAt = 0;
 
 export function getUsdKrwExchangeRate() {
-  if (!usdKrwExchangeRateRequest) {
+  if (!usdKrwExchangeRateRequest || Date.now() >= usdKrwExchangeRateExpiresAt) {
+    usdKrwExchangeRateExpiresAt = Number.POSITIVE_INFINITY;
     usdKrwExchangeRateRequest = (async () => {
       const controller = new AbortController();
       const timeout = window.setTimeout(() => controller.abort(), 8_000);
       try {
-        return await request<UsdKrwExchangeRate>("/finance/exchange-rate/usd-krw", {
+        const result = await request<UsdKrwExchangeRate>("/finance/exchange-rate/usd-krw", {
           signal: controller.signal,
         });
+        usdKrwExchangeRateExpiresAt = Date.now() + (
+          result.status === "fresh" ? USD_KRW_FRESH_CACHE_MS : USD_KRW_RETRY_CACHE_MS
+        );
+        return result;
       } catch {
-        return { base: "USD", quote: "KRW", rate: null, asOf: null, source: null };
+        usdKrwExchangeRateExpiresAt = Date.now() + USD_KRW_RETRY_CACHE_MS;
+        return {
+          base: "USD",
+          quote: "KRW",
+          rate: null,
+          asOf: null,
+          source: null,
+          status: "unavailable",
+        } satisfies UsdKrwExchangeRate;
       } finally {
         window.clearTimeout(timeout);
       }

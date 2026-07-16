@@ -17,7 +17,9 @@ test("all simple tooltips are delegated to one document body portal", async () =
   assert.match(tooltip, /document\.addEventListener\("focusin", show, true\)/);
   assert.match(tooltip, /target\.removeAttribute\("title"\)/);
   assert.match(tooltip, /document\.body/);
+  assert.match(tooltip, /anchor\.closest\("\.theme-dark"\) \? " theme-dark" : ""/);
   assert.match(styles, /\.global-tooltip-layer\s*\{[^}]*position:\s*fixed;[^}]*z-index:\s*10000/s);
+  assert.match(styles, /\.global-tooltip-layer\.theme-dark,[\s\S]*?--menu-surface:\s*#121417;/);
   assert.doesNotMatch(styles, /content:\s*attr\(data-tooltip\)/);
   assert.doesNotMatch(styles, /tooltip-control[^,{]*::after/);
 });

@@ -131,8 +131,9 @@ export function GlobalTooltipLayer({
   }, [open, updatePosition]);
 
   if (!open || !anchor) return null;
+  const themeClassName = anchor.closest(".theme-dark") ? " theme-dark" : "";
   return createPortal(
-    <div className={`global-tooltip-layer ${className}`} data-placement={position.placement} id={id} ref={layerRef} role="tooltip" style={position.style}>
+    <div className={`global-tooltip-layer ${className}${themeClassName}`} data-placement={position.placement} id={id} ref={layerRef} role="tooltip" style={position.style}>
       {children}
     </div>,
     document.body,

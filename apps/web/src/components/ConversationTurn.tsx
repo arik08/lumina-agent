@@ -59,7 +59,7 @@ import ReactMarkdown, {
 import { createPortal, flushSync } from "react-dom";
 import remarkGfm from "remark-gfm";
 import { visit } from "unist-util-visit";
-import { api, attachmentContentUrl } from "../api";
+import { api, attachmentContentUrl, type UsdKrwExchangeRate } from "../api";
 import type {
   ArtifactSummary,
   AttachmentSummary,
@@ -260,18 +260,35 @@ function UsageCostPopover({ usage, sessionUsage, model, provider }: {
     && typeof rawUsage === "object"
     && rawUsage !== null
     && (rawUsage as Record<string, unknown>).billing === "subscription_usage";
-  const [usdKrwRate, setUsdKrwRate] = useState<number | null | undefined>(undefined);
+  const [exchangeRate, setExchangeRate] = useState<UsdKrwExchangeRate | undefined>(undefined);
   useEffect(() => {
     let active = true;
     void api.finance.getUsdKrwExchangeRate()
       .then((result) => {
-        if (active) setUsdKrwRate(result.rate);
+        if (active) setExchangeRate(result);
       })
       .catch(() => {
-        if (active) setUsdKrwRate(null);
+        if (active) {
+          setExchangeRate({
+            base: "USD",
+            quote: "KRW",
+            rate: null,
+            asOf: null,
+            source: null,
+            status: "unavailable",
+          });
+        }
       });
     return () => { active = false; };
   }, []);
+  const usdKrwRate = exchangeRate?.rate;
+  const exchangeRateStatus = exchangeRate === undefined
+    ? "환율 확인 중"
+    : exchangeRate.status === "fresh"
+      ? `${exchangeRate.source ?? "환율"} · ${exchangeRate.asOf ?? "기준일 확인 중"}`
+      : exchangeRate.status === "stale"
+        ? `환율 갱신 지연 · 마지막 정상값 ${exchangeRate.asOf ?? "기준일 미상"}`
+        : "환율 확인 불가 · USD로 표시";
   const formatCost = (value: number | undefined) => {
     if (value === undefined) return "—";
     if (usdKrwRate === undefined) return "…";
@@ -334,6 +351,13 @@ function UsageCostPopover({ usage, sessionUsage, model, provider }: {
             ))}
           </tbody>
         </table>
+        <p
+          className="answer-usage-rate-status"
+          data-status={exchangeRate?.status ?? "loading"}
+          role="status"
+        >
+          {exchangeRateStatus}
+        </p>
       </GlobalTooltipLayer>
     </span>
   );
