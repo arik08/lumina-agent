@@ -13,7 +13,7 @@ from lumina.config import Settings
 from lumina.conversations.service import list_auto_delete_candidates, update_conversation
 from lumina.db import SessionLocal
 from lumina.main import create_app
-from lumina.models import Conversation, User, utc_now
+from lumina.models import Conversation, Message, User, utc_now
 
 
 def test_cursor_preserves_favorite_order_and_search_is_whitespace_tolerant(
@@ -329,6 +329,66 @@ def test_turn_set_cursor_pages_backwards_without_overlap(tmp_path: Path) -> None
         assert {item["id"] for item in latest["turnSets"]}.isdisjoint(
             {item["id"] for item in older["turnSets"]}
         )
+
+
+def test_turn_set_cursor_reaches_messages_older_than_legacy_limit(tmp_path: Path) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'long-turns.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation_id = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "long cursor test"},
+        ).json()["id"]
+
+        with SessionLocal() as db:
+            conversation = db.get(Conversation, conversation_id)
+            assert conversation is not None
+            created_at = utc_now()
+            for index in range(205):
+                branch_source_run_id = f"seed-run-{index:04d}"
+                for role_index, role in enumerate(("user", "assistant")):
+                    db.add(
+                        Message(
+                            conversation_id=conversation_id,
+                            author_user_id=conversation.owner_user_id if role == "user" else None,
+                            role=role,
+                            canonical_text=f"turn {index} {role}",
+                            turn_index=role_index,
+                            metadata_json={"branchSourceRunId": branch_source_run_id},
+                            created_at=created_at + timedelta(microseconds=index * 2 + role_index),
+                        )
+                    )
+            db.commit()
+
+        collected_ids: list[str] = []
+        cursor: str | None = None
+        while True:
+            params: dict[str, str | int] = {"limit_turn_sets": 20}
+            if cursor is not None:
+                params["before_cursor"] = cursor
+            page = client.get(
+                f"/api/conversations/{conversation_id}/turn-sets",
+                params=params,
+            )
+            assert page.status_code == 200, page.text
+            payload = page.json()
+            collected_ids.extend(item["id"] for item in payload["turnSets"])
+            if not payload["hasMoreBefore"]:
+                break
+            cursor = payload["previousCursor"]
+            assert cursor is not None
+
+        assert len(collected_ids) == 205
+        assert len(set(collected_ids)) == 205
 
 
 def _wait_for_terminal(client: TestClient, run_id: str) -> None:

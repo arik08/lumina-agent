@@ -1756,6 +1756,72 @@ function App() {
     workspace.activeConversationId,
     activeRuntime.loaded,
   );
+  const olderTurnSetsLoadingRef = useRef(false);
+  const prependScrollAnchorRef = useRef<{
+    conversationId: string;
+    scrollHeight: number;
+    scrollTop: number;
+    turnSetCount: number;
+  } | null>(null);
+  const loadOlderTurnSetsAtTop = useCallback(async () => {
+    const conversationId = workspace.activeConversationId;
+    const container = conversationFollow.containerRef.current;
+    if (
+      !conversationId
+      || !container
+      || container.scrollTop > 80
+      || !activeRuntime.hasMoreTurnSetsBefore
+      || olderTurnSetsLoadingRef.current
+    ) return;
+
+    olderTurnSetsLoadingRef.current = true;
+    prependScrollAnchorRef.current = {
+      conversationId,
+      scrollHeight: container.scrollHeight,
+      scrollTop: container.scrollTop,
+      turnSetCount: activeRuntime.turnSets.length,
+    };
+    try {
+      const loaded = await workspace.loadOlderConversationTurnSets(conversationId);
+      if (!loaded) prependScrollAnchorRef.current = null;
+    } finally {
+      olderTurnSetsLoadingRef.current = false;
+    }
+  }, [
+    activeRuntime.hasMoreTurnSetsBefore,
+    activeRuntime.turnSets.length,
+    conversationFollow.containerRef,
+    workspace.activeConversationId,
+    workspace.loadOlderConversationTurnSets,
+  ]);
+  useLayoutEffect(() => {
+    const anchor = prependScrollAnchorRef.current;
+    const container = conversationFollow.containerRef.current;
+    if (!anchor || !container) return;
+    if (anchor.conversationId !== workspace.activeConversationId) {
+      prependScrollAnchorRef.current = null;
+      return;
+    }
+    if (activeRuntime.turnSets.length <= anchor.turnSetCount) return;
+    container.scrollTop = anchor.scrollTop + (container.scrollHeight - anchor.scrollHeight);
+    prependScrollAnchorRef.current = null;
+  }, [
+    activeRuntime.turnSets.length,
+    conversationFollow.containerRef,
+    workspace.activeConversationId,
+  ]);
+  useEffect(() => {
+    if (!activeRuntime.loaded || !activeRuntime.hasMoreTurnSetsBefore) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      void loadOlderTurnSetsAtTop();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [
+    activeRuntime.hasMoreTurnSetsBefore,
+    activeRuntime.loaded,
+    activeRuntime.turnSets.length,
+    loadOlderTurnSetsAtTop,
+  ]);
   useEffect(() => {
     setOpenCalls(new Set());
   }, [activeRun?.runId]);
@@ -3087,7 +3153,10 @@ function App() {
           ref={conversationFollow.containerRef}
           tabIndex={-1}
           onKeyDown={selectAllInRegion}
-          onScroll={conversationFollow.onScroll}
+          onScroll={() => {
+            conversationFollow.onScroll();
+            void loadOlderTurnSetsAtTop();
+          }}
           onWheel={(event) => conversationFollow.onWheel(event.deltaY)}
           onPointerDown={(event) => {
             conversationFollow.onPointerDown();

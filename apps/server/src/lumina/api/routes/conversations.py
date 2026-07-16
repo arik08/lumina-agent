@@ -17,7 +17,6 @@ from ...conversations.service import (
     create_conversation,
     list_conversations,
     move_conversation,
-    recent_messages,
     search_conversation_content,
     soft_delete_conversation,
     update_conversation,
@@ -308,19 +307,23 @@ def get_turn_sets(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     conversation = require_conversation(db, user, conversation_id)
-    messages = recent_messages(db, conversation.id, limit=400)
     run_order: list[str] = []
-    grouped: dict[str, list[Message]] = defaultdict(list)
-    for message in messages:
-        branch_source_run_id = (message.metadata_json or {}).get("branchSourceRunId")
-        key = message.run_id or (
+    message_ids_by_key: dict[str, list[str]] = defaultdict(list)
+    message_rows = db.execute(
+        select(Message.id, Message.run_id, Message.metadata_json)
+        .where(Message.conversation_id == conversation.id)
+        .order_by(Message.created_at, Message.id)
+    )
+    for message_id, run_id, metadata_json in message_rows:
+        branch_source_run_id = (metadata_json or {}).get("branchSourceRunId")
+        key = run_id or (
             f"branch:{branch_source_run_id}"
             if isinstance(branch_source_run_id, str) and branch_source_run_id
-            else f"message:{message.id}"
+            else f"message:{message_id}"
         )
-        if key not in grouped:
+        if key not in message_ids_by_key:
             run_order.append(key)
-        grouped[key].append(message)
+        message_ids_by_key[key].append(message_id)
     end = len(run_order)
     if before_cursor is not None:
         try:
@@ -333,6 +336,27 @@ def get_turn_sets(
             ) from exc
     start = max(0, end - limit_turn_sets)
     selected_keys = run_order[start:end]
+    selected_message_ids = [
+        message_id
+        for key in selected_keys
+        for message_id in message_ids_by_key[key]
+    ]
+    selected_messages = list(
+        db.scalars(
+            select(Message)
+            .where(Message.id.in_(selected_message_ids))
+            .order_by(Message.created_at, Message.id)
+        )
+    ) if selected_message_ids else []
+    grouped: dict[str, list[Message]] = defaultdict(list)
+    for message in selected_messages:
+        branch_source_run_id = (message.metadata_json or {}).get("branchSourceRunId")
+        key = message.run_id or (
+            f"branch:{branch_source_run_id}"
+            if isinstance(branch_source_run_id, str) and branch_source_run_id
+            else f"message:{message.id}"
+        )
+        grouped[key].append(message)
     turn_sets: list[dict[str, object]] = []
     for key in selected_keys:
         run = db.get(Run, key) if not key.startswith(("message:", "branch:")) else None

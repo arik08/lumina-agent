@@ -32,6 +32,8 @@ export interface ConversationRuntime {
   turnSets: TurnSet[];
   snapshots: Record<string, RunSnapshot>;
   lastSequences: Record<string, number>;
+  previousTurnSetCursor: string | null;
+  hasMoreTurnSetsBefore: boolean;
   loaded: boolean;
   loading: boolean;
   error: string | null;
@@ -60,6 +62,8 @@ function emptyRuntime(): ConversationRuntime {
     turnSets: [],
     snapshots: {},
     lastSequences: {},
+    previousTurnSetCursor: null,
+    hasMoreTurnSetsBefore: false,
     loaded: false,
     loading: false,
     error: null,
@@ -150,6 +154,7 @@ export function useLuminaWorkspace() {
   const composerAttachmentsRef = useRef<AttachmentSummary[]>([]);
   const creatingConversationRef = useRef(false);
   const streamsRef = useRef(new Map<string, () => void>());
+  const loadingOlderTurnSetsRef = useRef(new Set<string>());
   const hydratingRef = useRef(new Set<string>());
   const reconcilingRunIdsRef = useRef(new Set<string>());
   const reconciliationTimersRef = useRef(new Set<number>());
@@ -223,6 +228,8 @@ export function useLuminaWorkspace() {
         [conversationId]: {
           ...(current[conversationId] ?? emptyRuntime()),
           turnSets: page.turnSets,
+          previousTurnSetCursor: page.previousCursor,
+          hasMoreTurnSetsBefore: page.hasMoreBefore,
           loaded: true,
           loading: false,
           error: null,
@@ -253,6 +260,62 @@ export function useLuminaWorkspace() {
           error: apiMessage(error),
         },
       }));
+    }
+  }, []);
+
+  const loadOlderConversationTurnSets = useCallback(async (conversationId: string) => {
+    const runtime = runtimesRef.current[conversationId];
+    if (
+      !runtime?.loaded
+      || !runtime.hasMoreTurnSetsBefore
+      || !runtime.previousTurnSetCursor
+      || loadingOlderTurnSetsRef.current.has(conversationId)
+    ) return false;
+
+    loadingOlderTurnSetsRef.current.add(conversationId);
+    try {
+      const page = await api.conversations.getTurnSets(
+        conversationId,
+        runtime.previousTurnSetCursor,
+        3,
+      );
+      const snapshotResults = await Promise.allSettled(
+        page.turnSets.flatMap((turnSet) => turnSet.runId ? [api.runs.getSnapshot(turnSet.runId)] : []),
+      );
+      const restoredSnapshots = snapshotResults.flatMap((result) =>
+        result.status === "fulfilled" ? [result.value] : [],
+      );
+      const knownTurnSetIds = new Set(runtime.turnSets.map((turnSet) => turnSet.id));
+      const added = page.turnSets.some((turnSet) => !knownTurnSetIds.has(turnSet.id));
+      setRuntimes((current) => {
+        const currentRuntime = current[conversationId] ?? emptyRuntime();
+        const currentTurnSetIds = new Set(currentRuntime.turnSets.map((turnSet) => turnSet.id));
+        const olderTurnSets = page.turnSets.filter((turnSet) => !currentTurnSetIds.has(turnSet.id));
+        const snapshots = { ...currentRuntime.snapshots };
+        const lastSequences = { ...currentRuntime.lastSequences };
+        restoredSnapshots.forEach((snapshot) => {
+          const existing = snapshots[snapshot.runId];
+          if (!existing || snapshot.lastSequence >= existing.lastSequence) snapshots[snapshot.runId] = snapshot;
+          lastSequences[snapshot.runId] = Math.max(lastSequences[snapshot.runId] ?? 0, snapshot.lastSequence);
+        });
+        return {
+          ...current,
+          [conversationId]: {
+            ...currentRuntime,
+            turnSets: [...olderTurnSets, ...currentRuntime.turnSets],
+            snapshots,
+            lastSequences,
+            previousTurnSetCursor: page.previousCursor,
+            hasMoreTurnSetsBefore: page.hasMoreBefore,
+          },
+        };
+      });
+      return added;
+    } catch (error) {
+      setNotice(apiMessage(error));
+      return false;
+    } finally {
+      loadingOlderTurnSetsRef.current.delete(conversationId);
     }
   }, []);
 
@@ -1422,6 +1485,7 @@ export function useLuminaWorkspace() {
     activeRuntime,
     activeRun,
     loadConversation,
+    loadOlderConversationTurnSets,
     settings,
     providers,
     models,
