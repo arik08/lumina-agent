@@ -65,11 +65,13 @@ test("tall Mermaid workflows keep readable geometry inside a bounded scroll surf
 
 test("chat Mermaid cards provide button-only zoom controls beside the expand button", () => {
   assert.match(rendererSource, /const \[zoom, setZoom\] = useState\(1\)/);
-  assert.match(rendererSource, /setZoom\(clamp\(next, 0\.5, 2\)\)/);
-  assert.match(rendererSource, /aria-label="Mermaid 다이어그램 축소"[\s\S]*?zoom - 0\.1/);
-  assert.match(rendererSource, /aria-label="Mermaid 다이어그램 배율 초기화"[\s\S]*?setZoom\(1\)/);
-  assert.match(rendererSource, /aria-label="Mermaid 다이어그램 확대"[\s\S]*?zoom \+ 0\.1/);
-  assert.match(rendererSource, /<MermaidSurface source=\{source\} zoom=\{zoom\} \/>/);
+  assert.match(rendererSource, /const \[initialZoom, setInitialZoom\] = useState\(1\)/);
+  assert.match(rendererSource, /setZoom\(clamp\(next, 0\.3, 2\)\)/);
+  assert.match(rendererSource, /clamp\(containerRef\.current\.clientHeight \/ Math\.max\(renderedHeight, 1\), 0\.3, 1\)/);
+  assert.match(rendererSource, /aria-label="Mermaid 다이어그램 축소"[\s\S]*?zoom - 0\.2/);
+  assert.match(rendererSource, /aria-label="Mermaid 다이어그램 배율 초기화"[\s\S]*?setZoom\(initialZoom\)/);
+  assert.match(rendererSource, /aria-label="Mermaid 다이어그램 확대"[\s\S]*?zoom \+ 0\.2/);
+  assert.match(rendererSource, /<MermaidSurface source=\{source\} zoom=\{zoom\} onInitialFit=\{applyInitialFit\} \/>/);
   assert.match(rendererSource, /className="interactive-response-expand-label" aria-label="Mermaid 다이어그램 크게 보기" onClick=\{\(\) => setExpanded\(true\)\}>Mermaid<\/button>/);
   assert.match(rendererSource, /renderedSvg\.style\.maxWidth = zoom > 1 \? "none" : "100%"/);
   assert.doesNotMatch(rendererSource, /<MermaidSurface source=\{source\} zoom=\{zoom\}[^>]*onWheel/);
@@ -90,7 +92,8 @@ test("Mermaid and structured charts expose a zoomable, pannable dialog", () => {
   assert.match(rendererSource, /event\.currentTarget\.scrollLeft = drag\.scrollLeft - \(event\.clientX - drag\.x\)/);
   assert.match(rendererSource, /event\.currentTarget\.scrollTop = drag\.scrollTop - \(event\.clientY - drag\.y\)/);
   assert.match(rendererSource, /const shouldScrollConversation = \(event\.deltaY < 0 && atTop\) \|\| \(event\.deltaY > 0 && atBottom\)/);
-  assert.match(rendererSource, /surface\.scrollTop \+= event\.deltaY/);
+  assert.match(rendererSource, /if \(!shouldScrollConversation\) return;[\s\S]*?event\.preventDefault\(\)/);
+  assert.doesNotMatch(rendererSource, /surface\.scrollTop \+= event\.deltaY/);
   assert.match(rendererSource, /surface\.closest<HTMLElement>\("\.conversation-scroll"\)\?\.scrollBy\(\{ top: event\.deltaY \}\)/);
   assert.doesNotMatch(rendererStyles, /\.interactive-response-content \{[^}]*cursor: zoom-in;/);
   assert.match(rendererSource, /setPointerCapture/);

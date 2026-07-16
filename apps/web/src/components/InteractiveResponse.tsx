@@ -174,7 +174,12 @@ function ZoomViewer({
   );
 }
 
-function MermaidSurface({ source, expanded = false, zoom = 1 }: { source: string; expanded?: boolean; zoom?: number }) {
+function MermaidSurface({ source, expanded = false, zoom = 1, onInitialFit }: {
+  source: string;
+  expanded?: boolean;
+  zoom?: number;
+  onInitialFit?: (zoom: number) => void;
+}) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const baseWidthRef = useRef(0);
   const zoomRef = useRef(zoom);
@@ -192,14 +197,20 @@ function MermaidSurface({ source, expanded = false, zoom = 1 }: { source: string
       if (renderedSvg) {
         const naturalWidth = renderedSvg.viewBox.baseVal.width || renderedSvg.getBoundingClientRect().width;
         baseWidthRef.current = Math.min(naturalWidth, containerRef.current.clientWidth);
-        renderedSvg.style.width = `${baseWidthRef.current * zoomRef.current}px`;
-        renderedSvg.style.maxWidth = zoomRef.current > 1 ? "none" : "100%";
+        const renderedHeight = renderedSvg.getBoundingClientRect().height;
+        const initialZoom = expanded
+          ? zoomRef.current
+          : clamp(containerRef.current.clientHeight / Math.max(renderedHeight, 1), 0.3, 1);
+        zoomRef.current = initialZoom;
+        renderedSvg.style.width = `${baseWidthRef.current * initialZoom}px`;
+        renderedSvg.style.maxWidth = initialZoom > 1 ? "none" : "100%";
+        onInitialFit?.(initialZoom);
       }
     }).catch(() => {
       if (!cancelled) setError(true);
     });
     return () => { cancelled = true; };
-  }, [source]);
+  }, [expanded, onInitialFit, source]);
 
   useEffect(() => {
     zoomRef.current = zoom;
@@ -240,11 +251,8 @@ function MermaidSurface({ source, expanded = false, zoom = 1 }: { source: string
     const atTop = surface.scrollTop <= 0;
     const atBottom = surface.scrollTop + surface.clientHeight >= surface.scrollHeight - 1;
     const shouldScrollConversation = (event.deltaY < 0 && atTop) || (event.deltaY > 0 && atBottom);
+    if (!shouldScrollConversation) return;
     event.preventDefault();
-    if (!shouldScrollConversation) {
-      surface.scrollTop += event.deltaY;
-      return;
-    }
     surface.closest<HTMLElement>(".conversation-scroll")?.scrollBy({ top: event.deltaY });
   };
   return (
@@ -370,7 +378,16 @@ export async function renderMermaidSvg(source: string) {
 export function MermaidDiagram({ source }: { source: string }) {
   const [expanded, setExpanded] = useState(false);
   const [zoom, setZoom] = useState(1);
-  const changeZoom = (next: number) => setZoom(clamp(next, 0.5, 2));
+  const [initialZoom, setInitialZoom] = useState(1);
+  const changeZoom = (next: number) => setZoom(clamp(next, 0.3, 2));
+  const applyInitialFit = useCallback((next: number) => {
+    setInitialZoom(next);
+    setZoom(next);
+  }, []);
+  useEffect(() => {
+    setInitialZoom(1);
+    setZoom(1);
+  }, [source]);
   return (
     <>
       <section className="interactive-response-block mermaid-diagram" aria-label="Mermaid 다이어그램">
@@ -378,15 +395,15 @@ export function MermaidDiagram({ source }: { source: string }) {
           <button type="button" className="interactive-response-expand-label" aria-label="Mermaid 다이어그램 크게 보기" onClick={() => setExpanded(true)}>Mermaid</button>
           <div className="interactive-response-toolbar-actions">
             <div className="mermaid-inline-zoom-controls" aria-label="Mermaid 다이어그램 배율 조절">
-              <button type="button" aria-label="Mermaid 다이어그램 축소" data-tooltip="축소" disabled={zoom <= 0.5} onClick={() => changeZoom(zoom - 0.1)}><Minus size={15} /></button>
-              <button type="button" className="mermaid-inline-zoom-value" aria-label="Mermaid 다이어그램 배율 초기화" data-tooltip="100%로 초기화" onClick={() => setZoom(1)}>{Math.round(zoom * 100)}%</button>
-              <button type="button" aria-label="Mermaid 다이어그램 확대" data-tooltip="확대" disabled={zoom >= 2} onClick={() => changeZoom(zoom + 0.1)}><Plus size={15} /></button>
+              <button type="button" aria-label="Mermaid 다이어그램 축소" data-tooltip="축소" disabled={zoom <= 0.3} onClick={() => changeZoom(zoom - 0.2)}><Minus size={15} /></button>
+              <button type="button" className="mermaid-inline-zoom-value" aria-label="Mermaid 다이어그램 배율 초기화" data-tooltip="초기 배율로" onClick={() => setZoom(initialZoom)}>{Math.round(zoom * 100)}%</button>
+              <button type="button" aria-label="Mermaid 다이어그램 확대" data-tooltip="확대" disabled={zoom >= 2} onClick={() => changeZoom(zoom + 0.2)}><Plus size={15} /></button>
             </div>
             <button type="button" className="interactive-response-expand-icon" aria-label="Mermaid 다이어그램 크게 보기" data-tooltip="크게 보기" onClick={() => setExpanded(true)}><Maximize2 size={15} /></button>
           </div>
         </div>
         <div className="interactive-response-content" onDoubleClick={() => setExpanded(true)}>
-          <MermaidSurface source={source} zoom={zoom} />
+          <MermaidSurface source={source} zoom={zoom} onInitialFit={applyInitialFit} />
         </div>
       </section>
       <ZoomViewer title="Mermaid" open={expanded} onClose={() => setExpanded(false)}>
