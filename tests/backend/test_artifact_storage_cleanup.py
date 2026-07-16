@@ -73,7 +73,7 @@ def test_artifact_version_flush_failure_cleans_managed_content(
     assert not [path for path in settings.artifacts_dir.rglob("*") if path.is_file()]
 
 
-def test_artifact_current_version_flush_failure_cleans_appended_content(
+def test_artifact_current_version_update_failure_cleans_appended_content(
     tmp_path: Path,
 ) -> None:
     settings = Settings(
@@ -107,16 +107,17 @@ def test_artifact_current_version_flush_failure_cleans_appended_content(
             content=b"version one",
         )
         db.commit()
-        real_flush = db.flush
+        real_execute = db.execute
 
-        def fail_current_version_flush(*args: object, **kwargs: object) -> None:
-            if artifact.current_version_number == 2:
-                raise RuntimeError("forced appended current-version flush failure")
-            real_flush(*args, **kwargs)
+        def fail_current_version_update(statement, *args, **kwargs):
+            table = getattr(statement, "table", None)
+            if getattr(table, "name", None) == "artifacts":
+                raise RuntimeError("forced appended current-version update failure")
+            return real_execute(statement, *args, **kwargs)
 
-        with patch.object(db, "flush", side_effect=fail_current_version_flush):
+        with patch.object(db, "execute", side_effect=fail_current_version_update):
             with pytest.raises(
-                RuntimeError, match="forced appended current-version flush failure"
+                RuntimeError, match="forced appended current-version update failure"
             ):
                 create_artifact_version(
                     db,

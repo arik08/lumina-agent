@@ -199,12 +199,13 @@ def create_artifact_version(
         validation_status=validation_status,
         validation_json=validation,
     )
-    artifact.current_version_number = version.version_number
-    try:
-        db.flush()
-    except BaseException:
-        discard_artifact_storage(storage, version.storage_key)
-        raise
+    _set_current_version(
+        db,
+        storage,
+        artifact=artifact,
+        base_version=base_version,
+        version=version,
+    )
     return version
 
 
@@ -280,12 +281,13 @@ def create_binary_artifact_version(
         renderer_manifest=renderer_manifest,
         asset_manifest=asset_manifest,
     )
-    artifact.current_version_number = version.version_number
-    try:
-        db.flush()
-    except BaseException:
-        discard_artifact_storage(storage, version.storage_key)
-        raise
+    _set_current_version(
+        db,
+        storage,
+        artifact=artifact,
+        base_version=base_version,
+        version=version,
+    )
     return artifact, version
 
 
@@ -340,6 +342,42 @@ def _write_version(
         discard_artifact_storage(storage, stored.key)
         raise
     return version
+
+
+def _set_current_version(
+    db: Session,
+    storage: ManagedLocalStorage,
+    *,
+    artifact: Artifact,
+    base_version: int,
+    version: ArtifactVersion,
+) -> None:
+    try:
+        result = db.execute(
+            update(Artifact)
+            .where(
+                Artifact.id == artifact.id,
+                Artifact.current_version_number == base_version,
+                Artifact.deleted_at.is_(None),
+            )
+            .values(current_version_number=version.version_number)
+            .execution_options(synchronize_session=False)
+        )
+    except BaseException:
+        discard_artifact_storage(storage, version.storage_key)
+        raise
+    if getattr(result, "rowcount", 0) != 1:
+        discard_artifact_storage(storage, version.storage_key)
+        db.expire(artifact)
+        db.refresh(artifact)
+        raise ApiProblem(
+            409,
+            "artifact_version_conflict",
+            "Artifact가 다른 곳에서 변경되었습니다. 최신 버전을 확인해 주세요.",
+            details={"currentVersion": artifact.current_version_number},
+        )
+    db.expire(artifact)
+    db.refresh(artifact)
 
 
 def discard_artifact_storage(storage: ManagedLocalStorage, key: str) -> None:

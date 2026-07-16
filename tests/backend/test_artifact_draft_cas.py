@@ -8,12 +8,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from lumina.artifacts.service import create_artifact
+from lumina.api.errors import ApiProblem
+from lumina.artifacts.service import create_artifact, create_artifact_version
 from lumina.auth.service import create_user
 from lumina.config import Settings
 from lumina.db import SessionLocal
 from lumina.main import create_app
-from lumina.models import ArtifactVersion, Message, Organization, Project, User
+from lumina.models import Artifact, ArtifactVersion, Message, Organization, Project, User
 from lumina.storage import ManagedLocalStorage
 
 
@@ -334,6 +335,81 @@ def test_version_commit_failure_preserves_existing_draft_and_content(
             if path.is_file()
         ]
         assert len(version_files) == 1
+
+
+def test_artifact_version_compare_and_swap_rejects_stale_session(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    app = create_app(settings)
+    with TestClient(app) as client:
+        _login(client)
+        artifact_id = _create_text_artifact(settings, "version-cas")
+        storage = ManagedLocalStorage(settings.artifacts_dir)
+
+        with SessionLocal() as first_db, SessionLocal() as stale_db:
+            first_user = first_db.scalar(
+                select(User).where(User.login_id == "admin@posco.com")
+            )
+            stale_user = stale_db.scalar(
+                select(User).where(User.login_id == "admin@posco.com")
+            )
+            stale_artifact = stale_db.get(Artifact, artifact_id)
+            assert first_user is not None and stale_user is not None
+            assert stale_artifact is not None
+            assert stale_artifact.current_version_number == 1
+
+            winner = create_artifact_version(
+                first_db,
+                storage,
+                user=first_user,
+                artifact_id=artifact_id,
+                base_version=1,
+                content=b"CAS winner",
+                change_type="manual_edit",
+                change_summary="winner",
+            )
+            first_db.commit()
+            assert winner.version_number == 2
+
+            with pytest.raises(ApiProblem) as conflict:
+                create_artifact_version(
+                    stale_db,
+                    storage,
+                    user=stale_user,
+                    artifact_id=artifact_id,
+                    base_version=1,
+                    content=b"stale writer",
+                    change_type="manual_edit",
+                    change_summary="stale",
+                )
+            assert conflict.value.code == "artifact_version_conflict"
+            assert conflict.value.details == {"currentVersion": 2}
+
+        with SessionLocal() as db:
+            persisted = db.get(Artifact, artifact_id)
+            versions = list(
+                db.scalars(
+                    select(ArtifactVersion)
+                    .where(ArtifactVersion.artifact_id == artifact_id)
+                    .order_by(ArtifactVersion.version_number)
+                )
+            )
+            assert persisted is not None
+            assert persisted.current_version_number == 2
+            assert [version.version_number for version in versions] == [1, 2]
+            assert versions[1].parent_version_id == versions[0].id
+
+        version_files = [
+            path
+            for path in (settings.artifacts_dir / "artifacts" / artifact_id).rglob("*")
+            if path.is_file()
+        ]
+        assert len(version_files) == 2
+        assert {path.read_bytes() for path in version_files} == {
+            b"committed v1",
+            b"CAS winner",
+        }
 
 
 def test_restore_commit_failure_cleans_new_version_content(tmp_path: Path) -> None:
