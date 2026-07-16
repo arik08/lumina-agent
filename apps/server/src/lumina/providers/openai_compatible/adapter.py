@@ -6,7 +6,6 @@ import re
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlsplit
 
 import httpx
 
@@ -18,6 +17,7 @@ from lumina.http_client import (
 )
 
 from ..errors import ProviderConfigurationError, ProviderRequestError
+from ..http import validate_http_base_url
 from ..types import (
     ProviderCapabilities,
     ProviderEvent,
@@ -615,21 +615,7 @@ def _is_retryable_stream_error(error: Mapping[str, Any]) -> bool:
 
 
 def _validated_base_url(value: str) -> str:
-    normalized = value.strip().rstrip("/")
-    parsed = urlsplit(normalized)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise ProviderConfigurationError(
-            "Provider base URL must be an absolute HTTP(S) URL."
-        )
-    if parsed.username or parsed.password:
-        raise ProviderConfigurationError(
-            "Provider base URL must not contain credentials."
-        )
-    if parsed.query or parsed.fragment:
-        raise ProviderConfigurationError(
-            "Provider base URL must not contain a query or fragment."
-        )
-    return normalized
+    return validate_http_base_url(value, "Provider")
 
 
 def _stage_for_status(status: int) -> str:

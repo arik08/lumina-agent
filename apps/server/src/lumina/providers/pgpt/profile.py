@@ -4,10 +4,10 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from urllib.parse import urlsplit
 
 from ..constants import DEFAULT_PGPT_BASE_URL
 from ..errors import ProviderConfigurationError
+from ..http import validate_http_base_url
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,16 +18,7 @@ class PgptProfile:
     timeout_seconds: float = 180.0
 
     def __post_init__(self) -> None:
-        base_url = self.base_url.strip().rstrip("/")
-        parsed = urlsplit(base_url)
-        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-            raise ProviderConfigurationError(
-                "PGPT_BASE_URL must be an absolute HTTP(S) URL."
-            )
-        if parsed.username or parsed.password or parsed.query or parsed.fragment:
-            raise ProviderConfigurationError(
-                "PGPT_BASE_URL must not contain credentials, a query, or a fragment."
-            )
+        base_url = validate_http_base_url(self.base_url, "PGPT_BASE_URL")
         if self.api_mode != "chat_completions":
             raise ProviderConfigurationError(
                 f"Unsupported P-GPT API mode: {self.api_mode}"

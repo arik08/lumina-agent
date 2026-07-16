@@ -4,7 +4,6 @@ import json
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlsplit
 
 import httpx
 
@@ -12,6 +11,7 @@ from lumina.http_client import TrustManager, TrustProfile, create_http_client
 
 from ..constants import DEFAULT_OPENAI_BASE_URL, OPENAI_PROVIDER_ID
 from ..errors import ProviderConfigurationError, ProviderRequestError
+from ..http import validate_http_base_url
 from ..openai_compatible import normalize_openai_usage
 from ..types import (
     ProviderCapabilities,
@@ -504,21 +504,7 @@ def _integer(value: object) -> int:
 
 
 def _validated_base_url(value: str) -> str:
-    normalized = value.strip().rstrip("/")
-    parsed = urlsplit(normalized)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise ProviderConfigurationError(
-            "OpenAI base URL must be an absolute HTTP(S) URL."
-        )
-    if parsed.username or parsed.password:
-        raise ProviderConfigurationError(
-            "OpenAI base URL must not contain credentials."
-        )
-    if parsed.query or parsed.fragment:
-        raise ProviderConfigurationError(
-            "OpenAI base URL must not contain a query or fragment."
-        )
-    return normalized
+    return validate_http_base_url(value, "OpenAI")
 
 
 def _stage_for_status(status: int) -> str:
