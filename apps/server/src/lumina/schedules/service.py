@@ -4,7 +4,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..api.errors import ApiProblem
@@ -520,12 +521,18 @@ def start_scheduled_run(
     scheduled_for: datetime,
     idempotency_key: str,
 ) -> tuple[ScheduledRun, bool]:
-    existing = db.scalar(
-        select(ScheduledRun).where(
-            ScheduledRun.scheduled_task_id == task.id,
-            ScheduledRun.idempotency_key == idempotency_key,
+    def existing_occurrence() -> ScheduledRun | None:
+        return db.scalar(
+            select(ScheduledRun).where(
+                ScheduledRun.scheduled_task_id == task.id,
+                or_(
+                    ScheduledRun.idempotency_key == idempotency_key,
+                    ScheduledRun.scheduled_for == scheduled_for,
+                ),
+            )
         )
-    )
+
+    existing = existing_occurrence()
     if existing is not None:
         return existing, False
     extension_snapshot = _execution_extension_snapshot(db, task, user)
@@ -557,8 +564,15 @@ def start_scheduled_run(
         status="queued",
         attempt=1,
     )
-    db.add(scheduled_run)
-    db.flush()
+    try:
+        with db.begin_nested():
+            db.add(scheduled_run)
+            db.flush()
+    except IntegrityError:
+        existing = existing_occurrence()
+        if existing is None:
+            raise
+        return existing, False
     conversation = _scheduled_conversation(
         db, user=user, task=task, scheduled_run=scheduled_run
     )
@@ -644,6 +658,7 @@ def dispatch_due_tasks(
                 ScheduledTask.next_run_at <= current,
             )
             .order_by(ScheduledTask.next_run_at, ScheduledTask.id)
+            .with_for_update(skip_locked=True)
         )
     )
     created: list[ScheduledRun] = []

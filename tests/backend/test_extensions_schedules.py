@@ -47,6 +47,7 @@ from lumina.schedules.service import (
     maintain_scheduled_runs,
     next_occurrence,
     scheduled_run_payload,
+    start_scheduled_run,
 )
 from lumina.schedules import service as schedules_service
 
@@ -1267,6 +1268,56 @@ def test_schedule_patch_rejects_empty_and_null_non_nullable_fields(
         assert unchanged.status_code == 200
         assert unchanged.json()["name"] == "예약 수정 검증"
         assert unchanged.json()["scheduleConfig"] == {"hour": 9, "minute": 30}
+
+
+def test_scheduled_run_recovers_idempotency_conflict_after_stale_lookup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, _settings = _test_app(tmp_path)
+    with TestClient(app) as client:
+        csrf = _login(client)
+        task_payload, scheduled_payload = _create_manual_scheduled_run(
+            client,
+            csrf=csrf,
+            name="동시 예약 충돌 복구",
+            idempotency_key="schedule-race-0001",
+            max_attempts=1,
+        )
+
+    with SessionLocal() as db:
+        task = db.get(ScheduledTask, str(task_payload["id"]))
+        scheduled_run = db.get(ScheduledRun, str(scheduled_payload["id"]))
+        assert task is not None and scheduled_run is not None
+        owner = db.get(User, task.owner_user_id)
+        assert owner is not None
+        run_count = len(list(db.scalars(select(Run.id))))
+        conversation_count = len(list(db.scalars(select(Conversation.id))))
+
+        real_scalar = db.scalar
+        stale_lookup_returned = False
+
+        def scalar_with_stale_first_lookup(*args: object, **kwargs: object) -> object:
+            nonlocal stale_lookup_returned
+            if not stale_lookup_returned:
+                stale_lookup_returned = True
+                return None
+            return real_scalar(*args, **kwargs)
+
+        monkeypatch.setattr(db, "scalar", scalar_with_stale_first_lookup)
+        recovered, created = start_scheduled_run(
+            db,
+            user=owner,
+            task=task,
+            trigger_type="manual",
+            scheduled_for=scheduled_run.scheduled_for,
+            idempotency_key=scheduled_run.idempotency_key,
+        )
+
+        assert stale_lookup_returned is True
+        assert created is False
+        assert recovered.id == scheduled_run.id
+        assert len(list(db.scalars(select(Run.id)))) == run_count
+        assert len(list(db.scalars(select(Conversation.id)))) == conversation_count
 
 
 def test_scheduled_run_syncs_terminal_artifacts_and_in_app_delivery(
