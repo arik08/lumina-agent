@@ -2155,7 +2155,10 @@ class LocalRunExecutor:
         self, run_id: str
     ) -> tuple[dict[str, int], dict[str, set[str]]]:
         counts = {"web_search": 0, "web_fetch": 0}
-        signatures = {"web_search": set(), "web_fetch": set()}
+        signatures: dict[str, set[str]] = {
+            "web_search": set(),
+            "web_fetch": set(),
+        }
         with SessionLocal() as db:
             executions = list(
                 db.scalars(
@@ -2739,7 +2742,7 @@ class LocalRunExecutor:
         current_user_message: str,
         *,
         images: tuple[ProviderImage, ...] = (),
-        tool_schemas: tuple[dict[str, Any], ...] = (),
+        tool_schemas: tuple[Mapping[str, Any], ...] = (),
     ) -> list[ProviderMessage]:
         with SessionLocal() as db:
             run = db.get(Run, run_id)
@@ -6503,7 +6506,7 @@ _REPORT_VISUAL_PALETTE = (
 _REPORT_VISUAL_PALETTE_TEXT = ", ".join(_REPORT_VISUAL_PALETTE)
 
 
-_REPORT_TOOL_SCHEMA = {
+_REPORT_TOOL_SCHEMA: dict[str, Any] = {
     "type": "function",
     "function": {
         "name": "create_report",
