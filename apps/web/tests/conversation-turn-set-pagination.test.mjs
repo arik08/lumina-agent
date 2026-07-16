@@ -16,12 +16,13 @@ test("older conversation turn sets are fetched by cursor and prepended without d
   assert.match(workspace, /loadOlderConversationTurnSets,/);
 });
 
-test("scrolling to the top loads older turn sets and preserves the visible position", async () => {
+test("approaching the top preloads older turn sets and preserves the visible position", async () => {
   const app = await readFile(appUrl, "utf8");
 
-  assert.match(app, /container\.scrollTop > 80/);
+  assert.match(app, /Math\.max\(240, container\.clientHeight \* 0\.75\)/);
+  assert.match(app, /container\.scrollTop > prefetchDistance/);
   assert.match(app, /scrollHeight: container\.scrollHeight/);
   assert.match(app, /workspace\.loadOlderConversationTurnSets\(conversationId\)/);
   assert.match(app, /container\.scrollTop = anchor\.scrollTop \+ \(container\.scrollHeight - anchor\.scrollHeight\)/);
-  assert.match(app, /onScroll=\{\(\) => \{\s*conversationFollow\.onScroll\(\);\s*void loadOlderTurnSetsAtTop\(\);/s);
+  assert.match(app, /onScroll=\{\(\) => \{\s*conversationFollow\.onScroll\(\);\s*void loadOlderTurnSetsNearTop\(\);/s);
 });

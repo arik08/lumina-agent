@@ -125,7 +125,7 @@ Turn Set
 ```
 
 - 세션을 처음 열면 가장 최근 Turn Set 3개를 기본으로 불러옵니다.
-- 사용자가 메시지 영역의 위쪽으로 스크롤하면 바로 앞의 Turn Set을 오래된 방향으로 순차 로딩합니다. 한 Turn Set은 중간에서 잘라 내려받지 않습니다.
+- 사용자가 메시지 영역을 위쪽으로 스크롤해 상단 근처에 접근하면, 최상단에 닿기 전에 바로 앞의 Turn Set을 오래된 방향으로 미리 순차 로딩합니다. 한 Turn Set은 중간에서 잘라 내려받지 않습니다.
 - Backend는 `before_cursor`, `limit_turn_sets`, `has_more_before`를 기준으로 응답하며 cursor는 Message 개수나 화면 index가 아닌 안정적인 서버 발급값을 사용합니다.
 - 새 메시지와 live Run event는 하단에 계속 결합하되, 과거 Turn Set 로딩과 같은 Message 또는 event가 중복되지 않도록 `message_id`, `run_id`, event sequence로 병합합니다.
 - 위쪽에 과거 Turn Set을 삽입한 뒤에도 사용자가 보고 있던 첫 visible Message의 위치를 유지합니다. 과거 항목 추가 때문에 화면이 갑자기 위나 아래로 튀지 않아야 합니다.

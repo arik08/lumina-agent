@@ -1763,13 +1763,16 @@ function App() {
     scrollTop: number;
     turnSetCount: number;
   } | null>(null);
-  const loadOlderTurnSetsAtTop = useCallback(async () => {
+  const loadOlderTurnSetsNearTop = useCallback(async () => {
     const conversationId = workspace.activeConversationId;
     const container = conversationFollow.containerRef.current;
+    const prefetchDistance = container
+      ? Math.max(240, container.clientHeight * 0.75)
+      : 0;
     if (
       !conversationId
       || !container
-      || container.scrollTop > 80
+      || container.scrollTop > prefetchDistance
       || !activeRuntime.hasMoreTurnSetsBefore
       || olderTurnSetsLoadingRef.current
     ) return;
@@ -1813,14 +1816,14 @@ function App() {
   useEffect(() => {
     if (!activeRuntime.loaded || !activeRuntime.hasMoreTurnSetsBefore) return undefined;
     const frame = window.requestAnimationFrame(() => {
-      void loadOlderTurnSetsAtTop();
+      void loadOlderTurnSetsNearTop();
     });
     return () => window.cancelAnimationFrame(frame);
   }, [
     activeRuntime.hasMoreTurnSetsBefore,
     activeRuntime.loaded,
     activeRuntime.turnSets.length,
-    loadOlderTurnSetsAtTop,
+    loadOlderTurnSetsNearTop,
   ]);
   useEffect(() => {
     setOpenCalls(new Set());
@@ -3155,7 +3158,7 @@ function App() {
           onKeyDown={selectAllInRegion}
           onScroll={() => {
             conversationFollow.onScroll();
-            void loadOlderTurnSetsAtTop();
+            void loadOlderTurnSetsNearTop();
           }}
           onWheel={(event) => conversationFollow.onWheel(event.deltaY)}
           onPointerDown={(event) => {
