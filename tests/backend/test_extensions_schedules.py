@@ -1220,6 +1220,55 @@ def test_schedule_run_now_enable_disable_and_due_dispatch(tmp_path: Path) -> Non
         assert len(scheduled_rows) == 2
 
 
+def test_schedule_patch_rejects_empty_and_null_non_nullable_fields(
+    tmp_path: Path,
+) -> None:
+    app, _settings = _test_app(tmp_path)
+    with TestClient(app, raise_server_exceptions=False) as client:
+        csrf = _login(client)
+        headers = {"X-CSRF-Token": csrf}
+        project_id = client.get("/api/projects").json()[0]["id"]
+        created = client.post(
+            "/api/scheduled-tasks",
+            headers=headers,
+            json={
+                "projectId": project_id,
+                "name": "예약 수정 검증",
+                "instructions": "예약 수정 입력을 검증합니다.",
+                "scheduleKind": "daily",
+                "scheduleConfig": {"hour": 9, "minute": 30},
+                "timezone": "Asia/Seoul",
+            },
+        )
+        assert created.status_code == 201, created.text
+        task_id = created.json()["id"]
+
+        invalid_patches = [
+            {},
+            {"name": None},
+            {"instructions": None},
+            {"scheduleKind": None},
+            {"scheduleConfig": None},
+            {"timezone": None},
+            {"contextMode": None},
+            {"execution": None},
+            {"extensionSnapshotPolicy": None},
+            {"deliveryPolicy": None},
+            {"maxAttempts": None},
+            {"timeoutSeconds": None},
+        ]
+        for patch in invalid_patches:
+            response = client.patch(
+                f"/api/scheduled-tasks/{task_id}", headers=headers, json=patch
+            )
+            assert response.status_code == 422, (patch, response.text)
+
+        unchanged = client.get(f"/api/scheduled-tasks/{task_id}")
+        assert unchanged.status_code == 200
+        assert unchanged.json()["name"] == "예약 수정 검증"
+        assert unchanged.json()["scheduleConfig"] == {"hour": 9, "minute": 30}
+
+
 def test_scheduled_run_syncs_terminal_artifacts_and_in_app_delivery(
     tmp_path: Path,
 ) -> None:

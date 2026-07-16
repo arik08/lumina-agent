@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
@@ -25,6 +26,10 @@ class ApiProblem(Exception):
         self.message = message
         self.field = field
         self.details = details
+
+
+def _validation_details(errors: Any) -> Any:
+    return jsonable_encoder(errors, custom_encoder={Exception: str})
 
 
 def problem_payload(request: Request, problem: ApiProblem) -> dict[str, Any]:
@@ -65,7 +70,7 @@ def install_error_handlers(app: FastAPI) -> None:
             422,
             "validation_failed",
             "입력값을 확인해 주세요.",
-            details=exc.errors(include_url=False),
+            details=_validation_details(exc.errors(include_url=False)),
         )
         return JSONResponse(problem_payload(request, problem), status_code=422)
 
@@ -77,6 +82,6 @@ def install_error_handlers(app: FastAPI) -> None:
             422,
             "validation_failed",
             "입력값을 확인해 주세요.",
-            details=exc.errors(),
+            details=_validation_details(exc.errors()),
         )
         return JSONResponse(problem_payload(request, problem), status_code=422)
