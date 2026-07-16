@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import importlib
 import json
 import logging
 import math
@@ -15,7 +16,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, BinaryIO, Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from sqlalchemy import func, select
@@ -482,13 +483,14 @@ class _DatabaseWorkerLock:
     def __init__(self, database_url: str) -> None:
         url = make_url(database_url)
         database = url.database
-        self.path = (
-            Path(database).resolve().with_suffix(f"{Path(database).suffix}.worker.lock")
-            if url.get_backend_name() == "sqlite"
-            and database not in {None, "", ":memory:"}
-            else None
-        )
-        self._handle: Any | None = None
+        if url.get_backend_name() == "sqlite" and database and database != ":memory:":
+            database_path = Path(database).resolve()
+            self.path: Path | None = database_path.with_suffix(
+                f"{database_path.suffix}.worker.lock"
+            )
+        else:
+            self.path = None
+        self._handle: BinaryIO | None = None
 
     def acquire(self) -> bool:
         if self.path is None or self._handle is not None:
@@ -506,9 +508,12 @@ class _DatabaseWorkerLock:
                 handle.seek(0)
                 msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
             else:
-                import fcntl
-
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl = importlib.import_module("fcntl")
+                flock = getattr(fcntl, "flock")
+                flock(
+                    handle.fileno(),
+                    getattr(fcntl, "LOCK_EX") | getattr(fcntl, "LOCK_NB"),
+                )
         except (BlockingIOError, OSError):
             handle.close()
             return False
@@ -527,9 +532,8 @@ class _DatabaseWorkerLock:
                 handle.seek(0)
                 msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
             else:
-                import fcntl
-
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                fcntl = importlib.import_module("fcntl")
+                getattr(fcntl, "flock")(handle.fileno(), getattr(fcntl, "LOCK_UN"))
         finally:
             handle.close()
 
