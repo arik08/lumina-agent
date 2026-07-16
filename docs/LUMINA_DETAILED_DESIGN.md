@@ -2219,7 +2219,7 @@ DELETE /api/notifications
 GET    /api/finance/exchange-rate/usd-krw
 ```
 
-Artifact Draft `PUT`은 ETag·base version을 검사하고 stale write를 `409`로 거부합니다. MCP Secret endpoint는 Secret 원문이 아니라 허용된 reference만 저장합니다. 환율 endpoint는 외부 source가 unavailable이면 잘못된 `0`을 만들지 않고 `null`과 상태를 반환하여 원화 예상비용 UI가 stale·unknown을 구분하게 합니다.
+Artifact Draft `PUT`은 ETag·base version을 검사하고 stale write를 `409`로 거부합니다. MCP Secret endpoint는 Secret 원문이 아니라 허용된 reference만 저장합니다. 환율 endpoint는 `fresh`, `stale`, `unavailable` 상태를 반환합니다. 외부 source 갱신이 실패하면 마지막 정상 환율을 `stale`로 유지하고, 정상 환율이 없을 때만 `null`과 `unavailable`을 반환합니다. 실패 후 재시도는 짧은 cache TTL로 제한하여 원화 예상비용 UI가 stale·unknown을 구분하면서 외부 장애를 요청 폭증으로 확대하지 않게 합니다.
 
 ## 23. DB와 Storage 전략
 
