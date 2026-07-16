@@ -475,12 +475,21 @@ def _retry_after_seconds(value: object) -> float | None:
                 if parsed is not None:
                     return parsed
         for item in value.values():
-            if isinstance(item, Mapping):
+            if isinstance(item, (Mapping, list, tuple)):
+                parsed = _retry_after_seconds(item)
+                if parsed is not None:
+                    return parsed
+        return None
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            if isinstance(item, (Mapping, list, tuple)):
                 parsed = _retry_after_seconds(item)
                 if parsed is not None:
                     return parsed
         return None
     if isinstance(value, bool):
+        return None
+    if not isinstance(value, (str, int, float)):
         return None
     try:
         parsed = float(value)

@@ -45,6 +45,7 @@ from lumina.providers import (
     ProviderRequestError,
     ProviderRequest,
 )
+from lumina.providers.openai_compatible import adapter as openai_compatible_module
 from lumina.providers.openai_compatible import OpenAICompatibleAdapter
 from lumina.runs.state import ACTIVE_STATUSES, TERMINAL_STATUSES
 from lumina.runs.broker import event_broker
@@ -762,6 +763,18 @@ def test_provider_retry_delay_prefers_retry_after_and_caps_it() -> None:
     assert executor_module._provider_retry_delay_seconds(retry_after, 0) == 12.5
     assert executor_module._provider_retry_delay_seconds(excessive, 0) == 600.0
     assert executor_module._PROVIDER_RETRY_DELAYS_SECONDS == (1.0, 2.0, 4.0)
+
+
+def test_retry_after_parser_accepts_nested_json_scalars_only() -> None:
+    assert (
+        openai_compatible_module._retry_after_seconds(
+            {"errors": [{"metadata": {"retry_after_seconds": "12.5"}}]}
+        )
+        == 12.5
+    )
+    assert openai_compatible_module._retry_after_seconds({"retry_after": 10_000}) == 600.0
+    for invalid in (None, True, -1, "nan", "inf", object(), {"status": 429}):
+        assert openai_compatible_module._retry_after_seconds(invalid) is None
 
 
 def test_continuation_deduper_handles_overlap_split_across_stream_chunks() -> None:
