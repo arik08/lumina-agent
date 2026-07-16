@@ -170,6 +170,18 @@ def test_project_file_api_versions_paths_search_and_isolation(tmp_path: Path) ->
         )
         assert old_download.status_code == 200
         assert old_download.content == "첫 버전 점검 내용".encode()
+        stored_version_one = next(
+            path
+            for path in (settings.files_dir / "project-files").rglob("*")
+            if path.is_file() and path.read_bytes() == "첫 버전 점검 내용".encode()
+        )
+        stored_version_one.write_bytes(b"tampered project file")
+        unavailable = client.get(
+            f"/api/projects/{project_id}/files/{first['id']}/download",
+            params={"version": 1},
+        )
+        assert unavailable.status_code == 503
+        assert unavailable.json()["code"] == "project_file_content_missing"
 
         extension_change = client.patch(
             f"/api/projects/{project_id}/files/{first['id']}",

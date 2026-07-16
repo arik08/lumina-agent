@@ -18,7 +18,7 @@ from ..api.errors import ApiProblem
 from ..document_limits import MAX_DOCUMENT_PAGES, MAX_OPENXML_MEMBERS
 from ..authorization import require_conversation, require_project
 from ..models import Artifact, ArtifactDraft, ArtifactVersion, User, utc_now
-from ..storage import ManagedLocalStorage, StorageNotFoundError
+from ..storage import ManagedLocalStorage, StorageError
 from .render_validation import ArtifactRenderBackend, verify_artifact_render
 
 
@@ -340,7 +340,7 @@ def read_artifact_version(
         content = storage.read_bytes(
             version.storage_key, expected_sha256=version.content_hash
         )
-    except StorageNotFoundError as exc:
+    except StorageError as exc:
         raise ApiProblem(
             503, "artifact_content_missing", "Artifact 원본을 읽을 수 없습니다."
         ) from exc
@@ -470,7 +470,7 @@ def read_user_draft(
         content = storage.read_bytes(
             draft.storage_key, expected_sha256=draft.content_hash
         )
-    except StorageNotFoundError as exc:
+    except StorageError as exc:
         raise ApiProblem(
             503,
             "artifact_draft_content_missing",

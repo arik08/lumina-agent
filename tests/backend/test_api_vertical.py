@@ -129,6 +129,15 @@ def test_login_run_replay_and_artifact_version(tmp_path: Path, capsys) -> None:
         downloaded = client.get(f"/api/artifacts/{artifact_id}/download?version=2")
         assert downloaded.status_code == 200
         assert "수정된 작업 결과 보고서" in downloaded.text
+        stored_version_two = next(
+            path
+            for path in (tmp_path / "artifacts").rglob("*")
+            if path.is_file() and "수정된 작업 결과 보고서" in path.read_text("utf-8")
+        )
+        stored_version_two.write_bytes(b"tampered artifact")
+        unavailable = client.get(f"/api/artifacts/{artifact_id}/download?version=2")
+        assert unavailable.status_code == 503
+        assert unavailable.json()["code"] == "artifact_content_missing"
 
         markdown_saved = client.post(
             f"/api/artifacts/from-message/{snapshot['assistantDraft']['messageId']}",

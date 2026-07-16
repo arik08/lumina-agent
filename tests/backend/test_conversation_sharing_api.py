@@ -284,6 +284,17 @@ def test_link_snapshot_share_and_revoke(tmp_path: Path) -> None:
         )
         assert downloaded_attachment.status_code == 200
         assert "점검 원문" in downloaded_attachment.text
+        shared_attachment_file = next(
+            path
+            for path in (tmp_path / "files" / "attachments").rglob("*")
+            if path.is_file()
+        )
+        shared_attachment_file.write_bytes(b"tampered shared attachment")
+        unavailable_attachment = client.get(
+            f"/api/conversation-shares/{token}/attachments/{attachment_id}/download"
+        )
+        assert unavailable_attachment.status_code == 503
+        assert unavailable_attachment.json()["code"] == "attachment_content_missing"
 
         _restore_cookies(client, alice_cookies)
         revoked = client.delete(

@@ -156,3 +156,15 @@ def test_attachment_api_rejects_fake_office_and_persists_valid_extraction(
         assert uploaded.status_code == 201, uploaded.text
         assert uploaded.json()["extractionStatus"] == "completed"
         assert uploaded.json()["metadata"]["extractedSize"] > 0
+
+        stored_attachment = next(
+            path
+            for path in (settings.files_dir / "attachments").rglob("*")
+            if path.is_file()
+        )
+        stored_attachment.write_bytes(b"tampered attachment")
+        unavailable = client.get(
+            f"/api/attachments/{uploaded.json()['id']}/content"
+        )
+        assert unavailable.status_code == 503
+        assert unavailable.json()["code"] == "attachment_content_missing"

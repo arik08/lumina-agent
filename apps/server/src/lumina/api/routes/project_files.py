@@ -26,8 +26,9 @@ from ...project_files import (
     soft_delete_project_file,
     soft_delete_project_folder,
 )
-from ...storage import ManagedLocalStorage
+from ...storage import ManagedLocalStorage, StorageError
 from ..dependencies import AuthContext, get_current_user, require_csrf
+from ..errors import ApiProblem
 from ..schemas import (
     ProjectFileDetailResponse,
     ProjectFileMove,
@@ -395,9 +396,16 @@ def download_project_file(
 ) -> Response:
     project_file = get_project_file(db, user, project_id, file_id)
     selected = get_project_file_version(db, project_file, version)
-    content = _storage(settings).read_bytes(
-        selected.storage_key, expected_sha256=selected.content_hash
-    )
+    try:
+        content = _storage(settings).read_bytes(
+            selected.storage_key, expected_sha256=selected.content_hash
+        )
+    except StorageError as exc:
+        raise ApiProblem(
+            503,
+            "project_file_content_missing",
+            "Project 파일 원본을 읽을 수 없습니다.",
+        ) from exc
     filename = PurePosixPath(project_file.logical_path).name
     return Response(
         content=content,

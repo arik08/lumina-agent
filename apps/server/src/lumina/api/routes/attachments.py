@@ -12,7 +12,7 @@ from ...attachments import MIME_BY_EXTENSION, extract_attachment_text, sniff_mim
 from ...config import Settings, get_settings
 from ...db import get_db
 from ...models import Attachment, User, utc_now
-from ...storage import ManagedLocalStorage
+from ...storage import ManagedLocalStorage, StorageError
 from ..dependencies import AuthContext, get_current_user, require_csrf
 from ..errors import ApiProblem
 
@@ -188,9 +188,14 @@ def get_attachment_content(
     if attachment is None or attachment.deleted_at is not None:
         raise ApiProblem(404, "not_found", "첨부 파일을 찾을 수 없습니다.")
     require_conversation(db, user, attachment.conversation_id or "")
-    content = _storage(settings).read_bytes(
-        attachment.storage_key, expected_sha256=attachment.content_hash
-    )
+    try:
+        content = _storage(settings).read_bytes(
+            attachment.storage_key, expected_sha256=attachment.content_hash
+        )
+    except StorageError as exc:
+        raise ApiProblem(
+            503, "attachment_content_missing", "첨부 원본을 읽을 수 없습니다."
+        ) from exc
     return Response(content=content, media_type=attachment.sniffed_mime_type)
 
 

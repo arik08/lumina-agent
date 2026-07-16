@@ -22,7 +22,7 @@ from ...models import (
     User,
     utc_now,
 )
-from ...storage import ManagedLocalStorage, StorageNotFoundError
+from ...storage import ManagedLocalStorage, StorageError
 from ..dependencies import AuthContext, get_current_user, require_csrf
 from ..errors import ApiProblem
 from ..schemas import ShareCreate
@@ -608,7 +608,7 @@ def download_shared_artifact(
             stored_version.storage_key,
             expected_sha256=stored_version.content_hash,
         )
-    except StorageNotFoundError as exc:
+    except StorageError as exc:
         raise ApiProblem(
             503, "artifact_content_missing", "Artifact 원본을 읽을 수 없습니다."
         ) from exc
@@ -680,7 +680,7 @@ def download_shared_attachment(
             attachment.storage_key,
             expected_sha256=attachment.content_hash,
         )
-    except StorageNotFoundError as exc:
+    except StorageError as exc:
         raise ApiProblem(
             503, "attachment_content_missing", "첨부 원본을 읽을 수 없습니다."
         ) from exc
