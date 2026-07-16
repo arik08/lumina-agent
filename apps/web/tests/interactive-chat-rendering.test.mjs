@@ -63,23 +63,30 @@ test("tall Mermaid workflows keep readable geometry inside a bounded scroll surf
   assert.doesNotMatch(globalStyles, /\.mermaid-diagram svg/);
 });
 
+test("chat Mermaid cards provide button-only zoom controls beside the expand button", () => {
+  assert.match(rendererSource, /const \[zoom, setZoom\] = useState\(1\)/);
+  assert.match(rendererSource, /setZoom\(clamp\(next, 0\.5, 2\)\)/);
+  assert.match(rendererSource, /aria-label="Mermaid 다이어그램 축소"[\s\S]*?zoom - 0\.25/);
+  assert.match(rendererSource, /aria-label="Mermaid 다이어그램 배율 초기화"[\s\S]*?setZoom\(1\)/);
+  assert.match(rendererSource, /aria-label="Mermaid 다이어그램 확대"[\s\S]*?zoom \+ 0\.25/);
+  assert.match(rendererSource, /<MermaidSurface source=\{source\} zoom=\{zoom\} \/>/);
+  assert.match(rendererSource, /renderedSvg\.style\.maxWidth = zoom > 1 \? "none" : "100%"/);
+  assert.doesNotMatch(rendererSource, /<MermaidSurface source=\{source\} zoom=\{zoom\}[^>]*onWheel/);
+  assert.match(rendererStyles, /\.mermaid-inline-zoom-controls \{[\s\S]*?border-right: 1px solid var\(--line\);/);
+});
+
 test("Mermaid and structured charts expose a zoomable, pannable dialog", () => {
   assert.match(rendererSource, /function ZoomViewer/);
   assert.match(rendererSource, /document\.querySelector\("\.app-shell\.theme-dark"\) \? " theme-dark" : ""/);
   assert.match(rendererSource, /className=\{`response-zoom-backdrop\$\{themeClassName\}`\}/);
   assert.match(globalStyles, /\.response-zoom-backdrop\.theme-dark,[\s\S]*?\.app-shell\.theme-dark/);
-  assert.match(rendererSource, /aria-label="Mermaid 다이어그램 확대"/);
-  assert.match(rendererSource, /<div[\s\S]*?className="interactive-response-toolbar interactive-response-expand-trigger"[\s\S]*?role="button"[\s\S]*?tabIndex=\{0\}[\s\S]*?onClick=\{\(\) => setExpanded\(true\)\}/);
+  assert.match(rendererSource, /aria-label="Mermaid 다이어그램 크게 보기"/);
   assert.match(rendererSource, /className="response-zoom-title"[\s\S]*?aria-label=\{`\$\{title\} 확대 보기 닫기`\}[\s\S]*?onClick=\{onClose\}/);
   assert.match(rendererStyles, /\.response-zoom-title \{[^}]*cursor: pointer;/);
-  assert.match(rendererSource, /aria-label="Mermaid 다이어그램 확대"\s+onClick/);
-  assert.match(rendererSource, /className="interactive-response-expand-icon" aria-hidden="true"><Maximize2 size=\{15\} \/><\/span>/);
-  assert.match(rendererSource, /event\.key !== "Enter" && event\.key !== " "/);
+  assert.match(rendererSource, /className="interactive-response-expand-icon" aria-label="Mermaid 다이어그램 크게 보기"[\s\S]*?onClick=\{\(\) => setExpanded\(true\)\}/);
   assert.match(rendererSource, /event\.currentTarget\.scrollLeft = drag\.scrollLeft - \(event\.clientX - drag\.x\)/);
   assert.match(rendererSource, /event\.currentTarget\.scrollTop = drag\.scrollTop - \(event\.clientY - drag\.y\)/);
-  assert.match(rendererStyles, /\.interactive-response-expand-trigger \{[^}]*cursor: pointer;/);
   assert.doesNotMatch(rendererStyles, /\.interactive-response-content \{[^}]*cursor: zoom-in;/);
-  assert.doesNotMatch(rendererStyles, /\.interactive-response-expand-trigger \{[^}]*cursor: zoom-in;/);
   assert.match(rendererSource, /setPointerCapture/);
   assert.match(rendererSource, /changeZoom\(zoom \* \(event\.deltaY > 0 \? 0\.9 : 1\.1\)\)/);
   assert.match(rendererStyles, /\.response-zoom-viewport[\s\S]*cursor: grab/);

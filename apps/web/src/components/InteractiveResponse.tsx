@@ -174,8 +174,10 @@ function ZoomViewer({
   );
 }
 
-function MermaidSurface({ source, expanded = false }: { source: string; expanded?: boolean }) {
+function MermaidSurface({ source, expanded = false, zoom = 1 }: { source: string; expanded?: boolean; zoom?: number }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const baseWidthRef = useRef(0);
+  const zoomRef = useRef(zoom);
   const dragRef = useRef<{ pointerId: number; x: number; y: number; scrollLeft: number; scrollTop: number } | null>(null);
   const [error, setError] = useState(false);
 
@@ -186,11 +188,26 @@ function MermaidSurface({ source, expanded = false }: { source: string; expanded
       if (cancelled || !containerRef.current) return;
       containerRef.current.innerHTML = svg;
       bindFunctions?.(containerRef.current);
+      const renderedSvg = containerRef.current.querySelector("svg");
+      if (renderedSvg) {
+        const naturalWidth = renderedSvg.viewBox.baseVal.width || renderedSvg.getBoundingClientRect().width;
+        baseWidthRef.current = Math.min(naturalWidth, containerRef.current.clientWidth);
+        renderedSvg.style.width = `${baseWidthRef.current * zoomRef.current}px`;
+        renderedSvg.style.maxWidth = zoomRef.current > 1 ? "none" : "100%";
+      }
     }).catch(() => {
       if (!cancelled) setError(true);
     });
     return () => { cancelled = true; };
   }, [source]);
+
+  useEffect(() => {
+    zoomRef.current = zoom;
+    const renderedSvg = containerRef.current?.querySelector("svg");
+    if (!renderedSvg || !baseWidthRef.current) return;
+    renderedSvg.style.width = `${baseWidthRef.current * zoom}px`;
+    renderedSvg.style.maxWidth = zoom > 1 ? "none" : "100%";
+  }, [zoom]);
 
   if (error) return <SyntaxCode className="mermaid-render-error" value={source} language="mermaid" />;
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
@@ -338,26 +355,24 @@ export async function renderMermaidSvg(source: string) {
 
 export function MermaidDiagram({ source }: { source: string }) {
   const [expanded, setExpanded] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  const changeZoom = (next: number) => setZoom(clamp(next, 0.5, 2));
   return (
     <>
       <section className="interactive-response-block mermaid-diagram" aria-label="Mermaid 다이어그램">
-        <div
-          className="interactive-response-toolbar interactive-response-expand-trigger"
-          role="button"
-          tabIndex={0}
-          aria-label="Mermaid 다이어그램 확대"
-          onClick={() => setExpanded(true)}
-          onKeyDown={(event) => {
-            if (event.key !== "Enter" && event.key !== " ") return;
-            event.preventDefault();
-            setExpanded(true);
-          }}
-        >
+        <div className="interactive-response-toolbar">
           <span>Mermaid</span>
-          <span className="interactive-response-expand-icon" aria-hidden="true"><Maximize2 size={15} /></span>
+          <div className="interactive-response-toolbar-actions">
+            <div className="mermaid-inline-zoom-controls" aria-label="Mermaid 다이어그램 배율 조절">
+              <button type="button" aria-label="Mermaid 다이어그램 축소" data-tooltip="축소" disabled={zoom <= 0.5} onClick={() => changeZoom(zoom - 0.25)}><Minus size={15} /></button>
+              <button type="button" className="mermaid-inline-zoom-value" aria-label="Mermaid 다이어그램 배율 초기화" data-tooltip="100%로 초기화" onClick={() => setZoom(1)}>{Math.round(zoom * 100)}%</button>
+              <button type="button" aria-label="Mermaid 다이어그램 확대" data-tooltip="확대" disabled={zoom >= 2} onClick={() => changeZoom(zoom + 0.25)}><Plus size={15} /></button>
+            </div>
+            <button type="button" className="interactive-response-expand-icon" aria-label="Mermaid 다이어그램 크게 보기" data-tooltip="크게 보기" onClick={() => setExpanded(true)}><Maximize2 size={15} /></button>
+          </div>
         </div>
         <div className="interactive-response-content" onDoubleClick={() => setExpanded(true)}>
-          <MermaidSurface source={source} />
+          <MermaidSurface source={source} zoom={zoom} />
         </div>
       </section>
       <ZoomViewer title="Mermaid" open={expanded} onClose={() => setExpanded(false)}>
