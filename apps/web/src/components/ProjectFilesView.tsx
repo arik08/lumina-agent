@@ -71,6 +71,7 @@ interface TreeContextMenu {
   x: number;
   y: number;
   node: FileTreeNode | null;
+  themeDark: boolean;
 }
 
 type TreeEditor =
@@ -512,9 +513,10 @@ export function ProjectFilesView({ projectId, onOpenNavigation }: ProjectFilesVi
     event.stopPropagation();
     setContextDeleteConfirming(null);
     setContextMenu({
-      x: Math.min(event.clientX, window.innerWidth - 190),
-      y: Math.min(event.clientY, window.innerHeight - 150),
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - 190)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 150)),
       node,
+      themeDark: Boolean(event.currentTarget.closest(".theme-dark")),
     });
   };
 
@@ -883,7 +885,7 @@ export function ProjectFilesView({ projectId, onOpenNavigation }: ProjectFilesVi
     </div>
     {contextMenu ? createPortal(
       <div
-        className="file-tree-context-menu"
+        className={`file-tree-context-menu${contextMenu.themeDark ? " theme-dark" : ""}`}
         role="menu"
         aria-label="파일 탐색기 메뉴"
         style={{ left: contextMenu.x, top: contextMenu.y }}

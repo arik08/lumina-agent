@@ -110,6 +110,11 @@ test("file explorer supports context actions and drag moves", async () => {
   assert.match(styles, /\.file-tree-context-menu button\s*\{[^}]*border:\s*0;/s);
   assert.match(styles, /\.file-tree-context-menu button\s*\{[^}]*background:\s*transparent;/s);
   assert.match(styles, /\.file-tree-context-menu button:hover\s*\{[^}]*background:\s*var\(--surface-soft\);/s);
+  assert.match(view, /themeDark:\s*Boolean\(event\.currentTarget\.closest\("\.theme-dark"\)\)/);
+  assert.match(view, /className=\{`file-tree-context-menu\$\{contextMenu\.themeDark \? " theme-dark" : ""\}`\}/);
+  assert.match(view, /x:\s*Math\.max\(8, Math\.min\(event\.clientX, window\.innerWidth - 190\)\)/);
+  assert.match(view, /y:\s*Math\.max\(8, Math\.min\(event\.clientY, window\.innerHeight - 150\)\)/);
+  assert.match(styles, /\.file-tree-context-menu\.theme-dark,[\s\S]*?--menu-surface:\s*#121417;/);
   assert.match(styles, /\.file-tree-row\.is-drop-target/);
   assert.match(styles, /\.file-explorer-heading-actions/);
   assert.match(styles, /\.file-explorer-heading-actions button\s*\{[^}]*background:\s*transparent;/s);
