@@ -283,13 +283,6 @@ function UsageCostPopover({ usage, sessionUsage, showSessionUsage, model, provid
     return () => { active = false; };
   }, []);
   const usdKrwRate = exchangeRate?.rate;
-  const exchangeRateStatus = exchangeRate === undefined
-    ? "환율 확인 중"
-    : exchangeRate.status === "fresh"
-      ? `${exchangeRate.source ?? "환율"} · ${exchangeRate.asOf ?? "기준일 확인 중"}`
-      : exchangeRate.status === "stale"
-        ? `환율 갱신 지연 · 마지막 정상값 ${exchangeRate.asOf ?? "기준일 미상"}`
-        : "환율 확인 불가 · USD로 표시";
   const formatCost = (value: number | undefined) => {
     if (value === undefined) return "—";
     if (usdKrwRate === undefined) return "…";
@@ -353,13 +346,6 @@ function UsageCostPopover({ usage, sessionUsage, showSessionUsage, model, provid
             ))}
           </tbody>
         </table>
-        <p
-          className="answer-usage-rate-status"
-          data-status={exchangeRate?.status ?? "loading"}
-          role="status"
-        >
-          {exchangeRateStatus}
-        </p>
       </GlobalTooltipLayer>
     </span>
   );

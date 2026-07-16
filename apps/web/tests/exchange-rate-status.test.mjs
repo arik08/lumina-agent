@@ -16,10 +16,10 @@ test("exchange-rate requests retry stale and unavailable results after a short c
   assert.match(apiSource, /Date\.now\(\) >= usdKrwExchangeRateExpiresAt/);
 });
 
-test("usage cost metadata distinguishes fresh, stale, and unavailable rates", () => {
-  assert.match(turnSource, /환율 갱신 지연 · 마지막 정상값/);
-  assert.match(turnSource, /환율 확인 불가 · USD로 표시/);
-  assert.match(turnSource, /className="answer-usage-rate-status"/);
-  assert.match(turnSource, /data-status=\{exchangeRate\?\.status \?\? "loading"\}/);
-  assert.match(styles, /\.answer-usage-rate-status\[data-status="stale"\]\s*\{[^}]*color:\s*var\(--warning\)/s);
+test("usage cost hides exchange-rate metadata while preserving conversion", () => {
+  assert.match(turnSource, /const usdKrwRate = exchangeRate\?\.rate/);
+  assert.match(turnSource, /Math\.round\(value \* usdKrwRate\)/);
+  assert.doesNotMatch(turnSource, /exchangeRateStatus/);
+  assert.doesNotMatch(turnSource, /answer-usage-rate-status/);
+  assert.doesNotMatch(styles, /answer-usage-rate-status/);
 });
