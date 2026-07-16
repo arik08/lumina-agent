@@ -14,6 +14,7 @@ from zipfile import BadZipFile, ZipFile
 from defusedxml import DefusedXmlException
 from defusedxml import ElementTree as DefusedElementTree
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..api.errors import ApiProblem
@@ -338,6 +339,13 @@ def _write_version(
     db.add(version)
     try:
         db.flush()
+    except IntegrityError as exc:
+        discard_artifact_storage(storage, stored.key)
+        raise ApiProblem(
+            409,
+            "artifact_version_conflict",
+            "Artifact version이 다른 작업에서 먼저 저장되었습니다.",
+        ) from exc
     except BaseException:
         discard_artifact_storage(storage, stored.key)
         raise
