@@ -2539,6 +2539,15 @@ button:disabled { cursor: default; opacity: 0.5; }
   text-align: left;
 }
 
+.progress-trigger[aria-expanded="false"] {
+  min-height: 16px;
+}
+.progress-trigger[aria-expanded="false"] :is(.progress-title, .current-step, .progress-count) { display: none; }
+.progress-trigger[aria-expanded="false"] .progress-chevron {
+  grid-column: 1 / -1;
+  justify-self: center;
+}
+
 .progress-header { display: flex; min-width: 0; align-items: center; }
 .progress-header .progress-trigger { width: 100%; min-width: 0; flex: 1; padding-right: 8px; }
 .progress-chevron { grid-column: 4; justify-self: end; }

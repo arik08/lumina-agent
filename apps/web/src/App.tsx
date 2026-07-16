@@ -3236,7 +3236,7 @@ function App() {
                 }}
               >
                 <div className="progress-header">
-                  <button className="progress-trigger" type="button" aria-expanded={progressOpen} aria-controls="active-run-progress-steps" data-tooltip={progressOpen ? undefined : latestProgressSummary?.text ?? runStatusLabel(activeRun.status)}>
+                  <button className="progress-trigger" type="button" aria-label={progressOpen ? "작업 계획 접기" : "작업 계획 펼치기"} aria-expanded={progressOpen} aria-controls="active-run-progress-steps">
                     <div className="progress-title"><Sparkles size={15} /><strong>작업 계획</strong></div>
                     {!progressOpen && (
                       <span className="current-step">
