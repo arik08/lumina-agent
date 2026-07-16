@@ -403,6 +403,7 @@ def patch_current_settings(
             theme_setting.value_json = payload.theme
     if payload.output_mode is not None:
         key = "composer.output_mode"
+        output_target: UserSetting | ProjectSetting | None
         if project.project_type == "shared":
             output_target = _project_setting(db, project.id, key)
             if output_target is None:
