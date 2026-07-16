@@ -16,6 +16,9 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
         files_dir=tmp_path / "files",
         artifacts_dir=tmp_path / "artifacts",
         cookie_secure=False,
+        pgpt_api_key="test-api-key",
+        pgpt_employee_no="test-employee",
+        pgpt_company_code="30",
     )
     with TestClient(create_app(settings)) as client:
         csrf = _login_admin(client)
@@ -63,7 +66,7 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
                 "expectedRevision": current_settings["revision"],
             },
         )
-        assert personal_execution.status_code == 200
+        assert personal_execution.status_code == 200, personal_execution.text
         assert personal_execution.json()["source"]["execution"] == "user"
         changed_organization_default = client.patch(
             "/api/admin/providers/initial-execution",
