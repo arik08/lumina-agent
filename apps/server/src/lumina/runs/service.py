@@ -741,7 +741,7 @@ def _validate_references(
                         ProjectFile.status == "active",
                     )
                     .order_by(ProjectFile.logical_path, ProjectFile.id)
-                )
+                ).tuples()
             )
             folder = next(
                 (

@@ -93,7 +93,7 @@ def _context_candidates(db: Session, project_id: str) -> list[dict[str, Any]]:
             )
             .order_by(ProjectFile.updated_at.desc(), ProjectFile.id)
             .limit(500)
-        )
+        ).tuples()
     )
     attachments = list(
         db.scalars(
