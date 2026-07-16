@@ -887,11 +887,18 @@ class LocalRunExecutor:
                 and isinstance(capabilities, dict)
                 and capabilities.get("image_generation")
             )
-            retry_step_key = str(run.snapshot_json.get("retry", {}).get("step_key", ""))
+            retry_snapshot = run.snapshot_json.get("retry")
+            retry_step_key = (
+                str(retry_snapshot.get("step_key", ""))
+                if isinstance(retry_snapshot, Mapping)
+                else ""
+            )
             checkpoint = run.snapshot_json.get("tool_checkpoint")
             resuming_checkpoint = isinstance(checkpoint, dict)
             resuming_approval = (
-                resuming_checkpoint and checkpoint.get("kind") != "user_input"
+                checkpoint.get("kind") != "user_input"
+                if isinstance(checkpoint, dict)
+                else False
             )
             prompt_cache_scope = str(
                 run.snapshot_json.get("prompt_cache_scope")
@@ -4112,7 +4119,10 @@ class LocalRunExecutor:
             finish_tool_subtask(db, tool)
             append_event(db, run, "tool_completed", {"execution": _tool_event(tool)})
             if artifact_id is not None:
-                artifact = require_artifact(db, db.get(User, run.user_id), artifact_id)
+                user = db.get(User, run.user_id)
+                if user is None:
+                    raise RuntimeError("Run user disappeared during artifact completion")
+                artifact = require_artifact(db, user, artifact_id)
                 append_event(
                     db,
                     run,
