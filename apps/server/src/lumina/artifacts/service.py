@@ -199,7 +199,11 @@ def create_artifact_version(
         validation_json=validation,
     )
     artifact.current_version_number = version.version_number
-    db.flush()
+    try:
+        db.flush()
+    except BaseException:
+        discard_artifact_storage(storage, version.storage_key)
+        raise
     return version
 
 
