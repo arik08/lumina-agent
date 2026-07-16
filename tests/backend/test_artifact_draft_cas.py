@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from lumina.artifacts.service import create_artifact
 from lumina.auth.service import create_user
@@ -87,6 +90,11 @@ def _version(client: TestClient, artifact_id: str) -> dict[str, object]:
     return response.json()
 
 
+def _draft_files(settings: Settings, artifact_id: str) -> list[Path]:
+    root = settings.artifacts_dir / "artifact-drafts" / artifact_id
+    return [path for path in root.rglob("*") if path.is_file()]
+
+
 def test_artifact_draft_get_put_cas_stale_and_user_isolation(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     app = create_app(settings)
@@ -115,6 +123,7 @@ def test_artifact_draft_get_put_cas_stale_and_user_isolation(tmp_path: Path) -> 
         }
         assert created_payload["content"] == "first draft"
         assert created_payload["stale"] is False
+        assert len(_draft_files(settings, artifact_id)) == 1
 
         fetched = first.get(f"/api/artifacts/{artifact_id}/draft")
         assert fetched.status_code == 200
@@ -153,6 +162,9 @@ def test_artifact_draft_get_put_cas_stale_and_user_isolation(tmp_path: Path) -> 
             )
             assert lost_update.status_code == 409
             assert lost_update.json()["code"] == "draft_conflict"
+            draft_files = _draft_files(settings, artifact_id)
+            assert len(draft_files) == 1
+            assert draft_files[0].read_text("utf-8") == "newer draft"
         finally:
             second.close()
 
@@ -222,6 +234,7 @@ def test_version_commit_cleans_only_matching_draft(tmp_path: Path) -> None:
         )
         assert saved.status_code == 201, saved.text
         assert client.get(f"/api/artifacts/{matching_id}/draft").status_code == 404
+        assert _draft_files(settings, matching_id) == []
 
         preserved_id = _create_text_artifact(settings, "preserved-cleanup")
         old = client.put(
@@ -251,6 +264,76 @@ def test_version_commit_cleans_only_matching_draft(tmp_path: Path) -> None:
         assert preserved.status_code == 200
         assert preserved.json()["content"] == "new device draft"
         assert preserved.json()["stale"] is True
+        preserved_files = _draft_files(settings, preserved_id)
+        assert len(preserved_files) == 1
+        assert preserved_files[0].read_text("utf-8") == "new device draft"
+
+
+def test_draft_commit_failure_cleans_new_storage_content(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    app = create_app(settings)
+    with TestClient(app) as client:
+        csrf = _login(client)
+        artifact_id = _create_text_artifact(settings, "draft-commit-failure")
+
+        with patch.object(
+            Session, "commit", side_effect=RuntimeError("forced draft commit failure")
+        ):
+            with pytest.raises(RuntimeError, match="forced draft commit failure"):
+                client.put(
+                    f"/api/artifacts/{artifact_id}/draft",
+                    headers=csrf,
+                    json={"baseVersion": 1, "content": "uncommitted draft"},
+                )
+
+        assert client.get(f"/api/artifacts/{artifact_id}/draft").status_code == 404
+        assert _draft_files(settings, artifact_id) == []
+
+
+def test_version_commit_failure_preserves_existing_draft_and_content(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    app = create_app(settings)
+    with TestClient(app) as client:
+        csrf = _login(client)
+        artifact_id = _create_text_artifact(settings, "version-commit-failure")
+        draft = client.put(
+            f"/api/artifacts/{artifact_id}/draft",
+            headers=csrf,
+            json={"baseVersion": 1, "content": "preserved draft"},
+        ).json()
+        current = _version(client, artifact_id)
+
+        with patch.object(
+            Session, "commit", side_effect=RuntimeError("forced version commit failure")
+        ):
+            with pytest.raises(RuntimeError, match="forced version commit failure"):
+                client.post(
+                    f"/api/artifacts/{artifact_id}/versions",
+                    headers={
+                        **csrf,
+                        "If-Match": str(current["etag"]),
+                        "X-Artifact-Draft-If-Match": draft["etag"],
+                        "Idempotency-Key": "failed-version-commit-0001",
+                    },
+                    json={
+                        "baseVersion": 1,
+                        "sourceText": "preserved draft",
+                        "changeSummary": "forced failure",
+                    },
+                )
+
+        preserved = client.get(f"/api/artifacts/{artifact_id}/draft")
+        assert preserved.status_code == 200
+        assert preserved.json()["content"] == "preserved draft"
+        assert len(_draft_files(settings, artifact_id)) == 1
+        version_files = [
+            path
+            for path in (settings.artifacts_dir / "artifacts" / artifact_id).rglob("*")
+            if path.is_file()
+        ]
+        assert len(version_files) == 1
 
 
 def test_public_edit_cannot_spoof_ai_or_restore_provenance(tmp_path: Path) -> None:

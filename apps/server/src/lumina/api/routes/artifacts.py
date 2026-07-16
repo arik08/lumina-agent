@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from contextlib import suppress
 from datetime import datetime
 from urllib.parse import quote
 
@@ -16,6 +17,7 @@ from ...artifacts.service import (
     create_artifact_version,
     current_artifact_version,
     delete_user_draft_if_matches,
+    discard_artifact_storage,
     ensure_artifact_text_editable,
     read_user_draft,
     read_artifact_version,
@@ -259,26 +261,29 @@ def post_version(
     content = payload.source_text.encode("utf-8")
     digest = hashlib.sha256(content).hexdigest()
     expected_draft_etag = _etag_value(draft_if_match)
+    storage = _storage(settings)
     if (
         artifact.current_version_number != payload.base_version
         and current.content_hash == digest
     ):
-        stored_content = _storage(settings).read_bytes(
+        stored_content = storage.read_bytes(
             current.storage_key, expected_sha256=current.content_hash
         )
-        if delete_user_draft_if_matches(
+        duplicate_draft_key = delete_user_draft_if_matches(
             db,
             user=context.user,
             artifact_id=artifact.id,
             base_version=payload.base_version,
             etag=expected_draft_etag,
             content_hash=digest,
-        ):
+        )
+        if duplicate_draft_key is not None:
             db.commit()
+            discard_artifact_storage(storage, duplicate_draft_key)
         return _version_payload(current, stored_content)
     version = create_artifact_version(
         db,
-        _storage(settings),
+        storage,
         user=context.user,
         artifact_id=artifact.id,
         base_version=payload.base_version,
@@ -286,29 +291,38 @@ def post_version(
         change_type=payload.change_type,
         change_summary=payload.change_summary,
     )
-    delete_user_draft_if_matches(
-        db,
-        user=context.user,
-        artifact_id=artifact.id,
-        base_version=payload.base_version,
-        etag=expected_draft_etag,
-        content_hash=digest,
-    )
-    record_audit(
-        db,
-        action="artifact_edited",
-        target_type="artifact",
-        target_id=artifact.id,
-        result="success",
-        actor=context.user,
-        request_id=getattr(request.state, "request_id", None),
-        metadata={
-            "version": version.version_number,
-            "idempotency_key": idempotency_key,
-        },
-    )
-    db.commit()
-    stored_content = _storage(settings).read_bytes(
+    removed_draft_key: str | None = None
+    try:
+        removed_draft_key = delete_user_draft_if_matches(
+            db,
+            user=context.user,
+            artifact_id=artifact.id,
+            base_version=payload.base_version,
+            etag=expected_draft_etag,
+            content_hash=digest,
+        )
+        record_audit(
+            db,
+            action="artifact_edited",
+            target_type="artifact",
+            target_id=artifact.id,
+            result="success",
+            actor=context.user,
+            request_id=getattr(request.state, "request_id", None),
+            metadata={
+                "version": version.version_number,
+                "idempotency_key": idempotency_key,
+            },
+        )
+        db.commit()
+    except BaseException:
+        with suppress(Exception):
+            db.rollback()
+        discard_artifact_storage(storage, version.storage_key)
+        raise
+    if removed_draft_key is not None:
+        discard_artifact_storage(storage, removed_draft_key)
+    stored_content = storage.read_bytes(
         version.storage_key, expected_sha256=version.content_hash
     )
     return _version_payload(version, stored_content)
@@ -416,16 +430,25 @@ def put_draft(
 ) -> ArtifactDraftResponse:
     artifact = require_artifact(db, context.user, artifact_id, write=True)
     ensure_artifact_text_editable(artifact)
-    draft = save_draft(
+    storage = _storage(settings)
+    draft, previous_storage_key = save_draft(
         db,
-        _storage(settings),
+        storage,
         user=context.user,
         artifact_id=artifact_id,
         base_version=payload.base_version,
         content=payload.content.encode("utf-8"),
         expected_etag=_etag_value(if_match),
     )
-    db.commit()
+    try:
+        db.commit()
+    except BaseException:
+        with suppress(Exception):
+            db.rollback()
+        discard_artifact_storage(storage, draft.storage_key)
+        raise
+    if previous_storage_key is not None:
+        discard_artifact_storage(storage, previous_storage_key)
     return _draft_payload(
         artifact.current_version_number,
         draft.artifact_id,

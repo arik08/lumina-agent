@@ -124,7 +124,7 @@ def create_artifact(
     try:
         db.flush()
     except BaseException:
-        _discard_version_content(storage, version.storage_key)
+        discard_artifact_storage(storage, version.storage_key)
         raise
     return artifact, version
 
@@ -279,7 +279,7 @@ def create_binary_artifact_version(
     try:
         db.flush()
     except BaseException:
-        _discard_version_content(storage, version.storage_key)
+        discard_artifact_storage(storage, version.storage_key)
         raise
     return artifact, version
 
@@ -332,12 +332,12 @@ def _write_version(
     try:
         db.flush()
     except BaseException:
-        _discard_version_content(storage, stored.key)
+        discard_artifact_storage(storage, stored.key)
         raise
     return version
 
 
-def _discard_version_content(storage: ManagedLocalStorage, key: str) -> None:
+def discard_artifact_storage(storage: ManagedLocalStorage, key: str) -> None:
     with suppress(StorageError):
         storage.delete(key)
 
@@ -379,7 +379,7 @@ def save_draft(
     base_version: int,
     content: bytes,
     expected_etag: str | None,
-) -> ArtifactDraft:
+) -> tuple[ArtifactDraft, str | None]:
     artifact = require_artifact(db, user, artifact_id, write=True)
     ensure_artifact_text_editable(artifact)
     if artifact.current_version_number != base_version:
@@ -424,48 +424,57 @@ def save_draft(
             "draft_conflict",
             "지정한 Artifact 편집 초안을 찾을 수 없습니다.",
         )
+    previous_storage_key = draft.storage_key if draft is not None else None
     digest = hashlib.sha256(content).hexdigest()
     etag = hashlib.sha256(
         f"{artifact.id}:{user.id}:{base_version}:{digest}".encode()
     ).hexdigest()
     extension = _safe_extension(artifact.display_name, artifact.mime_type)
-    key = f"artifact-drafts/{artifact.id}/{user.id}/{etag}.{extension}"
+    write_id = new_uuid()
+    key = (
+        f"artifact-drafts/{artifact.id}/{user.id}/"
+        f"{write_id}-{etag}.{extension}"
+    )
     stored = storage.put_bytes(key, content, expected_sha256=digest)
-    if draft is None:
-        draft = ArtifactDraft(
-            artifact_id=artifact.id,
-            user_id=user.id,
-            base_version_number=base_version,
-            storage_key=stored.key,
-            content_hash=stored.sha256,
-            etag=etag,
-        )
-        db.add(draft)
-        db.flush()
-    else:
-        result = db.execute(
-            update(ArtifactDraft)
-            .where(
-                ArtifactDraft.id == draft.id,
-                ArtifactDraft.etag == expected_etag,
-            )
-            .values(
+    try:
+        if draft is None:
+            draft = ArtifactDraft(
+                artifact_id=artifact.id,
+                user_id=user.id,
                 base_version_number=base_version,
                 storage_key=stored.key,
                 content_hash=stored.sha256,
                 etag=etag,
-                updated_at=utc_now(),
             )
-            .execution_options(synchronize_session=False)
-        )
-        if getattr(result, "rowcount", 0) != 1:
-            raise ApiProblem(
-                409,
-                "draft_conflict",
-                "Artifact 편집 초안이 다른 곳에서 변경되었습니다.",
+            db.add(draft)
+            db.flush()
+        else:
+            result = db.execute(
+                update(ArtifactDraft)
+                .where(
+                    ArtifactDraft.id == draft.id,
+                    ArtifactDraft.etag == expected_etag,
+                )
+                .values(
+                    base_version_number=base_version,
+                    storage_key=stored.key,
+                    content_hash=stored.sha256,
+                    etag=etag,
+                    updated_at=utc_now(),
+                )
+                .execution_options(synchronize_session=False)
             )
-        db.refresh(draft)
-    return draft
+            if getattr(result, "rowcount", 0) != 1:
+                raise ApiProblem(
+                    409,
+                    "draft_conflict",
+                    "Artifact 편집 초안이 다른 곳에서 변경되었습니다.",
+                )
+            db.refresh(draft)
+    except BaseException:
+        discard_artifact_storage(storage, stored.key)
+        raise
+    return draft, previous_storage_key
 
 
 def read_user_draft(
@@ -510,9 +519,20 @@ def delete_user_draft_if_matches(
     base_version: int,
     etag: str | None,
     content_hash: str,
-) -> bool:
+) -> str | None:
     if etag is None:
-        return False
+        return None
+    storage_key = db.scalar(
+        select(ArtifactDraft.storage_key).where(
+            ArtifactDraft.artifact_id == artifact_id,
+            ArtifactDraft.user_id == user.id,
+            ArtifactDraft.base_version_number == base_version,
+            ArtifactDraft.etag == etag,
+            ArtifactDraft.content_hash == content_hash,
+        )
+    )
+    if storage_key is None:
+        return None
     result = db.execute(
         delete(ArtifactDraft).where(
             ArtifactDraft.artifact_id == artifact_id,
@@ -522,7 +542,7 @@ def delete_user_draft_if_matches(
             ArtifactDraft.content_hash == content_hash,
         )
     )
-    return getattr(result, "rowcount", 0) == 1
+    return storage_key if getattr(result, "rowcount", 0) == 1 else None
 
 
 _MAX_OPENXML_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
