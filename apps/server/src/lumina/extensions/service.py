@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from pathlib import PurePosixPath
 from typing import Any
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from ..api.errors import ApiProblem
@@ -620,14 +620,31 @@ def update_draft(
     digest = package_digest(package)
     if digest == draft.current_digest:
         return draft, False
-    draft.current_revision += 1
-    draft.current_digest = digest
-    draft.package_json = package
-    draft.updated_at = utc_now()
+    next_revision = expected_revision + 1
+    result = db.execute(
+        update(ExtensionDraft)
+        .where(
+            ExtensionDraft.id == draft.id,
+            ExtensionDraft.current_revision == expected_revision,
+            ExtensionDraft.current_digest == expected_digest,
+        )
+        .values(
+            current_revision=next_revision,
+            current_digest=digest,
+            package_json=package,
+            updated_at=utc_now(),
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if getattr(result, "rowcount", 0) != 1:
+        db.expire(draft)
+        db.refresh(draft)
+        _check_draft_precondition(draft, expected_revision, expected_digest)
+        raise RuntimeError("Skill Draft compare-and-swap failed without a conflict")
     db.add(
         ExtensionDraftRevision(
             draft_id=draft.id,
-            revision_number=draft.current_revision,
+            revision_number=next_revision,
             package_json=package,
             package_digest=digest,
             change_summary=change_summary,
@@ -635,6 +652,8 @@ def update_draft(
         )
     )
     db.flush()
+    db.expire(draft)
+    db.refresh(draft)
     return draft, True
 
 

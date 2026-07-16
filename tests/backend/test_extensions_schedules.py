@@ -13,13 +13,14 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from lumina.api.errors import install_error_handlers
+from lumina.api.errors import ApiProblem, install_error_handlers
 from lumina.api.routes import auth, extensions, projects, schedules
 from lumina.agent.executor import LocalRunExecutor
 from lumina.auth import bootstrap_database, create_user
 from lumina.config import Settings, get_settings
 from lumina.db import SessionLocal, configure_database, create_schema
 from lumina.extensions import repository_catalog
+from lumina.extensions.service import update_draft
 from lumina.mcp.service import install_definition, resolve_mcp_snapshot
 from lumina.models import (
     Artifact,
@@ -28,6 +29,7 @@ from lumina.models import (
     Extension,
     ExtensionDraft,
     ExtensionDraftBinding,
+    ExtensionDraftRevision,
     ExtensionInstallation,
     ExtensionVersion,
     McpDefinition,
@@ -352,6 +354,78 @@ def test_repository_watcher_detects_explorer_style_file_addition(
                 await watcher
 
     asyncio.run(exercise_watcher())
+
+
+def test_skill_draft_compare_and_swap_rejects_stale_session(tmp_path: Path) -> None:
+    app, _settings = _test_app(tmp_path)
+    with TestClient(app) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        created = client.post(
+            "/api/extensions",
+            headers={"X-CSRF-Token": csrf},
+            json={
+                "name": "CAS Skill",
+                "slug": "cas-skill",
+                "projectId": project_id,
+                "package": {"files": {"SKILL.md": "# CAS base"}},
+            },
+        )
+        assert created.status_code == 201, created.text
+        draft_payload = created.json()["draft"]
+        draft_id = draft_payload["id"]
+        initial_digest = draft_payload["digest"]
+
+        with SessionLocal() as first_db, SessionLocal() as stale_db:
+            first_user = first_db.scalar(
+                select(User).where(User.login_id == "admin@posco.com")
+            )
+            stale_user = stale_db.scalar(
+                select(User).where(User.login_id == "admin@posco.com")
+            )
+            stale_draft = stale_db.get(ExtensionDraft, draft_id)
+            assert first_user is not None and stale_user is not None
+            assert stale_draft is not None
+            assert stale_draft.current_revision == 1
+
+            winner, changed = update_draft(
+                first_db,
+                user=first_user,
+                draft_id=draft_id,
+                expected_revision=1,
+                expected_digest=initial_digest,
+                package_files={"SKILL.md": "# CAS winner"},
+                change_summary="winner",
+            )
+            first_db.commit()
+            assert changed is True
+            assert winner.current_revision == 2
+
+            with pytest.raises(ApiProblem) as conflict:
+                update_draft(
+                    stale_db,
+                    user=stale_user,
+                    draft_id=draft_id,
+                    expected_revision=1,
+                    expected_digest=initial_digest,
+                    package_files={"SKILL.md": "# CAS stale writer"},
+                    change_summary="stale",
+                )
+            assert conflict.value.code == "draft_conflict"
+
+        with SessionLocal() as db:
+            persisted = db.get(ExtensionDraft, draft_id)
+            revisions = list(
+                db.scalars(
+                    select(ExtensionDraftRevision)
+                    .where(ExtensionDraftRevision.draft_id == draft_id)
+                    .order_by(ExtensionDraftRevision.revision_number)
+                )
+            )
+            assert persisted is not None
+            assert persisted.current_revision == 2
+            assert persisted.package_json == {"SKILL.md": "# CAS winner"}
+            assert [revision.revision_number for revision in revisions] == [1, 2]
 
 
 def test_skill_draft_versions_installation_and_folder_move(tmp_path: Path) -> None:
