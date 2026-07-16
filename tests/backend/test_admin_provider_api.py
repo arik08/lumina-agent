@@ -224,6 +224,25 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
         assert created.json()["defaultContextWindow"] is None
         assert created.json()["maxOutputTokens"] is None
 
+        for invalid_patch in (
+            {"displayName": None},
+            {"runtimeModelId": None},
+            {"aliases": None},
+            {"enabled": None},
+            {"isDefault": None},
+            {"sortOrder": None},
+            {"capabilities": None},
+        ):
+            rejected_null = client.patch(
+                "/api/admin/providers/internal/models/internal-analysis-v1",
+                headers={"X-CSRF-Token": csrf},
+                json=invalid_patch,
+            )
+            assert rejected_null.status_code == 422, (
+                invalid_patch,
+                rejected_null.text,
+            )
+
         activated = client.patch(
             "/api/admin/providers/internal/models/internal-analysis-v1",
             headers={"X-CSRF-Token": csrf},

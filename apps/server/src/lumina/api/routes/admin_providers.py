@@ -58,6 +58,13 @@ class ProviderModelPatch(ApiModel):
     def require_change(self) -> "ProviderModelPatch":
         if not self.model_fields_set:
             raise ValueError("At least one model field is required")
+        null_fields = sorted(
+            field_name
+            for field_name in self.model_fields_set
+            if getattr(self, field_name) is None
+        )
+        if null_fields:
+            raise ValueError(f"Model fields cannot be null: {', '.join(null_fields)}")
         return self
 
 
