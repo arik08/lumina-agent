@@ -1353,6 +1353,12 @@ function App() {
   }, [finishCloseArtifact]);
 
   const theme = workspace.settings?.theme ?? "light";
+  const conversationWidth = workspace.settings?.conversationWidth ?? 900;
+  const conversationFontSize = workspace.settings?.conversationFontSize ?? 14;
+  const conversationLayoutStyle = {
+    "--conversation-content-width": `${conversationWidth}px`,
+    "--conversation-font-size": `${conversationFontSize}px`,
+  } as CSSProperties;
   const isAdmin = workspace.authSession?.user.role === "admin";
   const artifactPaneVisible = artifactOpen && artifactPaneViews.has(mainView);
   const activeRuntime = workspace.activeRuntime;
@@ -2993,7 +2999,7 @@ function App() {
         </footer>
       </aside>
 
-      <section className={`chat-pane view-${mainView}`} id="top">
+      <section className={`chat-pane view-${mainView}`} id="top" style={conversationLayoutStyle}>
         <header className="chat-header">
           <button className="mobile-menu-button" type="button" aria-label="사이드바 열기" onClick={() => setSidebarOpen(true)}><Menu size={19} /></button>
           <div className="chat-title-wrap">
@@ -3551,6 +3557,8 @@ function App() {
                 <section className="settings-card" aria-labelledby="appearance-settings-title">
                   <header><h2 id="appearance-settings-title">모양</h2></header>
                   <div className="settings-row"><span><strong>테마</strong><small>앱 화면의 밝기를 선택합니다.</small></span><button className="settings-value-button" type="button" onClick={() => void workspace.toggleTheme()}>{theme === "dark" ? "다크" : "라이트"}</button></div>
+                  <div className="settings-row"><span><strong>대화 영역 폭</strong><small>대화, 작업 진행, 입력 영역의 공통 최대 폭입니다.</small></span><div className="settings-stepper" role="group" aria-label="대화 영역 폭"><button type="button" aria-label="대화 영역 폭 줄이기" disabled={conversationWidth <= 600} onClick={() => void workspace.selectConversationWidth(Math.max(600, conversationWidth - 20))}>−</button><output>{conversationWidth}px</output><button type="button" aria-label="대화 영역 폭 늘리기" disabled={conversationWidth >= 1400} onClick={() => void workspace.selectConversationWidth(Math.min(1400, conversationWidth + 20))}>+</button></div></div>
+                  <div className="settings-row"><span><strong>대화 글꼴 크기</strong><small>현재 크기를 최솟값으로 하며 1px 단위로 조절합니다.</small></span><div className="settings-stepper" role="group" aria-label="대화 글꼴 크기"><button type="button" aria-label="대화 글꼴 크기 줄이기" disabled={conversationFontSize <= 14} onClick={() => void workspace.selectConversationFontSize(Math.max(14, conversationFontSize - 1))}>−</button><output>{conversationFontSize}px</output><button type="button" aria-label="대화 글꼴 크기 늘리기" disabled={conversationFontSize >= 24} onClick={() => void workspace.selectConversationFontSize(Math.min(24, conversationFontSize + 1))}>+</button></div></div>
                 </section>
                 <section className="settings-card" aria-labelledby="clarification-settings-title">
                   <header><h2 id="clarification-settings-title">대화 방식</h2></header>

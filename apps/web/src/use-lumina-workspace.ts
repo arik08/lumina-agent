@@ -862,6 +862,8 @@ export function useLuminaWorkspace() {
 
   const persistSettings = useCallback(async (patch:
     Pick<CurrentSettings, "theme">
+    | Pick<CurrentSettings, "conversationWidth">
+    | Pick<CurrentSettings, "conversationFontSize">
     | Pick<CurrentSettings, "outputMode">
     | Pick<CurrentSettings, "clarificationMode">
     | { execution: CurrentSettings["execution"] }
@@ -960,6 +962,14 @@ export function useLuminaWorkspace() {
 
   const selectOutputMode = useCallback(async (outputMode: CurrentSettings["outputMode"]) => {
     await persistSettings({ outputMode });
+  }, [persistSettings]);
+
+  const selectConversationWidth = useCallback(async (conversationWidth: number) => {
+    await persistSettings({ conversationWidth });
+  }, [persistSettings]);
+
+  const selectConversationFontSize = useCallback(async (conversationFontSize: number) => {
+    await persistSettings({ conversationFontSize });
   }, [persistSettings]);
 
   const selectClarificationMode = useCallback(async (
@@ -1499,6 +1509,8 @@ export function useLuminaWorkspace() {
     setModelCandidates,
     selectEffort,
     selectOutputMode,
+    selectConversationWidth,
+    selectConversationFontSize,
     selectClarificationMode,
     toggleTheme,
     sendMessage,

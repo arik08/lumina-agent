@@ -25,6 +25,8 @@ router = APIRouter(tags=["providers", "settings"])
 
 _USER_SETTINGS_FIELDS = {
     "theme",
+    "conversation_width",
+    "conversation_font_size",
     "model_candidates",
     "clarification_mode",
 }
@@ -249,6 +251,14 @@ def _resolved_settings(
 ]:
     theme_setting = _setting(db, user.id, "ui.theme")
     theme = theme_setting.value_json if theme_setting else "light"
+    conversation_width_setting = _setting(db, user.id, "ui.conversation_width")
+    conversation_font_size_setting = _setting(db, user.id, "ui.conversation_font_size")
+    conversation_width = (
+        conversation_width_setting.value_json if conversation_width_setting else 900
+    )
+    conversation_font_size = (
+        conversation_font_size_setting.value_json if conversation_font_size_setting else 14
+    )
     output_mode_key = "composer.output_mode"
     output_mode_setting = (
         _project_setting(db, project.id, output_mode_key)
@@ -285,6 +295,16 @@ def _resolved_settings(
     )
     result: dict[str, Any] = {
         "theme": theme if theme in {"light", "dark"} else "light",
+        "conversationWidth": (
+            conversation_width
+            if isinstance(conversation_width, int) and 600 <= conversation_width <= 1400
+            else 900
+        ),
+        "conversationFontSize": (
+            conversation_font_size
+            if isinstance(conversation_font_size, int) and 14 <= conversation_font_size <= 24
+            else 14
+        ),
         "outputMode": output_mode
         if output_mode in {"auto", "chat", "file"}
         else "auto",
@@ -473,6 +493,18 @@ def patch_current_settings(
             db.add(theme_setting)
         else:
             theme_setting.value_json = payload.theme
+    for field_name, key in (
+        ("conversation_width", "ui.conversation_width"),
+        ("conversation_font_size", "ui.conversation_font_size"),
+    ):
+        value = getattr(payload, field_name)
+        if value is None:
+            continue
+        target = _setting(db, context.user.id, key)
+        if target is None:
+            db.add(UserSetting(user_id=context.user.id, key=key, value_json=value))
+        else:
+            target.value_json = value
     if payload.output_mode is not None:
         key = "composer.output_mode"
         output_target: UserSetting | ProjectSetting | None

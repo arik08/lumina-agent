@@ -1427,6 +1427,8 @@ Project 대용량 RAG를 Lumina Backend builtin으로 만들지 않는 원칙은
 
 Composer 하단의 `$` 호출 버튼 오른쪽에는 `자동 | 채팅 | 파일` 출력 방식 선택기를 둡니다. `자동`이 기본값이며 기존 Agent 판단과 명시된 파일 형식 요청을 따릅니다. `채팅`은 사용자가 메시지에서 파일을 명시하지 않는 한 최종 결과를 채팅 답변으로 반환하고, `파일`은 최종 산출물을 Artifact로 생성하며 채팅에는 짧은 요약과 Artifact 연결만 남깁니다.
 
+대화 본문과 Composer·진행 패널은 `ui.conversation_width` 사용자 설정 하나로 같은 최대 폭을 사용하며 기본값은 `900px`, 유효 범위는 `600px`~`1400px`입니다. 대화 본문·Composer·진행 상태 글꼴은 `ui.conversation_font_size`를 기준으로 기존 상대 크기 차이를 유지한 채 함께 커지며 기본값과 최솟값은 `14px`, 최댓값은 `24px`, 조절 단위는 `1px`입니다. 두 값의 원본은 서버 DB의 사용자 설정이고 로그인·새로고침 시 복원하며, 저장값이 없거나 범위를 벗어나면 각각 `900px`, `14px`로 fallback합니다.
+
 선택값은 `composer.output_mode`로 서버 DB에 저장합니다. 개인 Project에서는 사용자 설정, 공유 Project에서는 Project 공용 설정을 원본으로 사용하고 새로고침·재접속 시 복원합니다. 유효하지 않거나 저장되지 않은 값은 `자동`으로 fallback합니다. 각 요청은 전송 시점의 `auto | chat | file` 값을 message metadata와 Run snapshot에 고정하여 이후 설정 변경이 이미 시작된 Run의 출력 계약을 바꾸지 않게 합니다.
 
 ### 15.1 사용자 문법

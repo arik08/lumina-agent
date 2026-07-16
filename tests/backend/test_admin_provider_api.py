@@ -57,6 +57,8 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
         for invalid_settings in (
             {},
             {"theme": None},
+            {"conversationWidth": None},
+            {"conversationFontSize": None},
             {"outputMode": None},
             {"clarificationMode": None},
             {"execution": None},

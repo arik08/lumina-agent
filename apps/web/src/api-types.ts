@@ -246,6 +246,8 @@ export interface AdminInitialExecutionSettings {
 
 export interface CurrentSettings {
   theme: Theme;
+  conversationWidth: number;
+  conversationFontSize: number;
   outputMode: OutputMode;
   clarificationMode: ClarificationMode;
   execution: ExecutionSelection;
@@ -263,6 +265,8 @@ export interface CurrentSettings {
 
 export interface UpdateCurrentSettingsRequest {
   theme?: Theme;
+  conversationWidth?: number;
+  conversationFontSize?: number;
   outputMode?: OutputMode;
   clarificationMode?: ClarificationMode;
   execution?: ExecutionSelection;
