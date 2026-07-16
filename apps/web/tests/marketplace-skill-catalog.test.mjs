@@ -8,7 +8,7 @@ const buttonPath = new URL("../src/components/MarketplaceInstallButton.tsx", imp
 const apiPath = new URL("../src/api.ts", import.meta.url);
 const stylesPath = new URL("../src/styles.css", import.meta.url);
 
-test("catalog uses a searchable filterable card grid without opening package details", async () => {
+test("catalog uses a searchable card grid with installed-only package viewing", async () => {
   const [view, panel, api, styles] = await Promise.all([
     readFile(viewPath, "utf8"),
     readFile(panelPath, "utf8"),
@@ -17,7 +17,8 @@ test("catalog uses a searchable filterable card grid without opening package det
   ]);
 
   assert.match(view, /skillView === "catalog" \? <SkillCatalogPanel/);
-  assert.match(view, /if \(skillView === "catalog" \|\| skillView === "trash"/);
+  assert.match(view, /skillView === "catalog" && catalogPreviewId \? renderSkillDetail\(true\)/);
+  assert.match(view, /\(skillView === "catalog" && !catalogPreviewId\)/);
   assert.match(panel, /placeholder="이름, 설명, 태그 검색"/);
   assert.match(panel, /catalog\.facets\.categories\.map/);
   assert.match(panel, /catalog\.facets\.tags\.map/);
@@ -32,6 +33,12 @@ test("catalog uses a searchable filterable card grid without opening package det
   assert.match(panel, /data-tooltip="좋아요"/);
   assert.match(panel, /className=\{`skill-catalog-card \$\{item\.likedByMe \? "is-liked" : ""\}`\.trim\(\)\}/);
   assert.match(panel, /className=\{`skill-catalog-like/);
+  assert.match(panel, /item\.installed && <button className="skill-catalog-view"/);
+  assert.match(panel, /<span>View<\/span>/);
+  assert.match(panel, /\(item\.installed \|\| item\.canInstall\) && <MarketplaceInstallButton/);
+  assert.match(view, /카탈로그로 돌아가기/);
+  assert.match(view, /scrollPositionRef=\{catalogScrollPositionRef\}/);
+  assert.match(view, /if \(catalogPreviewId === extensionId\) \{[^}]*setCatalogPreviewId\(null\);[^}]*setVersionDetail\(null\);/s);
   assert.match(api, /request<SkillCatalogResponse>\("\/extensions\/catalog"/);
   assert.match(api, /method: liked \? "PUT" : "DELETE"/);
   assert.match(styles, /\.skill-catalog-layout \{[^}]*grid-template-columns: 248px minmax\(0, 1fr\)/);
@@ -42,7 +49,7 @@ test("catalog uses a searchable filterable card grid without opening package det
   assert.match(styles, /\.skill-catalog-like\.is-liked \{[^}]*background: transparent;[^}]*color: var\(--cobalt\);/);
   assert.match(styles, /\.skill-catalog-like\.is-liked:not\(:disabled\):hover \{[^}]*background: transparent;[^}]*color: var\(--cobalt-hover\);/);
   assert.doesNotMatch(styles, /\.skill-catalog-like\.is-liked \{[^}]*(?:box-shadow|transform):/);
-  assert.doesNotMatch(panel, /SKILL\.md|package|상세보기|QA|신뢰/);
+  assert.doesNotMatch(panel, /SKILL\.md|QA|신뢰/);
 });
 
 test("shared Skill lifecycle button keeps English states and invariant geometry", async () => {

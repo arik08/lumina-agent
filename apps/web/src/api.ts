@@ -1194,6 +1194,10 @@ export async function listExtensions(query?: string, signal?: AbortSignal) {
   return request<SkillExtension[]>("/extensions", { query: { query }, signal });
 }
 
+export async function getExtension(extensionId: string, signal?: AbortSignal) {
+  return request<SkillExtension>(`/extensions/${encodeURIComponent(extensionId)}`, { signal });
+}
+
 export async function listSkillCatalog(
   filters: {
     query?: string;
@@ -1944,6 +1948,7 @@ export const api = {
   },
   extensions: {
     list: listExtensions,
+    get: getExtension,
     listCatalog: listSkillCatalog,
     setLike: setSkillCatalogLike,
     syncRepository: syncRepositoryExtensions,

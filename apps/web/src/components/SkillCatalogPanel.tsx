@@ -1,5 +1,5 @@
-import { LoaderCircle, Play, RotateCcw, Search, SlidersHorizontal, ThumbsUp, UserRoundCheck, X } from "lucide-react";
-import type { ReactNode } from "react";
+import { Eye, LoaderCircle, Play, RotateCcw, Search, SlidersHorizontal, ThumbsUp, UserRoundCheck, X } from "lucide-react";
+import { type MutableRefObject, type ReactNode, useLayoutEffect, useRef } from "react";
 import type { SkillCatalogItem, SkillCatalogResponse } from "../api-types";
 import { MarketplaceInstallButton } from "./MarketplaceInstallButton";
 import { SelectMenu } from "./SelectMenu";
@@ -17,6 +17,8 @@ interface SkillCatalogPanelProps {
   sort: SkillCatalogSort;
   pendingInstallIds: ReadonlySet<string>;
   pendingLikeIds: ReadonlySet<string>;
+  pendingViewId: string | null;
+  scrollPositionRef: MutableRefObject<number>;
   onQueryChange: (value: string) => void;
   onCategoryChange: (value: string) => void;
   onTagChange: (value: string) => void;
@@ -24,6 +26,7 @@ interface SkillCatalogPanelProps {
   onReset: () => void;
   onToggleInstall: (item: SkillCatalogItem) => void;
   onToggleLike: (item: SkillCatalogItem) => void;
+  onView: (item: SkillCatalogItem) => void;
   onLoadMore: () => void;
 }
 
@@ -59,16 +62,20 @@ function CatalogCard({
   item,
   installPending,
   likePending,
+  viewPending,
   onTagChange,
   onToggleInstall,
   onToggleLike,
+  onView,
 }: {
   item: SkillCatalogItem;
   installPending: boolean;
   likePending: boolean;
+  viewPending: boolean;
   onTagChange: (value: string) => void;
   onToggleInstall: (item: SkillCatalogItem) => void;
   onToggleLike: (item: SkillCatalogItem) => void;
+  onView: (item: SkillCatalogItem) => void;
 }) {
   return (
     <article className={`skill-catalog-card ${item.likedByMe ? "is-liked" : ""}`.trim()}>
@@ -98,13 +105,15 @@ function CatalogCard({
             <span>{countFormatter.format(item.likeCount)}</span>
           </button>
         </div>
-        <MarketplaceInstallButton
-          name={item.name}
-          installed={item.installed}
-          pending={installPending}
-          disabled={!item.installed && !item.canInstall}
-          onClick={() => onToggleInstall(item)}
-        />
+        <div className="skill-catalog-card-actions">
+          {item.installed && <button className="skill-catalog-view" type="button" aria-label={`${item.name} View`} aria-busy={viewPending} disabled={viewPending} onClick={() => onView(item)}>{viewPending ? <LoaderCircle className="is-running" size={13} /> : <Eye size={13} />}<span>View</span></button>}
+          {(item.installed || item.canInstall) && <MarketplaceInstallButton
+            name={item.name}
+            installed={item.installed}
+            pending={installPending}
+            onClick={() => onToggleInstall(item)}
+          />}
+        </div>
       </footer>
     </article>
   );
@@ -120,6 +129,8 @@ export function SkillCatalogPanel({
   sort,
   pendingInstallIds,
   pendingLikeIds,
+  pendingViewId,
+  scrollPositionRef,
   onQueryChange,
   onCategoryChange,
   onTagChange,
@@ -127,9 +138,14 @@ export function SkillCatalogPanel({
   onReset,
   onToggleInstall,
   onToggleLike,
+  onView,
   onLoadMore,
 }: SkillCatalogPanelProps) {
+  const scrollRef = useRef<HTMLDivElement>(null);
   const hasFilters = Boolean(query.trim() || category || tag);
+  useLayoutEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollPositionRef.current;
+  }, [scrollPositionRef]);
   return (
     <div className="skill-catalog-layout">
       <aside className="skill-catalog-filters" aria-label="Skill 카탈로그 필터">
@@ -157,10 +173,10 @@ export function SkillCatalogPanel({
           <div><span>총 <strong>{countFormatter.format(catalog.total)}</strong>개의 Skill</span>{hasFilters && <div className="skill-catalog-active-filters">{category && <button type="button" onClick={() => onCategoryChange("")}>{category}<X size={11} /></button>}{tag && <button type="button" onClick={() => onTagChange("")}>#{tag}<X size={11} /></button>}</div>}</div>
           <SelectMenu value={sort} options={sortOptions} ariaLabel="카탈로그 정렬" size="small" width="auto" align="end" onChange={(value) => onSortChange(value as SkillCatalogSort)} />
         </header>
-        <div className="skill-catalog-scroll">
+        <div className="skill-catalog-scroll" ref={scrollRef} onScroll={(event) => { scrollPositionRef.current = event.currentTarget.scrollTop; }}>
           {loading ? <div className="skill-catalog-grid is-loading" aria-label="Skill 카탈로그를 불러오는 중">{Array.from({ length: 6 }, (_, index) => <div className="skill-catalog-skeleton" aria-hidden="true" key={index}><span /><strong /><p /><p /><footer /></div>)}</div>
             : catalog.items.length === 0 ? <div className="skill-catalog-empty"><Search size={20} /><strong>검색 결과가 없습니다.</strong><span>검색어나 필터를 바꿔 다시 확인해 주세요.</span>{hasFilters && <button type="button" onClick={onReset}>필터 초기화</button>}</div>
-              : <><div className="skill-catalog-grid">{catalog.items.map((item) => <CatalogCard item={item} installPending={pendingInstallIds.has(item.id)} likePending={pendingLikeIds.has(item.id)} key={item.id} onTagChange={onTagChange} onToggleInstall={onToggleInstall} onToggleLike={onToggleLike} />)}</div>{catalog.hasMore && <button className="skill-catalog-more" type="button" disabled={loadingMore} onClick={onLoadMore}>{loadingMore ? <LoaderCircle className="is-running" size={14} /> : null} 더 보기</button>}</>}
+              : <><div className="skill-catalog-grid">{catalog.items.map((item) => <CatalogCard item={item} installPending={pendingInstallIds.has(item.id)} likePending={pendingLikeIds.has(item.id)} viewPending={pendingViewId === item.id} key={item.id} onTagChange={onTagChange} onToggleInstall={onToggleInstall} onToggleLike={onToggleLike} onView={onView} />)}</div>{catalog.hasMore && <button className="skill-catalog-more" type="button" disabled={loadingMore} onClick={onLoadMore}>{loadingMore ? <LoaderCircle className="is-running" size={14} /> : null} 더 보기</button>}</>}
         </div>
       </section>
     </div>
