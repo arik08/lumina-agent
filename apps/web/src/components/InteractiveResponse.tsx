@@ -201,7 +201,7 @@ function MermaidSurface({ source, expanded = false, zoom = 1, onInitialFit }: {
         const renderedHeight = renderedSvg.getBoundingClientRect().height;
         const initialZoom = expanded
           ? zoomRef.current
-          : clamp(containerRef.current.clientHeight / Math.max(renderedHeight, 1), 0.3, 1);
+          : clamp(Math.round((containerRef.current.clientHeight / Math.max(renderedHeight, 1)) * 10) / 10, 0.3, 1);
         zoomRef.current = initialZoom;
         renderedSvg.style.width = `${baseWidthRef.current * initialZoom}px`;
         renderedSvg.style.maxWidth = initialZoom > 1 ? "none" : "100%";

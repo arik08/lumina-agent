@@ -68,7 +68,7 @@ test("chat Mermaid cards provide button-only zoom controls beside the expand but
   assert.match(rendererSource, /const \[zoom, setZoom\] = useState\(1\)/);
   assert.match(rendererSource, /const \[initialZoom, setInitialZoom\] = useState\(1\)/);
   assert.match(rendererSource, /setZoom\(clamp\(next, 0\.3, 2\)\)/);
-  assert.match(rendererSource, /clamp\(containerRef\.current\.clientHeight \/ Math\.max\(renderedHeight, 1\), 0\.3, 1\)/);
+  assert.match(rendererSource, /clamp\(Math\.round\(\(containerRef\.current\.clientHeight \/ Math\.max\(renderedHeight, 1\)\) \* 10\) \/ 10, 0\.3, 1\)/);
   assert.match(rendererSource, /aria-label="Mermaid 다이어그램 축소"[\s\S]*?zoom - 0\.2/);
   assert.match(rendererSource, /aria-label="Mermaid 다이어그램 배율 초기화"[\s\S]*?setZoom\(initialZoom\)/);
   assert.match(rendererSource, /aria-label="Mermaid 다이어그램 확대"[\s\S]*?zoom \+ 0\.2/);
