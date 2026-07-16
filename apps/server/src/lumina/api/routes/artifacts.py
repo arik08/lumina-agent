@@ -160,9 +160,10 @@ def create_markdown_artifact_from_message(
             "assistant_message_empty",
             "Markdown으로 저장할 답변 내용이 없습니다.",
         )
+    storage = _storage(settings)
     artifact, version = create_artifact(
         db,
-        _storage(settings),
+        storage,
         user=context.user,
         project_id=conversation.project_id,
         conversation_id=conversation.id,
@@ -177,17 +178,23 @@ def create_markdown_artifact_from_message(
             "source": {"type": "assistant_message", "messageId": message.id}
         },
     )
-    record_audit(
-        db,
-        action="message_markdown_artifact_created",
-        target_type="artifact",
-        target_id=artifact.id,
-        result="success",
-        actor=context.user,
-        request_id=getattr(request.state, "request_id", None),
-        metadata={"message_id": message.id, "version": version.version_number},
-    )
-    db.commit()
+    try:
+        record_audit(
+            db,
+            action="message_markdown_artifact_created",
+            target_type="artifact",
+            target_id=artifact.id,
+            result="success",
+            actor=context.user,
+            request_id=getattr(request.state, "request_id", None),
+            metadata={"message_id": message.id, "version": version.version_number},
+        )
+        db.commit()
+    except BaseException:
+        with suppress(Exception):
+            db.rollback()
+        discard_artifact_storage(storage, version.storage_key)
+        raise
     return artifact_summary(artifact, version)
 
 
@@ -355,16 +362,17 @@ def restore_version(
         raise ApiProblem(
             409, "artifact_etag_conflict", "Artifact가 다른 곳에서 변경되었습니다."
         )
+    storage = _storage(settings)
     _artifact, source, content = read_artifact_version(
         db,
-        _storage(settings),
+        storage,
         user=context.user,
         artifact_id=artifact.id,
         version_number=payload.source_version,
     )
     version = create_artifact_version(
         db,
-        _storage(settings),
+        storage,
         user=context.user,
         artifact_id=artifact.id,
         base_version=current.version_number,
@@ -375,22 +383,28 @@ def restore_version(
         ),
         source_version=source,
     )
-    record_audit(
-        db,
-        action="artifact_version_restored",
-        target_type="artifact",
-        target_id=artifact.id,
-        result="success",
-        actor=context.user,
-        request_id=getattr(request.state, "request_id", None),
-        metadata={
-            "version": version.version_number,
-            "source_version": source.version_number,
-            "idempotency_key": idempotency_key,
-        },
-    )
-    db.commit()
-    stored_content = _storage(settings).read_bytes(
+    try:
+        record_audit(
+            db,
+            action="artifact_version_restored",
+            target_type="artifact",
+            target_id=artifact.id,
+            result="success",
+            actor=context.user,
+            request_id=getattr(request.state, "request_id", None),
+            metadata={
+                "version": version.version_number,
+                "source_version": source.version_number,
+                "idempotency_key": idempotency_key,
+            },
+        )
+        db.commit()
+    except BaseException:
+        with suppress(Exception):
+            db.rollback()
+        discard_artifact_storage(storage, version.storage_key)
+        raise
+    stored_content = storage.read_bytes(
         version.storage_key, expected_sha256=version.content_hash
     )
     return _version_payload(version, stored_content)

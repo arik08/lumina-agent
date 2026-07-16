@@ -13,7 +13,7 @@ from lumina.auth.service import create_user
 from lumina.config import Settings
 from lumina.db import SessionLocal
 from lumina.main import create_app
-from lumina.models import ArtifactVersion, Organization, Project, User
+from lumina.models import ArtifactVersion, Message, Organization, Project, User
 from lumina.storage import ManagedLocalStorage
 
 
@@ -334,6 +334,84 @@ def test_version_commit_failure_preserves_existing_draft_and_content(
             if path.is_file()
         ]
         assert len(version_files) == 1
+
+
+def test_restore_commit_failure_cleans_new_version_content(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    app = create_app(settings)
+    with TestClient(app) as client:
+        csrf = _login(client)
+        artifact_id = _create_text_artifact(settings, "restore-commit-failure")
+        current = _version(client, artifact_id)
+
+        with patch.object(
+            Session, "commit", side_effect=RuntimeError("forced restore commit failure")
+        ):
+            with pytest.raises(RuntimeError, match="forced restore commit failure"):
+                client.post(
+                    f"/api/artifacts/{artifact_id}/restore",
+                    headers={
+                        **csrf,
+                        "If-Match": str(current["etag"]),
+                        "Idempotency-Key": "failed-restore-commit-0001",
+                    },
+                    json={"sourceVersion": 1, "changeSummary": "forced failure"},
+                )
+
+        artifact = client.get(f"/api/artifacts/{artifact_id}")
+        assert artifact.status_code == 200
+        assert artifact.json()["currentVersion"] == 1
+        version_files = [
+            path
+            for path in (settings.artifacts_dir / "artifacts" / artifact_id).rglob("*")
+            if path.is_file()
+        ]
+        assert len(version_files) == 1
+        assert version_files[0].read_bytes() == b"committed v1"
+
+
+def test_from_message_commit_failure_cleans_created_artifact(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    app = create_app(settings)
+    with TestClient(app) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation_response = client.post(
+            "/api/conversations",
+            headers=csrf,
+            json={"projectId": project_id, "title": "Commit cleanup"},
+        )
+        assert conversation_response.status_code == 201, conversation_response.text
+        conversation_id = conversation_response.json()["id"]
+        with SessionLocal() as db:
+            message = Message(
+                conversation_id=conversation_id,
+                role="assistant",
+                status="completed",
+                canonical_text="Artifact commit cleanup",
+                turn_index=1,
+            )
+            db.add(message)
+            db.commit()
+            message_id = message.id
+
+        with patch.object(
+            Session,
+            "commit",
+            side_effect=RuntimeError("forced from-message commit failure"),
+        ):
+            with pytest.raises(RuntimeError, match="forced from-message commit failure"):
+                client.post(
+                    f"/api/artifacts/from-message/{message_id}",
+                    headers=csrf,
+                )
+
+        listing = client.get("/api/artifacts", params={"project_id": project_id})
+        assert listing.status_code == 200
+        assert listing.json()["items"] == []
+        assert not [
+            path for path in settings.artifacts_dir.rglob("*") if path.is_file()
+        ]
 
 
 def test_public_edit_cannot_spoof_ai_or_restore_provenance(tmp_path: Path) -> None:
