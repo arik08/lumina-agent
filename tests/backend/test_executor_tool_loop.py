@@ -624,7 +624,7 @@ def test_artifact_progress_refreshes_at_100ms_with_live_model_output() -> None:
     assert executor_module._live_model_output_tokens(3_204, 400) == 3_304
 
 
-def test_report_progress_is_visible_without_provider_output_or_tool_call(
+def test_report_progress_waits_for_artifact_tool_output(
     monkeypatch, tmp_path: Path
 ) -> None:
     settings = Settings(
@@ -680,11 +680,8 @@ def test_report_progress_is_visible_without_provider_output_or_tool_call(
                 f"/api/runs/{started.json()['run']['runId']}/snapshot"
             ).json()
             assert snapshot["status"] == "model_streaming"
-            assert snapshot["artifactProgress"] == {
-                "tokens": 0,
-                "lines": 0,
-                "estimated": True,
-            }
+            assert snapshot["artifactProgress"] is None
+            assert snapshot["artifactUsage"] is None
         finally:
             release_provider.set()
 
