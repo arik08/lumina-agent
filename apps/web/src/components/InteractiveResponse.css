@@ -147,6 +147,10 @@
   margin: auto;
 }
 
+.mermaid-surface:not(.is-expanded) svg {
+  transition: width 150ms var(--ease-out-quint, ease-out);
+}
+
 .mermaid-surface svg .node[data-lumina-tone="blue"] {
   --mermaid-node-fill: color-mix(in srgb, var(--mermaid-palette-blue) 14%, var(--surface));
   --mermaid-node-stroke: var(--mermaid-palette-blue);
@@ -311,5 +315,5 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .response-zoom-canvas, .inline-markdown-image button > span { transition: none; }
+  .mermaid-surface:not(.is-expanded) svg, .response-zoom-canvas, .inline-markdown-image button > span { transition: none; }
 }

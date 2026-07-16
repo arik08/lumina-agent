@@ -58,6 +58,7 @@ test("tall Mermaid workflows keep readable geometry inside a bounded scroll surf
   assert.match(rendererStyles, /\.mermaid-surface:not\(\.is-expanded\) \{[^}]*overscroll-behavior: auto;[^}]*cursor: grab;[^}]*touch-action: none;/);
   assert.match(rendererStyles, /\.mermaid-surface\.is-dragging \{[^}]*cursor: grabbing;[^}]*user-select: none;/);
   assert.match(rendererStyles, /\.mermaid-surface svg \{[\s\S]*width: auto;[\s\S]*max-width: 100%;[\s\S]*height: auto;/);
+  assert.match(rendererStyles, /\.mermaid-surface:not\(\.is-expanded\) svg \{[^}]*transition: width 150ms var\(--ease-out-quint, ease-out\);/);
   assert.match(rendererStyles, /\.mermaid-surface\.is-expanded \{[\s\S]*max-height: none;/);
   assert.doesNotMatch(rendererStyles, /\.mermaid-surface svg \{[\s\S]*max-height: 660px;/);
   assert.doesNotMatch(globalStyles, /\.mermaid-diagram svg/);
@@ -100,6 +101,7 @@ test("Mermaid and structured charts expose a zoomable, pannable dialog", () => {
   assert.match(rendererSource, /changeZoom\(zoom \* \(event\.deltaY > 0 \? 0\.9 : 1\.1\)\)/);
   assert.match(rendererStyles, /\.response-zoom-viewport[\s\S]*cursor: grab/);
   assert.match(rendererStyles, /touch-action: none/);
+  assert.match(rendererStyles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.mermaid-surface:not\(\.is-expanded\) svg[\s\S]*transition: none;/);
 });
 
 test("safe Markdown images render inline and open a large viewer", () => {
