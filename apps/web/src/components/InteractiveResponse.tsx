@@ -361,7 +361,7 @@ export function MermaidDiagram({ source }: { source: string }) {
     <>
       <section className="interactive-response-block mermaid-diagram" aria-label="Mermaid 다이어그램">
         <div className="interactive-response-toolbar">
-          <span>Mermaid</span>
+          <button type="button" className="interactive-response-expand-label" aria-label="Mermaid 다이어그램 크게 보기" onClick={() => setExpanded(true)}>Mermaid</button>
           <div className="interactive-response-toolbar-actions">
             <div className="mermaid-inline-zoom-controls" aria-label="Mermaid 다이어그램 배율 조절">
               <button type="button" aria-label="Mermaid 다이어그램 축소" data-tooltip="축소" disabled={zoom <= 0.5} onClick={() => changeZoom(zoom - 0.1)}><Minus size={15} /></button>

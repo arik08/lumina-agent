@@ -70,9 +70,11 @@ test("chat Mermaid cards provide button-only zoom controls beside the expand but
   assert.match(rendererSource, /aria-label="Mermaid 다이어그램 배율 초기화"[\s\S]*?setZoom\(1\)/);
   assert.match(rendererSource, /aria-label="Mermaid 다이어그램 확대"[\s\S]*?zoom \+ 0\.1/);
   assert.match(rendererSource, /<MermaidSurface source=\{source\} zoom=\{zoom\} \/>/);
+  assert.match(rendererSource, /className="interactive-response-expand-label" aria-label="Mermaid 다이어그램 크게 보기" onClick=\{\(\) => setExpanded\(true\)\}>Mermaid<\/button>/);
   assert.match(rendererSource, /renderedSvg\.style\.maxWidth = zoom > 1 \? "none" : "100%"/);
   assert.doesNotMatch(rendererSource, /<MermaidSurface source=\{source\} zoom=\{zoom\}[^>]*onWheel/);
   assert.match(rendererStyles, /\.mermaid-inline-zoom-controls \{[\s\S]*?border-right: 1px solid var\(--line\);/);
+  assert.match(rendererStyles, /\.interactive-response-toolbar \.interactive-response-expand-label \{[\s\S]*?flex: 1;[\s\S]*?justify-content: flex-start;[\s\S]*?cursor: pointer;/);
 });
 
 test("Mermaid and structured charts expose a zoomable, pannable dialog", () => {
