@@ -257,7 +257,7 @@ def delete_notification(
 
 def delete_all_notifications(db: Session, *, user: User) -> int:
     result = db.execute(delete(Notification).where(Notification.user_id == user.id))
-    return int(result.rowcount or 0)
+    return _affected_row_count(result)
 
 
 def create_scheduled_run_result_notification(
@@ -379,7 +379,14 @@ def mark_all_notifications_read(db: Session, *, user: User) -> tuple[int, dateti
         .where(Notification.user_id == user.id, Notification.read_at.is_(None))
         .values(read_at=read_at)
     )
-    return int(getattr(result, "rowcount", 0)), read_at
+    return _affected_row_count(result), read_at
+
+
+def _affected_row_count(result: object) -> int:
+    rowcount = getattr(result, "rowcount", None)
+    if isinstance(rowcount, bool) or not isinstance(rowcount, int):
+        return 0
+    return max(0, rowcount)
 
 
 def notification_payload(notification: Notification) -> dict[str, Any]:

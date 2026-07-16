@@ -23,6 +23,7 @@ from lumina.models import (
     User,
 )
 from lumina.notifications import create_run_transition_notification
+from lumina.notifications import service as notification_service
 from lumina.runs.service import create_run, transition_run
 from lumina.runs.state import (
     AWAITING_APPROVAL,
@@ -240,6 +241,16 @@ def test_failure_approval_and_read_all_notifications(tmp_path: Path) -> None:
         deleted_all = client.delete("/api/notifications", headers=csrf)
         assert deleted_all.status_code == 204, deleted_all.text
         assert client.get("/api/notifications").json()["items"] == []
+
+
+def test_notification_rowcount_normalizes_unknown_driver_results() -> None:
+    class Result:
+        def __init__(self, rowcount: object) -> None:
+            self.rowcount = rowcount
+
+    assert notification_service._affected_row_count(Result(3)) == 3
+    for rowcount in (-1, None, True, "3"):
+        assert notification_service._affected_row_count(Result(rowcount)) == 0
 
 
 def test_scheduled_run_result_creates_one_deep_link_notification(
