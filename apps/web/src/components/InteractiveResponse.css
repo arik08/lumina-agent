@@ -91,6 +91,11 @@
   cursor: pointer;
 }
 
+.interactive-response-toolbar .interactive-response-expand-label:hover {
+  border-color: transparent;
+  background: transparent;
+}
+
 .interactive-response-expand-label:focus-visible {
   position: relative;
   z-index: 1;
