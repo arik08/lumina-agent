@@ -484,15 +484,42 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
 
   const viewCatalogSkill = (target: SkillCatalogItem) => {
     if (!target.installed) return;
+    window.history.pushState({
+      ...window.history.state,
+      luminaMarketplaceCatalogDetail: {
+        projectId: projectId ?? "none",
+        skillId: target.id,
+      },
+    }, "");
     setSelectedId(target.id);
     setEnteredInstalledFromCatalog(true);
     setSkillView("installed");
   };
 
   const returnToCatalog = () => {
+    if (window.history.state?.luminaMarketplaceCatalogDetail?.projectId === (projectId ?? "none")) {
+      window.history.back();
+      return;
+    }
     setEnteredInstalledFromCatalog(false);
     setSkillView("catalog");
   };
+
+  useEffect(() => {
+    const handlePopState = (event: PopStateEvent) => {
+      const detail = event.state?.luminaMarketplaceCatalogDetail;
+      if (detail?.projectId === (projectId ?? "none") && typeof detail.skillId === "string") {
+        setSelectedId(detail.skillId);
+        setEnteredInstalledFromCatalog(true);
+        setSkillView("installed");
+      } else if (enteredInstalledFromCatalog) {
+        setEnteredInstalledFromCatalog(false);
+        setSkillView("catalog");
+      }
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [enteredInstalledFromCatalog, projectId]);
 
   const beginPackageEdit = async () => {
     if (!selected?.canCreateDraft || busy) return;

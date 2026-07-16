@@ -18,9 +18,12 @@ test("catalog uses a searchable card grid with installed-only package viewing", 
 
   assert.match(view, /skillView === "catalog" \? <SkillCatalogPanel/);
   assert.match(view, /setSelectedId\(target\.id\);\s*setEnteredInstalledFromCatalog\(true\);\s*setSkillView\("installed"\);/);
+  assert.match(view, /window\.history\.pushState\(\{[\s\S]*luminaMarketplaceCatalogDetail:[\s\S]*skillId: target\.id/);
   assert.match(view, /enteredInstalledFromCatalog && skillView === "installed"/);
   assert.match(view, /<ArrowLeft size=\{14\} \/> 뒤로가기/);
-  assert.match(view, /const returnToCatalog = \(\) => \{\s*setEnteredInstalledFromCatalog\(false\);\s*setSkillView\("catalog"\);/);
+  assert.match(view, /const returnToCatalog = \(\) => \{[\s\S]*window\.history\.back\(\);[\s\S]*setSkillView\("catalog"\);/);
+  assert.match(view, /window\.addEventListener\("popstate", handlePopState\)/);
+  assert.match(view, /typeof detail\.skillId === "string"[\s\S]*setSelectedId\(detail\.skillId\)/);
   assert.match(panel, /placeholder="이름, 설명, 태그 검색"/);
   assert.match(panel, /catalog\.facets\.categories\.map/);
   assert.match(panel, /catalog\.facets\.tags\.map/);
