@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import suppress
 from html.parser import HTMLParser
 from io import BytesIO
 import math
@@ -17,7 +18,7 @@ from sqlalchemy.orm import Session
 from ..api.errors import ApiProblem
 from ..document_limits import MAX_DOCUMENT_PAGES, MAX_OPENXML_MEMBERS
 from ..authorization import require_conversation, require_project
-from ..models import Artifact, ArtifactDraft, ArtifactVersion, User, utc_now
+from ..models import Artifact, ArtifactDraft, ArtifactVersion, User, new_uuid, utc_now
 from ..storage import ManagedLocalStorage, StorageError
 from .render_validation import ArtifactRenderBackend, verify_artifact_render
 
@@ -120,7 +121,11 @@ def create_artifact(
         asset_manifest=asset_manifest,
     )
     artifact.current_version_number = 1
-    db.flush()
+    try:
+        db.flush()
+    except BaseException:
+        _discard_version_content(storage, version.storage_key)
+        raise
     return artifact, version
 
 
@@ -271,7 +276,11 @@ def create_binary_artifact_version(
         asset_manifest=asset_manifest,
     )
     artifact.current_version_number = version.version_number
-    db.flush()
+    try:
+        db.flush()
+    except BaseException:
+        _discard_version_content(storage, version.storage_key)
+        raise
     return artifact, version
 
 
@@ -294,9 +303,14 @@ def _write_version(
 ) -> ArtifactVersion:
     digest = hashlib.sha256(content).hexdigest()
     extension = _safe_extension(artifact.display_name, artifact.mime_type)
-    key = f"artifacts/{artifact.id}/v{version_number}/{digest}.{extension}"
+    version_id = new_uuid()
+    key = (
+        f"artifacts/{artifact.id}/v{version_number}/"
+        f"{version_id}-{digest}.{extension}"
+    )
     stored = storage.put_bytes(key, content, expected_sha256=digest)
     version = ArtifactVersion(
+        id=version_id,
         artifact_id=artifact.id,
         version_number=version_number,
         storage_backend="local",
@@ -315,8 +329,17 @@ def _write_version(
         created_by_user_id=user.id,
     )
     db.add(version)
-    db.flush()
+    try:
+        db.flush()
+    except BaseException:
+        _discard_version_content(storage, stored.key)
+        raise
     return version
+
+
+def _discard_version_content(storage: ManagedLocalStorage, key: str) -> None:
+    with suppress(StorageError):
+        storage.delete(key)
 
 
 def read_artifact_version(
