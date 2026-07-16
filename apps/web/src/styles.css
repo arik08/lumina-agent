@@ -1471,6 +1471,8 @@ button:disabled { cursor: default; opacity: 0.5; }
 .mcp-installation-row > header strong { font-size: 11.5px; }
 .mcp-installation-row > header small { overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .mcp-installation-row > header button { display: inline-flex; width: 27px; height: 27px; align-items: center; justify-content: center; border: 0; border-radius: 4px; background: transparent; color: var(--muted); cursor: pointer; }
+.mcp-installation-row > header button.mcp-uninstall-action.is-delete-armed { width: auto; gap: 4px; padding: 0 7px; background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
+.mcp-installation-row > header button.mcp-uninstall-action.is-delete-armed span { margin: 0; font-size: 10px; }
 .mcp-installation-row > header span { display: inline-flex; align-items: center; gap: 4px; margin-right: 3px; font-size: 10.5px; }
 .mcp-installation-row > header .is-ready { color: var(--success); }
 .mcp-installation-row > header .is-pending { color: var(--warning); }
@@ -1486,11 +1488,13 @@ button:disabled { cursor: default; opacity: 0.5; }
 .mcp-secret-row input:focus { border-color: var(--cobalt); }
 .mcp-secret-row button { height: 27px; border: 1px solid var(--line); border-radius: 4px; padding: 0 7px; background: var(--surface); color: var(--ink); font-size: 10.5px; cursor: pointer; }
 .mcp-secret-row > .mcp-secret-action { grid-column: -2 / -1; width: max-content; justify-self: end; white-space: nowrap; }
+.mcp-secret-row > .mcp-secret-action.is-delete-armed { border-color: color-mix(in srgb, var(--danger) 42%, var(--line)); background: color-mix(in srgb, var(--danger) 10%, var(--surface)); color: var(--danger); }
 
 .admin-mcp-panel { min-height: 0; flex: 1; overflow: hidden; }
 .admin-mcp-toolbar { display: flex; min-height: 38px; align-items: center; justify-content: space-between; padding: 0 18px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 10.5px; }
 .admin-mcp-toolbar > div { display: flex; gap: 5px; }
 .admin-mcp-toolbar button, .admin-mcp-detail header button, .admin-mcp-form button, .admin-mcp-revisions button { display: inline-flex; min-height: 28px; align-items: center; justify-content: center; gap: 5px; padding: 0 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); color: var(--ink); font-size: 10.5px; cursor: pointer; }
+.admin-mcp-detail button.is-delete-armed, .admin-mcp-revisions button.is-delete-armed { border-color: color-mix(in srgb, var(--danger) 42%, var(--line)); background: color-mix(in srgb, var(--danger) 10%, var(--surface)); color: var(--danger); }
 .admin-mcp-layout { display: grid; height: calc(100% - 38px); grid-template-columns: minmax(220px, 29%) minmax(0, 1fr); }
 .admin-mcp-list { overflow-y: auto; border-right: 1px solid var(--line); }
 .admin-mcp-list > button { display: grid; width: 100%; min-height: 48px; grid-template-columns: 20px minmax(0, 1fr) 16px; align-items: center; gap: 6px; padding: 6px 12px; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
