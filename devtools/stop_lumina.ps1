@@ -155,7 +155,75 @@ function Stop-ProcessTree {
     }
 }
 
+function Get-LuminaSupervisorPidFiles {
+    return @(
+        Get-ChildItem `
+            -LiteralPath $LogRoot `
+            -Filter "run_lumina*.pid" `
+            -File `
+            -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.Name -match '^run_lumina(?:_dev)?(?:\.\d+(?:-\d+)?)?\.pid$'
+            }
+    )
+}
+
+function Get-LuminaSupervisorIdentity {
+    param([Parameter(Mandatory = $true)][string]$PidPath)
+
+    try {
+        $identityParts = (
+            [System.IO.File]::ReadAllText($PidPath).Trim() -split '\|', 2
+        )
+    }
+    catch {
+        return $null
+    }
+    $processId = 0
+    $startTimeTicks = [long]0
+    if (
+        $identityParts.Count -ne 2 -or
+        -not [int]::TryParse($identityParts[0], [ref]$processId) -or
+        $processId -le 0 -or
+        -not [long]::TryParse($identityParts[1], [ref]$startTimeTicks)
+    ) {
+        return $null
+    }
+    $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+    if ($null -eq $process) {
+        return $null
+    }
+    try {
+        if ($process.StartTime.ToUniversalTime().Ticks -ne $startTimeTicks) {
+            return $null
+        }
+    }
+    catch {
+        return $null
+    }
+    return [pscustomobject]@{
+        ProcessId = $processId
+        ProcessName = "$($process.ProcessName).exe"
+        PidPath = $PidPath
+    }
+}
+
 $stoppedAny = $false
+foreach ($pidFile in @(Get-LuminaSupervisorPidFiles)) {
+    $supervisorIdentity = Get-LuminaSupervisorIdentity -PidPath $pidFile.FullName
+    if ($null -eq $supervisorIdentity) {
+        continue
+    }
+    $target = (
+        "$($supervisorIdentity.ProcessName) " +
+        "(PID $($supervisorIdentity.ProcessId))"
+    )
+    if ($PSCmdlet.ShouldProcess($target, "Stop Lumina supervisor process tree")) {
+        Write-Host "[Lumina] Stopping $target..."
+        Stop-ProcessTree -ProcessId $supervisorIdentity.ProcessId
+        $stoppedAny = $true
+    }
+}
 for ($pass = 1; $pass -le 3; $pass++) {
     $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop)
     $rootIds = @(Get-LuminaRootProcessIds -Processes $processes)
@@ -190,8 +258,8 @@ if ($remainingIds.Count -gt 0) {
     throw "Lumina process cleanup did not finish. Remaining root PID(s): $($remainingIds -join ', ')"
 }
 
-foreach ($pidFile in @("run_lumina.pid", "run_lumina_dev.pid")) {
-    $pidPath = Join-Path $LogRoot $pidFile
+foreach ($pidFile in @(Get-LuminaSupervisorPidFiles)) {
+    $pidPath = $pidFile.FullName
     if (
         (Test-Path -LiteralPath $pidPath) -and
         $PSCmdlet.ShouldProcess($pidPath, "Remove stale Lumina supervisor PID file")

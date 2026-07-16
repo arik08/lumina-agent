@@ -11,6 +11,30 @@ if ($errors.Count -gt 0) {
     throw "run_lumina.ps1 has parser errors: $($errors.Message -join '; ')"
 }
 
+$stopScriptPath = Join-Path $PSScriptRoot "stop_lumina.ps1"
+$stopTokens = $null
+$stopErrors = $null
+$stopAst = [System.Management.Automation.Language.Parser]::ParseFile(
+    $stopScriptPath,
+    [ref]$stopTokens,
+    [ref]$stopErrors
+)
+if ($stopErrors.Count -gt 0) {
+    throw "stop_lumina.ps1 has parser errors: $($stopErrors.Message -join '; ')"
+}
+$stopIdentityFunction = $stopAst.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq "Get-LuminaSupervisorIdentity"
+    },
+    $true
+)
+if ($null -eq $stopIdentityFunction) {
+    throw "Get-LuminaSupervisorIdentity was not found."
+}
+. ([scriptblock]::Create($stopIdentityFunction.Extent.Text))
+
 $inputSourcePath = Join-Path $PSScriptRoot "LuminaLauncher.Input.ps1"
 $inputTokens = $null
 $inputErrors = $null
@@ -692,6 +716,48 @@ finally {
         Stop-Process -Id $mismatchedSupervisor.Id -Force -ErrorAction SilentlyContinue
     }
     Remove-Item -LiteralPath $SupervisorPidPath -Force -ErrorAction SilentlyContinue
+}
+
+$stopSupervisorPidPath = Join-Path `
+    $env:TEMP `
+    "lumina-stop-supervisor-test-$([guid]::NewGuid()).pid"
+$stopSupervisor = $null
+try {
+    $stopSupervisor = Start-Process `
+        -FilePath "powershell.exe" `
+        -ArgumentList @('-NoProfile', '-Command', 'Start-Sleep -Seconds 30') `
+        -WindowStyle Hidden `
+        -PassThru
+    $stopIdentity = (
+        "$($stopSupervisor.Id)|" +
+        "$($stopSupervisor.StartTime.ToUniversalTime().Ticks)"
+    )
+    [System.IO.File]::WriteAllText($stopSupervisorPidPath, $stopIdentity)
+    $resolvedStopIdentity = Get-LuminaSupervisorIdentity `
+        -PidPath $stopSupervisorPidPath
+    if (
+        $null -eq $resolvedStopIdentity -or
+        $resolvedStopIdentity.ProcessId -ne $stopSupervisor.Id
+    ) {
+        throw "The stop launcher did not resolve a matching supervisor identity."
+    }
+
+    [System.IO.File]::WriteAllText(
+        $stopSupervisorPidPath,
+        "$($stopSupervisor.Id)|1"
+    )
+    if ($null -ne (Get-LuminaSupervisorIdentity -PidPath $stopSupervisorPidPath)) {
+        throw "The stop launcher accepted a reused or mismatched supervisor identity."
+    }
+}
+finally {
+    if ($null -ne $stopSupervisor) {
+        Stop-Process -Id $stopSupervisor.Id -Force -ErrorAction SilentlyContinue
+    }
+    Remove-Item `
+        -LiteralPath $stopSupervisorPidPath `
+        -Force `
+        -ErrorAction SilentlyContinue
 }
 
 $startProcessesFunction = $ast.Find(
