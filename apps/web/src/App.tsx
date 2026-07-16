@@ -3180,12 +3180,13 @@ function App() {
             {showNewConversationWelcome && (
               <div className="conversation-empty"><Sparkles size={24} /><h2>무엇을 함께 진행할까요?</h2><p>요청을 보내면 진행 과정, Tool 사용과 Artifact가 이곳에 이어집니다.</p><StarterPrompts onSelect={applyStarterPrompt} /></div>
             )}
-            {activeRuntime.turnSets.map((turnSet) => (
+            {activeRuntime.turnSets.map((turnSet, turnIndex) => (
               <AssistantTurn
                 key={turnSet.id}
                 turnSet={turnSet}
                 snapshot={turnSet.runId ? activeRuntime.snapshots[turnSet.runId] ?? null : null}
                 sessionUsage={cumulativeUsageByTurnSetId[turnSet.id]}
+                showSessionUsage={turnIndex > 0 || activeRuntime.hasMoreTurnSetsBefore}
                 openCalls={openCalls}
                 onToggleCall={(id) => toggleSetItem(setOpenCalls, id)}
                 onCopyTool={(execution) => void copyTool(execution)}

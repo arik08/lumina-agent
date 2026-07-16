@@ -2462,6 +2462,7 @@ button:disabled { cursor: default; opacity: 0.5; }
   box-shadow: 0 16px 38px rgba(15, 23, 42, 0.16);
   color: var(--ink);
 }
+.answer-usage-popover.is-answer-only { width: min(310px, calc(100vw - 32px)); }
 .answer-usage-popover table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; font-size: 13px; line-height: 1.25; }
 .answer-usage-popover :is(th, td) { padding: 3px 7px; text-align: right; white-space: nowrap; }
 .answer-usage-popover .answer-usage-label-column { width: 24%; }

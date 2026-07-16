@@ -246,9 +246,10 @@ type UsageRow = {
   tone?: string;
 };
 
-function UsageCostPopover({ usage, sessionUsage, model, provider }: {
+function UsageCostPopover({ usage, sessionUsage, showSessionUsage, model, provider }: {
   usage: Record<string, unknown> | undefined;
   sessionUsage: Record<string, unknown> | undefined;
+  showSessionUsage: boolean;
   model?: string;
   provider?: string;
 }) {
@@ -317,7 +318,7 @@ function UsageCostPopover({ usage, sessionUsage, model, provider }: {
     ];
   };
   const answerRows = usageRows(usage);
-  const cumulativeRows = usageRows(sessionUsage);
+  const cumulativeRows = showSessionUsage ? usageRows(sessionUsage) : [];
   const costHeading = `예상비용(${currencySymbol})`;
   return (
     <span
@@ -331,22 +332,23 @@ function UsageCostPopover({ usage, sessionUsage, model, provider }: {
       }}
     >
       <button className="answer-usage-button" type="button" aria-label={isSubscriptionUsage ? "토큰 및 예상 비용 확인" : "토큰 비용 확인"} aria-describedby={popoverOpen ? popoverId : undefined}><Coins size={16} /></button>
-      <GlobalTooltipLayer anchor={controlRef.current} className="answer-usage-popover" id={popoverId} open={popoverOpen}>
-        <table aria-label="이번 답변과 세션 누적 토큰 및 예상 비용">
+      <GlobalTooltipLayer anchor={controlRef.current} className={`answer-usage-popover ${showSessionUsage ? "" : "is-answer-only"}`} id={popoverId} open={popoverOpen}>
+        <table aria-label={showSessionUsage ? "이번 답변과 세션 누적 토큰 및 예상 비용" : "이번 답변 토큰 및 예상 비용"}>
           <colgroup>
             <col className="answer-usage-label-column" />
-            <col /><col /><col /><col />
+            <col /><col />
+            {showSessionUsage && <><col /><col /></>}
           </colgroup>
           <thead>
-            <tr><th rowSpan={2}>{model || "사용량"}</th><th colSpan={2}>이번 답변</th><th colSpan={2}>세션 누적</th></tr>
-            <tr><th>토큰</th><th>{costHeading}</th><th>토큰</th><th>{costHeading}</th></tr>
+            <tr><th rowSpan={2}>{model || "사용량"}</th><th colSpan={2}>이번 답변</th>{showSessionUsage && <th colSpan={2}>세션 누적</th>}</tr>
+            <tr><th>토큰</th><th>{costHeading}</th>{showSessionUsage && <><th>토큰</th><th>{costHeading}</th></>}</tr>
           </thead>
           <tbody>
             {answerRows.map((row, index) => (
               <tr className={row.label === "Total" ? "is-total" : row.label === "Cached" || row.label === "Uncached" || row.label === "Cache rate" ? "is-child" : ""} key={row.label}>
                 <th scope="row">{row.label}</th>
                 <td className={row.tone}>{row.tokens}</td><td>{row.cost}</td>
-                <td className={cumulativeRows[index]?.tone}>{cumulativeRows[index]?.tokens ?? "0"}</td><td>{cumulativeRows[index]?.cost ?? "—"}</td>
+                {showSessionUsage && <><td className={cumulativeRows[index]?.tone}>{cumulativeRows[index]?.tokens ?? "0"}</td><td>{cumulativeRows[index]?.cost ?? "—"}</td></>}
               </tr>
             ))}
           </tbody>
@@ -1548,6 +1550,7 @@ export function AssistantTurn({
   turnSet,
   snapshot,
   sessionUsage,
+  showSessionUsage,
   openCalls,
   onToggleCall,
   onCopyTool,
@@ -1564,6 +1567,7 @@ export function AssistantTurn({
   turnSet: TurnSet;
   snapshot: RunSnapshot | null;
   sessionUsage: Record<string, unknown> | undefined;
+  showSessionUsage: boolean;
   openCalls: Set<string>;
   onToggleCall: (id: string) => void;
   onCopyTool: (execution: ToolExecution) => void;
@@ -1949,6 +1953,7 @@ export function AssistantTurn({
                     <UsageCostPopover
                       usage={runUsage}
                       sessionUsage={sessionUsage}
+                      showSessionUsage={showSessionUsage}
                       model={snapshot?.execution.runtimeModelId}
                       provider={snapshot?.execution.providerId}
                     />
