@@ -1215,26 +1215,27 @@ def update_work_plan(
     if not 1 <= len(steps) <= 8:
         raise ValueError("업무 계획은 1개 이상 8개 이하의 단계여야 합니다.")
 
-    previous = run.snapshot_json.get("work_plan", [])
+    previous_value = run.snapshot_json.get("work_plan", [])
+    previous = previous_value if isinstance(previous_value, list) else []
     previous_ids = {
         str(item.get("step", "")).strip().casefold(): str(item.get("id"))
         for item in previous
         if isinstance(item, dict) and item.get("id")
     }
-    previous_ids_by_order = {
-        int(item.get("order")): str(item.get("id"))
-        for item in previous
-        if isinstance(item, dict)
-        and item.get("id")
-        and isinstance(item.get("order"), int)
-    }
-    previous_phases_by_order = {
-        int(item.get("order")): str(item.get("phase"))
-        for item in previous
-        if isinstance(item, dict)
-        and isinstance(item.get("order"), int)
-        and item.get("phase") in WORK_PLAN_PHASES
-    }
+    previous_ids_by_order: dict[int, str] = {}
+    previous_phases_by_order: dict[int, str] = {}
+    for item in previous:
+        if not isinstance(item, dict):
+            continue
+        order_value = item.get("order")
+        if not isinstance(order_value, int) or isinstance(order_value, bool):
+            continue
+        item_id = item.get("id")
+        if item_id:
+            previous_ids_by_order[order_value] = str(item_id)
+        phase_value = item.get("phase")
+        if isinstance(phase_value, str) and phase_value in WORK_PLAN_PHASES:
+            previous_phases_by_order[order_value] = phase_value
     normalized: list[dict[str, Any]] = []
     active_count = 0
     for order, item in enumerate(steps, start=1):
@@ -1359,7 +1360,13 @@ def align_work_plan_for_tool_start(
 
     changed = False
     for index, item in enumerate(steps):
-        current_status = item.get("status")
+        current_status_value = item.get("status")
+        current_status = (
+            current_status_value
+            if isinstance(current_status_value, str)
+            and current_status_value in {"pending", "in_progress", "completed"}
+            else "pending"
+        )
         if index < target_index:
             next_status = "completed"
         elif index == target_index:
@@ -1368,7 +1375,7 @@ def align_work_plan_for_tool_start(
             next_status = "pending"
         else:
             next_status = current_status
-        if next_status != current_status:
+        if next_status != current_status_value:
             item["status"] = next_status
             changed = True
     if not changed:
@@ -3079,9 +3086,9 @@ def _resequence_queued_commands(db: Session, run: Run) -> list[RunCommand]:
         )
     )
     positions: dict[str, int] = {}
-    for position, queued_message in enumerate(queued_messages, start=1):
-        queued_message.position = position
-        positions[queued_message.id] = position
+    for queue_position, queued_message in enumerate(queued_messages, start=1):
+        queued_message.position = queue_position
+        positions[queued_message.id] = queue_position
     changed: list[RunCommand] = []
     commands = list(
         db.scalars(
@@ -3094,12 +3101,15 @@ def _resequence_queued_commands(db: Session, run: Run) -> list[RunCommand]:
     )
     for queued_command in commands:
         queued_message_id = queued_command.payload_json.get("queued_message_id")
-        position = positions.get(str(queued_message_id))
-        if position is None or queued_command.payload_json.get("queue_position") == position:
+        resolved_position = positions.get(str(queued_message_id))
+        if (
+            resolved_position is None
+            or queued_command.payload_json.get("queue_position") == resolved_position
+        ):
             continue
         queued_command.payload_json = {
             **queued_command.payload_json,
-            "queue_position": position,
+            "queue_position": resolved_position,
         }
         changed.append(queued_command)
     return changed
