@@ -194,11 +194,14 @@ def _parse_revision(if_match: str | None) -> int | None:
         return None
     value = if_match.strip().removeprefix("W/").strip('"')
     try:
-        return int(value)
+        revision = int(value)
     except ValueError as exc:
         raise ApiProblem(
             400, "invalid_revision", "대화 revision이 올바르지 않습니다."
         ) from exc
+    if revision < 1:
+        raise ApiProblem(400, "invalid_revision", "대화 revision이 올바르지 않습니다.")
+    return revision
 
 
 @router.patch("/{conversation_id}")
@@ -209,11 +212,16 @@ def patch_conversation(
     context: AuthContext = Depends(require_csrf),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
+    header_revision = _parse_revision(if_match)
     conversation = update_conversation(
         db,
         context.user,
         conversation_id,
-        expected_revision=_parse_revision(if_match) or payload.expected_revision,
+        expected_revision=(
+            header_revision
+            if header_revision is not None
+            else payload.expected_revision
+        ),
         title=payload.title,
         is_favorite=payload.is_favorite,
         is_liked=payload.is_liked,

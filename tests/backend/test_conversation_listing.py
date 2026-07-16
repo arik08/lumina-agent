@@ -5,12 +5,15 @@ from pathlib import Path
 import time
 
 from fastapi.testclient import TestClient
+import pytest
+from sqlalchemy import select
 
+from lumina.api.errors import ApiProblem
 from lumina.config import Settings
-from lumina.conversations.service import list_auto_delete_candidates
+from lumina.conversations.service import list_auto_delete_candidates, update_conversation
 from lumina.db import SessionLocal
 from lumina.main import create_app
-from lumina.models import utc_now
+from lumina.models import Conversation, User, utc_now
 
 
 def test_cursor_preserves_favorite_order_and_search_is_whitespace_tolerant(
@@ -168,6 +171,17 @@ def test_project_and_conversation_patch_reject_noop_payloads(tmp_path: Path) -> 
             )
             assert rejected_conversation.status_code == 422, rejected_conversation.text
 
+        invalid_header = client.patch(
+            f"/api/conversations/{conversation['id']}",
+            headers={**headers, "If-Match": '"0"'},
+            json={
+                "isFavorite": True,
+                "expectedRevision": conversation["revision"],
+            },
+        )
+        assert invalid_header.status_code == 400
+        assert invalid_header.json()["code"] == "invalid_revision"
+
         conversations = client.get(
             "/api/conversations",
             params={"project_id": project["id"]},
@@ -176,6 +190,70 @@ def test_project_and_conversation_patch_reject_noop_payloads(tmp_path: Path) -> 
             item for item in conversations if item["id"] == conversation["id"]
         )
         assert unchanged_conversation["revision"] == conversation["revision"]
+
+
+def test_conversation_revision_compare_and_swap_rejects_stale_session(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'conversation-cas.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation_response = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "CAS base"},
+        )
+        assert conversation_response.status_code == 201, conversation_response.text
+        conversation_id = conversation_response.json()["id"]
+
+        with SessionLocal() as first_db, SessionLocal() as stale_db:
+            first_user = first_db.scalar(
+                select(User).where(User.login_id == "admin@posco.com")
+            )
+            stale_user = stale_db.scalar(
+                select(User).where(User.login_id == "admin@posco.com")
+            )
+            stale_conversation = stale_db.get(Conversation, conversation_id)
+            assert first_user is not None and stale_user is not None
+            assert stale_conversation is not None
+            assert stale_conversation.revision == 1
+
+            updated = update_conversation(
+                first_db,
+                first_user,
+                conversation_id,
+                expected_revision=1,
+                title="CAS winner",
+            )
+            first_db.commit()
+            assert updated.revision == 2
+
+            with pytest.raises(ApiProblem) as conflict:
+                update_conversation(
+                    stale_db,
+                    stale_user,
+                    conversation_id,
+                    expected_revision=1,
+                    is_favorite=True,
+                )
+            assert conflict.value.code == "revision_conflict"
+            assert conflict.value.details == {"currentRevision": 2}
+
+        persisted = client.get(
+            "/api/conversations",
+            params={"project_id": project_id},
+        ).json()["items"][0]
+        assert persisted["title"] == "CAS winner"
+        assert persisted["isFavorite"] is False
+        assert persisted["revision"] == "2"
 
 
 def _login(client: TestClient) -> str:

@@ -236,17 +236,46 @@ def update_conversation(
     conversation = require_conversation(db, user, conversation_id, write=True)
     if expected_revision is not None and conversation.revision != expected_revision:
         raise ApiProblem(409, "revision_conflict", "다른 곳에서 대화가 변경되었습니다.")
+    values: dict[str, object] = {
+        "revision": conversation.revision + 1,
+        "last_activity_at": utc_now(),
+    }
     if title is not None:
-        conversation.title = title.strip()
+        values["title"] = title.strip()
     if is_favorite is not None:
-        conversation.is_favorite = is_favorite
+        values["is_favorite"] = is_favorite
     if is_liked is not None:
-        conversation.is_liked = is_liked
+        values["is_liked"] = is_liked
     if archived is not None:
-        conversation.status = "archived" if archived else "active"
-    conversation.revision += 1
-    conversation.last_activity_at = utc_now()
-    db.flush()
+        values["status"] = "archived" if archived else "active"
+    if expected_revision is None:
+        for field_name, value in values.items():
+            setattr(conversation, field_name, value)
+        db.flush()
+        return conversation
+
+    result = db.execute(
+        update(Conversation)
+        .where(
+            Conversation.id == conversation.id,
+            Conversation.revision == expected_revision,
+            Conversation.deleted_at.is_(None),
+        )
+        .values(**values)
+        .execution_options(synchronize_session=False)
+    )
+    if getattr(result, "rowcount", 0) != 1:
+        current_revision = db.scalar(
+            select(Conversation.revision).where(Conversation.id == conversation.id)
+        )
+        raise ApiProblem(
+            409,
+            "revision_conflict",
+            "다른 곳에서 대화가 변경되었습니다.",
+            details={"currentRevision": current_revision},
+        )
+    db.expire(conversation)
+    db.refresh(conversation)
     return conversation
 
 
