@@ -234,6 +234,19 @@ function MermaidSurface({ source, expanded = false, zoom = 1 }: { source: string
     event.currentTarget.classList.remove("is-dragging");
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   };
+  const handleWheel = (event: WheelEvent<HTMLDivElement>) => {
+    if (expanded || event.deltaY === 0) return;
+    const surface = event.currentTarget;
+    const atTop = surface.scrollTop <= 0;
+    const atBottom = surface.scrollTop + surface.clientHeight >= surface.scrollHeight - 1;
+    const shouldScrollConversation = (event.deltaY < 0 && atTop) || (event.deltaY > 0 && atBottom);
+    event.preventDefault();
+    if (!shouldScrollConversation) {
+      surface.scrollTop += event.deltaY;
+      return;
+    }
+    surface.closest<HTMLElement>(".conversation-scroll")?.scrollBy({ top: event.deltaY });
+  };
   return (
     <div
       ref={containerRef}
@@ -244,6 +257,7 @@ function MermaidSurface({ source, expanded = false, zoom = 1 }: { source: string
       onPointerMove={handlePointerMove}
       onPointerUp={finishDrag}
       onPointerCancel={finishDrag}
+      onWheel={handleWheel}
     >
       <span>다이어그램 렌더링 중…</span>
     </div>

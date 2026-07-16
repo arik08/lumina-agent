@@ -129,6 +129,7 @@
 }
 
 .mermaid-surface:not(.is-expanded) {
+  overscroll-behavior: auto;
   cursor: grab;
   touch-action: none;
 }
