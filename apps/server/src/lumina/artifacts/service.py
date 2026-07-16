@@ -7,9 +7,10 @@ import math
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlparse
-from xml.etree import ElementTree
 from zipfile import BadZipFile, ZipFile
 
+from defusedxml import DefusedXmlException
+from defusedxml import ElementTree as DefusedElementTree
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
@@ -573,8 +574,8 @@ def _inspect_openxml_package(
                     errors.append("openxml_relationships_too_large")
                     continue
                 try:
-                    root = ElementTree.fromstring(package.read(entry))
-                except (ElementTree.ParseError, OSError):
+                    root = DefusedElementTree.fromstring(package.read(entry))
+                except (DefusedXmlException, DefusedElementTree.ParseError, OSError):
                     errors.append("invalid_openxml_relationships")
                     continue
                 for relationship in root:
