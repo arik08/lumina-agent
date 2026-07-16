@@ -3763,7 +3763,7 @@ function App() {
       )}
 
       {toast && <div className="toast" role="status">{toast}</div>}
-      {modelNameTooltip && createPortal(<div className="account-model-tooltip" role="tooltip" style={{ left: modelNameTooltip.left, top: modelNameTooltip.top }}>{modelNameTooltip.name}</div>, document.body)}
+      {modelNameTooltip && createPortal(<div className={`account-model-tooltip${theme === "dark" ? " theme-dark" : ""}`} role="tooltip" style={{ left: modelNameTooltip.left, top: modelNameTooltip.top }}>{modelNameTooltip.name}</div>, document.body)}
     </div>
   );
 }
