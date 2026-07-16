@@ -73,7 +73,7 @@ import {
 import { createClientId } from "./client-id";
 import { BranchFromHereIcon } from "./components/ActionIcons";
 import { copyText } from "./clipboard";
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type RefObject, type UIEvent as ReactUIEvent } from "react";
+import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type RefObject, type UIEvent as ReactUIEvent } from "react";
 import { createPortal } from "react-dom";
 import { api, ApiError, attachmentContentUrl } from "./api";
 import { isTerminalRunStatus } from "./run-status";
@@ -100,15 +100,7 @@ type AdminProviderModelWithContextUsageRatio = AdminProviderModel & {
   defaultContextUsageRatio?: number;
 };
 import LoginScreen from "./components/LoginScreen";
-import { AdminView } from "./components/AdminView";
 import { AdminRunSafetySettings } from "./components/AdminRunSafetySettings";
-import { ArtifactLibraryView } from "./components/ArtifactLibraryView";
-import { MarketplaceView } from "./components/MarketplaceView";
-import { MemoryView } from "./components/MemoryView";
-import { ProjectSettings } from "./components/ProjectSettings";
-import { ProjectFilesView } from "./components/ProjectFilesView";
-import { HelpCenterView } from "./components/HelpCenterView";
-import { SchedulesView } from "./components/SchedulesView";
 import { ViewDataCacheProvider } from "./view-data-cache";
 import { SelectMenu } from "./components/SelectMenu";
 import { SharedSnapshotViewer } from "./components/SharedSnapshotViewer";
@@ -125,6 +117,15 @@ import {
   runStatusLabel,
 } from "./components/ConversationTurn";
 import { ShareActionIcon } from "./components/ActionIcons";
+
+const AdminView = lazy(() => import("./components/AdminView").then(({ AdminView }) => ({ default: AdminView })));
+const ArtifactLibraryView = lazy(() => import("./components/ArtifactLibraryView").then(({ ArtifactLibraryView }) => ({ default: ArtifactLibraryView })));
+const HelpCenterView = lazy(() => import("./components/HelpCenterView").then(({ HelpCenterView }) => ({ default: HelpCenterView })));
+const MarketplaceView = lazy(() => import("./components/MarketplaceView").then(({ MarketplaceView }) => ({ default: MarketplaceView })));
+const MemoryView = lazy(() => import("./components/MemoryView").then(({ MemoryView }) => ({ default: MemoryView })));
+const ProjectFilesView = lazy(() => import("./components/ProjectFilesView").then(({ ProjectFilesView }) => ({ default: ProjectFilesView })));
+const ProjectSettings = lazy(() => import("./components/ProjectSettings").then(({ ProjectSettings }) => ({ default: ProjectSettings })));
+const SchedulesView = lazy(() => import("./components/SchedulesView").then(({ SchedulesView }) => ({ default: SchedulesView })));
 
 type ArtifactTab = "preview" | "source";
 type NotificationTab = "notifications" | "announcements";
@@ -1090,6 +1091,15 @@ function ComposerPicker({
         </div>
       )}
     </div>
+  );
+}
+
+function FeatureViewLoading() {
+  return (
+    <main className="feature-view feature-view-loading" aria-label="화면 로딩" aria-busy="true">
+      <LoaderCircle className="is-running" size={17} />
+      <span>화면을 불러오고 있습니다.</span>
+    </main>
   );
 }
 
@@ -3444,16 +3454,17 @@ function App() {
           </div>
         </div>
 
-        <ViewDataCacheProvider scope={workspace.authSession.user.id}>
+        <Suspense fallback={<FeatureViewLoading />}>
+          <ViewDataCacheProvider scope={workspace.authSession.user.id}>
           {mainView === "marketplace" && <MarketplaceView key={workspace.activeProjectId ?? "none"} projectId={workspace.activeProjectId} onOpenNavigation={() => setSidebarOpen(true)} />}
           {mainView === "library" && <ArtifactLibraryView key={workspace.activeProjectId ?? "all"} projectId={workspace.activeProjectId} onOpenArtifact={(artifact) => void openArtifact(artifact)} onOpenNavigation={() => setSidebarOpen(true)} />}
           {mainView === "files" && <ProjectFilesView key={workspace.activeProjectId ?? "none"} projectId={workspace.activeProjectId} onOpenNavigation={() => setSidebarOpen(true)} />}
           {mainView === "help" && <HelpCenterView canManage={isAdmin} initialAnnouncementId={helpAnnouncementId} onOpenNavigation={() => setSidebarOpen(true)} />}
           {mainView === "schedules" && <SchedulesView key={workspace.activeProjectId ?? "none"} projectId={workspace.activeProjectId} projects={workspace.projects} execution={workspace.settings?.execution ?? null} executionOptions={candidateModelOptions} onOpenNavigation={() => setSidebarOpen(true)} onProjectChange={workspace.setActiveProjectId} onConversationsChanged={workspace.refreshConversations} />}
           {mainView === "memory" && <MemoryView key={activeProject?.id ?? "none"} project={activeProject} completedRunId={completedProjectLearningRunId} canReviewProjectLearning={canReviewProjectLearning} onOpenNavigation={() => setSidebarOpen(true)} />}
-        </ViewDataCacheProvider>
-        {mainView === "admin" && isAdmin && <AdminView onOpenNavigation={() => setSidebarOpen(true)} onToast={showToast} onUserUpdated={() => void workspace.refreshAuthSession()} />}
-        {mainView === "settings" && (
+          </ViewDataCacheProvider>
+          {mainView === "admin" && isAdmin && <AdminView onOpenNavigation={() => setSidebarOpen(true)} onToast={showToast} onUserUpdated={() => void workspace.refreshAuthSession()} />}
+          {mainView === "settings" && (
           <main className="feature-view settings-view" aria-label="설정">
             <aside className="settings-section-nav" aria-label="설정 항목">
               <header><Settings size={16} /><strong>설정</strong></header>
@@ -3577,27 +3588,28 @@ function App() {
               </div>
             </section>
           </main>
-        )}
-        {mainView === "project-settings" && <ProjectSettings
-          projects={workspace.projects}
-          project={activeProject}
-          onOpenNavigation={() => setSidebarOpen(true)}
-          onSelect={(projectId) => workspace.setActiveProjectId(projectId)}
-          onCreate={async () => {
-            const names = new Set(workspace.projects.map((item) => item.name));
-            let name = "새 프로젝트";
-            let suffix = 2;
-            while (names.has(name)) {
-              name = `새 프로젝트 ${suffix}`;
-              suffix += 1;
-            }
-            const created = await workspace.createProject(name);
-            if (!created) showToast("프로젝트를 생성하지 못했습니다.");
-          }}
-          onSave={(projectId, changes) => workspace.updateProjectDetails(projectId, changes)}
-          onDelete={(projectId) => workspace.archiveProject(projectId)}
-          onMembershipsChanged={workspace.refreshProjects}
-        />}
+          )}
+          {mainView === "project-settings" && <ProjectSettings
+            projects={workspace.projects}
+            project={activeProject}
+            onOpenNavigation={() => setSidebarOpen(true)}
+            onSelect={(projectId) => workspace.setActiveProjectId(projectId)}
+            onCreate={async () => {
+              const names = new Set(workspace.projects.map((item) => item.name));
+              let name = "새 프로젝트";
+              let suffix = 2;
+              while (names.has(name)) {
+                name = `새 프로젝트 ${suffix}`;
+                suffix += 1;
+              }
+              const created = await workspace.createProject(name);
+              if (!created) showToast("프로젝트를 생성하지 못했습니다.");
+            }}
+            onSave={(projectId, changes) => workspace.updateProjectDetails(projectId, changes)}
+            onDelete={(projectId) => workspace.archiveProject(projectId)}
+            onMembershipsChanged={workspace.refreshProjects}
+          />}
+        </Suspense>
       </section>
 
       {artifactPaneVisible && (

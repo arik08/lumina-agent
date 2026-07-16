@@ -679,6 +679,14 @@ button:focus-visible, textarea:focus-visible, a:focus-visible {
   color: var(--ink);
 }
 
+.feature-view-loading {
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .feature-header {
   display: flex;
   height: 46px;
