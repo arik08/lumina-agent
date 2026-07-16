@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import suppress
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
@@ -26,6 +27,14 @@ def _storage(settings: Settings) -> ManagedLocalStorage:
     if settings.files_dir is None:
         raise RuntimeError("LUMINA_FILES_DIR is not configured")
     return ManagedLocalStorage(settings.files_dir)
+
+
+def _cleanup_storage(storage: ManagedLocalStorage, keys: list[str]) -> None:
+    for key in reversed(keys):
+        try:
+            storage.delete(key)
+        except StorageError:
+            continue
 
 
 def _payload(attachment: Attachment) -> dict[str, object]:
@@ -137,30 +146,40 @@ async def post_attachment(
     )
     db.add(attachment)
     db.flush()
-    key = f"attachments/{context.user.id}/{attachment.id}/{digest}.{extension}"
-    stored = _storage(settings).put_bytes(key, content, expected_sha256=digest)
-    attachment.storage_key = stored.key
-    attachment.status = "ready"
-    attachment.extraction_status = extraction.status
-    attachment.extraction_version = "lumina-text-v1"
-    attachment.locator_map_json = extraction.locator_map
-    attachment.metadata_json = {**metadata, **extraction.metadata}
-    if extraction.status == "completed":
-        extracted = extraction.text.encode("utf-8")
-        extracted_digest = hashlib.sha256(extracted).hexdigest()
-        extraction_key = (
-            f"extractions/{context.user.id}/{attachment.id}/{extracted_digest}.txt"
-        )
-        stored_extraction = _storage(settings).put_bytes(
-            extraction_key, extracted, expected_sha256=extracted_digest
-        )
-        attachment.metadata_json = {
-            **attachment.metadata_json,
-            "extractedStorageKey": stored_extraction.key,
-            "extractedContentHash": extracted_digest,
-            "extractedSize": len(extracted),
-        }
-    db.commit()
+    storage = _storage(settings)
+    managed_keys: list[str] = []
+    try:
+        key = f"attachments/{context.user.id}/{attachment.id}/{digest}.{extension}"
+        managed_keys.append(key)
+        stored = storage.put_bytes(key, content, expected_sha256=digest)
+        attachment.storage_key = stored.key
+        attachment.status = "ready"
+        attachment.extraction_status = extraction.status
+        attachment.extraction_version = "lumina-text-v1"
+        attachment.locator_map_json = extraction.locator_map
+        attachment.metadata_json = {**metadata, **extraction.metadata}
+        if extraction.status == "completed":
+            extracted = extraction.text.encode("utf-8")
+            extracted_digest = hashlib.sha256(extracted).hexdigest()
+            extraction_key = (
+                f"extractions/{context.user.id}/{attachment.id}/{extracted_digest}.txt"
+            )
+            managed_keys.append(extraction_key)
+            stored_extraction = storage.put_bytes(
+                extraction_key, extracted, expected_sha256=extracted_digest
+            )
+            attachment.metadata_json = {
+                **attachment.metadata_json,
+                "extractedStorageKey": stored_extraction.key,
+                "extractedContentHash": extracted_digest,
+                "extractedSize": len(extracted),
+            }
+        db.commit()
+    except BaseException:
+        with suppress(Exception):
+            db.rollback()
+        _cleanup_storage(storage, managed_keys)
+        raise
     return _payload(attachment)
 
 

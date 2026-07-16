@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from io import BytesIO
 from pathlib import Path
+from unittest.mock import patch
 
+import pytest
 from docx import Document
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from pptx import Presentation
+from sqlalchemy.orm import Session
 
 from lumina.api.routes.attachments import _sniff_mime
 from lumina.attachments import extract_attachment_text
@@ -168,3 +171,42 @@ def test_attachment_api_rejects_fake_office_and_persists_valid_extraction(
         )
         assert unavailable.status_code == 503
         assert unavailable.json()["code"] == "attachment_content_missing"
+
+
+def test_attachment_commit_failure_cleans_all_managed_files(tmp_path: Path) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'attachment-cleanup.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    with TestClient(create_app(settings)) as client:
+        login = client.post(
+            "/api/auth/login",
+            json={
+                "loginName": "admin",
+                "loginDomain": "posco.com",
+                "password": "1",
+            },
+        )
+        csrf = login.json()["csrfToken"]
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "첨부 rollback 검증"},
+        ).json()
+
+        with patch.object(
+            Session, "commit", side_effect=RuntimeError("forced attachment commit failure")
+        ):
+            with pytest.raises(RuntimeError, match="forced attachment commit failure"):
+                client.post(
+                    f"/api/conversations/{conversation['id']}/attachments",
+                    headers={"X-CSRF-Token": csrf},
+                    data={"pasted_text": "commit 실패 시 정리할 본문", "source": "paste"},
+                )
+
+    assert not [path for path in settings.files_dir.rglob("*") if path.is_file()]
