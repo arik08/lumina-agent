@@ -31,6 +31,7 @@ class ProviderCapabilities:
     max_input_bytes: int | None = None
     max_document_pages: int | None = None
     context_window: int | None = None
+    max_input_tokens: int | None = None
     max_output_tokens: int | None = None
 
 

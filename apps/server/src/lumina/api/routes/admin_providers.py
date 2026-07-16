@@ -142,6 +142,20 @@ def _validate_capabilities(
             "invalid_model_context_window",
             "최대 컨텍스트 토큰은 1 이상의 정수여야 합니다.",
         )
+    max_input_tokens = capabilities.get(
+        "max_input_tokens", capabilities.get("maxInputTokens")
+    )
+    if max_input_tokens is not None and (
+        isinstance(max_input_tokens, bool)
+        or not isinstance(max_input_tokens, int)
+        or max_input_tokens < 1
+        or (context_window is not None and max_input_tokens > context_window)
+    ):
+        raise ApiProblem(
+            422,
+            "invalid_model_input_token_limit",
+            "모델 입력 토큰 상한은 전체 컨텍스트 이내의 1 이상 정수여야 합니다.",
+        )
     context_usage_ratio = capabilities.get(
         "context_compaction_threshold",
         capabilities.get("contextCompactionThreshold"),

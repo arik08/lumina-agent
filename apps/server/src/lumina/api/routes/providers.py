@@ -209,6 +209,7 @@ def _capabilities(raw: dict[str, Any]) -> dict[str, object]:
         "imageInput": bool(raw.get("image_input", False)),
         "imageGeneration": bool(raw.get("image_generation", False)),
         "contextWindow": raw.get("context_window"),
+        "maxInputTokens": raw.get("max_input_tokens"),
         "effortOptions": [
             {
                 "id": value,

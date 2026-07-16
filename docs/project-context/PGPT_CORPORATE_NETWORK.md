@@ -189,6 +189,7 @@ def build_pgpt_auth_token(
 - streaming text와 Tool Call delta 누적
 - Tool Call ID와 Tool Result 연결
 - P-GPT가 거부하는 `response_format`은 제외하고 interactive output은 `max_completion_tokens` 42,000 이하로 제한
+- 전체 Context window와 입력 Token 상한을 별도 capability로 관리합니다. 2026-07-17 VS Code Codex 확장 경로 실측 기준 `gpt-5.4-mini`는 270,000 Token, `gpt-5.5`는 911,900 Token까지 입력 가능했습니다. `gpt-5.4`는 사용자 관측상 `gpt-5.5`와 같은 계열로 추정하여 911,900 Token을 임시 상한으로 적용합니다. Lumina 자체 System prompt와 Tool schema도 입력을 소비하므로 실제 대화 Context 예산에서는 Tool schema와 안전 여유를 추가로 제외합니다.
 - `stream_options.include_usage`, 안정적인 `prompt_cache_key`와 retention 전달
 - usage와 cached token 정규화
 - retry 가능한 timeout·network·429·5xx 분류

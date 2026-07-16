@@ -295,6 +295,7 @@ export interface ModelCapabilities {
   imageInput: boolean;
   imageGeneration: boolean;
   contextWindow: number | null;
+  maxInputTokens: number | null;
   effortOptions: EffortOption[];
 }
 

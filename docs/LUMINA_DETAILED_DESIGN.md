@@ -1084,6 +1084,7 @@ Model Catalog item은 최소한 `provider_id`, 안정된 `model_key`, `display_n
 - 표시명과 런타임 ID를 분리합니다. 예를 들어 Codex의 `GPT-5.6-Terra` pill은 `gpt-5.6-terra`로 전송하되 과거 Message와 Run에는 당시 표시명과 ID를 모두 snapshot합니다.
 - P-GPT의 `runtime_model_id`는 실제 사내 deployment name과 다를 수 있으므로 관리자 mapping으로 바꿀 수 있습니다. 사용자에게 보이는 제품명은 mapping 변경 때문에 바뀌지 않습니다.
 - Provider capability를 같은 Provider의 모든 Model에 일괄 적용하지 않습니다. Tool Call, image input·generation, structured output, effort, context window와 cache 지원 여부를 Model별로 병합·검증합니다.
+- P-GPT의 전체 Context window와 실제 입력 상한을 구분합니다. 2026-07-17 VS Code Codex 확장 경로 실측 기준 `gpt-5.4-mini`의 입력 상한은 270,000 Token, `gpt-5.5`는 911,900 Token입니다. `gpt-5.4`는 사용자 관측상 `gpt-5.5`와 같은 계열로 추정하여 911,900 Token을 보수적 상한으로 적용하되, 추후 직접 실측값이 나오면 Model Catalog revision으로 교체합니다. Lumina는 Tool schema와 안전 여유를 이 입력 상한에서 추가로 제외하며, 전체 Context window나 출력 한도 값은 변경하지 않습니다.
 - 실행 중인 Run은 `provider_id`, `model_key`, `runtime_model_id`, capability snapshot과 `catalog_revision`을 고정합니다. catalog 변경은 다음 Run부터 적용합니다.
 - 저장된 Model이 disabled·삭제·권한 회수되면 같은 Provider의 허용 기본 Model로 fallback하고 변경 사실을 알립니다. Provider 자체가 불가능할 때만 전체 app default로 이동합니다.
 - 관리자가 명시적으로 추가하지 않는 한 새 출시 Model을 자동 활성화하지 않습니다. 자동 discovery는 후보 갱신일 뿐 권한 부여가 아닙니다.

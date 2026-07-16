@@ -690,8 +690,17 @@ def _context_budget(
         else 0
     )
     safety_margin = max(256, min(4_096, context_window // 20))
+    max_input_tokens = _positive_integer(
+        capabilities.get(
+            "max_input_tokens", capabilities.get("maxInputTokens")
+        ),
+        context_window,
+    )
     return context_window, max(
-        256, context_window - reserved_output - tool_tokens - safety_margin
+        256,
+        min(context_window - reserved_output, max_input_tokens)
+        - tool_tokens
+        - safety_margin,
     )
 
 
