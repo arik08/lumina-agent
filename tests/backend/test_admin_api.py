@@ -566,6 +566,14 @@ def test_admin_announcements_are_managed_by_admins_and_visible_to_users(
             announcement = created.json()
             assert announcement["author"]["loginId"] == "admin@posco.com"
 
+            for invalid_payload in ({}, {"title": None, "body": None}):
+                rejected_update = admin_client.patch(
+                    f"/api/admin/announcements/{announcement['id']}",
+                    headers={"X-CSRF-Token": admin_csrf},
+                    json=invalid_payload,
+                )
+                assert rejected_update.status_code == 422, rejected_update.text
+
             user_listing = user_client.get("/api/notifications/announcements")
             assert user_listing.status_code == 200, user_listing.text
             assert user_listing.json()["items"][0]["title"] == "서비스 점검 안내"

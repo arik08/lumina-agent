@@ -8,7 +8,7 @@ from typing import Literal, get_args
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query, Request, Response
-from pydantic import Field
+from pydantic import Field, model_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
@@ -97,6 +97,12 @@ class AdminAnnouncementCreate(ApiModel):
 class AdminAnnouncementPatch(ApiModel):
     title: str | None = Field(default=None, min_length=1, max_length=240)
     body: str | None = Field(default=None, min_length=1, max_length=20_000)
+
+    @model_validator(mode="after")
+    def require_change(self) -> "AdminAnnouncementPatch":
+        if self.title is None and self.body is None:
+            raise ValueError("title or body is required")
+        return self
 
 
 def _request_id(request: Request) -> str | None:
