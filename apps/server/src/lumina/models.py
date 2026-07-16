@@ -169,6 +169,7 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     personal_instruction_digest: Mapped[str] = mapped_column(
         String(64), default=EMPTY_SHA256, nullable=False
     )
+    settings_revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(512), nullable=False)
     role: Mapped[str] = mapped_column(String(32), default="user", nullable=False)
     status: Mapped[str] = mapped_column(
@@ -242,6 +243,7 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     instruction_digest: Mapped[str] = mapped_column(
         String(64), default=EMPTY_SHA256, nullable=False
     )
+    settings_revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     project_type: Mapped[str] = mapped_column(
         String(24), default="personal", nullable=False
     )

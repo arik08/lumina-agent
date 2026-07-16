@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any
+from typing import Any, NoReturn
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from ...authorization import require_project
@@ -22,6 +22,13 @@ from ..schemas import SettingsPatch
 
 
 router = APIRouter(tags=["providers", "settings"])
+
+_USER_SETTINGS_FIELDS = {
+    "theme",
+    "model_candidates",
+    "clarification_mode",
+}
+_PROJECT_SETTINGS_FIELDS = {"output_mode", "execution"}
 
 PROVIDER_NAMES = {
     "mock": "Lumina Mock",
@@ -291,6 +298,8 @@ def _resolved_settings(
     }
     result["revision"] = _settings_revision(
         result,
+        user,
+        project,
         theme_setting,
         execution_setting,
         model_candidates_setting,
@@ -326,6 +335,8 @@ def _default_model_candidates(db: Session) -> dict[str, list[str]]:
 
 def _settings_revision(
     value: dict[str, Any],
+    user: User,
+    project: Project,
     theme: UserSetting | None,
     execution: UserSetting | ProjectSetting | None,
     model_candidates: UserSetting | None,
@@ -333,6 +344,10 @@ def _settings_revision(
 ) -> str:
     payload = {
         "value": value,
+        "user_settings_revision": user.settings_revision,
+        "project_settings_revision": (
+            project.settings_revision if project.project_type == "shared" else None
+        ),
         "theme_updated": theme.updated_at.isoformat() if theme else None,
         "execution_updated": execution.updated_at.isoformat() if execution else None,
         "model_candidates_updated": (
@@ -347,6 +362,59 @@ def _settings_revision(
             "utf-8"
         )
     ).hexdigest()[:24]
+
+
+def _raise_settings_revision_conflict(db: Session) -> NoReturn:
+    db.rollback()
+    raise ApiProblem(
+        409, "settings_revision_conflict", "설정이 다른 곳에서 변경되었습니다."
+    )
+
+
+def _claim_settings_revision(
+    db: Session,
+    *,
+    user: User,
+    project: Project,
+    payload: SettingsPatch,
+) -> None:
+    changed_fields = payload.model_fields_set - {"expected_revision"}
+    user_fields = set(_USER_SETTINGS_FIELDS)
+    if project.project_type != "shared":
+        user_fields.update(_PROJECT_SETTINGS_FIELDS)
+
+    if changed_fields & user_fields:
+        expected_user_revision = user.settings_revision
+        result = db.execute(
+            update(User)
+            .where(
+                User.id == user.id,
+                User.settings_revision == expected_user_revision,
+            )
+            .values(settings_revision=expected_user_revision + 1)
+            .execution_options(synchronize_session=False)
+        )
+        if getattr(result, "rowcount", 0) != 1:
+            _raise_settings_revision_conflict(db)
+        db.expire(user, ["settings_revision"])
+
+    if (
+        project.project_type == "shared"
+        and changed_fields & _PROJECT_SETTINGS_FIELDS
+    ):
+        expected_project_revision = project.settings_revision
+        result = db.execute(
+            update(Project)
+            .where(
+                Project.id == project.id,
+                Project.settings_revision == expected_project_revision,
+            )
+            .values(settings_revision=expected_project_revision + 1)
+            .execution_options(synchronize_session=False)
+        )
+        if getattr(result, "rowcount", 0) != 1:
+            _raise_settings_revision_conflict(db)
+        db.expire(project, ["settings_revision"])
 
 
 @router.get("/settings/current")
@@ -390,9 +458,13 @@ def patch_current_settings(
         _resolved_settings(db, context.user, project, settings)
     )
     if current["revision"] != payload.expected_revision:
-        raise ApiProblem(
-            409, "settings_revision_conflict", "설정이 다른 곳에서 변경되었습니다."
-        )
+        _raise_settings_revision_conflict(db)
+    _claim_settings_revision(
+        db,
+        user=context.user,
+        project=project,
+        payload=payload,
+    )
     if payload.theme is not None:
         if theme_setting is None:
             theme_setting = UserSetting(
