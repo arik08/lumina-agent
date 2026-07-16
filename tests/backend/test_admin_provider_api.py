@@ -54,6 +54,30 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
         )
         assert current_settings["source"]["execution"] == "organization"
 
+        for invalid_settings in (
+            {},
+            {"theme": None},
+            {"outputMode": None},
+            {"clarificationMode": None},
+            {"execution": None},
+            {"modelCandidates": None},
+        ):
+            rejected_settings = client.patch(
+                "/api/settings/current",
+                headers={"X-CSRF-Token": csrf},
+                json={
+                    **invalid_settings,
+                    "expectedRevision": current_settings["revision"],
+                },
+            )
+            assert rejected_settings.status_code == 422, (
+                invalid_settings,
+                rejected_settings.text,
+            )
+        assert client.get("/api/settings/current").json()["revision"] == (
+            current_settings["revision"]
+        )
+
         personal_execution = client.patch(
             "/api/settings/current",
             headers={"X-CSRF-Token": csrf},

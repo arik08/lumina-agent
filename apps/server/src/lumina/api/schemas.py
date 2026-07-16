@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 def _to_camel(value: str) -> str:
@@ -343,6 +343,20 @@ class SettingsPatch(ApiModel):
     execution: ExecutionSelection | None = None
     model_candidates: dict[str, list[str]] | None = None
     expected_revision: str
+
+    @model_validator(mode="after")
+    def validate_changes(self) -> "SettingsPatch":
+        setting_fields = self.model_fields_set - {"expected_revision"}
+        if not setting_fields:
+            raise ValueError("at least one setting field is required")
+        null_fields = sorted(
+            field_name
+            for field_name in setting_fields
+            if getattr(self, field_name) is None
+        )
+        if null_fields:
+            raise ValueError(f"setting fields cannot be null: {', '.join(null_fields)}")
+        return self
 
 
 class SettingsResponse(ApiModel):
