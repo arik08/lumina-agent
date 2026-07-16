@@ -23,7 +23,7 @@ from lumina.providers import (
     ProviderUsage,
 )
 from lumina.providers.codex.adapter import _CodexToolCallStream
-from lumina.tools.web import SearchInvocation, SourceEvidence, WebSearchResult
+from lumina.tools.web import SearchInvocation, SourceEvidence, WebFetchResult, WebSearchResult
 
 
 def test_codex_structured_final_text_streams_before_envelope_completion() -> None:
@@ -228,6 +228,16 @@ def test_auto_effort_preserves_explicit_choice_and_classifies_task_shape() -> No
         reference_count=0,
         web_research_budget=(10, 15),
     ) == "medium"
+    assert executor_module._effective_reasoning_effort(
+        "auto",
+        provider_id="pgpt",
+        user_message="조사가 끝난 보고서를 작성해 줘",
+        artifact_required=True,
+        attachment_count=0,
+        reference_count=0,
+        web_research_budget=(20, 30),
+        artifact_drafting=True,
+    ) == "low"
     assert executor_module._effective_reasoning_effort(
         "auto",
         provider_id="pgpt",
@@ -1243,10 +1253,14 @@ def test_report_request_recovers_when_model_tries_to_finish_without_artifact(
     provider_turn = 0
     observed_system_prompts: list[str] = []
     observed_stable_prefixes: list[str] = []
+    report_turn_started_at: list[datetime] = []
+    report_turn_efforts: list[str | None] = []
     report_stream_resumed_at: list[datetime] = []
 
     class DelayedReportProvider(MockProvider):
         async def stream(self, request):
+            report_turn_started_at.append(datetime.now(UTC))
+            report_turn_efforts.append(request.effort)
             async for event in super().stream(request):
                 yield event
                 if event.type == "tool_call_started":
@@ -1330,7 +1344,16 @@ def test_report_request_recovers_when_model_tries_to_finish_without_artifact(
         snapshot["toolExecutions"][0]["startedAt"].replace("Z", "+00:00")
     )
     assert report_stream_resumed_at
-    assert report_tool_started_at <= report_stream_resumed_at[0]
+    assert report_tool_started_at <= report_turn_started_at[0]
+    assert report_turn_efforts == ["low"]
+    with SessionLocal() as db:
+        event_types = [
+            event.event_type
+            for event in db.query(RunEvent)
+            .filter(RunEvent.run_id == started.json()["run"]["runId"])
+            .order_by(RunEvent.sequence)
+        ]
+    assert event_types.index("artifact_progress") < event_types.index("tool_started")
     assert len(snapshot["artifacts"]) == 1
     assert "must call `create_report`" in observed_system_prompts[0]
     assert "`html_source` argument" in observed_system_prompts[0]
@@ -1348,6 +1371,124 @@ def test_report_request_recovers_when_model_tries_to_finish_without_artifact(
         "without internal IDs or raw tool-result fields" in observed_system_prompts[0]
     )
     assert "must call `create_report`" not in observed_stable_prefixes[0]
+
+
+def test_web_fetch_starts_visible_report_drafting_before_create_report_output(
+    monkeypatch, tmp_path: Path
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'report-drafting-turn.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    provider_turn = 0
+    report_turn_started_at: list[datetime] = []
+    report_turn_efforts: list[str | None] = []
+
+    async def fetched_page(url: str, *, tool_execution_id: str, **_kwargs):
+        now = datetime.now(UTC)
+        evidence = SourceEvidence(
+            source_id="source-report",
+            original_url=url,
+            normalized_url=url,
+            title="확인된 기사",
+            domain="example.com",
+            verbatim_excerpt="보고서 근거",
+            query_ids=(),
+            tool_execution_ids=(tool_execution_id,),
+            fetched_at=now,
+            content_hash="c" * 64,
+            evidence_kind="fetched_page",
+        )
+        return WebFetchResult(
+            evidence=evidence,
+            text="확인된 기사 본문",
+            content_type="text/html",
+            redirect_count=0,
+        )
+
+    class ReportProvider(MockProvider):
+        async def stream(self, request):
+            report_turn_started_at.append(datetime.now(UTC))
+            report_turn_efforts.append(request.effort)
+            async for event in super().stream(request):
+                yield event
+
+    def provider(*_args, **_kwargs):
+        nonlocal provider_turn
+        provider_turn += 1
+        if provider_turn == 1:
+            return MockProvider(
+                tool_call=MockToolCall(
+                    name="web_fetch",
+                    arguments={"url": "https://example.com/article", "query_ids": []},
+                    call_id="call-report-fetch",
+                )
+            )
+        if provider_turn == 2:
+            return ReportProvider(
+                tool_call=MockToolCall(
+                    name="create_report",
+                    arguments={
+                        "format": "html",
+                        "title": "기사 동향",
+                        "executive_summary": "확인된 근거를 요약했습니다.",
+                        "key_metrics": [],
+                        "sections": [],
+                        "action_items": [],
+                    },
+                    call_id="call-report-drafting",
+                )
+            )
+        return MockProvider(text_chunks=("기사 동향 보고서를 생성했습니다.",))
+
+    monkeypatch.setattr(executor_module, "web_fetch", fetched_page)
+    monkeypatch.setattr(local_run_executor, "_provider", provider)
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "보고서 작성 Turn"},
+        ).json()
+        started = client.post(
+            f"/api/conversations/{conversation['id']}/runs",
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": "report-drafting-turn-0001",
+            },
+            json={"message": {"text": "최근 기사를 확인하고 HTML 보고서로 작성해 줘"}},
+        )
+        assert started.status_code == 202, started.text
+        snapshot = _wait_for_terminal(client, started.json()["run"]["runId"])
+
+    assert snapshot["status"] == "completed"
+    report_tool = next(
+        tool for tool in snapshot["toolExecutions"] if tool["toolName"] == "create_report"
+    )
+    report_tool_started_at = datetime.fromisoformat(
+        report_tool["startedAt"].replace("Z", "+00:00")
+    )
+    assert report_tool_started_at <= report_turn_started_at[0]
+    assert report_turn_efforts == ["low"]
+    with SessionLocal() as db:
+        events = list(
+            db.query(RunEvent)
+            .filter(RunEvent.run_id == started.json()["run"]["runId"])
+            .order_by(RunEvent.sequence)
+        )
+    drafting_progress = next(event for event in events if event.event_type == "artifact_progress")
+    report_started = next(
+        event
+        for event in events
+        if event.event_type == "tool_started"
+        and event.payload_json["execution"]["toolName"] == "create_report"
+    )
+    assert drafting_progress.sequence < report_started.sequence
 
 
 def test_executable_html_write_file_satisfies_artifact_completion_gate(

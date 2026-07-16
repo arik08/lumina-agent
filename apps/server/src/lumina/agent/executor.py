@@ -1037,6 +1037,8 @@ class LocalRunExecutor:
                 return
         artifact_created = False
         artifact_completion_reminded = False
+        artifact_drafting_turn = False
+        artifact_drafting_started = False
         reactive_context_recovery_attempted = False
         provider_retry_attempt = 0
         partial_response_recovery_attempt = 0
@@ -1062,6 +1064,14 @@ class LocalRunExecutor:
             if round_index == 0 and provider_retry_attempt == 0:
                 self._emit_run_activity(run_id, "started")
             await self._set_status(run_id, MODEL_STREAMING)
+            if artifact_drafting_turn and not artifact_drafting_started:
+                await self._publish_artifact_progress(
+                    run_id,
+                    0,
+                    0,
+                    drafting_started_at=utc_now(),
+                )
+                artifact_drafting_started = True
             provider = self._provider(
                 provider_id,
                 wants_artifact=artifact_required,
@@ -1075,6 +1085,7 @@ class LocalRunExecutor:
                 attachment_count=len(attachment_ids),
                 reference_count=len(prompt_references),
                 web_research_budget=web_research_budget,
+                artifact_drafting=artifact_drafting_turn,
             )
             request = ProviderRequest(
                 model=runtime_model_id,
@@ -1583,6 +1594,7 @@ class LocalRunExecutor:
                         )
                     )
                     artifact_completion_reminded = True
+                    artifact_drafting_turn = True
                     continue
                 await self._enter_final_plan(run_id)
                 await self._complete_run(
@@ -1707,6 +1719,8 @@ class LocalRunExecutor:
                     and isinstance(result.get("artifact_id"), str)
                 ):
                     artifact_created = True
+                elif call["name"] in {"create_report", "write_file"}:
+                    artifact_drafting_started = False
                 messages.append(
                     ProviderMessage(
                         role="tool",
@@ -1716,6 +1730,12 @@ class LocalRunExecutor:
                         provider_metadata=call["provider_metadata"],
                     )
                 )
+            if (
+                artifact_required
+                and not artifact_created
+                and any(call["name"] == "web_fetch" for call, _result in resolved_calls)
+            ):
+                artifact_drafting_turn = True
             exhausted_tools = self._exhausted_web_tools(
                 run_id,
                 search_limit=web_research_budget[0],
@@ -4307,6 +4327,7 @@ class LocalRunExecutor:
         *,
         estimated: bool = True,
         model_output_tokens: int | None = None,
+        drafting_started_at: datetime | None = None,
     ) -> None:
         with session_scope() as db:
             run = db.get(Run, run_id)
@@ -4324,11 +4345,14 @@ class LocalRunExecutor:
                 progress["targetTokens"] = target_tokens
             if model_output_tokens is not None and model_output_tokens > 0:
                 progress["modelOutputTokens"] = max(0, model_output_tokens)
-            run.snapshot_json = {
+            snapshot = {
                 **run.snapshot_json,
                 "artifact_progress": progress,
                 "artifact_usage": progress,
             }
+            if drafting_started_at is not None:
+                snapshot["artifact_drafting_started_at"] = drafting_started_at.isoformat()
+            run.snapshot_json = snapshot
             append_event(db, run, "artifact_progress", progress)
         await event_broker.notify(run_id)
 
@@ -4350,6 +4374,24 @@ class LocalRunExecutor:
             )
             if existing is not None:
                 return
+            started_at = utc_now()
+            snapshot = dict(run.snapshot_json)
+            drafting_started_at = snapshot.pop("artifact_drafting_started_at", None)
+            if tool_name in {"create_report", "write_file"} and isinstance(
+                drafting_started_at, str
+            ):
+                try:
+                    parsed_started_at = datetime.fromisoformat(
+                        drafting_started_at.replace("Z", "+00:00")
+                    )
+                    started_at = (
+                        parsed_started_at.replace(tzinfo=UTC)
+                        if parsed_started_at.tzinfo is None
+                        else parsed_started_at.astimezone(UTC)
+                    )
+                except ValueError:
+                    pass
+            run.snapshot_json = snapshot
             align_work_plan_for_tool_start(db, run, tool_name=tool_name)
             tool = ToolExecution(
                 run_id=run.id,
@@ -4364,7 +4406,7 @@ class LocalRunExecutor:
                     else {}
                 ),
                 status="streaming",
-                started_at=utc_now(),
+                started_at=started_at,
             )
             db.add(tool)
             db.flush()
@@ -5542,6 +5584,7 @@ def _effective_reasoning_effort(
     attachment_count: int,
     reference_count: int,
     web_research_budget: tuple[int, int],
+    artifact_drafting: bool = False,
 ) -> str | None:
     normalized = (requested_effort or "").strip().casefold()
     if normalized != "auto":
@@ -5550,6 +5593,8 @@ def _effective_reasoning_effort(
         # Supported Gemini models already use provider-side dynamic thinking when
         # no explicit thinking control is sent.
         return None
+    if artifact_drafting:
+        return "low"
 
     message = " ".join(user_message.split())
     if (
