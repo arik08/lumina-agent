@@ -260,7 +260,7 @@ def _resolve_source_document(
         project_file = db.get(ProjectFile, source_id)
         if project_file is None or project_file.project_id != run.project_id:
             raise ValueError("Source document is unavailable for this Run.")
-        version = db.scalar(
+        project_file_version = db.scalar(
             select(ProjectFileVersion)
             .where(
                 ProjectFileVersion.project_file_id == project_file.id,
@@ -269,9 +269,9 @@ def _resolve_source_document(
             .order_by(ProjectFileVersion.version_number.desc())
             .limit(1)
         )
-        if version is None:
+        if project_file_version is None:
             raise ValueError("Source document version is unavailable for this Run.")
-        content = _project_file_version_content(file_storage, version)
+        content = _project_file_version_content(file_storage, project_file_version)
         return SourceDocument(
             document_id=document_id,
             name=project_file.logical_path,
@@ -282,7 +282,7 @@ def _resolve_source_document(
         artifact = db.get(Artifact, source_id)
         if artifact is None or artifact.project_id != run.project_id:
             raise ValueError("Source document is unavailable for this Run.")
-        version = db.scalar(
+        artifact_version = db.scalar(
             select(ArtifactVersion)
             .where(
                 ArtifactVersion.artifact_id == artifact.id,
@@ -291,10 +291,11 @@ def _resolve_source_document(
             .order_by(ArtifactVersion.version_number.desc())
             .limit(1)
         )
-        if version is None:
+        if artifact_version is None:
             raise ValueError("Source document version is unavailable for this Run.")
         content = artifact_storage.read_bytes(
-            version.storage_key, expected_sha256=version.content_hash
+            artifact_version.storage_key,
+            expected_sha256=artifact_version.content_hash,
         ).decode("utf-8", errors="replace")
         return SourceDocument(
             document_id=document_id,

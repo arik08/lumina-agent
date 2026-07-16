@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from pathlib import Path
 
@@ -13,14 +14,24 @@ from lumina.api.schemas import RunCreate, RunMessageInput
 from lumina.config import Settings
 from lumina.db import SessionLocal
 from lumina.main import create_app
-from lumina.models import Attachment, Run, User
+from lumina.models import (
+    Artifact,
+    ArtifactVersion,
+    Attachment,
+    ProjectFile,
+    ProjectFileVersion,
+    Run,
+    User,
+)
 from lumina.runs.approvals import classify_tool_risk
 from lumina.runs.service import create_run
 from lumina.tools.source_documents import (
     SOURCE_DOCUMENT_TOOL_SCHEMAS,
+    artifact_source_document_id,
     attachment_source_document_id,
     execute_source_document_tool,
     message_source_document_id,
+    project_file_source_document_id,
     source_document_threshold_tokens,
 )
 
@@ -244,6 +255,129 @@ def test_small_attachment_remains_inline(tmp_path: Path) -> None:
         )
         assert "작은 문서 원문" in prepared
         assert "<source-document-manifest>" not in prepared
+
+
+def test_project_file_and_artifact_source_documents_resolve_exact_versions(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    executor = LocalRunExecutor(settings)
+    with TestClient(create_app(settings)) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers=headers,
+            json={"projectId": project_id, "title": "versioned sources"},
+        ).json()
+        with SessionLocal() as db:
+            user = db.scalar(select(User).where(User.login_id == "admin@posco.com"))
+            assert user is not None
+            run, _message, created = create_run(
+                db,
+                user=user,
+                conversation_id=conversation["id"],
+                payload=RunCreate(
+                    message=RunMessageInput(text="버전이 고정된 원문을 확인해 주세요.")
+                ),
+                idempotency_key="versioned-source-document-run",
+            )
+            assert created is True
+
+            project_file_content = "Project file exact version\nSecond line".encode()
+            project_file_digest = hashlib.sha256(project_file_content).hexdigest()
+            stored_project_file = executor.file_storage.put_bytes(
+                "project-files/versioned-source.txt",
+                project_file_content,
+                expected_sha256=project_file_digest,
+            )
+            project_file = ProjectFile(
+                organization_id=user.organization_id,
+                project_id=project_id,
+                created_by_user_id=user.id,
+                logical_path="sources/versioned-source.txt",
+                active_path_key="sources/versioned-source.txt",
+            )
+            db.add(project_file)
+            db.flush()
+            db.add(
+                ProjectFileVersion(
+                    project_file_id=project_file.id,
+                    version_number=1,
+                    storage_key=stored_project_file.key,
+                    content_hash=stored_project_file.sha256,
+                    size_bytes=stored_project_file.size,
+                    mime_type="text/plain",
+                    original_filename="versioned-source.txt",
+                    extraction_status="completed",
+                    created_by_user_id=user.id,
+                )
+            )
+
+            artifact_content = "Artifact exact version\nSecond line".encode()
+            artifact_digest = hashlib.sha256(artifact_content).hexdigest()
+            stored_artifact = executor.storage.put_bytes(
+                "artifacts/versioned-source.html",
+                artifact_content,
+                expected_sha256=artifact_digest,
+            )
+            artifact = Artifact(
+                organization_id=user.organization_id,
+                project_id=project_id,
+                conversation_id=conversation["id"],
+                created_by_user_id=user.id,
+                display_name="Versioned source.html",
+                kind="html",
+                mime_type="text/html",
+                current_version_number=1,
+            )
+            db.add(artifact)
+            db.flush()
+            db.add(
+                ArtifactVersion(
+                    artifact_id=artifact.id,
+                    version_number=1,
+                    storage_key=stored_artifact.key,
+                    content_hash=stored_artifact.sha256,
+                    size_bytes=stored_artifact.size,
+                    change_type="create",
+                    validation_status="valid",
+                    created_by_user_id=user.id,
+                )
+            )
+            db.commit()
+
+            project_file_result = execute_source_document_tool(
+                db,
+                executor.file_storage,
+                executor.storage,
+                run=run,
+                name="read_source_document",
+                arguments={
+                    "document_id": project_file_source_document_id(
+                        project_file.id, project_file_digest
+                    ),
+                    "start_line": 1,
+                    "limit": 2,
+                },
+            )
+            artifact_result = execute_source_document_tool(
+                db,
+                executor.file_storage,
+                executor.storage,
+                run=run,
+                name="read_source_document",
+                arguments={
+                    "document_id": artifact_source_document_id(
+                        artifact.id, artifact_digest
+                    ),
+                    "start_line": 1,
+                    "limit": 2,
+                },
+            )
+
+            assert "Project file exact version" in project_file_result["content"]
+            assert "Artifact exact version" in artifact_result["content"]
 
 
 def test_oversized_pasted_user_document_is_recoverable_from_message(
