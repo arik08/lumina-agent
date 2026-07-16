@@ -206,6 +206,16 @@ def test_link_snapshot_share_and_revoke(tmp_path: Path) -> None:
         share_id = created_payload["id"]
         token = created_payload["urlToken"]
         assert token
+        listed = client.get("/api/conversation-shares")
+        assert listed.status_code == 200, listed.text
+        assert listed.json()["items"] == [
+            {
+                key: value
+                for key, value in created_payload.items()
+                if key not in {"urlToken", "viewerPath"}
+            }
+        ]
+        assert listed.json()["items"][0]["recipient"] is None
 
         # A later Run must not expand the already-created snapshot.
         _start_and_wait(client, alice_csrf, conversation_id, "second-share-run")

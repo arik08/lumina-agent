@@ -214,7 +214,11 @@ def list_conversation_shares(
     )
     recipients: dict[str, User] = {}
     if not received:
-        recipient_ids = {grant.recipient_user_id for grant in grants}
+        recipient_ids = {
+            grant.recipient_user_id
+            for grant in grants
+            if grant.recipient_user_id is not None
+        }
         if recipient_ids:
             recipients = {
                 recipient.id: recipient
@@ -222,12 +226,12 @@ def list_conversation_shares(
                     select(User).where(User.id.in_(recipient_ids))
                 )
             }
-    return {
-        "items": [
-            _share_payload(grant, recipient=recipients.get(grant.recipient_user_id))
-            for grant in grants
-        ]
-    }
+    items: list[dict[str, object]] = []
+    for grant in grants:
+        recipient_id = grant.recipient_user_id
+        recipient = recipients.get(recipient_id) if recipient_id is not None else None
+        items.append(_share_payload(grant, recipient=recipient))
+    return {"items": items}
 
 
 @router.delete("/{share_id}", status_code=204)
