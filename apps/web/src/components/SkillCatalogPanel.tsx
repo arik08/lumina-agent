@@ -104,7 +104,7 @@ function CatalogCard({
           </button>
         </div>
         <div className="skill-catalog-card-actions">
-          {item.installed && <button className="skill-catalog-view tooltip-control" type="button" aria-label={`${item.name} 보기`} data-tooltip="설치된 Skill 보기" onClick={() => onView(item)}><Eye size={14} /></button>}
+          {item.installed && <button className="skill-catalog-view tooltip-control" type="button" aria-label={`${item.name} 보기`} data-tooltip="보기" onClick={() => onView(item)}><Eye size={14} /></button>}
           {(item.installed || item.canInstall) && <MarketplaceInstallButton
             name={item.name}
             installed={item.installed}

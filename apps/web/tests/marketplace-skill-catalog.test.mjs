@@ -17,7 +17,10 @@ test("catalog uses a searchable card grid with installed-only package viewing", 
   ]);
 
   assert.match(view, /skillView === "catalog" \? <SkillCatalogPanel/);
-  assert.match(view, /setSelectedId\(target\.id\);\s*setSkillView\("installed"\);/);
+  assert.match(view, /setSelectedId\(target\.id\);\s*setEnteredInstalledFromCatalog\(true\);\s*setSkillView\("installed"\);/);
+  assert.match(view, /enteredInstalledFromCatalog && skillView === "installed"/);
+  assert.match(view, /<ArrowLeft size=\{14\} \/> 뒤로가기/);
+  assert.match(view, /const returnToCatalog = \(\) => \{\s*setEnteredInstalledFromCatalog\(false\);\s*setSkillView\("catalog"\);/);
   assert.match(panel, /placeholder="이름, 설명, 태그 검색"/);
   assert.match(panel, /catalog\.facets\.categories\.map/);
   assert.match(panel, /catalog\.facets\.tags\.map/);
@@ -33,7 +36,7 @@ test("catalog uses a searchable card grid with installed-only package viewing", 
   assert.match(panel, /className=\{`skill-catalog-card \$\{item\.likedByMe \? "is-liked" : ""\}`\.trim\(\)\}/);
   assert.match(panel, /className=\{`skill-catalog-like/);
   assert.match(panel, /item\.installed && <button className="skill-catalog-view tooltip-control"/);
-  assert.match(panel, /data-tooltip="설치된 Skill 보기"/);
+  assert.match(panel, /data-tooltip="보기"/);
   assert.match(panel, /<Eye size=\{14\} \/><\/button>/);
   assert.doesNotMatch(panel, />View<\/span>/);
   assert.match(panel, /\(item\.installed \|\| item\.canInstall\) && <MarketplaceInstallButton/);
