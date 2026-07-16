@@ -364,9 +364,9 @@ export function MermaidDiagram({ source }: { source: string }) {
           <span>Mermaid</span>
           <div className="interactive-response-toolbar-actions">
             <div className="mermaid-inline-zoom-controls" aria-label="Mermaid 다이어그램 배율 조절">
-              <button type="button" aria-label="Mermaid 다이어그램 축소" data-tooltip="축소" disabled={zoom <= 0.5} onClick={() => changeZoom(zoom - 0.25)}><Minus size={15} /></button>
+              <button type="button" aria-label="Mermaid 다이어그램 축소" data-tooltip="축소" disabled={zoom <= 0.5} onClick={() => changeZoom(zoom - 0.1)}><Minus size={15} /></button>
               <button type="button" className="mermaid-inline-zoom-value" aria-label="Mermaid 다이어그램 배율 초기화" data-tooltip="100%로 초기화" onClick={() => setZoom(1)}>{Math.round(zoom * 100)}%</button>
-              <button type="button" aria-label="Mermaid 다이어그램 확대" data-tooltip="확대" disabled={zoom >= 2} onClick={() => changeZoom(zoom + 0.25)}><Plus size={15} /></button>
+              <button type="button" aria-label="Mermaid 다이어그램 확대" data-tooltip="확대" disabled={zoom >= 2} onClick={() => changeZoom(zoom + 0.1)}><Plus size={15} /></button>
             </div>
             <button type="button" className="interactive-response-expand-icon" aria-label="Mermaid 다이어그램 크게 보기" data-tooltip="크게 보기" onClick={() => setExpanded(true)}><Maximize2 size={15} /></button>
           </div>

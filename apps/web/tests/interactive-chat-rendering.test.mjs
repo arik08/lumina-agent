@@ -66,9 +66,9 @@ test("tall Mermaid workflows keep readable geometry inside a bounded scroll surf
 test("chat Mermaid cards provide button-only zoom controls beside the expand button", () => {
   assert.match(rendererSource, /const \[zoom, setZoom\] = useState\(1\)/);
   assert.match(rendererSource, /setZoom\(clamp\(next, 0\.5, 2\)\)/);
-  assert.match(rendererSource, /aria-label="Mermaid 다이어그램 축소"[\s\S]*?zoom - 0\.25/);
+  assert.match(rendererSource, /aria-label="Mermaid 다이어그램 축소"[\s\S]*?zoom - 0\.1/);
   assert.match(rendererSource, /aria-label="Mermaid 다이어그램 배율 초기화"[\s\S]*?setZoom\(1\)/);
-  assert.match(rendererSource, /aria-label="Mermaid 다이어그램 확대"[\s\S]*?zoom \+ 0\.25/);
+  assert.match(rendererSource, /aria-label="Mermaid 다이어그램 확대"[\s\S]*?zoom \+ 0\.1/);
   assert.match(rendererSource, /<MermaidSurface source=\{source\} zoom=\{zoom\} \/>/);
   assert.match(rendererSource, /renderedSvg\.style\.maxWidth = zoom > 1 \? "none" : "100%"/);
   assert.doesNotMatch(rendererSource, /<MermaidSurface source=\{source\} zoom=\{zoom\}[^>]*onWheel/);
