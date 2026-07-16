@@ -2506,6 +2506,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .appended-message { margin-top: 28px; }
 
 .dock-area { position: absolute; z-index: 8; right: 12px; bottom: 0; left: 0; padding: 0 20px max(16px, env(safe-area-inset-bottom)); background: transparent; pointer-events: none; }
+.dock-area::after { position: absolute; right: 0; bottom: 0; left: 0; height: max(16px, env(safe-area-inset-bottom)); background: var(--chat-canvas); content: ""; }
 .run-dock, .jump-to-latest { pointer-events: auto; }
 .jump-to-latest { position: absolute; top: -34px; left: 50%; display: grid; width: 40px; height: 26px; place-items: center; padding: 0; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface); color: var(--muted); cursor: pointer; transform: translateX(-50%); transition: background 140ms ease, border-color 140ms ease, color 140ms ease, transform 140ms cubic-bezier(.22, 1, .36, 1); }
 .jump-to-latest:hover { border-color: color-mix(in srgb, var(--cobalt) 38%, var(--line-strong)); background: var(--cobalt-pale); color: var(--cobalt); transform: translateX(-50%) translateY(1px); }

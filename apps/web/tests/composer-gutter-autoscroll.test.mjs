@@ -10,6 +10,7 @@ test("composer gutters pass middle-button hits through to the conversation scrol
 
   assert.match(dockAreaRule, /pointer-events:\s*none;/);
   assert.match(dockAreaRule, /background:\s*transparent;/);
+  assert.match(styles, /\.dock-area::after \{[^}]*height:\s*max\(16px, env\(safe-area-inset-bottom\)\);[^}]*background:\s*var\(--chat-canvas\);[^}]*content:\s*"";/);
   assert.match(styles, /\.run-dock,\s*\.jump-to-latest \{\s*pointer-events:\s*auto;\s*\}/);
 });
 
