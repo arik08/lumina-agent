@@ -517,7 +517,7 @@ def test_development_launcher_keeps_failure_visible_and_preserves_exit_code(
     assert "simulated development failure" in completed.stdout
     assert "Development launcher failed with exit code 9" in completed.stdout
     assert "run_lumina_dev.state.json" in completed.stdout
-    assert "Press any key" in completed.stdout
+    assert "Press R to restart. Press any other key to close this window." in completed.stdout
 
 
 def test_runtime_bootstrap_uses_migrated_schema_without_create_all() -> None:
