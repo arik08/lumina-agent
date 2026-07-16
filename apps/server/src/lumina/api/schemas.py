@@ -59,6 +59,15 @@ class ProjectPatch(ApiModel):
     concept: str | None = Field(default=None, max_length=20_000)
     archived: bool | None = None
 
+    @model_validator(mode="after")
+    def require_change(self) -> "ProjectPatch":
+        if all(
+            value is None
+            for value in (self.name, self.description, self.concept, self.archived)
+        ):
+            raise ValueError("at least one project field is required")
+        return self
+
 
 class ProjectResponse(ApiModel):
     id: str
@@ -144,6 +153,15 @@ class ConversationPatch(ApiModel):
     is_liked: bool | None = None
     archived: bool | None = None
     expected_revision: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def require_change(self) -> "ConversationPatch":
+        if all(
+            value is None
+            for value in (self.title, self.is_favorite, self.is_liked, self.archived)
+        ):
+            raise ValueError("at least one conversation field is required")
+        return self
 
 
 class ConversationMove(ApiModel):

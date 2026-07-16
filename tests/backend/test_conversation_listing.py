@@ -119,6 +119,65 @@ def test_cursor_preserves_favorite_order_and_search_is_whitespace_tolerant(
         ]
 
 
+def test_project_and_conversation_patch_reject_noop_payloads(tmp_path: Path) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'noop-patch.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        headers = {"X-CSRF-Token": csrf}
+        project = client.get("/api/projects").json()[0]
+
+        for invalid_payload in ({}, {"name": None, "archived": None}):
+            rejected_project = client.patch(
+                f"/api/projects/{project['id']}",
+                headers=headers,
+                json=invalid_payload,
+            )
+            assert rejected_project.status_code == 422, rejected_project.text
+
+        unchanged_project = next(
+            item
+            for item in client.get("/api/projects").json()
+            if item["id"] == project["id"]
+        )
+        assert unchanged_project["updatedAt"] == project["updatedAt"]
+
+        conversation_response = client.post(
+            "/api/conversations",
+            headers=headers,
+            json={"projectId": project["id"], "title": "No-op patch guard"},
+        )
+        assert conversation_response.status_code == 201, conversation_response.text
+        conversation = conversation_response.json()
+
+        for invalid_payload in (
+            {},
+            {"expectedRevision": conversation["revision"]},
+            {"title": None, "isFavorite": None},
+        ):
+            rejected_conversation = client.patch(
+                f"/api/conversations/{conversation['id']}",
+                headers=headers,
+                json=invalid_payload,
+            )
+            assert rejected_conversation.status_code == 422, rejected_conversation.text
+
+        conversations = client.get(
+            "/api/conversations",
+            params={"project_id": project["id"]},
+        ).json()["items"]
+        unchanged_conversation = next(
+            item for item in conversations if item["id"] == conversation["id"]
+        )
+        assert unchanged_conversation["revision"] == conversation["revision"]
+
+
 def _login(client: TestClient) -> str:
     response = client.post(
         "/api/auth/login",
