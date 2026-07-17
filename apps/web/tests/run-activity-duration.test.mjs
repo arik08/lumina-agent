@@ -47,6 +47,12 @@ test("group heading shows only merged tool time while model time has its own row
   assert.doesNotMatch(app, /formatDuration\(stageDurationMs \?\? toolCallGroupDuration/);
 });
 
+test("tool and model durations never wrap between the number and seconds unit", async () => {
+  const styles = await read("../src/styles.css");
+
+  assert.match(styles, /\.tool-call-duration \{[^}]*white-space: nowrap;/);
+});
+
 test("a stage hides its parent duration whenever timed child rows already account for it", async () => {
   const app = await read("../src/components/ConversationTurn.tsx");
 
