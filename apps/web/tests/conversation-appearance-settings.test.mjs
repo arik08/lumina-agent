@@ -36,8 +36,10 @@ test("tool detail overlay keeps the unified scroll area compact", () => {
 });
 
 test("tool detail copy action shows inline success feedback", () => {
+  assert.match(conversationTurn, /className="tool-message is-global"[\s\S]*?className="tool-message-actions"[\s\S]*?className="tool-message-section"/);
   assert.match(conversationTurn, /className=\{copied \? "is-copied" : undefined\}/);
   assert.match(conversationTurn, /copied \? <Check size=\{13\} \/> : <Copy size=\{13\} \/>/);
   assert.match(conversationTurn, /copied \? "복사됨" : "복사"/);
   assert.match(styles, /\.tool-message-actions button\.is-copied[\s\S]*?color: var\(--success\)/);
+  assert.match(styles, /\.tool-message-actions \{[^}]*position: sticky;[^}]*top: 0;[^}]*justify-content: flex-end;/);
 });

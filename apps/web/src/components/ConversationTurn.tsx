@@ -631,6 +631,11 @@ function ToolCallRow({
       )}
       {isOpen && overlayStyle && toolDetailText && createPortal(
         <div ref={overlayRef} className="tool-message is-global" id={contentId} style={overlayStyle}>
+          <div className="tool-message-actions">
+            <button className={copied ? "is-copied" : undefined} type="button" aria-live="polite" onClick={handleCopy}>
+              {copied ? <Check size={13} /> : <Copy size={13} />} {copied ? "복사됨" : "복사"}
+            </button>
+          </div>
           <section className="tool-message-section">
             <div className="tool-message-heading"><span>도구 요청</span><code>{execution.toolName}</code></div>
             <SyntaxCode value={toolDetailText.requestText} language={execution.input ? "json" : "plaintext"} />
@@ -639,11 +644,6 @@ function ToolCallRow({
             <div className="tool-message-heading"><span>도구 결과</span><span className="tool-message-state">{stoppedByRun ? (runOutcome === "failed" ? "실패" : "중지됨") : toolStatusLabel(execution.status)} · {formatDuration(liveDurationMs)}</span></div>
             <SyntaxCode value={toolDetailText.resultText} language={execution.result ? "json" : "plaintext"} />
           </section>
-          <div className="tool-message-actions">
-            <button className={copied ? "is-copied" : undefined} type="button" aria-live="polite" onClick={handleCopy}>
-              {copied ? <Check size={13} /> : <Copy size={13} />} {copied ? "복사됨" : "복사"}
-            </button>
-          </div>
         </div>,
         triggerRef.current?.closest(".app-shell") ?? document.body,
       )}
