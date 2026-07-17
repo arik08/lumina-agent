@@ -2706,9 +2706,9 @@ button:disabled { cursor: default; opacity: 0.5; }
 .composer-footer > div:last-child { flex: 0 0 auto; }
 .composer-footer button { min-width: 31px; height: 31px; border-radius: 7px; cursor: pointer; }
 .composer-footer button:hover { background: #f0f1f2; }
-.composer-footer .output-mode-toggle { display: inline-flex; gap: 0; margin-left: 3px; padding: 2px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-soft); }
-.composer-footer .output-mode-toggle button { min-width: 0; height: 25px; padding: 0 7px; border-radius: 5px; color: var(--muted); font-size: 10.5px; font-weight: 600; }
-.composer-footer .output-mode-toggle button.is-active { background: var(--surface); box-shadow: 0 1px 3px rgba(31, 39, 51, 0.12); color: var(--cobalt); }
+.composer-footer .output-mode-toggle { display: inline-flex; gap: 1px; margin-left: 3px; }
+.composer-footer .output-mode-toggle button { min-width: 0; height: 25px; padding: 0 5px; border-radius: 5px; color: var(--muted); font-size: 10.5px; font-weight: 600; }
+.composer-footer .output-mode-toggle button.is-active { background: var(--cobalt-pale); color: var(--cobalt); }
 .composer-footer .output-mode-toggle button.is-file-mode-nudged { background: var(--cobalt); box-shadow: 0 0 0 3px color-mix(in srgb, var(--cobalt) 24%, transparent), 0 3px 10px color-mix(in srgb, var(--cobalt) 28%, transparent); color: oklch(98.5% 0.006 255); animation: file-mode-attention 1.8s var(--ease-out-quint) infinite; }
 .composer-footer .text-control { gap: 5px; padding: 0 7px; color: var(--muted); font-size: 12.5px; font-weight: 650; }
 .composer-footer .model-control, .composer-footer .effort-control { width: auto; padding: 0 6px; color: #4b525c; font-size: 12px; }
@@ -2841,9 +2841,6 @@ button:disabled { cursor: default; opacity: 0.5; }
 .composer-footer .send-button.is-stop:active { transform: scale(0.94); }
 .composer-footer .send-button .stop-glyph { width: 9px; height: 9px; border-radius: 2.5px; background: currentColor; }
 .composer-footer .send-button:disabled { cursor: wait; opacity: 0.65; }
-@container composer (max-width: 460px) {
-  .composer-footer .output-mode-toggle { display: none; }
-}
 @container composer (max-width: 460px) {
   .composer-command-actions .composer-command-steer span { display: none; }
 }

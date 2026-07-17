@@ -5,8 +5,9 @@ import test from "node:test";
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
 test("composer keeps model controls intact and sends independent analysis and answer options", async () => {
-  const [app, workspace, types] = await Promise.all([
+  const [app, styles, workspace, types] = await Promise.all([
     read("../src/App.tsx"),
+    read("../src/styles.css"),
     read("../src/use-lumina-workspace.ts"),
     read("../src/api-types.ts"),
   ]);
@@ -23,6 +24,8 @@ test("composer keeps model controls intact and sends independent analysis and an
   assert.doesNotMatch(app, /tooltip="웹 검색과 자료 확인을 포함한 분석 범위"/);
   assert.doesNotMatch(app, /tooltip="채팅에 표시할 최종 답변 분량"/);
   assert.doesNotMatch(app, /composer-picker\.is-open \.composer-picker-trigger > svg/);
+  assert.match(styles, /\.output-mode-toggle \{ display: inline-flex; gap: 1px; margin-left: 3px; \}/);
+  assert.doesNotMatch(styles, /\.output-mode-toggle \{ display: none; \}/);
   assert.match(app, /<ArtifactLengthSlider[\s\S]*?disabled=\{workspace\.settings\?\.outputMode === "chat"\}/);
   assert.match(app, /<ComposerPicker[\s\S]*?controlClassName="model-control"[\s\S]*?<ComposerPicker[\s\S]*?controlClassName="effort-control"/);
   assert.match(workspace, /analysisDepth: AnalysisDepth = "auto"/);
