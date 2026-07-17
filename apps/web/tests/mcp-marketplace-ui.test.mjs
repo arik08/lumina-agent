@@ -7,7 +7,7 @@ const adminPanelPath = new URL("../src/components/AdminMcpPanel.tsx", import.met
 const adminViewPath = new URL("../src/components/AdminView.tsx", import.meta.url);
 const stylesPath = new URL("../src/styles.css", import.meta.url);
 
-test("MCP installs expose direct account and project actions with the Skill install-state toggle", async () => {
+test("MCP installs expose direct account and project actions and return to install after removal", async () => {
   const panel = await readFile(panelPath, "utf8");
 
   assert.match(panel, /onClick=\{\(\) => void install\("user"\)\}/);
@@ -16,9 +16,11 @@ test("MCP installs expose direct account and project actions with the Skill inst
   assert.match(panel, /"내 프로젝트 설치됨" : "내 프로젝트 설치"/);
   assert.doesNotMatch(panel, /<select|installScope/);
   assert.match(panel, /className=\{`marketplace-install-toggle \$\{stateClass\}`\}/);
-  assert.match(panel, /"is-installed" : userInstallation \? "is-unused"/);
+  assert.match(panel, /const stateClass = userInstallation \? "is-installed" : ""/);
   assert.match(panel, /<span className="install-toggle-rest">설치됨<\/span><span className="install-toggle-hover">미사용<\/span>/);
-  assert.match(panel, /api\.mcp\.setEnabled\(userInstallation\.id, !userInstallation\.enabled\)/);
+  assert.match(panel, /await api\.mcp\.uninstall\(userInstallation\.id\)/);
+  assert.match(panel, /current\.filter\(\(item\) => item\.id !== userInstallation\.id\)/);
+  assert.doesNotMatch(panel, /api\.mcp\.setEnabled\(userInstallation\.id/);
   assert.match(panel, /api\.mcp\.install\(definition\.id, revision!\.id, "user", undefined/);
 });
 

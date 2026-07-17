@@ -108,10 +108,13 @@ export function McpMarketplacePanel({ projectId }: McpMarketplacePanelProps) {
     setCatalogPendingId(definition.id);
     setError(null);
     try {
-      const updated = userInstallation
-        ? await api.mcp.setEnabled(userInstallation.id, !userInstallation.enabled)
-        : await api.mcp.install(definition.id, revision!.id, "user", undefined, revision!.tools.map((tool) => tool.name));
-      setInstallations((current) => [...current.filter((item) => item.id !== updated.id), updated]);
+      if (userInstallation) {
+        await api.mcp.uninstall(userInstallation.id);
+        setInstallations((current) => current.filter((item) => item.id !== userInstallation.id));
+      } else {
+        const installed = await api.mcp.install(definition.id, revision!.id, "user", undefined, revision!.tools.map((tool) => tool.name));
+        setInstallations((current) => [...current.filter((item) => item.id !== installed.id), installed]);
+      }
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -197,10 +200,10 @@ export function McpMarketplacePanel({ projectId }: McpMarketplacePanelProps) {
             const userInstallation = installations.find((item) => item.definitionId === definition.id && item.scopeType === "user") ?? null;
             const currentDefinitionRevision = definition.revisions.find((item) => item.id === definition.currentRevisionId) ?? definition.revisions.at(-1) ?? null;
             const pending = catalogPendingId === definition.id;
-            const stateClass = userInstallation?.enabled ? "is-installed" : userInstallation ? "is-unused" : "";
+            const stateClass = userInstallation ? "is-installed" : "";
             return <div className={`marketplace-skill-row ${definition.id === selected?.id ? "is-selected" : ""}`} key={definition.id}>
               <button className="marketplace-skill-select" type="button" onClick={() => { setSelectedId(definition.id); setUninstallConfirmId(null); setUnbindConfirmKey(null); }}><span><strong>{definition.name}</strong><small>{definition.description || definition.slug}</small></span></button>
-              <button className={`marketplace-install-toggle ${stateClass}`} type="button" aria-label={`${definition.name} ${userInstallation?.enabled ? "미사용" : userInstallation ? "사용" : "설치"}`} aria-pressed={Boolean(userInstallation?.enabled)} aria-busy={pending} disabled={pending || !userInstallation && !currentDefinitionRevision} onClick={() => void toggleCatalogInstallation(definition)}>{pending ? <LoaderCircle className="is-running" size={12} /> : userInstallation?.enabled ? <><span className="install-toggle-rest">설치됨</span><span className="install-toggle-hover">미사용</span></> : userInstallation ? <span>미사용</span> : <span>설치</span>}</button>
+              <button className={`marketplace-install-toggle ${stateClass}`} type="button" aria-label={`${definition.name} ${userInstallation ? "미사용" : "설치"}`} aria-pressed={Boolean(userInstallation)} aria-busy={pending} disabled={pending || !userInstallation && !currentDefinitionRevision} onClick={() => void toggleCatalogInstallation(definition)}>{pending ? <LoaderCircle className="is-running" size={12} /> : userInstallation ? <><span className="install-toggle-rest">설치됨</span><span className="install-toggle-hover">미사용</span></> : <span>설치</span>}</button>
             </div>;
           })}
         </aside>
