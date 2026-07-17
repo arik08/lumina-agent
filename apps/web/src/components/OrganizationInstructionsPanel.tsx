@@ -34,6 +34,37 @@ import "./OrganizationInstructionsPanel.css";
 
 type PromptLayerKey = RuntimePromptKey | "organization" | "project" | "personal";
 
+const RUNTIME_PROMPT_PLACEHOLDERS: Record<RuntimePromptKey, string> = {
+  system: `이 영역은 Lumina의 가장 높은 우선순위 제품 실행 계약입니다.
+
+예시:
+- Agent의 기본 동작과 진행 방식
+- Tool 호출 전후의 안전·권한 검증
+- 실패 복구, 중복 실행 방지와 결과 검증
+- 출력 형식과 Provider별 변환 규칙
+
+조직 정책이나 일반 작업 지침보다 우선해야 하는 규칙을 입력하세요.`,
+  agent_default: `이 영역은 조직 정책 다음에 적용되는 Lumina의 일반 작업 원칙입니다.
+
+예시:
+- 현재 Project 범위와 사용자 목표 준수
+- 원문 사실과 출처 보존
+- 확인된 사실, 추정과 가정 구분
+- 완료 전 결과 검증과 남은 작업 안내
+
+특정 조직에 종속되지 않는 기본 업무 원칙을 입력하세요.`,
+};
+
+const ORGANIZATION_INSTRUCTIONS_PLACEHOLDER = `이 영역은 모든 프로젝트와 Run에 공통 적용되는 조직 정책입니다.
+
+예시:
+- 사내 정보와 개인정보의 외부 전송 제한
+- 사용 가능한 Provider·Tool·데이터 범위
+- 업무 승인 절차와 금지 사항
+- 조직 공통 문체, 용어와 산출물 기준
+
+내장 Agent 기본 지침보다 우선할 회사 규칙을 입력하세요.`;
+
 function formatHistoryDate(value: string) {
   return new Intl.DateTimeFormat("ko-KR", {
     month: "2-digit",
@@ -110,6 +141,7 @@ function RuntimePromptEditor({
         rows={18}
         maxLength={40_000}
         aria-label={`${document.name} 내용`}
+        placeholder={RUNTIME_PROMPT_PLACEHOLDERS[document.key]}
         onChange={(event) => {
           setDraft(event.currentTarget.value);
           setResetArmed(false);
@@ -497,7 +529,7 @@ export function OrganizationInstructionsPanel() {
               )}
             </div>
             {isCurrentSelection ? (
-              <InstructionEditor key={historyRevision} scope="organization" heading="관리자 기본 지침" description="모든 프로젝트와 Run에서 내장 Agent 기본 지침보다 먼저 적용되는 조직 정책입니다." note="변경 이력은 모니터링 로그에 기록되고 새 Run부터 적용됩니다." onSaved={() => setHistoryRevision((value) => value + 1)} />
+              <InstructionEditor key={historyRevision} scope="organization" heading="관리자 기본 지침" description="모든 프로젝트와 Run에서 내장 Agent 기본 지침보다 먼저 적용되는 조직 정책입니다." note="변경 이력은 모니터링 로그에 기록되고 새 Run부터 적용됩니다." placeholder={ORGANIZATION_INSTRUCTIONS_PLACEHOLDER} onSaved={() => setHistoryRevision((value) => value + 1)} />
             ) : (
               <section className="admin-policy-revision-preview" aria-live="polite">
                 <header>

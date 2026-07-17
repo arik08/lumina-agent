@@ -9,6 +9,7 @@ interface InstructionEditorProps {
   heading: string;
   description: string;
   note: string;
+  placeholder?: string;
   onSaved?: () => void;
 }
 
@@ -22,6 +23,7 @@ export function InstructionEditor({
   heading,
   description,
   note,
+  placeholder = "새 Run에 일관되게 적용할 작업 방식과 산출물 원칙을 입력하세요.",
   onSaved,
 }: InstructionEditorProps) {
   const [snapshot, setSnapshot] = useState<InstructionDocument | null>(null);
@@ -122,7 +124,7 @@ export function InstructionEditor({
               rows={10}
               maxLength={40_000}
               readOnly={!snapshot?.editable}
-              placeholder="새 Run에 일관되게 적용할 작업 방식과 산출물 원칙을 입력하세요."
+              placeholder={placeholder}
               onChange={(event) => setDraft(event.currentTarget.value)}
             />
           </label>

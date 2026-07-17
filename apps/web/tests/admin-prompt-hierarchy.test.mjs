@@ -38,6 +38,14 @@ test("internal prompts are editable while project-scoped layers remain read only
   assert.match(apiSource, /\/admin\/runtime-prompts/);
 });
 
+test("each common prompt layer explains its purpose when the editor is empty", () => {
+  assert.match(panelSource, /가장 높은 우선순위 제품 실행 계약/);
+  assert.match(panelSource, /모든 프로젝트와 Run에 공통 적용되는 조직 정책/);
+  assert.match(panelSource, /조직 정책 다음에 적용되는 Lumina의 일반 작업 원칙/);
+  assert.match(panelSource, /placeholder=\{RUNTIME_PROMPT_PLACEHOLDERS\[document\.key\]\}/);
+  assert.match(panelSource, /placeholder=\{ORGANIZATION_INSTRUCTIONS_PLACEHOLDER\}/);
+});
+
 test("prompt composition controls stay visually quiet and collapse from the full header row", () => {
   assert.match(panelSource, /className="admin-prompt-composition-toggle"[\s\S]*onClick=\{\(\) => setShowComposition\(false\)\}/);
   assert.match(panelStyles, /\.admin-prompt-sidebar > header > button\.tooltip-control \{[^}]*border: 0;[^}]*background: transparent;/);
