@@ -48,7 +48,8 @@ test("Skill and MCP suggestions use compact single-line rows", async () => {
   assert.match(app, /composer-suggestions is-trigger-list \$\{composerTrigger\.trigger === "\$" \? "is-extension-list" : ""\}/);
   assert.match(app, /className=\{`composer-suggestion-icon kind-\$\{suggestion\.kind\}`\}/);
   assert.match(app, /composerTrigger\.trigger === "\$" && suggestion\.description && <small className="composer-suggestion-description">· \{suggestion\.description\}<\/small>/);
-  assert.match(app, /composerTrigger\.trigger === "@" && <small>\{suggestion\.subtitle\}<\/small>/);
+  assert.match(app, /<small className="composer-suggestion-path" title=\{suggestion\.subtitle\}>\{suggestion\.subtitle\}<\/small>/);
+  assert.doesNotMatch(app, /composerTrigger\.trigger === "@" && <small>\{suggestion\.subtitle\}<\/small>/);
   assert.doesNotMatch(app, /suggestion\.kind === "mcp" \? `MCP ·/);
   assert.match(styles, /\.composer-suggestions\.is-extension-list > button \{[^}]*min-height: 29px;[^}]*padding-block: 2px;/);
   assert.match(styles, /\.composer-suggestions\.is-extension-list \.composer-suggestion-copy \{[^}]*display: flex;[^}]*overflow: hidden;[^}]*white-space: nowrap;/);
@@ -58,6 +59,7 @@ test("Skill and MCP suggestions use compact single-line rows", async () => {
   assert.match(styles, /\.composer-suggestions\.is-trigger-list \.composer-suggestions-heading small \{[^}]*font-size: 12px;/);
   assert.match(styles, /\.composer-suggestions\.is-trigger-list \.composer-suggestion-copy strong \{[^}]*font-size: 13px;/);
   assert.match(styles, /\.composer-suggestions\.is-trigger-list \.composer-suggestion-copy small \{[^}]*font-size: 12px;/);
+  assert.match(styles, /\.composer-suggestions\.is-trigger-list small\.composer-suggestion-path \{[^}]*max-width: min\(42vw, 360px\);[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/);
   assert.match(styles, /\.composer-suggestions\.is-trigger-list span\.composer-suggestion-kind \{[^}]*font-size: 12px;/);
   assert.doesNotMatch(styles, /\.composer-suggestions\.is-extension-list [^{]*(?:heading small|copy strong|suggestion-description|suggestion-kind) \{[^}]*font-size:/);
 });

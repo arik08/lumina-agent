@@ -3501,9 +3501,10 @@ function App() {
                         <span className="composer-suggestion-copy">
                           <strong>{suggestion.name}</strong>
                           {composerTrigger.trigger === "$" && suggestion.description && <small className="composer-suggestion-description">· {suggestion.description}</small>}
-                          {composerTrigger.trigger === "@" && <small>{suggestion.subtitle}</small>}
                         </span>
-                        <span className="composer-suggestion-kind">{unavailable ? "사용 불가" : disabled ? attached ? "첨부됨" : "선택됨" : referenceKindLabel(suggestion.kind)}</span>
+                        {composerTrigger.trigger === "@"
+                          ? <small className="composer-suggestion-path" title={suggestion.subtitle}>{suggestion.subtitle}</small>
+                          : <span className="composer-suggestion-kind">{unavailable ? "사용 불가" : disabled ? attached ? "첨부됨" : "선택됨" : referenceKindLabel(suggestion.kind)}</span>}
                       </button>
                     );
                   })}

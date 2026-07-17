@@ -2680,6 +2680,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .composer-suggestion-copy strong, .composer-suggestion-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer-suggestions.is-trigger-list .composer-suggestion-copy strong { font-size: 13px; font-weight: 620; }
 .composer-suggestions.is-trigger-list .composer-suggestion-copy small { color: var(--muted); font-size: 12px; }
+.composer-suggestions.is-trigger-list small.composer-suggestion-path { max-width: min(42vw, 360px); overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .composer-suggestions.is-trigger-list span.composer-suggestion-kind { color: var(--muted); font-size: 12px; }
 .composer-suggestion-state { display: flex; min-height: 46px; align-items: center; justify-content: center; gap: 7px; color: var(--muted); font-size: 11.5px; }
 .reference-strip { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 5px; }
