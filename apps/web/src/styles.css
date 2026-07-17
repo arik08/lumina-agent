@@ -2013,10 +2013,10 @@ button:disabled { cursor: default; opacity: 0.5; }
 .question-navigator-marker:focus-visible { outline: 2px solid color-mix(in srgb, var(--cobalt) 52%, transparent); outline-offset: 1px; }
 .question-navigator-tooltip { display: grid; width: min(380px, calc(100vw - 24px)); gap: 7px; padding: 11px 13px 12px; border: 1px solid color-mix(in srgb, var(--tooltip-color) 12%, transparent); border-radius: 10px; background: var(--tooltip-background); box-shadow: var(--tooltip-shadow); color: var(--tooltip-color); text-align: left; }
 .question-navigator-tooltip.is-light { border-color: var(--line-strong); background: var(--surface); box-shadow: var(--shadow-overlay); color: var(--ink); }
-.question-navigator-tooltip strong { font-size: 12px; font-weight: 680; line-height: 1.25; }
+.question-navigator-tooltip strong { font-size: 13px; font-weight: 680; line-height: 1.25; }
 .question-navigator-preview-row { display: grid; grid-template-columns: 30px minmax(0, 1fr); align-items: start; gap: 7px; color: color-mix(in srgb, var(--tooltip-color) 76%, transparent); }
-.question-navigator-preview-row small { padding-top: 2px; color: color-mix(in srgb, var(--tooltip-color) 54%, transparent); font-size: 10.5px; font-weight: 650; line-height: 1.45; }
-.question-navigator-preview-row > span { display: -webkit-box; overflow: hidden; font-size: 12.5px; line-height: 1.5; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.question-navigator-preview-row small { padding-top: 2px; color: color-mix(in srgb, var(--tooltip-color) 54%, transparent); font-size: 11.5px; font-weight: 650; line-height: 1.45; }
+.question-navigator-preview-row > span { display: -webkit-box; overflow: hidden; font-size: 13.5px; line-height: 1.5; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .question-navigator-preview-row.is-answer { padding-top: 7px; border-top: 1px solid color-mix(in srgb, var(--tooltip-color) 11%, transparent); }
 .question-navigator-tooltip.is-light .question-navigator-preview-row { color: color-mix(in srgb, var(--ink) 76%, var(--muted)); }
 .question-navigator-tooltip.is-light .question-navigator-preview-row small { color: var(--muted); }
