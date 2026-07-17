@@ -40,12 +40,6 @@ function installationStateLabel(installation: McpInstallation) {
   return "연결 확인 중";
 }
 
-function installationIsConnecting(installation: McpInstallation) {
-  return installation.enabled
-    && ["ready", "not_required"].includes(installation.secretResolutionStatus)
-    && installation.healthStatus === "not_connected";
-}
-
 function AnswerTestFeedback({ result }: { result: McpAnswerTestResult | { error: string } }) {
   if ("error" in result) return <div className="mcp-answer-test-result is-error" role="alert">{result.error}</div>;
   return <div className="mcp-answer-test-result" role="status"><small>{result.providerId} · {result.modelKey} · {result.toolName}</small><p>{result.answer}</p></div>;
@@ -70,6 +64,7 @@ export function McpMarketplacePanel({ projectId }: McpMarketplacePanelProps) {
   const [answerTestInputs, setAnswerTestInputs] = useState<Record<string, string>>({});
   const [answerTestBusyId, setAnswerTestBusyId] = useState<string | null>(null);
   const [answerTestResults, setAnswerTestResults] = useState<Record<string, McpAnswerTestResult | { error: string }>>({});
+  const [verifyingInstallationIds, setVerifyingInstallationIds] = useState<Set<string>>(new Set());
   const [projectScopeOpen, setProjectScopeOpen] = useState(false);
   const [projectScopeDraft, setProjectScopeDraft] = useState<Set<string> | null>(null);
   const [projectScopeBusy, setProjectScopeBusy] = useState(false);
@@ -87,6 +82,7 @@ export function McpMarketplacePanel({ projectId }: McpMarketplacePanelProps) {
     const controller = new AbortController();
     setLoading(true);
     setError(null);
+    setVerifyingInstallationIds(new Set());
     Promise.all([
       api.mcp.listCatalog(controller.signal),
       api.mcp.listInstallations(undefined, controller.signal),
@@ -99,14 +95,23 @@ export function McpMarketplacePanel({ projectId }: McpMarketplacePanelProps) {
       setProjects(availableProjects);
       setSelectedId((current) => current && definitions.some((item) => item.id === current) ? current : definitions[0]?.id ?? null);
       const verifiable = installed.filter((item) => item.enabled && ["ready", "not_required"].includes(item.secretResolutionStatus));
-      void Promise.allSettled(verifiable.map((item) => api.mcp.verify(item.id, controller.signal))).then((results) => {
-        if (controller.signal.aborted) return;
-        const verified = new Map<string, McpInstallation>();
-        results.forEach((result) => {
-          if (result.status === "fulfilled") verified.set(result.value.id, result.value);
-        });
-        setInstallations((current) => current.map((item) => verified.get(item.id) ?? item));
-      });
+      setVerifyingInstallationIds(new Set(verifiable.map((item) => item.id)));
+      void Promise.allSettled(verifiable.map(async (item) => {
+        try {
+          const verified = await api.mcp.verify(item.id, controller.signal);
+          if (!controller.signal.aborted) {
+            setInstallations((current) => current.map((currentItem) => currentItem.id === verified.id ? verified : currentItem));
+          }
+        } finally {
+          if (!controller.signal.aborted) {
+            setVerifyingInstallationIds((current) => {
+              const next = new Set(current);
+              next.delete(item.id);
+              return next;
+            });
+          }
+        }
+      }));
     }).catch((caught) => {
       if (!controller.signal.aborted) setError(errorMessage(caught));
     }).finally(() => {
@@ -346,7 +351,7 @@ export function McpMarketplacePanel({ projectId }: McpMarketplacePanelProps) {
                 <div className="mcp-section-heading"><strong><ShieldCheck size={14} /> 설치 및 연결</strong><small>Secret 값은 저장·재표시하지 않습니다.</small></div>
                 {selectedInstallations.length === 0 ? <p className="mcp-empty">설치 후 Secret Store reference와 연결 상태를 설정할 수 있습니다.</p> : selectedInstallations.map((installation) => (
                   <article className="mcp-installation-row" key={installation.id}>
-                    <header><div><strong>{installation.scopeType === "project" ? "Project" : "내 계정"} · r{installation.configurationRevision}</strong><small>{installation.toolAllowlist.join(", ")}</small></div><div className="mcp-installation-actions"><span className={`mcp-installation-ready-state ${installation.ready ? "is-ready" : "is-pending"}`}>{installation.ready ? <Check size={13} /> : <LoaderCircle className={installationIsConnecting(installation) ? "is-running" : undefined} size={13} />} {installationStateLabel(installation)}</span><button className="tooltip-control" type="button" aria-label={installation.enabled ? "MCP 비활성화" : "MCP 활성화"} data-tooltip={installation.enabled ? "비활성화" : "활성화"} disabled={busy} onClick={() => void toggleInstallation(installation)}><Power size={14} /></button><button className={`mcp-uninstall-action text-danger ${uninstallConfirmId === installation.id ? "is-delete-armed" : ""}`} type="button" aria-label={uninstallConfirmId === installation.id ? "MCP 설치 해제 확인, 한 번 더 누르면 설치 해제" : "MCP 설치 해제"} data-tooltip={uninstallConfirmId === installation.id ? "한 번 더 눌러 설치 해제" : "설치 해제"} disabled={busy} onClick={() => void uninstall(installation)}><Trash2 size={14} />{uninstallConfirmId === installation.id ? <span>한 번 더 눌러 설치 해제</span> : null}</button></div></header>
+                    <header><div><strong>{installation.scopeType === "project" ? "Project" : "내 계정"} · r{installation.configurationRevision}</strong><small>{installation.toolAllowlist.join(", ")}</small></div><div className="mcp-installation-actions"><span className={`mcp-installation-ready-state ${installation.ready ? "is-ready" : "is-pending"}`}>{installation.ready ? <Check size={13} /> : <LoaderCircle className={verifyingInstallationIds.has(installation.id) ? "is-running" : undefined} size={13} />} {installationStateLabel(installation)}</span><button className="tooltip-control" type="button" aria-label={installation.enabled ? "MCP 비활성화" : "MCP 활성화"} data-tooltip={installation.enabled ? "비활성화" : "활성화"} disabled={busy} onClick={() => void toggleInstallation(installation)}><Power size={14} /></button><button className={`mcp-uninstall-action text-danger ${uninstallConfirmId === installation.id ? "is-delete-armed" : ""}`} type="button" aria-label={uninstallConfirmId === installation.id ? "MCP 설치 해제 확인, 한 번 더 누르면 설치 해제" : "MCP 설치 해제"} data-tooltip={uninstallConfirmId === installation.id ? "한 번 더 눌러 설치 해제" : "설치 해제"} disabled={busy} onClick={() => void uninstall(installation)}><Trash2 size={14} />{uninstallConfirmId === installation.id ? <span>한 번 더 눌러 설치 해제</span> : null}</button></div></header>
                     <div className="mcp-health-line"><span>health <strong>{stateLabel(installation.healthStatus)}</strong></span><span>schema <strong>{stateLabel(installation.schemaStatus)}</strong></span><span>Secret <strong>{resolverLabel(installation.secretResolutionStatus)}</strong></span><span>{installation.enabled ? "활성" : "비활성"}</span></div>
                     <form className="mcp-answer-test" onSubmit={(event) => void testAnswer(event, installation)}>
                       <input type="text" maxLength={1000} aria-label={`${installation.name} 실제 답변 테스트 질문`} placeholder="질문을 입력해 실제 LLM 답변 확인" value={answerTestInputs[installation.id] ?? ""} onChange={(event) => { const value = event.currentTarget.value; setAnswerTestInputs((current) => ({ ...current, [installation.id]: value })); }} />
