@@ -24,4 +24,5 @@ test("conversation font size controls every center-panel text surface", () => {
   assert.match(styles, /\.chat-pane\.view-chat :is\(\.chat-header, \.conversation-scroll, \.dock-area\) \*/);
   assert.match(styles, /\.app-shell > \.tool-message\.is-global \*/);
   assert.match(styles, /\.chat-pane\.view-chat \.composer-footer \*[\s\S]*?font-size: calc\(var\(--conversation-font-size\) - 2px\)/);
+  assert.match(styles, /\.chat-pane\.view-chat \.turn-work-details \*[\s\S]*?font-size: calc\(var\(--conversation-font-size\) - 1px\)/);
 });
