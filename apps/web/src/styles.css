@@ -1224,13 +1224,15 @@ button:disabled { cursor: default; opacity: 0.5; }
 .skill-catalog-active-filters button { flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--cobalt); text-overflow: ellipsis; white-space: nowrap; }
 .skill-catalog-scroll { min-height: 0; overflow-y: auto; overflow-anchor: none; padding: 14px 16px 32px; }
 .skill-catalog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
-.skill-catalog-card { display: grid; min-width: 0; min-height: 220px; grid-template-rows: minmax(0, 1fr) auto; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); transition: border-color var(--motion-fast) var(--ease-out-quart), background-color var(--motion-fast) var(--ease-out-quart); }
+.skill-catalog-card { display: grid; min-width: 0; min-height: 200px; grid-template-rows: minmax(0, 1fr) auto; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); transition: border-color var(--motion-fast) var(--ease-out-quart), background-color var(--motion-fast) var(--ease-out-quart); }
 .skill-catalog-card:hover { border-color: var(--line-strong); }
 .skill-catalog-card.is-liked { border-color: color-mix(in srgb, var(--cobalt) 48%, var(--line)); background: var(--surface-selected); }
 .skill-catalog-card.is-liked:hover { border-color: color-mix(in srgb, var(--cobalt) 62%, var(--line)); }
 .skill-catalog-card-copy { display: grid; align-content: start; gap: 8px; }
-.skill-catalog-category { color: var(--muted); font-size: 10.5px; font-weight: 680; letter-spacing: .02em; }
+.skill-catalog-card-header { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; }
+.skill-catalog-category { flex: 0 0 auto; max-width: 45%; overflow: hidden; color: var(--muted); font-size: 10.5px; font-weight: 680; letter-spacing: .02em; text-overflow: ellipsis; white-space: nowrap; }
 .skill-catalog-card h2 { overflow: hidden; margin: 0; font-size: 15px; font-weight: 700; letter-spacing: -.015em; text-overflow: ellipsis; white-space: nowrap; }
+.skill-catalog-card-header h2 { min-width: 0; }
 .skill-catalog-card p { display: -webkit-box; min-height: 42px; overflow: hidden; margin: 0; color: var(--muted); line-height: 1.55; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .skill-catalog-tags { display: flex; flex-wrap: wrap; gap: 5px; padding-top: 2px; }
 .skill-catalog-tags button { height: 25px; padding: 0 7px; border: 0; border-radius: 5px; background: var(--surface-soft); color: color-mix(in srgb, var(--cobalt) 78%, var(--muted)); cursor: pointer; }
@@ -1252,7 +1254,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .skill-catalog-empty { display: grid; min-height: 300px; place-content: center; justify-items: center; gap: 7px; color: var(--muted); text-align: center; }
 .skill-catalog-empty strong { color: var(--ink); }
 .skill-catalog-empty button { min-height: 30px; margin-top: 5px; padding: 0 9px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); color: var(--ink); cursor: pointer; }
-.skill-catalog-skeleton { display: grid; min-height: 220px; align-content: start; gap: 10px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.skill-catalog-skeleton { display: grid; min-height: 200px; align-content: start; gap: 10px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
 .skill-catalog-skeleton > * { display: block; height: 13px; border-radius: 4px; background: var(--surface-soft); }
 .skill-catalog-skeleton > span { width: 28%; height: 10px; }
 .skill-catalog-skeleton > strong { width: 64%; height: 18px; }

@@ -78,8 +78,10 @@ function CatalogCard({
   return (
     <article className={`skill-catalog-card ${item.likedByMe ? "is-liked" : ""}`.trim()}>
       <div className="skill-catalog-card-copy">
-        <span className="skill-catalog-category">{item.category}</span>
-        <h2>{item.name}</h2>
+        <div className="skill-catalog-card-header">
+          <h2>{item.name}</h2>
+          <span className="skill-catalog-category">{item.category}</span>
+        </div>
         <p>{item.description || "설명이 등록되지 않은 Skill입니다."}</p>
         <div className="skill-catalog-tags" aria-label={`${item.name} 태그`}>
           {item.tags.map((value) => <button type="button" key={value} onClick={() => onTagChange(value)}>#{value}</button>)}

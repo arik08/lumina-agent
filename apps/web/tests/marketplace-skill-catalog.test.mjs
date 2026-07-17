@@ -43,6 +43,7 @@ test("catalog uses a searchable card grid with installed-only package viewing", 
   assert.match(panel, /label="Skill 실행 횟수"/);
   assert.match(panel, /data-tooltip=\{label\}/);
   assert.match(panel, /data-tooltip="좋아요"/);
+  assert.match(panel, /<div className="skill-catalog-card-header">[\s\S]*<h2>\{item\.name\}<\/h2>[\s\S]*<span className="skill-catalog-category">\{item\.category\}<\/span>/);
   assert.match(panel, /className=\{`skill-catalog-card \$\{item\.likedByMe \? "is-liked" : ""\}`\.trim\(\)\}/);
   assert.match(panel, /className=\{`skill-catalog-like/);
   assert.match(panel, /item\.installed && <button className="skill-catalog-view tooltip-control"/);
@@ -61,6 +62,9 @@ test("catalog uses a searchable card grid with installed-only package viewing", 
   assert.match(styles, /\.skill-catalog-layout \{[^}]*grid-template-columns: 248px minmax\(0, 1fr\)/);
   assert.match(styles, /\.skill-catalog-search > span:last-child \{[^}]*min-width: 0;[^}]*margin-inline-end: var\(--space-2\)/);
   assert.match(styles, /\.skill-catalog-grid \{[^}]*repeat\(auto-fill, minmax\(300px, 1fr\)\)/);
+  assert.match(styles, /\.skill-catalog-card \{[^}]*min-height: 200px;/);
+  assert.match(styles, /\.skill-catalog-card-header \{[^}]*justify-content: space-between;/);
+  assert.match(styles, /\.skill-catalog-skeleton \{[^}]*min-height: 200px;/);
   assert.match(styles, /\.skill-catalog-scroll \{[^}]*overflow-anchor: none;/);
   assert.match(styles, /\.skill-catalog-card\.is-liked \{[^}]*background: var\(--surface-selected\)/);
   assert.match(styles, /\.skill-catalog-metrics \{[^}]*gap: var\(--space-5\)/);
