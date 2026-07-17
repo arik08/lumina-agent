@@ -115,6 +115,7 @@ export function AdminTrafficChart({ refreshKey }: AdminTrafficChartProps) {
             <strong id="admin-traffic-title">분당 트래픽</strong>
             <SelectMenu
               className="admin-traffic-period-select"
+              menuClassName="admin-traffic-period-menu"
               size="small"
               width="auto"
               value={String(periodMinutes)}

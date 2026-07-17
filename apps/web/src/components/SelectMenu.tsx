@@ -20,6 +20,7 @@ interface SelectMenuProps {
   width?: "fill" | "auto";
   align?: "start" | "end";
   className?: string;
+  menuClassName?: string;
 }
 
 interface SelectMenuPosition {
@@ -44,6 +45,7 @@ export function SelectMenu({
   width = "fill",
   align = "start",
   className = "",
+  menuClassName = "",
 }: SelectMenuProps) {
   const [open, setOpen] = useState(false);
   const [menuPosition, setMenuPosition] = useState<SelectMenuPosition | null>(null);
@@ -157,7 +159,7 @@ export function SelectMenu({
 
   const menu = open && createPortal(
     <div
-      className={`lumina-select-menu lumina-select-menu-global size-${size} ${menuPosition?.opensAbove ? "opens-above" : ""} ${rootRef.current?.closest(".theme-dark") ? "theme-dark" : ""}`.trim()}
+      className={`lumina-select-menu lumina-select-menu-global size-${size} ${menuPosition?.opensAbove ? "opens-above" : ""} ${rootRef.current?.closest(".theme-dark") ? "theme-dark" : ""} ${menuClassName}`.trim()}
       id={listId}
       role="listbox"
       aria-label={`${ariaLabel} 목록`}
