@@ -81,7 +81,9 @@ import { SyntaxCode, SyntaxTextarea } from "./components/SyntaxCode";
 import { GlobalTooltipLayer } from "./components/GlobalTooltip";
 import { renderMermaidSvg } from "./components/InteractiveResponse";
 import type {
+  AnalysisDepth,
   AnnouncementItem,
+  AnswerLength,
   AdminProviderModel,
   AdminProviderSummary,
   ArtifactSummary,
@@ -818,6 +820,20 @@ interface ComposerPickerOption {
 
 const defaultArtifactOutputTokens = 10_000;
 
+const analysisDepthOptions: ComposerPickerOption[] = [
+  { id: "auto", label: "자동 · 요청에 맞춰 분석 범위 결정", triggerLabel: "분석 자동" },
+  { id: "brief", label: "간단히 · 핵심 확인만 수행", triggerLabel: "분석 간단히" },
+  { id: "standard", label: "충분히 · 필요한 근거와 예외 확인", triggerLabel: "분석 충분히" },
+  { id: "deep", label: "심층 · 다양한 근거와 반례까지 검증", triggerLabel: "분석 심층" },
+];
+
+const answerLengthOptions: ComposerPickerOption[] = [
+  { id: "auto", label: "자동 · 요청에 맞춰 답변 분량 결정", triggerLabel: "답변 자동" },
+  { id: "brief", label: "짧게 · 핵심만", triggerLabel: "답변 짧게" },
+  { id: "standard", label: "보통 · 필요한 설명 포함", triggerLabel: "답변 보통" },
+  { id: "detailed", label: "자세히 · 배경과 예외까지", triggerLabel: "답변 자세히" },
+];
+
 const artifactLengthSteps = [
   { value: 8_000, label: "8k", warning: null },
   { value: 10_000, label: "10k", warning: null },
@@ -1149,6 +1165,8 @@ function App() {
   const [sessionTitleDraft, setSessionTitleDraft] = useState("");
   const [draft, setDraft] = useState("");
   const [targetOutputTokens, setTargetOutputTokens] = useState<number | null>(defaultArtifactOutputTokens);
+  const [analysisDepth, setAnalysisDepth] = useState<AnalysisDepth>("auto");
+  const [answerLength, setAnswerLength] = useState<AnswerLength>("auto");
   const [composerTrigger, setComposerTrigger] = useState<ComposerTriggerState | null>(null);
   const [composerSuggestions, setComposerSuggestions] = useState<ComposerSuggestion[]>([]);
   const [selectedReferences, setSelectedReferences] = useState<SelectedComposerReference[]>([]);
@@ -2369,12 +2387,16 @@ function App() {
       queueNext,
       promptReferences,
       targetOutputTokens ?? undefined,
+      analysisDepth,
+      answerLength,
     );
     if (!mode) return;
     if (resetFileModeAfterSend) void workspace.selectOutputMode("auto");
     setDraft("");
     setSelectedReferences([]);
     setTargetOutputTokens(defaultArtifactOutputTokens);
+    setAnalysisDepth("auto");
+    setAnswerLength("auto");
     setComposerTrigger(null);
     setComposerSuggestions([]);
   };
@@ -3548,6 +3570,24 @@ function App() {
                       <small>현재는 파일 모드입니다. 대화만 원하면 ‘채팅’을 선택하세요.</small>
                     </span>
                   </GlobalTooltipLayer>
+                  <ComposerPicker
+                    options={analysisDepthOptions}
+                    value={analysisDepth}
+                    onChange={(value) => setAnalysisDepth(value as AnalysisDepth)}
+                    ariaLabel="분석 범위 설정"
+                    menuLabel="분석 범위"
+                    controlClassName="analysis-depth-control"
+                    tooltip="웹 검색과 자료 확인을 포함한 분석 범위"
+                  />
+                  <ComposerPicker
+                    options={answerLengthOptions}
+                    value={answerLength}
+                    onChange={(value) => setAnswerLength(value as AnswerLength)}
+                    ariaLabel="채팅 답변 분량 설정"
+                    menuLabel="답변 분량"
+                    controlClassName="answer-length-control"
+                    tooltip="채팅에 표시할 최종 답변 분량"
+                  />
                   <ArtifactLengthSlider
                     value={targetOutputTokens}
                     onChange={setTargetOutputTokens}

@@ -234,6 +234,8 @@ export interface HelpItemList {
 export type Theme = "light" | "dark";
 export type OutputMode = "auto" | "chat" | "file";
 export type ClarificationMode = "autonomous" | "balanced" | "confirming";
+export type AnalysisDepth = "auto" | "brief" | "standard" | "deep";
+export type AnswerLength = "auto" | "brief" | "standard" | "detailed";
 
 export interface ExecutionSelection {
   providerId: string;
@@ -1586,6 +1588,8 @@ export interface RunMessageInput {
   attachmentIds: UUID[];
   promptReferences: PromptReference[];
   outputMode: OutputMode;
+  analysisDepth: AnalysisDepth;
+  answerLength: AnswerLength;
   targetOutputTokens?: number;
 }
 

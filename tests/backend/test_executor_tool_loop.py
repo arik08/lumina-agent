@@ -16,7 +16,7 @@ from lumina.config import Settings
 from lumina.main import create_app
 from lumina.db import SessionLocal
 from lumina.instructions.service import DEFAULT_SYSTEM_PROMPT
-from lumina.models import ArtifactVersion, Message, RunEvent, ToolExecution
+from lumina.models import ArtifactVersion, Message, Run, RunEvent, ToolExecution
 from lumina.providers import (
     MockProvider,
     MockToolCall,
@@ -306,7 +306,11 @@ def test_auto_effort_and_model_turn_metrics_are_persisted(
                 "Idempotency-Key": "auto-effort-metrics-0001",
             },
             json={
-                "message": {"text": "이 문장을 영어로 번역해 줘"},
+                "message": {
+                    "text": "이 문장을 영어로 번역해 줘",
+                    "analysisDepth": "deep",
+                    "answerLength": "brief",
+                },
                 "execution": {
                     "providerId": "mock",
                     "modelKey": "mock-agent",
@@ -332,6 +336,10 @@ def test_auto_effort_and_model_turn_metrics_are_persisted(
     assert first["reasoningTokens"] == 3
     assert first["cacheHitRatio"] == 0.75
     with SessionLocal() as db:
+        persisted_run = db.get(Run, run_id)
+        assert persisted_run is not None
+        assert persisted_run.snapshot_json["analysis_depth"] == "deep"
+        assert persisted_run.snapshot_json["answer_length"] == "brief"
         events = list(
             db.query(RunEvent).filter(
                 RunEvent.run_id == run_id,
@@ -488,6 +496,15 @@ def test_individual_truncated_tool_result_exposes_recoverable_reference() -> Non
 
 
 def test_web_research_uses_adaptive_guidance_with_separate_safety_limits() -> None:
+    assert executor_module._web_research_budget("최신 동향을 조사해줘", "brief") == (
+        3,
+        5,
+    )
+    assert executor_module._web_research_budget("간단한 질문", "standard") == (
+        10,
+        15,
+    )
+    assert executor_module._web_research_budget("간단한 질문", "deep") == (20, 30)
     assert executor_module._web_research_budget(
         "포스코 관련 최근 3개월 언론기사 동향을 조사해줘"
     ) == (10, 15)

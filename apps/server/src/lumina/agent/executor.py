@@ -193,6 +193,8 @@ _MAX_ARTIFACT_LENGTH_RETRIES = 2
 _ARTIFACT_PROGRESS_INTERVAL_SECONDS = 0.1
 _WEB_SEARCH_CALL_SAFETY_LIMIT = 10
 _WEB_FETCH_PAGE_SAFETY_LIMIT = 15
+_BRIEF_WEB_SEARCH_CALL_SAFETY_LIMIT = 3
+_BRIEF_WEB_FETCH_PAGE_SAFETY_LIMIT = 5
 _DEEP_WEB_SEARCH_CALL_SAFETY_LIMIT = 20
 _DEEP_WEB_FETCH_PAGE_SAFETY_LIMIT = 30
 _WEB_RESULT_LIMIT = 6
@@ -317,7 +319,22 @@ def _web_research_requirement(user_message: str) -> WebResearchRequirement:
     )
 
 
-def _web_research_budget(user_message: str) -> tuple[int, int]:
+def _web_research_budget(
+    user_message: str, analysis_depth: str = "auto"
+) -> tuple[int, int]:
+    normalized_depth = analysis_depth.strip().casefold()
+    if normalized_depth == "brief":
+        return (
+            _BRIEF_WEB_SEARCH_CALL_SAFETY_LIMIT,
+            _BRIEF_WEB_FETCH_PAGE_SAFETY_LIMIT,
+        )
+    if normalized_depth == "standard":
+        return (_WEB_SEARCH_CALL_SAFETY_LIMIT, _WEB_FETCH_PAGE_SAFETY_LIMIT)
+    if normalized_depth == "deep":
+        return (
+            _DEEP_WEB_SEARCH_CALL_SAFETY_LIMIT,
+            _DEEP_WEB_FETCH_PAGE_SAFETY_LIMIT,
+        )
     if _EXPLICIT_DEEP_WEB_RESEARCH.search(user_message):
         return (
             _DEEP_WEB_SEARCH_CALL_SAFETY_LIMIT,
@@ -1037,7 +1054,10 @@ class LocalRunExecutor:
         web_research_budget = (
             (0, 0)
             if web_research_requirement.mode == "disabled"
-            else _web_research_budget(user_message)
+            else _web_research_budget(
+                user_message,
+                str(run.snapshot_json.get("analysis_depth", "auto")),
+            )
         )
         core_tool_schemas = (
             _UPDATE_PLAN_TOOL_SCHEMA,
@@ -2885,6 +2905,25 @@ class LocalRunExecutor:
             "highest-value one to four questions in the single UI bundle."
         )
         web_research_requirement = run.snapshot_json.get("web_research_requirement", {})
+        analysis_depth = str(run.snapshot_json.get("analysis_depth", "auto"))
+        analysis_contracts = {
+            "brief": (
+                "Analysis scope: Brief. Use the smallest sufficient set of searches, source "
+                "reads, file inspections, and verification steps. Stop when the central claim "
+                "is supported; do not skip mandatory currentness, safety, or permission checks."
+            ),
+            "standard": (
+                "Analysis scope: Standard. Gather enough evidence to support the conclusion, "
+                "check material exceptions, and avoid optional exhaustive exploration."
+            ),
+            "deep": (
+                "Analysis scope: Deep. Explore the material alternatives, use diverse sources "
+                "when available, check contradictions and counterexamples, and verify the "
+                "conclusion thoroughly. Search and tool limits are ceilings, not quotas."
+            ),
+        }
+        if analysis_depth in analysis_contracts:
+            turn_system_parts.append(analysis_contracts[analysis_depth])
         if (
             isinstance(web_research_requirement, Mapping)
             and web_research_requirement.get("mode") == "required"
@@ -2937,6 +2976,24 @@ class LocalRunExecutor:
                 "tools in the same response when useful so the classification adds no avoidable "
                 "delay."
             )
+        answer_length = str(run.snapshot_json.get("answer_length", "auto"))
+        answer_length_contracts = {
+            "brief": (
+                "Chat answer length: Brief. When the final deliverable is chat, give only the "
+                "result and essential caveats in a few compact sentences or bullets. This does "
+                "not reduce analysis or mandatory disclosures."
+            ),
+            "standard": (
+                "Chat answer length: Standard. When the final deliverable is chat, provide a "
+                "concise but complete explanation with the necessary evidence and next action."
+            ),
+            "detailed": (
+                "Chat answer length: Detailed. When the final deliverable is chat, include "
+                "useful background, evidence, alternatives, and caveats without repetition."
+            ),
+        }
+        if answer_length in answer_length_contracts:
+            turn_system_parts.append(answer_length_contracts[answer_length])
         if run.snapshot_json.get("memory_learning_mode", "auto") != "off":
             turn_system_parts.append(
                 "Memory capture contract: In the same final response, after all user-visible "
@@ -3384,7 +3441,15 @@ class LocalRunExecutor:
                     "assumption briefly. Do not ask the same question again."
                 ),
             }
-        web_research_budget = _web_research_budget(user_message)
+        analysis_depth = "auto"
+        if tool_call["name"] in {"web_search", "web_fetch"}:
+            with SessionLocal() as db:
+                active_run = db.get(Run, run_id)
+                if active_run is not None:
+                    analysis_depth = str(
+                        active_run.snapshot_json.get("analysis_depth", "auto")
+                    )
+        web_research_budget = _web_research_budget(user_message, analysis_depth)
         if tool_call["name"] == "web_search":
             requested_limit = arguments.get("result_limit", 5)
             if isinstance(requested_limit, int) and not isinstance(
@@ -3393,6 +3458,8 @@ class LocalRunExecutor:
                 result_ceiling = (
                     10
                     if web_research_budget[0] == _DEEP_WEB_SEARCH_CALL_SAFETY_LIMIT
+                    else 3
+                    if web_research_budget[0] == _BRIEF_WEB_SEARCH_CALL_SAFETY_LIMIT
                     else _WEB_RESULT_LIMIT
                 )
                 arguments["result_limit"] = min(requested_limit, result_ceiling)
@@ -5138,6 +5205,12 @@ class LocalRunExecutor:
                     steer_target_tokens = _optional_positive_int(
                         message.metadata_json.get("target_output_tokens")
                     )
+                    steer_analysis_depth = str(
+                        message.metadata_json.get("analysis_depth", "auto")
+                    )
+                    steer_answer_length = str(
+                        message.metadata_json.get("answer_length", "auto")
+                    )
                     if steer_output_mode != "chat" and steer_target_tokens is not None:
                         steer_messages[-1] = (
                             "[Artifact content length target for this request: about "
@@ -5147,6 +5220,8 @@ class LocalRunExecutor:
                     applied_message_ids.add(message.id)
                     run.snapshot_json = {
                         **run.snapshot_json,
+                        "analysis_depth": steer_analysis_depth,
+                        "answer_length": steer_answer_length,
                         **(
                             {"target_output_tokens": steer_target_tokens}
                             if steer_output_mode != "chat"
@@ -5160,6 +5235,8 @@ class LocalRunExecutor:
                                 "text": message.canonical_text,
                                 "attachment_ids": attachment_ids,
                                 "prompt_references": prompt_references,
+                                "analysis_depth": steer_analysis_depth,
+                                "answer_length": steer_answer_length,
                                 "target_output_tokens": steer_target_tokens,
                             },
                         ],
@@ -5450,6 +5527,8 @@ class LocalRunExecutor:
                                 for reference in queued.prompt_references_json
                             ],
                             output_mode=execution.get("output_mode", "auto"),
+                            analysis_depth=execution.get("analysis_depth", "auto"),
+                            answer_length=execution.get("answer_length", "auto"),
                             target_output_tokens=execution.get("target_output_tokens"),
                         ),
                         execution=ExecutionSelection(
@@ -5763,10 +5842,7 @@ def _effective_reasoning_effort(
         return "low"
 
     message = " ".join(user_message.split())
-    if (
-        web_research_budget[0] >= _DEEP_WEB_SEARCH_CALL_SAFETY_LIMIT
-        or web_research_budget[1] >= _DEEP_WEB_FETCH_PAGE_SAFETY_LIMIT
-    ):
+    if _EXPLICIT_DEEP_WEB_RESEARCH.search(message):
         return "high"
     if (
         artifact_required

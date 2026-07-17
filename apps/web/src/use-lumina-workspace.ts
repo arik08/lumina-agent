@@ -3,6 +3,8 @@ import { api, ApiError } from "./api";
 import { imageAttachmentFileName } from "./attachment-file-name";
 import { createClientId } from "./client-id";
 import type {
+  AnalysisDepth,
+  AnswerLength,
   AuthSession,
   AttachmentSummary,
   ChatMessage,
@@ -1273,6 +1275,8 @@ export function useLuminaWorkspace() {
     queueNext: boolean,
     promptReferences: PromptReference[] = [],
     targetOutputTokens?: number,
+    analysisDepth: AnalysisDepth = "auto",
+    answerLength: AnswerLength = "auto",
   ) => {
     const messageText = text.trim();
     if (!messageText || sending) return null;
@@ -1310,6 +1314,8 @@ export function useLuminaWorkspace() {
       attachmentIds,
       promptReferences,
       outputMode: currentSettings.outputMode,
+      analysisDepth,
+      answerLength,
       ...(currentSettings.outputMode !== "chat" && targetOutputTokens
         ? { targetOutputTokens }
         : {}),

@@ -480,6 +480,8 @@ def create_run(
         },
         "execution": execution,
         "output_mode": payload.message.output_mode,
+        "analysis_depth": payload.message.analysis_depth,
+        "answer_length": payload.message.answer_length,
         "instructions": instruction_snapshot,
         "runtime_prompts": runtime_prompts,
         "extensions": extensions,
@@ -527,6 +529,8 @@ def create_run(
             "assistant_message_id": assistant_message_id,
             "user_message_text": payload.message.text,
             "output_mode": payload.message.output_mode,
+            "analysis_depth": payload.message.analysis_depth,
+            "answer_length": payload.message.answer_length,
             "target_output_tokens": target_output_tokens,
             "agent": agent_snapshot,
             "project": stable_prefix["project"],
@@ -569,6 +573,8 @@ def create_run(
             "attachment_ids": attachment_ids,
             "prompt_references": references,
             "output_mode": payload.message.output_mode,
+            "analysis_depth": payload.message.analysis_depth,
+            "answer_length": payload.message.answer_length,
             "target_output_tokens": target_output_tokens,
         },
     )
@@ -2688,6 +2694,8 @@ def apply_run_action(
             "attachment_ids": attachment_ids,
             "prompt_references": references,
             "output_mode": payload.message.output_mode,
+            "analysis_depth": payload.message.analysis_depth,
+            "answer_length": payload.message.answer_length,
             "target_output_tokens": (
                 payload.message.target_output_tokens
                 if payload.message.output_mode != "chat"
@@ -2730,6 +2738,8 @@ def apply_run_action(
                 "attachment_ids": attachment_ids,
                 "prompt_references": references,
                 "output_mode": payload.message.output_mode,
+                "analysis_depth": payload.message.analysis_depth,
+                "answer_length": payload.message.answer_length,
                 "target_output_tokens": canonical_message["target_output_tokens"],
             },
         )
@@ -2747,6 +2757,8 @@ def apply_run_action(
                         "text": message.canonical_text,
                         "attachment_ids": attachment_ids,
                         "prompt_references": references,
+                        "analysis_depth": canonical_message["analysis_depth"],
+                        "answer_length": canonical_message["answer_length"],
                         "target_output_tokens": canonical_message[
                             "target_output_tokens"
                         ],
@@ -2783,6 +2795,8 @@ def apply_run_action(
                 execution_options_json={
                     **run.snapshot_json.get("execution", {}),
                     "output_mode": payload.message.output_mode,
+                    "analysis_depth": canonical_message["analysis_depth"],
+                    "answer_length": canonical_message["answer_length"],
                     "target_output_tokens": canonical_message["target_output_tokens"],
                 },
                 idempotency_key=idempotency_key,
@@ -2841,6 +2855,12 @@ def apply_run_action(
                         ),
                         "prompt_references": target_message.metadata_json.get(
                             "prompt_references", []
+                        ),
+                        "analysis_depth": target_message.metadata_json.get(
+                            "analysis_depth", "auto"
+                        ),
+                        "answer_length": target_message.metadata_json.get(
+                            "answer_length", "auto"
                         ),
                         "target_output_tokens": target_message.metadata_json.get(
                             "target_output_tokens"
