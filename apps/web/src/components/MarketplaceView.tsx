@@ -151,6 +151,11 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
   const [catalogScrollPosition, setCatalogScrollPosition] = useState(0);
   const catalogCacheKey = `${cacheKey}:catalog:${catalogQuery.trim().toLocaleLowerCase("ko-KR")}:${catalogCategory}:${catalogTag}:${catalogSort}`;
   const [catalog, setCatalog, hasCachedCatalog] = useCachedViewState<SkillCatalogResponse>(catalogCacheKey, EMPTY_SKILL_CATALOG);
+  const lastVisibleCatalogRef = useRef(catalog);
+  useEffect(() => {
+    if (hasCachedCatalog) lastVisibleCatalogRef.current = catalog;
+  }, [catalog, hasCachedCatalog]);
+  const visibleCatalog = hasCachedCatalog ? catalog : lastVisibleCatalogRef.current;
   const [catalogLoading, setCatalogLoading] = useState(!hasCachedCatalog);
   const [catalogLoadingMore, setCatalogLoadingMore] = useState(false);
   const [versionDetail, setVersionDetail] = useState<SkillVersion | null>(null);
@@ -702,8 +707,8 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
       </div>}
       {error && <div className="feature-error" role="alert">{error}</div>}
       {marketKind === "mcp" ? <McpMarketplacePanel key={`${projectId ?? "none"}:${mcpRefreshKey}`} projectId={projectId} /> : skillView === "catalog" ? <SkillCatalogPanel
-        catalog={catalog}
-        loading={!hasCachedCatalog && (catalogLoading || !error)}
+        catalog={visibleCatalog}
+        loading={!hasCachedCatalog && visibleCatalog.items.length === 0 && (catalogLoading || !error)}
         loadingMore={catalogLoadingMore}
         query={catalogQuery}
         category={catalogCategory}
