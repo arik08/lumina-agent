@@ -740,3 +740,24 @@ def test_installer_uses_npm_cmd_instead_of_npm_ps1_on_windows(tmp_path: Path) ->
     invocation = capture.read_text(encoding="utf-8")
     assert invocation.count("npm.cmd ci --prefix") == 2
     assert "extensions\\mcp\\korea_weather" in invocation
+    assert "national_assembly_bootstrap.py --install-only" in invocation
+
+
+def test_national_assembly_bootstrap_pins_upstream_revision() -> None:
+    bootstrap = (
+        Path(__file__).resolve().parents[2]
+        / "extensions"
+        / "mcp"
+        / "national_assembly_bootstrap.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'REPO_REVISION = "f74c6b452c59d87e2fa7265fd985b90e4057a8ef"' in bootstrap
+    assert 'Path(".cache") / "mcp" / "assembly-api-mcp"' in bootstrap
+    assert '["git", "clone", "--depth", "1", REPO_URL' in bootstrap
+    assert '["git", "checkout", "--detach", REPO_REVISION]' in bootstrap
+    assert 'install_only = "--install-only" in sys.argv[1:]' in bootstrap
+
+    installer = (
+        Path(__file__).resolve().parents[2] / "devtools" / "install_lumina.ps1"
+    ).read_text(encoding="utf-8")
+    assert 'Assert-Command "git"' in installer

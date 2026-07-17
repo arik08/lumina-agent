@@ -187,6 +187,7 @@ Install-UvIfMissing
 Assert-Command "node" "Install the current Node.js LTS from https://nodejs.org/en/download."
 Assert-Command "npm" "npm is included with Node.js; reinstall the current Node.js LTS from https://nodejs.org/en/download."
 Assert-NodeVersion
+Assert-Command "git" "Install Git from https://git-scm.com/downloads. It is required to install the National Assembly MCP server."
 Enable-UvSystemCertificates
 $NpmCommand = if ($env:OS -eq "Windows_NT") {
     (Get-Command "npm.cmd" -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
@@ -401,6 +402,17 @@ if (-not $SkipDependencyInstall) {
         $weatherInstallArguments += @("--offline", "--no-audit")
     }
     Invoke-Checked -Command $NpmCommand -Arguments $weatherInstallArguments
+
+    Write-Host "[Lumina] Installing the pinned National Assembly MCP server..."
+    $assemblyInstallArguments = @(
+        "run", "--project", $ServerRoot,
+        "python", (Join-Path $RepositoryRoot "extensions/mcp/national_assembly_bootstrap.py"),
+        "--install-only"
+    )
+    if ($NoNetwork) {
+        $assemblyInstallArguments += "--offline"
+    }
+    Invoke-Checked -Command "uv" -Arguments $assemblyInstallArguments
 }
 
 Write-Host "[Lumina] Applying database migrations..."
