@@ -38,4 +38,6 @@ test("source evidence distinguishes cited, reviewed, and search-only material", 
   assert.match(stylesheet, /@container \(max-width: 610px\)[^{]*\{[^}]*\.answer-source-count\.is-reviewed \{ display: none; \}/s);
   assert.match(stylesheet, /@container \(max-width: 530px\)[^{]*\{[^}]*\.answer-source-count\.is-cited \{ display: none; \}/s);
   assert.match(stylesheet, /@container \(max-width: 460px\)[^{]*\{[^}]*\.answer-sources \{ display: none; \}/s);
+  assert.match(stylesheet, /\.answer-sources-popover \{[^}]*overflow-x: hidden;[^}]*white-space: normal;/s);
+  assert.match(stylesheet, /\.source-queries span \{[^}]*min-width: 0;[^}]*max-width: 100%;[^}]*overflow-wrap: anywhere;[^}]*white-space: normal;/s);
 });
