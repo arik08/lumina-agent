@@ -1047,128 +1047,109 @@ def _admin_conversation_workbook(
     artifact_counts: dict[str, int],
     share_counts: dict[str, int],
 ) -> bytes:
-    conversations = {conversation.id: conversation for conversation, _owner in conversation_rows}
-    owners = {conversation.id: owner for conversation, owner in conversation_rows}
     feedback_by_message: dict[str, list[tuple[MessageFeedback, User]]] = {}
-    feedback_by_conversation: dict[str, list[tuple[MessageFeedback, User]]] = {}
     for feedback, message, author in feedback_rows:
         feedback_by_message.setdefault(message.id, []).append((feedback, author))
-        feedback_by_conversation.setdefault(message.conversation_id, []).append((feedback, author))
+
+    messages_by_conversation: dict[str, list[Message]] = {}
+    for message in messages:
+        messages_by_conversation.setdefault(message.conversation_id, []).append(message)
 
     workbook = Workbook()
-    default_sheet = workbook.active
-    assert isinstance(default_sheet, Worksheet)
-    workbook.remove(default_sheet)
-
-    conversation_sheet = workbook.create_sheet("대화")
-    conversation_data: list[list[object]] = []
+    analysis_sheet = workbook.active
+    assert isinstance(analysis_sheet, Worksheet)
+    analysis_sheet.title = "대화 분석"
+    analysis_data: list[list[object]] = []
     for conversation, owner in conversation_rows:
-        feedback = feedback_by_conversation.get(conversation.id, [])
-        conversation_data.append(
-            [
-                conversation.id,
-                conversation.title,
-                owner.login_id,
-                owner.display_name or "",
-                conversation.project_id,
-                conversation.status,
-                conversation.visibility,
-                run_counts.get(conversation.id, 0),
-                artifact_counts.get(conversation.id, 0),
-                share_counts.get(conversation.id, 0),
-                sum(item.rating_value == "like" for item, _author in feedback),
-                sum(item.rating_value == "dislike" for item, _author in feedback),
-                sum(item.kind == "report" for item, _author in feedback),
-                _xlsx_datetime(conversation.created_at),
-                _xlsx_datetime(conversation.last_activity_at),
-            ]
-        )
+        conversation_messages = messages_by_conversation.get(conversation.id, [])
+        for message in conversation_messages or [None]:
+            feedback = feedback_by_message.get(message.id, []) if message else []
+            feedback_items = [item for item, _author in feedback]
+            analysis_data.append(
+                [
+                    conversation.id,
+                    conversation.title,
+                    owner.login_id,
+                    owner.display_name or "",
+                    conversation.project_id,
+                    conversation.status,
+                    conversation.visibility,
+                    run_counts.get(conversation.id, 0),
+                    artifact_counts.get(conversation.id, 0),
+                    share_counts.get(conversation.id, 0),
+                    _xlsx_datetime(conversation.created_at),
+                    _xlsx_datetime(conversation.last_activity_at),
+                    message.id if message else "",
+                    message.run_id or "" if message else "",
+                    message.turn_index if message else "",
+                    message.role if message else "",
+                    message.status if message else "",
+                    message.canonical_text if message else "",
+                    (
+                        "예"
+                        if message
+                        and len(message.canonical_text) > _XLSX_MAX_CELL_LENGTH
+                        else "아니요"
+                    ),
+                    _xlsx_datetime(message.created_at) if message else None,
+                    " + ".join(
+                        kind
+                        for kind in ("rating", "report")
+                        if any(item.kind == kind for item in feedback_items)
+                    ),
+                    ", ".join(
+                        dict.fromkeys(
+                            item.rating_value
+                            for item in feedback_items
+                            if item.rating_value
+                        )
+                    ),
+                    sum(item.rating_value == "like" for item in feedback_items),
+                    sum(item.rating_value == "dislike" for item in feedback_items),
+                    ", ".join(
+                        dict.fromkeys(
+                            item.report_category
+                            for item in feedback_items
+                            if item.report_category
+                        )
+                    ),
+                    sum(item.kind == "report" for item in feedback_items),
+                    "\n\n".join(
+                        item.report_description
+                        for item in feedback_items
+                        if item.report_description
+                    ),
+                    ", ".join(
+                        dict.fromkeys(author.login_id for _item, author in feedback)
+                    ),
+                    (
+                        _xlsx_datetime(min(item.created_at for item in feedback_items))
+                        if feedback_items
+                        else None
+                    ),
+                    (
+                        _xlsx_datetime(max(item.updated_at for item in feedback_items))
+                        if feedback_items
+                        else None
+                    ),
+                    "\n".join(item.id for item in feedback_items),
+                ]
+            )
     _write_xlsx_sheet(
-        conversation_sheet,
+        analysis_sheet,
         [
-            "대화 ID", "제목", "소유자 ID", "소유자 이름", "프로젝트 ID", "상태",
-            "공개 범위", "Run 수", "Artifact 수", "공유 수", "좋아요 수", "싫어요 수",
-            "Comment 수", "생성 일시", "최근 활동 일시",
+            "대화 ID", "대화 제목", "소유자 ID", "소유자 이름", "프로젝트 ID",
+            "대화 상태", "공개 범위", "대화 Run 수", "대화 Artifact 수", "대화 공유 수",
+            "대화 생성 일시", "최근 활동 일시", "메시지 ID", "Run ID", "Turn",
+            "메시지 역할", "메시지 상태", "메시지 내용", "내용 잘림", "메시지 생성 일시",
+            "의견 종류", "평가", "좋아요 수", "싫어요 수", "Category", "Comment 수",
+            "Comment", "의견 작성자", "의견 작성 일시", "의견 수정 일시", "의견 ID",
         ],
-        conversation_data,
-        [38, 40, 28, 18, 38, 14, 14, 10, 12, 10, 10, 10, 11, 20, 20],
-    )
-
-    message_sheet = workbook.create_sheet("메시지")
-    message_data: list[list[object]] = []
-    for message in messages:
-        conversation = conversations[message.conversation_id]
-        owner = owners[message.conversation_id]
-        feedback = feedback_by_message.get(message.id, [])
-        comments = "\n\n".join(
-            item.report_description or ""
-            for item, _author in feedback
-            if item.kind == "report" and item.report_description
-        )
-        message_data.append(
-            [
-                conversation.id,
-                conversation.title,
-                owner.login_id,
-                message.id,
-                message.run_id or "",
-                message.turn_index,
-                message.role,
-                message.status,
-                message.canonical_text,
-                "예" if len(message.canonical_text) > _XLSX_MAX_CELL_LENGTH else "아니요",
-                sum(item.rating_value == "like" for item, _author in feedback),
-                sum(item.rating_value == "dislike" for item, _author in feedback),
-                sum(item.kind == "report" for item, _author in feedback),
-                comments,
-                _xlsx_datetime(message.created_at),
-            ]
-        )
-    _write_xlsx_sheet(
-        message_sheet,
+        analysis_data,
         [
-            "대화 ID", "대화 제목", "소유자 ID", "메시지 ID", "Run ID", "Turn", "역할",
-            "상태", "내용", "내용 잘림", "좋아요 수", "싫어요 수", "Comment 수", "Comment",
-            "생성 일시",
+            38, 36, 28, 18, 38, 14, 14, 11, 14, 11, 20, 20, 38, 38, 9, 12,
+            14, 80, 11, 20, 14, 12, 10, 10, 16, 11, 55, 28, 20, 20, 38,
         ],
-        message_data,
-        [38, 36, 28, 38, 38, 9, 11, 14, 80, 11, 10, 10, 11, 55, 20],
-    )
-
-    feedback_sheet = workbook.create_sheet("의견")
-    feedback_data: list[list[object]] = []
-    for feedback, message, author in feedback_rows:
-        conversation = conversations[message.conversation_id]
-        owner = owners[message.conversation_id]
-        feedback_data.append(
-            [
-                feedback.id,
-                conversation.id,
-                conversation.title,
-                owner.login_id,
-                message.id,
-                message.role,
-                message.canonical_text,
-                feedback.kind,
-                feedback.rating_value or "",
-                feedback.report_category or "",
-                feedback.report_description or "",
-                author.login_id,
-                author.display_name or "",
-                feedback.status,
-                _xlsx_datetime(feedback.created_at),
-                _xlsx_datetime(feedback.updated_at),
-            ]
-        )
-    _write_xlsx_sheet(
-        feedback_sheet,
-        [
-            "의견 ID", "대화 ID", "대화 제목", "소유자 ID", "메시지 ID", "메시지 역할",
-            "메시지 내용", "의견 종류", "평가", "Category", "Comment", "작성자 ID",
-            "작성자 이름", "상태", "작성 일시", "수정 일시",
-        ],
-        feedback_data,
-        [38, 38, 36, 28, 38, 12, 80, 12, 10, 16, 55, 28, 18, 14, 20, 20],
     )
 
     output = BytesIO()

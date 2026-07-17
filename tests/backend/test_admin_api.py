@@ -548,32 +548,33 @@ def test_admin_conversation_view_is_audited(tmp_path: Path) -> None:
         assert "lumina_conversations_" in exported.headers["content-disposition"]
 
         workbook = load_workbook(BytesIO(exported.content))
-        assert workbook.sheetnames == ["대화", "메시지", "의견"]
-        message_sheet = workbook["메시지"]
+        assert workbook.sheetnames == ["대화 분석"]
+        analysis_sheet = workbook["대화 분석"]
         headers = {
-            cell.value: index for index, cell in enumerate(message_sheet[1], start=1)
+            cell.value: index for index, cell in enumerate(analysis_sheet[1], start=1)
         }
-        assert message_sheet.freeze_panes == "A2"
-        assert message_sheet.auto_filter.ref is not None
-        assert message_sheet.cell(2, headers["내용"]).value == "=1+1 관리자 의견 조회 대상 답변"
-        assert message_sheet.cell(2, headers["좋아요 수"]).value == 0
-        assert message_sheet.cell(2, headers["싫어요 수"]).value == 1
-        assert message_sheet.cell(2, headers["Comment 수"]).value == 1
+        assert analysis_sheet.max_row == 2
+        assert analysis_sheet.freeze_panes == "A2"
+        assert analysis_sheet.auto_filter.ref is not None
         assert (
-            message_sheet.cell(2, headers["Comment"]).value
+            analysis_sheet.cell(2, headers["메시지 내용"]).value
+            == "=1+1 관리자 의견 조회 대상 답변"
+        )
+        assert analysis_sheet.cell(2, headers["의견 종류"]).value == "rating + report"
+        assert analysis_sheet.cell(2, headers["평가"]).value == "dislike"
+        assert analysis_sheet.cell(2, headers["좋아요 수"]).value == 0
+        assert analysis_sheet.cell(2, headers["싫어요 수"]).value == 1
+        assert analysis_sheet.cell(2, headers["Category"]).value == "other"
+        assert analysis_sheet.cell(2, headers["Comment 수"]).value == 1
+        assert (
+            analysis_sheet.cell(2, headers["Comment"]).value
             == "관리 화면에서 확인할 의견"
         )
-
-        feedback_sheet = workbook["의견"]
-        feedback_headers = {
-            cell.value: index for index, cell in enumerate(feedback_sheet[1], start=1)
-        }
-        assert feedback_sheet.max_row == 3
-        assert {
-            feedback_sheet.cell(row, feedback_headers["평가"]).value
-            for row in range(2, 4)
-        } == {None, "dislike"}
-        assert feedback_sheet.cell(2, feedback_headers["메시지 내용"]).data_type == "s"
+        assert (
+            analysis_sheet.cell(2, headers["의견 작성자"]).value
+            == "admin@posco.com"
+        )
+        assert analysis_sheet.cell(2, headers["메시지 내용"]).data_type == "s"
 
         export_audit = client.get(
             "/api/admin/audit-events?action=admin_conversations_exported"
