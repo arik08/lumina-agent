@@ -55,3 +55,8 @@ test("project preview selector stays compact so the toolbar note remains readabl
   assert.match(panelStyles, /\.admin-prompt-toolbar \.lumina-select \{[^}]*width: min\(260px, 38vw\);[^}]*flex: 0 1 260px;/);
   assert.doesNotMatch(panelStyles, /\.admin-prompt-toolbar \.select-menu/);
 });
+
+test("project preview options use the same font size as the select trigger", () => {
+  assert.match(panelSource, /menuClassName="admin-prompt-project-menu"/);
+  assert.match(panelStyles, /\.admin-prompt-project-menu > button \{ font-size: 14px; \}/);
+});

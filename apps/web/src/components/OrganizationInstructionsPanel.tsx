@@ -468,6 +468,7 @@ export function OrganizationInstructionsPanel() {
             value={selectedProjectId}
             options={projectOptions}
             ariaLabel="프롬프트 미리보기 프로젝트"
+            menuClassName="admin-prompt-project-menu"
             disabled={projectOptions.length === 0}
             onChange={setSelectedProjectId}
           />
