@@ -2912,6 +2912,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .artifact-header .artifact-edit-control.is-active { background: var(--cobalt-pale); color: var(--cobalt); opacity: 1; }
 .artifact-header > div:last-child > button:disabled { color: var(--muted); cursor: default; opacity: 1; }
 .artifact-version-select { min-width: 60px; flex: 0 0 auto; }
+.artifact-version-select.size-small .lumina-select-trigger { font-size: 14px; }
 .artifact-header .artifact-edit-control.is-active:disabled { opacity: 1; }
 .artifact-header .artifact-file-control { margin-left: 5px; }
 
@@ -3325,6 +3326,7 @@ button:disabled { cursor: default; opacity: 0.5; }
   .composer-footer .effort-control { padding: 0 4px; }
   .artifact-header { gap: 5px; padding: 0 14px 0 11px; }
   .artifact-header strong { font-size: 12.5px; }
+  .artifact-version-select.size-small .lumina-select-trigger { font-size: 12.5px; }
   .artifact-header > div:last-child { gap: 0; }
   .artifact-header > div:last-child > button { width: 29px; height: 29px; border-radius: 6px; }
   .artifact-header .artifact-file-control { margin-left: 2px; }
