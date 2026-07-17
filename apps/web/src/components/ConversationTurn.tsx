@@ -505,8 +505,16 @@ function ToolCallRow({
   onCopy: (execution: ToolExecution) => void;
 }) {
   const [overlayStyle, setOverlayStyle] = useState<CSSProperties | null>(null);
+  const [copied, setCopied] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
+  const copyFeedbackTimerRef = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (copyFeedbackTimerRef.current !== null) window.clearTimeout(copyFeedbackTimerRef.current);
+  }, []);
+  useEffect(() => {
+    if (!isOpen) setCopied(false);
+  }, [isOpen]);
   useEffect(() => {
     if (!isOpen) {
       setOverlayStyle(null);
@@ -581,6 +589,15 @@ function ToolCallRow({
       resultText: statusExplanation ? `${rawResultText}\n\n${statusExplanation}` : rawResultText,
     };
   }, [execution.error, execution.input, execution.inputSummary, execution.result, execution.resultSummary, isOpen, running, stoppedByRun]);
+  const handleCopy = () => {
+    onCopy(execution);
+    setCopied(true);
+    if (copyFeedbackTimerRef.current !== null) window.clearTimeout(copyFeedbackTimerRef.current);
+    copyFeedbackTimerRef.current = window.setTimeout(() => {
+      setCopied(false);
+      copyFeedbackTimerRef.current = null;
+    }, 1600);
+  };
   return (
     <div className={`tool-call ${isOpen ? "is-open" : ""}`}>
       <button ref={triggerRef} className={`tool-call-trigger ${summaryText ? "has-summary" : ""}`} type="button" aria-expanded={isOpen} aria-controls={contentId} onClick={onToggle}>
@@ -623,7 +640,9 @@ function ToolCallRow({
             <SyntaxCode value={toolDetailText.resultText} language={execution.result ? "json" : "plaintext"} />
           </section>
           <div className="tool-message-actions">
-            <button type="button" onClick={() => onCopy(execution)}><Copy size={13} /> 복사</button>
+            <button className={copied ? "is-copied" : undefined} type="button" aria-live="polite" onClick={handleCopy}>
+              {copied ? <Check size={13} /> : <Copy size={13} />} {copied ? "복사됨" : "복사"}
+            </button>
           </div>
         </div>,
         triggerRef.current?.closest(".app-shell") ?? document.body,
