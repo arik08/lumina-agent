@@ -241,8 +241,28 @@ def can_view_skill_package(db: Session, user: User, extension: Extension) -> boo
     return installation_id is not None
 
 
+def _normalize_skill_tags(raw_tags: list[str]) -> list[str]:
+    tags: list[str] = []
+    for raw_tag in raw_tags:
+        tag = raw_tag.strip().removeprefix("#").strip()
+        if not tag or tag in tags:
+            continue
+        if len(tag) > 40:
+            raise ApiProblem(
+                422, "skill_tag_too_long", "Skill 태그는 40자 이하여야 합니다."
+            )
+        tags.append(tag)
+    return tags
+
+
 def update_extension_metadata(
-    db: Session, *, user: User, extension_id: str, name: str, description: str
+    db: Session,
+    *,
+    user: User,
+    extension_id: str,
+    name: str,
+    description: str,
+    tags: list[str] | None = None,
 ) -> Extension:
     extension = require_extension(db, user, extension_id)
     if not can_manage_skill(db, user, extension):
@@ -251,6 +271,14 @@ def update_extension_metadata(
         )
     extension.name = " ".join(name.split())
     extension.description = description.strip()
+    if tags is not None:
+        if skill_role(db, user, extension) != "owner":
+            raise ApiProblem(
+                403,
+                "skill_tags_write_forbidden",
+                "Skill 태그는 관리자 또는 Owner만 수정할 수 있습니다.",
+            )
+        extension.tags_json = _normalize_skill_tags(tags)
     extension.updated_at = utc_now()
     db.flush()
     return extension
@@ -1526,12 +1554,22 @@ def extension_payload(
             )
         )
     }
+    latest_manifest_tags: list[str] = []
+    if versions:
+        raw_tags = versions[-1].manifest_json.get("tags")
+        if isinstance(raw_tags, list):
+            latest_manifest_tags = _normalize_skill_tags(
+                [item for item in raw_tags if isinstance(item, str)]
+            )
     payload: dict[str, Any] = {
         "id": extension.id,
         "kind": extension.kind,
         "slug": extension.slug,
         "name": extension.name,
         "description": extension.description,
+        "tags": extension.tags_json
+        if extension.tags_json is not None
+        else latest_manifest_tags,
         "visibility": extension.visibility,
         "ownerUserId": extension.owner_user_id,
         "creatorUserId": extension.creator_user_id,
@@ -1565,6 +1603,7 @@ def extension_payload(
             else None
         ),
         "canEdit": can_manage,
+        "canEditTags": role == "owner",
         "canCreateDraft": can_manage or can_view_skill_package(db, user, extension),
         "canDelete": role == "owner",
     }

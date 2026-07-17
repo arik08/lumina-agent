@@ -1250,7 +1250,7 @@ export async function checkoutSkillDraft(extensionId: string, signal?: AbortSign
 
 export async function updateExtensionMetadata(
   extensionId: string,
-  payload: { name: string; description: string },
+  payload: { name: string; description: string; tags?: string[] },
   signal?: AbortSignal,
 ) {
   return request<SkillExtension>(`/extensions/${encodeURIComponent(extensionId)}`, {

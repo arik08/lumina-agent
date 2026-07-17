@@ -10,6 +10,7 @@ import { MarketplaceInstallButton } from "./MarketplaceInstallButton";
 import { ResizableSplitPane } from "./ResizableSplitPane";
 import { SkillCatalogPanel, type SkillCatalogSort } from "./SkillCatalogPanel";
 import { SyntaxCode, SyntaxTextarea } from "./SyntaxCode";
+import "./MarketplaceTagEditor.css";
 import { markdownBodyAfterFrontmatter, splitMarkdownFrontmatter } from "./markdownFrontmatter";
 
 interface MarketplaceViewProps {
@@ -175,6 +176,8 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
   const [editableFiles, setEditableFiles] = useState<Record<string, string>>({});
   const [editableName, setEditableName] = useState("");
   const [editableDescription, setEditableDescription] = useState("");
+  const [editableTags, setEditableTags] = useState<string[]>([]);
+  const [editableTagInput, setEditableTagInput] = useState("");
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [draggedPath, setDraggedPath] = useState<string | null>(null);
@@ -546,6 +549,8 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
       setEditableFiles({ ...draft.package.files });
       setEditableName(selected.name);
       setEditableDescription(selected.description);
+      setEditableTags(selected.tags);
+      setEditableTagInput("");
       setActiveFile(draft.package.files[activeFile] !== undefined ? activeFile : "SKILL.md");
       setEditMode(true);
     } catch (caught) {
@@ -557,6 +562,10 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
 
   const savePackageEdit = async () => {
     if (!selected?.draft || (selected.canEdit && !editableName.trim()) || busy) return;
+    const pendingTag = editableTagInput.trim().replace(/^#/, "").trim().slice(0, 40);
+    const tagsToSave = pendingTag && !editableTags.includes(pendingTag) && editableTags.length < 8
+      ? [...editableTags, pendingTag]
+      : editableTags;
     setBusy(true);
     setError(null);
     try {
@@ -565,6 +574,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
         await api.extensions.updateMetadata(selected.id, {
           name: editableName.trim(),
           description: editableDescription.trim(),
+          ...(selected.canEditTags ? { tags: tagsToSave } : {}),
         });
       }
       await refresh(selected.id);
@@ -575,6 +585,16 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
     } finally {
       setBusy(false);
     }
+  };
+
+  const addEditableTag = () => {
+    const tag = editableTagInput.trim().replace(/^#/, "").trim();
+    if (!tag || editableTags.includes(tag) || editableTags.length >= 8) {
+      setEditableTagInput("");
+      return;
+    }
+    setEditableTags((current) => [...current, tag.slice(0, 40)]);
+    setEditableTagInput("");
   };
 
   const remapPackagePath = (fromPath: string, toPath: string) => {
@@ -679,7 +699,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
       {!selected ? <div className="feature-state">Skill을 선택해 주세요.</div> : (
         skillContentExpanded ? renderPackageBrowser() : <>
           <header className="detail-heading">
-            <div>{enteredInstalledFromCatalog && skillView === "installed" && <button className="marketplace-catalog-back" type="button" onClick={returnToCatalog}><ArrowLeft size={14} /> 뒤로가기</button>}{editMode && selected.canEdit ? <><h2 className="marketplace-inline-editor" contentEditable="plaintext-only" suppressContentEditableWarning role="textbox" aria-label="Skill 이름" aria-multiline="false" onInput={(event) => setEditableName(event.currentTarget.textContent ?? "")} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }}>{editableName}</h2><p className="marketplace-inline-editor" contentEditable="plaintext-only" suppressContentEditableWarning role="textbox" aria-label="Skill 설명" aria-multiline="false" data-placeholder="설명 없음" onInput={(event) => setEditableDescription(event.currentTarget.textContent ?? "")} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }}>{editableDescription}</p></> : <><h2>{selected.name}</h2><p>{selected.description || "설명 없음"}</p></>}</div>
+            <div>{enteredInstalledFromCatalog && skillView === "installed" && <button className="marketplace-catalog-back" type="button" onClick={returnToCatalog}><ArrowLeft size={14} /> 뒤로가기</button>}{editMode && selected.canEdit ? <><h2 className="marketplace-inline-editor" contentEditable="plaintext-only" suppressContentEditableWarning role="textbox" aria-label="Skill 이름" aria-multiline="false" onInput={(event) => setEditableName(event.currentTarget.textContent ?? "")} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }}>{editableName}</h2><p className="marketplace-inline-editor" contentEditable="plaintext-only" suppressContentEditableWarning role="textbox" aria-label="Skill 설명" aria-multiline="false" data-placeholder="설명 없음" onInput={(event) => setEditableDescription(event.currentTarget.textContent ?? "")} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }}>{editableDescription}</p>{selected.canEditTags && <div className="marketplace-tag-editor" aria-label="Skill 태그 편집"><div>{editableTags.map((tag) => <button type="button" key={tag} aria-label={`${tag} 태그 삭제`} onClick={() => setEditableTags((current) => current.filter((item) => item !== tag))}>#{tag}<X size={11} /></button>)}</div><input aria-label="Skill 태그 추가" placeholder={editableTags.length >= 8 ? "태그는 최대 8개입니다" : "태그 입력 후 Enter"} value={editableTagInput} maxLength={41} disabled={editableTags.length >= 8} onChange={(event) => setEditableTagInput(event.currentTarget.value)} onBlur={addEditableTag} onKeyDown={(event) => { if (event.key === "Enter" || event.key === ",") { event.preventDefault(); addEditableTag(); } }} /></div>}</> : <><h2>{selected.name}</h2><p>{selected.description || "설명 없음"}</p></>}</div>
             <div className="detail-badges"><span>{skillView === "trash" ? "보관함" : visibilityLabel(selected.visibility)}</span><span>{skillDisplayVersion(selected)}</span></div>
           </header>
           <div className={`marketplace-package-detail ${editMode ? "is-editing" : ""}`}>

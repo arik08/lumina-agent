@@ -1,0 +1,5 @@
+.marketplace-tag-editor { display: flex; min-height: 30px; align-items: center; gap: 6px; margin-top: 8px; }
+.marketplace-tag-editor > div { display: flex; flex-wrap: wrap; gap: 4px; }
+.marketplace-tag-editor button { display: inline-flex; height: 25px; align-items: center; gap: 3px; border: 1px solid color-mix(in srgb, var(--cobalt) 24%, var(--line)); border-radius: var(--radius-pill); padding: 0 7px; background: var(--cobalt-pale); color: var(--cobalt); font-size: 11px; cursor: pointer; }
+.marketplace-tag-editor input { width: 150px; height: 28px; border: 1px solid var(--line); border-radius: var(--radius-control); outline: 0; padding: 0 8px; background: var(--surface); color: var(--ink); font-size: 11px; }
+.marketplace-tag-editor input:focus { border-color: var(--cobalt); }

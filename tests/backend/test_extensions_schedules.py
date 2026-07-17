@@ -1789,3 +1789,80 @@ def test_next_occurrence_respects_timezone_and_weekdays() -> None:
         after=friday_after_work,
     )
     assert result == datetime(2026, 7, 13, 0, 0, tzinfo=UTC)
+
+
+def test_skill_tags_are_editable_only_by_owner_or_admin(tmp_path: Path) -> None:
+    app, _settings = _test_app(tmp_path)
+    with SessionLocal() as db:
+        organization = db.scalar(select(Organization))
+        admin = db.scalar(select(User).where(User.login_id == "admin@posco.com"))
+        assert organization is not None and admin is not None
+        maintainer = create_user(
+            db,
+            login_name="tag-maintainer",
+            password="pw",
+            organization_id=organization.id,
+            created_by_user_id=admin.id,
+        )
+        maintainer_id = maintainer.id
+        db.commit()
+
+    with TestClient(app) as client:
+        admin_csrf = _login(client)
+        admin_headers = {"X-CSRF-Token": admin_csrf}
+        created = client.post(
+            "/api/extensions",
+            headers=admin_headers,
+            json={
+                "name": "태그 권한 Skill",
+                "description": "태그 권한 확인",
+                "package": {"files": {"SKILL.md": "# 태그 권한 Skill"}},
+            },
+        )
+        assert created.status_code == 201, created.text
+        skill = created.json()
+        assert skill["canEditTags"] is True
+
+        ownership = client.post(
+            f"/api/skills/{skill['id']}/ownerships",
+            headers=admin_headers,
+            json={"userId": maintainer_id, "role": "maintainer"},
+        )
+        assert ownership.status_code == 201, ownership.text
+
+        client.cookies.clear()
+        maintainer_csrf = _login(client, "tag-maintainer", "pw")
+        maintainer_view = client.get(f"/api/extensions/{skill['id']}").json()
+        assert maintainer_view["canEdit"] is True
+        assert maintainer_view["canEditTags"] is False
+        forbidden = client.patch(
+            f"/api/extensions/{skill['id']}",
+            headers={"X-CSRF-Token": maintainer_csrf},
+            json={
+                "name": skill["name"],
+                "description": skill["description"],
+                "tags": ["금지"],
+            },
+        )
+        assert forbidden.status_code == 403
+        assert forbidden.json()["code"] == "skill_tags_write_forbidden"
+
+        client.cookies.clear()
+        admin_csrf = _login(client)
+        updated = client.patch(
+            f"/api/extensions/{skill['id']}",
+            headers={"X-CSRF-Token": admin_csrf},
+            json={
+                "name": skill["name"],
+                "description": skill["description"],
+                "tags": ["Agent", "개발", "#Agent"],
+            },
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["tags"] == ["Agent", "개발"]
+        catalog_item = next(
+            item
+            for item in client.get("/api/extensions/catalog").json()["items"]
+            if item["id"] == skill["id"]
+        )
+        assert catalog_item["tags"] == ["Agent", "개발"]

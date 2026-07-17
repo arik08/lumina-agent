@@ -1350,6 +1350,7 @@ class Extension(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     slug: Mapped[str] = mapped_column(String(160), nullable=False)
     name: Mapped[str] = mapped_column(String(240), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    tags_json: Mapped[list[str] | None] = mapped_column(JSON)
     owner_user_id: Mapped[str] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), index=True, nullable=False
     )

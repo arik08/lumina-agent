@@ -1057,12 +1057,14 @@ export interface SkillExtension {
   slug: string;
   name: string;
   description: string;
+  tags: string[];
   visibility: "private" | "project" | "organization";
   ownerUserId: UUID;
   creatorUserId: UUID;
   currentUserRole: "owner" | "maintainer" | null;
   ownerships: SkillOwnership[];
   canEdit: boolean;
+  canEditTags: boolean;
   canCreateDraft: boolean;
   canDelete: boolean;
   latestPublishedVersionId: UUID | null;

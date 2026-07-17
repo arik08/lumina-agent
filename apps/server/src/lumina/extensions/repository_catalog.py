@@ -177,6 +177,7 @@ def sync_repository_skills(
         )
         extension.name = metadata.get("name", folder.name)
         extension.description = description
+        extension.tags_json = manifest["tags"]
         extension.kind = "mcp" if mcp_slug is not None else "skill"
         extension.visibility = "organization"
         extension.publisher_user_id = admin.id

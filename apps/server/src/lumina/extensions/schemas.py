@@ -24,6 +24,7 @@ class ExtensionCreate(ApiModel):
 class ExtensionPatch(ApiModel):
     name: str = Field(min_length=1, max_length=240)
     description: str = Field(default="", max_length=4000)
+    tags: list[str] | None = Field(default=None, max_length=8)
 
 
 class DraftUpdate(ApiModel):

@@ -191,7 +191,11 @@ def list_skill_catalog(
             None,
         )
         manifest = latest_version.manifest_json if latest_version is not None else {}
-        tags = _manifest_tags(manifest)
+        tags = (
+            _manifest_tags({"tags": extension.tags_json})
+            if extension.tags_json is not None
+            else _manifest_tags(manifest)
+        )
         category_value = _manifest_category(manifest)
         installation = user_installations.get(extension.id)
         records.append(

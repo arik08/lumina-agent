@@ -249,6 +249,7 @@ def patch_extension(
         extension_id=extension_id,
         name=payload.name,
         description=payload.description,
+        tags=payload.tags,
     )
     record_audit(
         db,

@@ -5,6 +5,7 @@ import test from "node:test";
 const viewPath = new URL("../src/components/MarketplaceView.tsx", import.meta.url);
 const apiPath = new URL("../src/api.ts", import.meta.url);
 const stylesPath = new URL("../src/styles.css", import.meta.url);
+const tagEditorStylesPath = new URL("../src/components/MarketplaceTagEditor.css", import.meta.url);
 const catalogPath = new URL("../../../extensions/skills/catalog.json", import.meta.url);
 
 test("repository skills display searchable hashtag metadata instead of a source label", async () => {
@@ -134,6 +135,23 @@ test("skill metadata stays in place while editing", async () => {
   assert.doesNotMatch(view, /className="marketplace-title-editor"/);
   assert.doesNotMatch(view, /className="marketplace-description-editor"/);
   assert.match(styles, /\.marketplace-inline-editor:focus \{[^}]*box-shadow: inset 0 -1px var\(--cobalt\);/);
+});
+
+test("only Skill owners and administrators can edit tags", async () => {
+  const [view, api, types, tagEditorStyles] = await Promise.all([
+    readFile(viewPath, "utf8"),
+    readFile(apiPath, "utf8"),
+    readFile(new URL("../src/api-types.ts", import.meta.url), "utf8"),
+    readFile(tagEditorStylesPath, "utf8"),
+  ]);
+
+  assert.match(types, /canEditTags: boolean/);
+  assert.match(types, /tags: string\[\]/);
+  assert.match(api, /tags\?: string\[\]/);
+  assert.match(view, /selected\.canEditTags && <div className="marketplace-tag-editor"/);
+  assert.match(view, /aria-label="Skill 태그 추가"/);
+  assert.match(view, /tags: tagsToSave/);
+  assert.match(tagEditorStyles, /\.marketplace-tag-editor button \{/);
 });
 
 test("owners and administrators get a compact two-step Skill trash action", async () => {
