@@ -31,6 +31,8 @@ test("composer keeps model controls intact and sends independent analysis and an
   assert.match(app, /artifact-output-mode-value/);
   assert.match(app, /outputMode=\{workspace\.settings\?\.outputMode \?\? "auto"\}/);
   assert.match(app, /disabled=\{outputMode === "chat"\}/);
+  assert.match(styles, /\.artifact-output-mode-picker > div \{[^}]*border: 1px solid var\(--line\)/);
+  assert.match(styles, /\.artifact-output-mode-picker > span \{[^}]*font-size: 12\.5px/);
   assert.match(app, /<ComposerPicker[\s\S]*?controlClassName="model-control"[\s\S]*?<ComposerPicker[\s\S]*?controlClassName="effort-control"/);
   assert.match(workspace, /analysisDepth: AnalysisDepth = "auto"/);
   assert.match(workspace, /answerLength: AnswerLength = "auto"/);
