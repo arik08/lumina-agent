@@ -29,6 +29,8 @@
   background: var(--surface-soft);
 }
 
+.interactive-chart .interactive-response-toolbar { padding-left: 12px; }
+
 .interactive-response-toolbar-actions,
 .mermaid-inline-zoom-controls {
   display: flex;
