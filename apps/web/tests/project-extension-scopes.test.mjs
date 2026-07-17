@@ -13,6 +13,11 @@ test("installed Skill project scope uses a multi-select LOV without changing det
   assert.match(marketplace, /createPortal\(/);
   assert.doesNotMatch(marketplace, /marketplace-project-scope/);
   assert.match(styles, /\.marketplace-project-options\.project-options \{ position: fixed;/);
+  assert.match(marketplace, /> 프로젝트 설정<\/button>/);
+  assert.doesNotMatch(marketplace, /프로젝트 사용 설정/);
+  assert.match(styles, /\.marketplace-package-actions > \.marketplace-project-selector > button \{[^}]*font-size: 11\.5px;/);
+  assert.match(styles, /\.marketplace-project-options\.project-options button \{ font-size: 11\.5px; \}/);
+  assert.match(styles, /\.marketplace-project-options > footer > span \{[^}]*font-size: 11\.5px;/);
 });
 
 test("project settings retain unchecked Skill and MCP rows until navigation", () => {
