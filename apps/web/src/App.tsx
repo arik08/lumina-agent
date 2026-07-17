@@ -3471,7 +3471,7 @@ function App() {
                 </div>
               )}
               {composerTrigger && (
-                <div className={`composer-suggestions is-trigger-list ${composerTrigger.trigger === "$" ? "is-extension-list" : ""}`} id="composer-suggestions" role="listbox" aria-label={composerTrigger.trigger === "@" ? "파일 및 Artifact 후보" : "Skill 및 MCP 후보"}>
+                <div className={`composer-suggestions is-trigger-list ${composerTrigger.trigger === "$" ? "is-extension-list" : ""}`} id="composer-suggestions" role="listbox" aria-label={composerTrigger.trigger === "@" ? "파일, 폴더 및 Artifact 후보" : "Skill 및 MCP 후보"}>
                   <div className="composer-suggestions-heading">
                     <span>{composerTrigger.trigger === "@" ? "Context 연결" : "Skill / MCP 호출"}</span>
                     <small>{composerTrigger.query ? `'${composerTrigger.query}' 검색` : "사용 가능한 항목"}</small>
@@ -3579,8 +3579,8 @@ function App() {
                     event.currentTarget.value = "";
                     void workspace.uploadFiles(files);
                   }} />
-                  <button type="button" className="composer-utility-button" aria-label="파일 첨부" disabled={workspace.uploadingAttachments} onClick={() => fileInputRef.current?.click()}>{workspace.uploadingAttachments ? <LoaderCircle className="is-running" size={17} /> : <Paperclip size={17} />}</button>
-                  <button type="button" className="composer-utility-button" aria-label="Context 연결" onClick={() => insertComposerTrigger("@")}><AtSign size={17} /></button>
+                  <button type="button" className="composer-utility-button tooltip-control" aria-label="파일 첨부" data-tooltip="업로드" disabled={workspace.uploadingAttachments} onClick={() => fileInputRef.current?.click()}>{workspace.uploadingAttachments ? <LoaderCircle className="is-running" size={17} /> : <Paperclip size={17} />}</button>
+                  <button type="button" className="composer-utility-button tooltip-control" aria-label="Context 연결" data-tooltip="참고문서" onClick={() => insertComposerTrigger("@")}><AtSign size={17} /></button>
                   <button type="button" className="composer-utility-button tooltip-control" aria-label="Skill 및 MCP 호출" data-tooltip="Skill / MCP" onClick={() => insertComposerTrigger("$")}><CircleDollarSign size={17} /></button>
                   <ComposerPicker
                     options={analysisDepthOptions}

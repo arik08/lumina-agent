@@ -33,6 +33,10 @@ test("composer keeps model controls intact and sends independent analysis and an
   assert.doesNotMatch(app, /composer-picker\.is-open \.composer-picker-trigger > svg/);
   assert.doesNotMatch(app, /className="output-mode-toggle"/);
   assert.equal((app.match(/className="composer-utility-button(?: tooltip-control)?"/g) ?? []).length, 3);
+  assert.match(app, /className="composer-utility-button tooltip-control" aria-label="파일 첨부" data-tooltip="업로드"/);
+  assert.match(app, /className="composer-utility-button tooltip-control" aria-label="Context 연결" data-tooltip="참고문서"/);
+  assert.match(app, /className="composer-utility-button tooltip-control" aria-label="Skill 및 MCP 호출" data-tooltip="Skill \/ MCP"/);
+  assert.match(app, /composerTrigger\.trigger === "@" \? "파일, 폴더 및 Artifact 후보"/);
   assert.match(styles, /\.composer-footer \.composer-utility-button \{ color: var\(--muted\); \}/);
   assert.match(styles, /\.model-control, \.composer-footer \.effort-control \{[^}]*color: var\(--muted\)/);
   assert.match(styles, /\.composer-footer \.effort-control \{ font-weight: 700; \}/);
