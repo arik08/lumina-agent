@@ -25,6 +25,7 @@ import remarkGfm from "remark-gfm";
 
 import { api } from "../api";
 import type { AnnouncementItem, HelpItem, HelpItemKind } from "../api-types";
+import { MarkdownResponse } from "./ConversationTurn";
 import { ResizableSplitPane } from "./ResizableSplitPane";
 
 type HelpSection = "manuals" | "announcements";
@@ -512,7 +513,7 @@ export function HelpCenterView({ canManage, initialAnnouncementId = null, onOpen
                 <div><h2>{selectedAnnouncement.title}</h2><p>{selectedAnnouncement.author?.displayName || selectedAnnouncement.author?.loginId || "관리자"} · {formatDate(selectedAnnouncement.createdAt)}{announcementWasEdited(selectedAnnouncement) ? " · 수정됨" : ""}</p></div>
                 {effectiveCanManage ? <div className="file-viewer-actions"><button type="button" disabled={busy} onClick={beginAnnouncementEdit}><Pencil size={14} />편집</button><button className={`is-danger ${announcementDeleteArmed ? "is-confirming" : ""}`} type="button" disabled={busy} onClick={() => void removeAnnouncement()}>{announcementDeleteArmed ? <AlertCircle size={14} /> : <Trash2 size={14} />}{announcementDeleteArmed ? "한 번 더 눌러 삭제" : "삭제"}</button></div> : null}
               </header>
-              <article className="help-markdown help-announcement-body thin-scrollbar"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: (props) => <a {...props} target="_blank" rel="noreferrer" /> }}>{selectedAnnouncement.body}</ReactMarkdown></article>
+              <article className="help-announcement-body thin-scrollbar"><MarkdownResponse text={selectedAnnouncement.body} /></article>
             </div>
           )}
         </section>
