@@ -2434,8 +2434,9 @@ button:disabled { cursor: default; opacity: 0.5; }
 .tool-message pre::-webkit-scrollbar { width: 7px; }
 .tool-message pre::-webkit-scrollbar-track { background: transparent; }
 .tool-message pre::-webkit-scrollbar-thumb { border-radius: 999px; background: var(--scrollbar-thumb); }
-.tool-message-actions { position: sticky; z-index: 1; top: 0; display: flex; justify-content: flex-end; gap: 4px; padding: 4px 0; background: inherit; }
-.tool-message-actions button { display: inline-flex; align-items: center; gap: 5px; min-height: 27px; padding: 0 7px; border: 0; border-radius: 5px; background: transparent; color: var(--muted); font-size: 11.5px; cursor: pointer; }
+.tool-message-actions { position: sticky; z-index: 1; top: 4px; display: flex; height: 0; justify-content: flex-end; gap: 4px; background: inherit; pointer-events: none; }
+.tool-message-actions + .tool-message-section .tool-message-heading { padding-right: 70px; }
+.tool-message-actions button { display: inline-flex; align-items: center; gap: 5px; min-height: 27px; padding: 0 7px; border: 0; border-radius: 5px; background: inherit; color: var(--muted); font-size: 11.5px; cursor: pointer; pointer-events: auto; }
 .tool-message-actions button:hover { background: #e9ebee; color: var(--ink); }
 .tool-message-actions button.is-copied,
 .tool-message-actions button.is-copied:hover { background: color-mix(in srgb, var(--success) 14%, transparent); color: var(--success); }

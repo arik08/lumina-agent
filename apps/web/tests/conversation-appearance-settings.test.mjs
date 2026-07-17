@@ -41,5 +41,6 @@ test("tool detail copy action shows inline success feedback", () => {
   assert.match(conversationTurn, /copied \? <Check size=\{13\} \/> : <Copy size=\{13\} \/>/);
   assert.match(conversationTurn, /copied \? "복사됨" : "복사"/);
   assert.match(styles, /\.tool-message-actions button\.is-copied[\s\S]*?color: var\(--success\)/);
-  assert.match(styles, /\.tool-message-actions \{[^}]*position: sticky;[^}]*top: 0;[^}]*justify-content: flex-end;/);
+  assert.match(styles, /\.tool-message-actions \{[^}]*position: sticky;[^}]*height: 0;[^}]*justify-content: flex-end;[^}]*pointer-events: none;/);
+  assert.match(styles, /\.tool-message-actions \+ \.tool-message-section \.tool-message-heading \{ padding-right: 70px; \}/);
 });
