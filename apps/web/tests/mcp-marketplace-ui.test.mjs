@@ -65,6 +65,7 @@ test("MCP destructive actions use inline same-button confirmation instead of pop
   assert.match(panel, /uninstallConfirmId !== installation\.id[\s\S]*?setUninstallConfirmId\(installation\.id\)/);
   assert.match(panel, /unbindConfirmKey !== key[\s\S]*?setUnbindConfirmKey\(key\)/);
   assert.match(panel, /"한 번 더 눌러 설치 해제"/);
+  assert.match(styles, /button\.mcp-uninstall-action\.is-delete-armed span\s*\{[^}]*font-size:\s*11\.5px;/);
   assert.match(panel, /"한 번 더 눌러 연결 해제"/);
   assert.match(adminPanel, /approveConfirmId !== revisionId[\s\S]*?setApproveConfirmId\(revisionId\)/);
   assert.match(adminPanel, /disableConfirmId !== selected\.id[\s\S]*?setDisableConfirmId\(selected\.id\)/);
