@@ -2816,6 +2816,8 @@ button:disabled { cursor: default; opacity: 0.5; }
   background: var(--menu-surface);
   box-shadow: 0 14px 36px rgba(31, 39, 51, 0.16), 0 2px 8px rgba(31, 39, 51, 0.06);
 }
+.composer-picker:has(.analysis-depth-control) .composer-picker-menu,
+.composer-picker:has(.answer-length-control) .composer-picker-menu { right: auto; left: 50%; transform: translateX(-50%); }
 .composer-picker-menu-label { padding: 5px 8px 7px; color: var(--faint); font-size: 10px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; }
 .composer-picker-menu-label.has-description { display: grid; gap: 3px; padding-bottom: 9px; letter-spacing: normal; text-transform: none; }
 .composer-picker-menu-label.has-description > span { letter-spacing: 0.09em; text-transform: uppercase; }

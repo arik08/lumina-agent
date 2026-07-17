@@ -922,7 +922,7 @@ function ArtifactLengthSlider({
       const maximumLeft = Math.max(viewportPadding, window.innerWidth - viewportPadding - popoverRect.width);
       const left = Math.min(
         maximumLeft,
-        Math.max(viewportPadding, triggerRect.left),
+        Math.max(viewportPadding, triggerRect.left + (triggerRect.width - popoverRect.width) / 2),
       );
       setPopoverStyle({
         left,
