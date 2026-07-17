@@ -18,6 +18,26 @@ const roleLabels: Record<ProjectRole, string> = {
 const assignableRoleOptions = (["member", "viewer", "admin"] as AssignableRole[])
   .map((role) => ({ value: role, label: roleLabels[role] }));
 
+const PERSONAL_INSTRUCTIONS_PLACEHOLDER = `이 영역은 프로젝트 선택과 무관하게 개인 프로젝트에 적용되는 나만의 전역 작업 지침입니다.
+
+예시:
+- 선호하는 답변 언어, 문체와 설명 수준
+- 자주 사용하는 업무 용어와 배경 정보
+- 반복해서 원하는 분석·보고 방식
+- 개인 산출물의 형식과 정리 원칙
+
+공유 프로젝트에는 적용되지 않으며 조직 정책과 프로젝트 지침보다 우선할 수 없습니다.`;
+
+const PROJECT_INSTRUCTIONS_PLACEHOLDER = `이 영역은 현재 프로젝트의 모든 Run과 구성원에게 공통 적용되는 업무 지침입니다.
+
+예시:
+- 프로젝트의 목적, 범위와 주요 용어
+- 참고해야 할 자료와 사실 기준
+- 작업 순서, 검토 방식과 완료 조건
+- 보고서·표·문서 등 산출물 형식
+
+개인 지침보다 우선하며 이 프로젝트 밖에는 적용되지 않습니다.`;
+
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "요청을 처리하지 못했습니다.";
 }
@@ -310,6 +330,7 @@ export function ProjectSettings({ projects, project, onOpenNavigation, onSelect,
               heading="개인 지침"
               description="현재 프로젝트 선택과 무관하게 개인 작업에 적용할 전역 프롬프트입니다."
               note="나만 볼 수 있으며 언제든 바로 수정할 수 있습니다. 공유 프로젝트에는 포함되지 않습니다."
+              placeholder={PERSONAL_INSTRUCTIONS_PLACEHOLDER}
             />
           </div>
         ) : !project ? <p className="workspace-empty">설정할 프로젝트가 없습니다.</p> : (
@@ -333,6 +354,7 @@ export function ProjectSettings({ projects, project, onOpenNavigation, onSelect,
               heading="프로젝트 지침"
               description="이 프로젝트의 모든 Run에 적용할 업무 배경, 작업 방식과 산출물 원칙입니다."
               note="모든 구성원에게 적용되며, 편집 권한이 있으면 수정할 수 있습니다."
+              placeholder={PROJECT_INSTRUCTIONS_PLACEHOLDER}
             />
 
             <section className="project-membership-settings" aria-labelledby="project-membership-heading">
