@@ -45,7 +45,7 @@ test("send button tooltip uses the shared global layer", async () => {
 test("Skill and MCP suggestions use compact single-line rows", async () => {
   const [app, styles] = await Promise.all([readFile(appUrl, "utf8"), readFile(stylesUrl, "utf8")]);
 
-  assert.match(app, /composerTrigger\.trigger === "\$" \? "is-extension-list" : ""/);
+  assert.match(app, /composer-suggestions is-trigger-list \$\{composerTrigger\.trigger === "\$" \? "is-extension-list" : ""\}/);
   assert.match(app, /className=\{`composer-suggestion-icon kind-\$\{suggestion\.kind\}`\}/);
   assert.match(app, /composerTrigger\.trigger === "\$" && suggestion\.description && <small className="composer-suggestion-description">· \{suggestion\.description\}<\/small>/);
   assert.match(app, /composerTrigger\.trigger === "@" && <small>\{suggestion\.subtitle\}<\/small>/);
@@ -55,4 +55,9 @@ test("Skill and MCP suggestions use compact single-line rows", async () => {
   assert.match(styles, /\.composer-suggestions\.is-extension-list \.composer-suggestion-description \{[^}]*min-width: 0;[^}]*flex: 1 1 0;/);
   assert.match(styles, /\.composer-suggestions\.is-extension-list \.composer-suggestion-icon\.kind-skill \{ color: var\(--skill-accent\); \}/);
   assert.match(styles, /\.composer-suggestions\.is-extension-list \.composer-suggestion-icon\.kind-mcp \{ color: var\(--mcp-accent\); \}/);
+  assert.match(styles, /\.composer-suggestions\.is-trigger-list \.composer-suggestions-heading small \{[^}]*font-size: 12px;/);
+  assert.match(styles, /\.composer-suggestions\.is-trigger-list \.composer-suggestion-copy strong \{[^}]*font-size: 13px;/);
+  assert.match(styles, /\.composer-suggestions\.is-trigger-list \.composer-suggestion-copy small \{[^}]*font-size: 12px;/);
+  assert.match(styles, /\.composer-suggestions\.is-trigger-list span\.composer-suggestion-kind \{[^}]*font-size: 12px;/);
+  assert.doesNotMatch(styles, /\.composer-suggestions\.is-extension-list [^{]*(?:heading small|copy strong|suggestion-description|suggestion-kind) \{[^}]*font-size:/);
 });

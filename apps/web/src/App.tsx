@@ -3471,7 +3471,7 @@ function App() {
                 </div>
               )}
               {composerTrigger && (
-                <div className={`composer-suggestions ${composerTrigger.trigger === "$" ? "is-extension-list" : ""}`} id="composer-suggestions" role="listbox" aria-label={composerTrigger.trigger === "@" ? "파일 및 Artifact 후보" : "Skill 및 MCP 후보"}>
+                <div className={`composer-suggestions is-trigger-list ${composerTrigger.trigger === "$" ? "is-extension-list" : ""}`} id="composer-suggestions" role="listbox" aria-label={composerTrigger.trigger === "@" ? "파일 및 Artifact 후보" : "Skill 및 MCP 후보"}>
                   <div className="composer-suggestions-heading">
                     <span>{composerTrigger.trigger === "@" ? "Context 연결" : "Skill / MCP 호출"}</span>
                     <small>{composerTrigger.query ? `'${composerTrigger.query}' 검색` : "사용 가능한 항목"}</small>
