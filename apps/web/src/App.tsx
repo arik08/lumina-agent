@@ -3578,6 +3578,11 @@ function App() {
                     triggerIcon={<AlignLeft size={15} aria-hidden="true" />}
                     iconOnly
                   />
+                  <ArtifactLengthSlider
+                    value={targetOutputTokens}
+                    onChange={setTargetOutputTokens}
+                    disabled={workspace.settings?.outputMode === "chat"}
+                  />
                   <div className="output-mode-toggle" role="group" aria-label="출력 방식">
                     {([['auto', '자동'], ['chat', '채팅'], ['file', '파일']] as const).map(([value, label]) => (
                       <button
@@ -3606,11 +3611,6 @@ function App() {
                       <small>현재는 파일 모드입니다. 대화만 원하면 ‘채팅’을 선택하세요.</small>
                     </span>
                   </GlobalTooltipLayer>
-                  <ArtifactLengthSlider
-                    value={targetOutputTokens}
-                    onChange={setTargetOutputTokens}
-                    disabled={workspace.settings?.outputMode === "chat"}
-                  />
                 </div>
                 <div>
                   {pendingComposerMode && (
