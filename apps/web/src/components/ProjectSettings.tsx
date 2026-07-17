@@ -325,7 +325,7 @@ export function ProjectSettings({ projects, project, onOpenNavigation, onSelect,
               projectId={project.id}
               heading="프로젝트 지침"
               description="이 프로젝트의 모든 Run에 적용할 업무 배경, 작업 방식과 산출물 원칙입니다."
-              note="모든 구성원에게 같은 지침이 적용되며, 프로젝트를 편집할 수 있는 구성원은 언제든 수정할 수 있습니다."
+              note="모든 구성원에게 적용되며, 편집 권한이 있으면 수정할 수 있습니다."
             />
 
             <section className="project-membership-settings" aria-labelledby="project-membership-heading">
