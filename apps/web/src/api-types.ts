@@ -1207,6 +1207,7 @@ export interface McpInstallation {
   supportedSecretSchemes: string[];
   secretBindingRole: "admin";
   ready: boolean;
+  connectionErrorCode: string | null;
   installedAt: IsoDateTime;
 }
 

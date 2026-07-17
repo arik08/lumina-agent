@@ -7,7 +7,13 @@ from sqlalchemy.orm import Session
 
 from ...audit import record_audit
 from ...authorization import require_admin
+from ...config import Settings, get_settings
 from ...db import get_db
+from ...mcp.runtime import (
+    McpRuntime,
+    McpRuntimeError,
+    load_installation_server_config,
+)
 from ...mcp.schemas import (
     McpApproval,
     McpDefinitionCreate,
@@ -29,6 +35,7 @@ from ...mcp.service import (
     list_catalog,
     list_installations,
     mcp_skill_wrappers,
+    require_installation,
     set_definition_status,
     set_installation_enabled,
     unbind_secret_reference,
@@ -252,6 +259,50 @@ def get_mcp_installations(
         installation_payload(db, installation, user=user)
         for installation in list_installations(db, user=user, project_id=project_id)
     ]
+
+
+@router.post("/mcp/installations/{installation_id}/verify")
+async def verify_mcp_installation(
+    installation_id: str,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    installation = require_installation(
+        db, user=context.user, installation_id=installation_id, write=False
+    )
+    payload = installation_payload(db, installation, user=context.user)
+    if (
+        not installation.enabled
+        or payload["secretResolutionStatus"] not in {"ready", "not_required"}
+    ):
+        payload["healthStatus"] = "not_connected"
+        payload["schemaStatus"] = "pending"
+        return payload
+
+    runtime = McpRuntime(settings)
+    try:
+        config = load_installation_server_config(
+            db, installation, user=context.user
+        )
+        await runtime.prepare_servers((config,))
+    except McpRuntimeError as exc:
+        payload["healthStatus"] = "failed"
+        payload["schemaStatus"] = "invalid" if exc.stage == "schema" else "pending"
+        payload["connectionErrorCode"] = exc.code
+        return payload
+    except Exception:
+        payload["healthStatus"] = "failed"
+        payload["schemaStatus"] = "pending"
+        payload["connectionErrorCode"] = "mcp_verification_failed"
+        return payload
+    finally:
+        await runtime.close()
+
+    payload["healthStatus"] = "connected"
+    payload["schemaStatus"] = "valid"
+    payload["ready"] = True
+    return payload
 
 
 @router.post("/mcp/installations", status_code=201)

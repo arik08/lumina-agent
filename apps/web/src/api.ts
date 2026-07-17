@@ -1415,6 +1415,16 @@ export async function setMcpInstallationEnabled(
   });
 }
 
+export async function verifyMcpInstallation(
+  installationId: string,
+  signal?: AbortSignal,
+) {
+  return request<McpInstallation>(
+    `/mcp/installations/${encodeURIComponent(installationId)}/verify`,
+    { method: "POST", body: {}, signal },
+  );
+}
+
 export async function uninstallMcp(installationId: string, signal?: AbortSignal) {
   await request<void>(`/mcp/installations/${encodeURIComponent(installationId)}`, {
     method: "DELETE",
@@ -1968,6 +1978,7 @@ export const api = {
     listInstallations: listMcpInstallations,
     install: installMcp,
     setEnabled: setMcpInstallationEnabled,
+    verify: verifyMcpInstallation,
     uninstall: uninstallMcp,
     bindSecret: bindMcpSecret,
     unbindSecret: unbindMcpSecret,

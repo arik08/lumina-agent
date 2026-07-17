@@ -28,6 +28,7 @@ from ..models import (
     McpInstallation,
     McpSecretBinding,
     Run,
+    User,
 )
 from .service import ALLOWED_SECRET_HEADER_NAMES, ALLOWED_STDIO_EXECUTABLES
 from .policy import APPROVABLE_PRIVATE_NETWORKS, SECRET_NAME_PATTERN
@@ -190,6 +191,51 @@ def load_pinned_server_configs(db: Session, run: Run) -> tuple[McpServerConfig, 
             )
         )
     return tuple(configs)
+
+
+def load_installation_server_config(
+    db: Session, installation: McpInstallation, *, user: User
+) -> McpServerConfig:
+    revision = db.get(
+        McpConfigurationRevision, installation.configuration_revision_id
+    )
+    definition = db.get(McpDefinition, installation.definition_id)
+    if (
+        revision is None
+        or definition is None
+        or revision.definition_id != definition.id
+    ):
+        raise _runtime_error("mcp_snapshot_invalid", "snapshot")
+    bindings = {
+        binding.secret_name: binding.secret_ref
+        for binding in db.scalars(
+            select(McpSecretBinding).where(
+                McpSecretBinding.installation_id == installation.id,
+                McpSecretBinding.user_id == user.id,
+            )
+        )
+    }
+    required = tuple(revision.required_secret_names_json)
+    if set(required) != set(bindings):
+        raise _runtime_error("mcp_secret_binding_missing", "credential")
+    return McpServerConfig(
+        definition_id=definition.id,
+        installation_id=installation.id,
+        configuration_revision_id=revision.id,
+        digest=revision.config_digest,
+        slug=definition.slug,
+        transport=revision.transport,
+        command=tuple(revision.command_json),
+        url=revision.url_template,
+        allowed_hosts=tuple(revision.allowed_hosts_json),
+        allowed_ip_ranges=tuple(revision.allowed_ip_ranges_json),
+        header_templates=dict(revision.header_templates_json),
+        declared_tools=tuple(revision.tool_schemas_json),
+        tool_allowlist=tuple(installation.tool_allowlist_json),
+        required_secret_names=required,
+        secret_refs=bindings,
+        timeout_seconds=float(revision.timeout_seconds),
+    )
 
 
 class McpRuntime:

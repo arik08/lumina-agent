@@ -1049,12 +1049,11 @@ def installation_payload(
         "secretResolutionStatus": secret_resolution_status,
         "supportedSecretSchemes": ["env"],
         "secretBindingRole": "admin",
-        "ready": (
-            definition.status == "approved"
-            and revision.approval_status == "approved"
-            and installation.enabled
-            and secret_resolution_status in {"ready", "not_required"}
-        ),
+        # Installation and Secret configuration are prerequisites, not proof that
+        # the MCP process can initialize and return the approved Tool schemas.
+        # The explicit runtime probe is the only path that may return ready=True.
+        "ready": False,
+        "connectionErrorCode": None,
         "installedAt": installation.installed_at,
     }
 

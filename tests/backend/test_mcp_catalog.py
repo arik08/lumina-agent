@@ -22,7 +22,7 @@ from lumina.auth import bootstrap_database, create_user
 from lumina.config import Settings, get_settings
 from lumina.db import SessionLocal, configure_database, create_schema
 from lumina.migrations import SERVER_ROOT, upgrade_database
-from lumina.mcp.runtime import McpRuntimeError, load_pinned_server_configs
+from lumina.mcp.runtime import McpRuntime, McpRuntimeError, load_pinned_server_configs
 from lumina.mcp.service import validate_configuration
 from lumina.models import (
     AuditEvent,
@@ -168,6 +168,7 @@ def _configuration(*, timeout_seconds: int = 30) -> dict[str, object]:
 
 def test_mcp_catalog_binding_snapshot_and_cross_user_isolation(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app, ids = _setup(tmp_path)
     alice_ref = "vault://users/alice/mcp/internal-search"
@@ -382,10 +383,46 @@ def test_mcp_catalog_binding_snapshot_and_cross_user_isolation(
             json={"secretRef": admin_ref},
         )
         assert admin_bound.status_code == 200, admin_bound.text
-        assert admin_bound.json()["ready"] is True
+        assert admin_bound.json()["ready"] is False
         assert admin_bound.json()["secretResolutionStatus"] == "ready"
         assert admin_bound.json()["boundSecrets"][0]["resolvable"] is True
         assert admin_ref not in admin_bound.text
+
+        async def prepare_success(
+            _runtime: McpRuntime, _configs: object
+        ) -> tuple[object, ...]:
+            return ()
+
+        monkeypatch.setattr(McpRuntime, "prepare_servers", prepare_success)
+        verified = admin_client.post(
+            f"/api/mcp/installations/{installation['id']}/verify",
+            headers={"X-CSRF-Token": admin_csrf},
+        )
+        assert verified.status_code == 200, verified.text
+        assert verified.json()["healthStatus"] == "connected"
+        assert verified.json()["schemaStatus"] == "valid"
+        assert verified.json()["ready"] is True
+        assert verified.json()["connectionErrorCode"] is None
+
+        async def prepare_failure(
+            _runtime: McpRuntime, _configs: object
+        ) -> tuple[object, ...]:
+            raise McpRuntimeError(
+                "mcp_transport_failed",
+                "MCP 서버에 안전하게 연결할 수 없습니다.",
+                stage="network",
+            )
+
+        monkeypatch.setattr(McpRuntime, "prepare_servers", prepare_failure)
+        unavailable = admin_client.post(
+            f"/api/mcp/installations/{installation['id']}/verify",
+            headers={"X-CSRF-Token": admin_csrf},
+        )
+        assert unavailable.status_code == 200, unavailable.text
+        assert unavailable.json()["healthStatus"] == "failed"
+        assert unavailable.json()["schemaStatus"] == "pending"
+        assert unavailable.json()["ready"] is False
+        assert unavailable.json()["connectionErrorCode"] == "mcp_transport_failed"
 
         suggestions = admin_client.get(
             "/api/composer/suggestions",
