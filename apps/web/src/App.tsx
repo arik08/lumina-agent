@@ -1797,6 +1797,12 @@ function App() {
       .sort((left, right) => (left.queuePosition ?? Number.MAX_SAFE_INTEGER) - (right.queuePosition ?? Number.MAX_SAFE_INTEGER)),
     [activeRun?.pendingCommands],
   );
+  const pendingComposerMode = useMemo(
+    () => [...(activeRun?.pendingCommands ?? [])]
+      .filter((command) => command.type === "steer" || command.type === "queue_next")
+      .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))[0]?.type ?? null,
+    [activeRun?.pendingCommands],
+  );
   const shouldNudgeFileMode = mainView === "chat"
     && workspace.settings?.outputMode === "file"
     && draft.trim().length === 0
@@ -3549,6 +3555,11 @@ function App() {
                   />
                 </div>
                 <div>
+                  {pendingComposerMode && (
+                    <span className="composer-command-mode" role="status">
+                      {pendingComposerMode === "queue_next" ? "Queue" : "Steering"}
+                    </span>
+                  )}
                   <ComposerPicker
                     options={candidateModelOptions}
                     value={selectedCandidateId}
