@@ -33,3 +33,9 @@ test("completed plan steps use the same success pill treatment as tool calls", a
   assert.match(stylesSource, /\.tool-call-status,\s*\.progress-step-status\.status-complete/);
   assert.match(stylesSource, /\.tool-call-status\.status-complete,\s*\.progress-step-status\.status-complete/);
 });
+
+test("plan copy stays one pixel smaller than the conversation body", async () => {
+  const stylesSource = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
+
+  assert.match(stylesSource, /\.chat-pane\.view-chat \.progress-title,[\s\S]*?\.chat-pane\.view-chat \.progress-step-label > span,[\s\S]*?\.chat-pane\.view-chat \.progress-step-status \{\s*font-size: calc\(var\(--conversation-font-size\) - 1px\);/);
+});
