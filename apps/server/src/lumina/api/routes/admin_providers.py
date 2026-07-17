@@ -95,6 +95,16 @@ def _payload(model: ProviderModel) -> dict[str, Any]:
             model.capabilities_json.get("configuredMaxOutputTokens"),
         )
     )
+    default_max_input_tokens = _positive_int(
+        catalog_entry.capabilities.max_input_tokens if catalog_entry else None
+    )
+    max_input_tokens = _positive_int(
+        model.capabilities_json.get(
+            "max_input_tokens", model.capabilities_json.get("maxInputTokens")
+        )
+    )
+    if max_input_tokens is None:
+        max_input_tokens = default_max_input_tokens
     if configured_max is None or (hard_max is not None and configured_max > hard_max):
         configured_max = default_max
     return {
@@ -116,6 +126,8 @@ def _payload(model: ProviderModel) -> dict[str, Any]:
             else DEFAULT_CONTEXT_COMPACTION_THRESHOLD
         ),
         "contextPolicyLocked": context_policy_locked,
+        "maxInputTokens": max_input_tokens,
+        "defaultMaxInputTokens": default_max_input_tokens,
         "maxOutputTokens": hard_max,
         "defaultMaxOutputTokens": default_max,
         "configuredMaxOutputTokens": configured_max,

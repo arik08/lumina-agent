@@ -1162,6 +1162,7 @@ function App() {
   const [adminInitialExecutionBusy, setAdminInitialExecutionBusy] = useState(false);
   const [adminInitialExecutionError, setAdminInitialExecutionError] = useState<string | null>(null);
   const [adminMaxTokens, setAdminMaxTokens] = useState("");
+  const [adminInputTokens, setAdminInputTokens] = useState("");
   const [adminContextUsagePercent, setAdminContextUsagePercent] = useState("");
   const [adminOutputTokens, setAdminOutputTokens] = useState(0);
   const [adminSettingsBusy, setAdminSettingsBusy] = useState(false);
@@ -1526,6 +1527,7 @@ function App() {
       ?? selectedAdminSettingsModel?.capabilities.contextCompactionThreshold
       ?? adminDefaultContextUsageRatio;
     setAdminMaxTokens(typeof value === "number" ? value.toLocaleString("en-US") : "");
+    setAdminInputTokens(selectedAdminSettingsModel?.maxInputTokens?.toLocaleString("en-US") ?? "");
     setAdminContextUsagePercent(typeof ratio === "number" ? String(Math.round(ratio * 100)) : "75");
     setAdminOutputTokens(
       selectedAdminSettingsModel?.configuredMaxOutputTokens
@@ -1535,14 +1537,24 @@ function App() {
   }, [adminDefaultContextUsageRatio, selectedAdminSettingsModel]);
 
   const parsedAdminContextWindow = Number(adminMaxTokens.replaceAll(",", ""));
+  const parsedAdminInputTokens = Number(adminInputTokens.replaceAll(",", ""));
   const parsedAdminContextUsagePercent = Number(adminContextUsagePercent);
+  const adminMeasuredInputTokenLimit = Number.isSafeInteger(parsedAdminInputTokens) && parsedAdminInputTokens > 0
+    ? parsedAdminInputTokens
+    : null;
   const adminBaseInputContext = (() => {
     if (!Number.isSafeInteger(parsedAdminContextWindow) || parsedAdminContextWindow < 1) return null;
     const reservedOutput = adminOutputTokens > 0
       ? adminOutputTokens
       : Math.max(512, Math.min(4_096, Math.floor(parsedAdminContextWindow / 8)));
     const safetyMargin = Math.max(256, Math.min(4_096, Math.floor(parsedAdminContextWindow / 20)));
-    return Math.max(256, parsedAdminContextWindow - reservedOutput - safetyMargin);
+    return Math.max(
+      256,
+      Math.min(
+        parsedAdminContextWindow - reservedOutput,
+        adminMeasuredInputTokenLimit ?? parsedAdminContextWindow,
+      ) - safetyMargin,
+    );
   })();
   const adminBaseCompactionThreshold = (
     adminBaseInputContext !== null
@@ -1594,6 +1606,38 @@ function App() {
     } finally {
       setAdminSettingsBusy(false);
     }
+  };
+  const saveAdminInputTokens = async (value = parsedAdminInputTokens) => {
+    if (!selectedAdminSettingsModel) return;
+    if (!Number.isSafeInteger(value) || value < 1 || value > parsedAdminContextWindow) {
+      setAdminSettingsError("실측 입력 토큰 상한은 전체 컨텍스트 이내의 1 이상 정수여야 합니다.");
+      return;
+    }
+    setAdminSettingsBusy(true);
+    setAdminSettingsError(null);
+    try {
+      const capabilities: Record<string, unknown> = {
+        ...selectedAdminSettingsModel.capabilities,
+        max_input_tokens: value,
+      };
+      delete capabilities.maxInputTokens;
+      const updated = await api.adminProviders.updateModel(
+        adminSettingsProviderId,
+        selectedAdminSettingsModel.modelKey,
+        { capabilities },
+      );
+      setAdminSettingsModels((models) => models.map((model) => model.modelKey === updated.modelKey ? updated : model));
+    } catch (error) {
+      setAdminSettingsError(error instanceof Error ? error.message : "실측 입력 토큰 상한을 저장하지 못했습니다.");
+    } finally {
+      setAdminSettingsBusy(false);
+    }
+  };
+  const resetAdminInputTokens = () => {
+    const defaultValue = selectedAdminSettingsModel?.defaultMaxInputTokens;
+    if (!defaultValue) return;
+    setAdminInputTokens(defaultValue.toLocaleString("en-US"));
+    void saveAdminInputTokens(defaultValue);
   };
   const saveAdminContextUsagePercent = async (nextPercent = parsedAdminContextUsagePercent) => {
     if (!selectedAdminSettingsModel) return;
@@ -3603,6 +3647,22 @@ function App() {
                         <button type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked} onClick={() => void saveAdminMaxTokens()}>저장</button>
                       </div>
                     </div>
+                    <div className="settings-row settings-context-budget-row">
+                      <span>
+                        <strong>실측 입력 토큰 상한</strong>
+                        <small>
+                          공식 전체 컨텍스트와 별도로 확인한 입력 상한입니다. 아래 입력 컨텍스트 계산에서 먼저 적용합니다.
+                          {selectedAdminSettingsModel?.defaultMaxInputTokens
+                            ? ` 카탈로그 기본값 ${selectedAdminSettingsModel.defaultMaxInputTokens.toLocaleString()} 토큰.`
+                            : " 등록된 기본값이 없습니다."}
+                        </small>
+                      </span>
+                      <div className="settings-inline-control">
+                        <input aria-label="실측 입력 토큰 상한" type="text" inputMode="numeric" value={adminInputTokens} disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked} onChange={(event) => setAdminInputTokens(event.currentTarget.value.replace(/\D/g, "").replace(/\B(?=(\d{3})+(?!\d))/g, ","))} />
+                        <button className="is-secondary" type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel?.defaultMaxInputTokens || selectedAdminSettingsModel.contextPolicyLocked} onClick={resetAdminInputTokens}>초기화</button>
+                        <button type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked || adminMeasuredInputTokenLimit === null} onClick={() => void saveAdminInputTokens()}>저장</button>
+                      </div>
+                    </div>
                     <div className="settings-row settings-output-token-row">
                       <span>
                         <strong>최대 출력 토큰</strong>
@@ -3635,7 +3695,7 @@ function App() {
                     <div className="settings-row settings-context-budget-row">
                       <span>
                         <strong>기본 최대 입력 컨텍스트</strong>
-                        <small>전체 컨텍스트에서 최대 출력 토큰과 안전 여유를 뺀 시스템 입력 상한입니다. Tool 적용 전 기준이며 실제 Run에서는 Tool schema 토큰을 추가 차감합니다.</small>
+                        <small>전체 컨텍스트에서 출력 예약을 뺀 값과 모델 입력 상한 중 작은 값에서 안전 여유를 뺀 시스템 입력 예산입니다. Tool 적용 전 기준이며 실제 Run에서는 Tool schema 토큰을 추가 차감합니다.</small>
                       </span>
                       <output aria-live="polite">{adminBaseInputContext === null ? "계산할 수 없음" : `${adminBaseInputContext.toLocaleString()} 토큰`}</output>
                     </div>

@@ -140,6 +140,8 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
         assert gpt_54["defaultContextWindow"] == 1_050_000
         assert gpt_54["defaultContextUsageRatio"] == 0.75
         assert gpt_54["contextPolicyLocked"] is False
+        assert gpt_54["maxInputTokens"] == 911_900
+        assert gpt_54["defaultMaxInputTokens"] == 911_900
         assert gpt_54["maxOutputTokens"] == 128_000
         assert gpt_54["defaultMaxOutputTokens"] == 42_000
         assert gpt_54["configuredMaxOutputTokens"] == 42_000
@@ -157,6 +159,20 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
         )
         assert configured.status_code == 200, configured.text
         assert configured.json()["configuredMaxOutputTokens"] == 64_000
+
+        configured_input = client.patch(
+            "/api/admin/providers/pgpt/models/gpt-5.4",
+            headers={"X-CSRF-Token": csrf},
+            json={
+                "capabilities": {
+                    **configured.json()["capabilities"],
+                    "max_input_tokens": 900_000,
+                }
+            },
+        )
+        assert configured_input.status_code == 200, configured_input.text
+        assert configured_input.json()["maxInputTokens"] == 900_000
+        assert configured_input.json()["defaultMaxInputTokens"] == 911_900
 
         configured_ratio = client.patch(
             "/api/admin/providers/pgpt/models/gpt-5.4",
@@ -210,6 +226,8 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
         assert codex_gpt_54["defaultContextWindow"] == 272_000
         assert codex_gpt_54["defaultContextUsageRatio"] == 0.85
         assert codex_gpt_54["contextPolicyLocked"] is True
+        assert codex_gpt_54["maxInputTokens"] is None
+        assert codex_gpt_54["defaultMaxInputTokens"] is None
 
         rejected_codex_policy = client.patch(
             "/api/admin/providers/codex/models/gpt-5.4",
