@@ -2659,9 +2659,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .composer-reference { display: inline-flex; max-width: min(100%, 260px); min-height: 26px; align-items: center; gap: 6px; padding: 2px 3px 2px 7px; border-radius: 5px; background: var(--cobalt-pale); color: #3f527e; }
 .composer-reference > svg { flex: 0 0 auto; }
 .composer-reference > span { display: grid; min-width: 0; line-height: 1.15; }
-.composer-reference strong, .composer-reference small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.composer-reference strong { font-size: 11.8px; font-weight: 650; }
-.composer-reference small { color: var(--muted); font-size: 10px; }
+.composer-reference strong { overflow: hidden; font-size: 11.8px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .composer-reference button { display: inline-grid; width: 20px; height: 20px; flex: 0 0 auto; place-items: center; border: 0; border-radius: 4px; background: transparent; color: var(--muted); cursor: pointer; }
 .composer-reference button:hover { background: rgba(63, 102, 201, 0.1); color: var(--ink); }
 .composer-reference.kind-skill, .composer-reference.kind-mcp { background: #f1f0f6; color: #62577d; }
@@ -3507,6 +3505,10 @@ button:disabled { cursor: default; opacity: 0.5; }
 
 .chat-pane.view-chat .composer-footer,
 .chat-pane.view-chat .composer-footer * {
+  font-size: calc(var(--conversation-font-size) - 2px);
+}
+
+.chat-pane.view-chat .composer-reference strong {
   font-size: calc(var(--conversation-font-size) - 2px);
 }
 

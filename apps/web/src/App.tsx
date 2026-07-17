@@ -3464,7 +3464,7 @@ function App() {
                   {selectedReferences.map((item) => (
                     <span className={`composer-reference kind-${item.reference.kind}`} key={item.key}>
                       {suggestionIcon(item.reference.kind)}
-                      <span><strong>{item.token}</strong><small>{item.subtitle}</small></span>
+                      <span><strong>{item.token}</strong></span>
                       <button type="button" aria-label={`${item.name} 연결 제거`} onClick={() => removeComposerReference(item.key)}><X size={12} /></button>
                     </span>
                   ))}
