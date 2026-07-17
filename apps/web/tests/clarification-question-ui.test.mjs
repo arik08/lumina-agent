@@ -31,6 +31,7 @@ test("clarification card identifies questions and supports objective, custom, an
   assert.match(cardSource, /답변한 확인 질문 다시 보기/);
   assert.match(cardSource, /다시 접기/);
   assert.match(turnSource, /inputRequestActivity[\s\S]*<UserInputRequestCard/);
+  assert.match(turnSource, /activity\.type === "input_request" \|\| groups\.length === 0/);
   assert.doesNotMatch(turnSource, /assistant-content">[\s\S]{0,300}inputRequests/);
   assert.match(stylesheet, /\.run-activity-timeline \.clarification-card \{[^}]*margin: 3px 0 1px/);
   assert.match(stylesheet, /\.clarification-question:disabled :is\(button, input\) \{ opacity: 0\.78; \}/);

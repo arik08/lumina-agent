@@ -1942,11 +1942,30 @@ class LocalRunExecutor:
             run = db.get(Run, run_id)
             if run is None or run.status in TERMINAL_STATUSES:
                 return False
-            if any(
-                isinstance(item, dict)
+            previous_requests = [
+                item
                 for item in run.snapshot_json.get("input_requests", [])
-            ):
-                call["input_request_error"] = "user_input_already_requested"
+                if isinstance(item, dict)
+            ]
+            if any(item.get("status") == "pending" for item in previous_requests):
+                call["input_request_error"] = "user_input_request_pending"
+                return False
+            previous_questions = [
+                question
+                for item in previous_requests
+                for question in item.get("questions", [])
+                if isinstance(question, dict)
+            ]
+            previous_question_ids = {
+                str(question.get("id"))
+                for question in previous_questions
+                if question.get("id")
+            }
+            if previous_question_ids.intersection(question_ids):
+                call["input_request_error"] = "user_input_question_repeated"
+                return False
+            if len(previous_questions) + len(questions) > _MAX_USER_INPUT_QUESTIONS:
+                call["input_request_error"] = "user_input_question_limit_reached"
                 return False
             run.snapshot_json = {
                 **run.snapshot_json,
@@ -2893,8 +2912,12 @@ class LocalRunExecutor:
                 clarification_mode, clarification_contracts["balanced"]
             )
             + " If clarification is needed, call `request_user_input` by itself before visible "
-            "answer text. Ask all currently known questions together, up to four, and do not "
-            "ask again in this Run. Never use it for tool permission or approval. If the user "
+            "answer text. Put independent, currently known questions together, normally up to "
+            "three. When the user explicitly requests an interview or an active Skill requires "
+            "answer-dependent follow-ups, ask one question at a time and call the same UI again "
+            "after each answer until the intent is actionable. Across the Run, never exceed ten "
+            "questions or repeat a resolved question. Never use it for tool permission or "
+            "approval. If the user "
             "explicitly asks you to interview them, ask follow-up or reverse questions, gather "
             "facts or preferences through questions, or otherwise make questioning the requested "
             "interaction, treat that request itself as sufficient reason to call "
@@ -2902,7 +2925,7 @@ class LocalRunExecutor:
             "decide that you need to ask the person any question, you MUST use "
             "`request_user_input`; never put questions for the person in visible answer text. If "
             "you do not need an answer from the person, answer directly without asking. Put the "
-            "highest-value one to four questions in the single UI bundle."
+            "highest-value questions in each UI interaction."
         )
         web_research_requirement = run.snapshot_json.get("web_research_requirement", {})
         analysis_depth = str(run.snapshot_json.get("analysis_depth", "auto"))
@@ -3438,7 +3461,9 @@ class LocalRunExecutor:
                 "instruction": (
                     "Continue the same task using these answers. For answers marked "
                     "AI judgment, choose the most reasonable option and state any material "
-                    "assumption briefly. Do not ask the same question again."
+                    "assumption briefly. Do not ask the same question again. If the task is an "
+                    "explicit interview and a later decision depends on this answer, you may "
+                    "request the next question through request_user_input."
                 ),
             }
         analysis_depth = "auto"
@@ -6687,9 +6712,11 @@ _REQUEST_USER_INPUT_TOOL_SCHEMA = {
     "function": {
         "name": "request_user_input",
         "description": (
-            "Pause the Run for one compact bundle of user clarification questions. Call this "
-            "tool by itself, at most once per Run, and only under the active clarification-mode "
-            "contract. Include every currently known material question in the same call. The UI "
+            "Pause the Run for a compact set of user clarification questions. Call this tool by "
+            "itself and only under the active clarification-mode contract. Group independent, "
+            "currently known questions; for an explicit interview, use later calls for questions "
+            "that genuinely depend on earlier answers. Never repeat a resolved question or exceed "
+            "ten questions in total across the Run. The UI "
             "automatically adds a free-form custom answer to every question, so provide only "
             "two to four useful objective options. Do not use this for tool approval."
             " Whenever you decide to ask the person any question, including an interview, "

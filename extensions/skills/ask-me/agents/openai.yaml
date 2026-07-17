@@ -1,6 +1,6 @@
 interface:
   display_name: "Ask Me"
-  short_description: "필요한 결정만 짧게 질문하고 실행 방향을 함께 맞춥니다"
-  default_prompt: "Use $ask-me to clarify the few decisions that could materially change this task before proceeding."
+  short_description: "질의응답으로 의도를 구체화하고 결과까지 검증합니다"
+  default_prompt: "Use $ask-me to question me as deeply as needed, make this task concrete, then execute and verify it."
 policy:
   allow_implicit_invocation: false

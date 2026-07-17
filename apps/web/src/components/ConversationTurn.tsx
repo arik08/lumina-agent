@@ -867,7 +867,7 @@ function RunActivityTimeline({
   const visibleActivities = useStaggeredRunActivities(activities, timelineRunning);
   const latestVisibleActivityId = visibleActivities.at(-1)?.id ?? "";
   const activityGroups = visibleActivities.reduce<RunActivity[][]>((groups, activity) => {
-    if (activity.type === "progress_summary" || activity.type === "skill" || groups.length === 0) groups.push([]);
+    if (activity.type === "progress_summary" || activity.type === "skill" || activity.type === "input_request" || groups.length === 0) groups.push([]);
     groups.at(-1)?.push(activity);
     return groups;
   }, []);

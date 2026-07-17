@@ -199,3 +199,121 @@ def test_account_clarification_setting_and_durable_input_resume(
                 "input_submitted",
                 "input_checkpoint_consumed",
             } <= events
+
+
+def test_explicit_interview_can_resume_into_a_second_question_card(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    provider_turn = 0
+
+    def adaptive_interview_provider(
+        _provider_id: str,
+        *,
+        wants_artifact: bool,
+        first_turn: bool,
+    ) -> MockProvider:
+        nonlocal provider_turn
+        del wants_artifact, first_turn
+        provider_turn += 1
+        if provider_turn == 1:
+            return MockProvider(
+                tool_call=MockToolCall(
+                    name="request_user_input",
+                    call_id="interview-goal",
+                    arguments={
+                        "questions": [
+                            {
+                                "id": "goal",
+                                "prompt": "가장 중요한 목표는 무엇인가요?",
+                                "options": [
+                                    {"id": "speed", "label": "빠른 실행"},
+                                    {"id": "quality", "label": "높은 완성도"},
+                                ],
+                            }
+                        ]
+                    },
+                )
+            )
+        if provider_turn == 2:
+            return MockProvider(
+                tool_call=MockToolCall(
+                    name="request_user_input",
+                    call_id="interview-quality-bar",
+                    arguments={
+                        "questions": [
+                            {
+                                "id": "quality_bar",
+                                "prompt": "완성도를 무엇으로 판단할까요?",
+                                "options": [
+                                    {"id": "review", "label": "검토 통과"},
+                                    {"id": "test", "label": "테스트 통과"},
+                                ],
+                            }
+                        ]
+                    },
+                )
+            )
+        return MockProvider(text_chunks=("합의한 목표와 완료 조건에 맞춰 실행했습니다.",))
+
+    monkeypatch.setattr(local_run_executor, "_provider", adaptive_interview_provider)
+    with TestClient(create_app(_settings(tmp_path))) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers=headers,
+            json={"projectId": project_id, "title": "적응형 인터뷰 테스트"},
+        )
+        started = client.post(
+            f"/api/conversations/{conversation.json()['id']}/runs",
+            headers={**headers, "Idempotency-Key": "adaptive-interview-start"},
+            json={"message": {"text": "$ask-me로 계획을 구체화해 주세요."}},
+        )
+        assert started.status_code == 202, started.text
+        run_id = started.json()["run"]["runId"]
+
+        first_wait = _wait_for_status(client, run_id, {"awaiting_input"})
+        first_request = first_wait["inputRequests"][0]
+        first_submit = client.post(
+            f"/api/runs/{run_id}/actions",
+            headers={**headers, "Idempotency-Key": "adaptive-interview-goal"},
+            json={
+                "type": "submit_user_input",
+                "inputRequestId": first_request["id"],
+                "answers": [{"questionId": "goal", "optionId": "quality"}],
+            },
+        )
+        assert first_submit.status_code == 200, first_submit.text
+
+        second_wait = _wait_for_status(client, run_id, {"awaiting_input"})
+        assert len(second_wait["inputRequests"]) == 2
+        assert second_wait["inputRequests"][0]["status"] == "submitted"
+        second_request = second_wait["inputRequests"][1]
+        assert second_request["status"] == "pending"
+        assert second_request["questions"][0]["id"] == "quality_bar"
+        second_submit = client.post(
+            f"/api/runs/{run_id}/actions",
+            headers={**headers, "Idempotency-Key": "adaptive-interview-quality"},
+            json={
+                "type": "submit_user_input",
+                "inputRequestId": second_request["id"],
+                "answers": [{"questionId": "quality_bar", "optionId": "test"}],
+            },
+        )
+        assert second_submit.status_code == 200, second_submit.text
+
+        completed = _wait_for_status(client, run_id, {"completed"})
+        assert [item["status"] for item in completed["inputRequests"]] == [
+            "submitted",
+            "submitted",
+        ]
+        input_activities = [
+            activity
+            for activity in completed["activities"]
+            if activity["type"] == "input_request"
+        ]
+        assert [activity["request"]["id"] for activity in input_activities] == [
+            first_request["id"],
+            second_request["id"],
+        ]

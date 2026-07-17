@@ -18,18 +18,20 @@ def test_ask_me_uses_the_existing_question_ui_without_over_questioning() -> None
 
     assert "name: ask-me" in skill
     assert "Call `request_user_input` by itself" in skill
-    assert "Normally ask one question" in skill
-    assert "prefer no more than three" in skill
-    assert "Never exceed ten questions" in skill
+    assert "ask exactly one" in skill
+    assert "normally no more than three" in skill
+    assert "ten total questions" in skill
+    assert "Never repeat a resolved question" in skill
+    assert "verify the result against that contract" in skill
     assert " (추천)" in skill
-    assert "Never place a user-facing question in ordinary response text" in skill
+    assert "Never place a question in ordinary response text" in skill
     assert "If no Blocking item remains" in skill
 
 
 def test_ask_me_has_repository_catalog_metadata() -> None:
     catalog = json.loads((SKILL_ROOT / "catalog.json").read_text(encoding="utf-8"))
 
-    assert catalog["ask-me"]["description"].startswith("작업을 실행하기 전에")
+    assert catalog["ask-me"]["description"].startswith("기존 확인 질문 UI를 통해")
     assert catalog["ask-me"]["tags"] == ["Agent", "업무설계"]
 
 
