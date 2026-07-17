@@ -6,6 +6,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from lumina.config import get_settings
+from lumina.deep_analysis import models as _deep_analysis_models  # noqa: F401
 from lumina.models import Base
 
 

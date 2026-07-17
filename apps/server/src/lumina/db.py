@@ -83,5 +83,6 @@ def get_db() -> Generator[Session, None, None]:
 def create_schema(bind: Engine | None = None) -> None:
     # Importing registers all mapped classes on Base.metadata.
     from . import models as _models  # noqa: F401
+    from .deep_analysis import models as _deep_analysis_models  # noqa: F401
 
     Base.metadata.create_all(bind or engine)
