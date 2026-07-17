@@ -19,6 +19,10 @@ test("catalog uses a searchable card grid with installed-only package viewing", 
   assert.match(view, /skillView === "catalog" \? <SkillCatalogPanel/);
   assert.match(view, /useEffect\(\(\) => \{\s*if \(hasCachedCatalog\) lastVisibleCatalogRef\.current = catalog;\s*\}, \[catalog, hasCachedCatalog\]\)/);
   assert.match(view, /const visibleCatalog = hasCachedCatalog \? catalog : lastVisibleCatalogRef\.current/);
+  assert.match(view, /const selectedTagCount = catalogTag[\s\S]*visibleCatalog\.facets\.tags\.find\(\(item\) => item\.value === catalogTag\)\?\.count/);
+  assert.match(view, /const catalogTabCount = hasCachedCatalog[\s\S]*\? catalog\.total[\s\S]*: selectedTagCount \?\? \(visibleCatalog\.total \|\| items\.length\)/);
+  assert.match(view, /카탈로그 <span>\{catalogTabCount\}<\/span>/);
+  assert.doesNotMatch(view, /카탈로그 <span>\{catalog\.total \|\| items\.length\}<\/span>/);
   assert.match(view, /catalog=\{visibleCatalog\}/);
   assert.match(view, /setSelectedId\(target\.id\);\s*setEnteredInstalledFromCatalog\(true\);\s*setSkillView\("installed"\);/);
   assert.match(view, /window\.history\.pushState\(\{[\s\S]*luminaMarketplaceCatalogDetail:[\s\S]*skillId: target\.id/);

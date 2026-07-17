@@ -158,6 +158,12 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
     if (hasCachedCatalog) lastVisibleCatalogRef.current = catalog;
   }, [catalog, hasCachedCatalog]);
   const visibleCatalog = hasCachedCatalog ? catalog : lastVisibleCatalogRef.current;
+  const selectedTagCount = catalogTag
+    ? visibleCatalog.facets.tags.find((item) => item.value === catalogTag)?.count
+    : undefined;
+  const catalogTabCount = hasCachedCatalog
+    ? catalog.total
+    : selectedTagCount ?? (visibleCatalog.total || items.length);
   const [catalogLoading, setCatalogLoading] = useState(!hasCachedCatalog);
   const [catalogLoadingMore, setCatalogLoadingMore] = useState(false);
   const [versionDetail, setVersionDetail] = useState<SkillVersion | null>(null);
@@ -700,7 +706,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
       <header className="feature-header"><div><button className="feature-mobile-menu" type="button" aria-label="사이드바 열기" onClick={onOpenNavigation}><Menu size={17} /></button><Store size={17} /><h1>마켓스토어</h1><div className="feature-kind-tabs" role="tablist" aria-label="Marketplace 유형"><button type="button" role="tab" aria-selected={marketKind === "skill"} onClick={() => setMarketKind("skill")}><Sparkles size={14} /> Skill</button><button type="button" role="tab" aria-selected={marketKind === "mcp"} onClick={() => setMarketKind("mcp")}><Wrench size={14} /> MCP</button></div><span>탐색·설치·관리</span></div><div><button type="button" aria-label="새로 고침" onClick={() => void refreshRepository()}><RefreshCw size={15} /></button></div></header>
       {marketKind === "skill" && <div className="marketplace-toolbar">
         <div className="marketplace-scope-tabs" role="tablist" aria-label="Skill 보기">
-          <button type="button" role="tab" aria-selected={skillView === "catalog"} onClick={returnToCatalog}><Package size={14} /> 카탈로그 <span>{catalog.total || items.length}</span></button>
+          <button type="button" role="tab" aria-selected={skillView === "catalog"} onClick={returnToCatalog}><Package size={14} /> 카탈로그 <span>{catalogTabCount}</span></button>
           <button type="button" role="tab" aria-selected={skillView === "installed"} onClick={() => { setEnteredInstalledFromCatalog(false); setSkillView("installed"); }}><Download size={14} /> 설치됨 <span>{counts.installed}</span></button>
           <button type="button" role="tab" aria-selected={skillView === "drafts"} onClick={() => { setEnteredInstalledFromCatalog(false); setSkillView("drafts"); }}><Sparkles size={14} /> 내 초안 <span>{counts.drafts}</span></button>
           <button className="tooltip-control" type="button" role="tab" aria-selected={skillView === "trash"} data-tooltip="삭제한 Skill은 30일 동안 보관되며 그 전에 복원할 수 있습니다." onClick={() => { setEnteredInstalledFromCatalog(false); setSkillView("trash"); }}><Trash2 size={14} /> 삭제됨 <span>{counts.trashed}</span></button>
