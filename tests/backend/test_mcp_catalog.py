@@ -22,7 +22,13 @@ from lumina.auth import bootstrap_database, create_user
 from lumina.config import Settings, get_settings
 from lumina.db import SessionLocal, configure_database, create_schema
 from lumina.migrations import SERVER_ROOT, upgrade_database
-from lumina.mcp.runtime import McpRuntime, McpRuntimeError, load_pinned_server_configs
+from lumina.agent.executor import local_run_executor
+from lumina.mcp.runtime import (
+    McpRuntime,
+    McpRuntimeError,
+    PreparedMcpTool,
+    load_pinned_server_configs,
+)
 from lumina.mcp.service import validate_configuration
 from lumina.models import (
     AuditEvent,
@@ -32,10 +38,12 @@ from lumina.models import (
     Organization,
     Project,
     ProjectMembership,
+    ProviderModel,
     Run,
     RunEvent,
     User,
 )
+from lumina.providers import MockProvider, MockToolCall
 from lumina.runs.service import create_run, run_snapshot
 
 
@@ -415,6 +423,92 @@ def test_mcp_catalog_binding_snapshot_and_cross_user_isolation(
         assert admin_bound.json()["secretResolutionStatus"] == "ready"
         assert admin_bound.json()["boundSecrets"][0]["resolvable"] is True
         assert admin_ref not in admin_bound.text
+
+        answer_test_without_real_provider = admin_client.post(
+            f"/api/mcp/installations/{installation['id']}/answer-test",
+            headers={"X-CSRF-Token": admin_csrf},
+            json={
+                "projectId": ids["project_id"],
+                "prompt": "검색 연결이 실제로 동작하는지 확인해 주세요.",
+            },
+        )
+        assert answer_test_without_real_provider.status_code == 409
+        assert (
+            answer_test_without_real_provider.json()["code"]
+            == "real_provider_required"
+        )
+
+        with SessionLocal() as db:
+            organization = db.scalar(select(Organization))
+            test_model = next(
+                model
+                for model in db.scalars(select(ProviderModel))
+                if model.enabled and model.capabilities_json.get("tools") is True
+            )
+            assert organization is not None
+            organization.initial_execution_settings_json = {
+                "providerId": test_model.provider_id,
+                "modelKey": test_model.model_key,
+                "effortId": "auto",
+            }
+            db.commit()
+
+        async def prepare_answer_test(
+            _runtime: McpRuntime, configs: object
+        ) -> tuple[PreparedMcpTool, ...]:
+            config = tuple(configs)[0]  # type: ignore[arg-type]
+            return (
+                PreparedMcpTool(
+                    provider_name="mcp_answer_test_search",
+                    server_slug=config.slug,
+                    original_name="search_docs",
+                    description="Search documents",
+                    input_schema={"type": "object"},
+                    config=config,
+                ),
+            )
+
+        async def call_answer_test_tool(
+            _runtime: McpRuntime, _tool: PreparedMcpTool, arguments: object
+        ) -> dict[str, object]:
+            assert arguments == {"query": "연결 확인"}
+            return {"content": [{"type": "text", "text": "실제 MCP 결과"}]}
+
+        class AnswerTestProvider:
+            async def stream(self, request: object):  # type: ignore[no-untyped-def]
+                provider_request = request  # keep the test provider protocol explicit
+                delegate = (
+                    MockProvider(
+                        text_chunks=(),
+                        tool_call=MockToolCall(
+                            name="mcp_answer_test_search",
+                            arguments={"query": "연결 확인"},
+                        ),
+                    )
+                    if provider_request.tools
+                    else MockProvider(text_chunks=("실제 MCP 결과로 답변했습니다.",))
+                )
+                async for event in delegate.stream(provider_request):
+                    yield event
+
+        monkeypatch.setattr(McpRuntime, "prepare_servers", prepare_answer_test)
+        monkeypatch.setattr(McpRuntime, "call_tool", call_answer_test_tool)
+        monkeypatch.setattr(
+            local_run_executor,
+            "provider_for_probe",
+            lambda _provider_id: AnswerTestProvider(),
+        )
+        answer_test = admin_client.post(
+            f"/api/mcp/installations/{installation['id']}/answer-test",
+            headers={"X-CSRF-Token": admin_csrf},
+            json={
+                "projectId": ids["project_id"],
+                "prompt": "검색 연결이 실제로 동작하는지 확인해 주세요.",
+            },
+        )
+        assert answer_test.status_code == 200, answer_test.text
+        assert answer_test.json()["answer"] == "실제 MCP 결과로 답변했습니다."
+        assert answer_test.json()["toolName"] == "search_docs"
 
         async def prepare_success(
             _runtime: McpRuntime, _configs: object

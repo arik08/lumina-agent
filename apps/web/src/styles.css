@@ -1246,7 +1246,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .skill-catalog-card-actions { display: flex; align-items: center; gap: 5px; margin-left: auto; }
 .skill-catalog-view { display: inline-grid; width: 28px; min-width: 28px; height: 26px; place-items: center; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--ink); cursor: pointer; }
 .skill-catalog-view:not(:disabled):hover, .skill-catalog-view:not(:disabled):focus-visible { border-color: color-mix(in srgb, var(--cobalt) 34%, var(--line)); background: var(--cobalt-pale); color: var(--cobalt); }
-.skill-catalog-card.is-liked .skill-catalog-view { border-color: var(--cobalt); }
+.skill-catalog-card.is-liked .skill-catalog-view { border-color: color-mix(in srgb, var(--cobalt) 34%, var(--line)); }
 .skill-catalog-more { display: flex; min-width: 112px; height: 32px; align-items: center; justify-content: center; gap: 6px; margin: 18px auto 0; padding: 0 12px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); color: var(--ink); cursor: pointer; }
 .skill-catalog-more:not(:disabled):hover { background: var(--surface-soft); }
 .skill-catalog-empty { display: grid; min-height: 300px; place-content: center; justify-items: center; gap: 7px; color: var(--muted); text-align: center; }
@@ -1512,6 +1512,17 @@ button:disabled { cursor: default; opacity: 0.5; }
 .mcp-installation-row > header .is-pending { color: var(--warning); }
 .mcp-health-line { display: flex; gap: 7px 16px; padding: 0 2px 8px; color: var(--muted); font-size: 10px; }
 .mcp-health-line strong { color: var(--ink); font-weight: 600; }
+.mcp-answer-test { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; padding: 0 2px 9px; }
+.mcp-answer-test > input { min-width: 0; height: 29px; border: 1px solid var(--line); border-radius: 4px; outline: 0; padding: 0 8px; background: var(--surface); color: var(--ink); font-size: 10.5px; }
+.mcp-answer-test > input:focus { border-color: var(--cobalt); }
+.mcp-answer-test > button { display: inline-flex; height: 29px; align-items: center; gap: 5px; border: 1px solid color-mix(in srgb, var(--cobalt) 48%, var(--line)); border-radius: 4px; padding: 0 9px; background: color-mix(in srgb, var(--cobalt) 8%, var(--surface)); color: var(--cobalt); font-size: 10.5px; cursor: pointer; }
+.mcp-answer-test > button:disabled { cursor: not-allowed; opacity: 0.5; }
+.mcp-answer-test > small, .mcp-answer-test-result { grid-column: 1 / -1; }
+.mcp-answer-test > small { color: var(--muted); font-size: 10px; }
+.mcp-answer-test-result { border-left: 2px solid var(--success); padding: 6px 8px; background: color-mix(in srgb, var(--success) 5%, transparent); color: var(--ink); font-size: 11px; line-height: 1.45; }
+.mcp-answer-test-result.is-error { border-left-color: var(--danger); background: color-mix(in srgb, var(--danger) 5%, transparent); color: var(--danger); }
+.mcp-answer-test-result small { display: block; margin-bottom: 3px; color: var(--muted); font-size: 9.5px; }
+.mcp-answer-test-result p { margin: 0; white-space: pre-wrap; }
 .mcp-secret-row { display: grid; min-height: 42px; grid-template-columns: 20px minmax(130px, 0.7fr) minmax(170px, 1fr) auto; align-items: center; gap: 7px; margin-left: 20px; border-top: 1px solid color-mix(in srgb, var(--line) 70%, transparent); }
 .mcp-secret-row > svg { color: var(--cobalt); }
 .mcp-secret-row > span { display: grid; gap: 1px; }
@@ -3407,6 +3418,8 @@ button:disabled { cursor: default; opacity: 0.5; }
   .mcp-tool-list { grid-template-columns: minmax(0, 1fr); }
   .mcp-tool-list label:nth-child(even) { padding-left: 3px; border-left: 0; }
   .mcp-secret-row { grid-template-columns: 20px minmax(0, 1fr) auto; margin-left: 0; padding: 6px 0; }
+  .mcp-answer-test { grid-template-columns: 1fr; }
+  .mcp-answer-test > button { justify-self: end; }
   .mcp-secret-row input { grid-column: 2 / -1; width: 100%; }
   .mcp-secret-row > .mcp-secret-guidance { grid-column: 2 / -1; }
   .admin-mcp-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(130px, 32%) minmax(0, 1fr); }

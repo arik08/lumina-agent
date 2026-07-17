@@ -41,6 +41,18 @@ test("MCP installation status and secret actions keep compact trailing geometry"
   assert.match(styles, /\.mcp-secret-row > \.mcp-secret-action \{[^}]*grid-column: -2 \/ -1;[^}]*width: max-content;[^}]*justify-self: end;/);
 });
 
+test("MCP installation can run a real LLM answer test inline", async () => {
+  const [panel, styles] = await Promise.all([
+    readFile(panelPath, "utf8"),
+    readFile(stylesPath, "utf8"),
+  ]);
+
+  assert.match(panel, /api\.mcp\.testAnswer\(installation\.id, projectId, prompt\)/);
+  assert.match(panel, /실제 답변 테스트/);
+  assert.match(panel, /providerId.*modelKey.*toolName/);
+  assert.match(styles, /\.mcp-answer-test-result/);
+});
+
 test("MCP detail shows whether its Skill wrapper is applied", async () => {
   const [panel, styles] = await Promise.all([
     readFile(panelPath, "utf8"),

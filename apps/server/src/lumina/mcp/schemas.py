@@ -71,5 +71,10 @@ class McpInstallationPatch(ApiModel):
         return self
 
 
+class McpAnswerTestInput(ApiModel):
+    project_id: str = Field(min_length=1, max_length=80)
+    prompt: str = Field(min_length=1, max_length=1000)
+
+
 class McpSecretBindingInput(ApiModel):
     secret_ref: str = Field(min_length=8, max_length=500)

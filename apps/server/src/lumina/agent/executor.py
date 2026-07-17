@@ -3316,6 +3316,9 @@ class LocalRunExecutor:
             f"{provider_id} Provider는 catalog 계약만 활성화되어 있고 credential adapter가 설정되지 않았습니다."
         )
 
+    def provider_for_probe(self, provider_id: str) -> ProviderAdapter:
+        return self._provider(provider_id, wants_artifact=False, first_turn=True)
+
     async def _execute_tool(
         self,
         run_id: str,

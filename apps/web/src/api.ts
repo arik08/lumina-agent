@@ -92,6 +92,7 @@ import type {
   McpDefinition,
   McpDefinitionCreateRequest,
   McpInstallation,
+  McpAnswerTestResult,
 } from "./api-types";
 import { createClientId } from "./client-id";
 
@@ -1462,6 +1463,18 @@ export async function verifyMcpInstallation(
   );
 }
 
+export async function testMcpInstallationAnswer(
+  installationId: string,
+  projectId: string,
+  prompt: string,
+  signal?: AbortSignal,
+) {
+  return request<McpAnswerTestResult>(
+    `/mcp/installations/${encodeURIComponent(installationId)}/answer-test`,
+    { method: "POST", body: { projectId, prompt }, signal },
+  );
+}
+
 export async function uninstallMcp(installationId: string, signal?: AbortSignal) {
   await request<void>(`/mcp/installations/${encodeURIComponent(installationId)}`, {
     method: "DELETE",
@@ -2019,6 +2032,7 @@ export const api = {
     setEnabled: setMcpInstallationEnabled,
     updateProjects: updateMcpInstallationProjects,
     verify: verifyMcpInstallation,
+    testAnswer: testMcpInstallationAnswer,
     uninstall: uninstallMcp,
     bindSecret: bindMcpSecret,
     unbindSecret: unbindMcpSecret,

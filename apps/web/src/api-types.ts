@@ -1225,6 +1225,13 @@ export interface McpInstallation {
   installedAt: IsoDateTime;
 }
 
+export interface McpAnswerTestResult {
+  answer: string;
+  providerId: string;
+  modelKey: string;
+  toolName: string;
+}
+
 export interface McpDefinitionCreateRequest {
   name: string;
   slug?: string;

@@ -1,7 +1,7 @@
-import { Check, KeyRound, LoaderCircle, Plug, Power, ShieldCheck, Trash2, Wrench } from "lucide-react";
+import { Check, KeyRound, LoaderCircle, Plug, Power, Send, ShieldCheck, Trash2, Wrench } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
 import { api, ApiError } from "../api";
-import type { McpDefinition, McpInstallation } from "../api-types";
+import type { McpAnswerTestResult, McpDefinition, McpInstallation } from "../api-types";
 import { ResizableSplitPane } from "./ResizableSplitPane";
 
 interface McpMarketplacePanelProps {
@@ -38,6 +38,11 @@ function installationStateLabel(installation: McpInstallation) {
   return "연결 확인 중";
 }
 
+function AnswerTestFeedback({ result }: { result: McpAnswerTestResult | { error: string } }) {
+  if ("error" in result) return <div className="mcp-answer-test-result is-error" role="alert">{result.error}</div>;
+  return <div className="mcp-answer-test-result" role="status"><small>{result.providerId} · {result.modelKey} · {result.toolName}</small><p>{result.answer}</p></div>;
+}
+
 export function McpMarketplacePanel({ projectId }: McpMarketplacePanelProps) {
   const [catalog, setCatalog] = useState<McpDefinition[]>([]);
   const [installations, setInstallations] = useState<McpInstallation[]>([]);
@@ -51,6 +56,9 @@ export function McpMarketplacePanel({ projectId }: McpMarketplacePanelProps) {
   const [refreshKey, setRefreshKey] = useState(0);
   const [uninstallConfirmId, setUninstallConfirmId] = useState<string | null>(null);
   const [unbindConfirmKey, setUnbindConfirmKey] = useState<string | null>(null);
+  const [answerTestInputs, setAnswerTestInputs] = useState<Record<string, string>>({});
+  const [answerTestBusyId, setAnswerTestBusyId] = useState<string | null>(null);
+  const [answerTestResults, setAnswerTestResults] = useState<Record<string, McpAnswerTestResult | { error: string }>>({});
 
   const selected = catalog.find((item) => item.id === selectedId) ?? catalog[0] ?? null;
   const currentRevision = selected?.revisions.find((item) => item.id === selected.currentRevisionId) ?? selected?.revisions.at(-1) ?? null;
@@ -191,6 +199,26 @@ export function McpMarketplacePanel({ projectId }: McpMarketplacePanelProps) {
     }
   };
 
+  const testAnswer = async (event: FormEvent<HTMLFormElement>, installation: McpInstallation) => {
+    event.preventDefault();
+    const prompt = answerTestInputs[installation.id]?.trim() ?? "";
+    if (!projectId || !prompt || answerTestBusyId) return;
+    setAnswerTestBusyId(installation.id);
+    setAnswerTestResults((current) => {
+      const next = { ...current };
+      delete next[installation.id];
+      return next;
+    });
+    try {
+      const result = await api.mcp.testAnswer(installation.id, projectId, prompt);
+      setAnswerTestResults((current) => ({ ...current, [installation.id]: result }));
+    } catch (caught) {
+      setAnswerTestResults((current) => ({ ...current, [installation.id]: { error: errorMessage(caught) } }));
+    } finally {
+      setAnswerTestBusyId(null);
+    }
+  };
+
   const unbindSecret = async (installation: McpInstallation, secretName: string) => {
     const key = `${installation.id}:${secretName}`;
     if (unbindConfirmKey !== key) {
@@ -250,6 +278,12 @@ export function McpMarketplacePanel({ projectId }: McpMarketplacePanelProps) {
                   <article className="mcp-installation-row" key={installation.id}>
                     <header><div><strong>{installation.scopeType === "project" ? "Project" : "내 계정"} · r{installation.configurationRevision}</strong><small>{installation.toolAllowlist.join(", ")}</small></div><div className="mcp-installation-actions"><span className={`mcp-installation-ready-state ${installation.ready ? "is-ready" : "is-pending"}`}>{installation.ready ? <Check size={13} /> : <LoaderCircle className={installation.healthStatus === "not_connected" ? "is-running" : undefined} size={13} />} {installationStateLabel(installation)}</span><button className="tooltip-control" type="button" aria-label={installation.enabled ? "MCP 비활성화" : "MCP 활성화"} data-tooltip={installation.enabled ? "비활성화" : "활성화"} disabled={busy} onClick={() => void toggleInstallation(installation)}><Power size={14} /></button><button className={`mcp-uninstall-action text-danger ${uninstallConfirmId === installation.id ? "is-delete-armed" : ""}`} type="button" aria-label={uninstallConfirmId === installation.id ? "MCP 설치 해제 확인, 한 번 더 누르면 설치 해제" : "MCP 설치 해제"} data-tooltip={uninstallConfirmId === installation.id ? "한 번 더 눌러 설치 해제" : "설치 해제"} disabled={busy} onClick={() => void uninstall(installation)}><Trash2 size={14} />{uninstallConfirmId === installation.id ? <span>한 번 더 눌러 설치 해제</span> : null}</button></div></header>
                     <div className="mcp-health-line"><span>health <strong>{stateLabel(installation.healthStatus)}</strong></span><span>schema <strong>{stateLabel(installation.schemaStatus)}</strong></span><span>Secret <strong>{resolverLabel(installation.secretResolutionStatus)}</strong></span><span>{installation.enabled ? "활성" : "비활성"}</span></div>
+                    <form className="mcp-answer-test" onSubmit={(event) => void testAnswer(event, installation)}>
+                      <input type="text" maxLength={1000} aria-label={`${installation.name} 실제 답변 테스트 질문`} placeholder="질문을 입력해 실제 LLM 답변 확인" value={answerTestInputs[installation.id] ?? ""} onChange={(event) => { const value = event.currentTarget.value; setAnswerTestInputs((current) => ({ ...current, [installation.id]: value })); }} />
+                      <button type="submit" disabled={!projectId || !installation.ready || answerTestBusyId !== null || !(answerTestInputs[installation.id] ?? "").trim()}>{answerTestBusyId === installation.id ? <LoaderCircle className="is-running" size={13} /> : <Send size={13} />} 실제 답변 테스트</button>
+                      {!projectId && <small>Project를 선택해야 현재 기본 LLM으로 테스트할 수 있습니다.</small>}
+                      {answerTestResults[installation.id] && <AnswerTestFeedback result={answerTestResults[installation.id]} />}
+                    </form>
                     {installation.boundSecrets.map((slot) => {
                       const key = `${installation.id}:${slot.name}`;
                       return <form className="mcp-secret-row" key={slot.name} onSubmit={(event) => void bindSecret(event, installation, slot.name)}><KeyRound size={14} /><span><strong>{slot.name}</strong><small>{resolverLabel(slot.resolverStatus)}</small></span>{slot.bound ? <button className={`mcp-secret-action text-danger ${unbindConfirmKey === key ? "is-delete-armed" : ""}`} type="button" disabled={busy} onClick={() => void unbindSecret(installation, slot.name)}>{unbindConfirmKey === key ? "한 번 더 눌러 연결 해제" : "연결 해제"}</button> : slot.canBind ? <><input type="text" autoComplete="off" aria-label={`${slot.name} Secret Store reference`} placeholder="env://VARIABLE_NAME" value={secretInputs[key] ?? ""} onChange={(event) => { const value = event.currentTarget.value; setSecretInputs((current) => ({ ...current, [key]: value })); }} /><button type="submit" disabled={busy || !(secretInputs[key] ?? "").trim()}>연결</button></> : <span className="mcp-secret-guidance">관리자 env:// 연결 필요</span>}</form>;
