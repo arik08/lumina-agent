@@ -1,10 +1,10 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import App from "./App";
 import { AppErrorBoundary } from "./AppErrorBoundary";
 import { BackendConnectionGuard } from "./BackendConnectionGuard";
 import "./components/ArtifactLibraryView.css";
 import { GlobalTooltipProvider } from "./components/GlobalTooltip";
+import { AgentFrontendHost } from "./frontend-host/AgentFrontendHost";
 import { installScrollbarActivity } from "./scrollbar-activity";
 import "./styles.css";
 
@@ -16,7 +16,7 @@ createRoot(document.getElementById("root")!).render(
     <AppErrorBoundary>
       <GlobalTooltipProvider>
         <BackendConnectionGuard>
-          <App />
+          <AgentFrontendHost />
         </BackendConnectionGuard>
       </GlobalTooltipProvider>
     </AppErrorBoundary>

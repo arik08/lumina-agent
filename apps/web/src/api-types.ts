@@ -384,6 +384,14 @@ export type SidebarRunStatus =
   | "failed"
   | "cancelled";
 
+export interface AgentFrontendReference {
+  id: string;
+  version: string;
+  frontendModule: string;
+  frontendContract: string;
+  fallback: boolean;
+}
+
 export interface ConversationListItem {
   id: UUID;
   projectId: UUID;
@@ -393,6 +401,7 @@ export interface ConversationListItem {
   lastRunStatus: SidebarRunStatus | null;
   activeRunId: UUID | null;
   lastSequence: number;
+  agent: AgentFrontendReference;
   updatedAt: IsoDateTime;
   revision: string;
 }
@@ -1382,6 +1391,7 @@ export interface RunSnapshot {
   conversationId: UUID;
   conversationTitle: string | null;
   conversationRevision: number | null;
+  agent: AgentFrontendReference;
   status: RunStatus;
   errorCode: string | null;
   errorMessage: string | null;

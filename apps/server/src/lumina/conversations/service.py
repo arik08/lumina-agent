@@ -6,6 +6,7 @@ from datetime import datetime
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
+from ..agent_frontends import DEFAULT_AGENT_FRONTEND
 from ..api.errors import ApiProblem
 from ..authorization import (
     conversation_access_query,
@@ -74,6 +75,8 @@ def create_conversation(
         project_id=project.id,
         owner_user_id=user.id,
         title=title.strip(),
+        agent_id=DEFAULT_AGENT_FRONTEND.agent_id,
+        agent_version=DEFAULT_AGENT_FRONTEND.agent_version,
         revision=1,
     )
     db.add(conversation)

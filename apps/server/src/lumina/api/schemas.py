@@ -174,6 +174,14 @@ class ConversationBranch(ApiModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
 
 
+class AgentFrontendReference(ApiModel):
+    id: str
+    version: str
+    frontend_module: str
+    frontend_contract: str
+    fallback: bool = False
+
+
 class ConversationListItem(ApiModel):
     id: str
     project_id: str
@@ -183,6 +191,7 @@ class ConversationListItem(ApiModel):
     last_run_status: str | None
     active_run_id: str | None
     last_sequence: int = 0
+    agent: AgentFrontendReference
     revision: int
     created_at: datetime
     updated_at: datetime

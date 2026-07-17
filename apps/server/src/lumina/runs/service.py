@@ -10,6 +10,7 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 from fastapi.encoders import jsonable_encoder
 
+from ..agent_frontends import agent_frontend_payload, normalize_agent_frontend_payload
 from ..api.errors import ApiProblem
 from ..api.schemas import (
     ExecutionSelection,
@@ -464,9 +465,12 @@ def create_run(
     extension_application = (
         "all_snapshot" if apply_extension_snapshot else "explicit_references"
     )
+    agent_snapshot = agent_frontend_payload(
+        conversation.agent_id, conversation.agent_version
+    )
     stable_prefix = {
         "contract_version": "lumina-run-v1",
-        "agent": {"id": conversation.agent_id, "version": conversation.agent_version},
+        "agent": agent_snapshot,
         "project": {
             "id": project.id,
             "concept": project.concept,
@@ -524,10 +528,7 @@ def create_run(
             "user_message_text": payload.message.text,
             "output_mode": payload.message.output_mode,
             "target_output_tokens": target_output_tokens,
-            "agent": {
-                "id": conversation.agent_id,
-                "version": conversation.agent_version,
-            },
+            "agent": agent_snapshot,
             "project": stable_prefix["project"],
             "instructions": instruction_snapshot,
             "runtime_prompts": runtime_prompts,
@@ -2112,6 +2113,11 @@ def run_snapshot(db: Session, run: Run) -> dict[str, Any]:
     )
     assistant_message_id = run.snapshot_json.get("assistant_message_id")
     execution = run.snapshot_json.get("execution", {})
+    agent_snapshot = normalize_agent_frontend_payload(
+        run.snapshot_json.get("agent"),
+        agent_id=conversation.agent_id if conversation is not None else "general",
+        agent_version=conversation.agent_version if conversation is not None else "1",
+    )
     return {
         "runId": run.id,
         "conversationId": run.conversation_id,
@@ -2119,6 +2125,7 @@ def run_snapshot(db: Session, run: Run) -> dict[str, Any]:
         "conversationRevision": conversation.revision
         if conversation is not None
         else None,
+        "agent": agent_snapshot,
         "status": run.status,
         "errorCode": run.error_code,
         "errorMessage": run.error_message,

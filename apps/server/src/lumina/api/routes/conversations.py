@@ -9,6 +9,7 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from ...agent_frontends import agent_frontend_payload
 from ...audit import record_audit
 from ...authorization import require_conversation
 from ...conversations.service import (
@@ -60,6 +61,9 @@ def _summary(db: Session, conversation) -> dict[str, object]:
         "lastSequence": result["last_sequence"],
         "parentConversationId": conversation.parent_conversation_id,
         "branchMessageId": conversation.branch_message_id,
+        "agent": agent_frontend_payload(
+            conversation.agent_id, conversation.agent_version
+        ),
         "revision": result["revision"],
         "createdAt": result["created_at"],
         "updatedAt": result["updated_at"],

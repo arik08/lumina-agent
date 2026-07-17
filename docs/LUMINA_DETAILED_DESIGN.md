@@ -1778,6 +1778,8 @@ Agent Package
 
 초기에는 범용 Agent와 `GeneralChatFrontend`만 code registry에 builtin 상수로 등록합니다. `agent_id`, `agent_version`과 frontend contract version은 Conversation·Run snapshot에 저장하되, Agent catalog용 DB·installer·remote loader는 만들지 않습니다. 두 번째 Frontend PoC에서 실제 교체 요구를 검증한 뒤 registry persistence를 추가합니다.
 
+현재 Agent Frontend 모듈화의 목적은 사용자가 임의 코드를 설치하는 Marketplace가 아니라 내부 유지보수입니다. 신뢰된 builtin 모듈만 독립 폴더와 명시적 code registry로 등록하며 runtime 자동 탐색·동적 import·설치 UI는 제공하지 않습니다. 선택 모듈은 Core의 공개 API와 event 계약만 사용하고, registry 등록을 제거한 뒤 해당 폴더를 삭제해도 Core와 기존 Run이 계속 동작해야 합니다. 삭제된 module 또는 호환되지 않는 contract를 참조하는 Conversation은 `general-chat`으로 fallback하되 기존 Agent ID·version과 Artifact는 보존합니다.
+
 ### 18.2 Frontend type
 
 ```text
