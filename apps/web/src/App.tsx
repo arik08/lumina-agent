@@ -3556,6 +3556,28 @@ function App() {
                   <button type="button" aria-label="파일 첨부" disabled={workspace.uploadingAttachments} onClick={() => fileInputRef.current?.click()}>{workspace.uploadingAttachments ? <LoaderCircle className="is-running" size={17} /> : <Paperclip size={17} />}</button>
                   <button type="button" aria-label="Context 연결" onClick={() => insertComposerTrigger("@")}><AtSign size={17} /></button>
                   <button type="button" className="tooltip-control" aria-label="Skill 및 MCP 호출" data-tooltip="Skill / MCP" onClick={() => insertComposerTrigger("$")}><CircleDollarSign size={17} /></button>
+                  <ComposerPicker
+                    options={analysisDepthOptions}
+                    value={analysisDepth}
+                    onChange={(value) => setAnalysisDepth(value as AnalysisDepth)}
+                    ariaLabel="분석 범위 설정"
+                    menuLabel="분석 범위"
+                    menuDescription="웹 검색과 자료 확인을 포함해 어디까지 분석할지 정합니다."
+                    controlClassName="analysis-depth-control"
+                    triggerIcon={<Search size={15} aria-hidden="true" />}
+                    iconOnly
+                  />
+                  <ComposerPicker
+                    options={answerLengthOptions}
+                    value={answerLength}
+                    onChange={(value) => setAnswerLength(value as AnswerLength)}
+                    ariaLabel="채팅 답변 분량 설정"
+                    menuLabel="답변 분량"
+                    menuDescription="채팅에 표시할 최종 답변의 분량을 정합니다."
+                    controlClassName="answer-length-control"
+                    triggerIcon={<AlignLeft size={15} aria-hidden="true" />}
+                    iconOnly
+                  />
                   <div className="output-mode-toggle" role="group" aria-label="출력 방식">
                     {([['auto', '자동'], ['chat', '채팅'], ['file', '파일']] as const).map(([value, label]) => (
                       <button
@@ -3584,28 +3606,6 @@ function App() {
                       <small>현재는 파일 모드입니다. 대화만 원하면 ‘채팅’을 선택하세요.</small>
                     </span>
                   </GlobalTooltipLayer>
-                  <ComposerPicker
-                    options={analysisDepthOptions}
-                    value={analysisDepth}
-                    onChange={(value) => setAnalysisDepth(value as AnalysisDepth)}
-                    ariaLabel="분석 범위 설정"
-                    menuLabel="분석 범위"
-                    menuDescription="웹 검색과 자료 확인을 포함해 어디까지 분석할지 정합니다."
-                    controlClassName="analysis-depth-control"
-                    triggerIcon={<Search size={15} aria-hidden="true" />}
-                    iconOnly
-                  />
-                  <ComposerPicker
-                    options={answerLengthOptions}
-                    value={answerLength}
-                    onChange={(value) => setAnswerLength(value as AnswerLength)}
-                    ariaLabel="채팅 답변 분량 설정"
-                    menuLabel="답변 분량"
-                    menuDescription="채팅에 표시할 최종 답변의 분량을 정합니다."
-                    controlClassName="answer-length-control"
-                    triggerIcon={<AlignLeft size={15} aria-hidden="true" />}
-                    iconOnly
-                  />
                   <ArtifactLengthSlider
                     value={targetOutputTokens}
                     onChange={setTargetOutputTokens}
