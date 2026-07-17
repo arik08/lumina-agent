@@ -37,3 +37,45 @@ def test_resolves_source_id_marker_without_fabricating_unknown_source() -> None:
     assert len(payload["citations"]) == 1
     assert payload["citations"][0]["sourceId"] == "source-c"
     assert payload["sources"][2]["citationStatus"] == "cited"
+
+
+def test_resolves_artifact_links_in_first_appearance_order() -> None:
+    payload = resolve_inline_citations(
+        "보고서를 생성했습니다.",
+        _sources(),
+        reference_texts=(
+            """
+            <h2>주요 참고자료</h2>
+            <a href="https://c.test/?utm_source=report">C 자료</a>
+            [A 자료](https://a.test/)
+            <a href="https://c.test">C 자료 재인용</a>
+            """,
+        ),
+    )
+
+    assert [item["sourceId"] for item in payload["citations"]] == [
+        "source-c",
+        "source-a",
+    ]
+    assert [item["markerNumber"] for item in payload["citations"]] == [1, 2]
+    assert {item["citationOrigin"] for item in payload["citations"]} == {
+        "artifact_link"
+    }
+    assert [source["citationStatus"] for source in payload["sources"]] == [
+        "cited",
+        "reference_only",
+        "cited",
+    ]
+
+
+def test_artifact_does_not_promote_unlinked_search_sources() -> None:
+    payload = resolve_inline_citations(
+        "보고서를 생성했습니다.",
+        _sources(),
+        reference_texts=("<p>링크 없이 검색 결과만 참고했습니다.</p>",),
+    )
+
+    assert payload["citations"] == []
+    assert {source["citationStatus"] for source in payload["sources"]} == {
+        "reference_only"
+    }

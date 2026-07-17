@@ -1191,8 +1191,9 @@ function searchPurposeLabel(purpose?: string) {
 }
 
 function citationTargets(text: string, sources: SourceEvidence[], citations: MessageCitation[]) {
-  return sources.map((source, index): CitationTarget => {
-    const citation = citations.find((item) => (item.sourceId ?? item.source_id) === source.sourceId);
+  return sources.map((source, index) => {
+    const citationOrder = citations.findIndex((item) => (item.sourceId ?? item.source_id) === source.sourceId);
+    const citation = citationOrder >= 0 ? citations[citationOrder] : undefined;
     const explicitMarker = citation?.markerNumber ?? citation?.marker_number;
     const markerNumber = explicitMarker && explicitMarker > 0 ? explicitMarker : index + 1;
     const hasSourceToken = text.includes(`[${source.sourceId}]`) || text.includes(`[[${source.sourceId}]]`);
@@ -1202,8 +1203,23 @@ function citationTargets(text: string, sources: SourceEvidence[], citations: Mes
       markerNumber,
       cited: citation ? citation.status === "cited" || citation.status === "resolved" : hasSourceToken || hasMarkerToken,
       reviewed: source.evidenceKind === "fetched_content",
+      citationOrder: citationOrder >= 0 ? citationOrder : Number.MAX_SAFE_INTEGER,
+      sourceOrder: index,
     };
-  });
+  }).sort((left, right) => {
+    const leftRank = left.cited ? 0 : left.reviewed ? 1 : 2;
+    const rightRank = right.cited ? 0 : right.reviewed ? 1 : 2;
+    if (leftRank !== rightRank) return leftRank - rightRank;
+    if (left.cited && left.citationOrder !== right.citationOrder) {
+      return left.citationOrder - right.citationOrder;
+    }
+    return left.sourceOrder - right.sourceOrder;
+  }).map((target): CitationTarget => ({
+    source: target.source,
+    markerNumber: target.markerNumber,
+    cited: target.cited,
+    reviewed: target.reviewed,
+  }));
 }
 
 function citationLinkUrl(sourceId: string) {

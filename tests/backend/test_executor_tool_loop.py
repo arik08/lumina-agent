@@ -1507,7 +1507,13 @@ def test_web_fetch_starts_visible_report_drafting_before_create_report_output(
                         "title": "기사 동향",
                         "executive_summary": "확인된 근거를 요약했습니다.",
                         "key_metrics": [],
-                        "sections": [],
+                        "sections": [
+                            {
+                                "heading": "주요 참고자료",
+                                "body": "확인한 기사: https://example.com/article",
+                                "bullets": [],
+                            }
+                        ],
                         "action_items": [],
                     },
                     call_id="call-report-drafting",
@@ -1535,6 +1541,14 @@ def test_web_fetch_starts_visible_report_drafting_before_create_report_output(
         )
         assert started.status_code == 202, started.text
         snapshot = _wait_for_terminal(client, started.json()["run"]["runId"])
+        turn_sets = client.get(
+            f"/api/conversations/{conversation['id']}/turn-sets"
+        ).json()["turnSets"]
+        assistant = next(
+            message
+            for message in turn_sets[-1]["messages"]
+            if message["role"] == "assistant"
+        )
 
     assert snapshot["status"] == "completed"
     report_tool = next(
@@ -1545,6 +1559,11 @@ def test_web_fetch_starts_visible_report_drafting_before_create_report_output(
     )
     assert report_tool_started_at <= report_turn_started_at[0]
     assert report_turn_efforts == ["low"]
+    assert assistant["metadata"]["citations"][0]["sourceId"] == "source-report"
+    assert (
+        assistant["metadata"]["citations"][0]["citationOrigin"]
+        == "artifact_link"
+    )
     with SessionLocal() as db:
         events = list(
             db.query(RunEvent)

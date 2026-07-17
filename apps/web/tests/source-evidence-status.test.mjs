@@ -15,6 +15,10 @@ test("source evidence distinguishes cited, reviewed, and search-only material", 
   assert.match(apiTypes, /researchVerification\?: "verified" \| "unverified" \| "not_required" \| "disabled"/);
   assert.match(app, /citation\.status === "cited" \|\| citation\.status === "resolved"/);
   assert.match(app, /reviewed: source\.evidenceKind === "fetched_content"/);
+  assert.match(app, /const leftRank = left\.cited \? 0 : left\.reviewed \? 1 : 2/);
+  assert.match(app, /if \(left\.cited && left\.citationOrder !== right\.citationOrder\)/);
+  assert.match(app, /return left\.citationOrder - right\.citationOrder/);
+  assert.match(app, /return left\.sourceOrder - right\.sourceOrder/);
   assert.match(app, /function normalizeCitationPositions\(text: string, targets: CitationTarget\[\]\)/);
   assert.match(app, /before === "\*\*" \|\| before === "__"/);
   assert.match(app, /streaming \? text : normalizeCitationPositions\(text, targets\)/);
