@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowLeft, Braces, Check, ChevronDown, ChevronRight, Code2, Download, Eye, FileCode2, FileJson, FileText, Folder, FolderOpen, Info, LoaderCircle, Maximize2, Menu, Minimize2, Package, Pencil, Power, RefreshCw, Save, Search, Settings2, Sparkles, Store, Trash2, Undo2, Wrench, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Braces, Check, ChevronDown, ChevronRight, Code2, Download, Eye, FileCode2, FileJson, FileText, Folder, FolderOpen, Info, LoaderCircle, Maximize2, Menu, Minimize2, Package, Pencil, Power, RefreshCw, Save, Search, ServerCog, Settings2, Sparkles, Store, Trash2, Undo2, Wrench, X } from "lucide-react";
 import { type DragEvent, type KeyboardEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import { api, ApiError } from "../api";
 import type { ExtensionInstallation, ProjectSummary, SkillCatalogItem, SkillCatalogResponse, SkillExtension, SkillVersion } from "../api-types";
 import { useCachedViewState } from "../view-data-cache";
+import { AdminMcpPanel } from "./AdminMcpPanel";
 import { McpMarketplacePanel } from "./McpMarketplacePanel";
 import { MarketplaceInstallButton } from "./MarketplaceInstallButton";
 import { ResizableSplitPane } from "./ResizableSplitPane";
@@ -17,6 +18,7 @@ import { markdownBodyAfterFrontmatter, splitMarkdownFrontmatter } from "./markdo
 interface MarketplaceViewProps {
   projectId: string | null;
   onOpenNavigation: () => void;
+  canManage: boolean;
 }
 
 interface SkillFileNode {
@@ -127,12 +129,13 @@ function SkillMarkdownPreview({ value }: { value: string }) {
   </div>;
 }
 
-export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceViewProps) {
+export function MarketplaceView({ projectId, onOpenNavigation, canManage }: MarketplaceViewProps) {
   const skillContentRef = useRef<HTMLDivElement>(null);
   const projectScopeButtonRef = useRef<HTMLButtonElement>(null);
   const repositoryRevisionRef = useRef<string | null>(null);
   const catalogRequestIdRef = useRef(0);
   const [marketKind, setMarketKind] = useState<"skill" | "mcp">("skill");
+  const [mcpView, setMcpView] = useState<"catalog" | "admin">("catalog");
   const [mcpRefreshKey, setMcpRefreshKey] = useState(0);
   const cacheKey = `marketplace:${projectId ?? "none"}`;
   const [items, setItems, hasCachedItems] = useCachedViewState<SkillExtension[]>(`${cacheKey}:items`, []);
@@ -796,8 +799,14 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
         </div>
         {skillView !== "catalog" && <label className="marketplace-search"><Search size={14} /><input aria-label="Skill 검색" placeholder="Skill 이름 또는 설명 검색" value={query} onChange={(event) => setQuery(event.currentTarget.value)} /></label>}
       </div>}
+      {marketKind === "mcp" && <div className="marketplace-toolbar">
+        <div className="marketplace-scope-tabs" role="tablist" aria-label="MCP 보기">
+          <button type="button" role="tab" aria-selected={mcpView === "catalog"} onClick={() => setMcpView("catalog")}><Package size={14} /> 카탈로그·설치</button>
+          {canManage && <button type="button" role="tab" aria-selected={mcpView === "admin"} onClick={() => setMcpView("admin")}><ServerCog size={14} /> 정의 관리</button>}
+        </div>
+      </div>}
       {error && <div className="feature-error" role="alert">{error}</div>}
-      {marketKind === "mcp" ? <McpMarketplacePanel key={`${projectId ?? "none"}:${mcpRefreshKey}`} projectId={projectId} /> : skillView === "catalog" ? <SkillCatalogPanel
+      {marketKind === "mcp" ? mcpView === "admin" && canManage ? <AdminMcpPanel key={mcpRefreshKey} /> : <McpMarketplacePanel key={`${projectId ?? "none"}:${mcpRefreshKey}`} projectId={projectId} /> : skillView === "catalog" ? <SkillCatalogPanel
         catalog={visibleCatalog}
         loading={!hasCachedCatalog && visibleCatalog.items.length === 0 && (catalogLoading || !error)}
         loadingMore={catalogLoadingMore}

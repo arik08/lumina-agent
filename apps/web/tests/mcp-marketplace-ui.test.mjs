@@ -5,6 +5,8 @@ import test from "node:test";
 const panelPath = new URL("../src/components/McpMarketplacePanel.tsx", import.meta.url);
 const adminPanelPath = new URL("../src/components/AdminMcpPanel.tsx", import.meta.url);
 const adminViewPath = new URL("../src/components/AdminView.tsx", import.meta.url);
+const marketplaceViewPath = new URL("../src/components/MarketplaceView.tsx", import.meta.url);
+const appPath = new URL("../src/App.tsx", import.meta.url);
 const stylesPath = new URL("../src/styles.css", import.meta.url);
 
 test("MCP installs expose direct account and project actions and return to install after removal", async () => {
@@ -92,11 +94,16 @@ test("MCP destructive actions use inline same-button confirmation instead of pop
   assert.match(styles, /\.admin-mcp-detail button\.is-delete-armed/);
 });
 
-test("system management exposes the administrator MCP panel", async () => {
-  const adminView = await readFile(adminViewPath, "utf8");
+test("Marketplace MCP exposes definition management only to administrators", async () => {
+  const [adminView, marketplaceView, app] = await Promise.all([
+    readFile(adminViewPath, "utf8"),
+    readFile(marketplaceViewPath, "utf8"),
+    readFile(appPath, "utf8"),
+  ]);
 
-  assert.match(adminView, /import \{ AdminMcpPanel \} from "\.\/AdminMcpPanel"/);
-  assert.match(adminView, /aria-selected=\{tab === "mcp"\}[\s\S]*?<ServerCog size=\{15\} \/> MCP/);
-  assert.match(adminView, /tab === "mcp" && <AdminMcpPanel \/>/);
-  assert.match(adminView, /tab === "policy" \|\| tab === "mcp"/);
+  assert.doesNotMatch(adminView, /AdminMcpPanel|tab === "mcp"|> MCP<\/button>/);
+  assert.match(marketplaceView, /interface MarketplaceViewProps[\s\S]*?canManage: boolean/);
+  assert.match(marketplaceView, /\{canManage && <button[\s\S]*?정의 관리<\/button>\}/);
+  assert.match(marketplaceView, /mcpView === "admin" && canManage \? <AdminMcpPanel/);
+  assert.match(app, /<MarketplaceView[\s\S]*?canManage=\{isAdmin\}/);
 });
