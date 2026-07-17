@@ -3579,9 +3579,9 @@ function App() {
                     event.currentTarget.value = "";
                     void workspace.uploadFiles(files);
                   }} />
-                  <button type="button" aria-label="파일 첨부" disabled={workspace.uploadingAttachments} onClick={() => fileInputRef.current?.click()}>{workspace.uploadingAttachments ? <LoaderCircle className="is-running" size={17} /> : <Paperclip size={17} />}</button>
-                  <button type="button" aria-label="Context 연결" onClick={() => insertComposerTrigger("@")}><AtSign size={17} /></button>
-                  <button type="button" className="tooltip-control" aria-label="Skill 및 MCP 호출" data-tooltip="Skill / MCP" onClick={() => insertComposerTrigger("$")}><CircleDollarSign size={17} /></button>
+                  <button type="button" className="composer-utility-button" aria-label="파일 첨부" disabled={workspace.uploadingAttachments} onClick={() => fileInputRef.current?.click()}>{workspace.uploadingAttachments ? <LoaderCircle className="is-running" size={17} /> : <Paperclip size={17} />}</button>
+                  <button type="button" className="composer-utility-button" aria-label="Context 연결" onClick={() => insertComposerTrigger("@")}><AtSign size={17} /></button>
+                  <button type="button" className="composer-utility-button tooltip-control" aria-label="Skill 및 MCP 호출" data-tooltip="Skill / MCP" onClick={() => insertComposerTrigger("$")}><CircleDollarSign size={17} /></button>
                   <ComposerPicker
                     options={analysisDepthOptions}
                     value={analysisDepth}

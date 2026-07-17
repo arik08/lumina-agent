@@ -31,6 +31,8 @@ test("composer keeps model controls intact and sends independent analysis and an
   assert.doesNotMatch(app, /tooltip="채팅에 표시할 최종 답변 분량"/);
   assert.doesNotMatch(app, /composer-picker\.is-open \.composer-picker-trigger > svg/);
   assert.doesNotMatch(app, /className="output-mode-toggle"/);
+  assert.equal((app.match(/className="composer-utility-button(?: tooltip-control)?"/g) ?? []).length, 3);
+  assert.match(styles, /\.composer-footer \.composer-utility-button \{ color: var\(--muted\); \}/);
   assert.match(app, /artifact-output-mode-value is-\$\{outputMode\}/);
   assert.match(styles, /\.artifact-output-mode-value\.is-chat \{ color: var\(--ink\); \}/);
   assert.match(styles, /\.artifact-output-mode-value\.is-file \{ color: var\(--artifact-length-warning\); \}/);
