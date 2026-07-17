@@ -7,7 +7,227 @@
       "args": [
         "extensions/mcp/worldbank_server.py"
       ],
-      "cwd": "."
+      "cwd": ".",
+      "tools": [
+        {
+          "name": "list_countries",
+          "description": "List World Bank countries and economies, optionally filtered by region, income level, or lending type code.",
+          "inputSchema": {
+            "properties": {
+              "region": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Region"
+              },
+              "income_level": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Income Level"
+              },
+              "lending_type": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Lending Type"
+              },
+              "limit": {
+                "default": 300,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "title": "list_countriesArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "search_countries",
+          "description": "Search World Bank country/economy metadata by name, ISO code, capital city, region, or income group.",
+          "inputSchema": {
+            "properties": {
+              "keyword": {
+                "title": "Keyword",
+                "type": "string"
+              },
+              "limit": {
+                "default": 50,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "keyword"
+            ],
+            "title": "search_countriesArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "search_indicators",
+          "description": "Search World Bank indicators by ID, name, or source note. Source 2 is World Development Indicators.",
+          "inputSchema": {
+            "properties": {
+              "keyword": {
+                "title": "Keyword",
+                "type": "string"
+              },
+              "source_id": {
+                "default": 2,
+                "title": "Source Id",
+                "type": "integer"
+              },
+              "limit": {
+                "default": 50,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "keyword"
+            ],
+            "title": "search_indicatorsArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "get_indicator_metadata",
+          "description": "Return World Bank metadata for one indicator ID such as NY.GDP.MKTP.CD.",
+          "inputSchema": {
+            "properties": {
+              "indicator": {
+                "title": "Indicator",
+                "type": "string"
+              },
+              "source_id": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source Id"
+              },
+              "limit": {
+                "default": 20,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "indicator"
+            ],
+            "title": "get_indicator_metadataArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "fetch_indicator_data",
+          "description": "Fetch World Bank time-series data for one country/economy and indicator.",
+          "inputSchema": {
+            "properties": {
+              "country": {
+                "title": "Country",
+                "type": "string"
+              },
+              "indicator": {
+                "title": "Indicator",
+                "type": "string"
+              },
+              "start_year": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Start Year"
+              },
+              "end_year": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "End Year"
+              },
+              "frequency": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Frequency"
+              },
+              "source_id": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": 2,
+                "title": "Source Id"
+              },
+              "limit": {
+                "default": 200,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "country",
+              "indicator"
+            ],
+            "title": "fetch_indicator_dataArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "check_connection",
+          "description": "Check whether the World Bank API is reachable from the current network.",
+          "inputSchema": {
+            "properties": {},
+            "title": "check_connectionArguments",
+            "type": "object"
+          }
+        }
+      ]
     }
   }
 }

@@ -7,6 +7,7 @@ import inspect
 import json
 import os
 import re
+import shutil
 import socket
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -396,7 +397,7 @@ class McpRuntime:
             match = _ENV_SECRET_REF_RE.fullmatch(secret_ref)
             if match is None:
                 raise _runtime_error("mcp_secret_resolver_unavailable", "credential")
-            value = self._environment.get(match.group(1), "")
+            value = _environment_value(self._environment, match.group(1))
             if not value:
                 raise _runtime_error("mcp_secret_unavailable", "credential")
             resolved[secret_name] = value
@@ -418,7 +419,7 @@ class McpRuntime:
                 config,
                 secrets,
                 profile,
-                runtime_dir=self.settings.data_dir / "mcp-runtime",
+                working_dir=Path(__file__).resolve().parents[5],
                 base_environment=self._environment,
             )
         elif config.transport == "streamable_http":
@@ -614,36 +615,36 @@ class _StdioTransport:
         secrets: Mapping[str, str],
         trust_profile: TrustProfile,
         *,
-        runtime_dir: Path,
+        working_dir: Path,
         base_environment: Mapping[str, str],
     ) -> None:
         self._config = config
         self._secrets = dict(secrets)
         self._trust_profile = trust_profile
-        self._runtime_dir = runtime_dir
+        self._working_dir = working_dir
         self._base_environment = base_environment
         self._process: asyncio.subprocess.Process | None = None
         self._stderr_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
         _validate_runtime_command(self._config.command)
-        self._runtime_dir.mkdir(parents=True, exist_ok=True)
         environment = {
-            name: self._base_environment[name]
+            name: value
             for name in _SAFE_ENV_NAMES
-            if self._base_environment.get(name)
+            if (value := _environment_value(self._base_environment, name))
         }
         environment.update(self._secrets)
         environment.setdefault("PYTHONUTF8", "1")
         environment.setdefault("PYTHONIOENCODING", "utf-8")
         environment = self._trust_profile.subprocess_environment(environment)
         try:
+            command = _resolve_stdio_command(self._config.command)
             self._process = await asyncio.create_subprocess_exec(
-                *self._config.command,
+                *command,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                cwd=self._runtime_dir,
+                cwd=self._working_dir,
                 env=environment,
                 limit=_MAX_MESSAGE_BYTES + 1,
             )
@@ -1195,6 +1196,33 @@ def _validate_runtime_command(command: Sequence[str]) -> None:
             or "password=" in folded
         ):
             raise _runtime_error("mcp_command_invalid", "transport")
+
+
+def _environment_value(environment: Mapping[str, str], name: str) -> str:
+    value = environment.get(name, "")
+    if value or os.name != "nt":
+        return value
+    folded_name = name.casefold()
+    return next(
+        (
+            value
+            for key, value in environment.items()
+            if key.casefold() == folded_name
+        ),
+        "",
+    )
+
+
+def _resolve_stdio_command(command: Sequence[str]) -> tuple[str, ...]:
+    if os.name != "nt" or command[0].casefold().removesuffix(".exe") != "npx":
+        return tuple(command)
+    executable = shutil.which(command[0])
+    if executable is None or Path(executable).suffix.casefold() not in {".cmd", ".bat"}:
+        return tuple(command)
+    npx_cli = Path(executable).parent / "node_modules" / "npm" / "bin" / "npx-cli.js"
+    if not npx_cli.is_file():
+        raise _runtime_error("mcp_process_start_failed", "network")
+    return ("node", str(npx_cli), *command[1:])
 
 
 def _render_header_templates(

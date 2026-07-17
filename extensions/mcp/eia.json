@@ -7,7 +7,119 @@
       "args": [
         "extensions/mcp/eia_server.py"
       ],
-      "cwd": "."
+      "cwd": ".",
+      "tools": [
+        {
+          "name": "get_series",
+          "description": "Fetch EIA seriesid data such as PET.RWTC.D or NG.RNGWHHD.D.",
+          "inputSchema": {
+            "properties": {
+              "series_id": {
+                "title": "Series Id",
+                "type": "string"
+              },
+              "start": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Start"
+              },
+              "end": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "End"
+              },
+              "length": {
+                "default": 100,
+                "title": "Length",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "series_id"
+            ],
+            "title": "get_seriesArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "get_energy_price",
+          "description": "Fetch common energy price series by alias: wti, brent, henry_hub, gasoline_regular, diesel.",
+          "inputSchema": {
+            "properties": {
+              "alias": {
+                "title": "Alias",
+                "type": "string"
+              },
+              "start": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Start"
+              },
+              "end": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "End"
+              },
+              "length": {
+                "default": 100,
+                "title": "Length",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "alias"
+            ],
+            "title": "get_energy_priceArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "list_price_series",
+          "description": "List built-in EIA energy price aliases and series IDs.",
+          "inputSchema": {
+            "properties": {},
+            "title": "list_price_seriesArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "check_connection",
+          "description": "Check whether EIA is reachable and the configured API key works.",
+          "inputSchema": {
+            "properties": {},
+            "title": "check_connectionArguments",
+            "type": "object"
+          }
+        }
+      ]
     }
   }
 }

@@ -16,63 +16,227 @@
       "tools": [
         {
           "name": "get_nowcast_observation",
-          "description": "특정 좌표의 현재 관측 날씨를 조회합니다.",
-          "input_schema": {"$schema":"http://json-schema.org/draft-07/schema#","type":"object","properties":{"lon":{"type":"number","description":"경도 (longitude)"},"lat":{"type":"number","description":"위도 (latitude)"}},"required":["lon","lat"]}
+          "description": "특정 좌표(위경도)의 현재 관측 날씨를 조회합니다. 기상청 초단기실황(getUltraSrtNcst).",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "lon": {
+                "type": "number",
+                "description": "경도 (longitude)"
+              },
+              "lat": {
+                "type": "number",
+                "description": "위도 (latitude)"
+              }
+            },
+            "required": [
+              "lon",
+              "lat"
+            ]
+          }
         },
         {
           "name": "get_nowcast_forecast",
-          "description": "특정 좌표의 초단기 예보를 조회합니다.",
-          "input_schema": {"$schema":"http://json-schema.org/draft-07/schema#","type":"object","properties":{"lon":{"type":"number","description":"경도 (longitude)"},"lat":{"type":"number","description":"위도 (latitude)"}},"required":["lon","lat"]}
+          "description": "특정 좌표(위경도)의 초단기(약 6시간) 예보를 조회합니다. 기상청 초단기예보(getUltraSrtFcst).",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "lon": {
+                "type": "number",
+                "description": "경도 (longitude)"
+              },
+              "lat": {
+                "type": "number",
+                "description": "위도 (latitude)"
+              }
+            },
+            "required": [
+              "lon",
+              "lat"
+            ]
+          }
         },
         {
           "name": "get_short_term_forecast",
-          "description": "특정 좌표의 단기 시간별 예보를 조회합니다.",
-          "input_schema": {"$schema":"http://json-schema.org/draft-07/schema#","type":"object","properties":{"lon":{"type":"number","description":"경도 (longitude)"},"lat":{"type":"number","description":"위도 (latitude)"}},"required":["lon","lat"]}
+          "description": "특정 좌표(위경도)의 단기(약 3~5일) 시간별 예보를 조회합니다. 기상청 단기예보(getVilageFcst).",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "lon": {
+                "type": "number",
+                "description": "경도 (longitude)"
+              },
+              "lat": {
+                "type": "number",
+                "description": "위도 (latitude)"
+              }
+            },
+            "required": [
+              "lon",
+              "lat"
+            ]
+          }
         },
         {
           "name": "get_short_term_land_forecast",
-          "description": "구역코드 기준 단기 육상예보를 조회합니다.",
-          "input_schema": {"$schema":"http://json-schema.org/draft-07/schema#","type":"object","properties":{"regId":{"type":"string","description":"단기예보 육상 구역코드 (예: 11B10101)"}},"required":["regId"]}
+          "description": "단기 육상예보 텍스트(VilageFcstMsgService.getLandFcst). regId 예: 11B10101(서울), 11A00101(백령도). 구역코드를 모를 경우 lookup_forecast_zone 를 먼저 호출하세요.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "regId": {
+                "type": "string",
+                "description": "단기예보 육상 구역코드 (예: 11B10101)"
+              }
+            },
+            "required": [
+              "regId"
+            ]
+          }
         },
         {
           "name": "get_short_term_sea_forecast",
-          "description": "구역코드 기준 단기 해상예보를 조회합니다.",
-          "input_schema": {"$schema":"http://json-schema.org/draft-07/schema#","type":"object","properties":{"regId":{"type":"string","description":"단기예보 해상 구역코드 (예: 12A20100)"}},"required":["regId"]}
+          "description": "단기 해상예보 텍스트(VilageFcstMsgService.getSeaFcst). regId 예: 12A20100(서해중부앞바다). lookup_forecast_zone 결과 참고.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "regId": {
+                "type": "string",
+                "description": "단기예보 해상 구역코드 (예: 12A20100)"
+              }
+            },
+            "required": [
+              "regId"
+            ]
+          }
         },
         {
           "name": "get_weather_situation",
-          "description": "발표관서 기준 기상개황을 조회합니다.",
-          "input_schema": {"$schema":"http://json-schema.org/draft-07/schema#","type":"object","properties":{"stnId":{"type":"integer","minimum":-9007199254740991,"maximum":9007199254740991,"description":"발표관서 번호 (예: 108)"}},"required":["stnId"]}
+          "description": "발표관서(stnId) 기준 기상개황(VilageFcstMsgService.getWthrSituation). 예: 108=기상청, 109=수도권(서울).",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "stnId": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991,
+                "description": "발표관서 번호 (예: 108)"
+              }
+            },
+            "required": [
+              "stnId"
+            ]
+          }
         },
         {
           "name": "get_mid_term_forecast",
-          "description": "중기 육상예보를 조회합니다.",
-          "input_schema": {"$schema":"http://json-schema.org/draft-07/schema#","type":"object","properties":{"regId":{"type":"string","description":"중기 육상 구역코드 (예: 11B00000)"}},"required":["regId"]}
+          "description": "중기(4~10일) 육상예보. 하늘상태/강수확률 (MidFcstInfoService.getMidLandFcst). regId 예: 11B00000(서울/인천/경기). 단기 육상 regId(11B10101 등)와 다르므로 주의.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "regId": {
+                "type": "string",
+                "description": "중기 육상 구역코드 (예: 11B00000)"
+              }
+            },
+            "required": [
+              "regId"
+            ]
+          }
         },
         {
           "name": "get_mid_term_temperature",
-          "description": "중기 최저·최고 기온 예보를 조회합니다.",
-          "input_schema": {"$schema":"http://json-schema.org/draft-07/schema#","type":"object","properties":{"regId":{"type":"string","description":"중기 기온 구역코드 (예: 11B10101)"}},"required":["regId"]}
+          "description": "중기(4~10일) 최저/최고 기온 예보 (MidFcstInfoService.getMidTa). regId 예: 11B10101(서울).",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "regId": {
+                "type": "string",
+                "description": "중기 기온 구역코드 (예: 11B10101)"
+              }
+            },
+            "required": [
+              "regId"
+            ]
+          }
         },
         {
           "name": "get_active_warnings",
-          "description": "현재 발효 중인 기상특보를 조회합니다.",
-          "input_schema": {"$schema":"http://json-schema.org/draft-07/schema#","type":"object","properties":{"regId":{"description":"특보구역 코드 (선택)","type":"string"}}}
+          "description": "현재 발효 중인 기상특보(강풍/호우/한파/태풍 등) 조회. wrn_now_data.php 사용. regId 미입력 시 전국 전체. 특정 구역만 보려면 lookup_warning_zone 으로 코드 확인 후 입력.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "regId": {
+                "description": "특보구역 코드 (선택)",
+                "type": "string"
+              }
+            }
+          }
         },
         {
           "name": "get_impact_forecast",
-          "description": "폭염·한파 영향예보를 조회합니다.",
-          "input_schema": {"$schema":"http://json-schema.org/draft-07/schema#","type":"object","properties":{"ifpar":{"type":"string","enum":["hw","cw"],"description":"hw=폭염, cw=한파"},"regId":{"description":"특보구역 코드 (선택, 예: L1050100)","type":"string"}},"required":["ifpar"]}
+          "description": "폭염(hw)/한파(cw) 영향예보 - 분야별 위험수준(0~4). ifs_fct_pstt.php 사용. 오늘 기준.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "ifpar": {
+                "type": "string",
+                "enum": [
+                  "hw",
+                  "cw"
+                ],
+                "description": "hw=폭염, cw=한파"
+              },
+              "regId": {
+                "description": "특보구역 코드 (선택, 예: L1050100)",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ifpar"
+            ]
+          }
         },
         {
           "name": "lookup_forecast_zone",
-          "description": "단기·중기 예보용 구역코드를 검색합니다.",
-          "input_schema": {"$schema":"http://json-schema.org/draft-07/schema#","type":"object","properties":{"regId":{"description":"정확한 예보구역 코드 (예: 11B10101)","type":"string"},"regName":{"description":"구역명 한글/영문 부분 검색 (예: \"서울\")","type":"string"}}}
+          "description": "단기/중기 예보용 구역코드(regId) 검색 (FcstZoneInfoService.getFcstZoneCd). regId 또는 regName(한글 일부 매칭) 중 하나 이상 지정.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "regId": {
+                "description": "정확한 예보구역 코드 (예: 11B10101)",
+                "type": "string"
+              },
+              "regName": {
+                "description": "구역명 한글/영문 부분 검색 (예: \"서울\")",
+                "type": "string"
+              }
+            }
+          }
         },
         {
           "name": "lookup_warning_zone",
-          "description": "기상특보용 구역코드를 검색합니다.",
-          "input_schema": {"$schema":"http://json-schema.org/draft-07/schema#","type":"object","properties":{"korName":{"description":"구역명 한글 검색어 (예: \"서울\")","type":"string"}}}
+          "description": "특보구역 코드 검색 (WethrBasicInfoService.getWrnZoneCd). korName 미입력 시 전체 목록 일부 반환.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "korName": {
+                "description": "구역명 한글 검색어 (예: \"서울\")",
+                "type": "string"
+              }
+            }
+          }
         }
       ]
     }

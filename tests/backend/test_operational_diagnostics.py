@@ -738,4 +738,5 @@ def test_installer_uses_npm_cmd_instead_of_npm_ps1_on_windows(tmp_path: Path) ->
     output = completed.stdout + completed.stderr
     assert completed.returncode == 0, output
     invocation = capture.read_text(encoding="utf-8")
-    assert "npm.cmd ci --prefix" in invocation
+    assert invocation.count("npm.cmd ci --prefix") == 2
+    assert "extensions\\mcp\\korea_weather" in invocation

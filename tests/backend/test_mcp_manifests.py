@@ -15,6 +15,9 @@ def test_mcp_manifests_use_portable_repository_relative_paths() -> None:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         for server_name, server in manifest["mcpServers"].items():
             assert server.get("cwd") == ".", f"{manifest_path.name}:{server_name}"
+            assert server.get("tools"), (
+                f"{manifest_path.name}:{server_name} must pin runtime Tool schemas"
+            )
             for argument in server.get("args", []):
                 assert not PureWindowsPath(argument).is_absolute(), (
                     f"{manifest_path.name}:{server_name} has an absolute Windows path"

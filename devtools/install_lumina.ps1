@@ -16,6 +16,7 @@ $ErrorActionPreference = "Stop"
 $RepositoryRoot = Split-Path -Parent $PSScriptRoot
 $ServerRoot = Join-Path $RepositoryRoot "apps/server"
 $WebRoot = Join-Path $RepositoryRoot "apps/web"
+$WeatherMcpRoot = Join-Path $RepositoryRoot "extensions/mcp/korea_weather"
 $EnvFile = Join-Path $RepositoryRoot ".env"
 . (Join-Path $PSScriptRoot "LuminaCache.Env.ps1") -RepositoryRoot $RepositoryRoot
 . (Join-Path $PSScriptRoot "LuminaInstall.Env.ps1")
@@ -393,6 +394,13 @@ if (-not $SkipDependencyInstall) {
         $frontendInstallArguments += @("--offline", "--no-audit")
     }
     Invoke-Checked -Command $NpmCommand -Arguments $frontendInstallArguments
+
+    Write-Host "[Lumina] Installing Korea Weather MCP dependencies..."
+    $weatherInstallArguments = @("ci", "--prefix", $WeatherMcpRoot)
+    if ($NoNetwork) {
+        $weatherInstallArguments += @("--offline", "--no-audit")
+    }
+    Invoke-Checked -Command $NpmCommand -Arguments $weatherInstallArguments
 }
 
 Write-Host "[Lumina] Applying database migrations..."

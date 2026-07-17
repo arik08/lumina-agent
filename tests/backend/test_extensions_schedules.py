@@ -33,6 +33,7 @@ from lumina.models import (
     ExtensionInstallation,
     ExtensionVersion,
     McpDefinition,
+    McpInstallation,
     Organization,
     Project,
     Run,
@@ -248,7 +249,7 @@ def test_repository_mcp_wrapper_is_classified_and_attached_to_mcp_snapshot(
             assert version is not None
             assert version.manifest_json["classification"] == "mcp"
             assert version.manifest_json["mcpSlug"] == "internal-search"
-            install_definition(
+            installation = install_definition(
                 db,
                 user=admin,
                 definition_id=definition.id,
@@ -258,9 +259,54 @@ def test_repository_mcp_wrapper_is_classified_and_attached_to_mcp_snapshot(
                 enabled=True,
                 tool_allowlist=["search_docs"],
             )
+            old_revision_id = installation.configuration_revision_id
+            installation_id = installation.id
+            db.commit()
             snapshot = resolve_mcp_snapshot(db, user=admin, project_id=project_id)[0]
             assert snapshot["skill_wrapper"]["extension_id"] == extension.id
             assert "반드시 MCP 검색 결과만" in snapshot["skill_wrapper"]["instructions"]
+        manifest = json.loads(
+            (mcp_root / "internal-search.json").read_text(encoding="utf-8")
+        )
+        manifest["mcpServers"]["internal-search"]["tools"][0]["description"] = (
+            "updated repository schema"
+        )
+        (mcp_root / "internal-search.json").write_text(
+            json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
+        )
+        upgraded = client.post(
+            "/api/extensions/repository-sync",
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert upgraded.status_code == 200, upgraded.text
+        assert upgraded.json()["mcpChanged"] == 1
+
+        with SessionLocal() as db:
+            installation = db.get(McpInstallation, installation_id)
+            definition = db.scalar(
+                select(McpDefinition).where(McpDefinition.slug == "internal-search")
+            )
+            assert installation is not None and definition is not None
+            assert installation.configuration_revision_id != old_revision_id
+            assert installation.configuration_revision_id == definition.current_revision_id
+            assert installation.tool_allowlist_json == ["search_docs"]
+            installation.configuration_revision_id = old_revision_id
+            db.commit()
+
+        repaired = client.post(
+            "/api/extensions/repository-sync",
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert repaired.status_code == 200, repaired.text
+        assert repaired.json()["mcpChanged"] == 0
+
+        with SessionLocal() as db:
+            installation = db.get(McpInstallation, installation_id)
+            definition = db.scalar(
+                select(McpDefinition).where(McpDefinition.slug == "internal-search")
+            )
+            assert installation is not None and definition is not None
+            assert installation.configuration_revision_id == definition.current_revision_id
 
 
 def test_selected_mcp_wrapper_guidance_enters_the_run_context(tmp_path: Path) -> None:

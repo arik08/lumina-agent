@@ -7,7 +7,185 @@
       "args": [
         "extensions/mcp/ecos_server.py"
       ],
-      "cwd": "."
+      "cwd": ".",
+      "tools": [
+        {
+          "name": "get_exchange_rate",
+          "description": "Fetch ECOS daily KRW exchange rates for USD, JPY100, EUR, or CNY.",
+          "inputSchema": {
+            "properties": {
+              "currency": {
+                "default": "USD",
+                "title": "Currency",
+                "type": "string"
+              },
+              "start_date": {
+                "default": "20240101",
+                "title": "Start Date",
+                "type": "string"
+              },
+              "end_date": {
+                "default": "20241231",
+                "title": "End Date",
+                "type": "string"
+              },
+              "limit": {
+                "default": 1000,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "title": "get_exchange_rateArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "get_statistic_data",
+          "description": "Fetch generic ECOS StatisticSearch rows by table code, cycle, date range, and optional item codes.",
+          "inputSchema": {
+            "properties": {
+              "stat_code": {
+                "title": "Stat Code",
+                "type": "string"
+              },
+              "cycle": {
+                "title": "Cycle",
+                "type": "string"
+              },
+              "start": {
+                "title": "Start",
+                "type": "string"
+              },
+              "end": {
+                "title": "End",
+                "type": "string"
+              },
+              "item_code1": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Item Code1"
+              },
+              "item_code2": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Item Code2"
+              },
+              "item_code3": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Item Code3"
+              },
+              "item_code4": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Item Code4"
+              },
+              "limit": {
+                "default": 1000,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "stat_code",
+              "cycle",
+              "start",
+              "end"
+            ],
+            "title": "get_statistic_dataArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "get_key_statistics",
+          "description": "Return ECOS key statistics, including recent KRW exchange-rate headline values.",
+          "inputSchema": {
+            "properties": {
+              "limit": {
+                "default": 100,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "title": "get_key_statisticsArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "list_stat_tables",
+          "description": "List ECOS statistic tables and codes.",
+          "inputSchema": {
+            "properties": {
+              "limit": {
+                "default": 1000,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "title": "list_stat_tablesArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "list_stat_items",
+          "description": "List ECOS item codes for one statistic table.",
+          "inputSchema": {
+            "properties": {
+              "stat_code": {
+                "title": "Stat Code",
+                "type": "string"
+              },
+              "limit": {
+                "default": 1000,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "stat_code"
+            ],
+            "title": "list_stat_itemsArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "check_connection",
+          "description": "Check whether ECOS is reachable and the configured API key works.",
+          "inputSchema": {
+            "properties": {},
+            "title": "check_connectionArguments",
+            "type": "object"
+          }
+        }
+      ]
     }
   }
 }

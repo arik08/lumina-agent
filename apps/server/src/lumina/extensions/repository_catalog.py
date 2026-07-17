@@ -28,6 +28,7 @@ from ..models import (
     ExtensionVersion,
     McpConfigurationRevision,
     McpDefinition,
+    McpInstallation,
     SkillOwnership,
     User,
     utc_now,
@@ -209,30 +210,7 @@ def sync_repository_skills(
     return changed
 
 
-def _declared_python_tools(
-    raw: dict[str, Any], repository_root: Path
-) -> list[dict[str, Any]]:
-    args = [str(item) for item in raw.get("args", [])]
-    script = next(
-        (repository_root / item for item in args if item.endswith(".py")), None
-    )
-    if script is None or not script.is_file():
-        return []
-    source = script.read_text(encoding="utf-8")
-    names = re.findall(
-        r"@\w+\.tool\(\)\s*\ndef\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(", source
-    )
-    return [
-        {
-            "name": name,
-            "description": f"{name.replace('_', ' ')} 도구",
-            "input_schema": {"type": "object", "additionalProperties": True},
-        }
-        for name in names
-    ]
-
-
-def _mcp_configuration(raw: dict[str, Any], repository_root: Path) -> dict[str, Any]:
+def _mcp_configuration(raw: dict[str, Any]) -> dict[str, Any]:
     transport = "streamable_http" if raw.get("type") == "streamable_http" else "stdio"
     command = (
         [str(raw.get("command", "")), *[str(item) for item in raw.get("args", [])]]
@@ -246,7 +224,7 @@ def _mcp_configuration(raw: dict[str, Any], repository_root: Path) -> dict[str, 
         "allowed_hosts": raw.get("allowedHosts", []),
         "allowed_ip_ranges": raw.get("allowedIpRanges", []),
         "header_templates": raw.get("headers", {}),
-        "tools": raw.get("tools", []) or _declared_python_tools(raw, repository_root),
+        "tools": raw.get("tools", []),
         "required_secret_names": raw.get("requiredSecretNames", []),
         "timeout_seconds": raw.get("timeoutSeconds", 30),
     }
@@ -262,7 +240,7 @@ def sync_repository_mcp(db: Session, *, admin: User, root: Path | None = None) -
         payload = json.loads(path.read_text(encoding="utf-8"))
         for slug, raw in payload.get("mcpServers", {}).items():
             catalog_slug = normalize_slug(slug)
-            configuration = _mcp_configuration(raw, repository_root)
+            configuration = _mcp_configuration(raw)
             if not configuration["tools"]:
                 continue
             _, digest = validate_configuration(configuration)
@@ -272,6 +250,7 @@ def sync_repository_mcp(db: Session, *, admin: User, root: Path | None = None) -
                     McpDefinition.slug == catalog_slug,
                 )
             )
+            revision_changed = definition is None
             if definition is None:
                 definition, revision = create_definition(
                     db,
@@ -288,17 +267,42 @@ def sync_repository_mcp(db: Session, *, admin: User, root: Path | None = None) -
                     else None
                 )
                 if current is not None and current.config_digest == digest:
-                    continue
-                revision = add_configuration_revision(
+                    revision = current
+                else:
+                    revision = add_configuration_revision(
+                        db,
+                        user=admin,
+                        definition_id=definition.id,
+                        configuration=configuration,
+                    )
+                    revision_changed = True
+            if revision_changed:
+                approve_revision(
                     db,
                     user=admin,
                     definition_id=definition.id,
-                    configuration=configuration,
+                    revision_id=revision.id,
                 )
-            approve_revision(
-                db, user=admin, definition_id=definition.id, revision_id=revision.id
-            )
-            changed += 1
+                changed += 1
+            available_tools = {
+                str(tool["name"])
+                for tool in revision.tool_schemas_json
+                if isinstance(tool, dict) and tool.get("name")
+            }
+            for installation in db.scalars(
+                select(McpInstallation).where(
+                    McpInstallation.definition_id == definition.id,
+                    McpInstallation.configuration_revision_id != revision.id,
+                )
+            ):
+                installation.configuration_revision_id = revision.id
+                installation.tool_allowlist_json = [
+                    name
+                    for name in installation.tool_allowlist_json
+                    if name in available_tools
+                ]
+                if not installation.tool_allowlist_json:
+                    installation.enabled = False
     db.flush()
     return changed
 
