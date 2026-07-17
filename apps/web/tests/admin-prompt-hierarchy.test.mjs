@@ -50,3 +50,8 @@ test("prompt composition expands in the same lower slot as its shortcut", () => 
     /\{showComposition \? \(\s*<section className="admin-prompt-composition"[\s\S]*<\/section>\s*\) : \(\s*<button className="admin-prompt-composition-shortcut"/,
   );
 });
+
+test("project preview selector stays compact so the toolbar note remains readable", () => {
+  assert.match(panelStyles, /\.admin-prompt-toolbar \.lumina-select \{[^}]*width: min\(260px, 38vw\);[^}]*flex: 0 1 260px;/);
+  assert.doesNotMatch(panelStyles, /\.admin-prompt-toolbar \.select-menu/);
+});
