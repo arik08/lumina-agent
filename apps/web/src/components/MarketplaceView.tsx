@@ -392,7 +392,6 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
       const deletedId = selected.id;
       await api.extensions.delete(deletedId);
       setDeleteConfirmId(null);
-      setSkillView("trash");
       await refresh(deletedId);
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "Skill을 보관함으로 이동하지 못했습니다.");

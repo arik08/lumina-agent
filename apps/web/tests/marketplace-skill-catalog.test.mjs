@@ -27,6 +27,8 @@ test("catalog uses a searchable card grid with installed-only package viewing", 
   assert.match(view, /setSelectedId\(target\.id\);\s*setEnteredInstalledFromCatalog\(true\);\s*setSkillView\("installed"\);/);
   assert.match(view, /window\.history\.pushState\(\{[\s\S]*luminaMarketplaceCatalogDetail:[\s\S]*skillId: target\.id/);
   assert.match(view, /enteredInstalledFromCatalog && skillView === "installed"/);
+  assert.match(view, /await api\.extensions\.delete\(deletedId\);[\s\S]*setDeleteConfirmId\(null\);[\s\S]*await refresh\(deletedId\);/);
+  assert.doesNotMatch(view, /await api\.extensions\.delete\(deletedId\);[\s\S]*setSkillView\("trash"\);[\s\S]*await refresh\(deletedId\);/);
   assert.match(view, /<ArrowLeft size=\{14\} \/> 뒤로가기/);
   assert.match(view, /const returnToCatalog = \(\) => \{[\s\S]*window\.history\.back\(\);[\s\S]*setSkillView\("catalog"\);/);
   assert.match(view, /window\.addEventListener\("popstate", handlePopState\)/);
