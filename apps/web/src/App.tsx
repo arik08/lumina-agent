@@ -89,6 +89,7 @@ import type {
   AdminProviderSummary,
   ArtifactSummary,
   ArtifactVersion,
+  OutputMode,
   ComposerSuggestion,
   ExecutionSelection,
   NotificationItem,
@@ -849,16 +850,23 @@ const artifactLengthSteps = [
 function ArtifactLengthSlider({
   value,
   onChange,
-  disabled = false,
+  outputMode,
+  onOutputModeChange,
+  controlRef,
+  attention = false,
 }: {
   value: number | null;
   onChange: (value: number | null) => void;
-  disabled?: boolean;
+  outputMode: OutputMode;
+  onOutputModeChange: (value: OutputMode) => void;
+  controlRef?: RefObject<HTMLButtonElement | null>;
+  attention?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [popoverStyle, setPopoverStyle] = useState<CSSProperties>({ left: 0, top: 0, visibility: "hidden" });
   const rootRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
+  const internalTriggerRef = useRef<HTMLButtonElement>(null);
+  const triggerRef = controlRef ?? internalTriggerRef;
   const popoverRef = useRef<HTMLDivElement>(null);
   const inputId = useId();
   const popoverId = useId();
@@ -867,6 +875,7 @@ function ArtifactLengthSlider({
     artifactLengthSteps.findIndex((option) => option.value === (value ?? defaultArtifactOutputTokens)),
   );
   const selected = artifactLengthSteps[selectedIndex];
+  const outputModeLabel = outputMode === "auto" ? "자동" : outputMode === "chat" ? "채팅" : "파일";
   const selectStep = (index: number) => {
     const boundedIndex = Math.min(artifactLengthSteps.length - 1, Math.max(0, index));
     const option = artifactLengthSteps[boundedIndex];
@@ -930,10 +939,6 @@ function ArtifactLengthSlider({
     };
   }, [open]);
 
-  useEffect(() => {
-    if (disabled) setOpen(false);
-  }, [disabled]);
-
   return (
     <div
       ref={rootRef}
@@ -941,15 +946,17 @@ function ArtifactLengthSlider({
     >
       <button
         ref={triggerRef}
-        className="artifact-length-trigger"
+        className={`artifact-length-trigger${attention ? " is-file-mode-nudged" : ""}`}
         type="button"
-        disabled={disabled}
-        aria-label={`문서 출력 토큰: ${selected.label}${selected.warning ? `, ${selected.warning}` : ""}`}
+        aria-label={`출력 방식 ${outputModeLabel}, 문서 출력 토큰 ${selected.label}${selected.warning ? `, ${selected.warning}` : ""}`}
+        aria-describedby={attention ? "file-mode-nudge" : undefined}
         aria-expanded={open}
         aria-controls={popoverId}
         onClick={() => setOpen((current) => !current)}
       >
         <FileText size={12} aria-hidden="true" />
+        <span className="artifact-output-mode-value">{outputModeLabel}</span>
+        <span className="artifact-control-separator" aria-hidden="true">·</span>
         <span className="artifact-length-value">{selected.label}</span>
         {selected.warning && <small>{selected.warning}</small>}
       </button>
@@ -965,7 +972,23 @@ function ArtifactLengthSlider({
             "--artifact-length-progress": `${(selectedIndex / (artifactLengthSteps.length - 1)) * 100}%`,
           } as CSSProperties}
         >
-          <div>
+          <div className="artifact-output-mode-picker">
+            <span>출력 방식</span>
+            <div role="group" aria-label="출력 방식">
+              {([['auto', '자동'], ['chat', '채팅'], ['file', '파일']] as const).map(([mode, label]) => (
+                <button
+                  key={mode}
+                  type="button"
+                  className={outputMode === mode ? "is-active" : ""}
+                  aria-pressed={outputMode === mode}
+                  onClick={() => onOutputModeChange(mode)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className={`artifact-length-popover-header${outputMode === "chat" ? " is-disabled" : ""}`}>
             <label htmlFor={inputId}>문서 출력 토큰</label>
             <output htmlFor={inputId}>
               <span>{selected.label}</span>
@@ -982,6 +1005,7 @@ function ArtifactLengthSlider({
             value={selectedIndex}
             aria-label="문서 출력 토큰"
             aria-valuetext={ariaValueText}
+            disabled={outputMode === "chat"}
             onChange={(event) => selectStep(Number(event.currentTarget.value))}
             onKeyDown={(event) => {
               const nextIndex = event.key === "Home"
@@ -3581,24 +3605,14 @@ function App() {
                   <ArtifactLengthSlider
                     value={targetOutputTokens}
                     onChange={setTargetOutputTokens}
-                    disabled={workspace.settings?.outputMode === "chat"}
+                    outputMode={workspace.settings?.outputMode ?? "auto"}
+                    onOutputModeChange={(value) => {
+                      setTargetOutputTokens((current) => value === "chat" ? null : current ?? defaultArtifactOutputTokens);
+                      void workspace.selectOutputMode(value);
+                    }}
+                    controlRef={fileModeButtonRef}
+                    attention={shouldNudgeFileMode}
                   />
-                  <div className="output-mode-toggle" role="group" aria-label="출력 방식">
-                    {([['auto', '자동'], ['chat', '채팅'], ['file', '파일']] as const).map(([value, label]) => (
-                      <button
-                        type="button"
-                        key={value}
-                        ref={value === "file" ? fileModeButtonRef : undefined}
-                        className={`${workspace.settings?.outputMode === value ? "is-active" : ""} ${value === "file" && shouldNudgeFileMode ? "is-file-mode-nudged" : ""}`.trim()}
-                        aria-pressed={workspace.settings?.outputMode === value}
-                        aria-describedby={value === "file" && shouldNudgeFileMode ? "file-mode-nudge" : undefined}
-                        onClick={() => {
-                          setTargetOutputTokens((current) => value === "chat" ? null : current ?? defaultArtifactOutputTokens);
-                          void workspace.selectOutputMode(value);
-                        }}
-                      >{label}</button>
-                    ))}
-                  </div>
                   <GlobalTooltipLayer
                     anchor={fileModeButtonRef.current}
                     className="file-mode-nudge-layer"
