@@ -825,8 +825,8 @@ const defaultArtifactOutputTokens = 10_000;
 
 const analysisDepthOptions: ComposerPickerOption[] = [
   { id: "auto", label: "자동", description: "요청에 맞춰 분석 범위를 결정합니다." },
-  { id: "brief", label: "간단히", description: "핵심 사실만 빠르게 확인합니다." },
-  { id: "standard", label: "충분히", description: "필요한 근거와 예외를 함께 확인합니다." },
+  { id: "brief", label: "간단", description: "핵심 사실만 빠르게 확인합니다." },
+  { id: "standard", label: "충분", description: "필요한 근거와 예외를 함께 확인합니다." },
   { id: "deep", label: "심층", description: "다양한 근거와 반례까지 폭넓게 검증합니다." },
 ];
 
@@ -834,7 +834,7 @@ const answerLengthOptions: ComposerPickerOption[] = [
   { id: "auto", label: "자동", description: "요청에 맞춰 답변 분량을 결정합니다." },
   { id: "brief", label: "짧게", description: "결론과 핵심만 간결하게 답합니다." },
   { id: "standard", label: "보통", description: "이해에 필요한 설명을 함께 답합니다." },
-  { id: "detailed", label: "자세히", description: "배경과 예외까지 상세하게 답합니다." },
+  { id: "detailed", label: "상세", description: "배경과 예외까지 상세하게 답합니다." },
 ];
 
 const artifactLengthSteps = [
@@ -1040,7 +1040,7 @@ function ComposerPicker({
   placeholder,
   tooltip,
   triggerIcon,
-  iconOnly = false,
+  hideChevron = false,
   disabled = false,
 }: {
   options: ComposerPickerOption[];
@@ -1053,7 +1053,7 @@ function ComposerPicker({
   placeholder?: string;
   tooltip?: string;
   triggerIcon?: ReactNode;
-  iconOnly?: boolean;
+  hideChevron?: boolean;
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -1088,7 +1088,7 @@ function ComposerPicker({
     <div className={`composer-picker ${open ? "is-open" : ""}`} ref={rootRef}>
       <button
         ref={triggerRef}
-        className={`composer-picker-trigger ${controlClassName}${iconOnly ? " is-icon-only" : ""}${tooltip ? " tooltip-control" : ""}`}
+        className={`composer-picker-trigger ${controlClassName}${hideChevron ? " has-no-chevron" : ""}${tooltip ? " tooltip-control" : ""}`}
         type="button"
         aria-label={ariaLabel}
         aria-haspopup="listbox"
@@ -1116,8 +1116,9 @@ function ComposerPicker({
           }
         }}
       >
-        {triggerIcon ?? <span>{selected?.triggerLabel ?? selected?.label ?? placeholder ?? ariaLabel}</span>}
-        {!iconOnly && <ChevronDown size={13} aria-hidden="true" />}
+        {triggerIcon}
+        <span>{selected?.triggerLabel ?? selected?.label ?? placeholder ?? ariaLabel}</span>
+        {!hideChevron && <ChevronDown size={13} aria-hidden="true" />}
       </button>
       {open && (
         <div className={`composer-picker-menu${options.some((option) => option.description) ? " has-descriptions" : ""}`} id={listId} role="listbox" aria-label={ariaLabel}>
@@ -3589,7 +3590,7 @@ function App() {
                     menuDescription="웹 검색과 자료 확인을 포함해 어디까지 분석할지 정합니다."
                     controlClassName="analysis-depth-control"
                     triggerIcon={<Search size={15} aria-hidden="true" />}
-                    iconOnly
+                    hideChevron
                   />
                   <ComposerPicker
                     options={answerLengthOptions}
@@ -3600,7 +3601,7 @@ function App() {
                     menuDescription="채팅에 표시할 최종 답변의 분량을 정합니다."
                     controlClassName="answer-length-control"
                     triggerIcon={<AlignLeft size={15} aria-hidden="true" />}
-                    iconOnly
+                    hideChevron
                   />
                   <ArtifactLengthSlider
                     value={targetOutputTokens}
