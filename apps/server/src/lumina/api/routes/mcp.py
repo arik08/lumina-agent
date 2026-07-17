@@ -28,6 +28,7 @@ from ...mcp.service import (
     list_admin_definitions,
     list_catalog,
     list_installations,
+    mcp_skill_wrappers,
     set_definition_status,
     set_installation_enabled,
     unbind_secret_reference,
@@ -50,12 +51,14 @@ def get_admin_mcp_definitions(
     db: Session = Depends(get_db),
 ) -> list[dict[str, Any]]:
     require_admin(user)
+    wrappers = mcp_skill_wrappers(db, organization_id=user.organization_id)
     return [
         definition_payload(
             db,
             definition,
             include_all_revisions=True,
             include_configuration=True,
+            skill_wrappers=wrappers,
         )
         for definition in list_admin_definitions(db, user=user)
     ]
@@ -226,12 +229,14 @@ def get_mcp_catalog(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[dict[str, Any]]:
+    wrappers = mcp_skill_wrappers(db, organization_id=user.organization_id)
     return [
         definition_payload(
             db,
             definition,
             include_all_revisions=False,
             include_configuration=False,
+            skill_wrappers=wrappers,
         )
         for definition in list_catalog(db, user=user)
     ]

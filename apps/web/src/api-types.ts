@@ -1159,6 +1159,10 @@ export interface McpDefinition {
   name: string;
   description: string;
   status: string;
+  skillWrapper: {
+    wrapped: boolean;
+    name: string | null;
+  };
   currentRevisionId: UUID | null;
   revisions: McpRevision[];
   approvedAt: IsoDateTime | null;

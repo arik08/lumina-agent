@@ -212,8 +212,9 @@ export function McpMarketplacePanel({ projectId }: McpMarketplacePanelProps) {
             <>
               <header className="detail-heading">
                 <div><h2>{selected.name}</h2><p>{selected.description || "설명 없음"}</p></div>
-                <div className="detail-badges"><span>MCP r{currentRevision.revision}</span><span>{currentRevision.transport}</span><span className={`status-${currentRevision.healthStatus}`}>health {stateLabel(currentRevision.healthStatus)}</span><span className={`status-${currentRevision.schemaStatus}`}>schema {stateLabel(currentRevision.schemaStatus)}</span></div>
+                <div className="detail-badges"><span>MCP r{currentRevision.revision}</span><span>{currentRevision.transport}</span><span className={selected.skillWrapper.wrapped ? "is-wrapper-ready" : "is-wrapper-missing"}>Skill 래퍼 {selected.skillWrapper.wrapped ? "적용" : "누락"}</span><span className={`status-${currentRevision.healthStatus}`}>health {stateLabel(currentRevision.healthStatus)}</span><span className={`status-${currentRevision.schemaStatus}`}>schema {stateLabel(currentRevision.schemaStatus)}</span></div>
               </header>
+              {!selected.skillWrapper.wrapped && <div className="mcp-wrapper-warning" role="alert"><strong>Skill 래퍼가 없습니다.</strong><span>이 MCP를 실행할 때 사용 지침이 Context에 주입되지 않습니다. extensions/skills 아래에 source: skill-mcp:{selected.slug} 래퍼를 추가해 주세요.</span></div>}
               <div className="mcp-tool-section">
                 <div className="mcp-section-heading"><strong><Wrench size={14} /> 설치 Tool allowlist</strong><small>{selectedTools.length} / {currentRevision.tools.length}</small></div>
                 <div className="mcp-tool-list">{currentRevision.tools.map((tool) => <label key={tool.name}><input type="checkbox" checked={selectedTools.includes(tool.name)} onChange={(event) => { const checked = event.currentTarget.checked; setSelectedTools((current) => checked ? [...current, tool.name] : current.filter((name) => name !== tool.name)); }} /><span><strong>{tool.name}</strong><small>{tool.description || "설명 없음"}</small></span></label>)}</div>

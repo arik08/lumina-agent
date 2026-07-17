@@ -1461,6 +1461,11 @@ button:disabled { cursor: default; opacity: 0.5; }
 .mcp-marketplace-panel .feature-list > button { min-height: 51px; border-bottom: 0; border-radius: 7px; }
 .mcp-marketplace-panel .feature-list > button + button { margin-top: 2px; }
 .mcp-detail { padding-top: 17px; }
+.detail-badges .is-wrapper-ready { background: color-mix(in srgb, var(--success) 10%, transparent); color: var(--success); }
+.detail-badges .is-wrapper-missing { background: color-mix(in srgb, var(--danger) 9%, transparent); color: var(--danger); }
+.mcp-wrapper-warning { display: grid; gap: 2px; margin-top: 12px; padding: 9px 11px; border: 1px solid color-mix(in srgb, var(--danger) 42%, var(--line)); border-radius: var(--radius-field); background: var(--danger-surface); color: var(--danger); }
+.mcp-wrapper-warning strong { font-size: 11.5px; }
+.mcp-wrapper-warning span { color: var(--muted); font-size: 10.5px; }
 .mcp-tool-section, .mcp-installation-section { padding-top: 15px; }
 .mcp-section-heading { display: flex; min-height: 32px; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--line); }
 .mcp-section-heading strong { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; }

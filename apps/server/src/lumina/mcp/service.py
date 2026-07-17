@@ -684,7 +684,14 @@ def definition_payload(
     *,
     include_all_revisions: bool,
     include_configuration: bool,
+    skill_wrappers: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    wrappers = (
+        skill_wrappers
+        if skill_wrappers is not None
+        else mcp_skill_wrappers(db, organization_id=definition.organization_id)
+    )
+    skill_wrapper = wrappers.get(definition.slug)
     statement = select(McpConfigurationRevision).where(
         McpConfigurationRevision.definition_id == definition.id
     )
@@ -701,6 +708,10 @@ def definition_payload(
         "name": definition.name,
         "description": definition.description,
         "status": definition.status,
+        "skillWrapper": {
+            "wrapped": skill_wrapper is not None,
+            "name": skill_wrapper["name"] if skill_wrapper is not None else None,
+        },
         "currentRevisionId": definition.current_revision_id,
         "revisions": [
             revision_payload(revision, include_configuration=include_configuration)
@@ -1052,7 +1063,7 @@ def resolve_mcp_snapshot(
     db: Session, *, user: User, project_id: str
 ) -> list[dict[str, Any]]:
     require_project(db, user, project_id)
-    wrappers = _mcp_skill_wrappers(db, organization_id=user.organization_id)
+    wrappers = mcp_skill_wrappers(db, organization_id=user.organization_id)
     rows = list(
         db.execute(
             select(McpInstallation, McpConfigurationRevision, McpDefinition)
@@ -1133,7 +1144,7 @@ def resolve_mcp_snapshot(
     )
 
 
-def _mcp_skill_wrappers(
+def mcp_skill_wrappers(
     db: Session, *, organization_id: str
 ) -> dict[str, dict[str, Any]]:
     wrappers: dict[str, dict[str, Any]] = {}

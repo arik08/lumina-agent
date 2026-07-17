@@ -264,6 +264,10 @@ def test_mcp_catalog_binding_snapshot_and_cross_user_isolation(
         assert approved.json()["status"] == "approved"
         catalog = alice_client.get("/api/mcp/catalog")
         assert catalog.status_code == 200
+        assert catalog.json()[0]["skillWrapper"] == {
+            "wrapped": False,
+            "name": None,
+        }
         assert catalog.json()[0]["revisions"][0]["target"] == "mcp.corp.example"
         assert "configuration" not in catalog.json()[0]["revisions"][0]
 

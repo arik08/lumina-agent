@@ -37,6 +37,20 @@ test("MCP installation status and secret actions keep compact trailing geometry"
   assert.match(styles, /\.mcp-secret-row > \.mcp-secret-action \{[^}]*grid-column: -2 \/ -1;[^}]*width: max-content;[^}]*justify-self: end;/);
 });
 
+test("MCP detail shows whether its Skill wrapper is applied", async () => {
+  const [panel, styles] = await Promise.all([
+    readFile(panelPath, "utf8"),
+    readFile(stylesPath, "utf8"),
+  ]);
+
+  assert.match(panel, /Skill 래퍼 \{selected\.skillWrapper\.wrapped \? "적용" : "누락"\}/);
+  assert.match(panel, /Skill 래퍼가 없습니다\./);
+  assert.match(panel, /source: skill-mcp:\{selected\.slug\}/);
+  assert.match(styles, /\.detail-badges \.is-wrapper-ready/);
+  assert.match(styles, /\.detail-badges \.is-wrapper-missing/);
+  assert.match(styles, /\.mcp-wrapper-warning \{/);
+});
+
 test("MCP destructive actions use inline same-button confirmation instead of popups", async () => {
   const [panel, adminPanel, styles] = await Promise.all([
     readFile(panelPath, "utf8"),
