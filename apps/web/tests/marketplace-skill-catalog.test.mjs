@@ -93,8 +93,9 @@ test("shared Skill lifecycle button keeps English states and invariant geometry"
   // The existing detail actions remain Korean and use their original control.
   assert.match(view, /\{selected\.canEdit \? "편집" : "내 버전으로 수정"\}/);
   assert.match(view, /\{installation \? "미사용" : "설치"\}/);
-  assert.match(view, /className=\{installation \? "is-disable" : "is-primary lumina-primary-action"\}/);
-  assert.match(view, /installation \? <PowerOff size=\{14\} \/> : <Download size=\{14\} \/>/);
+  assert.match(view, /className=\{`marketplace-detail-install-toggle \$\{installation \? "is-disable" : "is-primary lumina-primary-action"\}`\}/);
+  assert.match(view, /installation \? <Power size=\{14\} \/> : <Download size=\{14\} \/>/);
+  assert.match(styles, /\.marketplace-package-summary button\.marketplace-detail-install-toggle \{ width: 92px; min-width: 92px; max-width: 92px; justify-content: center; white-space: nowrap; \}/);
   assert.match(styles, /\.marketplace-package-summary button\.is-disable \{[^}]*var\(--warning\)/);
   assert.match(view, /deleteConfirmId === selected\.id \? "경고" : "삭제"/);
 });
