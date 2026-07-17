@@ -1245,7 +1245,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .skill-catalog-card-actions { display: flex; align-items: center; gap: 5px; margin-left: auto; }
 .skill-catalog-view { display: inline-grid; width: 28px; min-width: 28px; height: 26px; place-items: center; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--ink); cursor: pointer; }
 .skill-catalog-view:not(:disabled):hover, .skill-catalog-view:not(:disabled):focus-visible { border-color: color-mix(in srgb, var(--cobalt) 34%, var(--line)); background: var(--cobalt-pale); color: var(--cobalt); }
-.skill-catalog-card.is-liked .skill-catalog-view { border-color: var(--cobalt); }
+.skill-catalog-card.is-liked .skill-catalog-view { border-color: color-mix(in srgb, var(--cobalt) 34%, var(--line)); }
 .skill-catalog-more { display: flex; min-width: 112px; height: 32px; align-items: center; justify-content: center; gap: 6px; margin: 18px auto 0; padding: 0 12px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); color: var(--ink); cursor: pointer; }
 .skill-catalog-more:not(:disabled):hover { background: var(--surface-soft); }
 .skill-catalog-empty { display: grid; min-height: 300px; place-content: center; justify-items: center; gap: 7px; color: var(--muted); text-align: center; }
