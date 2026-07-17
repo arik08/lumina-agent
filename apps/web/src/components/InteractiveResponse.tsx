@@ -17,7 +17,6 @@ import {
   type WheelEvent,
 } from "react";
 import { createPortal } from "react-dom";
-import { inferMermaidNodeTone } from "../mermaid-semantic";
 import { repairMermaidSource } from "../mermaid-source";
 import { SyntaxCode } from "./SyntaxCode";
 import "./InteractiveResponse.css";
@@ -345,18 +344,6 @@ function mermaidAppearance() {
   } as const;
 }
 
-function decorateMermaidSvg(svg: string) {
-  const template = document.createElement("template");
-  template.innerHTML = svg;
-  template.content.querySelectorAll<SVGGElement>("g.node").forEach((node) => {
-    const hasAuthoredClass = Array.from(node.classList).some((className) => className !== "node" && className !== "default");
-    if (hasAuthoredClass) return;
-    const isDecision = Array.from(node.children).some((child) => child.tagName.toLowerCase() === "polygon");
-    node.dataset.luminaTone = inferMermaidNodeTone(node.textContent ?? "", isDecision);
-  });
-  return template.innerHTML;
-}
-
 export async function renderMermaidSvg(source: string) {
   const normalizedSource = source.trim();
   const appearance = mermaidAppearance();
@@ -374,7 +361,7 @@ export async function renderMermaidSvg(source: string) {
       if (repairedSource === normalizedSource) throw error;
       result = await mermaid.render(`lumina-mermaid-${++mermaidRenderSequence}`, repairedSource);
     }
-    return { ...result, svg: decorateMermaidSvg(result.svg) };
+    return result;
   });
   mermaidRenderJobs.set(cacheKey, renderJob);
   void renderJob.finally(() => {
