@@ -23,7 +23,8 @@ test("conversation font size controls every center-panel text surface", () => {
   assert.doesNotMatch(app, /className=\{`chat-pane view-\$\{mainView\}`\} id="top" style=/);
   assert.match(styles, /\.chat-pane\.view-chat :is\(\.chat-header, \.conversation-scroll, \.dock-area\) \*/);
   assert.match(styles, /\.app-shell > \.tool-message\.is-global \*[\s\S]*?font-size: calc\(var\(--conversation-font-size\) - 2px\)/);
-  assert.match(styles, /\.tool-message-section \+ \.tool-message-section \{[^}]*border-top: 1px solid var\(--line\)/);
+  assert.match(styles, /\.tool-message\.is-global pre \{[^}]*max-height: none;[^}]*overflow: visible;/);
+  assert.doesNotMatch(styles, /\.tool-message-section \+ \.tool-message-section \{[^}]*border-top:/);
   assert.match(styles, /\.chat-pane\.view-chat \.composer-footer \*[\s\S]*?font-size: calc\(var\(--conversation-font-size\) - 2px\)/);
   assert.match(styles, /\.chat-pane\.view-chat \.turn-work-details \*[\s\S]*?font-size: calc\(var\(--conversation-font-size\) - 1px\)/);
 });
