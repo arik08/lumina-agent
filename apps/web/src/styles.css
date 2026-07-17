@@ -1266,7 +1266,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .marketplace-package-summary > .marketplace-package-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
 .marketplace-package-summary strong { font-size: 13px; }
 .marketplace-package-summary span { color: var(--muted); font-size: 11px; }
-.marketplace-package-summary button { display: inline-flex; min-height: 30px; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 5px; padding: 0 10px; background: var(--surface); color: var(--ink); font-size: 11.5px; cursor: pointer; }
+.feature-view.feature-view .marketplace-package-summary button { display: inline-flex; min-height: 30px; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 5px; padding: 0 10px; background: var(--surface); color: var(--ink); font-size: 11.5px; cursor: pointer; }
 .marketplace-package-summary button.marketplace-detail-install-toggle { width: 92px; min-width: 92px; max-width: 92px; justify-content: center; white-space: nowrap; }
 .marketplace-package-summary button.is-primary { border-color: transparent; background: var(--cobalt); color: white; }
 .marketplace-package-summary button.is-disable { border-color: color-mix(in srgb, var(--warning) 28%, var(--line)); background: color-mix(in srgb, var(--warning) 7%, var(--surface)); color: var(--warning); }
