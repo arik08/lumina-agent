@@ -1943,10 +1943,10 @@ button:disabled { cursor: default; opacity: 0.5; }
 
 .notification-menu { position: relative; display: flex; align-items: center; margin-left: 6px; }
 .chat-actions .notification-trigger { position: relative; width: 28px; height: 28px; padding: 0; border-radius: 5px; color: var(--muted); }
-.chat-actions .notification-trigger.has-counts { width: auto; min-width: 28px; gap: 4px; padding: 0 4px 0 6px; border: 1px solid var(--line); background: var(--surface); }
+.chat-actions .notification-trigger.has-counts { width: auto; min-width: 28px; gap: 4px; padding: 0 4px 0 6px; background: transparent; }
 .chat-actions .notification-trigger.is-active { background: var(--surface-soft); color: var(--cobalt); }
 .notification-trigger-counts { display: inline-flex !important; align-items: center; gap: 3px; }
-.notification-trigger-count { display: inline-flex !important; min-width: 16px; height: 16px; align-items: center; justify-content: center; gap: 2px; padding: 0 4px; border-radius: 8px; font-size: 9px; font-variant-numeric: tabular-nums; font-weight: 750; line-height: 1; }
+.notification-trigger-count { display: inline-flex !important; min-width: 16px; height: 16px; align-items: center; justify-content: center; gap: 2px; padding: 0 4px; border-radius: 8px; font-size: 9px; font-variant-numeric: tabular-nums; font-weight: 400; line-height: 1; }
 .notification-trigger-count.is-notification { background: var(--cobalt); color: #ffffff; }
 .notification-trigger-count.is-announcement { background: color-mix(in srgb, var(--warning) 15%, var(--surface)); color: var(--warning); }
 .notification-panel { position: absolute; z-index: 40; top: calc(100% + 8px); right: 0; width: min(460px, calc(100vw - 30px)); overflow: hidden; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--menu-surface); box-shadow: 0 14px 36px rgba(31, 39, 51, 0.14); color: var(--ink); }

@@ -94,5 +94,7 @@ test("notification trigger separates unread notifications and announcements", as
   assert.match(app, /notification-trigger-count is-announcement/);
   assert.match(app, /announcementUnreadCount > 0 && <span>/);
   assert.match(stylesheet, /\.notification-trigger\.has-counts \{[^}]*width: auto;/s);
+  assert.doesNotMatch(stylesheet, /\.notification-trigger\.has-counts \{[^}]*border:/s);
+  assert.match(stylesheet, /\.notification-trigger-count \{[^}]*font-weight: 400;/s);
   assert.match(stylesheet, /\.notification-trigger-count\.is-announcement/);
 });
