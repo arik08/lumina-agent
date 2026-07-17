@@ -77,6 +77,7 @@ test("chat Mermaid cards provide button-only zoom controls beside the expand but
   assert.match(rendererSource, /renderedSvg\.style\.maxWidth = zoom > 1 \? "none" : "100%"/);
   assert.doesNotMatch(rendererSource, /<MermaidSurface source=\{source\} zoom=\{zoom\}[^>]*onWheel/);
   assert.match(rendererStyles, /\.mermaid-inline-zoom-controls \{[\s\S]*?border-right: 1px solid var\(--line\);/);
+  assert.match(rendererStyles, /\.interactive-response-toolbar button\.mermaid-inline-zoom-value \{[^}]*width: 3em;[^}]*flex: 0 0 3em;[^}]*white-space: nowrap;/s);
   assert.match(rendererStyles, /\.interactive-response-toolbar \.interactive-response-expand-label \{[\s\S]*?flex: 1;[\s\S]*?justify-content: flex-start;[\s\S]*?cursor: pointer;/);
   assert.match(rendererStyles, /\.interactive-response-toolbar \.interactive-response-expand-label:hover \{[^}]*border-color: transparent;[^}]*background: transparent;[^}]*\}/);
 });

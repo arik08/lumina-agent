@@ -43,11 +43,13 @@
   border-right: 1px solid var(--line);
 }
 
-.interactive-response-toolbar .mermaid-inline-zoom-value {
-  width: 40px;
+.interactive-response-toolbar button.mermaid-inline-zoom-value {
+  width: 3em;
+  flex: 0 0 3em;
   color: var(--muted);
   font-size: 10.5px;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .interactive-response-toolbar button:disabled {
