@@ -32,6 +32,8 @@ test("MCP installs once and uses the shared multi-project scope UI", async () =>
   assert.match(panel, /current\.filter\(\(item\) => item\.id !== userInstallation\.id\)/);
   assert.doesNotMatch(panel, /api\.mcp\.setEnabled\(userInstallation\.id/);
   assert.match(panel, /api\.mcp\.install\(definition\.id, revision!\.id, "user", undefined/);
+  assert.match(panel, /const verified = await api\.mcp\.verify\(installed\.id\)/);
+  assert.match(panel, /item\.id === verified\.id \? verified : item/);
 });
 
 test("MCP installation status and secret actions keep compact trailing geometry", async () => {

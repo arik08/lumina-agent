@@ -171,6 +171,19 @@ export function McpMarketplacePanel({ projectId }: McpMarketplacePanelProps) {
       } else {
         const installed = await api.mcp.install(definition.id, revision!.id, "user", undefined, revision!.tools.map((tool) => tool.name));
         setInstallations((current) => [...current.filter((item) => item.id !== installed.id), installed]);
+        if (installed.enabled && ["ready", "not_required"].includes(installed.secretResolutionStatus)) {
+          setVerifyingInstallationIds((current) => new Set(current).add(installed.id));
+          try {
+            const verified = await api.mcp.verify(installed.id);
+            setInstallations((current) => current.map((item) => item.id === verified.id ? verified : item));
+          } finally {
+            setVerifyingInstallationIds((current) => {
+              const next = new Set(current);
+              next.delete(installed.id);
+              return next;
+            });
+          }
+        }
       }
     } catch (caught) {
       setError(errorMessage(caught));

@@ -60,3 +60,15 @@ def test_every_mcp_server_has_a_skill_wrapper() -> None:
                 break
     assert len(wrapped_names) == len(set(wrapped_names))
     assert set(wrapped_names) == server_names
+
+
+def test_korea_weather_keeps_its_required_secret_binding() -> None:
+    required_by_server = {
+        server_name: server.get("requiredSecretNames", [])
+        for manifest_path in MCP_ROOT.glob("*.json")
+        for server_name, server in json.loads(
+            manifest_path.read_text(encoding="utf-8")
+        )["mcpServers"].items()
+    }
+
+    assert required_by_server["korea-weather"] == ["KOREA_WEATHER_API_KEY"]

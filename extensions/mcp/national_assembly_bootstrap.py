@@ -13,6 +13,7 @@ from pathlib import Path
 REPO_URL = "https://github.com/hollobit/assembly-api-mcp.git"
 REPO_REVISION = "f74c6b452c59d87e2fa7265fd985b90e4057a8ef"
 DEFAULT_CACHE_DIR = Path(".cache") / "mcp" / "assembly-api-mcp"
+DEFAULT_ASSEMBLY_API_KEY = "sample"
 
 
 def _log(message: str) -> None:
@@ -141,6 +142,7 @@ def main() -> None:
     if install_only:
         _log(f"installed pinned upstream revision {REPO_REVISION}")
         return
+    os.environ.setdefault("ASSEMBLY_API_KEY", DEFAULT_ASSEMBLY_API_KEY)
     args = [node, str(index_js), *forwarded_args]
     process = subprocess.Popen(
         args,

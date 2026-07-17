@@ -11,9 +11,6 @@
         "MCP_PROFILE": "full",
         "MCP_TRANSPORT": "stdio"
       },
-      "requiredSecretNames": [
-        "ASSEMBLY_API_KEY"
-      ],
       "tools": [
         {
           "name": "assembly_member",
