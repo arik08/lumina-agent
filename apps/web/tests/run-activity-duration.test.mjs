@@ -115,3 +115,12 @@ test("model processing expands to the actual persisted exchange instead of token
   assert.doesNotMatch(app, /화면에 저장된 실제 사용자 메시지/);
   assert.doesNotMatch(app, /현재 Run 누적 토큰/);
 });
+
+test("expanded model processing closes when the surrounding blank area is pressed", async () => {
+  const app = await read("../src/components/ConversationTurn.tsx");
+
+  assert.match(app, /const rootRef = useRef<HTMLDivElement>\(null\);/);
+  assert.match(app, /if \(!isOpen\) return;[\s\S]*document\.addEventListener\("pointerdown", closeOnOutsidePointer\)/);
+  assert.match(app, /event\.target instanceof Node && !rootRef\.current\?\.contains\(event\.target\)/);
+  assert.match(app, /model-processing-call[\s\S]*ref=\{rootRef\}/);
+});

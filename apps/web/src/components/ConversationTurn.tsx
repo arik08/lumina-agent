@@ -669,6 +669,7 @@ function ModelProcessingRow({ durationMs, state, sent, received, model, provider
   reasoningTokens?: number;
 }) {
   const [isOpen, setIsOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
   const contentId = useId();
   const running = state === "running";
   const awaitingInput = state === "awaiting_input";
@@ -678,8 +679,19 @@ function ModelProcessingRow({ durationMs, state, sent, received, model, provider
     { title: "Provider에서 받음", items: received, empty: running ? "응답을 수신하고 있습니다." : state === "stopped" ? "모델 응답이 완료되기 전에 작업을 중지했습니다." : "공개 가능한 응답 내용이 없습니다." },
   ];
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) {
+        if (rootRef.current) preserveConversationScrollPosition(rootRef.current, () => setIsOpen(false));
+      }
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    return () => document.removeEventListener("pointerdown", closeOnOutsidePointer);
+  }, [isOpen]);
+
   return (
-    <div className={`tool-call model-processing-call ${isOpen ? "is-open" : ""}`}>
+    <div className={`tool-call model-processing-call ${isOpen ? "is-open" : ""}`} ref={rootRef}>
       <button
         className={`tool-call-trigger model-processing-row ${running ? "" : "without-status-icon"}`}
         type="button"
