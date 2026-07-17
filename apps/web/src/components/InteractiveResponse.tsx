@@ -436,6 +436,32 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+function categoryLabelWidth(value: unknown) {
+  const label = typeof value === "string" || typeof value === "number"
+    ? String(value)
+    : isRecord(value) && (typeof value.value === "string" || typeof value.value === "number")
+      ? String(value.value)
+      : "";
+  if (!label) return 0;
+  return Array.from(label).reduce((width, character) => width + (character.charCodeAt(0) > 0xff ? 12 : 7), 16);
+}
+
+function readableCategoryAxis(axis: unknown, availableWidth: number) {
+  if (!isRecord(axis) || axis.type !== "category" || !Array.isArray(axis.data)) return axis;
+  const estimatedLabelWidth = axis.data.reduce((width, value) => width + categoryLabelWidth(value), 0);
+  if (estimatedLabelWidth <= Math.max(availableWidth - 80, 240)) return axis;
+  const axisLabel = isRecord(axis.axisLabel) ? axis.axisLabel : {};
+  return { ...axis, axisLabel: { interval: 0, rotate: 30, ...axisLabel } };
+}
+
+function withReadableCategoryAxes(option: Record<string, unknown>, availableWidth: number) {
+  if (!("xAxis" in option)) return option;
+  const xAxis = Array.isArray(option.xAxis)
+    ? option.xAxis.map((axis) => readableCategoryAxis(axis, availableWidth))
+    : readableCategoryAxis(option.xAxis, availableWidth);
+  return { ...option, xAxis };
+}
+
 function safeExternalUrl(value: unknown) {
   const text = shortText(value, 500);
   if (!text) return "";
@@ -537,12 +563,13 @@ function InteractiveChartContent({ spec, expanded = false }: { spec: Interactive
       const applyOption = () => {
         const currentStyles = getComputedStyle(container);
         const currentToken = (name: string, fallback: string) => currentStyles.getPropertyValue(name).trim() || fallback;
+        const readableOption = withReadableCategoryAxes(spec.option, container.clientWidth);
         chart.setOption({
           darkMode: Boolean(container.closest(".theme-dark")),
           color: [currentToken("--cobalt", "#3f66c9"), currentToken("--danger", "#c34f51"), currentToken("--success", "#2f9765"), currentToken("--warning", "#b8771f"), currentToken("--muted", "#6c737e")],
           backgroundColor: "transparent",
           textStyle: { color: currentToken("--ink", "#20242c"), fontFamily: currentToken("--font-ui", "Segoe UI, sans-serif") },
-          ...spec.option,
+          ...readableOption,
         }, { notMerge: true });
       };
       applyOption();

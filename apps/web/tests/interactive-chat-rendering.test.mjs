@@ -20,6 +20,9 @@ test("chat renders Mermaid and full ECharts options as interactive blocks", () =
   assert.match(rendererSource, /new MutationObserver\(applyOption\)/);
   assert.match(rendererSource, /darkMode: Boolean\(container\.closest\("\.theme-dark"\)\)/);
   assert.match(rendererSource, /legacyChartOption/);
+  assert.match(rendererSource, /estimatedLabelWidth <= Math\.max\(availableWidth - 80, 240\)/);
+  assert.match(rendererSource, /axisLabel: \{ interval: 0, rotate: 30, \.\.\.axisLabel \}/);
+  assert.match(rendererSource, /withReadableCategoryAxes\(spec\.option, container\.clientWidth\)/);
 });
 
 test("Mermaid preloads once, deduplicates active renders, and stays mounted while Markdown grows", () => {
