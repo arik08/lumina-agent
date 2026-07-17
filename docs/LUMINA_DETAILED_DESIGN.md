@@ -1780,6 +1780,41 @@ Agent Package
 
 현재 Agent Frontend 모듈화의 목적은 사용자가 임의 코드를 설치하는 Marketplace가 아니라 내부 유지보수입니다. 신뢰된 builtin 모듈만 독립 폴더와 명시적 code registry로 등록하며 runtime 자동 탐색·동적 import·설치 UI는 제공하지 않습니다. 선택 모듈은 Core의 공개 API와 event 계약만 사용하고, registry 등록을 제거한 뒤 해당 폴더를 삭제해도 Core와 기존 Run이 계속 동작해야 합니다. 삭제된 module 또는 호환되지 않는 contract를 참조하는 Conversation은 `general-chat`으로 fallback하되 기존 Agent ID·version과 Artifact는 보존합니다.
 
+#### 18.1.1 내부 유지보수용 모듈 불변 원칙
+
+Agent Frontend 모듈화는 외부 생태계나 무제한 확장을 위한 Plugin architecture가 아니라, 업무별 UI를 Core와 섞지 않고 실험·교체·삭제하기 위한 Modular Monolith 경계입니다.
+
+1. Lumina가 검토하고 함께 build한 builtin 모듈만 실행합니다. 사용자 설치, runtime module 탐색, 임의 JavaScript·Python import를 지원하지 않습니다.
+2. 각 선택 모듈은 Frontend, 전용 Backend adapter·업무 로직, Tool·MCP binding과 test를 자기 폴더가 소유합니다. Core 파일 여러 곳에 module ID 조건문을 흩뿌리지 않습니다.
+3. Core는 인증·권한, Organization·Project·Session·Run, Queue·event replay, File·Artifact, 승인·감사처럼 제품 전체의 일관성과 복구에 필요한 기능만 소유합니다.
+4. 둘 이상의 Frontend에서 실제 재사용이 확인된 기능만 UI와 무관한 Core capability로 승격합니다. 아직 하나의 업무 UI에서만 쓰는 기능을 예상만으로 Core에 일반화하지 않습니다.
+5. 모듈은 Core의 공개 API, typed Frontend contract와 canonical event stream만 사용합니다. 다른 선택 모듈의 내부 파일을 직접 import하지 않습니다.
+6. 화면 배치·필터·표·차트 같은 표현 책임은 Frontend 모듈에 두고, 권한 검사·영속 저장·감사·재접속 복원처럼 신뢰 경계에 속하는 처리는 Backend가 소유합니다.
+7. 특수 Backend 기능은 가능하면 같은 모듈 경계에 두되 Core process에 임의 코드를 자동 import하지 않습니다. 신뢰된 builtin adapter 또는 별도 MCP·service의 명시적 등록만 허용합니다.
+8. 새 모듈 도입은 Core 계약 변경을 최소화해야 하며, module 전용 DB column, 공용 event type, 전역 CSS와 `App.tsx` 조건문을 추가하는 방식은 기본 선택으로 사용하지 않습니다.
+
+기능의 위치는 다음 기준으로 결정합니다.
+
+| 질문 | 배치 위치 |
+|---|---|
+| 모든 UI가 동일하게 신뢰해야 하는 인증·권한·Run·복구 기능인가 | Core Backend |
+| 둘 이상의 UI가 재사용하며 화면 표현과 무관한 capability인가 | Core Backend의 공용 capability |
+| 특정 업무의 계산·workflow·외부 연동인가 | 해당 Agent module의 Backend·Tool·MCP |
+| 데이터의 배치·표현·상호작용인가 | 해당 Agent Frontend module |
+
+#### 18.1.2 제거 가능성 기준
+
+선택 모듈은 추가하기 쉬운 것보다 제거하기 쉬운 것을 우선합니다. 모듈 제거 완료 조건은 다음과 같습니다.
+
+1. Backend와 Frontend의 명시적 registry 등록을 제거합니다.
+2. 해당 모듈 폴더를 삭제합니다.
+3. Core에서 삭제된 module ID, import, route 분기, CSS selector와 전용 type 참조가 남지 않습니다.
+4. 해당 모듈 없이 Backend test, Frontend test, typecheck와 build가 통과합니다.
+5. 삭제된 모듈을 참조하는 기존 Conversation은 `general-chat`으로 열리고 진행 중이거나 과거인 Run·Artifact는 보존됩니다.
+6. 모듈 전용 영속 데이터가 있다면 코드 제거와 데이터 폐기를 분리합니다. 즉시 table을 drop하지 않고 보존·export·정리 migration 정책을 명시합니다.
+
+이 조건을 만족하지 못하고 Core 여러 곳을 함께 수정해야만 제거할 수 있는 기능은 독립 모듈로 간주하지 않습니다.
+
 ### 18.2 Frontend type
 
 ```text
