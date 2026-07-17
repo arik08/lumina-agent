@@ -17,3 +17,10 @@ test("personal settings expose bounded one-pixel font controls", () => {
   assert.match(app, /conversationFontSize \+ 1/);
   assert.match(styles, /font-size: var\(--conversation-font-size\)/);
 });
+
+test("conversation font size controls every center-panel text surface", () => {
+  assert.match(app, /style=\{\{ \.\.\.conversationLayoutStyle, "--artifact-pane-width"/);
+  assert.doesNotMatch(app, /className=\{`chat-pane view-\$\{mainView\}`\} id="top" style=/);
+  assert.match(styles, /\.chat-pane\.view-chat :is\(\.chat-header, \.conversation-scroll, \.dock-area\) \*/);
+  assert.match(styles, /\.app-shell > \.tool-message\.is-global \*/);
+});

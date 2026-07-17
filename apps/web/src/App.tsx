@@ -2808,7 +2808,7 @@ function App() {
   return (
     <div
       className={`app-shell ${artifactPaneVisible ? "has-artifact" : ""} ${sidebarCollapsed ? "is-sidebar-collapsed" : ""} ${artifactResizing ? "is-artifact-resizing" : ""} ${theme === "dark" ? "theme-dark" : ""}`}
-      style={{ "--artifact-pane-width": `${artifactPaneWidth}px` } as CSSProperties}
+      style={{ ...conversationLayoutStyle, "--artifact-pane-width": `${artifactPaneWidth}px` } as CSSProperties}
       onClick={() => {
         setSessionMenuId(null);
         setMoveMenuId(null);
@@ -3043,7 +3043,7 @@ function App() {
         </footer>
       </aside>
 
-      <section className={`chat-pane view-${mainView}`} id="top" style={conversationLayoutStyle}>
+      <section className={`chat-pane view-${mainView}`} id="top">
         <header className="chat-header">
           <button className="mobile-menu-button" type="button" aria-label="사이드바 열기" onClick={() => setSidebarOpen(true)}><Menu size={19} /></button>
           <div className="chat-title-wrap">

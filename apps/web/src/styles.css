@@ -128,6 +128,8 @@ button:focus-visible, textarea:focus-visible, a:focus-visible {
 
 .app-shell {
   --chat-center-offset: 139px;
+  --conversation-content-width: 900px;
+  --conversation-font-size: 14px;
   display: grid;
   grid-template-columns: 278px minmax(0, 1fr);
   width: 100%;
@@ -658,8 +660,6 @@ button:focus-visible, textarea:focus-visible, a:focus-visible {
 .user-copy small { overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 
 .chat-pane {
-  --conversation-content-width: 900px;
-  --conversation-font-size: 14px;
   position: relative;
   display: flex;
   min-width: 0;
@@ -1244,7 +1244,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .skill-catalog-like.is-liked { background: transparent; color: var(--cobalt); }
 .skill-catalog-like.is-liked:not(:disabled):hover { background: transparent; color: var(--cobalt-hover); }
 .skill-catalog-card-actions { display: flex; align-items: center; gap: 5px; margin-left: auto; }
-.skill-catalog-view { display: inline-grid; width: 28px; min-width: 28px; height: 26px; place-items: center; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--ink); cursor: pointer; }
+.skill-catalog-view { display: inline-grid; width: 28px; min-width: 28px; height: 26px; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--ink); cursor: pointer; }
 .skill-catalog-view:not(:disabled):hover, .skill-catalog-view:not(:disabled):focus-visible { border-color: color-mix(in srgb, var(--cobalt) 34%, var(--line)); background: var(--cobalt-pale); color: var(--cobalt); }
 .skill-catalog-card.is-liked .skill-catalog-view { border-color: color-mix(in srgb, var(--cobalt) 34%, var(--line)); }
 .skill-catalog-more { display: flex; min-width: 112px; height: 32px; align-items: center; justify-content: center; gap: 6px; margin: 18px auto 0; padding: 0 12px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); color: var(--ink); cursor: pointer; }
@@ -1726,7 +1726,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .admin-conversation-user-trigger span { flex: 0 0 auto; color: var(--muted); font-size: 10px; }
 .admin-conversation-user-trigger svg { color: var(--muted); transition: transform 140ms ease; }
 .admin-conversation-user-trigger[aria-expanded="false"] svg { transform: rotate(-90deg); }
-.admin-conversation-row > span:last-child { color: var(--muted); font-size: 10px; white-space: nowrap; }
+.admin-conversation-row > span:last-child { color: var(--muted); font-size: 13px; white-space: nowrap; }
 .admin-conversation-meta { display: grid; flex: 0 0 auto; gap: 2px; text-align: right; }
 .admin-conversation-meta > span { min-height: 12px; }
 .admin-conversation-meta .admin-feedback-count { margin-right: 0; }
@@ -3453,4 +3453,12 @@ button:disabled { cursor: default; opacity: 0.5; }
 
 @media (forced-colors: active) {
   .streaming-leading-edge { color: CanvasText; }
+}
+
+/* The conversation font-size setting controls every text surface in the center chat panel. */
+.chat-pane.view-chat :is(.chat-header, .conversation-scroll, .dock-area),
+.chat-pane.view-chat :is(.chat-header, .conversation-scroll, .dock-area) *,
+.app-shell > .tool-message.is-global,
+.app-shell > .tool-message.is-global * {
+  font-size: var(--conversation-font-size);
 }
