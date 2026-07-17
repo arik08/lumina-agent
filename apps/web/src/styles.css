@@ -1146,7 +1146,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .marketplace-scope-tabs button { display: inline-flex; height: 32px; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--muted); font-size: 11.5px; cursor: pointer; }
 .marketplace-scope-tabs button:hover { background: var(--surface-soft); color: var(--ink); }
 .marketplace-scope-tabs button[aria-selected="true"] { border-color: color-mix(in srgb, var(--cobalt) 34%, var(--line)); background: var(--cobalt-pale); color: var(--cobalt); font-weight: 650; }
-.marketplace-scope-tabs button span { display: inline-flex; min-width: 18px; height: 18px; box-sizing: border-box; align-items: center; justify-content: center; padding: 0 5px; border-radius: 999px; background: color-mix(in srgb, currentColor 9%, transparent); font-size: 10px; font-variant-numeric: tabular-nums; line-height: 1; }
+.marketplace-scope-tabs button span { display: inline-flex; min-width: 28px; height: 18px; box-sizing: border-box; align-items: center; justify-content: center; padding: 0 5px; border-radius: 999px; background: color-mix(in srgb, currentColor 9%, transparent); font-size: 10px; font-variant-numeric: tabular-nums; line-height: 1; }
 .marketplace-search { display: flex; width: min(320px, 38%); height: 32px; align-items: center; gap: 7px; padding: 0 9px; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); }
 .marketplace-search:focus-within { border-color: var(--cobalt); box-shadow: 0 0 0 2px color-mix(in srgb, var(--cobalt) 12%, transparent); }
 .marketplace-search input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: 11.5px; }

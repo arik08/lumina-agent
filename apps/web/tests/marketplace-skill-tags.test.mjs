@@ -84,7 +84,7 @@ test("skill rows use a dedicated install and unused toggle without status badges
   assert.match(styles, /\.skill-install-toggle:active \{ transform: none; \}/);
   assert.match(styles, /\.skill-install-toggle\.is-installed \{[^}]*background: color-mix\(in oklab, var\(--success\) 8%, var\(--surface\)\)/);
   assert.match(styles, /\.skill-install-toggle\.is-installed:hover:not\(:disabled\)[^\{]*\{[^}]*background: color-mix\(in oklab, var\(--danger\) 12%, var\(--surface\)\)/);
-  assert.match(styles, /\.marketplace-scope-tabs button span \{[^}]*min-width: 18px; height: 18px;[^}]*box-sizing: border-box;[^}]*justify-content: center;/);
+  assert.match(styles, /\.marketplace-scope-tabs button span \{[^}]*min-width: 28px; height: 18px;[^}]*box-sizing: border-box;[^}]*justify-content: center;/);
   assert.doesNotMatch(view, />설치됨<\/em>/);
   assert.doesNotMatch(view, />공식<\/em>/);
 });
