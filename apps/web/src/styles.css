@@ -2712,8 +2712,8 @@ button:disabled { cursor: default; opacity: 0.5; }
 .composer-footer .output-mode-toggle button.is-file-mode-nudged { background: var(--cobalt); box-shadow: 0 0 0 3px color-mix(in srgb, var(--cobalt) 24%, transparent), 0 3px 10px color-mix(in srgb, var(--cobalt) 28%, transparent); color: oklch(98.5% 0.006 255); animation: file-mode-attention 1.8s var(--ease-out-quint) infinite; }
 .composer-footer .text-control { gap: 5px; padding: 0 7px; color: var(--muted); font-size: 12.5px; font-weight: 650; }
 .composer-footer .model-control, .composer-footer .effort-control { width: auto; padding: 0 6px; color: #4b525c; font-size: 12px; }
-.composer-footer .analysis-depth-control, .composer-footer .answer-length-control { width: auto; min-width: 0; padding: 0 7px; color: var(--muted); font-size: 11.5px; font-weight: 620; }
-.composer-footer .analysis-depth-control { margin-left: 7px; border-left: 1px solid var(--line); border-radius: 0 7px 7px 0; padding-left: 10px; }
+.composer-footer .analysis-depth-control, .composer-footer .answer-length-control { width: 30px; min-width: 30px; padding: 0; color: var(--muted); }
+.composer-footer .analysis-depth-control { margin-left: 7px; border-left: 1px solid var(--line); border-radius: 0 7px 7px 0; }
 .composer-footer .composer-command-mode { margin-right: 3px; color: var(--cobalt); font-size: 11.5px; font-weight: 650; white-space: nowrap; }
 .composer-footer .composer-picker-trigger { gap: 5px; }
 .composer-footer .model-control { max-width: 156px; padding: 0 8px; font-weight: 620; }
@@ -2811,6 +2811,9 @@ button:disabled { cursor: default; opacity: 0.5; }
   box-shadow: 0 14px 36px rgba(31, 39, 51, 0.16), 0 2px 8px rgba(31, 39, 51, 0.06);
 }
 .composer-picker-menu-label { padding: 5px 8px 7px; color: var(--faint); font-size: 10px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; }
+.composer-picker-menu-label.has-description { display: grid; gap: 3px; padding-bottom: 9px; letter-spacing: normal; text-transform: none; }
+.composer-picker-menu-label.has-description > span { letter-spacing: 0.09em; text-transform: uppercase; }
+.composer-picker-menu-label.has-description > small { max-width: 270px; color: var(--muted); font-size: 11px; font-weight: 450; line-height: 1.4; }
 .composer-footer .composer-picker-menu > button {
   width: 100%;
   height: 34px;
@@ -2830,6 +2833,10 @@ button:disabled { cursor: default; opacity: 0.5; }
 .composer-picker-menu > button > svg { flex: 0 0 auto; opacity: 0; }
 .composer-picker-menu > button > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer-picker-menu > button.is-selected > svg { opacity: 1; }
+.composer-footer .composer-picker-menu.has-descriptions > button { height: auto; min-height: 47px; }
+.composer-picker-option-copy { display: grid; gap: 2px; min-width: 0; }
+.composer-picker-option-copy > strong { overflow: hidden; font-size: 12.5px; font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
+.composer-picker-option-copy > small { overflow: hidden; color: var(--muted); font-size: 11px; font-weight: 450; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 .composer-footer .send-button { width: 34px; min-width: 34px; height: 34px; margin-left: 3px; border-radius: 8px; background: var(--cobalt); color: white; transition: background-color 160ms cubic-bezier(0.25, 1, 0.5, 1), border-radius 160ms cubic-bezier(0.25, 1, 0.5, 1), box-shadow 160ms cubic-bezier(0.25, 1, 0.5, 1), color 160ms cubic-bezier(0.25, 1, 0.5, 1), transform 100ms cubic-bezier(0.25, 1, 0.5, 1); }
 .composer-footer .send-button:hover { background: var(--cobalt-hover); }
 .composer-footer .send-button.is-stop { border-radius: 50%; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--ink); }

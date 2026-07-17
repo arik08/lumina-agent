@@ -1,5 +1,6 @@
 import {
   AlertCircle,
+  AlignLeft,
   ArrowDown,
   ArrowLeft,
   AtSign,
@@ -73,7 +74,7 @@ import {
 import { createClientId } from "./client-id";
 import { BranchFromHereIcon } from "./components/ActionIcons";
 import { copyText } from "./clipboard";
-import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type RefObject, type UIEvent as ReactUIEvent } from "react";
+import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject, type UIEvent as ReactUIEvent } from "react";
 import { createPortal } from "react-dom";
 import { api, ApiError, attachmentContentUrl } from "./api";
 import { isTerminalRunStatus } from "./run-status";
@@ -816,22 +817,23 @@ interface ComposerPickerOption {
   id: string;
   label: string;
   triggerLabel?: string;
+  description?: string;
 }
 
 const defaultArtifactOutputTokens = 10_000;
 
 const analysisDepthOptions: ComposerPickerOption[] = [
-  { id: "auto", label: "자동 · 요청에 맞춰 분석 범위 결정", triggerLabel: "분석 자동" },
-  { id: "brief", label: "간단히 · 핵심 확인만 수행", triggerLabel: "분석 간단히" },
-  { id: "standard", label: "충분히 · 필요한 근거와 예외 확인", triggerLabel: "분석 충분히" },
-  { id: "deep", label: "심층 · 다양한 근거와 반례까지 검증", triggerLabel: "분석 심층" },
+  { id: "auto", label: "자동", description: "요청에 맞춰 분석 범위를 결정합니다." },
+  { id: "brief", label: "간단히", description: "핵심 사실만 빠르게 확인합니다." },
+  { id: "standard", label: "충분히", description: "필요한 근거와 예외를 함께 확인합니다." },
+  { id: "deep", label: "심층", description: "다양한 근거와 반례까지 폭넓게 검증합니다." },
 ];
 
 const answerLengthOptions: ComposerPickerOption[] = [
-  { id: "auto", label: "자동 · 요청에 맞춰 답변 분량 결정", triggerLabel: "답변 자동" },
-  { id: "brief", label: "짧게 · 핵심만", triggerLabel: "답변 짧게" },
-  { id: "standard", label: "보통 · 필요한 설명 포함", triggerLabel: "답변 보통" },
-  { id: "detailed", label: "자세히 · 배경과 예외까지", triggerLabel: "답변 자세히" },
+  { id: "auto", label: "자동", description: "요청에 맞춰 답변 분량을 결정합니다." },
+  { id: "brief", label: "짧게", description: "결론과 핵심만 간결하게 답합니다." },
+  { id: "standard", label: "보통", description: "이해에 필요한 설명을 함께 답합니다." },
+  { id: "detailed", label: "자세히", description: "배경과 예외까지 상세하게 답합니다." },
 ];
 
 const artifactLengthSteps = [
@@ -1009,9 +1011,12 @@ function ComposerPicker({
   onChange,
   ariaLabel,
   menuLabel,
+  menuDescription,
   controlClassName,
   placeholder,
   tooltip,
+  triggerIcon,
+  iconOnly = false,
   disabled = false,
 }: {
   options: ComposerPickerOption[];
@@ -1019,9 +1024,12 @@ function ComposerPicker({
   onChange: (id: string) => void;
   ariaLabel: string;
   menuLabel: string;
+  menuDescription?: string;
   controlClassName: string;
   placeholder?: string;
   tooltip?: string;
+  triggerIcon?: ReactNode;
+  iconOnly?: boolean;
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -1056,7 +1064,7 @@ function ComposerPicker({
     <div className={`composer-picker ${open ? "is-open" : ""}`} ref={rootRef}>
       <button
         ref={triggerRef}
-        className={`composer-picker-trigger ${controlClassName}${tooltip ? " tooltip-control" : ""}`}
+        className={`composer-picker-trigger ${controlClassName}${iconOnly ? " is-icon-only" : ""}${tooltip ? " tooltip-control" : ""}`}
         type="button"
         aria-label={ariaLabel}
         aria-haspopup="listbox"
@@ -1084,12 +1092,15 @@ function ComposerPicker({
           }
         }}
       >
-        <span>{selected?.triggerLabel ?? selected?.label ?? placeholder ?? ariaLabel}</span>
-        <ChevronDown size={13} aria-hidden="true" />
+        {triggerIcon ?? <span>{selected?.triggerLabel ?? selected?.label ?? placeholder ?? ariaLabel}</span>}
+        {!iconOnly && <ChevronDown size={13} aria-hidden="true" />}
       </button>
       {open && (
-        <div className="composer-picker-menu" id={listId} role="listbox" aria-label={ariaLabel}>
-          <div className="composer-picker-menu-label">{menuLabel}</div>
+        <div className={`composer-picker-menu${options.some((option) => option.description) ? " has-descriptions" : ""}`} id={listId} role="listbox" aria-label={ariaLabel}>
+          <div className={`composer-picker-menu-label${menuDescription ? " has-description" : ""}`}>
+            <span>{menuLabel}</span>
+            {menuDescription && <small>{menuDescription}</small>}
+          </div>
           {options.map((option, index) => (
             <button
               key={option.id}
@@ -1100,7 +1111,10 @@ function ComposerPicker({
               onMouseEnter={() => setActiveIndex(index)}
               onClick={() => choose(option)}
             >
-              <span>{option.label}</span>
+              <span className="composer-picker-option-copy">
+                <strong>{option.label}</strong>
+                {option.description && <small>{option.description}</small>}
+              </span>
               <Check size={14} aria-hidden="true" />
             </button>
           ))}
@@ -3576,8 +3590,10 @@ function App() {
                     onChange={(value) => setAnalysisDepth(value as AnalysisDepth)}
                     ariaLabel="분석 범위 설정"
                     menuLabel="분석 범위"
+                    menuDescription="웹 검색과 자료 확인을 포함해 어디까지 분석할지 정합니다."
                     controlClassName="analysis-depth-control"
-                    tooltip="웹 검색과 자료 확인을 포함한 분석 범위"
+                    triggerIcon={<Search size={15} aria-hidden="true" />}
+                    iconOnly
                   />
                   <ComposerPicker
                     options={answerLengthOptions}
@@ -3585,8 +3601,10 @@ function App() {
                     onChange={(value) => setAnswerLength(value as AnswerLength)}
                     ariaLabel="채팅 답변 분량 설정"
                     menuLabel="답변 분량"
+                    menuDescription="채팅에 표시할 최종 답변의 분량을 정합니다."
                     controlClassName="answer-length-control"
-                    tooltip="채팅에 표시할 최종 답변 분량"
+                    triggerIcon={<AlignLeft size={15} aria-hidden="true" />}
+                    iconOnly
                   />
                   <ArtifactLengthSlider
                     value={targetOutputTokens}

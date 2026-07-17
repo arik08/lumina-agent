@@ -13,8 +13,14 @@ test("composer keeps model controls intact and sends independent analysis and an
 
   assert.match(app, /menuLabel="분석 범위"/);
   assert.match(app, /menuLabel="답변 분량"/);
-  assert.match(app, /triggerLabel: "분석 자동"/);
-  assert.match(app, /triggerLabel: "답변 자동"/);
+  assert.match(app, /menuDescription="웹 검색과 자료 확인을 포함해 어디까지 분석할지 정합니다\."/);
+  assert.match(app, /menuDescription="채팅에 표시할 최종 답변의 분량을 정합니다\."/);
+  assert.match(app, /controlClassName="analysis-depth-control"[\s\S]*?triggerIcon=\{<Search[\s\S]*?iconOnly/);
+  assert.match(app, /controlClassName="answer-length-control"[\s\S]*?triggerIcon=\{<AlignLeft[\s\S]*?iconOnly/);
+  assert.doesNotMatch(app, /triggerLabel: "분석/);
+  assert.doesNotMatch(app, /triggerLabel: "답변/);
+  assert.doesNotMatch(app, /tooltip="웹 검색과 자료 확인을 포함한 분석 범위"/);
+  assert.doesNotMatch(app, /tooltip="채팅에 표시할 최종 답변 분량"/);
   assert.match(app, /<ArtifactLengthSlider[\s\S]*?disabled=\{workspace\.settings\?\.outputMode === "chat"\}/);
   assert.match(app, /<ComposerPicker[\s\S]*?controlClassName="model-control"[\s\S]*?<ComposerPicker[\s\S]*?controlClassName="effort-control"/);
   assert.match(workspace, /analysisDepth: AnalysisDepth = "auto"/);
