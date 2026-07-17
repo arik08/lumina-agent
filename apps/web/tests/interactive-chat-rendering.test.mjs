@@ -49,8 +49,11 @@ test("Mermaid preserves LLM-authored styles without runtime recoloring", () => {
 });
 
 test("Mermaid uses cobalt tokens for the default node fill and border", () => {
+  assert.match(rendererSource, /document\.querySelector<HTMLElement>\("\.app-shell"\) \?\? document\.documentElement/);
   assert.match(rendererSource, /primaryColor: token\("--cobalt-pale", "#edf2fb"\)/);
   assert.match(rendererSource, /primaryBorderColor: token\("--cobalt", "#3f66c9"\)/);
+  assert.match(rendererSource, /observer\.observe\(themeRoot, \{ attributes: true, attributeFilter: \["class"\] \}\)/);
+  assert.match(rendererSource, /\[expanded, onInitialFit, source, themeRevision\]/);
 });
 
 test("tall Mermaid workflows keep readable geometry inside a bounded scroll surface", () => {

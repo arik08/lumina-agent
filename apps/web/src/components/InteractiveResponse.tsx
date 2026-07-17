@@ -185,6 +185,15 @@ function MermaidSurface({ source, expanded = false, zoom = 1, onInitialFit }: {
   const zoomRef = useRef(zoom);
   const dragRef = useRef<{ pointerId: number; x: number; y: number; scrollLeft: number; scrollTop: number } | null>(null);
   const [error, setError] = useState(false);
+  const [themeRevision, setThemeRevision] = useState(0);
+
+  useEffect(() => {
+    const themeRoot = document.querySelector(".app-shell");
+    if (!themeRoot) return undefined;
+    const observer = new MutationObserver(() => setThemeRevision((revision) => revision + 1));
+    observer.observe(themeRoot, { attributes: true, attributeFilter: ["class"] });
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -210,7 +219,7 @@ function MermaidSurface({ source, expanded = false, zoom = 1, onInitialFit }: {
       if (!cancelled) setError(true);
     });
     return () => { cancelled = true; };
-  }, [expanded, onInitialFit, source]);
+  }, [expanded, onInitialFit, source, themeRevision]);
 
   useEffect(() => {
     zoomRef.current = zoom;
@@ -273,7 +282,8 @@ function MermaidSurface({ source, expanded = false, zoom = 1, onInitialFit }: {
 }
 
 function mermaidAppearance() {
-  const styles = getComputedStyle(document.documentElement);
+  const themeRoot = document.querySelector<HTMLElement>(".app-shell") ?? document.documentElement;
+  const styles = getComputedStyle(themeRoot);
   const token = (name: string, fallback: string) => styles.getPropertyValue(name).trim() || fallback;
   const themeVariables = {
     background: "transparent",
