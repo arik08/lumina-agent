@@ -82,3 +82,10 @@ test("notification trigger does not render an empty tooltip while the panel is o
   assert.match(stylesheet, /\.global-tooltip-layer\s*\{/);
   assert.doesNotMatch(stylesheet, /tooltip-control:not\(\[data-tooltip\]\)::after/);
 });
+
+test("notification badge leaves enough room for the unread count", async () => {
+  const stylesheet = await read("../src/styles.css");
+
+  assert.match(stylesheet, /\.notification-badge \{[^}]*min-width: 18px;[^}]*height: 18px;/s);
+  assert.match(stylesheet, /\.notification-badge \{[^}]*font-size: 10px;[^}]*font-variant-numeric: tabular-nums;/s);
+});
