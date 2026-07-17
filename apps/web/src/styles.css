@@ -1266,7 +1266,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .marketplace-package-summary > .marketplace-package-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
 .marketplace-package-summary strong { font-size: 13px; }
 .marketplace-package-summary span { color: var(--muted); font-size: 11px; }
-.feature-view.feature-view .marketplace-package-summary button { display: inline-flex; min-height: 30px; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 5px; padding: 0 10px; background: var(--surface); color: var(--ink); font-size: 11.5px; cursor: pointer; }
+.feature-view.feature-view .marketplace-package-summary button { display: inline-flex; min-height: 30px; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 5px; padding: 0 10px; background: var(--surface); color: var(--ink); font-size: 14px; cursor: pointer; }
 .marketplace-package-summary button.marketplace-detail-install-toggle { width: 92px; min-width: 92px; max-width: 92px; justify-content: center; white-space: nowrap; }
 .marketplace-package-summary button.is-primary { border-color: transparent; background: var(--cobalt); color: white; }
 .marketplace-package-summary button.is-disable { border-color: color-mix(in srgb, var(--warning) 28%, var(--line)); background: color-mix(in srgb, var(--warning) 7%, var(--surface)); color: var(--warning); }
@@ -1318,15 +1318,15 @@ button:disabled { cursor: default; opacity: 0.5; }
 .marketplace-inline-editor:focus { background: color-mix(in srgb, var(--cobalt) 6%, transparent); box-shadow: inset 0 -1px var(--cobalt); }
 .marketplace-inline-editor[data-placeholder]:empty::before { color: var(--faint); content: attr(data-placeholder); }
 .marketplace-project-selector { position: relative; }
-.marketplace-package-actions > .marketplace-project-selector > button { display: inline-flex; height: 30px; align-items: center; gap: 5px; padding: 0 9px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); color: var(--ink); font-size: 11.5px; cursor: pointer; }
+.marketplace-package-actions > .marketplace-project-selector > button { display: inline-flex; height: 30px; align-items: center; gap: 5px; padding: 0 9px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); color: var(--ink); font-size: 14px; cursor: pointer; }
 .marketplace-project-options.project-options { position: fixed; z-index: 1000; right: 0; left: auto; width: 280px; padding: 5px; }
-.marketplace-project-options.project-options button { font-size: 11.5px; }
+.marketplace-project-options.project-options button { font-size: 14px; }
 .marketplace-project-options.project-options > button.marketplace-project-all { border-bottom: 1px solid var(--line); border-radius: 4px 4px 0 0; color: var(--cobalt); font-weight: 650; }
 .marketplace-project-option-list { display: grid; max-height: 190px; overflow-x: hidden; overflow-y: auto; padding-block: 3px; }
 .marketplace-project-options.project-options .marketplace-project-option-list > button { width: 100%; }
 .marketplace-project-options.project-options [role="option"][aria-selected="true"] { background: color-mix(in srgb, var(--cobalt) 8%, transparent); color: var(--cobalt); }
 .marketplace-project-options > footer { display: flex; min-height: 38px; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 3px 0; border-top: 1px solid var(--line); }
-.marketplace-project-options > footer > span { color: var(--muted); font-size: 11.5px; }
+.marketplace-project-options > footer > span { color: var(--muted); font-size: 14px; }
 .marketplace-project-options > footer > div { display: flex; gap: 4px; }
 .marketplace-project-options.project-options > footer button { min-height: 27px; padding: 0 7px; border: 1px solid var(--line); background: var(--surface); }
 .marketplace-package-detail.is-editing .marketplace-file-browser { border-color: color-mix(in srgb, var(--cobalt) 42%, var(--line)); }
