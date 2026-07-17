@@ -516,11 +516,13 @@ function ToolCallRow({
       const rect = triggerRef.current?.getBoundingClientRect();
       if (!rect) return;
       const top = rect.bottom + 2;
+      const availableHeight = Math.max(160, window.innerHeight - top - 12);
+      const preferredHeight = Math.max(160, Math.round(window.innerHeight * 0.6));
       setOverlayStyle({
         top,
         left: rect.left,
         width: rect.width,
-        maxHeight: Math.max(160, window.innerHeight - top - 12),
+        maxHeight: Math.min(520, preferredHeight, availableHeight),
       });
     };
     updateOverlayPosition();

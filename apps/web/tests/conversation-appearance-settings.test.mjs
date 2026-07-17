@@ -4,6 +4,7 @@ import test from "node:test";
 
 const app = fs.readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const styles = fs.readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+const conversationTurn = fs.readFileSync(new URL("../src/components/ConversationTurn.tsx", import.meta.url), "utf8");
 
 test("conversation and run dock share the persisted width token", () => {
   assert.match(app, /--conversation-content-width/);
@@ -27,4 +28,9 @@ test("conversation font size controls every center-panel text surface", () => {
   assert.doesNotMatch(styles, /\.tool-message-section \+ \.tool-message-section \{[^}]*border-top:/);
   assert.match(styles, /\.chat-pane\.view-chat \.composer-footer \*[\s\S]*?font-size: calc\(var\(--conversation-font-size\) - 2px\)/);
   assert.match(styles, /\.chat-pane\.view-chat \.turn-work-details \*[\s\S]*?font-size: calc\(var\(--conversation-font-size\) - 1px\)/);
+});
+
+test("tool detail overlay keeps the unified scroll area compact", () => {
+  assert.match(conversationTurn, /preferredHeight = Math\.max\(160, Math\.round\(window\.innerHeight \* 0\.6\)\)/);
+  assert.match(conversationTurn, /maxHeight: Math\.min\(520, preferredHeight, availableHeight\)/);
 });
