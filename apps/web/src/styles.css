@@ -1717,6 +1717,9 @@ button:disabled { cursor: default; opacity: 0.5; }
 .admin-conversation-heading { display: flex; min-height: 42px; flex-wrap: nowrap; align-items: center; justify-content: space-between; gap: 4px; }
 .admin-conversation-heading .admin-count { white-space: nowrap; }
 .admin-conversation-controls { display: flex; max-width: 100%; flex-wrap: nowrap; align-items: center; justify-content: flex-end; gap: 4px; margin-left: auto; }
+.admin-conversation-export { display: grid; width: 28px; height: 28px; flex: 0 0 auto; place-items: center; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); color: var(--muted); cursor: pointer; }
+.admin-conversation-export:hover:not(:disabled) { border-color: var(--line-strong); background: var(--surface-soft); color: var(--ink); }
+.admin-conversation-export:disabled { cursor: wait; opacity: .6; }
 .admin-control-label { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; white-space: nowrap; }
 .lumina-select.admin-limit-select { min-width: 72px; }
 .admin-conversation-view-toggle { display: inline-flex; flex: 0 0 auto; padding: 2px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface-soft); }

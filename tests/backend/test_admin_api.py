@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 from datetime import timedelta
+from io import BytesIO
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from openpyxl import load_workbook
 from sqlalchemy import select
 
 from lumina.api.routes import admin
@@ -484,7 +486,7 @@ def test_admin_conversation_view_is_audited(tmp_path: Path) -> None:
                 conversation_id=conversation_id,
                 role="assistant",
                 status="completed",
-                canonical_text="관리자 의견 조회 대상 답변",
+                canonical_text="=1+1 관리자 의견 조회 대상 답변",
                 turn_index=0,
                 metadata_json={},
             )
@@ -527,6 +529,64 @@ def test_admin_conversation_view_is_audited(tmp_path: Path) -> None:
         )
         assert audit.status_code == 200
         assert len(audit.json()["items"]) == 2
+
+        rating = client.put(
+            f"/api/messages/{message_id}/rating",
+            headers={"X-CSRF-Token": csrf},
+            json={"value": "dislike"},
+        )
+        assert rating.status_code == 200, rating.text
+
+        exported = client.get(
+            "/api/admin/conversations/export.xlsx"
+            "?query=조회%20감사&feedback_only=true&limit=120"
+        )
+        assert exported.status_code == 200, exported.text
+        assert exported.headers["content-type"].startswith(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        assert "lumina_conversations_" in exported.headers["content-disposition"]
+
+        workbook = load_workbook(BytesIO(exported.content))
+        assert workbook.sheetnames == ["대화", "메시지", "의견"]
+        message_sheet = workbook["메시지"]
+        headers = {
+            cell.value: index for index, cell in enumerate(message_sheet[1], start=1)
+        }
+        assert message_sheet.freeze_panes == "A2"
+        assert message_sheet.auto_filter.ref is not None
+        assert message_sheet.cell(2, headers["내용"]).value == "=1+1 관리자 의견 조회 대상 답변"
+        assert message_sheet.cell(2, headers["좋아요 수"]).value == 0
+        assert message_sheet.cell(2, headers["싫어요 수"]).value == 1
+        assert message_sheet.cell(2, headers["Comment 수"]).value == 1
+        assert (
+            message_sheet.cell(2, headers["Comment"]).value
+            == "관리 화면에서 확인할 의견"
+        )
+
+        feedback_sheet = workbook["의견"]
+        feedback_headers = {
+            cell.value: index for index, cell in enumerate(feedback_sheet[1], start=1)
+        }
+        assert feedback_sheet.max_row == 3
+        assert {
+            feedback_sheet.cell(row, feedback_headers["평가"]).value
+            for row in range(2, 4)
+        } == {None, "dislike"}
+        assert feedback_sheet.cell(2, feedback_headers["메시지 내용"]).data_type == "s"
+
+        export_audit = client.get(
+            "/api/admin/audit-events?action=admin_conversations_exported"
+        )
+        assert export_audit.status_code == 200
+        assert export_audit.json()["items"][0]["metadata"] == {
+            "query_used": True,
+            "feedback_only": True,
+            "limit": 120,
+            "conversation_count": 1,
+            "message_count": 1,
+            "feedback_count": 2,
+        }
 
 
 def test_admin_announcements_are_managed_by_admins_and_visible_to_users(

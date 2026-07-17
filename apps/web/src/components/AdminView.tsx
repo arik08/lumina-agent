@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   BarChart3,
   ChevronDown,
+  Download,
   FileText,
   KeyRound,
   List,
@@ -118,6 +119,7 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
   const [conversationLimit, setConversationLimit] = useState<AdminListLimit>(120);
   const [collapsedConversationUsers, setCollapsedConversationUsers] = useState<Set<string>>(new Set());
   const [feedbackOnly, setFeedbackOnly] = useState(false);
+  const [exportingConversations, setExportingConversations] = useState(false);
   const [auditEvents, setAuditEvents] = useState<AdminAuditEvent[]>([]);
   const [auditTotal, setAuditTotal] = useState(0);
   const [auditLimit, setAuditLimit] = useState<AdminListLimit>(120);
@@ -314,6 +316,27 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
     }
   };
 
+  const exportConversations = async () => {
+    setExportingConversations(true);
+    try {
+      const download = await api.admin.exportConversations({
+        query,
+        feedbackOnly,
+        limit: conversationLimit,
+      });
+      const url = URL.createObjectURL(download.blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = download.fileName;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (requestError) {
+      onToast(errorMessage(requestError));
+    } finally {
+      setExportingConversations(false);
+    }
+  };
+
   const renderConversationRow = (conversation: AdminConversationSummary) => (
     <button className="admin-conversation-row" type="button" key={conversation.id} onClick={() => void openConversation(conversation.id)}>
       <span><strong>{conversation.title}</strong><small>{conversation.owner.loginId}</small><small>{formatDate(conversation.lastActivityAt)}</small></span>
@@ -438,6 +461,7 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
               <div className="admin-count">대화 {conversations.length} / {conversationTotal}건</div>
               <div className="admin-conversation-controls">
                 <div className="admin-control-label"><span>조회 한도</span><SelectMenu className="admin-limit-select" size="small" width="auto" align="end" value={String(conversationLimit)} options={adminListLimitOptions} ariaLabel="대화 조회 한도" onChange={(value) => setConversationLimit(Number(value) as AdminListLimit)} /></div>
+                <button className="tooltip-control admin-conversation-export" type="button" aria-label="대화 Excel 내보내기" data-tooltip="Excel 내보내기" disabled={exportingConversations} onClick={() => void exportConversations()}>{exportingConversations ? <LoaderCircle className="is-running" size={14} /> : <Download size={14} />}</button>
                 <div className="admin-conversation-view-toggle" role="group" aria-label="대화 목록 보기 방식">
                   <button className="tooltip-control" type="button" aria-label="메시지순" data-tooltip="메시지순" aria-pressed={conversationViewMode === "recent"} onClick={() => setConversationViewMode("recent")}><MessageSquare size={14} /></button>
                   <button className="tooltip-control" type="button" aria-label="사용자별" data-tooltip="사용자별" aria-pressed={conversationViewMode === "user"} onClick={() => setConversationViewMode("user")}><Users size={14} /></button>

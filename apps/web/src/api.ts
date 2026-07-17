@@ -1797,6 +1797,24 @@ export async function getAdminConversation(conversationId: string, signal?: Abor
   return request<AdminConversationDetail>(`/admin/conversations/${encodeURIComponent(conversationId)}`, { signal });
 }
 
+export async function exportAdminConversations(
+  filters: { query?: string; feedbackOnly?: boolean; limit?: number } = {},
+  signal?: AbortSignal,
+): Promise<ArtifactDownload> {
+  const response = await fetchApi("/admin/conversations/export.xlsx", {
+    query: {
+      query: filters.query,
+      feedback_only: filters.feedbackOnly || undefined,
+      limit: filters.limit,
+    },
+    signal,
+  });
+  return {
+    blob: await response.blob(),
+    fileName: downloadFileName(response, "lumina_conversations.xlsx"),
+  };
+}
+
 export async function listAdminAuditEvents(
   filters: { action?: string; actorUserId?: string; targetType?: string; targetId?: string; limit?: number; offset?: number } = {},
   signal?: AbortSignal,
@@ -2126,6 +2144,7 @@ export const api = {
     resetPassword: resetAdminUserPassword,
     listConversations: listAdminConversations,
     getConversation: getAdminConversation,
+    exportConversations: exportAdminConversations,
     listAuditEvents: listAdminAuditEvents,
     getAuditTraffic: getAdminAuditTraffic,
     listMcpDefinitions: listAdminMcpDefinitions,

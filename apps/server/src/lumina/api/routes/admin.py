@@ -3,11 +3,17 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import UTC, date, datetime, time, timedelta
+from io import BytesIO
 from pathlib import Path
 from typing import Literal, get_args
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query, Request, Response
+from openpyxl import Workbook
+from openpyxl.cell.cell import Cell
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.worksheet.worksheet import Worksheet
 from pydantic import Field, model_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
@@ -49,6 +55,12 @@ _USER_STATUSES = frozenset(get_args(UserStatus))
 _USER_ROLES = frozenset(get_args(UserRole))
 _LAUNCHER_EVENT_TYPES = frozenset({"automatic_recovery", "manual_restart"})
 _ANALYTICS_TIMEZONE = ZoneInfo("Asia/Seoul")
+_XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+_XLSX_MAX_CELL_LENGTH = 32_767
+_XLSX_HEADER_FILL = PatternFill("solid", fgColor="E8F0FF")
+_XLSX_HEADER_FONT = Font(name="맑은 고딕", bold=True, color="172033")
+_XLSX_BODY_FONT = Font(name="맑은 고딕", size=10, color="172033")
+_XLSX_ROW_BORDER = Border(bottom=Side(style="thin", color="DCE3EF"))
 
 
 class AdminUserCreate(ApiModel):
@@ -831,21 +843,16 @@ def _conversation_list_payload(
     }
 
 
-@router.get("/conversations")
-def list_admin_conversations(
-    request: Request,
-    query: str = "",
+def _admin_conversation_filters(
+    actor: User,
+    *,
+    query: str,
     owner_login_id: str | None = None,
     project_id: str | None = None,
     status: str | None = None,
     feedback_only: bool = False,
-    limit: int = Query(default=50, ge=1, le=500),
-    offset: int = Query(default=0, ge=0),
-    actor: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict[str, object]:
-    require_admin(actor)
-    filters = [
+) -> tuple[list[object], str]:
+    filters: list[object] = [
         Conversation.organization_id == actor.organization_id,
         Conversation.deleted_at.is_(None),
     ]
@@ -868,6 +875,31 @@ def list_admin_conversations(
             )
             .exists()
         )
+    return filters, normalized_query
+
+
+@router.get("/conversations")
+def list_admin_conversations(
+    request: Request,
+    query: str = "",
+    owner_login_id: str | None = None,
+    project_id: str | None = None,
+    status: str | None = None,
+    feedback_only: bool = False,
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    actor: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    require_admin(actor)
+    filters, normalized_query = _admin_conversation_filters(
+        actor,
+        query=query,
+        owner_login_id=owner_login_id,
+        project_id=project_id,
+        status=status,
+        feedback_only=feedback_only,
+    )
 
     base = (
         select(Conversation, User)
@@ -958,6 +990,303 @@ def list_admin_conversations(
         "offset": offset,
         "hasMore": offset + len(items) < total,
     }
+
+
+def _xlsx_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        value = value.astimezone(_ANALYTICS_TIMEZONE).replace(tzinfo=None)
+    return value
+
+
+def _set_xlsx_value(cell: Cell, value: object) -> None:
+    if isinstance(value, str):
+        cell.value = value[:_XLSX_MAX_CELL_LENGTH]
+        cell.data_type = "s"
+        return
+    cell.value = value
+    if isinstance(value, datetime):
+        cell.number_format = "yyyy-mm-dd hh:mm:ss"
+
+
+def _write_xlsx_sheet(
+    sheet: Worksheet,
+    headers: list[str],
+    rows: list[list[object]],
+    widths: list[float],
+) -> None:
+    sheet.sheet_view.showGridLines = False
+    sheet.freeze_panes = "A2"
+    for column, (header, width) in enumerate(zip(headers, widths, strict=True), start=1):
+        cell = sheet.cell(1, column)
+        _set_xlsx_value(cell, header)
+        cell.font = _XLSX_HEADER_FONT
+        cell.fill = _XLSX_HEADER_FILL
+        cell.border = _XLSX_ROW_BORDER
+        cell.alignment = Alignment(vertical="center", wrap_text=True)
+        sheet.column_dimensions[cell.column_letter].width = width
+    sheet.row_dimensions[1].height = 28
+    for row_index, values in enumerate(rows, start=2):
+        for column, value in enumerate(values, start=1):
+            cell = sheet.cell(row_index, column)
+            _set_xlsx_value(cell, value)
+            cell.font = _XLSX_BODY_FONT
+            cell.border = _XLSX_ROW_BORDER
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+        sheet.row_dimensions[row_index].height = 42
+    last_row = max(1, len(rows) + 1)
+    sheet.auto_filter.ref = f"A1:{sheet.cell(1, len(headers)).column_letter}{last_row}"
+
+
+def _admin_conversation_workbook(
+    conversation_rows: list[tuple[Conversation, User]],
+    messages: list[Message],
+    feedback_rows: list[tuple[MessageFeedback, Message, User]],
+    run_counts: dict[str, int],
+    artifact_counts: dict[str, int],
+    share_counts: dict[str, int],
+) -> bytes:
+    conversations = {conversation.id: conversation for conversation, _owner in conversation_rows}
+    owners = {conversation.id: owner for conversation, owner in conversation_rows}
+    feedback_by_message: dict[str, list[tuple[MessageFeedback, User]]] = {}
+    feedback_by_conversation: dict[str, list[tuple[MessageFeedback, User]]] = {}
+    for feedback, message, author in feedback_rows:
+        feedback_by_message.setdefault(message.id, []).append((feedback, author))
+        feedback_by_conversation.setdefault(message.conversation_id, []).append((feedback, author))
+
+    workbook = Workbook()
+    default_sheet = workbook.active
+    assert isinstance(default_sheet, Worksheet)
+    workbook.remove(default_sheet)
+
+    conversation_sheet = workbook.create_sheet("대화")
+    conversation_data: list[list[object]] = []
+    for conversation, owner in conversation_rows:
+        feedback = feedback_by_conversation.get(conversation.id, [])
+        conversation_data.append(
+            [
+                conversation.id,
+                conversation.title,
+                owner.login_id,
+                owner.display_name or "",
+                conversation.project_id,
+                conversation.status,
+                conversation.visibility,
+                run_counts.get(conversation.id, 0),
+                artifact_counts.get(conversation.id, 0),
+                share_counts.get(conversation.id, 0),
+                sum(item.rating_value == "like" for item, _author in feedback),
+                sum(item.rating_value == "dislike" for item, _author in feedback),
+                sum(item.kind == "report" for item, _author in feedback),
+                _xlsx_datetime(conversation.created_at),
+                _xlsx_datetime(conversation.last_activity_at),
+            ]
+        )
+    _write_xlsx_sheet(
+        conversation_sheet,
+        [
+            "대화 ID", "제목", "소유자 ID", "소유자 이름", "프로젝트 ID", "상태",
+            "공개 범위", "Run 수", "Artifact 수", "공유 수", "좋아요 수", "싫어요 수",
+            "Comment 수", "생성 일시", "최근 활동 일시",
+        ],
+        conversation_data,
+        [38, 40, 28, 18, 38, 14, 14, 10, 12, 10, 10, 10, 11, 20, 20],
+    )
+
+    message_sheet = workbook.create_sheet("메시지")
+    message_data: list[list[object]] = []
+    for message in messages:
+        conversation = conversations[message.conversation_id]
+        owner = owners[message.conversation_id]
+        feedback = feedback_by_message.get(message.id, [])
+        comments = "\n\n".join(
+            item.report_description or ""
+            for item, _author in feedback
+            if item.kind == "report" and item.report_description
+        )
+        message_data.append(
+            [
+                conversation.id,
+                conversation.title,
+                owner.login_id,
+                message.id,
+                message.run_id or "",
+                message.turn_index,
+                message.role,
+                message.status,
+                message.canonical_text,
+                "예" if len(message.canonical_text) > _XLSX_MAX_CELL_LENGTH else "아니요",
+                sum(item.rating_value == "like" for item, _author in feedback),
+                sum(item.rating_value == "dislike" for item, _author in feedback),
+                sum(item.kind == "report" for item, _author in feedback),
+                comments,
+                _xlsx_datetime(message.created_at),
+            ]
+        )
+    _write_xlsx_sheet(
+        message_sheet,
+        [
+            "대화 ID", "대화 제목", "소유자 ID", "메시지 ID", "Run ID", "Turn", "역할",
+            "상태", "내용", "내용 잘림", "좋아요 수", "싫어요 수", "Comment 수", "Comment",
+            "생성 일시",
+        ],
+        message_data,
+        [38, 36, 28, 38, 38, 9, 11, 14, 80, 11, 10, 10, 11, 55, 20],
+    )
+
+    feedback_sheet = workbook.create_sheet("의견")
+    feedback_data: list[list[object]] = []
+    for feedback, message, author in feedback_rows:
+        conversation = conversations[message.conversation_id]
+        owner = owners[message.conversation_id]
+        feedback_data.append(
+            [
+                feedback.id,
+                conversation.id,
+                conversation.title,
+                owner.login_id,
+                message.id,
+                message.role,
+                message.canonical_text,
+                feedback.kind,
+                feedback.rating_value or "",
+                feedback.report_category or "",
+                feedback.report_description or "",
+                author.login_id,
+                author.display_name or "",
+                feedback.status,
+                _xlsx_datetime(feedback.created_at),
+                _xlsx_datetime(feedback.updated_at),
+            ]
+        )
+    _write_xlsx_sheet(
+        feedback_sheet,
+        [
+            "의견 ID", "대화 ID", "대화 제목", "소유자 ID", "메시지 ID", "메시지 역할",
+            "메시지 내용", "의견 종류", "평가", "Category", "Comment", "작성자 ID",
+            "작성자 이름", "상태", "작성 일시", "수정 일시",
+        ],
+        feedback_data,
+        [38, 38, 36, 28, 38, 12, 80, 12, 10, 16, 55, 28, 18, 14, 20, 20],
+    )
+
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+@router.get("/conversations/export.xlsx")
+def export_admin_conversations(
+    request: Request,
+    query: str = "",
+    feedback_only: bool = False,
+    limit: int = Query(default=120, ge=1, le=500),
+    actor: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    require_admin(actor)
+    filters, normalized_query = _admin_conversation_filters(
+        actor,
+        query=query,
+        feedback_only=feedback_only,
+    )
+    conversation_rows = list(
+        db.execute(
+            select(Conversation, User)
+            .join(User, User.id == Conversation.owner_user_id)
+            .where(*filters)
+            .order_by(Conversation.last_activity_at.desc(), Conversation.id)
+            .limit(limit)
+        ).all()
+    )
+    conversation_ids = [conversation.id for conversation, _owner in conversation_rows]
+    messages = (
+        list(
+            db.scalars(
+                select(Message)
+                .where(Message.conversation_id.in_(conversation_ids))
+                .order_by(Message.conversation_id, Message.created_at, Message.id)
+            )
+        )
+        if conversation_ids
+        else []
+    )
+    feedback_rows = (
+        list(
+            db.execute(
+                select(MessageFeedback, Message, User)
+                .join(Message, Message.id == MessageFeedback.message_id)
+                .join(User, User.id == MessageFeedback.user_id)
+                .where(
+                    Message.conversation_id.in_(conversation_ids),
+                    MessageFeedback.deleted_at.is_(None),
+                )
+                .order_by(Message.conversation_id, Message.created_at, MessageFeedback.created_at)
+            ).all()
+        )
+        if conversation_ids
+        else []
+    )
+
+    def grouped_counts(statement: object) -> dict[str, int]:
+        if not conversation_ids:
+            return {}
+        return {conversation_id: int(count) for conversation_id, count in db.execute(statement).all()}
+
+    run_counts = grouped_counts(
+        select(Run.conversation_id, func.count(Run.id))
+        .where(Run.conversation_id.in_(conversation_ids))
+        .group_by(Run.conversation_id)
+    )
+    artifact_counts = grouped_counts(
+        select(Artifact.conversation_id, func.count(Artifact.id))
+        .where(
+            Artifact.conversation_id.in_(conversation_ids),
+            Artifact.deleted_at.is_(None),
+        )
+        .group_by(Artifact.conversation_id)
+    )
+    share_counts = grouped_counts(
+        select(ConversationShareGrant.conversation_id, func.count(ConversationShareGrant.id))
+        .where(
+            ConversationShareGrant.conversation_id.in_(conversation_ids),
+            ConversationShareGrant.revoked_at.is_(None),
+        )
+        .group_by(ConversationShareGrant.conversation_id)
+    )
+    content = _admin_conversation_workbook(
+        conversation_rows,
+        messages,
+        feedback_rows,
+        run_counts,
+        artifact_counts,
+        share_counts,
+    )
+    record_audit(
+        db,
+        action="admin_conversations_exported",
+        target_type="conversation",
+        result="success",
+        actor=actor,
+        request_id=_request_id(request),
+        metadata={
+            "query_used": bool(normalized_query),
+            "feedback_only": feedback_only,
+            "limit": limit,
+            "conversation_count": len(conversation_rows),
+            "message_count": len(messages),
+            "feedback_count": len(feedback_rows),
+        },
+    )
+    db.commit()
+    generated_at = datetime.now(_ANALYTICS_TIMEZONE)
+    filename = quote(generated_at.strftime("lumina_conversations_%Y%m%d_%H%M.xlsx"), safe="")
+    return Response(
+        content=content,
+        media_type=_XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+    )
 
 
 def _require_admin_conversation(
