@@ -2026,8 +2026,8 @@ button:disabled { cursor: default; opacity: 0.5; }
 .conversation-error { color: var(--danger); }
 .conversation-empty { display: grid; min-height: max(430px, calc(100svh - var(--dock-height, 140px) - 110px)); padding: 24px 0; place-content: center; justify-items: center; text-align: center; }
 .conversation-empty svg { color: var(--cobalt); }
-.conversation-empty h2 { margin: 13px 0 6px; font-size: 20px; letter-spacing: -0.025em; }
-.conversation-empty p { max-width: 420px; margin: 0; color: var(--muted); font-size: 13.5px; line-height: 1.55; }
+.chat-pane.view-chat .conversation-scroll .conversation-empty h2 { margin: 13px 0 6px; font-size: calc(var(--conversation-font-size) + 4px); letter-spacing: -0.025em; }
+.conversation-empty p { width: fit-content; max-width: 100%; margin: 0; color: var(--muted); font-size: 13.5px; line-height: 1.55; }
 .starter-prompts { display: grid; width: 100%; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin-top: 26px; }
 .starter-prompt-button { display: grid; min-height: 62px; grid-template-columns: 34px minmax(0, 1fr); align-items: center; gap: 9px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 7px; background: color-mix(in srgb, var(--surface) 90%, transparent); color: var(--ink); text-align: left; cursor: pointer; transition: border-color 140ms ease, background 140ms ease, transform 140ms ease; }
 .starter-prompt-button:hover { border-color: color-mix(in srgb, var(--cobalt) 32%, var(--line)); background: color-mix(in srgb, var(--surface) 96%, var(--cobalt) 4%); transform: translateY(-1px); }
