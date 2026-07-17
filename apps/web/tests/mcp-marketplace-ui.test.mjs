@@ -9,13 +9,17 @@ const marketplaceViewPath = new URL("../src/components/MarketplaceView.tsx", imp
 const appPath = new URL("../src/App.tsx", import.meta.url);
 const stylesPath = new URL("../src/styles.css", import.meta.url);
 
-test("MCP installs expose direct account and project actions and return to install after removal", async () => {
+test("MCP installs once and uses the shared multi-project scope UI", async () => {
   const panel = await readFile(panelPath, "utf8");
 
-  assert.match(panel, /onClick=\{\(\) => void install\("user"\)\}/);
-  assert.match(panel, /"내 계정 설치됨" : "내 계정 설치"/);
-  assert.match(panel, /onClick=\{\(\) => void install\("project"\)\}/);
-  assert.match(panel, /"내 프로젝트 설치됨" : "내 프로젝트 설치"/);
+  assert.match(panel, /onClick=\{\(\) => void install\(\)\}/);
+  assert.doesNotMatch(panel, /내 계정 설치|내 프로젝트 설치/);
+  assert.match(panel, /api\.mcp\.updateProjects/);
+  assert.match(panel, /aria-label="MCP를 사용할 프로젝트"/);
+  assert.match(panel, /aria-multiselectable="true"/);
+  assert.match(panel, /전체 해제/);
+  assert.match(panel, /전체 선택/);
+  assert.match(panel, /> 프로젝트 설정<\/button>/);
   assert.doesNotMatch(panel, /<select|installScope/);
   assert.match(panel, /className=\{`marketplace-install-toggle \$\{stateClass\}`\}/);
   assert.match(panel, /const stateClass = userInstallation \? "is-installed" : ""/);

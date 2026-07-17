@@ -1,7 +1,8 @@
-import { Check, KeyRound, LoaderCircle, Plug, Power, Send, ShieldCheck, Trash2, Wrench } from "lucide-react";
-import { type FormEvent, useEffect, useState } from "react";
+import { Check, Folder, FolderOpen, KeyRound, LoaderCircle, Plug, Power, Save, Send, Settings2, ShieldCheck, Trash2, Wrench } from "lucide-react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api, ApiError } from "../api";
-import type { McpAnswerTestResult, McpDefinition, McpInstallation } from "../api-types";
+import type { McpAnswerTestResult, McpDefinition, McpInstallation, ProjectSummary } from "../api-types";
 import { ResizableSplitPane } from "./ResizableSplitPane";
 
 interface McpMarketplacePanelProps {
@@ -44,8 +45,10 @@ function AnswerTestFeedback({ result }: { result: McpAnswerTestResult | { error:
 }
 
 export function McpMarketplacePanel({ projectId }: McpMarketplacePanelProps) {
+  const projectScopeButtonRef = useRef<HTMLButtonElement>(null);
   const [catalog, setCatalog] = useState<McpDefinition[]>([]);
   const [installations, setInstallations] = useState<McpInstallation[]>([]);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
   const [secretInputs, setSecretInputs] = useState<Record<string, string>>({});
@@ -59,11 +62,16 @@ export function McpMarketplacePanel({ projectId }: McpMarketplacePanelProps) {
   const [answerTestInputs, setAnswerTestInputs] = useState<Record<string, string>>({});
   const [answerTestBusyId, setAnswerTestBusyId] = useState<string | null>(null);
   const [answerTestResults, setAnswerTestResults] = useState<Record<string, McpAnswerTestResult | { error: string }>>({});
+  const [projectScopeOpen, setProjectScopeOpen] = useState(false);
+  const [projectScopeDraft, setProjectScopeDraft] = useState<Set<string> | null>(null);
+  const [projectScopeBusy, setProjectScopeBusy] = useState(false);
+  const [projectScopePosition, setProjectScopePosition] = useState({ top: 0, right: 0 });
 
   const selected = catalog.find((item) => item.id === selectedId) ?? catalog[0] ?? null;
   const currentRevision = selected?.revisions.find((item) => item.id === selected.currentRevisionId) ?? selected?.revisions.at(-1) ?? null;
   const selectedInstallations = selected ? installations.filter((item) => item.definitionId === selected.id) : [];
-  const selectedConnection = selectedInstallations.find((item) => item.scopeType === "user") ?? selectedInstallations.find((item) => item.scopeType === "project") ?? null;
+  const selectedUserInstallation = selectedInstallations.find((item) => item.scopeType === "user") ?? null;
+  const selectedConnection = selectedUserInstallation ?? selectedInstallations.find((item) => item.scopeType === "project") ?? null;
   const skillWrapperApplied = selected?.skillWrapper?.wrapped;
 
   useEffect(() => {
@@ -72,10 +80,14 @@ export function McpMarketplacePanel({ projectId }: McpMarketplacePanelProps) {
     setError(null);
     Promise.all([
       api.mcp.listCatalog(controller.signal),
-      api.mcp.listInstallations(projectId ?? undefined, controller.signal),
-    ]).then(([definitions, installed]) => {
+      api.mcp.listInstallations(undefined, controller.signal),
+      projectId ? api.mcp.listInstallations(projectId, controller.signal) : Promise.resolve([]),
+      api.projects.list(controller.signal),
+    ]).then(([definitions, userInstalled, projectInstalled, availableProjects]) => {
+      const installed = [...new Map([...userInstalled, ...projectInstalled].map((item) => [item.id, item])).values()];
       setCatalog(definitions);
       setInstallations(installed);
+      setProjects(availableProjects);
       setSelectedId((current) => current && definitions.some((item) => item.id === current) ? current : definitions[0]?.id ?? null);
       const verifiable = installed.filter((item) => item.enabled && ["ready", "not_required"].includes(item.secretResolutionStatus));
       void Promise.allSettled(verifiable.map((item) => api.mcp.verify(item.id, controller.signal))).then((results) => {
@@ -101,6 +113,8 @@ export function McpMarketplacePanel({ projectId }: McpMarketplacePanelProps) {
   useEffect(() => {
     setUninstallConfirmId(null);
     setUnbindConfirmKey(null);
+    setProjectScopeOpen(false);
+    setProjectScopeDraft(null);
   }, [projectId, selected?.id]);
 
   const refresh = () => {
@@ -109,16 +123,16 @@ export function McpMarketplacePanel({ projectId }: McpMarketplacePanelProps) {
     setRefreshKey((value) => value + 1);
   };
 
-  const install = async (scope: "user" | "project") => {
-    if (!selected || !currentRevision || busy || scope === "project" && !projectId) return;
+  const install = async () => {
+    if (!selected || !currentRevision || busy) return;
     setBusy(true);
     setError(null);
     try {
       await api.mcp.install(
         selected.id,
         currentRevision.id,
-        scope,
-        scope === "project" ? projectId ?? undefined : undefined,
+        "user",
+        undefined,
         selectedTools,
       );
       refresh();
@@ -219,6 +233,41 @@ export function McpMarketplacePanel({ projectId }: McpMarketplacePanelProps) {
     }
   };
 
+  const openProjectScope = () => {
+    if (!selectedUserInstallation) return;
+    const rect = projectScopeButtonRef.current?.getBoundingClientRect();
+    if (rect) setProjectScopePosition({ top: rect.bottom + 4, right: Math.max(8, window.innerWidth - rect.right) });
+    setProjectScopeDraft(selectedUserInstallation.projectIds === null ? null : new Set(selectedUserInstallation.projectIds));
+    setProjectScopeOpen((current) => !current);
+  };
+
+  const toggleProjectScope = (targetProjectId: string) => {
+    setProjectScopeDraft((current) => {
+      const next = current === null ? new Set(projects.map((item) => item.id)) : new Set(current);
+      if (next.has(targetProjectId)) next.delete(targetProjectId);
+      else next.add(targetProjectId);
+      return next;
+    });
+  };
+
+  const saveProjectScope = async () => {
+    if (!selectedUserInstallation) return;
+    setProjectScopeBusy(true);
+    setError(null);
+    try {
+      const updated = await api.mcp.updateProjects(
+        selectedUserInstallation.id,
+        projectScopeDraft === null ? null : [...projectScopeDraft],
+      );
+      setInstallations((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setProjectScopeOpen(false);
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setProjectScopeBusy(false);
+    }
+  };
+
   const unbindSecret = async (installation: McpInstallation, secretName: string) => {
     const key = `${installation.id}:${secretName}`;
     if (unbindConfirmKey !== key) {
@@ -268,8 +317,17 @@ export function McpMarketplacePanel({ projectId }: McpMarketplacePanelProps) {
                 <div className="mcp-section-heading"><strong><Wrench size={14} /> 설치 Tool allowlist</strong><small>{selectedTools.length} / {currentRevision.tools.length}</small></div>
                 <div className="mcp-tool-list">{currentRevision.tools.map((tool) => <label key={tool.name}><input type="checkbox" checked={selectedTools.includes(tool.name)} onChange={(event) => { const checked = event.currentTarget.checked; setSelectedTools((current) => checked ? [...current, tool.name] : current.filter((name) => name !== tool.name)); }} /><span><strong>{tool.name}</strong><small>{tool.description || "설명 없음"}</small></span></label>)}</div>
                 <div className="mcp-install-controls" aria-label="MCP 설치 대상">
-                  <button className="is-primary lumina-primary-action" type="button" disabled={busy || selectedTools.length === 0 || selectedInstallations.some((item) => item.scopeType === "user")} onClick={() => void install("user")}><Plug size={14} /> {selectedInstallations.some((item) => item.scopeType === "user") ? "내 계정 설치됨" : "내 계정 설치"}</button>
-                  <button type="button" aria-label={!projectId ? "Project를 선택해야 설치할 수 있습니다." : "내 프로젝트 MCP 설치"} data-tooltip={!projectId ? "Project를 선택해야 설치할 수 있습니다." : undefined} disabled={busy || !projectId || selectedTools.length === 0 || selectedInstallations.some((item) => item.scopeType === "project")} onClick={() => void install("project")}><Plug size={14} /> {selectedInstallations.some((item) => item.scopeType === "project") ? "내 프로젝트 설치됨" : "내 프로젝트 설치"}</button>
+                  {selectedUserInstallation ? <div className="marketplace-project-selector" onClick={(event) => event.stopPropagation()}>
+                    <button ref={projectScopeButtonRef} type="button" aria-haspopup="listbox" aria-expanded={projectScopeOpen} onClick={openProjectScope}><Settings2 size={14} /> 프로젝트 설정</button>
+                    {projectScopeOpen && createPortal(<div className="marketplace-project-options project-options" style={{ top: projectScopePosition.top, right: projectScopePosition.right }} role="listbox" aria-label="MCP를 사용할 프로젝트" aria-multiselectable="true" onClick={(event) => event.stopPropagation()}>
+                      <button className="marketplace-project-all" type="button" role="option" aria-selected={projectScopeDraft === null || projectScopeDraft.size === projects.length} onClick={() => setProjectScopeDraft(projectScopeDraft === null || projectScopeDraft.size === projects.length ? new Set() : null)}><FolderOpen size={15} /><span>{projectScopeDraft === null || projectScopeDraft.size === projects.length ? "전체 해제" : "전체 선택"}</span><Check size={14} /></button>
+                      <div className="marketplace-project-option-list">{projects.map((item) => {
+                        const checked = projectScopeDraft === null || projectScopeDraft.has(item.id);
+                        return <button type="button" role="option" aria-selected={checked} key={item.id} onClick={() => toggleProjectScope(item.id)}><Folder size={15} /><span>{item.name}</span>{checked && <Check size={14} />}</button>;
+                      })}</div>
+                      <footer><span>{projectScopeDraft === null ? "모든 프로젝트" : `${projectScopeDraft.size}개 선택`}</span><div><button type="button" disabled={projectScopeBusy} onClick={() => setProjectScopeOpen(false)}>취소</button><button className="lumina-primary-action" type="button" disabled={projectScopeBusy} onClick={() => void saveProjectScope()}>{projectScopeBusy ? <LoaderCircle className="is-running" size={13} /> : <Save size={13} />} 적용</button></div></footer>
+                    </div>, document.body)}
+                  </div> : <button className="is-primary lumina-primary-action" type="button" disabled={busy || selectedTools.length === 0} onClick={() => void install()}><Plug size={14} /> 설치</button>}
                 </div>
               </div>
               <div className="mcp-installation-section">
