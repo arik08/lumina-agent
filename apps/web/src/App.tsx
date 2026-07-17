@@ -955,7 +955,7 @@ function ArtifactLengthSlider({
         onClick={() => setOpen((current) => !current)}
       >
         <FileText size={12} aria-hidden="true" />
-        <span className="artifact-output-mode-value">{outputModeLabel}</span>
+        <span className={`artifact-output-mode-value is-${outputMode}`}>{outputModeLabel}</span>
         <span className="artifact-control-separator" aria-hidden="true">·</span>
         <span className="artifact-length-value">{selected.label}</span>
         {selected.warning && <small>{selected.warning}</small>}

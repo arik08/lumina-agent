@@ -2725,6 +2725,8 @@ button:disabled { cursor: default; opacity: 0.5; }
 .composer-footer .artifact-length-trigger { display: inline-flex; width: auto; min-width: 0; height: 29px; align-items: center; gap: 4px; padding: 0 8px; color: var(--muted); font-size: 11.5px; font-weight: 620; }
 .artifact-length-trigger svg { flex: 0 0 auto; color: var(--faint); }
 .artifact-output-mode-value { color: var(--muted); white-space: nowrap; }
+.artifact-output-mode-value.is-chat { color: var(--ink); }
+.artifact-output-mode-value.is-file { color: var(--artifact-length-warning); }
 .artifact-control-separator { color: var(--faint); }
 .artifact-length-trigger small { color: var(--artifact-length-accent); font-size: 10px; font-weight: 700; }
 .artifact-length-value { color: var(--ink); font-weight: 650; white-space: nowrap; }
