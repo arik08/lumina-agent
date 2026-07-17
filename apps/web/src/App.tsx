@@ -3589,7 +3589,7 @@ function App() {
                     ariaLabel="분석 범위 설정"
                     menuLabel="분석 범위"
                     menuDescription="웹 검색과 자료 확인을 포함해 어디까지 분석할지 정합니다."
-                    controlClassName="analysis-depth-control"
+                    controlClassName={`analysis-depth-control is-${analysisDepth}`}
                     triggerIcon={<Search size={15} aria-hidden="true" />}
                     hideChevron
                   />
@@ -3600,7 +3600,7 @@ function App() {
                     ariaLabel="채팅 답변 분량 설정"
                     menuLabel="답변 분량"
                     menuDescription="채팅에 표시할 최종 답변의 분량을 정합니다."
-                    controlClassName="answer-length-control"
+                    controlClassName={`answer-length-control is-${answerLength}`}
                     triggerIcon={<AlignLeft size={15} aria-hidden="true" />}
                     hideChevron
                   />

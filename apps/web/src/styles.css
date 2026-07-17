@@ -2800,6 +2800,9 @@ button:disabled { cursor: default; opacity: 0.5; }
 .composer-picker-trigger:not(.has-no-chevron) > svg { transition: transform 140ms ease; }
 .composer-picker { position: relative; display: flex; }
 .composer-picker.is-open .composer-picker-trigger { background: var(--surface-soft); color: var(--ink); }
+.composer-footer :is(.analysis-depth-control, .answer-length-control):is(.is-auto, .is-brief) { color: var(--muted); }
+.composer-footer :is(.analysis-depth-control, .answer-length-control).is-standard { color: var(--ink); }
+.composer-footer :is(.analysis-depth-control.is-deep, .answer-length-control.is-detailed) { color: var(--warning); }
 .composer-picker.is-open .composer-picker-trigger:not(.has-no-chevron) > svg { transform: rotate(180deg); }
 .composer-picker-menu {
   position: absolute;
