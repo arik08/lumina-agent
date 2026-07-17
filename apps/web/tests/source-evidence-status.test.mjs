@@ -19,9 +19,8 @@ test("source evidence distinguishes cited, reviewed, and search-only material", 
   assert.match(app, /if \(left\.cited && left\.citationOrder !== right\.citationOrder\)/);
   assert.match(app, /return left\.citationOrder - right\.citationOrder/);
   assert.match(app, /return left\.sourceOrder - right\.sourceOrder/);
-  assert.match(app, /function normalizeCitationPositions\(text: string, targets: CitationTarget\[\]\)/);
-  assert.match(app, /before === "\*\*" \|\| before === "__"/);
-  assert.match(app, /streaming \? text : normalizeCitationPositions\(text, targets\)/);
+  assert.doesNotMatch(app, /normalizeCitationPositions/);
+  assert.match(app, /streaming \? splitStreamingMarkdown\(text\) : \{ prefix: text, liveTail: "" \}/);
   assert.match(app, /"본문 확인" : "검색 참고"/);
   assert.match(app, /function searchPurposeLabel\(purpose\?: string\)/);
   assert.match(app, /researchVerification === "unverified"/);

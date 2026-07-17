@@ -1257,54 +1257,6 @@ function splitCitationText(value: string, targets: CitationTarget[]): PhrasingCo
   return parts;
 }
 
-function normalizeCitationPositions(text: string, targets: CitationTarget[]) {
-  const byToken = new Map<string, CitationTarget>();
-  targets.filter((target) => target.cited).forEach((target) => {
-    byToken.set(target.source.sourceId, target);
-    byToken.set(String(target.markerNumber), target);
-    byToken.set(citationMarkerLabel(target.markerNumber), target);
-  });
-  if (byToken.size === 0) return text;
-
-  const markerPattern = /\[\[([^\]\n]+)\]\]|\[([^\]\n]+)\]|[①-⑳]/gu;
-  const sentenceEndPattern = /[.!?。！？]+(?=\s|$)/gu;
-  let inFence = false;
-  return text.split(/(\r?\n)/).map((line) => {
-    if (/^\s*(`{3,}|~{3,})/.test(line)) {
-      inFence = !inFence;
-      return line;
-    }
-    if (inFence || /^\r?\n$/.test(line)) return line;
-
-    const boundaries = [...line.matchAll(sentenceEndPattern)].map((match) => (match.index ?? 0) + match[0].length);
-    boundaries.push(line.length);
-    let start = 0;
-    return boundaries.map((boundary) => {
-      if (boundary <= start) return "";
-      const sentence = line.slice(start, boundary);
-      start = boundary;
-      const matches = [...sentence.matchAll(markerPattern)].filter((match) => {
-        const token = match[1] ?? match[2] ?? match[0];
-        return byToken.has(token);
-      });
-      if (matches.length === 0) return sentence;
-      let cleaned = sentence;
-      [...matches].reverse().forEach((match) => {
-        const index = match.index ?? 0;
-        let removalStart = index;
-        let removalEnd = index + match[0].length;
-        const before = cleaned.slice(Math.max(0, removalStart - 2), removalStart);
-        const after = cleaned.slice(removalEnd, removalEnd + 2);
-        if ((before === "**" || before === "__") && /[ \t]/.test(cleaned[removalEnd] ?? "")) removalEnd += 1;
-        if ((after === "**" || after === "__") && /[ \t]/.test(cleaned[removalStart - 1] ?? "")) removalStart -= 1;
-        cleaned = cleaned.slice(0, removalStart) + cleaned.slice(removalEnd);
-      });
-      cleaned = cleaned.replace(/[ \t]{2,}/g, " ").trimEnd();
-      return `${cleaned} ${matches.map((match) => match[0]).join(" ")}`;
-    }).join("");
-  }).join("");
-}
-
 function remarkCitationLinks(options: { targets: CitationTarget[] }) {
   return (tree: Root) => {
     visit(tree, "text", (node: Text, index: number | undefined, parent: Parent | undefined) => {
@@ -1579,8 +1531,7 @@ export function MarkdownResponse({
   artifact?: boolean;
 }) {
   const targets = useMemo(() => citationTargets(text, sources, citations), [citations, sources, text]);
-  const renderedText = useMemo(() => streaming ? text : normalizeCitationPositions(text, targets), [streaming, targets, text]);
-  const streamingParts = useMemo(() => streaming ? splitStreamingMarkdown(renderedText) : { prefix: renderedText, liveTail: "" }, [renderedText, streaming]);
+  const streamingParts = useMemo(() => streaming ? splitStreamingMarkdown(text) : { prefix: text, liveTail: "" }, [streaming, text]);
   const pendingKind = useMemo(() => streaming ? pendingStreamingKind(streamingParts.liveTail) : null, [streaming, streamingParts.liveTail]);
   const prefixText = useMemo(() => normalizeKoreanMarkdownEmphasis(streamingParts.prefix), [streamingParts.prefix]);
   const tailText = useMemo(() => normalizeKoreanMarkdownEmphasis(streamingParts.liveTail), [streamingParts.liveTail]);
