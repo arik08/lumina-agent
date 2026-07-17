@@ -7,6 +7,17 @@ const appSource = await readFile(new URL("../src/App.tsx", import.meta.url), "ut
 const workspaceSource = await readFile(new URL("../src/use-lumina-workspace.ts", import.meta.url), "utf8");
 const actionIconsSource = await readFile(new URL("../src/components/ActionIcons.tsx", import.meta.url), "utf8");
 
+test("completed time appears between the answer status and action icons", () => {
+  const meta = turnSource.match(/<div className="final-answer-meta">[\s\S]*?<div className="answer-actions"/)?.[0] ?? "";
+
+  const statusIndex = meta.indexOf("final-answer-status");
+  const completedTimeIndex = meta.indexOf("answer-completed-time");
+  const actionsIndex = meta.indexOf("answer-actions");
+
+  assert.ok(statusIndex >= 0 && statusIndex < completedTimeIndex, "completed time should follow the answer status");
+  assert.ok(completedTimeIndex < actionsIndex, "action icons should follow the completed time");
+});
+
 test("answer actions place usage first and branch immediately before share", () => {
   const actions = turnSource.match(/<div className="answer-actions"[\s\S]*?<\/div>/)?.[0] ?? "";
 

@@ -2038,6 +2038,7 @@ export function AssistantTurn({
                     {status === "completed" ? <CheckCircle2 size={17} /> : <AlertCircle size={17} />}
                     {status === "completed" ? "작성 완료" : runStatusLabel(status)}
                   </div>
+                  <time className="answer-completed-time" dateTime={snapshot?.finishedAt ?? finalMessage?.completedAt ?? undefined}>{formatCompletedAt(snapshot?.finishedAt ?? finalMessage?.completedAt)}</time>
                   <div className="answer-actions" role="group" aria-label="답변 작업">
                     <UsageCostPopover
                       usage={runUsage}
@@ -2054,7 +2055,6 @@ export function AssistantTurn({
                     <button className={`tooltip-control answer-rating-control ${answerRating === "dislike" ? "is-dislike" : ""}`} type="button" aria-label="싫어요" aria-pressed={answerRating === "dislike"} data-tooltip="싫어요" disabled={!finalMessage || ratingSubmitting} onClick={() => void rateAnswer("dislike")}><ThumbsDown size={16} /></button>
                     <button className={`tooltip-control ${reportOpen ? "is-active" : ""}`} type="button" aria-label="의견 게시" aria-expanded={reportOpen} data-tooltip="의견 게시" disabled={!finalMessage} onClick={() => { setReportOpen((open) => !open); setReportError(null); }}><MessageSquarePlus size={16} /></button>
                   </div>
-                  <time className="answer-completed-time" dateTime={snapshot?.finishedAt ?? finalMessage?.completedAt ?? undefined}>{formatCompletedAt(snapshot?.finishedAt ?? finalMessage?.completedAt)}</time>
                   {sourceCountLabels.length > 0 && (
                     <div className="answer-sources">
                       <button
