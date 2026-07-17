@@ -42,7 +42,7 @@ test("Mermaid preserves LLM-authored styles without runtime recoloring", () => {
   assert.match(rendererSource, /pie10: artifactVisualPalette\.purple/);
   assert.match(rendererSource, /cScale9: artifactVisualPalette\.purple/);
   assert.match(rendererSource, /plotColorPalette: artifactVisualPaletteSequence\.join\(","\)/);
-  assert.match(rendererSource, /return result;/);
+  assert.match(rendererSource, /return \{ \.\.\.result, svg: bindMermaidThemeTokens/);
   assert.doesNotMatch(rendererSource, /inferMermaidNodeTone|decorateMermaidSvg|luminaTone/);
   assert.doesNotMatch(rendererStyles, /data-lumina-tone|--mermaid-node-fill|--mermaid-node-stroke/);
   assert.doesNotMatch(rendererStyles, /\.mermaid-surface svg :is\(\.edgePath|\.mermaid-surface svg marker/);
@@ -52,8 +52,10 @@ test("Mermaid uses cobalt tokens for the default node fill and border", () => {
   assert.match(rendererSource, /document\.querySelector<HTMLElement>\("\.app-shell"\) \?\? document\.documentElement/);
   assert.match(rendererSource, /primaryColor: token\("--cobalt-pale", "#edf2fb"\)/);
   assert.match(rendererSource, /primaryBorderColor: token\("--cobalt", "#3f66c9"\)/);
-  assert.match(rendererSource, /observer\.observe\(themeRoot, \{ attributes: true, attributeFilter: \["class"\] \}\)/);
-  assert.match(rendererSource, /\[expanded, onInitialFit, source, themeRevision\]/);
+  assert.match(rendererSource, /function bindMermaidThemeTokens/);
+  assert.match(rendererSource, /themedSvg\.replaceAll\(value, `var\(\$\{tokenName\}\)`\)/);
+  assert.match(rendererSource, /svg: bindMermaidThemeTokens\(result\.svg, appearance\.tokenBindings\)/);
+  assert.doesNotMatch(rendererSource, /MutationObserver\(\(\) => setThemeRevision/);
 });
 
 test("tall Mermaid workflows keep readable geometry inside a bounded scroll surface", () => {

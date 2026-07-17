@@ -185,15 +185,6 @@ function MermaidSurface({ source, expanded = false, zoom = 1, onInitialFit }: {
   const zoomRef = useRef(zoom);
   const dragRef = useRef<{ pointerId: number; x: number; y: number; scrollLeft: number; scrollTop: number } | null>(null);
   const [error, setError] = useState(false);
-  const [themeRevision, setThemeRevision] = useState(0);
-
-  useEffect(() => {
-    const themeRoot = document.querySelector(".app-shell");
-    if (!themeRoot) return undefined;
-    const observer = new MutationObserver(() => setThemeRevision((revision) => revision + 1));
-    observer.observe(themeRoot, { attributes: true, attributeFilter: ["class"] });
-    return () => observer.disconnect();
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -219,7 +210,7 @@ function MermaidSurface({ source, expanded = false, zoom = 1, onInitialFit }: {
       if (!cancelled) setError(true);
     });
     return () => { cancelled = true; };
-  }, [expanded, onInitialFit, source, themeRevision]);
+  }, [expanded, onInitialFit, source]);
 
   useEffect(() => {
     zoomRef.current = zoom;
@@ -342,6 +333,16 @@ function mermaidAppearance() {
   };
   return {
     signature: JSON.stringify(themeVariables),
+    tokenBindings: [
+      [themeVariables.primaryColor, "--cobalt-pale"],
+      [themeVariables.primaryTextColor, "--ink"],
+      [themeVariables.primaryBorderColor, "--cobalt"],
+      [themeVariables.secondaryColor, "--surface-soft"],
+      [themeVariables.tertiaryColor, "--surface"],
+      [themeVariables.lineColor, "--muted"],
+      [themeVariables.noteBkgColor, "--surface-selected"],
+      [themeVariables.actorBorder, "--line-strong"],
+    ] as const,
     config: {
       startOnLoad: false,
       securityLevel: "strict",
@@ -352,6 +353,13 @@ function mermaidAppearance() {
       },
     },
   } as const;
+}
+
+function bindMermaidThemeTokens(svg: string, bindings: ReadonlyArray<readonly [string, string]>) {
+  return bindings.reduce(
+    (themedSvg, [value, tokenName]) => themedSvg.replaceAll(value, `var(${tokenName})`),
+    svg,
+  );
 }
 
 export async function renderMermaidSvg(source: string) {
@@ -371,7 +379,7 @@ export async function renderMermaidSvg(source: string) {
       if (repairedSource === normalizedSource) throw error;
       result = await mermaid.render(`lumina-mermaid-${++mermaidRenderSequence}`, repairedSource);
     }
-    return result;
+    return { ...result, svg: bindMermaidThemeTokens(result.svg, appearance.tokenBindings) };
   });
   mermaidRenderJobs.set(cacheKey, renderJob);
   void renderJob.finally(() => {
