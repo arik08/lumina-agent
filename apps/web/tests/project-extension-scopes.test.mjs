@@ -33,3 +33,9 @@ test("project instructions replace the duplicate business Concept field near pro
   assert.doesNotMatch(projectSettings, /setConcept/);
   assert.match(projectSettings, /프로젝트 정보[\s\S]*<InstructionEditor[\s\S]*공유 및 구성원/);
 });
+
+test("project deletion stays inline and sits in the project information header", () => {
+  assert.match(projectSettings, /<header>[\s\S]*프로젝트 정보[\s\S]*프로젝트 삭제[\s\S]*<\/header>[\s\S]*<label>이름/);
+  assert.match(projectSettings, /deleteArmed \? "한 번 더 눌러 삭제" : "프로젝트 삭제"/);
+  assert.doesNotMatch(projectSettings, /<div className="project-settings-actions">\s*\{!project\.isDefault/);
+});
