@@ -99,15 +99,11 @@ def sync_repository_skills(
     skills_root = (root or REPOSITORY_ROOT) / "extensions" / "skills"
     if not skills_root.is_dir():
         return 0
-    translations_path = skills_root / "catalog.ko.json"
-    translations = (
-        json.loads(translations_path.read_text(encoding="utf-8"))
-        if translations_path.is_file()
+    catalog_path = skills_root / "catalog.json"
+    catalog = (
+        json.loads(catalog_path.read_text(encoding="utf-8"))
+        if catalog_path.is_file()
         else {}
-    )
-    tags_path = skills_root / "catalog.tags.json"
-    tags_by_slug = (
-        json.loads(tags_path.read_text(encoding="utf-8")) if tags_path.is_file() else {}
     )
     changed = 0
     for folder in sorted(path for path in skills_root.iterdir() if path.is_dir()):
@@ -123,7 +119,10 @@ def sync_repository_skills(
             ).strip("-")
             or folder.name
         )
-        description = str(translations.get(slug) or metadata.get("description", ""))
+        catalog_entry = catalog.get(slug, {})
+        description = str(
+            catalog_entry.get("description") or metadata.get("description", "")
+        )
         wrapper_source = metadata.get("source", "")
         mcp_slug = (
             normalize_slug(wrapper_source.removeprefix("skill-mcp:"))
@@ -134,7 +133,7 @@ def sync_repository_skills(
             "source": "repository",
             "sourcePath": folder.relative_to(root or REPOSITORY_ROOT).as_posix(),
             "category": "기본 제공",
-            "tags": _catalog_tags(tags_by_slug.get(slug)),
+            "tags": _catalog_tags(catalog_entry.get("tags")),
             "publisher": "Lumina",
             "fileCount": len(package),
             **(

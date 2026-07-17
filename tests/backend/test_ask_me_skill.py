@@ -27,15 +27,10 @@ def test_ask_me_uses_the_existing_question_ui_without_over_questioning() -> None
 
 
 def test_ask_me_has_repository_catalog_metadata() -> None:
-    descriptions = json.loads(
-        (SKILL_ROOT / "catalog.ko.json").read_text(encoding="utf-8")
-    )
-    tags = json.loads(
-        (SKILL_ROOT / "catalog.tags.json").read_text(encoding="utf-8")
-    )
+    catalog = json.loads((SKILL_ROOT / "catalog.json").read_text(encoding="utf-8"))
 
-    assert descriptions["ask-me"].startswith("작업을 실행하기 전에")
-    assert tags["ask-me"] == ["Agent", "업무설계"]
+    assert catalog["ask-me"]["description"].startswith("작업을 실행하기 전에")
+    assert catalog["ask-me"]["tags"] == ["Agent", "업무설계"]
 
 
 def test_ask_me_is_explicitly_invoked() -> None:

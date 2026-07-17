@@ -5,17 +5,18 @@ import test from "node:test";
 const viewPath = new URL("../src/components/MarketplaceView.tsx", import.meta.url);
 const apiPath = new URL("../src/api.ts", import.meta.url);
 const stylesPath = new URL("../src/styles.css", import.meta.url);
-const tagsPath = new URL("../../../extensions/skills/catalog.tags.json", import.meta.url);
+const catalogPath = new URL("../../../extensions/skills/catalog.json", import.meta.url);
 
 test("repository skills display searchable hashtag metadata instead of a source label", async () => {
-  const [view, tagsText] = await Promise.all([
+  const [view, catalogText] = await Promise.all([
     readFile(viewPath, "utf8"),
-    readFile(tagsPath, "utf8"),
+    readFile(catalogPath, "utf8"),
   ]);
-  const tags = JSON.parse(tagsText);
+  const catalog = JSON.parse(catalogText);
 
-  assert.deepEqual(tags["visual-artifact"], ["경영기획", "디자인"]);
-  assert.ok(Object.values(tags).every((value) => Array.isArray(value) && value.length > 0));
+  assert.deepEqual(catalog["visual-artifact"].tags, ["경영기획", "디자인"]);
+  assert.ok(Object.values(catalog).every((entry) => typeof entry.description === "string" && entry.description.length > 0));
+  assert.ok(Object.values(catalog).every((entry) => Array.isArray(entry.tags) && entry.tags.length > 0));
   assert.match(view, /className="marketplace-tags" aria-label="Skill 태그"/);
   assert.match(view, /tags\.map\(\(tag\) => `#\$\{tag\}`\)/);
   assert.doesNotMatch(view, /Lumina 기본 제공/);

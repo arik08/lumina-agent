@@ -2,7 +2,7 @@
 
 > 문서 상태: 통합 기준안
 > 작성일: 2026-07-11
-> 최종 동기화: 2026-07-17 (`8ff169b` 이후 현재 작업 트리 포함)
+> 최종 동기화: 2026-07-17 (현재 source 작업 트리와 migration `0030` 기준)
 > 적용 범위: Lumina Agent 제품, Frontend, Backend, Agent Worker, 확장 시스템과 운영 환경
 > 구현 상태: 이 문서는 설계 문서의 통합본이며, 각 항목의 실제 구현 완료 여부를 뜻하지 않습니다.
 
@@ -1312,6 +1312,7 @@ Catalog ExtensionVersion
 - Draft resolver는 `draft_id`, current `draft_revision`과 package digest를 고정합니다. Draft 변경은 이미 실행 중인 Run에 영향을 주지 않고 다음 Run부터 응답에 반영합니다.
 - Marketplace의 설치 상태는 단순 badge가 아니라 scope installation의 실제 상태입니다. `미사용`으로 전환하면 해당 사용자 또는 Project installation을 해제하고, 다시 설치할 수 있는 catalog action으로 돌아갑니다.
 - 설치 Skill 상세는 `SKILL.md` frontmatter를 metadata로 분리하고 Markdown 본문을 기본 읽기 화면으로 렌더링합니다. raw source는 보조 view이며, catalog→detail→이전 detail 이동은 browser history와 동기화합니다.
+- repository builtin Skill의 한국어 설명과 검색 tag 원본은 `extensions/skills/catalog.json` 한 파일의 slug별 `{description, tags}` entry로 관리합니다. 설명·tag를 별도 sidecar로 나누지 않고 repository sync와 Frontend test가 같은 catalog를 읽으며, 모든 builtin entry는 비어 있지 않은 설명과 tag를 가져야 합니다.
 
 ### 14.3 불변 version
 
