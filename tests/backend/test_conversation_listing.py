@@ -13,7 +13,7 @@ from lumina.config import Settings
 from lumina.conversations.service import list_auto_delete_candidates, update_conversation
 from lumina.db import SessionLocal
 from lumina.main import create_app
-from lumina.models import Conversation, Message, User, utc_now
+from lumina.models import Conversation, Message, ToolExecution, User, utc_now
 
 
 def test_cursor_preserves_favorite_order_and_search_is_whitespace_tolerant(
@@ -389,6 +389,74 @@ def test_turn_set_cursor_reaches_messages_older_than_legacy_limit(tmp_path: Path
 
         assert len(collected_ids) == 205
         assert len(set(collected_ids)) == 205
+
+
+def test_web_source_content_pages_stored_text_with_delivery_counts(tmp_path: Path) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'source-content.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation_id = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "source body"},
+        ).json()["id"]
+        started = client.post(
+            f"/api/conversations/{conversation_id}/runs",
+            headers={"X-CSRF-Token": csrf, "Idempotency-Key": "source-body-run"},
+            json={
+                "message": {"text": "source", "attachmentIds": [], "promptReferences": []},
+                "execution": {"providerId": "mock", "modelKey": "mock-agent", "effortId": "medium"},
+            },
+        )
+        run_id = started.json()["run"]["runId"]
+        _wait_for_terminal(client, run_id)
+        body = "0123456789" * 1_200
+        with SessionLocal() as db:
+            db.add(
+                ToolExecution(
+                    run_id=run_id,
+                    tool_call_id="fetch-source-body",
+                    tool_name="web_fetch",
+                    validated_input_json={"url": "https://example.com/source"},
+                    status="completed",
+                    result_json={
+                        "source": {"sourceId": "src-body"},
+                        "text": body,
+                        "providerContextIncludedChars": 8_000,
+                    },
+                )
+            )
+            db.commit()
+
+        first = client.get(
+            f"/api/conversations/{conversation_id}/runs/{run_id}/sources/src-body/content",
+            params={"offset": 0, "limit": 4_000},
+        )
+        assert first.status_code == 200, first.text
+        assert first.json() == {
+            "sourceId": "src-body",
+            "content": body[:4_000],
+            "offset": 0,
+            "nextOffset": 4_000,
+            "hasMore": True,
+            "totalChars": len(body),
+            "llmTextChars": 8_000,
+            "llmTextCharsEstimated": False,
+        }
+        last = client.get(
+            f"/api/conversations/{conversation_id}/runs/{run_id}/sources/src-body/content",
+            params={"offset": 8_000, "limit": 4_000},
+        ).json()
+        assert last["content"] == body[8_000:]
+        assert last["hasMore"] is False
 
 
 def _wait_for_terminal(client: TestClient, run_id: str) -> None:

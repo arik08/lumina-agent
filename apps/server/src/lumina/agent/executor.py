@@ -1773,11 +1773,14 @@ class LocalRunExecutor:
             if first_violation is not None:
                 await self._limit_run(run_id, first_violation)
                 return
+            delivered_web_text_chars: dict[str, int] = {}
             provider_tool_contents = _provider_tool_result_contents(
                 resolved_calls,
                 capabilities=capabilities,
                 untrusted_tool_names=frozenset(mcp_tools_by_name),
+                delivered_web_text_chars=delivered_web_text_chars,
             )
+            _record_web_fetch_provider_context(run_id, delivered_web_text_chars)
             for resolved_index, (call, result) in enumerate(resolved_calls):
                 if call["name"] == "classify_file_output_intent":
                     artifact_required = result.get("fileCreationRequested") is True
@@ -2185,11 +2188,14 @@ class LocalRunExecutor:
                 ),
             )
         await event_broker.notify(run_id)
+        delivered_web_text_chars: dict[str, int] = {}
         provider_tool_contents = _provider_tool_result_contents(
             resolved_calls,
             capabilities=capabilities,
             untrusted_tool_names=frozenset(mcp_tools),
+            delivered_web_text_chars=delivered_web_text_chars,
         )
+        _record_web_fetch_provider_context(run_id, delivered_web_text_chars)
         for resolved_index, (call, _result) in enumerate(resolved_calls):
             messages.append(
                 ProviderMessage(
@@ -6026,10 +6032,19 @@ def _provider_tool_result_contents(
     *,
     capabilities: Mapping[str, Any] | None,
     untrusted_tool_names: frozenset[str] = frozenset(),
+    delivered_web_text_chars: dict[str, int] | None = None,
 ) -> list[str]:
     """Bound every Tool result individually and across one provider turn."""
 
     page_limit, turn_limit = _web_provider_context_limits(capabilities)
+    included_text_chars = [
+        min(len(result.get("text", "")), page_limit)
+        if str(call.get("name", "")) == "web_fetch"
+        and isinstance(result, Mapping)
+        and isinstance(result.get("text"), str)
+        else 0
+        for call, result in resolved_calls
+    ]
     contents = [
         _provider_tool_result_content(
             str(call.get("name", "")),
@@ -6067,6 +6082,7 @@ def _provider_tool_result_contents(
             include_preview=True,
         )
         contents[index] = replacement
+        included_text_chars[index] = 0
         total_size += len(replacement) - previous_size
 
     if total_size > turn_limit:
@@ -6087,6 +6103,7 @@ def _provider_tool_result_contents(
                 include_preview=False,
             )
             contents[index] = replacement
+            included_text_chars[index] = 0
             total_size += len(replacement) - previous_size
     if total_size > turn_limit:
         contents = [
@@ -6104,7 +6121,40 @@ def _provider_tool_result_contents(
             )
             for call, _result in resolved_calls
         ]
+        included_text_chars = [0] * len(resolved_calls)
+    if delivered_web_text_chars is not None:
+        for index, (call, _result) in enumerate(resolved_calls):
+            if str(call.get("name", "")) != "web_fetch":
+                continue
+            call_id = str(call.get("id", "")).strip()
+            if call_id:
+                delivered_web_text_chars[call_id] = included_text_chars[index]
     return contents
+
+
+def _record_web_fetch_provider_context(
+    run_id: str, delivered_web_text_chars: Mapping[str, int]
+) -> None:
+    if not delivered_web_text_chars:
+        return
+    with session_scope() as db:
+        tools = db.scalars(
+            select(ToolExecution).where(
+                ToolExecution.run_id == run_id,
+                ToolExecution.tool_call_id.in_(tuple(delivered_web_text_chars)),
+                ToolExecution.tool_name == "web_fetch",
+            )
+        )
+        for tool in tools:
+            result = dict(tool.result_json or {})
+            included_chars = delivered_web_text_chars.get(tool.tool_call_id)
+            if included_chars is None:
+                continue
+            result["providerContextIncludedChars"] = included_chars
+            source = result.get("source")
+            if isinstance(source, dict):
+                result["source"] = {**source, "llmTextChars": included_chars}
+            tool.result_json = result
 
 
 def _should_wrap_untrusted_result(

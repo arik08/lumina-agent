@@ -439,6 +439,58 @@ def get_turn_sets(
     }
 
 
+@router.get("/{conversation_id}/runs/{run_id}/sources/{source_id}/content")
+def get_web_source_content(
+    conversation_id: str,
+    run_id: str,
+    source_id: str,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=4_000, ge=500, le=20_000),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    conversation = require_conversation(db, user, conversation_id)
+    run = db.get(Run, run_id)
+    if run is None or run.conversation_id != conversation.id:
+        raise ApiProblem(404, "source_not_found", "출처 본문을 찾을 수 없습니다.")
+
+    tools = db.scalars(
+        select(ToolExecution).where(
+            ToolExecution.run_id == run.id,
+            ToolExecution.tool_name == "web_fetch",
+            ToolExecution.status == "completed",
+        )
+    )
+    for tool in tools:
+        result = tool.result_json if isinstance(tool.result_json, dict) else {}
+        source = result.get("source")
+        text = result.get("text")
+        if (
+            not isinstance(source, dict)
+            or source.get("sourceId") != source_id
+            or not isinstance(text, str)
+        ):
+            continue
+        page = text[offset : offset + limit]
+        next_offset = offset + len(page)
+        raw_llm_chars = result.get("providerContextIncludedChars")
+        llm_chars_recorded = isinstance(raw_llm_chars, int) and not isinstance(
+            raw_llm_chars, bool
+        )
+        llm_chars = raw_llm_chars if llm_chars_recorded else min(len(text), 15_000)
+        return {
+            "sourceId": source_id,
+            "content": page,
+            "offset": offset,
+            "nextOffset": next_offset,
+            "hasMore": next_offset < len(text),
+            "totalChars": len(text),
+            "llmTextChars": llm_chars,
+            "llmTextCharsEstimated": not llm_chars_recorded,
+        }
+    raise ApiProblem(404, "source_not_found", "출처 본문을 찾을 수 없습니다.")
+
+
 @router.get("/{conversation_id}/export")
 def export_conversation(
     conversation_id: str,

@@ -503,6 +503,19 @@ export interface SourceEvidence {
   contentType?: string | null;
   extractionStatus?: "snippet_only" | "complete" | "empty";
   searchBackends?: string[];
+  textChars?: number | null;
+  llmTextChars?: number | null;
+}
+
+export interface WebSourceContentPage {
+  sourceId: string;
+  content: string;
+  offset: number;
+  nextOffset: number;
+  hasMore: boolean;
+  totalChars: number;
+  llmTextChars: number;
+  llmTextCharsEstimated: boolean;
 }
 
 export interface MessageCitation {

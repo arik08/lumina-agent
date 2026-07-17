@@ -169,6 +169,7 @@ class SourceEvidence:
     content_type: str | None = None
     extraction_status: str = "complete"
     search_backends: tuple[str, ...] = ()
+    text_chars: int | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -186,6 +187,7 @@ class SourceEvidence:
             "contentType": self.content_type,
             "extractionStatus": self.extraction_status,
             "searchBackends": list(self.search_backends),
+            "textChars": self.text_chars,
         }
 
 
@@ -492,6 +494,7 @@ async def web_fetch(
         evidence_kind="fetched_content",
         content_type=fetched.content_type,
         extraction_status="complete" if readable else "empty",
+        text_chars=len(readable),
     )
     return WebFetchResult(
         evidence=evidence,

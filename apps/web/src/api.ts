@@ -93,6 +93,7 @@ import type {
   McpDefinitionCreateRequest,
   McpInstallation,
   McpAnswerTestResult,
+  WebSourceContentPage,
 } from "./api-types";
 import { createClientId } from "./client-id";
 
@@ -1195,6 +1196,20 @@ export async function listExtensions(query?: string, signal?: AbortSignal) {
   return request<SkillExtension[]>("/extensions", { query: { query }, signal });
 }
 
+export async function getWebSourceContent(
+  conversationId: string,
+  runId: string,
+  sourceId: string,
+  offset = 0,
+  limit = 4_000,
+  signal?: AbortSignal,
+) {
+  return request<WebSourceContentPage>(
+    `/conversations/${encodeURIComponent(conversationId)}/runs/${encodeURIComponent(runId)}/sources/${encodeURIComponent(sourceId)}/content`,
+    { query: { offset, limit }, signal },
+  );
+}
+
 export async function getAnnouncementUnreadCount(signal?: AbortSignal) {
   return request<NotificationUnreadCount>("/notifications/announcements/unread-count", { signal });
 }
@@ -1990,6 +2005,7 @@ export const api = {
     branch: branchConversation,
     export: exportConversation,
     getTurnSets: getConversationTurnSets,
+    getSourceContent: getWebSourceContent,
   },
   runs: { start: startRun, action: sendRunAction, getSnapshot: getRunSnapshot, openStream: openRunEventStream },
   artifacts: {

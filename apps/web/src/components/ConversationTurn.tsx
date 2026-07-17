@@ -50,6 +50,7 @@ import {
   type CSSProperties,
   type FormEvent,
   type MouseEvent as ReactMouseEvent,
+  type UIEvent as ReactUIEvent,
 } from "react";
 import ReactMarkdown, {
   defaultUrlTransform,
@@ -1636,6 +1637,18 @@ export function AssistantTurn({
   const [ratingSubmitting, setRatingSubmitting] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [expandedSourceId, setExpandedSourceId] = useState<string | null>(null);
+  const [sourceContent, setSourceContent] = useState<{
+    sourceId: string;
+    content: string;
+    nextOffset: number;
+    totalChars: number;
+    llmTextChars: number;
+    llmTextCharsEstimated: boolean;
+    hasMore: boolean;
+    loading: boolean;
+    error: string | null;
+  } | null>(null);
+  const sourceContentLoadingRef = useRef(false);
   const [previewAttachment, setPreviewAttachment] = useState<AttachmentSummary | null>(null);
   const [textPreviewAttachment, setTextPreviewAttachment] = useState<AttachmentSummary | null>(null);
   const [textPreviewContent, setTextPreviewContent] = useState("");
@@ -1679,6 +1692,74 @@ export function AssistantTurn({
     else window.history.pushState(nextState, "");
     setExpandedSourceId(sourceId);
   }, [turnSet.id]);
+
+  useEffect(() => {
+    const source = sources.find((item) => item.sourceId === expandedSourceId);
+    const conversationId = finalMessage?.conversationId;
+    const runId = finalMessage?.runId ?? turnSet.runId;
+    if (!source || source.evidenceKind !== "fetched_content" || !conversationId || !runId) {
+      setSourceContent(null);
+      return;
+    }
+    const controller = new AbortController();
+    sourceContentLoadingRef.current = true;
+    setSourceContent({
+      sourceId: source.sourceId,
+      content: "",
+      nextOffset: 0,
+      totalChars: source.textChars ?? 0,
+      llmTextChars: source.llmTextChars ?? 0,
+      llmTextCharsEstimated: false,
+      hasMore: true,
+      loading: true,
+      error: null,
+    });
+    void api.conversations.getSourceContent(conversationId, runId, source.sourceId, 0, 4_000, controller.signal)
+      .then((page) => {
+        setSourceContent({ ...page, sourceId: source.sourceId, loading: false, error: null });
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setSourceContent((current) => current?.sourceId === source.sourceId
+          ? { ...current, loading: false, error: "본문을 불러오지 못했습니다." }
+          : current);
+      })
+      .finally(() => { sourceContentLoadingRef.current = false; });
+    return () => controller.abort();
+  }, [expandedSourceId, finalMessage?.conversationId, finalMessage?.runId, sources, turnSet.runId]);
+
+  const loadMoreSourceContent = useCallback(() => {
+    const conversationId = finalMessage?.conversationId;
+    const runId = finalMessage?.runId ?? turnSet.runId;
+    if (!sourceContent || !conversationId || !runId || !sourceContent.hasMore || sourceContentLoadingRef.current) return;
+    sourceContentLoadingRef.current = true;
+    setSourceContent((current) => current ? { ...current, loading: true, error: null } : current);
+    void api.conversations.getSourceContent(conversationId, runId, sourceContent.sourceId, sourceContent.nextOffset)
+      .then((page) => {
+        setSourceContent((current) => current?.sourceId === page.sourceId
+          ? {
+              ...current,
+              content: current.content + page.content,
+              nextOffset: page.nextOffset,
+              totalChars: page.totalChars,
+              llmTextChars: page.llmTextChars,
+              llmTextCharsEstimated: page.llmTextCharsEstimated,
+              hasMore: page.hasMore,
+              loading: false,
+              error: null,
+            }
+          : current);
+      })
+      .catch(() => {
+        setSourceContent((current) => current ? { ...current, loading: false, error: "다음 본문을 불러오지 못했습니다." } : current);
+      })
+      .finally(() => { sourceContentLoadingRef.current = false; });
+  }, [finalMessage?.conversationId, finalMessage?.runId, sourceContent, turnSet.runId]);
+
+  const handleSourcesScroll = useCallback((event: ReactUIEvent<HTMLDivElement>) => {
+    const element = event.currentTarget;
+    if (element.scrollHeight - element.scrollTop - element.clientHeight < 240) loadMoreSourceContent();
+  }, [loadMoreSourceContent]);
 
   const returnToSourceList = useCallback(() => {
     if (window.history.state?.luminaSourceDetail?.turnSetId === turnSet.id) window.history.back();
@@ -1991,7 +2072,7 @@ export function AssistantTurn({
                       {sourcesOpen && (
                         <>
                           <button className="answer-sources-backdrop" type="button" aria-label="검색 및 참고 출처 닫기" onClick={closeSources} />
-                          <div className="answer-sources-popover">
+                          <div className="answer-sources-popover" onScroll={handleSourcesScroll}>
                             {expandedSourceTarget ? (
                               <div className="source-detail">
                                 <div className="source-detail-navigation">
@@ -2005,7 +2086,21 @@ export function AssistantTurn({
                                     : <strong>{expandedSourceTarget.source.title || expandedSourceTarget.source.domain}</strong>}
                                   <small>{expandedSourceTarget.source.domain}</small>
                                 </div>
-                                <p className="source-detail-excerpt">{expandedSourceTarget.source.verbatimExcerpt}</p>
+                                {sourceContent?.sourceId === expandedSourceTarget.source.sourceId ? (
+                                  <>
+                                    <div className="source-detail-stats" aria-label="출처 본문 글자 수">
+                                      <span>LLM 전달 {sourceContent.llmTextChars.toLocaleString()}자{sourceContent.llmTextCharsEstimated ? " (기존 기록 기준 추정)" : ""}</span>
+                                      <span>추출 본문 {sourceContent.totalChars.toLocaleString()}자</span>
+                                      <span>현재 표시 {sourceContent.content.length.toLocaleString()}자</span>
+                                    </div>
+                                    <p className="source-detail-excerpt">{sourceContent.content || expandedSourceTarget.source.verbatimExcerpt}</p>
+                                    {sourceContent.loading && <p className="source-detail-loading" role="status">본문을 이어서 불러오는 중…</p>}
+                                    {sourceContent.error && <p className="source-detail-error" role="alert">{sourceContent.error}</p>}
+                                    {!sourceContent.hasMore && sourceContent.content && <p className="source-detail-end">본문 끝 · {sourceContent.totalChars.toLocaleString()}자</p>}
+                                  </>
+                                ) : (
+                                  <p className="source-detail-excerpt">{expandedSourceTarget.source.verbatimExcerpt}</p>
+                                )}
                               </div>
                             ) : (
                               <>

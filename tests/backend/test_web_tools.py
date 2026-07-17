@@ -146,6 +146,7 @@ async def test_web_fetch_extracts_readable_html_and_content_hash() -> None:
     assert result.evidence.evidence_kind == "fetched_content"
     assert result.evidence.content_type == "text/html"
     assert result.evidence.extraction_status == "complete"
+    assert result.evidence.text_chars == len(result.text)
     assert result.evidence.content_hash == hashlib.sha256(html).hexdigest()
     assert "Inspection result" in result.text
     assert "All checks passed." in result.text

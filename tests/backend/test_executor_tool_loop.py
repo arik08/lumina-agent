@@ -435,9 +435,13 @@ def test_web_tool_results_share_one_turn_context_budget() -> None:
         for index in range(3)
     ]
 
+    delivered: dict[str, int] = {}
+    for index, (call, _result) in enumerate(resolved_calls):
+        call["id"] = f"fetch-{index}"
     contents = executor_module._provider_tool_result_contents(
         resolved_calls,
         capabilities={"context_window": 16_000},
+        delivered_web_text_chars=delivered,
     )
 
     assert len(contents) == 3
@@ -445,6 +449,7 @@ def test_web_tool_results_share_one_turn_context_budget() -> None:
     assert all(
         json.loads(content)["providerContextTruncated"] is True for content in contents
     )
+    assert delivered == {"fetch-0": 0, "fetch-1": 0, "fetch-2": 9_600}
 
 
 def test_all_tool_results_share_one_turn_context_budget_and_keep_readback_ids() -> None:
