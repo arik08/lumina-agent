@@ -108,7 +108,7 @@ export function ArtifactLibraryView({ projectId, onOpenArtifact, onOpenNavigatio
           />
         </div>
       </div>
-      <div className="feature-scroll">
+      <div className="feature-scroll artifact-library-scroll">
         {loading && !hasCachedItems ? <div className="feature-state"><LoaderCircle className="is-running" size={17} /> Artifact를 불러오고 있습니다.</div> : filtered.length === 0 ? <div className="feature-state">표시할 Artifact가 없습니다.</div> : (
           <div className="artifact-library-list">
             {filtered.map((artifact) => (

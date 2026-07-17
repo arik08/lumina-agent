@@ -19,5 +19,12 @@ test("artifact library uses the themed thin scrollbar", async () => {
   assert.match(styles, /:where\(\*\) \{[\s\S]*?scrollbar-color: var\(--scrollbar-thumb\) transparent;[\s\S]*?scrollbar-width: thin;/);
   assert.match(styles, /:where\(\*\)::\-webkit-scrollbar \{ width: 6px; height: 6px; \}/);
   assert.match(styles, /\.artifact-library-row \{[^}]*grid-template-columns: 30px minmax\(0, 1fr\) auto;/);
+  assert.match(styles, /\.artifact-library-scroll \{[^}]*background: var\(--surface\);/);
   assert.doesNotMatch(styles, /\.validation-mark/);
+});
+
+test("artifact library uses the main work surface", async () => {
+  const view = await readFile(viewPath, "utf8");
+
+  assert.match(view, /className="feature-scroll artifact-library-scroll"/);
 });
