@@ -21,7 +21,7 @@ test("the Help icon sits immediately after the theme control and opens the Help 
 
 test("the Help workspace is Markdown-first and hides mutations behind admin capability", () => {
   assert.match(helpView, /ReactMarkdown remarkPlugins=\{\[remarkGfm\]\}/);
-  assert.match(helpView, /effectiveCanManage && section === "manuals" \? <div className="help-create-actions">/);
+  assert.match(helpView, /section === "manuals" \? <div className="feature-toolbar help-center-toolbar">[\s\S]*?effectiveCanManage \? <div className="help-create-actions">/);
   assert.match(helpView, /await api\.help\.create/);
   assert.match(helpView, /await api\.help\.update/);
   assert.match(helpView, /await api\.help\.delete/);
@@ -37,4 +37,7 @@ test("the Help workspace combines manuals and announcements with admin-only anno
   assert.match(helpView, /api\.admin\.updateAnnouncement/);
   assert.match(helpView, /api\.admin\.deleteAnnouncement/);
   assert.match(helpView, /announcementDeleteArmed \? "한 번 더 눌러 삭제" : "삭제"/);
+  assert.match(helpView, /help-announcement-explorer-controls[\s\S]*?공지 작성[\s\S]*?공지 제목이나 내용 검색[\s\S]*?file-explorer-heading/);
+  assert.match(helpView, /본문 Markdown 원문 \(Raw code\)[\s\S]*?<textarea[^>]+spellCheck=\{false\}/);
+  assert.match(helpView, /help-markdown help-announcement-body[\s\S]*?<ReactMarkdown remarkPlugins=\{\[remarkGfm\]\}/);
 });

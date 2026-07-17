@@ -1774,6 +1774,11 @@ button:disabled { cursor: default; opacity: 0.5; }
 .help-section-tabs button[aria-selected="true"] > span { background: var(--cobalt-pale); color: var(--cobalt); }
 .help-center-toolbar { gap: 10px; }
 .help-center-toolbar .feature-search { min-width: 220px; flex: 1; }
+.help-announcement-explorer-controls { display: grid; gap: 7px; padding: 9px 10px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.help-announcement-explorer-controls .feature-search { width: 100%; }
+.help-announcement-explorer-controls .help-create-actions,
+.help-announcement-explorer-controls .help-create-actions button { width: 100%; }
+.help-announcement-explorer-controls .help-create-actions button { justify-content: center; }
 .help-create-actions { display: flex; flex: 0 0 auto; gap: 5px; }
 .help-create-actions button { display: inline-flex; height: 30px; align-items: center; gap: 5px; padding: 0 9px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); color: var(--ink); white-space: nowrap; }
 .help-create-actions button:hover { background: var(--surface-soft); }
@@ -1835,7 +1840,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .help-announcement-form footer { display: flex; justify-content: flex-end; gap: 6px; }
 .help-announcement-form footer button { display: inline-flex; height: 30px; align-items: center; gap: 5px; padding: 0 10px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); color: var(--ink); cursor: pointer; }
 .help-announcement-form footer button.lumina-primary-action { border-color: var(--cobalt); background: var(--cobalt); color: var(--surface); }
-.help-announcement-body { min-height: 0; flex: 1; overflow: auto; max-width: 78ch; padding: 26px clamp(22px, 6vw, 72px) 60px; color: var(--ink); line-height: 1.72; white-space: pre-wrap; overflow-wrap: anywhere; }
+.help-announcement-body { min-height: 0; flex: 1; overflow: auto; }
 
 .shared-viewer { display: flex; width: 100%; height: 100svh; flex-direction: column; background: var(--canvas); color: var(--ink); }
 .shared-viewer-header { display: grid; min-height: 52px; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 5px; padding: 0 max(20px, calc((100% - 780px) / 2)); border-bottom: 1px solid var(--line); background: var(--surface); }

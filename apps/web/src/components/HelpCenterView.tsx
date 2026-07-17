@@ -355,14 +355,17 @@ export function HelpCenterView({ canManage, initialAnnouncementId = null, onOpen
         <button type="button" role="tab" aria-selected={section === "announcements"} onClick={() => switchSection("announcements")}><Megaphone size={14} />공지사항 <span>{announcementTotal}</span></button>
         <button type="button" role="tab" aria-selected={section === "manuals"} onClick={() => switchSection("manuals")}><FileText size={14} />매뉴얼 <span>{documentCount}</span></button>
       </div>
-      <div className="feature-toolbar help-center-toolbar">
-        <label className="feature-search"><Search size={14} /><input value={query} placeholder={section === "manuals" ? "매뉴얼 제목이나 내용 검색" : "공지 제목이나 내용 검색"} onChange={(event) => setQuery(event.currentTarget.value)} /></label>
-        {effectiveCanManage && section === "manuals" ? <div className="help-create-actions"><button type="button" disabled={busy} onClick={() => beginCreate("folder")}><FolderPlus size={14} />폴더</button><button type="button" disabled={busy} onClick={() => beginCreate("document")}><FilePlus2 size={14} />문서</button></div> : null}
-        {effectiveCanManage && section === "announcements" ? <div className="help-create-actions"><button className="lumina-primary-action" type="button" disabled={busy} onClick={beginAnnouncementCreate}><Plus size={14} />공지 작성</button></div> : null}
-      </div>
+      {section === "manuals" ? <div className="feature-toolbar help-center-toolbar">
+        <label className="feature-search"><Search size={14} /><input value={query} placeholder="매뉴얼 제목이나 내용 검색" onChange={(event) => setQuery(event.currentTarget.value)} /></label>
+        {effectiveCanManage ? <div className="help-create-actions"><button type="button" disabled={busy} onClick={() => beginCreate("folder")}><FolderPlus size={14} />폴더</button><button type="button" disabled={busy} onClick={() => beginCreate("document")}><FilePlus2 size={14} />문서</button></div> : null}
+      </div> : null}
       {error ? <div className="feature-error" role="alert">{error}</div> : null}
       <ResizableSplitPane storageKey="lumina:help-explorer-width" ariaLabel="사용 안내 탐색기 너비 조절" className="file-workspace-split help-center-split">
         <aside className="file-workspace-explorer" aria-label={section === "manuals" ? "매뉴얼 탐색기" : "공지사항 목록"}>
+          {section === "announcements" ? <div className="help-announcement-explorer-controls">
+            {effectiveCanManage ? <div className="help-create-actions"><button className="lumina-primary-action" type="button" disabled={busy} onClick={beginAnnouncementCreate}><Plus size={14} />공지 작성</button></div> : null}
+            <label className="feature-search"><Search size={14} /><input value={query} placeholder="공지 제목이나 내용 검색" onChange={(event) => setQuery(event.currentTarget.value)} /></label>
+          </div> : null}
           <div className="file-explorer-heading">{section === "manuals" ? <FolderOpen size={14} /> : <Megaphone size={14} />}<strong>{section === "manuals" ? "매뉴얼 목차" : "공지사항"}</strong>{effectiveCanManage ? <small>관리자 편집</small> : null}</div>
           {section === "manuals" && creating ? (
             <form className="help-create-form" onSubmit={(event) => { event.preventDefault(); void createItem(); }}>
@@ -409,7 +412,7 @@ export function HelpCenterView({ canManage, initialAnnouncementId = null, onOpen
             <form className="help-announcement-form" onSubmit={(event) => void saveAnnouncement(event)}>
               <header><span className="file-viewer-icon"><Megaphone size={22} /></span><div><h2>{announcementMode === "create" ? "새 공지 작성" : "공지사항 수정"}</h2><p>게시하면 조직의 모든 사용자가 알림과 사용 안내에서 볼 수 있습니다.</p></div></header>
               <label><span>제목</span><input autoFocus maxLength={240} value={announcementTitle} onChange={(event) => setAnnouncementTitle(event.currentTarget.value)} placeholder="공지 제목" required /></label>
-              <label><span>내용</span><textarea className="thin-scrollbar" maxLength={20000} value={announcementBody} onChange={(event) => setAnnouncementBody(event.currentTarget.value)} placeholder="사용자에게 전달할 상세 내용을 입력하세요." required /></label>
+              <label><span>본문 Markdown 원문 (Raw code)</span><textarea className="thin-scrollbar" maxLength={20000} value={announcementBody} spellCheck={false} onChange={(event) => setAnnouncementBody(event.currentTarget.value)} placeholder="사용자에게 전달할 상세 내용을 Markdown으로 입력하세요." required /></label>
               <footer><button type="button" onClick={() => { setAnnouncementMode("idle"); if (!selectedAnnouncementId) setSelectedAnnouncementId(announcements[0]?.id ?? null); }}><X size={14} />취소</button><button className="lumina-primary-action" type="submit" disabled={busy || !announcementTitle.trim() || !announcementBody.trim()}>{busy ? <LoaderCircle className="is-running" size={14} /> : <Check size={14} />}{announcementMode === "create" ? "게시" : "저장"}</button></footer>
             </form>
           ) : !selectedAnnouncement ? (
@@ -421,7 +424,7 @@ export function HelpCenterView({ canManage, initialAnnouncementId = null, onOpen
                 <div><h2>{selectedAnnouncement.title}</h2><p>{selectedAnnouncement.author?.displayName || selectedAnnouncement.author?.loginId || "관리자"} · {formatDate(selectedAnnouncement.createdAt)}{announcementWasEdited(selectedAnnouncement) ? " · 수정됨" : ""}</p></div>
                 {effectiveCanManage ? <div className="file-viewer-actions"><button type="button" disabled={busy} onClick={beginAnnouncementEdit}><Pencil size={14} />편집</button><button className={`is-danger ${announcementDeleteArmed ? "is-confirming" : ""}`} type="button" disabled={busy} onClick={() => void removeAnnouncement()}>{announcementDeleteArmed ? <AlertCircle size={14} /> : <Trash2 size={14} />}{announcementDeleteArmed ? "한 번 더 눌러 삭제" : "삭제"}</button></div> : null}
               </header>
-              <article className="help-announcement-body thin-scrollbar">{selectedAnnouncement.body}</article>
+              <article className="help-markdown help-announcement-body thin-scrollbar"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: (props) => <a {...props} target="_blank" rel="noreferrer" /> }}>{selectedAnnouncement.body}</ReactMarkdown></article>
             </div>
           )}
         </section>
