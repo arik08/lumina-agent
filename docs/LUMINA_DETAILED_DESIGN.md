@@ -1307,6 +1307,7 @@ Catalog ExtensionVersion
 
 - 카탈로그 공개 범위와 설치 권한은 별개입니다.
 - 설치 범위는 user, project, organization입니다.
+- user 범위 Skill·MCP 설치의 Project 허용 목록은 `null=모든 Project`, `[]=허용 Project 없음`, `[project_id...]`=선택 Project로 저장합니다. Marketplace는 채팅 Project 선택기와 같은 Portal 기반 다중 선택 LOV와 전체 선택·해제를 제공하고, Project 설정은 현재 유효 항목을 체크 목록으로 보여주되 해제한 행을 화면 전환 전까지 유지합니다.
 - Composer의 `$` 검색은 현재 사용자의 활성 WorkingDraft와 현재 Project·사용자에 설치·활성화된 항목만 반환합니다.
 - update는 명시적으로 설치 pointer를 새 version으로 바꾸며 자동 update는 기본적으로 끕니다.
 - uninstall은 scope 연결만 제거하고 package나 다른 설치를 삭제하지 않습니다.

@@ -176,6 +176,10 @@ Skill Folder Root
 
 설치 대상은 `user`, `project`, `organization` 중 하나입니다. 일반 Marketplace의 기본 설치는 로그인한 `user` 계정 범위이며, Project와 Organization 설치는 권한이 있는 협업·관리 workflow에서 명시적으로 선택합니다.
 
+사용자 범위 Skill·MCP 설치는 기본적으로 모든 접근 가능 Project에서 활성화합니다. 설치 상세의 다중 선택 LOV에서 여러 Project를 함께 선택하거나 전체 선택·해제할 수 있으며, `project_ids = null`은 현재와 앞으로 생성될 모든 접근 가능 Project, 빈 배열은 어떤 Project에서도 사용하지 않음, ID 배열은 선택한 Project만 허용함을 뜻합니다. Backend는 Composer 후보와 Run·예약 Run snapshot을 만들 때 이 범위를 다시 검증합니다.
+
+Project 설정은 현재 Project에서 유효한 Skill·MCP 설치를 체크 목록으로 보여줍니다. 체크 해제는 즉시 다음 Run과 Composer 후보에 반영하지만 현재 화면의 행은 제거하지 않아 같은 화면에서 다시 선택할 수 있게 하고, 다른 화면이나 Project로 전환한 뒤 목록을 다시 불러올 때 제외합니다.
+
 ```text
 Catalog ExtensionVersion
         ↓ install exact version

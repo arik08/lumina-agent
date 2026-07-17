@@ -37,7 +37,7 @@ from ...mcp.service import (
     mcp_skill_wrappers,
     require_installation,
     set_definition_status,
-    set_installation_enabled,
+    update_installation,
     unbind_secret_reference,
     uninstall,
 )
@@ -350,11 +350,13 @@ def patch_mcp_installation(
     context: AuthContext = Depends(require_csrf),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    installation = set_installation_enabled(
+    installation = update_installation(
         db,
         user=context.user,
         installation_id=installation_id,
         enabled=payload.enabled,
+        project_ids=payload.project_ids,
+        update_project_ids="project_ids" in payload.model_fields_set,
     )
     record_audit(
         db,
@@ -364,7 +366,10 @@ def patch_mcp_installation(
         result="success",
         actor=context.user,
         request_id=_request_id(request),
-        metadata={"enabled": installation.enabled},
+        metadata={
+            "enabled": installation.enabled,
+            "project_ids": installation.project_ids_json,
+        },
     )
     db.commit()
     return installation_payload(db, installation, user=context.user)

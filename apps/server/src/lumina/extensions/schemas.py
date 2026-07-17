@@ -55,7 +55,14 @@ class InstallationCreate(ApiModel):
 
 
 class InstallationPatch(ApiModel):
-    enabled: bool
+    enabled: bool | None = None
+    project_ids: list[str] | None = None
+
+    @model_validator(mode="after")
+    def require_change(self) -> "InstallationPatch":
+        if not self.model_fields_set:
+            raise ValueError("enabled or projectIds is required")
+        return self
 
 
 class FolderCreate(ApiModel):
@@ -72,9 +79,7 @@ class FolderPatch(ApiModel):
 
     @model_validator(mode="after")
     def require_change(self) -> "FolderPatch":
-        if not self.model_fields_set or (
-            self.name is None and self.sort_order is None
-        ):
+        if not self.model_fields_set or (self.name is None and self.sort_order is None):
             raise ValueError("name or sortOrder is required")
         return self
 

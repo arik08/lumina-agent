@@ -1509,6 +1509,7 @@ class ExtensionInstallation(UUIDPrimaryKeyMixin, Base):
     settings_json: Mapped[dict[str, Any]] = mapped_column(
         JSON, default=dict, nullable=False
     )
+    project_ids_json: Mapped[list[str] | None] = mapped_column(JSON)
     installed_by_user_id: Mapped[str] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
@@ -1718,6 +1719,7 @@ class McpInstallation(UUIDPrimaryKeyMixin, Base):
     tool_allowlist_json: Mapped[list[str]] = mapped_column(
         JSON, default=list, nullable=False
     )
+    project_ids_json: Mapped[list[str] | None] = mapped_column(JSON)
     installed_by_user_id: Mapped[str] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )

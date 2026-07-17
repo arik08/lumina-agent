@@ -984,11 +984,31 @@ def require_installation(
     return installation
 
 
-def set_installation_enabled(
-    db: Session, *, user: User, installation_id: str, enabled: bool
+def update_installation(
+    db: Session,
+    *,
+    user: User,
+    installation_id: str,
+    enabled: bool | None,
+    project_ids: list[str] | None,
+    update_project_ids: bool,
 ) -> ExtensionInstallation:
     installation = require_installation(db, user, installation_id, write=True)
-    installation.enabled = enabled
+    if enabled is not None:
+        installation.enabled = enabled
+    if update_project_ids:
+        if installation.scope_type != "user":
+            raise ApiProblem(
+                422,
+                "installation_project_scope_unsupported",
+                "사용자 범위 Skill 설치만 프로젝트별로 설정할 수 있습니다.",
+            )
+        normalized_project_ids = list(dict.fromkeys(project_ids or []))
+        for project_id in normalized_project_ids:
+            require_project(db, user, project_id)
+        installation.project_ids_json = (
+            normalized_project_ids if project_ids is not None else None
+        )
     db.flush()
     return installation
 
@@ -1018,7 +1038,7 @@ def list_installations(
         & (ExtensionInstallation.scope_id == scope_id)
         for scope_type, scope_id in scopes
     ]
-    return list(
+    installations = list(
         db.scalars(
             select(ExtensionInstallation)
             .where(
@@ -1028,6 +1048,15 @@ def list_installations(
             .order_by(ExtensionInstallation.installed_at.desc())
         )
     )
+    if project_id is None:
+        return installations
+    return [
+        installation
+        for installation in installations
+        if installation.scope_type != "user"
+        or installation.project_ids_json is None
+        or project_id in installation.project_ids_json
+    ]
 
 
 def list_extensions(
@@ -1114,6 +1143,12 @@ def resolve_skill_snapshot(
         )
     ):
         if (installation.scope_type, installation.scope_id) not in scope_pairs:
+            continue
+        if (
+            installation.scope_type == "user"
+            and installation.project_ids_json is not None
+            and project_id not in installation.project_ids_json
+        ):
             continue
         if extension.id in resolved:
             continue
@@ -1670,6 +1705,7 @@ def installation_payload(
         "scopeType": installation.scope_type,
         "scopeId": installation.scope_id,
         "enabled": installation.enabled,
+        "projectIds": installation.project_ids_json,
         "settings": installation.settings_json,
         "installedAt": installation.installed_at,
     }

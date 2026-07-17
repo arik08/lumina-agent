@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from ..api.schemas import ApiModel
 
@@ -61,7 +61,14 @@ class McpInstallationCreate(ApiModel):
 
 
 class McpInstallationPatch(ApiModel):
-    enabled: bool
+    enabled: bool | None = None
+    project_ids: list[str] | None = None
+
+    @model_validator(mode="after")
+    def require_change(self) -> "McpInstallationPatch":
+        if not self.model_fields_set:
+            raise ValueError("enabled or projectIds is required")
+        return self
 
 
 class McpSecretBindingInput(ApiModel):

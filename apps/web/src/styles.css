@@ -1245,7 +1245,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .skill-catalog-card-actions { display: flex; align-items: center; gap: 5px; margin-left: auto; }
 .skill-catalog-view { display: inline-grid; width: 28px; min-width: 28px; height: 26px; place-items: center; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--ink); cursor: pointer; }
 .skill-catalog-view:not(:disabled):hover, .skill-catalog-view:not(:disabled):focus-visible { border-color: color-mix(in srgb, var(--cobalt) 34%, var(--line)); background: var(--cobalt-pale); color: var(--cobalt); }
-.skill-catalog-card.is-liked .skill-catalog-view { border-color: color-mix(in srgb, var(--cobalt) 34%, var(--line)); }
+.skill-catalog-card.is-liked .skill-catalog-view { border-color: var(--cobalt); }
 .skill-catalog-more { display: flex; min-width: 112px; height: 32px; align-items: center; justify-content: center; gap: 6px; margin: 18px auto 0; padding: 0 12px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); color: var(--ink); cursor: pointer; }
 .skill-catalog-more:not(:disabled):hover { background: var(--surface-soft); }
 .skill-catalog-empty { display: grid; min-height: 300px; place-content: center; justify-items: center; gap: 7px; color: var(--muted); text-align: center; }
@@ -1316,6 +1316,17 @@ button:disabled { cursor: default; opacity: 0.5; }
 .marketplace-inline-editor:hover { background: color-mix(in srgb, var(--cobalt) 4%, transparent); }
 .marketplace-inline-editor:focus { background: color-mix(in srgb, var(--cobalt) 6%, transparent); box-shadow: inset 0 -1px var(--cobalt); }
 .marketplace-inline-editor[data-placeholder]:empty::before { color: var(--faint); content: attr(data-placeholder); }
+.marketplace-project-selector { position: relative; }
+.marketplace-package-actions > .marketplace-project-selector > button { display: inline-flex; height: 30px; align-items: center; gap: 5px; padding: 0 9px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); color: var(--ink); font-size: 11px; cursor: pointer; }
+.marketplace-project-options.project-options { position: fixed; z-index: 1000; right: 0; left: auto; width: 280px; padding: 5px; }
+.marketplace-project-options.project-options > button.marketplace-project-all { border-bottom: 1px solid var(--line); border-radius: 4px 4px 0 0; color: var(--cobalt); font-weight: 650; }
+.marketplace-project-option-list { display: grid; max-height: 190px; overflow-x: hidden; overflow-y: auto; padding-block: 3px; }
+.marketplace-project-options.project-options .marketplace-project-option-list > button { width: 100%; }
+.marketplace-project-options.project-options [role="option"][aria-selected="true"] { background: color-mix(in srgb, var(--cobalt) 8%, transparent); color: var(--cobalt); }
+.marketplace-project-options > footer { display: flex; min-height: 38px; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 3px 0; border-top: 1px solid var(--line); }
+.marketplace-project-options > footer > span { color: var(--muted); font-size: 10px; }
+.marketplace-project-options > footer > div { display: flex; gap: 4px; }
+.marketplace-project-options.project-options > footer button { min-height: 27px; padding: 0 7px; border: 1px solid var(--line); background: var(--surface); font-size: 10.5px; }
 .marketplace-package-detail.is-editing .marketplace-file-browser { border-color: color-mix(in srgb, var(--cobalt) 42%, var(--line)); }
 .marketplace-file-browser .skill-file-explorer > header small { margin-left: auto; color: var(--faint); font-size: 10px; font-weight: 500; }
 .marketplace-package-detail .marketplace-file-browser .skill-file-editor { display: block; width: 100%; height: 100%; min-height: 0; overflow: hidden; border: 0; outline: 0; padding: 0; background: var(--surface); color: var(--ink); font-family: var(--font-code); font-size: 12.5px; line-height: 1.65; letter-spacing: normal; }

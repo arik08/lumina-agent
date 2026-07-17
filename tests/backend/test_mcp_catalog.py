@@ -300,6 +300,34 @@ def test_mcp_catalog_binding_snapshot_and_cross_user_isolation(
         assert installation["secretBindingRole"] == "admin"
         assert installation["ready"] is False
 
+        user_installation = admin_client.post(
+            "/api/mcp/installations",
+            headers={"X-CSRF-Token": admin_csrf},
+            json={
+                "definitionId": definition["id"],
+                "configurationRevisionId": revision_one["id"],
+                "scopeType": "user",
+                "toolAllowlist": ["search_docs"],
+            },
+        )
+        assert user_installation.status_code == 201, user_installation.text
+        assert user_installation.json()["projectIds"] is None
+        user_installation_id = user_installation.json()["id"]
+        user_scope_disabled = admin_client.patch(
+            f"/api/mcp/installations/{user_installation_id}",
+            headers={"X-CSRF-Token": admin_csrf},
+            json={"projectIds": []},
+        )
+        assert user_scope_disabled.status_code == 200, user_scope_disabled.text
+        assert user_scope_disabled.json()["projectIds"] == []
+        assert all(
+            item["id"] != user_installation_id
+            for item in admin_client.get(
+                "/api/mcp/installations",
+                params={"project_id": ids["project_id"]},
+            ).json()
+        )
+
         no_candidate = alice_client.get(
             "/api/composer/suggestions",
             params={"project_id": ids["project_id"], "trigger": "$"},

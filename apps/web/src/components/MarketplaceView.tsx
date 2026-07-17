@@ -1,9 +1,10 @@
-import { AlertTriangle, ArrowLeft, Braces, Check, ChevronDown, ChevronRight, Code2, Download, Eye, FileCode2, FileJson, FileText, Folder, FolderOpen, Info, LoaderCircle, Maximize2, Menu, Minimize2, Package, Pencil, Power, RefreshCw, Save, Search, Sparkles, Store, Trash2, Undo2, Wrench, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Braces, Check, ChevronDown, ChevronRight, Code2, Download, Eye, FileCode2, FileJson, FileText, Folder, FolderOpen, Info, LoaderCircle, Maximize2, Menu, Minimize2, Package, Pencil, Power, RefreshCw, Save, Search, Settings2, Sparkles, Store, Trash2, Undo2, Wrench, X } from "lucide-react";
 import { type DragEvent, type KeyboardEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api, ApiError } from "../api";
-import type { ExtensionInstallation, SkillCatalogItem, SkillCatalogResponse, SkillExtension, SkillVersion } from "../api-types";
+import type { ExtensionInstallation, ProjectSummary, SkillCatalogItem, SkillCatalogResponse, SkillExtension, SkillVersion } from "../api-types";
 import { useCachedViewState } from "../view-data-cache";
 import { McpMarketplacePanel } from "./McpMarketplacePanel";
 import { MarketplaceInstallButton } from "./MarketplaceInstallButton";
@@ -128,6 +129,7 @@ function SkillMarkdownPreview({ value }: { value: string }) {
 
 export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceViewProps) {
   const skillContentRef = useRef<HTMLDivElement>(null);
+  const projectScopeButtonRef = useRef<HTMLButtonElement>(null);
   const repositoryRevisionRef = useRef<string | null>(null);
   const catalogRequestIdRef = useRef(0);
   const [marketKind, setMarketKind] = useState<"skill" | "mcp">("skill");
@@ -183,6 +185,11 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
   const [draggedPath, setDraggedPath] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [projectScopeOpen, setProjectScopeOpen] = useState(false);
+  const [projectScopeDraft, setProjectScopeDraft] = useState<Set<string> | null>(null);
+  const [projectScopeBusy, setProjectScopeBusy] = useState(false);
+  const [projectScopePosition, setProjectScopePosition] = useState({ top: 0, right: 0 });
 
   useEffect(() => {
     const element = skillContentRef.current;
@@ -192,7 +199,10 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
   }, [activeFile, selectedId, skillView]);
 
   const currentItems = skillView === "trash" ? trashedItems : items;
-  const selected = currentItems.find((item) => item.id === selectedId) ?? currentItems[0] ?? null;
+  const selectedCandidate = currentItems.find((item) => item.id === selectedId) ?? currentItems[0] ?? null;
+  const selected = skillView === "installed" && selectedCandidate && !installations.some((entry) => entry.extensionId === selectedCandidate.id)
+    ? currentItems.find((item) => installations.some((entry) => entry.extensionId === item.id)) ?? null
+    : selectedCandidate;
   const installation = selected ? installations.find((item) => item.extensionId === selected.id) ?? null : null;
   const latestVersion = selected?.versions.at(-1) ?? null;
   const visibleItems = useMemo(() => {
@@ -213,14 +223,16 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
     setLoading(true);
     setError(null);
     try {
-      const [extensions, trashed, installed] = await Promise.all([
+      const [extensions, trashed, installed, availableProjects] = await Promise.all([
         api.extensions.list(),
         api.extensions.listTrash(),
         api.extensions.listInstallations(),
+        api.projects.list(),
       ]);
       setItems(extensions);
       setTrashedItems(trashed);
       setInstallations(installed.filter((entry) => entry.scopeType === "user"));
+      setProjects(availableProjects);
       setSelectedId((current) => preferredId ?? (current && [...extensions, ...trashed].some((item) => item.id === current) ? current : extensions[0]?.id ?? trashed[0]?.id ?? null));
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "Marketplace를 불러오지 못했습니다.");
@@ -498,6 +510,46 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
     }
   };
 
+  useEffect(() => {
+    setProjectScopeOpen(false);
+    setProjectScopeDraft(null);
+  }, [selected?.id]);
+
+  const openProjectScope = () => {
+    if (!installation) return;
+    const rect = projectScopeButtonRef.current?.getBoundingClientRect();
+    if (rect) setProjectScopePosition({ top: rect.bottom + 4, right: Math.max(8, window.innerWidth - rect.right) });
+    setProjectScopeDraft(installation.projectIds === null ? null : new Set(installation.projectIds));
+    setProjectScopeOpen((current) => !current);
+  };
+
+  const toggleProjectScope = (targetProjectId: string) => {
+    setProjectScopeDraft((current) => {
+      const next = current === null ? new Set(projects.map((item) => item.id)) : new Set(current);
+      if (next.has(targetProjectId)) next.delete(targetProjectId);
+      else next.add(targetProjectId);
+      return next;
+    });
+  };
+
+  const saveProjectScope = async () => {
+    if (!installation) return;
+    setProjectScopeBusy(true);
+    setError(null);
+    try {
+      const updated = await api.extensions.updateProjects(
+        installation.id,
+        projectScopeDraft === null ? null : [...projectScopeDraft],
+      );
+      setInstallations((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setProjectScopeOpen(false);
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : "프로젝트 사용 범위를 저장하지 못했습니다.");
+    } finally {
+      setProjectScopeBusy(false);
+    }
+  };
+
   const viewCatalogSkill = (target: SkillCatalogItem) => {
     if (!target.installed) return;
     window.history.pushState({
@@ -709,6 +761,17 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
                 {skillView === "trash" ? <button className="lumina-primary-action" type="button" disabled={busy} onClick={() => void restoreSelectedSkill()}>{busy ? <LoaderCircle className="is-running" size={14} /> : <Undo2 size={14} />} 복원</button> : <>
                   {editMode ? <><button type="button" disabled={busy} onClick={() => { setEditMode(false); setRenamingPath(null); }}><X size={14} /> 취소</button><button className="lumina-primary-action" type="button" disabled={busy || (selected.canEdit && !editableName.trim())} onClick={() => void savePackageEdit()}><Save size={14} /> 초안 저장</button></> : selected.canCreateDraft && <button type="button" disabled={busy} onClick={() => void beginPackageEdit()}><Pencil size={14} /> {selected.canEdit ? "편집" : "내 버전으로 수정"}</button>}
                   {!editMode && selected.draft?.dirty && <button type="button" disabled={busy} onClick={() => void saveVersion()}><Check size={14} /> {nextSavedSkillDisplayVersion(selected)}로 저장</button>}
+                  {!editMode && installation && <div className="marketplace-project-selector" onClick={(event) => event.stopPropagation()}>
+                    <button ref={projectScopeButtonRef} type="button" aria-haspopup="listbox" aria-expanded={projectScopeOpen} onClick={openProjectScope}><Settings2 size={14} /> 프로젝트 사용 설정</button>
+                    {projectScopeOpen && createPortal(<div className="marketplace-project-options project-options" style={{ top: projectScopePosition.top, right: projectScopePosition.right }} role="listbox" aria-label="Skill을 사용할 프로젝트" aria-multiselectable="true" onClick={(event) => event.stopPropagation()}>
+                      <button className="marketplace-project-all" type="button" role="option" aria-selected={projectScopeDraft === null || projectScopeDraft.size === projects.length} onClick={() => setProjectScopeDraft(projectScopeDraft === null || projectScopeDraft.size === projects.length ? new Set() : null)}><FolderOpen size={15} /><span>{projectScopeDraft === null || projectScopeDraft.size === projects.length ? "전체 해제" : "전체 선택"}</span><Check size={14} /></button>
+                      <div className="marketplace-project-option-list">{projects.map((item) => {
+                        const checked = projectScopeDraft === null || projectScopeDraft.has(item.id);
+                        return <button type="button" role="option" aria-selected={checked} key={item.id} onClick={() => toggleProjectScope(item.id)}><Folder size={15} /><span>{item.name}</span>{checked && <Check size={14} />}</button>;
+                      })}</div>
+                      <footer><span>{projectScopeDraft === null ? "모든 프로젝트" : `${projectScopeDraft.size}개 선택`}</span><div><button type="button" disabled={projectScopeBusy} onClick={() => setProjectScopeOpen(false)}>취소</button><button className="lumina-primary-action" type="button" disabled={projectScopeBusy} onClick={() => void saveProjectScope()}>{projectScopeBusy ? <LoaderCircle className="is-running" size={13} /> : <Save size={13} />} 적용</button></div></footer>
+                    </div>, document.body)}
+                  </div>}
                   {!editMode && <button className={`marketplace-detail-install-toggle ${installation ? "is-disable" : "is-primary lumina-primary-action"}`} type="button" aria-busy={pendingInstallationSurfaceById[selected.id] === "detail"} disabled={!latestVersion || busy || pendingInstallationSurfaceById[selected.id] === "detail"} onClick={() => selected && void toggleInstallation(selected, "detail")}>{pendingInstallationSurfaceById[selected.id] === "detail" ? <><LoaderCircle className="is-running" size={14} /> 처리 중</> : <>{installation ? <Power size={14} /> : <Download size={14} />}{installation ? "미사용" : "설치"}</>}</button>}
                   {!editMode && selected.canDelete && <button className={`text-danger ${deleteConfirmId === selected.id ? "is-delete-armed" : ""}`} type="button" aria-label={deleteConfirmId === selected.id ? `${selected.name} 삭제 경고, 한 번 더 누르면 보관함으로 이동` : `${selected.name} 삭제`} disabled={busy} onClick={() => void deleteSelectedSkill()}>{busy && deleteConfirmId === selected.id ? <LoaderCircle className="is-running" size={14} /> : deleteConfirmId === selected.id ? <AlertTriangle size={14} /> : <Trash2 size={14} />} {deleteConfirmId === selected.id ? "경고" : "삭제"}</button>}
                 </>}

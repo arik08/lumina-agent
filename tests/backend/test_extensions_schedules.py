@@ -679,6 +679,36 @@ def test_skill_draft_versions_installation_and_folder_move(tmp_path: Path) -> No
         )
         assert installed.status_code == 201, installed.text
         installation_id = installed.json()["id"]
+        assert installed.json()["projectIds"] is None
+        projects_before_scope = client.get("/api/projects").json()
+        default_project_id = projects_before_scope[0]["id"]
+        second_project = client.post(
+            "/api/projects",
+            headers=headers,
+            json={"name": "Skill 제외 프로젝트"},
+        )
+        assert second_project.status_code == 201, second_project.text
+        scoped = client.patch(
+            f"/api/extension-installations/{installation_id}",
+            headers=headers,
+            json={"projectIds": [default_project_id]},
+        )
+        assert scoped.status_code == 200, scoped.text
+        assert scoped.json()["projectIds"] == [default_project_id]
+        assert any(
+            item["id"] == installation_id
+            for item in client.get(
+                "/api/extension-installations",
+                params={"project_id": default_project_id},
+            ).json()
+        )
+        assert all(
+            item["id"] != installation_id
+            for item in client.get(
+                "/api/extension-installations",
+                params={"project_id": second_project.json()["id"]},
+            ).json()
+        )
         upgraded = client.post(
             "/api/extension-installations",
             headers=headers,

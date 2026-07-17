@@ -1346,8 +1346,9 @@ export async function removeSkillOwnership(
   );
 }
 
-export async function listExtensionInstallations(signal?: AbortSignal) {
+export async function listExtensionInstallations(projectId?: string, signal?: AbortSignal) {
   return request<ExtensionInstallation[]>("/extension-installations", {
+    query: { project_id: projectId },
     signal,
   });
 }
@@ -1411,6 +1412,42 @@ export async function setMcpInstallationEnabled(
   return request<McpInstallation>(`/mcp/installations/${encodeURIComponent(installationId)}`, {
     method: "PATCH",
     body: { enabled },
+    signal,
+  });
+}
+
+export async function updateExtensionInstallationProjects(
+  installationId: string,
+  projectIds: string[] | null,
+  signal?: AbortSignal,
+) {
+  return request<ExtensionInstallation>(`/extension-installations/${encodeURIComponent(installationId)}`, {
+    method: "PATCH",
+    body: { projectIds },
+    signal,
+  });
+}
+
+export async function setExtensionInstallationEnabled(
+  installationId: string,
+  enabled: boolean,
+  signal?: AbortSignal,
+) {
+  return request<ExtensionInstallation>(`/extension-installations/${encodeURIComponent(installationId)}`, {
+    method: "PATCH",
+    body: { enabled },
+    signal,
+  });
+}
+
+export async function updateMcpInstallationProjects(
+  installationId: string,
+  projectIds: string[] | null,
+  signal?: AbortSignal,
+) {
+  return request<McpInstallation>(`/mcp/installations/${encodeURIComponent(installationId)}`, {
+    method: "PATCH",
+    body: { projectIds },
     signal,
   });
 }
@@ -1971,6 +2008,8 @@ export const api = {
     removeOwnership: removeSkillOwnership,
     listInstallations: listExtensionInstallations,
     install: installExtensionVersion,
+    setEnabled: setExtensionInstallationEnabled,
+    updateProjects: updateExtensionInstallationProjects,
     uninstall: uninstallExtension,
   },
   mcp: {
@@ -1978,6 +2017,7 @@ export const api = {
     listInstallations: listMcpInstallations,
     install: installMcp,
     setEnabled: setMcpInstallationEnabled,
+    updateProjects: updateMcpInstallationProjects,
     verify: verifyMcpInstallation,
     uninstall: uninstallMcp,
     bindSecret: bindMcpSecret,

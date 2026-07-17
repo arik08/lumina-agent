@@ -1121,6 +1121,7 @@ export interface ExtensionInstallation {
   scopeType: "user" | "project" | "organization";
   scopeId: UUID;
   enabled: boolean;
+  projectIds: UUID[] | null;
   settings: Record<string, unknown>;
   installedAt: IsoDateTime;
 }
@@ -1198,6 +1199,7 @@ export interface McpInstallation {
   scopeType: "user" | "project";
   scopeId: UUID;
   enabled: boolean;
+  projectIds: UUID[] | null;
   toolAllowlist: string[];
   boundSecrets: Array<{
     name: string;
