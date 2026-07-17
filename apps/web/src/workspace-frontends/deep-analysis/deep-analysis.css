@@ -1,0 +1,167 @@
+.deep-analysis-view { overflow: hidden; }
+
+.deep-analysis-header > div:first-child { min-width: 0; }
+.deep-analysis-header > div:first-child > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.deep-analysis-header > button,
+.deep-analysis-mobile-menu {
+  min-height: var(--control-height-sm);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  cursor: pointer;
+}
+.deep-analysis-header > button { display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; }
+.deep-analysis-header > button:hover { border-color: var(--line-strong); background: var(--surface-soft); }
+.deep-analysis-header .deep-analysis-mobile-menu { display: none; width: 30px; place-items: center; padding: 0; }
+
+.deep-analysis-error {
+  z-index: 2;
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--danger) 35%, var(--line));
+  background: var(--danger-surface);
+  color: var(--danger);
+  font-size: 12px;
+}
+.deep-analysis-error button { display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; color: inherit; cursor: pointer; }
+
+.deep-analysis-layout { display: grid; min-height: 0; flex: 1; grid-template-columns: 258px minmax(0, 1fr); }
+.deep-analysis-missions { min-height: 0; overflow: auto; border-right: 1px solid var(--line); background: var(--surface); }
+.deep-analysis-pane-title { display: flex; min-height: 42px; align-items: center; justify-content: space-between; padding: 0 14px; border-bottom: 1px solid var(--line); }
+.deep-analysis-pane-title strong { font-size: 12px; }
+.deep-analysis-pane-title span { min-width: 22px; border-radius: var(--radius-pill); background: var(--surface-soft); color: var(--muted); font-size: 11px; line-height: 20px; text-align: center; }
+
+.deep-analysis-create { display: grid; gap: 12px; padding: 13px; border-bottom: 1px solid var(--line); background: var(--canvas); }
+.deep-analysis-create label { display: grid; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 650; }
+.deep-analysis-create input,
+.deep-analysis-create textarea {
+  width: 100%;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-field);
+  padding: 8px 9px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.45;
+  resize: vertical;
+}
+.deep-analysis-create fieldset { display: grid; grid-template-columns: repeat(3, 1fr); margin: 0; padding: 0; border: 0; gap: 4px; }
+.deep-analysis-create legend { margin-bottom: 6px; color: var(--muted); font-size: 11px; font-weight: 650; }
+.deep-analysis-create fieldset button { min-height: 28px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); color: var(--muted); font-size: 10.5px; cursor: pointer; }
+.deep-analysis-create fieldset button.is-active { border-color: color-mix(in srgb, var(--cobalt) 48%, var(--line)); background: var(--cobalt-pale); color: var(--cobalt); }
+.deep-analysis-create-submit { display: inline-flex; min-height: 31px; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--cobalt); border-radius: var(--radius-control); background: var(--cobalt); color: white; font-size: 12px; cursor: pointer; }
+.deep-analysis-create-submit:disabled { opacity: .52; cursor: default; }
+
+.deep-analysis-mission-list { display: grid; padding: 6px; gap: 2px; }
+.deep-analysis-mission-list > button {
+  display: flex;
+  width: 100%;
+  min-height: 58px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 0;
+  border-radius: var(--radius-option);
+  padding: 8px 8px 8px 10px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.deep-analysis-mission-list > button:hover { background: var(--surface-soft); }
+.deep-analysis-mission-list > button.is-active { background: var(--surface-selected); color: var(--cobalt); }
+.deep-analysis-mission-list > button > span { display: grid; min-width: 0; gap: 4px; }
+.deep-analysis-mission-list strong,
+.deep-analysis-mission-list small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.deep-analysis-mission-list strong { color: var(--ink); font-size: 12px; font-weight: 650; }
+.deep-analysis-mission-list small { color: var(--muted); font-size: 10.5px; }
+
+.deep-analysis-loading,
+.deep-analysis-list-empty { display: flex; min-height: 130px; align-items: center; justify-content: center; gap: 7px; padding: 20px; color: var(--muted); font-size: 12px; text-align: center; }
+.deep-analysis-list-empty { flex-direction: column; }
+.deep-analysis-list-empty p { margin: 0; }
+.deep-analysis-list-empty button { display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; color: var(--cobalt); font-size: 12px; cursor: pointer; }
+
+.deep-analysis-workspace { display: flex; min-width: 0; min-height: 0; flex-direction: column; background: var(--canvas); }
+.deep-analysis-mission-header { display: flex; min-height: 92px; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 15px 18px 12px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.deep-analysis-mission-header > div:first-child { display: grid; min-width: 0; gap: 5px; }
+.deep-analysis-mission-header h2 { overflow: hidden; margin: 0; font-size: 17px; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
+.deep-analysis-mission-header p { overflow: hidden; max-width: 780px; margin: 0; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.deep-analysis-status,
+.node-status { width: fit-content; color: var(--muted); font-size: 10.5px; font-weight: 650; }
+.status-ready, .status-completed { color: var(--success); }
+.status-running { color: var(--cobalt); }
+.status-failed, .status-blocked { color: var(--danger); }
+
+.deep-analysis-cost-wrap { position: relative; flex: none; }
+.deep-analysis-cost { display: inline-flex; min-height: 30px; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: var(--radius-control); padding: 0 9px; background: var(--surface); color: var(--ink); font-size: 11.5px; cursor: pointer; }
+.deep-analysis-cost:hover { background: var(--surface-soft); }
+.deep-analysis-cost-popover { position: absolute; z-index: 6; top: 36px; right: 0; display: grid; width: 300px; gap: 7px; border: 1px solid var(--line); border-radius: var(--radius-menu); padding: 10px; background: var(--surface); box-shadow: var(--shadow-overlay); }
+.deep-analysis-cost-popover > strong { font-size: 11px; }
+.deep-analysis-cost-popover > span { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 10.5px; }
+.deep-analysis-cost-popover em { overflow: hidden; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.deep-analysis-cost-popover b { flex: none; color: var(--ink); font-size: 10.5px; font-weight: 600; }
+
+.deep-analysis-tabs { display: flex; height: 39px; min-height: 39px; align-items: flex-end; gap: 14px; padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.deep-analysis-tabs button { height: 39px; border: 0; border-bottom: 2px solid transparent; padding: 0 4px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 650; }
+.deep-analysis-tabs button.is-active { border-bottom-color: var(--cobalt); color: var(--ink); }
+.deep-analysis-tabs span { margin: 0 0 11px auto; color: var(--faint); font-size: 10.5px; }
+
+.deep-analysis-workflow-layout { display: grid; min-width: 0; min-height: 0; flex: 1; grid-template-columns: minmax(0, 1fr) 278px; }
+.deep-analysis-canvas-scroll { min-width: 0; min-height: 0; overflow: auto; background-color: var(--canvas); background-image: radial-gradient(color-mix(in srgb, var(--muted) 22%, transparent) .7px, transparent .7px); background-size: 18px 18px; }
+.deep-analysis-canvas { position: relative; width: 1190px; min-width: 100%; height: 540px; }
+.deep-analysis-canvas > svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.deep-analysis-canvas > svg path:not(marker path) { fill: none; stroke: color-mix(in srgb, var(--muted) 52%, transparent); stroke-width: 1.4; }
+.deep-analysis-canvas marker path { fill: color-mix(in srgb, var(--muted) 65%, transparent); }
+
+.deep-analysis-node { position: absolute; display: grid; width: 176px; min-height: 86px; gap: 6px; border: 1px solid var(--line-strong); border-radius: var(--radius-select); padding: 10px 11px; background: var(--surface); box-shadow: 0 2px 7px color-mix(in srgb, var(--ink) 7%, transparent); text-align: left; cursor: pointer; transition: border-color var(--motion-fast), box-shadow var(--motion-fast), transform var(--motion-fast); }
+.deep-analysis-node:hover { border-color: color-mix(in srgb, var(--cobalt) 40%, var(--line)); transform: translateY(-1px); }
+.deep-analysis-node.is-selected { border-color: var(--cobalt); box-shadow: 0 0 0 2px color-mix(in srgb, var(--cobalt) 12%, transparent), 0 3px 9px color-mix(in srgb, var(--ink) 8%, transparent); }
+.deep-analysis-node > span { display: flex; align-items: center; gap: 5px; color: var(--cobalt); font-size: 10.5px; font-weight: 650; }
+.deep-analysis-node > strong { overflow: hidden; color: var(--ink); font-size: 12px; font-weight: 670; text-overflow: ellipsis; white-space: nowrap; }
+
+.deep-analysis-inspector { min-height: 0; overflow: auto; border-left: 1px solid var(--line); background: var(--surface); }
+.deep-analysis-inspector > header { display: grid; gap: 5px; padding: 15px; border-bottom: 1px solid var(--line); }
+.deep-analysis-inspector > header > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.deep-analysis-inspector > header > div > span { color: var(--cobalt); font-size: 10.5px; font-weight: 650; }
+.deep-analysis-inspector > header button { display: grid; width: 25px; height: 25px; place-items: center; border: 0; border-radius: var(--radius-control); padding: 0; background: transparent; color: var(--muted); cursor: pointer; }
+.deep-analysis-inspector > header button:hover { background: var(--surface-soft); color: var(--ink); }
+.deep-analysis-inspector > header > strong { font-size: 13px; }
+.deep-analysis-inspector > section { padding: 14px 15px; border-bottom: 1px solid var(--line); }
+.deep-analysis-inspector h3 { margin: 0 0 7px; font-size: 11px; }
+.deep-analysis-inspector p { margin: 0; color: var(--muted); font-size: 11.5px; line-height: 1.55; }
+.deep-analysis-inspector dl { display: grid; margin: 0; gap: 7px; }
+.deep-analysis-inspector dl > div { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; }
+.deep-analysis-inspector dt { color: var(--muted); }
+.deep-analysis-inspector dd { margin: 0; font-weight: 600; }
+
+.deep-analysis-empty { display: flex; min-height: 0; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 28px; color: var(--muted); text-align: center; }
+.deep-analysis-empty > svg { color: var(--faint); }
+.deep-analysis-empty h2 { margin: 0; color: var(--ink); font-size: 14px; }
+.deep-analysis-empty p { margin: 0; font-size: 12px; }
+
+@media (max-width: 1050px) {
+  .deep-analysis-workflow-layout { grid-template-columns: minmax(0, 1fr); }
+  .deep-analysis-inspector { position: absolute; z-index: 4; right: 0; bottom: 0; width: 278px; height: calc(100% - 131px); box-shadow: -8px 0 18px color-mix(in srgb, var(--ink) 7%, transparent); }
+}
+
+@media (max-width: 760px) {
+  .deep-analysis-header .deep-analysis-mobile-menu { display: grid; }
+  .deep-analysis-header > div:first-child > span { display: none; }
+  .deep-analysis-layout { grid-template-columns: 210px minmax(0, 1fr); }
+  .deep-analysis-mission-header { min-height: 84px; }
+  .deep-analysis-mission-header p { max-width: 52vw; }
+  .deep-analysis-cost { font-size: 0; }
+  .deep-analysis-cost svg { width: 16px; height: 16px; }
+}
+
+@media (max-width: 560px) {
+  .deep-analysis-layout { display: block; overflow: auto; }
+  .deep-analysis-missions { max-height: 220px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .deep-analysis-workspace { min-height: 520px; }
+  .deep-analysis-mission-header { padding-inline: 12px; }
+  .deep-analysis-inspector { display: none; }
+}

@@ -343,6 +343,13 @@ def get_turn_sets(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     conversation = require_conversation(db, user, conversation_id)
+    total_question_count = db.scalar(
+        select(func.count(Message.id)).where(
+            Message.conversation_id == conversation.id,
+            Message.role == "user",
+            func.trim(Message.canonical_text) != "",
+        )
+    ) or 0
     run_order: list[str] = []
     message_ids_by_key: dict[str, list[str]] = defaultdict(list)
     message_rows = db.execute(
@@ -436,6 +443,7 @@ def get_turn_sets(
         "turnSets": turn_sets,
         "previousCursor": selected_keys[0] if has_more and selected_keys else None,
         "hasMoreBefore": has_more,
+        "totalQuestionCount": total_question_count,
     }
 
 

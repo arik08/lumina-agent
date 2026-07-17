@@ -27,6 +27,9 @@ test("all visible scrollbars share the neutral idle fade behavior", async () => 
   assert.match(styles, /\.has-scrollbar-fade \{[^}]*--scrollbar-strength: 11%;[^}]*transition: --scrollbar-strength var\(--scrollbar-fade-duration\) linear;/s);
   assert.match(styles, /\.has-scrollbar-fade\.is-scrolling \{ --scrollbar-strength: 30%;[^}]*transition-duration: var\(--scrollbar-activation-duration\);/s);
   assert.match(styles, /:where\(\*\)::\-webkit-scrollbar-thumb \{[^}]*transition: border-width var\(--scrollbar-fade-duration\) linear;/s);
+  assert.match(styles, /\.conversation-scroll \{[^}]*scrollbar-width: auto;/);
+  assert.match(styles, /\.conversation-scroll\.has-scrollbar-fade \{ --scrollbar-strength: 20%; \}/);
+  assert.match(styles, /\.conversation-scroll::\-webkit-scrollbar \{ width: 16px; \}/);
   assert.doesNotMatch(styles, /scrollbar[^;}]*var\(--cobalt\)/);
   assert.match(design, /thumb는[^.\n]*중성 회색/);
   assert.match(design, /650ms/);

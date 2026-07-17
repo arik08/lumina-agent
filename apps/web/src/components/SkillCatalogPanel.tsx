@@ -39,6 +39,7 @@ const sortOptions = [
 ] as const;
 
 const countFormatter = new Intl.NumberFormat("ko-KR");
+const categoryLabel = (value: string) => value === "기본 제공" ? "공통" : value;
 
 function CatalogMetric({
   icon,
@@ -76,11 +77,11 @@ function CatalogCard({
   onView: (item: SkillCatalogItem) => void;
 }) {
   return (
-    <article className={`skill-catalog-card ${item.likedByMe ? "is-liked" : ""}`.trim()}>
+    <article className={`skill-catalog-card ${item.installed ? "is-installed" : ""} ${item.likedByMe ? "is-liked" : ""}`.trim()}>
       <div className="skill-catalog-card-copy">
         <div className="skill-catalog-card-header">
           <h2>{item.name}</h2>
-          <span className="skill-catalog-category">{item.category}</span>
+          <span className="skill-catalog-category">{categoryLabel(item.category)}</span>
         </div>
         <p>{item.description || "설명이 등록되지 않은 Skill입니다."}</p>
         <div className="skill-catalog-tags" aria-label={`${item.name} 태그`}>
@@ -160,14 +161,13 @@ export function SkillCatalogPanel({
       <aside className="skill-catalog-filters" aria-label="Skill 카탈로그 필터">
         <header><span><SlidersHorizontal size={14} /> 상세 필터</span><button type="button" disabled={!hasFilters} onClick={onReset}><RotateCcw size={12} /> 초기화</button></header>
         <label className="skill-catalog-search">
-          <span>Skill 검색</span>
-          <span><Search size={14} /><input type="search" placeholder="이름, 설명, 태그 검색" value={query} onChange={(event) => onQueryChange(event.currentTarget.value)} /></span>
+          <span><Search size={14} /><input type="search" aria-label="Skill 검색" placeholder="이름, 설명, 태그 검색" value={query} onChange={(event) => onQueryChange(event.currentTarget.value)} /></span>
         </label>
         <section>
           <h2>업무 영역</h2>
           <div className="skill-catalog-filter-grid">
             <button type="button" aria-pressed={!category} onClick={() => onCategoryChange("")}><span>전체</span><small>{catalog.facets.categories.reduce((sum, item) => sum + item.count, 0)}</small></button>
-            {catalog.facets.categories.map((item) => <button type="button" aria-pressed={category === item.value} key={item.value} onClick={() => onCategoryChange(item.value)}><span>{item.value}</span><small>{item.count}</small></button>)}
+            {catalog.facets.categories.map((item) => <button type="button" aria-pressed={category === item.value} key={item.value} onClick={() => onCategoryChange(item.value)}><span>{categoryLabel(item.value)}</span><small>{item.count}</small></button>)}
           </div>
         </section>
         {catalog.facets.tags.length > 0 && <section>
@@ -179,7 +179,7 @@ export function SkillCatalogPanel({
       </aside>
       <section className="skill-catalog-results">
         <header className="skill-catalog-results-toolbar">
-          <div><span>총 <strong>{countFormatter.format(catalog.total)}</strong>개의 Skill</span>{hasFilters && <div className="skill-catalog-active-filters">{category && <button type="button" onClick={() => onCategoryChange("")}>{category}<X size={11} /></button>}{tag && <button type="button" onClick={() => onTagChange("")}>#{tag}<X size={11} /></button>}</div>}</div>
+          <div><span>총 <strong>{countFormatter.format(catalog.total)}</strong>개의 Skill</span>{hasFilters && <div className="skill-catalog-active-filters">{category && <button type="button" onClick={() => onCategoryChange("")}>{categoryLabel(category)}<X size={11} /></button>}{tag && <button type="button" onClick={() => onTagChange("")}>#{tag}<X size={11} /></button>}</div>}</div>
           <SelectMenu value={sort} options={sortOptions} ariaLabel="카탈로그 정렬" size="small" width="auto" align="end" onChange={(value) => onSortChange(value as SkillCatalogSort)} />
         </header>
         <div className="skill-catalog-scroll" ref={scrollRef}>

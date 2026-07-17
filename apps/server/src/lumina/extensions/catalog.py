@@ -65,9 +65,7 @@ def _applied_skill_ids(snapshot: dict[str, Any]) -> set[str]:
         and item.get("reference_id")
     }
     auto_ids = {
-        str(item)
-        for item in snapshot.get("auto_selected_skill_ids", [])
-        if str(item)
+        str(item) for item in snapshot.get("auto_selected_skill_ids", []) if str(item)
     }
     return explicit_ids | auto_ids
 
@@ -145,7 +143,9 @@ def list_skill_catalog(
             .group_by(ExtensionInstallation.extension_id)
         )
     }
-    like_keys = {_like_key(extension_id): extension_id for extension_id in extension_ids}
+    like_keys = {
+        _like_key(extension_id): extension_id for extension_id in extension_ids
+    }
     like_counts = {
         like_keys[str(key)]: int(count)
         for key, count in db.execute(

@@ -13,6 +13,7 @@
 | Cowork 계열 기능 | Lumina의 기존 설계 | 통합 결과 |
 |---|---|---|
 | 자율 다단계 작업 | `AGENT_LOOP.md`의 Turn·Tool·Queue·중단/재개 | Plan·Subtask·Steering·단계 재실행을 추가 |
+| 장기·대형 심층분석 | 구조화된 Plan, Project 파일과 Artifact | 독립 `심층분석` Mission, 제로베이스 Workflow 설계와 필요할 때만 재사용하는 적응형 Pattern, 단위별 LLM 출력 보존과 계산·비용 추적은 [`DEEP_ANALYSIS_WORKFLOW.md`](DEEP_ANALYSIS_WORKFLOW.md)를 기준으로 추가 |
 | 로컬 파일 작업 공간 | `@파일명`, Artifact, Storage | 명시 연결 Workspace와 Local Bridge를 추가 |
 | 전문 업무 산출물 | Artifact Library | 형식별 생성·Preview·검증·부분 수정 추가 |
 | Project 지속성 | 사용자·조직·세션 구조 | `Organization → Project → Session → Run`으로 확장 |
@@ -94,7 +95,7 @@ Local Workspace    → 사용자 PC의 Local Bridge가 허용 폴더만 연결
 Remote Connector   → SharePoint, Drive, Box 등 외부 저장소
 ```
 
-`Server Workspace`는 사용자가 업로드한 참조 파일의 기본 저장 위치입니다. 채팅의 `저장`과 Agent의 Artifact 생성·편집 결과는 별도 Artifact Storage에 기록하며 파일 저장소 트리에 자동으로 추가하지 않습니다. 사용자의 개인 PC에는 사용자가 명시적으로 브라우저 다운로드를 실행할 때만 사본을 전달합니다. 초기에는 단일 구동 장비의 관리된 `data/` 영역을 사용할 수 있지만, API와 metadata는 Storage Adapter를 통해 향후 별도 S3/MinIO 또는 조직 파일 서버로 이전할 수 있게 합니다.
+`Server Workspace`는 사용자가 업로드한 참조 파일의 기본 저장 위치입니다. 일반 채팅의 `저장`과 Agent의 Artifact 생성·편집 결과는 별도 Artifact Storage에 기록하며 `프로젝트 파일` 트리에 자동으로 추가하지 않습니다. 심층분석 Mission이 생성한 단위별 MD·CSV·PY는 이 일반 규칙의 명시적 예외로, Project 파일과 섞지 않고 파일 화면의 같은 수준인 시스템 관리 `심층분석` root에서 Mission별로 표시합니다. 상세 저장·이름·version과 권한 계약은 [`DEEP_ANALYSIS_WORKFLOW.md`](DEEP_ANALYSIS_WORKFLOW.md)를 따릅니다. 사용자의 개인 PC에는 사용자가 명시적으로 브라우저 다운로드를 실행할 때만 사본을 전달합니다. 초기에는 단일 구동 장비의 관리된 `data/` 영역을 사용할 수 있지만, API와 metadata는 Storage Adapter를 통해 향후 별도 S3/MinIO 또는 조직 파일 서버로 이전할 수 있게 합니다.
 
 Local Bridge가 없는 환경에서는 “로컬 폴더 직접 접근”을 제공한다고 오해하게 만들지 않습니다. 초기 버전은 Upload와 Server Workspace부터 구현하고, Local Bridge는 이후 별도 설치 구성요소로 제공합니다.
 
@@ -391,6 +392,7 @@ Project, 파일, Connector, Skill, Plugin, Browser와 Computer Use 모두 현재
 5. Upload·Server Workspace와 파일 버전
 6. DOCX/XLSX/PPTX/PDF/HTML 생성·Preview·검증 기반
 7. Connector·Skill·MCP 동적 로딩
+8. 심층분석 Mission, 제로베이스 Workflow·선택적 Pattern·revision과 단위별 LLM 출력 Markdown 보존
 
 ### 2단계: 반복 업무와 지속성
 
@@ -422,6 +424,9 @@ Project, 파일, Connector, Skill, Plugin, Browser와 Computer Use 모두 현재
 8. 예약 작업은 중복 실행 없이 입력 snapshot과 결과 이력을 보존합니다.
 9. Live Artifact는 버전 이력과 복원을 지원합니다.
 10. Frontend 연결이 끊겨도 Run과 예약 작업은 Backend에서 계속됩니다.
+11. 심층분석 Mission의 각 완료 Node 출력은 추가 모델 재작성 없이 고유한 Markdown version으로 보존되고, 계산 입력·코드·CSV 결과와 비용을 역추적할 수 있습니다.
+12. Mission은 Pattern 없이 새 Workflow를 설계할 수 있고, 반복 업무에 Pattern을 사용한 경우에도 목표·답변·자료·정책에 맞는 별도 Workflow revision으로 적응하며 민감한 Mission 내용은 Pattern에 포함하지 않습니다.
+13. 심층분석은 Mission Charter·Completion Contract, Claim·supporting·contradicting Evidence, 미해결 항목과 최종 Quality Gate를 보존하고 보고서 생성만으로 완료를 판정하지 않습니다.
 
 ## 참고한 공식 설명 주제
 

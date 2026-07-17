@@ -317,6 +317,7 @@ def test_turn_set_cursor_pages_backwards_without_overlap(tmp_path: Path) -> None
         ).json()
         assert len(latest["turnSets"]) == 2
         assert latest["hasMoreBefore"] is True
+        assert latest["totalQuestionCount"] == 5
 
         older = client.get(
             f"/api/conversations/{conversation_id}/turn-sets",
@@ -326,6 +327,7 @@ def test_turn_set_cursor_pages_backwards_without_overlap(tmp_path: Path) -> None
             },
         ).json()
         assert len(older["turnSets"]) == 2
+        assert older["totalQuestionCount"] == 5
         assert {item["id"] for item in latest["turnSets"]}.isdisjoint(
             {item["id"] for item in older["turnSets"]}
         )

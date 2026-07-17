@@ -257,7 +257,7 @@ Lumina는 flat by default입니다. 일반 section과 row는 surface tone과 1px
 ### Tooltips and Scrollbars
 
 - **Tooltip:** 모든 tooltip은 body portal의 공용 layer를 사용합니다. browser title과 clipping container 내부 pseudo-element는 금지합니다.
-- **Scrollbar:** 모든 사용자 노출 scroll surface는 공용 thin scrollbar를 사용합니다. Track은 투명하게 유지하고 thumb는 accent 색이 아닌 `ink` 기반의 중성 회색으로 계산합니다. 기본 상태는 11% 강도로 은은하게 보이며, 스크롤 조작 중에는 30%로 선명해지고 마지막 조작 650ms 후 520ms 동안 서서히 흐려집니다. Light와 Dark, Artifact Library, 채팅, Marketplace, 파일 Workspace, 예약 작업, 설정, popover와 선택 메뉴에 같은 token과 idle-fade 동작을 적용하며 화면별 색상 예외를 만들지 않습니다.
+- **Scrollbar:** 모든 사용자 노출 scroll surface는 공용 thin scrollbar를 사용합니다. Track은 투명하게 유지하고 thumb는 accent 색이 아닌 `ink` 기반의 중성 회색으로 계산합니다. 기본 상태는 11% 강도로 은은하게 보이며, 스크롤 조작 중에는 30%로 선명해지고 마지막 조작 650ms 후 520ms 동안 서서히 흐려집니다. Light와 Dark, Artifact Library, Marketplace, 파일 Workspace, 예약 작업, 설정, popover와 선택 메뉴에 같은 token과 idle-fade 동작을 적용하며 화면별 색상 예외를 만들지 않습니다. 가장 중요한 탐색 영역인 채팅 본문은 예외로 취급해 Chromium 계열 scrollbar 폭을 16px로 넓히고 Firefox에서도 `thin`을 사용하지 않습니다. 채팅 scrollbar는 조작 후에도 20% 강도에서 흐려짐을 멈춰 항상 식별할 수 있게 하며, 조작 중에는 공용 30% 강도를 사용합니다.
 
 ### Status, Warning and Error Messages
 

@@ -22,9 +22,12 @@ import type {
   AuthSession,
   CreateAdminUserRequest,
   CreateConversationRequest,
+  CreateDeepAnalysisMissionRequest,
   CreateProjectLearningProposalRequest,
   CreateProjectRequest,
   CurrentSettings,
+  DeepAnalysisMissionDetail,
+  DeepAnalysisMissionSummary,
   CursorPage,
   ListConversationsQuery,
   LoginRequest,
@@ -60,6 +63,7 @@ import type {
   UpdateAdminUserRequest,
   UpdateProjectRequest,
   UpdateConversationRequest,
+  UpdateDeepAnalysisMissionRequest,
   UpdateCurrentSettingsRequest,
   ConversationListItem,
   ComposerSuggestion,
@@ -268,6 +272,7 @@ async function fetchApi(path: string, options: ApiRequestOptions = {}) {
   const response = await fetchBackend(buildUrl(apiBase, path, query), {
     ...requestInit,
     body,
+    cache: requestInit.cache ?? "no-store",
     credentials: "include",
     headers,
   });
@@ -283,6 +288,14 @@ async function fetchApi(path: string, options: ApiRequestOptions = {}) {
 
 async function request<T>(path: string, options?: ApiRequestOptions): Promise<T> {
   const response = await fetchApi(path, options);
+  const contentType = response.headers.get("content-type") ?? "";
+  if (response.status !== 204 && !contentType.includes("application/json")) {
+    throw new ApiError("서버가 예상하지 못한 응답을 반환했습니다. Lumina 실행 상태를 확인해 주세요.", {
+      status: 502,
+      code: "invalid_api_response",
+      details: { contentType },
+    });
+  }
   const payload = await parseBody(response);
   captureCsrf(response, payload);
   return payload as T;
@@ -1196,6 +1209,42 @@ export async function listExtensions(query?: string, signal?: AbortSignal) {
   return request<SkillExtension[]>("/extensions", { query: { query }, signal });
 }
 
+export async function listDeepAnalysisMissions(projectId: string, signal?: AbortSignal) {
+  return request<DeepAnalysisMissionSummary[]>(
+    `/projects/${encodeURIComponent(projectId)}/deep-analysis/missions`,
+    { signal },
+  );
+}
+
+export async function createDeepAnalysisMission(
+  projectId: string,
+  payload: CreateDeepAnalysisMissionRequest,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisMissionDetail>(
+    `/projects/${encodeURIComponent(projectId)}/deep-analysis/missions`,
+    { method: "POST", body: payload, signal },
+  );
+}
+
+export async function getDeepAnalysisMission(missionId: string, signal?: AbortSignal) {
+  return request<DeepAnalysisMissionDetail>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}`,
+    { signal },
+  );
+}
+
+export async function updateDeepAnalysisMission(
+  missionId: string,
+  payload: UpdateDeepAnalysisMissionRequest,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisMissionDetail>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}`,
+    { method: "PATCH", body: payload, signal },
+  );
+}
+
 export async function getWebSourceContent(
   conversationId: string,
   runId: string,
@@ -1984,6 +2033,12 @@ export const api = {
     deleteAll: deleteAllNotifications,
   },
   projects: { list: listProjects, create: createProject, update: updateProject, archive: archiveProject },
+  deepAnalysis: {
+    listMissions: listDeepAnalysisMissions,
+    createMission: createDeepAnalysisMission,
+    getMission: getDeepAnalysisMission,
+    updateMission: updateDeepAnalysisMission,
+  },
   projectMemberships: {
     list: listProjectMemberships,
     add: addProjectMembership,

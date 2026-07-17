@@ -32,6 +32,7 @@ export type PendingCommandAction = "steer_queued" | "cancel_command";
 
 export interface ConversationRuntime {
   turnSets: TurnSet[];
+  totalQuestionCount: number;
   snapshots: Record<string, RunSnapshot>;
   lastSequences: Record<string, number>;
   previousTurnSetCursor: string | null;
@@ -62,6 +63,7 @@ function provisionalConversationTitle(messageText: string) {
 function emptyRuntime(): ConversationRuntime {
   return {
     turnSets: [],
+    totalQuestionCount: 0,
     snapshots: {},
     lastSequences: {},
     previousTurnSetCursor: null,
@@ -230,6 +232,7 @@ export function useLuminaWorkspace() {
         [conversationId]: {
           ...(current[conversationId] ?? emptyRuntime()),
           turnSets: page.turnSets,
+          totalQuestionCount: page.totalQuestionCount ?? 0,
           previousTurnSetCursor: page.previousCursor,
           hasMoreTurnSetsBefore: page.hasMoreBefore,
           loaded: true,
@@ -305,6 +308,7 @@ export function useLuminaWorkspace() {
           [conversationId]: {
             ...currentRuntime,
             turnSets: [...olderTurnSets, ...currentRuntime.turnSets],
+            totalQuestionCount: page.totalQuestionCount ?? currentRuntime.totalQuestionCount,
             snapshots,
             lastSequences,
             previousTurnSetCursor: page.previousCursor,
@@ -325,6 +329,9 @@ export function useLuminaWorkspace() {
     const { run, message } = mutation;
     setRuntimes((current) => {
       const runtime = current[run.conversationId] ?? emptyRuntime();
+      const addsQuestion = message?.role === "user"
+        && Boolean(message.text.trim())
+        && !runtime.turnSets.some((turnSet) => turnSet.messages.some((item) => item.id === message.id));
       const turnSets = ensureTurnSet(runtime, run.runId, message).map((turnSet) => ({
         ...turnSet,
         messages: turnSet.messages.filter((item) => !(
@@ -335,6 +342,7 @@ export function useLuminaWorkspace() {
         ...current,
         [run.conversationId]: {
           ...runtime,
+          totalQuestionCount: runtime.totalQuestionCount + (addsQuestion ? 1 : 0),
           turnSets: turnSets.map((turnSet) =>
             turnSet.runId === run.runId
               ? {

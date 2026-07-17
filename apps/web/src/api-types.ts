@@ -196,6 +196,80 @@ export interface AnnouncementList {
   unreadCount: number;
 }
 
+export type DeepAnalysisAutonomyMode = "guided" | "balanced" | "autonomous";
+
+export interface DeepAnalysisMissionSummary {
+  id: UUID;
+  projectId: UUID;
+  title: string;
+  objective: string;
+  status: string;
+  startMode: string;
+  autonomyMode: DeepAnalysisAutonomyMode;
+  budgetMicrousd: number | null;
+  spentMicrousd: number;
+  revision: number;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+export interface DeepAnalysisWorkflowNode {
+  id: UUID;
+  nodeKey: string;
+  nodeType: string;
+  title: string;
+  purpose: string;
+  status: string;
+  sequence: number;
+  positionX: number;
+  positionY: number;
+  config: Record<string, unknown>;
+  outputSummary: string;
+  estimatedCostMicrousd: number;
+  actualCostMicrousd: number;
+}
+
+export interface DeepAnalysisWorkflowEdge {
+  id: UUID;
+  sourceNodeKey: string;
+  targetNodeKey: string;
+  edgeType: string;
+}
+
+export interface DeepAnalysisWorkflowRevision {
+  id: UUID;
+  revisionNumber: number;
+  state: string;
+  source: string;
+  reason: string;
+  graphDigest: string;
+  nodes: DeepAnalysisWorkflowNode[];
+  edges: DeepAnalysisWorkflowEdge[];
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+export interface DeepAnalysisMissionDetail extends DeepAnalysisMissionSummary {
+  charter: Record<string, unknown>;
+  completionContract: Record<string, unknown>;
+  workflow: DeepAnalysisWorkflowRevision;
+}
+
+export interface CreateDeepAnalysisMissionRequest {
+  title: string;
+  objective?: string;
+  autonomyMode?: DeepAnalysisAutonomyMode;
+  budgetMicrousd?: number | null;
+}
+
+export interface UpdateDeepAnalysisMissionRequest {
+  expectedRevision: number;
+  title?: string;
+  objective?: string;
+  autonomyMode?: DeepAnalysisAutonomyMode;
+  budgetMicrousd?: number;
+}
+
 export interface AnnouncementMutationRequest {
   title: string;
   body: string;
@@ -1427,6 +1501,7 @@ export interface TurnSetPage {
   turnSets: TurnSet[];
   previousCursor: string | null;
   hasMoreBefore: boolean;
+  totalQuestionCount?: number;
 }
 
 export interface RunSnapshot {

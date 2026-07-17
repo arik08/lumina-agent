@@ -9,7 +9,7 @@
 .project-member-add { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-3); padding: 11px; border: 1px solid var(--line); border-radius: var(--radius-field); background: var(--surface-soft); }
 .project-member-add label, .project-role-field { display: grid; min-width: 0; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 7px; }
 .project-role-field { grid-template-columns: auto 104px; }
-.project-member-add :is(label, .project-role-field) > span { color: var(--muted); font-size: 10.5px; }
+.project-member-add :is(label, .project-role-field) > span { color: var(--muted); font-size: 12px; }
 .project-member-add input { width: 100%; height: var(--control-height-md); min-width: 0; border: 1px solid var(--line); border-radius: var(--radius-control); outline: 0; padding: 0 8px; background: var(--surface); color: var(--ink); font: inherit; font-size: 11.5px; }
 .project-member-add input:focus { border-color: var(--cobalt); }
 .project-member-add > button { display: inline-flex; height: var(--control-height-md); align-items: center; justify-content: center; gap: 5px; white-space: nowrap; }
@@ -32,6 +32,8 @@
 .project-member-identity strong { color: var(--ink); font-size: 11.5px; font-weight: 650; }
 .project-member-identity small { color: var(--muted); font-size: 10px; }
 .project-member-list article > .project-member-role-select { width: 104px; justify-self: end; }
+.project-member-role-select.size-small .lumina-select-trigger,
+.project-member-role-menu.size-small > button { font-size: 12px; }
 .project-member-owner, .project-member-role { justify-self: end; color: var(--muted); font-size: 10.5px; }
 .project-member-owner { color: var(--cobalt); font-weight: 650; }
 .project-member-list article > button { display: inline-flex; height: 29px; align-items: center; justify-content: center; gap: 4px; padding: 0 7px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--muted); font-size: 10.5px; cursor: pointer; white-space: nowrap; }

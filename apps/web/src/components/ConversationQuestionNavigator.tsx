@@ -70,16 +70,23 @@ function questionItems(turnSets: TurnSet[]) {
 
 export function ConversationQuestionNavigator({
   turnSets,
+  totalQuestionCount,
   theme,
   scrollContainerRef,
   onNavigateStart,
 }: {
   turnSets: TurnSet[];
+  totalQuestionCount?: number;
   theme: Theme;
   scrollContainerRef: RefObject<HTMLDivElement | null>;
   onNavigateStart: () => void;
 }) {
   const items = useMemo(() => questionItems(turnSets), [turnSets]);
+  const authoritativeQuestionCount = typeof totalQuestionCount === "number" && Number.isFinite(totalQuestionCount)
+    ? totalQuestionCount
+    : 0;
+  const questionCount = Math.max(authoritativeQuestionCount, items.length);
+  const unloadedQuestionCount = questionCount - items.length;
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const markerRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -145,20 +152,28 @@ export function ConversationQuestionNavigator({
     animationFrameRef.current = window.requestAnimationFrame(step);
   };
 
-  if (items.length === 0) return null;
+  if (questionCount === 0) return null;
 
   return (
     <nav
       className="question-navigator"
-      aria-label={`사용자 질문 ${items.length}개 바로가기`}
+      aria-label={`사용자 질문 ${questionCount}개 바로가기`}
       onMouseLeave={() => setActiveIndex(null)}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setActiveIndex(null);
       }}
     >
-      <div className="question-navigator-track" style={{ "--question-count": items.length } as NavigatorStyle}>
+      <div className="question-navigator-track" style={{ "--question-count": questionCount } as NavigatorStyle}>
+        {Array.from({ length: unloadedQuestionCount }, (_, index) => (
+          <span
+            className="question-navigator-marker is-unloaded"
+            aria-hidden="true"
+            key={`unloaded-question-${index}`}
+          />
+        ))}
         {items.map((item, index) => {
-          const distance = activeIndex === null ? Number.POSITIVE_INFINITY : Math.abs(activeIndex - index);
+          const questionIndex = unloadedQuestionCount + index;
+          const distance = activeIndex === null ? Number.POSITIVE_INFINITY : Math.abs(activeIndex - questionIndex);
           const tooltipId = `question-navigator-tooltip-${item.anchorId}`;
           const markerStyle = {
             "--question-marker-scale": markerScaleForDistance(distance),
@@ -166,20 +181,20 @@ export function ConversationQuestionNavigator({
           } as NavigatorStyle;
           return (
             <button
-              className={`question-navigator-marker ${index < 2 ? "is-tooltip-start" : ""} ${index >= items.length - 2 ? "is-tooltip-end" : ""}`}
+              className={`question-navigator-marker ${questionIndex < 2 ? "is-tooltip-start" : ""} ${questionIndex >= questionCount - 2 ? "is-tooltip-end" : ""}`}
               type="button"
-              ref={(node) => { markerRefs.current[index] = node; }}
-              aria-label={`질문 ${index + 1}로 이동: ${item.questionPreview}`}
-              aria-describedby={activeIndex === index ? tooltipId : undefined}
+              ref={(node) => { markerRefs.current[questionIndex] = node; }}
+              aria-label={`질문 ${questionIndex + 1}로 이동: ${item.questionPreview}`}
+              aria-describedby={activeIndex === questionIndex ? tooltipId : undefined}
               style={markerStyle}
-              onMouseEnter={() => setActiveIndex(index)}
-              onFocus={() => setActiveIndex(index)}
+              onMouseEnter={() => setActiveIndex(questionIndex)}
+              onFocus={() => setActiveIndex(questionIndex)}
               onClick={() => navigateToQuestion(item)}
               key={item.anchorId}
             >
-              {activeIndex === index && (
-                <GlobalTooltipLayer anchor={markerRefs.current[index]} className={`question-navigator-tooltip is-${theme}`} id={tooltipId} open preferredPlacement="right">
-                  <strong>질문 {index + 1}</strong>
+              {activeIndex === questionIndex && (
+                <GlobalTooltipLayer anchor={markerRefs.current[questionIndex]} className={`question-navigator-tooltip is-${theme}`} id={tooltipId} open preferredPlacement="right">
+                  <strong>질문 {questionIndex + 1}</strong>
                   <span className="question-navigator-preview-row">
                     <small>질문</small>
                     <span>{item.questionPreview}</span>
