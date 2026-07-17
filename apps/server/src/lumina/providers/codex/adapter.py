@@ -382,6 +382,7 @@ class CodexResponsesAdapter:
                                 cache_write_tokens=usage.cache_write_tokens,
                                 uncached_input_tokens=usage.uncached_input_tokens,
                                 output_tokens=usage.output_tokens,
+                                reasoning_tokens=usage.reasoning_tokens,
                                 raw={
                                     **dict(usage.raw),
                                     "auth_mode": "chatgpt",
@@ -876,11 +877,17 @@ def _usage(raw: object) -> ProviderUsage | None:
     input_tokens = max(0, int(getattr(last, "input_tokens", 0) or 0))
     cached = max(0, int(getattr(last, "cached_input_tokens", 0) or 0))
     output_tokens = max(0, int(getattr(last, "output_tokens", 0) or 0))
+    raw_reasoning_tokens = getattr(last, "reasoning_output_tokens", None)
     return ProviderUsage(
         input_tokens=input_tokens,
         cached_input_tokens=cached,
         uncached_input_tokens=max(0, input_tokens - cached),
         output_tokens=output_tokens,
+        reasoning_tokens=(
+            max(0, int(raw_reasoning_tokens))
+            if raw_reasoning_tokens is not None
+            else None
+        ),
         raw={"auth_mode": "chatgpt", "billing": "subscription_usage"},
     )
 

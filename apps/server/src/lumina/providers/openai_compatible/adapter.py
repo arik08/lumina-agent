@@ -90,12 +90,24 @@ def normalize_openai_usage(raw: Mapping[str, Any]) -> ProviderUsage:
         or prompt_details.get("cache_creation_input_tokens")
         or 0
     )
+    output_details = (
+        raw.get("completion_tokens_details") or raw.get("output_tokens_details") or {}
+    )
+    if not isinstance(output_details, Mapping):
+        output_details = {}
+    raw_reasoning_tokens = output_details.get("reasoning_tokens")
+    reasoning_tokens = (
+        max(0, int(raw_reasoning_tokens))
+        if raw_reasoning_tokens is not None
+        else None
+    )
     return ProviderUsage(
         input_tokens=input_tokens,
         cached_input_tokens=cached,
         cache_write_tokens=cache_write,
         uncached_input_tokens=max(0, input_tokens - cached),
         output_tokens=output_tokens,
+        reasoning_tokens=reasoning_tokens,
         raw=dict(raw),
     )
 

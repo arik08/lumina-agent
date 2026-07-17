@@ -87,6 +87,8 @@ test("non-tool time is rendered as a model processing row with a clear explanati
 
   assert.match(app, /<ModelProcessingRow[\s\S]*durationMs=\{modelProcessingDurationMs\}/);
   assert.match(app, /모델 판단 · 내부 실행 합계/);
+  assert.match(app, /내부 추론 \$\{reasoningTokens\.toLocaleString\(\)\} 토큰/);
+  assert.match(app, /reasoningTokens=\{!timelineRunning && groupIndex === activityGroups\.length - 1 \? reasoningTokens : undefined\}/);
   assert.match(app, /여러 모델 호출과 Skill·계획 처리, 재시도 시간을 합산한 값\(외부 도구 실행 제외\)/);
   assert.doesNotMatch(app, /Provider 요청 전송 · 응답 수신/);
 });

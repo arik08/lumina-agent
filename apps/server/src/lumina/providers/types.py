@@ -71,6 +71,7 @@ class ProviderUsage:
     cache_write_tokens: int = 0
     uncached_input_tokens: int = 0
     output_tokens: int = 0
+    reasoning_tokens: int | None = None
     raw: Mapping[str, Any] = field(default_factory=dict)
 
 

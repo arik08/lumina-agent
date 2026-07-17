@@ -548,6 +548,7 @@ async def test_google_stream_normalizes_text_tool_usage_and_completion() -> None
     assert usage.cached_input_tokens == 4
     assert usage.uncached_input_tokens == 6
     assert usage.output_tokens == 5
+    assert usage.reasoning_tokens == 2
     assert events[-1].stop_reason == "tool_calls"
 
 

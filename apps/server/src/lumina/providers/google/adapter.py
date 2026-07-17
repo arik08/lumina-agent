@@ -320,14 +320,19 @@ def _google_thinking_config(model: str, effort: str | None) -> dict[str, Any] | 
 def normalize_google_usage(raw: Mapping[str, Any]) -> ProviderUsage:
     input_tokens = _integer(raw.get("promptTokenCount"))
     cached = _integer(raw.get("cachedContentTokenCount"))
-    output_tokens = _integer(raw.get("candidatesTokenCount")) + _integer(
-        raw.get("thoughtsTokenCount")
+    raw_reasoning_tokens = raw.get("thoughtsTokenCount")
+    reasoning_tokens = (
+        _integer(raw_reasoning_tokens) if raw_reasoning_tokens is not None else None
+    )
+    output_tokens = _integer(raw.get("candidatesTokenCount")) + (
+        reasoning_tokens or 0
     )
     return ProviderUsage(
         input_tokens=input_tokens,
         cached_input_tokens=cached,
         uncached_input_tokens=max(0, input_tokens - cached),
         output_tokens=output_tokens,
+        reasoning_tokens=reasoning_tokens,
         raw=dict(raw),
     )
 

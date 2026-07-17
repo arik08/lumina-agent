@@ -285,6 +285,7 @@ def test_auto_effort_and_model_turn_metrics_are_persisted(
             cached_input_tokens=75,
             uncached_input_tokens=25,
             output_tokens=5,
+            reasoning_tokens=3,
             raw={"provider": "mock"},
         ),
     )
@@ -328,6 +329,7 @@ def test_auto_effort_and_model_turn_metrics_are_persisted(
     assert first["durationMs"] >= first["ttftMs"] >= 0
     assert first["cachedInputTokens"] == 75
     assert first["uncachedInputTokens"] == 25
+    assert first["reasoningTokens"] == 3
     assert first["cacheHitRatio"] == 0.75
     with SessionLocal() as db:
         events = list(

@@ -638,13 +638,14 @@ function modelExchangeText(value: unknown) {
 
 type ModelProcessingState = RunActivityOutcome | "awaiting_input";
 
-function ModelProcessingRow({ durationMs, state, sent, received, model, provider }: {
+function ModelProcessingRow({ durationMs, state, sent, received, model, provider, reasoningTokens }: {
   durationMs: number;
   state: ModelProcessingState;
   sent: ModelExchangeItem[];
   received: ModelExchangeItem[];
   model?: string;
   provider?: string;
+  reasoningTokens?: number;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const contentId = useId();
@@ -673,7 +674,7 @@ function ModelProcessingRow({ durationMs, state, sent, received, model, provider
           {running ? <LoaderCircle className="status-icon is-running" size={15} aria-hidden="true" /> : null}
           {!running && !awaitingInput && state !== "completed" ? <AlertCircle className="status-icon status-warning" size={15} aria-hidden="true" /> : null}
         </span>
-        <span className="tool-call-detail">{awaitingInput ? "확인 질문 · 사용자 답변 대기" : state === "stopped" ? "사용자 요청으로 모델 처리를 중지했습니다." : "모델 판단 · 내부 실행 합계"}</span>
+        <span className="tool-call-detail">{awaitingInput ? "확인 질문 · 사용자 답변 대기" : state === "stopped" ? "사용자 요청으로 모델 처리를 중지했습니다." : `모델 판단 · 내부 실행 합계${reasoningTokens === undefined ? "" : ` · 내부 추론 ${reasoningTokens.toLocaleString()} 토큰`}`}</span>
         <span className={`tool-call-status status-${running ? "running" : state === "completed" ? "complete" : "warning"}`}>{statusLabel}</span>
         <span className="tool-call-duration" data-tooltip="여러 모델 호출과 Skill·계획 처리, 재시도 시간을 합산한 값(외부 도구 실행 제외)">{formatDuration(durationMs)}</span>
         {isOpen ? <ChevronDown size={15} aria-hidden="true" /> : <ChevronRight size={15} aria-hidden="true" />}
@@ -786,6 +787,7 @@ function RunActivityTimeline({
   assistantResponse,
   model,
   provider,
+  reasoningTokens,
   openCalls,
   onToggleCall,
   onCopy,
@@ -806,6 +808,7 @@ function RunActivityTimeline({
   assistantResponse: string;
   model?: string;
   provider?: string;
+  reasoningTokens?: number;
   openCalls: Set<string>;
   onToggleCall: (id: string) => void;
   onCopy: (execution: ToolExecution) => void;
@@ -1085,6 +1088,7 @@ function RunActivityTimeline({
                     received={received}
                     model={model}
                     provider={provider}
+                    reasoningTokens={!timelineRunning && groupIndex === activityGroups.length - 1 ? reasoningTokens : undefined}
                   />
                 )}
               </div>
@@ -1801,6 +1805,7 @@ export function AssistantTurn({
     ? tokenBucketProgress(artifactUsage.tokens, artifactUsage.targetTokens)
     : null;
   const runUsage = finalMessage?.metadata?.usage ?? snapshot?.usage;
+  const reasoningTokens = optionalUsageNumber(runUsage, "reasoning_tokens");
   const modelOutputTokens = usageNumber(runUsage, "output_tokens");
   const liveModelOutputTokens = Math.max(
     modelOutputTokens,
@@ -1886,6 +1891,7 @@ export function AssistantTurn({
                 assistantResponse={sanitizedAssistantText}
                 model={snapshot?.execution.runtimeModelId}
                 provider={snapshot?.execution.providerId}
+                reasoningTokens={reasoningTokens}
                 openCalls={openCalls}
                 onCopy={onCopyTool}
                 onToggleCall={onToggleCall}

@@ -4965,6 +4965,11 @@ class LocalRunExecutor:
             "cachedInputTokens": cached_input_tokens,
             "uncachedInputTokens": uncached_input_tokens,
             "outputTokens": _nonnegative_int(observed_usage.get("output_tokens")),
+            "reasoningTokens": (
+                _nonnegative_int(observed_usage.get("reasoning_tokens"))
+                if observed_usage.get("reasoning_tokens") is not None
+                else None
+            ),
             "cacheHitRatio": (
                 round(cached_input_tokens / cacheable_input_tokens, 4)
                 if cacheable_input_tokens > 0
@@ -5673,6 +5678,8 @@ def _usage_payload(
         "output_tokens": usage.output_tokens,
         "raw": dict(usage.raw),
     }
+    if usage.reasoning_tokens is not None:
+        payload["reasoning_tokens"] = usage.reasoning_tokens
     subscription_usage = usage.raw.get("billing") == "subscription_usage"
     reported_cost = _reported_cost_usd(usage.raw)
     estimated_cost = estimate_model_cost_parts(

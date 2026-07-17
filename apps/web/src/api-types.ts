@@ -1483,6 +1483,7 @@ export interface ModelTurnMetric {
   cachedInputTokens: number;
   uncachedInputTokens: number;
   outputTokens: number;
+  reasoningTokens?: number | null;
   cacheHitRatio: number;
 }
 
