@@ -61,6 +61,8 @@ import { createPortal, flushSync } from "react-dom";
 import remarkGfm from "remark-gfm";
 import { visit } from "unist-util-visit";
 import { api, attachmentContentUrl, type UsdKrwExchangeRate } from "../api";
+import { ImageAttachmentViewer } from "./ImageAttachmentViewer";
+import { TextAttachmentViewer } from "./TextAttachmentViewer";
 import type {
   ArtifactSummary,
   AttachmentSummary,
@@ -1651,8 +1653,6 @@ export function AssistantTurn({
   const sourceContentLoadingRef = useRef(false);
   const [previewAttachment, setPreviewAttachment] = useState<AttachmentSummary | null>(null);
   const [textPreviewAttachment, setTextPreviewAttachment] = useState<AttachmentSummary | null>(null);
-  const [textPreviewContent, setTextPreviewContent] = useState("");
-  const [textPreviewError, setTextPreviewError] = useState<string | null>(null);
   const [workDetailsOpen, setWorkDetailsOpen] = useState(!collapseWorkDetails);
   const [workClock, setWorkClock] = useState(() => Date.now());
   const expandedSourceTarget = sourceTargets.find(({ source }) => source.sourceId === expandedSourceId) ?? null;
@@ -1787,24 +1787,6 @@ export function AssistantTurn({
   }, [turnSet.id]);
 
   useEffect(() => {
-    if (!textPreviewAttachment) return;
-    const controller = new AbortController();
-    setTextPreviewContent("");
-    setTextPreviewError(null);
-    void fetch(attachmentContentUrl(textPreviewAttachment.id), { signal: controller.signal })
-      .then((response) => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return response.text();
-      })
-      .then(setTextPreviewContent)
-      .catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === "AbortError") return;
-        setTextPreviewError("텍스트 첨부 내용을 불러오지 못했습니다.");
-      });
-    return () => controller.abort();
-  }, [textPreviewAttachment]);
-
-  useEffect(() => {
     if (revealing && displayedText) onVisibleGrowth();
   }, [displayedText, onVisibleGrowth, revealing]);
 
@@ -1920,17 +1902,7 @@ export function AssistantTurn({
                     <span>{pastedTextAttachmentLabel(attachment, message.attachments.slice(0, attachmentIndex).filter((item) => item.kind === "pasted_text").length)}</span>
                   </button>
                   {textPreviewAttachment?.id === attachment.id && (
-                    <>
-                      <button className="text-attachment-backdrop" type="button" aria-label="텍스트 첨부 닫기" onClick={() => setTextPreviewAttachment(null)} />
-                      <div className="text-attachment-popover" role="dialog" aria-label={`${attachment.fileName} 내용`}>
-                        <button className="text-attachment-close" type="button" aria-label="텍스트 첨부 닫기" onClick={() => setTextPreviewAttachment(null)}><X size={18} /></button>
-                        {textPreviewError
-                          ? <p role="alert">{textPreviewError}</p>
-                          : textPreviewContent
-                            ? <SyntaxCode value={textPreviewContent} fileName={attachment.fileName} mimeType={attachment.mimeType} />
-                            : <p>내용을 불러오는 중...</p>}
-                      </div>
-                    </>
+                    <TextAttachmentViewer attachment={attachment} onClose={() => setTextPreviewAttachment(null)} />
                   )}
                 </div>
               ) : (
@@ -1986,12 +1958,7 @@ export function AssistantTurn({
           )}
         </section>
       )}
-      {previewAttachment && (
-        <div className="image-attachment-viewer" role="dialog" aria-modal="true" aria-label={`${previewAttachment.fileName} 이미지 보기`} onClick={(event) => { if (event.target === event.currentTarget) setPreviewAttachment(null); }}>
-          <button type="button" aria-label="이미지 닫기" onClick={() => setPreviewAttachment(null)}><X size={18} /></button>
-          <img src={attachmentContentUrl(previewAttachment.id)} alt={previewAttachment.fileName} />
-        </div>
-      )}
+      {previewAttachment && <ImageAttachmentViewer attachment={previewAttachment} onClose={() => setPreviewAttachment(null)} />}
       {(assistantText || tools.length > 0 || artifacts.length > 0 || snapshot) && (
         <section className="assistant-turn">
           <div className="assistant-content">

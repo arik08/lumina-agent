@@ -87,6 +87,7 @@ import type {
   AnswerLength,
   AdminProviderModel,
   AdminProviderSummary,
+  AttachmentSummary,
   ArtifactSummary,
   ArtifactVersion,
   OutputMode,
@@ -121,6 +122,8 @@ import {
   runStatusLabel,
 } from "./components/ConversationTurn";
 import { ShareActionIcon } from "./components/ActionIcons";
+import { ImageAttachmentViewer } from "./components/ImageAttachmentViewer";
+import { TextAttachmentViewer } from "./components/TextAttachmentViewer";
 
 const AdminView = lazy(() => import("./components/AdminView").then(({ AdminView }) => ({ default: AdminView })));
 const ArtifactLibraryView = lazy(() => import("./components/ArtifactLibraryView").then(({ ArtifactLibraryView }) => ({ default: ArtifactLibraryView })));
@@ -1209,6 +1212,8 @@ function App() {
   const [composerTrigger, setComposerTrigger] = useState<ComposerTriggerState | null>(null);
   const [composerSuggestions, setComposerSuggestions] = useState<ComposerSuggestion[]>([]);
   const [selectedReferences, setSelectedReferences] = useState<SelectedComposerReference[]>([]);
+  const [previewComposerAttachment, setPreviewComposerAttachment] = useState<AttachmentSummary | null>(null);
+  const [previewComposerTextAttachment, setPreviewComposerTextAttachment] = useState<AttachmentSummary | null>(null);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   const [pendingCommandAction, setPendingCommandAction] = useState<{ id: string; action: PendingCommandAction } | null>(null);
@@ -3451,10 +3456,13 @@ function App() {
               {workspace.composerAttachments.length > 0 && (
                 <div className="composer-attachments" aria-label="첨부 Context">
                   {workspace.composerAttachments.map((attachment, attachmentIndex) => (
-                    <span key={attachment.id}>
-                      <FileText size={13} />
-                      <span>{attachment.kind === "pasted_text" ? pastedTextAttachmentLabel(attachment, workspace.composerAttachments.slice(0, attachmentIndex).filter((item) => item.kind === "pasted_text").length) : attachment.fileName}</span>
-                      <button type="button" aria-label={`${attachment.fileName} 첨부 제거`} onClick={() => workspace.removeComposerAttachment(attachment.id)}><X size={12} /></button>
+                    <span className={`composer-attachment kind-${attachment.kind}`} key={attachment.id}>
+                      {attachment.kind === "image"
+                        ? <button className="composer-attachment-preview" type="button" aria-label={`${attachment.fileName} 이미지 크게 보기`} onClick={() => setPreviewComposerAttachment(attachment)}><ImageIcon size={15} /><strong>{attachment.fileName}</strong></button>
+                        : attachment.kind === "pasted_text"
+                          ? <button className="composer-attachment-preview" type="button" aria-label={`${attachment.fileName} 내용 보기`} onClick={() => setPreviewComposerTextAttachment(attachment)}><FileText size={15} /><strong>{pastedTextAttachmentLabel(attachment, workspace.composerAttachments.slice(0, attachmentIndex).filter((item) => item.kind === "pasted_text").length)}</strong></button>
+                          : <><FileText size={15} /><strong>{attachment.fileName}</strong></>}
+                      <button className="composer-attachment-remove" type="button" aria-label={`${attachment.fileName} 첨부 제거`} onClick={() => workspace.removeComposerAttachment(attachment.id)}><X size={12} /></button>
                     </span>
                   ))}
                 </div>
@@ -3470,6 +3478,8 @@ function App() {
                   ))}
                 </div>
               )}
+              {previewComposerAttachment && <ImageAttachmentViewer attachment={previewComposerAttachment} onClose={() => setPreviewComposerAttachment(null)} />}
+              {previewComposerTextAttachment && <TextAttachmentViewer attachment={previewComposerTextAttachment} onClose={() => setPreviewComposerTextAttachment(null)} />}
               {composerTrigger && (
                 <div className={`composer-suggestions is-trigger-list ${composerTrigger.trigger === "$" ? "is-extension-list" : ""}`} id="composer-suggestions" role="listbox" aria-label={composerTrigger.trigger === "@" ? "파일, 폴더 및 Artifact 후보" : "Skill 및 MCP 후보"}>
                   <div className="composer-suggestions-heading">

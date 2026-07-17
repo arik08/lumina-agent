@@ -2649,12 +2649,14 @@ button:disabled { cursor: default; opacity: 0.5; }
 .composer-command-actions .composer-command-steer:hover { color: var(--cobalt); }
 .composer-command-actions .composer-command-cancel:hover { color: var(--danger); }
 .visually-hidden { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-.composer-attachments { display: flex; flex-wrap: wrap; gap: 5px; margin: 0 0 6px; }
-.composer-attachments > span { display: inline-flex; max-width: 100%; align-items: center; gap: 5px; min-height: 25px; padding: 2px 4px 2px 7px; border: 1px solid var(--line); border-radius: 5px; color: var(--ink); font-size: 12.5px; }
-.composer-attachments > span > span { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.composer-attachments small { color: var(--muted); font-size: 11px; }
-.composer-attachments button { display: inline-grid; width: 20px; height: 20px; place-items: center; border: 0; border-radius: 4px; background: transparent; color: var(--muted); cursor: pointer; }
-.composer-attachments button:hover { background: #f0f1f2; color: var(--ink); }
+.composer-attachments { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 6px; }
+.composer-attachment { display: inline-flex; max-width: min(100%, 260px); min-height: 26px; align-items: center; gap: 6px; padding: 2px 3px 2px 7px; border-radius: 5px; background: var(--cobalt-pale); color: #3f527e; }
+.composer-attachment > svg { flex: 0 0 auto; }
+.composer-attachment strong { min-width: 0; overflow: hidden; font-size: 11.8px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.composer-attachment-preview { display: inline-flex; min-width: 0; align-items: center; gap: 6px; padding: 0; border: 0; background: transparent; color: inherit; cursor: zoom-in; }
+.composer-attachment-preview > svg { flex: 0 0 auto; }
+.composer-attachment-remove { display: inline-grid; width: 20px; height: 20px; flex: 0 0 auto; place-items: center; border: 0; border-radius: 4px; background: transparent; color: var(--muted); cursor: pointer; }
+.composer-attachment-remove:hover { background: rgba(63, 102, 201, 0.1); color: var(--ink); }
 .composer-references { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 6px; }
 .composer-reference { display: inline-flex; max-width: min(100%, 260px); min-height: 26px; align-items: center; gap: 6px; padding: 2px 3px 2px 7px; border-radius: 5px; background: var(--cobalt-pale); color: #3f527e; }
 .composer-reference > svg { flex: 0 0 auto; }
@@ -3166,7 +3168,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .theme-dark .chat-title-input { color: var(--ink); }
 .theme-dark .user-message,
 .theme-dark .reference-strip button { background: #292d33; color: #d6dbe2; }
-.theme-dark .composer-reference { background: #26334d; color: #c8d6f5; }
+.theme-dark :is(.composer-reference, .composer-attachment) { background: #26334d; color: #c8d6f5; }
 .theme-dark .composer-reference.kind-skill,
 .theme-dark .composer-reference.kind-mcp { background: #302b3b; color: #d8ccea; }
 .theme-dark .tool-group-trigger:hover,
@@ -3508,7 +3510,7 @@ button:disabled { cursor: default; opacity: 0.5; }
   font-size: calc(var(--conversation-font-size) - 2px);
 }
 
-.chat-pane.view-chat .composer-reference strong {
+.chat-pane.view-chat :is(.composer-reference, .composer-attachment) strong {
   font-size: calc(var(--conversation-font-size) - 2px);
 }
 

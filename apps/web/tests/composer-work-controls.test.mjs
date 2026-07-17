@@ -38,8 +38,12 @@ test("composer keeps model controls intact and sends independent analysis and an
   assert.match(app, /className="composer-utility-button tooltip-control" aria-label="Skill 및 MCP 호출" data-tooltip="Skill \/ MCP"/);
   assert.match(app, /composerTrigger\.trigger === "@" \? "파일, 폴더 및 Artifact 후보"/);
   assert.match(styles, /\.composer-footer \.composer-utility-button \{ color: var\(--muted\); \}/);
-  assert.match(styles, /\.chat-pane\.view-chat \.composer-reference strong \{[^}]*font-size: calc\(var\(--conversation-font-size\) - 2px\);/);
+  assert.match(styles, /\.chat-pane\.view-chat :is\(\.composer-reference, \.composer-attachment\) strong \{[^}]*font-size: calc\(var\(--conversation-font-size\) - 2px\);/);
   assert.doesNotMatch(app, /<strong>\{item\.token\}<\/strong><small>\{item\.subtitle\}<\/small>/);
+  assert.match(app, /attachment\.kind === "image"[\s\S]*?composer-attachment-preview[\s\S]*?setPreviewComposerAttachment\(attachment\)/);
+  assert.match(app, /attachment\.kind === "pasted_text"[\s\S]*?composer-attachment-preview[\s\S]*?setPreviewComposerTextAttachment\(attachment\)/);
+  assert.match(styles, /\.composer-attachment \{[^}]*background: var\(--cobalt-pale\);/);
+  assert.match(styles, /\.theme-dark :is\(\.composer-reference, \.composer-attachment\) \{ background: #26334d; color: #c8d6f5; \}/);
   assert.match(styles, /\.model-control, \.composer-footer \.effort-control \{[^}]*color: var\(--muted\)/);
   assert.match(styles, /\.composer-footer \.effort-control \{ font-weight: 700; \}/);
   assert.match(app, /artifact-output-mode-value is-\$\{outputMode\}/);
