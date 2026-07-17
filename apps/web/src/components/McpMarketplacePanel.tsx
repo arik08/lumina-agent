@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { api, ApiError } from "../api";
 import type { McpAnswerTestResult, McpDefinition, McpInstallation, ProjectSummary } from "../api-types";
 import { ResizableSplitPane } from "./ResizableSplitPane";
+import { useDismissablePopover } from "./useDismissablePopover";
 
 interface McpMarketplacePanelProps {
   projectId: string | null;
@@ -46,6 +47,7 @@ function AnswerTestFeedback({ result }: { result: McpAnswerTestResult | { error:
 
 export function McpMarketplacePanel({ projectId }: McpMarketplacePanelProps) {
   const projectScopeButtonRef = useRef<HTMLButtonElement>(null);
+  const projectScopeMenuRef = useRef<HTMLDivElement>(null);
   const [catalog, setCatalog] = useState<McpDefinition[]>([]);
   const [installations, setInstallations] = useState<McpInstallation[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -66,6 +68,7 @@ export function McpMarketplacePanel({ projectId }: McpMarketplacePanelProps) {
   const [projectScopeDraft, setProjectScopeDraft] = useState<Set<string> | null>(null);
   const [projectScopeBusy, setProjectScopeBusy] = useState(false);
   const [projectScopePosition, setProjectScopePosition] = useState({ top: 0, right: 0 });
+  useDismissablePopover(projectScopeOpen, projectScopeButtonRef, projectScopeMenuRef, setProjectScopeOpen);
 
   const selected = catalog.find((item) => item.id === selectedId) ?? catalog[0] ?? null;
   const currentRevision = selected?.revisions.find((item) => item.id === selected.currentRevisionId) ?? selected?.revisions.at(-1) ?? null;
@@ -317,17 +320,20 @@ export function McpMarketplacePanel({ projectId }: McpMarketplacePanelProps) {
                 <div className="mcp-section-heading"><strong><Wrench size={14} /> 설치 Tool allowlist</strong><small>{selectedTools.length} / {currentRevision.tools.length}</small></div>
                 <div className="mcp-tool-list">{currentRevision.tools.map((tool) => <label key={tool.name}><input type="checkbox" checked={selectedTools.includes(tool.name)} onChange={(event) => { const checked = event.currentTarget.checked; setSelectedTools((current) => checked ? [...current, tool.name] : current.filter((name) => name !== tool.name)); }} /><span><strong>{tool.name}</strong><small>{tool.description || "설명 없음"}</small></span></label>)}</div>
                 <div className="mcp-install-controls" aria-label="MCP 설치 대상">
-                  {selectedUserInstallation ? <div className="marketplace-project-selector" onClick={(event) => event.stopPropagation()}>
-                    <button ref={projectScopeButtonRef} type="button" aria-haspopup="listbox" aria-expanded={projectScopeOpen} onClick={openProjectScope}><Settings2 size={14} /> 프로젝트 설정</button>
-                    {projectScopeOpen && createPortal(<div className="marketplace-project-options project-options" style={{ top: projectScopePosition.top, right: projectScopePosition.right }} role="listbox" aria-label="MCP를 사용할 프로젝트" aria-multiselectable="true" onClick={(event) => event.stopPropagation()}>
-                      <button className="marketplace-project-all" type="button" role="option" aria-selected={projectScopeDraft === null || projectScopeDraft.size === projects.length} onClick={() => setProjectScopeDraft(projectScopeDraft === null || projectScopeDraft.size === projects.length ? new Set() : null)}><FolderOpen size={15} /><span>{projectScopeDraft === null || projectScopeDraft.size === projects.length ? "전체 해제" : "전체 선택"}</span><Check size={14} /></button>
-                      <div className="marketplace-project-option-list">{projects.map((item) => {
-                        const checked = projectScopeDraft === null || projectScopeDraft.has(item.id);
-                        return <button type="button" role="option" aria-selected={checked} key={item.id} onClick={() => toggleProjectScope(item.id)}><Folder size={15} /><span>{item.name}</span>{checked && <Check size={14} />}</button>;
-                      })}</div>
-                      <footer><span>{projectScopeDraft === null ? "모든 프로젝트" : `${projectScopeDraft.size}개 선택`}</span><div><button type="button" disabled={projectScopeBusy} onClick={() => setProjectScopeOpen(false)}>취소</button><button className="lumina-primary-action" type="button" disabled={projectScopeBusy} onClick={() => void saveProjectScope()}>{projectScopeBusy ? <LoaderCircle className="is-running" size={13} /> : <Save size={13} />} 적용</button></div></footer>
-                    </div>, document.body)}
-                  </div> : <button className="is-primary lumina-primary-action" type="button" disabled={busy || selectedTools.length === 0} onClick={() => void install()}><Plug size={14} /> 설치</button>}
+                  {selectedUserInstallation ? <>
+                    <div className="marketplace-project-selector" onClick={(event) => event.stopPropagation()}>
+                      <button ref={projectScopeButtonRef} type="button" aria-haspopup="listbox" aria-expanded={projectScopeOpen} onClick={openProjectScope}><Settings2 size={14} /> 프로젝트 설정</button>
+                      {projectScopeOpen && createPortal(<div ref={projectScopeMenuRef} className="marketplace-project-options project-options" style={{ top: projectScopePosition.top, right: projectScopePosition.right }} role="listbox" aria-label="MCP를 사용할 프로젝트" aria-multiselectable="true" onClick={(event) => event.stopPropagation()}>
+                        <button className="marketplace-project-all" type="button" role="option" aria-selected={projectScopeDraft === null || projectScopeDraft.size === projects.length} onClick={() => setProjectScopeDraft(projectScopeDraft === null || projectScopeDraft.size === projects.length ? new Set() : null)}><FolderOpen size={15} /><span>{projectScopeDraft === null || projectScopeDraft.size === projects.length ? "전체 해제" : "전체 선택"}</span><Check size={14} /></button>
+                        <div className="marketplace-project-option-list">{projects.map((item) => {
+                          const checked = projectScopeDraft === null || projectScopeDraft.has(item.id);
+                          return <button type="button" role="option" aria-selected={checked} key={item.id} onClick={() => toggleProjectScope(item.id)}><Folder size={15} /><span>{item.name}</span>{checked && <Check size={14} />}</button>;
+                        })}</div>
+                        <footer><span>{projectScopeDraft === null ? "모든 프로젝트" : `${projectScopeDraft.size}개 선택`}</span><div><button type="button" disabled={projectScopeBusy} onClick={() => setProjectScopeOpen(false)}>취소</button><button className="lumina-primary-action" type="button" disabled={projectScopeBusy} onClick={() => void saveProjectScope()}>{projectScopeBusy ? <LoaderCircle className="is-running" size={13} /> : <Save size={13} />} 적용</button></div></footer>
+                      </div>, document.body)}
+                    </div>
+                    <button type="button" disabled={catalogPendingId !== null} onClick={() => void toggleCatalogInstallation(selected)}>{catalogPendingId === selected.id ? <LoaderCircle className="is-running" size={14} /> : <Power size={14} />} {catalogPendingId === selected.id ? "처리 중" : "미사용"}</button>
+                  </> : <button className="is-primary lumina-primary-action" type="button" disabled={busy || selectedTools.length === 0} onClick={() => void install()}><Plug size={14} /> 설치</button>}
                 </div>
               </div>
               <div className="mcp-installation-section">

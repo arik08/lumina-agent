@@ -12,6 +12,7 @@ import { MarketplaceInstallButton } from "./MarketplaceInstallButton";
 import { ResizableSplitPane } from "./ResizableSplitPane";
 import { SkillCatalogPanel, type SkillCatalogSort } from "./SkillCatalogPanel";
 import { SyntaxCode, SyntaxTextarea } from "./SyntaxCode";
+import { useDismissablePopover } from "./useDismissablePopover";
 import "./MarketplaceTagEditor.css";
 import { markdownBodyAfterFrontmatter, splitMarkdownFrontmatter } from "./markdownFrontmatter";
 
@@ -132,6 +133,7 @@ function SkillMarkdownPreview({ value }: { value: string }) {
 export function MarketplaceView({ projectId, onOpenNavigation, canManage }: MarketplaceViewProps) {
   const skillContentRef = useRef<HTMLDivElement>(null);
   const projectScopeButtonRef = useRef<HTMLButtonElement>(null);
+  const projectScopeMenuRef = useRef<HTMLDivElement>(null);
   const repositoryRevisionRef = useRef<string | null>(null);
   const catalogRequestIdRef = useRef(0);
   const [marketKind, setMarketKind] = useState<"skill" | "mcp">("skill");
@@ -193,6 +195,7 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
   const [projectScopeDraft, setProjectScopeDraft] = useState<Set<string> | null>(null);
   const [projectScopeBusy, setProjectScopeBusy] = useState(false);
   const [projectScopePosition, setProjectScopePosition] = useState({ top: 0, right: 0 });
+  useDismissablePopover(projectScopeOpen, projectScopeButtonRef, projectScopeMenuRef, setProjectScopeOpen);
 
   useEffect(() => {
     const element = skillContentRef.current;
@@ -766,7 +769,7 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
                   {!editMode && selected.draft?.dirty && <button type="button" disabled={busy} onClick={() => void saveVersion()}><Check size={14} /> {nextSavedSkillDisplayVersion(selected)}로 저장</button>}
                   {!editMode && installation && <div className="marketplace-project-selector" onClick={(event) => event.stopPropagation()}>
                     <button ref={projectScopeButtonRef} type="button" aria-haspopup="listbox" aria-expanded={projectScopeOpen} onClick={openProjectScope}><Settings2 size={14} /> 프로젝트 설정</button>
-                    {projectScopeOpen && createPortal(<div className="marketplace-project-options project-options" style={{ top: projectScopePosition.top, right: projectScopePosition.right }} role="listbox" aria-label="Skill을 사용할 프로젝트" aria-multiselectable="true" onClick={(event) => event.stopPropagation()}>
+                    {projectScopeOpen && createPortal(<div ref={projectScopeMenuRef} className="marketplace-project-options project-options" style={{ top: projectScopePosition.top, right: projectScopePosition.right }} role="listbox" aria-label="Skill을 사용할 프로젝트" aria-multiselectable="true" onClick={(event) => event.stopPropagation()}>
                       <button className="marketplace-project-all" type="button" role="option" aria-selected={projectScopeDraft === null || projectScopeDraft.size === projects.length} onClick={() => setProjectScopeDraft(projectScopeDraft === null || projectScopeDraft.size === projects.length ? new Set() : null)}><FolderOpen size={15} /><span>{projectScopeDraft === null || projectScopeDraft.size === projects.length ? "전체 해제" : "전체 선택"}</span><Check size={14} /></button>
                       <div className="marketplace-project-option-list">{projects.map((item) => {
                         const checked = projectScopeDraft === null || projectScopeDraft.has(item.id);

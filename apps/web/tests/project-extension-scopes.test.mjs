@@ -14,6 +14,8 @@ test("installed Skill project scope uses a multi-select LOV without changing det
   assert.doesNotMatch(marketplace, /marketplace-project-scope/);
   assert.match(styles, /\.marketplace-project-options\.project-options \{ position: fixed;/);
   assert.match(marketplace, /> 프로젝트 설정<\/button>/);
+  assert.match(marketplace, /ref=\{projectScopeMenuRef\}/);
+  assert.match(marketplace, /useDismissablePopover\(projectScopeOpen, projectScopeButtonRef, projectScopeMenuRef, setProjectScopeOpen\)/);
   assert.doesNotMatch(marketplace, /프로젝트 사용 설정/);
   assert.match(styles, /\.feature-view\.feature-view \.marketplace-package-summary button \{[^}]*font-size: 14px;/);
   assert.match(styles, /\.marketplace-package-actions > \.marketplace-project-selector > button \{[^}]*font-size: 14px;/);

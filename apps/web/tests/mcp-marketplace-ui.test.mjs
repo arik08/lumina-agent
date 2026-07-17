@@ -20,6 +20,10 @@ test("MCP installs once and uses the shared multi-project scope UI", async () =>
   assert.match(panel, /전체 해제/);
   assert.match(panel, /전체 선택/);
   assert.match(panel, /> 프로젝트 설정<\/button>/);
+  assert.match(panel, /ref=\{projectScopeMenuRef\}/);
+  assert.match(panel, /useDismissablePopover\(projectScopeOpen, projectScopeButtonRef, projectScopeMenuRef, setProjectScopeOpen\)/);
+  assert.match(panel, /toggleCatalogInstallation\(selected\)/);
+  assert.match(panel, /"처리 중" : "미사용"/);
   assert.doesNotMatch(panel, /<select|installScope/);
   assert.match(panel, /className=\{`marketplace-install-toggle \$\{stateClass\}`\}/);
   assert.match(panel, /const stateClass = userInstallation \? "is-installed" : ""/);
