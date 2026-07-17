@@ -277,9 +277,9 @@ function mermaidAppearance() {
   const token = (name: string, fallback: string) => styles.getPropertyValue(name).trim() || fallback;
   const themeVariables = {
     background: "transparent",
-    primaryColor: token("--surface-soft", "#f5f6f7"),
+    primaryColor: token("--cobalt-pale", "#edf2fb"),
     primaryTextColor: token("--ink", "#20242c"),
-    primaryBorderColor: token("--line-strong", "#d4d8de"),
+    primaryBorderColor: token("--cobalt", "#3f66c9"),
     secondaryColor: token("--surface-soft", "#f5f6f7"),
     secondaryTextColor: token("--ink", "#20242c"),
     tertiaryColor: token("--surface", "#ffffff"),

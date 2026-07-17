@@ -48,6 +48,11 @@ test("Mermaid preserves LLM-authored styles without runtime recoloring", () => {
   assert.doesNotMatch(rendererStyles, /\.mermaid-surface svg :is\(\.edgePath|\.mermaid-surface svg marker/);
 });
 
+test("Mermaid uses cobalt tokens for the default node fill and border", () => {
+  assert.match(rendererSource, /primaryColor: token\("--cobalt-pale", "#edf2fb"\)/);
+  assert.match(rendererSource, /primaryBorderColor: token\("--cobalt", "#3f66c9"\)/);
+});
+
 test("tall Mermaid workflows keep readable geometry inside a bounded scroll surface", () => {
   assert.match(rendererStyles, /\.mermaid-surface \{[\s\S]*max-height: min\(640px, 68vh\);[\s\S]*overflow: auto;[\s\S]*overscroll-behavior: contain;/);
   assert.match(rendererStyles, /\.mermaid-surface:not\(\.is-expanded\) \{[^}]*overscroll-behavior: auto;[^}]*cursor: grab;[^}]*touch-action: none;/);
