@@ -26,6 +26,13 @@ def test_ask_me_uses_the_existing_question_ui_without_over_questioning() -> None
     assert " (추천)" in skill
     assert "Never place a question in ordinary response text" in skill
     assert "If no Blocking item remains" in skill
+    assert "requests personalized guidance without facts" in skill
+    assert "Do not substitute a generic conditional checklist" in skill
+    assert "Role-play framing or an assigned profession" in skill
+    assert "Do not trigger intake for general knowledge" in skill
+    assert "gives an underspecified search or retrieval request" in skill
+    assert "Before using files, enterprise search, MCP, or web search" in skill
+    assert "if the preceding conversation already identifies it" in skill
 
 
 def test_ask_me_has_repository_catalog_metadata() -> None:

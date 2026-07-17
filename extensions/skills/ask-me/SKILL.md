@@ -1,6 +1,6 @@
 ---
 name: ask-me
-description: Clarify a user's intent through adaptive question-and-answer before and, when necessary, during execution. Use when the user explicitly invokes $ask-me, asks to be interviewed or questioned, wants a plan or design stress-tested, or needs research, reports, documents, skills, automation, implementation, or other work made concrete without avoidable assumptions.
+description: Clarify a user's intent through adaptive question-and-answer before and, when necessary, during execution. Use when the user explicitly invokes $ask-me, asks to be interviewed or questioned, requests personalized guidance without facts that could materially change the recommendation, gives an underspecified search or retrieval request, wants a plan or design stress-tested, or needs research, reports, documents, skills, automation, implementation, or other work made concrete without avoidable assumptions.
 ---
 
 # Ask Me
@@ -15,6 +15,9 @@ Turn the user's intent into an actionable execution contract, then complete and 
    - **Delegatable**: A reasonable default is safe and reversible.
    - **Discoverable**: The answer can be found from available context or tools.
 3. Ask only about Blocking items. Make reasonable defaults for Delegatable items and investigate Discoverable items.
+   - Treat missing user-specific facts as Blocking when the user asks what they personally should do, choose, prioritize, diagnose, respond to, or plan and those facts could materially change the recommendation, urgency, safety, scope, or next action.
+   - Do not substitute a generic conditional checklist for this intake. Role-play framing or an assigned profession does not provide the person's facts.
+   - Treat a search or retrieval request as Blocking when the conversation does not identify a useful target. Before using files, enterprise search, MCP, or web search, ask for the highest-information missing criterion such as subject, purpose, scope, recency, owner, or document type. Do not ask for filters already implied by the conversation or selected context.
 4. Choose the question cadence from the decision structure:
    - If no Blocking item remains, proceed without asking.
    - If multiple Blocking items are independent and already known, ask them together, normally no more than three.
@@ -32,6 +35,7 @@ Turn the user's intent into an actionable execution contract, then complete and 
 - Keep the execution contract in Run context; do not create a separate plan, specification, or intake artifact unless the user requests one.
 - Do not use clarification questions for Tool permission or approval; use the normal approval flow.
 - Prefer a useful assumption over another question when the downside is small.
+- Do not trigger intake for general knowledge, clearly hypothetical examples, open brainstorming without a personal decision, or requests that already contain enough facts for a responsible answer.
 - Do not ask whether to continue after every answer. Continue automatically until another material decision is required or the work is ready to execute.
 
 ## Examples
@@ -40,3 +44,5 @@ Turn the user's intent into an actionable execution contract, then complete and 
 - For an HTML report, ask about audience or required content only when the request does not already imply them; choose layout details yourself.
 - For a new Skill, ask about triggering behavior or allowed capabilities when those materially affect its contract; infer ordinary package structure and validation steps.
 - For a plan or design stress test, walk one unresolved decision branch at a time until dependencies and success conditions are clear, then execute the agreed work.
+- For personalized consequential guidance, first ask only for the facts that could change the recommended next action; do not answer with a forest of `if` branches in place of intake.
+- For a bare request such as `find a document`, ask what the document should be about or support before invoking retrieval; if the preceding conversation already identifies it, search directly.

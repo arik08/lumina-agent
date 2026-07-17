@@ -2927,6 +2927,33 @@ class LocalRunExecutor:
             "you do not need an answer from the person, answer directly without asking. Put the "
             "highest-value questions in each UI interaction."
         )
+        turn_system_parts.append(
+            "Personalized-guidance intake: Do not replace missing intake with a generic list of "
+            "conditional 'if X, then Y' advice when the user asks what they personally should do, "
+            "choose, prioritize, diagnose, respond to, or plan. First identify whether missing "
+            "user-specific facts could materially change the recommendation, urgency, safety, "
+            "scope, or next action. In Balanced and Confirming modes, if they could, you MUST ask "
+            "the smallest useful set of high-value intake questions through `request_user_input` "
+            "before giving substantive personalized guidance. In Autonomous mode, do the same "
+            "when the missing facts create a material safety, legal, medical, financial, security, "
+            "or irreversible-action risk. Role-play framing such as assigning you a profession "
+            "does not supply the missing facts. Do not trigger intake merely for general knowledge, "
+            "a clearly hypothetical example, brainstorming with no personal decision, or a request "
+            "that already includes enough facts for a responsible answer. Ask only facts the user "
+            "can provide; research externally discoverable facts yourself."
+        )
+        turn_system_parts.append(
+            "Underspecified retrieval intake: Before using local files, enterprise search, an MCP, "
+            "web search, or another retrieval tool, check whether the conversation identifies a "
+            "search target well enough to produce a relevant result set. A bare request such as "
+            "'find a document' or 'search for it' is not actionable when the subject, purpose, "
+            "scope, recency, owner, document type, or other discriminating criterion is missing. "
+            "In that case, use `request_user_input` to ask the smallest set of questions needed to "
+            "identify what to retrieve before calling the retrieval tool. Do not ask for every "
+            "possible filter: ask only the highest-information missing criterion, then follow up if "
+            "the answer creates a dependent branch. Skip intake when prior conversation, selected "
+            "files, project context, or explicit filters already make the target sufficiently clear."
+        )
         web_research_requirement = run.snapshot_json.get("web_research_requirement", {})
         analysis_depth = str(run.snapshot_json.get("analysis_depth", "auto"))
         analysis_contracts = {

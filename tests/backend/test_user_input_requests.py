@@ -137,6 +137,29 @@ def test_account_clarification_setting_and_durable_input_resume(
         assert "never put questions for the person in visible answer text" in (
             provider_system_text
         )
+        assert "Personalized-guidance intake" in provider_system_text
+        assert "generic list of conditional 'if X, then Y' advice" in (
+            provider_system_text
+        )
+        assert "missing user-specific facts could materially change" in (
+            provider_system_text
+        )
+        assert "Role-play framing such as assigning you a profession" in (
+            provider_system_text
+        )
+        assert "Do not trigger intake merely for general knowledge" in (
+            provider_system_text
+        )
+        assert "Underspecified retrieval intake" in provider_system_text
+        assert "Before using local files, enterprise search, an MCP" in (
+            provider_system_text
+        )
+        assert "'find a document' or 'search for it' is not actionable" in (
+            provider_system_text
+        )
+        assert "selected files, project context, or explicit filters" in (
+            provider_system_text
+        )
         assert len(waiting["inputRequests"]) == 1
         request = waiting["inputRequests"][0]
         assert request["status"] == "pending"
