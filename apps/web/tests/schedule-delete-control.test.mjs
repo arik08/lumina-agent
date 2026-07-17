@@ -34,7 +34,7 @@ test("schedule creation lives in the left list and replaces the detail panel", a
   const createAction = view.indexOf('className="feature-primary-action lumina-primary-action"', toolbarStart);
   const refreshAction = view.indexOf('className="schedule-list-refresh"', headerStart);
   const detailStart = view.indexOf('className="feature-detail schedule-detail"');
-  const createBranch = view.indexOf("{createOpen ? (", detailStart);
+  const createBranch = view.indexOf("{createOpen || editOpen ? (", detailStart);
   const formStart = view.indexOf('className="compact-form schedule-form schedule-detail-form"', detailStart);
 
   assert.ok(headerStart >= 0 && headerEnd > headerStart);
@@ -98,6 +98,25 @@ test("new schedules choose the project where each session is saved", async () =>
   assert.match(view, /projectId: draftProjectId/);
   assert.match(view, /created\.projectId !== projectId[\s\S]*?onProjectChange\(created\.projectId\)/);
   assert.match(view, /선택한 프로젝트에 새 채팅을 만들고 결과를 저장합니다\./);
+});
+
+test("existing schedules can edit project timing and execution in place", async () => {
+  const [view, api] = await Promise.all([
+    read("../src/components/SchedulesView.tsx"),
+    read("../src/api.ts"),
+  ]);
+
+  assert.match(api, /updateScheduledTask[\s\S]*?method: "PATCH"/);
+  assert.match(api, /schedules:\s*\{[\s\S]*?update: updateScheduledTask/);
+  assert.match(view, /setDraftProjectId\(selected\.projectId\)/);
+  assert.match(view, /setDraftExecution\(selected\.execution\)/);
+  assert.match(view, /setKind\(selected\.scheduleKind\)/);
+  assert.match(view, /setHour\(selected\.scheduleConfig\.hour \?\? 9\)/);
+  assert.match(view, /setMinute\(selected\.scheduleConfig\.minute \?\? 0\)/);
+  assert.match(view, /setWeekday\(selected\.scheduleConfig\.weekday \?\? 0\)/);
+  assert.match(view, /await api\.schedules\.update\(selected\.id/);
+  assert.match(view, /예약 작업 편집/);
+  assert.match(view, /변경 저장/);
 });
 
 test("weekly schedule controls keep weekday before hour with balanced widths", async () => {

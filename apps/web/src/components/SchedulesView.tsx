@@ -6,6 +6,7 @@ import {
   LoaderCircle,
   Menu,
   Pause,
+  Pencil,
   Play,
   Plus,
   RefreshCw,
@@ -101,6 +102,7 @@ export function SchedulesView({ projectId, projects, execution, executionOptions
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [deleteErrorId, setDeleteErrorId] = useState<string | null>(null);
   const [name, setName] = useState("");
@@ -244,6 +246,35 @@ export function SchedulesView({ projectId, projects, execution, executionOptions
     }
   };
 
+  const updateTask = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!selected || !draftProjectId || !draftExecution || !name.trim() || !instructions.trim() || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = await api.schedules.update(selected.id, {
+        projectId: draftProjectId,
+        name: name.trim(),
+        instructions: instructions.trim(),
+        scheduleKind: kind,
+        scheduleConfig,
+        execution: draftExecution,
+      });
+      setEditOpen(false);
+      if (updated.projectId !== projectId) {
+        setTasks([updated]);
+        setSelectedId(updated.id);
+        onProjectChange(updated.projectId);
+      } else {
+        setTasks((current) => current.map((task) => task.id === updated.id ? updated : task));
+      }
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : "예약 작업을 수정하지 못했습니다.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const toggleEnabled = async () => {
     if (!selected || busy) return;
     setBusy(true);
@@ -280,6 +311,21 @@ export function SchedulesView({ projectId, projects, execution, executionOptions
     setDraftProjectId(projectId ?? projects[0]?.id ?? null);
     setDraftExecution(defaultScheduleExecution(execution, executionOptions));
     setCreateOpen(true);
+    setEditOpen(false);
+  };
+
+  const openEditForm = () => {
+    if (!selected) return;
+    setName(selected.name);
+    setInstructions(selected.instructions);
+    setKind(selected.scheduleKind);
+    setHour(selected.scheduleConfig.hour ?? 9);
+    setMinute(selected.scheduleConfig.minute ?? 0);
+    setWeekday(selected.scheduleConfig.weekday ?? 0);
+    setDraftProjectId(selected.projectId);
+    setDraftExecution(selected.execution);
+    setCreateOpen(false);
+    setEditOpen(true);
   };
 
   const selectScheduleProvider = (providerId: string) => {
@@ -344,18 +390,18 @@ export function SchedulesView({ projectId, projects, execution, executionOptions
             <button className="feature-primary-action lumina-primary-action" type="button" disabled={!projectId || !execution || executionOptions.length === 0} onClick={openCreateForm}><Plus size={15} /> 새 예약</button>
           </div>
           {loading && !hasCachedTasks ? <div className="feature-state"><LoaderCircle className="is-running" size={16} /> 불러오는 중</div> : tasks.length === 0 ? <div className="feature-state">예약 작업이 없습니다.</div> : tasks.map((task) => (
-            <button className={task.id === selected?.id ? "is-selected" : ""} type="button" key={task.id} onClick={() => { setSelectedId(task.id); setCreateOpen(false); }}>
+            <button className={task.id === selected?.id ? "is-selected" : ""} type="button" key={task.id} onClick={() => { setSelectedId(task.id); setCreateOpen(false); setEditOpen(false); }}>
               <span><strong>{task.name}</strong><small>{scheduleText(task)}</small></span>
               <em className={task.enabled ? "is-enabled" : ""}>{task.enabled ? "사용" : "중지"}</em>
             </button>
           ))}
         </aside>
         <section className="feature-detail schedule-detail">
-          {createOpen ? (
-            <form className="compact-form schedule-form schedule-detail-form" aria-labelledby="new-schedule-title" onSubmit={(event) => void createTask(event)}>
+          {createOpen || editOpen ? (
+            <form className="compact-form schedule-form schedule-detail-form" aria-labelledby="schedule-form-title" onSubmit={(event) => void (editOpen ? updateTask(event) : createTask(event))}>
               <header className="detail-heading schedule-form-heading">
-                <div><h2 id="new-schedule-title">새 예약 작업</h2><p>예약 결과가 저장될 프로젝트와 실행 설정을 정합니다.</p></div>
-                <button className="schedule-form-close" type="button" aria-label="예약 작성 닫기" onClick={() => setCreateOpen(false)}><X size={16} /></button>
+                <div><h2 id="schedule-form-title">{editOpen ? "예약 작업 편집" : "새 예약 작업"}</h2><p>예약 결과가 저장될 프로젝트와 실행 설정을 정합니다.</p></div>
+                <button className="schedule-form-close" type="button" aria-label={editOpen ? "예약 편집 닫기" : "예약 작성 닫기"} onClick={() => { setCreateOpen(false); setEditOpen(false); }}><X size={16} /></button>
               </header>
               <label><span>작업명</span><input autoFocus value={name} onChange={(event) => setName(event.currentTarget.value)} /></label>
               <label><span>지시사항</span><textarea rows={6} value={instructions} onChange={(event) => setInstructions(event.currentTarget.value)} /></label>
@@ -372,7 +418,7 @@ export function SchedulesView({ projectId, projects, execution, executionOptions
                 <div className="lumina-select-field"><span>Effort</span><SelectMenu value={draftExecution?.effortId ?? ""} options={scheduleEffortOptions} ariaLabel="예약 Effort" onChange={(value) => setDraftExecution((current) => current ? { ...current, effortId: value || null } : null)} /></div>
               </div>
               <p className="form-help">예약 실행마다 선택한 프로젝트에 새 채팅을 만들고 결과를 저장합니다. 일반 채팅의 현재 실행 설정을 기본값으로 사용하며, 계정 메뉴에서 사용하도록 체크한 Provider와 Model만 선택할 수 있습니다.</p>
-              <div className="dialog-actions"><button type="button" onClick={() => setCreateOpen(false)}>취소</button><button className="is-primary lumina-primary-action" type="submit" disabled={!name.trim() || !instructions.trim() || !draftProjectId || !draftExecution || busy}>예약 생성</button></div>
+              <div className="dialog-actions"><button type="button" onClick={() => { setCreateOpen(false); setEditOpen(false); }}>취소</button><button className="is-primary lumina-primary-action" type="submit" disabled={!name.trim() || !instructions.trim() || !draftProjectId || !draftExecution || busy}>{editOpen ? "변경 저장" : "예약 생성"}</button></div>
             </form>
           ) : !selected ? <div className="feature-state">예약 작업을 선택해 주세요.</div> : (
             <>
@@ -390,6 +436,7 @@ export function SchedulesView({ projectId, projects, execution, executionOptions
                 <span>{selected.execution.modelKey} · {selected.execution.effortId ?? "기본 Effort"}</span>
               </div>
               <div className="detail-actions schedule-actions">
+                <button type="button" disabled={busy} onClick={openEditForm}><Pencil size={14} /> 편집</button>
                 <button type="button" disabled={busy} onClick={() => void toggleEnabled()}>{selected.enabled ? <Pause size={14} /> : <Play size={14} />}{selected.enabled ? "중지" : "사용"}</button>
                 <button className="is-primary lumina-primary-action" type="button" disabled={busy} onClick={() => void runNow()}><Play size={14} /> 지금 실행</button>
                 <button

@@ -33,6 +33,7 @@ class ScheduledTaskCreate(ApiModel):
 
 
 class ScheduledTaskPatch(ApiModel):
+    project_id: str | None = None
     name: str | None = Field(default=None, min_length=1, max_length=240)
     instructions: str | None = Field(default=None, min_length=1, max_length=200_000)
     schedule_kind: ScheduleKind | None = None

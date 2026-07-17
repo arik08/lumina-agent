@@ -1611,6 +1611,25 @@ export async function createScheduledTask(
   });
 }
 
+export async function updateScheduledTask(
+  taskId: string,
+  payload: {
+    projectId: string;
+    name: string;
+    instructions: string;
+    scheduleKind: ScheduleKind;
+    scheduleConfig: Record<string, number>;
+    execution: CurrentSettings["execution"];
+  },
+  signal?: AbortSignal,
+) {
+  return request<ScheduledTask>(`/scheduled-tasks/${encodeURIComponent(taskId)}`, {
+    method: "PATCH",
+    body: payload,
+    signal,
+  });
+}
+
 export async function setScheduledTaskEnabled(taskId: string, enabled: boolean, signal?: AbortSignal) {
   return request<ScheduledTask>(`/scheduled-tasks/${encodeURIComponent(taskId)}/${enabled ? "enable" : "disable"}`, {
     method: "POST",
@@ -2069,6 +2088,7 @@ export const api = {
   schedules: {
     list: listScheduledTasks,
     create: createScheduledTask,
+    update: updateScheduledTask,
     setEnabled: setScheduledTaskEnabled,
     delete: deleteScheduledTask,
     runNow: runScheduledTaskNow,

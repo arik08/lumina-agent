@@ -1477,6 +1477,7 @@ def test_schedule_patch_rejects_empty_and_null_non_nullable_fields(
 
         invalid_patches = [
             {},
+            {"projectId": None},
             {"name": None},
             {"instructions": None},
             {"scheduleKind": None},
@@ -1499,6 +1500,74 @@ def test_schedule_patch_rejects_empty_and_null_non_nullable_fields(
         assert unchanged.status_code == 200
         assert unchanged.json()["name"] == "예약 수정 검증"
         assert unchanged.json()["scheduleConfig"] == {"hour": 9, "minute": 30}
+
+
+def test_schedule_patch_updates_project_timing_and_execution(tmp_path: Path) -> None:
+    app, _settings = _test_app(tmp_path)
+    with TestClient(app) as client:
+        csrf = _login(client)
+        headers = {"X-CSRF-Token": csrf}
+        projects = client.get("/api/projects").json()
+        source_project_id = projects[0]["id"]
+        destination = client.post(
+            "/api/projects",
+            headers=headers,
+            json={"name": "예약 결과 프로젝트"},
+        )
+        assert destination.status_code == 201, destination.text
+        destination_project_id = destination.json()["id"]
+        created = client.post(
+            "/api/scheduled-tasks",
+            headers=headers,
+            json={
+                "projectId": source_project_id,
+                "name": "예약 수정 전",
+                "instructions": "수정 전 지시사항",
+                "scheduleKind": "daily",
+                "scheduleConfig": {"hour": 9, "minute": 30},
+            },
+        )
+        assert created.status_code == 201, created.text
+
+        updated = client.patch(
+            f"/api/scheduled-tasks/{created.json()['id']}",
+            headers=headers,
+            json={
+                "projectId": destination_project_id,
+                "name": "예약 수정 후",
+                "instructions": "수정 후 지시사항",
+                "scheduleKind": "weekly",
+                "scheduleConfig": {"weekday": 4, "hour": 18, "minute": 45},
+                "execution": {
+                    "providerId": "mock",
+                    "modelKey": "mock-agent",
+                    "effortId": "high",
+                },
+            },
+        )
+        assert updated.status_code == 200, updated.text
+        payload = updated.json()
+        assert payload["projectId"] == destination_project_id
+        assert payload["name"] == "예약 수정 후"
+        assert payload["instructions"] == "수정 후 지시사항"
+        assert payload["scheduleKind"] == "weekly"
+        assert payload["scheduleConfig"] == {
+            "weekday": 4,
+            "hour": 18,
+            "minute": 45,
+        }
+        assert payload["execution"] == {
+            "providerId": "mock",
+            "modelKey": "mock-agent",
+            "effortId": "high",
+        }
+        assert client.get(
+            "/api/scheduled-tasks", params={"project_id": source_project_id}
+        ).json() == []
+        destination_tasks = client.get(
+            "/api/scheduled-tasks", params={"project_id": destination_project_id}
+        ).json()
+        assert [task["id"] for task in destination_tasks] == [payload["id"]]
 
 
 def test_scheduled_run_recovers_idempotency_conflict_after_stale_lookup(
