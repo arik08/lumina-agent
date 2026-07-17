@@ -163,7 +163,7 @@ export function LoginScreen({ onAuthenticated, initialDomain = "posco.com" }: Lo
                 autoFocus
                 disabled={submitting}
                 inputMode="text"
-                placeholder="POSCO_계정명"
+                placeholder="POSCO_ID"
                 value={loginName}
                 onChange={(event) => setLoginName(event.currentTarget.value)}
                 onKeyDown={(event) => {
@@ -218,6 +218,7 @@ export function LoginScreen({ onAuthenticated, initialDomain = "posco.com" }: Lo
                 ref={passwordRef}
                 autoComplete="current-password"
                 disabled={submitting}
+                placeholder="********"
                 type="password"
                 value={password}
                 onChange={(event) => setPassword(event.currentTarget.value)}

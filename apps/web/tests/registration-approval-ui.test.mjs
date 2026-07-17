@@ -10,7 +10,8 @@ test("login screen exposes registration request fields without the session note"
     read("../src/api.ts"),
   ]);
   assert.doesNotMatch(screen, /인증된 세션은 오늘 자정까지 유지됩니다/);
-  assert.match(screen, /placeholder="POSCO_계정명"/);
+  assert.match(screen, /placeholder="POSCO_ID"/);
+  assert.match(screen, /placeholder="\*{8}"/);
   assert.match(screen, />\s*회원가입\s*</);
   for (const label of ["가입 이메일", "이름", "소속", "신청 역할", "가입 비밀번호", "비밀번호 확인"]) {
     assert.match(screen, new RegExp(`aria(?:-label|Label)="${label}"`));
