@@ -2700,7 +2700,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 
 .composer textarea { display: block; width: 100%; min-height: var(--control-height-sm); max-height: 120px; margin: 0; overflow-y: auto; field-sizing: content; resize: none; border: 0; outline: 0; padding: var(--space-1) var(--space-2); background: transparent; color: var(--ink); font-size: var(--conversation-font-size); line-height: 1.5; }
 .composer textarea::placeholder { color: #a4aab3; }
-.composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.composer-footer { --artifact-length-warning: oklch(62% 0.18 52); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .composer-footer > div { display: flex; align-items: center; gap: 3px; }
 .composer-footer > div:first-child { min-width: 0; flex: 1 1 auto; }
 .composer-footer > div:last-child { flex: 0 0 auto; }
@@ -2715,7 +2715,6 @@ button:disabled { cursor: default; opacity: 0.5; }
 .composer-footer .model-control { max-width: 156px; padding: 0 8px; font-weight: 620; }
 .artifact-length-control {
   --artifact-length-accent: var(--cobalt);
-  --artifact-length-warning: oklch(62% 0.18 52);
   position: relative;
   display: flex;
   flex: 0 0 auto;
@@ -2803,7 +2802,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .composer-picker.is-open .composer-picker-trigger { background: var(--surface-soft); color: var(--ink); }
 .composer-footer :is(.analysis-depth-control, .answer-length-control):is(.is-auto, .is-brief) { color: var(--muted); }
 .composer-footer :is(.analysis-depth-control, .answer-length-control).is-standard { color: var(--ink); }
-.composer-footer :is(.analysis-depth-control.is-deep, .answer-length-control.is-detailed) { color: var(--warning); }
+.composer-footer :is(.analysis-depth-control.is-deep, .answer-length-control.is-detailed) { color: var(--artifact-length-warning); }
 .composer-picker.is-open .composer-picker-trigger:not(.has-no-chevron) > svg { transform: rotate(180deg); }
 .composer-picker-menu {
   position: absolute;

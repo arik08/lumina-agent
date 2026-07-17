@@ -20,7 +20,8 @@ test("composer keeps model controls intact and sends independent analysis and an
   assert.match(app, /controlClassName=\{`answer-length-control is-\$\{answerLength\}`\}[\s\S]*?triggerIcon=\{<AlignLeft[\s\S]*?hideChevron/);
   assert.match(styles, /\.is-auto, \.is-brief\) \{ color: var\(--muted\); \}/);
   assert.match(styles, /\.is-standard \{ color: var\(--ink\); \}/);
-  assert.match(styles, /\.analysis-depth-control\.is-deep, \.answer-length-control\.is-detailed\) \{ color: var\(--warning\); \}/);
+  assert.match(styles, /\.composer-footer \{ --artifact-length-warning: oklch\(62% 0\.18 52\);/);
+  assert.match(styles, /\.analysis-depth-control\.is-deep, \.answer-length-control\.is-detailed\) \{ color: var\(--artifact-length-warning\); \}/);
   assert.match(app, /id: "brief", label: "간단"/);
   assert.match(app, /id: "standard", label: "충분"/);
   assert.match(app, /id: "detailed", label: "상세"/);
