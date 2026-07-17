@@ -19,7 +19,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -28,6 +28,7 @@ import type { AnnouncementItem, HelpItem, HelpItemKind } from "../api-types";
 import { ResizableSplitPane } from "./ResizableSplitPane";
 
 type HelpSection = "manuals" | "announcements";
+const helpTreeDragMime = "application/x-lumina-help-tree";
 
 interface HelpCenterViewProps {
   canManage: boolean;
@@ -84,7 +85,17 @@ function announcementWasEdited(announcement: AnnouncementItem) {
   return new Date(announcement.updatedAt).getTime() - new Date(announcement.createdAt).getTime() >= 1000;
 }
 
+function isHelpItemSelfOrDescendant(items: HelpItem[], itemId: string, candidateParentId: string) {
+  let current = items.find((item) => item.id === candidateParentId) ?? null;
+  while (current) {
+    if (current.id === itemId) return true;
+    current = current.parentId ? items.find((item) => item.id === current?.parentId) ?? null : null;
+  }
+  return false;
+}
+
 export function HelpCenterView({ canManage, initialAnnouncementId = null, onOpenNavigation }: HelpCenterViewProps) {
+  const draggedHelpItemRef = useRef<HelpItem | null>(null);
   const [section, setSection] = useState<HelpSection>(initialAnnouncementId ? "announcements" : "manuals");
   const [items, setItems] = useState<HelpItem[]>([]);
   const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
@@ -107,6 +118,7 @@ export function HelpCenterView({ canManage, initialAnnouncementId = null, onOpen
   const [announcementTitle, setAnnouncementTitle] = useState("");
   const [announcementBody, setAnnouncementBody] = useState("");
   const [announcementDeleteArmed, setAnnouncementDeleteArmed] = useState(false);
+  const [helpTreeDropParentId, setHelpTreeDropParentId] = useState<string | null | undefined>(undefined);
 
   const effectiveCanManage = canManage && serverCanManage;
   const selected = items.find((item) => item.id === selectedId) ?? null;
@@ -251,6 +263,33 @@ export function HelpCenterView({ canManage, initialAnnouncementId = null, onOpen
     }
   };
 
+  const moveHelpItem = async (item: HelpItem, parentId: string | null) => {
+    if (busy || item.parentId === parentId) {
+      draggedHelpItemRef.current = null;
+      setHelpTreeDropParentId(undefined);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = await api.help.update(item.id, {
+        title: item.title,
+        markdownContent: item.markdownContent,
+        parentId,
+        expectedRevision: item.revision,
+      });
+      setItems((current) => current.map((candidate) => candidate.id === updated.id ? updated : candidate));
+      setSelectedId(updated.id);
+      if (parentId) setExpanded((current) => new Set(current).add(parentId));
+    } catch (moveError) {
+      setError(errorMessage(moveError));
+    } finally {
+      setBusy(false);
+      draggedHelpItemRef.current = null;
+      setHelpTreeDropParentId(undefined);
+    }
+  };
+
   const beginAnnouncementCreate = () => {
     setSelectedAnnouncementId(null);
     setAnnouncementTitle("");
@@ -317,12 +356,14 @@ export function HelpCenterView({ canManage, initialAnnouncementId = null, onOpen
   const renderTree = (nodes: HelpTreeNode[], depth = 0): React.ReactNode => nodes.map((node) => {
     const isFolder = node.item.kind === "folder";
     const isExpanded = query.trim() ? true : expanded.has(node.item.id);
+    const isDropTarget = isFolder && helpTreeDropParentId === node.item.id;
     return (
       <div key={node.item.id}>
         <button
-          className={`file-tree-row help-tree-row ${isFolder ? "is-folder" : ""} ${selectedId === node.item.id ? "is-selected" : ""}`}
+          className={`file-tree-row help-tree-row ${isFolder ? "is-folder" : ""} ${selectedId === node.item.id ? "is-selected" : ""} ${isDropTarget ? "is-drop-target" : ""}`}
           style={{ "--tree-depth": depth } as CSSProperties}
           type="button"
+          draggable={effectiveCanManage && !busy}
           onClick={() => {
             setSelectedId(node.item.id);
             setCreating(null);
@@ -335,6 +376,36 @@ export function HelpCenterView({ canManage, initialAnnouncementId = null, onOpen
               return next;
             });
           }}
+          onDragStart={(event) => {
+            event.dataTransfer.effectAllowed = "move";
+            event.dataTransfer.setData(helpTreeDragMime, node.item.id);
+            draggedHelpItemRef.current = node.item;
+          }}
+          onDragEnd={() => {
+            draggedHelpItemRef.current = null;
+            setHelpTreeDropParentId(undefined);
+          }}
+          onDragOver={isFolder ? (event) => {
+            const source = draggedHelpItemRef.current;
+            if (!source && !Array.from(event.dataTransfer.types).includes(helpTreeDragMime)) return;
+            if (source && isHelpItemSelfOrDescendant(items, source.id, node.item.id)) {
+              event.stopPropagation();
+              event.dataTransfer.dropEffect = "none";
+              setHelpTreeDropParentId(undefined);
+              return;
+            }
+            event.preventDefault();
+            event.stopPropagation();
+            event.dataTransfer.dropEffect = "move";
+            setHelpTreeDropParentId(node.item.id);
+          } : undefined}
+          onDrop={isFolder ? (event) => {
+            const source = draggedHelpItemRef.current ?? items.find((item) => item.id === event.dataTransfer.getData(helpTreeDragMime));
+            if (!source || isHelpItemSelfOrDescendant(items, source.id, node.item.id)) return;
+            event.preventDefault();
+            event.stopPropagation();
+            void moveHelpItem(source, node.item.id);
+          } : undefined}
         >
           <span className="file-tree-chevron" aria-hidden="true">{isFolder ? (isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />) : null}</span>
           {isFolder ? <Folder size={14} /> : <FileText size={14} />}
@@ -361,7 +432,24 @@ export function HelpCenterView({ canManage, initialAnnouncementId = null, onOpen
       </div> : null}
       {error ? <div className="feature-error" role="alert">{error}</div> : null}
       <ResizableSplitPane storageKey="lumina:help-explorer-width" ariaLabel="사용 안내 탐색기 너비 조절" className="file-workspace-split help-center-split">
-        <aside className="file-workspace-explorer" aria-label={section === "manuals" ? "매뉴얼 탐색기" : "공지사항 목록"}>
+        <aside
+          className={`file-workspace-explorer ${section === "manuals" && helpTreeDropParentId === null ? "is-root-drop-target" : ""}`}
+          aria-label={section === "manuals" ? "매뉴얼 탐색기" : "공지사항 목록"}
+          onDragOver={(event) => {
+            if (section !== "manuals" || !effectiveCanManage) return;
+            if (!draggedHelpItemRef.current && !Array.from(event.dataTransfer.types).includes(helpTreeDragMime)) return;
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "move";
+            setHelpTreeDropParentId(null);
+          }}
+          onDrop={(event) => {
+            if (section !== "manuals" || !effectiveCanManage) return;
+            const source = draggedHelpItemRef.current ?? items.find((item) => item.id === event.dataTransfer.getData(helpTreeDragMime));
+            if (!source) return;
+            event.preventDefault();
+            void moveHelpItem(source, null);
+          }}
+        >
           {section === "announcements" ? <div className="help-announcement-explorer-controls">
             {effectiveCanManage ? <div className="help-create-actions"><button className="lumina-primary-action" type="button" disabled={busy} onClick={beginAnnouncementCreate}><Plus size={14} />공지 작성</button></div> : null}
             <label className="feature-search"><Search size={14} /><input value={query} placeholder="공지 제목이나 내용 검색" onChange={(event) => setQuery(event.currentTarget.value)} /></label>

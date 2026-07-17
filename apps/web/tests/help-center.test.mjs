@@ -26,6 +26,13 @@ test("the Help workspace is Markdown-first and hides mutations behind admin capa
   assert.match(helpView, /await api\.help\.create/);
   assert.match(helpView, /await api\.help\.update/);
   assert.match(helpView, /await api\.help\.delete/);
+  assert.match(helpView, /application\/x-lumina-help-tree/);
+  assert.match(helpView, /draggable=\{effectiveCanManage && !busy\}/);
+  assert.match(helpView, /void moveHelpItem\(source, node\.item\.id\)/);
+  assert.match(helpView, /void moveHelpItem\(source, null\)/);
+  assert.match(helpView, /isHelpItemSelfOrDescendant/);
+  assert.match(stylesheet, /\.file-tree-row\.is-drop-target/);
+  assert.match(stylesheet, /\.file-workspace-explorer\.is-root-drop-target/);
   assert.match(helpView, /deleteArmed \? "한 번 더 눌러 삭제" : "삭제"/);
 });
 

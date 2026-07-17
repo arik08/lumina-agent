@@ -1577,7 +1577,7 @@ export async function createHelpItem(
 
 export async function updateHelpItem(
   itemId: string,
-  payload: { title: string; markdownContent: string; expectedRevision: number },
+  payload: { title: string; markdownContent: string; expectedRevision: number; parentId?: string | null },
   signal?: AbortSignal,
 ) {
   return request<HelpItem>(`/help/items/${encodeURIComponent(itemId)}`, {

@@ -80,12 +80,57 @@ def test_help_manual_is_readable_by_users_and_managed_only_by_admins(tmp_path: P
         assert updated.status_code == 200, updated.text
         assert updated.json()["revision"] == 2
 
+        moved_to_root = client.patch(
+            f"/api/help/items/{document.json()['id']}",
+            headers=headers,
+            json={
+                "title": updated.json()["title"],
+                "markdownContent": updated.json()["markdownContent"],
+                "parentId": None,
+                "expectedRevision": updated.json()["revision"],
+            },
+        )
+        assert moved_to_root.status_code == 200, moved_to_root.text
+        assert moved_to_root.json()["parentId"] is None
+
+        moved_back = client.patch(
+            f"/api/help/items/{document.json()['id']}",
+            headers=headers,
+            json={
+                "title": moved_to_root.json()["title"],
+                "markdownContent": moved_to_root.json()["markdownContent"],
+                "parentId": folder.json()["id"],
+                "expectedRevision": moved_to_root.json()["revision"],
+            },
+        )
+        assert moved_back.status_code == 200, moved_back.text
+        assert moved_back.json()["parentId"] == folder.json()["id"]
+
+        nested_folder = client.post(
+            "/api/help/items",
+            headers=headers,
+            json={"kind": "folder", "title": "하위 폴더", "parentId": folder.json()["id"]},
+        )
+        assert nested_folder.status_code == 201, nested_folder.text
+        cycle = client.patch(
+            f"/api/help/items/{folder.json()['id']}",
+            headers=headers,
+            json={
+                "title": folder.json()["title"],
+                "markdownContent": "",
+                "parentId": nested_folder.json()["id"],
+                "expectedRevision": folder.json()["revision"],
+            },
+        )
+        assert cycle.status_code == 422, cycle.text
+        assert cycle.json()["code"] == "help_parent_cycle"
+
         client.cookies.clear()
         user_csrf = _login(client, "manual-reader", "reader-password")
         listing = client.get("/api/help/items")
         assert listing.status_code == 200, listing.text
         assert listing.json()["canManage"] is False
-        assert {item["title"] for item in listing.json()["items"]} == {"시작하기", "첫 사용 안내"}
+        assert {item["title"] for item in listing.json()["items"]} == {"시작하기", "첫 사용 안내", "하위 폴더"}
         manual = next(item for item in listing.json()["items"] if item["kind"] == "document")
         assert "정보 아이콘" in manual["markdownContent"]
 
