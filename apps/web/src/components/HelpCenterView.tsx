@@ -20,8 +20,6 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 
 import { api } from "../api";
 import type { AnnouncementItem, HelpItem, HelpItemKind } from "../api-types";
@@ -492,8 +490,8 @@ export function HelpCenterView({ canManage, initialAnnouncementId = null, onOpen
               ) : editing ? (
                 <div className="help-markdown-editor"><div><strong>Markdown</strong><span>제목, 목록, 표, 링크와 코드 블록을 사용할 수 있습니다.</span></div><textarea className="thin-scrollbar" value={draftContent} spellCheck={false} aria-label="안내 Markdown 편집" placeholder="# 시작하기\n\n사용 방법과 팁을 Markdown으로 작성해 주세요." onChange={(event) => setDraftContent(event.currentTarget.value)} /></div>
               ) : (
-                <article className="help-markdown thin-scrollbar">
-                  {selected.markdownContent.trim() ? <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: (props) => <a {...props} target="_blank" rel="noreferrer" /> }}>{selected.markdownContent}</ReactMarkdown> : <div className="file-viewer-empty"><FileText size={28} /><strong>아직 내용이 없습니다.</strong><span>{effectiveCanManage ? "편집을 눌러 Markdown 매뉴얼을 작성해 주세요." : "관리자가 내용을 준비하고 있습니다."}</span></div>}
+                <article className="help-chat-markdown-body thin-scrollbar">
+                  {selected.markdownContent.trim() ? <MarkdownResponse text={selected.markdownContent} /> : <div className="file-viewer-empty"><FileText size={28} /><strong>아직 내용이 없습니다.</strong><span>{effectiveCanManage ? "편집을 눌러 Markdown 매뉴얼을 작성해 주세요." : "관리자가 내용을 준비하고 있습니다."}</span></div>}
                 </article>
               )}
             </div>
@@ -513,7 +511,7 @@ export function HelpCenterView({ canManage, initialAnnouncementId = null, onOpen
                 <div><h2>{selectedAnnouncement.title}</h2><p>{selectedAnnouncement.author?.displayName || selectedAnnouncement.author?.loginId || "관리자"} · {formatDate(selectedAnnouncement.createdAt)}{announcementWasEdited(selectedAnnouncement) ? " · 수정됨" : ""}</p></div>
                 {effectiveCanManage ? <div className="file-viewer-actions"><button type="button" disabled={busy} onClick={beginAnnouncementEdit}><Pencil size={14} />편집</button><button className={`is-danger ${announcementDeleteArmed ? "is-confirming" : ""}`} type="button" disabled={busy} onClick={() => void removeAnnouncement()}>{announcementDeleteArmed ? <AlertCircle size={14} /> : <Trash2 size={14} />}{announcementDeleteArmed ? "한 번 더 눌러 삭제" : "삭제"}</button></div> : null}
               </header>
-              <article className="help-announcement-body thin-scrollbar"><MarkdownResponse text={selectedAnnouncement.body} /></article>
+              <article className="help-chat-markdown-body thin-scrollbar"><MarkdownResponse text={selectedAnnouncement.body} /></article>
             </div>
           )}
         </section>
