@@ -2,7 +2,7 @@
 
 > 문서 상태: 통합 기준안
 > 작성일: 2026-07-11
-> 최종 동기화: 2026-07-13 (`f9983df`와 현재 작업 트리 기준)
+> 최종 동기화: 2026-07-17 (`8ff169b` 이후 현재 작업 트리 포함)
 > 적용 범위: Lumina Agent 제품, Frontend, Backend, Agent Worker, 확장 시스템과 운영 환경
 > 구현 상태: 이 문서는 설계 문서의 통합본이며, 각 항목의 실제 구현 완료 여부를 뜻하지 않습니다.
 
@@ -60,7 +60,7 @@
 3. 승인된 기능 상세 문서가 있지만 source가 아직 이전 계약이면 `Target`입니다.
 4. 평가 보고서, 조사 문서와 구현 plan은 근거·Roadmap이며 현재 지원을 주장하지 않습니다.
 
-2026-07-13 동기화 시점의 주요 상태는 다음과 같습니다.
+2026-07-17 동기화 시점의 주요 상태는 다음과 같습니다.
 
 | 영역 | 상태 | 근거와 해석 |
 |---|---|---|
@@ -75,7 +75,7 @@
 
 ### 1.4 현재 구현 상세 인벤토리
 
-아래 표는 2026-07-13의 migration `0001`~`0022`, 현재 route·service·Frontend source와 회귀 test로 확인한 실제 구현 범위입니다. `Implemented`는 source가 존재하고 해당 계약 test가 있다는 뜻이며 운영 규모·보안 심사·실사용 품질까지 완료되었다는 뜻은 아닙니다.
+아래 표는 2026-07-17의 migration `0001`~`0030`, 현재 route·service·Frontend source와 회귀 test로 확인한 실제 구현 범위입니다. `Implemented`는 source가 존재하고 해당 계약 test가 있다는 뜻이며 운영 규모·보안 심사·실사용 품질까지 완료되었다는 뜻은 아닙니다.
 
 | 영역 | 구현된 세부 기능 | 주요 source·test 근거 |
 |---|---|---|
@@ -83,25 +83,45 @@
 | 관리자 | 사용자 생성·조회·수정·비밀번호 reset·role/status 변경, 마지막 active admin 보호, 조직 범위 사용량 통계, 다른 사용자 대화·Turn Set 감사 조회, audit event 검색, 공유 링크 목록과 token 비노출 강제 revoke, 조직 Run 안전 한도 설정과 비상 전체 중단 | `routes/admin.py`, `test_admin_api.py`, `test_admin_share_revoke.py`, `test_run_safety.py` |
 | Project·지침 | Project CRUD와 Default 삭제 방지, owner·editor·viewer membership 생명주기와 조직 격리, Organization→Agent default→Project→Personal 지침 합성, 관리자용 고정 system·Agent 기본 프롬프트 override와 기본값 복원, Run snapshot 고정, 사용자에게 노출하지 않는 revision·digest·ETag 동시성, 프로젝트 쓰기 구성원의 지침 편집, 조직 지침 과거 revision label·내용 수정, Secret 패턴 차단 | `projects/`, `routes/project_memberships.py`, `instructions/`, `test_project_memberships.py`, `test_instruction_hierarchy.py` |
 | Project File·Workspace | Project 파일 upload·목록·상세·rename·새 version·download·삭제, 안전한 상대 경로, content hash와 immutable version, DB commit 실패 시 storage cleanup, Composer와 Run의 exact file version 고정, `read_file`·`write_file`·`glob` Project scope 강제 | `project_files/`, `tools/workspace.py`, `test_project_workspace.py`, `test_workspace_tools.py` |
-| Conversation | favorite 우선 cursor 목록, 좋아요 filter·보존, whitespace-tolerant 제목 검색, Message 본문 검색과 snippet, Turn Set 역방향 pagination, first Run 임시·모델 제목, Project 이동과 Session-owned asset 이동, 특정 Message 기준 분기, JSON·Markdown 내보내기 | `routes/conversations.py`, `conversations/service.py`, `test_conversation_listing.py`, `test_conversation_branch_export.py`, `test_conversation_move_assets.py` |
+| Conversation | favorite 우선 cursor 목록, 좋아요 filter·보존, whitespace-tolerant 제목 검색, Message 본문 검색과 snippet, Turn Set 역방향 pagination·이전 묶음 선행 로딩, revision CAS와 no-op PATCH 차단, first Run 임시·모델 제목, Project 이동과 Session-owned asset 이동, 특정 Message 기준 분기, JSON·Markdown 내보내기, builtin Agent Frontend contract 저장·fallback | `routes/conversations.py`, `conversations/service.py`, `agent_frontends/`, `test_conversation_listing.py`, `test_conversation_branch_export.py`, `test_agent_frontend_contract.py` |
 | 공유·Message 상호작용 | 특정 Message까지의 immutable snapshot 공유, attachment·Artifact version 고정, token hash 저장, owner·admin revoke와 공유 download 권한, Message reference 조회, like/dislike upsert·취소, 문제 신고, 선택 문장 Comment CRUD와 stale anchor | `routes/sharing.py`, `routes/messages.py`, `test_conversation_sharing_api.py`, `test_message_memory_interactions.py` |
-| Agent Run·Plan | Conversation 단위 single active Run과 다른 Conversation 병렬 실행, durable Queue와 `queue_next` 승격, SSE snapshot·Last-Event-ID replay, worker restart 복구, pause·resume·cancel·retry, model Turn·총 Token·경과 시간·예상 비용 한도, 모델 `update_plan`, stable Step ID, Tool Subtask, 독립 Tool 병렬 실행, approval 대기·승인·거부 | `runs/`, `agent/executor.py`, `test_run_concurrency_replay.py`, `test_worker_recovery.py`, `test_plan_lifecycle.py`, `test_tool_approvals.py`, `test_run_safety.py` |
+| Agent Run·Plan | Conversation 단위 single active Run과 다른 Conversation 병렬 실행, durable Queue와 `queue_next` 승격, SSE snapshot·Last-Event-ID replay, worker restart 복구, pause·resume·cancel·retry, 계정별 확인 질문 mode와 `awaiting_input` checkpoint·재개, model Turn·총 Token·경과 시간·예상 비용 한도, 모델 `update_plan`, stable Step ID, Tool Subtask, 독립 Tool 병렬 실행, approval 대기·승인·거부 | `runs/`, `agent/executor.py`, `test_run_concurrency_replay.py`, `test_worker_recovery.py`, `test_plan_lifecycle.py`, `test_tool_approvals.py`, Frontend clarification tests |
 | Context·Memory | recoverable compaction, Tool Call/Result pair·side effect 보존, 실패 시 원 Context 유지, 모델별 Context budget, 사용자 Memory 후보·자동/확인/끔 mode, 민감정보 차단, relevant subset recall, LLM 최적화와 provenance 병합, Project learning proposal approve·reject·apply·rollback | `context/`, `memories/`, `project_memories/`, `test_context_compaction_memory_learning.py`, `test_project_memory_learning.py` |
-| Provider | Mock·P-GPT·OpenAI Responses·Anthropic·Gemini·OpenAI Compatible adapter, multimodal image 입력, Tool roundtrip, typed·redacted 오류, 관리자 Model discovery와 명시 활성화, 사용자·Project 실행 선택 저장, Codex ChatGPT OAuth App Server·warm client·transport retry·API key 제거, 사용자 hash prompt-cache routing | `providers/`, `routes/providers.py`, `routes/admin_providers.py`, `test_external_provider_adapters.py`, `test_codex_oauth_provider.py`, `test_openai_responses_provider.py` |
+| Provider | Mock·P-GPT·OpenAI Responses·Anthropic·Gemini·OpenAI Compatible adapter, multimodal image 입력, Tool roundtrip, typed·redacted 오류, 공통 base URL·Retry-After 검증, 관리자 Model discovery·명시 활성화·공식 Context와 실측 입력 상한 분리, revision 기반 사용자·Project 실행 선택 저장, Codex ChatGPT OAuth App Server·warm client·transport retry·API key 제거, 사용자 hash prompt-cache routing | `providers/`, `routes/providers.py`, `routes/admin_providers.py`, `test_provider_http.py`, `test_model_output_limits.py`, `test_settings_revision_cas.py` |
 | Web Search·인용 | DuckDuckGo search, readable HTML fetch, query·timeout·size·content-type 제한, redirect·private IP·DNS rebinding 방어, search snippet→fetched evidence 승격, source hash·번호 안정화, cited·reviewed·search-only UI 상태 | `tools/web.py`, `citations.py`, `test_web_tools.py`, `test_citations.py`, `source-evidence-status.test.mjs` |
-| Attachment·Artifact | TXT·Markdown·HTML·CSV·TSV·PDF·DOCX·PPTX·XLSX extraction과 자연 locator, fake Office 거부, Artifact immutable version·restore, 사용자별 Draft ETag/CAS, stale·provenance 보호, Preview·download, HTML 원문 보존, DOCX·XLSX·PPTX·PDF·HTML·Markdown 생성, Codex image와 복합 asset embedding | `attachments/`, `artifacts/`, `test_attachment_extraction.py`, `test_artifact_draft_cas.py`, `test_report_generation.py`, `test_codex_image_generation.py` |
+| Attachment·Artifact | TXT·Markdown·HTML·CSV·TSV·PDF·DOCX·PPTX·XLSX extraction과 자연 locator, fake Office 거부와 OpenXML 관계 XML 안전 파싱, Artifact immutable version·restore, 사용자별 Draft·current version ETag/CAS, stale·provenance 보호, DB 실패·경합 시 새 storage blob 보상 정리, 손상되거나 누락된 원본의 명시 오류, Preview·download, HTML 원문 보존, DOCX·XLSX·PPTX·PDF·HTML·Markdown 생성, Codex image와 복합 asset embedding | `attachments/`, `artifacts/`, `test_attachment_extraction.py`, `test_artifact_draft_cas.py`, `test_artifact_storage_cleanup.py`, `test_artifact_render_validation.py` |
 | Artifact 검증 | binary signature·재개봉, OpenXML macro·외부 hyperlink 차단, PDF link·page geometry 검사, LibreOffice 격리 profile과 Poppler page render, blank·비정상 크기·page count mismatch·timeout 실패 판정, renderer 미설치 시 `structural_passed`와 pending 구분 | `artifacts/render_validation.py`, `test_artifact_validation.py`, `test_artifact_render_validation.py` |
-| Skill Marketplace | Private Skill 생성, 사용자별 WorkingDraft checkout·revision·activate, immutable version save·publish, account별 installation, catalog tag, Folder CRUD·move, creator와 복수 Owner·Maintainer 분리, primary Owner 제거 방지, exact draft/version digest를 Run·예약 Run에 고정 | `extensions/`, migration `0019`, `test_extensions_schedules.py`, `test_composer_run_references.py`, Marketplace Frontend tests |
+| Skill Marketplace | Private Skill 생성, 사용자별 WorkingDraft checkout·revision·activate와 atomic revision CAS, stale base version save 차단, immutable version save·publish, account별 installation, catalog tag, Folder CRUD·move, creator와 복수 Owner·Maintainer 분리, primary Owner 제거 방지, exact draft/version digest를 Run·예약 Run에 고정, 설치 Skill Markdown 기본 보기·상세 history navigation | `extensions/`, migration `0019`, `test_extensions_schedules.py`, `test_composer_run_references.py`, Marketplace Frontend tests |
 | MCP | 관리자 definition·revision·approval·status, 사용자·Project installation, Secret reference bind/unbind, repository-relative manifest와 literal Secret 금지, stdio lifecycle·Tool allowlist·schema drift 차단, streamable HTTP session/SSE/timeout, exact host·DNS pinning·rebind 검사와 명시 private range | `mcp/`, `routes/mcp.py`, `test_mcp_catalog.py`, `test_mcp_runtime.py`, `test_mcp_manifests.py` |
-| Scheduler·알림 | hourly·daily·weekly·weekdays·manual과 timezone, enable·disable·run-now·archive, due tick 중복 방지, frozen/latest Skill snapshot, timeout retry와 restart 후 interrupted retry, terminal Artifact 동기화, 사용자별 persistent·idempotent in-app 알림, unread count·read one/all·delete·deep link | `schedules/`, `notifications/`, `test_extensions_schedules.py`, `test_notifications.py` |
-| Frontend 내구성·상세 UI | `crypto.randomUUID` fallback, Backend readiness 연속 확인 뒤 reload, top-level React Error Boundary, Session 복원 loading, Composer stop, Turn renderer 분리, Plan 자동 open/terminal close, Tool group·duration·model exchange·write progress, source evidence, Artifact panel·공유 viewer·clipboard fallback | `AppErrorBoundary.tsx`, `BackendConnectionGuard.tsx`, `ConversationTurn.tsx`, `client-id.ts`와 `apps/web/tests/` |
-| 설치·운영 | installer validate-only/offline, Node version 검사, Windows `npm.cmd`, optional·required company CA 분리, 성공·실패 창과 exit code 보존, staged diagnostics와 Secret redaction, health live/ready, SQLite→PostgreSQL offline migration compile, 격리 QA port와 실행기 hard reset | `devtools/install_lumina.ps1`, `devtools/run_lumina.ps1`, `diagnostics/`, `test_operational_diagnostics.py`, `test_postgres_compatibility.py` |
+| Scheduler·알림 | hourly·daily·weekly·weekdays·manual과 timezone, enable·disable·run-now·archive, `(task, scheduled_for)` claim과 중복 dispatch 경합 복구, frozen/latest Skill snapshot, timeout retry와 restart 후 interrupted retry, terminal Artifact 동기화, 사용자별 persistent·idempotent in-app 알림, unread count·read one/all·delete·deep link | `schedules/`, `notifications/`, `test_extensions_schedules.py`, `test_notifications.py` |
+| Frontend 내구성·상세 UI | `crypto.randomUUID` fallback, Backend readiness 연속 확인 뒤 reload, top-level React Error Boundary, Session 복원 loading, 부가 화면 lazy loading, Composer stop, Turn renderer 분리, 확인 질문 card, Plan 자동 open/terminal close, Tool group·duration·model exchange·write progress, source evidence, 공용 body Portal tooltip, Artifact panel·공유 viewer·clipboard fallback, 사용자별 채팅 폭·글꼴 설정 | `AppErrorBoundary.tsx`, `BackendConnectionGuard.tsx`, `ConversationTurn.tsx`, `GlobalTooltip.tsx`, `client-id.ts`와 `apps/web/tests/` |
+| 설치·운영 | installer validate-only/offline, Node version 검사, Windows `npm.cmd`, optional·required company CA 분리, 성공·실패 창과 exit code 보존, staged diagnostics와 Secret redaction, health live/ready, SQLite→PostgreSQL offline migration compile, SQLite worker lock의 platform 경계, 격리 QA port, supervisor identity 기반 종료와 실행기 hard reset | `devtools/install_lumina.ps1`, `devtools/run_lumina.ps1`, `devtools/stop_lumina.ps1`, `diagnostics/`, `test_operational_diagnostics.py`, `test_database_worker_lock.py` |
 
 현재 명시적으로 구현하지 않은 경계도 함께 고정합니다.
 
 - Run당 model Turn·총 Token·경과 시간·예상 비용은 생성 시 조직 설정을 snapshot으로 고정하고 한도 도달 시 `limit_reached`로 종료합니다. 기본값은 각각 400, 4,000,000, 10,080분, $100이며 관리자 화면에서 조정합니다.
 - multi-worker lease·heartbeat, Redis queue, Object Storage, hosted document RAG, Local Workspace Bridge와 Skill Change Request·자동 Eval은 Target입니다.
 - 조건부 LibreOffice·Poppler·PostgreSQL test가 skip되면 해당 외부 실행 환경까지 검증되었다고 주장하지 않습니다.
+
+### 1.5 2026-07-16~17 source 정합화 결과
+
+최근 source 변경을 설계에 반영할 때 단일 commit의 화면 모양을 장기 계약으로 과장하지 않고, 같은 동작을 보호하는 service·migration·회귀 test가 함께 있는지를 기준으로 삼았습니다. 현재 source에서 확정된 추가 계약은 다음과 같습니다.
+
+| 영역 | 현재 구현 계약 |
+|---|---|
+| 원자 갱신 | Conversation, 사용자·Project 설정, Help 문서, Skill Draft·version pointer와 Artifact Draft·current version은 expected revision 또는 ETag 기반 compare-and-swap을 사용합니다. 누락·`null`·no-op PATCH는 구분하고 stale writer가 최신 값을 덮어쓰지 못하게 합니다. |
+| 저장 보상 | Attachment, Project File, Artifact version과 Agent가 생성한 파일은 storage write 뒤 DB commit·pointer 갱신이 실패하면 이번 시도에서 새로 만든 blob만 정리합니다. 기존 version과 다른 요청의 blob은 보존합니다. |
+| Project Workspace | Project Folder Context reference는 현재 ProjectFile·ProjectFileVersion query 결과에서 만들고 선택 시점의 folder content hash를 Run에서 다시 검증합니다. 파일 record 갱신과 논리 folder 갱신 경계를 분리하며, 손상·누락된 저장 원본은 빈 정상 응답으로 위장하지 않고 복구 가능한 오류 계약을 반환합니다. |
+| 대화 복원 | 최근 Turn Set을 먼저 열고 위쪽 경계 접근 전에 이전 묶음을 선행 로딩합니다. live event와 과거 page를 ID·sequence로 합치며, 아직 load하지 않은 대화를 신규 welcome으로 오인하지 않습니다. |
+| 확인 질문 | 계정 설정 `autonomous | balanced | confirming`을 Run snapshot에 고정하고, `request_user_input`은 한 Run에서 한 번의 질문 묶음으로만 호출합니다. Run은 `awaiting_input`에서 checkpoint를 보존하며 `submit_user_input` 후 Queue를 거쳐 재개합니다. |
+| 실행 Timeline | Plan은 실제 모델 계획과 Tool 순서에 맞춰 갱신하고 terminal 전에 완료로 보이지 않게 합니다. 모델 처리 시간과 Tool interval을 분리하며 보고서·`write_file` 진행은 실제 출력 시작과 누적량을 기준으로 표시합니다. |
+| Renderer | Mermaid는 label 문법을 안전하게 보정하고 authored style을 보존하며 fit·zoom·pan·drag scroll·keyboard close를 제공합니다. ECharts는 제한된 chart preset이 아니라 검증된 전체 option을 renderer 경계에서 처리합니다. |
+| Marketplace | 설치된 Skill은 frontmatter와 Markdown 본문을 구분한 기본 읽기 화면을 제공하고 browser history로 catalog/detail을 오갑니다. MCP의 `미사용`은 단순 표시가 아니라 해당 scope installation 해제로 이어지며 destructive action은 같은 버튼의 2단계 확인을 사용합니다. |
+| MCP wrapper | MCP definition payload와 상세 화면은 `source: skill-mcp:<slug>` wrapper 적용 여부를 함께 표시합니다. wrapper가 없으면 사용 지침이 Context에 들어가지 않음을 경고하며, 실제 연결이 없는 POSCO placeholder manifest·stub·wrapper는 builtin catalog처럼 남겨 두지 않습니다. |
+| 사용자 표현 설정 | 채팅 본문 폭과 UI·사용자·assistant·code 글꼴 크기는 서버 설정 revision과 함께 저장합니다. 첫 답변에는 비교할 이전 누적량이 없으므로 Session 누적 usage 비교를 숨깁니다. |
+| 조용한 정상 흐름 | 일상적인 저장·복사·읽음·실행 성공은 toast를 남발하지 않고 화면의 상태 변화로 확인합니다. 오류·부분 실패·복구·guard 상태는 명시적으로 알립니다. |
+| Runtime 호환성 | Run 복구는 누락된 과거 Context·Plan field를 안전한 기본값으로 정규화하고, version 고정 source 문서는 원본 reference로 복구 가능해야 합니다. Provider `Retry-After`, Tool schema와 관리자 집계값은 외부·DB 경계에서 타입을 검증합니다. |
+| Agent Frontend 경계 | Conversation과 Run은 builtin Agent Frontend ID·version·contract snapshot을 보존합니다. 등록되지 않았거나 호환되지 않는 Frontend는 `general-chat`으로 열되 원래 ID와 Artifact·Run 기록은 버리지 않습니다. |
 
 ## 2. 제품 정의
 
@@ -669,6 +689,7 @@ Turn Set
 
 - Session을 열면 최근 Turn Set 3개를 기본으로 가져옵니다.
 - 위로 스크롤하면 이전 Turn Set을 원자적으로 추가합니다.
+- 현재 구현은 첫 page가 열린 뒤 `has_more_before=true`이면 직전 page를 background에서 선행 요청하고, 사용자가 상단 임계값에 접근했을 때 준비된 page를 즉시 prepend합니다. 선행 요청 실패는 현재 대화를 지우지 않으며 상단 접근 시 다시 시도합니다.
 - `before_cursor`, `limit_turn_sets`, `has_more_before`를 사용합니다.
 - 과거 항목 삽입 전후 첫 visible Message의 화면 위치를 보존합니다.
 - live event와 과거 load는 `message_id`, `run_id`, sequence로 중복을 제거합니다.
@@ -808,6 +829,14 @@ queued_message_added
 queued_message_cancelled
 queued_message_promoted_to_run
 ```
+
+확인 질문은 일반 steer와 별도의 durable 입력 대기 흐름입니다.
+
+- 계정 설정은 `autonomous | balanced | confirming`이며 Run 생성 시 `clarification_mode`로 snapshot합니다.
+- Agent가 질문하기로 결정하면 visible assistant text에 질문을 흘리지 않고 `request_user_input` Tool을 단독 호출합니다. 한 Run에서 최대 한 묶음, 묶음당 1~10개 질문과 각 2~4개 객관식 선택지를 허용하고 UI가 직접 입력 선택지를 추가합니다.
+- Backend는 질문 묶음과 Tool checkpoint를 Run snapshot에 저장하고 `input_requested` event 뒤 상태를 `awaiting_input`으로 바꿉니다. 재시작·재접속에서도 질문 card와 이미 제출한 답을 복원합니다.
+- 사용자는 객관식, 직접 입력 또는 `AI가 판단`으로 답할 수 있습니다. `submit_user_input`은 모든 질문의 답과 중복을 검증하고 `input_submitted`를 저장한 뒤 Run을 Queue로 돌려 같은 checkpoint에서 재개합니다.
+- `awaiting_input` 동안 모델 작업 시간은 진행 중으로 누적하지 않고 pause·approval과 구분한 `Q&A` 상태를 표시합니다. Tool 승인은 이 흐름으로 대체하지 않습니다.
 
 ### 9.9 Pause, resume, cancel과 retry
 
@@ -965,6 +994,7 @@ work_plan_updated
 assistant_text_delta
 assistant_turn_completed / message_completed
 approval_requested
+input_requested / input_submitted
 tool_started / tool_completed
 artifact_created
 message_feedback_changed / message_comment_changed
@@ -1280,6 +1310,8 @@ Catalog ExtensionVersion
 - uninstall은 scope 연결만 제거하고 package나 다른 설치를 삭제하지 않습니다.
 - Harness 대화에서 만든 Skill WorkingDraft는 기본적으로 생성한 사용자에게 즉시 활성화합니다. catalog publish나 immutable version 저장 전에도 다음 Run에서 실제 Skill로 resolve할 수 있습니다.
 - Draft resolver는 `draft_id`, current `draft_revision`과 package digest를 고정합니다. Draft 변경은 이미 실행 중인 Run에 영향을 주지 않고 다음 Run부터 응답에 반영합니다.
+- Marketplace의 설치 상태는 단순 badge가 아니라 scope installation의 실제 상태입니다. `미사용`으로 전환하면 해당 사용자 또는 Project installation을 해제하고, 다시 설치할 수 있는 catalog action으로 돌아갑니다.
+- 설치 Skill 상세는 `SKILL.md` frontmatter를 metadata로 분리하고 Markdown 본문을 기본 읽기 화면으로 렌더링합니다. raw source는 보조 view이며, catalog→detail→이전 detail 이동은 browser history와 동기화합니다.
 
 ### 14.3 불변 version
 
@@ -1334,6 +1366,8 @@ Skill의 `creator_user_id`는 최초 기여 기록으로 고정합니다. 현재
 - 현재 stdio runtime은 shell 문자열이 아니라 argument 배열로 process를 실행하고 repository-relative `cwd`, command allowlist, environment template와 Secret resolver를 검증합니다. literal Secret이 manifest에 있거나 선언한 Tool schema가 runtime `tools/list`와 달라지면 호출 전에 실패합니다.
 - streamable HTTP runtime은 session header와 SSE response를 지원하되 exact scheme·host·port, redirect, DNS 결과와 실제 socket address를 검증합니다. loopback·link-local은 금지하고 private range는 관리자가 명시한 범위만 허용하며 request 직전 재해석으로 DNS rebinding을 막습니다.
 - 설치 snapshot은 definition revision, configuration digest, Tool allowlist, transport와 Secret binding reference를 고정합니다. runtime 결과·오류에는 Secret 원문, 전체 remote body와 내부 header를 넣지 않습니다.
+- 모든 MCP definition은 `extensions/skills/<wrapper>/SKILL.md`의 `source: skill-mcp:<mcp-slug>`와 1:1로 대응해야 합니다. Backend catalog payload는 wrapper 적용 여부와 이름을 반환하고 상세 UI는 `적용 | 누락`을 표시합니다. 누락 상태에서는 Tool 연결 자체를 성공처럼 설명하지 않고 Run Context에 사용 지침이 주입되지 않는다는 경고를 제공합니다.
+- 실제 endpoint·Tool schema·운영 책임이 정해지지 않은 placeholder manifest, 성공만 반환하는 stub process와 빈 wrapper 묶음은 builtin MCP로 배포하지 않습니다. 삭제하더라도 DB의 과거 revision·Run snapshot은 감사 원본으로 보존하고 신규 catalog seed와 설치 후보에서만 제외합니다.
 
 ### 14.6 Skill Folder 계층
 
@@ -1574,6 +1608,8 @@ Chat Workspace
 
 usage에는 Provider, Model, Input, Cached Input, Uncached Input, Output과 Total을 표시합니다. 가격표 계산은 `예상 비용`으로 표시하고 가격표 version, 통화와 환율 시각을 추적합니다. 알 수 없는 비용을 0으로 표시하지 않습니다.
 
+첫 assistant 답변에는 비교할 이전 답변이 없으므로 Session 누적 사용량 비교를 숨기고 해당 답변 자체의 usage만 표시합니다. 두 번째 답변부터 Turn 순서로 누적한 Session usage를 함께 보여줍니다. 환율 source·cache 내부 metadata는 사용자 popover에 노출하지 않고 `fresh | stale | unavailable`에 따른 계산 가능 여부만 반영합니다.
+
 답변 피드백은 사용자별·Message별로 저장합니다. 좋아요와 싫어요는 상호 배타적이고 다시 누르면 취소할 수 있으며, 최신 상태가 여러 기기에 동기화되어야 합니다. 싫어요는 선택형 이유와 선택적 설명을 받을 수 있지만 입력을 강제하지 않습니다.
 
 `문제 신고`는 부정확함, 출처 문제, 유해·부적절, 개인정보, UI·도구 오류와 기타 category를 제공하고 재현 설명을 받을 수 있습니다. 제출 전에 포함할 정보 범위를 보여주며, 기본 payload에는 Message ID, Provider·Model, Run·Tool 상태와 client version만 넣습니다. 전체 대화, Tool 원문, attachment, secret과 개인 Memory는 사용자의 별도 동의 없이 신고에 포함하지 않습니다. 신고는 일반 좋아요·싫어요와 별도 상태·운영 workflow를 가집니다.
@@ -1624,6 +1660,10 @@ MessageSelectionComment
 - idempotency·client ID는 공용 `createClientId()`에서 만듭니다. `crypto.randomUUID()`가 없는 browser에서는 `getRandomValues`로 UUID v4 version·variant bit를 설정하고, Web Crypto 자체가 없을 때만 `Math.random` 호환 fallback을 사용합니다.
 - Backend 연결 실패 화면은 listener가 다시 열린 한 번의 probe만으로 reload하지 않고 연속 readiness 성공을 확인합니다. 재연결 중 spinner와 오류 상태를 구분하고 무한 reload loop를 만들지 않습니다.
 - React render 오류는 `AppErrorBoundary`가 white screen 대신 복구 안내와 reload action을 표시합니다. process health와 render crash를 같은 오류로 취급하지 않습니다.
+- Agent 외 부가 workspace는 처음 열 때 lazy load하고, 화면별 server data는 짧은 cache를 사용해 재방문 비용을 줄입니다. 목록형 화면은 사용자가 마지막으로 연 항목을 우선 표시하되 서버의 canonical 정렬·권한을 바꾸지 않습니다.
+- 사용자 노출 tooltip·popover·파일 context menu는 `document.body`의 공용 Portal layer에서 렌더링해 clipping·theme 경계를 피합니다. native `title`이나 component별 pseudo-element tooltip을 fallback으로 섞지 않습니다.
+- 채팅 content width와 UI·user·assistant·code font size는 서버의 사용자 설정과 `settings_revision`으로 저장하며, UI는 허용 범위 안의 1px 단위 조정만 제공합니다. 전역 token을 거치고 화면별 magic number로 복제하지 않습니다.
+- 저장·복사·읽음·Run 시작처럼 결과가 화면에 즉시 드러나는 정상 동작은 성공 toast를 생략합니다. 오류, guard, 부분 실패와 자동 복구는 원인과 다음 행동을 알립니다.
 - Clipboard API 실패·미지원 시 안전한 DOM copy fallback을 사용하고 두 경로가 모두 실패하면 성공 toast를 표시하지 않습니다.
 - 실행 상세는 사용자 업무 계획, 모델 처리, Tool group과 최종 답변을 분리합니다. 반복 Tool은 group으로 접되 최신 실행 group은 답변 작성이 끝날 때까지 열어 두고, Tool별 duration과 group wall time을 중복 합산하지 않습니다.
 - 모델 처리 row는 token 합계만 보여주지 않고 권한 있는 persisted model exchange를 펼쳐 볼 수 있게 합니다. 외부 object·array의 바깥 delimiter만 compact하게 표현하고 내부 content line은 보존합니다.
@@ -1711,9 +1751,9 @@ HTML iframe은 app origin의 cookie, token, 상위 window, 다른 Project API와
 
 현재 HTML Artifact는 JavaScript를 포함할 수 있지만 `allow-same-origin` 없이 격리된 sandbox에서만 실행합니다. 따라서 standalone report의 chart·interaction은 유지하되 Lumina cookie·API·parent DOM에는 접근할 수 없습니다. 공유 viewer도 같은 immutable version과 sandbox 정책을 사용합니다.
 
-ECharts는 bar, line, area, pie/donut, scatter, stacked·combination chart를 지원하며 resize/fullscreen에서 다시 계산합니다. 검증한 고정 version의 self-hosted asset 또는 관리 proxy를 기본으로 하고 실패 시 source와 retry를 제공합니다.
+ECharts는 `option` object 전체를 JSON으로 받아 bar, line, area, pie/donut, scatter, stacked·combination 외의 ECharts 구성도 renderer에 전달하며 resize/fullscreen에서 다시 계산합니다. 함수·무한 depth·비유한 숫자와 `__proto__`·`prototype`·`constructor` key는 거부하고 legacy `categories + series` payload는 안전한 option으로 변환합니다. 검증한 고정 version의 self-hosted asset 또는 관리 proxy를 기본으로 하고 실패 시 source와 retry를 제공합니다.
 
-Mermaid는 완결된 fence만 parse하고 streaming 중에는 placeholder를 표시합니다. 큰 diagram은 zoom, pan, fit, reset과 keyboard close를 제공합니다. 오류는 다른 본문을 깨뜨리지 않습니다.
+Mermaid는 완결된 fence만 parse하고 streaming 중에는 placeholder를 표시합니다. flowchart의 괄호가 있는 unquoted label처럼 안전하게 판별 가능한 문법만 renderer 직전 보정하고, 작성자가 이미 인용했거나 의미가 불명확한 source는 임의 수정하지 않습니다. 큰 diagram은 viewport 기준 자동 fit, 단계식 zoom, pointer pan·drag scroll, scroll boundary 연결, reset과 keyboard close를 제공하며 header 전체를 명확한 확대 affordance로 사용합니다. 오류는 다른 본문을 깨뜨리지 않습니다.
 
 Mermaid와 HTML Artifact의 chart·diagram·data accent는 사용자가 MyHarness에서 지정한 `#3288bd`, `#66c2a5`, `#e6f598`, `#d53e4f`, `#9e0142`, `#f46d43`, `#fdae61`, `#fee08b`, `#abdda4`, `#5e4fa2` palette를 기본으로 사용합니다. 별도 brand palette가 명시된 경우에만 이를 대체하며, 제품 UI의 단일 cobalt accent 규칙을 Artifact 시각화에 강제로 덮어쓰지 않습니다. Mermaid의 authored `classDef`는 보존하고, class가 없는 node와 pie·C4·gitGraph·XY chart 계열에는 이 기본 palette를 renderer가 적용합니다.
 
@@ -1722,6 +1762,8 @@ Mermaid와 HTML Artifact의 chart·diagram·data accent는 사용자가 MyHarnes
 ### 17.6 편집
 
 수동 편집 draft는 base version 또는 ETag를 기억합니다. 사용자가 `수정사항 반영`을 선택할 때 optimistic concurrency를 검사하고 정확히 하나의 새 committed version을 만듭니다. autosave는 draft만 갱신하며 version history를 오염시키지 않습니다. 충돌 시 조용히 덮어쓰지 않고 비교, 새 version 또는 권한 있는 강제 처리 선택지를 제공합니다. 실패 시 draft를 보존합니다.
+
+Artifact content를 먼저 managed Storage에 쓴 뒤 DB commit 또는 current-version CAS가 실패하면 이번 시도에서 생성한 새 blob만 보상 정리합니다. 이미 존재하던 version, 다른 writer가 채택한 blob과 stale Draft는 삭제하지 않습니다. Attachment·Project File·Agent 생성 Artifact에도 같은 원칙을 적용합니다.
 
 AI Assist는 중앙 Agent Run과 같은 Queue, Provider, 권한과 event replay를 사용합니다. source `artifact_id`, source version, 의견·locator와 목표 형식을 snapshot으로 고정합니다. 원본을 덮어쓰지 않고 새 version을 생성하며 저장과 검증이 완료되기 전 current version을 바꾸지 않습니다.
 
@@ -1905,7 +1947,7 @@ ScheduledRun
 - `latest_allowed`는 실행 직전 권한·호환성을 검사하고 실제 version을 Run snapshot에 저장
 - 예약 작업 삭제는 row 물리 삭제가 아니라 `enabled=false`, `next_run_at=null`, `archived_at`을 원자적으로 기록하는 보관 처리입니다. 이후 목록·due claim에서 제외하되 과거 `ScheduledRun`, Artifact와 audit reference는 보존합니다.
 - UI는 별도 modal·browser confirm 없이 같은 삭제 버튼의 첫 click에 `한 번 더 눌러 삭제` 상태를 표시하고 같은 대상의 두 번째 click에만 `DELETE`를 호출합니다. Project나 선택 대상이 바뀌면 확인 상태를 해제하며 삭제 중·실패·재시도 상태도 버튼 위치에서 보여줍니다.
-- Scheduler tick은 `(scheduled_task_id, scheduled_for)` idempotency로 중복 dispatch를 막습니다. timeout·실패는 `max_attempts` 안에서 retry하고 worker restart로 interrupted된 예약 Run도 저장된 attempt·snapshot에서 한 번만 재개합니다.
+- Scheduler tick은 `(scheduled_task_id, scheduled_for)` idempotency와 DB claim으로 중복 dispatch를 막습니다. 동시 tick이 같은 due slot을 읽었더라도 uniqueness 경합에서 진 쪽은 transaction을 복구하고 이미 생성된 ScheduledRun을 반환하며, timeout·실패는 `max_attempts` 안에서 retry하고 worker restart로 interrupted된 예약 Run도 저장된 attempt·snapshot에서 한 번만 재개합니다.
 - `pinned`은 Task 생성 시 Skill snapshot을 고정하고 `latest_allowed`는 실행 직전에 다시 resolve하되 실제 사용 digest를 ScheduledRun과 Run prompt hash에 기록합니다. terminal Run의 Artifact·usage·오류를 ScheduledRun에 동기화한 뒤 사용자별 in-app 결과 알림을 생성합니다.
 
 ## 21. 데이터 모델 통합 초안
@@ -1957,7 +1999,7 @@ audit_events
 
 초기 `ArtifactAssetRef`는 `artifact_versions.asset_manifest` JSON에 저장합니다. asset 단위 검색·재사용·license 추적 요구가 실제로 생길 때 별도 table로 승격합니다.
 
-### 21.2 현재 구현된 확장 table (`0002`~`0022`)
+### 21.2 현재 구현된 확장 table과 schema (`0002`~`0030`)
 
 ```text
 skill_folders / skill_folder_placements            논리 Folder tree와 안정된 Skill 배치
@@ -1979,9 +2021,16 @@ project_learning_proposals / project_memories       검토 가능한 Project 학
 notifications                                      persistent inbox와 read state
 tool_approvals                                     one-shot Tool approval 결정
 organizations.run_safety_settings_json             조직별 Run 안전 한도 설정
+runtime_prompt_overrides                           조직별 고정 prompt override revision·digest
+project_folders                                    Project 내부 논리 folder와 tombstone
+help_items                                         계층형 Help Markdown과 revision
+announcements                                      조직 공지와 작성자·수정 시각
+organizations.initial_execution_settings_json      조직별 최초 실행 설정
+users.settings_revision / projects.settings_revision 사용자·공유 설정의 atomic revision
+provider_models.capabilities_json.max_input_tokens Model별 실측 입력 상한
 ```
 
-현재 migration head는 `0023_runtime_prompt_overrides`입니다. `0009`, `0013`~`0018`, `0020`~`0023`은 기존 table에 MCP runtime header, instruction hierarchy·revision, 공개 share link, 사용자 소속, 알림 compact metadata, Skill 개인 Draft·소유권, 대화 좋아요, Codex OAuth catalog, 조직별 Run 안전 설정과 내부 프롬프트 override를 증분 추가합니다. 따라서 위 객체는 더 이상 미래 설계용 이름이 아니라 현재 ORM·migration이 관리하는 물리 table입니다.
+현재 migration head는 `0030_pgpt_input_token_limits`입니다. `0009`, `0013`~`0018`, `0020`~`0030`은 기존 table과 seed data에 MCP runtime header, instruction hierarchy·revision, 공개 share link, 사용자 소속, 알림 compact metadata, Skill 개인 Draft·소유권, 대화 좋아요, Codex OAuth catalog·표시 순서, 조직별 Run 안전 설정·내부 prompt override·최초 실행 설정, Project Folder, Help Center, 공지, 설정 revision과 P-GPT 실측 입력 상한을 증분 추가합니다. `0026`, `0030`처럼 catalog row를 갱신하는 data migration도 schema migration과 같은 Alembic chain에서 재현합니다.
 
 ### 21.3 후속 기능에서 추가할 table
 
@@ -2011,6 +2060,9 @@ Provider usage record에는 raw provider usage와 함께 normalized input, cache
 - content body와 binary는 Storage에, DB에는 opaque key, hash, size와 metadata를 저장합니다.
 - secret 값은 Secret Store reference로만 연결합니다.
 - soft delete, tombstone과 보존 기간을 사용하고 audit·Run 재현 데이터를 무조건 hard delete하지 않습니다.
+- 여러 기기·worker가 수정할 수 있는 aggregate는 `expectedRevision` 또는 `If-Match`로 compare-and-swap합니다. stale·invalid revision은 `409` 또는 명시적 validation code로 반환하고 최신 값을 조용히 덮어쓰지 않습니다.
+- PATCH body는 omitted와 explicit `null`을 구분합니다. 필수 값을 `null`로 지우는 요청과 변경 field가 하나도 없는 no-op 요청은 transaction 전에 거부합니다.
+- Storage write와 DB transaction이 함께 필요한 작업은 생성한 key의 소유권을 추적합니다. commit·CAS 실패 시 이번 작업이 새로 만든 unreferenced key만 정리하고 기존 canonical content는 보존합니다.
 
 ## 22. API 경계 초안
 
@@ -2081,7 +2133,7 @@ PATCH  /api/message-comments/{id}
 DELETE /api/message-comments/{id}
 ```
 
-Run action body는 `steer`, `queue_next`, `pause`, `resume`, `cancel`, `retry_step`, `approve`, `reject`를 idempotency key와 함께 표현합니다.
+Run action body는 `steer`, `queue_next`, `submit_user_input`, `pause`, `resume`, `cancel`, `retry_step`, `approve`, `reject`를 idempotency key와 함께 표현합니다. `submit_user_input`은 pending input request ID와 질문별 answer를 요구하고 Run이 `awaiting_input`일 때만 적용합니다.
 
 Attachment upload response는 안정된 `attachment_id`, 검사·추출 상태와 preview metadata만 반환합니다. Run 생성 body는 `attachment_ids[]`와 `message_reference_ids[]`를 전달하며 Backend가 Conversation·Project ownership, scan 완료와 현재 권한을 다시 검사합니다. clipboard image와 긴 `pasted_text`도 동일한 attachment 계약을 사용합니다.
 
@@ -2261,6 +2313,8 @@ GET    /api/finance/exchange-rate/usd-krw
 
 Artifact Draft `PUT`은 ETag·base version을 검사하고 stale write를 `409`로 거부합니다. MCP Secret endpoint는 Secret 원문이 아니라 허용된 reference만 저장합니다. 환율 endpoint는 `fresh`, `stale`, `unavailable` 상태를 반환합니다. 외부 source 갱신이 실패하면 마지막 정상 환율을 `stale`로 유지하고, 정상 환율이 없을 때만 `null`과 `unavailable`을 반환합니다. 실패 후 재시도는 짧은 cache TTL로 제한하여 원화 예상비용 UI가 stale·unknown을 구분하면서 외부 장애를 요청 폭증으로 확대하지 않게 합니다.
 
+Conversation PATCH는 `If-Match` 또는 body의 `expectedRevision`, 사용자·Project 설정 PATCH는 response의 `revision`을 다음 요청의 `expectedRevision`으로 사용합니다. Help·Skill Draft·Artifact도 자기 aggregate의 revision 또는 ETag를 사용하며 서로 다른 종류의 revision을 교차 사용하지 않습니다. Agent Frontend가 포함된 Conversation·Run response는 원래 `id`, `version`과 해석된 `frontendModule`, `frontendContract`, `fallback`을 반환하여 Frontend Host가 server와 같은 fallback 결정을 재현하게 합니다.
+
 ## 23. DB와 Storage 전략
 
 ### 23.1 개발
@@ -2350,6 +2404,8 @@ run_lumina_dev.bat
 
 `run_lumina.bat`와 `run_lumina_dev.bat`는 `.env`의 `LUMINA_FRONTEND_PORT`, `LUMINA_BACKEND_PORT`를 사용하며 기본값은 각각 `5252`, `5253`입니다. 실행 창의 `r`, `R` 또는 한글 두벌식 `ㄱ` 입력은 Frontend와 Backend를 함께 hard reset합니다. startup 대기 중 입력도 잃지 않고 현재 managed process만 정리한 뒤 전체 재시작하며, 개발 mode에서 평상시 자동 Backend 재시작이 Frontend를 보존하는 최적화와 사용자의 명시적 전체 재시작을 구분합니다.
 
+종료 script는 process 이름이나 port만 보고 임의 process를 죽이지 않습니다. 실행기가 기록한 supervisor identity와 자신이 시작한 child process tree를 확인한 뒤 해당 runtime만 종료하고, identity가 일치하지 않으면 사용자 또는 다른 QA runtime을 보존합니다. SQLite local worker lock도 Windows와 POSIX의 lock primitive 차이를 service 경계에서 흡수하고 같은 DB의 중복 worker만 차단합니다.
+
 ### 25.2 개발·운영 topology
 
 ```text
@@ -2417,7 +2473,10 @@ tests/evals     Agent quality, recovery and batch consistency
 - Tool Call마다 정확히 하나의 Tool Result
 - Session별 lock과 사용자별 병렬 한도
 - Queue action idempotency와 정확히 한 번 승격
+- `request_user_input` 단독 호출·질문 schema·한 Run 한 묶음 제한, `awaiting_input` snapshot/replay와 `submit_user_input` 후 정확한 checkpoint 재개
 - snapshot·replay의 누락·중복 없음
+- Conversation·설정·Help·Skill Draft·Artifact의 stale revision/CAS 거부와 no-op·explicit null validation
+- Attachment·Project File·Artifact storage write 뒤 commit·pointer 경합 실패 시 새 unreferenced blob만 정리하고 기존 version은 보존
 - immutable Artifact·Extension version
 - WorkingDraft 수정이 다음 Run의 Skill 응답에 반영되고 이미 시작한 Run은 draft revision·digest를 유지
 - Draft autosave는 version 번호를 만들지 않고 명시적 저장만 `v1`, `v2`를 단조 증가시킴
@@ -2459,7 +2518,9 @@ tests/evals     Agent quality, recovery and batch consistency
 - scroll follow, user detach, latest affordance와 reduced motion
 - Session 전환·재연결 후 현재 부분 답변·Tool·Plan 복원
 - Sidebar cursor loading, title search, favorite, rename와 delete
+- Turn Set 선행 로딩이 현재 scroll 위치를 보존하고 실패 후 재시도하며 live event와 중복되지 않음
 - Action Bar, usage popover와 share viewer
+- 첫 답변 usage에는 이전 누적 비교를 숨기고 두 번째 답변부터 Session 누적값을 표시
 - 좋아요·싫어요 선택·취소·기기 동기화, 문제 신고 category와 diagnostic 동의 확인
 - drag selection·우클릭·keyboard로 Comment chip 생성, highlight·전송·stale anchor 표시
 - Project Folder 생성·선택·접기, Default fallback과 Session `… → 프로젝트로 이동`
@@ -2474,13 +2535,19 @@ tests/evals     Agent quality, recovery and batch consistency
 - 이메일·`$6.4`·bare trigger·없는 reference는 pill로 오인하지 않고 일반 text 유지
 - Artifact panel resize, fullscreen, Preview/Source, dirty state와 version 전환
 - ECharts, Mermaid, Markdown, code, math, image와 PDF 실제 렌더링
+- Mermaid label 안전 보정, authored style 보존, fit·zoom·pan·drag scroll·keyboard close와 ECharts option 전달
 - 첨부·생성 image를 포함한 HTML·문서 Artifact의 Preview·공유·독립 다운로드 자산 일치
 - HTML sandbox 탈출 차단
 - download byte, MIME, filename과 독립 HTML 동작
 - keyboard-only, focus order, tooltip와 screen reader label
+- tooltip·popover·context menu가 body Portal에서 theme·clipping 경계를 지키고 native `title`로 중복되지 않음
+- 채팅 폭·글꼴 설정이 revision과 함께 서버에 저장·복원되고 stale 설정 저장이 최신 값을 덮어쓰지 않음
+- 정상 동작은 불필요한 성공 toast 없이 상태 변화로 확인되고 오류·부분 실패·guard는 알림을 유지
 - active Run에서 비어 있는 Composer의 send action이 stop으로 전환되고 click·Enter가 cancel을 한 번만 전송하며, 입력 payload가 있으면 steer를 유지
 - Conversation 전환 중 welcome flash 없이 loading을 표시하고 load 완료 뒤 실제 empty state 또는 Turn을 표시
 - 예약 작업 삭제의 동일 버튼 2단계 확인, 대상 변경 시 해제, archive 성공과 실패·재시도 상태
+- Marketplace 설치 Skill Markdown 기본 보기·browser history 복귀와 MCP `미사용`의 실제 installation 해제
+- builtin Agent Frontend registry 제거·미지원 contract에서 `general-chat` fallback과 원래 Agent ID·Run·Artifact 보존
 - 개발 로그인 helper가 production build에는 없고 development build에서 tooltip·접근성 이름·자동 입력 후 password focus를 제공
 
 JSDOM과 API test만으로 UI 완료를 판정하지 않습니다.
