@@ -215,6 +215,27 @@ _AUTO_EFFORT_RESEARCH_PATTERN = re.compile(
     r"(?:최신|검색|찾아|조사|뉴스|자료\s*확인|research|search|latest|current)",
     re.IGNORECASE,
 )
+_WEB_RESEARCH_EXPLICIT_REQUIRED_PATTERN = re.compile(
+    r"(?:최신|최근\s+(?:뉴스|자료|정보|동향)|오늘|실시간|인터넷|웹에서|"
+    r"검색|찾아봐|조사해|뉴스|팩트체크|최신성\s*검증|"
+    r"latest|recent\s+(?:news|data|information|trend)|today|real[- ]?time|"
+    r"search|research|browse|"
+    r"look\s*up|verify|fact[- ]?check)",
+    re.IGNORECASE,
+)
+_WEB_RESEARCH_HIGH_STAKES_PATTERN = re.compile(
+    r"(?:의료|의학|치료|진단|약물|법률|법령|규정|판례|금융|투자|세금|"
+    r"medical|treatment|diagnos|medication|legal|law|regulation|case\s+law|"
+    r"financial|investment|tax)",
+    re.IGNORECASE,
+)
+_WEB_RESEARCH_DISABLED_PATTERN = re.compile(
+    r"(?:검색(?:은|을)?\s*하지\s*(?:마|말)|"
+    r"인터넷(?:은|을)?\s*사용하지\s*(?:마|말)|"
+    r"웹(?:은|을)?\s*사용하지\s*(?:마|말)|do\s+not\s+(?:search|browse)|"
+    r"without\s+(?:web|search|browsing))",
+    re.IGNORECASE,
+)
 _NON_PERSISTED_TOOL_RESULTS = frozenset(
     {
         "activate_skill",
@@ -268,6 +289,31 @@ _TRUNCATED_AFTER_CONTINUATIONS_NOTICE = (
 ClaimResult = Literal["claimed", "wait", "stop"]
 _MEMORY_ENVELOPE_OPEN = "<lumina_memory>"
 _MEMORY_ENVELOPE_CLOSE = "</lumina_memory>"
+
+
+@dataclass(frozen=True, slots=True)
+class WebResearchRequirement:
+    mode: Literal["required", "optional", "disabled"]
+    reasons: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"mode": self.mode, "reasons": list(self.reasons)}
+
+
+def _web_research_requirement(user_message: str) -> WebResearchRequirement:
+    normalized = " ".join(user_message.split())
+    if _WEB_RESEARCH_DISABLED_PATTERN.search(normalized):
+        return WebResearchRequirement("disabled", ("user_disabled",))
+    reasons: list[str] = []
+    if _WEB_RESEARCH_EXPLICIT_REQUIRED_PATTERN.search(normalized):
+        reasons.append("explicit_recency_or_research")
+    if _WEB_RESEARCH_HIGH_STAKES_PATTERN.search(normalized):
+        reasons.append("high_stakes")
+    if re.search(r"https?://", normalized, re.IGNORECASE):
+        reasons.append("user_supplied_url")
+    return WebResearchRequirement(
+        "required" if reasons else "optional", tuple(dict.fromkeys(reasons))
+    )
 
 
 def _web_research_budget(user_message: str) -> tuple[int, int]:
@@ -941,6 +987,11 @@ class LocalRunExecutor:
                     "model",
                     reason="model_processing_started",
                 )
+            web_research_requirement = _web_research_requirement(user_message)
+            run.snapshot_json = {
+                **run.snapshot_json,
+                "web_research_requirement": web_research_requirement.to_dict(),
+            }
         await event_broker.notify(run_id)
         await self._publish_progress_summary(
             run_id,
@@ -982,7 +1033,11 @@ class LocalRunExecutor:
         mcp_tools = await self.mcp_runtime.prepare_run(run_id)
         mcp_tools_by_name = {tool.provider_name: tool for tool in mcp_tools}
         skill_activation_schema = _skill_activation_tool_schema(run.snapshot_json)
-        web_research_budget = _web_research_budget(user_message)
+        web_research_budget = (
+            (0, 0)
+            if web_research_requirement.mode == "disabled"
+            else _web_research_budget(user_message)
+        )
         core_tool_schemas = (
             _UPDATE_PLAN_TOOL_SCHEMA,
             _REQUEST_USER_INPUT_TOOL_SCHEMA,
@@ -2823,6 +2878,29 @@ class LocalRunExecutor:
             "you do not need an answer from the person, answer directly without asking. Put the "
             "highest-value one to four questions in the single UI bundle."
         )
+        web_research_requirement = run.snapshot_json.get("web_research_requirement", {})
+        if (
+            isinstance(web_research_requirement, Mapping)
+            and web_research_requirement.get("mode") == "required"
+        ):
+            turn_system_parts.append(
+                "Web research requirement: Required for this Run. Before visible answer text, "
+                "call `web_search` or directly call `web_fetch` for a user-supplied URL. Verify "
+                "material current or high-stakes claims with fetched page content, not search "
+                "snippets alone. For comparisons, prefer official sources for facts and "
+                "independent sources for evaluations; add a contradiction-check query when "
+                "material sources disagree. Label each search purpose. If approved web access "
+                "fails, state the verification gap instead of presenting stale knowledge as "
+                "confirmed current fact. Do not finish from model memory alone."
+            )
+        elif (
+            isinstance(web_research_requirement, Mapping)
+            and web_research_requirement.get("mode") == "disabled"
+        ):
+            turn_system_parts.append(
+                "Web research requirement: Disabled by the user for this Run. Do not browse, "
+                "search, or fetch external pages; clearly qualify facts that may be stale."
+            )
         output_mode = _normalized_output_mode(
             run.snapshot_json.get("output_mode", "auto")
         )
@@ -3605,6 +3683,10 @@ class LocalRunExecutor:
                     query,
                     tool_execution_id=tool_id,
                     result_limit=result_limit,
+                    purpose=str(arguments.get("purpose", "")) or None,
+                    parent_invocation_id=(
+                        str(arguments.get("parent_invocation_id", "")) or None
+                    ),
                     policy=_web_policy(),
                     trust_profile=self.trust_profile,
                 )
@@ -5095,6 +5177,28 @@ class LocalRunExecutor:
                     web_metadata["sources"],
                 )
             )
+            research_requirement = run.snapshot_json.get(
+                "web_research_requirement", {"mode": "optional", "reasons": []}
+            )
+            if not isinstance(research_requirement, Mapping):
+                research_requirement = {"mode": "optional", "reasons": []}
+            research_mode = str(research_requirement.get("mode", "optional"))
+            fetched_evidence = any(
+                source.get("evidenceKind") == "fetched_content"
+                and source.get("extractionStatus", "complete") == "complete"
+                for source in web_metadata["sources"]
+                if isinstance(source, Mapping)
+            )
+            web_metadata["researchRequirement"] = dict(research_requirement)
+            web_metadata["researchVerification"] = (
+                "disabled"
+                if research_mode == "disabled"
+                else "verified"
+                if fetched_evidence
+                else "unverified"
+                if research_mode == "required"
+                else "not_required"
+            )
             artifact_usage = run.snapshot_json.get("artifact_usage")
             message_metadata = {"usage": run.usage_json, **web_metadata}
             if isinstance(artifact_usage, Mapping):
@@ -6162,6 +6266,36 @@ def _is_output_truncated_stop_reason(stop_reason: str | None) -> bool:
     }
 
 
+def _ordered_string_union(*values: Any) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not isinstance(value, list):
+            continue
+        for item in value:
+            normalized = str(item).strip()
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                merged.append(normalized)
+    return merged
+
+
+def _merge_web_source_evidence(
+    existing: Mapping[str, Any], candidate: Mapping[str, Any]
+) -> dict[str, Any]:
+    existing_fetched = existing.get("evidenceKind") == "fetched_content"
+    candidate_fetched = candidate.get("evidenceKind") == "fetched_content"
+    preferred = candidate if candidate_fetched or not existing_fetched else existing
+    fallback = existing if preferred is candidate else candidate
+    merged = {**fallback, **preferred}
+    for key in ("queryIds", "toolExecutionIds", "searchBackends"):
+        merged[key] = _ordered_string_union(existing.get(key), candidate.get(key))
+    for key in ("originalUrl", "normalizedUrl", "title", "domain", "verbatimExcerpt"):
+        if not str(merged.get(key) or "").strip():
+            merged[key] = fallback.get(key)
+    return merged
+
+
 def _web_source_metadata(db: Session, run_id: str) -> dict[str, Any]:
     tools = list(
         db.scalars(
@@ -6176,7 +6310,7 @@ def _web_source_metadata(db: Session, run_id: str) -> dict[str, Any]:
     )
     invocations: list[dict[str, Any]] = []
     sources: list[dict[str, Any]] = []
-    seen_sources: set[str] = set()
+    source_positions: dict[str, int] = {}
     for tool in tools:
         result_json = tool.result_json or {}
         invocation = result_json.get("searchInvocation")
@@ -6191,10 +6325,14 @@ def _web_source_metadata(db: Session, run_id: str) -> dict[str, Any]:
             if not isinstance(raw, dict):
                 continue
             key = str(raw.get("sourceId") or raw.get("normalizedUrl") or "")
-            if not key or key in seen_sources:
+            if not key:
                 continue
-            seen_sources.add(key)
-            sources.append(raw)
+            position = source_positions.get(key)
+            if position is None:
+                source_positions[key] = len(sources)
+                sources.append(dict(raw))
+            else:
+                sources[position] = _merge_web_source_evidence(sources[position], raw)
     return {"searchInvocations": invocations, "sources": sources}
 
 
@@ -6725,7 +6863,8 @@ _WEB_SEARCH_TOOL_SCHEMA = {
             "research with two or three focused, non-overlapping query calls, often in "
             "parallel, then fetch only the best pages. This is starting guidance, not a "
             "hard limit; expand when the evidence is insufficient, blocked, stale, or "
-            "contradictory, and stop once it supports the requested conclusion."
+            "contradictory, and stop once it supports the requested conclusion. Label each "
+            "query's purpose and link follow-up queries to the parent invocation when useful."
         ),
         "parameters": {
             "type": "object",
@@ -6736,6 +6875,25 @@ _WEB_SEARCH_TOOL_SCHEMA = {
                     "minimum": 1,
                     "maximum": 10,
                     "default": 5,
+                },
+                "purpose": {
+                    "type": "string",
+                    "enum": [
+                        "broad_discovery",
+                        "official_facts",
+                        "latest_update",
+                        "independent_evaluation",
+                        "contradiction_check",
+                    ],
+                    "description": "Why this query is needed for the answer.",
+                },
+                "parent_invocation_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "description": (
+                        "Prior search invocation that caused this follow-up query, when any."
+                    ),
                 },
             },
             "required": ["query"],

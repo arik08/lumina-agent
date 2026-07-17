@@ -1143,6 +1143,16 @@ function citationMarkerLabel(markerNumber: number) {
   return circledCitationMarkers[markerNumber - 1] ?? `[${markerNumber}]`;
 }
 
+function searchPurposeLabel(purpose?: string) {
+  return ({
+    broad_discovery: "폭넓게 탐색",
+    official_facts: "공식 정보 확인",
+    latest_update: "최신 정보 확인",
+    independent_evaluation: "외부 평가 확인",
+    contradiction_check: "상충 근거 확인",
+  } as Record<string, string>)[purpose ?? ""] ?? null;
+}
+
 function citationTargets(text: string, sources: SourceEvidence[], citations: MessageCitation[]) {
   return sources.map((source, index): CitationTarget => {
     const citation = citations.find((item) => (item.sourceId ?? item.source_id) === source.sourceId);
@@ -1577,6 +1587,7 @@ export function AssistantTurn({
   const sources = finalMessage?.metadata?.sources ?? emptySources;
   const citations = finalMessage?.metadata?.citations ?? emptyCitations;
   const searches = finalMessage?.metadata?.searchInvocations ?? [];
+  const researchVerification = finalMessage?.metadata?.researchVerification;
   const artifacts = snapshot?.artifacts ?? turnSet.artifacts;
   const assistantText = finalMessage?.text || snapshot?.assistantDraft?.text || "";
   const sanitizedAssistantText = sanitizeAssistantResponse(assistantText, artifacts.length > 0);
@@ -1898,6 +1909,11 @@ export function AssistantTurn({
         <section className="assistant-turn">
           <div className="assistant-content">
             {assistantText && <MarkdownResponse text={displayedText} sources={sources} citations={citations} streaming={revealing} settling={settling} />}
+            {terminal && researchVerification === "unverified" && (
+              <div className="research-verification-warning" role="status">
+                최신성 또는 중요도가 높은 정보에 필요한 웹 본문을 확인하지 못했습니다. 답변의 관련 내용을 미검증 정보로 봐 주세요.
+              </div>
+            )}
             {artifactUsage && artifactProgress && (
               <div className={`artifact-progress-count is-${artifactProgress.stage}`} role="status" aria-live={terminal ? undefined : "polite"} aria-label={`문서 ${artifactUsage.estimated === false ? "완성 분량" : "작성 중 추정 분량"} ${artifactUsage.tokens.toLocaleString()} 토큰 ${artifactUsage.lines.toLocaleString()}줄${liveModelOutputTokens > 0 ? `, 모델 출력 누계 ${liveModelOutputTokens.toLocaleString()} 토큰` : ""}`}>
                 <div className="artifact-progress-heading">
@@ -1988,7 +2004,10 @@ export function AssistantTurn({
                             ) : (
                               <>
                                 {searches.length > 0 && (
-                                  <div className="source-queries">{searches.map((search) => <span key={search.invocationId}>{search.query}</span>)}</div>
+                                  <div className="source-queries">{searches.map((search) => {
+                                    const purposeLabel = searchPurposeLabel(search.purpose);
+                                    return <span key={search.invocationId}>{purposeLabel && <small>{purposeLabel}</small>}{search.query}</span>;
+                                  })}</div>
                                 )}
                                 <ol>
                                   {sourceTargets.map(({ source, markerNumber, cited, reviewed }) => (

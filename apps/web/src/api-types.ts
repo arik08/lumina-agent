@@ -498,6 +498,9 @@ export interface SourceEvidence {
   domain: string;
   verbatimExcerpt: string;
   evidenceKind: "search_snippet" | "fetched_content";
+  contentType?: string | null;
+  extractionStatus?: "snippet_only" | "complete" | "empty";
+  searchBackends?: string[];
 }
 
 export interface MessageCitation {
@@ -525,7 +528,14 @@ export interface MessageMetadata {
     query: string;
     backend: string;
     startedAt: IsoDateTime;
+    purpose?: "broad_discovery" | "official_facts" | "latest_update" | "independent_evaluation" | "contradiction_check";
+    parentInvocationId?: string;
   }>;
+  researchRequirement?: {
+    mode: "required" | "optional" | "disabled";
+    reasons: string[];
+  };
+  researchVerification?: "verified" | "unverified" | "not_required" | "disabled";
   [key: string]: unknown;
 }
 

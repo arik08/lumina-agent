@@ -12,12 +12,16 @@ test("source evidence distinguishes cited, reviewed, and search-only material", 
   ]);
 
   assert.match(apiTypes, /status: "cited" \| "resolved" \| "reference_only"/);
+  assert.match(apiTypes, /researchVerification\?: "verified" \| "unverified" \| "not_required" \| "disabled"/);
   assert.match(app, /citation\.status === "cited" \|\| citation\.status === "resolved"/);
   assert.match(app, /reviewed: source\.evidenceKind === "fetched_content"/);
   assert.match(app, /function normalizeCitationPositions\(text: string, targets: CitationTarget\[\]\)/);
   assert.match(app, /before === "\*\*" \|\| before === "__"/);
   assert.match(app, /streaming \? text : normalizeCitationPositions\(text, targets\)/);
   assert.match(app, /"본문 확인" : "검색 참고"/);
+  assert.match(app, /function searchPurposeLabel\(purpose\?: string\)/);
+  assert.match(app, /researchVerification === "unverified"/);
+  assert.match(app, /최신성 또는 중요도가 높은 정보에 필요한 웹 본문을 확인하지 못했습니다/);
   assert.match(app, /sourceCountLabels = \[/);
   assert.match(app, /sourceCountLabels\.length > 0/);
   assert.match(app, /citedSourceCount > 0 && <span className="answer-source-count is-cited"> · 인용 \{citedSourceCount\}<\/span>/);
@@ -28,6 +32,7 @@ test("source evidence distinguishes cited, reviewed, and search-only material", 
   assert.match(stylesheet, /\.is-reference-only[^}]*background: var\(--surface-soft\)/s);
   assert.match(stylesheet, /\.inline-citation \{[^}]*font-size: 1em;[^}]*vertical-align: baseline;/s);
   assert.match(stylesheet, /\.final-answer-meta \{[^}]*container-type: inline-size;/s);
+  assert.match(stylesheet, /\.research-verification-warning \{[^}]*var\(--danger-border\)/s);
   assert.match(stylesheet, /@container \(max-width: 820px\)[^{]*\{[^}]*\.answer-completed-time \{ display: none; \}/s);
   assert.match(stylesheet, /@container \(max-width: 690px\)[^{]*\{[^}]*\.answer-source-count\.is-reference-only \{ display: none; \}/s);
   assert.match(stylesheet, /@container \(max-width: 610px\)[^{]*\{[^}]*\.answer-source-count\.is-reviewed \{ display: none; \}/s);

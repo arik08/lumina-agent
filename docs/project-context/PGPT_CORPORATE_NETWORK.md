@@ -360,6 +360,8 @@ create_http_client(
 
 DuckDuckGo가 회사 정책, 네트워크 또는 일시적 장애로 실패했다고 해서 임의의 검색 사이트로 조용히 전환하지 않습니다. 대체 Backend는 관리자 정책과 allowlist에 포함되어야 하며, 사용자에게 현재 사용된 Backend 또는 검색 제한 상태를 알립니다.
 
+현재 활성 Backend는 `duckduckgo_html` 하나입니다. 검색 도구는 Backend protocol 경계를 통해 호출하여 공급자 구현을 분리합니다. **Vertex AI 기반 Google 검색은 향후 추가 예정이지만 현재는 미구현·비활성 상태**이며, 이름만 설정하거나 자동 fallback 대상으로 사용하지 않습니다. 추후 Vertex adapter, 인증·과금·조직 egress 정책과 관리자 명시 활성화를 함께 구현한 뒤 별도 Backend로 등록합니다. 기존 Run은 snapshot에 기록된 Backend를 유지하고, 새 Backend 발견이나 코드 배포만으로 자동 전환하지 않습니다.
+
 Web Search 실패 시 “인증서 문제”로 단정하지 않고 DNS, proxy, TLS, HTTP status와 content policy 단계로 진단합니다.
 
 ## 사용자·관리자 UX

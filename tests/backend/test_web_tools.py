@@ -62,6 +62,8 @@ async def test_duckduckgo_search_parses_structured_evidence() -> None:
             "  steel   market\n outlook  ",
             tool_execution_id="tool-search-1",
             result_limit=5,
+            purpose="official_facts",
+            parent_invocation_id="search-parent",
             client=client,
             resolver=_public_resolver,
         )
@@ -69,6 +71,8 @@ async def test_duckduckgo_search_parses_structured_evidence() -> None:
     assert result.invocation.backend == "duckduckgo_html"
     assert result.invocation.query == "steel market outlook"
     assert result.invocation.tool_execution_id == "tool-search-1"
+    assert result.invocation.purpose == "official_facts"
+    assert result.invocation.parent_invocation_id == "search-parent"
     assert len(result.sources) == 2
     first = result.sources[0]
     assert first.title == "Example Guide"
@@ -76,11 +80,39 @@ async def test_duckduckgo_search_parses_structured_evidence() -> None:
     assert first.original_url.endswith("utm_source=ddg&x=1")
     assert first.verbatim_excerpt == "A verbatim result snippet with useful evidence."
     assert first.evidence_kind == "search_snippet"
+    assert first.extraction_status == "snippet_only"
+    assert first.search_backends == ("duckduckgo_html",)
     assert first.query_ids == (result.invocation.invocation_id,)
     assert first.tool_execution_ids == ("tool-search-1",)
     assert first.source_id.startswith("src_")
     assert len(first.content_hash) == 64
     assert result.to_dict()["untrustedExternalContent"] is True
+
+
+@pytest.mark.asyncio
+async def test_web_search_uses_explicit_backend_boundary() -> None:
+    class PlannedBackend:
+        name = "planned_test_backend"
+
+        async def search(self, query: str, **_kwargs) -> tuple[object, ...]:
+            assert query == "future backend boundary"
+            return (
+                web_module._SearchEntry(
+                    url="https://example.com/future",
+                    title="Future backend",
+                    snippet="Backend result",
+                ),
+            )
+
+    result = await web_search(
+        "future backend boundary",
+        tool_execution_id="tool-planned-backend",
+        backend=PlannedBackend(),
+        resolver=_public_resolver,
+    )
+
+    assert result.invocation.backend == "planned_test_backend"
+    assert result.sources[0].search_backends == ("planned_test_backend",)
 
 
 @pytest.mark.asyncio
@@ -112,6 +144,8 @@ async def test_web_fetch_extracts_readable_html_and_content_hash() -> None:
     assert result.evidence.normalized_url == "https://example.com/report"
     assert result.evidence.query_ids == ("search-1",)
     assert result.evidence.evidence_kind == "fetched_content"
+    assert result.evidence.content_type == "text/html"
+    assert result.evidence.extraction_status == "complete"
     assert result.evidence.content_hash == hashlib.sha256(html).hexdigest()
     assert "Inspection result" in result.text
     assert "All checks passed." in result.text

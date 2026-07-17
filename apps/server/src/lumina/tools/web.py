@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from html.parser import HTMLParser
+from typing import Protocol
 from urllib.parse import (
     parse_qs,
     parse_qsl,
@@ -134,15 +135,22 @@ class SearchInvocation:
     query: str
     backend: str
     started_at: datetime
+    purpose: str | None = None
+    parent_invocation_id: str | None = None
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "invocationId": self.invocation_id,
             "toolExecutionId": self.tool_execution_id,
             "query": self.query,
             "backend": self.backend,
             "startedAt": self.started_at.isoformat(),
         }
+        if self.purpose:
+            payload["purpose"] = self.purpose
+        if self.parent_invocation_id:
+            payload["parentInvocationId"] = self.parent_invocation_id
+        return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +166,9 @@ class SourceEvidence:
     fetched_at: datetime
     content_hash: str
     evidence_kind: str
+    content_type: str | None = None
+    extraction_status: str = "complete"
+    search_backends: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -172,6 +183,9 @@ class SourceEvidence:
             "fetchedAt": self.fetched_at.isoformat(),
             "contentHash": self.content_hash,
             "evidenceKind": self.evidence_kind,
+            "contentType": self.content_type,
+            "extractionStatus": self.extraction_status,
+            "searchBackends": list(self.search_backends),
         }
 
 
@@ -235,6 +249,57 @@ class _SearchEntry:
     snippet: str
 
 
+class WebSearchBackend(Protocol):
+    """Approved search discovery boundary; only DuckDuckGo is active today."""
+
+    name: str
+
+    async def search(
+        self,
+        query: str,
+        *,
+        policy: WebToolPolicy,
+        client: httpx.AsyncClient | None,
+        trust_manager: TrustManager | None,
+        trust_profile: TrustProfile | None,
+        resolver: AddressResolver,
+    ) -> tuple[_SearchEntry, ...]: ...
+
+
+class DuckDuckGoHtmlSearchBackend:
+    name = "duckduckgo_html"
+
+    async def search(
+        self,
+        query: str,
+        *,
+        policy: WebToolPolicy,
+        client: httpx.AsyncClient | None,
+        trust_manager: TrustManager | None,
+        trust_profile: TrustProfile | None,
+        resolver: AddressResolver,
+    ) -> tuple[_SearchEntry, ...]:
+        search_url = f"{DUCKDUCKGO_HTML_URL}?{urlencode({'q': query})}"
+        async with _client_scope(
+            client,
+            policy=policy,
+            trust_manager=trust_manager,
+            trust_profile=trust_profile,
+        ) as http_client:
+            fetched = await _fetch_public_bytes(
+                search_url,
+                client=http_client,
+                policy=policy,
+                resolver=resolver,
+                allowed_content_types=frozenset({"text/html", "application/xhtml+xml"}),
+            )
+        html = _decode_content(fetched.content, fetched.charset)
+        return tuple(_parse_duckduckgo_results(html))
+
+
+DEFAULT_WEB_SEARCH_BACKEND: WebSearchBackend = DuckDuckGoHtmlSearchBackend()
+
+
 def create_web_http_client(
     policy: WebToolPolicy | None = None,
     *,
@@ -265,13 +330,16 @@ async def web_search(
     *,
     tool_execution_id: str,
     result_limit: int = 5,
+    purpose: str | None = None,
+    parent_invocation_id: str | None = None,
     policy: WebToolPolicy | None = None,
     client: httpx.AsyncClient | None = None,
     trust_manager: TrustManager | None = None,
     trust_profile: TrustProfile | None = None,
     resolver: AddressResolver | None = None,
+    backend: WebSearchBackend | None = None,
 ) -> WebSearchResult:
-    """Search DuckDuckGo HTML and return snapshot-ready source evidence."""
+    """Search the selected approved backend and return snapshot-ready evidence."""
 
     selected_policy = policy or WebToolPolicy()
     normalized_query = " ".join(query.split())
@@ -303,31 +371,29 @@ async def web_search(
             stage="validation",
         )
     normalized_tool_execution_id = _normalize_tool_execution_id(tool_execution_id)
+    normalized_purpose = _normalize_optional_label(purpose, max_chars=160)
+    normalized_parent_invocation_id = _normalize_optional_label(
+        parent_invocation_id, max_chars=200
+    )
+    selected_backend = backend or DEFAULT_WEB_SEARCH_BACKEND
 
     invocation = SearchInvocation(
         invocation_id=f"search_{uuid4().hex}",
         tool_execution_id=normalized_tool_execution_id,
         query=normalized_query,
-        backend="duckduckgo_html",
+        backend=selected_backend.name,
         started_at=datetime.now(UTC),
+        purpose=normalized_purpose,
+        parent_invocation_id=normalized_parent_invocation_id,
     )
-    search_url = f"{DUCKDUCKGO_HTML_URL}?{urlencode({'q': normalized_query})}"
-    async with _client_scope(
-        client,
+    entries = await selected_backend.search(
+        normalized_query,
         policy=selected_policy,
+        client=client,
         trust_manager=trust_manager,
         trust_profile=trust_profile,
-    ) as http_client:
-        fetched = await _fetch_public_bytes(
-            search_url,
-            client=http_client,
-            policy=selected_policy,
-            resolver=resolver or resolve_public_addresses,
-            allowed_content_types=frozenset({"text/html", "application/xhtml+xml"}),
-        )
-
-    html = _decode_content(fetched.content, fetched.charset)
-    entries = _parse_duckduckgo_results(html)
+        resolver=resolver or resolve_public_addresses,
+    )
     sources: list[SourceEvidence] = []
     seen_urls: set[str] = set()
     fetched_at = datetime.now(UTC)
@@ -365,6 +431,8 @@ async def web_search(
                 fetched_at=fetched_at,
                 content_hash=hashlib.sha256(evidence_content).hexdigest(),
                 evidence_kind="search_snippet",
+                extraction_status="snippet_only",
+                search_backends=(selected_backend.name,),
             )
         )
     return WebSearchResult(invocation=invocation, sources=tuple(sources))
@@ -422,6 +490,8 @@ async def web_fetch(
         fetched_at=datetime.now(UTC),
         content_hash=hashlib.sha256(fetched.content).hexdigest(),
         evidence_kind="fetched_content",
+        content_type=fetched.content_type,
+        extraction_status="complete" if readable else "empty",
     )
     return WebFetchResult(
         evidence=evidence,
@@ -930,6 +1000,21 @@ def _normalize_tool_execution_id(value: str) -> str:
     return normalized
 
 
+def _normalize_optional_label(value: str | None, *, max_chars: int) -> str | None:
+    normalized = " ".join(str(value or "").split())
+    if not normalized:
+        return None
+    if len(normalized) > max_chars or any(
+        ord(character) < 0x20 or ord(character) == 0x7F for character in normalized
+    ):
+        raise WebToolError(
+            "invalid_search_metadata",
+            "검색 목적 또는 상위 검색 ID가 올바르지 않습니다.",
+            stage="validation",
+        )
+    return normalized
+
+
 def _normalize_query_ids(values: Sequence[str]) -> tuple[str, ...]:
     if len(values) > 50:
         raise WebToolError(
@@ -1217,12 +1302,15 @@ class _ReadableHTMLParser(HTMLParser):
 
 
 __all__ = [
+    "DEFAULT_WEB_SEARCH_BACKEND",
     "DUCKDUCKGO_HTML_URL",
+    "DuckDuckGoHtmlSearchBackend",
     "SearchInvocation",
     "SourceEvidence",
     "UNTRUSTED_CONTENT_BANNER",
     "WebFetchResult",
     "WebSearchResult",
+    "WebSearchBackend",
     "WebToolError",
     "WebToolPolicy",
     "create_web_http_client",

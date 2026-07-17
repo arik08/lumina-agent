@@ -88,7 +88,7 @@
 | Agent Run·Plan | Conversation 단위 single active Run과 다른 Conversation 병렬 실행, durable Queue와 `queue_next` 승격, SSE snapshot·Last-Event-ID replay, worker restart 복구, pause·resume·cancel·retry, 계정별 확인 질문 mode와 `awaiting_input` checkpoint·재개, model Turn·총 Token·경과 시간·예상 비용 한도, 모델 `update_plan`, stable Step ID, Tool Subtask, 독립 Tool 병렬 실행, approval 대기·승인·거부 | `runs/`, `agent/executor.py`, `test_run_concurrency_replay.py`, `test_worker_recovery.py`, `test_plan_lifecycle.py`, `test_tool_approvals.py`, Frontend clarification tests |
 | Context·Memory | recoverable compaction, Tool Call/Result pair·side effect 보존, 실패 시 원 Context 유지, 모델별 Context budget, 사용자 Memory 후보·자동/확인/끔 mode, 민감정보 차단, relevant subset recall, LLM 최적화와 provenance 병합, Project learning proposal approve·reject·apply·rollback | `context/`, `memories/`, `project_memories/`, `test_context_compaction_memory_learning.py`, `test_project_memory_learning.py` |
 | Provider | Mock·P-GPT·OpenAI Responses·Anthropic·Gemini·OpenAI Compatible adapter, multimodal image 입력, Tool roundtrip, typed·redacted 오류, 공통 base URL·Retry-After 검증, 관리자 Model discovery·명시 활성화·공식 Context와 실측 입력 상한 분리, revision 기반 사용자·Project 실행 선택 저장, Codex ChatGPT OAuth App Server·warm client·transport retry·API key 제거, 사용자 hash prompt-cache routing | `providers/`, `routes/providers.py`, `routes/admin_providers.py`, `test_provider_http.py`, `test_model_output_limits.py`, `test_settings_revision_cas.py` |
-| Web Search·인용 | DuckDuckGo search, readable HTML fetch, query·timeout·size·content-type 제한, redirect·private IP·DNS rebinding 방어, search snippet→fetched evidence 승격, source hash·번호 안정화, cited·reviewed·search-only UI 상태 | `tools/web.py`, `citations.py`, `test_web_tools.py`, `test_citations.py`, `source-evidence-status.test.mjs` |
+| Web Search·인용 | DuckDuckGo 기본 search와 교체 가능한 Backend 경계, readable HTML fetch, 최신·고위험 질의의 필수 조사 정책, query 목적·상위 검색 이력, search snippet→fetched evidence 승격, source hash·번호 안정화, cited·reviewed·search-only·미검증 UI 상태 | `tools/web.py`, `citations.py`, `test_web_tools.py`, `test_citations.py`, `source-evidence-status.test.mjs` |
 | Attachment·Artifact | TXT·Markdown·HTML·CSV·TSV·PDF·DOCX·PPTX·XLSX extraction과 자연 locator, fake Office 거부와 OpenXML 관계 XML 안전 파싱, Artifact immutable version·restore, 사용자별 Draft·current version ETag/CAS, stale·provenance 보호, DB 실패·경합 시 새 storage blob 보상 정리, 손상되거나 누락된 원본의 명시 오류, Preview·download, HTML 원문 보존, DOCX·XLSX·PPTX·PDF·HTML·Markdown 생성, Codex image와 복합 asset embedding | `attachments/`, `artifacts/`, `test_attachment_extraction.py`, `test_artifact_draft_cas.py`, `test_artifact_storage_cleanup.py`, `test_artifact_render_validation.py` |
 | Artifact 검증 | binary signature·재개봉, OpenXML macro·외부 hyperlink 차단, PDF link·page geometry 검사, LibreOffice 격리 profile과 Poppler page render, blank·비정상 크기·page count mismatch·timeout 실패 판정, renderer 미설치 시 `structural_passed`와 pending 구분 | `artifacts/render_validation.py`, `test_artifact_validation.py`, `test_artifact_render_validation.py` |
 | Skill Marketplace | Private Skill 생성, 사용자별 WorkingDraft checkout·revision·activate와 atomic revision CAS, stale base version save 차단, immutable version save·publish, account별 installation, catalog tag, Folder CRUD·move, creator와 복수 Owner·Maintainer 분리, primary Owner 제거 방지, exact draft/version digest를 Run·예약 Run에 고정, 설치 Skill Markdown 기본 보기·상세 history navigation | `extensions/`, migration `0019`, `test_extensions_schedules.py`, `test_composer_run_references.py`, Marketplace Frontend tests |
@@ -1241,7 +1241,7 @@ create_http_client(
 
 실패 시 임의 endpoint로 조용히 전환하지 않습니다. DNS, proxy, TLS, HTTP status와 content policy 단계로 오류를 분류합니다.
 
-전용 Deep Research 실행기는 만들지 않습니다. Agent Loop가 문제의 복잡도에 따라 검색어 생성 → `web_search` → 필요한 문서의 `web_fetch` → 추가 검색 → 상충 근거 확인 → 최종 합성을 반복합니다. 간단한 최신 정보 확인은 한두 번의 검색으로 끝낼 수 있고, 복잡한 조사는 구조화 Plan·진행 event·steer·cancel·예산 제한을 그대로 사용합니다.
+전용 Deep Research 실행기는 만들지 않습니다. Agent Loop가 문제의 복잡도에 따라 검색어 생성 → `web_search` → 필요한 문서의 `web_fetch` → 추가 검색 → 상충 근거 확인 → 최종 합성을 반복합니다. 간단한 최신 정보 확인은 한두 번의 검색으로 끝낼 수 있고, 복잡한 조사는 구조화 Plan·진행 event·steer·cancel·예산 제한을 그대로 사용합니다. 최신성 요청, 사용자 제공 URL과 의료·법률·금융 같은 고위험 질의는 Run snapshot의 `web_research_requirement=required`로 고정하고, fetched 본문을 확보하지 못하면 최종 Message를 `researchVerification=unverified`로 표시하여 모델 기억만으로 현재 사실을 검증한 것처럼 보이지 않게 합니다.
 
 ### 13.4 검증 가능한 인용과 검색 이력
 
@@ -1250,7 +1250,8 @@ create_http_client(
 ```text
 SearchInvocation
 ├─ tool_execution_id
-├─ query / backend
+├─ query / backend / purpose
+├─ parent_invocation_id
 └─ started_at
 
 SourceEvidence
@@ -1260,6 +1261,7 @@ SourceEvidence
 ├─ verbatim_excerpt
 ├─ query_ids[] / tool_execution_ids[]
 ├─ fetched_at / content_hash
+├─ content_type / extraction_status / search_backends[]
 └─ evidence_kind: search_snippet | fetched_content | uploaded_document
 
 MessageCitation

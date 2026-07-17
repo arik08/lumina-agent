@@ -498,6 +498,65 @@ def test_web_research_uses_adaptive_guidance_with_separate_safety_limits() -> No
     ) == (10, 15)
 
 
+def test_web_research_requirement_distinguishes_required_optional_and_disabled() -> (
+    None
+):
+    assert (
+        executor_module._web_research_requirement("최신 철강 시장 동향을 조사해줘").mode
+        == "required"
+    )
+    assert (
+        executor_module._web_research_requirement(
+            "제2형 당뇨병 치료 지침을 설명해줘"
+        ).mode
+        == "required"
+    )
+    assert (
+        executor_module._web_research_requirement("현재 코드 구조를 설명해줘").mode
+        == "optional"
+    )
+    assert (
+        executor_module._web_research_requirement(
+            "인터넷은 사용하지 말고 내가 준 내용만 요약해줘"
+        ).mode
+        == "disabled"
+    )
+
+
+def test_web_source_merge_promotes_fetched_evidence_and_preserves_provenance() -> None:
+    search_source = {
+        "sourceId": "src-1",
+        "normalizedUrl": "https://example.com/report",
+        "verbatimExcerpt": "search snippet",
+        "queryIds": ["search-1"],
+        "toolExecutionIds": ["tool-search"],
+        "searchBackends": ["duckduckgo_html"],
+        "evidenceKind": "search_snippet",
+        "extractionStatus": "snippet_only",
+        "contentHash": "search-hash",
+    }
+    fetched_source = {
+        "sourceId": "src-1",
+        "normalizedUrl": "https://example.com/report",
+        "verbatimExcerpt": "verified page text",
+        "queryIds": ["search-1", "search-2"],
+        "toolExecutionIds": ["tool-fetch"],
+        "searchBackends": [],
+        "evidenceKind": "fetched_content",
+        "extractionStatus": "complete",
+        "contentHash": "fetch-hash",
+    }
+
+    merged = executor_module._merge_web_source_evidence(search_source, fetched_source)
+
+    assert merged["evidenceKind"] == "fetched_content"
+    assert merged["verbatimExcerpt"] == "verified page text"
+    assert merged["contentHash"] == "fetch-hash"
+    assert merged["queryIds"] == ["search-1", "search-2"]
+    assert merged["toolExecutionIds"] == ["tool-search", "tool-fetch"]
+    assert merged["searchBackends"] == ["duckduckgo_html"]
+
+
 def test_web_search_schema_distinguishes_query_calls_from_candidate_urls() -> None:
     description = executor_module._WEB_SEARCH_TOOL_SCHEMA["function"]["description"]
 
@@ -505,6 +564,12 @@ def test_web_search_schema_distinguishes_query_calls_from_candidate_urls() -> No
     assert "return several candidate URLs" in description
     assert "starting guidance, not a hard limit" in description
     assert "stay within three searches" not in description
+    assert (
+        "purpose"
+        in executor_module._WEB_SEARCH_TOOL_SCHEMA["function"]["parameters"][
+            "properties"
+        ]
+    )
 
 
 def test_web_budget_skips_overlapping_duplicate_and_excess_calls(monkeypatch) -> None:
@@ -860,6 +925,8 @@ def test_agent_loop_persists_web_evidence_and_returns_to_model(
         assert assistant["metadata"]["searchInvocations"][0]["query"] == (
             "설비 예방 정비 최신 동향"
         )
+        assert assistant["metadata"]["researchRequirement"]["mode"] == "required"
+        assert assistant["metadata"]["researchVerification"] == "unverified"
 
 
 def test_file_mode_is_a_general_delivery_preference_not_a_file_command(
