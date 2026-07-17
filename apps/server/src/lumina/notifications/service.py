@@ -16,6 +16,7 @@ from ..models import (
     Run,
     ScheduledRun,
     ScheduledTask,
+    ToolExecution,
     User,
     utc_now,
 )
@@ -188,6 +189,14 @@ def create_run_transition_notification(
         .order_by(Artifact.created_at, Artifact.id)
         .limit(1)
     )
+    if target == "completed" and artifact_id is None:
+        tool_execution_id = db.scalar(
+            select(ToolExecution.id)
+            .where(ToolExecution.run_id == run.id)
+            .limit(1)
+        )
+        if tool_execution_id is None:
+            return None, False
     kind, title, body = copy
     conversation = db.get(Conversation, run.conversation_id)
     if target == "completed":

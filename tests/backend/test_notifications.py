@@ -20,6 +20,7 @@ from lumina.models import (
     Notification,
     Organization,
     Run,
+    ToolExecution,
     User,
 )
 from lumina.notifications import create_run_transition_notification
@@ -118,6 +119,15 @@ def test_run_notification_is_persistent_idempotent_isolated_and_device_synced(
             )
             transition_run(db, run, PREPARING)
             transition_run(db, run, MODEL_STREAMING)
+            db.add(
+                ToolExecution(
+                    run_id=run.id,
+                    tool_call_id="notification-tool-call-0001",
+                    tool_name="web_search",
+                    validated_input_json={},
+                    status="completed",
+                )
+            )
             transition_run(db, run, COMPLETED)
             db.commit()
             run_id = run.id
@@ -191,6 +201,32 @@ def test_run_notification_is_persistent_idempotent_isolated_and_device_synced(
             assert forbidden.json()["code"] == "notification_not_found"
         finally:
             other.close()
+
+
+def test_simple_chat_completion_does_not_create_notification(tmp_path: Path) -> None:
+    app = create_app(_settings(tmp_path, "simple-chat-notifications.db"))
+    with TestClient(app) as client:
+        csrf = _login(client)
+        _project_id, conversation_id = _conversation(client, csrf, "단순 채팅")
+        with SessionLocal() as db:
+            user = db.scalar(select(User).where(User.login_id == "admin@posco.com"))
+            assert user is not None
+            run, _message, _created = create_run(
+                db,
+                user=user,
+                conversation_id=conversation_id,
+                payload=RunCreate(message=RunMessageInput(text="간단한 질문")),
+                idempotency_key="notification-simple-chat-0001",
+            )
+            transition_run(db, run, PREPARING)
+            transition_run(db, run, MODEL_STREAMING)
+            transition_run(db, run, COMPLETED)
+            db.commit()
+
+        listing = client.get("/api/notifications")
+        assert listing.status_code == 200, listing.text
+        assert listing.json()["items"] == []
+        assert listing.json()["unreadCount"] == 0
 
 
 def test_failure_approval_and_read_all_notifications(tmp_path: Path) -> None:
