@@ -47,7 +47,7 @@ test("MCP installation status and secret actions keep compact trailing geometry"
   assert.match(panel, /installation\.ready \? "is-ready" : "is-pending"/);
   assert.match(panel, /setVerifyingInstallationIds\(new Set\(verifiable\.map\(\(item\) => item\.id\)\)\)/);
   assert.match(panel, /const verified = await api\.mcp\.verify\(item\.id, controller\.signal\)[\s\S]*?finally[\s\S]*?next\.delete\(item\.id\)/);
-  assert.match(panel, /className=\{verifyingInstallationIds\.has\(installation\.id\) \? "is-running" : undefined\}/);
+  assert.match(panel, /verifyingInstallationIds\.has\(installation\.id\) \? <LoaderCircle className="is-running" size=\{13\} \/> : null/);
   assert.match(panel, /selectedConnection\?\.healthStatus \?\? currentRevision\.healthStatus/);
   assert.match(panel, /mcp-secret-action text-danger/);
   assert.match(styles, /\.mcp-installation-row > header > \.mcp-installation-actions \{[^}]*flex: 0 0 auto;[^}]*white-space: nowrap;/);
