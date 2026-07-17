@@ -40,15 +40,17 @@ def test_resolves_source_id_marker_without_fabricating_unknown_source() -> None:
 
 
 def test_resolves_artifact_links_in_first_appearance_order() -> None:
+    sources = _sources()
+    sources[2]["normalizedUrl"] = "https://c.test/%EC%9E%90%EB%A3%8C"
     payload = resolve_inline_citations(
         "보고서를 생성했습니다.",
-        _sources(),
+        sources,
         reference_texts=(
             """
             <h2>주요 참고자료</h2>
-            <a href="https://c.test/?utm_source=report">C 자료</a>
+            https://c.test/자료&lt;br&gt;[2]
             [A 자료](https://a.test/)
-            <a href="https://c.test">C 자료 재인용</a>
+            <a href="https://c.test/%EC%9E%90%EB%A3%8C?utm_source=report">C 자료 재인용</a>
             """,
         ),
     )

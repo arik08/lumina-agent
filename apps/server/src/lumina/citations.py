@@ -5,6 +5,8 @@ import re
 from collections.abc import Mapping, Sequence
 from html import unescape
 from typing import Any
+from unicodedata import normalize
+from urllib.parse import unquote
 
 from .tools.web import WebToolError, normalize_public_url
 
@@ -131,22 +133,30 @@ def _artifact_source_occurrences(
             if not candidate:
                 continue
             try:
-                source_by_url.setdefault(normalize_public_url(candidate), source_id)
+                source_by_url.setdefault(_url_match_key(candidate), source_id)
             except WebToolError:
                 continue
 
     occurrences: list[tuple[int, int, str]] = []
     for document_index, document in enumerate(reference_texts):
         for match in _ARTIFACT_URL_RE.finditer(document):
-            candidate = unescape(match.group(0)).rstrip(".,;:!?，。；：！？")
+            candidate = (
+                unescape(match.group(0))
+                .split("<", 1)[0]
+                .rstrip(".,;:!?，。；：！？")
+            )
             try:
-                normalized_url = normalize_public_url(candidate)
+                normalized_url = _url_match_key(candidate)
             except WebToolError:
                 continue
             source_id = source_by_url.get(normalized_url)
             if source_id:
                 occurrences.append((document_index, match.start(), source_id))
     return occurrences
+
+
+def _url_match_key(url: str) -> str:
+    return normalize("NFC", unquote(normalize_public_url(url)))
 
 
 def _source_id_at(sources: Sequence[Mapping[str, Any]], ordinal: int) -> str:

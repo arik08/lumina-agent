@@ -16,7 +16,7 @@ from lumina.config import Settings
 from lumina.main import create_app
 from lumina.db import SessionLocal
 from lumina.instructions.service import DEFAULT_SYSTEM_PROMPT
-from lumina.models import ArtifactVersion, RunEvent, ToolExecution
+from lumina.models import ArtifactVersion, Message, RunEvent, ToolExecution
 from lumina.providers import (
     MockProvider,
     MockToolCall,
@@ -1549,6 +1549,22 @@ def test_web_fetch_starts_visible_report_drafting_before_create_report_output(
             for message in turn_sets[-1]["messages"]
             if message["role"] == "assistant"
         )
+        with SessionLocal() as db:
+            stored_message = db.get(Message, assistant["id"])
+            assert stored_message is not None
+            stored_message.metadata_json = {
+                **stored_message.metadata_json,
+                "citations": [],
+            }
+            db.commit()
+        legacy_turn_sets = client.get(
+            f"/api/conversations/{conversation['id']}/turn-sets"
+        ).json()["turnSets"]
+        legacy_assistant = next(
+            message
+            for message in legacy_turn_sets[-1]["messages"]
+            if message["role"] == "assistant"
+        )
 
     assert snapshot["status"] == "completed"
     report_tool = next(
@@ -1563,6 +1579,9 @@ def test_web_fetch_starts_visible_report_drafting_before_create_report_output(
     assert (
         assistant["metadata"]["citations"][0]["citationOrigin"]
         == "artifact_link"
+    )
+    assert legacy_assistant["metadata"]["citations"][0]["sourceId"] == (
+        "source-report"
     )
     with SessionLocal() as db:
         events = list(

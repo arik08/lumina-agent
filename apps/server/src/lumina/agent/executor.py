@@ -24,6 +24,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
 from ..api.errors import ApiProblem
+from ..artifact_citations import run_artifact_citation_texts
 from ..artifacts.service import (
     artifact_summary,
     cleanup_artifact_storage_on_error,
@@ -93,7 +94,7 @@ from ..providers.openai import OpenAIResponsesAdapter
 from ..providers.openai_compatible import OpenAICompatibleAdapter
 from ..providers.pgpt import PgptAdapter
 from ..providers.catalog import estimate_model_cost_parts, model_operational_profile
-from ..storage import ManagedLocalStorage, StorageError
+from ..storage import ManagedLocalStorage
 from ..tools.web import WebToolError, WebToolPolicy, web_fetch, web_search
 from ..tools.source_documents import (
     SOURCE_DOCUMENT_TOOL_SCHEMAS,
@@ -190,10 +191,6 @@ _ARTIFACT_FIRST_PASS_PREFERRED_FLOOR_RATIO = 0.9
 _ARTIFACT_HTML_CHARS_PER_FLOOR_TOKEN = 2
 _MAX_ARTIFACT_LENGTH_RETRIES = 2
 _ARTIFACT_PROGRESS_INTERVAL_SECONDS = 0.1
-_ARTIFACT_CITATION_MAX_BYTES = 5_000_000
-_ARTIFACT_CITATION_MIME_TYPES = frozenset(
-    {"text/html", "text/markdown", "text/plain", "application/xhtml+xml"}
-)
 _WEB_SEARCH_CALL_SAFETY_LIMIT = 10
 _WEB_FETCH_PAGE_SAFETY_LIMIT = 15
 _DEEP_WEB_SEARCH_CALL_SAFETY_LIMIT = 20
@@ -5202,9 +5199,9 @@ class LocalRunExecutor:
                 resolve_inline_citations(
                     run.assistant_draft,
                     web_metadata["sources"],
-                    reference_texts=_run_artifact_citation_texts(
-                        db, self.storage, run.id
-                    ),
+                    reference_texts=run_artifact_citation_texts(
+                        db, self.storage, (run.id,)
+                    ).get(run.id, ()),
                 )
             )
             research_requirement = run.snapshot_json.get(
@@ -6366,40 +6363,6 @@ def _web_source_metadata(db: Session, run_id: str) -> dict[str, Any]:
             else:
                 sources[position] = _merge_web_source_evidence(sources[position], raw)
     return {"searchInvocations": invocations, "sources": sources}
-
-
-def _run_artifact_citation_texts(
-    db: Session, storage: ManagedLocalStorage, run_id: str
-) -> tuple[str, ...]:
-    rows = db.execute(
-        select(Artifact, ArtifactVersion)
-        .join(
-            ArtifactVersion,
-            (ArtifactVersion.artifact_id == Artifact.id)
-            & (ArtifactVersion.version_number == Artifact.current_version_number),
-        )
-        .where(
-            Artifact.source_run_id == run_id,
-            Artifact.deleted_at.is_(None),
-            Artifact.mime_type.in_(_ARTIFACT_CITATION_MIME_TYPES),
-            ArtifactVersion.size_bytes <= _ARTIFACT_CITATION_MAX_BYTES,
-        )
-        .order_by(Artifact.created_at, Artifact.id)
-    ).all()
-    texts: list[str] = []
-    for _artifact, version in rows:
-        try:
-            content = storage.read_bytes(
-                version.storage_key, expected_sha256=version.content_hash
-            )
-        except StorageError:
-            logger.warning(
-                "Skipping unavailable artifact content while resolving citations",
-                extra={"run_id": run_id, "artifact_version_id": version.id},
-            )
-            continue
-        texts.append(content.decode("utf-8-sig", errors="replace"))
-    return tuple(texts)
 
 
 def _report_html(request: str, arguments: dict[str, Any]) -> str:

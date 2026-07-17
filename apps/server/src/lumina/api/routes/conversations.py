@@ -10,8 +10,11 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ...agent_frontends import agent_frontend_payload
+from ...artifact_citations import run_artifact_citation_texts
 from ...audit import record_audit
 from ...authorization import require_conversation
+from ...citations import resolve_inline_citations
+from ...config import Settings, get_settings
 from ...conversations.service import (
     branch_conversation,
     conversation_summary,
@@ -34,6 +37,7 @@ from ...models import (
     User,
 )
 from ...runs.service import message_response, run_snapshot
+from ...storage import ManagedLocalStorage
 from ..dependencies import AuthContext, get_current_user, require_csrf
 from ..errors import ApiProblem
 from ..schemas import (
@@ -45,6 +49,33 @@ from ..schemas import (
 
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
+
+
+def _message_response_with_artifact_citations(
+    message: Message,
+    db: Session,
+    artifact_texts_by_run: dict[str, tuple[str, ...]],
+) -> dict[str, object]:
+    payload = message_response(message, db)
+    metadata = message.metadata_json or {}
+    sources = metadata.get("sources")
+    if (
+        message.role == "assistant"
+        and message.run_id is not None
+        and isinstance(sources, list)
+        and sources
+        and not metadata.get("citations")
+        and artifact_texts_by_run.get(message.run_id)
+    ):
+        payload["metadata"] = {
+            **metadata,
+            **resolve_inline_citations(
+                message.canonical_text,
+                sources,
+                reference_texts=artifact_texts_by_run[message.run_id],
+            ),
+        }
+    return payload
 
 
 def _summary(db: Session, conversation) -> dict[str, object]:
@@ -308,6 +339,7 @@ def get_turn_sets(
     before_cursor: str | None = None,
     limit_turn_sets: int = Query(default=3, ge=1, le=20),
     user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     conversation = require_conversation(db, user, conversation_id)
@@ -361,6 +393,22 @@ def get_turn_sets(
             else f"message:{message.id}"
         )
         grouped[key].append(message)
+    legacy_citation_run_ids = [
+        message.run_id
+        for message in selected_messages
+        if message.role == "assistant"
+        and message.run_id is not None
+        and isinstance((message.metadata_json or {}).get("sources"), list)
+        and (message.metadata_json or {}).get("sources")
+        and not (message.metadata_json or {}).get("citations")
+    ]
+    artifact_texts_by_run = (
+        run_artifact_citation_texts(
+            db, ManagedLocalStorage(settings.artifacts_dir), legacy_citation_run_ids
+        )
+        if settings.artifacts_dir is not None and legacy_citation_run_ids
+        else {}
+    )
     turn_sets: list[dict[str, object]] = []
     for key in selected_keys:
         run = db.get(Run, key) if not key.startswith(("message:", "branch:")) else None
@@ -370,7 +418,12 @@ def get_turn_sets(
             {
                 "id": key,
                 "runId": run.id if run else None,
-                "messages": [message_response(message, db) for message in group],
+                "messages": [
+                    _message_response_with_artifact_citations(
+                        message, db, artifact_texts_by_run
+                    )
+                    for message in group
+                ],
                 "plan": snapshot["plan"] if snapshot else None,
                 "toolExecutions": snapshot["toolExecutions"] if snapshot else [],
                 "artifacts": snapshot["artifacts"] if snapshot else [],
