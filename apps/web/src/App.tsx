@@ -1332,17 +1332,16 @@ function App() {
 
   const closeArtifact = useCallback(() => {
     if (artifactSaveBusy) return;
-    if (artifactHistoryOpenRef.current) {
-      window.history.back();
-      return;
-    }
+    const shouldRewindHistory = artifactHistoryOpenRef.current;
     finishCloseArtifact();
+    if (shouldRewindHistory) window.history.back();
   }, [artifactSaveBusy, finishCloseArtifact]);
 
   useEffect(() => {
     if (!artifactOpen || artifactPaneViews.has(mainView)) return;
-    if (artifactHistoryOpenRef.current) window.history.back();
-    else finishCloseArtifact();
+    const shouldRewindHistory = artifactHistoryOpenRef.current;
+    finishCloseArtifact();
+    if (shouldRewindHistory) window.history.back();
   }, [artifactOpen, finishCloseArtifact, mainView]);
 
   useEffect(() => {
