@@ -17,6 +17,7 @@ import {
   type WheelEvent,
 } from "react";
 import { createPortal } from "react-dom";
+import { inferMermaidNodeTone } from "../mermaid-semantic";
 import { repairMermaidSource } from "../mermaid-source";
 import { SyntaxCode } from "./SyntaxCode";
 import "./InteractiveResponse.css";
@@ -37,7 +38,6 @@ const artifactVisualPalette = {
   purple: "#5e4fa2",
 } as const;
 const artifactVisualPaletteSequence = Object.values(artifactVisualPalette);
-const mermaidNodeTones = ["blue", "teal", "orange", "red", "purple"] as const;
 
 async function loadMermaid() {
   if (!mermaidModulePromise) {
@@ -278,22 +278,22 @@ function mermaidAppearance() {
   const token = (name: string, fallback: string) => styles.getPropertyValue(name).trim() || fallback;
   const themeVariables = {
     background: "transparent",
-    primaryColor: token("--cobalt-pale", "#edf2fb"),
+    primaryColor: token("--surface-soft", "#f5f6f7"),
     primaryTextColor: token("--ink", "#20242c"),
-    primaryBorderColor: artifactVisualPalette.blue,
+    primaryBorderColor: token("--line-strong", "#d4d8de"),
     secondaryColor: token("--surface-soft", "#f5f6f7"),
     secondaryTextColor: token("--ink", "#20242c"),
     tertiaryColor: token("--surface", "#ffffff"),
     tertiaryTextColor: token("--ink", "#20242c"),
-    lineColor: artifactVisualPalette.purple,
+    lineColor: token("--muted", "#6c737e"),
     textColor: token("--ink", "#20242c"),
     noteBkgColor: token("--surface-selected", "#edf2fb"),
     noteTextColor: token("--ink", "#20242c"),
     actorBkg: token("--surface", "#ffffff"),
-    actorBorder: artifactVisualPalette.blue,
+    actorBorder: token("--line-strong", "#d4d8de"),
     actorTextColor: token("--ink", "#20242c"),
     clusterBkg: token("--surface-soft", "#f5f6f7"),
-    clusterBorder: artifactVisualPalette.teal,
+    clusterBorder: token("--line-strong", "#d4d8de"),
     pie1: artifactVisualPalette.blue,
     pie2: artifactVisualPalette.teal,
     pie3: artifactVisualPalette.lime,
@@ -348,11 +348,11 @@ function mermaidAppearance() {
 function decorateMermaidSvg(svg: string) {
   const template = document.createElement("template");
   template.innerHTML = svg;
-  template.content.querySelectorAll<SVGGElement>("g.node").forEach((node, index) => {
+  template.content.querySelectorAll<SVGGElement>("g.node").forEach((node) => {
     const hasAuthoredClass = Array.from(node.classList).some((className) => className !== "node" && className !== "default");
     if (hasAuthoredClass) return;
     const isDecision = Array.from(node.children).some((child) => child.tagName.toLowerCase() === "polygon");
-    node.dataset.luminaTone = isDecision ? "orange" : mermaidNodeTones[index % mermaidNodeTones.length];
+    node.dataset.luminaTone = inferMermaidNodeTone(node.textContent ?? "", isDecision);
   });
   return template.innerHTML;
 }

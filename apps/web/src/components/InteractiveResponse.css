@@ -155,29 +155,34 @@
   transition: width 150ms var(--ease-out-quint, ease-out);
 }
 
-.mermaid-surface svg .node[data-lumina-tone="blue"] {
+.mermaid-surface svg .node[data-lumina-tone="neutral"] {
+  --mermaid-node-fill: var(--surface-soft);
+  --mermaid-node-stroke: var(--line-strong);
+}
+
+.mermaid-surface svg .node[data-lumina-tone="input"] {
   --mermaid-node-fill: color-mix(in srgb, var(--mermaid-palette-blue) 14%, var(--surface));
   --mermaid-node-stroke: var(--mermaid-palette-blue);
 }
 
-.mermaid-surface svg .node[data-lumina-tone="teal"] {
+.mermaid-surface svg .node[data-lumina-tone="decision"] {
+  --mermaid-node-fill: color-mix(in srgb, var(--mermaid-palette-amber) 18%, var(--surface));
+  --mermaid-node-stroke: color-mix(in srgb, var(--mermaid-palette-amber) 72%, var(--muted));
+}
+
+.mermaid-surface svg .node[data-lumina-tone="execution"] {
   --mermaid-node-fill: color-mix(in srgb, var(--mermaid-palette-teal) 16%, var(--surface));
   --mermaid-node-stroke: var(--mermaid-palette-teal);
 }
 
-.mermaid-surface svg .node[data-lumina-tone="orange"] {
-  --mermaid-node-fill: color-mix(in srgb, var(--mermaid-palette-coral) 16%, var(--surface));
-  --mermaid-node-stroke: var(--mermaid-palette-coral);
+.mermaid-surface svg .node[data-lumina-tone="success"] {
+  --mermaid-node-fill: color-mix(in srgb, var(--mermaid-palette-green) 22%, var(--surface));
+  --mermaid-node-stroke: color-mix(in srgb, var(--mermaid-palette-green) 68%, var(--muted));
 }
 
-.mermaid-surface svg .node[data-lumina-tone="red"] {
+.mermaid-surface svg .node[data-lumina-tone="danger"] {
   --mermaid-node-fill: color-mix(in srgb, var(--mermaid-palette-red) 13%, var(--surface));
   --mermaid-node-stroke: var(--mermaid-palette-red);
-}
-
-.mermaid-surface svg .node[data-lumina-tone="purple"] {
-  --mermaid-node-fill: color-mix(in srgb, var(--mermaid-palette-purple) 12%, var(--surface));
-  --mermaid-node-stroke: var(--mermaid-palette-purple);
 }
 
 .mermaid-surface svg .node[data-lumina-tone] :is(rect, circle, ellipse, polygon, path) {
@@ -186,8 +191,8 @@
 }
 
 .mermaid-surface svg :is(.cluster rect, .cluster polygon, .cluster path) {
-  fill: color-mix(in srgb, var(--mermaid-palette-lime) 18%, var(--surface-soft)) !important;
-  stroke: var(--mermaid-palette-teal) !important;
+  fill: var(--surface-soft) !important;
+  stroke: var(--line-strong) !important;
 }
 
 .mermaid-surface svg :is(.label, .nodeLabel, .edgeLabel, .cluster-label, text, tspan) {
@@ -196,12 +201,12 @@
 }
 
 .mermaid-surface svg :is(.edgePath .path, .flowchart-link) {
-  stroke: color-mix(in srgb, var(--mermaid-palette-purple) 68%, var(--muted)) !important;
+  stroke: var(--muted) !important;
 }
 
 .mermaid-surface svg marker :is(path, polygon) {
-  fill: var(--mermaid-palette-purple) !important;
-  stroke: var(--mermaid-palette-purple) !important;
+  fill: var(--muted) !important;
+  stroke: var(--muted) !important;
 }
 
 .mermaid-surface.is-expanded {
