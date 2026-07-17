@@ -1944,7 +1944,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .notification-menu { position: relative; display: flex; align-items: center; margin-left: 6px; }
 .chat-actions .notification-trigger { position: relative; width: 28px; height: 28px; padding: 0; border-radius: 5px; color: var(--muted); }
 .chat-actions .notification-trigger.is-active { background: var(--surface-soft); color: var(--cobalt); }
-.notification-badge { position: absolute; top: -4px; right: -6px; display: grid !important; min-width: 18px; height: 18px; place-items: center; padding: 0 4px; border: 2px solid var(--surface); border-radius: 999px; background: var(--cobalt); color: #ffffff; font-size: 10px; font-style: normal; font-variant-numeric: tabular-nums; font-weight: 700; line-height: 1; }
+.notification-badge { position: absolute; top: -2px; right: -14px; display: grid !important; min-width: 18px; height: 18px; place-items: center; padding: 0 4px; border: 2px solid var(--surface); border-radius: 999px; background: var(--cobalt); color: #ffffff; font-size: 11px; font-style: normal; font-variant-numeric: tabular-nums; font-weight: 700; line-height: 1; }
 .notification-panel { position: absolute; z-index: 40; top: calc(100% + 8px); right: 0; width: min(460px, calc(100vw - 30px)); overflow: hidden; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--menu-surface); box-shadow: 0 14px 36px rgba(31, 39, 51, 0.14); color: var(--ink); }
 .notification-panel > header { display: flex; min-height: 43px; align-items: stretch; justify-content: space-between; gap: 10px; padding: 0 17px 0 12px; }
 .notification-tabs { display: flex; min-width: 0; align-items: stretch; gap: 14px; }
