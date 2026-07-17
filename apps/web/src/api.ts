@@ -1195,6 +1195,17 @@ export async function listExtensions(query?: string, signal?: AbortSignal) {
   return request<SkillExtension[]>("/extensions", { query: { query }, signal });
 }
 
+export async function getAnnouncementUnreadCount(signal?: AbortSignal) {
+  return request<NotificationUnreadCount>("/notifications/announcements/unread-count", { signal });
+}
+
+export async function markAnnouncementRead(announcementId: string, signal?: AbortSignal) {
+  return request<AnnouncementItem>(`/notifications/announcements/${encodeURIComponent(announcementId)}/read`, {
+    method: "POST",
+    signal,
+  });
+}
+
 export async function listSkillCatalog(
   filters: {
     query?: string;
@@ -1913,7 +1924,9 @@ export const api = {
     list: listNotifications,
     listAnnouncements,
     getUnreadCount: getNotificationUnreadCount,
+    getAnnouncementUnreadCount,
     markRead: markNotificationRead,
+    markAnnouncementRead,
     markAllRead: markAllNotificationsRead,
     delete: deleteNotification,
     deleteAll: deleteAllNotifications,

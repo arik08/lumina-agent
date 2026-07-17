@@ -470,6 +470,7 @@ class AnnouncementResponse(ApiModel):
     title: str
     body: str
     author: AnnouncementAuthorResponse | None
+    read_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -477,6 +478,7 @@ class AnnouncementResponse(ApiModel):
 class AnnouncementListResponse(ApiModel):
     items: list[AnnouncementResponse]
     total: int
+    unread_count: int = 0
 
 
 class NotificationUnreadCountResponse(ApiModel):

@@ -578,6 +578,18 @@ def test_admin_announcements_are_managed_by_admins_and_visible_to_users(
             assert user_listing.status_code == 200, user_listing.text
             assert user_listing.json()["items"][0]["title"] == "서비스 점검 안내"
             assert user_listing.json()["total"] == 1
+            assert user_listing.json()["unreadCount"] == 1
+            assert user_listing.json()["items"][0]["readAt"] is None
+
+            marked_read = user_client.post(
+                f"/api/notifications/announcements/{announcement['id']}/read",
+                headers={"X-CSRF-Token": user_csrf},
+            )
+            assert marked_read.status_code == 200, marked_read.text
+            assert marked_read.json()["readAt"] is not None
+            assert user_client.get(
+                "/api/notifications/announcements/unread-count"
+            ).json() == {"unreadCount": 0}
 
             updated = admin_client.patch(
                 f"/api/admin/announcements/{announcement['id']}",
@@ -589,6 +601,9 @@ def test_admin_announcements_are_managed_by_admins_and_visible_to_users(
             )
             assert updated.status_code == 200, updated.text
             assert updated.json()["title"] == "서비스 점검 시간 변경"
+            assert user_client.get(
+                "/api/notifications/announcements/unread-count"
+            ).json() == {"unreadCount": 1}
 
             searched = admin_client.get(
                 "/api/admin/announcements?query=시간 변경"
@@ -606,6 +621,7 @@ def test_admin_announcements_are_managed_by_admins_and_visible_to_users(
             assert user_client.get("/api/notifications/announcements").json() == {
                 "items": [],
                 "total": 0,
+                "unreadCount": 0,
             }
 
         finally:
@@ -615,6 +631,7 @@ def test_admin_announcements_are_managed_by_admins_and_visible_to_users(
         assert audit.status_code == 200
         assert {item["action"] for item in audit.json()["items"]} == {
             "announcement_created",
+            "announcement_read",
             "announcement_updated",
             "announcement_deleted",
         }

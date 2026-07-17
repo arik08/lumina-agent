@@ -83,10 +83,16 @@ test("notification trigger does not render an empty tooltip while the panel is o
   assert.doesNotMatch(stylesheet, /tooltip-control:not\(\[data-tooltip\]\)::after/);
 });
 
-test("notification badge leaves enough room for the unread count", async () => {
-  const stylesheet = await read("../src/styles.css");
+test("notification trigger separates unread notifications and announcements", async () => {
+  const [app, stylesheet] = await Promise.all([
+    read("../src/App.tsx"),
+    read("../src/styles.css"),
+  ]);
 
-  assert.match(stylesheet, /\.notification-badge \{[^}]*min-width: 18px;[^}]*height: 18px;/s);
-  assert.match(stylesheet, /\.notification-badge \{[^}]*right: -14px;[^}]*font-size: 11px;/s);
-  assert.match(stylesheet, /\.notification-badge \{[^}]*font-variant-numeric: tabular-nums;/s);
+  assert.match(app, /notificationUnreadCount > 0 \|\| announcementUnreadCount > 0/);
+  assert.match(app, /notification-trigger-count is-notification/);
+  assert.match(app, /notification-trigger-count is-announcement/);
+  assert.match(app, /announcementUnreadCount > 0 && <span>/);
+  assert.match(stylesheet, /\.notification-trigger\.has-counts \{[^}]*width: auto;/s);
+  assert.match(stylesheet, /\.notification-trigger-count\.is-announcement/);
 });

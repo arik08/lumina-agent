@@ -1916,8 +1916,31 @@ class Announcement(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     body: Mapped[str] = mapped_column(Text, nullable=False)
 
 
+class AnnouncementReceipt(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "announcement_receipts"
+    __table_args__ = (
+        UniqueConstraint(
+            "announcement_id",
+            "user_id",
+            name="uq_announcement_receipts_announcement_user",
+        ),
+        Index("ix_announcement_receipts_user_read", "user_id", "read_at"),
+    )
+
+    announcement_id: Mapped[str] = mapped_column(
+        ForeignKey("announcements.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    read_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, nullable=False
+    )
+
+
 __all__ = [
     "Announcement",
+    "AnnouncementReceipt",
     "Artifact",
     "ArtifactDraft",
     "ArtifactVersion",

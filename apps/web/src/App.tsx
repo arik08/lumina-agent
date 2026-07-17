@@ -1140,6 +1140,7 @@ function App() {
   const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
   const [helpAnnouncementId, setHelpAnnouncementId] = useState<string | null>(null);
   const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
+  const [announcementUnreadCount, setAnnouncementUnreadCount] = useState(0);
   const [notificationLoading, setNotificationLoading] = useState(false);
   const [notificationError, setNotificationError] = useState<string | null>(null);
   const [notificationBusyId, setNotificationBusyId] = useState<string | null>(null);
@@ -1933,15 +1934,20 @@ function App() {
       setNotifications([]);
       setAnnouncements([]);
       setNotificationUnreadCount(0);
+      setAnnouncementUnreadCount(0);
       setNotificationError(null);
       return;
     }
     const controller = new AbortController();
     const refresh = async () => {
       try {
-        const count = await api.notifications.getUnreadCount(controller.signal);
+        const [count, announcementCount] = await Promise.all([
+          api.notifications.getUnreadCount(controller.signal),
+          api.notifications.getAnnouncementUnreadCount(controller.signal),
+        ]);
         if (controller.signal.aborted) return;
         setNotificationUnreadCount(count.unreadCount);
+        setAnnouncementUnreadCount(announcementCount.unreadCount);
         if (notificationOpen) {
           setNotificationLoading(true);
           const [page, announcementPage] = await Promise.all([
@@ -1952,6 +1958,7 @@ function App() {
           setNotifications(page.items);
           setAnnouncements(announcementPage.items);
           setNotificationUnreadCount(page.unreadCount);
+          setAnnouncementUnreadCount(announcementPage.unreadCount);
           setNotificationError(null);
         }
       } catch (error) {
@@ -2762,6 +2769,13 @@ function App() {
   };
 
   const openAnnouncementInHelp = (announcementId: string | null) => {
+    const unreadAnnouncement = announcements.find((item) => item.id === announcementId && !item.readAt);
+    if (unreadAnnouncement) {
+      void api.notifications.markAnnouncementRead(unreadAnnouncement.id).then((updated) => {
+        setAnnouncements((items) => items.map((item) => item.id === updated.id ? updated : item));
+        setAnnouncementUnreadCount((count) => Math.max(0, count - 1));
+      }).catch(() => showToast("공지사항 읽음 상태를 저장하지 못했습니다."));
+    }
     setHelpAnnouncementId(announcementId);
     setNotificationOpen(false);
     setMainView("help");
@@ -3059,9 +3073,9 @@ function App() {
             <span className={`connection-state state-${connectionIndicatorState}`}>{streamLabel} <i /></span>
             <div className="notification-menu" ref={notificationMenuRef}>
               <button
-                className={`notification-trigger tooltip-control ${notificationOpen ? "is-active" : ""}`}
+                className={`notification-trigger tooltip-control ${notificationOpen ? "is-active" : ""} ${notificationUnreadCount > 0 || announcementUnreadCount > 0 ? "has-counts" : ""}`}
                 type="button"
-                aria-label={notificationUnreadCount > 0 ? `알림 · 읽지 않음 ${notificationUnreadCount}개` : "알림"}
+                aria-label={`알림${notificationUnreadCount > 0 ? ` · 읽지 않은 알림 ${notificationUnreadCount}개` : ""}${announcementUnreadCount > 0 ? ` · 읽지 않은 공지 ${announcementUnreadCount}개` : ""}`}
                 aria-expanded={notificationOpen}
                 data-tooltip={notificationOpen ? undefined : "알림"}
                 onClick={() => {
@@ -3071,8 +3085,11 @@ function App() {
                 }}
               >
                 <Bell size={16} />
-                {notificationUnreadCount > 0 && (
-                  <span className="notification-badge" aria-hidden="true">{notificationUnreadCount > 99 ? "99+" : notificationUnreadCount}</span>
+                {(notificationUnreadCount > 0 || announcementUnreadCount > 0) && (
+                  <span className="notification-trigger-counts" aria-hidden="true">
+                    {notificationUnreadCount > 0 && <span className="notification-trigger-count is-notification">{notificationUnreadCount > 99 ? "99+" : notificationUnreadCount}</span>}
+                    {announcementUnreadCount > 0 && <span className="notification-trigger-count is-announcement"><Megaphone size={10} />{announcementUnreadCount > 99 ? "99+" : announcementUnreadCount}</span>}
+                  </span>
                 )}
               </button>
               {notificationOpen && (
@@ -3102,6 +3119,7 @@ function App() {
                         }}
                       >
                         공지사항
+                        {announcementUnreadCount > 0 && <span>{announcementUnreadCount > 99 ? "99+" : announcementUnreadCount}</span>}
                       </button>
                     </div>
                     {notificationTab === "notifications" && (

@@ -185,6 +185,7 @@ export interface AnnouncementItem {
   title: string;
   body: string;
   author: { id: UUID; loginId: string; displayName: string | null } | null;
+  readAt: IsoDateTime | null;
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
 }
@@ -192,6 +193,7 @@ export interface AnnouncementItem {
 export interface AnnouncementList {
   items: AnnouncementItem[];
   total: number;
+  unreadCount: number;
 }
 
 export interface AnnouncementMutationRequest {
