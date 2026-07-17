@@ -3472,3 +3472,15 @@ button:disabled { cursor: default; opacity: 0.5; }
 .chat-pane.view-chat .turn-work-details * {
   font-size: calc(var(--conversation-font-size) - 2px);
 }
+
+.chat-pane.view-chat .answer-sources-trigger,
+.chat-pane.view-chat .answer-sources-trigger * {
+  font-size: calc(var(--conversation-font-size) - 2px);
+}
+
+.chat-pane.view-chat .answer-sources-trigger {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.chat-pane.view-chat .answer-sources-trigger:hover { color: var(--ink); }
