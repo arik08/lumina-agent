@@ -68,7 +68,7 @@ $restartPromptPath = Join-Path $PSScriptRoot "Wait-LuminaLauncherRestart.ps1"
 $restartPromptSource = Get-Content -Raw -LiteralPath $restartPromptPath
 $alreadyRunningBranch = [regex]::Match(
     $developmentLauncherSource,
-    '(?s)if "%LUMINA_DEV_EXIT%"=="76" \(.*?exit /b %LUMINA_DEV_EXIT%.*?\)'
+    '(?s)if "%LUMINA_DEV_EXIT%"=="76" \(.*?\)'
 )
 $databaseOwnershipBranch = [regex]::Match(
     $developmentLauncherSource,
@@ -83,11 +83,30 @@ if (
     $restartPromptSource -notmatch 'Test-HardResetInput' -or
     $restartPromptSource -notmatch 'exit 75' -or
     -not $alreadyRunningBranch.Success -or
+    $alreadyRunningBranch.Value -match 'exit /b' -or
     -not $databaseOwnershipBranch.Success -or
     $alreadyRunningBranch.Index -gt $developmentLauncherSource.IndexOf('Wait-LuminaLauncherRestart.ps1') -or
     $databaseOwnershipBranch.Index -gt $developmentLauncherSource.IndexOf('Wait-LuminaLauncherRestart.ps1')
 ) {
-    throw "The development launcher must close duplicate instances without leaving a restart prompt behind."
+    throw "The development launcher must keep port-conflict details visible and avoid retrying database ownership conflicts."
+}
+
+$takeoverFunction = $ast.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq "Enter-LuminaPortLocksWithTakeover"
+    },
+    $true
+)
+if (
+    $null -eq $takeoverFunction -or
+    $takeoverFunction.Extent.Text -notmatch 'Stop-PreviousSupervisor' -or
+    $takeoverFunction.Extent.Text -notmatch 'Enter-LuminaPortLocks' -or
+    $ast.Extent.Text -notmatch
+        'if \(-not \(Enter-LuminaPortLocksWithTakeover -Ports \$claimedPorts\)\)'
+) {
+    throw "The launcher must safely take over a matching previous supervisor before reporting a port conflict."
 }
 if (
     $developmentLauncherSource -notmatch 'if "%LUMINA_DEV_EXIT%"=="78" exit /b 0' -or

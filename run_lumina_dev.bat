@@ -6,7 +6,6 @@ set "LUMINA_DEV_EXIT=%ERRORLEVEL%"
 if "%LUMINA_DEV_EXIT%"=="76" (
     echo.
     echo [Lumina] Another launcher is already using the configured port. The existing runtime was left running.
-    exit /b %LUMINA_DEV_EXIT%
 )
 if "%LUMINA_DEV_EXIT%"=="77" (
     echo.

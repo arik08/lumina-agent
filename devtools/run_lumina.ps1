@@ -846,6 +846,25 @@ function Stop-PreviousSupervisor {
     }
 }
 
+function Enter-LuminaPortLocksWithTakeover {
+    param([Parameter(Mandatory = $true)][int[]]$Ports)
+
+    if (Enter-LuminaPortLocks -Ports $Ports) {
+        return $true
+    }
+
+    Stop-PreviousSupervisor
+    $deadline = [DateTime]::UtcNow.AddSeconds(5)
+    do {
+        Start-Sleep -Milliseconds 100
+        if (Enter-LuminaPortLocks -Ports $Ports) {
+            return $true
+        }
+    } while ([DateTime]::UtcNow -lt $deadline)
+
+    return $false
+}
+
 function Set-SupervisorPid {
     $utf8 = New-Object System.Text.UTF8Encoding($false)
     $current = Get-Process -Id $PID -ErrorAction Stop
@@ -1131,7 +1150,7 @@ $claimedPorts = if ($Development) {
 else {
     @($BackendPort)
 }
-if (-not (Enter-LuminaPortLocks -Ports $claimedPorts)) {
+if (-not (Enter-LuminaPortLocksWithTakeover -Ports $claimedPorts)) {
     Write-Warning (
         "Another Lumina launcher already owns port " +
         "$($script:LauncherLockConflictPort). The existing runtime was left running."
@@ -1154,7 +1173,6 @@ try {
     if (-not $Development) {
         Confirm-LuminaRuntimePrepared
     }
-    Stop-PreviousSupervisor
     if ($Development) {
         Confirm-LuminaRuntimePrepared
     }
