@@ -31,6 +31,13 @@ test("project settings retain unchecked Skill and MCP rows until navigation", ()
   assert.doesNotMatch(projectSettings, /setProjectMcps\(\(items\) => items\.filter/);
 });
 
+test("project settings show MCP descriptions instead of slugs", () => {
+  assert.match(projectSettings, /api\.mcp\.listCatalog\(controller\.signal\)/);
+  assert.match(projectSettings, /mcpDefinitionById\.get\(installation\.definitionId\)\?\.description/);
+  assert.match(projectSettings, /setting\.description \|\| "설명 없음"/);
+  assert.doesNotMatch(projectSettings, /<small>\{setting\.installation\.slug\}<\/small>/);
+});
+
 test("project instructions replace the duplicate business Concept field near project information", () => {
   assert.doesNotMatch(projectSettings, /업무 Concept/);
   assert.doesNotMatch(projectSettings, /setConcept/);

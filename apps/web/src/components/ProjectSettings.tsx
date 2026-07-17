@@ -42,6 +42,7 @@ interface ProjectSkillSetting {
 
 interface ProjectMcpSetting {
   installation: McpInstallation;
+  description: string;
   checked: boolean;
 }
 
@@ -111,9 +112,11 @@ export function ProjectSettings({ projects, project, onOpenNavigation, onSelect,
     void Promise.all([
       api.extensions.list(),
       api.extensions.listInstallations(project.id, controller.signal),
+      api.mcp.listCatalog(controller.signal),
       api.mcp.listInstallations(project.id, controller.signal),
-    ]).then(([extensions, skillInstallations, mcpInstallations]) => {
+    ]).then(([extensions, skillInstallations, mcpDefinitions, mcpInstallations]) => {
       const extensionById = new Map(extensions.map((item) => [item.id, item]));
+      const mcpDefinitionById = new Map(mcpDefinitions.map((item) => [item.id, item]));
       setProjectSkills(skillInstallations.filter((item) => item.enabled).map((installation) => {
         const extension = extensionById.get(installation.extensionId);
         return {
@@ -123,7 +126,11 @@ export function ProjectSettings({ projects, project, onOpenNavigation, onSelect,
           checked: true,
         };
       }));
-      setProjectMcps(mcpInstallations.filter((item) => item.enabled).map((installation) => ({ installation, checked: true })));
+      setProjectMcps(mcpInstallations.filter((item) => item.enabled).map((installation) => ({
+        installation,
+        description: mcpDefinitionById.get(installation.definitionId)?.description ?? "",
+        checked: true,
+      })));
     }).catch((error) => {
       if (!controller.signal.aborted) setResourceError(errorMessage(error));
     }).finally(() => {
@@ -350,7 +357,7 @@ export function ProjectSettings({ projects, project, onOpenNavigation, onSelect,
                       <span className="project-member-avatar" aria-hidden="true">{membership.displayName.trim().charAt(0).toUpperCase() || "?"}</span>
                       <span className="project-member-identity"><strong>{membership.displayName}</strong><small>{membership.loginId}</small></span>
                       {protectedOwner ? <span className="project-member-owner">소유자</span> : canManageMembers ? (
-                        <SelectMenu className="project-member-role-select" size="small" align="end" value={membership.role} options={assignableRoleOptions} ariaLabel={`${membership.displayName} 권한`} disabled={actionBusy} onChange={(role) => void changeMemberRole(membership, role as AssignableRole)} />
+                        <SelectMenu className="project-member-role-select" menuClassName="project-member-role-menu" size="small" align="end" value={membership.role} options={assignableRoleOptions} ariaLabel={`${membership.displayName} 권한`} disabled={actionBusy} onChange={(role) => void changeMemberRole(membership, role as AssignableRole)} />
                       ) : <span className="project-member-role">{roleLabels[membership.role]}</span>}
                       {!protectedOwner && canManageMembers && <button className={removalArmed ? "is-delete-armed" : ""} type="button" aria-label={removalArmed ? `${membership.displayName} 제거 확인, 한 번 더 누르면 제거` : `${membership.displayName} 제거`} disabled={actionBusy} onClick={() => void removeMember(membership)}>{actionBusy ? <LoaderCircle className="is-running" size={14} /> : removalArmed ? <AlertTriangle size={14} /> : <Trash2 size={14} />}<span>{removalArmed ? "한 번 더 눌러 제거" : "제거"}</span></button>}
                     </article>
@@ -373,7 +380,7 @@ export function ProjectSettings({ projects, project, onOpenNavigation, onSelect,
                 </div>
                 <div className="project-resource-group">
                   <strong><Wrench size={14} /> MCP</strong>
-                  {projectMcps.map((setting) => <label className={!setting.checked ? "is-unchecked" : ""} key={setting.installation.id}><input type="checkbox" checked={setting.checked} disabled={resourceActionId === setting.installation.id} onChange={(event) => void setMcpForProject(setting, event.currentTarget.checked)} /><span><strong>{setting.installation.name}</strong><small>{setting.installation.slug}</small></span>{resourceActionId === setting.installation.id && <LoaderCircle className="is-running" size={13} />}</label>)}
+                  {projectMcps.map((setting) => <label className={!setting.checked ? "is-unchecked" : ""} key={setting.installation.id}><input type="checkbox" checked={setting.checked} disabled={resourceActionId === setting.installation.id} onChange={(event) => void setMcpForProject(setting, event.currentTarget.checked)} /><span><strong>{setting.installation.name}</strong><small>{setting.description || "설명 없음"}</small></span>{resourceActionId === setting.installation.id && <LoaderCircle className="is-running" size={13} />}</label>)}
                   {projectMcps.length === 0 && <small>이 프로젝트에서 사용하는 MCP가 없습니다.</small>}
                 </div>
               </>}
