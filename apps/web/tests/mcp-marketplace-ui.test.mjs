@@ -43,7 +43,9 @@ test("MCP detail shows whether its Skill wrapper is applied", async () => {
     readFile(stylesPath, "utf8"),
   ]);
 
-  assert.match(panel, /Skill 래퍼 \{selected\.skillWrapper\.wrapped \? "적용" : "누락"\}/);
+  assert.match(panel, /const skillWrapperApplied = selected\?\.skillWrapper\?\.wrapped/);
+  assert.match(panel, /skillWrapperApplied === true \? "적용" : skillWrapperApplied === false \? "누락" : "확인 불가"/);
+  assert.match(panel, /skillWrapperApplied === false && <div className="mcp-wrapper-warning"/);
   assert.match(panel, /Skill 래퍼가 없습니다\./);
   assert.match(panel, /source: skill-mcp:\{selected\.slug\}/);
   assert.match(styles, /\.detail-badges \.is-wrapper-ready/);

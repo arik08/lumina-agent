@@ -1159,7 +1159,7 @@ export interface McpDefinition {
   name: string;
   description: string;
   status: string;
-  skillWrapper: {
+  skillWrapper?: {
     wrapped: boolean;
     name: string | null;
   };
