@@ -3785,7 +3785,8 @@ class LocalRunExecutor:
             try:
                 logical_path = normalize_logical_path(str(arguments.get("path", "")))
                 display_name = Path(logical_path).name
-                content = str(arguments.get("content", "")).encode("utf-8")
+                content_text = str(arguments.get("content", ""))
+                content = content_text.encode("utf-8")
                 if len(content) > self.settings.max_upload_bytes:
                     raise ApiProblem(
                         413,
@@ -3836,6 +3837,18 @@ class LocalRunExecutor:
                         "artifact_version": version.version_number,
                     }
                     artifact_id = artifact.id
+                    artifact_usage: dict[str, Any] = {
+                        "tokens": estimate_tokens(
+                            content_text, model=workspace_run.runtime_model_id
+                        ),
+                        "lines": content_text.count("\n") + 1 if content_text else 0,
+                        "estimated": False,
+                    }
+                    target_output_tokens = _optional_positive_int(
+                        workspace_run.snapshot_json.get("target_output_tokens")
+                    )
+                    if target_output_tokens is not None:
+                        artifact_usage["targetTokens"] = target_output_tokens
             except (ApiProblem, TypeError, ValueError) as exc:
                 return await self._fail_tool_execution(run_id, tool_id, exc)
             await self._complete_tool_execution(
@@ -3844,6 +3857,7 @@ class LocalRunExecutor:
                 payload,
                 "사용자 요청 Artifact를 생성했습니다.",
                 artifact_id=artifact_id,
+                artifact_usage=artifact_usage,
             )
             return payload
 
@@ -4199,6 +4213,7 @@ class LocalRunExecutor:
         summary: str,
         *,
         artifact_id: str | None = None,
+        artifact_usage: Mapping[str, Any] | None = None,
     ) -> None:
         with session_scope() as db:
             run = db.get(Run, run_id)
@@ -4227,6 +4242,14 @@ class LocalRunExecutor:
                         )
                     },
                 )
+            if artifact_usage is not None:
+                final_artifact_usage = dict(artifact_usage)
+                run.snapshot_json = {
+                    **run.snapshot_json,
+                    "artifact_progress": None,
+                    "artifact_usage": final_artifact_usage,
+                }
+                append_event(db, run, "artifact_progress", final_artifact_usage)
             change_plan_step(
                 db,
                 run,

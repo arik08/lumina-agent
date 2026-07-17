@@ -395,7 +395,13 @@ def test_write_file_result_is_exposed_as_document_artifact(
         started = client.post(
             f"/api/conversations/{conversation['id']}/runs",
             headers={**headers, "Idempotency-Key": "write-file-artifact-run"},
-            json={"message": {"text": "파일을 만들어 주세요."}},
+            json={
+                "message": {
+                    "text": "파일을 만들어 주세요.",
+                    "outputMode": "file",
+                    "targetOutputTokens": 10_000,
+                }
+            },
         )
         assert started.status_code == 202, started.text
 
@@ -416,6 +422,11 @@ def test_write_file_result_is_exposed_as_document_artifact(
     assert snapshot["toolExecutions"][0]["durationMs"] >= 100
     assert snapshot["artifacts"][0]["displayName"] == "result.md"
     assert snapshot["artifacts"][0]["mimeType"] == "text/markdown"
+    assert snapshot["artifactProgress"] is None
+    assert snapshot["artifactUsage"]["tokens"] > 0
+    assert snapshot["artifactUsage"]["lines"] == 1
+    assert snapshot["artifactUsage"]["estimated"] is False
+    assert snapshot["artifactUsage"]["targetTokens"] == 10_000
 
 
 def test_write_file_allows_executable_html_and_exposes_html_artifact(
