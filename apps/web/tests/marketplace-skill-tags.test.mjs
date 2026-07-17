@@ -18,6 +18,8 @@ test("repository skills display searchable hashtag metadata instead of a source 
   assert.ok(Object.values(catalog).every((entry) => typeof entry.description === "string" && entry.description.length > 0));
   assert.ok(Object.values(catalog).every((entry) => Array.isArray(entry.tags) && entry.tags.length > 0));
   assert.match(view, /className="marketplace-tags" aria-label="Skill 태그"/);
+  assert.match(view, /const storedTags = \(item as SkillExtension & \{ tags\?: unknown \}\)\.tags/);
+  assert.match(view, /Array\.isArray\(storedTags\) && storedTags\.length > 0/);
   assert.match(view, /tags\.map\(\(tag\) => `#\$\{tag\}`\)/);
   assert.doesNotMatch(view, /Lumina 기본 제공/);
 });

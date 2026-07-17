@@ -73,6 +73,8 @@ const EMPTY_SKILL_CATALOG: SkillCatalogResponse = {
 };
 
 function skillTags(item: SkillExtension): string[] {
+  const storedTags = (item as SkillExtension & { tags?: unknown }).tags;
+  if (Array.isArray(storedTags) && storedTags.length > 0) return storedTags.slice(0, 3);
   const manifest = item.versions.at(-1)?.manifest;
   const configured = Array.isArray(manifest?.tags)
     ? manifest.tags.filter((tag): tag is string => typeof tag === "string" && Boolean(tag.trim())).map((tag) => tag.trim().replace(/^#/, ""))
