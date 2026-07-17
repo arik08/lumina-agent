@@ -32,7 +32,7 @@ import { InstructionEditor } from "./InstructionEditor";
 import { SelectMenu } from "./SelectMenu";
 import "./OrganizationInstructionsPanel.css";
 
-type PromptLayerKey = RuntimePromptKey | "organization" | "concept" | "project" | "personal";
+type PromptLayerKey = RuntimePromptKey | "organization" | "project" | "personal";
 
 function formatHistoryDate(value: string) {
   return new Intl.DateTimeFormat("ko-KR", {
@@ -438,7 +438,6 @@ export function OrganizationInstructionsPanel() {
         </div>
         <div className="admin-prompt-layer-group">
           <span>프로젝트 기준</span>
-          {layerButton("concept", <FileText size={14} />, "프로젝트 Concept", selectedProject?.name ?? "선택된 프로젝트 없음", Boolean(selectedProject))}
           {layerButton("project", <FileText size={14} />, "프로젝트 지침", "프로젝트 설정에서 수정", Boolean(selectedProject))}
           {layerButton("personal", <UserRound size={14} />, "개인 지침", personalApplied ? "개인 프로젝트에 적용" : "공유 프로젝트에서는 제외", personalApplied)}
         </div>
@@ -477,7 +476,6 @@ export function OrganizationInstructionsPanel() {
 
         {selectedLayer === "system" && systemPrompt && <RuntimePromptEditor document={systemPrompt} onUpdated={updateRuntimePrompt} />}
         {selectedLayer === "agent_default" && agentPrompt && <RuntimePromptEditor document={agentPrompt} onUpdated={updateRuntimePrompt} />}
-        {selectedLayer === "concept" && <ReadOnlyPrompt heading="프로젝트 Concept" description={`${selectedProject?.name ?? "선택된 프로젝트"}의 목적, 용어와 업무 배경입니다.`} content={selectedProject?.concept ?? ""} note="프로젝트 설정의 업무 Concept에서 수정합니다." applied={Boolean(selectedProject)} />}
         {selectedLayer === "project" && <ReadOnlyPrompt heading="프로젝트 지침" description={`${selectedProject?.name ?? "선택된 프로젝트"}의 모든 Run에 적용되는 작업 방식입니다.`} content={projectInstruction?.content ?? ""} note="프로젝트 설정의 프로젝트 지침에서 수정합니다." applied={Boolean(selectedProject)} />}
         {selectedLayer === "personal" && <ReadOnlyPrompt heading="개인 지침" description="현재 관리자 계정의 개인 전역 지침입니다." content={personalInstruction?.content ?? ""} note={personalApplied ? "개인 프로젝트에서 프로젝트 지침 다음에 적용됩니다." : "공유 프로젝트에서는 개인 지침을 합성하지 않습니다."} applied={personalApplied} />}
 
@@ -535,7 +533,7 @@ export function OrganizationInstructionsPanel() {
             <ol>
               <li><strong>고정 system</strong><span>Lumina의 기본 행동, 진행 표시, Plan과 사용자 노출 안전 계약</span></li>
               <li><strong>저장 지침 계층</strong><span>관리자 → Agent 기본 → 프로젝트 지침 → 개인 지침 순서, 공유 프로젝트는 개인 지침 제외</span></li>
-              <li><strong>프로젝트 Context</strong><span>선택 Project의 Concept과 고정된 revision</span></li>
+              <li><strong>프로젝트 Context</strong><span>선택 Project의 지침과 고정된 revision</span></li>
               <li><strong>선택 Skill</strong><span>명시 선택·자동 선택·예약 작업에서 고정된 Skill 지침</span></li>
               <li><strong>현재 Turn 계약</strong><span>Chat/File 출력 모드, Skill 활성화, Artifact 형식·길이 조건</span></li>
               <li><strong>복구 Context</strong><span>압축 요약, 보존 Tool 결과와 미완료 작업 상태</span></li>

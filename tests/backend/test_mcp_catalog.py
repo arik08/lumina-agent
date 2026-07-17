@@ -639,6 +639,73 @@ def test_mcp_catalog_binding_snapshot_and_cross_user_isolation(
             )
 
 
+def test_user_mcp_installation_can_be_scoped_by_project(tmp_path: Path) -> None:
+    app, ids = _setup(tmp_path)
+    with TestClient(app) as admin_client, TestClient(app) as alice_client:
+        admin_csrf = _login(admin_client, "admin", "1")
+        alice_csrf = _login(alice_client, "alice", "alice-pw")
+
+        created = admin_client.post(
+            "/api/admin/mcp-definitions",
+            headers={"X-CSRF-Token": admin_csrf},
+            json={
+                "name": "프로젝트별 MCP",
+                "slug": "project-scoped-mcp",
+                "description": "프로젝트별 사용 여부를 검증합니다.",
+                "configuration": _configuration(),
+            },
+        )
+        assert created.status_code == 201, created.text
+        definition = created.json()
+        revision = definition["revisions"][0]
+        approved = admin_client.post(
+            f"/api/admin/mcp-definitions/{definition['id']}/approve",
+            headers={"X-CSRF-Token": admin_csrf},
+            json={"configurationRevisionId": revision["id"]},
+        )
+        assert approved.status_code == 200, approved.text
+
+        second_project = alice_client.post(
+            "/api/projects",
+            headers={"X-CSRF-Token": alice_csrf},
+            json={"name": "MCP 제외 프로젝트"},
+        )
+        assert second_project.status_code == 201, second_project.text
+        installed = alice_client.post(
+            "/api/mcp/installations",
+            headers={"X-CSRF-Token": alice_csrf},
+            json={
+                "definitionId": definition["id"],
+                "configurationRevisionId": revision["id"],
+                "scopeType": "user",
+                "toolAllowlist": ["search_docs"],
+            },
+        )
+        assert installed.status_code == 201, installed.text
+        assert installed.json()["projectIds"] is None
+
+        scoped = alice_client.patch(
+            f"/api/mcp/installations/{installed.json()['id']}",
+            headers={"X-CSRF-Token": alice_csrf},
+            json={"projectIds": [ids["project_id"]]},
+        )
+        assert scoped.status_code == 200, scoped.text
+        assert scoped.json()["projectIds"] == [ids["project_id"]]
+        assert any(
+            item["id"] == installed.json()["id"]
+            for item in alice_client.get(
+                "/api/mcp/installations", params={"project_id": ids["project_id"]}
+            ).json()
+        )
+        assert all(
+            item["id"] != installed.json()["id"]
+            for item in alice_client.get(
+                "/api/mcp/installations",
+                params={"project_id": second_project.json()["id"]},
+            ).json()
+        )
+
+
 def test_mcp_migration_0006_round_trip(tmp_path: Path) -> None:
     database = tmp_path / "mcp-round-trip.db"
     database_url = f"sqlite:///{database.as_posix()}"

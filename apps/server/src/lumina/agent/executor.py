@@ -2804,7 +2804,6 @@ class LocalRunExecutor:
             run = db.get(Run, run_id)
             if run is None:
                 raise RuntimeError("Run disappeared while building model context")
-            project_snapshot = run.snapshot_json.get("project", {})
             history = list(
                 db.scalars(
                     select(Message)
@@ -3065,13 +3064,6 @@ class LocalRunExecutor:
         )
         if instruction_prompt:
             system += "\n\n" + _bounded_text(instruction_prompt, 120_000)
-        project_concept = (
-            str(project_snapshot.get("concept", "")).strip()
-            if isinstance(project_snapshot, dict)
-            else ""
-        )
-        if project_concept:
-            system += f"\n\nProject concept and instructions:\n{project_concept}"
         extension_application = run.snapshot_json.get(
             "extension_application", "explicit_references"
         )

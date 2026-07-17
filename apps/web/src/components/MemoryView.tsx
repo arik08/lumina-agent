@@ -5,7 +5,6 @@ import {
   ChevronRight,
   Clock3,
   History,
-  Lightbulb,
   Link2,
   LoaderCircle,
   Menu,
@@ -540,10 +539,6 @@ function LearningProposalsPanel({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [reviewNote, setReviewNote] = useState("");
-  const [conceptFormOpen, setConceptFormOpen] = useState(false);
-  const [concept, setConcept] = useState(project?.concept ?? "");
-  const [conceptRationale, setConceptRationale] = useState("Project의 반복 업무 배경을 더 명확히 설명합니다.");
-  const [projectBasis, setProjectBasis] = useState<ProjectSummary | null>(project);
 
   useEffect(() => {
     if (!project) {
@@ -563,53 +558,6 @@ function LearningProposalsPanel({
       });
     return () => controller.abort();
   }, [project, refreshKey, status]);
-
-  useEffect(() => {
-    if (!project) {
-      setProjectBasis(null);
-      return;
-    }
-    const controller = new AbortController();
-    api.projects.list(controller.signal)
-      .then((projects) => {
-        const current = projects.find((item) => item.id === project.id) ?? null;
-        setProjectBasis(current);
-        if (!conceptFormOpen && current) setConcept(current.concept);
-      })
-      .catch((caught) => {
-        if (!controller.signal.aborted) setError(projectLearningError(caught, "Project concept 기준을 불러오지 못했습니다."));
-      });
-    return () => controller.abort();
-  }, [conceptFormOpen, project, refreshKey]);
-
-  const createConceptProposal = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!project || !projectBasis || !completedRunId || busyId || !conceptRationale.trim()) return;
-    setBusyId("concept");
-    setError(null);
-    setNotice(null);
-    try {
-      await api.projectMemories.createProposal(project.id, {
-        sourceRunIds: [completedRunId],
-        targetType: "project_concept",
-        targetId: null,
-        baseRevision: projectBasis.conceptRevision,
-        baseHash: projectBasis.conceptHash,
-        proposedPatch: { concept },
-        rationale: conceptRationale.trim(),
-        evidenceRefs: [{ kind: "run", referenceId: completedRunId, note: "현재 세션의 완료된 Run" }],
-        expectedScope: "project",
-      });
-      setConceptFormOpen(false);
-      setStatus("proposed");
-      setNotice("Project concept 제안을 만들었습니다.");
-      onChanged();
-    } catch (caught) {
-      setError(projectLearningError(caught, "Project concept 제안을 만들지 못했습니다."));
-    } finally {
-      setBusyId(null);
-    }
-  };
 
   const mutateProposal = async (proposal: ProjectLearningProposal, action: "approve" | "reject" | "apply" | "rollback") => {
     if (!project || !canReview || busyId) return;
@@ -646,25 +594,15 @@ function LearningProposalsPanel({
       <div className="learning-proposal-toolbar">
         <div className="lumina-select-field learning-proposal-select-field"><span>상태</span><SelectMenu size="small" value={status} options={[{ value: "all", label: "모든 상태" }, ...Object.entries(proposalStatusLabels).map(([value, label]) => ({ value, label }))]} ariaLabel="메모리 반영 제안 상태" onChange={(value) => setStatus(value as ProposalFilter)} /></div>
         {canReview ? <label className="proposal-review-note"><span>검토 메모</span><input maxLength={1000} placeholder="선택 입력" value={reviewNote} onChange={(event) => setReviewNote(event.currentTarget.value)} /></label> : <div className="proposal-review-policy"><ShieldCheck size={14} /><span>검토·적용은 Project owner 또는 admin만 가능합니다.</span></div>}
-        <button className="memory-primary-action lumina-primary-action" type="button" disabled={!completedRunId || !projectBasis} data-tooltip={completedRunId ? "Project concept 변경 제안" : "현재 세션에 완료된 Run이 필요합니다."} onClick={() => { setConcept(projectBasis?.concept ?? ""); setConceptFormOpen(true); }}><Lightbulb size={14} /> Concept 제안</button>
       </div>
       {!completedRunId && <div className="memory-source-warning"><AlertTriangle size={14} /><span>새 메모리 반영 제안에는 현재 세션의 완료된 Run이 근거로 필요합니다.</span></div>}
-      {conceptFormOpen && projectBasis && (
-        <form className="project-proposal-form concept-proposal-form" onSubmit={(event) => void createConceptProposal(event)}>
-          <div className="proposal-form-heading"><div><strong>Project concept 변경 제안</strong><span>현재 기준과 정확히 일치할 때만 승인·적용됩니다.</span></div><button type="button" aria-label="Concept 제안 닫기" onClick={() => setConceptFormOpen(false)}><X size={14} /></button></div>
-          <div className="proposal-base-line"><span>Base</span><code>r{projectBasis.conceptRevision}</code><code data-tooltip={projectBasis.conceptHash}>{shortId(projectBasis.conceptHash, 12)}</code><span>{projectBasis.name}</span></div>
-          <label><span>Project concept</span><textarea rows={5} maxLength={20_000} value={concept} onChange={(event) => setConcept(event.currentTarget.value)} /></label>
-          <label><span>제안 이유</span><textarea required rows={2} maxLength={4000} value={conceptRationale} onChange={(event) => setConceptRationale(event.currentTarget.value)} /></label>
-          <div className="memory-edit-actions"><button type="button" onClick={() => setConceptFormOpen(false)}>취소</button><button className="is-primary lumina-primary-action" type="submit" disabled={busyId === "concept" || !completedRunId}>{busyId === "concept" ? <LoaderCircle className="is-running" size={14} /> : <Save size={14} />} 제안 저장</button></div>
-        </form>
-      )}
       <div className="feature-scroll learning-proposal-scroll">
         {!hasCachedItems && (loading || !error) ? <div className="feature-state"><LoaderCircle className="is-running" size={17} /> 메모리 반영 제안을 불러오고 있습니다.</div> : items.length === 0 ? <div className="feature-state">이 상태의 메모리 반영 제안이 없습니다.</div> : (
           <div className="learning-proposal-list">
             {items.map((proposal) => (
               <article className={`learning-proposal-row status-${proposal.status}`} key={proposal.id}>
                 <header>
-                  <div><span className="learning-target">{proposal.targetType === "project_concept" ? "Project concept" : proposal.targetId ? `Project Memory · ${shortId(proposal.targetId)}` : "새 Project Memory"}</span><span className={`learning-status status-${proposal.status}`}>{proposalStatusLabels[proposal.status]}</span></div>
+                  <div><span className="learning-target">{proposal.targetType === "project_concept" ? "이전 프로젝트 맥락" : proposal.targetId ? `Project Memory · ${shortId(proposal.targetId)}` : "새 Project Memory"}</span><span className={`learning-status status-${proposal.status}`}>{proposalStatusLabels[proposal.status]}</span></div>
                   <time>{dateLabel(proposal.createdAt)}</time>
                 </header>
                 <div className="learning-proposal-body">

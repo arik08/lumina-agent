@@ -542,7 +542,7 @@ Project
 ├─ owner_user_id / project_type
 ├─ name / description / icon / color
 ├─ members and roles
-├─ concept and instructions
+├─ instructions
 ├─ files and connected folders
 ├─ allowed connectors / skills / plugins / MCP
 ├─ project memory
@@ -563,8 +563,8 @@ Project
 UI의 `Project Folder`는 임의의 서버 filesystem 경로가 아니라 권한과 설정이 적용되는 `Project` 객체입니다. 사용자마다 최초 로그인 시 개인 `Default` Project를 정확히 하나 생성하고, 새 Session은 별도 선택이 없으면 여기에 속합니다.
 
 - 사용자는 Sidebar에서 자신의 Project Folder를 생성·선택·이름 변경·정렬·보관할 수 있습니다. `Default`는 이름 변경은 허용할 수 있지만 삭제할 수 없으며 항상 fallback 대상입니다.
-- Project Folder에는 이름, 설명, icon·color, 업무 concept, 기본 지침, 기본 Provider·Model·Effort, 허용 Skill·MCP, 출력 형식·문체와 Artifact style을 설정할 수 있습니다. 실행 승인 mode는 기본 `on_risk`이며 비밀번호·token·일회성 승인은 concept에 저장하지 않습니다.
-- Project concept는 해당 Project의 새 Run에 stable instruction snapshot으로 들어가며 기존 Run을 소급 변경하지 않습니다. 사용자의 전역 Memory보다 현재 Project 지침이 우선하지만, 보안·조직 정책보다 우선할 수 없습니다.
+- Project Folder에는 이름, 설명, icon·color, 프로젝트 지침, 기본 Provider·Model·Effort, 허용 Skill·MCP, 출력 형식·문체와 Artifact style을 설정할 수 있습니다. 실행 승인 mode는 기본 `on_risk`이며 비밀번호·token·일회성 승인은 프로젝트 지침에 저장하지 않습니다.
+- 프로젝트 지침에는 업무 목적·용어·배경과 작업 방식·산출물 원칙을 함께 기록합니다. 새 Run에 stable instruction snapshot으로 들어가며 기존 Run을 소급 변경하지 않습니다. 사용자의 전역 Memory보다 현재 Project 지침이 우선하지만, 보안·조직 정책보다 우선할 수 없습니다.
 - Sidebar는 `Default`, 사용자가 만든 개인 Project, 참여 중인 공유 Project 아래에 Session을 묶어 표시하고 Project 단위 접기·검색을 지원합니다.
 - 각 Session 행의 `…` 메뉴에는 `프로젝트로 이동`을 제공하고, 사용자가 접근 가능한 destination만 보여줍니다. 이동은 `conversations.project_id`를 한 transaction에서 변경하고 `conversation_moved` audit/event를 남깁니다.
 - Session 이동 시 Session 소유 attachment와 Artifact는 함께 이동할 수 있습니다. 기존 Project 공용 파일·Memory·Secret·MCP binding은 복사하지 않으며, 과거 Message는 당시 source project와 reference snapshot을 유지합니다.
@@ -1986,7 +1986,7 @@ audit_events
 
 `organization_memberships`는 둘 이상의 Organization 또는 organization role이 실제로 필요해질 때 추가합니다. 초기 single-company 배포에서는 User가 seeded Organization에 속한다고 간주하고 Project membership만 명시적으로 관리할 수 있습니다.
 
-`projects`는 `owner_user_id`, `project_type=personal | shared | system`, concept·instruction version과 `is_default`를 가집니다. `(owner_user_id, is_default=true)`는 사용자마다 하나만 허용하고, 사용자 생성과 Default Project 생성을 같은 transaction 또는 idempotent bootstrap으로 처리합니다.
+`projects`는 `owner_user_id`, `project_type=personal | shared | system`, instruction version과 `is_default`를 가집니다. 기존 concept column은 이전 데이터 호환을 위해 남겨 두되 새 Run의 prompt에는 사용하지 않습니다. `(owner_user_id, is_default=true)`는 사용자마다 하나만 허용하고, 사용자 생성과 Default Project 생성을 같은 transaction 또는 idempotent bootstrap으로 처리합니다.
 
 `message_feedback`는 `kind=rating | report`로 통합하되 rating은 `(user_id, message_id)`당 하나만 활성화하고 `value=like | dislike`를 upsert합니다. report는 category, 설명, 사용자가 동의한 diagnostic scope, 운영 status와 처리 이력을 가지며 rating 취소와 독립적으로 보존합니다.
 사용자는 답변 action bar에서 인라인 form으로 report 의견을 게시합니다. 관리 화면의 대화 탭은 feedback 개수를 표시하고 `의견 있는 대화만` 필터를 제공하며, 상세 화면에서 작성자·분류·내용·게시 시각을 읽기 전용으로 보여줍니다.
@@ -2679,7 +2679,7 @@ PDF 실제 렌더는 `pdftoppm`, DOCX·XLSX·PPTX 실제 렌더는 LibreOffice�
 27. assistant 답변의 문장을 drag 또는 keyboard로 선택하고 우클릭·selection action으로 Comment를 작성하면 선택 구간이 후속 질문의 구조화 Context로 전달됩니다.
 28. 사용자의 안정된 선호와 반복 정보는 Turn 완료 뒤 개인 UserMemory로 자동 학습되고, 사용자가 출처를 확인하거나 수정·삭제·학습 중지할 수 있으며 다른 사용자·공유 Project에 노출되지 않습니다.
 29. 모든 사용자는 Default Project Folder를 가지며 개인 Project를 생성·선택할 수 있고, Session의 `…` 메뉴에서 권한과 실행 상태 검사를 거쳐 다른 Project로 이동할 수 있습니다.
-30. Project concept·지침·기본 설정은 새 Run에 snapshot으로 적용되고 다른 Project의 파일·Memory·Secret을 섞지 않습니다.
+30. Project 지침·기본 설정은 새 Run에 snapshot으로 적용되고 다른 Project의 파일·Memory·Secret을 섞지 않습니다.
 31. `generate_image`는 Codex Provider와 실제 capability가 있는 Run에서만 노출되고, 결과가 source Run·backend·model·prompt hash를 가진 immutable Image Artifact로 저장됩니다.
 32. 첨부 이미지와 생성 이미지를 HTML·문서 Artifact의 본문 자산으로 함께 사용할 수 있고 Preview·공유·독립 다운로드에서 이미지와 layout이 재현됩니다.
 33. 여러 개발팀원이 `admin@posco.com`으로 로그인하면 같은 채팅·Project·Artifact·설정을 보고, admin viewer에서는 다른 일반 사용자의 채팅을 audit와 함께 조회할 수 있습니다.
