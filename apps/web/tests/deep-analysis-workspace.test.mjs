@@ -263,7 +263,11 @@ test("Mission Charter is editable before start and immutable Quality Gates remai
   assert.match(view, /분석 목표<textarea/);
   assert.match(view, /핵심 질문<textarea/);
   assert.match(view, /보고서 구성<textarea/);
-  assert.match(view, /<summary>상세 설정 <span>산출물·범위·품질 기준<\/span><\/summary>/);
+  assert.match(view, /대상 기간<input[^>]*comparisonBasis/);
+  assert.match(view, /산출물 형태<input[^>]*deliverables/);
+  assert.doesNotMatch(view, /<summary>상세 설정/);
+  assert.doesNotMatch(view, /최소 근거 충족률/);
+  assert.doesNotMatch(view, /허용 미해결 항목 수/);
   assert.match(css, /\.deep-analysis-workspace\.is-contract-open > :is\([^}]*\.deep-analysis-workflow-layout[^}]*\.deep-analysis-execution-log[^}]*\) \{ display: none; \}/);
   assert.match(css, /\.deep-analysis-contract \{[^}]*flex: 1;[^}]*grid-template-rows: minmax\(0, 1fr\) auto;/);
   assert.match(css, /\.deep-analysis-contract-content \{[^}]*width: min\(1120px, calc\(100% - 64px\)\)/);
@@ -283,9 +287,8 @@ test("Mission Charter is editable before start and immutable Quality Gates remai
   assert.match(view, /검사 결과 보기/);
   assert.match(view, /api\.deepAnalysis\.runQualityGate/);
   assert.match(view, /Quality Gate 다시 검사/);
-  assert.match(css, /\.deep-analysis-contract-grid \{/);
   assert.match(css, /\.deep-analysis-contract-scroll \{[^}]*overflow-y: auto;/);
-  assert.match(css, /\.deep-analysis-contract-advanced \{[^}]*border-top: 1px solid var\(--line\)/);
+  assert.doesNotMatch(css, /\.deep-analysis-contract-advanced/);
   assert.match(css, /\.deep-analysis-quality-gate\.is-failed/);
 });
 
