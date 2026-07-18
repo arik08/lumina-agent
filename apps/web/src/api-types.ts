@@ -323,6 +323,32 @@ export interface KnowledgeSource {
   evidenceSegments: KnowledgeEvidenceSegment[];
 }
 
+export type KnowledgeIngestionStatus = "queued" | "running" | "completed" | "failed";
+
+export interface KnowledgeIngestionJob {
+  id: UUID;
+  spaceId: UUID;
+  sourceId: UUID;
+  sourceRevisionId: UUID;
+  status: KnowledgeIngestionStatus;
+  providerId: string;
+  modelKey: string;
+  extractorVersion: string;
+  inputSegmentCount: number;
+  inputCharacterCount: number;
+  entityCount: number;
+  statementCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  errorCode: string | null;
+  errorMessage: string | null;
+  queuedAt: IsoDateTime;
+  startedAt: IsoDateTime | null;
+  finishedAt: IsoDateTime | null;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
 export interface CreateKnowledgeSourceRequest {
   sourceType: KnowledgeSourceType;
   title: string;

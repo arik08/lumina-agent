@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from hashlib import sha256
+import json
 from pathlib import Path
+import time
 
 from fastapi.testclient import TestClient
 
 from lumina.config import Settings
+from lumina.agent.executor import local_run_executor
 from lumina.main import create_app
+from lumina.providers.mock import MockProvider
 
 
 def _login(client: TestClient, login_name: str, password: str) -> str:
@@ -229,3 +233,139 @@ def test_personal_knowledge_source_statement_and_bounded_graph(tmp_path: Path) -
         _login(client, "admin", "1")
         assert client.get("/api/knowledge/spaces").json() == []
         assert client.get(f"/api/knowledge/spaces/{space_id}").status_code == 404
+
+
+def test_knowledge_ingestion_runs_structured_extraction_and_reuses_result(
+    tmp_path: Path, monkeypatch
+) -> None:
+    extraction_json = json.dumps(
+        {
+            "entities": [
+                {
+                    "key": "lumina",
+                    "entityType": "product",
+                    "canonicalName": "Lumina",
+                    "description": "지식 기능을 제공하는 제품",
+                },
+                {
+                    "key": "knowledge",
+                    "entityType": "feature",
+                    "canonicalName": "Knowledge",
+                    "description": "근거 기반 지식 기능",
+                },
+            ],
+            "statements": [
+                {
+                    "subjectKey": "lumina",
+                    "predicateKey": "HAS_FEATURE",
+                    "objectKey": "knowledge",
+                    "confidence": 0.94,
+                    "evidenceSegmentIds": ["placeholder"],
+                }
+            ],
+        },
+        ensure_ascii=False,
+    )
+
+    def provider_for_test(_provider_id: str) -> MockProvider:
+        return MockProvider(text_chunks=(extraction_json,))
+
+    monkeypatch.setattr(local_run_executor, "provider_for_probe", provider_for_test)
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'knowledge-ingestion.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client, "admin", "1")
+        headers = {"X-CSRF-Token": csrf}
+        space_response = client.post(
+            "/api/knowledge/spaces",
+            headers=headers,
+            json={"name": "AI 추출 검증", "purpose": "구조화 추출 실행 검증"},
+        )
+        assert space_response.status_code == 201, space_response.text
+        space_id = space_response.json()["id"]
+        source_text = "Lumina는 근거 기반 Knowledge 기능을 제공한다."
+        source_response = client.post(
+            f"/api/knowledge/spaces/{space_id}/sources",
+            headers=headers,
+            json={
+                "sourceType": "text",
+                "title": "제품 설명",
+                "contentDigest": sha256(source_text.encode()).hexdigest(),
+                "mediaType": "text/plain",
+                "byteSize": len(source_text.encode()),
+                "capturedText": source_text,
+                "evidenceSegments": [{"text": source_text}],
+            },
+        )
+        assert source_response.status_code == 201, source_response.text
+        source = source_response.json()
+        evidence_id = source["evidenceSegments"][0]["id"]
+        extraction_json = json.dumps(
+            {
+                **json.loads(extraction_json),
+                "statements": [
+                    {
+                        "subjectKey": "lumina",
+                        "predicateKey": "HAS_FEATURE",
+                        "objectKey": "knowledge",
+                        "confidence": 0.94,
+                        "evidenceSegmentIds": [evidence_id],
+                    },
+                    {
+                        "subjectKey": "lumina",
+                        "predicateKey": "UNSUPPORTED",
+                        "objectKey": "knowledge",
+                        "confidence": 0.2,
+                        "evidenceSegmentIds": ["unknown-evidence"],
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        )
+
+        started = client.post(
+            f"/api/knowledge/spaces/{space_id}/sources/{source['id']}/ingestions",
+            headers=headers,
+        )
+        assert started.status_code == 202, started.text
+        job = started.json()
+        for _ in range(100):
+            jobs = client.get(
+                f"/api/knowledge/spaces/{space_id}/ingestions"
+            ).json()
+            job = jobs[0]
+            if job["status"] in {"completed", "failed"}:
+                break
+            time.sleep(0.01)
+        assert job["status"] == "completed", job
+        assert job["entityCount"] == 2
+        assert job["statementCount"] == 1
+        assert job["inputSegmentCount"] == 1
+        assert job["inputTokens"] == 8
+
+        entities = client.get(
+            f"/api/knowledge/spaces/{space_id}/entities"
+        ).json()
+        assert {entity["canonicalName"] for entity in entities} == {
+            "Lumina",
+            "Knowledge",
+        }
+        statements = client.get(
+            f"/api/knowledge/spaces/{space_id}/statements"
+        ).json()
+        assert len(statements) == 1
+        assert statements[0]["status"] == "proposed"
+        assert statements[0]["evidenceSegmentIds"] == [evidence_id]
+
+        reused = client.post(
+            f"/api/knowledge/spaces/{space_id}/sources/{source['id']}/ingestions",
+            headers=headers,
+        )
+        assert reused.status_code == 200, reused.text
+        assert reused.json()["id"] == job["id"]

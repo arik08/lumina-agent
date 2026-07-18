@@ -27,8 +27,20 @@ test("Knowledge uses account-scoped Space and typed source, entity, statement AP
   assert.match(view, /api\.knowledge\.createSource/);
   assert.match(view, /api\.knowledge\.createEntity/);
   assert.match(view, /api\.knowledge\.createStatement/);
+  assert.match(view, /api\.knowledge\.startIngestion/);
+  assert.match(view, /api\.knowledge\.listIngestions/);
   assert.match(api, /\/knowledge\/spaces\/\$\{encodeURIComponent\(spaceId\)\}\/sources/);
   assert.match(api, /\/knowledge\/spaces\/\$\{encodeURIComponent\(spaceId\)\}\/entities/);
+  assert.match(api, /sources\/\$\{encodeURIComponent\(sourceId\)\}\/ingestions/);
+});
+
+test("Knowledge AI ingestion exposes durable progress and review-only results", async () => {
+  const view = await readFile(viewPath, "utf8");
+
+  assert.match(view, /job\.status === "queued" \|\| job\.status === "running"/);
+  assert.match(view, /근거 기반 추출 중/);
+  assert.match(view, /검토 제안/);
+  assert.match(view, /추출 완료/);
 });
 
 test("Knowledge graph stays bounded and approved relations preserve evidence", async () => {

@@ -8,18 +8,24 @@ from sqlalchemy import case, func, literal, or_, select
 from sqlalchemy.orm import Session
 
 from ..api.errors import ApiProblem
+from ..config import Settings
 from ..models import (
     KnowledgeEntity,
     KnowledgeEvidenceSegment,
+    KnowledgeIngestionJob,
     KnowledgeRevision,
     KnowledgeSource,
     KnowledgeSourceRevision,
     KnowledgeSpace,
     KnowledgeStatement,
     KnowledgeStatementEvidence,
+    ProviderModel,
     User,
+    UserSetting,
     utc_now,
 )
+from ..providers.execution_defaults import initial_execution_selection
+from .extractor import KNOWLEDGE_EXTRACTOR_VERSION
 from .schemas import (
     EvidenceSegmentCreate,
     KnowledgeEntityCreate,
@@ -202,6 +208,193 @@ def create_knowledge_source(
     db.flush()
     evidence = _create_evidence_segments(db, revision.id, payload.evidence_segments)
     return source, revision, evidence, True
+
+
+def create_knowledge_ingestion_job(
+    db: Session,
+    user: User,
+    space_id: str,
+    source_id: str,
+    *,
+    settings: Settings,
+) -> tuple[KnowledgeIngestionJob, bool]:
+    require_knowledge_space(db, user, space_id, write=True)
+    source = db.get(KnowledgeSource, source_id)
+    if source is None or source.space_id != space_id or source.status != "active":
+        raise ApiProblem(
+            404, "knowledge_source_not_found", "지식 원문을 찾을 수 없습니다."
+        )
+    revision = db.scalar(
+        select(KnowledgeSourceRevision)
+        .where(KnowledgeSourceRevision.source_id == source.id)
+        .order_by(
+            KnowledgeSourceRevision.revision_number.desc(),
+            KnowledgeSourceRevision.id,
+        )
+        .limit(1)
+    )
+    if revision is None:
+        raise ApiProblem(
+            409,
+            "knowledge_source_revision_missing",
+            "지식 원문의 현재 revision을 찾을 수 없습니다.",
+        )
+    evidence_count = db.scalar(
+        select(func.count(KnowledgeEvidenceSegment.id)).where(
+            KnowledgeEvidenceSegment.source_revision_id == revision.id
+        )
+    )
+    if not evidence_count:
+        raise ApiProblem(
+            422,
+            "knowledge_evidence_required",
+            "AI 추출에는 한 개 이상의 근거 구간이 필요합니다.",
+        )
+    execution = _resolve_knowledge_execution(db, user=user, settings=settings)
+    existing = db.scalar(
+        select(KnowledgeIngestionJob)
+        .where(
+            KnowledgeIngestionJob.source_revision_id == revision.id,
+            KnowledgeIngestionJob.extractor_version == KNOWLEDGE_EXTRACTOR_VERSION,
+            KnowledgeIngestionJob.provider_id == execution["provider_id"],
+            KnowledgeIngestionJob.model_key == execution["model_key"],
+            KnowledgeIngestionJob.status.in_(("queued", "running", "completed")),
+        )
+        .order_by(KnowledgeIngestionJob.created_at.desc())
+        .limit(1)
+    )
+    if existing is not None:
+        return existing, False
+    job = KnowledgeIngestionJob(
+        space_id=space_id,
+        source_id=source.id,
+        source_revision_id=revision.id,
+        requested_by_user_id=user.id,
+        status="queued",
+        provider_id=execution["provider_id"],
+        model_key=execution["model_key"],
+        runtime_model_id=execution["runtime_model_id"],
+        extractor_version=KNOWLEDGE_EXTRACTOR_VERSION,
+    )
+    db.add(job)
+    db.flush()
+    return job, True
+
+
+def _resolve_knowledge_execution(
+    db: Session, *, user: User, settings: Settings
+) -> dict[str, str]:
+    setting = db.scalar(
+        select(UserSetting).where(
+            UserSetting.user_id == user.id,
+            UserSetting.key == "execution.default",
+        )
+    )
+    value = setting.value_json if setting is not None else None
+    provider_id = (
+        value.get("providerId", value.get("provider_id"))
+        if isinstance(value, dict)
+        else None
+    )
+    model_key = (
+        value.get("modelKey", value.get("model_key"))
+        if isinstance(value, dict)
+        else None
+    )
+    if not isinstance(provider_id, str) or not isinstance(model_key, str):
+        fallback, _source = initial_execution_selection(
+            db,
+            organization_id=user.organization_id,
+            environment=settings.environment,
+        )
+        provider_id = str(fallback["providerId"])
+        model_key = str(fallback["modelKey"])
+    if provider_id == "mock":
+        if settings.environment == "production":
+            raise ApiProblem(
+                409,
+                "knowledge_provider_unavailable",
+                "운영 환경에서는 Mock Provider로 지식을 추출할 수 없습니다.",
+            )
+        return {
+            "provider_id": "mock",
+            "model_key": "mock-agent",
+            "runtime_model_id": "mock-agent",
+        }
+    model = db.scalar(
+        select(ProviderModel).where(
+            ProviderModel.provider_id == provider_id,
+            ProviderModel.model_key == model_key,
+            ProviderModel.enabled.is_(True),
+        )
+    )
+    if model is None:
+        fallback, _source = initial_execution_selection(
+            db,
+            organization_id=user.organization_id,
+            environment=settings.environment,
+        )
+        fallback_provider_id = str(fallback["providerId"])
+        fallback_model_key = str(fallback["modelKey"])
+        if fallback_provider_id == "mock":
+            if settings.environment == "production":
+                raise ApiProblem(
+                    409,
+                    "knowledge_provider_unavailable",
+                    "Knowledge 추출에 사용할 Provider 모델이 없습니다.",
+                )
+            return {
+                "provider_id": "mock",
+                "model_key": "mock-agent",
+                "runtime_model_id": "mock-agent",
+            }
+        model = db.scalar(
+            select(ProviderModel).where(
+                ProviderModel.provider_id == fallback_provider_id,
+                ProviderModel.model_key == fallback_model_key,
+                ProviderModel.enabled.is_(True),
+            )
+        )
+        if model is None:
+            raise ApiProblem(
+                409,
+                "knowledge_provider_unavailable",
+                "Knowledge 추출에 사용할 Provider 모델이 없습니다.",
+            )
+    if not bool(model.capabilities_json.get("structured_output")):
+        raise ApiProblem(
+            409,
+            "knowledge_structured_output_required",
+            "선택한 모델은 Knowledge 구조화 추출을 지원하지 않습니다.",
+        )
+    return {
+        "provider_id": model.provider_id,
+        "model_key": model.model_key,
+        "runtime_model_id": model.runtime_model_id,
+    }
+
+
+def list_knowledge_ingestion_jobs(
+    db: Session,
+    user: User,
+    space_id: str,
+    *,
+    source_id: str | None = None,
+) -> list[KnowledgeIngestionJob]:
+    require_knowledge_space(db, user, space_id)
+    query = select(KnowledgeIngestionJob).where(
+        KnowledgeIngestionJob.space_id == space_id
+    )
+    if source_id is not None:
+        query = query.where(KnowledgeIngestionJob.source_id == source_id)
+    return list(
+        db.scalars(
+            query.order_by(
+                KnowledgeIngestionJob.created_at.desc(),
+                KnowledgeIngestionJob.id,
+            ).limit(200)
+        )
+    )
 
 
 def _create_evidence_segments(
@@ -537,6 +730,32 @@ def evidence_payload(evidence: KnowledgeEvidenceSegment) -> dict[str, Any]:
         "textDigest": evidence.text_digest,
         "language": evidence.language,
         "tokenCount": evidence.token_count,
+    }
+
+
+def ingestion_job_payload(job: KnowledgeIngestionJob) -> dict[str, Any]:
+    return {
+        "id": job.id,
+        "spaceId": job.space_id,
+        "sourceId": job.source_id,
+        "sourceRevisionId": job.source_revision_id,
+        "status": job.status,
+        "providerId": job.provider_id,
+        "modelKey": job.model_key,
+        "extractorVersion": job.extractor_version,
+        "inputSegmentCount": job.input_segment_count,
+        "inputCharacterCount": job.input_character_count,
+        "entityCount": job.entity_count,
+        "statementCount": job.statement_count,
+        "inputTokens": job.input_tokens,
+        "outputTokens": job.output_tokens,
+        "errorCode": job.error_code,
+        "errorMessage": job.error_message,
+        "queuedAt": job.queued_at,
+        "startedAt": job.started_at,
+        "finishedAt": job.finished_at,
+        "createdAt": job.created_at,
+        "updatedAt": job.updated_at,
     }
 
 

@@ -14,6 +14,7 @@ import { api, ApiError } from "../../api";
 import { SelectMenu } from "../../components/SelectMenu";
 import type {
   KnowledgeEntity,
+  KnowledgeIngestionJob,
   KnowledgeNeighborhood,
   KnowledgeSource,
   KnowledgeSpace,
@@ -41,6 +42,7 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
   const [spaces, setSpaces] = useState<KnowledgeSpace[]>([]);
   const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(null);
   const [sources, setSources] = useState<KnowledgeSource[]>([]);
+  const [ingestions, setIngestions] = useState<KnowledgeIngestionJob[]>([]);
   const [entities, setEntities] = useState<KnowledgeEntity[]>([]);
   const [statements, setStatements] = useState<KnowledgeStatement[]>([]);
   const [neighborhood, setNeighborhood] = useState<KnowledgeNeighborhood | null>(null);
@@ -50,6 +52,7 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
   const [loadingSpaces, setLoadingSpaces] = useState(true);
   const [loadingContent, setLoadingContent] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [startingSourceId, setStartingSourceId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [spaceName, setSpaceName] = useState("");
@@ -114,6 +117,7 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
   useEffect(() => {
     if (!selectedSpaceId) {
       setSources([]);
+      setIngestions([]);
       setEntities([]);
       setStatements([]);
       setNeighborhood(null);
@@ -124,11 +128,13 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
     setError(null);
     Promise.all([
       api.knowledge.listSources(selectedSpaceId, controller.signal),
+      api.knowledge.listIngestions(selectedSpaceId, controller.signal),
       api.knowledge.listEntities(selectedSpaceId, controller.signal),
       api.knowledge.listStatements(selectedSpaceId, controller.signal),
     ])
-      .then(([nextSources, nextEntities, nextStatements]) => {
+      .then(([nextSources, nextIngestions, nextEntities, nextStatements]) => {
         setSources(nextSources);
+        setIngestions(nextIngestions);
         setEntities(nextEntities);
         setStatements(nextStatements);
         setSelectedEntityId((current) => nextEntities.some((item) => item.id === current) ? current : (nextEntities[0]?.id ?? null));
@@ -141,6 +147,32 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
       });
     return () => controller.abort();
   }, [selectedSpaceId]);
+
+  useEffect(() => {
+    if (!selectedSpaceId || !ingestions.some((job) => job.status === "queued" || job.status === "running")) return;
+    let disposed = false;
+    const timer = window.setInterval(() => {
+      Promise.all([
+        api.knowledge.listIngestions(selectedSpaceId),
+        api.knowledge.listEntities(selectedSpaceId),
+        api.knowledge.listStatements(selectedSpaceId),
+      ])
+        .then(([nextIngestions, nextEntities, nextStatements]) => {
+          if (disposed) return;
+          setIngestions(nextIngestions);
+          setEntities(nextEntities);
+          setStatements(nextStatements);
+          setSelectedEntityId((current) => nextEntities.some((item) => item.id === current) ? current : (nextEntities[0]?.id ?? null));
+        })
+        .catch((loadError) => {
+          if (!disposed) setError(errorMessage(loadError));
+        });
+    }, 1_200);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [ingestions, selectedSpaceId]);
 
   useEffect(() => {
     if (!selectedEntityId) {
@@ -230,6 +262,21 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
       setError(errorMessage(createError));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function startIngestion(sourceId: string) {
+    if (!selectedSpaceId || startingSourceId) return;
+    setStartingSourceId(sourceId);
+    setError(null);
+    try {
+      const job = await api.knowledge.startIngestion(selectedSpaceId, sourceId);
+      setIngestions((current) => [job, ...current.filter((item) => item.id !== job.id)]);
+      setTab("records");
+    } catch (startError) {
+      setError(errorMessage(startError));
+    } finally {
+      setStartingSourceId(null);
     }
   }
 
@@ -331,7 +378,14 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
               {loadingContent ? <div className="knowledge-loading"><LoaderCircle className="is-running" size={18} /> 지식을 불러오는 중</div> : tab === "graph" ? (
                 <KnowledgeGraph neighborhood={neighborhood} entities={entities} selectedEntityId={selectedEntityId} onSelectEntity={setSelectedEntityId} />
               ) : (
-                <KnowledgeRecords sources={sources} statements={statements} entityById={entityById} />
+                <KnowledgeRecords
+                  sources={sources}
+                  ingestions={ingestions}
+                  statements={statements}
+                  entityById={entityById}
+                  startingSourceId={startingSourceId}
+                  onStartIngestion={startIngestion}
+                />
               )}
             </>
           )}
@@ -351,8 +405,63 @@ function KnowledgeGraph({ neighborhood, entities, selectedEntityId, onSelectEnti
   return <div className="knowledge-graph-layout"><aside className="knowledge-entity-list"><strong>Entity</strong>{entities.map((entity) => <button className={selectedEntityId === entity.id ? "is-active" : ""} type="button" key={entity.id} onClick={() => onSelectEntity(entity.id)}><CircleDot size={13} /><span>{entity.canonicalName}</span><small>{entity.entityType}</small></button>)}</aside><div className="knowledge-graph-scroll"><div className="knowledge-graph-canvas"><svg aria-hidden="true">{(neighborhood?.edges ?? []).map((edge) => { const source = positions.get(edge.subjectEntityId); const target = edge.objectEntityId ? positions.get(edge.objectEntityId) : null; return source && target ? <line key={edge.id} x1={source.x} y1={source.y} x2={target.x} y2={target.y} /> : null; })}</svg>{nodes.map((node) => { const position = positions.get(node.id)!; return <button className={node.id === neighborhood?.rootEntityId ? "is-root" : ""} style={{ left: position.x, top: position.y }} type="button" key={node.id} onClick={() => onSelectEntity(node.id)}><strong>{node.canonicalName}</strong><small>{node.entityType} · {node.depth ?? 0} hop</small></button>; })}{neighborhood?.truncated && <span className="knowledge-truncated">표시 한도에 맞춰 일부 관계만 보여줍니다.</span>}</div></div></div>;
 }
 
-function KnowledgeRecords({ sources, statements, entityById }: { sources: KnowledgeSource[]; statements: KnowledgeStatement[]; entityById: Map<string, KnowledgeEntity> }) {
-  return <div className="knowledge-records"><section><header><FileText size={15} /><strong>원문</strong><span>{sources.length}</span></header>{sources.length ? sources.map((source) => <article key={source.id}><div><strong>{source.title}</strong><small>{source.sourceType} · revision {source.revision.revisionNumber}</small></div><p>{source.evidenceSegments[0]?.text ?? "보존된 텍스트가 없습니다."}</p><span>{source.evidenceSegments.length}개 근거 구간</span></article>) : <p className="knowledge-section-empty">등록된 원문이 없습니다.</p>}</section><section><header><GitBranch size={15} /><strong>Statement</strong><span>{statements.length}</span></header>{statements.length ? statements.map((statement) => <article key={statement.id}><div><strong>{entityById.get(statement.subjectEntityId)?.canonicalName ?? "Unknown"} <em>{statement.predicateKey}</em> {statement.objectEntityId ? entityById.get(statement.objectEntityId)?.canonicalName ?? "Unknown" : String(statement.objectValue)}</strong><small>revision {statement.revisionNumber ?? "-"} · {statement.status === "approved" ? "승인" : "검토 제안"}</small></div><span>{statement.evidenceSegmentIds.length ? `${statement.evidenceSegmentIds.length}개 근거` : "근거 없음"}</span></article>) : <p className="knowledge-section-empty">등록된 Statement가 없습니다.</p>}</section></div>;
+function KnowledgeRecords({ sources, ingestions, statements, entityById, startingSourceId, onStartIngestion }: {
+  sources: KnowledgeSource[];
+  ingestions: KnowledgeIngestionJob[];
+  statements: KnowledgeStatement[];
+  entityById: Map<string, KnowledgeEntity>;
+  startingSourceId: string | null;
+  onStartIngestion: (sourceId: string) => void;
+}) {
+  const latestBySource = new Map<string, KnowledgeIngestionJob>();
+  for (const job of ingestions) {
+    if (!latestBySource.has(job.sourceId)) latestBySource.set(job.sourceId, job);
+  }
+  return (
+    <div className="knowledge-records">
+      <section>
+        <header><FileText size={15} /><strong>원문</strong><span>{sources.length}</span></header>
+        {sources.length ? sources.map((source) => {
+          const job = latestBySource.get(source.id);
+          const active = job?.status === "queued" || job?.status === "running";
+          return (
+            <article key={source.id}>
+              <div><strong>{source.title}</strong><small>{source.sourceType} · revision {source.revision.revisionNumber}</small></div>
+              <p>{source.evidenceSegments[0]?.text ?? "보존된 텍스트가 없습니다."}</p>
+              <div className="knowledge-source-actions">
+                <span>{source.evidenceSegments.length}개 근거 구간</span>
+                {job && <small className={`is-${job.status}`} role="status">{ingestionLabel(job)}</small>}
+                <button
+                  type="button"
+                  disabled={active || job?.status === "completed" || startingSourceId !== null}
+                  onClick={() => onStartIngestion(source.id)}
+                >
+                  {(active || startingSourceId === source.id) && <RefreshCw className="is-running" size={12} />}
+                  {job?.status === "completed" ? "추출 완료" : job?.status === "failed" ? "다시 추출" : active ? "AI 추출 중" : "AI 추출"}
+                </button>
+              </div>
+            </article>
+          );
+        }) : <p className="knowledge-section-empty">등록된 원문이 없습니다.</p>}
+      </section>
+      <section>
+        <header><GitBranch size={15} /><strong>Statement</strong><span>{statements.length}</span></header>
+        {statements.length ? statements.map((statement) => (
+          <article key={statement.id}>
+            <div><strong>{entityById.get(statement.subjectEntityId)?.canonicalName ?? "Unknown"} <em>{statement.predicateKey}</em> {statement.objectEntityId ? entityById.get(statement.objectEntityId)?.canonicalName ?? "Unknown" : String(statement.objectValue)}</strong><small>revision {statement.revisionNumber ?? "-"} · {statement.status === "approved" ? "승인" : "검토 제안"}</small></div>
+            <span>{statement.evidenceSegmentIds.length ? `${statement.evidenceSegmentIds.length}개 근거` : "근거 없음"}</span>
+          </article>
+        )) : <p className="knowledge-section-empty">등록된 Statement가 없습니다.</p>}
+      </section>
+    </div>
+  );
+}
+
+function ingestionLabel(job: KnowledgeIngestionJob) {
+  if (job.status === "queued") return "추출 대기";
+  if (job.status === "running") return "근거 기반 추출 중";
+  if (job.status === "failed") return job.errorMessage ?? "추출 실패";
+  return `${job.entityCount}개 Entity · ${job.statementCount}개 검토 제안`;
 }
 
 function KnowledgeEmpty() {

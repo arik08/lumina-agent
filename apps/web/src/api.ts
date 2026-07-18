@@ -33,6 +33,7 @@ import type {
   DeepAnalysisMissionDetail,
   DeepAnalysisMissionSummary,
   KnowledgeEntity,
+  KnowledgeIngestionJob,
   KnowledgeNeighborhood,
   KnowledgeSource,
   KnowledgeSpace,
@@ -1287,6 +1288,27 @@ export async function createKnowledgeSource(
   );
 }
 
+export async function listKnowledgeIngestions(
+  spaceId: string,
+  signal?: AbortSignal,
+) {
+  return request<KnowledgeIngestionJob[]>(
+    `/knowledge/spaces/${encodeURIComponent(spaceId)}/ingestions`,
+    { signal },
+  );
+}
+
+export async function startKnowledgeIngestion(
+  spaceId: string,
+  sourceId: string,
+  signal?: AbortSignal,
+) {
+  return request<KnowledgeIngestionJob>(
+    `/knowledge/spaces/${encodeURIComponent(spaceId)}/sources/${encodeURIComponent(sourceId)}/ingestions`,
+    { method: "POST", signal },
+  );
+}
+
 export async function listKnowledgeEntities(spaceId: string, signal?: AbortSignal) {
   return request<KnowledgeEntity[]>(
     `/knowledge/spaces/${encodeURIComponent(spaceId)}/entities`,
@@ -2133,6 +2155,8 @@ export const api = {
     createSpace: createKnowledgeSpace,
     listSources: listKnowledgeSources,
     createSource: createKnowledgeSource,
+    listIngestions: listKnowledgeIngestions,
+    startIngestion: startKnowledgeIngestion,
     listEntities: listKnowledgeEntities,
     createEntity: createKnowledgeEntity,
     listStatements: listKnowledgeStatements,

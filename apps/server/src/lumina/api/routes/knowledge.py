@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.orm import Session
 
 from ...audit import record_audit
 from ...db import get_db
+from ...config import Settings, get_settings
+from ...knowledge.executor import knowledge_ingestion_executor
 from ...knowledge.schemas import (
     KnowledgeEntityCreate,
     KnowledgeSourceCreate,
@@ -15,12 +17,15 @@ from ...knowledge.schemas import (
 )
 from ...knowledge.service import (
     create_knowledge_entity,
+    create_knowledge_ingestion_job,
     create_knowledge_source,
     create_knowledge_space,
     create_knowledge_statement,
     entity_payload,
+    ingestion_job_payload,
     knowledge_neighborhood,
     list_knowledge_entities,
+    list_knowledge_ingestion_jobs,
     list_knowledge_sources,
     list_knowledge_spaces,
     list_knowledge_statements,
@@ -117,6 +122,67 @@ def get_knowledge_sources(
     return [
         source_payload(source, revision, evidence)
         for source, revision, evidence in list_knowledge_sources(db, user, space_id)
+    ]
+
+
+@router.post(
+    "/spaces/{space_id}/sources/{source_id}/ingestions",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def post_knowledge_ingestion(
+    space_id: str,
+    source_id: str,
+    request: Request,
+    response: Response,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    job, created = create_knowledge_ingestion_job(
+        db,
+        context.user,
+        space_id,
+        source_id,
+        settings=settings,
+    )
+    if not created:
+        response.status_code = status.HTTP_200_OK
+    record_audit(
+        db,
+        action=(
+            "knowledge_ingestion_queued"
+            if created
+            else "knowledge_ingestion_reused"
+        ),
+        target_type="knowledge_ingestion_job",
+        target_id=job.id,
+        result="success",
+        actor=context.user,
+        request_id=_request_id(request),
+        metadata={
+            "source_id": source_id,
+            "provider_id": job.provider_id,
+            "model_key": job.model_key,
+        },
+    )
+    db.commit()
+    if created:
+        knowledge_ingestion_executor.enqueue(job.id)
+    return ingestion_job_payload(job)
+
+
+@router.get("/spaces/{space_id}/ingestions")
+def get_knowledge_ingestions(
+    space_id: str,
+    source_id: str | None = Query(default=None, alias="sourceId"),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict[str, Any]]:
+    return [
+        ingestion_job_payload(job)
+        for job in list_knowledge_ingestion_jobs(
+            db, user, space_id, source_id=source_id
+        )
     ]
 
 

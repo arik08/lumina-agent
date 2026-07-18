@@ -2088,6 +2088,61 @@ class KnowledgeEvidenceSegment(UUIDPrimaryKeyMixin, Base):
     token_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
 
+class KnowledgeIngestionJob(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "knowledge_ingestion_jobs"
+    __table_args__ = (
+        Index("ix_knowledge_ingestion_jobs_space_status", "space_id", "status"),
+        Index(
+            "ix_knowledge_ingestion_jobs_source_revision",
+            "source_revision_id",
+            "created_at",
+        ),
+    )
+
+    space_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_spaces.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    source_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_sources.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    source_revision_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_source_revisions.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    requested_by_user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(24), default="queued", index=True, nullable=False
+    )
+    provider_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    model_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    runtime_model_id: Mapped[str] = mapped_column(String(240), nullable=False)
+    extractor_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    input_segment_count: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )
+    input_character_count: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )
+    entity_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    statement_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    error_code: Mapped[str | None] = mapped_column(String(120))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    queued_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, nullable=False
+    )
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+
+
 class KnowledgeEntity(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "knowledge_entities"
     __table_args__ = (
