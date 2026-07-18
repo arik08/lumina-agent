@@ -42,7 +42,8 @@ test("tool group metadata reserves the same scrollbar gutter as its tool rows", 
   const styles = await read("../src/styles.css");
 
   assert.match(styles, /\.tool-call-group-summary \{[^}]*overflow-y: auto;[^}]*scrollbar-gutter: stable;[^}]*scrollbar-width: thin;/s);
-  assert.match(styles, /\.tool-call-group-summary \{[^}]*grid-template-columns: 17px minmax\(0, 1fr\) 46px 16px;[^}]*gap: 5px;/s);
+  assert.match(styles, /\.tool-call-group-summary \{[^}]*grid-template-columns: 17px minmax\(0, 1fr\) minmax\(46px, max-content\) 16px;[^}]*gap: 5px;/s);
+  assert.match(styles, /\.tool-call-group-summary > \.tool-call-group-duration \{[^}]*overflow: visible;[^}]*text-overflow: clip;/s);
   assert.match(styles, /\.progress-tools \{[^}]*max-height: 470px;[^}]*overflow-y: auto;[^}]*scrollbar-gutter: stable;[^}]*scrollbar-width: thin;/s);
   for (const selector of [
     ".model-exchange",

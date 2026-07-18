@@ -2143,13 +2143,13 @@ button:disabled { cursor: default; opacity: 0.5; }
 .progress-summary-text > span { min-width: 0; }
 .progress-summary-text > span:only-child { grid-column: 1 / -1; }
 .progress-summary-text > .progress-summary-duration { color: var(--muted); font-size: 11.5px; line-height: 1.8; text-align: right; }
-.tool-call-group-summary { display: grid; width: calc(100% - 30px); min-height: 29px; grid-template-columns: 17px minmax(0, 1fr) 46px 16px; align-items: center; gap: 5px; margin-left: 30px; padding: 2px 6px 2px 4px; overflow-y: auto; border: 0; border-radius: 4px; background: transparent; color: var(--muted); font: inherit; cursor: pointer; scrollbar-color: transparent transparent; scrollbar-gutter: stable; scrollbar-width: thin; text-align: left; }
+.tool-call-group-summary { display: grid; width: calc(100% - 30px); min-height: 29px; grid-template-columns: 17px minmax(0, 1fr) minmax(46px, max-content) 16px; align-items: center; gap: 5px; margin-left: 30px; padding: 2px 6px 2px 4px; overflow-y: auto; border: 0; border-radius: 4px; background: transparent; color: var(--muted); font: inherit; cursor: pointer; scrollbar-color: transparent transparent; scrollbar-gutter: stable; scrollbar-width: thin; text-align: left; }
 .tool-call-group-summary::-webkit-scrollbar { width: 7px; }
 .tool-call-group-summary::-webkit-scrollbar-track,
 .tool-call-group-summary::-webkit-scrollbar-thumb { background: transparent; }
 .progress-group-toggle:hover .tool-call-group-summary { color: var(--ink); }
 .tool-call-group-summary > span { overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
-.tool-call-group-summary > .tool-call-group-duration { font-size: 11.5px; text-align: right; }
+.tool-call-group-summary > .tool-call-group-duration { overflow: visible; font-size: 11.5px; text-align: right; text-overflow: clip; }
 .tool-call-group-summary > svg:first-child { color: var(--tool-icon-color, var(--tool-common)); }
 .progress-tools { display: grid; max-height: 470px; gap: 5px; overflow-y: auto; transform-origin: top; animation: activity-expand var(--motion-medium) var(--ease-out-quint) both; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) transparent; }
 .progress-tools.is-collapsing { pointer-events: none; animation: tool-group-settle-out 240ms var(--ease-out-quint) both; }
