@@ -417,7 +417,7 @@ button:focus-visible, textarea:focus-visible, a:focus-visible {
   text-align: left;
   cursor: pointer;
 }
-.project-options button:hover { background: var(--surface-soft); }
+.project-options button:hover { background: color-mix(in srgb, var(--ink) 6%, var(--menu-surface)); }
 .project-options button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-options button svg:last-child { margin-left: auto; color: var(--faint); }
 

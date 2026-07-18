@@ -50,6 +50,15 @@ test("embedded composer suggestions use the composer surface", async () => {
   );
 });
 
+test("project menu options have visible neutral hover feedback", async () => {
+  const styles = await readFile(stylesPath, "utf8");
+
+  assert.match(
+    styles,
+    /\.project-options button:hover\s*\{[^}]*background:\s*color-mix\(in srgb, var\(--ink\) 6%, var\(--menu-surface\)\);/,
+  );
+});
+
 test("scrollable surfaces use shared neutral scrollbar tokens", async () => {
   const styles = await readFile(stylesPath, "utf8");
 
