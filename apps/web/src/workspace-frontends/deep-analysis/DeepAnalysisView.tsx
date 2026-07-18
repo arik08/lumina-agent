@@ -30,6 +30,7 @@ import {
 } from "react";
 
 import { api, ApiError } from "../../api";
+import { SelectMenu } from "../../components/SelectMenu";
 import type {
   DeepAnalysisAutonomyMode,
   DeepAnalysisCompletionContract,
@@ -73,6 +74,11 @@ const statusLabels: Record<string, string> = {
 
 const minimumCanvasScale = 0.4;
 const maximumCanvasScale = 1.8;
+const exportScopeOptions = [
+  { value: "latest", label: "최신 생성 파일 전체" },
+  { value: "report_evidence", label: "최종 보고서와 근거" },
+  { value: "audit", label: "과거 version 포함 감사본" },
+] as const;
 
 const workflowActionLabels: Record<string, string> = {
   initial: "질문 기반 초기 Workflow",
@@ -217,6 +223,23 @@ export function DeepAnalysisView({
     positionY: number;
     moved: boolean;
   } | null>(null);
+  const publishedPatternOptions = useMemo(
+    () => [
+      { value: "", label: "제로베이스 · 질문에 맞춰 새로 설계" },
+      ...patterns.flatMap((pattern) => pattern.latestPublishedVersion ? [{
+        value: pattern.latestPublishedVersion.id,
+        label: `${pattern.name} · v${pattern.latestPublishedVersion.versionNumber}`,
+      }] : []),
+    ],
+    [patterns],
+  );
+  const patternTargetOptions = useMemo(
+    () => [
+      { value: "", label: "새 Project Pattern" },
+      ...patterns.map((pattern) => ({ value: pattern.id, label: `${pattern.name}의 새 version` })),
+    ],
+    [patterns],
+  );
 
   useEffect(() => {
     setMissions([]);
@@ -1129,16 +1152,16 @@ export function DeepAnalysisView({
                     </button>
                   ))}
                 </fieldset>
-                <label>
+                <div className="deep-analysis-select-field">
                   Workflow 시작 방식
-                  <select value={selectedPatternVersionId} onChange={(event) => setSelectedPatternVersionId(event.target.value)}>
-                    <option value="">제로베이스 · 질문에 맞춰 새로 설계</option>
-                    {patterns.filter((pattern) => pattern.latestPublishedVersion).map((pattern) => (
-                      <option key={pattern.id} value={pattern.latestPublishedVersion?.id}>{pattern.name} · v{pattern.latestPublishedVersion?.versionNumber}</option>
-                    ))}
-                  </select>
+                  <SelectMenu
+                    value={selectedPatternVersionId}
+                    options={publishedPatternOptions}
+                    ariaLabel="Workflow 시작 방식"
+                    onChange={setSelectedPatternVersionId}
+                  />
                   <small>{selectedPatternVersionId ? "선택한 Pattern은 초기 뼈대이며 Mission 질문과 중간 결과에 따라 달라질 수 있습니다." : "Pattern 없이도 동일한 실행·기록·복구 기능을 사용합니다."}</small>
-                </label>
+                </div>
                 <label>
                   최대 비용 (US$, 선택)
                   <input
@@ -1244,7 +1267,7 @@ export function DeepAnalysisView({
                         <div className="deep-analysis-pattern-popover">
                           <strong>Workflow Pattern</strong>
                           {!patternDraftVersion ? <>
-                            <label>저장 위치<select value={patternTargetId} onChange={(event) => setPatternTargetId(event.target.value)}><option value="">새 Project Pattern</option>{patterns.map((pattern) => <option key={pattern.id} value={pattern.id}>{pattern.name}의 새 version</option>)}</select></label>
+                            <div className="deep-analysis-select-field">저장 위치<SelectMenu value={patternTargetId} options={patternTargetOptions} ariaLabel="Pattern 저장 위치" size="small" onChange={setPatternTargetId} /></div>
                             {!patternTargetId && <label>Pattern 이름<input value={patternName} maxLength={240} placeholder="예: 손익 변동 원인 분석" onChange={(event) => setPatternName(event.target.value)} /></label>}
                             <label>{patternTargetId ? "변경 요약" : "설명"}<textarea rows={2} value={patternChangeSummary} onChange={(event) => setPatternChangeSummary(event.target.value)} /></label>
                             <small>파일 ID·수치·답변·출력은 제외하고 구조와 semantic input role만 Draft에 저장합니다.</small>
@@ -1264,7 +1287,7 @@ export function DeepAnalysisView({
                       {exportOpen && (
                         <div className="deep-analysis-export-popover">
                           <strong>Mission 내보내기</strong>
-                          <label>범위<select value={exportScope} onChange={(event) => setExportScope(event.target.value as typeof exportScope)}><option value="latest">최신 생성 파일 전체</option><option value="report_evidence">최종 보고서와 근거</option><option value="audit">과거 version 포함 감사본</option></select></label>
+                          <div className="deep-analysis-select-field">범위<SelectMenu value={exportScope} options={exportScopeOptions} ariaLabel="Mission 내보내기 범위" size="small" onChange={(value) => setExportScope(value as typeof exportScope)} /></div>
                           <label className="deep-analysis-export-check"><input type="checkbox" checked={exportIncludeOriginals} onChange={(event) => setExportIncludeOriginals(event.target.checked)} /> Project 원본 자료 포함</label>
                           <small>원본 자료를 포함하면 현재 권한과 exact frozen version을 다시 확인합니다.</small>
                           <button type="button" disabled={exportingMission} onClick={() => void exportMission()}>{exportingMission ? <LoaderCircle className="is-running" size={13} /> : <Download size={13} />}{exportingMission ? "준비 중" : "ZIP 다운로드"}</button>

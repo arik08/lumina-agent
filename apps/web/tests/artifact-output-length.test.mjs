@@ -18,7 +18,7 @@ test("composer defaults file length to 10k and sends the selected target", async
   assert.match(app, /문서 출력 토큰/);
   assert.doesNotMatch(app, />파일 분량</);
   assert.doesNotMatch(app, /className="artifact-length-label"/);
-  assert.match(app, /<FileText size=\{12\} aria-hidden="true" \/>\s*<span className="artifact-length-value">/);
+  assert.match(app, /<FileText size=\{12\} aria-hidden="true" \/>[\s\S]*artifact-output-mode-value[\s\S]*artifact-length-value/);
   assert.match(app, /type="range"/);
   assert.match(app, /aria-expanded=\{open\}/);
   assert.match(app, /open && createPortal\(/);
@@ -26,7 +26,7 @@ test("composer defaults file length to 10k and sends the selected target", async
   assert.match(app, /popoverRef\.current\?\.contains\(target\)/);
   assert.match(styles, /\.artifact-length-popover \{[^}]*position: fixed;/);
   assert.match(styles, /\.artifact-length-popover \{[^}]*box-shadow: 0 6px 16px/);
-  assert.match(styles, /\.composer-footer \.artifact-length-trigger[^}]+padding: 0 10px;/);
+  assert.match(styles, /\.composer-footer \.artifact-length-trigger[^}]+padding: 0 8px;/);
   assert.match(app, /closeOnOutsidePointer/);
   assert.match(app, /event\.key !== "Escape"/);
   assert.match(app, /onChange=\{\(event\) => selectStep/);

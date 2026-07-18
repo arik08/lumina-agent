@@ -2873,6 +2873,8 @@ button:disabled { cursor: default; opacity: 0.5; }
 .composer-footer .send-button:disabled { cursor: wait; opacity: 0.65; }
 @container composer (max-width: 460px) {
   .composer-command-actions .composer-command-steer span { display: none; }
+  .composer-footer .artifact-output-mode-value,
+  .composer-footer .artifact-control-separator { display: none; }
 }
 
 @container composer (max-width: 680px) {

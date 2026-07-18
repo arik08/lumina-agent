@@ -52,7 +52,7 @@ test("hovered marker tapers its neighbors and click scrolling accelerates then d
   assert.match(navigator, />답변<\/small>/);
   assert.match(navigator, /item\.answerPreview \|\| "아직 답변이 없습니다\."/);
   assert.match(styles, /\.question-navigator-tooltip \{/);
-  assert.match(styles, /\.question-navigator-tooltip\.is-light \{[^}]*border-color:\s*var\(--line\);[^}]*background:\s*var\(--surface\);[^}]*box-shadow:\s*var\(--shadow-overlay\);[^}]*color:\s*var\(--ink\);/s);
+  assert.match(styles, /\.question-navigator-tooltip\.is-light \{[^}]*border-color:\s*var\(--line-strong\);[^}]*background:\s*var\(--surface\);[^}]*box-shadow:\s*var\(--shadow-overlay\);[^}]*color:\s*var\(--ink\);/s);
   assert.doesNotMatch(styles, /\.question-navigator-tooltip\.is-dark\s*\{/);
   assert.match(styles, /\.question-navigator-preview-row\.is-answer \{[^}]*border-top:/s);
   assert.doesNotMatch(styles, /question-tooltip-enter/);

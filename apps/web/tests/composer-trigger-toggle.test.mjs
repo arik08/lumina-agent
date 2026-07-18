@@ -48,7 +48,7 @@ test("Skill and MCP suggestions use compact single-line rows", async () => {
   assert.match(app, /composer-suggestions is-trigger-list \$\{composerTrigger\.trigger === "\$" \? "is-extension-list" : ""\}/);
   assert.match(app, /className=\{`composer-suggestion-icon kind-\$\{suggestion\.kind\}`\}/);
   assert.match(app, /composerTrigger\.trigger === "\$" && suggestion\.description && <small className="composer-suggestion-description">· \{suggestion\.description\}<\/small>/);
-  assert.match(app, /<small className="composer-suggestion-path" title=\{suggestion\.subtitle\}>\{suggestion\.subtitle\}<\/small>/);
+  assert.match(app, /<small className="composer-suggestion-path" data-tooltip=\{suggestion\.subtitle\}>\{suggestion\.subtitle\}<\/small>/);
   assert.doesNotMatch(app, /composerTrigger\.trigger === "@" && <small>\{suggestion\.subtitle\}<\/small>/);
   assert.doesNotMatch(app, /suggestion\.kind === "mcp" \? `MCP ·/);
   assert.match(styles, /\.composer-suggestions\.is-extension-list > button \{[^}]*min-height: 29px;[^}]*padding-block: 2px;/);

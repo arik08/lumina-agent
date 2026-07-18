@@ -36,10 +36,9 @@
 .deep-analysis-pane-title span { min-width: 22px; border-radius: var(--radius-pill); background: var(--surface-soft); color: var(--muted); font-size: 11px; line-height: 20px; text-align: center; }
 
 .deep-analysis-create { display: grid; gap: 12px; padding: 13px; border-bottom: 1px solid var(--line); background: var(--canvas); }
-.deep-analysis-create label { display: grid; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 650; }
+.deep-analysis-create label, .deep-analysis-create .deep-analysis-select-field { display: grid; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 650; }
 .deep-analysis-create input,
-.deep-analysis-create textarea,
-.deep-analysis-create select {
+.deep-analysis-create textarea {
   width: 100%;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-field);
@@ -50,8 +49,7 @@
   line-height: 1.45;
   resize: vertical;
 }
-.deep-analysis-create select { height: 34px; padding-block: 0; }
-.deep-analysis-create label > small { color: var(--faint); font-size: 9px; font-weight: 450; line-height: 1.4; }
+.deep-analysis-create label > small, .deep-analysis-create .deep-analysis-select-field > small { color: var(--faint); font-size: 9px; font-weight: 450; line-height: 1.4; }
 .deep-analysis-create fieldset { display: grid; grid-template-columns: repeat(3, 1fr); margin: 0; padding: 0; border: 0; gap: 4px; }
 .deep-analysis-create legend { margin-bottom: 6px; color: var(--muted); font-size: 11px; font-weight: 650; }
 .deep-analysis-create fieldset button { min-height: 28px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); color: var(--muted); font-size: 10.5px; cursor: pointer; }
@@ -121,11 +119,9 @@
 .deep-analysis-pattern-wrap { position: relative; flex: none; }
 .deep-analysis-pattern-popover { position: absolute; z-index: 8; top: 36px; right: 0; display: grid; width: 300px; gap: 9px; border: 1px solid var(--line); border-radius: var(--radius-menu); padding: 11px; background: var(--surface); box-shadow: var(--shadow-overlay); }
 .deep-analysis-pattern-popover > strong { color: var(--ink); font-size: 11px; }
-.deep-analysis-pattern-popover label { display: grid; gap: 4px; color: var(--muted); font-size: 9.5px; }
+.deep-analysis-pattern-popover label, .deep-analysis-pattern-popover .deep-analysis-select-field { display: grid; gap: 4px; color: var(--muted); font-size: 9.5px; }
 .deep-analysis-pattern-popover input,
-.deep-analysis-pattern-popover select,
 .deep-analysis-pattern-popover textarea { width: 100%; border: 1px solid var(--line); border-radius: var(--radius-field); padding: 7px 8px; background: var(--canvas); color: var(--ink); font-size: 10.5px; resize: vertical; }
-.deep-analysis-pattern-popover select { height: 30px; padding-block: 0; }
 .deep-analysis-pattern-popover > small { color: var(--faint); font-size: 9px; line-height: 1.4; }
 .deep-analysis-pattern-popover > button { display: flex; min-height: 30px; align-items: center; justify-content: center; gap: 5px; border: 1px solid var(--cobalt); border-radius: var(--radius-control); background: var(--cobalt); color: white; font-size: 10px; font-weight: 650; cursor: pointer; }
 .deep-analysis-pattern-popover > button:disabled { opacity: .5; cursor: default; }
@@ -138,8 +134,7 @@
 .deep-analysis-export:hover { background: var(--surface-soft); color: var(--ink); }
 .deep-analysis-export-popover { position: absolute; z-index: 7; top: 36px; right: 0; display: grid; width: 280px; gap: 9px; border: 1px solid var(--line); border-radius: var(--radius-menu); padding: 11px; background: var(--surface); box-shadow: var(--shadow-overlay); }
 .deep-analysis-export-popover > strong { color: var(--ink); font-size: 11px; }
-.deep-analysis-export-popover label { display: grid; gap: 4px; color: var(--muted); font-size: 10px; }
-.deep-analysis-export-popover select { height: 30px; border: 1px solid var(--line); border-radius: var(--radius-field); padding: 0 7px; background: var(--canvas); color: var(--ink); font-size: 10.5px; }
+.deep-analysis-export-popover label, .deep-analysis-export-popover .deep-analysis-select-field { display: grid; gap: 4px; color: var(--muted); font-size: 10px; }
 .deep-analysis-export-popover .deep-analysis-export-check { display: flex; align-items: center; gap: 6px; color: var(--ink); }
 .deep-analysis-export-check input { margin: 0; accent-color: var(--cobalt); }
 .deep-analysis-export-popover small { color: var(--faint); font-size: 9px; line-height: 1.4; }
