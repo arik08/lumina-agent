@@ -6,11 +6,17 @@ from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.orm import Session
 
 from ...audit import record_audit
+from ...authorization import require_project
 from ...db import get_db
 from ...config import Settings, get_settings
+from ...knowledge.context import (
+    build_project_knowledge_context_snapshot,
+    knowledge_context_api_payload,
+)
 from ...knowledge.executor import knowledge_ingestion_executor
 from ...knowledge.schemas import (
     KnowledgeAutoCaptureUpdate,
+    KnowledgeContextPackCreate,
     KnowledgeEntityCreate,
     KnowledgePageUpdate,
     KnowledgeProjectBindingCreate,
@@ -59,6 +65,7 @@ from ...knowledge.service import (
 )
 from ...models import User
 from ..dependencies import AuthContext, get_current_user, require_csrf
+from ..errors import ApiProblem
 
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
@@ -66,6 +73,29 @@ router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
 def _request_id(request: Request) -> str | None:
     return getattr(request.state, "request_id", None)
+
+
+@router.post("/context-packs")
+def post_knowledge_context_pack(
+    payload: KnowledgeContextPackCreate,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    project = require_project(db, context.user, payload.project_id)
+    snapshot = build_project_knowledge_context_snapshot(
+        db,
+        project=project,
+        query=payload.query,
+        max_statements=payload.max_statements,
+        character_budget=payload.character_budget,
+    )
+    if snapshot is None:
+        raise ApiProblem(
+            404,
+            "knowledge_context_unavailable",
+            "Project에 연결된 Knowledge Revision이 없습니다.",
+        )
+    return knowledge_context_api_payload(snapshot)
 
 
 @router.get("/auto-capture")

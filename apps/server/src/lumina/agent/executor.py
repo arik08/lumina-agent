@@ -157,6 +157,7 @@ from ..instructions import (
     RICH_CHAT_RENDERING_CONTRACT,
     WEB_RESEARCH_EFFICIENCY_CONTRACT,
 )
+from ..knowledge.context import render_project_knowledge_context
 from ..runs.state import (
     ACTIVE_STATUSES,
     AWAITING_APPROVAL,
@@ -2890,6 +2891,12 @@ class LocalRunExecutor:
             # before this cost and latency contract was introduced.
             system += f"\n\n{WEB_RESEARCH_EFFICIENCY_CONTRACT}"
         turn_system_parts: list[str] = []
+        knowledge_snapshot = run.snapshot_json.get("knowledge_context")
+        knowledge_context = render_project_knowledge_context(
+            knowledge_snapshot if isinstance(knowledge_snapshot, dict) else None
+        )
+        if knowledge_context:
+            turn_system_parts.append(_bounded_text(knowledge_context, 60_000))
         user_message = str(run.snapshot_json.get("user_message_text", ""))
         clarification_mode = str(
             run.snapshot_json.get("clarification_mode", "balanced")

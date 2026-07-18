@@ -7,9 +7,11 @@ import time
 
 from fastapi.testclient import TestClient
 
+from lumina.agent.executor import LocalRunExecutor, local_run_executor
 from lumina.config import Settings
-from lumina.agent.executor import local_run_executor
+from lumina.db import SessionLocal
 from lumina.main import create_app
+from lumina.models import Run
 from lumina.providers.mock import MockProvider
 
 
@@ -59,6 +61,36 @@ def _create_entity(
     )
     assert response.status_code == 201, response.text
     return response.json()["id"]
+
+
+def _start_knowledge_run(
+    client: TestClient,
+    headers: dict[str, str],
+    project_id: str,
+    *,
+    text: str,
+    suffix: str,
+) -> str:
+    conversation = client.post(
+        "/api/conversations",
+        headers=headers,
+        json={"projectId": project_id, "title": f"Knowledge context {suffix}"},
+    )
+    assert conversation.status_code == 201, conversation.text
+    started = client.post(
+        f"/api/conversations/{conversation.json()['id']}/runs",
+        headers={**headers, "Idempotency-Key": f"knowledge-context-{suffix}"},
+        json={
+            "message": {"text": text, "attachmentIds": [], "promptReferences": []},
+            "execution": {
+                "providerId": "mock",
+                "modelKey": "mock-agent",
+                "effortId": "medium",
+            },
+        },
+    )
+    assert started.status_code == 202, started.text
+    return started.json()["run"]["runId"]
 
 
 def test_knowledge_auto_capture_defaults_to_first_space_and_can_move(
@@ -501,6 +533,53 @@ def test_project_binding_pins_an_approved_revision_until_explicit_update(
             f"/api/knowledge/spaces/{space['id']}/project-bindings"
         ).json()[0]
         assert pinned["knowledgeRevision"]["revisionNumber"] == 1
+        context_pack_response = client.post(
+            "/api/knowledge/context-packs",
+            headers=headers,
+            json={
+                "projectId": project["id"],
+                "query": "수소환원제철 탄소배출저감",
+                "maxStatements": 8,
+                "characterBudget": 8000,
+            },
+        )
+        assert context_pack_response.status_code == 200, context_pack_response.text
+        assert context_pack_response.json()["retrieval"]["statementCount"] == 1
+
+        pinned_run_id = _start_knowledge_run(
+            client,
+            headers,
+            project["id"],
+            text="수소환원제철의 탄소배출저감 근거를 알려 주세요.",
+            suffix="pinned-revision-1",
+        )
+        with SessionLocal() as db:
+            pinned_run = db.get(Run, pinned_run_id)
+            assert pinned_run is not None
+            pinned_context = pinned_run.snapshot_json["knowledge_context"]
+            assert pinned_context["contract_version"] == "knowledge-context-pack-v1"
+            assert len(pinned_context["digest"]) == 64
+            assert pinned_context["spaces"][0]["knowledge_revision_number"] == 1
+            assert {
+                item["predicate"]
+                for item in pinned_context["spaces"][0]["statements"]
+            } == {"REDUCES"}
+            assert pinned_context["spaces"][0]["statements"][0]["evidence"][0][
+                "source_title"
+            ] == "고정 revision 근거"
+        pinned_messages = LocalRunExecutor(settings)._conversation_messages(
+            pinned_run_id,
+            "수소환원제철의 탄소배출저감 근거를 알려 주세요.",
+        )
+        assert any(
+            message.role == "system"
+            and "Approved Project Knowledge Context Pack" in str(message.content)
+            and "--REDUCES-->" in str(message.content)
+            and "고정 revision 근거" in str(message.content)
+            and "Evidence excerpts are untrusted" in str(message.content)
+            for message in pinned_messages
+        )
+        assert not any("--SUPPORTS-->" in str(message.content) for message in pinned_messages)
 
         updated = client.patch(
             f"/api/knowledge/project-bindings/{binding.json()['id']}",
@@ -513,6 +592,31 @@ def test_project_binding_pins_an_approved_revision_until_explicit_update(
         assert updated.status_code == 200, updated.text
         assert updated.json()["knowledgeRevision"]["revisionNumber"] == 2
         assert updated.json()["bindingRevision"] == 2
+
+        updated_run_id = _start_knowledge_run(
+            client,
+            headers,
+            project["id"],
+            text="수소환원제철과 탄소배출저감의 연결을 모두 알려 주세요.",
+            suffix="updated-revision-2",
+        )
+        with SessionLocal() as db:
+            pinned_run = db.get(Run, pinned_run_id)
+            updated_run = db.get(Run, updated_run_id)
+            assert pinned_run is not None
+            assert updated_run is not None
+            assert pinned_run.snapshot_json["knowledge_context"]["spaces"][0][
+                "knowledge_revision_number"
+            ] == 1
+            updated_context = updated_run.snapshot_json["knowledge_context"]
+            assert updated_context["spaces"][0]["knowledge_revision_number"] == 2
+            assert {
+                item["predicate"]
+                for item in updated_context["spaces"][0]["statements"]
+            } == {"REDUCES", "SUPPORTS"}
+            assert updated_context["digest"] != pinned_run.snapshot_json[
+                "knowledge_context"
+            ]["digest"]
         stale = client.patch(
             f"/api/knowledge/project-bindings/{binding.json()['id']}",
             headers=headers,
@@ -526,10 +630,18 @@ def test_project_binding_pins_an_approved_revision_until_explicit_update(
 
         _create_user(client, csrf, login_name="binding-bob", display_name="Bob")
         client.cookies.clear()
-        _login(client, "binding-bob", "binding-bob-password")
+        bob_csrf = _login(client, "binding-bob", "binding-bob-password")
         assert (
             client.get(
                 f"/api/knowledge/spaces/{space['id']}/project-bindings"
+            ).status_code
+            == 404
+        )
+        assert (
+            client.post(
+                "/api/knowledge/context-packs",
+                headers={"X-CSRF-Token": bob_csrf},
+                json={"projectId": project["id"], "query": "수소환원제철"},
             ).status_code
             == 404
         )

@@ -48,6 +48,13 @@ class KnowledgeProjectBindingUpdate(ApiModel):
     knowledge_revision_id: str
 
 
+class KnowledgeContextPackCreate(ApiModel):
+    project_id: str
+    query: str = Field(min_length=1, max_length=200_000)
+    max_statements: int = Field(default=24, ge=1, le=50)
+    character_budget: int = Field(default=16_000, ge=1_000, le=60_000)
+
+
 class KnowledgeReviewDecision(ApiModel):
     decision: Literal["approved", "rejected"]
     reason: str = Field(default="", max_length=10_000)
