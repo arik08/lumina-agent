@@ -12,7 +12,7 @@ import {
   ShieldCheck,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { api, ApiError } from "../../api";
 import { SelectMenu } from "../../components/SelectMenu";
 import type {
@@ -111,6 +111,9 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
     [evidenceOptions],
   );
   const pendingCount = statements.filter((statement) => statement.status === "proposed").length;
+  const handleSettingsError = useCallback((settingsError: unknown) => {
+    setError(errorMessage(settingsError));
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -362,7 +365,7 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
     if (tab === "wiki") content = <KnowledgeWiki {...shared} selectedEntityId={selectedEntityId} onSelectEntity={setSelectedEntityId} onOpenEvidence={openEvidence} />;
     if (tab === "graph") content = <KnowledgeGraph neighborhood={neighborhood} entities={entities} statements={statements} selectedEntityId={selectedEntityId} onSelectEntity={setSelectedEntityId} onOpenWiki={(id) => openEntity(id, "wiki")} />;
     if (tab === "review") content = <KnowledgeReview sources={sources} statements={statements} entityById={entityById} onOpenEvidence={openEvidence} onReviewed={updateReviewedStatement} onError={(reviewError) => setError(errorMessage(reviewError))} />;
-    if (tab === "settings") content = <KnowledgeSettings key={selectedSpace.id} space={selectedSpace} ingestions={ingestions} onUpdated={updateSpace} onArchived={archiveSpace} onError={(settingsError) => setError(errorMessage(settingsError))} />;
+    if (tab === "settings") content = <KnowledgeSettings key={selectedSpace.id} space={selectedSpace} ingestions={ingestions} onUpdated={updateSpace} onArchived={archiveSpace} onError={handleSettingsError} />;
   }
 
   return (

@@ -301,6 +301,17 @@ export interface UpdateKnowledgeSpaceRequest {
   purpose?: string;
 }
 
+export interface KnowledgeAutoCaptureSetting {
+  enabled: boolean;
+  spaceId: UUID | null;
+  mode: "research";
+}
+
+export interface UpdateKnowledgeAutoCaptureRequest {
+  enabled: boolean;
+  spaceId?: UUID | null;
+}
+
 export interface KnowledgeEvidenceSegment {
   id: UUID;
   sourceRevisionId: UUID;

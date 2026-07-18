@@ -28,6 +28,11 @@ class KnowledgeSpaceUpdate(ApiModel):
     purpose: str | None = Field(default=None, max_length=20_000)
 
 
+class KnowledgeAutoCaptureUpdate(ApiModel):
+    enabled: bool
+    space_id: str | None = None
+
+
 class KnowledgeReviewDecision(ApiModel):
     decision: Literal["approved", "rejected"]
     reason: str = Field(default="", max_length=10_000)

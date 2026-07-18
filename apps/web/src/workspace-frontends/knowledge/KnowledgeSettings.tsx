@@ -1,7 +1,7 @@
-import { Archive, Check, Coins, Database, LoaderCircle, LockKeyhole, RotateCcw, Save, ShieldCheck } from "lucide-react";
-import { useMemo, useState, type FormEvent } from "react";
+import { Archive, Check, Coins, Database, LoaderCircle, LockKeyhole, RotateCcw, Save, ShieldCheck, Sparkles } from "lucide-react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { api } from "../../api";
-import type { KnowledgeIngestionJob, KnowledgeSpace } from "../../api-types";
+import type { KnowledgeAutoCaptureSetting, KnowledgeIngestionJob, KnowledgeSpace } from "../../api-types";
 import { formatDate } from "./knowledge-utils";
 
 interface KnowledgeSettingsProps {
@@ -17,11 +17,40 @@ export function KnowledgeSettings({ space, ingestions, onUpdated, onArchived, on
   const [purpose, setPurpose] = useState(space.purpose);
   const [description, setDescription] = useState(space.description);
   const [saving, setSaving] = useState(false);
+  const [savingCapture, setSavingCapture] = useState(false);
+  const [autoCapture, setAutoCapture] = useState<KnowledgeAutoCaptureSetting | null>(null);
   const [saved, setSaved] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState(false);
   const usage = useMemo(() => ingestions.reduce((total, job) => ({ input: total.input + job.inputTokens, output: total.output + job.outputTokens, characters: total.characters + job.inputCharacterCount }), { input: 0, output: 0, characters: 0 }), [ingestions]);
   const latestJob = ingestions[0];
   const dirty = name.trim() !== space.name || purpose.trim() !== space.purpose || description.trim() !== space.description;
+  const capturesToCurrentSpace = autoCapture?.enabled === true && autoCapture.spaceId === space.id;
+
+  useEffect(() => {
+    const controller = new AbortController();
+    api.knowledge.getAutoCapture(controller.signal)
+      .then(setAutoCapture)
+      .catch((error) => {
+        if (!controller.signal.aborted) onError(error);
+      });
+    return () => controller.abort();
+  }, [onError]);
+
+  async function toggleAutoCapture() {
+    if (savingCapture || autoCapture === null) return;
+    setSavingCapture(true);
+    try {
+      const updated = await api.knowledge.updateAutoCapture({
+        enabled: !capturesToCurrentSpace,
+        spaceId: capturesToCurrentSpace ? null : space.id,
+      });
+      setAutoCapture(updated);
+    } catch (error) {
+      onError(error);
+    } finally {
+      setSavingCapture(false);
+    }
+  }
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -61,6 +90,31 @@ export function KnowledgeSettings({ space, ingestions, onUpdated, onArchived, on
   return (
     <div className="knowledge-page knowledge-settings-page">
       <div className="knowledge-settings-column">
+        <section className="knowledge-card knowledge-auto-capture-card">
+          <header>
+            <div><strong><Sparkles size={15} /> 분석 결과 자동 축적</strong><small>출처가 확인된 리서치가 끝나면 이 공간에 원문과 근거를 보존합니다.</small></div>
+            <button
+              className={capturesToCurrentSpace ? "is-active" : ""}
+              type="button"
+              role="switch"
+              aria-checked={capturesToCurrentSpace}
+              disabled={autoCapture === null || savingCapture}
+              onClick={toggleAutoCapture}
+            >
+              {savingCapture && <LoaderCircle className="is-running" size={13} />}
+              <span /> {capturesToCurrentSpace ? "켜짐" : "꺼짐"}
+            </button>
+          </header>
+          <p>
+            {capturesToCurrentSpace
+              ? "웹 원문까지 확인한 분석은 대화가 끝나도 사라지지 않습니다. 중복 원문은 digest로 재사용하고, 추출된 지식은 검토 대기 상태로만 쌓입니다."
+              : autoCapture?.enabled
+                ? "다른 Knowledge Space가 자동 축적 대상으로 지정되어 있습니다. 이 스위치를 켜면 현재 공간으로 전환됩니다."
+                : "자동 축적이 꺼져 있습니다. 켜면 다음 출처 기반 분석부터 이 공간에 저장됩니다."}
+          </p>
+          <ul><li>검색 요약만 있는 답변은 제외</li><li>최대 60,000자만 AI 추출에 사용</li><li>자동 승인 없이 검토함에 제안</li></ul>
+        </section>
+
         <section className="knowledge-card knowledge-settings-card">
           <header><div><strong>공간 정보</strong><small>이름과 설명은 보이는 자리에서 바로 관리합니다.</small></div><span>revision {space.settingsRevision}</span></header>
           <form onSubmit={save}>

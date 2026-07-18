@@ -10,6 +10,7 @@ from ...db import get_db
 from ...config import Settings, get_settings
 from ...knowledge.executor import knowledge_ingestion_executor
 from ...knowledge.schemas import (
+    KnowledgeAutoCaptureUpdate,
     KnowledgeEntityCreate,
     KnowledgeSourceCreate,
     KnowledgeSpaceCreate,
@@ -27,6 +28,7 @@ from ...knowledge.service import (
     decide_knowledge_statement,
     entity_payload,
     ingestion_job_payload,
+    knowledge_auto_capture_payload,
     knowledge_neighborhood,
     list_knowledge_entities,
     list_knowledge_ingestion_jobs,
@@ -38,6 +40,7 @@ from ...knowledge.service import (
     space_payload,
     statement_payload,
     update_knowledge_space,
+    update_knowledge_auto_capture,
 )
 from ...models import User
 from ..dependencies import AuthContext, get_current_user, require_csrf
@@ -48,6 +51,36 @@ router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
 def _request_id(request: Request) -> str | None:
     return getattr(request.state, "request_id", None)
+
+
+@router.get("/auto-capture")
+def get_knowledge_auto_capture(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    return knowledge_auto_capture_payload(db, user)
+
+
+@router.patch("/auto-capture")
+def patch_knowledge_auto_capture(
+    payload: KnowledgeAutoCaptureUpdate,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    updated = update_knowledge_auto_capture(db, context.user, payload)
+    record_audit(
+        db,
+        action="knowledge_auto_capture_updated",
+        target_type="knowledge_space",
+        target_id=updated.get("spaceId"),
+        result="success",
+        actor=context.user,
+        request_id=_request_id(request),
+        metadata={"enabled": updated["enabled"], "mode": updated["mode"]},
+    )
+    db.commit()
+    return updated
 
 
 @router.get("/spaces")

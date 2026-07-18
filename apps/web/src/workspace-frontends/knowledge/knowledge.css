@@ -326,6 +326,17 @@
 .knowledge-settings-page { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(280px, .65fr); align-content: start; gap: 13px; }
 .knowledge-settings-column,
 .knowledge-settings-aside { display: grid; align-content: start; gap: 13px; }
+.knowledge-auto-capture-card { border-color: color-mix(in srgb, var(--cobalt) 28%, var(--line)); }
+.knowledge-auto-capture-card > header { background: color-mix(in srgb, var(--cobalt) 4%, var(--surface)); }
+.knowledge-auto-capture-card > header strong { display: inline-flex; align-items: center; gap: 6px; }
+.knowledge-auto-capture-card > header strong svg { color: var(--cobalt); }
+.knowledge-auto-capture-card > header > button { display: inline-flex; min-width: 66px; min-height: 29px; align-items: center; justify-content: center; gap: 5px; border: 1px solid var(--line-strong); border-radius: var(--radius-pill); padding: 0 9px; background: var(--surface); color: var(--muted); font-weight: 650; }
+.knowledge-auto-capture-card > header > button.is-active { border-color: color-mix(in srgb, var(--cobalt) 55%, var(--line)); background: var(--surface-selected); color: var(--cobalt); }
+.knowledge-auto-capture-card > header > button:disabled { opacity: .5; cursor: default; }
+.knowledge-auto-capture-card > header > button > span { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+.knowledge-auto-capture-card > header > button.is-active > span { background: var(--cobalt); box-shadow: 0 0 0 3px color-mix(in srgb, var(--cobalt) 12%, transparent); }
+.knowledge-auto-capture-card > p { margin: 0; padding: 11px 13px 7px; color: var(--muted); font-size: 9.5px; line-height: 1.55; }
+.knowledge-auto-capture-card > ul { display: flex; flex-wrap: wrap; gap: 5px 18px; margin: 0; padding: 0 13px 12px 29px; color: var(--muted); font-size: 8.5px; }
 .knowledge-settings-card > header > span { color: var(--muted); font-size: 9px; }
 .knowledge-settings-card form { display: grid; gap: 10px; padding: 13px; }
 .knowledge-settings-card label { display: grid; gap: 5px; color: var(--muted); font-size: 9.5px; font-weight: 650; }

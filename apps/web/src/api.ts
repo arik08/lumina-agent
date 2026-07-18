@@ -37,9 +37,11 @@ import type {
   KnowledgeNeighborhood,
   KnowledgeSource,
   KnowledgeSpace,
+  KnowledgeAutoCaptureSetting,
   KnowledgeStatement,
   KnowledgeReviewDecisionRequest,
   UpdateKnowledgeSpaceRequest,
+  UpdateKnowledgeAutoCaptureRequest,
   CursorPage,
   ListConversationsQuery,
   LoginRequest,
@@ -1290,6 +1292,21 @@ export async function createKnowledgeSource(
   );
 }
 
+export async function getKnowledgeAutoCapture(signal?: AbortSignal) {
+  return request<KnowledgeAutoCaptureSetting>("/knowledge/auto-capture", { signal });
+}
+
+export async function updateKnowledgeAutoCapture(
+  payload: UpdateKnowledgeAutoCaptureRequest,
+  signal?: AbortSignal,
+) {
+  return request<KnowledgeAutoCaptureSetting>("/knowledge/auto-capture", {
+    method: "PATCH",
+    body: payload,
+    signal,
+  });
+}
+
 export async function updateKnowledgeSpace(
   spaceId: string,
   payload: UpdateKnowledgeSpaceRequest,
@@ -2188,6 +2205,8 @@ export const api = {
     updateMission: updateDeepAnalysisMission,
   },
   knowledge: {
+    getAutoCapture: getKnowledgeAutoCapture,
+    updateAutoCapture: updateKnowledgeAutoCapture,
     listSpaces: listKnowledgeSpaces,
     createSpace: createKnowledgeSpace,
     updateSpace: updateKnowledgeSpace,

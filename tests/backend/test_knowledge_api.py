@@ -61,6 +61,56 @@ def _create_entity(
     return response.json()["id"]
 
 
+def test_knowledge_auto_capture_defaults_to_first_space_and_can_move(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'knowledge-auto-capture.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client, "admin", "1")
+        headers = {"X-CSRF-Token": csrf}
+        first = client.post(
+            "/api/knowledge/spaces", headers=headers, json={"name": "철강 기술 동향"}
+        )
+        assert first.status_code == 201, first.text
+        setting = client.get("/api/knowledge/auto-capture")
+        assert setting.status_code == 200, setting.text
+        assert setting.json() == {
+            "enabled": True,
+            "spaceId": first.json()["id"],
+            "mode": "research",
+        }
+
+        second = client.post(
+            "/api/knowledge/spaces", headers=headers, json={"name": "신소재 연구"}
+        )
+        moved = client.patch(
+            "/api/knowledge/auto-capture",
+            headers=headers,
+            json={"enabled": True, "spaceId": second.json()["id"]},
+        )
+        assert moved.status_code == 200, moved.text
+        assert moved.json()["spaceId"] == second.json()["id"]
+
+        disabled = client.patch(
+            "/api/knowledge/auto-capture",
+            headers=headers,
+            json={"enabled": False},
+        )
+        assert disabled.status_code == 200, disabled.text
+        assert disabled.json() == {
+            "enabled": False,
+            "spaceId": None,
+            "mode": "research",
+        }
+
+
 def test_personal_knowledge_source_statement_and_bounded_graph(tmp_path: Path) -> None:
     settings = Settings(
         environment="test",

@@ -28,6 +28,7 @@ from ..providers.execution_defaults import initial_execution_selection
 from .extractor import KNOWLEDGE_EXTRACTOR_VERSION
 from .schemas import (
     EvidenceSegmentCreate,
+    KnowledgeAutoCaptureUpdate,
     KnowledgeEntityCreate,
     KnowledgeReviewDecision,
     KnowledgeSourceCreate,
@@ -35,6 +36,9 @@ from .schemas import (
     KnowledgeSpaceUpdate,
     KnowledgeStatementCreate,
 )
+
+
+KNOWLEDGE_AUTO_CAPTURE_SETTING_KEY = "knowledge.auto_capture"
 
 
 def knowledge_space_access_query(user: User, *, write: bool = False):
@@ -148,7 +152,89 @@ def create_knowledge_space(
     )
     db.add(space)
     db.flush()
+    setting = db.scalar(
+        select(UserSetting).where(
+            UserSetting.user_id == user.id,
+            UserSetting.key == KNOWLEDGE_AUTO_CAPTURE_SETTING_KEY,
+        )
+    )
+    if setting is None:
+        db.add(
+            UserSetting(
+                user_id=user.id,
+                key=KNOWLEDGE_AUTO_CAPTURE_SETTING_KEY,
+                value_json={"enabled": True, "spaceId": space.id, "mode": "research"},
+            )
+        )
     return space
+
+
+def knowledge_auto_capture_payload(db: Session, user: User) -> dict[str, Any]:
+    setting = db.scalar(
+        select(UserSetting).where(
+            UserSetting.user_id == user.id,
+            UserSetting.key == KNOWLEDGE_AUTO_CAPTURE_SETTING_KEY,
+        )
+    )
+    value = setting.value_json if setting is not None else None
+    if isinstance(value, dict) and value.get("enabled") is False:
+        return {"enabled": False, "spaceId": None, "mode": "research"}
+    configured_space_id = value.get("spaceId") if isinstance(value, dict) else None
+    space = None
+    if isinstance(configured_space_id, str):
+        space = db.scalar(
+            knowledge_space_access_query(user, write=True).where(
+                KnowledgeSpace.id == configured_space_id
+            )
+        )
+    if space is None and setting is None:
+        space = db.scalar(
+            knowledge_space_access_query(user, write=True)
+            .where(KnowledgeSpace.space_type == "personal")
+            .order_by(KnowledgeSpace.created_at, KnowledgeSpace.id)
+            .limit(1)
+        )
+    return {
+        "enabled": space is not None,
+        "spaceId": space.id if space is not None else None,
+        "mode": "research",
+    }
+
+
+def update_knowledge_auto_capture(
+    db: Session,
+    user: User,
+    payload: KnowledgeAutoCaptureUpdate,
+) -> dict[str, Any]:
+    space_id: str | None = None
+    if payload.enabled:
+        if payload.space_id is None:
+            raise ApiProblem(
+                422,
+                "knowledge_auto_capture_space_required",
+                "자동 축적을 켜려면 Knowledge Space를 선택해 주세요.",
+            )
+        space = require_knowledge_space(db, user, payload.space_id, write=True)
+        space_id = space.id
+    setting = db.scalar(
+        select(UserSetting).where(
+            UserSetting.user_id == user.id,
+            UserSetting.key == KNOWLEDGE_AUTO_CAPTURE_SETTING_KEY,
+        )
+    )
+    value = {"enabled": payload.enabled, "spaceId": space_id, "mode": "research"}
+    if setting is None:
+        setting = UserSetting(
+            user_id=user.id,
+            key=KNOWLEDGE_AUTO_CAPTURE_SETTING_KEY,
+            value_json=value,
+        )
+        db.add(setting)
+    else:
+        setting.value_json = value
+        setting.updated_at = utc_now()
+    db.flush()
+    return value
 
 
 def update_knowledge_space(

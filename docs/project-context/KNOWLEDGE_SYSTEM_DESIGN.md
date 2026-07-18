@@ -406,6 +406,21 @@ knowledge.publish         publish
 knowledge.admin           admin
 ```
 
+### 5.3 완료된 리서치 Run 자동 축적
+
+계정에는 자동 축적 대상 Personal Knowledge Space를 최대 하나만 둡니다. 첫 개인 Space를 만들면 기본 대상으로 설정하며 사용자는 `설정` 화면에서 대상을 현재 Space로 전환하거나 전체 자동 축적을 끌 수 있습니다.
+
+자동 축적은 모든 대화를 무조건 저장하지 않습니다. `web_fetch`로 원문을 실제 확인했고 `fetched_content + complete` provenance가 남은 완료 Run만 다음 순서로 처리합니다.
+
+1. Run 완료 transaction을 먼저 확정합니다. Knowledge 저장 실패는 원래 답변 완료를 되돌리지 않습니다.
+2. 별도 transaction에서 assistant 분석문, conversation/run/message locator와 확인된 웹 출처 excerpt를 `conversation` Source Revision으로 보존합니다.
+3. 같은 captured content는 SHA-256 digest로 재사용합니다.
+4. AI extraction 입력은 최대 60,000자로 제한하고 계정의 기본 실행 모델 snapshot으로 ingestion job을 생성합니다.
+5. 추출 Statement는 자동 승인하지 않고 `proposed` 상태로 검토함에 둡니다.
+6. process가 job enqueue 전에 종료되어도 DB의 `queued` 상태를 startup recovery가 다시 실행합니다.
+
+검색 snippet만 있거나 자동 축적이 꺼진 경우에는 Source와 ingestion job을 만들지 않습니다. Source 저장에 성공했지만 Provider를 사용할 수 없으면 원문은 보존하고 추출만 보류합니다.
+
 ## 6. 검색과 답변 생성
 
 ### 6.1 검색 모드
@@ -709,6 +724,8 @@ GET    /api/knowledge/spaces
 POST   /api/knowledge/spaces
 GET    /api/knowledge/spaces/{space_id}
 PATCH  /api/knowledge/spaces/{space_id}
+GET    /api/knowledge/auto-capture
+PATCH  /api/knowledge/auto-capture
 
 POST   /api/knowledge/spaces/{space_id}/sources
 GET    /api/knowledge/spaces/{space_id}/sources
