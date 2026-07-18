@@ -263,6 +263,11 @@ test("Mission Charter is editable before start and immutable Quality Gates remai
   assert.match(view, /분석 목표<textarea/);
   assert.match(view, /핵심 질문<textarea/);
   assert.match(view, /보고서 구성<textarea/);
+  assert.match(view, /placeholder="예: 2025년 4분기 대비 2026년 4분기 영업이익 감소 원인 분석"/);
+  assert.match(view, /placeholder=\{"예:\\n영업이익은 전년 동기 대비 얼마나 감소했는가\?\\n감소에 가장 크게 기여한 요인은 무엇인가\?"\}/);
+  assert.match(view, /placeholder=\{"예:\\n요약\\n주요 변동 요인\\n근거와 한계"\}/);
+  assert.match(view, /placeholder="예: 2025년 4분기 대비 2026년 4분기"/);
+  assert.match(view, /placeholder="예: 경영진용 Markdown 보고서"/);
   assert.match(view, /대상 기간<input[^>]*comparisonBasis/);
   assert.match(view, /산출물 형태<input[^>]*deliverables/);
   assert.doesNotMatch(view, /<summary>상세 설정/);
