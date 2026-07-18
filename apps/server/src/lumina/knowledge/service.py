@@ -5,7 +5,7 @@ import json
 import re
 from typing import Any
 
-from sqlalchemy import String, and_, case, cast, delete, exists, func, literal, or_, select, update
+from sqlalchemy import String, and_, case, cast, delete, exists, func, literal, or_, select, text, update
 from sqlalchemy.orm import Session, aliased
 
 from ..api.errors import ApiProblem
@@ -189,7 +189,9 @@ def search_knowledge(
     db: Session, user: User, *, space_id: str, query: str, scope: str, limit: int
 ) -> dict[str, Any]:
     require_knowledge_space(db, user, space_id)
-    terms = re.findall(r"\w{2,}", query.casefold(), flags=re.UNICODE)
+    terms = list(
+        dict.fromkeys(re.findall(r"\w{2,}", query.casefold(), flags=re.UNICODE))
+    )[:16]
     if not terms:
         return {
             "query": query.strip(),
@@ -201,133 +203,168 @@ def search_knowledge(
             "sources": [],
         }
 
+    fts_candidates = _sqlite_knowledge_fts_candidates(
+        db, space_id=space_id, terms=terms, scope=scope, limit=limit
+    )
+    method = "sqlite_fts5_v1" if fts_candidates is not None else "bounded_keyword_v1"
+
     entities: list[KnowledgeEntity] = []
     if scope in {"all", "wiki"}:
-        entity_text = func.lower(
-            KnowledgeEntity.canonical_name
-            + " "
-            + KnowledgeEntity.entity_type
-            + " "
-            + KnowledgeEntity.description
-        )
-        entities = list(
-            db.scalars(
-                select(KnowledgeEntity)
-                .where(
-                    KnowledgeEntity.space_id == space_id,
-                    KnowledgeEntity.status == "active",
-                    and_(*(entity_text.contains(term, autoescape=True) for term in terms)),
+        if fts_candidates is not None:
+            entity_ids = fts_candidates["entities"]
+            items = list(
+                db.scalars(
+                    select(KnowledgeEntity).where(KnowledgeEntity.id.in_(entity_ids))
                 )
-                .order_by(KnowledgeEntity.canonical_name, KnowledgeEntity.id)
-                .limit(limit)
             )
-        )
+            item_by_id = {item.id: item for item in items}
+            entities = [item_by_id[item_id] for item_id in entity_ids]
+        else:
+            entity_text = func.lower(
+                KnowledgeEntity.canonical_name
+                + " "
+                + KnowledgeEntity.entity_type
+                + " "
+                + KnowledgeEntity.description
+            )
+            entities = list(
+                db.scalars(
+                    select(KnowledgeEntity)
+                    .where(
+                        KnowledgeEntity.space_id == space_id,
+                        KnowledgeEntity.status == "active",
+                        and_(
+                            *(
+                                entity_text.contains(term, autoescape=True)
+                                for term in terms
+                            )
+                        ),
+                    )
+                    .order_by(KnowledgeEntity.canonical_name, KnowledgeEntity.id)
+                    .limit(limit)
+                )
+            )
 
     statements: list[KnowledgeStatement] = []
     if scope in {"all", "statement"}:
-        subject = aliased(KnowledgeEntity)
-        object_entity = aliased(KnowledgeEntity)
-        successor = KnowledgeStatement.__table__.alias("search_statement_successor")
-        statement_text = func.lower(
-            subject.canonical_name
-            + " "
-            + KnowledgeStatement.predicate_key
-            + " "
-            + func.coalesce(object_entity.canonical_name, "")
-            + " "
-            + func.coalesce(cast(KnowledgeStatement.object_value_json, String), "")
-        )
-        statements = list(
-            db.scalars(
-                select(KnowledgeStatement)
-                .join(subject, subject.id == KnowledgeStatement.subject_entity_id)
-                .outerjoin(
-                    object_entity,
-                    object_entity.id == KnowledgeStatement.object_entity_id,
+        if fts_candidates is not None:
+            statement_ids = fts_candidates["statements"]
+            items = list(
+                db.scalars(
+                    select(KnowledgeStatement).where(
+                        KnowledgeStatement.id.in_(statement_ids)
+                    )
                 )
-                .where(
-                    KnowledgeStatement.space_id == space_id,
-                    ~exists(
-                        select(successor.c.id).where(
-                            successor.c.supersedes_statement_id
-                            == KnowledgeStatement.id
-                        )
-                    ),
-                    and_(*(statement_text.contains(term, autoescape=True) for term in terms)),
-                )
-                .order_by(
-                    KnowledgeStatement.recorded_at.desc(), KnowledgeStatement.id
-                )
-                .limit(limit)
             )
-        )
+            item_by_id = {item.id: item for item in items}
+            statements = [item_by_id[item_id] for item_id in statement_ids]
+        else:
+            subject = aliased(KnowledgeEntity)
+            object_entity = aliased(KnowledgeEntity)
+            successor = KnowledgeStatement.__table__.alias(
+                "search_statement_successor"
+            )
+            statement_text = func.lower(
+                subject.canonical_name
+                + " "
+                + KnowledgeStatement.predicate_key
+                + " "
+                + func.coalesce(object_entity.canonical_name, "")
+                + " "
+                + func.coalesce(
+                    cast(KnowledgeStatement.object_value_json, String), ""
+                )
+            )
+            statements = list(
+                db.scalars(
+                    select(KnowledgeStatement)
+                    .join(subject, subject.id == KnowledgeStatement.subject_entity_id)
+                    .outerjoin(
+                        object_entity,
+                        object_entity.id == KnowledgeStatement.object_entity_id,
+                    )
+                    .where(
+                        KnowledgeStatement.space_id == space_id,
+                        ~exists(
+                            select(successor.c.id).where(
+                                successor.c.supersedes_statement_id
+                                == KnowledgeStatement.id
+                            )
+                        ),
+                        and_(
+                            *(
+                                statement_text.contains(term, autoescape=True)
+                                for term in terms
+                            )
+                        ),
+                    )
+                    .order_by(
+                        KnowledgeStatement.recorded_at.desc(), KnowledgeStatement.id
+                    )
+                    .limit(limit)
+                )
+            )
 
     sources: list[
         tuple[KnowledgeSource, KnowledgeSourceRevision, list[KnowledgeEvidenceSegment]]
     ] = []
     if scope in {"all", "source"}:
-        latest_source_revision = aliased(KnowledgeSourceRevision)
-        latest_revision_number = (
-            select(func.max(latest_source_revision.revision_number))
-            .where(latest_source_revision.source_id == KnowledgeSource.id)
-            .correlate(KnowledgeSource)
-            .scalar_subquery()
-        )
-        source_filters = []
-        for term in terms:
-            evidence_match = exists(
-                select(KnowledgeEvidenceSegment.id)
-                .join(
-                    KnowledgeSourceRevision,
-                    KnowledgeSourceRevision.id
-                    == KnowledgeEvidenceSegment.source_revision_id,
-                )
-                .where(
-                    KnowledgeSourceRevision.source_id == KnowledgeSource.id,
-                    KnowledgeSourceRevision.revision_number
-                    == latest_revision_number,
-                    func.lower(KnowledgeEvidenceSegment.text).contains(
-                        term, autoescape=True
-                    ),
-                )
-            )
-            source_filters.append(
-                or_(
-                    func.lower(KnowledgeSource.title).contains(term, autoescape=True),
-                    evidence_match,
-                )
-            )
-        source_candidates = list(
-            db.scalars(
-                select(KnowledgeSource)
-                .where(
-                    KnowledgeSource.space_id == space_id,
-                    KnowledgeSource.status == "active",
-                    and_(*source_filters),
-                )
-                .order_by(KnowledgeSource.updated_at.desc(), KnowledgeSource.id)
-                .limit(limit)
-            )
-        )
-        for source in source_candidates:
-            revision = db.scalar(
-                select(KnowledgeSourceRevision)
-                .where(KnowledgeSourceRevision.source_id == source.id)
-                .order_by(KnowledgeSourceRevision.revision_number.desc())
-                .limit(1)
-            )
-            if revision is None:
-                continue
-            evidence = list(
+        if fts_candidates is not None:
+            source_ids = fts_candidates["sources"]
+            items = list(
                 db.scalars(
-                    select(KnowledgeEvidenceSegment)
-                    .where(
-                        KnowledgeEvidenceSegment.source_revision_id == revision.id
-                    )
-                    .order_by(KnowledgeEvidenceSegment.segment_ordinal)
+                    select(KnowledgeSource).where(KnowledgeSource.id.in_(source_ids))
                 )
             )
-            sources.append((source, revision, evidence))
+            item_by_id = {item.id: item for item in items}
+            source_candidates = [item_by_id[item_id] for item_id in source_ids]
+        else:
+            latest_source_revision = aliased(KnowledgeSourceRevision)
+            latest_revision_number = (
+                select(func.max(latest_source_revision.revision_number))
+                .where(latest_source_revision.source_id == KnowledgeSource.id)
+                .correlate(KnowledgeSource)
+                .scalar_subquery()
+            )
+            source_filters = []
+            for term in terms:
+                evidence_match = exists(
+                    select(KnowledgeEvidenceSegment.id)
+                    .join(
+                        KnowledgeSourceRevision,
+                        KnowledgeSourceRevision.id
+                        == KnowledgeEvidenceSegment.source_revision_id,
+                    )
+                    .where(
+                        KnowledgeSourceRevision.source_id == KnowledgeSource.id,
+                        KnowledgeSourceRevision.revision_number
+                        == latest_revision_number,
+                        func.lower(KnowledgeEvidenceSegment.text).contains(
+                            term, autoescape=True
+                        ),
+                    )
+                )
+                source_filters.append(
+                    or_(
+                        func.lower(KnowledgeSource.title).contains(
+                            term, autoescape=True
+                        ),
+                        evidence_match,
+                    )
+                )
+            source_candidates = list(
+                db.scalars(
+                    select(KnowledgeSource)
+                    .where(
+                        KnowledgeSource.space_id == space_id,
+                        KnowledgeSource.status == "active",
+                        and_(*source_filters),
+                    )
+                    .order_by(KnowledgeSource.updated_at.desc(), KnowledgeSource.id)
+                    .limit(limit)
+                )
+            )
+        sources = _load_search_sources(db, source_candidates)
 
     source_results = []
     for source, revision, evidence in sources:
@@ -338,12 +375,171 @@ def search_knowledge(
     return {
         "query": query.strip(),
         "scope": scope,
-        "method": "bounded_keyword_v1",
+        "method": method,
         "limit": limit,
         "entities": [entity_payload(item) for item in entities],
         "statements": [statement_payload(db, item) for item in statements],
         "sources": source_results,
     }
+
+
+def _sqlite_knowledge_fts_candidates(
+    db: Session, *, space_id: str, terms: list[str], scope: str, limit: int
+) -> dict[str, list[str]] | None:
+    bind = db.get_bind()
+    if bind.dialect.name != "sqlite":
+        return None
+    available_count = db.scalar(
+        text(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ("
+            "'knowledge_entity_fts', 'knowledge_statement_fts', "
+            "'knowledge_source_fts', 'knowledge_evidence_fts')"
+        )
+    )
+    if available_count != 4:
+        return None
+
+    match_queries = {f"match_{index}": f'"{term}"*' for index, term in enumerate(terms)}
+    match_query = " AND ".join(match_queries.values())
+    parameters: dict[str, Any] = {
+        "space_id": space_id,
+        "match_query": match_query,
+        "limit": limit,
+        **match_queries,
+    }
+    candidates = {"entities": [], "statements": [], "sources": []}
+    if scope in {"all", "wiki"}:
+        candidates["entities"] = list(
+            db.scalars(
+                text(
+                    "SELECT entity.id FROM knowledge_entity_fts "
+                    "JOIN knowledge_entities AS entity "
+                    "ON entity.rowid = knowledge_entity_fts.rowid "
+                    "WHERE knowledge_entity_fts MATCH :match_query "
+                    "AND entity.space_id = :space_id AND entity.status = 'active' "
+                    "ORDER BY bm25(knowledge_entity_fts), entity.canonical_name "
+                    "LIMIT :limit"
+                ),
+                parameters,
+            )
+        )
+    if scope in {"all", "statement"}:
+        statement_matches = " INTERSECT ".join(
+            (
+                "SELECT statement.id FROM knowledge_statements AS statement "
+                "WHERE statement.space_id = :space_id "
+                "AND NOT EXISTS (SELECT 1 FROM knowledge_statements AS successor "
+                "WHERE successor.supersedes_statement_id = statement.id) "
+                "AND (statement.rowid IN (SELECT rowid FROM knowledge_statement_fts "
+                f"WHERE knowledge_statement_fts MATCH :match_{index}) "
+                "OR statement.subject_entity_id IN ("
+                "SELECT entity.id FROM knowledge_entity_fts "
+                "JOIN knowledge_entities AS entity "
+                "ON entity.rowid = knowledge_entity_fts.rowid "
+                f"WHERE knowledge_entity_fts MATCH :match_{index}) "
+                "OR statement.object_entity_id IN ("
+                "SELECT entity.id FROM knowledge_entity_fts "
+                "JOIN knowledge_entities AS entity "
+                "ON entity.rowid = knowledge_entity_fts.rowid "
+                f"WHERE knowledge_entity_fts MATCH :match_{index}))"
+            )
+            for index in range(len(terms))
+        )
+        candidates["statements"] = list(
+            db.scalars(
+                text(
+                    f"WITH matched_statements AS ({statement_matches}) "
+                    "SELECT statement.id FROM knowledge_statements AS statement "
+                    "JOIN matched_statements ON matched_statements.id = statement.id "
+                    "ORDER BY statement.recorded_at DESC, statement.id LIMIT :limit"
+                ),
+                parameters,
+            )
+        )
+    if scope in {"all", "source"}:
+        source_matches = " INTERSECT ".join(
+            (
+                "SELECT source.id FROM knowledge_sources AS source "
+                "WHERE source.space_id = :space_id AND source.status = 'active' "
+                "AND (source.rowid IN (SELECT rowid FROM knowledge_source_fts "
+                f"WHERE knowledge_source_fts MATCH :match_{index}) "
+                "OR source.id IN (SELECT revision.source_id "
+                "FROM knowledge_evidence_fts "
+                "JOIN knowledge_evidence_segments AS evidence "
+                "ON evidence.rowid = knowledge_evidence_fts.rowid "
+                "JOIN knowledge_source_revisions AS revision "
+                "ON revision.id = evidence.source_revision_id "
+                f"WHERE knowledge_evidence_fts MATCH :match_{index} "
+                "AND revision.revision_number = ("
+                "SELECT MAX(latest.revision_number) "
+                "FROM knowledge_source_revisions AS latest "
+                "WHERE latest.source_id = revision.source_id)))"
+            )
+            for index in range(len(terms))
+        )
+        candidates["sources"] = list(
+            db.scalars(
+                text(
+                    f"WITH matched_sources AS ({source_matches}) "
+                    "SELECT source.id FROM knowledge_sources AS source "
+                    "JOIN matched_sources ON matched_sources.id = source.id "
+                    "ORDER BY source.updated_at DESC, source.id LIMIT :limit"
+                ),
+                parameters,
+            )
+        )
+    return candidates
+
+
+def _load_search_sources(
+    db: Session, source_candidates: list[KnowledgeSource]
+) -> list[
+    tuple[KnowledgeSource, KnowledgeSourceRevision, list[KnowledgeEvidenceSegment]]
+]:
+    source_ids = [source.id for source in source_candidates]
+    if not source_ids:
+        return []
+    latest = (
+        select(
+            KnowledgeSourceRevision.source_id.label("source_id"),
+            func.max(KnowledgeSourceRevision.revision_number).label("revision_number"),
+        )
+        .where(KnowledgeSourceRevision.source_id.in_(source_ids))
+        .group_by(KnowledgeSourceRevision.source_id)
+        .subquery()
+    )
+    revisions = list(
+        db.scalars(
+            select(KnowledgeSourceRevision).join(
+                latest,
+                and_(
+                    KnowledgeSourceRevision.source_id == latest.c.source_id,
+                    KnowledgeSourceRevision.revision_number
+                    == latest.c.revision_number,
+                ),
+            )
+        )
+    )
+    revision_by_source = {revision.source_id: revision for revision in revisions}
+    revision_ids = [revision.id for revision in revisions]
+    evidence_by_revision: dict[str, list[KnowledgeEvidenceSegment]] = {
+        revision_id: [] for revision_id in revision_ids
+    }
+    if revision_ids:
+        for segment in db.scalars(
+            select(KnowledgeEvidenceSegment)
+            .where(KnowledgeEvidenceSegment.source_revision_id.in_(revision_ids))
+            .order_by(
+                KnowledgeEvidenceSegment.source_revision_id,
+                KnowledgeEvidenceSegment.segment_ordinal,
+            )
+        ):
+            evidence_by_revision[segment.source_revision_id].append(segment)
+    return [
+        (source, revision, evidence_by_revision[revision.id])
+        for source in source_candidates
+        if (revision := revision_by_source.get(source.id)) is not None
+    ]
 
 
 def knowledge_auto_capture_payload(db: Session, user: User) -> dict[str, Any]:

@@ -11,6 +11,7 @@ from lumina.agent.executor import LocalRunExecutor, local_run_executor
 from lumina.config import Settings
 from lumina.db import SessionLocal
 from lumina.main import create_app
+from lumina.migrations import upgrade_database
 from lumina.models import Run
 from lumina.providers.mock import MockProvider
 
@@ -374,6 +375,16 @@ def test_personal_knowledge_source_statement_and_bounded_graph(tmp_path: Path) -
         assert second_statement.status_code == 201, second_statement.text
         assert second_statement.json()["revisionNumber"] == 2
 
+        fallback_search = client.post(
+            "/api/knowledge/search",
+            json={"spaceId": space_id, "query": "Lumina", "scope": "all"},
+        )
+        assert fallback_search.status_code == 200, fallback_search.text
+        assert fallback_search.json()["method"] == "bounded_keyword_v1"
+        assert len(fallback_search.json()["entities"]) == 1
+        assert len(fallback_search.json()["statements"]) == 1
+        assert len(fallback_search.json()["sources"]) == 1
+
         missing_evidence = client.post(
             f"/api/knowledge/spaces/{space_id}/statements",
             headers=headers,
@@ -446,6 +457,7 @@ def test_project_binding_pins_an_approved_revision_until_explicit_update(
         artifacts_dir=tmp_path / "artifacts",
         cookie_secure=False,
     )
+    upgrade_database(settings.database_url)
     with TestClient(create_app(settings)) as client:
         csrf = _login(client, "admin", "1")
         headers = {"X-CSRF-Token": csrf}
@@ -551,10 +563,40 @@ def test_project_binding_pins_an_approved_revision_until_explicit_update(
             json={"spaceId": space["id"], "query": "수소환원제철", "scope": "all"},
         )
         assert search_response.status_code == 200, search_response.text
-        assert search_response.json()["method"] == "bounded_keyword_v1"
+        assert search_response.json()["method"] == "sqlite_fts5_v1"
         assert len(search_response.json()["entities"]) == 1
         assert len(search_response.json()["statements"]) == 2
         assert len(search_response.json()["sources"]) == 1
+        prefix_search = client.post(
+            "/api/knowledge/search",
+            json={"spaceId": space["id"], "query": "수소환원", "scope": "all"},
+        )
+        assert prefix_search.status_code == 200, prefix_search.text
+        assert prefix_search.json()["method"] == "sqlite_fts5_v1"
+        assert len(prefix_search.json()["entities"]) == 1
+        assert len(prefix_search.json()["statements"]) == 2
+        assert len(prefix_search.json()["sources"]) == 1
+        relationship_search = client.post(
+            "/api/knowledge/search",
+            json={
+                "spaceId": space["id"],
+                "query": "수소환원 REDUCES",
+                "scope": "statement",
+            },
+        )
+        assert relationship_search.status_code == 200, relationship_search.text
+        assert len(relationship_search.json()["statements"]) == 1
+        assert relationship_search.json()["statements"][0]["predicateKey"] == "REDUCES"
+        cross_field_source_search = client.post(
+            "/api/knowledge/search",
+            json={
+                "spaceId": space["id"],
+                "query": "고정 수소환원",
+                "scope": "source",
+            },
+        )
+        assert cross_field_source_search.status_code == 200
+        assert len(cross_field_source_search.json()["sources"]) == 1
 
         pinned_run_id = _start_knowledge_run(
             client,

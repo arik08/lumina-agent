@@ -5,7 +5,7 @@ from pathlib import Path
 from alembic import command
 from alembic.config import Config
 from alembic.migration import MigrationContext
-from sqlalchemy import create_engine, inspect, select
+from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.orm import Session
 
 from lumina.db import Base
@@ -49,6 +49,12 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
         }
         with engine.connect() as connection:
             revision = MigrationContext.configure(connection).get_current_revision()
+            knowledge_fts_trigger_count = connection.scalar(
+                text(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' "
+                    "AND name LIKE 'trg_knowledge_%_fts_%'"
+                )
+            )
     finally:
         engine.dispose()
 
@@ -96,6 +102,10 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
         "knowledge_pages",
         "knowledge_page_revisions",
         "knowledge_project_bindings",
+        "knowledge_entity_fts",
+        "knowledge_statement_fts",
+        "knowledge_source_fts",
+        "knowledge_evidence_fts",
     } <= tables
     assert {"concept_revision", "concept_hash"} <= project_columns
     assert {
@@ -120,6 +130,40 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
     } <= user_columns
     assert "creator_user_id" in extension_columns
     assert "is_liked" in conversation_columns
+    assert knowledge_fts_trigger_count == 12
+    assert revision == "0039"
+
+
+def test_knowledge_fts_migration_0039_round_trip(tmp_path: Path) -> None:
+    database = tmp_path / "knowledge-fts-round-trip.db"
+    database_url = f"sqlite:///{database.as_posix()}"
+    upgrade_database(database_url, "0039")
+
+    config = Config(str(SERVER_ROOT / "alembic.ini"))
+    config.attributes["database_url"] = database_url
+    command.downgrade(config, "0038")
+
+    engine = create_engine(database_url)
+    try:
+        tables = set(inspect(engine).get_table_names())
+        with engine.connect() as connection:
+            revision = MigrationContext.configure(connection).get_current_revision()
+            trigger_count = connection.scalar(
+                text(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' "
+                    "AND name LIKE 'trg_knowledge_%_fts_%'"
+                )
+            )
+    finally:
+        engine.dispose()
+
+    assert not {
+        "knowledge_entity_fts",
+        "knowledge_statement_fts",
+        "knowledge_source_fts",
+        "knowledge_evidence_fts",
+    } & tables
+    assert trigger_count == 0
     assert revision == "0038"
 
 
@@ -207,7 +251,7 @@ def test_structured_plan_migration_round_trip(tmp_path: Path) -> None:
         assert {"plans", "plan_steps"} <= set(inspect(engine).get_table_names())
         with engine.connect() as connection:
             assert (
-                MigrationContext.configure(connection).get_current_revision() == "0038"
+                MigrationContext.configure(connection).get_current_revision() == "0039"
             )
     finally:
         engine.dispose()
@@ -257,7 +301,7 @@ def test_context_compaction_memory_learning_migration_round_trip(
         }
         with engine.connect() as connection:
             assert (
-                MigrationContext.configure(connection).get_current_revision() == "0038"
+                MigrationContext.configure(connection).get_current_revision() == "0039"
             )
     finally:
         engine.dispose()
@@ -289,7 +333,7 @@ def test_context_migration_adopts_legacy_create_all_table(tmp_path: Path) -> Non
         }
         with engine.connect() as connection:
             assert (
-                MigrationContext.configure(connection).get_current_revision() == "0038"
+                MigrationContext.configure(connection).get_current_revision() == "0039"
             )
     finally:
         engine.dispose()
@@ -319,7 +363,7 @@ def test_recent_migrations_adopt_tables_precreated_by_runtime_schema(
     try:
         with engine.connect() as connection:
             revision = MigrationContext.configure(connection).get_current_revision()
-        assert revision == "0038"
+        assert revision == "0039"
     finally:
         engine.dispose()
 

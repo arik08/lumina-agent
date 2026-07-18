@@ -536,7 +536,7 @@ SQLite는 초기 구현에 충분합니다.
 
 - Entity, Statement, Evidence와 Revision은 일반 관계형 테이블로 저장합니다.
 - [recursive CTE](https://www.sqlite.org/lang_with.html)로 제한된 깊이의 graph traversal을 구현합니다.
-- [FTS5](https://www.sqlite.org/fts5.html)로 Source, Wiki Page와 Statement text를 검색합니다.
+- [FTS5](https://www.sqlite.org/fts5.html) external-content index와 DB trigger로 Entity, Statement predicate/literal, Source 제목과 Evidence text를 증분 검색합니다.
 - 현재 Lumina의 `PRAGMA foreign_keys=ON`, WAL, busy timeout 설정을 그대로 사용합니다.
 - WAL은 reader와 writer의 상호 차단을 줄이지만 writer는 사실상 직렬화되므로 추출 worker 수를 제한하고 transaction을 짧게 유지합니다.
 
@@ -546,7 +546,7 @@ SQLite MVP 제약은 다음과 같습니다.
 - LLM 호출 중 DB transaction을 열어 두지 않습니다.
 - 후보 추출은 transaction 밖에서 수행하고 짧은 CAS transaction으로 적용합니다.
 - 그래프 탐색 기본 깊이는 3, node/edge 결과 상한을 둡니다.
-- FTS5가 없는 빌드는 startup diagnostics에서 감지하고 LIKE fallback이 아니라 기능 비활성 상태를 명확히 표시합니다.
+- FTS5 table이 없는 개발·호환 DB는 응답의 `retrieval_method`를 `bounded_keyword_v1`으로 표시하고 제한된 lexical query로 fallback합니다. 제품 배포용 SQLite는 startup diagnostics에서 FTS5 migration 상태를 확인합니다.
 - 대규모 vector를 JSON으로 저장해 SQL에서 거리 계산하지 않습니다.
 
 ### 8.2 운영 전환: PostgreSQL
@@ -771,7 +771,7 @@ Project Binding은 승인된 `KnowledgeRevision`만 연결하며 `(project_id, s
 
 일반 Agent Run을 만들 때는 Project에 연결된 각 고정 revision 이하의 현재 승인 Statement를 질문과 lexical matching해 `knowledge-context-pack-v1` snapshot으로 저장합니다. 기본 상한은 24개 Statement와 16,000자이며, 관련 항목이 하나도 없으면 최신 4개만 fallback으로 사용합니다. Pack은 binding/revision/digest, Statement ID, Entity 관계, Evidence segment, Source revision, locator와 text digest를 포함하고 자체 digest를 계산합니다. 이 snapshot은 `prompt_prefix_hash`에도 포함되므로 이후 Binding이 바뀌어도 기존 Run의 입력은 변하지 않습니다. Agent system context에는 Evidence를 비신뢰 자료로 명시해 원문 속 지시를 실행하지 않도록 하며, `POST /api/knowledge/context-packs`도 같은 권한 검사·검색·예산 로직을 재사용합니다.
 
-탐색 화면은 `POST /api/knowledge/search`를 250ms debounce와 요청 취소로 호출합니다. Backend는 매 요청마다 Space의 소유자·조직 공개·Project Binding 읽기 권한을 다시 검사하고, query는 최대 2,000자, 결과는 종류별 기본 20개·최대 50개로 제한합니다. 현재 `bounded_keyword_v1`은 두 글자 이상인 모든 검색 token이 Entity 이름·설명, Statement의 Entity 관계 또는 Source 제목·최신 Evidence에 포함되는지 DB query에서 검사해 종류별 상한까지만 객체화하며, 검색 응답의 Evidence 본문은 segment당 1,200자로 잘라 전송합니다. 이는 SQLite 개발 단계의 서버 검색 계약과 메모리 상한을 먼저 고정한 구현이며, 아래의 FTS5와 PostgreSQL FTS 인덱스 기반 후보 검색은 아직 후속 작업입니다.
+탐색 화면은 `POST /api/knowledge/search`를 250ms debounce와 요청 취소로 호출합니다. Backend는 매 요청마다 Space의 소유자·조직 공개·Project Binding 읽기 권한을 다시 검사하고, query는 최대 2,000자, 중복 제거 후 검색 token은 최대 16개, 결과는 종류별 기본 20개·최대 50개로 제한합니다. SQLite migration `0039`는 external-content FTS5 index 4개와 insert/update/delete trigger 12개를 만들며 `sqlite_fts5_v1`은 한국어를 포함한 token prefix 검색을 사용합니다. 다중 token은 후보 ID를 교집합해 Entity 이름과 predicate, Source 제목과 Evidence처럼 서로 다른 필드에 걸친 질의도 유지합니다. Entity 이름·설명, Statement의 Entity 관계·predicate·literal, Source 제목·최신 Evidence에서 후보 ID만 먼저 조회하고 필요한 ORM 객체만 materialize하며, Source의 최신 revision과 Evidence는 결과 수와 무관하게 각각 한 번의 batch query로 가져옵니다. 검색 응답의 Evidence 본문은 segment당 1,200자로 잘라 전송합니다. FTS table이 없는 호환 DB에서는 같은 권한과 상한을 지키는 `bounded_keyword_v1`으로 fallback하고, PostgreSQL FTS는 운영 전환 단계에서 같은 API 계약 뒤에 연결합니다.
 
 ## 12. 보안, 품질과 감사
 

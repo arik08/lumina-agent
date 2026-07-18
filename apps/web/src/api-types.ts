@@ -523,7 +523,7 @@ export interface KnowledgeNeighborhood {
 export interface KnowledgeSearchResponse {
   query: string;
   scope: "all" | "wiki" | "statement" | "source";
-  method: "bounded_keyword_v1";
+  method: "bounded_keyword_v1" | "sqlite_fts5_v1";
   limit: number;
   entities: KnowledgeEntity[];
   statements: KnowledgeStatement[];
