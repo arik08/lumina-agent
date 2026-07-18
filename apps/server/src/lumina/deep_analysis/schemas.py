@@ -106,6 +106,32 @@ class MissionExportResponse(ApiModel):
     updated_at: datetime
 
 
+class WorkflowDraftCreate(ApiModel):
+    expected_revision: int = Field(ge=1)
+
+
+class WorkflowDraftNode(ApiModel):
+    node_key: str = Field(min_length=1, max_length=32)
+    node_type: str = Field(min_length=1, max_length=40)
+    title: str = Field(min_length=1, max_length=240)
+    purpose: str = Field(default="", max_length=20_000)
+    position_x: int = Field(ge=-100_000, le=100_000)
+    position_y: int = Field(ge=-100_000, le=100_000)
+    config: dict[str, Any] = Field(default_factory=dict)
+    estimated_cost_microusd: int = Field(default=0, ge=0)
+
+
+class WorkflowDraftEdge(ApiModel):
+    source_node_key: str = Field(min_length=1, max_length=32)
+    target_node_key: str = Field(min_length=1, max_length=32)
+
+
+class WorkflowDraftPatch(ApiModel):
+    expected_revision: int = Field(ge=1)
+    nodes: list[WorkflowDraftNode] = Field(min_length=1, max_length=200)
+    edges: list[WorkflowDraftEdge] = Field(default_factory=list, max_length=1000)
+
+
 class DecisionAnswer(ApiModel):
     expected_revision: int = Field(ge=1)
     selected_option_id: str = Field(min_length=1, max_length=64)

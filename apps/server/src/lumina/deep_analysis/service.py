@@ -877,6 +877,145 @@ def active_workflow(
     return revision, nodes, edges
 
 
+def workflow_revision(
+    db: Session, revision: DeepAnalysisWorkflowRevision
+) -> tuple[list[DeepAnalysisWorkflowNode], list[DeepAnalysisWorkflowEdge]]:
+    nodes = list(
+        db.scalars(
+            select(DeepAnalysisWorkflowNode)
+            .where(DeepAnalysisWorkflowNode.workflow_revision_id == revision.id)
+            .order_by(DeepAnalysisWorkflowNode.sequence)
+        )
+    )
+    edges = list(
+        db.scalars(
+            select(DeepAnalysisWorkflowEdge)
+            .where(DeepAnalysisWorkflowEdge.workflow_revision_id == revision.id)
+            .order_by(DeepAnalysisWorkflowEdge.source_node_key, DeepAnalysisWorkflowEdge.target_node_key)
+        )
+    )
+    return nodes, edges
+
+
+def create_workflow_draft(
+    db: Session,
+    mission: DeepAnalysisMission,
+    *,
+    expected_revision: int,
+) -> DeepAnalysisWorkflowRevision:
+    if mission.revision != expected_revision:
+        raise ApiProblem(409, "revision_conflict", "다른 변경사항이 먼저 저장되었습니다.", details={"currentRevision": mission.revision})
+    if mission.status not in {"draft", "ready"}:
+        raise ApiProblem(409, "workflow_edit_not_allowed", "실행 전 Mission만 Workflow를 편집할 수 있습니다.")
+    existing = db.scalar(
+        select(DeepAnalysisWorkflowRevision).where(
+            DeepAnalysisWorkflowRevision.mission_id == mission.id,
+            DeepAnalysisWorkflowRevision.state == "draft",
+        )
+    )
+    if existing is not None:
+        return existing
+    source, nodes, edges = active_workflow(db, mission.id)
+    number = db.scalar(
+        select(DeepAnalysisWorkflowRevision.revision_number)
+        .where(DeepAnalysisWorkflowRevision.mission_id == mission.id)
+        .order_by(DeepAnalysisWorkflowRevision.revision_number.desc())
+    ) or 0
+    draft = DeepAnalysisWorkflowRevision(
+        mission_id=mission.id,
+        revision_number=number + 1,
+        state="draft",
+        source="manual",
+        reason=f"active_revision_{source.revision_number}_edited",
+        graph_digest=source.graph_digest,
+        change_log_json=[*source.change_log_json, {"revision": number + 1, "action": "draft_created", "graphChanged": False, "createdAt": utc_now().isoformat()}],
+    )
+    db.add(draft)
+    db.flush()
+    for node in nodes:
+        db.add(DeepAnalysisWorkflowNode(
+            workflow_revision_id=draft.id, node_key=node.node_key, node_type=node.node_type,
+            title=node.title, purpose=node.purpose, status="planned", sequence=node.sequence,
+            position_x=node.position_x, position_y=node.position_y, config_json=node.config_json,
+            estimated_cost_microusd=node.estimated_cost_microusd,
+        ))
+    for edge in edges:
+        db.add(DeepAnalysisWorkflowEdge(
+            workflow_revision_id=draft.id, source_node_key=edge.source_node_key,
+            target_node_key=edge.target_node_key, edge_type=edge.edge_type,
+        ))
+    db.flush()
+    return draft
+
+
+def update_workflow_draft(
+    db: Session,
+    mission: DeepAnalysisMission,
+    *,
+    expected_revision: int,
+    nodes_payload: list[dict[str, object]],
+    edges_payload: list[dict[str, str]],
+) -> DeepAnalysisWorkflowRevision:
+    draft = create_workflow_draft(db, mission, expected_revision=expected_revision)
+    keys = [str(item["nodeKey"]) for item in nodes_payload]
+    if len(keys) != len(set(keys)) or not keys:
+        raise ApiProblem(422, "invalid_workflow_nodes", "Node key는 비어 있지 않고 중복될 수 없습니다.")
+    if not any(str(item["nodeType"]) == "report" for item in nodes_payload):
+        raise ApiProblem(422, "workflow_report_required", "Workflow에는 report Node가 하나 이상 필요합니다.")
+    edge_pairs = [(item["sourceNodeKey"], item["targetNodeKey"]) for item in edges_payload]
+    if len(edge_pairs) != len(set(edge_pairs)) or any(source not in keys or target not in keys or source == target for source, target in edge_pairs):
+        raise ApiProblem(422, "invalid_workflow_edges", "연결은 존재하는 서로 다른 Node 사이에서 중복 없이 만들어야 합니다.")
+    adjacency: dict[str, list[str]] = {key: [] for key in keys}
+    indegree = {key: 0 for key in keys}
+    for source, target in edge_pairs:
+        adjacency[source].append(target)
+        indegree[target] += 1
+    queue = [key for key, degree in indegree.items() if degree == 0]
+    visited = 0
+    while queue:
+        key = queue.pop()
+        visited += 1
+        for target in adjacency[key]:
+            indegree[target] -= 1
+            if indegree[target] == 0:
+                queue.append(target)
+    if visited != len(keys):
+        raise ApiProblem(422, "workflow_cycle", "Workflow 연결에는 순환이 없어야 합니다.")
+    db.execute(delete(DeepAnalysisWorkflowEdge).where(DeepAnalysisWorkflowEdge.workflow_revision_id == draft.id))
+    db.execute(delete(DeepAnalysisWorkflowNode).where(DeepAnalysisWorkflowNode.workflow_revision_id == draft.id))
+    for sequence, item in enumerate(nodes_payload, start=1):
+        db.add(DeepAnalysisWorkflowNode(
+            workflow_revision_id=draft.id, node_key=str(item["nodeKey"]), node_type=str(item["nodeType"]),
+            title=str(item["title"]), purpose=str(item.get("purpose") or ""), status="planned", sequence=sequence,
+            position_x=int(item["positionX"]), position_y=int(item["positionY"]),
+            config_json=dict(item.get("config") or {}), estimated_cost_microusd=int(item.get("estimatedCostMicrousd") or 0),
+        ))
+    for source, target in edge_pairs:
+        db.add(DeepAnalysisWorkflowEdge(workflow_revision_id=draft.id, source_node_key=source, target_node_key=target, edge_type="sequence"))
+    db.flush()
+    nodes, edges = workflow_revision(db, draft)
+    draft.graph_digest = graph_digest(nodes, edges)
+    draft.change_log_json = [*draft.change_log_json, {"revision": draft.revision_number, "action": "manual_edit", "graphChanged": True, "createdAt": utc_now().isoformat()}]
+    db.flush()
+    return draft
+
+
+def activate_workflow_draft(
+    db: Session, mission: DeepAnalysisMission, *, expected_revision: int
+) -> DeepAnalysisWorkflowRevision:
+    if mission.revision != expected_revision:
+        raise ApiProblem(409, "revision_conflict", "다른 변경사항이 먼저 저장되었습니다.", details={"currentRevision": mission.revision})
+    draft = db.scalar(select(DeepAnalysisWorkflowRevision).where(DeepAnalysisWorkflowRevision.mission_id == mission.id, DeepAnalysisWorkflowRevision.state == "draft"))
+    if draft is None:
+        raise ApiProblem(409, "workflow_draft_missing", "활성화할 Workflow Draft가 없습니다.")
+    active, _nodes, _edges = active_workflow(db, mission.id)
+    active.state = "archived"
+    draft.state = "active"
+    mission.revision += 1
+    db.flush()
+    return draft
+
+
 def upgrade_legacy_draft_workflow(
     db: Session, mission: DeepAnalysisMission
 ) -> bool:
@@ -893,5 +1032,11 @@ def upgrade_legacy_draft_workflow(
         mission,
         workflow=workflow,
         action="legacy_upgraded",
-    )
+        )
+    if mission.status not in {"draft", "ready"}:
+        raise ApiProblem(
+            409,
+            "workflow_edit_not_allowed",
+            "실행 전 Mission만 Workflow Draft를 활성화할 수 있습니다.",
+        )
     return True

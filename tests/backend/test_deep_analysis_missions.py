@@ -832,6 +832,72 @@ def test_mission_export_contains_portable_records_and_verified_checksums(
                 assert len(content) == metadata["sizeBytes"]
 
 
+def test_workflow_draft_is_separate_validated_and_activated_atomically(
+    tmp_path: Path,
+) -> None:
+    with TestClient(create_app(_settings(tmp_path))) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        created = client.post(
+            f"/api/projects/{project_id}/deep-analysis/missions",
+            headers=headers,
+            json={"title": "Draft 편집 검증", "objective": "분기와 합류를 편집한다."},
+        ).json()
+        active_id = created["workflow"]["id"]
+        draft_response = client.post(
+            f"/api/deep-analysis/missions/{created['id']}/revisions",
+            headers=headers,
+            json={"expectedRevision": 1},
+        )
+        assert draft_response.status_code == 201, draft_response.text
+        draft = draft_response.json()
+        assert draft["state"] == "draft"
+        assert draft["id"] != active_id
+        nodes = draft["nodes"]
+        edges = draft["edges"]
+        nodes[0]["positionX"] += 75
+        payload_nodes = [
+            {
+                "nodeKey": node["nodeKey"], "nodeType": node["nodeType"],
+                "title": node["title"], "purpose": node["purpose"],
+                "positionX": node["positionX"], "positionY": node["positionY"],
+                "config": node["config"],
+                "estimatedCostMicrousd": node["estimatedCostMicrousd"],
+            }
+            for node in nodes
+        ]
+        cycle = client.patch(
+            f"/api/deep-analysis/missions/{created['id']}/draft",
+            headers=headers,
+            json={"expectedRevision": 1, "nodes": payload_nodes, "edges": [
+                {"sourceNodeKey": nodes[0]["nodeKey"], "targetNodeKey": nodes[1]["nodeKey"]},
+                {"sourceNodeKey": nodes[1]["nodeKey"], "targetNodeKey": nodes[0]["nodeKey"]},
+            ]},
+        )
+        assert cycle.status_code == 422
+        saved = client.patch(
+            f"/api/deep-analysis/missions/{created['id']}/draft",
+            headers=headers,
+            json={"expectedRevision": 1, "nodes": payload_nodes, "edges": [
+                {"sourceNodeKey": edge["sourceNodeKey"], "targetNodeKey": edge["targetNodeKey"]}
+                for edge in edges
+            ]},
+        )
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["nodes"][0]["positionX"] == nodes[0]["positionX"]
+        activated = client.post(
+            f"/api/deep-analysis/missions/{created['id']}/draft/activate",
+            headers=headers,
+            json={"expectedRevision": 1},
+        )
+        assert activated.status_code == 200, activated.text
+        assert activated.json()["revision"] == 2
+        assert activated.json()["workflow"]["id"] == draft["id"]
+        with SessionLocal() as db:
+            previous = db.get(DeepAnalysisWorkflowRevision, active_id)
+            assert previous is not None and previous.state == "archived"
+
+
 def test_mission_endpoints_require_auth_and_project_access(tmp_path: Path) -> None:
     with TestClient(create_app(_settings(tmp_path))) as client:
         assert (

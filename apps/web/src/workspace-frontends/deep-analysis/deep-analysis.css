@@ -216,6 +216,17 @@
 .deep-analysis-run-feedback.is-cancelled > svg { color: var(--danger); }
 .deep-analysis-run-feedback.is-unavailable > svg { color: var(--muted); }
 
+.deep-analysis-workflow-editor { display: flex; min-height: 46px; align-items: center; gap: 7px; padding: 7px 16px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.deep-analysis-workflow-editor.is-editing { background: var(--cobalt-pale); }
+.deep-analysis-workflow-editor > div { display: flex; min-width: 0; flex: 1; align-items: center; gap: 8px; }
+.deep-analysis-workflow-editor > div > svg { flex: none; color: var(--cobalt); }
+.deep-analysis-workflow-editor > div > span { display: grid; min-width: 0; gap: 2px; }
+.deep-analysis-workflow-editor strong { color: var(--ink); font-size: 10.5px; }
+.deep-analysis-workflow-editor small { overflow: hidden; color: var(--muted); font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
+.deep-analysis-workflow-editor > button { display: inline-flex; min-height: 28px; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: var(--radius-control); padding: 0 8px; background: var(--surface); color: var(--ink); font-size: 10px; font-weight: 620; cursor: pointer; }
+.deep-analysis-workflow-editor > button.is-primary { border-color: var(--cobalt); background: var(--cobalt); color: white; }
+.deep-analysis-workflow-editor > button:disabled { opacity: .45; cursor: default; }
+
 .deep-analysis-node-origin { display: flex; align-items: flex-start; gap: 5px; margin-top: 8px; color: var(--muted); font-size: 10.5px; line-height: 1.45; }
 .deep-analysis-node-origin svg { flex: none; margin-top: 1px; color: var(--cobalt); }
 
@@ -281,6 +292,7 @@
 
 .deep-analysis-node { position: absolute; display: grid; width: 176px; min-height: 86px; gap: 6px; border: 1px solid var(--line-strong); border-radius: var(--radius-select); padding: 10px 11px; background: var(--surface); box-shadow: 0 2px 7px color-mix(in srgb, var(--ink) 7%, transparent); text-align: left; cursor: pointer; transition: border-color var(--motion-fast), box-shadow var(--motion-fast), transform var(--motion-fast); }
 .deep-analysis-node:hover { border-color: color-mix(in srgb, var(--cobalt) 40%, var(--line)); transform: translateY(-1px); }
+.deep-analysis-node.is-editable { cursor: move; touch-action: none; }
 .deep-analysis-node.is-selected { border-color: var(--cobalt); box-shadow: 0 0 0 2px color-mix(in srgb, var(--cobalt) 12%, transparent), 0 3px 9px color-mix(in srgb, var(--ink) 8%, transparent); }
 .deep-analysis-node > span { display: flex; align-items: center; gap: 5px; color: var(--cobalt); font-size: 10.5px; font-weight: 650; }
 .deep-analysis-node > strong { overflow: hidden; color: var(--ink); font-size: 12px; font-weight: 670; text-overflow: ellipsis; white-space: nowrap; }
@@ -301,6 +313,15 @@
 .deep-analysis-inspector > section { padding: 14px 15px; border-bottom: 1px solid var(--line); }
 .deep-analysis-inspector h3 { margin: 0 0 7px; font-size: 11px; }
 .deep-analysis-inspector p { margin: 0; color: var(--muted); font-size: 11.5px; line-height: 1.55; }
+.deep-analysis-node-edit-field { display: grid; gap: 5px; margin-bottom: 9px; color: var(--muted); font-size: 9.5px; font-weight: 620; }
+.deep-analysis-node-edit-field input,
+.deep-analysis-node-edit-field textarea { width: 100%; border: 1px solid var(--line); border-radius: var(--radius-field); padding: 7px 8px; background: var(--canvas); color: var(--ink); font-size: 10.5px; line-height: 1.45; resize: vertical; }
+.deep-analysis-node-dependencies > p { margin-bottom: 8px; font-size: 9.5px; }
+.deep-analysis-node-dependencies > label { display: flex; align-items: center; gap: 7px; border-top: 1px solid var(--line); padding: 7px 0; color: var(--muted); font-size: 9.5px; cursor: pointer; }
+.deep-analysis-node-dependencies > label input { margin: 0; accent-color: var(--cobalt); }
+.deep-analysis-node-dependencies > label span { display: flex; min-width: 0; gap: 6px; }
+.deep-analysis-node-dependencies > label b { color: var(--cobalt); }
+.deep-analysis-node-dependencies > button { display: flex; width: 100%; min-height: 28px; align-items: center; justify-content: center; gap: 5px; margin-top: 8px; border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--line)); border-radius: var(--radius-control); background: var(--surface); color: var(--danger); font-size: 10px; cursor: pointer; }
 .deep-analysis-inspector .deep-analysis-node-progress { display: flex; align-items: center; gap: 6px; color: var(--cobalt); }
 .deep-analysis-inspector .deep-analysis-node-error { color: var(--danger); }
 .deep-analysis-live-output { overflow: auto; max-height: 180px; margin: 9px 0 0; border: 1px solid var(--line); border-radius: var(--radius-field); padding: 9px; background: var(--canvas); color: var(--muted); font-family: var(--font-mono); font-size: 10px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }

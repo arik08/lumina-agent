@@ -39,6 +39,7 @@ import type {
   DeepAnalysisMissionExport,
   DeepAnalysisMissionSummary,
   DeepAnalysisOpenIssue,
+  DeepAnalysisWorkflowRevision,
   KnowledgeEntity,
   KnowledgeNeighborhood,
   KnowledgeSource,
@@ -82,6 +83,7 @@ import type {
   UpdateProjectRequest,
   UpdateConversationRequest,
   UpdateDeepAnalysisMissionRequest,
+  UpdateDeepAnalysisWorkflowDraftRequest,
   UpdateCurrentSettingsRequest,
   ConversationListItem,
   ComposerSuggestion,
@@ -1296,6 +1298,36 @@ export async function downloadDeepAnalysisMissionExport(
   };
 }
 
+export async function createDeepAnalysisWorkflowDraft(
+  missionId: string,
+  expectedRevision: number,
+) {
+  return request<DeepAnalysisWorkflowRevision>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/revisions`,
+    { method: "POST", body: { expectedRevision } },
+  );
+}
+
+export async function updateDeepAnalysisWorkflowDraft(
+  missionId: string,
+  payload: UpdateDeepAnalysisWorkflowDraftRequest,
+) {
+  return request<DeepAnalysisWorkflowRevision>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/draft`,
+    { method: "PATCH", body: payload },
+  );
+}
+
+export async function activateDeepAnalysisWorkflowDraft(
+  missionId: string,
+  expectedRevision: number,
+) {
+  return request<DeepAnalysisMissionDetail>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/draft/activate`,
+    { method: "POST", body: { expectedRevision } },
+  );
+}
+
 export async function startDeepAnalysisMission(
   missionId: string,
   payload: StartDeepAnalysisMissionRequest,
@@ -2251,6 +2283,9 @@ export const api = {
     getOpenIssues: getDeepAnalysisOpenIssues,
     createExport: createDeepAnalysisMissionExport,
     downloadExport: downloadDeepAnalysisMissionExport,
+    createDraft: createDeepAnalysisWorkflowDraft,
+    updateDraft: updateDeepAnalysisWorkflowDraft,
+    activateDraft: activateDeepAnalysisWorkflowDraft,
     startMission: startDeepAnalysisMission,
     cancelMission: cancelDeepAnalysisMission,
     retryMission: retryDeepAnalysisMission,

@@ -22,6 +22,7 @@ from ...deep_analysis.models import (
     DeepAnalysisMissionExport,
     DeepAnalysisOpenIssue,
     DeepAnalysisQualityGateResult,
+    DeepAnalysisWorkflowRevision,
 )
 from ...deep_analysis.ledger import list_claims, list_evidence, list_open_issues
 from ...deep_analysis.schemas import (
@@ -40,12 +41,17 @@ from ...deep_analysis.schemas import (
     MissionStart,
     MissionSummaryResponse,
     OpenIssueResponse,
+    WorkflowDraftCreate,
+    WorkflowDraftPatch,
+    WorkflowRevisionResponse,
 )
 from ...deep_analysis.service import (
     active_workflow,
+    activate_workflow_draft,
     answer_decision,
     cancel_mission,
     create_mission,
+    create_workflow_draft,
     delete_mission,
     execution_engine_available,
     list_decisions,
@@ -55,7 +61,9 @@ from ...deep_analysis.service import (
     run_quality_gate,
     start_mission,
     update_mission,
+    update_workflow_draft,
     upgrade_legacy_draft_workflow,
+    workflow_revision,
 )
 from ...deep_analysis.quality import list_quality_gates
 from ...models import Run, User
@@ -232,6 +240,45 @@ def _summary_payload(mission: DeepAnalysisMission) -> dict[str, object]:
     }
 
 
+def _workflow_revision_payload(
+    db: Session, revision: DeepAnalysisWorkflowRevision
+) -> dict[str, object]:
+    nodes, edges = workflow_revision(db, revision)
+    runs = {
+        run.id: run
+        for run in db.query(Run).filter(Run.id.in_([node.run_id for node in nodes if node.run_id]))
+    }
+    return {
+        "id": revision.id,
+        "revision_number": revision.revision_number,
+        "state": revision.state,
+        "source": revision.source,
+        "reason": revision.reason,
+        "graph_digest": revision.graph_digest,
+        "change_log": revision.change_log_json,
+        "nodes": [
+            {
+                "id": node.id, "node_key": node.node_key, "node_type": node.node_type,
+                "title": node.title, "purpose": node.purpose, "status": node.status,
+                "sequence": node.sequence, "position_x": node.position_x, "position_y": node.position_y,
+                "config": node.config_json, "run_id": node.run_id,
+                "output_project_file_id": node.output_project_file_id, "output_logical_path": node.output_logical_path,
+                "output_summary": node.output_summary, "output_markdown": node.output_markdown,
+                "generated_files": node.generated_files_json, "run_history": node.run_history_json,
+                "run_status": runs[node.run_id].status if node.run_id and node.run_id in runs else None,
+                "live_output": "", "error_message": node.error_message,
+                "estimated_cost_microusd": node.estimated_cost_microusd,
+                "actual_cost_microusd": node.actual_cost_microusd,
+                "started_at": node.started_at, "finished_at": node.finished_at,
+            }
+            for node in nodes
+        ],
+        "edges": [{"id": edge.id, "source_node_key": edge.source_node_key, "target_node_key": edge.target_node_key, "edge_type": edge.edge_type} for edge in edges],
+        "created_at": revision.created_at,
+        "updated_at": revision.updated_at,
+    }
+
+
 def _detail_payload(db: Session, mission: DeepAnalysisMission) -> dict[str, object]:
     revision, nodes, edges = active_workflow(db, mission.id)
     runs = {
@@ -389,6 +436,61 @@ def get_mission(
     mission = require_mission(db, user, mission_id)
     if upgrade_legacy_draft_workflow(db, mission):
         db.commit()
+    return _detail_payload(db, mission)
+
+
+@router.post(
+    "/deep-analysis/missions/{mission_id}/revisions",
+    response_model=WorkflowRevisionResponse,
+    status_code=201,
+)
+def post_workflow_draft(
+    mission_id: str,
+    payload: WorkflowDraftCreate,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    mission = require_mission(db, context.user, mission_id, write=True)
+    draft = create_workflow_draft(db, mission, expected_revision=payload.expected_revision)
+    db.commit()
+    return _workflow_revision_payload(db, draft)
+
+
+@router.patch(
+    "/deep-analysis/missions/{mission_id}/draft",
+    response_model=WorkflowRevisionResponse,
+)
+def patch_workflow_draft(
+    mission_id: str,
+    payload: WorkflowDraftPatch,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    mission = require_mission(db, context.user, mission_id, write=True)
+    draft = update_workflow_draft(
+        db,
+        mission,
+        expected_revision=payload.expected_revision,
+        nodes_payload=[item.model_dump(by_alias=True) for item in payload.nodes],
+        edges_payload=[item.model_dump(by_alias=True) for item in payload.edges],
+    )
+    db.commit()
+    return _workflow_revision_payload(db, draft)
+
+
+@router.post(
+    "/deep-analysis/missions/{mission_id}/draft/activate",
+    response_model=MissionDetailResponse,
+)
+def post_workflow_draft_activate(
+    mission_id: str,
+    payload: WorkflowDraftCreate,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    mission = require_mission(db, context.user, mission_id, write=True)
+    activate_workflow_draft(db, mission, expected_revision=payload.expected_revision)
+    db.commit()
     return _detail_payload(db, mission)
 
 

@@ -35,6 +35,7 @@ import type {
   DeepAnalysisMissionDetail,
   DeepAnalysisMissionSummary,
   DeepAnalysisWorkflowNode,
+  DeepAnalysisWorkflowRevision,
 } from "../../api-types";
 import "./deep-analysis.css";
 
@@ -142,6 +143,11 @@ export function DeepAnalysisView({
   const [exportScope, setExportScope] = useState<"latest" | "report_evidence" | "audit">("latest");
   const [exportIncludeOriginals, setExportIncludeOriginals] = useState(false);
   const [activeTab, setActiveTab] = useState<"workflow" | "evidence">("workflow");
+  const [workflowDraft, setWorkflowDraft] = useState<DeepAnalysisWorkflowRevision | null>(null);
+  const [workflowDraftDirty, setWorkflowDraftDirty] = useState(false);
+  const [editingWorkflow, setEditingWorkflow] = useState(false);
+  const [savingWorkflow, setSavingWorkflow] = useState(false);
+  const [activatingWorkflow, setActivatingWorkflow] = useState(false);
   const [charterDraft, setCharterDraft] = useState<DeepAnalysisMissionCharter | null>(null);
   const [completionDraft, setCompletionDraft] = useState<DeepAnalysisCompletionContract | null>(null);
   const [canvasScale, setCanvasScale] = useState(1);
@@ -155,12 +161,23 @@ export function DeepAnalysisView({
     offsetX: number;
     offsetY: number;
   } | null>(null);
+  const nodeDragRef = useRef<{
+    pointerId: number;
+    nodeKey: string;
+    clientX: number;
+    clientY: number;
+    positionX: number;
+    positionY: number;
+    moved: boolean;
+  } | null>(null);
 
   useEffect(() => {
     setMissions([]);
     setMission(null);
     setSelectedMissionId(null);
     setSelectedNodeKey(null);
+    setWorkflowDraft(null);
+    setEditingWorkflow(false);
     setActiveTab("workflow");
     setCreateOpen(false);
     setError(null);
@@ -190,6 +207,9 @@ export function DeepAnalysisView({
     setSelectedNodeKey(null);
     setCostDetailsOpen(false);
     setDeleteArmed(false);
+    setWorkflowDraft(null);
+    setWorkflowDraftDirty(false);
+    setEditingWorkflow(false);
     setActiveTab("workflow");
     if (!projectId || !selectedMissionId) return;
 
@@ -241,9 +261,10 @@ export function DeepAnalysisView({
     };
   }, [mission?.status, selectedMissionId]);
 
+  const shownWorkflow = workflowDraft ?? mission?.workflow ?? null;
   const selectedNode = useMemo(
-    () => mission?.workflow.nodes.find((node) => node.nodeKey === selectedNodeKey) ?? null,
-    [mission, selectedNodeKey],
+    () => shownWorkflow?.nodes.find((node) => node.nodeKey === selectedNodeKey) ?? null,
+    [shownWorkflow, selectedNodeKey],
   );
   const activeNode = useMemo(
     () => mission?.workflow.nodes.find((node) => node.status === "running") ?? null,
@@ -271,7 +292,7 @@ export function DeepAnalysisView({
   const workflowTopology = useMemo(() => {
     const outgoing = new Map<string, number>();
     const incoming = new Map<string, number>();
-    for (const edge of mission?.workflow.edges ?? []) {
+    for (const edge of shownWorkflow?.edges ?? []) {
       outgoing.set(edge.sourceNodeKey, (outgoing.get(edge.sourceNodeKey) ?? 0) + 1);
       incoming.set(edge.targetNodeKey, (incoming.get(edge.targetNodeKey) ?? 0) + 1);
     }
@@ -287,7 +308,7 @@ export function DeepAnalysisView({
       branchNodeKeys,
       mergeNodeKeys,
     };
-  }, [mission?.workflow.edges]);
+  }, [shownWorkflow?.edges]);
 
   useEffect(() => {
     setDecisionOptionId(
@@ -339,7 +360,7 @@ export function DeepAnalysisView({
 
   function fitCanvasToViewport() {
     const viewport = canvasViewportRef.current;
-    const nodes = mission?.workflow.nodes ?? [];
+    const nodes = shownWorkflow?.nodes ?? [];
     if (!viewport || !nodes.length) return;
 
     const padding = 36;
@@ -372,10 +393,10 @@ export function DeepAnalysisView({
   }
 
   useEffect(() => {
-    if (!mission?.workflow.graphDigest) return;
+    if (!shownWorkflow?.graphDigest) return;
     const frame = window.requestAnimationFrame(() => fitCanvasToViewport());
     return () => window.cancelAnimationFrame(frame);
-  }, [mission?.workflow.graphDigest]);
+  }, [shownWorkflow?.graphDigest]);
 
   function beginCanvasPan(event: ReactPointerEvent<HTMLDivElement>) {
     if (event.button !== 0 || (event.target as Element).closest("button")) return;
@@ -413,6 +434,171 @@ export function DeepAnalysisView({
     canvasPanRef.current = null;
     setCanvasPanning(false);
     if (wasBlankClick) closeNodeInspectorAndFit();
+  }
+
+  async function beginWorkflowEdit() {
+    if (!mission || editingWorkflow) return;
+    setError(null);
+    try {
+      const draft = await api.deepAnalysis.createDraft(mission.id, mission.revision);
+      setWorkflowDraft(draft);
+      setWorkflowDraftDirty(false);
+      setEditingWorkflow(true);
+      setSelectedNodeKey(draft.nodes[0]?.nodeKey ?? null);
+    } catch (draftError) {
+      setError(errorMessage(draftError));
+    }
+  }
+
+  function draftPayload(draft: DeepAnalysisWorkflowRevision) {
+    return {
+      expectedRevision: mission?.revision ?? 0,
+      nodes: draft.nodes.map((node) => ({
+        nodeKey: node.nodeKey,
+        nodeType: node.nodeType,
+        title: node.title,
+        purpose: node.purpose,
+        positionX: Math.round(node.positionX),
+        positionY: Math.round(node.positionY),
+        config: node.config,
+        estimatedCostMicrousd: node.estimatedCostMicrousd,
+      })),
+      edges: draft.edges.map((edge) => ({
+        sourceNodeKey: edge.sourceNodeKey,
+        targetNodeKey: edge.targetNodeKey,
+      })),
+    };
+  }
+
+  async function saveWorkflowDraft() {
+    if (!mission || !workflowDraft || savingWorkflow) return null;
+    setSavingWorkflow(true);
+    setError(null);
+    try {
+      const saved = await api.deepAnalysis.updateDraft(
+        mission.id,
+        draftPayload(workflowDraft),
+      );
+      setWorkflowDraft(saved);
+      setWorkflowDraftDirty(false);
+      return saved;
+    } catch (draftError) {
+      setError(errorMessage(draftError));
+      return null;
+    } finally {
+      setSavingWorkflow(false);
+    }
+  }
+
+  async function activateWorkflowDraft() {
+    if (!mission || !workflowDraft || activatingWorkflow) return;
+    setActivatingWorkflow(true);
+    try {
+      const saved = workflowDraftDirty ? await saveWorkflowDraft() : workflowDraft;
+      if (!saved) return;
+      const activated = await api.deepAnalysis.activateDraft(mission.id, mission.revision);
+      setMission(activated);
+      setMissions((current) => current.map((item) => item.id === activated.id ? activated : item));
+      setWorkflowDraft(null);
+      setWorkflowDraftDirty(false);
+      setEditingWorkflow(false);
+      setSelectedNodeKey(activated.workflow.nodes[0]?.nodeKey ?? null);
+    } catch (draftError) {
+      setError(errorMessage(draftError));
+    } finally {
+      setActivatingWorkflow(false);
+    }
+  }
+
+  function beginNodeDrag(event: ReactPointerEvent<HTMLButtonElement>, node: DeepAnalysisWorkflowNode) {
+    if (!editingWorkflow || event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    nodeDragRef.current = {
+      pointerId: event.pointerId,
+      nodeKey: node.nodeKey,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      positionX: node.positionX,
+      positionY: node.positionY,
+      moved: false,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function moveNodeDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    const drag = nodeDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId || !workflowDraft) return;
+    const dx = (event.clientX - drag.clientX) / canvasScale;
+    const dy = (event.clientY - drag.clientY) / canvasScale;
+    drag.moved = drag.moved || Math.hypot(dx, dy) > 3;
+    setWorkflowDraft({
+      ...workflowDraft,
+      nodes: workflowDraft.nodes.map((node) => node.nodeKey === drag.nodeKey
+        ? { ...node, positionX: drag.positionX + dx, positionY: drag.positionY + dy }
+        : node),
+    });
+    setWorkflowDraftDirty(true);
+  }
+
+  function endNodeDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    const drag = nodeDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    nodeDragRef.current = null;
+    setSelectedNodeKey(drag.nodeKey);
+  }
+
+  function toggleDependency(sourceNodeKey: string, targetNodeKey: string) {
+    if (!workflowDraft || sourceNodeKey === targetNodeKey) return;
+    const exists = workflowDraft.edges.some((edge) => edge.sourceNodeKey === sourceNodeKey && edge.targetNodeKey === targetNodeKey);
+    setWorkflowDraft({
+      ...workflowDraft,
+      edges: exists
+        ? workflowDraft.edges.filter((edge) => !(edge.sourceNodeKey === sourceNodeKey && edge.targetNodeKey === targetNodeKey))
+        : [...workflowDraft.edges, { id: `draft:${sourceNodeKey}:${targetNodeKey}`, sourceNodeKey, targetNodeKey, edgeType: "sequence" }],
+    });
+    setWorkflowDraftDirty(true);
+  }
+
+  function addDraftNode() {
+    if (!workflowDraft) return;
+    const used = new Set(workflowDraft.nodes.map((node) => node.nodeKey));
+    let number = 10;
+    while (used.has(`N${String(number).padStart(3, "0")}`)) number += 1;
+    const nodeKey = `N${String(number).padStart(3, "0")}`;
+    const report = workflowDraft.nodes.find((node) => node.nodeType === "report");
+    const node: DeepAnalysisWorkflowNode = {
+      ...workflowDraft.nodes[0],
+      id: `draft:${nodeKey}`,
+      nodeKey,
+      nodeType: "research",
+      title: "새 분석 단계",
+      purpose: "이 단계에서 확인할 질문과 산출물을 정의해 주세요.",
+      status: "planned",
+      sequence: workflowDraft.nodes.length + 1,
+      positionX: (report?.positionX ?? 520) - 220,
+      positionY: (report?.positionY ?? 220) + 120,
+      config: {}, runId: null, outputProjectFileId: null, outputLogicalPath: null,
+      outputSummary: "", outputMarkdown: "", generatedFiles: [], runHistory: [],
+      runStatus: null, liveOutput: "", errorMessage: null, actualCostMicrousd: 0,
+      startedAt: null, finishedAt: null,
+    };
+    setWorkflowDraft({ ...workflowDraft, nodes: [...workflowDraft.nodes, node] });
+    setWorkflowDraftDirty(true);
+    setSelectedNodeKey(nodeKey);
+  }
+
+  function removeDraftNode(nodeKey: string) {
+    if (!workflowDraft) return;
+    const node = workflowDraft.nodes.find((item) => item.nodeKey === nodeKey);
+    if (!node || node.nodeType === "report") return;
+    setWorkflowDraft({
+      ...workflowDraft,
+      nodes: workflowDraft.nodes.filter((item) => item.nodeKey !== nodeKey),
+      edges: workflowDraft.edges.filter((edge) => edge.sourceNodeKey !== nodeKey && edge.targetNodeKey !== nodeKey),
+    });
+    setWorkflowDraftDirty(true);
+    setSelectedNodeKey(null);
   }
 
   async function startMission() {
@@ -795,8 +981,8 @@ export function DeepAnalysisView({
                       <button
                         className={`deep-analysis-start ${!mission.executionAvailable ? "is-unavailable" : ""}`}
                         type="button"
-                        disabled={startingMission || !mission.executionAvailable}
-                        data-tooltip={!mission.executionAvailable ? "실제 분석 실행기가 연결된 후 시작할 수 있습니다." : undefined}
+                        disabled={startingMission || !mission.executionAvailable || editingWorkflow}
+                        data-tooltip={editingWorkflow ? "Workflow Draft를 활성화한 뒤 시작해 주세요." : !mission.executionAvailable ? "실제 분석 실행기가 연결된 후 시작할 수 있습니다." : undefined}
                         onClick={() => void startMission()}
                       >
                         {startingMission ? <LoaderCircle className="is-running" size={15} /> : <Play size={15} />}
@@ -879,7 +1065,7 @@ export function DeepAnalysisView({
                   <button className={activeTab === "evidence" ? "is-active" : ""} type="button" role="tab" aria-selected={activeTab === "evidence"} onClick={() => setActiveTab("evidence")}>결론·근거</button>
                   <span>
                     {activeTab === "workflow" ? <>
-                      {completedNodeCount}/{mission.workflow.nodes.length} 완료 · 분기 {workflowTopology.branchCount} · 합류 {workflowTopology.mergeCount} · 입력 자료 {mission.sourceManifest.length}개 · Revision {mission.workflow.revisionNumber}
+                      {completedNodeCount}/{shownWorkflow?.nodes.length ?? 0} 완료 · 분기 {workflowTopology.branchCount} · 합류 {workflowTopology.mergeCount} · 입력 자료 {mission.sourceManifest.length}개 · Revision {shownWorkflow?.revisionNumber}
                     </> : <>
                       Claim {mission.claims.length}개 · Evidence {mission.evidence.length}개 · Open Issue {mission.openIssues.filter((item) => item.status === "open").length}개
                     </>}
@@ -1039,6 +1225,21 @@ export function DeepAnalysisView({
                     <div><strong>실행 엔진 준비 중</strong><span>Workflow 설계와 검토는 가능하지만 실제 분석 실행은 아직 연결되지 않았습니다.</span></div>
                   </div>
                 )}
+                {canEdit && (mission.status === "draft" || mission.status === "ready") && (
+                  <div className={`deep-analysis-workflow-editor ${editingWorkflow ? "is-editing" : ""}`}>
+                    <div>
+                      <GitBranch size={15} />
+                      <span><strong>{editingWorkflow ? `Workflow Draft · Revision ${workflowDraft?.revisionNumber}` : "Workflow 구조 편집"}</strong><small>{editingWorkflow ? "Node를 끌어 이동하고, 상세 패널에서 선행 Node 연결을 바꿀 수 있습니다." : "활성 revision은 유지한 채 별도 Draft에서 편집합니다."}</small></span>
+                    </div>
+                    {editingWorkflow ? <>
+                      <button type="button" onClick={addDraftNode}><Plus size={13} /> Node 추가</button>
+                      <button type="button" disabled={!workflowDraftDirty || savingWorkflow} onClick={() => void saveWorkflowDraft()}>{savingWorkflow ? <LoaderCircle className="is-running" size={13} /> : null}{savingWorkflow ? "저장 중" : "Draft 저장"}</button>
+                      <button className="is-primary" type="button" disabled={savingWorkflow || activatingWorkflow} onClick={() => void activateWorkflowDraft()}>{activatingWorkflow ? <LoaderCircle className="is-running" size={13} /> : null}{activatingWorkflow ? "활성화 중" : "Draft 활성화"}</button>
+                    </> : (
+                      <button className="is-primary" type="button" onClick={() => void beginWorkflowEdit()}>편집 시작</button>
+                    )}
+                  </div>
+                )}
                 <div className={`deep-analysis-workflow-layout ${selectedNode ? "has-inspector" : ""}`}>
                   <div className="deep-analysis-canvas-shell">
                   <div
@@ -1071,9 +1272,9 @@ export function DeepAnalysisView({
                             <path d="M0,0 L0,7 L7,3.5 z" />
                           </marker>
                         </defs>
-                        {mission.workflow.edges.map((edge) => {
-                          const source = mission.workflow.nodes.find((node) => node.nodeKey === edge.sourceNodeKey);
-                          const target = mission.workflow.nodes.find((node) => node.nodeKey === edge.targetNodeKey);
+                        {(shownWorkflow?.edges ?? []).map((edge) => {
+                          const source = shownWorkflow?.nodes.find((node) => node.nodeKey === edge.sourceNodeKey);
+                          const target = shownWorkflow?.nodes.find((node) => node.nodeKey === edge.targetNodeKey);
                           if (!source || !target) return null;
                           return (
                             <path
@@ -1085,12 +1286,16 @@ export function DeepAnalysisView({
                           );
                         })}
                       </svg>
-                      {mission.workflow.nodes.map((node) => (
+                      {(shownWorkflow?.nodes ?? []).map((node) => (
                         <WorkflowNodeButton
                           key={node.id}
                           node={node}
                           selected={selectedNodeKey === node.nodeKey}
                           onSelect={() => setSelectedNodeKey(node.nodeKey)}
+                          editable={editingWorkflow}
+                          onPointerDown={(event) => beginNodeDrag(event, node)}
+                          onPointerMove={moveNodeDrag}
+                          onPointerUp={endNodeDrag}
                         />
                       ))}
                     </div>
@@ -1115,13 +1320,33 @@ export function DeepAnalysisView({
                       </header>
                       <section>
                         <h3>목적</h3>
-                        <p>{selectedNode.purpose}</p>
+                        {editingWorkflow && workflowDraft ? <>
+                          <label className="deep-analysis-node-edit-field">이름<input value={selectedNode.title} onChange={(event) => {
+                            setWorkflowDraft({ ...workflowDraft, nodes: workflowDraft.nodes.map((node) => node.nodeKey === selectedNode.nodeKey ? { ...node, title: event.target.value } : node) });
+                            setWorkflowDraftDirty(true);
+                          }} /></label>
+                          <label className="deep-analysis-node-edit-field">목적<textarea rows={3} value={selectedNode.purpose} onChange={(event) => {
+                            setWorkflowDraft({ ...workflowDraft, nodes: workflowDraft.nodes.map((node) => node.nodeKey === selectedNode.nodeKey ? { ...node, purpose: event.target.value } : node) });
+                            setWorkflowDraftDirty(true);
+                          }} /></label>
+                        </> : <p>{selectedNode.purpose}</p>}
                         {typeof selectedNode.config.reason === "string" && (
                           <small className="deep-analysis-node-origin">
                             <GitBranch size={12} /> {selectedNode.config.reason}
                           </small>
                         )}
                       </section>
+                      {editingWorkflow && workflowDraft && (
+                        <section className="deep-analysis-node-dependencies">
+                          <h3>선행 Node 연결</h3>
+                          <p>선택한 Node로 들어오는 연결입니다. 여러 Node를 선택하면 합류가 됩니다.</p>
+                          {workflowDraft.nodes.filter((node) => node.nodeKey !== selectedNode.nodeKey).map((node) => {
+                            const checked = workflowDraft.edges.some((edge) => edge.sourceNodeKey === node.nodeKey && edge.targetNodeKey === selectedNode.nodeKey);
+                            return <label key={node.nodeKey}><input type="checkbox" checked={checked} onChange={() => toggleDependency(node.nodeKey, selectedNode.nodeKey)} /><span><b>{node.nodeKey}</b>{node.title}</span></label>;
+                          })}
+                          {selectedNode.nodeType !== "report" && <button type="button" onClick={() => removeDraftNode(selectedNode.nodeKey)}><Trash2 size={13} /> 이 Node 삭제</button>}
+                        </section>
+                      )}
                       <section>
                         <h3>출력</h3>
                         {selectedNode.status === "running" && !selectedNode.outputSummary ? (
@@ -1274,18 +1499,30 @@ function WorkflowNodeButton({
   node,
   selected,
   onSelect,
+  editable,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
 }: {
   node: DeepAnalysisWorkflowNode;
   selected: boolean;
   onSelect: () => void;
+  editable: boolean;
+  onPointerDown: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+  onPointerMove: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+  onPointerUp: (event: ReactPointerEvent<HTMLButtonElement>) => void;
 }) {
   return (
     <button
-      className={`deep-analysis-node ${selected ? "is-selected" : ""}`}
+      className={`deep-analysis-node ${selected ? "is-selected" : ""} ${editable ? "is-editable" : ""}`}
       style={{ left: node.positionX, top: node.positionY }}
       type="button"
       aria-pressed={selected}
       onClick={onSelect}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
     >
       <span><GitBranch size={14} />{node.nodeKey}</span>
       <strong>{node.title}</strong>

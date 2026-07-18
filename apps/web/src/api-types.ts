@@ -432,6 +432,21 @@ export interface CreateDeepAnalysisMissionExportRequest {
   includeOriginals?: boolean;
 }
 
+export interface UpdateDeepAnalysisWorkflowDraftRequest {
+  expectedRevision: number;
+  nodes: Array<{
+    nodeKey: string;
+    nodeType: string;
+    title: string;
+    purpose: string;
+    positionX: number;
+    positionY: number;
+    config: Record<string, unknown>;
+    estimatedCostMicrousd: number;
+  }>;
+  edges: Array<{ sourceNodeKey: string; targetNodeKey: string }>;
+}
+
 export interface DeepAnalysisMissionDetail extends DeepAnalysisMissionSummary {
   executionAvailable: boolean;
   charter: DeepAnalysisMissionCharter;

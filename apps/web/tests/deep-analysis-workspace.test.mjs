@@ -109,7 +109,7 @@ test("adaptive Workflow changes are explained and refitted on graph updates", as
   assert.match(view, /initial: "질문 기반 초기 Workflow"/);
   assert.match(view, /deep-analysis-workflow-change/);
   assert.match(view, /결과에 따라 남은 Workflow가 확장되거나 축소될 수 있습니다/);
-  assert.match(view, /\[mission\?\.workflow\.graphDigest\]/);
+  assert.match(view, /\[shownWorkflow\?\.graphDigest\]/);
   assert.match(view, /typeof selectedNode\.config\.reason === "string"/);
   assert.match(view, /branchCount: branchNodeKeys\.size/);
   assert.match(view, /mergeCount: mergeNodeKeys\.size/);
@@ -119,6 +119,29 @@ test("adaptive Workflow changes are explained and refitted on graph updates", as
   assert.match(css, /\.deep-analysis-workflow-change \{/);
   assert.match(css, /path\.is-branch/);
   assert.match(css, /path\.is-merge/);
+});
+
+test("Workflow Draft supports node drag, dependency connect, save and atomic activation", async () => {
+  const [view, api, css] = await Promise.all([
+    readFile(viewPath, "utf8"),
+    readFile(apiPath, "utf8"),
+    readFile(cssPath, "utf8"),
+  ]);
+  assert.match(view, /Workflow 구조 편집/);
+  assert.match(view, /api\.deepAnalysis\.createDraft/);
+  assert.match(view, /api\.deepAnalysis\.updateDraft/);
+  assert.match(view, /api\.deepAnalysis\.activateDraft/);
+  assert.match(view, /function beginNodeDrag/);
+  assert.match(view, /event\.clientX - drag\.clientX\) \/ canvasScale/);
+  assert.match(view, /function toggleDependency/);
+  assert.match(view, /선행 Node 연결/);
+  assert.match(view, /Node 추가/);
+  assert.match(view, /Draft 활성화/);
+  assert.match(api, /createDraft: createDeepAnalysisWorkflowDraft/);
+  assert.match(api, /updateDraft: updateDeepAnalysisWorkflowDraft/);
+  assert.match(api, /activateDraft: activateDeepAnalysisWorkflowDraft/);
+  assert.match(css, /\.deep-analysis-node\.is-editable/);
+  assert.match(css, /\.deep-analysis-workflow-editor\.is-editing/);
 });
 
 test("durable Decision requests pause inline and resume through the revision-checked API", async () => {
