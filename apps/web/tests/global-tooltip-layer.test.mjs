@@ -17,6 +17,8 @@ test("all simple tooltips are delegated to one document body portal", async () =
   assert.match(main, /<GlobalTooltipProvider>/);
   assert.match(tooltip, /const tooltipSelector = "\[data-tooltip\]"/);
   assert.match(tooltip, /document\.addEventListener\("pointerover", show, true\)/);
+  assert.match(tooltip, /event instanceof PointerEvent && event\.buttons !== 0/);
+  assert.match(tooltip, /document\.addEventListener\("pointerdown", hide, true\)/);
   assert.match(tooltip, /document\.addEventListener\("focusin", show, true\)/);
   assert.doesNotMatch(tooltip, /getAttribute\("title"\)|removeAttribute\("title"\)/);
   assert.match(tooltip, /document\.body/);

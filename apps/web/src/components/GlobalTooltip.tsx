@@ -130,6 +130,7 @@ export function GlobalTooltipProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const show = (event: Event) => {
+      if (event instanceof PointerEvent && event.buttons !== 0) return;
       const target = tooltipTarget(event.target);
       if (!target) return;
       const text = tooltipText(target);
@@ -147,11 +148,13 @@ export function GlobalTooltipProvider({ children }: { children: ReactNode }) {
     };
     document.addEventListener("pointerover", show, true);
     document.addEventListener("pointerout", hide, true);
+    document.addEventListener("pointerdown", hide, true);
     document.addEventListener("focusin", show, true);
     document.addEventListener("focusout", hide, true);
     return () => {
       document.removeEventListener("pointerover", show, true);
       document.removeEventListener("pointerout", hide, true);
+      document.removeEventListener("pointerdown", hide, true);
       document.removeEventListener("focusin", show, true);
       document.removeEventListener("focusout", hide, true);
     };
