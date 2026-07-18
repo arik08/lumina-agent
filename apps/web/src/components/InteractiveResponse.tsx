@@ -186,6 +186,40 @@ function MermaidSurface({ source, expanded = false, zoom = 1, onInitialFit }: {
   const dragRef = useRef<{ pointerId: number; x: number; y: number; scrollLeft: number; scrollTop: number } | null>(null);
   const [error, setError] = useState(false);
 
+  const positionAtFlowStart = (surface: HTMLDivElement, renderedSvg: SVGSVGElement) => {
+    const direction = source.match(/^\s*(?:flowchart|graph)\s+(TB|TD|BT|LR|RL)\b/im)?.[1];
+    const nodes = direction
+      ? Array.from(renderedSvg.querySelectorAll<SVGGraphicsElement>("g.node"))
+      : [];
+    if (!direction || nodes.length === 0) {
+      surface.scrollLeft = 0;
+      surface.scrollTop = 0;
+      return;
+    }
+    const node = nodes.reduce((best, candidate) => {
+      const bestBox = best.getBoundingClientRect();
+      const candidateBox = candidate.getBoundingClientRect();
+      if (direction === "RL") return candidateBox.right > bestBox.right ? candidate : best;
+      if (direction === "BT") return candidateBox.bottom > bestBox.bottom ? candidate : best;
+      if (direction === "LR") return candidateBox.left < bestBox.left ? candidate : best;
+      return candidateBox.top < bestBox.top ? candidate : best;
+    });
+    const svgBox = renderedSvg.getBoundingClientRect();
+    const nodeBox = node.getBoundingClientRect();
+    const padding = 12;
+    if (direction === "LR" || direction === "RL") {
+      surface.scrollLeft = direction === "LR"
+        ? Math.max(nodeBox.left - svgBox.left - padding, 0)
+        : Math.max(nodeBox.right - svgBox.left - surface.clientWidth + padding, 0);
+      surface.scrollTop = Math.max(nodeBox.top - svgBox.top - (surface.clientHeight - nodeBox.height) / 2, 0);
+      return;
+    }
+    surface.scrollLeft = Math.max(nodeBox.left - svgBox.left - (surface.clientWidth - nodeBox.width) / 2, 0);
+    surface.scrollTop = direction === "BT"
+      ? Math.max(nodeBox.bottom - svgBox.top - surface.clientHeight + padding, 0)
+      : Math.max(nodeBox.top - svgBox.top - padding, 0);
+  };
+
   useEffect(() => {
     let cancelled = false;
     setError(false);
@@ -211,8 +245,7 @@ function MermaidSurface({ source, expanded = false, zoom = 1, onInitialFit }: {
         window.requestAnimationFrame(() => {
           const surface = containerRef.current;
           if (!surface) return;
-          surface.scrollLeft = Math.max((surface.scrollWidth - surface.clientWidth) / 2, 0);
-          surface.scrollTop = 0;
+          positionAtFlowStart(surface, renderedSvg);
         });
       }
     }).catch(() => {

@@ -91,7 +91,11 @@ test("chat Mermaid cards provide button-only zoom controls beside the expand but
   assert.match(rendererSource, /<MermaidSurface source=\{source\} zoom=\{zoom\} onInitialFit=\{applyInitialFit\} \/>/);
   assert.match(rendererSource, /className="interactive-response-expand-label" aria-label="Mermaid 다이어그램 크게 보기" onClick=\{\(\) => setExpanded\(true\)\}>Mermaid<\/button>/);
   assert.match(rendererSource, /renderedSvg\.style\.maxWidth = "none"/);
-  assert.match(rendererSource, /surface\.scrollLeft = Math\.max\(\(surface\.scrollWidth - surface\.clientWidth\) \/ 2, 0\)/);
+  assert.match(rendererSource, /const positionAtFlowStart = \(surface: HTMLDivElement, renderedSvg: SVGSVGElement\)/);
+  assert.match(rendererSource, /source\.match\(\/\^\\s\*\(\?:flowchart\|graph\)\\s\+\(TB\|TD\|BT\|LR\|RL\)\\b\/im\)/);
+  assert.match(rendererSource, /querySelectorAll<SVGGraphicsElement>\("g\.node"\)/);
+  assert.match(rendererSource, /positionAtFlowStart\(surface, renderedSvg\)/);
+  assert.doesNotMatch(rendererSource, /surface\.scrollLeft = Math\.max\(\(surface\.scrollWidth - surface\.clientWidth\) \/ 2, 0\)/);
   assert.doesNotMatch(rendererSource, /<MermaidSurface source=\{source\} zoom=\{zoom\}[^>]*onWheel/);
   assert.match(rendererStyles, /\.mermaid-inline-zoom-controls \{[\s\S]*?border-right: 1px solid var\(--line\);/);
   assert.match(rendererStyles, /\.interactive-response-toolbar button\.mermaid-inline-zoom-value \{[^}]*width: 3em;[^}]*flex: 0 0 3em;[^}]*white-space: nowrap;/s);
