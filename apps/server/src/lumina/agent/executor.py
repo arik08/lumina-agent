@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import hashlib
-import importlib
 import json
 import logging
 import math
@@ -14,13 +12,12 @@ import time
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, BinaryIO, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from sqlalchemy import func, select
-from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
 from ..api.errors import ApiProblem
@@ -34,6 +31,19 @@ from ..artifacts.service import (
 )
 from ..artifacts.reporting import REPORT_FORMATS, generate_report
 from ..artifacts.token_estimation import estimate_tokens
+from .execution_policy import (
+    RunLimitViolation,
+    _EXPLICIT_DEEP_WEB_RESEARCH,
+    _artifact_model_request_tokens,
+    _configured_max_output_tokens as _configured_max_output_tokens,
+    _effective_reasoning_effort,
+    _nonnegative_int,
+    _optional_positive_int,
+    _provider_prompt_cache_key,
+    _run_deadline,
+    _run_limit_violation,
+    _usage_payload,
+)
 from .image_tool import (
     GENERATE_IMAGE_TOOL_SCHEMA,
     ImageToolError,
@@ -42,6 +52,7 @@ from .image_tool import (
     redacted_generate_image_input,
 )
 from .report_assets import resolve_report_images
+from .streaming import _ContinuationDeduper, _InlineMemoryStream
 from .tool_runtime_policy import (
     build_tool_surface,
     describe_deferred_tool,
@@ -93,7 +104,7 @@ from ..providers.google import GoogleGeminiAdapter
 from ..providers.openai import OpenAIResponsesAdapter
 from ..providers.openai_compatible import OpenAICompatibleAdapter
 from ..providers.pgpt import PgptAdapter
-from ..providers.catalog import estimate_model_cost_parts, model_operational_profile
+from ..providers.catalog import model_operational_profile
 from ..storage import ManagedLocalStorage
 from ..tools.web import WebToolError, WebToolPolicy, web_fetch, web_search
 from ..tools.source_documents import (
@@ -117,6 +128,7 @@ from ..deep_analysis.calculations import (
     PYTHON_CALCULATION_TOOL_SCHEMA,
     execute_python_calculation,
 )
+from .worker_lock import _DatabaseWorkerLock
 from ..runs.broker import event_broker
 from ..runs.recovery import (
     clear_model_turn_inflight,
@@ -189,7 +201,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 _PROVIDER_RETRY_DELAYS_SECONDS = (1.0, 2.0, 4.0)
 _MAX_PROVIDER_RETRY_AFTER_SECONDS = 600.0
-_MAX_CONTINUATION_OVERLAP_CHARS = 4_000
 _MAX_AUTO_CONTINUATIONS = 4
 _MAX_EMPTY_RESPONSE_RETRIES = 1
 _MAX_USER_INPUT_QUESTIONS = 10
@@ -214,18 +225,6 @@ _WEB_PROVIDER_PAGE_WINDOW_FRACTION = 0.15
 _WEB_PROVIDER_TURN_WINDOW_FRACTION = 0.30
 _WEB_PROVIDER_PREVIEW_CHARS = 1_500
 _ESTIMATED_CHARS_PER_TOKEN = 4
-_AUTO_EFFORT_COMPLEX_PATTERN = re.compile(
-    r"(?:심층|전수|종합\s*분석|근본\s*원인|원인\s*분석|아키텍처|설계|구현|"
-    r"디버그|버그|리팩터|보안|취약점|재무|법률|의료|증명|최적화|"
-    r"deep\s+(?:analysis|research)|exhaustive|root\s+cause|architecture|"
-    r"implement|debug|refactor|security|vulnerabilit|financial|legal|medical|"
-    r"prove|optimi[sz])",
-    re.IGNORECASE,
-)
-_AUTO_EFFORT_RESEARCH_PATTERN = re.compile(
-    r"(?:최신|검색|찾아|조사|뉴스|자료\s*확인|research|search|latest|current)",
-    re.IGNORECASE,
-)
 _WEB_RESEARCH_EXPLICIT_REQUIRED_PATTERN = re.compile(
     r"(?:최신|최근\s+(?:뉴스|자료|정보|동향)|오늘|실시간|인터넷|웹에서|"
     r"검색|찾아봐|조사해|뉴스|팩트체크|최신성\s*검증|"
@@ -262,10 +261,6 @@ _ARTICLE_RESEARCH_REQUEST = re.compile(
     r"(?:기사|언론|뉴스|보도|\bnews\b|\barticles?\b|press\s+coverage|media\s+coverage)",
     re.IGNORECASE,
 )
-_EXPLICIT_DEEP_WEB_RESEARCH = re.compile(
-    r"(?:심층|철저|전수|광범위|종합적|deep\s+research|in[- ]depth|exhaustive|comprehensive)",
-    re.IGNORECASE,
-)
 _WEB_QUERY_TOKEN = re.compile(r"[\w가-힣]+", re.UNICODE)
 _TRACKING_QUERY_KEYS = frozenset({"fbclid", "gclid", "mc_cid", "mc_eid"})
 _PROVIDER_FAILURE_CODES = {
@@ -298,8 +293,6 @@ _TRUNCATED_AFTER_CONTINUATIONS_NOTICE = (
     "계속해 달라고 요청하면 이어서 진행할 수 있습니다.]"
 )
 ClaimResult = Literal["claimed", "wait", "stop"]
-_MEMORY_ENVELOPE_OPEN = "<lumina_memory>"
-_MEMORY_ENVELOPE_CLOSE = "</lumina_memory>"
 
 
 @dataclass(frozen=True, slots=True)
@@ -421,194 +414,6 @@ def _recalled_memory_context(snapshot: Mapping[str, Any]) -> str:
     return "\n\n".join(
         text for text in (memory_context, project_memory_context) if text
     )
-
-
-@dataclass(frozen=True, slots=True)
-class RunLimitViolation:
-    code: str
-    message: str
-    limit: int | float | str | None
-    observed: int | float | str | None
-
-    def event_payload(self) -> dict[str, Any]:
-        return {
-            "code": self.code,
-            "limit": self.limit,
-            "observed": self.observed,
-        }
-
-
-class _InlineMemoryStream:
-    """Hide and collect a model-authored Memory envelope across stream chunks."""
-
-    def __init__(self) -> None:
-        self._pending = ""
-        self._payload_parts: list[str] = []
-        self._capturing = False
-        self._closed = False
-
-    @property
-    def payload(self) -> str | None:
-        if not self._closed:
-            return None
-        return "".join(self._payload_parts).strip()
-
-    def feed(self, chunk: str) -> str:
-        if not chunk:
-            return ""
-        if self._closed:
-            return chunk
-        self._pending += chunk
-        visible: list[str] = []
-        while self._pending:
-            if self._capturing:
-                close_at = self._pending.find(_MEMORY_ENVELOPE_CLOSE)
-                if close_at < 0:
-                    retained = _matching_prefix_suffix(
-                        self._pending, _MEMORY_ENVELOPE_CLOSE
-                    )
-                    if retained:
-                        self._payload_parts.append(self._pending[:-retained])
-                        self._pending = self._pending[-retained:]
-                    else:
-                        self._payload_parts.append(self._pending)
-                        self._pending = ""
-                    break
-                self._payload_parts.append(self._pending[:close_at])
-                self._pending = self._pending[close_at + len(_MEMORY_ENVELOPE_CLOSE) :]
-                self._capturing = False
-                self._closed = True
-                visible.append(self._pending)
-                self._pending = ""
-                break
-
-            open_at = self._pending.find(_MEMORY_ENVELOPE_OPEN)
-            if open_at >= 0:
-                visible.append(self._pending[:open_at])
-                self._pending = self._pending[open_at + len(_MEMORY_ENVELOPE_OPEN) :]
-                self._capturing = True
-                continue
-
-            retained = _matching_prefix_suffix(self._pending, _MEMORY_ENVELOPE_OPEN)
-            if retained:
-                visible.append(self._pending[:-retained])
-                self._pending = self._pending[-retained:]
-            else:
-                visible.append(self._pending)
-                self._pending = ""
-            break
-        return "".join(visible)
-
-    def finish(self) -> str:
-        if self._capturing:
-            self._pending = ""
-            return ""
-        visible = self._pending
-        self._pending = ""
-        return visible
-
-
-class _ContinuationDeduper:
-    """Remove only a repeated suffix while a continuation stream establishes overlap."""
-
-    def __init__(self, reference: str | None) -> None:
-        self.reference = (reference or "")[-_MAX_CONTINUATION_OVERLAP_CHARS:]
-        self._pending = ""
-        self._resolved = not self.reference
-        self.suppressed_chars = 0
-
-    def feed(self, chunk: str) -> str:
-        if not chunk:
-            return ""
-        if self._resolved:
-            return chunk
-        self._pending += chunk
-        if self._pending in self.reference:
-            return ""
-        return self._resolve()
-
-    def finish(self) -> str:
-        return "" if self._resolved else self._resolve()
-
-    def _resolve(self) -> str:
-        overlap = 0
-        for size in range(min(len(self.reference), len(self._pending)), 0, -1):
-            if self._pending.startswith(self.reference[-size:]):
-                overlap = size
-                break
-        visible = self._pending[overlap:]
-        self.suppressed_chars += overlap
-        self._pending = ""
-        self._resolved = True
-        return visible
-
-
-def _matching_prefix_suffix(value: str, prefix: str) -> int:
-    for size in range(min(len(value), len(prefix) - 1), 0, -1):
-        if value.endswith(prefix[:size]):
-            return size
-    return 0
-
-
-class _DatabaseWorkerLock:
-    """Keep one local Run executor per SQLite database process group."""
-
-    def __init__(self, database_url: str) -> None:
-        url = make_url(database_url)
-        database = url.database
-        if url.get_backend_name() == "sqlite" and database and database != ":memory:":
-            database_path = Path(database).resolve()
-            self.path: Path | None = database_path.with_suffix(
-                f"{database_path.suffix}.worker.lock"
-            )
-        else:
-            self.path = None
-        self._handle: BinaryIO | None = None
-
-    def acquire(self) -> bool:
-        if self.path is None or self._handle is not None:
-            return True
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        handle = self.path.open("a+b")
-        try:
-            if os.name == "nt":
-                import msvcrt
-
-                handle.seek(0, os.SEEK_END)
-                if handle.tell() == 0:
-                    handle.write(b"\0")
-                    handle.flush()
-                handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                fcntl = importlib.import_module("fcntl")
-                flock = getattr(fcntl, "flock")
-                flock(
-                    handle.fileno(),
-                    getattr(fcntl, "LOCK_EX") | getattr(fcntl, "LOCK_NB"),
-                )
-        except (BlockingIOError, OSError):
-            handle.close()
-            return False
-        self._handle = handle
-        return True
-
-    def release(self) -> None:
-        handle = self._handle
-        if handle is None:
-            return
-        self._handle = None
-        try:
-            if os.name == "nt":
-                import msvcrt
-
-                handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                fcntl = importlib.import_module("fcntl")
-                getattr(fcntl, "flock")(handle.fileno(), getattr(fcntl, "LOCK_UN"))
-        finally:
-            handle.close()
 
 
 class LocalRunExecutor:
@@ -5983,285 +5788,6 @@ def _safe_provider_metadata(raw: Any) -> dict[str, str]:
     if len(signature.encode("utf-8")) > 16_384:
         return {}
     return {"thought_signature": signature}
-
-
-def _usage_payload(
-    usage: Any,
-    *,
-    provider_id: str | None = None,
-    model: str | None = None,
-    model_key: str | None = None,
-) -> dict[str, Any]:
-    payload = {
-        "input_tokens": usage.input_tokens,
-        "cached_input_tokens": usage.cached_input_tokens,
-        "cache_write_tokens": usage.cache_write_tokens,
-        "uncached_input_tokens": usage.uncached_input_tokens,
-        "output_tokens": usage.output_tokens,
-        "raw": dict(usage.raw),
-    }
-    if usage.reasoning_tokens is not None:
-        payload["reasoning_tokens"] = usage.reasoning_tokens
-    subscription_usage = usage.raw.get("billing") == "subscription_usage"
-    reported_cost = _reported_cost_usd(usage.raw)
-    estimated_cost = estimate_model_cost_parts(
-        provider_id or "",
-        model_key or model or "",
-        input_tokens=usage.input_tokens,
-        cached_input_tokens=usage.cached_input_tokens,
-        cache_write_tokens=usage.cache_write_tokens,
-        output_tokens=usage.output_tokens,
-    )
-    if estimated_cost is not None:
-        payload["estimated_cost_breakdown_usd"] = estimated_cost
-    if reported_cost is not None and not subscription_usage:
-        payload["cost_usd"] = reported_cost
-        payload["cost_basis"] = "provider_reported"
-    elif estimated_cost is not None:
-        payload["cost_usd"] = estimated_cost["total"]
-        payload["cost_basis"] = (
-            "subscription_price_table_estimate"
-            if subscription_usage
-            else "price_table_estimate"
-        )
-        profile = model_operational_profile(provider_id or "", model_key or model or "")
-        if profile is not None and profile.token_pricing is not None:
-            payload["pricing_version"] = profile.token_pricing.version
-    return payload
-
-
-def _effective_reasoning_effort(
-    requested_effort: str | None,
-    *,
-    provider_id: str,
-    user_message: str,
-    artifact_required: bool,
-    attachment_count: int,
-    reference_count: int,
-    web_research_budget: tuple[int, int],
-    artifact_drafting: bool = False,
-) -> str | None:
-    normalized = (requested_effort or "").strip().casefold()
-    if normalized != "auto":
-        return normalized or None
-    if provider_id.strip().casefold() == "google":
-        # Supported Gemini models already use provider-side dynamic thinking when
-        # no explicit thinking control is sent.
-        return None
-    if artifact_drafting:
-        return "low"
-
-    message = " ".join(user_message.split())
-    if _EXPLICIT_DEEP_WEB_RESEARCH.search(message):
-        return "high"
-    if (
-        artifact_required
-        or attachment_count >= 3
-        or reference_count >= 3
-        or _AUTO_EFFORT_COMPLEX_PATTERN.search(message)
-        or _AUTO_EFFORT_RESEARCH_PATTERN.search(message)
-    ):
-        return "medium"
-    return "low"
-
-
-def _provider_prompt_cache_key(
-    *,
-    user_scope: str,
-    provider_id: str,
-    model: str,
-    messages: Sequence[ProviderMessage],
-    tools: Sequence[Mapping[str, Any]],
-) -> tuple[str, str]:
-    if not user_scope:
-        return "", ""
-    stable_system = next(
-        (
-            message.content or ""
-            for message in messages
-            if message.role == "system"
-        ),
-        "",
-    )
-    stable_tools = sorted(
-        (dict(tool) for tool in tools),
-        key=lambda tool: str(
-            tool.get("function", {}).get("name", "")
-            if isinstance(tool.get("function"), Mapping)
-            else tool.get("name", "")
-        ),
-    )
-    static_payload = {
-        "provider": provider_id.strip().casefold(),
-        "model": model.strip().casefold(),
-        "system": stable_system,
-        "tools": stable_tools,
-    }
-    static_digest = hashlib.sha256(
-        json.dumps(
-            static_payload,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            default=str,
-        ).encode("utf-8")
-    ).hexdigest()
-    cache_digest = hashlib.sha256(
-        f"{user_scope}\0{static_digest}".encode("utf-8")
-    ).hexdigest()[:48]
-    return f"lumina:user:v2:{cache_digest}", static_digest
-
-
-def _nonnegative_int(value: Any) -> int:
-    if isinstance(value, bool):
-        return 0
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError, OverflowError):
-        return 0
-    return max(0, parsed)
-
-
-def _optional_positive_int(value: Any) -> int | None:
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError, OverflowError):
-        return None
-    return parsed if parsed > 0 else None
-
-
-def _configured_max_output_tokens(capabilities: Any) -> int | None:
-    if not isinstance(capabilities, Mapping):
-        return None
-    configured = _optional_positive_int(
-        capabilities.get(
-            "configured_max_output_tokens",
-            capabilities.get("configuredMaxOutputTokens"),
-        )
-    )
-    hard_max = _optional_positive_int(
-        capabilities.get("max_output_tokens", capabilities.get("maxOutputTokens"))
-    )
-    if configured is not None and hard_max is not None:
-        return min(configured, hard_max)
-    return configured
-
-
-def _artifact_model_request_tokens(
-    capabilities: Any, target_output_tokens: int | None
-) -> int | None:
-    """Give an explicit Artifact target headroom while respecting model hard limits."""
-    configured = _configured_max_output_tokens(capabilities)
-    target = _optional_positive_int(target_output_tokens)
-    if target is None:
-        return configured
-    requested = max(target, int(target * 1.25))
-    if configured is not None:
-        requested = max(configured, requested)
-    hard_max = (
-        _optional_positive_int(
-            capabilities.get("max_output_tokens", capabilities.get("maxOutputTokens"))
-        )
-        if isinstance(capabilities, Mapping)
-        else None
-    )
-    return min(requested, hard_max) if hard_max is not None else requested
-
-
-def _run_deadline(run: Run) -> datetime | None:
-    limits = run.snapshot_json.get("limits", {})
-    if not isinstance(limits, Mapping):
-        return None
-    value = limits.get("deadline")
-    if isinstance(value, datetime):
-        parsed = value
-    elif isinstance(value, str) and value:
-        try:
-            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError:
-            return None
-    else:
-        max_elapsed_seconds = _nonnegative_int(limits.get("maxElapsedSeconds"))
-        if max_elapsed_seconds <= 0 or run.started_at is None:
-            return None
-        parsed = run.started_at + timedelta(seconds=max_elapsed_seconds)
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
-
-
-def _run_limit_violation(run: Run) -> RunLimitViolation | None:
-    limits = run.snapshot_json.get("limits", {})
-    if not isinstance(limits, Mapping):
-        return None
-
-    max_model_turns = _nonnegative_int(limits.get("maxModelTurns"))
-    model_turns = _nonnegative_int(run.usage_json.get("model_turns"))
-    if max_model_turns and model_turns >= max_model_turns:
-        return RunLimitViolation(
-            code="run_model_turn_limit_reached",
-            message="관리자가 설정한 Run 모델 Turn 한도에 도달했습니다.",
-            limit=max_model_turns,
-            observed=model_turns,
-        )
-
-    max_total_tokens = _nonnegative_int(limits.get("maxTotalTokens"))
-    total_tokens = _nonnegative_int(
-        run.usage_json.get("input_tokens")
-    ) + _nonnegative_int(run.usage_json.get("output_tokens"))
-    if max_total_tokens and total_tokens >= max_total_tokens:
-        return RunLimitViolation(
-            code="run_token_limit_reached",
-            message="관리자가 설정한 Run 누적 Token 한도에 도달했습니다.",
-            limit=max_total_tokens,
-            observed=total_tokens,
-        )
-
-    max_cost_usd = _nonnegative_float(limits.get("maxCostUsd"))
-    cost_usd = _nonnegative_float(run.usage_json.get("cost_usd"))
-    if max_cost_usd and cost_usd >= max_cost_usd:
-        return RunLimitViolation(
-            code="run_cost_limit_reached",
-            message="관리자가 설정한 Run 예상 비용 한도에 도달했습니다.",
-            limit=max_cost_usd,
-            observed=cost_usd,
-        )
-
-    deadline = _run_deadline(run)
-    if deadline is not None and utc_now() >= deadline:
-        return RunLimitViolation(
-            code="run_deadline_reached",
-            message="관리자가 설정한 Run 실행 시간 한도에 도달했습니다.",
-            limit=deadline.isoformat(),
-            observed=utc_now().isoformat(),
-        )
-    return None
-
-
-def _nonnegative_float(value: Any) -> float:
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        converted = float(value)
-        if math.isfinite(converted) and converted >= 0:
-            return converted
-    return 0.0
-
-
-def _reported_cost_usd(raw: Any) -> float | None:
-    if not isinstance(raw, Mapping):
-        return None
-    for key in ("cost_usd", "total_cost_usd", "estimated_cost_usd", "cost"):
-        value = raw.get(key)
-        if value is None or isinstance(value, bool):
-            continue
-        try:
-            parsed = float(value)
-        except (TypeError, ValueError, OverflowError):
-            continue
-        if parsed >= 0 and math.isfinite(parsed):
-            return parsed
-    return None
 
 
 def _bounded_text(value: str, limit: int) -> str:
