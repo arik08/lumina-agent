@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from yaml import YAMLError, safe_load
 
 from ..api.errors import ApiProblem
 from ..authorization import require_conversation, require_project
@@ -1106,6 +1107,9 @@ def resolve_skill_snapshot(
     resolved: dict[str, dict[str, Any]] = {}
     for binding, draft, extension in bindings:
         effective_project_id = binding.project_id or extension.project_id
+        allow_implicit_invocation = _skill_allows_implicit_invocation(
+            draft.package_json
+        )
         candidate = {
             "extension_id": extension.id,
             "kind": extension.kind,
@@ -1117,6 +1121,7 @@ def resolve_skill_snapshot(
             "draft_revision": draft.current_revision,
             "digest": draft.current_digest,
             "instructions": _skill_instructions(draft.package_json),
+            "allow_implicit_invocation": allow_implicit_invocation,
             "scope_type": "project" if effective_project_id else "user",
             "scope_id": effective_project_id or user.id,
         }
@@ -1152,6 +1157,9 @@ def resolve_skill_snapshot(
             continue
         if extension.id in resolved:
             continue
+        allow_implicit_invocation = _skill_allows_implicit_invocation(
+            version.package_json
+        )
         resolved[extension.id] = {
             "extension_id": extension.id,
             "kind": extension.kind,
@@ -1163,6 +1171,7 @@ def resolve_skill_snapshot(
             "version": version.version_number,
             "digest": version.package_digest,
             "instructions": _skill_instructions(version.package_json),
+            "allow_implicit_invocation": allow_implicit_invocation,
             "installation_id": installation.id,
             "scope_type": installation.scope_type,
             "scope_id": installation.scope_id,
@@ -1182,6 +1191,24 @@ def _skill_instructions(package: dict[str, str]) -> str:
         "skill_instructions_missing",
         "Skill snapshot의 SKILL.md를 찾을 수 없습니다.",
     )
+
+
+def _skill_allows_implicit_invocation(package: dict[str, str]) -> bool:
+    for path, content in package.items():
+        if path.casefold() not in {"agents/openai.yaml", "agents/openai.yml"}:
+            continue
+        try:
+            metadata = safe_load(content)
+        except YAMLError:
+            return True
+        if not isinstance(metadata, dict):
+            return True
+        policy = metadata.get("policy")
+        if not isinstance(policy, dict):
+            return True
+        value = policy.get("allow_implicit_invocation")
+        return value if isinstance(value, bool) else True
+    return True
 
 
 def authorize_scope(

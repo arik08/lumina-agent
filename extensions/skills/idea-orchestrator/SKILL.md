@@ -1,6 +1,6 @@
 ---
 name: idea-orchestrator
-description: Systematically generate, combine, and rank practical ideas by routing a problem through two or three complementary methods such as TRIZ, SIT, morphological analysis, SCAMPER, Jobs to Be Done, Design Thinking, Six Thinking Hats, reverse thinking, or Five Whys. Use for product, service, process, business, UX, strategy, or technical innovation when the user asks for ideas, alternatives, concepts, creative problem solving, brainstorming, innovation workshops, or a structured ideation method. Do not use for simple factual questions or when the user already requests one narrowly defined solution with no exploration.
+description: Systematically generate, combine, and rank practical ideas by routing a problem through two or three complementary methods such as TRIZ, SIT, morphological analysis, SCAMPER, Jobs to Be Done, Design Thinking, Six Thinking Hats, reverse thinking, or Five Whys. Use only when the user asks to generate or explore ideas, alternatives, concepts, creative solutions, innovation workshops, or a structured ideation method for a product, service, process, business, UX, strategy, or technical problem. Do not use for factual research, article or trend analysis, summarization, or a narrowly defined solution with no exploration.
 ---
 
 # Idea Orchestrator

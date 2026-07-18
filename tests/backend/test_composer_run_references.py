@@ -21,7 +21,12 @@ from lumina.auth import bootstrap_database, create_user
 from lumina.agent.executor import _skill_activation_tool_schema
 from lumina.config import Settings, get_settings
 from lumina.db import SessionLocal, configure_database, create_schema
-from lumina.extensions.service import create_skill, resolve_skill_snapshot, update_draft
+from lumina.extensions.service import (
+    _skill_allows_implicit_invocation,
+    create_skill,
+    resolve_skill_snapshot,
+    update_draft,
+)
 from lumina.models import (
     Artifact,
     ArtifactVersion,
@@ -65,6 +70,7 @@ def test_implicit_skill_activation_requires_a_model_tool_choice() -> None:
             "instructions": "Create a presentation.",
             "version": 1,
             "digest": "pptx-digest",
+            "allow_implicit_invocation": False,
         },
     ]
     run = SimpleNamespace(
@@ -81,8 +87,9 @@ def test_implicit_skill_activation_requires_a_model_tool_choice() -> None:
     assert schema["function"]["name"] == "activate_skill"
     assert schema["function"]["parameters"]["properties"]["skillId"]["enum"] == [
         "visual-id",
-        "pptx-id",
     ]
+    assert "There is no target Skill count" in schema["function"]["description"]
+    assert "mere topic overlap" in schema["function"]["description"]
     assert (
         classify_tool_risk("activate_skill", approval_mode="on_risk").approval_required
         is False
@@ -99,6 +106,22 @@ def test_implicit_skill_activation_requires_a_model_tool_choice() -> None:
     assert _skill_activities(run)[0]["reason"] == (
         "요청한 시장 동향을 읽기 쉬운 HTML 보고서로 구성하기 위해 선택했습니다."
     )
+
+
+def test_skill_interface_can_disable_implicit_invocation() -> None:
+    assert (
+        _skill_allows_implicit_invocation(
+            {
+                "SKILL.md": "---\nname: ask-me\ndescription: Ask questions.\n---\n",
+                "agents/openai.yaml": (
+                    "interface:\n  display_name: Ask Me\npolicy:\n"
+                    "  allow_implicit_invocation: false\n"
+                ),
+            }
+        )
+        is False
+    )
+    assert _skill_allows_implicit_invocation({"SKILL.md": "# Default"}) is True
 
 
 def test_skill_activities_show_which_skill_was_actually_applied() -> None:

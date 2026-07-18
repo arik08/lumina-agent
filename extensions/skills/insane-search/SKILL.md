@@ -1,21 +1,14 @@
 ---
 name: insane-search
 description: >
-  Auto-bypass for blocked or sparse web sources after normal web access or
-  OpenWeb cannot satisfy the request. Use when WebFetch/WebSearch/OpenWeb returns
-  401/402/403/429, access denied, bot/WAF/challenge pages, unexpectedly sparse
-  results, or when accessing X/Twitter, Reddit,
-  YouTube, GitHub, Mastodon, Medium, Substack, Stack Overflow, Threads, Naver,
-  Coupang, LinkedIn, or any WAF/bot-protected platform and the source matters.
-  Leverages yt-dlp, Jina Reader, public APIs, curl_cffi TLS impersonation,
-  mobile URL transforms, and Playwright real-Chrome fallback.
-  Korean triggers: 트위터/X 못 열어, 레딧 안 읽혀, 유튜브 자막 뽑아줘, 깃헙 검색,
-  사이트 차단됨, 스레드 안 열려, 마스토돈, 미디엄, 서브스택, 스택오버플로우,
-  네이버 블로그, 디시인사이드, 에펨코리아, 요즘IT, 긱뉴스, 클리앙, 쿠팡, 링크드인,
-  당근마켓. English triggers: twitter access, reddit blocked, youtube subtitles,
-  github search, arxiv papers, threads, mastodon, medium, substack, stackoverflow,
-  naver blog, dcinside, fmkorea, coupang, linkedin, yozm, wishket.
-  Do NOT trigger for simple web searches that WebSearch can handle directly.
+  Fallback retrieval workflow for blocked or unexpectedly sparse web sources. Use
+  only after ordinary WebFetch, WebSearch, or OpenWeb returns 401/402/403/429,
+  access denial, a bot/WAF challenge, or insufficient content, or when the requested
+  content clearly requires specialized extraction unavailable through ordinary
+  access, such as a video transcript or protected dynamic thread. Uses yt-dlp,
+  Jina Reader, public APIs, TLS impersonation, URL transforms, and real-Chrome
+  fallback. A platform name alone is not sufficient evidence. Do not activate
+  speculatively or for normal pages and searches that ordinary access can handle.
 ---
 
 # Insane Search

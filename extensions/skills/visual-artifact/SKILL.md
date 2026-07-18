@@ -1,6 +1,6 @@
 ---
 name: visual-artifact
-description: Create polished single-file HTML visual artifacts such as visually rich reports, dashboards, infographics, one-pagers, slide-like webpages, visual summaries, comparison pages, timelines, and interactive previews. Use when the user asks for a beautiful/dynamic webpage-like output, HTML preview, visual report, presentation-style page, screenshot-ready artifact, PDF-ready page, business/research summary, or any reusable visual deliverable intended to be opened in a browser or captured into PPT/PDF. Preserve the requested artifact type; ordinary report-style HTML should remain a web-native scrolling report unless the user explicitly asks for a fixed page, A4, or slide format.
+description: Create polished single-file HTML visual artifacts such as visually rich reports, dashboards, infographics, one-pagers, slide-like webpages, visual summaries, comparison pages, timelines, and interactive previews. Use only when the user requests a reusable browser-ready visual deliverable, HTML preview, visual report, presentation-style page, screenshot-ready artifact, or PDF/PPT-ready page. Do not use for an ordinary chat analysis, research summary, or explanation when no visual file or browser-openable artifact is requested. Preserve the requested artifact type; ordinary report-style HTML should remain a web-native scrolling report unless the user explicitly asks for a fixed page, A4, or slide format.
 ---
 
 # Visual Artifact

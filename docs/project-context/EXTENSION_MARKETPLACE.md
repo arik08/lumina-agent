@@ -40,6 +40,8 @@
 
 Skill package는 최소 `SKILL.md`를 가지며 선택적으로 manifest, references, scripts, examples와 assets를 포함합니다. Marketplace가 관리하는 Skill에는 안정적인 `skill_id`와 별도의 불변 `skill_version_id`를 부여합니다.
 
+일반 Run의 암시적 Skill 선택은 LLM의 의미 판단으로 수행합니다. 선택 개수에는 기본값이나 상한을 두지 않고 0개·1개·여러 개를 모두 허용하되, 각 Skill의 핵심 절차가 사용자가 요청한 행동·산출물과 직접 일치하고 해당 지침을 제외하면 실행 방식이나 결과가 실질적으로 달라질 때만 선택합니다. 주제 인접성, 이름·설명의 단어 중복, 일반적인 유용성, 아직 발생하지 않은 미래 조건은 선택 근거가 아닙니다. 일반 접근 실패처럼 선행 조건이 있는 Skill은 그 조건을 실제로 관찰한 뒤 선택합니다. `agents/openai.yaml`의 `policy.allow_implicit_invocation: false`인 Skill은 LLM 후보에서 제외하되 `$Skill` 명시 호출은 계속 허용합니다.
+
 ```text
 Skill
 ├─ User A WorkingDraft revision 1..N (mutable personal head)
