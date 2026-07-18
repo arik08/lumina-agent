@@ -5,8 +5,8 @@ import json
 import re
 from typing import Any
 
-from sqlalchemy import case, delete, exists, func, literal, or_, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy import String, and_, case, cast, delete, exists, func, literal, or_, select, update
+from sqlalchemy.orm import Session, aliased
 
 from ..api.errors import ApiProblem
 from ..authorization import project_access_query, require_project
@@ -201,42 +201,133 @@ def search_knowledge(
             "sources": [],
         }
 
-    def matches(value: str) -> bool:
-        normalized = value.casefold()
-        return all(term in normalized for term in terms)
+    entities: list[KnowledgeEntity] = []
+    if scope in {"all", "wiki"}:
+        entity_text = func.lower(
+            KnowledgeEntity.canonical_name
+            + " "
+            + KnowledgeEntity.entity_type
+            + " "
+            + KnowledgeEntity.description
+        )
+        entities = list(
+            db.scalars(
+                select(KnowledgeEntity)
+                .where(
+                    KnowledgeEntity.space_id == space_id,
+                    KnowledgeEntity.status == "active",
+                    and_(*(entity_text.contains(term, autoescape=True) for term in terms)),
+                )
+                .order_by(KnowledgeEntity.canonical_name, KnowledgeEntity.id)
+                .limit(limit)
+            )
+        )
 
-    entities = (
-        []
-        if scope not in {"all", "wiki"}
-        else [
-            item
-            for item in list_knowledge_entities(db, user, space_id)
-            if matches(f"{item.canonical_name} {item.entity_type} {item.description}")
-        ][:limit]
-    )
-    statements = []
+    statements: list[KnowledgeStatement] = []
     if scope in {"all", "statement"}:
-        for item in list_knowledge_statements(db, user, space_id):
-            subject = db.get(KnowledgeEntity, item.subject_entity_id)
-            search_text = (
-                f"{subject.canonical_name if subject is not None else ''} "
-                f"{item.predicate_key} {_statement_object_text(db, item)}"
+        subject = aliased(KnowledgeEntity)
+        object_entity = aliased(KnowledgeEntity)
+        successor = KnowledgeStatement.__table__.alias("search_statement_successor")
+        statement_text = func.lower(
+            subject.canonical_name
+            + " "
+            + KnowledgeStatement.predicate_key
+            + " "
+            + func.coalesce(object_entity.canonical_name, "")
+            + " "
+            + func.coalesce(cast(KnowledgeStatement.object_value_json, String), "")
+        )
+        statements = list(
+            db.scalars(
+                select(KnowledgeStatement)
+                .join(subject, subject.id == KnowledgeStatement.subject_entity_id)
+                .outerjoin(
+                    object_entity,
+                    object_entity.id == KnowledgeStatement.object_entity_id,
+                )
+                .where(
+                    KnowledgeStatement.space_id == space_id,
+                    ~exists(
+                        select(successor.c.id).where(
+                            successor.c.supersedes_statement_id
+                            == KnowledgeStatement.id
+                        )
+                    ),
+                    and_(*(statement_text.contains(term, autoescape=True) for term in terms)),
+                )
+                .order_by(
+                    KnowledgeStatement.recorded_at.desc(), KnowledgeStatement.id
+                )
+                .limit(limit)
             )
-            if matches(search_text):
-                statements.append(item)
-            if len(statements) >= limit:
-                break
-    sources = (
-        []
-        if scope not in {"all", "source"}
-        else [
-            item
-            for item in list_knowledge_sources(db, user, space_id)
-            if matches(
-                f"{item[0].title} {' '.join(segment.text for segment in item[2])}"
+        )
+
+    sources: list[
+        tuple[KnowledgeSource, KnowledgeSourceRevision, list[KnowledgeEvidenceSegment]]
+    ] = []
+    if scope in {"all", "source"}:
+        latest_source_revision = aliased(KnowledgeSourceRevision)
+        latest_revision_number = (
+            select(func.max(latest_source_revision.revision_number))
+            .where(latest_source_revision.source_id == KnowledgeSource.id)
+            .correlate(KnowledgeSource)
+            .scalar_subquery()
+        )
+        source_filters = []
+        for term in terms:
+            evidence_match = exists(
+                select(KnowledgeEvidenceSegment.id)
+                .join(
+                    KnowledgeSourceRevision,
+                    KnowledgeSourceRevision.id
+                    == KnowledgeEvidenceSegment.source_revision_id,
+                )
+                .where(
+                    KnowledgeSourceRevision.source_id == KnowledgeSource.id,
+                    KnowledgeSourceRevision.revision_number
+                    == latest_revision_number,
+                    func.lower(KnowledgeEvidenceSegment.text).contains(
+                        term, autoescape=True
+                    ),
+                )
             )
-        ][:limit]
-    )
+            source_filters.append(
+                or_(
+                    func.lower(KnowledgeSource.title).contains(term, autoescape=True),
+                    evidence_match,
+                )
+            )
+        source_candidates = list(
+            db.scalars(
+                select(KnowledgeSource)
+                .where(
+                    KnowledgeSource.space_id == space_id,
+                    KnowledgeSource.status == "active",
+                    and_(*source_filters),
+                )
+                .order_by(KnowledgeSource.updated_at.desc(), KnowledgeSource.id)
+                .limit(limit)
+            )
+        )
+        for source in source_candidates:
+            revision = db.scalar(
+                select(KnowledgeSourceRevision)
+                .where(KnowledgeSourceRevision.source_id == source.id)
+                .order_by(KnowledgeSourceRevision.revision_number.desc())
+                .limit(1)
+            )
+            if revision is None:
+                continue
+            evidence = list(
+                db.scalars(
+                    select(KnowledgeEvidenceSegment)
+                    .where(
+                        KnowledgeEvidenceSegment.source_revision_id == revision.id
+                    )
+                    .order_by(KnowledgeEvidenceSegment.segment_ordinal)
+                )
+            )
+            sources.append((source, revision, evidence))
 
     source_results = []
     for source, revision, evidence in sources:
