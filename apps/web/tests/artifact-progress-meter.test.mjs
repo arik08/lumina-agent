@@ -20,6 +20,8 @@ test("artifact progress distinguishes document size, target, and model output us
   assert.match(app, /artifact-progress-fill/);
   assert.match(app, /style=\{\{ width: `\$\{artifactProgress\.percent\}%` \}\}/);
   assert.match(app, /snapshot\?\.artifactProgress\s+\?\? snapshot\?\.artifactUsage\s+\?\? finalMessage\?\.metadata\?\.artifactUsage/);
+  assert.match(app, /const hasCreateReportExecution = tools\.some\([\s\S]*?includes\("create_report"\)[\s\S]*?\);/);
+  assert.match(app, /\{hasCreateReportExecution && artifactUsage && artifactProgress && \(/);
   assert.match(app, /artifactUsage\.estimated === false \? "문서 약" : "작성 중 약"/);
   assert.match(app, /artifactUsage\?\.modelOutputTokens \?\? 0/);
   assert.match(app, /모델 출력 누계 \{liveModelOutputTokens\.toLocaleString\(\)\}토큰/);
