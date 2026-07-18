@@ -41,14 +41,15 @@ test("the global connection label follows readiness and API transport failures",
   assert.match(stylesheet, /\.connection-state\.state-offline/);
 });
 
-test("the React root renders a recoverable top-level error screen", async () => {
+test("the backend recovery guard stays mounted around the top-level error screen", async () => {
   const [main, boundary, stylesheet] = await Promise.all([
     read("../src/main.tsx"),
     read("../src/AppErrorBoundary.tsx"),
     read("../src/styles.css"),
   ]);
 
-  assert.match(main, /<AppErrorBoundary>[\s\S]*<BackendConnectionGuard>/);
+  assert.match(main, /<BackendConnectionGuard>[\s\S]*<AppErrorBoundary>/);
+  assert.doesNotMatch(main, /<AppErrorBoundary>[\s\S]*<BackendConnectionGuard>/);
   assert.match(boundary, /class AppErrorBoundary extends Component/);
   assert.match(boundary, /static getDerivedStateFromError/);
   assert.match(boundary, /componentDidCatch/);

@@ -13,12 +13,12 @@ import.meta.hot?.dispose(disposeScrollbarActivity);
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <AppErrorBoundary>
-      <GlobalTooltipProvider>
-        <BackendConnectionGuard>
+    <BackendConnectionGuard>
+      <AppErrorBoundary>
+        <GlobalTooltipProvider>
           <AgentFrontendHost />
-        </BackendConnectionGuard>
-      </GlobalTooltipProvider>
-    </AppErrorBoundary>
+        </GlobalTooltipProvider>
+      </AppErrorBoundary>
+    </BackendConnectionGuard>
   </StrictMode>,
 );
