@@ -7,6 +7,7 @@ from pathlib import Path
 from lumina.agent.executor import LocalRunExecutor, _run_limit_violation
 from lumina.config import Settings
 from lumina.models import Run, utc_now
+from lumina.providers import ProviderCapabilities, ProviderRequest
 from lumina.runs.safety import normalize_run_safety_settings, run_limit_snapshot
 
 
@@ -102,5 +103,56 @@ def test_executor_cancel_many_actively_cancels_matching_tasks(tmp_path: Path) ->
         assert not second.cancelled()
         second.cancel()
         await asyncio.gather(second, return_exceptions=True)
+
+    asyncio.run(exercise())
+
+
+def test_provider_wait_stops_when_database_run_becomes_terminal(tmp_path: Path) -> None:
+    settings = Settings(
+        environment="test",
+        DATABASE_URL=f"sqlite:///{(tmp_path / 'provider-cancel.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    executor = LocalRunExecutor(settings)
+    stream_closed = asyncio.Event()
+
+    class SilentProvider:
+        provider_id = "silent"
+        capabilities = ProviderCapabilities()
+
+        async def stream(self, _request: ProviderRequest):
+            try:
+                await asyncio.Event().wait()
+                yield
+            finally:
+                stream_closed.set()
+
+    async def exercise() -> None:
+        terminal = False
+
+        def run_is_terminal(_run_id: str) -> bool:
+            return terminal
+
+        executor._run_is_terminal = run_is_terminal  # type: ignore[assignment]
+
+        async def consume() -> None:
+            async for _event in executor._provider_events(
+                "run-id",
+                SilentProvider(),
+                ProviderRequest(model="silent", messages=()),
+            ):
+                raise AssertionError("A silent Provider must not emit an event")
+
+        task = asyncio.create_task(consume())
+        await asyncio.sleep(0)
+        terminal = True
+        result = await asyncio.wait_for(
+            asyncio.gather(task, return_exceptions=True), timeout=0.5
+        )
+        assert isinstance(result[0], asyncio.CancelledError)
+        assert stream_closed.is_set()
 
     asyncio.run(exercise())

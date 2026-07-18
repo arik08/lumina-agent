@@ -9,7 +9,7 @@ import mimetypes
 import os
 import re
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -108,6 +108,7 @@ from ..providers import (
     ProviderAdapter,
     ProviderConfigurationError,
     ProviderError,
+    ProviderEvent,
     ProviderImage,
     ProviderMessage,
     ProviderRequest,
@@ -220,6 +221,7 @@ _MAX_AUTO_CONTINUATIONS = 4
 _MAX_EMPTY_RESPONSE_RETRIES = 1
 _MAX_ARTIFACT_LENGTH_RETRIES = 2
 _ARTIFACT_PROGRESS_INTERVAL_SECONDS = 0.1
+_RUN_CANCELLATION_POLL_SECONDS = 0.2
 _WEB_SEARCH_CALL_SAFETY_LIMIT = 10
 _WEB_FETCH_PAGE_SAFETY_LIMIT = 15
 _BRIEF_WEB_SEARCH_CALL_SAFETY_LIMIT = 3
@@ -610,6 +612,40 @@ class LocalRunExecutor:
 
     def cancel_many(self, run_ids: list[str]) -> int:
         return sum(1 for run_id in run_ids if self.cancel(run_id))
+
+    def _run_is_terminal(self, run_id: str) -> bool:
+        with SessionLocal() as db:
+            status = db.scalar(select(Run.status).where(Run.id == run_id))
+        return status is None or status in TERMINAL_STATUSES
+
+    async def _provider_events(
+        self,
+        run_id: str,
+        provider: ProviderAdapter,
+        request: ProviderRequest,
+    ) -> AsyncIterator[ProviderEvent]:
+        """Stop a silent Provider stream when another process cancels the Run."""
+        stream = provider.stream(request)
+        pending: asyncio.Future[ProviderEvent] = asyncio.ensure_future(anext(stream))
+        try:
+            while True:
+                done, _ = await asyncio.wait(
+                    (pending,), timeout=_RUN_CANCELLATION_POLL_SECONDS
+                )
+                if pending in done:
+                    try:
+                        event = pending.result()
+                    except StopAsyncIteration:
+                        return
+                    yield event
+                    pending = asyncio.ensure_future(anext(stream))
+                    continue
+                if self._run_is_terminal(run_id):
+                    raise asyncio.CancelledError
+        finally:
+            if not pending.done():
+                pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
 
     def _discard_task(self, task: asyncio.Task[None]) -> None:
         for run_id, current in list(self._tasks.items()):
@@ -1132,7 +1168,7 @@ class LocalRunExecutor:
             try:
                 async with asyncio.timeout(self._remaining_run_seconds(run_id)):
                     provider_attempt_count += 1
-                    async for event in provider.stream(request):
+                    async for event in self._provider_events(run_id, provider, request):
                         if event.type == "text_delta" and event.text:
                             streamed_output_chars += len(event.text)
                         elif event.type == "tool_call_delta" and event.arguments_delta:
