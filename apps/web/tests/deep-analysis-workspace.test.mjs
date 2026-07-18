@@ -73,6 +73,15 @@ test("project selection preserves the active top-level feature", async () => {
   assert.doesNotMatch(projectSelection, /setMainView\("chat"\)/);
 });
 
+test("Mission header keeps only the title and objective rows", async () => {
+  const view = await readFile(viewPath, "utf8");
+  const missionHeader = view.match(/<header className="deep-analysis-mission-header">([\s\S]*?)<div className="deep-analysis-mission-actions">/)?.[1] ?? "";
+
+  assert.match(missionHeader, /<h2>\{mission\.title\}<\/h2>/);
+  assert.match(missionHeader, /mission\.objective/);
+  assert.doesNotMatch(missionHeader, /statusLabel\(mission\.status\)/);
+});
+
 test("Workflow keeps cost detail opt-in and exposes selectable Node inspection", async () => {
   const view = await readFile(viewPath, "utf8");
 

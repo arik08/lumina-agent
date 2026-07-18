@@ -67,7 +67,6 @@
 .deep-analysis-mission-header > div:first-child { display: grid; min-width: 0; gap: 5px; }
 .deep-analysis-mission-header h2 { overflow: hidden; margin: 0; font-size: 17px; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
 .deep-analysis-mission-header p { overflow: hidden; max-width: 780px; margin: 0; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.deep-analysis-status,
 .node-status { width: fit-content; color: var(--muted); font-size: 10.5px; font-weight: 650; }
 .status-ready, .status-completed { color: var(--success); }
 .status-running, .status-awaiting_input { color: var(--cobalt); }

@@ -1192,7 +1192,6 @@ export function DeepAnalysisView({
               <>
                 <header className="deep-analysis-mission-header">
                   <div>
-                    <span className={`deep-analysis-status status-${mission.status}`}>{statusLabel(mission.status)}</span>
                     <h2>{mission.title}</h2>
                     <p>{mission.objective || "분석 목적이 아직 입력되지 않았습니다."}</p>
                   </div>
