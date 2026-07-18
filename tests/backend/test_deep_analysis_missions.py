@@ -848,8 +848,12 @@ def test_mission_export_contains_portable_records_and_verified_checksums(
 
 
 def test_workflow_draft_is_separate_validated_and_activated_atomically(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch
 ) -> None:
+    monkeypatch.setattr(
+        "lumina.api.routes.deep_analysis.local_run_executor.enqueue",
+        lambda _run_id: None,
+    )
     with TestClient(create_app(_settings(tmp_path))) as client:
         headers = _login(client)
         project_id = client.get("/api/projects").json()[0]["id"]
@@ -908,6 +912,14 @@ def test_workflow_draft_is_separate_validated_and_activated_atomically(
         assert activated.status_code == 200, activated.text
         assert activated.json()["revision"] == 2
         assert activated.json()["workflow"]["id"] == draft["id"]
+        started = client.post(
+            f"/api/deep-analysis/missions/{created['id']}/start",
+            headers=headers,
+            json={"expectedRevision": 2},
+        )
+        assert started.status_code == 200, started.text
+        assert started.json()["status"] == "running"
+        assert started.json()["workflow"]["nodes"][0]["status"] == "running"
         with SessionLocal() as db:
             previous = db.get(DeepAnalysisWorkflowRevision, active_id)
             assert previous is not None and previous.state == "archived"

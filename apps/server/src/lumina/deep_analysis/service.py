@@ -22,6 +22,7 @@ from .planning import (
     graph_digest,
     initial_change_log,
     initial_workflow_plan,
+    next_runnable_node,
     plan_edges,
     planned_positions,
 )
@@ -233,8 +234,6 @@ def answer_decision(
         db.flush()
         db.refresh(mission)
         return decision, response, None, True
-    from .planning import next_runnable_node
-
     next_node = next_runnable_node(nodes, edges)
     if next_node is None:
         mission.status = "completed"
@@ -650,11 +649,11 @@ def start_mission(
             details={"currentRevision": mission.revision},
         )
 
-    _revision, nodes, _edges = active_workflow(db, mission.id)
-    first_ready_node = next((node for node in nodes if node.status == "ready"), None)
-    if first_ready_node is not None:
-        first_ready_node.status = "running"
-        first_ready_node.started_at = utc_now()
+    _revision, nodes, edges = active_workflow(db, mission.id)
+    first_runnable_node = next_runnable_node(nodes, edges)
+    if first_runnable_node is not None:
+        first_runnable_node.status = "running"
+        first_runnable_node.started_at = utc_now()
     db.flush()
     db.refresh(mission)
     return mission
