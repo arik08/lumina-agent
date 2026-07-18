@@ -338,13 +338,13 @@ export function ProjectSettings({ projects, project, onOpenNavigation, onSelect,
             <form className="project-settings-form" onSubmit={(event) => void save(event)}>
               <header>
                 <div><h2>프로젝트 정보</h2><p>이름과 설명을 관리합니다.</p></div>
-                {!project.isDefault && <div className="project-settings-actions"><button className={`text-danger ${deleteArmed ? "is-delete-armed" : ""}`} type="button" aria-label={deleteArmed ? "프로젝트 삭제 확인, 한 번 더 누르면 삭제" : "프로젝트 삭제"} disabled={busy} onClick={() => void remove()}>{busy ? <LoaderCircle className="is-running" size={15} /> : deleteArmed ? <AlertTriangle size={15} /> : <Archive size={15} />} {deleteArmed ? "한 번 더 눌러 삭제" : "프로젝트 삭제"}</button></div>}
+                <div className="project-settings-actions">
+                  <button className="primary-compact lumina-primary-action" type="submit" disabled={busy || !name.trim()}>{busy ? <LoaderCircle className="is-running" size={15} /> : <Save size={15} />} 정보 저장</button>
+                  {!project.isDefault && <button className={`text-danger ${deleteArmed ? "is-delete-armed" : ""}`} type="button" aria-label={deleteArmed ? "프로젝트 삭제 확인, 한 번 더 누르면 삭제" : "프로젝트 삭제"} disabled={busy} onClick={() => void remove()}>{busy ? <LoaderCircle className="is-running" size={15} /> : deleteArmed ? <AlertTriangle size={15} /> : <Archive size={15} />} {deleteArmed ? "한 번 더 눌러 삭제" : "프로젝트 삭제"}</button>}
+                </div>
               </header>
               <label>이름<input value={name} maxLength={240} required onChange={(event) => setName(event.currentTarget.value)} /></label>
               <label>설명<input value={description} maxLength={1000} placeholder="프로젝트를 구분할 짧은 설명" onChange={(event) => setDescription(event.currentTarget.value)} /></label>
-              <div className="project-settings-actions">
-                <button className="primary-compact lumina-primary-action" type="submit" disabled={busy || !name.trim()}>{busy ? <LoaderCircle className="is-running" size={15} /> : <Save size={15} />} 정보 저장</button>
-              </div>
               {project.isDefault && <small>기본 프로젝트는 삭제할 수 없습니다.</small>}
             </form>
 
