@@ -3541,9 +3541,13 @@ button:disabled { cursor: default; opacity: 0.5; }
 
 .chat-pane.view-chat .progress-title,
 .chat-pane.view-chat .progress-title *,
-.chat-pane.view-chat .progress-step-label > span,
-.chat-pane.view-chat .progress-step-status {
+.chat-pane.view-chat .progress-step-label > span {
   font-size: calc(var(--conversation-font-size) - 1px);
+}
+
+.chat-pane.view-chat .turn-work-details .tool-call-status,
+.chat-pane.view-chat .progress-step-status {
+  font-size: calc(var(--conversation-font-size) - 2px);
 }
 
 .chat-pane.view-chat .answer-sources-trigger,
