@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import {
   type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
   useEffect,
@@ -303,6 +304,14 @@ export function DeepAnalysisView({
   useEffect(() => {
     eventCursorRef.current = mission?.eventCursor ?? 0;
   }, [mission?.id, mission?.eventCursor]);
+
+  useEffect(() => {
+    if (mission?.status === "running") {
+      setExecutionLogOpen(true);
+    } else if (mission && ["completed", "cancelled", "failed"].includes(mission.status)) {
+      setExecutionLogOpen(false);
+    }
+  }, [mission?.id, mission?.status]);
 
   useEffect(() => {
     if (!costDetailsOpen || !mission) return;
@@ -653,6 +662,38 @@ export function DeepAnalysisView({
       edges: exists
         ? workflowDraft.edges.filter((edge) => !(edge.sourceNodeKey === sourceNodeKey && edge.targetNodeKey === targetNodeKey))
         : [...workflowDraft.edges, { id: `draft:${sourceNodeKey}:${targetNodeKey}`, sourceNodeKey, targetNodeKey, edgeType: "sequence" }],
+    });
+    setWorkflowDraftDirty(true);
+  }
+
+  function handleNodeKeyDown(
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    node: DeepAnalysisWorkflowNode,
+  ) {
+    if (!editingWorkflow || !workflowDraft) return;
+    if (event.key === "Delete" && node.nodeType !== "report") {
+      event.preventDefault();
+      removeDraftNode(node.nodeKey);
+      return;
+    }
+    const direction = {
+      ArrowLeft: [-1, 0],
+      ArrowRight: [1, 0],
+      ArrowUp: [0, -1],
+      ArrowDown: [0, 1],
+    }[event.key];
+    if (!direction) return;
+    event.preventDefault();
+    const distance = event.shiftKey ? 40 : 10;
+    setWorkflowDraft({
+      ...workflowDraft,
+      nodes: workflowDraft.nodes.map((item) => item.nodeKey === node.nodeKey
+        ? {
+            ...item,
+            positionX: Math.max(0, item.positionX + direction[0] * distance),
+            positionY: Math.max(0, item.positionY + direction[1] * distance),
+          }
+        : item),
     });
     setWorkflowDraftDirty(true);
   }
@@ -1524,6 +1565,7 @@ export function DeepAnalysisView({
                           onPointerDown={(event) => beginNodeDrag(event, node)}
                           onPointerMove={moveNodeDrag}
                           onPointerUp={endNodeDrag}
+                          onKeyDown={(event) => handleNodeKeyDown(event, node)}
                         />
                       ))}
                     </div>
@@ -1781,6 +1823,7 @@ function WorkflowNodeButton({
   onPointerDown,
   onPointerMove,
   onPointerUp,
+  onKeyDown,
 }: {
   node: DeepAnalysisWorkflowNode;
   selected: boolean;
@@ -1789,6 +1832,7 @@ function WorkflowNodeButton({
   onPointerDown: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   onPointerMove: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   onPointerUp: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+  onKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
 }) {
   return (
     <button
@@ -1801,6 +1845,7 @@ function WorkflowNodeButton({
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
+      onKeyDown={onKeyDown}
     >
       <span><GitBranch size={14} />{node.nodeKey}</span>
       <strong>{node.title}</strong>

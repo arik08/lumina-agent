@@ -42,7 +42,7 @@ test("Workflow keeps cost detail opt-in and exposes selectable Node inspection",
   const view = await readFile(viewPath, "utf8");
 
   assert.match(view, /aria-expanded=\{costDetailsOpen\}/);
-  assert.match(view, /노드별 비용/);
+  assert.match(view, /비용 상세/);
   assert.match(view, /setSelectedNodeKey\(node\.nodeKey\)/);
   assert.match(view, /deep-analysis-inspector/);
 });
@@ -85,7 +85,7 @@ test("Workflow reports live Run progress and pans with transform at every zoom",
 
   assert.match(view, /!mission\.executionAvailable/);
   assert.match(view, /실제 Lumina Run \$\{activeNode\.runStatus/);
-  assert.match(view, /window\.setInterval\(refresh, 1_500\)/);
+  assert.match(view, /window\.setInterval\(\(\) => void refresh\(\), 1_500\)/);
   assert.match(view, /selectedNode\.liveOutput/);
   assert.match(view, /\$\{completedNodeCount\}\/\$\{mission\.workflow\.nodes\.length\} Node 완료/);
   assert.match(view, /selectedNode\.outputMarkdown/);
@@ -94,6 +94,10 @@ test("Workflow reports live Run progress and pans with transform at every zoom",
   assert.match(view, /if \(wasBlankClick\) closeNodeInspectorAndFit\(\)/);
   assert.match(view, /function fitCanvasToViewport\(\)/);
   assert.match(view, /window\.requestAnimationFrame\(\(\) => window\.requestAnimationFrame\(fitCanvasToViewport\)\)/);
+  assert.match(view, /aria-label="실행 과정"/);
+  assert.match(view, /missionEvents\.slice\(-12\)/);
+  assert.match(view, /onKeyDown=\{onKeyDown\}/);
+  assert.match(view, /event\.shiftKey \? 40 : 10/);
   assert.match(css, /\.deep-analysis-canvas-stage \{[^}]*overflow: clip;/);
   assert.match(view, /aria-label="확대"[\s\S]*?Math\.round\(canvasScale \* 100\)[\s\S]*?aria-label="축소"/);
 });
@@ -178,7 +182,7 @@ test("durable Decision requests pause inline and resume through the revision-che
   assert.match(view, /expectedRevision: mission\.revision/);
   assert.match(view, /selectedOptionId: decisionOptionId/);
   assert.match(view, /이 결정으로 계속/);
-  assert.match(view, /mission\.status === "running" \|\| mission\.status === "awaiting_input"/);
+  assert.match(view, /mission\.status === "running" \|\| mission\.status === "paused" \|\| mission\.status === "awaiting_input"/);
   assert.match(api, /decisions\/\$\{encodeURIComponent\(decisionId\)\}\/answer/);
   assert.match(api, /answerDecision: answerDeepAnalysisDecision/);
   assert.match(css, /\.deep-analysis-decision \{/);

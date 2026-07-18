@@ -1,19 +1,19 @@
 # 심층분석 Mission Workflow 최종 설계
 
-> 문서 상태: 최종 Target 구현 계약
+> 문서 상태: 구현된 Core 계약과 Gate 이후 확장 계약
 > 작성일: 2026-07-17
 > 최종 수정: 2026-07-18
 > 적용 범위: Lumina Agent의 장기·대형 분석 Workflow, 단위별 LLM 출력 보존, 수치 계산, 비용 추적과 결과 보고
-> 구현 상태: 이 문서는 구현 기준으로 사용할 최종 목표 계약이며 현재 source·migration·test의 구현 완료를 뜻하지 않습니다.
+> 구현 상태: 0절의 `구현 완료` 범위는 현재 source·migration·test와 일치합니다. `검증 후 확장`으로 표시한 항목은 동작하지 않는 placeholder를 노출하지 않는 후속 계약입니다.
 
 ## 0. 구현 현황
 
-2026-07-18 기준으로 적응형 end-to-end 실행 Slice가 구현되어 있습니다. 아래 Target 전체가 완료된 것은 아니지만, 질문별 초기 DAG 생성부터 exact 자료 고정, 실제 Core Run 실행, 실행 중 Workflow 재계획, Python 계산, Node별 산출물·비용 기록과 최종 보고서까지 제품 경로가 연결되어 있습니다.
+2026-07-18 기준으로 첫 제품 Core가 end-to-end로 구현되어 있습니다. 질문별 초기 DAG 생성부터 exact 자료 고정, 실제 Core Run 실행, 실행 중 Workflow 재계획, Python 계산, Node별 Markdown·비용·Context lineage, Decision, Claim·Evidence, Quality Gate, Pattern과 감사 export까지 하나의 Mission 경로로 연결됩니다. 이 절은 구현 사실의 원본이며, 뒤 절의 고급 최적화는 `현재 계약`과 `검증 후 확장`을 구분해 읽습니다.
 
 구현된 범위는 다음과 같습니다.
 
 - Lumina 공통 Shell의 독립 `심층분석` 메뉴와 lazy-loaded Workspace Frontend module
-- Project에 귀속되는 `Mission`, `WorkflowRevision`, `WorkflowNode`, `WorkflowEdge` 분리 entity와 실행·적응 이력 migration `0034`, `0036`, `0037`
+- Project에 귀속되는 Mission·Workflow·Decision·Claim·Evidence·Quality Gate·Pattern·Export·Event·Context·File lineage 분리 entity와 migration `0034`~`0044`
 - Mission 목록·생성·상세 조회·revision CAS 수정 API, 기존 Project read/write 권한 재검증과 audit event
 - Mission 생성 시 질문을 정량 분석·비교 조사·의사결정·비정형 분석으로 판별해 서로 다른 6~7개 초기 가설 DAG를 구성하며, 모든 초기안은 최소 한 번 독립 분석으로 분기하고 교차검증·합성 Node에서 다시 합류
 - Mission을 시작한 뒤 각 비보고서 Node가 결과와 함께 `continue`, `expand`, `shrink`, `replace`, `finish` 판단과 근거를 구조화해 반환. 추가 Node는 임시 `ref`와 앞서 선언한 `dependsOn`으로 fan-out·fan-in을 표현하며 Backend가 허용 action·Node type·순환·상한·예산을 검증한 뒤 실제 Node·Edge를 추가·제거·연결
@@ -39,10 +39,30 @@
 - 우상단 누적 비용 icon·hover 요약·Node별 opt-in 상세와 닫을 때 전체 Graph를 현재 viewport에 자동 맞춤하는 Node Inspector
 - Canvas 내부의 숨은 native scroll 상태를 금지하여 Inspector를 닫거나 viewport가 넓어져도 Node가 잘리지 않는 배치
 - Backend DB를 원본으로 한 새로고침 복원과 Project별 마지막 선택 Mission 복원
+- Mission Charter·Completion Contract 고정, `satisfied`·`satisfied_with_exceptions`·`not_satisfied` 결과 분리와 immutable waiver 이력
+- 사용자 질문이 필요한 `Decision`의 선택지·AI 권고·영향 Node·답변 보존, `awaiting_input` 중단과 같은 Workflow revision 재개
+- 별도 Workflow Draft revision에서 Node 추가·drag 이동·Inspector 기반 다중 선행 연결·삭제·저장·활성화. 방향키 이동과 Delete를 포함한 Keyboard 조작
+- Project scope Workflow Pattern의 Mission별 복제, 민감·실행 값을 제거한 definition, immutable version publish와 선택적 적용
+- Claim·supporting/contradicting Evidence·Open Issue 원장, exact locator·version·digest와 stale 전파, deterministic Quality Gate
+- `DeepAnalysisEvent`의 Mission 단위 단조 sequence, reconnect replay, payload 비밀값 제거와 start·pause·resume·cancel·retry·Decision·Quality Gate·export command idempotency
+- Node 시작·출력 진행·완료·파일·비용·Workflow 변경·Decision·Gate·Mission 완료 event와 접이식 하단 실행 과정 Drawer
+- Node Run별 `ContextManifest`와 stable prefix hash, 원본 exact version과 선행 ancestor 출력만 포함하는 branch 격리, `MissionFileLink` lineage
+- Provider·Model·날짜·재실행별 비용, cached·uncached·cache-write·output Token, 가격표 version, cache 미적용 상한·예상 완료 비용 breakdown
+- 중단·실패 시 생성된 LLM 문자열을 고유 `_partial.md`로 보존하고 retry 시 영향 Claim·File을 `review_required`로 전파
+- 최신·보고서/근거·감사 scope의 Mission ZIP export, manifest와 파일별 SHA-256, 전체 `checksums.json` 검증
 
-아직 구현되지 않은 핵심 Target은 사용자 응답을 기다리는 질문·Decision Node, Node 위치 편집·수동 connect와 별도 Draft revision, 심층분석 canonical event projection, Workflow Pattern, Claim·Evidence·Quality Gate, Mission export입니다. 현재 AI 재계획 판단은 `changeLog`에 보존되지만 별도 사용자 Decision entity와 승인 Gate는 후속 Slice입니다. typed source manifest는 구현됐지만 Claim·Evidence 단위의 선택형 Context 조립도 후속 Slice입니다.
+현재 의도적으로 제한한 범위는 다음과 같습니다.
 
-현재 Slice는 전용 Backend·migration test 23개에서 질문별 6·7 Node 초기안의 공통 fan-out·fan-in, Draft 질문 변경과 기존 미실행 Mission 승격, runtime branch·merge·shrink와 dependency next-node 선택, Mock 전체 완주, 취소·재시도·시도 이력, source version 고정, Mission 산출물 입력 제외·삭제 연동, Python 계산의 frozen CSV 사용과 위험 script 차단을 검증했습니다. Ruff, Frontend 심층분석 test 9개, typecheck·production build와 migration `0001 → 0037`도 통과했습니다.
+- 같은 Mission의 분기 의미와 fan-out/fan-in은 보존하지만 Core Run은 한 번에 하나씩 durable하게 실행합니다. Mission 내부 동시 fan-out은 별도 동시성·비용·취소 정책을 검증한 뒤 확장합니다.
+- Canvas 연결은 Inspector의 Keyboard 접근 가능한 선행 Node 선택으로 제공합니다. port-to-port Edge drag, minimap, group·Sub-workflow와 대규모 layout은 후속 Canvas 확장입니다.
+- Pattern은 Project scope의 선택 기능입니다. 추천 조합형 `pattern_assisted`, Organization·Personal 공유와 Marketplace는 실제 사용 패턴이 쌓인 뒤 확장합니다.
+- Context item은 현재 `exact` source와 ancestor `dependency_output`을 사용합니다. extractive·reference·compressed Context Pack, 학습형 Model routing과 offline Workflow 탐색은 11.4절 Gate를 통과하기 전에는 실행하지 않습니다.
+- export는 현재 bounded ZIP을 요청 transaction에서 생성하되 별도 export operation entity·status·digest를 남깁니다. 대용량 비동기 worker 전환은 크기·시간 threshold가 확인되면 동일 operation 계약을 유지한 채 적용합니다.
+- Mission 목록은 현재 Project scope의 bounded 목록입니다. cursor pagination은 실제 목록 규모가 threshold를 넘기기 전에 호환 API로 추가합니다.
+
+현재 Core 검증은 전용 Backend·migration test 32개에서 fan-out/fan-in, Draft·Pattern, Decision·waiver, Mock 전체 완주, canonical event replay·idempotency, pause·resume·cancel·retry, exact source·ancestor Context, Claim·Evidence·Quality Gate, 비용·cache breakdown, export checksum, partial output과 Python sandbox를 검증합니다. Ruff, Frontend typecheck와 production build, 심층분석 Frontend 전용 test 15개도 통과했으며 migration head는 `0044`입니다. 전체 Frontend test는 271개 중 263개가 통과했고, 현재 심층분석과 무관한 기존 assertion 8개는 별도 정리가 필요합니다.
+
+격리 port `15252`·`15253`의 현재 Mock Provider 브라우저 검증에서는 7 Node fan-out/fan-in Mission을 생성·완주하고 Event 46까지의 Node 대기·시작·출력·파일·비용·Quality Gate·완료 event를 확인했습니다. Workflow Draft의 Node 추가, 다중 선행 Node 연결, 저장·활성화와 인라인 2단계 삭제를 검증했습니다. 61%→70% wheel zoom, 축소 상태 좌클릭 pan, Inspector 외부 click 닫기와 닫은 뒤 전체 Canvas 유지, 실행 과정 Drawer overlay, 760px 반응형 body overflow 없음과 console error 0건도 확인했습니다.
 
 격리 port `15252`·`15253`의 실제 GPT-5.5 검증에서는 `inputs/cost-variance.csv` 1개를 고정 입력으로 사용해 N001부터 N040까지 5개 Node를 완주했습니다. 5개 Markdown, N010·N020·N030의 Python·CSV 6개를 합쳐 총 11개 파일을 생성했고, 전기 1,850·당기 2,240·증감 +390과 기여율을 재현 계산했습니다. Node 비용은 N001 `US$0.0672`, N010 `US$0.2140`, N020 `US$0.3171`, N030 `US$0.4530`, N040 `US$0.0498`, Mission 합계 `US$1.1010`으로 기록됐습니다. 브라우저에서 live output, 중단, 삭제 2단계 확인, 40% 좌클릭 pan, wheel zoom, 빈 Canvas click Inspector 닫기, 닫은 뒤 전체 Node fit, 비용 popover, 파일 tree와 console error 0건을 확인했습니다.
 
@@ -151,21 +171,13 @@ Lumina 공통 Shell
 `deep-analysis`는 Lumina와 함께 검토·build하는 builtin module입니다. 사용자 설치, runtime 자동 탐색, 원격 JavaScript loader와 범용 Plugin Framework를 만들지 않습니다.
 
 ```text
-apps/web/src/agent-frontends/deep-analysis/
-├─ DeepAnalysisFrontend.tsx
-├─ MissionList.tsx
-├─ PatternLibrary.tsx
-├─ WorkflowCanvas.tsx
-├─ NodeInspector.tsx
-├─ ExecutionDrawer.tsx
-├─ DecisionPanel.tsx
-├─ ClaimEvidencePanel.tsx
-├─ QualityGatePanel.tsx
-├─ CostPanel.tsx
-└─ module styles and tests
+apps/web/src/workspace-frontends/deep-analysis/
+├─ index.ts
+├─ DeepAnalysisView.tsx
+└─ deep-analysis.css
 ```
 
-이 경로와 파일명은 구현 시 현재 Frontend 구조에 맞게 조정할 수 있지만 책임 경계는 유지합니다.
+현재 첫 제품 Core는 하나의 lazy-loaded Workspace module 안에서 Mission list, Pattern popover, Canvas, Inspector, Execution Drawer, Decision과 Evidence Ledger를 함께 조합합니다. 각 책임이 독립적으로 재사용되거나 변경 충돌이 반복될 때만 별도 component로 추출하며, 파일 수를 늘리는 것 자체를 모듈성으로 보지 않습니다.
 
 - 공통 Shell은 로그인, Project 선택, 전역 내비게이션, 알림과 설정을 소유합니다.
 - `DeepAnalysisFrontend`는 Mission 목록, Workflow Pattern Library, Workflow Canvas, Node Inspector, 실행 Drawer, 자료·결정·Claim·Evidence·Quality Gate·비용·보고서 화면을 소유합니다.
@@ -173,7 +185,7 @@ apps/web/src/agent-frontends/deep-analysis/
 - `App.tsx`, 전역 CSS와 공용 type 여러 곳에 `deep-analysis` 조건문을 흩뿌리지 않습니다.
 - 알 수 없거나 호환되지 않는 contract는 안전한 fallback을 제공하되 Mission·Run·파일 원본을 삭제하거나 다른 객체로 바꾸지 않습니다.
 
-현재 Agent Frontend 선택은 Conversation 중심이므로 심층분석을 계기로 공통 Shell에 최소한의 builtin `Workspace Frontend Slot`을 추가합니다.
+공통 Shell은 builtin `Workspace Frontend Slot`으로 `deep-analysis`를 lazy load합니다. `App.tsx`는 메뉴 선택·Project ID·편집 가능 여부만 전달하고 Mission domain state와 Canvas 로직은 module 안에 둡니다.
 
 ```text
 Lumina Web Shell
@@ -191,18 +203,22 @@ Lumina Web Shell
 
 ```text
 apps/server/src/lumina/deep_analysis/
-├─ models.py
-├─ schemas.py
-├─ repository.py
-├─ service.py
-├─ workflow.py
-├─ executor.py
-├─ context.py
-├─ files.py
+├─ calculations.py
+├─ context_manifest.py
 ├─ costs.py
-├─ claims.py
+├─ events.py
+├─ execution.py
+├─ exports.py
+├─ ledger.py
+├─ models.py
+├─ patterns.py
+├─ planning.py
 ├─ quality.py
-└─ routes.py
+├─ schemas.py
+├─ service.py
+└─ __init__.py
+
+apps/server/src/lumina/api/routes/deep_analysis.py
 ```
 
 파일 분리는 구현 규모에 따라 합칠 수 있으며 entity마다 기계적으로 Repository·Service를 만들지 않습니다. 이 module이 소유할 책임은 다음과 같습니다.
@@ -322,17 +338,18 @@ POST   /deep-analysis/patterns/{pattern_id}/versions
 POST   /deep-analysis/patterns/{pattern_id}/versions/{version_id}/publish
 ```
 
-`start`, `pause`, `resume`, `cancel`, `retry`, Decision 답변, proposal 결정과 export는 중복 요청에 안전해야 합니다. Frontend가 Node 상태를 계산하지 않고 Mission snapshot과 canonical event를 합쳐 표시합니다. 목록은 cursor pagination, 상세 write는 ETag·expected revision, 긴 실행과 export는 비동기 operation ID를 사용합니다.
+`start`, `pause`, `resume`, `cancel`, `retry`, Decision 답변, Quality Gate와 export command는 `Idempotency-Key`와 request digest로 중복 요청에 안전해야 합니다. Frontend가 Node 상태를 계산하지 않고 Mission snapshot과 canonical event를 합쳐 표시합니다. 상세 write는 expected revision을 사용합니다. 현재 bounded Project 목록과 bounded ZIP export는 동기 응답을 허용하되 export operation entity는 항상 남기며, cursor pagination과 worker 비동기화는 0절의 threshold 확장 계약을 따릅니다.
 
 ### 3.8 Canonical event 계약
 
-Deep Analysis 전용 event는 Core event envelope와 sequence·replay를 사용합니다. 초기 필수 event는 다음과 같습니다.
+Deep Analysis 전용 event는 Mission별 단조 sequence와 replay를 사용합니다. 현재 canonical event는 다음과 같습니다. 검증 실패·stale의 상세 상태는 Mission snapshot entity가 원본이며 별도 event type이 필요해질 때 이 목록에 versioned하게 추가합니다.
 
 ```text
 mission_created
 mission_charter_updated
 mission_status_changed
 workflow_draft_created
+workflow_draft_updated
 workflow_revision_activated
 workflow_expansion_proposed
 workflow_expansion_decided
@@ -340,13 +357,12 @@ node_queued
 node_started
 node_output_delta
 node_completed
-node_validation_failed
+node_cancelled
+node_retried
 node_failed
-node_stale
 decision_requested
 decision_resolved
 claim_recorded
-claim_status_changed
 evidence_linked
 mission_file_created
 mission_cost_updated
@@ -411,10 +427,10 @@ Mission은 다음 세 방식 중 하나로 계획할 수 있습니다.
 | 방식 | 사용 시점 | 동작 |
 |---|---|---|
 | `zero_based` | 새롭거나 일회성인 업무 | AI와 사용자가 목적에 맞는 새 Workflow Draft를 설계 |
-| `pattern_assisted` | 일부 반복 구간이 있는 업무 | 관련 Sub-workflow·Node Recipe만 선택적으로 조합 |
+| `pattern_assisted` | 검증 후 확장 | 관련 Sub-workflow·Node Recipe를 추천받아 선택적으로 조합 |
 | `pattern_based` | 충분히 정형화된 반복 업무 | 지정 Pattern을 현재 Mission에 맞게 인스턴스화·변형 |
 
-기본값은 `zero_based`이며 Pattern 추천은 선택 사항입니다. 시작 방식은 기록을 위한 provenance이지 실행 능력의 차이가 아닙니다.
+기본값은 `zero_based`이며 현재 UI는 published Pattern을 명시적으로 고르는 `pattern_based`를 함께 제공합니다. `pattern_assisted`는 추천 품질과 조합 provenance가 검증된 뒤 추가합니다. 시작 방식은 기록을 위한 provenance이지 실행 능력의 차이가 아닙니다.
 
 ### 4.3 자율성 Mode
 
@@ -422,9 +438,9 @@ Pattern 사용 여부와 별도로 Mission별 자율성 범위를 지정합니�
 
 | Mode | 자동 수행 범위 |
 |---|---|
-| `strict` | 승인된 Workflow 밖의 Node 추가·외부 요청·고비용 재실행을 모두 확인 |
+| `guided` | 단계별 확인. 승인된 Workflow 밖의 Node 추가·외부 요청·고비용 재실행을 모두 확인 |
 | `balanced` | 기본값. 저비용·읽기 전용·되돌릴 수 있는 확장은 정책 한도 안에서 자동 수행 |
-| `exploratory` | 명시 예산·depth·branch 한도 안에서 가설 탐색을 넓게 허용하되 외부 write·권한 상승은 계속 승인 |
+| `autonomous` | 자율 진행. 명시 예산·depth·branch 한도 안에서 가설 탐색을 넓게 허용하되 외부 write·권한 상승은 계속 승인 |
 
 Mode는 조직 상한을 넘을 수 없고 실행 시작 시 snapshot으로 고정합니다. 사용자가 실행 중 Mode를 바꾸면 새 Mission policy revision과 영향 범위를 기록하며 이미 수행한 작업을 소급 변경하지 않습니다.
 
@@ -481,19 +497,24 @@ Memory
 
 ### 5.2 Mission Workspace
 
-Mission을 열면 다음 탭을 같은 순서로 제공합니다.
+현재 Mission Workspace는 빈 화면을 늘리지 않도록 두 개의 주 탭과 문맥형 상세 surface로 제공합니다.
 
 ```text
-Workflow | 실행 과정 | 자료 | 의사결정 | 결론·근거 | 비용 | 보고서
+Workflow | 결론·근거
+           ├─ 하단 실행 과정 Drawer
+           ├─ Header: Mission 계약 · Pattern · Export · 비용
+           └─ Node Inspector: 출력 · Context · 계산 파일 · 재실행 · 비용
 ```
 
 - `Workflow`: Node를 배치·연결하고 실행 상태를 보는 주 화면
-- `실행 과정`: 시간순 Node 실행, 질문, 승인, 실패, 재시도와 복구
-- `자료`: 현재 Mission이 참조하거나 생성한 MD·CSV·PY와 원본 참조
-- `의사결정`: 선택지, 권고, 답변, 영향 Node와 변경 이력
+- `실행 과정 Drawer`: 시간순 Node 실행, 출력 진행, 질문, 실패, 재시도와 복구 event
+- `Mission 자료`: `결론·근거`의 lineage 목록과 `파일 → 심층분석` root에서 MD·CSV·PY, partial output과 원본 exact reference 확인
+- `의사결정`: Workflow 상단에 현재 pending 질문을 표시하고 답변하며, 확정 이력은 Mission detail·event·export에 보존
 - `결론·근거`: Claim, supporting·contradicting Evidence, 미해결 항목과 Quality Gate
-- `비용`: 단계·Node·Model·날짜·재실행별 사용량과 비용
-- `보고서`: 중간 보고와 최종 결과, 검증 상태와 download
+- `비용`: Header 누적 비용 icon을 열어 단계·Node·Model·날짜·재실행·cache breakdown과 예상 완료 비용 확인
+- `보고서`: Report Node Inspector와 `파일 → 심층분석` root에서 검증 상태, 최종 Markdown과 export 확인
+
+자료·의사결정·비용·보고서의 양과 탐색 빈도가 독립 탭을 정당화할 만큼 커지면 동일 API와 entity를 사용해 탭으로 분리합니다. 초기 화면에 동작하지 않는 빈 탭은 두지 않습니다.
 
 ### 5.3 Workflow Canvas
 
@@ -501,10 +522,10 @@ Workflow 화면은 n8n과 유사한 드래그·연결 Canvas 상호작용을 사
 
 - Canvas를 화면의 주 영역으로 사용합니다.
 - `+ Node`를 누르면 Node 검색·추가 popover를 임시로 엽니다. Node 목록을 상시 고정해 Canvas를 좁히지 않습니다.
-- Node를 Canvas로 끌어 놓고 연결점을 드래그해 Edge를 만듭니다.
+- Node 추가 후 Node를 drag하거나 방향키로 이동하고 Inspector의 선행 Node checkbox로 Edge를 만듭니다. port-to-port Edge drag는 검증 후 Canvas 확장입니다.
 - Node 클릭 시 오른쪽 Inspector를 열고 Canvas 빈 영역을 클릭하면 닫습니다.
-- 실행 중에는 접을 수 있는 하단 Drawer에서 대화, 실행 트리, 입력, 출력, 로그와 비용을 확인합니다.
-- 확대·축소, fit, 자동 정렬, 미니맵과 Sub-workflow 접기를 제공합니다.
+- 실행 중에는 접을 수 있는 하단 Drawer에서 canonical event 순서와 출력 진행을 확인합니다. 입력·출력·Context·비용 상세는 선택 Node Inspector와 비용 popover에서 봅니다.
+- 확대·축소, 현재 배율, fit과 위치 초기화를 제공합니다. 자동 정렬, 미니맵과 Sub-workflow 접기는 대규모 Canvas 확장입니다.
 - Keyboard로 Node 이동·연결·삭제·상세 열기와 focus 이동이 가능해야 합니다.
 
 ```text
@@ -787,19 +808,16 @@ LLM 출력 생성
 
 ```text
 심층분석/
-└─ 전사 영업원가 변동 원인 분석/
-   ├─ N001_목표범위_확정.md
-   ├─ N002_데이터품질_검사.md
-   ├─ N003_원재료비_분석.md
-   ├─ N003_원재료비_분석_계산.py
-   ├─ N003_원재료비_분석_결과.csv
-   ├─ N003_원재료비_분석_정합성검증.csv
-   ├─ N004_제품믹스_분석.md
-   ├─ N004_제품믹스_분석_계산.py
-   ├─ N004_제품믹스_분석_결과.csv
-   ├─ N005_생산수율_분석.md
+└─ 전사 영업원가 변동 원인 분석_a1b2c3d4/
+   ├─ N001_목표범위 확정.md
+   ├─ N002_데이터품질 검사.md
+   ├─ N003_원재료비 분석.md
+   ├─ N003_variance.py
+   ├─ N003_variance-result.csv
+   ├─ N004_제품믹스 분석.md
+   ├─ N005_생산수율 분석_partial.md
    ├─ N020_교차검증.md
-   ├─ N030_핵심원인_합성.md
+   ├─ N030_핵심원인 합성.md
    └─ N040_최종보고서.md
 ```
 
@@ -820,9 +838,9 @@ LLM 출력 생성
 
 ### 8.3 부분 출력과 재실행
 
-정상 완료된 LLM 출력만 현재 Node의 주 Markdown version으로 승격합니다. 중단된 partial output도 복구와 감사 목적으로 저장하되 UI에서 `생성 중 중단됨`을 명확히 표시하고 확정 결과처럼 사용하지 않습니다.
+정상 완료된 LLM 출력만 현재 Node의 주 Markdown으로 승격합니다. 중단된 문자열은 `{Node ID}_{작업명}_partial.md`와 `partial_output·interrupted` lineage로 별도 저장해 확정 결과와 섞지 않습니다.
 
-재실행은 이전 결과를 덮어쓰지 않고 새 immutable version과 Node Execution을 만듭니다. UI의 기본 파일 목록에는 latest valid version만 보이고 파일 상세에서 과거 실행과 partial version을 확인합니다.
+재실행은 이전 실행 이력을 `runHistory`에 보존하고 같은 논리 결과 파일의 새 immutable version과 Node Execution을 만듭니다. partial 파일과 영향 Claim·File은 `review_required`로 남깁니다.
 
 ## 9. 수치 계산과 파일
 
@@ -887,11 +905,11 @@ LLM은 중요한 합계, 증감률, 가격·물량·믹스 분해와 통계값�
 파일 저장소
 ├─ 프로젝트 파일
 └─ 심층분석
-   └─ 전사 영업원가 변동 원인 분석
-      ├─ N001_목표범위_확정.md
-      ├─ N003_원재료비_분석.md
-      ├─ N003_원재료비_분석_계산.py
-      └─ N003_원재료비_분석_결과.csv
+   └─ 전사 영업원가 변동 원인 분석_a1b2c3d4
+      ├─ N001_목표범위 확정.md
+      ├─ N003_원재료비 분석.md
+      ├─ N003_variance.py
+      └─ N003_variance-result.csv
 ```
 
 - `프로젝트 파일`: 사용자가 직접 업로드·생성·이동·삭제하는 일반 Project 자료
@@ -914,7 +932,7 @@ Mission 전체 대화와 모든 파일을 매 model Turn에 넣지 않습니다.
 ```text
 Mission 목표와 완료 기준
 + 현재 Node 계약
-+ 직접 연결된 선행 Node의 MD 출력
++ 현재 Node의 dependency ancestor인 선행 Node MD 출력
 + 관련 사용자 결정
 + 필요한 CSV 통계·일부 행
 + 검증 결과와 반대 근거
@@ -1073,17 +1091,16 @@ Workflow Canvas와 Node 카드에는 Node별 비용을 기본 표시하지 않�
 
 Node별 비용은 다음 경우에만 노출합니다.
 
-- 사용자가 `Node별 비용 표시`를 켠 경우
 - Node Inspector 또는 비용 상세를 연 경우
 - 예상 비용이 정책 threshold를 넘는 경우
 - 재실행이나 신규 AI 제안으로 추가 비용이 발생하는 경우
 
-예산 50%, 80%, 100% 같은 threshold는 조직 정책으로 설정합니다. 80% 도달이나 초과 예상 시 경고와 예상 완료 비용을 표시하고, hard limit을 넘는 고비용 Node는 실행 전에 확인을 요구합니다.
+현재 Core는 Mission hard limit을 다음 Node 시작 전에 차단하고 비용 상세에서 예산 사용률·예상 완료 비용·cache 미적용 상한을 제공합니다. 50%·80% 사전 경고와 예상 초과 승인 threshold는 Organization 비용 정책을 도입할 때 추가합니다.
 
 ## 13. 실행, 복구와 동시성
 
-- 실행 가능한 Node만 dependency와 사용자·서버 한도 안에서 병렬 실행합니다.
-- 실행 전 Workflow revision을 dependency graph로 compile하고 동일 입력·동일 Tool의 중복 작업을 병합한 뒤 독립 작업만 batch·병렬 dispatch합니다.
+- 현재 scheduler는 dependency를 만족한 Node만 선택하되 같은 Mission에서는 한 Core Run씩 실행합니다. 다른 Mission·Session은 사용자·서버 한도 안에서 병렬 실행할 수 있습니다.
+- Workflow revision을 dependency graph로 검증해 branch·merge 순서를 보존합니다. 동일 Mission의 batch·병렬 dispatch와 중복 Tool 병합은 fan-out 비용·취소·cache 계측 Gate를 통과한 뒤 확장합니다.
 - 하나의 Node Execution은 입력, Workflow revision, Provider, Model, Tool, 파일과 결정 reference를 snapshot으로 고정합니다.
 - 브라우저를 닫거나 다른 화면으로 이동해도 Backend Worker가 계속 실행합니다.
 - 재접속 시 Mission snapshot과 sequence event replay로 Canvas 상태, 실행 Drawer, partial output, 질문, 비용과 파일을 복원합니다.
@@ -1209,9 +1226,11 @@ Lumina의 차별점은 Workflow Builder 자체가 아닙니다. 사용자가 큰
 6. 자동 Workflow 탐색은 online 기본 동작이 아니라 예산이 제한된 offline Pattern 개선 과정입니다.
 7. 비용 최적화는 Token·달러뿐 아니라 품질 회귀, 재실행, 질문 부담, TTFT와 Mission 완료시간을 함께 평가합니다.
 
-## 18. 단계별 구현
+## 18. 구현 단계와 상태
 
 ### 1단계: 기록 가능한 Mission 실행
+
+상태: `구현 완료`. 아래 항목은 migration `0034`~`0044`와 현재 API·UI·test에 반영되어 있습니다.
 
 1. builtin `deep-analysis` Workspace Frontend registry와 공통 Shell slot
 2. Deep Analysis Backend domain module과 Core Run·Storage adapter
@@ -1227,6 +1246,8 @@ Lumina의 차별점은 Workflow Builder 자체가 아닙니다. 사용자가 큰
 
 ### 2단계: 수치 계산과 시각 Workflow 편집
 
+상태: `Core 구현 완료`. 9번의 같은 Mission 병렬 dispatch·중복 Tool 병합은 11.4절 Gate 이후 확장입니다. Canvas port drag 대신 현재 Inspector connect를 사용합니다.
+
 1. Python 계산 Node와 sandbox
 2. CSV 입력·출력과 정합성 검증
 3. drag·connect Workflow Canvas
@@ -1239,6 +1260,8 @@ Lumina의 차별점은 Workflow Builder 자체가 아닙니다. 사용자가 큰
 10. Claim·Evidence·Open Issue와 deterministic Quality Gate
 
 ### 3단계: 동적 확장과 장기 복구
+
+상태: `부분 구현`. 1·2·4(exact ancestor 선택)·5·6·7은 구현됐습니다. 3의 대규모 Canvas, 4의 압축 Context, 8·9·10은 검증 후 확장입니다.
 
 1. AI 제안 Node와 사용자 승인
 2. branch·depth·비용 기반 자동 확장 제한
@@ -1253,16 +1276,18 @@ Lumina의 차별점은 Workflow Builder 자체가 아닙니다. 사용자가 큰
 
 ## 19. 수용 기준
 
+`현재 Core` 완료 판정에는 1~26과 32~40을 사용합니다. 27~31은 연구 결과를 제품에 넣기 전 통과해야 하는 `검증 후 확장 Gate`이며 현재 UI나 runtime의 구현 완료 조건으로 계산하지 않습니다.
+
 1. 사용자는 `심층분석` 독립 메뉴에서 Mission을 생성하고 현재 상태를 확인할 수 있습니다.
-2. 사용자는 `Workflow` Canvas에서 Node를 추가·이동·연결하고 Node 상세를 열 수 있습니다.
+2. 사용자는 `Workflow` Canvas에서 Node를 추가하고 pointer·Keyboard로 이동하며 Inspector에서 다중 선행 Node를 연결하고 Node 상세를 열 수 있습니다.
 3. 실행 중 Workflow는 revision으로 고정되고 편집은 새 Draft revision에만 반영됩니다.
 4. 각 완료 Node의 실제 LLM 출력이 추가 모델 호출 없이 고유한 Markdown 파일로 저장됩니다.
 5. Mission 폴더 아래에 Node별 불필요한 물리 폴더가 자동 생성되지 않습니다.
-6. 파일명은 `{Node ID}_{작업명}_{용도}` 규칙으로 고유하며 Windows와 Linux에서 안전합니다.
+6. LLM 문서는 `{Node ID}_{작업명}.md`, 부분 문서는 `_partial.md`, 계산은 `{Node ID}_{고유 계산명}.py|.csv` 규칙으로 고유하며 Windows와 Linux에서 안전합니다.
 7. 수치 계산은 재현 가능한 Python·SQL·계산 Tool로 수행되고 입력·코드·결과와 검증 version을 추적할 수 있습니다.
 8. 검증에 실패한 수치가 확정 결론이나 최종 보고서로 자동 승격되지 않습니다.
 9. 기본 Canvas에는 누적 비용과 예산 비율만 표시되고 Node별 비용은 상세 또는 opt-in에서 확인됩니다.
-10. 사용자는 누적 비용을 눌러 단계·Node·Model·날짜·재실행별 breakdown과 예상 완료 비용을 확인할 수 있습니다.
+10. 사용자는 누적 비용을 눌러 Node·Model·Provider·날짜·재실행별 breakdown과 예상 완료 비용을 확인할 수 있습니다.
 11. `파일` 화면에는 `프로젝트 파일`과 `심층분석` root가 같은 수준으로 표시됩니다.
 12. Project 원본 파일은 Mission에 복제하지 않고 exact reference로 연결됩니다.
 13. 후속 Node는 Workflow에 연결된 관련 MD와 근거만 Context로 받고 모든 과거 대화와 파일을 무조건 포함하지 않습니다.
@@ -1271,7 +1296,7 @@ Lumina의 차별점은 Workflow Builder 자체가 아닙니다. 사용자가 큰
 16. 최종 보고서에서 관련 Node 출력, 계산 파일과 Evidence를 역추적할 수 있습니다.
 17. `deep-analysis`는 명시적인 builtin Workspace Frontend와 Backend domain module로 등록되고 일반 채팅·공통 Shell·Project 파일 내부에 전용 조건문을 흩뿌리지 않습니다.
 18. `deep-analysis` registry와 module 코드를 제거해도 Core 인증·채팅·Run·Project 파일·Artifact의 test, typecheck와 build가 계속 통과하며 전용 데이터 보존·export 정책은 코드 제거와 별도로 적용됩니다.
-19. 사용자는 Pattern 없이 AI가 새로 설계한 Workflow, 추천 Pattern을 일부 활용한 Workflow 또는 지정한 Pattern 기반 Workflow 중 하나로 Mission을 시작할 수 있습니다.
+19. 사용자는 Pattern 없이 질문에 맞춰 새로 설계한 `zero_based` Workflow 또는 지정한 immutable Pattern version을 Mission별로 복제한 `pattern_based` Workflow로 시작할 수 있습니다. 일부 Pattern 조합 추천은 검증 후 확장입니다.
 20. Pattern을 사용한 경우에만 시스템이 Pattern version과 생성된 Workflow revision을 함께 고정하며, Pattern reference가 없는 Mission도 동일하게 실행·복구·감사할 수 있습니다.
 21. 같은 Pattern으로 시작한 Mission도 목표·답변·자료·정책과 중간 결과가 다르면 서로 다른 Workflow를 만들며 변경 이유를 revision diff에서 확인할 수 있습니다.
 22. Pattern에는 특정 Mission의 파일 ID·수치·답변·출력·비밀값이 포함되지 않고 semantic input role만 저장됩니다.
@@ -1279,26 +1304,26 @@ Lumina의 차별점은 Workflow Builder 자체가 아닙니다. 사용자가 큰
 24. 같은 Mission과 Tool·Node Profile의 반복 호출은 stable prefix를 canonical하게 재사용하고 변동 정보는 tail에 배치합니다.
 25. 비용 집계와 예상 완료 비용은 Provider별 cache write·read·일반 input 단가와 가격표 version을 구분하며 cache 미적용 상한도 제공합니다.
 26. Prompt cache 할인 때문에 불필요한 Tool·자료를 넣거나 별도 warming 호출을 만들지 않고 사용자·Organization·Project 권한 scope를 넘어서 cache를 재사용하지 않습니다.
-27. 자체 서빙 KV cache의 latency·throughput 개선과 외부 Provider의 API cache 할인은 서로 다른 지표로 기록하고 논문 benchmark를 Lumina 예상 절감률로 표시하지 않습니다.
-28. 압축 Context는 원본 reference와 검증 결과를 가지며 사용자 결정·공식 수치·계산식·직접 인용·핵심 Evidence를 대체하지 않습니다.
-29. 저비용 Model routing은 scope별 품질 평가를 통과해야 하고 OOD·고위험·낮은 confidence 요청은 강한 Model 또는 명시 정책으로 fallback합니다.
-30. 실행 전 dependency compile과 중복 Tool 병합을 수행하되 병렬화가 호출 수·Token을 줄였다고 별도 계측 없이 간주하지 않습니다.
-31. Workflow 자동 탐색은 실행 Mission의 예산을 암묵적으로 사용하지 않고 별도 offline 예산·평가·승인 과정에서 Pattern 개선 후보로만 수행합니다.
+27. `[검증 후 확장]` 자체 서빙 KV cache의 latency·throughput 개선과 외부 Provider의 API cache 할인은 서로 다른 지표로 기록하고 논문 benchmark를 Lumina 예상 절감률로 표시하지 않습니다.
+28. `[검증 후 확장]` 압축 Context는 원본 reference와 검증 결과를 가지며 사용자 결정·공식 수치·계산식·직접 인용·핵심 Evidence를 대체하지 않습니다.
+29. `[검증 후 확장]` 저비용 Model routing은 scope별 품질 평가를 통과해야 하고 OOD·고위험·낮은 confidence 요청은 강한 Model 또는 명시 정책으로 fallback합니다.
+30. `[검증 후 확장]` 동일 Mission 병렬 실행 전 dependency compile과 중복 Tool 병합을 수행하되 병렬화가 호출 수·Token을 줄였다고 별도 계측 없이 간주하지 않습니다.
+31. `[검증 후 확장]` Workflow 자동 탐색은 실행 Mission의 예산을 암묵적으로 사용하지 않고 별도 offline 예산·평가·승인 과정에서 Pattern 개선 후보로만 수행합니다.
 32. Mission 실행 전에 목적·필수 질문·산출물·범위·품질·잔차·예산·승인을 포함한 Charter와 Completion Contract를 revision으로 고정합니다.
-33. `strict`, `balanced`, `exploratory` 자율성 Mode는 조직 정책 상한 안에서 동작하고 실행 중 변경은 새 policy revision으로 기록됩니다.
+33. `guided`, `balanced`, `autonomous` 자율성 Mode는 조직 정책 상한 안에서 동작하며 실행 시작 시 Mission context revision에 고정됩니다. 실행 중 변경은 현재 허용하지 않고 pause 뒤 새 policy revision 기능이 추가될 때만 지원합니다.
 34. 핵심 결론은 Claim으로 저장되고 supporting·contradicting Evidence, 계산 결과와 원본 exact locator를 역추적할 수 있습니다.
 35. 미설명 잔차·자료 부족·상충 근거·제외 범위는 Open Issue로 보존되고 최종 보고서에서 확정 결론과 구분됩니다.
 36. 최종 보고서 확정 전에 수치 정합성·Evidence coverage·반대 근거·stale·Completion Contract를 검사하는 Quality Gate를 통과하거나 명시적 waiver를 기록합니다.
 37. `completed`와 목표 충족 여부를 분리해 `satisfied`, `satisfied_with_exceptions`, `not_satisfied`를 표시하고 자료 부족 결과를 성공한 분석처럼 표현하지 않습니다.
-38. Mission·Workflow·Node 관계는 query 가능한 entity로 저장하고 write command는 권한 검사·ETag 또는 expected revision·idempotency를 적용합니다.
+38. Mission·Workflow·Node 관계는 query 가능한 entity로 저장하고 모든 write는 Backend 권한을 재검증합니다. Mission·Draft 변경은 expected revision, 실행 상태 command는 expected revision·idempotency를 함께 적용합니다.
 39. 재접속 시 Mission snapshot과 canonical event replay로 Node·Decision·Claim·File·비용·Quality Gate 상태를 중복 없이 복원합니다.
 40. 질문별 초기 Workflow와 실행 중 확장은 독립 가설을 fan-out하고 공통 검증·합성 단계에서 fan-in하며, UI에서 분기·합류 수와 Edge 구조를 확인할 수 있습니다.
 
-## 20. 구현 시작 기준
+## 20. 구현 완료 판정과 후속 확장 기준
 
-### 20.1 첫 Vertical Slice
+### 20.1 완료된 첫 Vertical Slice
 
-첫 구현은 Canvas 기능을 넓게 만드는 것보다 다음 하나의 사용자 흐름을 end-to-end로 완성합니다.
+첫 제품 Core는 다음 사용자 흐름을 end-to-end로 구현하고 유지합니다.
 
 ```text
 Mission 생성
@@ -1317,7 +1342,7 @@ Mission 생성
 
 이 Slice에서 Project 격리, exact file version, 실행 revision 고정, idempotent command, partial failure, stale 전파와 event replay까지 검증합니다. 단순 화면 demo만 동작하고 복구·권한·비용 원본이 없는 상태는 1단계 완료가 아닙니다.
 
-### 20.2 초기 구현에서 의도적으로 미루는 것
+### 20.2 검증 후 확장으로 남기는 것
 
 - 사용자 설치형 Workflow plugin과 remote module loader
 - 별도 범용 Workflow engine 또는 LangGraph runtime 교체
@@ -1327,7 +1352,7 @@ Mission 생성
 - 무제한 Sub-agent, 자동 외부 write와 사용자 승인 없는 고비용 확장
 - 모든 Node 종류와 고급 Canvas group·minimap·대규모 layout 최적화
 
-이 항목은 Core 계약과 실제 사용량이 확인된 뒤 별도 설계·검증합니다. 초기 schema와 UI에 동작하지 않는 placeholder를 노출하지 않습니다.
+이 항목은 Core 계약과 실제 사용량이 확인된 뒤 별도 설계·검증합니다. 현재 schema와 UI에 동작하지 않는 placeholder를 노출하지 않습니다.
 
 ### 20.3 필수 검증 Matrix
 
@@ -1335,12 +1360,12 @@ Mission 생성
 |---|---|
 | 권한 | 다른 Project·사용자의 Mission, Pattern, 파일, Claim과 export 접근 거부 |
 | Revision | 실행 revision 불변, Draft 편집 분리, stale writer·no-op write 차단 |
-| 실행 | 순차·병렬 dependency, pause·resume·cancel·retry, Worker restart 복구 |
+| 실행 | 같은 Mission 순차 dependency와 Mission 간 병렬성, pause·resume·cancel·retry, Worker restart 복구 |
 | 파일 | LLM 출력 MD 동일성, 평면 고유 파일명, exact version·digest·lineage |
 | 계산 | sandbox, deterministic rerun, schema·합계·허용 오차와 validation failure |
 | Claim | support·contradict locator, Open Issue, stale 전파와 report 역추적 |
 | 비용 | cached·uncached·cache write·output, retry, 가격표 version과 hard limit |
-| Context | manifest 재현, 권한 범위, 압축 fallback, prefix hash·무효화 사유 |
+| Context | exact·ancestor manifest 재현, branch 격리, 권한 범위와 prefix hash; 압축 fallback은 확장 Gate에서 별도 검증 |
 | 복원 | snapshot과 Last-Event-ID replay, 중복·누락 event, partial output |
 | UI | Mission 목록, Canvas, Inspector, Decision, 결론·근거, 비용, 보고서와 반응형 배치 |
 | 접근성 | Keyboard Canvas 조작, focus 복원, 상태 text·icon, 색상 비의존 |
