@@ -15,12 +15,41 @@ class MissionCreate(ApiModel):
     budget_microusd: int | None = Field(default=None, ge=0)
 
 
+class MissionCharter(ApiModel):
+    purpose: str = Field(default="", max_length=20_000)
+    key_questions: list[str] = Field(default_factory=list, max_length=12)
+    deliverables: list[str] = Field(default_factory=list, max_length=12)
+    audience: str = Field(default="", max_length=500)
+    in_scope: list[str] = Field(default_factory=list, max_length=20)
+    out_of_scope: list[str] = Field(default_factory=list, max_length=20)
+    comparison_basis: str = Field(default="", max_length=2000)
+    quality_standards: list[str] = Field(default_factory=list, max_length=20)
+    confirmed: bool = False
+
+
+class CompletionContract(ApiModel):
+    required_sections: list[str] = Field(default_factory=list, max_length=12)
+    required_node_types: list[str] = Field(default_factory=list, max_length=12)
+    require_report: bool = True
+    require_no_failed_nodes: bool = True
+    require_no_stale_nodes: bool = True
+    minimum_evidence_coverage: float = Field(default=0.0, ge=0.0, le=1.0)
+    maximum_open_issues: int = Field(default=0, ge=0, le=1000)
+    maximum_unexplained_residual_percent: float | None = Field(
+        default=None, ge=0.0, le=100.0
+    )
+    requires_final_review: bool = False
+    allow_waiver: bool = True
+
+
 class MissionPatch(ApiModel):
     expected_revision: int = Field(ge=1)
     title: str | None = Field(default=None, min_length=1, max_length=240)
     objective: str | None = Field(default=None, max_length=20_000)
     autonomy_mode: Literal["guided", "balanced", "autonomous"] | None = None
     budget_microusd: int | None = Field(default=None, ge=0)
+    charter: MissionCharter | None = None
+    completion_contract: CompletionContract | None = None
 
     @model_validator(mode="after")
     def require_change(self) -> "MissionPatch":
@@ -31,6 +60,8 @@ class MissionPatch(ApiModel):
                 self.objective,
                 self.autonomy_mode,
                 self.budget_microusd,
+                self.charter,
+                self.completion_contract,
             )
         ):
             raise ValueError("at least one mission field is required")
@@ -48,6 +79,10 @@ class MissionCancel(ApiModel):
 class MissionRetry(ApiModel):
     expected_revision: int = Field(ge=1)
     node_key: str = Field(min_length=1, max_length=32)
+
+
+class MissionQualityGate(ApiModel):
+    expected_revision: int = Field(ge=1)
 
 
 class DecisionAnswer(ApiModel):
@@ -75,6 +110,20 @@ class DecisionResponse(ApiModel):
     resolved_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class QualityGateResponse(ApiModel):
+    id: str
+    workflow_revision_id: str
+    report_node_key: str | None
+    parent_result_id: str | None
+    waiver_decision_id: str | None
+    result: str
+    completion_outcome: str
+    checks: list[dict[str, Any]]
+    failure_reasons: list[str]
+    evaluated_at: datetime
+    created_at: datetime
 
 
 class WorkflowNodeResponse(ApiModel):
@@ -135,6 +184,7 @@ class MissionSummaryResponse(ApiModel):
     autonomy_mode: str
     budget_microusd: int | None
     spent_microusd: int
+    completion_outcome: str | None
     revision: int
     created_at: datetime
     updated_at: datetime
@@ -146,4 +196,5 @@ class MissionDetailResponse(MissionSummaryResponse):
     completion_contract: dict[str, Any]
     source_manifest: list[dict[str, Any]]
     decisions: list[DecisionResponse]
+    quality_gates: list[QualityGateResponse]
     workflow: WorkflowRevisionResponse

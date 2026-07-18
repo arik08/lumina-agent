@@ -27,6 +27,37 @@ from .planning import (
 DEEP_ANALYSIS_EXECUTION_AVAILABLE = True
 
 
+def default_charter(title: str, objective: str) -> dict[str, object]:
+    purpose = objective.strip() or title.strip()
+    return {
+        "purpose": purpose,
+        "keyQuestions": [purpose] if purpose else [],
+        "deliverables": ["최종 Markdown 보고서"],
+        "audience": "분석 요청자와 의사결정자",
+        "inScope": [],
+        "outOfScope": [],
+        "comparisonBasis": "",
+        "qualityStandards": ["확인하지 않은 사실이나 수치를 만들지 않음"],
+        "confirmed": False,
+    }
+
+
+def default_completion_contract() -> dict[str, object]:
+    return {
+        "requiredSections": [],
+        "requiredNodeTypes": ["report"],
+        "requireReport": True,
+        "requireNoFailedNodes": True,
+        "requireNoStaleNodes": True,
+        "minimumEvidenceCoverage": 0.0,
+        "maximumOpenIssues": 0,
+        "maximumUnexplainedResidualPercent": None,
+        "requiresFinalReview": False,
+        "allowWaiver": True,
+        "qualityGate": "pending",
+    }
+
+
 def list_decisions(
     db: Session, mission_id: str
 ) -> list[
@@ -187,6 +218,18 @@ def answer_decision(
                     "selectedOptionId": selected_option_id,
                 },
             }
+    if decision.impact_json.get("kind") == "quality_gate_waiver":
+        from .quality import resolve_quality_gate_decision
+
+        resolve_quality_gate_decision(
+            db,
+            mission=mission,
+            decision=decision,
+            selected_option_id=selected_option_id,
+        )
+        db.flush()
+        db.refresh(mission)
+        return decision, response, None, True
     from .planning import next_runnable_node
 
     next_node = next_runnable_node(nodes, edges)
@@ -327,11 +370,8 @@ def create_mission(
         objective=objective.strip(),
         autonomy_mode=autonomy_mode,
         budget_microusd=budget_microusd,
-        charter_json={"question": objective.strip(), "confirmed": False},
-        completion_contract_json={
-            "requiredSections": ["결론", "근거", "한계"],
-            "qualityGate": "pending",
-        },
+        charter_json=default_charter(clean_title, objective),
+        completion_contract_json=default_completion_contract(),
     )
     db.add(mission)
     db.flush()
@@ -391,7 +431,18 @@ def update_mission(
     objective: str | None,
     autonomy_mode: str | None,
     budget_microusd: int | None,
+    charter: dict[str, object] | None = None,
+    completion_contract: dict[str, object] | None = None,
 ) -> DeepAnalysisMission:
+    if (
+        (charter is not None or completion_contract is not None)
+        and mission.status not in {"draft", "ready"}
+    ):
+        raise ApiProblem(
+            409,
+            "mission_contract_locked",
+            "실행을 시작한 Mission의 계약은 덮어쓸 수 없습니다.",
+        )
     values: dict[str, object] = {}
     if title is not None:
         clean_title = title.strip()
@@ -405,12 +456,24 @@ def update_mission(
         values["objective"] = clean_objective
         values["charter_json"] = {
             **mission.charter_json,
-            "question": clean_objective,
+            "purpose": clean_objective,
+            "keyQuestions": [clean_objective] if clean_objective else [],
+            "confirmed": False,
         }
     if autonomy_mode is not None:
         values["autonomy_mode"] = autonomy_mode
     if budget_microusd is not None:
         values["budget_microusd"] = budget_microusd
+    if charter is not None:
+        values["charter_json"] = {
+            **charter,
+            "confirmed": False,
+        }
+    if completion_contract is not None:
+        values["completion_contract_json"] = {
+            **completion_contract,
+            "qualityGate": "pending",
+        }
     values["revision"] = expected_revision + 1
 
     result = db.execute(
@@ -535,8 +598,14 @@ def start_mission(
         )
         .values(
             status="running",
+            completion_outcome=None,
             revision=expected_revision + 1,
-            charter_json={**mission.charter_json, "confirmed": True},
+            charter_json={
+                **mission.charter_json,
+                "confirmed": True,
+                "confirmedMissionRevision": expected_revision + 1,
+                "confirmedAt": utc_now().isoformat(),
+            },
         )
         .execution_options(synchronize_session=False)
     )
@@ -607,6 +676,7 @@ def retry_mission_node(
         )
         .values(
             status="running",
+            completion_outcome=None,
             revision=expected_revision + 1,
             completion_contract_json={
                 **mission.completion_contract_json,
@@ -645,6 +715,63 @@ def retry_mission_node(
     db.flush()
     db.refresh(mission)
     return target
+
+
+def run_quality_gate(
+    db: Session,
+    mission: DeepAnalysisMission,
+    *,
+    expected_revision: int,
+) -> None:
+    if mission.status == "awaiting_input":
+        raise ApiProblem(
+            409,
+            "mission_awaiting_input",
+            "먼저 대기 중인 판단 요청에 답해 주세요.",
+        )
+    workflow_revision, nodes, _edges = active_workflow(db, mission.id)
+    report = next(
+        (
+            node
+            for node in reversed(nodes)
+            if node.node_type == "report" and node.status == "completed"
+        ),
+        None,
+    )
+    if report is None:
+        raise ApiProblem(
+            409,
+            "report_not_ready",
+            "완료된 최종 보고서 Node가 있어야 Quality Gate를 실행할 수 있습니다.",
+        )
+    result = db.execute(
+        update(DeepAnalysisMission)
+        .where(
+            DeepAnalysisMission.id == mission.id,
+            DeepAnalysisMission.revision == expected_revision,
+        )
+        .values(revision=expected_revision + 1)
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        db.refresh(mission)
+        raise ApiProblem(
+            409,
+            "revision_conflict",
+            "다른 변경사항이 먼저 저장되었습니다. 최신 상태를 불러와 다시 시도해 주세요.",
+            details={"currentRevision": mission.revision},
+        )
+    db.refresh(mission)
+    from .quality import evaluate_quality_gate
+
+    evaluate_quality_gate(
+        db,
+        mission=mission,
+        revision=workflow_revision,
+        report_node=report,
+        nodes=nodes,
+    )
+    db.flush()
 
 
 def cancel_mission(

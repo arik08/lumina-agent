@@ -142,6 +142,28 @@ test("durable Decision requests pause inline and resume through the revision-che
   assert.match(css, /\.deep-analysis-decision-options > button\.is-selected/);
 });
 
+test("Mission Charter is editable before start and immutable Quality Gates remain visible", async () => {
+  const [view, css] = await Promise.all([
+    readFile(viewPath, "utf8"),
+    readFile(cssPath, "utf8"),
+  ]);
+
+  assert.match(view, /Mission 계약/);
+  assert.match(view, /Mission Charter/);
+  assert.match(view, /Completion Contract/);
+  assert.match(view, /api\.deepAnalysis\.updateMission/);
+  assert.match(view, /charter: \{/);
+  assert.match(view, /completionContract: \{/);
+  assert.match(view, /실행을 시작하면 이 계약이 해당 Mission revision에 고정됩니다/);
+  assert.match(view, /mission\?\.qualityGates\.at\(-1\)/);
+  assert.match(view, /Quality Gate ·/);
+  assert.match(view, /검사 결과 보기/);
+  assert.match(view, /api\.deepAnalysis\.runQualityGate/);
+  assert.match(view, /Quality Gate 다시 검사/);
+  assert.match(css, /\.deep-analysis-contract-grid \{/);
+  assert.match(css, /\.deep-analysis-quality-gate\.is-failed/);
+});
+
 test("failed or cancelled Nodes can retry with visible attempts and calculation files", async () => {
   const [view, api] = await Promise.all([
     readFile(viewPath, "utf8"),

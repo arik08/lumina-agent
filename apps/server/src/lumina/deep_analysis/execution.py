@@ -41,6 +41,7 @@ from .planning import (
     extract_workflow_decision,
     next_runnable_node,
 )
+from .quality import evaluate_quality_gate
 
 
 @dataclass(frozen=True, slots=True)
@@ -634,13 +635,23 @@ def sync_terminal_run(
                 }
                 mission.revision += 1
                 return TerminalSyncResult(changed=True)
-            mission.status = "completed"
-            mission.completion_contract_json = {
-                **mission.completion_contract_json,
-                "qualityGate": "completed",
-                "finalOutputFileId": node.output_project_file_id,
-                "finalOutputPath": node.output_logical_path,
-            }
+            if node.node_type == "report":
+                evaluate_quality_gate(
+                    db,
+                    mission=mission,
+                    revision=workflow_revision,
+                    report_node=node,
+                    nodes=nodes,
+                )
+            else:
+                mission.status = "completed"
+                mission.completion_outcome = "not_satisfied"
+                mission.completion_contract_json = {
+                    **mission.completion_contract_json,
+                    "qualityGate": "report_missing",
+                    "finalOutputFileId": node.output_project_file_id,
+                    "finalOutputPath": node.output_logical_path,
+                }
             mission.revision += 1
             return TerminalSyncResult(changed=True)
 

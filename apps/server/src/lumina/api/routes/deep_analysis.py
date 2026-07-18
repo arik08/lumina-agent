@@ -13,6 +13,7 @@ from ...deep_analysis.models import (
     DeepAnalysisDecision,
     DeepAnalysisDecisionResponse,
     DeepAnalysisMission,
+    DeepAnalysisQualityGateResult,
 )
 from ...deep_analysis.schemas import (
     DecisionAnswer,
@@ -21,6 +22,7 @@ from ...deep_analysis.schemas import (
     MissionCreate,
     MissionDetailResponse,
     MissionPatch,
+    MissionQualityGate,
     MissionRetry,
     MissionStart,
     MissionSummaryResponse,
@@ -36,10 +38,12 @@ from ...deep_analysis.service import (
     list_missions,
     require_mission,
     retry_mission_node,
+    run_quality_gate,
     start_mission,
     update_mission,
     upgrade_legacy_draft_workflow,
 )
+from ...deep_analysis.quality import list_quality_gates
 from ...models import Run, User
 from ...runs.broker import event_broker
 from ...runs.service import apply_run_action
@@ -82,6 +86,25 @@ def _decision_payload(
     }
 
 
+def _quality_gate_payload(
+    gate: DeepAnalysisQualityGateResult,
+    report_node_key: str | None,
+) -> dict[str, object]:
+    return {
+        "id": gate.id,
+        "workflow_revision_id": gate.workflow_revision_id,
+        "report_node_key": report_node_key,
+        "parent_result_id": gate.parent_result_id,
+        "waiver_decision_id": gate.waiver_decision_id,
+        "result": gate.result,
+        "completion_outcome": gate.completion_outcome,
+        "checks": gate.checks_json,
+        "failure_reasons": gate.failure_reasons_json,
+        "evaluated_at": gate.evaluated_at,
+        "created_at": gate.created_at,
+    }
+
+
 def _summary_payload(mission: DeepAnalysisMission) -> dict[str, object]:
     return {
         "id": mission.id,
@@ -93,6 +116,7 @@ def _summary_payload(mission: DeepAnalysisMission) -> dict[str, object]:
         "autonomy_mode": mission.autonomy_mode,
         "budget_microusd": mission.budget_microusd,
         "spent_microusd": mission.spent_microusd,
+        "completion_outcome": mission.completion_outcome,
         "revision": mission.revision,
         "created_at": mission.created_at,
         "updated_at": mission.updated_at,
@@ -116,6 +140,10 @@ def _detail_payload(db: Session, mission: DeepAnalysisMission) -> dict[str, obje
         "decisions": [
             _decision_payload(decision, response, node_key)
             for decision, response, node_key in list_decisions(db, mission.id)
+        ],
+        "quality_gates": [
+            _quality_gate_payload(gate, node_key)
+            for gate, node_key in list_quality_gates(db, mission.id)
         ],
         "workflow": {
             "id": revision.id,
@@ -316,6 +344,37 @@ async def post_mission_decision_answer(
     return _detail_payload(db, mission)
 
 
+@router.post(
+    "/deep-analysis/missions/{mission_id}/quality-gate",
+    response_model=MissionDetailResponse,
+)
+def post_mission_quality_gate(
+    mission_id: str,
+    payload: MissionQualityGate,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    mission = require_mission(db, context.user, mission_id, write=True)
+    run_quality_gate(
+        db,
+        mission,
+        expected_revision=payload.expected_revision,
+    )
+    record_audit(
+        db,
+        action="deep_analysis_quality_gate_evaluated",
+        target_type="deep_analysis_mission",
+        target_id=mission.id,
+        result="success",
+        actor=context.user,
+        request_id=getattr(request.state, "request_id", None),
+        metadata={"revision": mission.revision},
+    )
+    db.commit()
+    return _detail_payload(db, mission)
+
+
 @router.patch(
     "/deep-analysis/missions/{mission_id}",
     response_model=MissionDetailResponse,
@@ -336,6 +395,16 @@ def patch_mission(
         objective=payload.objective,
         autonomy_mode=payload.autonomy_mode,
         budget_microusd=payload.budget_microusd,
+        charter=(
+            payload.charter.model_dump(mode="json", by_alias=True)
+            if payload.charter is not None
+            else None
+        ),
+        completion_contract=(
+            payload.completion_contract.model_dump(mode="json", by_alias=True)
+            if payload.completion_contract is not None
+            else None
+        ),
     )
     record_audit(
         db,

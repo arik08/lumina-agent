@@ -29,6 +29,8 @@ import {
 import { api, ApiError } from "../../api";
 import type {
   DeepAnalysisAutonomyMode,
+  DeepAnalysisCompletionContract,
+  DeepAnalysisMissionCharter,
   DeepAnalysisMissionDetail,
   DeepAnalysisMissionSummary,
   DeepAnalysisWorkflowNode,
@@ -96,6 +98,13 @@ function selectedMissionStorageKey(projectId: string) {
   return `lumina:deep-analysis:selected:${projectId}`;
 }
 
+function splitContractLines(value: string) {
+  return value
+    .split("\n")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 export function DeepAnalysisView({
   projectId,
   canEdit,
@@ -124,6 +133,11 @@ export function DeepAnalysisView({
   const [decisionOptionId, setDecisionOptionId] = useState("");
   const [decisionAnswerText, setDecisionAnswerText] = useState("");
   const [answeringDecision, setAnsweringDecision] = useState(false);
+  const [contractOpen, setContractOpen] = useState(false);
+  const [savingContract, setSavingContract] = useState(false);
+  const [runningQualityGate, setRunningQualityGate] = useState(false);
+  const [charterDraft, setCharterDraft] = useState<DeepAnalysisMissionCharter | null>(null);
+  const [completionDraft, setCompletionDraft] = useState<DeepAnalysisCompletionContract | null>(null);
   const [canvasScale, setCanvasScale] = useState(1);
   const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
   const [canvasPanning, setCanvasPanning] = useState(false);
@@ -242,6 +256,10 @@ export function DeepAnalysisView({
       .find((item) => item.graphChanged) ?? null,
     [mission],
   );
+  const latestQualityGate = useMemo(
+    () => mission?.qualityGates.at(-1) ?? null,
+    [mission?.qualityGates],
+  );
   const workflowTopology = useMemo(() => {
     const outgoing = new Map<string, number>();
     const incoming = new Map<string, number>();
@@ -271,6 +289,16 @@ export function DeepAnalysisView({
     );
     setDecisionAnswerText("");
   }, [pendingDecision?.id]);
+
+  useEffect(() => {
+    if (!mission) {
+      setCharterDraft(null);
+      setCompletionDraft(null);
+      return;
+    }
+    setCharterDraft(mission.charter);
+    setCompletionDraft(mission.completionContract);
+  }, [mission?.id, mission?.revision]);
 
   function updateCanvasScale(nextScale: number, originX?: number, originY?: number) {
     const viewport = canvasViewportRef.current;
@@ -434,6 +462,63 @@ export function DeepAnalysisView({
       setError(errorMessage(answerError));
     } finally {
       setAnsweringDecision(false);
+    }
+  }
+
+  async function saveMissionContract() {
+    if (!mission || !charterDraft || !completionDraft || savingContract) return;
+    setSavingContract(true);
+    setError(null);
+    try {
+      const updated = await api.deepAnalysis.updateMission(mission.id, {
+        expectedRevision: mission.revision,
+        charter: {
+          purpose: charterDraft.purpose,
+          keyQuestions: charterDraft.keyQuestions,
+          deliverables: charterDraft.deliverables,
+          audience: charterDraft.audience,
+          inScope: charterDraft.inScope,
+          outOfScope: charterDraft.outOfScope,
+          comparisonBasis: charterDraft.comparisonBasis,
+          qualityStandards: charterDraft.qualityStandards,
+        },
+        completionContract: {
+          requiredSections: completionDraft.requiredSections,
+          requiredNodeTypes: completionDraft.requiredNodeTypes,
+          requireReport: completionDraft.requireReport,
+          requireNoFailedNodes: completionDraft.requireNoFailedNodes,
+          requireNoStaleNodes: completionDraft.requireNoStaleNodes,
+          minimumEvidenceCoverage: completionDraft.minimumEvidenceCoverage,
+          maximumOpenIssues: completionDraft.maximumOpenIssues,
+          maximumUnexplainedResidualPercent: completionDraft.maximumUnexplainedResidualPercent,
+          requiresFinalReview: completionDraft.requiresFinalReview,
+          allowWaiver: completionDraft.allowWaiver,
+        },
+      });
+      setMission(updated);
+      setMissions((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setContractOpen(false);
+    } catch (contractError) {
+      setError(errorMessage(contractError));
+    } finally {
+      setSavingContract(false);
+    }
+  }
+
+  async function rerunQualityGate() {
+    if (!mission || runningQualityGate) return;
+    setRunningQualityGate(true);
+    setError(null);
+    try {
+      const updated = await api.deepAnalysis.runQualityGate(mission.id, {
+        expectedRevision: mission.revision,
+      });
+      setMission(updated);
+      setMissions((current) => current.map((item) => item.id === updated.id ? updated : item));
+    } catch (qualityError) {
+      setError(errorMessage(qualityError));
+    } finally {
+      setRunningQualityGate(false);
     }
   }
 
@@ -697,6 +782,14 @@ export function DeepAnalysisView({
                         {cancellingMission ? "중단 중" : "중단"}
                       </button>
                     )}
+                    <button
+                      className={`deep-analysis-contract-toggle ${contractOpen ? "is-active" : ""}`}
+                      type="button"
+                      aria-expanded={contractOpen}
+                      onClick={() => setContractOpen((open) => !open)}
+                    >
+                      Mission 계약
+                    </button>
                     <div className="deep-analysis-cost-wrap">
                       <button
                         className="deep-analysis-cost tooltip-control"
@@ -741,6 +834,66 @@ export function DeepAnalysisView({
                     {completedNodeCount}/{mission.workflow.nodes.length} 완료 · 분기 {workflowTopology.branchCount} · 합류 {workflowTopology.mergeCount} · 입력 자료 {mission.sourceManifest.length}개 · Revision {mission.workflow.revisionNumber}
                   </span>
                 </div>
+                {contractOpen && charterDraft && completionDraft && (
+                  <section className="deep-analysis-contract" aria-label="Mission Charter와 완료 조건">
+                    <div className="deep-analysis-contract-grid">
+                      <div>
+                        <strong>Mission Charter</strong>
+                        <label>목적<textarea rows={2} value={charterDraft.purpose} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCharterDraft({ ...charterDraft, purpose: event.target.value })} /></label>
+                        <label>반드시 답할 핵심 질문<textarea rows={3} value={charterDraft.keyQuestions.join("\n")} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCharterDraft({ ...charterDraft, keyQuestions: splitContractLines(event.target.value) })} /></label>
+                        <label>필수 산출물<textarea rows={2} value={charterDraft.deliverables.join("\n")} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCharterDraft({ ...charterDraft, deliverables: splitContractLines(event.target.value) })} /></label>
+                        <label>독자<input value={charterDraft.audience} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCharterDraft({ ...charterDraft, audience: event.target.value })} /></label>
+                      </div>
+                      <div>
+                        <strong>범위와 기준</strong>
+                        <label>포함 범위<textarea rows={2} value={charterDraft.inScope.join("\n")} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCharterDraft({ ...charterDraft, inScope: splitContractLines(event.target.value) })} /></label>
+                        <label>제외 범위<textarea rows={2} value={charterDraft.outOfScope.join("\n")} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCharterDraft({ ...charterDraft, outOfScope: splitContractLines(event.target.value) })} /></label>
+                        <label>비교 기준·기간·단위<textarea rows={2} value={charterDraft.comparisonBasis} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCharterDraft({ ...charterDraft, comparisonBasis: event.target.value })} /></label>
+                        <label>품질 기준<textarea rows={2} value={charterDraft.qualityStandards.join("\n")} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCharterDraft({ ...charterDraft, qualityStandards: splitContractLines(event.target.value) })} /></label>
+                      </div>
+                      <div>
+                        <strong>Completion Contract</strong>
+                        <label>보고서 필수 섹션<textarea rows={2} value={completionDraft.requiredSections.join("\n")} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCompletionDraft({ ...completionDraft, requiredSections: splitContractLines(event.target.value) })} /></label>
+                        <label>최소 근거 coverage (%)<input type="number" min="0" max="100" value={Math.round(completionDraft.minimumEvidenceCoverage * 100)} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCompletionDraft({ ...completionDraft, minimumEvidenceCoverage: Math.min(1, Math.max(0, Number(event.target.value) / 100)) })} /></label>
+                        <label>허용 미해결 항목 수<input type="number" min="0" max="1000" value={completionDraft.maximumOpenIssues} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCompletionDraft({ ...completionDraft, maximumOpenIssues: Math.max(0, Number(event.target.value)) })} /></label>
+                        <label className="deep-analysis-contract-check"><input type="checkbox" checked={completionDraft.requiresFinalReview} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCompletionDraft({ ...completionDraft, requiresFinalReview: event.target.checked })} /> 최종 사용자 검토 필요</label>
+                        <label className="deep-analysis-contract-check"><input type="checkbox" checked={completionDraft.allowWaiver} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCompletionDraft({ ...completionDraft, allowWaiver: event.target.checked })} /> 미충족 시 명시적 예외 승인 허용</label>
+                      </div>
+                    </div>
+                    {(mission.status === "draft" || mission.status === "ready") && canEdit && (
+                      <div className="deep-analysis-contract-actions">
+                        <span>실행을 시작하면 이 계약이 해당 Mission revision에 고정됩니다.</span>
+                        <button type="button" disabled={savingContract || !charterDraft.purpose.trim()} onClick={() => void saveMissionContract()}>
+                          {savingContract && <LoaderCircle className="is-running" size={14} />}
+                          {savingContract ? "저장 중" : "계약 저장"}
+                        </button>
+                      </div>
+                    )}
+                  </section>
+                )}
+                {latestQualityGate && (
+                  <section className={`deep-analysis-quality-gate is-${latestQualityGate.result}`} aria-label="최신 Quality Gate 결과">
+                    <div>
+                      {latestQualityGate.result === "passed" ? <CircleAlert size={16} /> : <AlertTriangle size={16} />}
+                      <span>
+                        <strong>Quality Gate · {latestQualityGate.result === "passed" ? "통과" : latestQualityGate.result === "waived" ? "예외 승인" : "미충족"}</strong>
+                        <small>{latestQualityGate.checks.filter((check) => check.status === "passed").length}/{latestQualityGate.checks.length} 검사 통과 · 결과 {mission.completionOutcome ?? "확정 대기"}</small>
+                      </span>
+                    </div>
+                    <details>
+                      <summary>검사 결과 보기</summary>
+                      {latestQualityGate.checks.map((check) => (
+                        <span className={`is-${check.status}`} key={check.id}><b>{check.status === "passed" ? "통과" : "미충족"}</b><em>{check.message}</em></span>
+                      ))}
+                    </details>
+                    {canEdit && !pendingDecision && (mission.status === "blocked" || mission.status === "completed") && (
+                      <button className="deep-analysis-quality-rerun" type="button" disabled={runningQualityGate} onClick={() => void rerunQualityGate()}>
+                        {runningQualityGate ? <LoaderCircle className="is-running" size={13} /> : <RefreshCw size={13} />}
+                        {runningQualityGate ? "검사 중" : "Quality Gate 다시 검사"}
+                      </button>
+                    )}
+                  </section>
+                )}
                 {latestGraphChange && (
                   <div className="deep-analysis-workflow-change" role="status">
                     <GitBranch size={15} />

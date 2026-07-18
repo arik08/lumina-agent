@@ -112,6 +112,9 @@
 .deep-analysis-delete:hover,
 .deep-analysis-delete.is-armed { border-color: color-mix(in srgb, var(--danger) 48%, var(--line)); background: color-mix(in srgb, var(--danger) 8%, var(--surface)); color: var(--danger); }
 .deep-analysis-delete:disabled { opacity: .45; cursor: default; }
+.deep-analysis-contract-toggle { min-height: 30px; border: 1px solid var(--line); border-radius: var(--radius-control); padding: 0 9px; background: var(--surface); color: var(--muted); font-size: 11px; cursor: pointer; }
+.deep-analysis-contract-toggle:hover,
+.deep-analysis-contract-toggle.is-active { border-color: color-mix(in srgb, var(--cobalt) 45%, var(--line)); background: var(--cobalt-pale); color: var(--cobalt); }
 .deep-analysis-cost-popover { position: absolute; z-index: 6; top: 36px; right: 0; display: grid; width: 300px; gap: 7px; border: 1px solid var(--line); border-radius: var(--radius-menu); padding: 10px; background: var(--surface); box-shadow: var(--shadow-overlay); }
 .deep-analysis-cost-popover > strong { font-size: 11px; }
 .deep-analysis-cost-popover > span { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 10.5px; }
@@ -122,6 +125,42 @@
 .deep-analysis-tabs button { height: 39px; border: 0; border-bottom: 2px solid transparent; padding: 0 4px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 650; }
 .deep-analysis-tabs button.is-active { border-bottom-color: var(--cobalt); color: var(--ink); }
 .deep-analysis-tabs span { margin: 0 0 11px auto; color: var(--faint); font-size: 10.5px; }
+
+.deep-analysis-contract { display: grid; gap: 11px; padding: 13px 16px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.deep-analysis-contract-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.deep-analysis-contract-grid > div { display: grid; align-content: start; gap: 8px; }
+.deep-analysis-contract-grid > div > strong { color: var(--ink); font-size: 11.5px; }
+.deep-analysis-contract label { display: grid; gap: 4px; color: var(--muted); font-size: 10px; font-weight: 620; }
+.deep-analysis-contract input:not([type="checkbox"]),
+.deep-analysis-contract textarea { width: 100%; border: 1px solid var(--line); border-radius: var(--radius-field); padding: 7px 8px; background: var(--canvas); color: var(--ink); font-size: 10.5px; line-height: 1.4; resize: vertical; }
+.deep-analysis-contract input:disabled,
+.deep-analysis-contract textarea:disabled { opacity: .78; cursor: default; }
+.deep-analysis-contract .deep-analysis-contract-check { display: flex; align-items: center; gap: 6px; color: var(--ink); }
+.deep-analysis-contract-check input { margin: 0; accent-color: var(--cobalt); }
+.deep-analysis-contract-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+.deep-analysis-contract-actions span { margin-right: auto; color: var(--faint); font-size: 10px; }
+.deep-analysis-contract-actions button { display: inline-flex; min-height: 30px; align-items: center; gap: 6px; border: 1px solid var(--cobalt); border-radius: var(--radius-control); padding: 0 10px; background: var(--cobalt); color: white; font-size: 10.5px; font-weight: 650; cursor: pointer; }
+.deep-analysis-contract-actions button:disabled { opacity: .5; cursor: default; }
+
+.deep-analysis-quality-gate { display: grid; gap: 8px; padding: 9px 16px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.deep-analysis-quality-gate > div { display: flex; align-items: center; gap: 8px; }
+.deep-analysis-quality-gate > div > svg { flex: none; }
+.deep-analysis-quality-gate > div > span { display: grid; gap: 2px; }
+.deep-analysis-quality-gate strong { color: var(--ink); font-size: 11px; }
+.deep-analysis-quality-gate small { color: var(--muted); font-size: 10px; }
+.deep-analysis-quality-gate.is-passed > div > svg { color: var(--success); }
+.deep-analysis-quality-gate.is-failed { background: var(--danger-surface); }
+.deep-analysis-quality-gate.is-failed > div > svg { color: var(--danger); }
+.deep-analysis-quality-gate.is-waived > div > svg { color: var(--cobalt); }
+.deep-analysis-quality-gate details { margin-left: 24px; }
+.deep-analysis-quality-gate summary { width: fit-content; color: var(--cobalt); font-size: 10px; cursor: pointer; }
+.deep-analysis-quality-gate details > span { display: flex; gap: 7px; margin-top: 6px; color: var(--muted); font-size: 10px; }
+.deep-analysis-quality-gate details b { min-width: 35px; color: var(--success); font-size: 9.5px; }
+.deep-analysis-quality-gate details span.is-failed b { color: var(--danger); }
+.deep-analysis-quality-gate details em { font-style: normal; }
+.deep-analysis-quality-rerun { display: inline-flex; width: fit-content; min-height: 27px; align-items: center; gap: 5px; margin-left: 24px; border: 1px solid var(--line); border-radius: var(--radius-control); padding: 0 8px; background: var(--surface); color: var(--cobalt); font-size: 10px; cursor: pointer; }
+.deep-analysis-quality-rerun:hover { border-color: var(--cobalt); }
+.deep-analysis-quality-rerun:disabled { opacity: .5; cursor: default; }
 
 .deep-analysis-workflow-change { display: flex; min-height: 43px; align-items: center; gap: 9px; padding: 7px 16px; border-bottom: 1px solid var(--line); background: var(--cobalt-pale); color: var(--cobalt); }
 .deep-analysis-workflow-change > svg { flex: none; }
@@ -232,6 +271,7 @@
 .deep-analysis-empty p { margin: 0; font-size: 12px; }
 
 @media (max-width: 1050px) {
+  .deep-analysis-contract-grid { grid-template-columns: 1fr; }
   .deep-analysis-workflow-layout.has-inspector { grid-template-columns: minmax(0, 1fr); }
   .deep-analysis-inspector { position: absolute; z-index: 4; right: 0; bottom: 0; width: 278px; height: calc(100% - 131px); box-shadow: -8px 0 18px color-mix(in srgb, var(--ink) 7%, transparent); }
 }

@@ -1314,6 +1314,17 @@ export async function answerDeepAnalysisDecision(
   );
 }
 
+export async function runDeepAnalysisQualityGate(
+  missionId: string,
+  payload: StartDeepAnalysisMissionRequest,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisMissionDetail>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/quality-gate`,
+    { method: "POST", body: payload, signal },
+  );
+}
+
 export async function listKnowledgeSpaces(signal?: AbortSignal) {
   return request<KnowledgeSpace[]>("/knowledge/spaces", { signal });
 }
@@ -2192,6 +2203,7 @@ export const api = {
     deleteMission: deleteDeepAnalysisMission,
     updateMission: updateDeepAnalysisMission,
     answerDecision: answerDeepAnalysisDecision,
+    runQualityGate: runDeepAnalysisQualityGate,
   },
   knowledge: {
     listSpaces: listKnowledgeSpaces,

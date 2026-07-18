@@ -25,6 +25,7 @@ from lumina.deep_analysis.planning import (
     next_runnable_node,
     plan_edges,
 )
+from lumina.deep_analysis.quality import evaluate_quality_gate
 from lumina.main import create_app
 from lumina.models import Message, Organization, ProjectFile, Run, User
 from lumina.storage import ManagedLocalStorage
@@ -491,6 +492,145 @@ def test_runtime_decision_waits_for_durable_user_answer_and_resumes(
         assert listed.json()[0]["appliedWorkflowRevisionNumber"] == 1
 
 
+def test_charter_contract_quality_gate_and_immutable_waiver(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "lumina.api.routes.deep_analysis.local_run_executor.enqueue",
+        lambda _run_id: None,
+    )
+    with TestClient(create_app(_settings(tmp_path))) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        created = client.post(
+            f"/api/projects/{project_id}/deep-analysis/missions",
+            headers=headers,
+            json={"title": "계약 검증 분석", "objective": "투자 타당성을 판단한다."},
+        ).json()
+        patched = client.patch(
+            f"/api/deep-analysis/missions/{created['id']}",
+            headers=headers,
+            json={
+                "expectedRevision": 1,
+                "charter": {
+                    "purpose": "투자 타당성을 판단한다.",
+                    "keyQuestions": ["예상 수익이 위험을 보상하는가?"],
+                    "deliverables": ["최종 Markdown 보고서"],
+                    "audience": "투자심의위원회",
+                    "inScope": ["향후 3년 현금흐름"],
+                    "outOfScope": ["법률 실사"],
+                    "comparisonBasis": "기준안 대비",
+                    "qualityStandards": ["근거 없는 수치를 사용하지 않음"],
+                },
+                "completionContract": {
+                    "requiredSections": ["결론", "근거", "한계"],
+                    "requiredNodeTypes": ["report"],
+                    "requireReport": True,
+                    "requireNoFailedNodes": True,
+                    "requireNoStaleNodes": True,
+                    "minimumEvidenceCoverage": 0,
+                    "maximumOpenIssues": 0,
+                    "requiresFinalReview": True,
+                    "allowWaiver": True,
+                },
+            },
+        )
+        assert patched.status_code == 200, patched.text
+        contract = patched.json()
+        assert contract["revision"] == 2
+        assert contract["charter"]["audience"] == "투자심의위원회"
+        assert contract["completionContract"]["requiresFinalReview"] is True
+
+        output = client.post(
+            f"/api/projects/{project_id}/files",
+            headers=headers,
+            data={
+                "logicalPath": "심층분석/계약 검증 분석_test/N040_최종 보고서.md",
+                "changeReason": "Quality Gate 테스트",
+            },
+            files={
+                "file": (
+                    "N040_최종 보고서.md",
+                    "# 결론\n진행 가능\n# 근거\n검증됨\n# 한계\n법률 실사 제외\n".encode(),
+                    "text/markdown",
+                )
+            },
+        )
+        assert output.status_code == 201, output.text
+
+        with SessionLocal() as db:
+            mission = db.get(DeepAnalysisMission, created["id"])
+            revision = db.get(
+                DeepAnalysisWorkflowRevision, created["workflow"]["id"]
+            )
+            assert mission is not None and revision is not None
+            nodes = list(
+                db.scalars(
+                    select(DeepAnalysisWorkflowNode)
+                    .where(DeepAnalysisWorkflowNode.workflow_revision_id == revision.id)
+                    .order_by(DeepAnalysisWorkflowNode.sequence)
+                )
+            )
+            report = next(node for node in nodes if node.node_type == "report")
+            for node in nodes:
+                node.status = "completed"
+            mission.status = "running"
+            mission.charter_json = {**mission.charter_json, "confirmed": True}
+            report.output_project_file_id = output.json()["id"]
+            report.output_logical_path = output.json()["logicalPath"]
+            report.output_markdown = "# 결론\n진행 가능\n# 근거\n검증됨\n# 한계\n법률 실사 제외\n"
+            gate = evaluate_quality_gate(
+                db,
+                mission=mission,
+                revision=revision,
+                report_node=report,
+                nodes=nodes,
+            )
+            mission.revision += 1
+            db.commit()
+            assert gate.result == "failed"
+
+        waiting = client.get(
+            f"/api/deep-analysis/missions/{created['id']}"
+        ).json()
+        assert waiting["status"] == "awaiting_input"
+        assert waiting["completionOutcome"] is None
+        assert waiting["completionContract"]["qualityGate"] == "waiver_required"
+        failed_gate = waiting["qualityGates"][-1]
+        assert failed_gate["result"] == "failed"
+        assert any(
+            check["id"] == "final_review" and check["status"] == "failed"
+            for check in failed_gate["checks"]
+        )
+        waiver_decision = waiting["decisions"][-1]
+
+        waived = client.post(
+            f"/api/deep-analysis/missions/{created['id']}/decisions/{waiver_decision['id']}/answer",
+            headers=headers,
+            json={
+                "expectedRevision": waiting["revision"],
+                "selectedOptionId": "accept_exceptions",
+                "answerText": "위원회 검토를 완료했고 예외를 승인합니다.",
+            },
+        )
+        assert waived.status_code == 200, waived.text
+        resolved = waived.json()
+        assert resolved["status"] == "completed"
+        assert resolved["completionOutcome"] == "satisfied_with_exceptions"
+        assert resolved["qualityGates"][-1]["result"] == "waived"
+        assert resolved["qualityGates"][-1]["parentResultId"] == failed_gate["id"]
+        assert resolved["qualityGates"][-1]["waiverDecisionId"] == waiver_decision["id"]
+
+        rerun = client.post(
+            f"/api/deep-analysis/missions/{created['id']}/quality-gate",
+            headers=headers,
+            json={"expectedRevision": resolved["revision"]},
+        )
+        assert rerun.status_code == 200, rerun.text
+        assert rerun.json()["status"] == "awaiting_input"
+        assert rerun.json()["qualityGates"][-1]["result"] == "failed"
+
+
 def test_mission_endpoints_require_auth_and_project_access(tmp_path: Path) -> None:
     with TestClient(create_app(_settings(tmp_path))) as client:
         assert (
@@ -537,6 +677,8 @@ def test_mission_executes_all_nodes_and_persists_markdown_outputs(
             restored = client.get(f"/api/deep-analysis/missions/{created['id']}").json()
 
         assert restored["status"] == "completed"
+        assert restored["completionOutcome"] == "satisfied"
+        assert restored["qualityGates"][-1]["result"] == "passed"
         assert all(
             node["status"] == "completed" for node in restored["workflow"]["nodes"]
         )

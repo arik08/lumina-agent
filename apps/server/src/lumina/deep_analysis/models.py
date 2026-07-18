@@ -64,6 +64,7 @@ class DeepAnalysisMission(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     budget_microusd: Mapped[int | None] = mapped_column(BigInteger)
     spent_microusd: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    completion_outcome: Mapped[str | None] = mapped_column(String(40))
     revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
 
@@ -228,3 +229,40 @@ class DeepAnalysisDecisionResponse(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     decided_by_user_id: Mapped[str] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
+
+
+class DeepAnalysisQualityGateResult(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "deep_analysis_quality_gate_results"
+    __table_args__ = (
+        Index(
+            "ix_deep_analysis_quality_gates_mission_created",
+            "mission_id",
+            "created_at",
+        ),
+    )
+
+    mission_id: Mapped[str] = mapped_column(
+        ForeignKey("deep_analysis_missions.id", ondelete="CASCADE"), nullable=False
+    )
+    workflow_revision_id: Mapped[str] = mapped_column(
+        ForeignKey("deep_analysis_workflow_revisions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    report_node_id: Mapped[str | None] = mapped_column(
+        ForeignKey("deep_analysis_workflow_nodes.id", ondelete="SET NULL")
+    )
+    parent_result_id: Mapped[str | None] = mapped_column(
+        ForeignKey("deep_analysis_quality_gate_results.id", ondelete="SET NULL")
+    )
+    waiver_decision_id: Mapped[str | None] = mapped_column(
+        ForeignKey("deep_analysis_decisions.id", ondelete="SET NULL")
+    )
+    result: Mapped[str] = mapped_column(String(24), nullable=False)
+    completion_outcome: Mapped[str] = mapped_column(String(40), nullable=False)
+    checks_json: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
+    failure_reasons_json: Mapped[list[str]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

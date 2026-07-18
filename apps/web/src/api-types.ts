@@ -208,6 +208,7 @@ export interface DeepAnalysisMissionSummary {
   autonomyMode: DeepAnalysisAutonomyMode;
   budgetMicrousd: number | null;
   spentMicrousd: number;
+  completionOutcome: "satisfied" | "satisfied_with_exceptions" | "not_satisfied" | null;
   revision: number;
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
@@ -310,10 +311,60 @@ export interface DeepAnalysisDecision {
   updatedAt: IsoDateTime;
 }
 
+export interface DeepAnalysisMissionCharter {
+  purpose: string;
+  keyQuestions: string[];
+  deliverables: string[];
+  audience: string;
+  inScope: string[];
+  outOfScope: string[];
+  comparisonBasis: string;
+  qualityStandards: string[];
+  confirmed: boolean;
+  confirmedMissionRevision?: number;
+  confirmedAt?: IsoDateTime;
+}
+
+export interface DeepAnalysisCompletionContract {
+  requiredSections: string[];
+  requiredNodeTypes: string[];
+  requireReport: boolean;
+  requireNoFailedNodes: boolean;
+  requireNoStaleNodes: boolean;
+  minimumEvidenceCoverage: number;
+  maximumOpenIssues: number;
+  maximumUnexplainedResidualPercent: number | null;
+  requiresFinalReview: boolean;
+  allowWaiver: boolean;
+  qualityGate?: string;
+  latestQualityGateResultId?: UUID;
+  finalOutputFileId?: UUID;
+  finalOutputPath?: string;
+}
+
+export interface DeepAnalysisQualityGate {
+  id: UUID;
+  workflowRevisionId: UUID;
+  reportNodeKey: string | null;
+  parentResultId: UUID | null;
+  waiverDecisionId: UUID | null;
+  result: "passed" | "failed" | "waived";
+  completionOutcome: "satisfied" | "satisfied_with_exceptions" | "not_satisfied";
+  checks: Array<{
+    id: string;
+    status: "passed" | "failed";
+    message: string;
+    details: Record<string, unknown>;
+  }>;
+  failureReasons: string[];
+  evaluatedAt: IsoDateTime;
+  createdAt: IsoDateTime;
+}
+
 export interface DeepAnalysisMissionDetail extends DeepAnalysisMissionSummary {
   executionAvailable: boolean;
-  charter: Record<string, unknown>;
-  completionContract: Record<string, unknown>;
+  charter: DeepAnalysisMissionCharter;
+  completionContract: DeepAnalysisCompletionContract;
   sourceManifest: Array<{
     projectFileId: UUID;
     logicalPath: string;
@@ -324,6 +375,7 @@ export interface DeepAnalysisMissionDetail extends DeepAnalysisMissionSummary {
     sizeBytes: number;
   }>;
   decisions: DeepAnalysisDecision[];
+  qualityGates: DeepAnalysisQualityGate[];
   workflow: DeepAnalysisWorkflowRevision;
 }
 
@@ -340,6 +392,8 @@ export interface UpdateDeepAnalysisMissionRequest {
   objective?: string;
   autonomyMode?: DeepAnalysisAutonomyMode;
   budgetMicrousd?: number;
+  charter?: Omit<DeepAnalysisMissionCharter, "confirmed" | "confirmedMissionRevision" | "confirmedAt">;
+  completionContract?: Omit<DeepAnalysisCompletionContract, "qualityGate" | "latestQualityGateResultId" | "finalOutputFileId" | "finalOutputPath">;
 }
 
 export interface StartDeepAnalysisMissionRequest {
