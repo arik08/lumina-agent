@@ -1172,6 +1172,8 @@ function App() {
   const workspace = useLuminaWorkspace();
   const backendConnectionState = useBackendConnectionState();
   const [mainView, setMainView] = useState<MainView>("chat");
+  const [projectSettingsReturnView, setProjectSettingsReturnView] = useState<MainView>("chat");
+  const sidebarView = mainView === "project-settings" ? projectSettingsReturnView : mainView;
   const [settingsSection, setSettingsSection] = useState<"personal" | "admin">("personal");
   const [progressOpen, setProgressOpen] = useState(false);
   const progressRunIdRef = useRef<string | null>(null);
@@ -2940,11 +2942,11 @@ function App() {
           }}
         >
           <button type="button" aria-label="사이드바 펼치기" data-tooltip="사이드바 펼치기" onClick={() => { sidebarAutoCollapsedRef.current = false; setSidebarCollapsed(false); }}><PanelLeftOpen size={17} /></button>
-          {mainView === "deep-analysis"
+          {sidebarView === "deep-analysis"
             ? <button type="button" aria-label="새 분석" data-tooltip="새 분석" disabled={activeProject?.role === "viewer"} onClick={startNewDeepAnalysis}><Workflow size={18} /></button>
             : <button type="button" aria-label="새 채팅" data-tooltip="새 채팅" onClick={startNewConversation}><SquarePen size={18} /></button>}
           {navigation.map(({ id, label, icon: Icon }) => (
-            <button className={mainView === id ? "is-active" : ""} type="button" aria-label={label} data-tooltip={label} key={id} onClick={() => setMainView(id)}><Icon size={18} /></button>
+            <button className={sidebarView === id ? "is-active" : ""} type="button" aria-label={label} data-tooltip={label} key={id} onClick={() => setMainView(id)}><Icon size={18} /></button>
           ))}
         </nav>
         <header className="sidebar-header">
@@ -2969,7 +2971,7 @@ function App() {
         </header>
 
         <nav className="primary-navigation" aria-label="주요 메뉴">
-          {navigation.map(({ id, label, icon: Icon }) => <button className={mainView === id ? "is-active" : ""} type="button" key={id} onClick={() => {
+          {navigation.map(({ id, label, icon: Icon }) => <button className={sidebarView === id ? "is-active" : ""} type="button" key={id} onClick={() => {
             setMainView(id);
             setSidebarOpen(false);
           }}><Icon size={17} /> {label}</button>)}
@@ -2977,7 +2979,7 @@ function App() {
 
         <div className="sidebar-scroll">
           <section className="sidebar-section">
-            {mainView === "deep-analysis"
+            {sidebarView === "deep-analysis"
               ? <button className="new-task-button" type="button" disabled={activeProject?.role === "viewer"} onClick={startNewDeepAnalysis}><Workflow size={17} /> <span>새 분석</span></button>
               : <button className="new-task-button" type="button" onClick={startNewConversation}><SquarePen size={17} /> <span>새 채팅</span><kbd aria-hidden="true">Ctrl + Shift + O</kbd></button>}
           </section>
@@ -2985,7 +2987,14 @@ function App() {
           <section className="sidebar-section">
             <div className="sidebar-section-heading project-heading">
               <span>프로젝트</span>
-              <button className="tooltip-control" type="button" aria-label="프로젝트 설정" data-tooltip="프로젝트 설정" disabled={!activeProject} onClick={() => { setMainView(mainView === "project-settings" ? "chat" : "project-settings"); setSidebarOpen(false); }}><Settings size={15} /></button>
+              <button className="tooltip-control" type="button" aria-label="프로젝트 설정" data-tooltip="프로젝트 설정" disabled={!activeProject} onClick={() => {
+                if (mainView === "project-settings") setMainView(projectSettingsReturnView);
+                else {
+                  setProjectSettingsReturnView(mainView);
+                  setMainView("project-settings");
+                }
+                setSidebarOpen(false);
+              }}><Settings size={15} /></button>
             </div>
             <div className="project-selector" onClick={(event) => event.stopPropagation()}>
               <button className="project-row is-selected" type="button" aria-haspopup="listbox" aria-expanded={projectMenuOpen} disabled={!activeProject} onClick={() => setProjectMenuOpen((open) => !open)}>
@@ -3006,7 +3015,7 @@ function App() {
             </div>
           </section>
 
-          {mainView === "deep-analysis" ? (
+          {sidebarView === "deep-analysis" ? (
             <section className="sidebar-section session-section">
               <div className="sidebar-section-heading session-heading">
                 <span>최근 항목</span>

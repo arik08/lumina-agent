@@ -59,7 +59,7 @@ test("new analysis action uses the shared sidebar and opens creation in the work
     readFile(viewPath, "utf8"),
   ]);
 
-  assert.match(app, /mainView === "deep-analysis"[\s\S]*?startNewDeepAnalysis[\s\S]*?<span>새 분석<\/span>/);
+  assert.match(app, /sidebarView === "deep-analysis"[\s\S]*?startNewDeepAnalysis[\s\S]*?<span>새 분석<\/span>/);
   assert.match(view, /className="deep-analysis-create-shell"/);
   assert.match(view, /onCreateRequestHandled\(\)/);
   assert.doesNotMatch(view, /deep-analysis-new-button/);
@@ -71,6 +71,17 @@ test("project selection preserves the active top-level feature", async () => {
 
   assert.ok(projectSelection);
   assert.doesNotMatch(projectSelection, /setMainView\("chat"\)/);
+});
+
+test("project settings preserve the active deep-analysis sidebar", async () => {
+  const app = await readFile(appPath, "utf8");
+
+  assert.match(app, /const sidebarView = mainView === "project-settings" \? projectSettingsReturnView : mainView;/);
+  assert.match(app, /setProjectSettingsReturnView\(mainView\);[\s\S]*?setMainView\("project-settings"\);/);
+  assert.match(app, /sidebarView === "deep-analysis"[\s\S]*?<span>새 분석<\/span>/);
+  assert.match(app, /sidebarView === "deep-analysis" \? \([\s\S]*?deepAnalysisMissions\.map/);
+  assert.match(app, /className=\{sidebarView === id \? "is-active" : ""\}/);
+  assert.match(app, /mainView === "project-settings"\) setMainView\(projectSettingsReturnView\);/);
 });
 
 test("Mission header keeps only the title and objective rows", async () => {
