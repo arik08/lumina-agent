@@ -8,12 +8,13 @@ interface KnowledgeReviewProps {
   sources: KnowledgeSource[];
   statements: KnowledgeStatement[];
   entityById: Map<string, KnowledgeEntity>;
+  readOnly?: boolean;
   onOpenEvidence: (evidenceId: string) => void;
   onReviewed: (originalId: string, reviewed: KnowledgeStatement) => void;
   onError: (error: unknown) => void;
 }
 
-export function KnowledgeReview({ sources, statements, entityById, onOpenEvidence, onReviewed, onError }: KnowledgeReviewProps) {
+export function KnowledgeReview({ sources, statements, entityById, readOnly = false, onOpenEvidence, onReviewed, onError }: KnowledgeReviewProps) {
   const pending = statements.filter((statement) => statement.status === "proposed");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [reason, setReason] = useState("");
@@ -58,11 +59,11 @@ export function KnowledgeReview({ sources, statements, entityById, onOpenEvidenc
           {selected.evidenceSegmentIds.length ? <div className="knowledge-review-evidence">{selected.evidenceSegmentIds.map((id) => { const info = evidence.get(id); return info ? <button type="button" key={id} onClick={() => onOpenEvidence(id)}><FileText size={15} /><span><strong>{info.source.title}</strong><small>{info.evidence.text}</small></span><em>원문 열기</em></button> : <div className="knowledge-missing-evidence" key={id}>근거에 접근할 수 없습니다.</div>; })}</div> : <div className="knowledge-missing-evidence">근거가 없어 승인할 수 없습니다. 거절하거나 근거가 있는 새 Statement를 등록해 주세요.</div>}
         </section>
 
-        <section className="knowledge-review-decision">
+        {!readOnly && <section className="knowledge-review-decision">
           <label>검토 메모<textarea value={reason} rows={3} maxLength={10_000} placeholder="승인 또는 거절 이유를 남길 수 있습니다." onChange={(event) => setReason(event.target.value)} /></label>
           <p>결정하면 기존 제안을 덮어쓰지 않고 새 Knowledge revision으로 기록합니다.</p>
           <div><button className="is-reject" type="button" disabled={saving} onClick={() => decide("rejected")}><X size={14} /> 거절</button><button className="is-approve" type="button" disabled={saving || !selected.evidenceSegmentIds.length} onClick={() => decide("approved")}>{saving ? <LoaderCircle className="is-running" size={14} /> : <Check size={14} />} 근거 확인 후 승인</button></div>
-        </section>
+        </section>}
       </section>}
     </div>
   );

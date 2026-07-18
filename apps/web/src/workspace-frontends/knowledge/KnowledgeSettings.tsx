@@ -14,6 +14,7 @@ interface KnowledgeSettingsProps {
 }
 
 export function KnowledgeSettings({ space, ingestions, onUpdated, onArchived, onError }: KnowledgeSettingsProps) {
+  const readOnly = space.accessMode !== "owner";
   const [name, setName] = useState(space.name);
   const [purpose, setPurpose] = useState(space.purpose);
   const [description, setDescription] = useState(space.description);
@@ -28,6 +29,7 @@ export function KnowledgeSettings({ space, ingestions, onUpdated, onArchived, on
   const capturesToCurrentSpace = autoCapture?.enabled === true && autoCapture.spaceId === space.id;
 
   useEffect(() => {
+    if (readOnly) return;
     const controller = new AbortController();
     api.knowledge.getAutoCapture(controller.signal)
       .then(setAutoCapture)
@@ -35,7 +37,7 @@ export function KnowledgeSettings({ space, ingestions, onUpdated, onArchived, on
         if (!controller.signal.aborted) onError(error);
       });
     return () => controller.abort();
-  }, [onError]);
+  }, [onError, readOnly]);
 
   async function toggleAutoCapture() {
     if (savingCapture || autoCapture === null) return;
@@ -86,6 +88,22 @@ export function KnowledgeSettings({ space, ingestions, onUpdated, onArchived, on
     } finally {
       setSaving(false);
     }
+  }
+
+  if (readOnly) {
+    return (
+      <div className="knowledge-page knowledge-settings-page">
+        <div className="knowledge-settings-column">
+          <section className="knowledge-card knowledge-settings-card">
+            <header><div><strong><LockKeyhole size={15} /> Project 읽기 전용 연결</strong><small>Project 소유자가 고정한 Knowledge revision을 조회하고 Agent Context로 사용할 수 있습니다.</small></div><span>revision {space.settingsRevision}</span></header>
+            <div className="knowledge-readonly-settings"><p><strong>{space.name}</strong></p><p>{space.purpose || space.description || "Project에 연결된 지식 공간입니다."}</p><ul><li>원문과 Evidence citation 열람</li><li>Wiki·Graph와 승인 Statement 조회</li><li>새 Run에서 고정 Context Pack 사용</li></ul></div>
+          </section>
+        </div>
+        <aside className="knowledge-settings-aside">
+          <section className="knowledge-card"><header><div><strong>범위와 권한</strong><small>Project Binding으로 부여된 최소 권한</small></div></header><dl className="knowledge-policy-list"><div><dt><LockKeyhole size={14} /> 접근 모드</dt><dd>읽기 전용</dd></div><div><dt><ShieldCheck size={14} /> 원본 범위</dt><dd>고정 revision</dd></div><div><dt><Database size={14} /> 변경 권한</dt><dd>없음</dd></div></dl><p className="knowledge-policy-note">원문 추가, AI 추출, Wiki 편집, 검토와 설정 변경은 Space 소유자만 할 수 있습니다.</p></section>
+        </aside>
+      </div>
+    );
   }
 
   return (

@@ -92,6 +92,7 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
   const [evidenceId, setEvidenceId] = useState("");
 
   const selectedSpace = spaces.find((space) => space.id === selectedSpaceId) ?? null;
+  const canEditSelectedSpace = selectedSpace?.accessMode === "owner";
   const entityById = useMemo(() => new Map(entities.map((entity) => [entity.id, entity])), [entities]);
   const evidenceOptions = useMemo(
     () => sources.flatMap((source) => source.evidenceSegments.map((item) => ({
@@ -116,6 +117,10 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
   const handleSettingsError = useCallback((settingsError: unknown) => {
     setError(errorMessage(settingsError));
   }, []);
+
+  useEffect(() => {
+    if (!canEditSelectedSpace && createPanel !== "space") setCreatePanel(null);
+  }, [canEditSelectedSpace, createPanel]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -384,10 +389,10 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
     const shared = { sources, entities, statements, entityById };
     if (tab === "home") content = <KnowledgeHome {...shared} ingestions={ingestions} onChangeTab={setTab} onOpenEntity={openEntity} />;
     if (tab === "explore") content = <KnowledgeExplore {...shared} onOpenEntity={openEntity} onOpenEvidence={openEvidence} />;
-    if (tab === "sources") content = <KnowledgeSources sources={sources} ingestions={ingestions} selectedSourceId={selectedSourceId} selectedEvidenceId={selectedEvidenceId} startingSourceId={startingSourceId} onSelectSource={setSelectedSourceId} onSelectEvidence={setSelectedEvidenceId} onStartIngestion={startIngestion} />;
-    if (tab === "wiki") content = <KnowledgeWiki {...shared} pages={pages} selectedEntityId={selectedEntityId} onSelectEntity={setSelectedEntityId} onOpenEvidence={openEvidence} onPageUpdated={updatePage} onError={(wikiError) => setError(errorMessage(wikiError))} />;
+    if (tab === "sources") content = <KnowledgeSources sources={sources} ingestions={ingestions} selectedSourceId={selectedSourceId} selectedEvidenceId={selectedEvidenceId} startingSourceId={startingSourceId} readOnly={!canEditSelectedSpace} onSelectSource={setSelectedSourceId} onSelectEvidence={setSelectedEvidenceId} onStartIngestion={startIngestion} />;
+    if (tab === "wiki") content = <KnowledgeWiki {...shared} pages={pages} selectedEntityId={selectedEntityId} readOnly={!canEditSelectedSpace} onSelectEntity={setSelectedEntityId} onOpenEvidence={openEvidence} onPageUpdated={updatePage} onError={(wikiError) => setError(errorMessage(wikiError))} />;
     if (tab === "graph") content = <KnowledgeGraph neighborhood={neighborhood} entities={entities} statements={statements} selectedEntityId={selectedEntityId} onSelectEntity={setSelectedEntityId} onOpenWiki={(id) => openEntity(id, "wiki")} />;
-    if (tab === "review") content = <KnowledgeReview sources={sources} statements={statements} entityById={entityById} onOpenEvidence={openEvidence} onReviewed={updateReviewedStatement} onError={(reviewError) => setError(errorMessage(reviewError))} />;
+    if (tab === "review") content = <KnowledgeReview sources={sources} statements={statements} entityById={entityById} readOnly={!canEditSelectedSpace} onOpenEvidence={openEvidence} onReviewed={updateReviewedStatement} onError={(reviewError) => setError(errorMessage(reviewError))} />;
     if (tab === "settings") content = <KnowledgeSettings key={selectedSpace.id} space={selectedSpace} ingestions={ingestions} onUpdated={updateSpace} onArchived={archiveSpace} onError={handleSettingsError} />;
   }
 
@@ -423,7 +428,7 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
             <div className="knowledge-space-list">
               {spaces.map((space) => (
                 <button className={selectedSpaceId === space.id ? "is-active" : ""} type="button" key={space.id} onClick={() => setSelectedSpaceId(space.id)}>
-                  <BookOpenText size={15} /><span><strong>{space.name}</strong><small>{space.purpose || "개인 지식 공간"}</small></span><em>개인</em>
+                  <BookOpenText size={15} /><span><strong>{space.name}</strong><small>{space.purpose || "개인 지식 공간"}</small></span><em>{space.accessMode === "owner" ? "개인" : "연결"}</em>
                 </button>
               ))}
             </div>
@@ -434,7 +439,7 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
           {!selectedSpace ? <KnowledgeEmpty /> : (
             <>
               <header className="knowledge-space-header">
-                <div><small>개인 · 비공개 · revision {selectedSpace.settingsRevision}</small><h2>{selectedSpace.name}</h2><p>{selectedSpace.purpose || selectedSpace.description || "원문과 검증된 관계를 축적하는 계정 단위 공간입니다."}</p></div>
+                <div><small>{canEditSelectedSpace ? "개인 · 비공개" : "Project 연결 · 읽기 전용"} · revision {selectedSpace.settingsRevision}</small><h2>{selectedSpace.name}</h2><p>{selectedSpace.purpose || selectedSpace.description || "원문과 검증된 관계를 축적하는 계정 단위 공간입니다."}</p></div>
                 <div className="knowledge-metrics" aria-label="지식 현황">
                   <span><b>{sources.length}</b> 원문</span><span><b>{entities.length}</b> Entity</span><span><b>{statements.filter((item) => item.status === "approved").length}</b> 승인</span><span className={pendingCount ? "has-pending" : ""}><b>{pendingCount}</b> 검토</span>
                 </div>
@@ -447,11 +452,11 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
                     </button>
                   ))}
                 </div>
-                <div>
+                {canEditSelectedSpace && <div>
                   <button type="button" onClick={() => togglePanel("source")}><Plus size={13} /> 원문</button>
                   <button type="button" onClick={() => togglePanel("entity")}><Plus size={13} /> Entity</button>
                   <button type="button" disabled={entities.length < 2} onClick={() => togglePanel("statement")}><Plus size={13} /> 관계</button>
-                </div>
+                </div>}
               </nav>
 
               {createPanel === "source" && <form className="knowledge-inline-form knowledge-source-form" onSubmit={createSource}><label>원문 제목<input autoFocus value={sourceTitle} maxLength={500} onChange={(event) => setSourceTitle(event.target.value)} /></label><label className="is-wide">원문<textarea value={sourceText} rows={4} maxLength={2_000_000} placeholder="근거로 보존할 텍스트나 Markdown을 입력하세요." onChange={(event) => setSourceText(event.target.value)} /></label><label className="knowledge-checkbox"><input type="checkbox" checked={extractAfterCreate} onChange={(event) => setExtractAfterCreate(event.target.checked)} /> 등록 후 AI로 Entity와 Statement 추출</label><button type="submit" disabled={saving || !sourceTitle.trim() || !sourceText.trim()}>{saving && <LoaderCircle className="is-running" size={14} />} 등록</button><p>동일한 내용은 digest로 재사용하며, 한 번의 추출은 최대 40개 근거 구간·60,000자로 제한됩니다.</p></form>}

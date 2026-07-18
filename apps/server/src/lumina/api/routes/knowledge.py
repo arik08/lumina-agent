@@ -133,7 +133,7 @@ def get_knowledge_spaces(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[dict[str, Any]]:
-    return [space_payload(space) for space in list_knowledge_spaces(db, user)]
+    return [space_payload(db, user, space) for space in list_knowledge_spaces(db, user)]
 
 
 @router.post("/spaces", status_code=201)
@@ -154,7 +154,7 @@ def post_knowledge_space(
         request_id=_request_id(request),
     )
     db.commit()
-    return space_payload(space)
+    return space_payload(db, context.user, space)
 
 
 @router.get("/spaces/{space_id}")
@@ -163,7 +163,7 @@ def get_knowledge_space(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    return space_payload(require_knowledge_space(db, user, space_id))
+    return space_payload(db, user, require_knowledge_space(db, user, space_id))
 
 
 @router.patch("/spaces/{space_id}")
@@ -186,7 +186,7 @@ def patch_knowledge_space(
         metadata={"settings_revision": space.settings_revision},
     )
     db.commit()
-    return space_payload(space)
+    return space_payload(db, context.user, space)
 
 
 @router.delete("/spaces/{space_id}", status_code=status.HTTP_204_NO_CONTENT)

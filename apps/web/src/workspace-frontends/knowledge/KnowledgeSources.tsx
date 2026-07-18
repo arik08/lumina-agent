@@ -9,12 +9,13 @@ interface KnowledgeSourcesProps {
   selectedSourceId: string | null;
   selectedEvidenceId: string | null;
   startingSourceId: string | null;
+  readOnly?: boolean;
   onSelectSource: (sourceId: string) => void;
   onSelectEvidence: (evidenceId: string | null) => void;
   onStartIngestion: (sourceId: string) => void;
 }
 
-export function KnowledgeSources({ sources, ingestions, selectedSourceId, selectedEvidenceId, startingSourceId, onSelectSource, onSelectEvidence, onStartIngestion }: KnowledgeSourcesProps) {
+export function KnowledgeSources({ sources, ingestions, selectedSourceId, selectedEvidenceId, startingSourceId, readOnly = false, onSelectSource, onSelectEvidence, onStartIngestion }: KnowledgeSourcesProps) {
   const selected = sources.find((source) => source.id === selectedSourceId) ?? sources[0] ?? null;
   const jobsBySource = useMemo(() => {
     const result = new Map<string, KnowledgeIngestionJob[]>();
@@ -45,10 +46,10 @@ export function KnowledgeSources({ sources, ingestions, selectedSourceId, select
       {selected && <section className="knowledge-detail-panel">
         <header className="knowledge-detail-header">
           <div><span className="knowledge-kicker">{selected.sourceType.toUpperCase()} SOURCE</span><h3>{selected.title}</h3><p>revision {selected.revision.revisionNumber} · {formatDate(selected.revision.capturedAt)} · {formatBytes(selected.revision.byteSize)}</p></div>
-          <button type="button" disabled={active || startingSourceId !== null || latestJob?.status === "completed"} onClick={() => onStartIngestion(selected.id)}>
+          {!readOnly && <button type="button" disabled={active || startingSourceId !== null || latestJob?.status === "completed"} onClick={() => onStartIngestion(selected.id)}>
             {(active || startingSourceId === selected.id) ? <RefreshCw className="is-running" size={14} /> : latestJob?.status === "failed" ? <RotateCcw size={14} /> : <LoaderCircle size={14} />}
             {latestJob?.status === "completed" ? "추출 완료" : latestJob?.status === "failed" ? "다시 추출" : active ? "AI 추출 중" : "AI 추출"}
-          </button>
+          </button>}
         </header>
 
         {latestJob && <div className={`knowledge-job-banner is-${latestJob.status}`} role="status">

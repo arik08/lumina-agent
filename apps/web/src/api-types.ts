@@ -284,6 +284,7 @@ export interface KnowledgeSpace {
   visibility: "private" | "organization";
   status: string;
   settingsRevision: number;
+  accessMode: "owner" | "project_read" | "organization_read";
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
 }

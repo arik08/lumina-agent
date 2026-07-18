@@ -30,7 +30,7 @@ def _login(client: TestClient, login_name: str, password: str) -> str:
 
 def _create_user(
     client: TestClient, csrf: str, *, login_name: str, display_name: str
-) -> None:
+) -> dict[str, object]:
     response = client.post(
         "/api/admin/users",
         headers={"X-CSRF-Token": csrf},
@@ -46,6 +46,7 @@ def _create_user(
         },
     )
     assert response.status_code == 201, response.text
+    return response.json()
 
 
 def _create_entity(
@@ -628,22 +629,34 @@ def test_project_binding_pins_an_approved_revision_until_explicit_update(
         assert stale.status_code == 409
         assert stale.json()["code"] == "knowledge_project_binding_conflict"
 
-        _create_user(client, csrf, login_name="binding-bob", display_name="Bob")
+        bob = _create_user(
+            client, csrf, login_name="binding-bob", display_name="Bob"
+        )
+        membership = client.post(
+            f"/api/projects/{project['id']}/memberships",
+            headers=headers,
+            json={"loginId": bob["loginId"], "role": "member"},
+        )
+        assert membership.status_code == 201, membership.text
         client.cookies.clear()
         bob_csrf = _login(client, "binding-bob", "binding-bob-password")
-        assert (
-            client.get(
-                f"/api/knowledge/spaces/{space['id']}/project-bindings"
-            ).status_code
-            == 404
-        )
+        shared_space = client.get(f"/api/knowledge/spaces/{space['id']}")
+        assert shared_space.status_code == 200, shared_space.text
+        assert shared_space.json()["accessMode"] == "project_read"
+        assert client.get(f"/api/knowledge/spaces/{space['id']}/sources").status_code == 200
+        assert client.get(f"/api/knowledge/spaces/{space['id']}/statements").status_code == 200
+        assert client.patch(
+            f"/api/knowledge/spaces/{space['id']}",
+            headers={"X-CSRF-Token": bob_csrf},
+            json={"expectedRevision": 1, "name": "권한 없음"},
+        ).status_code == 404
         assert (
             client.post(
                 "/api/knowledge/context-packs",
                 headers={"X-CSRF-Token": bob_csrf},
                 json={"projectId": project["id"], "query": "수소환원제철"},
             ).status_code
-            == 404
+            == 200
         )
 
         client.cookies.clear()
@@ -660,6 +673,9 @@ def test_project_binding_pins_an_approved_revision_until_explicit_update(
             ).json()
             == []
         )
+        client.cookies.clear()
+        _login(client, "binding-bob", "binding-bob-password")
+        assert client.get(f"/api/knowledge/spaces/{space['id']}").status_code == 404
 
 
 def test_knowledge_ingestion_runs_structured_extraction_and_reuses_result(

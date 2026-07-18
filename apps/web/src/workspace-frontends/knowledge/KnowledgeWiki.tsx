@@ -32,6 +32,7 @@ interface KnowledgeWikiProps {
   onOpenEvidence: (evidenceId: string) => void;
   onPageUpdated: (page: KnowledgePage) => void;
   onError: (error: unknown) => void;
+  readOnly?: boolean;
 }
 
 export function KnowledgeWiki({
@@ -45,6 +46,7 @@ export function KnowledgeWiki({
   onOpenEvidence,
   onPageUpdated,
   onError,
+  readOnly = false,
 }: KnowledgeWikiProps) {
   const [filter, setFilter] = useState("");
   const [editing, setEditing] = useState(false);
@@ -133,7 +135,7 @@ export function KnowledgeWiki({
           <div className="knowledge-wiki-title-row">
             <h2>{selected.canonicalName}</h2>
             {page && <div className="knowledge-wiki-actions">
-              <button type="button" onClick={() => setEditing((current) => !current)}>{editing ? <X size={13} /> : <Pencil size={13} />}{editing ? "편집 취소" : "메모 편집"}</button>
+              {!readOnly && <button type="button" onClick={() => setEditing((current) => !current)}>{editing ? <X size={13} /> : <Pencil size={13} />}{editing ? "편집 취소" : "메모 편집"}</button>}
               <button className={historyOpen ? "is-active" : ""} type="button" onClick={toggleHistory}><History size={13} /> 변경 이력</button>
             </div>}
           </div>

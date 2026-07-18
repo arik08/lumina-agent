@@ -59,10 +59,16 @@ def knowledge_space_access_query(user: User, *, write: bool = False):
     )
     if write:
         return query.where(KnowledgeSpace.owner_user_id == user.id)
+    accessible_project_ids = project_access_query(user).with_only_columns(Project.id)
+    bound_space_ids = select(KnowledgeProjectBinding.space_id).where(
+        KnowledgeProjectBinding.project_id.in_(accessible_project_ids),
+        KnowledgeProjectBinding.permission == "read",
+    )
     return query.where(
         or_(
             KnowledgeSpace.owner_user_id == user.id,
             KnowledgeSpace.visibility == "organization",
+            KnowledgeSpace.id.in_(bound_space_ids),
         )
     )
 
@@ -1440,7 +1446,18 @@ def _normalize_entity_name(value: str) -> str:
     return " ".join(value.casefold().split())
 
 
-def space_payload(space: KnowledgeSpace) -> dict[str, Any]:
+def space_payload(db: Session, user: User, space: KnowledgeSpace) -> dict[str, Any]:
+    access_mode = "owner"
+    if space.owner_user_id != user.id:
+        accessible_project_ids = project_access_query(user).with_only_columns(Project.id)
+        project_binding = db.scalar(
+            select(KnowledgeProjectBinding.id).where(
+                KnowledgeProjectBinding.space_id == space.id,
+                KnowledgeProjectBinding.project_id.in_(accessible_project_ids),
+                KnowledgeProjectBinding.permission == "read",
+            )
+        )
+        access_mode = "project_read" if project_binding is not None else "organization_read"
     return {
         "id": space.id,
         "organizationId": space.organization_id,
@@ -1452,6 +1469,7 @@ def space_payload(space: KnowledgeSpace) -> dict[str, Any]:
         "visibility": space.visibility,
         "status": space.status,
         "settingsRevision": space.settings_revision,
+        "accessMode": access_mode,
         "createdAt": space.created_at,
         "updatedAt": space.updated_at,
     }

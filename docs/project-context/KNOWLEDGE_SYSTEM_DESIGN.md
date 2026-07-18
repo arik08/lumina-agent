@@ -766,6 +766,8 @@ List API는 cursor pagination을 사용하고 모든 응답에서 접근 가능�
 
 Project Binding은 승인된 `KnowledgeRevision`만 연결하며 `(project_id, space_id)`당 하나를 유지합니다. 초기 권한은 `read`, `follow_latest_approved`는 `false`로 고정합니다. 새 승인 revision이 생겨도 기존 Project에는 자동 반영되지 않고 사용자가 설정 화면에서 revision을 명시적으로 바꿔야 합니다. 생성·변경·해제 시 Space 소유권과 Project 쓰기 권한을 모두 다시 검사하고, 변경·해제는 `bindingRevision` CAS와 감사 이벤트를 남깁니다.
 
+연결된 Project 구성원은 개인 원본 Space 자체를 공개받는 대신 Binding이 유지되는 동안 `project_read` 접근을 얻습니다. 이 권한으로 고정 지식의 원문·Evidence, Wiki, Graph와 승인 Statement를 열람할 수 있지만 Source 추가, AI 추출, Wiki 편집, 검토 결정, Binding·Space 설정과 archive는 할 수 없습니다. Binding을 해제하거나 Project membership을 잃으면 Space 조회 권한도 즉시 사라집니다. Frontend는 이 접근을 `연결`과 `Project 연결 · 읽기 전용`으로 표시하고 사용할 수 없는 소유자 작업을 노출하지 않습니다.
+
 일반 Agent Run을 만들 때는 Project에 연결된 각 고정 revision 이하의 현재 승인 Statement를 질문과 lexical matching해 `knowledge-context-pack-v1` snapshot으로 저장합니다. 기본 상한은 24개 Statement와 16,000자이며, 관련 항목이 하나도 없으면 최신 4개만 fallback으로 사용합니다. Pack은 binding/revision/digest, Statement ID, Entity 관계, Evidence segment, Source revision, locator와 text digest를 포함하고 자체 digest를 계산합니다. 이 snapshot은 `prompt_prefix_hash`에도 포함되므로 이후 Binding이 바뀌어도 기존 Run의 입력은 변하지 않습니다. Agent system context에는 Evidence를 비신뢰 자료로 명시해 원문 속 지시를 실행하지 않도록 하며, `POST /api/knowledge/context-packs`도 같은 권한 검사·검색·예산 로직을 재사용합니다.
 
 ## 12. 보안, 품질과 감사
