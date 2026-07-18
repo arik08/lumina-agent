@@ -94,6 +94,7 @@ import type {
   ArtifactVersion,
   OutputMode,
   ComposerSuggestion,
+  DeepAnalysisMissionSummary,
   ExecutionSelection,
   NotificationItem,
   PromptReference,
@@ -1179,6 +1180,10 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const sidebarAutoCollapsedRef = useRef(false);
+  const [deepAnalysisMissions, setDeepAnalysisMissions] = useState<DeepAnalysisMissionSummary[]>([]);
+  const [deepAnalysisMissionsLoading, setDeepAnalysisMissionsLoading] = useState(false);
+  const [deepAnalysisSelectedMissionId, setDeepAnalysisSelectedMissionId] = useState<string | null>(null);
+  const [deepAnalysisCreateRequest, setDeepAnalysisCreateRequest] = useState(0);
   const [sessionMenuId, setSessionMenuId] = useState<string | null>(null);
   const [likedSessionsOnly, setLikedSessionsOnly] = useState(false);
   const [sessionDeleteArmedId, setSessionDeleteArmedId] = useState<string | null>(null);
@@ -1437,6 +1442,11 @@ function App() {
     [activeRuntime.snapshots, activeRuntime.turnSets],
   );
   const activeProject = workspace.projects.find((project) => project.id === workspace.activeProjectId) ?? null;
+  useEffect(() => {
+    setDeepAnalysisMissions([]);
+    setDeepAnalysisMissionsLoading(false);
+    setDeepAnalysisSelectedMissionId(null);
+  }, [workspace.activeProjectId]);
   const restoringActiveConversation = Boolean(
     workspace.activeConversationId && !activeRuntime.loaded && !activeRuntime.error,
   );
@@ -2168,6 +2178,13 @@ function App() {
     workspace.startNewConversation();
     window.requestAnimationFrame(() => composerInputRef.current?.focus());
   }, [workspace.startNewConversation]);
+
+  const startNewDeepAnalysis = useCallback(() => {
+    setMainView("deep-analysis");
+    setSidebarOpen(false);
+    setDeepAnalysisCreateRequest((current) => current + 1);
+  }, []);
+  const handleDeepAnalysisCreateRequest = useCallback(() => setDeepAnalysisCreateRequest(0), []);
 
   const openAdmin = useCallback(() => {
     setMainView("admin");
@@ -2923,7 +2940,9 @@ function App() {
           }}
         >
           <button type="button" aria-label="사이드바 펼치기" data-tooltip="사이드바 펼치기" onClick={() => { sidebarAutoCollapsedRef.current = false; setSidebarCollapsed(false); }}><PanelLeftOpen size={17} /></button>
-          <button type="button" aria-label="새 채팅" data-tooltip="새 채팅" onClick={startNewConversation}><SquarePen size={18} /></button>
+          {mainView === "deep-analysis"
+            ? <button type="button" aria-label="새 분석" data-tooltip="새 분석" disabled={activeProject?.role === "viewer"} onClick={startNewDeepAnalysis}><Workflow size={18} /></button>
+            : <button type="button" aria-label="새 채팅" data-tooltip="새 채팅" onClick={startNewConversation}><SquarePen size={18} /></button>}
           {navigation.map(({ id, label, icon: Icon }) => (
             <button className={mainView === id ? "is-active" : ""} type="button" aria-label={label} data-tooltip={label} key={id} onClick={() => setMainView(id)}><Icon size={18} /></button>
           ))}
@@ -2958,7 +2977,9 @@ function App() {
 
         <div className="sidebar-scroll">
           <section className="sidebar-section">
-            <button className="new-task-button" type="button" onClick={startNewConversation}><SquarePen size={17} /> <span>새 채팅</span><kbd aria-hidden="true">Ctrl + Shift + O</kbd></button>
+            {mainView === "deep-analysis"
+              ? <button className="new-task-button" type="button" disabled={activeProject?.role === "viewer"} onClick={startNewDeepAnalysis}><Workflow size={17} /> <span>새 분석</span></button>
+              : <button className="new-task-button" type="button" onClick={startNewConversation}><SquarePen size={17} /> <span>새 채팅</span><kbd aria-hidden="true">Ctrl + Shift + O</kbd></button>}
           </section>
 
           <section className="sidebar-section">
@@ -2975,7 +2996,6 @@ function App() {
                   {workspace.projects.map((project) => (
                     <button type="button" role="option" aria-selected={project.id === workspace.activeProjectId} key={project.id} onClick={() => {
                       workspace.setActiveProjectId(project.id);
-                      setMainView("chat");
                       setProjectMenuOpen(false);
                     }}>
                       <Folder size={15} /><span>{project.name}</span>{project.id === workspace.activeProjectId && <Check size={14} />}
@@ -2986,6 +3006,28 @@ function App() {
             </div>
           </section>
 
+          {mainView === "deep-analysis" ? (
+            <section className="sidebar-section session-section">
+              <div className="sidebar-section-heading session-heading">
+                <span>최근 항목</span>
+                {deepAnalysisMissionsLoading && <LoaderCircle className="is-running" size={13} />}
+              </div>
+              <div className="session-list" onScroll={handleSessionListScroll}>
+                {deepAnalysisMissions.map((missionSummary) => (
+                  <div className={`session-item deep-analysis-sidebar-item ${missionSummary.id === deepAnalysisSelectedMissionId ? "is-selected" : ""}`} key={missionSummary.id}>
+                    <button className="session-row" type="button" onClick={() => {
+                      setDeepAnalysisSelectedMissionId(missionSummary.id);
+                      setSidebarOpen(false);
+                    }}>
+                      <Workflow size={14} />
+                      <span>{missionSummary.title}</span>
+                    </button>
+                  </div>
+                ))}
+                {!deepAnalysisMissionsLoading && deepAnalysisMissions.length === 0 && <p className="sidebar-empty">새 분석을 만들어 시작하세요.</p>}
+              </div>
+            </section>
+          ) : (
           <section className="sidebar-section session-section">
             <div className="sidebar-section-heading session-heading">
               <span>{bulkSessionMode ? `${likedSessionsOnly ? "좋아요 · " : ""}${bulkSessionIds.size}개 선택` : likedSessionsOnly ? "좋아요" : "최근 항목"}</span>
@@ -3069,6 +3111,7 @@ function App() {
               {!workspace.loadingWorkspace && workspace.conversations.filter((conversation) => !likedSessionsOnly || conversation.isLiked).length === 0 && <p className="sidebar-empty">{likedSessionsOnly ? "좋아요한 채팅이 없습니다." : "새 채팅을 만들어 시작하세요."}</p>}
             </div>
           </section>
+          )}
         </div>
 
         <footer className="sidebar-footer" onClick={(event) => event.stopPropagation()}>
@@ -3701,7 +3744,18 @@ function App() {
           {mainView === "marketplace" && <MarketplaceView key={workspace.activeProjectId ?? "none"} projectId={workspace.activeProjectId} canManage={isAdmin} onOpenNavigation={() => setSidebarOpen(true)} />}
           {mainView === "library" && <ArtifactLibraryView key={workspace.activeProjectId ?? "all"} projectId={workspace.activeProjectId} onOpenArtifact={(artifact) => void openArtifact(artifact)} onOpenNavigation={() => setSidebarOpen(true)} />}
           {mainView === "files" && <ProjectFilesView key={workspace.activeProjectId ?? "none"} projectId={workspace.activeProjectId} onOpenNavigation={() => setSidebarOpen(true)} />}
-          {mainView === "deep-analysis" && <DeepAnalysisView key={workspace.activeProjectId ?? "none"} projectId={workspace.activeProjectId} canEdit={activeProject?.role !== "viewer"} onOpenNavigation={() => setSidebarOpen(true)} />}
+          {mainView === "deep-analysis" && <DeepAnalysisView
+            key={workspace.activeProjectId ?? "none"}
+            projectId={workspace.activeProjectId}
+            canEdit={activeProject?.role !== "viewer"}
+            requestedMissionId={deepAnalysisSelectedMissionId}
+            createRequest={deepAnalysisCreateRequest}
+            onCreateRequestHandled={handleDeepAnalysisCreateRequest}
+            onMissionsChange={setDeepAnalysisMissions}
+            onMissionsLoadingChange={setDeepAnalysisMissionsLoading}
+            onSelectedMissionChange={setDeepAnalysisSelectedMissionId}
+            onOpenNavigation={() => setSidebarOpen(true)}
+          />}
           {mainView === "knowledge" && <KnowledgeView onOpenNavigation={() => setSidebarOpen(true)} />}
           {mainView === "help" && <HelpCenterView canManage={isAdmin} initialAnnouncementId={helpAnnouncementId} onOpenNavigation={() => setSidebarOpen(true)} />}
           {mainView === "schedules" && <SchedulesView key={workspace.activeProjectId ?? "none"} projectId={workspace.activeProjectId} projects={workspace.projects} execution={workspace.settings?.execution ?? null} executionOptions={candidateModelOptions} onOpenNavigation={() => setSidebarOpen(true)} onProjectChange={workspace.setActiveProjectId} onConversationsChanged={workspace.refreshConversations} />}

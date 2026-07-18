@@ -49,6 +49,12 @@ import "./deep-analysis.css";
 interface DeepAnalysisViewProps {
   projectId: string | null;
   canEdit: boolean;
+  requestedMissionId: string | null;
+  createRequest: number;
+  onCreateRequestHandled: () => void;
+  onMissionsChange: (missions: DeepAnalysisMissionSummary[]) => void;
+  onMissionsLoadingChange: (loading: boolean) => void;
+  onSelectedMissionChange: (missionId: string | null) => void;
   onOpenNavigation: () => void;
 }
 
@@ -139,6 +145,12 @@ function eventDescription(event: DeepAnalysisMissionEvent) {
 export function DeepAnalysisView({
   projectId,
   canEdit,
+  requestedMissionId,
+  createRequest,
+  onCreateRequestHandled,
+  onMissionsChange,
+  onMissionsLoadingChange,
+  onSelectedMissionChange,
   onOpenNavigation,
 }: DeepAnalysisViewProps) {
   const [missions, setMissions] = useState<DeepAnalysisMissionSummary[]>([]);
@@ -223,6 +235,22 @@ export function DeepAnalysisView({
     ],
     [patterns],
   );
+
+  useEffect(() => onMissionsChange(missions), [missions, onMissionsChange]);
+  useEffect(() => onMissionsLoadingChange(loadingList), [loadingList, onMissionsLoadingChange]);
+  useEffect(() => onSelectedMissionChange(selectedMissionId), [onSelectedMissionChange, selectedMissionId]);
+
+  useEffect(() => {
+    if (!requestedMissionId) return;
+    setSelectedMissionId(requestedMissionId);
+    setCreateOpen(false);
+  }, [requestedMissionId]);
+
+  useEffect(() => {
+    if (createRequest <= 0) return;
+    setCreateOpen(true);
+    onCreateRequestHandled();
+  }, [createRequest, onCreateRequestHandled]);
   const patternTargetOptions = useMemo(
     () => [
       { value: "", label: "새 Project Pattern" },
@@ -1082,113 +1110,83 @@ export function DeepAnalysisView({
         </section>
       ) : (
         <div className="deep-analysis-layout">
-          <aside className="deep-analysis-missions" aria-label="심층분석 목록">
-            <div className="deep-analysis-pane-title">
-              <strong>Mission</strong>
-              {canEdit && (
-                <button className="deep-analysis-new-button" type="button" onClick={() => setCreateOpen((open) => !open)}>
-                  {createOpen ? <X size={15} /> : <Plus size={15} />}
-                  {createOpen ? "닫기" : "새 분석"}
-                </button>
-              )}
-            </div>
-            {createOpen && (
-              <form className="deep-analysis-create" onSubmit={createMission}>
-                <label>
-                  분석 이름
-                  <input
-                    autoFocus
-                    value={title}
-                    maxLength={240}
-                    placeholder="예: 전사 영업원가 변동 원인 분석"
-                    onChange={(event) => setTitle(event.target.value)}
-                  />
-                </label>
-                <label>
-                  분석 목적
-                  <textarea
-                    value={objective}
-                    rows={4}
-                    maxLength={20_000}
-                    placeholder="무엇을 설명하거나 결정해야 하는지 적어 주세요."
-                    onChange={(event) => setObjective(event.target.value)}
-                  />
-                </label>
-                <fieldset>
-                  <legend>진행 방식</legend>
-                  {(
-                    [
-                      ["guided", "단계별 확인"],
-                      ["balanced", "균형 있게"],
-                      ["autonomous", "자율 진행"],
-                    ] as const
-                  ).map(([value, label]) => (
-                    <button
-                      className={autonomyMode === value ? "is-active" : ""}
-                      type="button"
-                      key={value}
-                      aria-pressed={autonomyMode === value}
-                      onClick={() => setAutonomyMode(value)}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </fieldset>
-                <div className="deep-analysis-select-field">
-                  Workflow 시작 방식
-                  <SelectMenu
-                    value={selectedPatternVersionId}
-                    options={publishedPatternOptions}
-                    ariaLabel="Workflow 시작 방식"
-                    onChange={setSelectedPatternVersionId}
-                  />
-                  <small>{selectedPatternVersionId ? "선택한 Pattern은 초기 뼈대이며 Mission 질문과 중간 결과에 따라 달라질 수 있습니다." : "Pattern 없이도 동일한 실행·기록·복구 기능을 사용합니다."}</small>
-                </div>
-                <label>
-                  최대 비용 (US$, 선택)
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    inputMode="decimal"
-                    value={budgetUsd}
-                    placeholder="예: 1.00"
-                    onChange={(event) => setBudgetUsd(event.target.value)}
-                  />
-                </label>
-                <button className="deep-analysis-create-submit" type="submit" disabled={creating || !title.trim()}>
-                  {creating && <LoaderCircle className="is-running" size={14} />}
-                  Mission 만들기
-                </button>
-              </form>
-            )}
-            {loadingList ? (
-              <div className="deep-analysis-loading"><LoaderCircle className="is-running" size={16} /> 불러오는 중</div>
-            ) : missions.length ? (
-              <div className="deep-analysis-mission-list">
-                {missions.map((item) => (
-                  <button
-                    className={selectedMissionId === item.id ? "is-active" : ""}
-                    type="button"
-                    key={item.id}
-                    aria-current={selectedMissionId === item.id ? "page" : undefined}
-                    onClick={() => setSelectedMissionId(item.id)}
-                  >
-                    <span><strong>{item.title}</strong><small>{item.objective || "목적 미입력"}</small></span>
-                    <ChevronRight size={14} />
-                  </button>
-                ))}
-              </div>
-            ) : !createOpen ? (
-              <div className="deep-analysis-list-empty">
-                <p>아직 심층분석이 없습니다.</p>
-                {canEdit && <button type="button" onClick={() => setCreateOpen(true)}><Plus size={14} /> 첫 분석 만들기</button>}
-              </div>
-            ) : null}
-          </aside>
-
           <section className="deep-analysis-workspace">
-            {loadingMission ? (
+            {createOpen ? (
+              <div className="deep-analysis-create-shell">
+                <header>
+                  <div><GitBranch size={18} /><span><strong>새 분석</strong><small>현재 프로젝트에 새로운 심층분석 Mission을 만듭니다.</small></span></div>
+                  <button type="button" aria-label="새 분석 닫기" onClick={() => setCreateOpen(false)}><X size={16} /></button>
+                </header>
+                <form className="deep-analysis-create" onSubmit={createMission}>
+                  <label>
+                    분석 이름
+                    <input
+                      autoFocus
+                      value={title}
+                      maxLength={240}
+                      placeholder="예: 전사 영업원가 변동 원인 분석"
+                      onChange={(event) => setTitle(event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    분석 목적
+                    <textarea
+                      value={objective}
+                      rows={4}
+                      maxLength={20_000}
+                      placeholder="무엇을 설명하거나 결정해야 하는지 적어 주세요."
+                      onChange={(event) => setObjective(event.target.value)}
+                    />
+                  </label>
+                  <fieldset>
+                    <legend>진행 방식</legend>
+                    {(
+                      [
+                        ["guided", "단계별 확인"],
+                        ["balanced", "균형 있게"],
+                        ["autonomous", "자율 진행"],
+                      ] as const
+                    ).map(([value, label]) => (
+                      <button
+                        className={autonomyMode === value ? "is-active" : ""}
+                        type="button"
+                        key={value}
+                        aria-pressed={autonomyMode === value}
+                        onClick={() => setAutonomyMode(value)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </fieldset>
+                  <div className="deep-analysis-select-field">
+                    Workflow 시작 방식
+                    <SelectMenu
+                      value={selectedPatternVersionId}
+                      options={publishedPatternOptions}
+                      ariaLabel="Workflow 시작 방식"
+                      onChange={setSelectedPatternVersionId}
+                    />
+                    <small>{selectedPatternVersionId ? "선택한 Pattern은 초기 뼈대이며 Mission 질문과 중간 결과에 따라 달라질 수 있습니다." : "Pattern 없이도 동일한 실행·기록·복구 기능을 사용합니다."}</small>
+                  </div>
+                  <label>
+                    최대 비용 (US$, 선택)
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      inputMode="decimal"
+                      value={budgetUsd}
+                      placeholder="예: 1.00"
+                      onChange={(event) => setBudgetUsd(event.target.value)}
+                    />
+                  </label>
+                  <button className="deep-analysis-create-submit" type="submit" disabled={creating || !title.trim()}>
+                    {creating && <LoaderCircle className="is-running" size={14} />}
+                    Mission 만들기
+                  </button>
+                </form>
+              </div>
+            ) : loadingMission ? (
               <div className="deep-analysis-empty"><LoaderCircle className="is-running" size={20} /><p>Workflow를 불러오는 중입니다.</p></div>
             ) : mission ? (
               <>

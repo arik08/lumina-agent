@@ -38,23 +38,39 @@ test("Mission creation and restoration use the typed deep-analysis API", async (
   assert.match(api, /cache: requestInit\.cache \?\? "no-store"/);
 });
 
-test("Mission pane title omits the aggregate count badge", async () => {
-  const [view, css] = await Promise.all([
+test("Mission navigation lives in the shared sidebar instead of a duplicate content pane", async () => {
+  const [app, view, css] = await Promise.all([
+    readFile(appPath, "utf8"),
     readFile(viewPath, "utf8"),
     readFile(cssPath, "utf8"),
   ]);
 
-  assert.doesNotMatch(view, /<span>\{missions\.length\}<\/span>/);
-  assert.doesNotMatch(css, /\.deep-analysis-pane-title span/);
+  assert.match(app, /deepAnalysisMissions\.map\(\(missionSummary\)/);
+  assert.match(app, /<Workflow size=\{14\} \/>/);
+  assert.match(app, /requestedMissionId=\{deepAnalysisSelectedMissionId\}/);
+  assert.doesNotMatch(view, /className="deep-analysis-missions"/);
+  assert.doesNotMatch(css, /\.deep-analysis-missions/);
+  assert.match(css, /\.deep-analysis-workspace \{[^}]*flex: 1;/);
 });
 
-test("new analysis action is located in the Mission pane title", async () => {
-  const view = await readFile(viewPath, "utf8");
-  const paneTitle = view.match(/<div className="deep-analysis-pane-title">([\s\S]*?)<\/div>/)?.[1] ?? "";
+test("new analysis action uses the shared sidebar and opens creation in the workspace", async () => {
+  const [app, view] = await Promise.all([
+    readFile(appPath, "utf8"),
+    readFile(viewPath, "utf8"),
+  ]);
 
-  assert.match(paneTitle, /className="deep-analysis-new-button"/);
-  assert.match(paneTitle, /createOpen \? "닫기" : "새 분석"/);
-  assert.doesNotMatch(view, /<header className="deep-analysis-header">[\s\S]*?deep-analysis-new-button[\s\S]*?<\/header>/);
+  assert.match(app, /mainView === "deep-analysis"[\s\S]*?startNewDeepAnalysis[\s\S]*?<span>새 분석<\/span>/);
+  assert.match(view, /className="deep-analysis-create-shell"/);
+  assert.match(view, /onCreateRequestHandled\(\)/);
+  assert.doesNotMatch(view, /deep-analysis-new-button/);
+});
+
+test("project selection preserves the active top-level feature", async () => {
+  const app = await readFile(appPath, "utf8");
+  const projectSelection = app.match(/workspace\.projects\.map\(\(project\) => \([\s\S]*?workspace\.setActiveProjectId\(project\.id\);[\s\S]*?setProjectMenuOpen\(false\);/)?.[0] ?? "";
+
+  assert.ok(projectSelection);
+  assert.doesNotMatch(projectSelection, /setMainView\("chat"\)/);
 });
 
 test("Workflow keeps cost detail opt-in and exposes selectable Node inspection", async () => {

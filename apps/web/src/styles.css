@@ -311,6 +311,7 @@ button:focus-visible, textarea:focus-visible, a:focus-visible {
 }
 
 .new-task-button:hover { background: rgba(32, 36, 44, 0.05); }
+.new-task-button:disabled { opacity: .45; cursor: default; }
 .new-task-button kbd {
   margin-left: auto;
   color: var(--muted);
@@ -452,6 +453,8 @@ button:focus-visible, textarea:focus-visible, a:focus-visible {
 .session-item:hover { background: rgba(32, 36, 44, 0.045); }
 .session-item.is-selected { background: #e9ebed; color: #1f232a; font-weight: 540; }
 .session-item.is-bulk { grid-template-columns: minmax(0, 1fr); }
+.session-item.deep-analysis-sidebar-item { grid-template-columns: minmax(0, 1fr); }
+.deep-analysis-sidebar-item .session-row > svg { color: var(--cobalt); }
 .session-like-button {
   display: inline-flex;
   width: 31px;
