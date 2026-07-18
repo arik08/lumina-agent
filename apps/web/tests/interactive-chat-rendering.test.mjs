@@ -81,13 +81,15 @@ test("chat Mermaid cards provide button-only zoom controls beside the expand but
   assert.match(rendererSource, /const \[zoom, setZoom\] = useState\(1\)/);
   assert.match(rendererSource, /const \[initialZoom, setInitialZoom\] = useState\(1\)/);
   assert.match(rendererSource, /setZoom\(clamp\(next, 0\.3, 2\)\)/);
-  assert.match(rendererSource, /clamp\(Math\.round\(\(containerRef\.current\.clientHeight \/ Math\.max\(renderedHeight, 1\)\) \* 10\) \/ 10, 0\.3, 1\)/);
+  assert.match(rendererSource, /baseWidthRef\.current = naturalWidth/);
+  assert.match(rendererSource, /clamp\(Math\.floor\(Math\.min\(widthFit, heightFit, 1\) \* 10\) \/ 10, 0\.7, 1\)/);
   assert.match(rendererSource, /aria-label="Mermaid 다이어그램 축소"[\s\S]*?zoom - 0\.2/);
   assert.match(rendererSource, /aria-label="Mermaid 다이어그램 배율 초기화"[\s\S]*?setZoom\(initialZoom\)/);
   assert.match(rendererSource, /aria-label="Mermaid 다이어그램 확대"[\s\S]*?zoom \+ 0\.2/);
   assert.match(rendererSource, /<MermaidSurface source=\{source\} zoom=\{zoom\} onInitialFit=\{applyInitialFit\} \/>/);
   assert.match(rendererSource, /className="interactive-response-expand-label" aria-label="Mermaid 다이어그램 크게 보기" onClick=\{\(\) => setExpanded\(true\)\}>Mermaid<\/button>/);
-  assert.match(rendererSource, /renderedSvg\.style\.maxWidth = zoom > 1 \? "none" : "100%"/);
+  assert.match(rendererSource, /renderedSvg\.style\.maxWidth = "none"/);
+  assert.match(rendererSource, /surface\.scrollLeft = Math\.max\(\(surface\.scrollWidth - surface\.clientWidth\) \/ 2, 0\)/);
   assert.doesNotMatch(rendererSource, /<MermaidSurface source=\{source\} zoom=\{zoom\}[^>]*onWheel/);
   assert.match(rendererStyles, /\.mermaid-inline-zoom-controls \{[\s\S]*?border-right: 1px solid var\(--line\);/);
   assert.match(rendererStyles, /\.interactive-response-toolbar button\.mermaid-inline-zoom-value \{[^}]*width: 3em;[^}]*flex: 0 0 3em;[^}]*white-space: nowrap;/s);

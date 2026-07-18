@@ -196,15 +196,23 @@ function MermaidSurface({ source, expanded = false, zoom = 1, onInitialFit }: {
       const renderedSvg = containerRef.current.querySelector("svg");
       if (renderedSvg) {
         const naturalWidth = renderedSvg.viewBox.baseVal.width || renderedSvg.getBoundingClientRect().width;
-        baseWidthRef.current = Math.min(naturalWidth, containerRef.current.clientWidth);
-        const renderedHeight = renderedSvg.getBoundingClientRect().height;
+        const naturalHeight = renderedSvg.viewBox.baseVal.height || renderedSvg.getBoundingClientRect().height;
+        baseWidthRef.current = naturalWidth;
+        const widthFit = containerRef.current.clientWidth / Math.max(naturalWidth, 1);
+        const heightFit = containerRef.current.clientHeight / Math.max(naturalHeight, 1);
         const initialZoom = expanded
           ? zoomRef.current
-          : clamp(Math.round((containerRef.current.clientHeight / Math.max(renderedHeight, 1)) * 10) / 10, 0.3, 1);
+          : clamp(Math.floor(Math.min(widthFit, heightFit, 1) * 10) / 10, 0.7, 1);
         zoomRef.current = initialZoom;
         renderedSvg.style.width = `${baseWidthRef.current * initialZoom}px`;
-        renderedSvg.style.maxWidth = initialZoom > 1 ? "none" : "100%";
+        renderedSvg.style.maxWidth = "none";
         onInitialFit?.(initialZoom);
+        window.requestAnimationFrame(() => {
+          const surface = containerRef.current;
+          if (!surface) return;
+          surface.scrollLeft = Math.max((surface.scrollWidth - surface.clientWidth) / 2, 0);
+          surface.scrollTop = 0;
+        });
       }
     }).catch(() => {
       if (!cancelled) setError(true);
@@ -217,7 +225,7 @@ function MermaidSurface({ source, expanded = false, zoom = 1, onInitialFit }: {
     const renderedSvg = containerRef.current?.querySelector("svg");
     if (!renderedSvg || !baseWidthRef.current) return;
     renderedSvg.style.width = `${baseWidthRef.current * zoom}px`;
-    renderedSvg.style.maxWidth = zoom > 1 ? "none" : "100%";
+    renderedSvg.style.maxWidth = "none";
   }, [zoom]);
 
   if (error) return <SyntaxCode className="mermaid-render-error" value={source} language="mermaid" />;
