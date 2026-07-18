@@ -80,16 +80,6 @@ const exportScopeOptions = [
   { value: "audit", label: "과거 version 포함 감사본" },
 ] as const;
 
-const workflowActionLabels: Record<string, string> = {
-  initial: "질문 기반 초기 Workflow",
-  legacy_upgraded: "질문 기반 Workflow로 승격",
-  question_updated: "질문 변경으로 재구성",
-  expand: "분석 단계 확장",
-  shrink: "불필요 단계 축소",
-  replace: "분석 단계 교체",
-  finish: "조기 합성 전환",
-};
-
 function statusLabel(status: string) {
   return statusLabels[status] ?? status;
 }
@@ -405,13 +395,6 @@ export function DeepAnalysisView({
   );
   const completedNodeCount = useMemo(
     () => mission?.workflow.nodes.filter((node) => node.status === "completed").length ?? 0,
-    [mission],
-  );
-  const latestGraphChange = useMemo(
-    () => mission?.workflow.changeLog
-      .slice()
-      .reverse()
-      .find((item) => item.graphChanged) ?? null,
     [mission],
   );
   const latestQualityGate = useMemo(
@@ -1279,6 +1262,13 @@ export function DeepAnalysisView({
                         </div>
                       )}
                     </div>
+                    {canEdit && (mission.status === "draft" || mission.status === "ready") && (editingWorkflow ? <>
+                      <button className="deep-analysis-workflow-action" type="button" onClick={addDraftNode}><Plus size={13} /> Node 추가</button>
+                      <button className="deep-analysis-workflow-action" type="button" disabled={!workflowDraftDirty || savingWorkflow} onClick={() => void saveWorkflowDraft()}>{savingWorkflow ? <LoaderCircle className="is-running" size={13} /> : null}{savingWorkflow ? "저장 중" : "Draft 저장"}</button>
+                      <button className="deep-analysis-workflow-action is-primary" type="button" disabled={savingWorkflow || activatingWorkflow} onClick={() => void activateWorkflowDraft()}>{activatingWorkflow ? <LoaderCircle className="is-running" size={13} /> : null}{activatingWorkflow ? "활성화 중" : "Draft 활성화"}</button>
+                    </> : (
+                      <button className="deep-analysis-workflow-action is-primary" type="button" onClick={() => void beginWorkflowEdit()}>편집 시작</button>
+                    ))}
                     <div className="deep-analysis-export-wrap">
                       <button className="deep-analysis-export tooltip-control" type="button" aria-label="Mission 내보내기" aria-expanded={exportOpen} data-tooltip="내보내기" onClick={() => setExportOpen((open) => !open)}>
                         <Download size={15} />
@@ -1417,20 +1407,6 @@ export function DeepAnalysisView({
                   </section>
                 )}
                 {activeTab === "workflow" ? <>
-                {latestGraphChange && (
-                  <div className="deep-analysis-workflow-change" role="status">
-                    <GitBranch size={15} />
-                    <div>
-                      <strong>{workflowActionLabels[latestGraphChange.action] ?? "Workflow 조정"}</strong>
-                      <span>{latestGraphChange.reason || "중간 결과에 따라 남은 Workflow를 조정했습니다."}</span>
-                    </div>
-                    <small>
-                      {(latestGraphChange.addedNodeKeys?.length ?? 0) > 0 && `+${latestGraphChange.addedNodeKeys?.length}`}
-                      {(latestGraphChange.addedNodeKeys?.length ?? 0) > 0 && (latestGraphChange.removedNodeKeys?.length ?? 0) > 0 && " · "}
-                      {(latestGraphChange.removedNodeKeys?.length ?? 0) > 0 && `−${latestGraphChange.removedNodeKeys?.length}`}
-                    </small>
-                  </div>
-                )}
                 {pendingDecision && (
                   <section className="deep-analysis-decision" aria-labelledby={`decision-${pendingDecision.id}`}>
                     <div className="deep-analysis-decision-heading">
@@ -1514,21 +1490,6 @@ export function DeepAnalysisView({
                   <div className="deep-analysis-run-feedback is-unavailable" role="status">
                     <CircleAlert size={16} />
                     <div><strong>실행 엔진 준비 중</strong><span>Workflow 설계와 검토는 가능하지만 실제 분석 실행은 아직 연결되지 않았습니다.</span></div>
-                  </div>
-                )}
-                {canEdit && (mission.status === "draft" || mission.status === "ready") && (
-                  <div className={`deep-analysis-workflow-editor ${editingWorkflow ? "is-editing" : ""}`}>
-                    <div>
-                      <GitBranch size={15} />
-                      <span><strong>{editingWorkflow ? `Workflow Draft · Revision ${workflowDraft?.revisionNumber}` : "Workflow 구조 편집"}</strong><small>{editingWorkflow ? "Node를 끌어 이동하고, 상세 패널에서 선행 Node 연결을 바꿀 수 있습니다." : "활성 revision은 유지한 채 별도 Draft에서 편집합니다."}</small></span>
-                    </div>
-                    {editingWorkflow ? <>
-                      <button type="button" onClick={addDraftNode}><Plus size={13} /> Node 추가</button>
-                      <button type="button" disabled={!workflowDraftDirty || savingWorkflow} onClick={() => void saveWorkflowDraft()}>{savingWorkflow ? <LoaderCircle className="is-running" size={13} /> : null}{savingWorkflow ? "저장 중" : "Draft 저장"}</button>
-                      <button className="is-primary" type="button" disabled={savingWorkflow || activatingWorkflow} onClick={() => void activateWorkflowDraft()}>{activatingWorkflow ? <LoaderCircle className="is-running" size={13} /> : null}{activatingWorkflow ? "활성화 중" : "Draft 활성화"}</button>
-                    </> : (
-                      <button className="is-primary" type="button" onClick={() => void beginWorkflowEdit()}>편집 시작</button>
-                    )}
                   </div>
                 )}
                 <div className={`deep-analysis-workflow-layout ${selectedNode ? "has-inspector" : ""}`}>

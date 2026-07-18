@@ -121,16 +121,14 @@ test("Workflow reports live Run progress and pans with transform at every zoom",
   assert.match(view, /aria-label="확대"[\s\S]*?Math\.round\(canvasScale \* 100\)[\s\S]*?aria-label="축소"/);
 });
 
-test("adaptive Workflow changes are explained and refitted on graph updates", async () => {
+test("adaptive Workflow changes retain graph semantics and refit on updates", async () => {
   const [view, css] = await Promise.all([
     readFile(viewPath, "utf8"),
     readFile(cssPath, "utf8"),
   ]);
 
-  assert.match(view, /mission\?\.workflow\.changeLog/);
-  assert.match(view, /\.find\(\(item\) => item\.graphChanged\)/);
-  assert.match(view, /initial: "질문 기반 초기 Workflow"/);
-  assert.match(view, /deep-analysis-workflow-change/);
+  assert.doesNotMatch(view, /deep-analysis-workflow-change/);
+  assert.doesNotMatch(css, /\.deep-analysis-workflow-change/);
   assert.match(view, /결과에 따라 남은 Workflow가 확장되거나 축소될 수 있습니다/);
   assert.match(view, /\[shownWorkflow\?\.graphDigest\]/);
   assert.match(view, /typeof selectedNode\.config\.reason === "string"/);
@@ -139,7 +137,6 @@ test("adaptive Workflow changes are explained and refitted on graph updates", as
   assert.match(view, /분기 \{workflowTopology\.branchCount\} · 합류 \{workflowTopology\.mergeCount\}/);
   assert.match(view, /workflowTopology\.branchNodeKeys\.has\(edge\.sourceNodeKey\)/);
   assert.match(view, /workflowTopology\.mergeNodeKeys\.has\(edge\.targetNodeKey\)/);
-  assert.match(css, /\.deep-analysis-workflow-change \{/);
   assert.match(css, /path\.is-branch/);
   assert.match(css, /path\.is-merge/);
 });
@@ -150,7 +147,7 @@ test("Workflow Draft supports node drag, dependency connect, save and atomic act
     readFile(apiPath, "utf8"),
     readFile(cssPath, "utf8"),
   ]);
-  assert.match(view, /Workflow 구조 편집/);
+  assert.doesNotMatch(view, /Workflow 구조 편집/);
   assert.match(view, /api\.deepAnalysis\.createDraft/);
   assert.match(view, /api\.deepAnalysis\.updateDraft/);
   assert.match(view, /api\.deepAnalysis\.activateDraft/);
@@ -164,7 +161,10 @@ test("Workflow Draft supports node drag, dependency connect, save and atomic act
   assert.match(api, /updateDraft: updateDeepAnalysisWorkflowDraft/);
   assert.match(api, /activateDraft: activateDeepAnalysisWorkflowDraft/);
   assert.match(css, /\.deep-analysis-node\.is-editable/);
-  assert.match(css, /\.deep-analysis-workflow-editor\.is-editing/);
+  assert.doesNotMatch(css, /\.deep-analysis-workflow-editor/);
+  assert.match(view, /deep-analysis-pattern-wrap[\s\S]*?deep-analysis-workflow-action is-primary[\s\S]*?편집 시작/);
+  assert.match(css, /\.deep-analysis-canvas-controls \{[^}]*top: 12px;[^}]*right: 12px;/);
+  assert.doesNotMatch(css, /\.deep-analysis-workflow-layout:has\(\+ \.deep-analysis-execution-log\.is-open\) \.deep-analysis-canvas-controls/);
 });
 
 test("Project Pattern Library stays optional and publishes immutable reviewed versions", async () => {

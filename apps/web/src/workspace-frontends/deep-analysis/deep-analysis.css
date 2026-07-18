@@ -119,6 +119,9 @@
 .deep-analysis-contract-toggle:hover,
 .deep-analysis-contract-toggle.is-active { border-color: color-mix(in srgb, var(--cobalt) 45%, var(--line)); background: var(--cobalt-pale); color: var(--cobalt); }
 .deep-analysis-pattern-wrap { position: relative; flex: none; }
+.deep-analysis-workflow-action { display: inline-flex; min-height: 30px; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: var(--radius-control); padding: 0 9px; background: var(--surface); color: var(--muted); font-size: 11px; font-weight: 620; cursor: pointer; }
+.deep-analysis-workflow-action.is-primary { border-color: var(--cobalt); background: var(--cobalt); color: white; }
+.deep-analysis-workflow-action:disabled { opacity: .45; cursor: default; }
 .deep-analysis-pattern-popover { position: absolute; z-index: 8; top: 36px; right: 0; display: grid; width: 300px; gap: 9px; border: 1px solid var(--line); border-radius: var(--radius-menu); padding: 11px; background: var(--surface); box-shadow: var(--shadow-overlay); }
 .deep-analysis-pattern-popover > strong { color: var(--ink); font-size: 11px; }
 .deep-analysis-pattern-popover label, .deep-analysis-pattern-popover .deep-analysis-select-field { display: grid; gap: 4px; color: var(--muted); font-size: 9.5px; }
@@ -197,13 +200,6 @@
 .deep-analysis-quality-rerun:hover { border-color: var(--cobalt); }
 .deep-analysis-quality-rerun:disabled { opacity: .5; cursor: default; }
 
-.deep-analysis-workflow-change { display: flex; min-height: 43px; align-items: center; gap: 9px; padding: 7px 16px; border-bottom: 1px solid var(--line); background: var(--cobalt-pale); color: var(--cobalt); }
-.deep-analysis-workflow-change > svg { flex: none; }
-.deep-analysis-workflow-change > div { display: grid; min-width: 0; gap: 2px; }
-.deep-analysis-workflow-change strong { color: var(--ink); font-size: 11px; }
-.deep-analysis-workflow-change span { overflow: hidden; color: var(--muted); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
-.deep-analysis-workflow-change small { margin-left: auto; color: var(--cobalt); font-size: 10.5px; font-weight: 650; white-space: nowrap; }
-
 .deep-analysis-decision { display: grid; gap: 10px; padding: 12px 16px; border-bottom: 1px solid color-mix(in srgb, var(--cobalt) 28%, var(--line)); background: color-mix(in srgb, var(--cobalt-pale) 58%, var(--surface)); }
 .deep-analysis-decision-heading { display: flex; align-items: center; gap: 8px; color: var(--cobalt); }
 .deep-analysis-decision-heading > svg { flex: none; }
@@ -238,17 +234,6 @@
 .deep-analysis-run-feedback.is-warning strong { color: var(--danger); }
 .deep-analysis-run-feedback.is-cancelled > svg { color: var(--danger); }
 .deep-analysis-run-feedback.is-unavailable > svg { color: var(--muted); }
-
-.deep-analysis-workflow-editor { display: flex; min-height: 46px; align-items: center; gap: 7px; padding: 7px 16px; border-bottom: 1px solid var(--line); background: var(--surface); }
-.deep-analysis-workflow-editor.is-editing { background: var(--cobalt-pale); }
-.deep-analysis-workflow-editor > div { display: flex; min-width: 0; flex: 1; align-items: center; gap: 8px; }
-.deep-analysis-workflow-editor > div > svg { flex: none; color: var(--cobalt); }
-.deep-analysis-workflow-editor > div > span { display: grid; min-width: 0; gap: 2px; }
-.deep-analysis-workflow-editor strong { color: var(--ink); font-size: 10.5px; }
-.deep-analysis-workflow-editor small { overflow: hidden; color: var(--muted); font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
-.deep-analysis-workflow-editor > button { display: inline-flex; min-height: 28px; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: var(--radius-control); padding: 0 8px; background: var(--surface); color: var(--ink); font-size: 10px; font-weight: 620; cursor: pointer; }
-.deep-analysis-workflow-editor > button.is-primary { border-color: var(--cobalt); background: var(--cobalt); color: white; }
-.deep-analysis-workflow-editor > button:disabled { opacity: .45; cursor: default; }
 
 .deep-analysis-node-origin { display: flex; align-items: flex-start; gap: 5px; margin-top: 8px; color: var(--muted); font-size: 10.5px; line-height: 1.45; }
 .deep-analysis-node-origin svg { flex: none; margin-top: 1px; color: var(--cobalt); }
@@ -320,8 +305,7 @@
 .deep-analysis-node > span { display: flex; align-items: center; gap: 5px; color: var(--cobalt); font-size: 10.5px; font-weight: 650; }
 .deep-analysis-node > strong { overflow: hidden; color: var(--ink); font-size: 12px; font-weight: 670; text-overflow: ellipsis; white-space: nowrap; }
 
-.deep-analysis-canvas-controls { position: absolute; z-index: 6; bottom: 46px; left: 12px; display: flex; overflow: hidden; align-items: center; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); box-shadow: var(--shadow-overlay); }
-.deep-analysis-workflow-layout:has(+ .deep-analysis-execution-log.is-open) .deep-analysis-canvas-controls { bottom: 193px; }
+.deep-analysis-canvas-controls { position: absolute; z-index: 6; top: 12px; right: 12px; display: flex; overflow: hidden; align-items: center; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); box-shadow: var(--shadow-overlay); }
 .deep-analysis-canvas-controls button { display: grid; min-width: 29px; height: 29px; place-items: center; border: 0; border-right: 1px solid var(--line); padding: 0 7px; background: transparent; color: var(--muted); font-size: 10.5px; cursor: pointer; }
 .deep-analysis-canvas-controls button:last-child { border-right: 0; }
 .deep-analysis-canvas-controls button:hover { background: var(--surface-soft); color: var(--ink); }
