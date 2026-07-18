@@ -40,6 +40,8 @@ import type {
   DeepAnalysisMissionSummary,
   DeepAnalysisOpenIssue,
   DeepAnalysisWorkflowRevision,
+  DeepAnalysisWorkflowPattern,
+  DeepAnalysisWorkflowPatternVersion,
   KnowledgeEntity,
   KnowledgeNeighborhood,
   KnowledgeSource,
@@ -1247,6 +1249,40 @@ export async function createDeepAnalysisMission(
   );
 }
 
+export async function listDeepAnalysisPatterns(projectId: string, signal?: AbortSignal) {
+  return request<DeepAnalysisWorkflowPattern[]>(
+    `/projects/${encodeURIComponent(projectId)}/deep-analysis/patterns`,
+    { signal },
+  );
+}
+
+export async function createDeepAnalysisPattern(
+  projectId: string,
+  payload: { missionId: string; name: string; description?: string },
+) {
+  return request<DeepAnalysisWorkflowPatternVersion>(
+    `/projects/${encodeURIComponent(projectId)}/deep-analysis/patterns`,
+    { method: "POST", body: payload },
+  );
+}
+
+export async function createDeepAnalysisPatternVersion(
+  patternId: string,
+  payload: { missionId: string; changeSummary?: string },
+) {
+  return request<DeepAnalysisWorkflowPatternVersion>(
+    `/deep-analysis/patterns/${encodeURIComponent(patternId)}/versions`,
+    { method: "POST", body: payload },
+  );
+}
+
+export async function publishDeepAnalysisPatternVersion(patternId: string, versionId: string) {
+  return request<DeepAnalysisWorkflowPatternVersion>(
+    `/deep-analysis/patterns/${encodeURIComponent(patternId)}/versions/${encodeURIComponent(versionId)}/publish`,
+    { method: "POST" },
+  );
+}
+
 export async function getDeepAnalysisMission(missionId: string, signal?: AbortSignal) {
   return request<DeepAnalysisMissionDetail>(
     `/deep-analysis/missions/${encodeURIComponent(missionId)}`,
@@ -2277,6 +2313,10 @@ export const api = {
   deepAnalysis: {
     listMissions: listDeepAnalysisMissions,
     createMission: createDeepAnalysisMission,
+    listPatterns: listDeepAnalysisPatterns,
+    createPattern: createDeepAnalysisPattern,
+    createPatternVersion: createDeepAnalysisPatternVersion,
+    publishPatternVersion: publishDeepAnalysisPatternVersion,
     getMission: getDeepAnalysisMission,
     getClaims: getDeepAnalysisClaims,
     getEvidence: getDeepAnalysisEvidence,

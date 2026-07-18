@@ -52,6 +52,9 @@ class DeepAnalysisMission(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     start_mode: Mapped[str] = mapped_column(
         String(32), default="zero_based", nullable=False
     )
+    pattern_version_id: Mapped[str | None] = mapped_column(
+        ForeignKey("deep_analysis_workflow_pattern_versions.id", ondelete="SET NULL")
+    )
     autonomy_mode: Mapped[str] = mapped_column(
         String(32), default="balanced", nullable=False
     )
@@ -399,3 +402,50 @@ class DeepAnalysisMissionExport(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     error_message: Mapped[str] = mapped_column(Text, default="", nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class DeepAnalysisWorkflowPattern(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "deep_analysis_workflow_patterns"
+    __table_args__ = (
+        Index("ix_deep_analysis_patterns_project_status", "project_id", "status"),
+    )
+
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
+    )
+    project_id: Mapped[str | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE")
+    )
+    created_by_user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    scope: Mapped[str] = mapped_column(String(24), default="project", nullable=False)
+    name: Mapped[str] = mapped_column(String(240), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="active", nullable=False)
+
+
+class DeepAnalysisWorkflowPatternVersion(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "deep_analysis_workflow_pattern_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "pattern_id", "version_number", name="uq_deep_analysis_pattern_version"
+        ),
+    )
+
+    pattern_id: Mapped[str] = mapped_column(
+        ForeignKey("deep_analysis_workflow_patterns.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="draft", nullable=False)
+    definition_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    definition_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    change_summary: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    source_mission_id: Mapped[str | None] = mapped_column(
+        ForeignKey("deep_analysis_missions.id", ondelete="SET NULL")
+    )
+    published_by_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

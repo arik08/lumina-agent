@@ -13,6 +13,7 @@ class MissionCreate(ApiModel):
     objective: str = Field(default="", max_length=20_000)
     autonomy_mode: Literal["guided", "balanced", "autonomous"] = "balanced"
     budget_microusd: int | None = Field(default=None, ge=0)
+    pattern_version_id: str | None = None
 
 
 class MissionCharter(ApiModel):
@@ -130,6 +131,43 @@ class WorkflowDraftPatch(ApiModel):
     expected_revision: int = Field(ge=1)
     nodes: list[WorkflowDraftNode] = Field(min_length=1, max_length=200)
     edges: list[WorkflowDraftEdge] = Field(default_factory=list, max_length=1000)
+
+
+class PatternCreate(ApiModel):
+    mission_id: str
+    name: str = Field(min_length=1, max_length=240)
+    description: str = Field(default="", max_length=4000)
+
+
+class PatternVersionCreate(ApiModel):
+    mission_id: str
+    change_summary: str = Field(default="", max_length=4000)
+
+
+class PatternVersionResponse(ApiModel):
+    id: str
+    pattern_id: str
+    version_number: int
+    status: str
+    definition_digest: str
+    definition: dict[str, Any]
+    change_summary: str
+    source_mission_id: str | None
+    published_by_user_id: str | None
+    published_at: datetime | None
+    created_at: datetime
+
+
+class PatternResponse(ApiModel):
+    id: str
+    project_id: str | None
+    scope: str
+    name: str
+    description: str
+    status: str
+    latest_published_version: PatternVersionResponse | None
+    created_at: datetime
+    updated_at: datetime
 
 
 class DecisionAnswer(ApiModel):
@@ -278,6 +316,7 @@ class MissionSummaryResponse(ApiModel):
     objective: str
     status: str
     start_mode: str
+    pattern_version_id: str | None
     autonomy_mode: str
     budget_microusd: int | None
     spent_microusd: int

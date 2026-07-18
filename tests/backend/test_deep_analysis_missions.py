@@ -898,6 +898,88 @@ def test_workflow_draft_is_separate_validated_and_activated_atomically(
             assert previous is not None and previous.state == "archived"
 
 
+def test_published_pattern_is_sanitized_versioned_and_optional_for_new_mission(
+    tmp_path: Path,
+) -> None:
+    with TestClient(create_app(_settings(tmp_path))) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        source = client.post(
+            f"/api/projects/{project_id}/deep-analysis/missions",
+            headers=headers,
+            json={"title": "Pattern 원본", "objective": "반복 가능한 변동 분석"},
+        ).json()
+        with SessionLocal() as db:
+            node = db.scalar(
+                select(DeepAnalysisWorkflowNode).where(
+                    DeepAnalysisWorkflowNode.workflow_revision_id
+                    == source["workflow"]["id"]
+                )
+            )
+            assert node is not None
+            node.config_json = {
+                "role": "variance_driver",
+                "semanticInputRoles": ["계획 대비 실적"],
+                "projectFileId": "must-not-leak",
+                "resolvedDecision": {"answer": "must-not-leak"},
+            }
+            db.commit()
+
+        draft_response = client.post(
+            f"/api/projects/{project_id}/deep-analysis/patterns",
+            headers=headers,
+            json={
+                "missionId": source["id"],
+                "name": "변동 원인 분석",
+                "description": "구조만 재사용",
+            },
+        )
+        assert draft_response.status_code == 201, draft_response.text
+        draft = draft_response.json()
+        assert draft["status"] == "draft"
+        first_config = draft["definition"]["nodes"][0]["config"]
+        assert first_config["role"] == "variance_driver"
+        assert first_config["semanticInputRoles"] == ["계획 대비 실적"]
+        assert "projectFileId" not in first_config
+        assert "resolvedDecision" not in first_config
+
+        published = client.post(
+            f"/api/deep-analysis/patterns/{draft['patternId']}/versions/{draft['id']}/publish",
+            headers=headers,
+        )
+        assert published.status_code == 200, published.text
+        assert published.json()["status"] == "published"
+        patterns = client.get(
+            f"/api/projects/{project_id}/deep-analysis/patterns"
+        ).json()
+        assert patterns[0]["latestPublishedVersion"]["id"] == draft["id"]
+
+        instantiated = client.post(
+            f"/api/projects/{project_id}/deep-analysis/missions",
+            headers=headers,
+            json={
+                "title": "Pattern 적용 Mission",
+                "objective": "이번 달 원가 변동을 분석한다.",
+                "patternVersionId": draft["id"],
+            },
+        )
+        assert instantiated.status_code == 201, instantiated.text
+        payload = instantiated.json()
+        assert payload["startMode"] == "pattern_based"
+        assert payload["patternVersionId"] == draft["id"]
+        assert payload["workflow"]["source"] == "pattern"
+        assert payload["workflow"]["nodes"][0]["id"] != source["workflow"]["nodes"][0]["id"]
+
+        second = client.post(
+            f"/api/deep-analysis/patterns/{draft['patternId']}/versions",
+            headers=headers,
+            json={"missionId": payload["id"], "changeSummary": "새 Mission 구조 검토"},
+        )
+        assert second.status_code == 201, second.text
+        assert second.json()["versionNumber"] == 2
+        assert published.json()["definitionDigest"] == draft["definitionDigest"]
+
+
 def test_mission_endpoints_require_auth_and_project_access(tmp_path: Path) -> None:
     with TestClient(create_app(_settings(tmp_path))) as client:
         assert (

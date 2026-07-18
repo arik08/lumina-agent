@@ -38,7 +38,8 @@
 .deep-analysis-create { display: grid; gap: 12px; padding: 13px; border-bottom: 1px solid var(--line); background: var(--canvas); }
 .deep-analysis-create label { display: grid; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 650; }
 .deep-analysis-create input,
-.deep-analysis-create textarea {
+.deep-analysis-create textarea,
+.deep-analysis-create select {
   width: 100%;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-field);
@@ -49,6 +50,8 @@
   line-height: 1.45;
   resize: vertical;
 }
+.deep-analysis-create select { height: 34px; padding-block: 0; }
+.deep-analysis-create label > small { color: var(--faint); font-size: 9px; font-weight: 450; line-height: 1.4; }
 .deep-analysis-create fieldset { display: grid; grid-template-columns: repeat(3, 1fr); margin: 0; padding: 0; border: 0; gap: 4px; }
 .deep-analysis-create legend { margin-bottom: 6px; color: var(--muted); font-size: 11px; font-weight: 650; }
 .deep-analysis-create fieldset button { min-height: 28px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); color: var(--muted); font-size: 10.5px; cursor: pointer; }
@@ -115,6 +118,21 @@
 .deep-analysis-contract-toggle { min-height: 30px; border: 1px solid var(--line); border-radius: var(--radius-control); padding: 0 9px; background: var(--surface); color: var(--muted); font-size: 11px; cursor: pointer; }
 .deep-analysis-contract-toggle:hover,
 .deep-analysis-contract-toggle.is-active { border-color: color-mix(in srgb, var(--cobalt) 45%, var(--line)); background: var(--cobalt-pale); color: var(--cobalt); }
+.deep-analysis-pattern-wrap { position: relative; flex: none; }
+.deep-analysis-pattern-popover { position: absolute; z-index: 8; top: 36px; right: 0; display: grid; width: 300px; gap: 9px; border: 1px solid var(--line); border-radius: var(--radius-menu); padding: 11px; background: var(--surface); box-shadow: var(--shadow-overlay); }
+.deep-analysis-pattern-popover > strong { color: var(--ink); font-size: 11px; }
+.deep-analysis-pattern-popover label { display: grid; gap: 4px; color: var(--muted); font-size: 9.5px; }
+.deep-analysis-pattern-popover input,
+.deep-analysis-pattern-popover select,
+.deep-analysis-pattern-popover textarea { width: 100%; border: 1px solid var(--line); border-radius: var(--radius-field); padding: 7px 8px; background: var(--canvas); color: var(--ink); font-size: 10.5px; resize: vertical; }
+.deep-analysis-pattern-popover select { height: 30px; padding-block: 0; }
+.deep-analysis-pattern-popover > small { color: var(--faint); font-size: 9px; line-height: 1.4; }
+.deep-analysis-pattern-popover > button { display: flex; min-height: 30px; align-items: center; justify-content: center; gap: 5px; border: 1px solid var(--cobalt); border-radius: var(--radius-control); background: var(--cobalt); color: white; font-size: 10px; font-weight: 650; cursor: pointer; }
+.deep-analysis-pattern-popover > button:disabled { opacity: .5; cursor: default; }
+.deep-analysis-pattern-review { display: grid; gap: 5px; border: 1px solid var(--line); border-radius: var(--radius-field); padding: 9px; background: var(--canvas); }
+.deep-analysis-pattern-review span { color: var(--ink); font-size: 10.5px; font-weight: 650; }
+.deep-analysis-pattern-review code,
+.deep-analysis-pattern-review small { color: var(--muted); font-size: 9px; }
 .deep-analysis-export-wrap { position: relative; flex: none; }
 .deep-analysis-export { display: grid; width: 30px; min-height: 30px; place-items: center; border: 1px solid var(--line); border-radius: var(--radius-control); padding: 0; background: var(--surface); color: var(--muted); cursor: pointer; }
 .deep-analysis-export:hover { background: var(--surface-soft); color: var(--ink); }

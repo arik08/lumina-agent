@@ -36,6 +36,8 @@ import type {
   DeepAnalysisMissionSummary,
   DeepAnalysisWorkflowNode,
   DeepAnalysisWorkflowRevision,
+  DeepAnalysisWorkflowPattern,
+  DeepAnalysisWorkflowPatternVersion,
 } from "../../api-types";
 import "./deep-analysis.css";
 
@@ -113,6 +115,7 @@ export function DeepAnalysisView({
   onOpenNavigation,
 }: DeepAnalysisViewProps) {
   const [missions, setMissions] = useState<DeepAnalysisMissionSummary[]>([]);
+  const [patterns, setPatterns] = useState<DeepAnalysisWorkflowPattern[]>([]);
   const [selectedMissionId, setSelectedMissionId] = useState<string | null>(null);
   const [mission, setMission] = useState<DeepAnalysisMissionDetail | null>(null);
   const [selectedNodeKey, setSelectedNodeKey] = useState<string | null>(null);
@@ -125,6 +128,13 @@ export function DeepAnalysisView({
   const [budgetUsd, setBudgetUsd] = useState("");
   const [autonomyMode, setAutonomyMode] =
     useState<DeepAnalysisAutonomyMode>("balanced");
+  const [selectedPatternVersionId, setSelectedPatternVersionId] = useState("");
+  const [patternPanelOpen, setPatternPanelOpen] = useState(false);
+  const [patternTargetId, setPatternTargetId] = useState("");
+  const [patternName, setPatternName] = useState("");
+  const [patternChangeSummary, setPatternChangeSummary] = useState("");
+  const [savingPattern, setSavingPattern] = useState(false);
+  const [patternDraftVersion, setPatternDraftVersion] = useState<DeepAnalysisWorkflowPatternVersion | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [costDetailsOpen, setCostDetailsOpen] = useState(false);
   const [startingMission, setStartingMission] = useState(false);
@@ -173,6 +183,7 @@ export function DeepAnalysisView({
 
   useEffect(() => {
     setMissions([]);
+    setPatterns([]);
     setMission(null);
     setSelectedMissionId(null);
     setSelectedNodeKey(null);
@@ -199,6 +210,11 @@ export function DeepAnalysisView({
         }
       })
       .finally(() => setLoadingList(false));
+    void api.deepAnalysis.listPatterns(projectId, controller.signal)
+      .then(setPatterns)
+      .catch(() => {
+        // Mission 목록은 Pattern Library의 일시적 실패와 독립적으로 사용할 수 있습니다.
+      });
     return () => controller.abort();
   }, [projectId]);
 
@@ -740,6 +756,55 @@ export function DeepAnalysisView({
     }
   }
 
+  async function savePatternDraft() {
+    if (!mission || !projectId || savingPattern) return;
+    if (!patternTargetId && !patternName.trim()) {
+      setError("새 Pattern 이름을 입력해 주세요.");
+      return;
+    }
+    setSavingPattern(true);
+    setError(null);
+    try {
+      const draft = patternTargetId
+        ? await api.deepAnalysis.createPatternVersion(patternTargetId, {
+            missionId: mission.id,
+            changeSummary: patternChangeSummary.trim(),
+          })
+        : await api.deepAnalysis.createPattern(projectId, {
+            missionId: mission.id,
+            name: patternName.trim(),
+            description: patternChangeSummary.trim(),
+          });
+      setPatternDraftVersion(draft);
+    } catch (patternError) {
+      setError(errorMessage(patternError));
+    } finally {
+      setSavingPattern(false);
+    }
+  }
+
+  async function publishPatternDraft() {
+    if (!projectId || !patternDraftVersion || savingPattern) return;
+    setSavingPattern(true);
+    setError(null);
+    try {
+      await api.deepAnalysis.publishPatternVersion(
+        patternDraftVersion.patternId,
+        patternDraftVersion.id,
+      );
+      setPatterns(await api.deepAnalysis.listPatterns(projectId));
+      setPatternPanelOpen(false);
+      setPatternDraftVersion(null);
+      setPatternTargetId("");
+      setPatternName("");
+      setPatternChangeSummary("");
+    } catch (patternError) {
+      setError(errorMessage(patternError));
+    } finally {
+      setSavingPattern(false);
+    }
+  }
+
   async function retryNode(node: DeepAnalysisWorkflowNode) {
     if (!mission || retryingNodeKey) return;
     setRetryingNodeKey(node.nodeKey);
@@ -803,6 +868,7 @@ export function DeepAnalysisView({
         budgetMicrousd: parsedBudget !== null
           ? Math.round(parsedBudget * 1_000_000)
           : null,
+        patternVersionId: selectedPatternVersionId || null,
       });
       setMissions((current) => [created, ...current]);
       setSelectedMissionId(created.id);
@@ -812,6 +878,7 @@ export function DeepAnalysisView({
       setObjective("");
       setAutonomyMode("balanced");
       setBudgetUsd("");
+      setSelectedPatternVersionId("");
       setCreateOpen(false);
     } catch (createError) {
       setError(errorMessage(createError));
@@ -923,6 +990,16 @@ export function DeepAnalysisView({
                   ))}
                 </fieldset>
                 <label>
+                  Workflow 시작 방식
+                  <select value={selectedPatternVersionId} onChange={(event) => setSelectedPatternVersionId(event.target.value)}>
+                    <option value="">제로베이스 · 질문에 맞춰 새로 설계</option>
+                    {patterns.filter((pattern) => pattern.latestPublishedVersion).map((pattern) => (
+                      <option key={pattern.id} value={pattern.latestPublishedVersion?.id}>{pattern.name} · v{pattern.latestPublishedVersion?.versionNumber}</option>
+                    ))}
+                  </select>
+                  <small>{selectedPatternVersionId ? "선택한 Pattern은 초기 뼈대이며 Mission 질문과 중간 결과에 따라 달라질 수 있습니다." : "Pattern 없이도 동일한 실행·기록·복구 기능을 사용합니다."}</small>
+                </label>
+                <label>
                   최대 비용 (US$, 선택)
                   <input
                     type="number"
@@ -1008,6 +1085,25 @@ export function DeepAnalysisView({
                     >
                       Mission 계약
                     </button>
+                    <div className="deep-analysis-pattern-wrap">
+                      <button className="deep-analysis-contract-toggle" type="button" aria-expanded={patternPanelOpen} onClick={() => setPatternPanelOpen((open) => !open)}>Pattern</button>
+                      {patternPanelOpen && (
+                        <div className="deep-analysis-pattern-popover">
+                          <strong>Workflow Pattern</strong>
+                          {!patternDraftVersion ? <>
+                            <label>저장 위치<select value={patternTargetId} onChange={(event) => setPatternTargetId(event.target.value)}><option value="">새 Project Pattern</option>{patterns.map((pattern) => <option key={pattern.id} value={pattern.id}>{pattern.name}의 새 version</option>)}</select></label>
+                            {!patternTargetId && <label>Pattern 이름<input value={patternName} maxLength={240} placeholder="예: 손익 변동 원인 분석" onChange={(event) => setPatternName(event.target.value)} /></label>}
+                            <label>{patternTargetId ? "변경 요약" : "설명"}<textarea rows={2} value={patternChangeSummary} onChange={(event) => setPatternChangeSummary(event.target.value)} /></label>
+                            <small>파일 ID·수치·답변·출력은 제외하고 구조와 semantic input role만 Draft에 저장합니다.</small>
+                            <button type="button" disabled={savingPattern} onClick={() => void savePatternDraft()}>{savingPattern ? <LoaderCircle className="is-running" size={13} /> : null}{savingPattern ? "생성 중" : "검토용 Draft 만들기"}</button>
+                          </> : <>
+                            <div className="deep-analysis-pattern-review"><span>Version {patternDraftVersion.versionNumber} · Draft</span><code>{patternDraftVersion.definitionDigest.slice(0, 16)}…</code><small>Node {patternDraftVersion.definition.nodes.length}개 · Edge {patternDraftVersion.definition.edges.length}개</small></div>
+                            <small>Publish하면 이 version은 immutable하며 이후 Mission이 명시적으로 선택할 수 있습니다.</small>
+                            <button type="button" disabled={savingPattern} onClick={() => void publishPatternDraft()}>{savingPattern ? <LoaderCircle className="is-running" size={13} /> : null}{savingPattern ? "게시 중" : "검토 완료 · Publish"}</button>
+                          </>}
+                        </div>
+                      )}
+                    </div>
                     <div className="deep-analysis-export-wrap">
                       <button className="deep-analysis-export tooltip-control" type="button" aria-label="Mission 내보내기" aria-expanded={exportOpen} data-tooltip="내보내기" onClick={() => setExportOpen((open) => !open)}>
                         <Download size={15} />

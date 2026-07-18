@@ -155,6 +155,8 @@ def create_mission_export(
             "title": mission.title,
             "objective": mission.objective,
             "status": mission.status,
+            "startMode": mission.start_mode,
+            "patternVersionId": mission.pattern_version_id,
             "completionOutcome": mission.completion_outcome,
             "revision": mission.revision,
             "charter": mission.charter_json,

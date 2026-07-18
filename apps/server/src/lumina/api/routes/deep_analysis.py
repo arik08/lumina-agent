@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.orm import Session
 
 from ...audit import record_audit
+from ...authorization import require_project
 from ...agent.executor import local_run_executor
 from ...api.schemas import RunActionRequest
 from ...config import Settings, get_settings
@@ -23,8 +24,16 @@ from ...deep_analysis.models import (
     DeepAnalysisOpenIssue,
     DeepAnalysisQualityGateResult,
     DeepAnalysisWorkflowRevision,
+    DeepAnalysisWorkflowPattern,
+    DeepAnalysisWorkflowPatternVersion,
 )
 from ...deep_analysis.ledger import list_claims, list_evidence, list_open_issues
+from ...deep_analysis.patterns import (
+    create_pattern,
+    create_pattern_version,
+    list_patterns,
+    publish_pattern_version,
+)
 from ...deep_analysis.schemas import (
     DecisionAnswer,
     DecisionResponse,
@@ -41,6 +50,10 @@ from ...deep_analysis.schemas import (
     MissionStart,
     MissionSummaryResponse,
     OpenIssueResponse,
+    PatternCreate,
+    PatternResponse,
+    PatternVersionCreate,
+    PatternVersionResponse,
     WorkflowDraftCreate,
     WorkflowDraftPatch,
     WorkflowRevisionResponse,
@@ -98,6 +111,43 @@ def _export_payload(item: DeepAnalysisMissionExport) -> dict[str, object]:
         "completed_at": item.completed_at,
         "created_at": item.created_at,
         "updated_at": item.updated_at,
+    }
+
+
+def _pattern_version_payload(
+    version: DeepAnalysisWorkflowPatternVersion,
+) -> dict[str, object]:
+    return {
+        "id": version.id,
+        "pattern_id": version.pattern_id,
+        "version_number": version.version_number,
+        "status": version.status,
+        "definition_digest": version.definition_digest,
+        "definition": version.definition_json,
+        "change_summary": version.change_summary,
+        "source_mission_id": version.source_mission_id,
+        "published_by_user_id": version.published_by_user_id,
+        "published_at": version.published_at,
+        "created_at": version.created_at,
+    }
+
+
+def _pattern_payload(
+    pattern: DeepAnalysisWorkflowPattern,
+    latest: DeepAnalysisWorkflowPatternVersion | None,
+) -> dict[str, object]:
+    return {
+        "id": pattern.id,
+        "project_id": pattern.project_id,
+        "scope": pattern.scope,
+        "name": pattern.name,
+        "description": pattern.description,
+        "status": pattern.status,
+        "latest_published_version": (
+            _pattern_version_payload(latest) if latest is not None else None
+        ),
+        "created_at": pattern.created_at,
+        "updated_at": pattern.updated_at,
     }
 
 
@@ -230,6 +280,7 @@ def _summary_payload(mission: DeepAnalysisMission) -> dict[str, object]:
         "objective": mission.objective,
         "status": mission.status,
         "start_mode": mission.start_mode,
+        "pattern_version_id": mission.pattern_version_id,
         "autonomy_mode": mission.autonomy_mode,
         "budget_microusd": mission.budget_microusd,
         "spent_microusd": mission.spent_microusd,
@@ -389,6 +440,118 @@ def get_missions(
     ]
 
 
+@router.get(
+    "/projects/{project_id}/deep-analysis/patterns",
+    response_model=list[PatternResponse],
+)
+def get_patterns(
+    project_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict[str, object]]:
+    project = require_project(db, user, project_id)
+    return [
+        _pattern_payload(pattern, latest)
+        for pattern, latest in list_patterns(db, project.id)
+    ]
+
+
+@router.post(
+    "/projects/{project_id}/deep-analysis/patterns",
+    response_model=PatternVersionResponse,
+    status_code=201,
+)
+def post_pattern(
+    project_id: str,
+    payload: PatternCreate,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    require_project(db, context.user, project_id, write=True)
+    mission = require_mission(db, context.user, payload.mission_id, write=True)
+    if mission.project_id != project_id:
+        raise ApiProblem(404, "mission_not_found", "Project에서 Mission을 찾을 수 없습니다.")
+    pattern, version = create_pattern(
+        db,
+        mission=mission,
+        user=context.user,
+        name=payload.name,
+        description=payload.description,
+    )
+    record_audit(
+        db,
+        action="deep_analysis_pattern_draft_created",
+        target_type="deep_analysis_workflow_pattern",
+        target_id=pattern.id,
+        result="success",
+        actor=context.user,
+        request_id=getattr(request.state, "request_id", None),
+        metadata={"mission_id": mission.id, "version_id": version.id},
+    )
+    db.commit()
+    return _pattern_version_payload(version)
+
+
+@router.post(
+    "/deep-analysis/patterns/{pattern_id}/versions",
+    response_model=PatternVersionResponse,
+    status_code=201,
+)
+def post_pattern_version(
+    pattern_id: str,
+    payload: PatternVersionCreate,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    pattern = db.get(DeepAnalysisWorkflowPattern, pattern_id)
+    if pattern is None or pattern.project_id is None:
+        raise ApiProblem(404, "pattern_not_found", "Pattern을 찾을 수 없습니다.")
+    require_project(db, context.user, pattern.project_id, write=True)
+    mission = require_mission(db, context.user, payload.mission_id, write=True)
+    if mission.project_id != pattern.project_id:
+        raise ApiProblem(403, "pattern_scope_mismatch", "같은 Project의 Mission만 Pattern version 근거로 사용할 수 있습니다.")
+    version = create_pattern_version(
+        db,
+        pattern=pattern,
+        mission=mission,
+        change_summary=payload.change_summary,
+    )
+    db.commit()
+    return _pattern_version_payload(version)
+
+
+@router.post(
+    "/deep-analysis/patterns/{pattern_id}/versions/{version_id}/publish",
+    response_model=PatternVersionResponse,
+)
+def post_pattern_version_publish(
+    pattern_id: str,
+    version_id: str,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    pattern = db.get(DeepAnalysisWorkflowPattern, pattern_id)
+    version = db.get(DeepAnalysisWorkflowPatternVersion, version_id)
+    if pattern is None or version is None or pattern.project_id is None:
+        raise ApiProblem(404, "pattern_version_not_found", "Pattern version을 찾을 수 없습니다.")
+    require_project(db, context.user, pattern.project_id, write=True)
+    publish_pattern_version(db, pattern=pattern, version=version, user=context.user)
+    record_audit(
+        db,
+        action="deep_analysis_pattern_version_published",
+        target_type="deep_analysis_workflow_pattern_version",
+        target_id=version.id,
+        result="success",
+        actor=context.user,
+        request_id=getattr(request.state, "request_id", None),
+        metadata={"pattern_id": pattern.id, "version": version.version_number},
+    )
+    db.commit()
+    return _pattern_version_payload(version)
+
+
 @router.post(
     "/projects/{project_id}/deep-analysis/missions",
     response_model=MissionDetailResponse,
@@ -409,6 +572,7 @@ def post_mission(
         objective=payload.objective,
         autonomy_mode=payload.autonomy_mode,
         budget_microusd=payload.budget_microusd,
+        pattern_version_id=payload.pattern_version_id,
     )
     record_audit(
         db,

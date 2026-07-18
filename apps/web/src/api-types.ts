@@ -205,6 +205,7 @@ export interface DeepAnalysisMissionSummary {
   objective: string;
   status: string;
   startMode: string;
+  patternVersionId: UUID | null;
   autonomyMode: DeepAnalysisAutonomyMode;
   budgetMicrousd: number | null;
   spentMicrousd: number;
@@ -473,6 +474,42 @@ export interface CreateDeepAnalysisMissionRequest {
   objective?: string;
   autonomyMode?: DeepAnalysisAutonomyMode;
   budgetMicrousd?: number | null;
+  patternVersionId?: UUID | null;
+}
+
+export interface DeepAnalysisWorkflowPatternVersion {
+  id: UUID;
+  patternId: UUID;
+  versionNumber: number;
+  status: "draft" | "published" | "retired";
+  definitionDigest: string;
+  definition: {
+    kind: string;
+    schemaVersion: number;
+    intent: string;
+    expectedOutputs: string[];
+    requiredQuestions: string[];
+    nodes: Array<Record<string, unknown>>;
+    edges: Array<Record<string, unknown>>;
+    policies: Record<string, unknown>;
+  };
+  changeSummary: string;
+  sourceMissionId: UUID | null;
+  publishedByUserId: UUID | null;
+  publishedAt: IsoDateTime | null;
+  createdAt: IsoDateTime;
+}
+
+export interface DeepAnalysisWorkflowPattern {
+  id: UUID;
+  projectId: UUID | null;
+  scope: "builtin" | "project";
+  name: string;
+  description: string;
+  status: string;
+  latestPublishedVersion: DeepAnalysisWorkflowPatternVersion | null;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
 }
 
 export interface UpdateDeepAnalysisMissionRequest {

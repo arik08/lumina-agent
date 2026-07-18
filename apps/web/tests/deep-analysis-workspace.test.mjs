@@ -144,6 +144,26 @@ test("Workflow Draft supports node drag, dependency connect, save and atomic act
   assert.match(css, /\.deep-analysis-workflow-editor\.is-editing/);
 });
 
+test("Project Pattern Library stays optional and publishes immutable reviewed versions", async () => {
+  const [view, api, types, css] = await Promise.all([
+    readFile(viewPath, "utf8"),
+    readFile(apiPath, "utf8"),
+    readFile(new URL("../src/api-types.ts", import.meta.url), "utf8"),
+    readFile(cssPath, "utf8"),
+  ]);
+  assert.match(view, /제로베이스 · 질문에 맞춰 새로 설계/);
+  assert.match(view, /Pattern 없이도 동일한 실행·기록·복구 기능/);
+  assert.match(view, /검토용 Draft 만들기/);
+  assert.match(view, /검토 완료 · Publish/);
+  assert.match(view, /파일 ID·수치·답변·출력은 제외/);
+  assert.match(view, /patternVersionId: selectedPatternVersionId \|\| null/);
+  assert.match(api, /listPatterns: listDeepAnalysisPatterns/);
+  assert.match(api, /createPatternVersion: createDeepAnalysisPatternVersion/);
+  assert.match(api, /publishPatternVersion: publishDeepAnalysisPatternVersion/);
+  assert.match(types, /interface DeepAnalysisWorkflowPatternVersion/);
+  assert.match(css, /\.deep-analysis-pattern-popover \{/);
+});
+
 test("durable Decision requests pause inline and resume through the revision-checked API", async () => {
   const [view, api, css] = await Promise.all([
     readFile(viewPath, "utf8"),

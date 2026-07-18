@@ -356,6 +356,7 @@ def create_mission(
     objective: str,
     autonomy_mode: str,
     budget_microusd: int | None,
+    pattern_version_id: str | None = None,
 ) -> DeepAnalysisMission:
     project = require_project(db, user, project_id, write=True)
     clean_title = title.strip()
@@ -395,6 +396,34 @@ def create_mission(
         title=clean_title,
         objective=objective.strip(),
     )
+    if pattern_version_id:
+        from .models import (
+            DeepAnalysisWorkflowPattern,
+            DeepAnalysisWorkflowPatternVersion,
+        )
+        from .patterns import apply_pattern_version
+
+        pattern_version = db.get(
+            DeepAnalysisWorkflowPatternVersion, pattern_version_id
+        )
+        pattern = (
+            db.get(DeepAnalysisWorkflowPattern, pattern_version.pattern_id)
+            if pattern_version is not None
+            else None
+        )
+        if pattern_version is None or pattern is None:
+            raise ApiProblem(
+                404,
+                "pattern_version_not_found",
+                "Pattern version을 찾을 수 없습니다.",
+            )
+        apply_pattern_version(
+            db,
+            mission=mission,
+            revision=revision,
+            version=pattern_version,
+            pattern=pattern,
+        )
     db.flush()
     return mission
 
