@@ -258,12 +258,16 @@ test("Mission Charter is editable before start and immutable Quality Gates remai
   assert.match(view, /aria-controls="deep-analysis-goal-completion"/);
   assert.match(view, /function toggleGoalCompletionPanel\(\)[\s\S]*?setExecutionLogOpen\(false\)/);
   assert.match(view, /function toggleExecutionLog\(\)[\s\S]*?setContractOpen\(false\)/);
+  assert.match(view, /className=\{`deep-analysis-workspace \$\{contractOpen \? "is-contract-open" : ""\}`\}/);
   assert.match(view, /className="deep-analysis-contract-primary"/);
   assert.match(view, /분석 목표<textarea/);
   assert.match(view, /핵심 질문<textarea/);
   assert.match(view, /보고서 구성<textarea/);
   assert.match(view, /<summary>상세 설정 <span>산출물·범위·품질 기준<\/span><\/summary>/);
-  assert.match(css, /\.deep-analysis-contract-primary \{[^}]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/);
+  assert.match(css, /\.deep-analysis-workspace\.is-contract-open > :is\([^}]*\.deep-analysis-workflow-layout[^}]*\.deep-analysis-execution-log[^}]*\) \{ display: none; \}/);
+  assert.match(css, /\.deep-analysis-contract \{[^}]*flex: 1;[^}]*grid-template-rows: minmax\(0, 1fr\) auto;/);
+  assert.match(css, /\.deep-analysis-contract-content \{[^}]*width: min\(1120px, calc\(100% - 64px\)\)/);
+  assert.match(css, /\.deep-analysis-contract-primary \{[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
   assert.match(view, /api\.deepAnalysis\.updateMission/);
   assert.match(view, /charter: \{/);
   assert.match(view, /completionContract: \{/);
@@ -280,7 +284,7 @@ test("Mission Charter is editable before start and immutable Quality Gates remai
   assert.match(view, /api\.deepAnalysis\.runQualityGate/);
   assert.match(view, /Quality Gate 다시 검사/);
   assert.match(css, /\.deep-analysis-contract-grid \{/);
-  assert.match(css, /\.deep-analysis-contract \{[^}]*max-height: min\(520px, 60vh\);[^}]*overflow-y: auto;/);
+  assert.match(css, /\.deep-analysis-contract-scroll \{[^}]*overflow-y: auto;/);
   assert.match(css, /\.deep-analysis-contract-advanced \{[^}]*border-top: 1px solid var\(--line\)/);
   assert.match(css, /\.deep-analysis-quality-gate\.is-failed/);
 });
