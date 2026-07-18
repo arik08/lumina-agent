@@ -774,6 +774,7 @@ function preserveConversationScrollPosition(target: HTMLElement, update: () => v
 }
 
 const runActivityRevealDelayMs = 85;
+const toolGroupMinimumVisibleMs = 700;
 const toolGroupCompletionSettleMs = 500;
 const toolGroupContentExitMs = 240;
 const toolGroupReflowMs = 350;
@@ -864,6 +865,7 @@ function RunActivityTimeline({
   const manuallyOpenSummaryIds = useRef<Set<string>>(new Set());
   const manuallyClosedSummaryIds = useRef<Set<string>>(new Set());
   const summaryGroupElements = useRef<Map<string, HTMLDivElement>>(new Map());
+  const autoOpenedAtMs = useRef<Map<string, number>>(new Map());
   const settleTimers = useRef<Map<string, number>>(new Map());
   const collapseTimers = useRef<Map<string, number>>(new Map());
   const visibleActivities = useStaggeredRunActivities(activities, timelineRunning);
@@ -938,6 +940,7 @@ function RunActivityTimeline({
         return next;
       });
     });
+    autoOpenedAtMs.current.delete(id);
     collapseTimers.current.delete(id);
     followingGroups.forEach((element) => {
       const previousTop = previousTops.get(element);
@@ -959,6 +962,7 @@ function RunActivityTimeline({
     autoOpenSummaryIds.forEach((id) => {
       cancelScheduledCollapse(id);
       if (manuallyClosedSummaryIds.current.has(id)) return;
+      if (!previous.has(id)) autoOpenedAtMs.current.set(id, performance.now());
       setOpenSummaryIds((current) => current.has(id) ? current : new Set(current).add(id));
     });
     previous.forEach((id) => {
@@ -969,13 +973,15 @@ function RunActivityTimeline({
         finishAutoCollapse(id);
         return;
       }
+      const openedAtMs = autoOpenedAtMs.current.get(id) ?? performance.now();
+      const minimumVisibleRemainingMs = Math.max(0, toolGroupMinimumVisibleMs - (performance.now() - openedAtMs));
       const settleTimer = window.setTimeout(() => {
         settleTimers.current.delete(id);
         if (manuallyOpenSummaryIds.current.has(id)) return;
         setCollapsingSummaryIds((current) => new Set(current).add(id));
         const collapseTimer = window.setTimeout(() => finishAutoCollapse(id), toolGroupContentExitMs);
         collapseTimers.current.set(id, collapseTimer);
-      }, toolGroupCompletionSettleMs);
+      }, Math.max(toolGroupCompletionSettleMs, minimumVisibleRemainingMs));
       settleTimers.current.set(id, settleTimer);
     });
     previousAutoOpenSummaryIds.current = autoOpenSummaryIds;
@@ -1055,6 +1061,7 @@ function RunActivityTimeline({
               const next = new Set(current);
               if (toolsOpen) {
                 next.delete(summary.id);
+                autoOpenedAtMs.current.delete(summary.id);
                 manuallyOpenSummaryIds.current.delete(summary.id);
                 manuallyClosedSummaryIds.current.add(summary.id);
               } else {

@@ -10,10 +10,12 @@ test("auto-expanded tool groups settle before collapsing while manual expansion 
   assert.match(app, /keepLatestToolGroupOpen=\{status === "model_streaming"\}/);
   assert.match(app, /const latestToolGroupSummaryId = activityGroups\.reduce/);
   assert.match(app, /if \(keepLatestToolGroupOpen && latestToolGroupSummaryId\) autoOpenSummaryIds\.add\(latestToolGroupSummaryId\)/);
+  assert.match(app, /const toolGroupMinimumVisibleMs = 700/);
   assert.match(app, /const toolGroupCompletionSettleMs = 500/);
   assert.match(app, /const toolGroupContentExitMs = 240/);
   assert.match(app, /const toolGroupReflowMs = 350/);
   assert.match(app, /manuallyOpenSummaryIds\.current\.has\(id\)/);
+  assert.match(app, /Math\.max\(toolGroupCompletionSettleMs, minimumVisibleRemainingMs\)/);
   assert.match(app, /element\.animate\(/);
 });
 
