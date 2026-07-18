@@ -53,7 +53,12 @@ class DeepAnalysisMission(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         String(32), default="zero_based", nullable=False
     )
     pattern_version_id: Mapped[str | None] = mapped_column(
-        ForeignKey("deep_analysis_workflow_pattern_versions.id", ondelete="SET NULL")
+        ForeignKey(
+            "deep_analysis_workflow_pattern_versions.id",
+            name="fk_deep_analysis_mission_pattern_version",
+            ondelete="SET NULL",
+            use_alter=True,
+        )
     )
     autonomy_mode: Mapped[str] = mapped_column(
         String(32), default="balanced", nullable=False

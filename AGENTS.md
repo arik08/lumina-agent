@@ -46,6 +46,7 @@
 - 변경 범위에 맞는 test, typecheck와 build를 실행합니다. 전체 기본 명령은 `docs/project-context/INSTALLATION_AND_DIAGNOSTICS.md`를 따릅니다.
 - 코드 작업 전 `codegraph status --json .`과 `.codegraph/codegraph.db` 수정 시각을 확인합니다. graph가 없거나 pending change 또는 `reindexRecommended`가 있으면 `powershell -ExecutionPolicy Bypass -File devtools/update_codegraph.ps1`로 갱신합니다. 순수 문서·문구 수정이나 영향이 명백한 국소 변경은 생략할 수 있습니다.
 - 영향 조사에는 `codegraph_explore`를 우선하고 MCP가 없으면 `codegraph explore "<질문 또는 심볼>"` CLI를 사용합니다.
+- 개별 도구가 없다는 이유로 연결 실패로 판단하지 않습니다. 사용 가능한 CodeGraph MCP 도구나 CLI 명령으로 동일한 조사를 계속합니다.
 - 자동 QA의 기본 포트는 Frontend `15252`, Backend `15253`입니다. 사용 중이면 사용자 포트 `5252`, `5253`을 제외한 빈 포트 쌍을 선택합니다.
 - 사용자의 runtime, 포트, Lumina 탭과 browser context를 재사용·종료·이동·새로고침하지 않습니다. 자신이 시작한 격리 process와 browser context만 종료합니다.
 - UI 점검용 screenshot·trace는 `.lumina-ui-checks/`에 두고 검증 후 정리합니다. 개선 결과를 보고할 screenshot은 저장소 밖에 보관해 첨부합니다.

@@ -187,7 +187,6 @@ Install-UvIfMissing
 Assert-Command "node" "Install the current Node.js LTS from https://nodejs.org/en/download."
 Assert-Command "npm" "npm is included with Node.js; reinstall the current Node.js LTS from https://nodejs.org/en/download."
 Assert-NodeVersion
-Assert-Command "git" "Install Git from https://git-scm.com/downloads. It is required to install the National Assembly MCP server."
 Enable-UvSystemCertificates
 $NpmCommand = if ($env:OS -eq "Windows_NT") {
     (Get-Command "npm.cmd" -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
@@ -195,6 +194,7 @@ $NpmCommand = if ($env:OS -eq "Windows_NT") {
 else {
     (Get-Command "npm" -ErrorAction Stop | Select-Object -First 1).Source
 }
+Assert-Command "git" "Install Git from https://git-scm.com/downloads. It is required to install the National Assembly MCP server."
 Write-Host "[Lumina] Required tools are available."
 
 if ($ValidateOnly) {
