@@ -12,6 +12,7 @@ from ...knowledge.executor import knowledge_ingestion_executor
 from ...knowledge.schemas import (
     KnowledgeAutoCaptureUpdate,
     KnowledgeEntityCreate,
+    KnowledgePageUpdate,
     KnowledgeSourceCreate,
     KnowledgeSpaceCreate,
     KnowledgeSpaceUpdate,
@@ -29,9 +30,13 @@ from ...knowledge.service import (
     entity_payload,
     ingestion_job_payload,
     knowledge_auto_capture_payload,
+    knowledge_page_payload,
+    knowledge_page_revision_payload,
     knowledge_neighborhood,
     list_knowledge_entities,
     list_knowledge_ingestion_jobs,
+    list_knowledge_page_revisions,
+    list_knowledge_pages,
     list_knowledge_sources,
     list_knowledge_spaces,
     list_knowledge_statements,
@@ -41,6 +46,7 @@ from ...knowledge.service import (
     statement_payload,
     update_knowledge_space,
     update_knowledge_auto_capture,
+    update_knowledge_page,
 )
 from ...models import User
 from ..dependencies import AuthContext, get_current_user, require_csrf
@@ -270,6 +276,55 @@ def get_knowledge_ingestions(
             db, user, space_id, source_id=source_id
         )
     ]
+
+
+@router.get("/spaces/{space_id}/pages")
+def get_knowledge_pages(
+    space_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict[str, Any]]:
+    return [
+        knowledge_page_payload(page, revision, revision_count)
+        for page, revision, revision_count in list_knowledge_pages(
+            db, user, space_id
+        )
+    ]
+
+
+@router.get("/pages/{page_id}/revisions")
+def get_knowledge_page_revisions(
+    page_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict[str, Any]]:
+    _page, revisions = list_knowledge_page_revisions(db, user, page_id)
+    return [knowledge_page_revision_payload(revision) for revision in revisions]
+
+
+@router.patch("/pages/{page_id}")
+def patch_knowledge_page(
+    page_id: str,
+    payload: KnowledgePageUpdate,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    page, revision, revision_count = update_knowledge_page(
+        db, context.user, page_id, payload
+    )
+    record_audit(
+        db,
+        action="knowledge_page_updated",
+        target_type="knowledge_page",
+        target_id=page.id,
+        result="success",
+        actor=context.user,
+        request_id=_request_id(request),
+        metadata={"revision_number": revision.revision_number},
+    )
+    db.commit()
+    return knowledge_page_payload(page, revision, revision_count)
 
 
 @router.post("/spaces/{space_id}/entities", status_code=201)

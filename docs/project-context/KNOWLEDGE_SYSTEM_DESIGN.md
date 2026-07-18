@@ -1,6 +1,6 @@
 # Lumina Knowledge 시스템 설계
 
-> 상태: 구현 전 설계 기준
+> 상태: 설계 기준 및 Phase 1 구현 추적
 >
 > 작성일: 2026-07-18
 >
@@ -735,6 +735,7 @@ POST   /api/knowledge/ingestions/{job_id}/cancel
 
 GET    /api/knowledge/spaces/{space_id}/pages
 GET    /api/knowledge/pages/{page_id}
+GET    /api/knowledge/pages/{page_id}/revisions
 PATCH  /api/knowledge/pages/{page_id}
 
 POST   /api/knowledge/search
@@ -750,6 +751,12 @@ POST   /api/knowledge/merge-proposals
 ```
 
 List API는 cursor pagination을 사용하고 모든 응답에서 접근 가능한 최소 metadata만 반환합니다. Graph API는 `max_depth`, `max_nodes`, `max_edges`의 서버 상한을 무시할 수 없게 합니다.
+
+### 11.1 현재 Phase 1 구현 범위
+
+현재 SQLite 개발 경로에는 `KnowledgePage`와 append-only `KnowledgePageRevision`이 구현되어 있습니다. Entity 생성 시 첫 Wiki Page를 만들고 승인 Statement가 추가되면 관련 Page의 생성 영역만 새 revision으로 갱신합니다. 사용자가 직접 쓴 Markdown은 수동 영역에 분리해 보존하므로 이후 AI 추출이나 승인으로 생성 영역이 바뀌어도 덮어쓰지 않습니다.
+
+`PATCH /api/knowledge/pages/{page_id}`는 `expectedRevision` CAS를 요구하며 충돌 시 `409`를 반환합니다. Wiki UI는 현재 revision, 인라인 사용자 메모 편집, revision 목록과 이전/현재 전체 Markdown 비교를 제공합니다. Page와 revision 조회·수정은 모두 Space 소유권을 Backend에서 다시 검사합니다.
 
 ## 12. 보안, 품질과 감사
 

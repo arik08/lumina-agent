@@ -33,6 +33,11 @@ class KnowledgeAutoCaptureUpdate(ApiModel):
     space_id: str | None = None
 
 
+class KnowledgePageUpdate(ApiModel):
+    expected_revision: int = Field(ge=1)
+    manual_markdown: str = Field(default="", max_length=200_000)
+
+
 class KnowledgeReviewDecision(ApiModel):
     decision: Literal["approved", "rejected"]
     reason: str = Field(default="", max_length=10_000)

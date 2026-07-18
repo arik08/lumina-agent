@@ -2172,6 +2172,73 @@ class KnowledgeEntity(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
 
+class KnowledgePage(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "knowledge_pages"
+    __table_args__ = (
+        UniqueConstraint("space_id", "slug", name="uq_knowledge_pages_space_slug"),
+        UniqueConstraint(
+            "space_id", "entity_id", name="uq_knowledge_pages_space_entity"
+        ),
+        Index("ix_knowledge_pages_space_status", "space_id", "status"),
+    )
+
+    space_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_spaces.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    entity_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_entities.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    slug: Mapped[str] = mapped_column(String(560), nullable=False)
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    page_type: Mapped[str] = mapped_column(
+        String(24), default="entity", nullable=False
+    )
+    current_revision_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    status: Mapped[str] = mapped_column(
+        String(24), default="active", index=True, nullable=False
+    )
+
+
+class KnowledgePageRevision(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "knowledge_page_revisions"
+    __table_args__ = (
+        UniqueConstraint(
+            "page_id", "revision_number", name="uq_knowledge_page_revisions_number"
+        ),
+        Index("ix_knowledge_page_revisions_page_created", "page_id", "created_at"),
+    )
+
+    page_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_pages.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    revision_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    markdown_body: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    generated_sections_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
+    manual_sections_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
+    source_statement_revision_id: Mapped[str | None] = mapped_column(
+        ForeignKey("knowledge_revisions.id", ondelete="SET NULL"), index=True
+    )
+    generation_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("runs.id", ondelete="SET NULL"), index=True
+    )
+    created_by_user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, nullable=False
+    )
+
+
 class KnowledgeStatement(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "knowledge_statements"
     __table_args__ = (
@@ -2269,6 +2336,8 @@ __all__ = [
     "HelpItem",
     "KnowledgeEntity",
     "KnowledgeEvidenceSegment",
+    "KnowledgePage",
+    "KnowledgePageRevision",
     "KnowledgeRevision",
     "KnowledgeSource",
     "KnowledgeSourceRevision",

@@ -111,6 +111,123 @@ def test_knowledge_auto_capture_defaults_to_first_space_and_can_move(
         }
 
 
+def test_wiki_pages_preserve_manual_markdown_across_generated_revisions(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'knowledge-wiki.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client, "admin", "1")
+        headers = {"X-CSRF-Token": csrf}
+        space = client.post(
+            "/api/knowledge/spaces", headers=headers, json={"name": "철강 Wiki"}
+        ).json()
+        evidence_text = "수소환원제철은 철광석 환원 과정의 탄소 배출을 줄입니다."
+        source = client.post(
+            f"/api/knowledge/spaces/{space['id']}/sources",
+            headers=headers,
+            json={
+                "sourceType": "text",
+                "title": "수소환원제철 검증 자료",
+                "contentDigest": sha256(evidence_text.encode()).hexdigest(),
+                "mediaType": "text/plain",
+                "byteSize": len(evidence_text.encode()),
+                "capturedText": evidence_text,
+                "evidenceSegments": [{"text": evidence_text}],
+            },
+        ).json()
+        process_id = _create_entity(client, headers, space["id"], "수소환원제철")
+        impact_id = _create_entity(client, headers, space["id"], "탄소배출감축")
+
+        initial_pages = client.get(
+            f"/api/knowledge/spaces/{space['id']}/pages"
+        ).json()
+        process_page = next(
+            page for page in initial_pages if page["entityId"] == process_id
+        )
+        assert process_page["currentRevision"]["revisionNumber"] == 1
+
+        approved = client.post(
+            f"/api/knowledge/spaces/{space['id']}/statements",
+            headers=headers,
+            json={
+                "subjectEntityId": process_id,
+                "predicateKey": "REDUCES",
+                "objectKind": "entity",
+                "objectEntityId": impact_id,
+                "evidenceSegmentIds": [source["evidenceSegments"][0]["id"]],
+                "status": "approved",
+            },
+        )
+        assert approved.status_code == 201, approved.text
+        generated_page = next(
+            page
+            for page in client.get(
+                f"/api/knowledge/spaces/{space['id']}/pages"
+            ).json()
+            if page["entityId"] == process_id
+        )
+        assert generated_page["currentRevision"]["revisionNumber"] == 2
+        assert "`REDUCES`" in generated_page["currentRevision"]["generatedMarkdown"]
+
+        edited = client.patch(
+            f"/api/knowledge/pages/{process_page['id']}",
+            headers=headers,
+            json={
+                "expectedRevision": 2,
+                "manualMarkdown": "상용화 일정과 실증 규모를 매 분기 확인합니다.",
+            },
+        )
+        assert edited.status_code == 200, edited.text
+        assert edited.json()["currentRevision"]["revisionNumber"] == 3
+        assert "매 분기 확인" in edited.json()["currentRevision"]["markdownBody"]
+
+        refreshed = client.post(
+            f"/api/knowledge/spaces/{space['id']}/statements",
+            headers=headers,
+            json={
+                "subjectEntityId": process_id,
+                "predicateKey": "SUPPORTS",
+                "objectKind": "entity",
+                "objectEntityId": impact_id,
+                "evidenceSegmentIds": [source["evidenceSegments"][0]["id"]],
+                "status": "approved",
+            },
+        )
+        assert refreshed.status_code == 201, refreshed.text
+        current = next(
+            page
+            for page in client.get(
+                f"/api/knowledge/spaces/{space['id']}/pages"
+            ).json()
+            if page["entityId"] == process_id
+        )
+        assert current["currentRevision"]["revisionNumber"] == 4
+        assert current["currentRevision"]["manualMarkdown"] == (
+            "상용화 일정과 실증 규모를 매 분기 확인합니다."
+        )
+        assert "`SUPPORTS`" in current["currentRevision"]["generatedMarkdown"]
+
+        revisions = client.get(
+            f"/api/knowledge/pages/{process_page['id']}/revisions"
+        )
+        assert revisions.status_code == 200, revisions.text
+        assert [item["revisionNumber"] for item in revisions.json()] == [4, 3, 2, 1]
+        stale = client.patch(
+            f"/api/knowledge/pages/{process_page['id']}",
+            headers=headers,
+            json={"expectedRevision": 3, "manualMarkdown": "stale"},
+        )
+        assert stale.status_code == 409
+        assert stale.json()["code"] == "knowledge_page_revision_conflict"
+
+
 def test_personal_knowledge_source_statement_and_bounded_graph(tmp_path: Path) -> None:
     settings = Settings(
         environment="test",

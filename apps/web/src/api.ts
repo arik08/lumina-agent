@@ -35,6 +35,8 @@ import type {
   KnowledgeEntity,
   KnowledgeIngestionJob,
   KnowledgeNeighborhood,
+  KnowledgePage,
+  KnowledgePageRevision,
   KnowledgeSource,
   KnowledgeSpace,
   KnowledgeAutoCaptureSetting,
@@ -42,6 +44,7 @@ import type {
   KnowledgeReviewDecisionRequest,
   UpdateKnowledgeSpaceRequest,
   UpdateKnowledgeAutoCaptureRequest,
+  UpdateKnowledgePageRequest,
   CursorPage,
   ListConversationsQuery,
   LoginRequest,
@@ -1388,6 +1391,32 @@ export async function createKnowledgeStatement(
   );
 }
 
+export async function listKnowledgePages(spaceId: string, signal?: AbortSignal) {
+  return request<KnowledgePage[]>(
+    `/knowledge/spaces/${encodeURIComponent(spaceId)}/pages`,
+    { signal },
+  );
+}
+
+export async function listKnowledgePageRevisions(pageId: string, signal?: AbortSignal) {
+  return request<KnowledgePageRevision[]>(
+    `/knowledge/pages/${encodeURIComponent(pageId)}/revisions`,
+    { signal },
+  );
+}
+
+export async function updateKnowledgePage(
+  pageId: string,
+  payload: UpdateKnowledgePageRequest,
+  signal?: AbortSignal,
+) {
+  return request<KnowledgePage>(`/knowledge/pages/${encodeURIComponent(pageId)}`, {
+    method: "PATCH",
+    body: payload,
+    signal,
+  });
+}
+
 export async function decideKnowledgeStatement(
   statementId: string,
   payload: KnowledgeReviewDecisionRequest,
@@ -2217,6 +2246,9 @@ export const api = {
     startIngestion: startKnowledgeIngestion,
     listEntities: listKnowledgeEntities,
     createEntity: createKnowledgeEntity,
+    listPages: listKnowledgePages,
+    listPageRevisions: listKnowledgePageRevisions,
+    updatePage: updateKnowledgePage,
     listStatements: listKnowledgeStatements,
     createStatement: createKnowledgeStatement,
     decideStatement: decideKnowledgeStatement,

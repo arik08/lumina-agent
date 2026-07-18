@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from hashlib import sha256
 import json
+import re
 from typing import Any
 
-from sqlalchemy import case, exists, func, literal, or_, select
+from sqlalchemy import case, exists, func, literal, or_, select, update
 from sqlalchemy.orm import Session
 
 from ..api.errors import ApiProblem
@@ -13,6 +14,8 @@ from ..models import (
     KnowledgeEntity,
     KnowledgeEvidenceSegment,
     KnowledgeIngestionJob,
+    KnowledgePage,
+    KnowledgePageRevision,
     KnowledgeRevision,
     KnowledgeSource,
     KnowledgeSourceRevision,
@@ -22,6 +25,7 @@ from ..models import (
     ProviderModel,
     User,
     UserSetting,
+    new_uuid,
     utc_now,
 )
 from ..providers.execution_defaults import initial_execution_selection
@@ -30,6 +34,7 @@ from .schemas import (
     EvidenceSegmentCreate,
     KnowledgeAutoCaptureUpdate,
     KnowledgeEntityCreate,
+    KnowledgePageUpdate,
     KnowledgeReviewDecision,
     KnowledgeSourceCreate,
     KnowledgeSpaceCreate,
@@ -580,6 +585,7 @@ def create_knowledge_entity(
         )
     )
     if existing is not None:
+        _ensure_knowledge_page(db, existing, user.id)
         return existing, False
     entity = KnowledgeEntity(
         space_id=space_id,
@@ -591,6 +597,7 @@ def create_knowledge_entity(
     )
     db.add(entity)
     db.flush()
+    _ensure_knowledge_page(db, entity, user.id)
     return entity, True
 
 
@@ -674,6 +681,8 @@ def create_knowledge_statement(
         for item in evidence
     )
     db.flush()
+    if statement.status == "approved":
+        _refresh_knowledge_pages_for_statement(db, statement, user.id)
     return statement
 
 
@@ -801,7 +810,321 @@ def decide_knowledge_statement(
         for evidence_id in evidence_ids
     )
     db.flush()
+    if reviewed.status == "approved":
+        _refresh_knowledge_pages_for_statement(db, reviewed, user.id)
     return reviewed
+
+
+def list_knowledge_pages(
+    db: Session, user: User, space_id: str
+) -> list[tuple[KnowledgePage, KnowledgePageRevision, int]]:
+    require_knowledge_space(db, user, space_id)
+    pages = list(
+        db.scalars(
+            select(KnowledgePage)
+            .where(
+                KnowledgePage.space_id == space_id,
+                KnowledgePage.status == "active",
+            )
+            .order_by(KnowledgePage.title, KnowledgePage.id)
+        )
+    )
+    result: list[tuple[KnowledgePage, KnowledgePageRevision, int]] = []
+    for page in pages:
+        revision = _current_knowledge_page_revision(db, page)
+        if revision is None:
+            continue
+        revision_count = int(
+            db.scalar(
+                select(func.count(KnowledgePageRevision.id)).where(
+                    KnowledgePageRevision.page_id == page.id
+                )
+            )
+            or 0
+        )
+        result.append((page, revision, revision_count))
+    return result
+
+
+def list_knowledge_page_revisions(
+    db: Session, user: User, page_id: str
+) -> tuple[KnowledgePage, list[KnowledgePageRevision]]:
+    page = _require_knowledge_page(db, user, page_id)
+    revisions = list(
+        db.scalars(
+            select(KnowledgePageRevision)
+            .where(KnowledgePageRevision.page_id == page.id)
+            .order_by(
+                KnowledgePageRevision.revision_number.desc(),
+                KnowledgePageRevision.id,
+            )
+        )
+    )
+    return page, revisions
+
+
+def update_knowledge_page(
+    db: Session,
+    user: User,
+    page_id: str,
+    payload: KnowledgePageUpdate,
+) -> tuple[KnowledgePage, KnowledgePageRevision, int]:
+    page = _require_knowledge_page(db, user, page_id, write=True)
+    current = _current_knowledge_page_revision(db, page)
+    if current is None:
+        raise ApiProblem(
+            409,
+            "knowledge_page_revision_missing",
+            "Wiki Page의 현재 Revision을 찾을 수 없습니다.",
+        )
+    if current.revision_number != payload.expected_revision:
+        raise ApiProblem(
+            409,
+            "knowledge_page_revision_conflict",
+            "Wiki Page가 다른 곳에서 변경되었습니다. 최신 Revision을 확인해 주세요.",
+            details={"currentRevision": current.revision_number},
+        )
+    generated = _section_markdown(current.generated_sections_json)
+    revision, _created = _append_knowledge_page_revision(
+        db,
+        page,
+        generated_markdown=generated,
+        manual_markdown=payload.manual_markdown.strip(),
+        created_by_user_id=user.id,
+        source_statement_revision_id=current.source_statement_revision_id,
+        generated_metadata=current.generated_sections_json,
+    )
+    revision_count = int(
+        db.scalar(
+            select(func.count(KnowledgePageRevision.id)).where(
+                KnowledgePageRevision.page_id == page.id
+            )
+        )
+        or 0
+    )
+    return page, revision, revision_count
+
+
+def _require_knowledge_page(
+    db: Session,
+    user: User,
+    page_id: str,
+    *,
+    write: bool = False,
+) -> KnowledgePage:
+    page = db.get(KnowledgePage, page_id)
+    if page is None or page.status != "active":
+        raise ApiProblem(404, "knowledge_page_not_found", "Wiki Page를 찾을 수 없습니다.")
+    require_knowledge_space(db, user, page.space_id, write=write)
+    return page
+
+
+def _ensure_knowledge_page(
+    db: Session, entity: KnowledgeEntity, created_by_user_id: str
+) -> KnowledgePage:
+    page = db.scalar(
+        select(KnowledgePage).where(
+            KnowledgePage.space_id == entity.space_id,
+            KnowledgePage.entity_id == entity.id,
+        )
+    )
+    if page is not None:
+        return page
+    slug_base = re.sub(r"[^\w\-]+", "-", entity.canonical_name.casefold()).strip(
+        "-"
+    ) or "entity"
+    page = KnowledgePage(
+        space_id=entity.space_id,
+        entity_id=entity.id,
+        slug=f"{slug_base}-{entity.id[:8]}",
+        title=entity.canonical_name,
+        page_type="entity",
+        status="active",
+    )
+    db.add(page)
+    db.flush()
+    generated, metadata = _generated_page_section(db, entity)
+    _append_knowledge_page_revision(
+        db,
+        page,
+        generated_markdown=generated,
+        manual_markdown="",
+        created_by_user_id=created_by_user_id,
+        source_statement_revision_id=None,
+        generated_metadata=metadata,
+    )
+    return page
+
+
+def _refresh_knowledge_pages_for_statement(
+    db: Session, statement: KnowledgeStatement, created_by_user_id: str
+) -> None:
+    entity_ids = {statement.subject_entity_id}
+    if statement.object_entity_id is not None:
+        entity_ids.add(statement.object_entity_id)
+    for entity_id in entity_ids:
+        entity = db.get(KnowledgeEntity, entity_id)
+        if entity is None:
+            continue
+        page = _ensure_knowledge_page(db, entity, created_by_user_id)
+        current = _current_knowledge_page_revision(db, page)
+        manual = (
+            _section_markdown(current.manual_sections_json)
+            if current is not None
+            else ""
+        )
+        generated, metadata = _generated_page_section(db, entity)
+        _append_knowledge_page_revision(
+            db,
+            page,
+            generated_markdown=generated,
+            manual_markdown=manual,
+            created_by_user_id=created_by_user_id,
+            source_statement_revision_id=statement.revision_id,
+            generated_metadata=metadata,
+        )
+
+
+def _generated_page_section(
+    db: Session, entity: KnowledgeEntity
+) -> tuple[str, dict[str, Any]]:
+    successor = KnowledgeStatement.__table__.alias("page_statement_successor")
+    statements = list(
+        db.scalars(
+            select(KnowledgeStatement)
+            .where(
+                KnowledgeStatement.space_id == entity.space_id,
+                KnowledgeStatement.status == "approved",
+                or_(
+                    KnowledgeStatement.subject_entity_id == entity.id,
+                    KnowledgeStatement.object_entity_id == entity.id,
+                ),
+                ~exists(
+                    select(successor.c.id).where(
+                        successor.c.supersedes_statement_id == KnowledgeStatement.id
+                    )
+                ),
+            )
+            .order_by(KnowledgeStatement.recorded_at, KnowledgeStatement.id)
+        )
+    )
+    lines = [entity.description.strip()] if entity.description.strip() else []
+    statement_ids: list[str] = []
+    evidence_ids: list[str] = []
+    if statements:
+        lines.extend(["## 검증된 지식", ""])
+    for statement in statements:
+        subject = db.get(KnowledgeEntity, statement.subject_entity_id)
+        object_text = _statement_object_text(db, statement)
+        subject_name = subject.canonical_name if subject is not None else "알 수 없는 Entity"
+        lines.append(
+            f"- **{subject_name}** — `{statement.predicate_key}` → **{object_text}**"
+        )
+        statement_ids.append(statement.id)
+        evidence_ids.extend(
+            db.scalars(
+                select(KnowledgeStatementEvidence.evidence_segment_id).where(
+                    KnowledgeStatementEvidence.statement_id == statement.id
+                )
+            )
+        )
+    markdown = "\n".join(lines).strip()
+    return markdown, {
+        "markdown": markdown,
+        "statementIds": statement_ids,
+        "evidenceSegmentIds": list(dict.fromkeys(evidence_ids)),
+    }
+
+
+def _statement_object_text(db: Session, statement: KnowledgeStatement) -> str:
+    if statement.object_entity_id is not None:
+        entity = db.get(KnowledgeEntity, statement.object_entity_id)
+        return entity.canonical_name if entity is not None else "알 수 없는 Entity"
+    value = statement.object_value_json
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _append_knowledge_page_revision(
+    db: Session,
+    page: KnowledgePage,
+    *,
+    generated_markdown: str,
+    manual_markdown: str,
+    created_by_user_id: str,
+    source_statement_revision_id: str | None,
+    generated_metadata: dict[str, Any],
+) -> tuple[KnowledgePageRevision, bool]:
+    current = _current_knowledge_page_revision(db, page)
+    markdown_body = _compose_page_markdown(
+        page.title, manual_markdown, generated_markdown
+    )
+    if current is not None and current.markdown_body == markdown_body:
+        return current, False
+    revision = KnowledgePageRevision(
+        id=new_uuid(),
+        page_id=page.id,
+        revision_number=1 if current is None else current.revision_number + 1,
+        markdown_body=markdown_body,
+        generated_sections_json={**generated_metadata, "markdown": generated_markdown},
+        manual_sections_json={"markdown": manual_markdown},
+        source_statement_revision_id=source_statement_revision_id,
+        created_by_user_id=created_by_user_id,
+    )
+    expected_current_revision_id = page.current_revision_id
+    current_revision_condition = (
+        KnowledgePage.current_revision_id.is_(None)
+        if expected_current_revision_id is None
+        else KnowledgePage.current_revision_id == expected_current_revision_id
+    )
+    updated_at = utc_now()
+    result = db.execute(
+        update(KnowledgePage)
+        .where(
+            KnowledgePage.id == page.id,
+            current_revision_condition,
+        )
+        .values(current_revision_id=revision.id, updated_at=updated_at)
+    )
+    if result.rowcount != 1:
+        db.expire(page)
+        raise ApiProblem(
+            409,
+            "knowledge_page_revision_conflict",
+            "Wiki Page가 다른 곳에서 변경되었습니다. 최신 Revision을 확인해 주세요.",
+        )
+    db.add(revision)
+    db.flush()
+    page.current_revision_id = revision.id
+    page.updated_at = updated_at
+    return revision, True
+
+
+def _current_knowledge_page_revision(
+    db: Session, page: KnowledgePage
+) -> KnowledgePageRevision | None:
+    if page.current_revision_id is None:
+        return None
+    return db.get(KnowledgePageRevision, page.current_revision_id)
+
+
+def _section_markdown(value: Any) -> str:
+    if not isinstance(value, dict):
+        return ""
+    markdown = value.get("markdown")
+    return markdown if isinstance(markdown, str) else ""
+
+
+def _compose_page_markdown(
+    title: str, manual_markdown: str, generated_markdown: str
+) -> str:
+    sections = [f"# {title}"]
+    if manual_markdown:
+        sections.extend(["## 사용자 메모", manual_markdown])
+    if generated_markdown:
+        sections.append(generated_markdown)
+    return "\n\n".join(sections)
 
 
 def knowledge_neighborhood(
@@ -1031,6 +1354,47 @@ def entity_payload(
     if depth is not None:
         payload["depth"] = depth
     return payload
+
+
+def knowledge_page_payload(
+    page: KnowledgePage,
+    revision: KnowledgePageRevision,
+    revision_count: int,
+) -> dict[str, Any]:
+    return {
+        "id": page.id,
+        "spaceId": page.space_id,
+        "entityId": page.entity_id,
+        "slug": page.slug,
+        "title": page.title,
+        "pageType": page.page_type,
+        "status": page.status,
+        "revisionCount": revision_count,
+        "currentRevision": knowledge_page_revision_payload(revision),
+        "createdAt": page.created_at,
+        "updatedAt": page.updated_at,
+    }
+
+
+def knowledge_page_revision_payload(
+    revision: KnowledgePageRevision,
+) -> dict[str, Any]:
+    return {
+        "id": revision.id,
+        "pageId": revision.page_id,
+        "revisionNumber": revision.revision_number,
+        "markdownBody": revision.markdown_body,
+        "generatedMarkdown": _section_markdown(revision.generated_sections_json),
+        "manualMarkdown": _section_markdown(revision.manual_sections_json),
+        "statementIds": revision.generated_sections_json.get("statementIds", []),
+        "evidenceSegmentIds": revision.generated_sections_json.get(
+            "evidenceSegmentIds", []
+        ),
+        "sourceStatementRevisionId": revision.source_statement_revision_id,
+        "generationRunId": revision.generation_run_id,
+        "createdByUserId": revision.created_by_user_id,
+        "createdAt": revision.created_at,
+    }
 
 
 def statement_payload(db: Session, statement: KnowledgeStatement) -> dict[str, Any]:

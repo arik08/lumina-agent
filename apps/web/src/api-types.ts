@@ -433,6 +433,40 @@ export interface CreateKnowledgeStatementRequest {
   changeSummary?: string;
 }
 
+export interface KnowledgePageRevision {
+  id: UUID;
+  pageId: UUID;
+  revisionNumber: number;
+  markdownBody: string;
+  generatedMarkdown: string;
+  manualMarkdown: string;
+  statementIds: UUID[];
+  evidenceSegmentIds: UUID[];
+  sourceStatementRevisionId: UUID | null;
+  generationRunId: UUID | null;
+  createdByUserId: UUID;
+  createdAt: IsoDateTime;
+}
+
+export interface KnowledgePage {
+  id: UUID;
+  spaceId: UUID;
+  entityId: UUID;
+  slug: string;
+  title: string;
+  pageType: string;
+  status: string;
+  revisionCount: number;
+  currentRevision: KnowledgePageRevision;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+export interface UpdateKnowledgePageRequest {
+  expectedRevision: number;
+  manualMarkdown: string;
+}
+
 export interface KnowledgeReviewDecisionRequest {
   decision: "approved" | "rejected";
   reason?: string;

@@ -19,6 +19,7 @@ import type {
   KnowledgeEntity,
   KnowledgeIngestionJob,
   KnowledgeNeighborhood,
+  KnowledgePage,
   KnowledgeSource,
   KnowledgeSpace,
   KnowledgeStatement,
@@ -64,6 +65,7 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
   const [sources, setSources] = useState<KnowledgeSource[]>([]);
   const [ingestions, setIngestions] = useState<KnowledgeIngestionJob[]>([]);
   const [entities, setEntities] = useState<KnowledgeEntity[]>([]);
+  const [pages, setPages] = useState<KnowledgePage[]>([]);
   const [statements, setStatements] = useState<KnowledgeStatement[]>([]);
   const [neighborhood, setNeighborhood] = useState<KnowledgeNeighborhood | null>(null);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
@@ -137,6 +139,7 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
       setSources([]);
       setIngestions([]);
       setEntities([]);
+      setPages([]);
       setStatements([]);
       setNeighborhood(null);
       return;
@@ -148,12 +151,14 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
       api.knowledge.listSources(selectedSpaceId, controller.signal),
       api.knowledge.listIngestions(selectedSpaceId, controller.signal),
       api.knowledge.listEntities(selectedSpaceId, controller.signal),
+      api.knowledge.listPages(selectedSpaceId, controller.signal),
       api.knowledge.listStatements(selectedSpaceId, controller.signal),
     ])
-      .then(([nextSources, nextIngestions, nextEntities, nextStatements]) => {
+      .then(([nextSources, nextIngestions, nextEntities, nextPages, nextStatements]) => {
         setSources(nextSources);
         setIngestions(nextIngestions);
         setEntities(nextEntities);
+        setPages(nextPages);
         setStatements(nextStatements);
         setSelectedEntityId((current) => nextEntities.some((item) => item.id === current) ? current : (nextEntities[0]?.id ?? null));
         setSelectedSourceId((current) => nextSources.some((item) => item.id === current) ? current : (nextSources[0]?.id ?? null));
@@ -175,12 +180,14 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
       Promise.all([
         api.knowledge.listIngestions(selectedSpaceId),
         api.knowledge.listEntities(selectedSpaceId),
+        api.knowledge.listPages(selectedSpaceId),
         api.knowledge.listStatements(selectedSpaceId),
       ])
-        .then(([nextIngestions, nextEntities, nextStatements]) => {
+        .then(([nextIngestions, nextEntities, nextPages, nextStatements]) => {
           if (disposed) return;
           setIngestions(nextIngestions);
           setEntities(nextEntities);
+          setPages(nextPages);
           setStatements(nextStatements);
         })
         .catch((loadError) => {
@@ -270,6 +277,8 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
       });
       setEntities((current) => [...current.filter((item) => item.id !== created.id), created]
         .sort((left, right) => left.canonicalName.localeCompare(right.canonicalName)));
+      const nextPages = await api.knowledge.listPages(selectedSpaceId);
+      setPages(nextPages);
       setSelectedEntityId(created.id);
       setEntityName("");
       setCreatePanel(null);
@@ -312,6 +321,9 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
         changeSummary: "Knowledge 화면에서 관계 등록",
       });
       setStatements((current) => [created, ...current]);
+      if (created.status === "approved") {
+        setPages(await api.knowledge.listPages(selectedSpaceId));
+      }
       setSelectedEntityId(subjectId);
       setObjectId("");
       setEvidenceId("");
@@ -337,8 +349,19 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
     setTab("sources");
   }
 
-  function updateReviewedStatement(originalId: string, reviewed: KnowledgeStatement) {
+  async function updateReviewedStatement(originalId: string, reviewed: KnowledgeStatement) {
     setStatements((current) => [reviewed, ...current.filter((item) => item.id !== originalId)]);
+    if (reviewed.status === "approved" && selectedSpaceId) {
+      try {
+        setPages(await api.knowledge.listPages(selectedSpaceId));
+      } catch (refreshError) {
+        setError(errorMessage(refreshError));
+      }
+    }
+  }
+
+  function updatePage(updated: KnowledgePage) {
+    setPages((current) => current.map((page) => page.id === updated.id ? updated : page));
   }
 
   function updateSpace(updated: KnowledgeSpace) {
@@ -362,7 +385,7 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
     if (tab === "home") content = <KnowledgeHome {...shared} ingestions={ingestions} onChangeTab={setTab} onOpenEntity={openEntity} />;
     if (tab === "explore") content = <KnowledgeExplore {...shared} onOpenEntity={openEntity} onOpenEvidence={openEvidence} />;
     if (tab === "sources") content = <KnowledgeSources sources={sources} ingestions={ingestions} selectedSourceId={selectedSourceId} selectedEvidenceId={selectedEvidenceId} startingSourceId={startingSourceId} onSelectSource={setSelectedSourceId} onSelectEvidence={setSelectedEvidenceId} onStartIngestion={startIngestion} />;
-    if (tab === "wiki") content = <KnowledgeWiki {...shared} selectedEntityId={selectedEntityId} onSelectEntity={setSelectedEntityId} onOpenEvidence={openEvidence} />;
+    if (tab === "wiki") content = <KnowledgeWiki {...shared} pages={pages} selectedEntityId={selectedEntityId} onSelectEntity={setSelectedEntityId} onOpenEvidence={openEvidence} onPageUpdated={updatePage} onError={(wikiError) => setError(errorMessage(wikiError))} />;
     if (tab === "graph") content = <KnowledgeGraph neighborhood={neighborhood} entities={entities} statements={statements} selectedEntityId={selectedEntityId} onSelectEntity={setSelectedEntityId} onOpenWiki={(id) => openEntity(id, "wiki")} />;
     if (tab === "review") content = <KnowledgeReview sources={sources} statements={statements} entityById={entityById} onOpenEvidence={openEvidence} onReviewed={updateReviewedStatement} onError={(reviewError) => setError(errorMessage(reviewError))} />;
     if (tab === "settings") content = <KnowledgeSettings key={selectedSpace.id} space={selectedSpace} ingestions={ingestions} onUpdated={updateSpace} onArchived={archiveSpace} onError={handleSettingsError} />;
