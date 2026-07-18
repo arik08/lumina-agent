@@ -132,14 +132,15 @@ def initial_workflow_plan(title: str, objective: str) -> InitialWorkflowPlan:
     ):
         return InitialWorkflowPlan(
             kind="comparative_research",
-            reason="비교·조사형 질문으로 판단해 근거 수집, 비교축 분석과 교차검증 중심의 초기안을 구성했습니다.",
+            reason="비교·조사형 질문으로 판단해 자료 수집과 비교 기준 점검을 분기하고, 비교 분석과 반대 관점을 다시 합류시키는 초기안을 구성했습니다.",
             nodes=(
                 PlannedNode("N001", "scope", "조사 질문·비교축 설계", "대상, 기간, 비교 기준과 판단 조건을 확정하고 Workflow 적합성을 평가합니다."),
                 PlannedNode("N010", "research", "근거·사례 수집", "Project 자료와 사용 가능한 출처에서 비교 가능한 근거와 사례를 수집합니다.", ("N001",)),
-                PlannedNode("N020", "analysis", "비교 대상별 분석", "동일한 비교축으로 대상별 사실, 차이와 맥락을 분석합니다.", ("N010",)),
-                PlannedNode("N030", "validation", "출처·반례 교차검증", "출처의 신뢰도와 시점을 확인하고 반례와 누락된 관점을 점검합니다.", ("N020",)),
-                PlannedNode("N035", "synthesis", "비교 결과 합성", "중요한 공통점, 차이, 시사점과 불확실성을 합성합니다.", ("N030",)),
-                PlannedNode("N040", "report", "최종 보고서", "비교 결과, 근거, 한계와 적용 시사점을 보고서로 정리합니다.", ("N035",)),
+                PlannedNode("N015", "validation", "비교 기준·출처 점검", "비교축의 공정성, 출처 신뢰도와 시점 차이를 독립적으로 점검합니다.", ("N001",)),
+                PlannedNode("N020", "analysis", "비교 대상별 분석", "수집 자료와 검증된 비교축을 함께 사용해 대상별 차이와 맥락을 분석합니다.", ("N010", "N015")),
+                PlannedNode("N025", "analysis", "반대 관점·예외 분석", "주요 해석을 뒤집을 수 있는 반례, 누락 관점과 적용 예외를 별도로 분석합니다.", ("N010", "N015")),
+                PlannedNode("N030", "synthesis", "비교 결과 교차 합성", "주 분석과 반대 관점을 교차검증하여 공통점, 차이, 시사점과 불확실성을 합성합니다.", ("N020", "N025")),
+                PlannedNode("N040", "report", "최종 보고서", "비교 결과, 근거, 반대 관점, 한계와 적용 시사점을 보고서로 정리합니다.", ("N030",)),
             ),
         )
     if any(
@@ -161,13 +162,14 @@ def initial_workflow_plan(title: str, objective: str) -> InitialWorkflowPlan:
         )
     return InitialWorkflowPlan(
         kind="open_analysis",
-        reason="비정형 질문으로 판단해 최소 가설 Workflow를 만들고 첫 단계 결과에 따라 확장하거나 축소하도록 구성했습니다.",
+        reason="비정형 질문으로 판단해 핵심 가설과 대안 가설을 분리 탐색한 뒤 검증에서 합류하는 최소 Workflow를 구성했습니다.",
         nodes=(
             PlannedNode("N001", "scope", "질문·범위 설계", "질문을 검증 가능한 하위 질문으로 나누고 필요한 Workflow를 평가합니다."),
             PlannedNode("N010", "data_check", "근거·자료 진단", "사용 가능한 자료와 부족한 근거를 구분합니다.", ("N001",)),
-            PlannedNode("N020", "analysis", "핵심 분석", "확인된 근거로 핵심 가설과 설명을 분석합니다.", ("N010",)),
-            PlannedNode("N030", "synthesis", "검증·합성", "결과를 교차검증하고 결론과 한계를 합성합니다.", ("N020",)),
-            PlannedNode("N040", "report", "최종 보고서", "결론, 근거, 한계와 후속 조치를 보고서로 정리합니다.", ("N030",)),
+            PlannedNode("N020", "analysis", "핵심 가설 분석", "확인된 근거로 가장 유력한 가설과 설명을 분석합니다.", ("N010",)),
+            PlannedNode("N025", "analysis", "대안 가설·반례 분석", "핵심 설명과 경쟁하는 대안 가설, 반례와 누락 변수를 독립적으로 분석합니다.", ("N010",)),
+            PlannedNode("N030", "synthesis", "교차검증·합성", "핵심 가설과 대안 가설을 함께 검증하여 결론, 불확실성과 한계를 합성합니다.", ("N020", "N025")),
+            PlannedNode("N040", "report", "최종 보고서", "결론, 근거, 대안 설명, 한계와 후속 조치를 보고서로 정리합니다.", ("N030",)),
         ),
     )
 
@@ -362,10 +364,13 @@ Workflow 적응 판단:
 - 이미 적용된 그래프 재계획: {replans}/{MAX_REPLANS}회
 - 근거가 부족하거나 별도 전문 분석이 필요하면 expand, 불필요한 예정 Node가 있으면 shrink, 예정 단계를 다른 분석으로 바꿔야 하면 replace, 바로 최종 합성이 가능하면 finish를 선택하십시오.
 - 단순히 예정대로 진행해도 충분하면 continue를 선택하십시오.
+- 서로 독립적으로 검증해야 하는 가설·지역·제품·관점은 한 줄로 연결하지 말고 같은 선행 Node에서 분기하십시오.
+- 분기 결과를 함께 판단해야 하면 별도 검증·합성 Node를 추가하고 그 Node의 dependsOn에 모든 분기 ref를 지정해 다시 합류시키십시오.
+- add의 ref는 이번 판단 안에서만 쓰는 짧은 식별자입니다. dependsOn은 current 또는 앞서 선언한 ref만 사용할 수 있으며, 생략하면 current에서 분기합니다.
 - 추가 Node는 최대 {MAX_ADDED_NODES_PER_DECISION}개이며 보고서 Node를 직접 추가하지 마십시오.
 - Markdown 본문 맨 끝에 아래 형식의 HTML 주석을 정확히 하나 추가하십시오. 이 주석은 문서 저장 전에 분리됩니다.
 <!-- LUMINA_WORKFLOW_DECISION
-{{"action":"continue|expand|shrink|replace|finish","reason":"판단 근거","confidence":0.0,"add":[{{"title":"추가 분석명","purpose":"검증할 내용","nodeType":"analysis"}}],"remove":["N020"]}}
+{{"action":"continue|expand|shrink|replace|finish","reason":"판단 근거","confidence":0.0,"add":[{{"ref":"causeA","title":"원인 A 분석","purpose":"독립적으로 검증할 내용","nodeType":"analysis","dependsOn":["current"]}},{{"ref":"causeB","title":"원인 B 분석","purpose":"독립적으로 검증할 내용","nodeType":"analysis","dependsOn":["current"]}},{{"ref":"merge","title":"원인 교차검증","purpose":"두 분석 결과를 함께 검증","nodeType":"validation","dependsOn":["causeA","causeB"]}}],"remove":["N020"]}}
 -->
 """
 
@@ -400,6 +405,7 @@ def extract_workflow_decision(markdown: str) -> tuple[str, dict[str, Any]]:
     except (TypeError, ValueError):
         confidence = None
     additions = []
+    seen_refs: set[str] = set()
     for item in raw.get("add", []) if isinstance(raw.get("add"), list) else []:
         if not isinstance(item, dict):
             continue
@@ -407,13 +413,31 @@ def extract_workflow_decision(markdown: str) -> tuple[str, dict[str, Any]]:
         purpose = str(item.get("purpose") or "").strip()[:2000]
         node_type = str(item.get("nodeType") or "analysis").strip().lower()
         if title and purpose:
+            raw_ref = str(item.get("ref") or f"A{len(additions) + 1}")
+            ref = re.sub(r"[^A-Za-z0-9_-]", "", raw_ref)[:32]
+            if not ref or ref in seen_refs or ref.lower() == "current":
+                ref = f"A{len(additions) + 1}"
+            raw_dependencies = (
+                item.get("dependsOn") if isinstance(item.get("dependsOn"), list) else []
+            )
+            dependencies = []
+            for dependency in raw_dependencies:
+                candidate = str(dependency)[:32]
+                if candidate == "current" or candidate in seen_refs:
+                    if candidate not in dependencies:
+                        dependencies.append(candidate)
+            if not dependencies:
+                dependencies = ["current"]
             additions.append(
                 {
+                    "ref": ref,
                     "title": title,
                     "purpose": purpose,
                     "nodeType": node_type if node_type in _ALLOWED_NODE_TYPES else "analysis",
+                    "dependsOn": dependencies,
                 }
             )
+            seen_refs.add(ref)
         if len(additions) >= MAX_ADDED_NODES_PER_DECISION:
             break
     removals = [
@@ -557,7 +581,11 @@ def apply_workflow_decision(
         )
 
     added: list[str] = []
-    if action in {"expand", "replace"} and additions:
+    if (
+        action in {"expand", "replace"}
+        and additions
+        and len(nodes) < MAX_WORKFLOW_NODES
+    ):
         room = max(0, MAX_WORKFLOW_NODES - len(nodes))
         additions = additions[:room]
         successors = [
@@ -569,9 +597,17 @@ def apply_workflow_decision(
             if edge.source_node_key == current_node.node_key:
                 edges.remove(edge)
                 db.delete(edge)
-        previous = current_node.node_key
-        for item in additions:
+        created: list[
+            tuple[DeepAnalysisWorkflowNode, dict[str, Any], str]
+        ] = []
+        used_refs: set[str] = set()
+        for index, item in enumerate(additions):
             key = _next_node_key(nodes)
+            raw_ref = str(item.get("ref") or f"A{index + 1}")
+            ref = re.sub(r"[^A-Za-z0-9_-]", "", raw_ref)[:32]
+            if not ref or ref in used_refs or ref.lower() == "current":
+                ref = f"A{index + 1}"
+            used_refs.add(ref)
             node = DeepAnalysisWorkflowNode(
                 workflow_revision_id=revision.id,
                 node_key=key,
@@ -586,16 +622,47 @@ def apply_workflow_decision(
                     "origin": "runtime_replan",
                     "createdByNodeKey": current_node.node_key,
                     "reason": decision.get("reason"),
+                    "adaptiveRef": ref,
+                    "dependsOn": list(item.get("dependsOn") or ["current"]),
                 },
             )
             db.add(node)
             db.flush()
             nodes.append(node)
             added.append(key)
-            _add_edge(db, revision, edges, previous, key)
-            previous = key
+            created.append((node, item, ref))
+
+        available_refs: dict[str, str] = {}
+        for node, item, ref in created:
+            dependencies = item.get("dependsOn")
+            if not isinstance(dependencies, list):
+                dependencies = ["current"]
+            sources: list[str] = []
+            for dependency in dependencies:
+                candidate = str(dependency)[:32]
+                source = (
+                    current_node.node_key
+                    if candidate in {"current", current_node.node_key}
+                    else available_refs.get(candidate)
+                )
+                if source and source not in sources:
+                    sources.append(source)
+            if not sources:
+                sources = [current_node.node_key]
+            for source in sources:
+                _add_edge(db, revision, edges, source, node.node_key)
+            available_refs[ref] = node.node_key
+
+        added_set = set(added)
+        branch_sources = {
+            edge.source_node_key
+            for edge in edges
+            if edge.source_node_key in added_set and edge.target_node_key in added_set
+        }
+        terminal_nodes = [key for key in added if key not in branch_sources]
         for successor in successors:
-            _add_edge(db, revision, edges, previous, successor)
+            for terminal in terminal_nodes:
+                _add_edge(db, revision, edges, terminal, successor)
 
     graph_changed = bool(removed or added)
     if action == "finish":

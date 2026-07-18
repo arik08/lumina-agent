@@ -235,6 +235,26 @@ export function DeepAnalysisView({
       .find((item) => item.graphChanged) ?? null,
     [mission],
   );
+  const workflowTopology = useMemo(() => {
+    const outgoing = new Map<string, number>();
+    const incoming = new Map<string, number>();
+    for (const edge of mission?.workflow.edges ?? []) {
+      outgoing.set(edge.sourceNodeKey, (outgoing.get(edge.sourceNodeKey) ?? 0) + 1);
+      incoming.set(edge.targetNodeKey, (incoming.get(edge.targetNodeKey) ?? 0) + 1);
+    }
+    const branchNodeKeys = new Set(
+      [...outgoing.entries()].filter(([, count]) => count > 1).map(([key]) => key),
+    );
+    const mergeNodeKeys = new Set(
+      [...incoming.entries()].filter(([, count]) => count > 1).map(([key]) => key),
+    );
+    return {
+      branchCount: branchNodeKeys.size,
+      mergeCount: mergeNodeKeys.size,
+      branchNodeKeys,
+      mergeNodeKeys,
+    };
+  }, [mission?.workflow.edges]);
 
   function updateCanvasScale(nextScale: number, originX?: number, originY?: number) {
     const viewport = canvasViewportRef.current;
@@ -679,7 +699,7 @@ export function DeepAnalysisView({
                 <div className="deep-analysis-tabs" role="tablist" aria-label="심층분석 화면">
                   <button className="is-active" type="button" role="tab" aria-selected="true">Workflow</button>
                   <span>
-                    {completedNodeCount}/{mission.workflow.nodes.length} 완료 · 입력 자료 {mission.sourceManifest.length}개 · Revision {mission.workflow.revisionNumber}
+                    {completedNodeCount}/{mission.workflow.nodes.length} 완료 · 분기 {workflowTopology.branchCount} · 합류 {workflowTopology.mergeCount} · 입력 자료 {mission.sourceManifest.length}개 · Revision {mission.workflow.revisionNumber}
                   </span>
                 </div>
                 {latestGraphChange && (
@@ -758,6 +778,7 @@ export function DeepAnalysisView({
                           return (
                             <path
                               key={edge.id}
+                              className={`${workflowTopology.branchNodeKeys.has(edge.sourceNodeKey) ? "is-branch" : ""} ${workflowTopology.mergeNodeKeys.has(edge.targetNodeKey) ? "is-merge" : ""}`.trim()}
                               d={`M ${source.positionX + 176} ${source.positionY + 43} C ${source.positionX + 198} ${source.positionY + 43}, ${target.positionX - 22} ${target.positionY + 43}, ${target.positionX} ${target.positionY + 43}`}
                               markerEnd="url(#deep-analysis-arrow)"
                             />

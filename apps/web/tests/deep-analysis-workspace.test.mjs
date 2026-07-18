@@ -111,7 +111,14 @@ test("adaptive Workflow changes are explained and refitted on graph updates", as
   assert.match(view, /결과에 따라 남은 Workflow가 확장되거나 축소될 수 있습니다/);
   assert.match(view, /\[mission\?\.workflow\.graphDigest\]/);
   assert.match(view, /typeof selectedNode\.config\.reason === "string"/);
+  assert.match(view, /branchCount: branchNodeKeys\.size/);
+  assert.match(view, /mergeCount: mergeNodeKeys\.size/);
+  assert.match(view, /분기 \{workflowTopology\.branchCount\} · 합류 \{workflowTopology\.mergeCount\}/);
+  assert.match(view, /workflowTopology\.branchNodeKeys\.has\(edge\.sourceNodeKey\)/);
+  assert.match(view, /workflowTopology\.mergeNodeKeys\.has\(edge\.targetNodeKey\)/);
   assert.match(css, /\.deep-analysis-workflow-change \{/);
+  assert.match(css, /path\.is-branch/);
+  assert.match(css, /path\.is-merge/);
 });
 
 test("failed or cancelled Nodes can retry with visible attempts and calculation files", async () => {

@@ -19,7 +19,9 @@ from lumina.deep_analysis.models import (
 from lumina.deep_analysis.planning import (
     apply_workflow_decision,
     extract_workflow_decision,
+    initial_workflow_plan,
     next_runnable_node,
+    plan_edges,
 )
 from lumina.main import create_app
 from lumina.models import Organization, ProjectFile, Run, User
@@ -154,7 +156,7 @@ def test_draft_question_change_rebuilds_the_initial_workflow(tmp_path: Path) -> 
             headers=headers,
             json={"title": "열린 문제 진단", "objective": "현상을 분석해 설명한다."},
         ).json()
-        assert len(created["workflow"]["nodes"]) == 5
+        assert len(created["workflow"]["nodes"]) == 6
 
         updated = client.patch(
             f"/api/deep-analysis/missions/{created['id']}",
@@ -202,7 +204,27 @@ def test_legacy_unstarted_workflow_is_upgraded_once_on_restore(tmp_path: Path) -
         assert restored_again.json()["workflow"]["revisionNumber"] == 2
 
 
-def test_runtime_decision_expands_and_then_shrinks_the_dag(tmp_path: Path) -> None:
+def test_every_initial_workflow_contains_a_branch_and_merge() -> None:
+    questions = (
+        ("원가 변동", "원가 변동 기여도를 정량적으로 분석한다."),
+        ("시장 비교", "경쟁사 사례와 시장 동향을 비교 조사한다."),
+        ("도입 의사결정", "신규 시스템 투자 리스크와 대안을 평가한다."),
+        ("공급망 이슈", "공급망 지연 원인을 분석한다."),
+    )
+    for title, objective in questions:
+        plan = initial_workflow_plan(title, objective)
+        outgoing: dict[str, int] = {}
+        incoming: dict[str, int] = {}
+        for source, target in plan_edges(plan):
+            outgoing[source] = outgoing.get(source, 0) + 1
+            incoming[target] = incoming.get(target, 0) + 1
+        assert max(outgoing.values()) >= 2, plan.kind
+        assert max(incoming.values()) >= 2, plan.kind
+
+
+def test_runtime_decision_branches_merges_and_then_shrinks_the_dag(
+    tmp_path: Path,
+) -> None:
     with TestClient(create_app(_settings(tmp_path))) as client:
         headers = _login(client)
         project_id = client.get("/api/projects").json()[0]["id"]
@@ -215,9 +237,13 @@ def test_runtime_decision_expands_and_then_shrinks_the_dag(tmp_path: Path) -> No
         markdown, decision = extract_workflow_decision(
             "# 중간 결과\n추가 검증이 필요합니다.\n"
             '<!-- LUMINA_WORKFLOW_DECISION\n'
-            '{"action":"expand","reason":"지역별 지연 패턴을 별도로 확인해야 합니다.",'
-            '"confidence":0.88,"add":[{"title":"지역별 지연 분석",'
-            '"purpose":"지역별 리드타임과 병목 차이를 검증합니다.","nodeType":"analysis"}],'
+            '{"action":"expand","reason":"지역과 공급자 가설을 분리 검증한 뒤 합쳐야 합니다.",'
+            '"confidence":0.88,"add":[{"ref":"region","title":"지역별 지연 분석",'
+            '"purpose":"지역별 리드타임과 병목 차이를 검증합니다.","nodeType":"analysis","dependsOn":["current"]},'
+            '{"ref":"supplier","title":"공급자별 지연 분석",'
+            '"purpose":"공급자별 납기 편차와 반복 병목을 검증합니다.","nodeType":"analysis","dependsOn":["current"]},'
+            '{"ref":"merge","title":"지연 원인 교차검증",'
+            '"purpose":"지역과 공급자 분석을 결합해 공통 원인과 예외를 검증합니다.","nodeType":"validation","dependsOn":["region","supplier"]}],'
             '"remove":[]}\n-->'
         )
         assert "LUMINA_WORKFLOW_DECISION" not in markdown
@@ -260,17 +286,31 @@ def test_runtime_decision_expands_and_then_shrinks_the_dag(tmp_path: Path) -> No
                     )
                 )
             )
-            added = next(node for node in nodes if node.title == "지역별 지연 분석")
+            region = next(node for node in nodes if node.title == "지역별 지연 분석")
+            supplier = next(node for node in nodes if node.title == "공급자별 지연 분석")
+            merge = next(node for node in nodes if node.title == "지연 원인 교차검증")
+            edge_pairs = {
+                (edge.source_node_key, edge.target_node_key) for edge in edges
+            }
             assert revision.revision_number == 2
-            assert next_runnable_node(nodes, edges).node_key == added.node_key
-            assert revision.change_log_json[-1]["addedNodeKeys"] == [added.node_key]
+            assert (current.node_key, region.node_key) in edge_pairs
+            assert (current.node_key, supplier.node_key) in edge_pairs
+            assert (region.node_key, merge.node_key) in edge_pairs
+            assert (supplier.node_key, merge.node_key) in edge_pairs
+            assert (merge.node_key, "N010") in edge_pairs
+            assert next_runnable_node(nodes, edges).node_key == region.node_key
+            assert revision.change_log_json[-1]["addedNodeKeys"] == [
+                region.node_key,
+                supplier.node_key,
+                merge.node_key,
+            ]
 
             shrink = {
                 "action": "shrink",
                 "reason": "기존 자료로 동일 내용을 이미 검증했습니다.",
                 "confidence": 0.93,
                 "add": [],
-                "remove": [added.node_key],
+                "remove": [region.node_key, supplier.node_key, merge.node_key],
             }
             assert apply_workflow_decision(
                 db,
@@ -294,9 +334,14 @@ def test_runtime_decision_expands_and_then_shrinks_the_dag(tmp_path: Path) -> No
                     )
                 )
             )
-            assert all(node.id != added.id for node in remaining)
+            removed_ids = {region.id, supplier.id, merge.id}
+            assert all(node.id not in removed_ids for node in remaining)
             assert next_runnable_node(remaining, remaining_edges).node_key == "N010"
-            assert revision.change_log_json[-1]["removedNodeKeys"] == [added.node_key]
+            assert set(revision.change_log_json[-1]["removedNodeKeys"]) == {
+                region.node_key,
+                supplier.node_key,
+                merge.node_key,
+            }
 
 
 def test_mission_endpoints_require_auth_and_project_access(tmp_path: Path) -> None:
