@@ -1082,12 +1082,6 @@ export function DeepAnalysisView({
           <h1>심층분석</h1>
           <span>장기 분석을 Workflow 단위로 기록하고 이어갑니다.</span>
         </div>
-        {canEdit && projectId && (
-          <button type="button" onClick={() => setCreateOpen((open) => !open)}>
-            {createOpen ? <X size={15} /> : <Plus size={15} />}
-            {createOpen ? "닫기" : "새 분석"}
-          </button>
-        )}
       </header>
 
       {error && (
@@ -1108,7 +1102,12 @@ export function DeepAnalysisView({
           <aside className="deep-analysis-missions" aria-label="심층분석 목록">
             <div className="deep-analysis-pane-title">
               <strong>Mission</strong>
-              <span>{missions.length}</span>
+              {canEdit && (
+                <button className="deep-analysis-new-button" type="button" onClick={() => setCreateOpen((open) => !open)}>
+                  {createOpen ? <X size={15} /> : <Plus size={15} />}
+                  {createOpen ? "닫기" : "새 분석"}
+                </button>
+              )}
             </div>
             {createOpen && (
               <form className="deep-analysis-create" onSubmit={createMission}>

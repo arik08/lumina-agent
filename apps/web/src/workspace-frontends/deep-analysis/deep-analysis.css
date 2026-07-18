@@ -3,6 +3,7 @@
 .deep-analysis-header > div:first-child { min-width: 0; }
 .deep-analysis-header > div:first-child > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .deep-analysis-header > button,
+.deep-analysis-new-button,
 .deep-analysis-mobile-menu {
   min-height: var(--control-height-sm);
   border: 1px solid var(--line);
@@ -10,8 +11,10 @@
   background: var(--surface);
   cursor: pointer;
 }
-.deep-analysis-header > button { display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; }
-.deep-analysis-header > button:hover { border-color: var(--line-strong); background: var(--surface-soft); }
+.deep-analysis-header > button,
+.deep-analysis-new-button { display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; }
+.deep-analysis-header > button:hover,
+.deep-analysis-new-button:hover { border-color: var(--line-strong); background: var(--surface-soft); }
 .deep-analysis-header .deep-analysis-mobile-menu { display: none; width: 30px; place-items: center; padding: 0; }
 
 .deep-analysis-error {
@@ -33,7 +36,6 @@
 .deep-analysis-missions { min-height: 0; overflow: auto; border-right: 1px solid var(--line); background: var(--surface); }
 .deep-analysis-pane-title { display: flex; min-height: 42px; align-items: center; justify-content: space-between; padding: 0 14px; border-bottom: 1px solid var(--line); }
 .deep-analysis-pane-title strong { font-size: 12px; }
-.deep-analysis-pane-title span { min-width: 22px; border-radius: var(--radius-pill); background: var(--surface-soft); color: var(--muted); font-size: 11px; line-height: 20px; text-align: center; }
 
 .deep-analysis-create { display: grid; gap: 12px; padding: 13px; border-bottom: 1px solid var(--line); background: var(--canvas); }
 .deep-analysis-create label, .deep-analysis-create .deep-analysis-select-field { display: grid; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 650; }

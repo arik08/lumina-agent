@@ -38,6 +38,25 @@ test("Mission creation and restoration use the typed deep-analysis API", async (
   assert.match(api, /cache: requestInit\.cache \?\? "no-store"/);
 });
 
+test("Mission pane title omits the aggregate count badge", async () => {
+  const [view, css] = await Promise.all([
+    readFile(viewPath, "utf8"),
+    readFile(cssPath, "utf8"),
+  ]);
+
+  assert.doesNotMatch(view, /<span>\{missions\.length\}<\/span>/);
+  assert.doesNotMatch(css, /\.deep-analysis-pane-title span/);
+});
+
+test("new analysis action is located in the Mission pane title", async () => {
+  const view = await readFile(viewPath, "utf8");
+  const paneTitle = view.match(/<div className="deep-analysis-pane-title">([\s\S]*?)<\/div>/)?.[1] ?? "";
+
+  assert.match(paneTitle, /className="deep-analysis-new-button"/);
+  assert.match(paneTitle, /createOpen \? "닫기" : "새 분석"/);
+  assert.doesNotMatch(view, /<header className="deep-analysis-header">[\s\S]*?deep-analysis-new-button[\s\S]*?<\/header>/);
+});
+
 test("Workflow keeps cost detail opt-in and exposes selectable Node inspection", async () => {
   const view = await readFile(viewPath, "utf8");
 
