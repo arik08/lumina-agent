@@ -34,6 +34,7 @@ import type {
   DeepAnalysisMissionDetail,
   DeepAnalysisMissionSummary,
   KnowledgeEntity,
+  KnowledgeSearchResponse,
   KnowledgeIngestionJob,
   KnowledgeNeighborhood,
   KnowledgePage,
@@ -1395,6 +1396,19 @@ export async function createKnowledgeStatement(
   );
 }
 
+export async function searchKnowledge(
+  spaceId: string,
+  query: string,
+  scope: "all" | "wiki" | "statement" | "source",
+  signal?: AbortSignal,
+) {
+  return request<KnowledgeSearchResponse>("/knowledge/search", {
+    method: "POST",
+    body: { spaceId, query, scope, limit: 20 },
+    signal,
+  });
+}
+
 export async function listKnowledgePages(spaceId: string, signal?: AbortSignal) {
   return request<KnowledgePage[]>(
     `/knowledge/spaces/${encodeURIComponent(spaceId)}/pages`,
@@ -2296,6 +2310,7 @@ export const api = {
     listIngestions: listKnowledgeIngestions,
     startIngestion: startKnowledgeIngestion,
     listEntities: listKnowledgeEntities,
+    search: searchKnowledge,
     createEntity: createKnowledgeEntity,
     listPages: listKnowledgePages,
     listPageRevisions: listKnowledgePageRevisions,

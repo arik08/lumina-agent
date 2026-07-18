@@ -25,6 +25,7 @@ from ...knowledge.schemas import (
     KnowledgeSpaceCreate,
     KnowledgeSpaceUpdate,
     KnowledgeReviewDecision,
+    KnowledgeSearchRequest,
     KnowledgeStatementCreate,
 )
 from ...knowledge.service import (
@@ -55,6 +56,7 @@ from ...knowledge.service import (
     list_knowledge_spaces,
     list_knowledge_statements,
     require_knowledge_space,
+    search_knowledge,
     source_payload,
     space_payload,
     statement_payload,
@@ -96,6 +98,22 @@ def post_knowledge_context_pack(
             "Project에 연결된 Knowledge Revision이 없습니다.",
         )
     return knowledge_context_api_payload(snapshot)
+
+
+@router.post("/search")
+def post_knowledge_search(
+    payload: KnowledgeSearchRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    return search_knowledge(
+        db,
+        user,
+        space_id=payload.space_id,
+        query=payload.query,
+        scope=payload.scope,
+        limit=payload.limit,
+    )
 
 
 @router.get("/auto-capture")

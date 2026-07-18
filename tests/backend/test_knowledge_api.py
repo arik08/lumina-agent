@@ -546,6 +546,15 @@ def test_project_binding_pins_an_approved_revision_until_explicit_update(
         )
         assert context_pack_response.status_code == 200, context_pack_response.text
         assert context_pack_response.json()["retrieval"]["statementCount"] == 1
+        search_response = client.post(
+            "/api/knowledge/search",
+            json={"spaceId": space["id"], "query": "수소환원제철", "scope": "all"},
+        )
+        assert search_response.status_code == 200, search_response.text
+        assert search_response.json()["method"] == "bounded_keyword_v1"
+        assert len(search_response.json()["entities"]) == 1
+        assert len(search_response.json()["statements"]) == 2
+        assert len(search_response.json()["sources"]) == 1
 
         pinned_run_id = _start_knowledge_run(
             client,
@@ -645,6 +654,12 @@ def test_project_binding_pins_an_approved_revision_until_explicit_update(
         assert shared_space.json()["accessMode"] == "project_read"
         assert client.get(f"/api/knowledge/spaces/{space['id']}/sources").status_code == 200
         assert client.get(f"/api/knowledge/spaces/{space['id']}/statements").status_code == 200
+        member_search = client.post(
+            "/api/knowledge/search",
+            json={"spaceId": space["id"], "query": "수소환원제철"},
+        )
+        assert member_search.status_code == 200, member_search.text
+        assert len(member_search.json()["statements"]) == 2
         assert client.patch(
             f"/api/knowledge/spaces/{space['id']}",
             headers={"X-CSRF-Token": bob_csrf},
@@ -676,6 +691,10 @@ def test_project_binding_pins_an_approved_revision_until_explicit_update(
         client.cookies.clear()
         _login(client, "binding-bob", "binding-bob-password")
         assert client.get(f"/api/knowledge/spaces/{space['id']}").status_code == 404
+        assert client.post(
+            "/api/knowledge/search",
+            json={"spaceId": space["id"], "query": "수소환원제철"},
+        ).status_code == 404
 
 
 def test_knowledge_ingestion_runs_structured_extraction_and_reuses_result(

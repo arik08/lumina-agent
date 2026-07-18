@@ -747,6 +747,7 @@ DELETE /api/knowledge/project-bindings/{binding_id}
 POST   /api/knowledge/search
 POST   /api/knowledge/context-packs
 GET    /api/knowledge/entities/{entity_id}/neighborhood
+POST   /api/knowledge/search
 
 GET    /api/knowledge/spaces/{space_id}/reviews
 POST   /api/knowledge/reviews/{review_id}/decision
@@ -769,6 +770,8 @@ Project Binding은 승인된 `KnowledgeRevision`만 연결하며 `(project_id, s
 연결된 Project 구성원은 개인 원본 Space 자체를 공개받는 대신 Binding이 유지되는 동안 `project_read` 접근을 얻습니다. 이 권한으로 고정 지식의 원문·Evidence, Wiki, Graph와 승인 Statement를 열람할 수 있지만 Source 추가, AI 추출, Wiki 편집, 검토 결정, Binding·Space 설정과 archive는 할 수 없습니다. Binding을 해제하거나 Project membership을 잃으면 Space 조회 권한도 즉시 사라집니다. Frontend는 이 접근을 `연결`과 `Project 연결 · 읽기 전용`으로 표시하고 사용할 수 없는 소유자 작업을 노출하지 않습니다.
 
 일반 Agent Run을 만들 때는 Project에 연결된 각 고정 revision 이하의 현재 승인 Statement를 질문과 lexical matching해 `knowledge-context-pack-v1` snapshot으로 저장합니다. 기본 상한은 24개 Statement와 16,000자이며, 관련 항목이 하나도 없으면 최신 4개만 fallback으로 사용합니다. Pack은 binding/revision/digest, Statement ID, Entity 관계, Evidence segment, Source revision, locator와 text digest를 포함하고 자체 digest를 계산합니다. 이 snapshot은 `prompt_prefix_hash`에도 포함되므로 이후 Binding이 바뀌어도 기존 Run의 입력은 변하지 않습니다. Agent system context에는 Evidence를 비신뢰 자료로 명시해 원문 속 지시를 실행하지 않도록 하며, `POST /api/knowledge/context-packs`도 같은 권한 검사·검색·예산 로직을 재사용합니다.
+
+탐색 화면은 `POST /api/knowledge/search`를 250ms debounce와 요청 취소로 호출합니다. Backend는 매 요청마다 Space의 소유자·조직 공개·Project Binding 읽기 권한을 다시 검사하고, query는 최대 2,000자, 결과는 종류별 기본 20개·최대 50개로 제한합니다. 현재 `bounded_keyword_v1`은 두 글자 이상인 모든 검색 token이 Entity 이름·설명, Statement의 Entity 관계 또는 Source 제목·Evidence에 포함되는지 확인하며 검색 응답의 Evidence 본문은 segment당 1,200자로 잘라 전송합니다. 이는 SQLite 개발 단계의 서버 검색 계약을 먼저 고정한 구현이며, 아래의 FTS5와 PostgreSQL FTS 인덱스 기반 후보 검색은 아직 후속 작업입니다.
 
 ## 12. 보안, 품질과 감사
 

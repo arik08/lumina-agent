@@ -185,6 +185,76 @@ def create_knowledge_space(
     return space
 
 
+def search_knowledge(
+    db: Session, user: User, *, space_id: str, query: str, scope: str, limit: int
+) -> dict[str, Any]:
+    require_knowledge_space(db, user, space_id)
+    terms = re.findall(r"\w{2,}", query.casefold(), flags=re.UNICODE)
+    if not terms:
+        return {
+            "query": query.strip(),
+            "scope": scope,
+            "method": "bounded_keyword_v1",
+            "limit": limit,
+            "entities": [],
+            "statements": [],
+            "sources": [],
+        }
+
+    def matches(value: str) -> bool:
+        normalized = value.casefold()
+        return all(term in normalized for term in terms)
+
+    entities = (
+        []
+        if scope not in {"all", "wiki"}
+        else [
+            item
+            for item in list_knowledge_entities(db, user, space_id)
+            if matches(f"{item.canonical_name} {item.entity_type} {item.description}")
+        ][:limit]
+    )
+    statements = []
+    if scope in {"all", "statement"}:
+        for item in list_knowledge_statements(db, user, space_id):
+            subject = db.get(KnowledgeEntity, item.subject_entity_id)
+            search_text = (
+                f"{subject.canonical_name if subject is not None else ''} "
+                f"{item.predicate_key} {_statement_object_text(db, item)}"
+            )
+            if matches(search_text):
+                statements.append(item)
+            if len(statements) >= limit:
+                break
+    sources = (
+        []
+        if scope not in {"all", "source"}
+        else [
+            item
+            for item in list_knowledge_sources(db, user, space_id)
+            if matches(
+                f"{item[0].title} {' '.join(segment.text for segment in item[2])}"
+            )
+        ][:limit]
+    )
+
+    source_results = []
+    for source, revision, evidence in sources:
+        payload = source_payload(source, revision, evidence)
+        for segment in payload["evidenceSegments"]:
+            segment["text"] = segment["text"][:1_200]
+        source_results.append(payload)
+    return {
+        "query": query.strip(),
+        "scope": scope,
+        "method": "bounded_keyword_v1",
+        "limit": limit,
+        "entities": [entity_payload(item) for item in entities],
+        "statements": [statement_payload(db, item) for item in statements],
+        "sources": source_results,
+    }
+
+
 def knowledge_auto_capture_payload(db: Session, user: User) -> dict[str, Any]:
     setting = db.scalar(
         select(UserSetting).where(

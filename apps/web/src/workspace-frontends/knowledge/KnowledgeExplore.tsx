@@ -1,28 +1,45 @@
 import { BookOpenText, CircleDot, FileText, Search, X } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
-import type { KnowledgeEntity, KnowledgeSource, KnowledgeStatement } from "../../api-types";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { api } from "../../api";
+import type { KnowledgeEntity, KnowledgeSearchResponse, KnowledgeSource, KnowledgeStatement } from "../../api-types";
 import type { KnowledgeTab } from "./KnowledgeView";
 import { evidenceById, statementSentence } from "./knowledge-utils";
 
 interface KnowledgeExploreProps {
+  spaceId: string;
   sources: KnowledgeSource[];
   entities: KnowledgeEntity[];
   statements: KnowledgeStatement[];
   entityById: Map<string, KnowledgeEntity>;
   onOpenEntity: (entityId: string, tab?: KnowledgeTab) => void;
   onOpenEvidence: (evidenceId: string) => void;
+  onError: (error: unknown) => void;
 }
 
 type SearchScope = "all" | "wiki" | "statement" | "source";
 
-export function KnowledgeExplore({ sources, entities, statements, entityById, onOpenEntity, onOpenEvidence }: KnowledgeExploreProps) {
+export function KnowledgeExplore({ spaceId, sources, entities, statements, entityById, onOpenEntity, onOpenEvidence, onError }: KnowledgeExploreProps) {
   const [query, setQuery] = useState("");
   const [scope, setScope] = useState<SearchScope>("all");
+  const [remote, setRemote] = useState<KnowledgeSearchResponse | null>(null);
+  const [searching, setSearching] = useState(false);
   const evidence = useMemo(() => evidenceById(sources), [sources]);
   const normalized = query.trim().toLocaleLowerCase();
-  const entityResults = entities.filter((entity) => !normalized || `${entity.canonicalName} ${entity.entityType} ${entity.description}`.toLocaleLowerCase().includes(normalized));
-  const statementResults = statements.filter((statement) => statement.status !== "rejected" && (!normalized || statementSentence(statement, entityById).toLocaleLowerCase().includes(normalized)));
-  const sourceResults = sources.filter((source) => !normalized || `${source.title} ${source.evidenceSegments.map((item) => item.text).join(" ")}`.toLocaleLowerCase().includes(normalized));
+  useEffect(() => {
+    if (!normalized) { setRemote(null); setSearching(false); return; }
+    setSearching(true);
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      api.knowledge.search(spaceId, normalized, scope, controller.signal)
+        .then((response) => { if (!controller.signal.aborted) { setRemote(response); setSearching(false); } })
+        .catch((error: unknown) => { if (!controller.signal.aborted) { setRemote(null); setSearching(false); onError(error); } });
+    }, 250);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [normalized, onError, scope, spaceId]);
+  const currentRemote = remote?.query.toLocaleLowerCase() === normalized && remote.scope === scope ? remote : null;
+  const entityResults = normalized ? currentRemote?.entities ?? [] : entities;
+  const statementResults = normalized ? currentRemote?.statements ?? [] : statements.filter((statement) => statement.status !== "rejected");
+  const sourceResults = normalized ? currentRemote?.sources ?? [] : sources;
   const resultCount = (scope === "all" || scope === "wiki" ? entityResults.length : 0)
     + (scope === "all" || scope === "statement" ? statementResults.length : 0)
     + (scope === "all" || scope === "source" ? sourceResults.length : 0);
@@ -46,7 +63,7 @@ export function KnowledgeExplore({ sources, entities, statements, entityById, on
         <span>{resultCount}개 결과</span>
       </div>
 
-      {!resultCount ? <div className="knowledge-empty"><Search size={24} /><h3>검색 결과가 없습니다.</h3><p>다른 표현이나 Entity 이름으로 다시 찾아보세요.</p></div> : (
+      {searching ? <div className="knowledge-empty"><Search size={24} /><h3>Knowledge를 검색하고 있습니다.</h3><p>현재 Space에서 권한이 확인된 결과만 불러옵니다.</p></div> : !resultCount ? <div className="knowledge-empty"><Search size={24} /><h3>검색 결과가 없습니다.</h3><p>다른 표현이나 Entity 이름으로 다시 찾아보세요.</p></div> : (
         <div className="knowledge-search-results">
           {(scope === "all" || scope === "wiki") && entityResults.length > 0 && <SearchGroup icon={<BookOpenText size={15} />} title="Wiki Entity" count={entityResults.length}>{entityResults.map((entity) => (
             <button type="button" key={entity.id} onClick={() => onOpenEntity(entity.id)}>

@@ -117,6 +117,9 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
   const handleSettingsError = useCallback((settingsError: unknown) => {
     setError(errorMessage(settingsError));
   }, []);
+  const handleExploreError = useCallback((searchError: unknown) => {
+    setError(errorMessage(searchError));
+  }, []);
 
   useEffect(() => {
     if (!canEditSelectedSpace && createPanel !== "space") setCreatePanel(null);
@@ -388,7 +391,7 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
   if (selectedSpace) {
     const shared = { sources, entities, statements, entityById };
     if (tab === "home") content = <KnowledgeHome {...shared} ingestions={ingestions} onChangeTab={setTab} onOpenEntity={openEntity} />;
-    if (tab === "explore") content = <KnowledgeExplore {...shared} onOpenEntity={openEntity} onOpenEvidence={openEvidence} />;
+    if (tab === "explore") content = <KnowledgeExplore {...shared} spaceId={selectedSpace.id} onOpenEntity={openEntity} onOpenEvidence={openEvidence} onError={handleExploreError} />;
     if (tab === "sources") content = <KnowledgeSources sources={sources} ingestions={ingestions} selectedSourceId={selectedSourceId} selectedEvidenceId={selectedEvidenceId} startingSourceId={startingSourceId} readOnly={!canEditSelectedSpace} onSelectSource={setSelectedSourceId} onSelectEvidence={setSelectedEvidenceId} onStartIngestion={startIngestion} />;
     if (tab === "wiki") content = <KnowledgeWiki {...shared} pages={pages} selectedEntityId={selectedEntityId} readOnly={!canEditSelectedSpace} onSelectEntity={setSelectedEntityId} onOpenEvidence={openEvidence} onPageUpdated={updatePage} onError={(wikiError) => setError(errorMessage(wikiError))} />;
     if (tab === "graph") content = <KnowledgeGraph neighborhood={neighborhood} entities={entities} statements={statements} selectedEntityId={selectedEntityId} onSelectEntity={setSelectedEntityId} onOpenWiki={(id) => openEntity(id, "wiki")} />;

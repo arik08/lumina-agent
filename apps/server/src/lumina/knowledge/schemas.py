@@ -55,6 +55,13 @@ class KnowledgeContextPackCreate(ApiModel):
     character_budget: int = Field(default=16_000, ge=1_000, le=60_000)
 
 
+class KnowledgeSearchRequest(ApiModel):
+    space_id: str
+    query: str = Field(min_length=1, max_length=2_000)
+    scope: Literal["all", "wiki", "statement", "source"] = "all"
+    limit: int = Field(default=20, ge=1, le=50)
+
+
 class KnowledgeReviewDecision(ApiModel):
     decision: Literal["approved", "rejected"]
     reason: str = Field(default="", max_length=10_000)

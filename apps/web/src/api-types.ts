@@ -520,6 +520,16 @@ export interface KnowledgeNeighborhood {
   truncated: boolean;
 }
 
+export interface KnowledgeSearchResponse {
+  query: string;
+  scope: "all" | "wiki" | "statement" | "source";
+  method: "bounded_keyword_v1";
+  limit: number;
+  entities: KnowledgeEntity[];
+  statements: KnowledgeStatement[];
+  sources: KnowledgeSource[];
+}
+
 export interface AnnouncementMutationRequest {
   title: string;
   body: string;

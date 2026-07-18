@@ -15,6 +15,10 @@ const settings = readFileSync(
   new URL("../src/workspace-frontends/knowledge/KnowledgeSettings.tsx", import.meta.url),
   "utf8",
 );
+const explore = readFileSync(
+  new URL("../src/workspace-frontends/knowledge/KnowledgeExplore.tsx", import.meta.url),
+  "utf8",
+);
 
 test("Knowledge Project bindings stay fixed until an explicit revision change", () => {
   assert.match(api, /listKnowledgeProjectBindings/);
@@ -33,4 +37,13 @@ test("Project-bound Knowledge is visible to members without owner actions", () =
   assert.match(view, /canEditSelectedSpace && <div>/);
   assert.match(settings, /Project 읽기 전용 연결/);
   assert.match(settings, /원문 추가, AI 추출, Wiki 편집, 검토와 설정 변경은 Space 소유자만/);
+});
+
+test("Knowledge Explore uses debounced, abortable server search", () => {
+  assert.match(api, /\/knowledge\/search/);
+  assert.match(explore, /window\.setTimeout\(\(\) =>/);
+  assert.match(explore, /}, 250\)/);
+  assert.match(explore, /api\.knowledge\.search\(spaceId, normalized, scope, controller\.signal\)/);
+  assert.match(explore, /controller\.abort\(\)/);
+  assert.match(explore, /remote\?\.query\.toLocaleLowerCase\(\) === normalized/);
 });
