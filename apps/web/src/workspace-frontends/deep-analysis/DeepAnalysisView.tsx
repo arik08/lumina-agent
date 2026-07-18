@@ -121,6 +121,9 @@ export function DeepAnalysisView({
   const [retryingNodeKey, setRetryingNodeKey] = useState<string | null>(null);
   const [deleteArmed, setDeleteArmed] = useState(false);
   const [deletingMission, setDeletingMission] = useState(false);
+  const [decisionOptionId, setDecisionOptionId] = useState("");
+  const [decisionAnswerText, setDecisionAnswerText] = useState("");
+  const [answeringDecision, setAnsweringDecision] = useState(false);
   const [canvasScale, setCanvasScale] = useState(1);
   const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
   const [canvasPanning, setCanvasPanning] = useState(false);
@@ -224,6 +227,10 @@ export function DeepAnalysisView({
     () => mission?.workflow.nodes.find((node) => node.status === "running") ?? null,
     [mission],
   );
+  const pendingDecision = useMemo(
+    () => mission?.decisions.find((decision) => decision.status === "pending") ?? null,
+    [mission],
+  );
   const completedNodeCount = useMemo(
     () => mission?.workflow.nodes.filter((node) => node.status === "completed").length ?? 0,
     [mission],
@@ -255,6 +262,15 @@ export function DeepAnalysisView({
       mergeNodeKeys,
     };
   }, [mission?.workflow.edges]);
+
+  useEffect(() => {
+    setDecisionOptionId(
+      pendingDecision?.recommendationOptionId
+      ?? pendingDecision?.options[0]?.id
+      ?? "",
+    );
+    setDecisionAnswerText("");
+  }, [pendingDecision?.id]);
 
   function updateCanvasScale(nextScale: number, originX?: number, originY?: number) {
     const viewport = canvasViewportRef.current;
@@ -395,6 +411,29 @@ export function DeepAnalysisView({
       setError(errorMessage(cancelError));
     } finally {
       setCancellingMission(false);
+    }
+  }
+
+  async function submitDecisionAnswer() {
+    if (!mission || !pendingDecision || !decisionOptionId || answeringDecision) return;
+    setAnsweringDecision(true);
+    setError(null);
+    try {
+      const resumed = await api.deepAnalysis.answerDecision(
+        mission.id,
+        pendingDecision.id,
+        {
+          expectedRevision: mission.revision,
+          selectedOptionId: decisionOptionId,
+          answerText: decisionAnswerText.trim(),
+        },
+      );
+      setMission(resumed);
+      setMissions((current) => current.map((item) => item.id === resumed.id ? resumed : item));
+    } catch (answerError) {
+      setError(errorMessage(answerError));
+    } finally {
+      setAnsweringDecision(false);
     }
   }
 
@@ -647,7 +686,7 @@ export function DeepAnalysisView({
                         {startingMission ? "시작 중" : mission.executionAvailable ? "Workflow 시작" : "실행 엔진 준비 중"}
                       </button>
                     )}
-                    {canEdit && mission.status === "running" && (
+                    {canEdit && (mission.status === "running" || mission.status === "awaiting_input") && (
                       <button
                         className="deep-analysis-cancel"
                         type="button"
@@ -686,8 +725,8 @@ export function DeepAnalysisView({
                         className={`deep-analysis-delete ${deleteArmed ? "is-armed" : ""}`}
                         type="button"
                         aria-label={deleteArmed ? "심층분석 삭제 확인, 한 번 더 누르면 삭제" : "심층분석 삭제"}
-                        data-tooltip={mission.status === "running" ? "먼저 실행을 중단해 주세요." : deleteArmed ? "한 번 더 눌러 삭제" : "삭제"}
-                        disabled={deletingMission || mission.status === "running"}
+                        data-tooltip={mission.status === "running" || mission.status === "awaiting_input" ? "먼저 실행을 중단해 주세요." : deleteArmed ? "한 번 더 눌러 삭제" : "삭제"}
+                        disabled={deletingMission || mission.status === "running" || mission.status === "awaiting_input"}
                         onClick={() => void deleteMission()}
                       >
                         {deletingMission ? <LoaderCircle className="is-running" size={14} /> : deleteArmed ? <AlertTriangle size={14} /> : <Trash2 size={14} />}
@@ -715,6 +754,62 @@ export function DeepAnalysisView({
                       {(latestGraphChange.removedNodeKeys?.length ?? 0) > 0 && `−${latestGraphChange.removedNodeKeys?.length}`}
                     </small>
                   </div>
+                )}
+                {pendingDecision && (
+                  <section className="deep-analysis-decision" aria-labelledby={`decision-${pendingDecision.id}`}>
+                    <div className="deep-analysis-decision-heading">
+                      <CircleAlert size={17} />
+                      <div>
+                        <strong id={`decision-${pendingDecision.id}`}>사용자 판단이 필요합니다</strong>
+                        <span>{pendingDecision.requestedByNodeKey ? `${pendingDecision.requestedByNodeKey} 결과에서 요청됨` : "Workflow 진행을 위한 확인"}</span>
+                      </div>
+                    </div>
+                    <p>{pendingDecision.question}</p>
+                    <div className="deep-analysis-decision-options" role="radiogroup" aria-label="판단 선택지">
+                      {pendingDecision.options.map((option) => {
+                        const recommended = option.id === pendingDecision.recommendationOptionId;
+                        return (
+                          <button
+                            type="button"
+                            role="radio"
+                            aria-checked={decisionOptionId === option.id}
+                            className={decisionOptionId === option.id ? "is-selected" : ""}
+                            key={option.id}
+                            onClick={() => setDecisionOptionId(option.id)}
+                            disabled={!canEdit || answeringDecision}
+                          >
+                            <span><strong>{option.label}</strong>{recommended && <em>AI 권고</em>}</span>
+                            {option.description && <small>{option.description}</small>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {pendingDecision.recommendationRationale && (
+                      <div className="deep-analysis-decision-recommendation">
+                        <strong>권고 근거</strong>
+                        <span>{pendingDecision.recommendationRationale}</span>
+                      </div>
+                    )}
+                    {canEdit && (
+                      <div className="deep-analysis-decision-answer">
+                        <textarea
+                          rows={2}
+                          maxLength={4000}
+                          value={decisionAnswerText}
+                          placeholder="추가 지시나 판단 근거가 있으면 적어 주세요. (선택)"
+                          onChange={(event) => setDecisionAnswerText(event.target.value)}
+                        />
+                        <button
+                          type="button"
+                          disabled={!decisionOptionId || answeringDecision}
+                          onClick={() => void submitDecisionAnswer()}
+                        >
+                          {answeringDecision && <LoaderCircle className="is-running" size={14} />}
+                          {answeringDecision ? "적용 중" : "이 결정으로 계속"}
+                        </button>
+                      </div>
+                    )}
+                  </section>
                 )}
                 {mission.status === "running" && (
                   <div className="deep-analysis-run-feedback is-running" role="status">

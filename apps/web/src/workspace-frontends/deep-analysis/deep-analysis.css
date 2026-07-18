@@ -93,7 +93,7 @@
 .deep-analysis-status,
 .node-status { width: fit-content; color: var(--muted); font-size: 10.5px; font-weight: 650; }
 .status-ready, .status-completed { color: var(--success); }
-.status-running { color: var(--cobalt); }
+.status-running, .status-awaiting_input { color: var(--cobalt); }
 .status-failed, .status-blocked, .status-cancelled { color: var(--danger); }
 
 .deep-analysis-mission-actions { display: flex; flex: none; align-items: center; gap: 7px; }
@@ -129,6 +129,29 @@
 .deep-analysis-workflow-change strong { color: var(--ink); font-size: 11px; }
 .deep-analysis-workflow-change span { overflow: hidden; color: var(--muted); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
 .deep-analysis-workflow-change small { margin-left: auto; color: var(--cobalt); font-size: 10.5px; font-weight: 650; white-space: nowrap; }
+
+.deep-analysis-decision { display: grid; gap: 10px; padding: 12px 16px; border-bottom: 1px solid color-mix(in srgb, var(--cobalt) 28%, var(--line)); background: color-mix(in srgb, var(--cobalt-pale) 58%, var(--surface)); }
+.deep-analysis-decision-heading { display: flex; align-items: center; gap: 8px; color: var(--cobalt); }
+.deep-analysis-decision-heading > svg { flex: none; }
+.deep-analysis-decision-heading > div { display: grid; gap: 2px; }
+.deep-analysis-decision-heading strong { color: var(--ink); font-size: 12px; }
+.deep-analysis-decision-heading span { color: var(--muted); font-size: 10px; }
+.deep-analysis-decision > p { margin: 0; color: var(--ink); font-size: 12px; font-weight: 620; line-height: 1.5; }
+.deep-analysis-decision-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 7px; }
+.deep-analysis-decision-options > button { display: grid; min-height: 58px; gap: 5px; border: 1px solid var(--line-strong); border-radius: var(--radius-option); padding: 9px 10px; background: var(--surface); color: var(--ink); text-align: left; cursor: pointer; }
+.deep-analysis-decision-options > button:hover { border-color: color-mix(in srgb, var(--cobalt) 45%, var(--line)); }
+.deep-analysis-decision-options > button.is-selected { border-color: var(--cobalt); box-shadow: inset 0 0 0 1px var(--cobalt); background: var(--cobalt-pale); }
+.deep-analysis-decision-options > button:disabled { cursor: default; }
+.deep-analysis-decision-options > button > span { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.deep-analysis-decision-options strong { font-size: 11px; }
+.deep-analysis-decision-options em { border-radius: var(--radius-pill); padding: 2px 6px; background: var(--cobalt); color: white; font-size: 9px; font-style: normal; font-weight: 650; }
+.deep-analysis-decision-options small { color: var(--muted); font-size: 10px; line-height: 1.4; }
+.deep-analysis-decision-recommendation { display: flex; gap: 7px; color: var(--muted); font-size: 10.5px; line-height: 1.45; }
+.deep-analysis-decision-recommendation strong { flex: none; color: var(--cobalt); }
+.deep-analysis-decision-answer { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; }
+.deep-analysis-decision-answer textarea { min-height: 48px; border: 1px solid var(--line-strong); border-radius: var(--radius-field); padding: 8px 9px; background: var(--surface); color: var(--ink); font-size: 11px; line-height: 1.45; resize: vertical; }
+.deep-analysis-decision-answer button { display: inline-flex; min-height: 31px; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--cobalt); border-radius: var(--radius-control); padding: 0 11px; background: var(--cobalt); color: white; font-size: 11px; font-weight: 650; cursor: pointer; }
+.deep-analysis-decision-answer button:disabled { opacity: .5; cursor: default; }
 
 .deep-analysis-run-feedback { display: flex; min-height: 44px; align-items: center; gap: 9px; padding: 7px 16px; border-bottom: 1px solid var(--line); background: var(--surface); color: var(--muted); }
 .deep-analysis-run-feedback > svg { flex: none; }

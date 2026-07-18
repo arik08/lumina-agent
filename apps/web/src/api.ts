@@ -19,6 +19,7 @@ import type {
   AdminUser,
   AdminUserList,
   AttachmentSummary,
+  AnswerDeepAnalysisDecisionRequest,
   AuthSession,
   CancelDeepAnalysisMissionRequest,
   CreateKnowledgeEntityRequest,
@@ -1301,6 +1302,18 @@ export async function updateDeepAnalysisMission(
   );
 }
 
+export async function answerDeepAnalysisDecision(
+  missionId: string,
+  decisionId: string,
+  payload: AnswerDeepAnalysisDecisionRequest,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisMissionDetail>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/decisions/${encodeURIComponent(decisionId)}/answer`,
+    { method: "POST", body: payload, signal },
+  );
+}
+
 export async function listKnowledgeSpaces(signal?: AbortSignal) {
   return request<KnowledgeSpace[]>("/knowledge/spaces", { signal });
 }
@@ -2178,6 +2191,7 @@ export const api = {
     retryMission: retryDeepAnalysisMission,
     deleteMission: deleteDeepAnalysisMission,
     updateMission: updateDeepAnalysisMission,
+    answerDecision: answerDeepAnalysisDecision,
   },
   knowledge: {
     listSpaces: listKnowledgeSpaces,

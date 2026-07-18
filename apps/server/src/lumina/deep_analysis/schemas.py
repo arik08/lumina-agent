@@ -50,6 +50,33 @@ class MissionRetry(ApiModel):
     node_key: str = Field(min_length=1, max_length=32)
 
 
+class DecisionAnswer(ApiModel):
+    expected_revision: int = Field(ge=1)
+    selected_option_id: str = Field(min_length=1, max_length=64)
+    answer_text: str = Field(default="", max_length=4000)
+
+
+class DecisionResponse(ApiModel):
+    id: str
+    mission_id: str
+    workflow_revision_id: str
+    requested_by_node_key: str | None
+    question: str
+    options: list[dict[str, Any]]
+    recommendation_option_id: str | None
+    recommendation_rationale: str
+    impact: dict[str, Any]
+    affected_node_keys: list[str]
+    status: str
+    selected_option_id: str | None
+    answer_text: str
+    decided_by_user_id: str | None
+    applied_workflow_revision_number: int | None
+    resolved_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
 class WorkflowNodeResponse(ApiModel):
     id: str
     node_key: str
@@ -118,4 +145,5 @@ class MissionDetailResponse(MissionSummaryResponse):
     charter: dict[str, Any]
     completion_contract: dict[str, Any]
     source_manifest: list[dict[str, Any]]
+    decisions: list[DecisionResponse]
     workflow: WorkflowRevisionResponse

@@ -9,8 +9,14 @@ from ...api.schemas import RunActionRequest
 from ...config import Settings, get_settings
 from ...db import get_db
 from ...deep_analysis.execution import create_node_run
-from ...deep_analysis.models import DeepAnalysisMission
+from ...deep_analysis.models import (
+    DeepAnalysisDecision,
+    DeepAnalysisDecisionResponse,
+    DeepAnalysisMission,
+)
 from ...deep_analysis.schemas import (
+    DecisionAnswer,
+    DecisionResponse,
     MissionCancel,
     MissionCreate,
     MissionDetailResponse,
@@ -21,10 +27,12 @@ from ...deep_analysis.schemas import (
 )
 from ...deep_analysis.service import (
     active_workflow,
+    answer_decision,
     cancel_mission,
     create_mission,
     delete_mission,
     execution_engine_available,
+    list_decisions,
     list_missions,
     require_mission,
     retry_mission_node,
@@ -39,6 +47,39 @@ from ..dependencies import AuthContext, get_current_user, require_csrf
 
 
 router = APIRouter(tags=["deep-analysis"])
+
+
+def _decision_payload(
+    decision: DeepAnalysisDecision,
+    response: DeepAnalysisDecisionResponse | None,
+    requested_by_node_key: str | None,
+) -> dict[str, object]:
+    return {
+        "id": decision.id,
+        "mission_id": decision.mission_id,
+        "workflow_revision_id": decision.workflow_revision_id,
+        "requested_by_node_key": requested_by_node_key,
+        "question": decision.question,
+        "options": decision.options_json,
+        "recommendation_option_id": decision.recommendation_option_id,
+        "recommendation_rationale": decision.recommendation_rationale,
+        "impact": decision.impact_json,
+        "affected_node_keys": decision.affected_node_keys_json,
+        "status": decision.status,
+        "selected_option_id": (
+            response.selected_option_id if response is not None else None
+        ),
+        "answer_text": response.answer_text if response is not None else "",
+        "decided_by_user_id": (
+            response.decided_by_user_id if response is not None else None
+        ),
+        "applied_workflow_revision_number": (
+            decision.applied_workflow_revision_number
+        ),
+        "resolved_at": decision.resolved_at,
+        "created_at": decision.created_at,
+        "updated_at": decision.updated_at,
+    }
 
 
 def _summary_payload(mission: DeepAnalysisMission) -> dict[str, object]:
@@ -72,6 +113,10 @@ def _detail_payload(db: Session, mission: DeepAnalysisMission) -> dict[str, obje
         "charter": mission.charter_json,
         "completion_contract": mission.completion_contract_json,
         "source_manifest": mission.source_manifest_json,
+        "decisions": [
+            _decision_payload(decision, response, node_key)
+            for decision, response, node_key in list_decisions(db, mission.id)
+        ],
         "workflow": {
             "id": revision.id,
             "revision_number": revision.revision_number,
@@ -195,6 +240,79 @@ def get_mission(
     mission = require_mission(db, user, mission_id)
     if upgrade_legacy_draft_workflow(db, mission):
         db.commit()
+    return _detail_payload(db, mission)
+
+
+@router.get(
+    "/deep-analysis/missions/{mission_id}/decisions",
+    response_model=list[DecisionResponse],
+)
+def get_mission_decisions(
+    mission_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict[str, object]]:
+    mission = require_mission(db, user, mission_id)
+    return [
+        _decision_payload(decision, response, node_key)
+        for decision, response, node_key in list_decisions(db, mission.id)
+    ]
+
+
+@router.post(
+    "/deep-analysis/missions/{mission_id}/decisions/{decision_id}/answer",
+    response_model=MissionDetailResponse,
+)
+async def post_mission_decision_answer(
+    mission_id: str,
+    decision_id: str,
+    payload: DecisionAnswer,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    mission = require_mission(db, context.user, mission_id, write=True)
+    decision, _response, next_node, changed = answer_decision(
+        db,
+        mission=mission,
+        user=context.user,
+        decision_id=decision_id,
+        expected_revision=payload.expected_revision,
+        selected_option_id=payload.selected_option_id,
+        answer_text=payload.answer_text,
+    )
+    next_run = None
+    created = False
+    if changed and next_node is not None:
+        next_run, created = create_node_run(
+            db,
+            user=context.user,
+            mission=mission,
+            node=next_node,
+            settings=settings,
+        )
+    if changed:
+        record_audit(
+            db,
+            action="deep_analysis_decision_resolved",
+            target_type="deep_analysis_decision",
+            target_id=decision.id,
+            result="success",
+            actor=context.user,
+            request_id=getattr(request.state, "request_id", None),
+            metadata={
+                "mission_id": mission.id,
+                "selected_option_id": payload.selected_option_id,
+                "applied_workflow_revision_number": (
+                    decision.applied_workflow_revision_number
+                ),
+            },
+        )
+    db.commit()
+    if created and next_run is not None:
+        local_run_executor.enqueue(next_run.id)
+        await event_broker.notify(next_run.id)
     return _detail_payload(db, mission)
 
 

@@ -7,6 +7,8 @@ from ..api.errors import ApiProblem
 from ..authorization import require_project
 from ..models import Conversation, ProjectFile, User, utc_now
 from .models import (
+    DeepAnalysisDecision,
+    DeepAnalysisDecisionResponse,
     DeepAnalysisMission,
     DeepAnalysisWorkflowEdge,
     DeepAnalysisWorkflowNode,
@@ -23,6 +25,183 @@ from .planning import (
 
 
 DEEP_ANALYSIS_EXECUTION_AVAILABLE = True
+
+
+def list_decisions(
+    db: Session, mission_id: str
+) -> list[
+    tuple[
+        DeepAnalysisDecision,
+        DeepAnalysisDecisionResponse | None,
+        str | None,
+    ]
+]:
+    decisions = list(
+        db.scalars(
+            select(DeepAnalysisDecision)
+            .where(DeepAnalysisDecision.mission_id == mission_id)
+            .order_by(DeepAnalysisDecision.created_at, DeepAnalysisDecision.id)
+        )
+    )
+    if not decisions:
+        return []
+    responses = {
+        response.decision_id: response
+        for response in db.scalars(
+            select(DeepAnalysisDecisionResponse).where(
+                DeepAnalysisDecisionResponse.decision_id.in_(
+                    [decision.id for decision in decisions]
+                )
+            )
+        )
+    }
+    requested_node_ids = [
+        decision.requested_by_node_id
+        for decision in decisions
+        if decision.requested_by_node_id
+    ]
+    node_keys = (
+        {
+            node.id: node.node_key
+            for node in db.scalars(
+                select(DeepAnalysisWorkflowNode).where(
+                    DeepAnalysisWorkflowNode.id.in_(requested_node_ids)
+                )
+            )
+        }
+        if requested_node_ids
+        else {}
+    )
+    return [
+        (
+            decision,
+            responses.get(decision.id),
+            node_keys.get(decision.requested_by_node_id),
+        )
+        for decision in decisions
+    ]
+
+
+def answer_decision(
+    db: Session,
+    *,
+    mission: DeepAnalysisMission,
+    user: User,
+    decision_id: str,
+    expected_revision: int,
+    selected_option_id: str,
+    answer_text: str,
+) -> tuple[
+    DeepAnalysisDecision,
+    DeepAnalysisDecisionResponse,
+    DeepAnalysisWorkflowNode | None,
+    bool,
+]:
+    decision = db.scalar(
+        select(DeepAnalysisDecision).where(
+            DeepAnalysisDecision.id == decision_id,
+            DeepAnalysisDecision.mission_id == mission.id,
+        )
+    )
+    if decision is None:
+        raise ApiProblem(404, "decision_not_found", "판단 요청을 찾을 수 없습니다.")
+    existing = db.scalar(
+        select(DeepAnalysisDecisionResponse).where(
+            DeepAnalysisDecisionResponse.decision_id == decision.id
+        )
+    )
+    clean_text = answer_text.strip()
+    if existing is not None:
+        if (
+            existing.selected_option_id == selected_option_id
+            and existing.answer_text == clean_text
+        ):
+            return decision, existing, None, False
+        raise ApiProblem(
+            409,
+            "decision_already_resolved",
+            "이미 확정된 판단은 다른 답으로 덮어쓸 수 없습니다.",
+        )
+    option_ids = {
+        str(option.get("id"))
+        for option in decision.options_json
+        if isinstance(option, dict) and option.get("id")
+    }
+    if selected_option_id not in option_ids:
+        raise ApiProblem(
+            422,
+            "invalid_decision_option",
+            "판단 요청에 포함된 선택지를 골라 주세요.",
+            field="selectedOptionId",
+        )
+    if mission.status != "awaiting_input" or decision.status != "pending":
+        raise ApiProblem(
+            409,
+            "decision_not_pending",
+            "현재 답변을 기다리는 판단 요청이 아닙니다.",
+            details={
+                "missionStatus": mission.status,
+                "decisionStatus": decision.status,
+            },
+        )
+    result = db.execute(
+        update(DeepAnalysisMission)
+        .where(
+            DeepAnalysisMission.id == mission.id,
+            DeepAnalysisMission.revision == expected_revision,
+            DeepAnalysisMission.status == "awaiting_input",
+        )
+        .values(status="running", revision=expected_revision + 1)
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        db.refresh(mission)
+        raise ApiProblem(
+            409,
+            "revision_conflict",
+            "다른 변경사항이 먼저 저장되었습니다. 최신 상태를 불러와 다시 시도해 주세요.",
+            details={"currentRevision": mission.revision},
+        )
+
+    response = DeepAnalysisDecisionResponse(
+        decision_id=decision.id,
+        selected_option_id=selected_option_id,
+        answer_text=clean_text,
+        decided_by_user_id=user.id,
+    )
+    db.add(response)
+    decision.status = "resolved"
+    decision.resolved_at = utc_now()
+    revision, nodes, edges = active_workflow(db, mission.id)
+    decision.applied_workflow_revision_number = revision.revision_number
+    if decision.requested_by_node_id:
+        requesting_node = next(
+            (node for node in nodes if node.id == decision.requested_by_node_id),
+            None,
+        )
+        if requesting_node is not None:
+            requesting_node.config_json = {
+                **requesting_node.config_json,
+                "resolvedDecision": {
+                    "decisionId": decision.id,
+                    "selectedOptionId": selected_option_id,
+                },
+            }
+    from .planning import next_runnable_node
+
+    next_node = next_runnable_node(nodes, edges)
+    if next_node is None:
+        mission.status = "completed"
+        mission.completion_contract_json = {
+            **mission.completion_contract_json,
+            "qualityGate": "completed",
+        }
+    else:
+        next_node.status = "running"
+        next_node.started_at = next_node.started_at or utc_now()
+    db.flush()
+    db.refresh(mission)
+    return decision, response, next_node, True
 
 
 def execution_engine_available() -> bool:
@@ -263,7 +442,7 @@ def delete_mission(
     *,
     expected_revision: int,
 ) -> int:
-    if mission.status == "running":
+    if mission.status in {"running", "awaiting_input"}:
         raise ApiProblem(
             409,
             "mission_running",
@@ -476,7 +655,7 @@ def cancel_mission(
 ) -> DeepAnalysisMission:
     if mission.status == "cancelled":
         return mission
-    if mission.status != "running":
+    if mission.status not in {"running", "awaiting_input"}:
         raise ApiProblem(
             409,
             "mission_not_cancellable",
@@ -506,6 +685,13 @@ def cancel_mission(
     for node in nodes:
         if node.status == "running":
             node.status = "cancelled"
+    for decision in db.scalars(
+        select(DeepAnalysisDecision).where(
+            DeepAnalysisDecision.mission_id == mission.id,
+            DeepAnalysisDecision.status == "pending",
+        )
+    ):
+        decision.status = "cancelled"
     db.flush()
     db.refresh(mission)
     return mission

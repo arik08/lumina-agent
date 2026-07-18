@@ -285,6 +285,31 @@ export interface DeepAnalysisWorkflowRevision {
   updatedAt: IsoDateTime;
 }
 
+export interface DeepAnalysisDecision {
+  id: UUID;
+  missionId: UUID;
+  workflowRevisionId: UUID;
+  requestedByNodeKey: string | null;
+  question: string;
+  options: Array<{
+    id: string;
+    label: string;
+    description: string;
+  }>;
+  recommendationOptionId: string | null;
+  recommendationRationale: string;
+  impact: Record<string, unknown>;
+  affectedNodeKeys: string[];
+  status: "pending" | "resolved" | "cancelled";
+  selectedOptionId: string | null;
+  answerText: string;
+  decidedByUserId: UUID | null;
+  appliedWorkflowRevisionNumber: number | null;
+  resolvedAt: IsoDateTime | null;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
 export interface DeepAnalysisMissionDetail extends DeepAnalysisMissionSummary {
   executionAvailable: boolean;
   charter: Record<string, unknown>;
@@ -298,6 +323,7 @@ export interface DeepAnalysisMissionDetail extends DeepAnalysisMissionSummary {
     mimeType: string;
     sizeBytes: number;
   }>;
+  decisions: DeepAnalysisDecision[];
   workflow: DeepAnalysisWorkflowRevision;
 }
 
@@ -327,6 +353,12 @@ export interface CancelDeepAnalysisMissionRequest {
 export interface RetryDeepAnalysisMissionRequest {
   expectedRevision: number;
   nodeKey: string;
+}
+
+export interface AnswerDeepAnalysisDecisionRequest {
+  expectedRevision: number;
+  selectedOptionId: string;
+  answerText?: string;
 }
 
 export type KnowledgeSourceType = "file" | "url" | "conversation" | "text" | "connector";

@@ -172,3 +172,59 @@ class DeepAnalysisWorkflowEdge(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     edge_type: Mapped[str] = mapped_column(
         String(24), default="sequence", nullable=False
     )
+
+
+class DeepAnalysisDecision(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "deep_analysis_decisions"
+    __table_args__ = (
+        Index(
+            "ix_deep_analysis_decisions_mission_status",
+            "mission_id",
+            "status",
+        ),
+    )
+
+    mission_id: Mapped[str] = mapped_column(
+        ForeignKey("deep_analysis_missions.id", ondelete="CASCADE"), nullable=False
+    )
+    workflow_revision_id: Mapped[str] = mapped_column(
+        ForeignKey("deep_analysis_workflow_revisions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    requested_by_node_id: Mapped[str | None] = mapped_column(
+        ForeignKey("deep_analysis_workflow_nodes.id", ondelete="SET NULL")
+    )
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    options_json: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
+    recommendation_option_id: Mapped[str | None] = mapped_column(String(64))
+    recommendation_rationale: Mapped[str] = mapped_column(
+        Text, default="", nullable=False
+    )
+    impact_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
+    affected_node_keys_json: Mapped[list[str]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(24), default="pending", nullable=False
+    )
+    applied_workflow_revision_number: Mapped[int | None] = mapped_column(Integer)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class DeepAnalysisDecisionResponse(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "deep_analysis_decision_responses"
+
+    decision_id: Mapped[str] = mapped_column(
+        ForeignKey("deep_analysis_decisions.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+    )
+    selected_option_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    answer_text: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    decided_by_user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )

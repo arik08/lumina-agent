@@ -121,6 +121,27 @@ test("adaptive Workflow changes are explained and refitted on graph updates", as
   assert.match(css, /path\.is-merge/);
 });
 
+test("durable Decision requests pause inline and resume through the revision-checked API", async () => {
+  const [view, api, css] = await Promise.all([
+    readFile(viewPath, "utf8"),
+    readFile(apiPath, "utf8"),
+    readFile(cssPath, "utf8"),
+  ]);
+
+  assert.match(view, /mission\?\.decisions\.find\(\(decision\) => decision\.status === "pending"\)/);
+  assert.match(view, /사용자 판단이 필요합니다/);
+  assert.match(view, /AI 권고/);
+  assert.match(view, /api\.deepAnalysis\.answerDecision/);
+  assert.match(view, /expectedRevision: mission\.revision/);
+  assert.match(view, /selectedOptionId: decisionOptionId/);
+  assert.match(view, /이 결정으로 계속/);
+  assert.match(view, /mission\.status === "running" \|\| mission\.status === "awaiting_input"/);
+  assert.match(api, /decisions\/\$\{encodeURIComponent\(decisionId\)\}\/answer/);
+  assert.match(api, /answerDecision: answerDeepAnalysisDecision/);
+  assert.match(css, /\.deep-analysis-decision \{/);
+  assert.match(css, /\.deep-analysis-decision-options > button\.is-selected/);
+});
+
 test("failed or cancelled Nodes can retry with visible attempts and calculation files", async () => {
   const [view, api] = await Promise.all([
     readFile(viewPath, "utf8"),

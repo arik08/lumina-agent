@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from ..models import utc_now
 from .models import (
+    DeepAnalysisDecision,
     DeepAnalysisMission,
     DeepAnalysisWorkflowEdge,
     DeepAnalysisWorkflowNode,
@@ -25,7 +26,7 @@ _DECISION_PATTERN = re.compile(
     r"<!--\s*LUMINA_WORKFLOW_DECISION\s*(\{.*?\})\s*-->",
     re.IGNORECASE | re.DOTALL,
 )
-_ALLOWED_ACTIONS = {"continue", "expand", "shrink", "replace", "finish"}
+_ALLOWED_ACTIONS = {"continue", "expand", "shrink", "replace", "finish", "ask"}
 _ALLOWED_NODE_TYPES = {
     "data_check",
     "research",
@@ -363,6 +364,7 @@ Workflow 적응 판단:
 - 남은 Node: {', '.join(pending) if pending else '없음'}
 - 이미 적용된 그래프 재계획: {replans}/{MAX_REPLANS}회
 - 근거가 부족하거나 별도 전문 분석이 필요하면 expand, 불필요한 예정 Node가 있으면 shrink, 예정 단계를 다른 분석으로 바꿔야 하면 replace, 바로 최종 합성이 가능하면 finish를 선택하십시오.
+- 사용자의 답에 따라 분석 범위나 결론이 실질적으로 달라지고 안전한 기본값을 정할 수 없을 때만 ask를 선택하십시오. 질문은 한 번에 하나, 선택지는 2~3개로 제한하고 AI 권고와 영향을 함께 제시하십시오.
 - 단순히 예정대로 진행해도 충분하면 continue를 선택하십시오.
 - 서로 독립적으로 검증해야 하는 가설·지역·제품·관점은 한 줄로 연결하지 말고 같은 선행 Node에서 분기하십시오.
 - 분기 결과를 함께 판단해야 하면 별도 검증·합성 Node를 추가하고 그 Node의 dependsOn에 모든 분기 ref를 지정해 다시 합류시키십시오.
@@ -370,7 +372,7 @@ Workflow 적응 판단:
 - 추가 Node는 최대 {MAX_ADDED_NODES_PER_DECISION}개이며 보고서 Node를 직접 추가하지 마십시오.
 - Markdown 본문 맨 끝에 아래 형식의 HTML 주석을 정확히 하나 추가하십시오. 이 주석은 문서 저장 전에 분리됩니다.
 <!-- LUMINA_WORKFLOW_DECISION
-{{"action":"continue|expand|shrink|replace|finish","reason":"판단 근거","confidence":0.0,"add":[{{"ref":"causeA","title":"원인 A 분석","purpose":"독립적으로 검증할 내용","nodeType":"analysis","dependsOn":["current"]}},{{"ref":"causeB","title":"원인 B 분석","purpose":"독립적으로 검증할 내용","nodeType":"analysis","dependsOn":["current"]}},{{"ref":"merge","title":"원인 교차검증","purpose":"두 분석 결과를 함께 검증","nodeType":"validation","dependsOn":["causeA","causeB"]}}],"remove":["N020"]}}
+{{"action":"continue|expand|shrink|replace|finish|ask","reason":"판단 근거","confidence":0.0,"add":[{{"ref":"causeA","title":"원인 A 분석","purpose":"독립적으로 검증할 내용","nodeType":"analysis","dependsOn":["current"]}},{{"ref":"causeB","title":"원인 B 분석","purpose":"독립적으로 검증할 내용","nodeType":"analysis","dependsOn":["current"]}},{{"ref":"merge","title":"원인 교차검증","purpose":"두 분석 결과를 함께 검증","nodeType":"validation","dependsOn":["causeA","causeB"]}}],"remove":["N020"],"question":"사용자 판단이 필요한 한 가지 질문","options":[{{"id":"option_a","label":"선택 A","description":"선택 시 영향"}},{{"id":"option_b","label":"선택 B","description":"선택 시 영향"}}],"recommendationOptionId":"option_a","recommendationRationale":"AI 권고 근거","impact":{{"summary":"답에 따라 달라지는 분석 범위"}},"affectedNodeKeys":["N020"]}}
 -->
 """
 
@@ -444,12 +446,61 @@ def extract_workflow_decision(markdown: str) -> tuple[str, dict[str, Any]]:
         str(item)[:32]
         for item in raw.get("remove", []) if isinstance(item, str)
     ][:8] if isinstance(raw.get("remove"), list) else []
+    question = str(raw.get("question") or "").strip()[:2000]
+    options: list[dict[str, str]] = []
+    seen_option_ids: set[str] = set()
+    raw_options = raw.get("options") if isinstance(raw.get("options"), list) else []
+    for item in raw_options:
+        if not isinstance(item, dict):
+            continue
+        option_id = re.sub(
+            r"[^A-Za-z0-9_-]", "", str(item.get("id") or "")
+        )[:64]
+        label = str(item.get("label") or "").strip()[:240]
+        description = str(item.get("description") or "").strip()[:1000]
+        if not option_id or option_id in seen_option_ids or not label:
+            continue
+        options.append(
+            {"id": option_id, "label": label, "description": description}
+        )
+        seen_option_ids.add(option_id)
+        if len(options) >= 3:
+            break
+    recommendation_option_id = str(
+        raw.get("recommendationOptionId") or ""
+    )[:64]
+    if recommendation_option_id not in seen_option_ids:
+        recommendation_option_id = ""
+    impact = raw.get("impact") if isinstance(raw.get("impact"), dict) else {}
+    affected_node_keys = [
+        str(item)[:32]
+        for item in (
+            raw.get("affectedNodeKeys")
+            if isinstance(raw.get("affectedNodeKeys"), list)
+            else []
+        )
+        if isinstance(item, str)
+    ][:12]
+    if action == "ask" and (not question or len(options) < 2):
+        action = "continue"
+        reason = (
+            "질문 형식이 불완전하여 안전하게 기존 Workflow를 계속합니다. "
+            f"원 판단: {reason}"
+        )
     return clean, {
         "action": action,
         "reason": reason,
         "confidence": confidence,
         "add": additions,
         "remove": removals,
+        "question": question,
+        "options": options,
+        "recommendationOptionId": recommendation_option_id or None,
+        "recommendationRationale": str(
+            raw.get("recommendationRationale") or ""
+        ).strip()[:2000],
+        "impact": impact,
+        "affectedNodeKeys": affected_node_keys,
     }
 
 
@@ -548,7 +599,12 @@ def apply_workflow_decision(
         for item in revision.change_log_json
         if isinstance(item, dict) and item.get("graphChanged") and item.get("action") != "initial"
     )
-    if graph_change_count >= MAX_REPLANS and action != "continue":
+    if graph_change_count >= MAX_REPLANS and action in {
+        "expand",
+        "shrink",
+        "replace",
+        "finish",
+    }:
         action = "continue"
         decision = {
             **decision,
@@ -676,6 +732,34 @@ def apply_workflow_decision(
             ):
                 _add_edge(db, revision, edges, current_node.node_key, report.node_key)
                 graph_changed = True
+
+    if action == "ask":
+        pending = db.query(DeepAnalysisDecision).filter(
+            DeepAnalysisDecision.mission_id == mission.id,
+            DeepAnalysisDecision.status == "pending",
+        ).one_or_none()
+        if pending is None:
+            db.add(
+                DeepAnalysisDecision(
+                    mission_id=mission.id,
+                    workflow_revision_id=revision.id,
+                    requested_by_node_id=current_node.id,
+                    question=str(decision.get("question") or ""),
+                    options_json=list(decision.get("options") or []),
+                    recommendation_option_id=decision.get(
+                        "recommendationOptionId"
+                    ),
+                    recommendation_rationale=str(
+                        decision.get("recommendationRationale") or ""
+                    ),
+                    impact_json=dict(decision.get("impact") or {}),
+                    affected_node_keys_json=list(
+                        decision.get("affectedNodeKeys") or []
+                    ),
+                    status="pending",
+                )
+            )
+        mission.status = "awaiting_input"
 
     db.flush()
     if graph_changed:

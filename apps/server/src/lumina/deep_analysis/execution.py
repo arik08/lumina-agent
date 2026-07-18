@@ -28,6 +28,8 @@ from ..runs.service import create_run
 from ..runs.state import CANCELLED, COMPLETED, TERMINAL_STATUSES
 from ..storage import ManagedStorage
 from .models import (
+    DeepAnalysisDecision,
+    DeepAnalysisDecisionResponse,
     DeepAnalysisMission,
     DeepAnalysisWorkflowEdge,
     DeepAnalysisWorkflowNode,
@@ -242,6 +244,7 @@ def _run_prompt(
     node: DeepAnalysisWorkflowNode,
     manifest: list[dict[str, Any]],
     workflow_instruction: str,
+    decision_context: str = "",
 ) -> str:
     return f"""당신은 Lumina 심층분석 Workflow의 한 Node를 실행하고 있습니다.
 
@@ -252,6 +255,8 @@ Node 목적: {node.purpose}
 
 고정 입력 자료 manifest:
 {_manifest_prompt(manifest)}
+
+{decision_context}
 
 이번 단계 지시:
 {_stage_instruction(node)}
@@ -267,6 +272,38 @@ Node 목적: {node.purpose}
 - 채팅 인사말이나 작업 예고 없이 완성된 본문부터 출력하십시오.
 {workflow_instruction}
 """
+
+
+def _resolved_decision_context(db: Session, mission_id: str) -> str:
+    rows = db.execute(
+        select(DeepAnalysisDecision, DeepAnalysisDecisionResponse)
+        .join(
+            DeepAnalysisDecisionResponse,
+            DeepAnalysisDecisionResponse.decision_id == DeepAnalysisDecision.id,
+        )
+        .where(
+            DeepAnalysisDecision.mission_id == mission_id,
+            DeepAnalysisDecision.status == "resolved",
+        )
+        .order_by(DeepAnalysisDecision.created_at, DeepAnalysisDecision.id)
+    )
+    lines: list[str] = []
+    for decision, response in rows:
+        option = next(
+            (
+                item
+                for item in decision.options_json
+                if isinstance(item, dict)
+                and item.get("id") == response.selected_option_id
+            ),
+            {},
+        )
+        selected = str(option.get("label") or response.selected_option_id)
+        detail = f" — {response.answer_text}" if response.answer_text else ""
+        lines.append(f"- {decision.question}: {selected}{detail}")
+    if not lines:
+        return "사용자 확정 판단: 없음"
+    return "사용자 확정 판단(후속 Node의 고정 입력):\n" + "\n".join(lines)
 
 
 def _ensure_conversation(
@@ -322,6 +359,7 @@ def create_node_run(
         if workflow_revision is not None
         else ""
     )
+    decision_context = _resolved_decision_context(db, mission.id)
     analysis_depth, answer_length = _run_profile(node)
     attempt = len(node.run_history_json) + 1
     run, _message, created = create_run(
@@ -330,7 +368,13 @@ def create_node_run(
         conversation_id=conversation.id,
         payload=RunCreate(
             message=RunMessageInput(
-                text=_run_prompt(mission, node, manifest, workflow_instruction),
+                text=_run_prompt(
+                    mission,
+                    node,
+                    manifest,
+                    workflow_instruction,
+                    decision_context,
+                ),
                 output_mode="chat",
                 analysis_depth=analysis_depth,
                 answer_length=answer_length,
@@ -553,6 +597,9 @@ def sync_terminal_run(
                 current_node=node,
                 decision=workflow_decision,
             )
+        if mission.status == "awaiting_input":
+            mission.revision += 1
+            return TerminalSyncResult(changed=True)
         nodes = list(
             db.scalars(
                 select(DeepAnalysisWorkflowNode)

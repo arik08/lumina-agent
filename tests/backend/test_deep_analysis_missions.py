@@ -11,6 +11,8 @@ from lumina.config import Settings
 from lumina.db import SessionLocal
 from lumina.deep_analysis.calculations import execute_python_calculation
 from lumina.deep_analysis.models import (
+    DeepAnalysisDecision,
+    DeepAnalysisDecisionResponse,
     DeepAnalysisMission,
     DeepAnalysisWorkflowEdge,
     DeepAnalysisWorkflowNode,
@@ -24,7 +26,7 @@ from lumina.deep_analysis.planning import (
     plan_edges,
 )
 from lumina.main import create_app
-from lumina.models import Organization, ProjectFile, Run, User
+from lumina.models import Message, Organization, ProjectFile, Run, User
 from lumina.storage import ManagedLocalStorage
 
 
@@ -342,6 +344,151 @@ def test_runtime_decision_branches_merges_and_then_shrinks_the_dag(
                 supplier.node_key,
                 merge.node_key,
             }
+
+
+def test_runtime_decision_waits_for_durable_user_answer_and_resumes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    enqueued: list[str] = []
+    monkeypatch.setattr(
+        "lumina.api.routes.deep_analysis.local_run_executor.enqueue",
+        enqueued.append,
+    )
+    with TestClient(create_app(_settings(tmp_path))) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        created = client.post(
+            f"/api/projects/{project_id}/deep-analysis/missions",
+            headers=headers,
+            json={
+                "title": "투자안 심층 분석",
+                "objective": "사용자 기준에 따라 투자안의 우선순위를 평가한다.",
+            },
+        ).json()
+        assert created["decisions"] == []
+
+        markdown, decision = extract_workflow_decision(
+            "# 중간 결과\n평가 기준을 확정해야 합니다.\n"
+            "<!-- LUMINA_WORKFLOW_DECISION\n"
+            '{"action":"ask","reason":"평가 기준에 따라 결론이 달라집니다.",'
+            '"confidence":0.91,"add":[],"remove":[],'
+            '"question":"어떤 기준을 최우선으로 평가할까요?",'
+            '"options":[{"id":"profit","label":"수익성","description":"NPV와 회수기간을 우선합니다."},'
+            '{"id":"risk","label":"위험 최소화","description":"변동성과 손실 가능성을 우선합니다."}],'
+            '"recommendationOptionId":"risk",'
+            '"recommendationRationale":"현재 자료의 불확실성이 높습니다.",'
+            '"impact":{"summary":"후속 분석의 가중치가 달라집니다."},'
+            '"affectedNodeKeys":["N010","N020"]}\n-->'
+        )
+        assert markdown.startswith("# 중간 결과")
+        assert decision["action"] == "ask"
+        assert [item["id"] for item in decision["options"]] == ["profit", "risk"]
+
+        with SessionLocal() as db:
+            mission = db.get(DeepAnalysisMission, created["id"])
+            revision = db.get(
+                DeepAnalysisWorkflowRevision, created["workflow"]["id"]
+            )
+            assert mission is not None and revision is not None
+            current = db.scalar(
+                select(DeepAnalysisWorkflowNode).where(
+                    DeepAnalysisWorkflowNode.workflow_revision_id == revision.id,
+                    DeepAnalysisWorkflowNode.node_key == "N001",
+                )
+            )
+            assert current is not None
+            mission.status = "running"
+            current.status = "completed"
+            assert not apply_workflow_decision(
+                db,
+                mission=mission,
+                revision=revision,
+                current_node=current,
+                decision=decision,
+            )
+            mission.revision += 1
+            db.commit()
+            decision_id = db.scalar(
+                select(DeepAnalysisDecision.id).where(
+                    DeepAnalysisDecision.mission_id == mission.id
+                )
+            )
+            assert decision_id is not None
+
+        waiting = client.get(
+            f"/api/deep-analysis/missions/{created['id']}"
+        ).json()
+        assert waiting["status"] == "awaiting_input"
+        assert waiting["revision"] == 2
+        assert waiting["decisions"][0]["status"] == "pending"
+        assert waiting["decisions"][0]["recommendationOptionId"] == "risk"
+
+        answered = client.post(
+            f"/api/deep-analysis/missions/{created['id']}/decisions/{decision_id}/answer",
+            headers=headers,
+            json={
+                "expectedRevision": 2,
+                "selectedOptionId": "risk",
+                "answerText": "하방 위험을 먼저 제한해 주세요.",
+            },
+        )
+        assert answered.status_code == 200, answered.text
+        resumed = answered.json()
+        assert resumed["status"] == "running"
+        assert resumed["revision"] == 3
+        assert resumed["decisions"][0]["status"] == "resolved"
+        assert resumed["decisions"][0]["selectedOptionId"] == "risk"
+        next_node = next(
+            node for node in resumed["workflow"]["nodes"] if node["status"] == "running"
+        )
+        assert next_node["runId"] in enqueued
+
+        with SessionLocal() as db:
+            stored_response = db.scalar(
+                select(DeepAnalysisDecisionResponse).where(
+                    DeepAnalysisDecisionResponse.decision_id == decision_id
+                )
+            )
+            prompt = db.scalar(
+                select(Message.canonical_text).where(
+                    Message.run_id == next_node["runId"], Message.role == "user"
+                )
+            )
+            assert stored_response is not None
+            assert stored_response.answer_text == "하방 위험을 먼저 제한해 주세요."
+            assert prompt is not None
+            assert "사용자 확정 판단" in prompt
+            assert "위험 최소화 — 하방 위험을 먼저 제한해 주세요." in prompt
+
+        duplicate = client.post(
+            f"/api/deep-analysis/missions/{created['id']}/decisions/{decision_id}/answer",
+            headers=headers,
+            json={
+                "expectedRevision": 2,
+                "selectedOptionId": "risk",
+                "answerText": "하방 위험을 먼저 제한해 주세요.",
+            },
+        )
+        assert duplicate.status_code == 200, duplicate.text
+        assert duplicate.json()["revision"] == 3
+
+        overwritten = client.post(
+            f"/api/deep-analysis/missions/{created['id']}/decisions/{decision_id}/answer",
+            headers=headers,
+            json={
+                "expectedRevision": 3,
+                "selectedOptionId": "profit",
+                "answerText": "수익성을 우선합니다.",
+            },
+        )
+        assert overwritten.status_code == 409
+        assert overwritten.json()["code"] == "decision_already_resolved"
+
+        listed = client.get(
+            f"/api/deep-analysis/missions/{created['id']}/decisions"
+        )
+        assert listed.status_code == 200
+        assert listed.json()[0]["appliedWorkflowRevisionNumber"] == 1
 
 
 def test_mission_endpoints_require_auth_and_project_access(tmp_path: Path) -> None:
