@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+const interactiveResponseSource = readFileSync(new URL("../src/components/InteractiveResponse.tsx", import.meta.url), "utf8");
 const stylesSource = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 const visualArtifactSkillSource = readFileSync(new URL("../../../extensions/skills/visual-artifact/SKILL.md", import.meta.url), "utf8");
 
@@ -51,6 +52,10 @@ test("HTML Artifact generation keeps the user-designated visual palette", () => 
   assert.match(visualArtifactSkillSource, /--viz-blue/);
   assert.match(visualArtifactSkillSource, /--viz-purple/);
   assert.match(visualArtifactSkillSource, /Do not silently replace it with Lumina's app cobalt or an all-gray theme/);
+});
+
+test("HTML Artifact Mermaid colors retain fallbacks outside the app theme root", () => {
+  assert.match(interactiveResponseSource, /themedSvg\.replaceAll\(value, `var\(\$\{tokenName\}, \$\{value\}\)`\)/);
 });
 
 test("visual Artifact report drafting starts inside create_report", () => {

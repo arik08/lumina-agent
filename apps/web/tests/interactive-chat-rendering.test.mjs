@@ -61,7 +61,7 @@ test("Mermaid uses cobalt tokens for the default node fill and border", () => {
   assert.match(rendererSource, /primaryColor: token\("--cobalt-pale", "#edf2fb"\)/);
   assert.match(rendererSource, /primaryBorderColor: token\("--cobalt", "#3f66c9"\)/);
   assert.match(rendererSource, /function bindMermaidThemeTokens/);
-  assert.match(rendererSource, /themedSvg\.replaceAll\(value, `var\(\$\{tokenName\}\)`\)/);
+  assert.match(rendererSource, /themedSvg\.replaceAll\(value, `var\(\$\{tokenName\}, \$\{value\}\)`\)/);
   assert.match(rendererSource, /svg: bindMermaidThemeTokens\(result\.svg, appearance\.tokenBindings\)/);
   assert.doesNotMatch(rendererSource, /MutationObserver\(\(\) => setThemeRevision/);
 });

@@ -365,7 +365,7 @@ function mermaidAppearance() {
 
 function bindMermaidThemeTokens(svg: string, bindings: ReadonlyArray<readonly [string, string]>) {
   return bindings.reduce(
-    (themedSvg, [value, tokenName]) => themedSvg.replaceAll(value, `var(${tokenName})`),
+    (themedSvg, [value, tokenName]) => themedSvg.replaceAll(value, `var(${tokenName}, ${value})`),
     svg,
   );
 }
