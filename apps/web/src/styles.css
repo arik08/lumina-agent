@@ -1428,7 +1428,8 @@ button:disabled { cursor: default; opacity: 0.5; }
 .file-tree-row > svg { flex: 0 0 auto; color: var(--muted); }
 .file-tree-row.is-folder > .file-tree-chevron + svg { color: var(--warning); }
 .file-tree-row.is-folder > .file-tree-selection + svg { color: var(--warning); }
-.file-tree-row > span:last-child { min-width: 0; overflow: hidden; font-size: 13.5px; font-weight: 640; text-overflow: ellipsis; white-space: nowrap; }
+.file-tree-row > span:last-child { min-width: 0; overflow: hidden; font-size: 13.5px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+.file-tree-row:is(.is-selected, .is-bulk-selected) > span:last-child { font-weight: 640; }
 .file-tree-chevron { display: inline-flex; width: 13px; flex: 0 0 13px; align-items: center; justify-content: center; color: var(--muted); }
 .file-tree-selection { display: inline-flex; flex: 0 0 auto; align-items: center; color: var(--muted); }
 .file-tree-row.is-bulk-selected .file-tree-selection { color: var(--cobalt); }
