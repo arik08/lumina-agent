@@ -702,7 +702,7 @@ const navigation = [
   { id: "knowledge", label: "지식", icon: BookOpenText },
   { id: "marketplace", label: "마켓스토어", icon: Store },
   { id: "library", label: "라이브러리", icon: Library },
-  { id: "files", label: "파일", icon: FolderOpen },
+  { id: "files", label: "파일 저장소", icon: FolderOpen },
   { id: "schedules", label: "예약 작업", icon: Clock3 },
   { id: "memory", label: "Memory", icon: Brain },
 ] satisfies Array<{ id: MainView; label: string; icon: typeof Bot }>;
