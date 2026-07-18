@@ -11,6 +11,7 @@
 
 - 요구사항이 겹치면 루트 `AGENTS.md` → `docs/LUMINA_DESIGN.md` → 기능별 `docs/project-context/` 문서 → `README.md` → `.examples/` 순으로 해석합니다. 구현과 설계가 충돌하면 임의로 맞추지 말고 차이와 영향을 사용자에게 알립니다.
 - `README.md`는 제품 개요와 사용 안내, `docs/LUMINA_DESIGN.md`는 통합 구현 계약의 원본입니다.
+- 사용자 요청을 해석하고 작업 범위·완료 증거를 정할 때 `docs/DEVELOPMENT_INSTRUCTION_PATTERNS.md`의 관련 heading을 공통 참고합니다. 이 문서는 반복 지시의 해석 guide이며 제품 계약을 대체하지 않고, 현재 사용자의 가장 최근 명시적 지시가 항상 우선합니다.
 - UI 작업 전 `PRODUCT.md`와 `DESIGN.md`를 읽고 공용 token, component와 interaction pattern을 우선합니다.
 - 영역별 상세 기준은 다음 문서를 사용합니다.
   - Agent Run, Queue, 복구와 event: `docs/project-context/AGENT_LOOP.md`
@@ -34,6 +35,7 @@
 
 ## UI 변경
 
+- GUI 요청은 `docs/DEVELOPMENT_INSTRUCTION_PATTERNS.md`의 `4. GUI 관련 요청 패턴 상세 분석`에서 요청 표현, 국소 변경, 상태 전이, 디자인 취향과 실제 화면 검증 기준을 먼저 확인합니다. 긴 문서 전체를 매번 읽지 말고 현재 요청과 관련된 `4.x` heading을 검색해 적용합니다.
 - 시각 규칙은 `PRODUCT.md`와 `DESIGN.md`를 원본으로 사용하며 화면별 하드코딩이나 중복 component를 추가하지 않습니다.
 - 이름·라벨·제목은 가능한 한 보이는 자리에서 직접 편집하고 저장·취소·오류도 같은 위치에 표시합니다.
 - 삭제는 popup이나 modal 대신 같은 버튼의 인라인 2단계 확인을 사용합니다. 대상이나 화면이 바뀌면 확인 상태를 해제합니다.
