@@ -25,6 +25,14 @@ test("chat renders Mermaid and full ECharts options as interactive blocks", () =
   assert.match(rendererSource, /withReadableCategoryAxes\(spec\.option, container\.clientWidth\)/);
 });
 
+test("streaming diagram, chart, and table placeholders use an accessible light sweep", () => {
+  assert.match(turnSource, /kind === "mermaid" \? "다이어그램 작성 중" : kind === "chart" \? "인터랙티브 차트 작성 중" : "표 작성 중"/);
+  assert.match(turnSource, /className={`stream-block-pending is-\${kind}`} role="status"/);
+  assert.match(globalStyles, /\.stream-block-pending > span \{[^}]*linear-gradient[^}]*background-clip: text;[^}]*animation: stream-block-light-sweep/s);
+  assert.match(globalStyles, /@keyframes stream-block-light-sweep/);
+  assert.match(globalStyles, /@media \(prefers-reduced-motion: reduce\) \{ \.stream-block-pending > span \{[^}]*animation: none;[^}]*\} \}/);
+});
+
 test("Mermaid preloads once, deduplicates active renders, and stays mounted while Markdown grows", () => {
   assert.match(rendererSource, /let mermaidModulePromise: Promise<typeof import\("mermaid"\)> \| null = null/);
   assert.match(rendererSource, /window\.requestIdleCallback\(preloadMermaid, \{ timeout: 1500 \}\)/);

@@ -2272,7 +2272,9 @@ button:disabled { cursor: default; opacity: 0.5; }
 .markdown-table-scroll tr:last-child td { border-bottom: 0; }
 .stream-block-pending { display: flex; min-height: 58px; align-items: center; gap: 9px; margin: 4px 0 1em; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--cobalt) 22%, var(--line)); border-radius: 7px; background: color-mix(in srgb, var(--cobalt) 5%, var(--surface)); color: var(--muted); }
 .stream-block-pending > :first-child { color: var(--cobalt); }
-.stream-block-pending > span { flex: 1; font-size: 13.5px; font-weight: 650; }
+.stream-block-pending > span { margin-right: auto; background: linear-gradient(100deg, var(--muted) 46%, color-mix(in srgb, var(--cobalt) 24%, #fff) 50%, var(--muted) 54%); background-position: 100% 50%; background-size: 250% 100%; background-clip: text; color: transparent; font-size: 13.5px; font-weight: 650; -webkit-background-clip: text; -webkit-text-fill-color: transparent; animation: stream-block-light-sweep 1.8s linear infinite; }
+@keyframes stream-block-light-sweep { from { background-position: 100% 50%; } to { background-position: -100% 50%; } }
+@media (prefers-reduced-motion: reduce) { .stream-block-pending > span { background: none; color: var(--muted); -webkit-text-fill-color: currentColor; animation: none; } }
 .mermaid-render-error { border-left-color: var(--danger) !important; }
 .markdown-response input[type="checkbox"] { margin: 0 6px 0 0; accent-color: var(--cobalt); }
 .markdown-image-link { display: inline-flex; align-items: center; gap: 5px; font-size: 0.9em; }
