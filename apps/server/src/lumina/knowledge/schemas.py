@@ -21,6 +21,52 @@ class KnowledgeSpaceCreate(ApiModel):
     purpose: str = Field(default="", max_length=20_000)
 
 
+class KnowledgeSpaceUpdate(ApiModel):
+    expected_revision: int = Field(ge=1)
+    name: str | None = Field(default=None, min_length=1, max_length=240)
+    description: str | None = Field(default=None, max_length=10_000)
+    purpose: str | None = Field(default=None, max_length=20_000)
+
+
+class KnowledgeAutoCaptureUpdate(ApiModel):
+    enabled: bool
+    space_id: str | None = None
+
+
+class KnowledgePageUpdate(ApiModel):
+    expected_revision: int = Field(ge=1)
+    manual_markdown: str = Field(default="", max_length=200_000)
+
+
+class KnowledgeProjectBindingCreate(ApiModel):
+    project_id: str
+    knowledge_revision_id: str
+
+
+class KnowledgeProjectBindingUpdate(ApiModel):
+    expected_revision: int = Field(ge=1)
+    knowledge_revision_id: str
+
+
+class KnowledgeContextPackCreate(ApiModel):
+    project_id: str
+    query: str = Field(min_length=1, max_length=200_000)
+    max_statements: int = Field(default=24, ge=1, le=50)
+    character_budget: int = Field(default=16_000, ge=1_000, le=60_000)
+
+
+class KnowledgeSearchRequest(ApiModel):
+    space_id: str
+    query: str = Field(min_length=1, max_length=2_000)
+    scope: Literal["all", "wiki", "statement", "source"] = "all"
+    limit: int = Field(default=20, ge=1, le=50)
+
+
+class KnowledgeReviewDecision(ApiModel):
+    decision: Literal["approved", "rejected"]
+    reason: str = Field(default="", max_length=10_000)
+
+
 class EvidenceSegmentCreate(ApiModel):
     text: str = Field(min_length=1, max_length=200_000)
     locator: dict[str, Any] = Field(default_factory=dict)

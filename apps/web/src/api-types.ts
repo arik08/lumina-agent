@@ -631,6 +631,7 @@ export interface KnowledgeSpace {
   visibility: "private" | "organization";
   status: string;
   settingsRevision: number;
+  accessMode: "owner" | "project_read" | "organization_read";
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
 }
@@ -639,6 +640,24 @@ export interface CreateKnowledgeSpaceRequest {
   name: string;
   description?: string;
   purpose?: string;
+}
+
+export interface UpdateKnowledgeSpaceRequest {
+  expectedRevision: number;
+  name?: string;
+  description?: string;
+  purpose?: string;
+}
+
+export interface KnowledgeAutoCaptureSetting {
+  enabled: boolean;
+  spaceId: UUID | null;
+  mode: "research";
+}
+
+export interface UpdateKnowledgeAutoCaptureRequest {
+  enabled: boolean;
+  spaceId?: UUID | null;
 }
 
 export interface KnowledgeEvidenceSegment {
@@ -668,6 +687,32 @@ export interface KnowledgeSource {
     capturedAt: IsoDateTime;
   };
   evidenceSegments: KnowledgeEvidenceSegment[];
+}
+
+export type KnowledgeIngestionStatus = "queued" | "running" | "completed" | "failed";
+
+export interface KnowledgeIngestionJob {
+  id: UUID;
+  spaceId: UUID;
+  sourceId: UUID;
+  sourceRevisionId: UUID;
+  status: KnowledgeIngestionStatus;
+  providerId: string;
+  modelKey: string;
+  extractorVersion: string;
+  inputSegmentCount: number;
+  inputCharacterCount: number;
+  entityCount: number;
+  statementCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  errorCode: string | null;
+  errorMessage: string | null;
+  queuedAt: IsoDateTime;
+  startedAt: IsoDateTime | null;
+  finishedAt: IsoDateTime | null;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
 }
 
 export interface CreateKnowledgeSourceRequest {
@@ -714,7 +759,7 @@ export interface KnowledgeStatement {
   objectKind: KnowledgeObjectKind;
   objectEntityId: UUID | null;
   objectValue: unknown;
-  status: "proposed" | "approved";
+  status: "proposed" | "approved" | "rejected";
   rank: "preferred" | "normal" | "deprecated";
   confidence: number | null;
   validFrom: IsoDateTime | null;
@@ -736,12 +781,100 @@ export interface CreateKnowledgeStatementRequest {
   changeSummary?: string;
 }
 
+export interface KnowledgePageRevision {
+  id: UUID;
+  pageId: UUID;
+  revisionNumber: number;
+  markdownBody: string;
+  generatedMarkdown: string;
+  manualMarkdown: string;
+  statementIds: UUID[];
+  evidenceSegmentIds: UUID[];
+  sourceStatementRevisionId: UUID | null;
+  generationRunId: UUID | null;
+  createdByUserId: UUID;
+  createdAt: IsoDateTime;
+}
+
+export interface KnowledgePage {
+  id: UUID;
+  spaceId: UUID;
+  entityId: UUID;
+  slug: string;
+  title: string;
+  pageType: string;
+  status: string;
+  revisionCount: number;
+  currentRevision: KnowledgePageRevision;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+export interface UpdateKnowledgePageRequest {
+  expectedRevision: number;
+  manualMarkdown: string;
+}
+
+export interface KnowledgeRevision {
+  id: UUID;
+  spaceId: UUID;
+  revisionNumber: number;
+  status: "approved";
+  contentDigest: string;
+  changeSummary: string;
+  createdByUserId: UUID;
+  approvedByUserId: UUID | null;
+  createdAt: IsoDateTime;
+  approvedAt: IsoDateTime | null;
+}
+
+export interface KnowledgeProjectBinding {
+  id: UUID;
+  projectId: UUID;
+  projectName: string;
+  spaceId: UUID;
+  knowledgeRevision: KnowledgeRevision;
+  permission: "read";
+  followLatestApproved: false;
+  namespaceFilters: string[];
+  tagFilters: string[];
+  bindingRevision: number;
+  createdByUserId: UUID;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+export interface CreateKnowledgeProjectBindingRequest {
+  projectId: UUID;
+  knowledgeRevisionId: UUID;
+}
+
+export interface UpdateKnowledgeProjectBindingRequest {
+  expectedRevision: number;
+  knowledgeRevisionId: UUID;
+}
+
+export interface KnowledgeReviewDecisionRequest {
+  decision: "approved" | "rejected";
+  reason?: string;
+}
+
 export interface KnowledgeNeighborhood {
   rootEntityId: UUID;
   maxDepth: number;
   nodes: KnowledgeEntity[];
   edges: KnowledgeStatement[];
   truncated: boolean;
+}
+
+export interface KnowledgeSearchResponse {
+  query: string;
+  scope: "all" | "wiki" | "statement" | "source";
+  method: "bounded_keyword_v1" | "sqlite_fts5_v1";
+  limit: number;
+  entities: KnowledgeEntity[];
+  statements: KnowledgeStatement[];
+  sources: KnowledgeSource[];
 }
 
 export interface AnnouncementMutationRequest {

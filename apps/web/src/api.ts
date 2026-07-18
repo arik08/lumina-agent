@@ -23,6 +23,7 @@ import type {
   AuthSession,
   CancelDeepAnalysisMissionRequest,
   CreateKnowledgeEntityRequest,
+  CreateKnowledgeProjectBindingRequest,
   CreateKnowledgeSourceRequest,
   CreateKnowledgeSpaceRequest,
   CreateKnowledgeStatementRequest,
@@ -45,10 +46,22 @@ import type {
   DeepAnalysisWorkflowPattern,
   DeepAnalysisWorkflowPatternVersion,
   KnowledgeEntity,
+  KnowledgeSearchResponse,
+  KnowledgeIngestionJob,
   KnowledgeNeighborhood,
+  KnowledgePage,
+  KnowledgePageRevision,
+  KnowledgeProjectBinding,
+  KnowledgeRevision,
   KnowledgeSource,
   KnowledgeSpace,
+  KnowledgeAutoCaptureSetting,
   KnowledgeStatement,
+  KnowledgeReviewDecisionRequest,
+  UpdateKnowledgeSpaceRequest,
+  UpdateKnowledgeAutoCaptureRequest,
+  UpdateKnowledgePageRequest,
+  UpdateKnowledgeProjectBindingRequest,
   CursorPage,
   ListConversationsQuery,
   LoginRequest,
@@ -1520,6 +1533,66 @@ export async function createKnowledgeSource(
   );
 }
 
+export async function getKnowledgeAutoCapture(signal?: AbortSignal) {
+  return request<KnowledgeAutoCaptureSetting>("/knowledge/auto-capture", { signal });
+}
+
+export async function updateKnowledgeAutoCapture(
+  payload: UpdateKnowledgeAutoCaptureRequest,
+  signal?: AbortSignal,
+) {
+  return request<KnowledgeAutoCaptureSetting>("/knowledge/auto-capture", {
+    method: "PATCH",
+    body: payload,
+    signal,
+  });
+}
+
+export async function updateKnowledgeSpace(
+  spaceId: string,
+  payload: UpdateKnowledgeSpaceRequest,
+  signal?: AbortSignal,
+) {
+  return request<KnowledgeSpace>(`/knowledge/spaces/${encodeURIComponent(spaceId)}`, {
+    method: "PATCH",
+    body: payload,
+    signal,
+  });
+}
+
+export async function archiveKnowledgeSpace(
+  spaceId: string,
+  expectedRevision: number,
+  signal?: AbortSignal,
+) {
+  return request<void>(`/knowledge/spaces/${encodeURIComponent(spaceId)}`, {
+    method: "DELETE",
+    query: { expectedRevision },
+    signal,
+  });
+}
+
+export async function listKnowledgeIngestions(
+  spaceId: string,
+  signal?: AbortSignal,
+) {
+  return request<KnowledgeIngestionJob[]>(
+    `/knowledge/spaces/${encodeURIComponent(spaceId)}/ingestions`,
+    { signal },
+  );
+}
+
+export async function startKnowledgeIngestion(
+  spaceId: string,
+  sourceId: string,
+  signal?: AbortSignal,
+) {
+  return request<KnowledgeIngestionJob>(
+    `/knowledge/spaces/${encodeURIComponent(spaceId)}/sources/${encodeURIComponent(sourceId)}/ingestions`,
+    { method: "POST", signal },
+  );
+}
+
 export async function listKnowledgeEntities(spaceId: string, signal?: AbortSignal) {
   return request<KnowledgeEntity[]>(
     `/knowledge/spaces/${encodeURIComponent(spaceId)}/entities`,
@@ -1552,6 +1625,103 @@ export async function createKnowledgeStatement(
 ) {
   return request<KnowledgeStatement>(
     `/knowledge/spaces/${encodeURIComponent(spaceId)}/statements`,
+    { method: "POST", body: payload, signal },
+  );
+}
+
+export async function searchKnowledge(
+  spaceId: string,
+  query: string,
+  scope: "all" | "wiki" | "statement" | "source",
+  signal?: AbortSignal,
+) {
+  return request<KnowledgeSearchResponse>("/knowledge/search", {
+    method: "POST",
+    body: { spaceId, query, scope, limit: 20 },
+    signal,
+  });
+}
+
+export async function listKnowledgePages(spaceId: string, signal?: AbortSignal) {
+  return request<KnowledgePage[]>(
+    `/knowledge/spaces/${encodeURIComponent(spaceId)}/pages`,
+    { signal },
+  );
+}
+
+export async function listKnowledgePageRevisions(pageId: string, signal?: AbortSignal) {
+  return request<KnowledgePageRevision[]>(
+    `/knowledge/pages/${encodeURIComponent(pageId)}/revisions`,
+    { signal },
+  );
+}
+
+export async function updateKnowledgePage(
+  pageId: string,
+  payload: UpdateKnowledgePageRequest,
+  signal?: AbortSignal,
+) {
+  return request<KnowledgePage>(`/knowledge/pages/${encodeURIComponent(pageId)}`, {
+    method: "PATCH",
+    body: payload,
+    signal,
+  });
+}
+
+export async function listKnowledgeRevisions(spaceId: string, signal?: AbortSignal) {
+  return request<KnowledgeRevision[]>(
+    `/knowledge/spaces/${encodeURIComponent(spaceId)}/revisions`,
+    { signal },
+  );
+}
+
+export async function listKnowledgeProjectBindings(spaceId: string, signal?: AbortSignal) {
+  return request<KnowledgeProjectBinding[]>(
+    `/knowledge/spaces/${encodeURIComponent(spaceId)}/project-bindings`,
+    { signal },
+  );
+}
+
+export async function createKnowledgeProjectBinding(
+  spaceId: string,
+  payload: CreateKnowledgeProjectBindingRequest,
+  signal?: AbortSignal,
+) {
+  return request<KnowledgeProjectBinding>(
+    `/knowledge/spaces/${encodeURIComponent(spaceId)}/project-bindings`,
+    { method: "POST", body: payload, signal },
+  );
+}
+
+export async function updateKnowledgeProjectBinding(
+  bindingId: string,
+  payload: UpdateKnowledgeProjectBindingRequest,
+  signal?: AbortSignal,
+) {
+  return request<KnowledgeProjectBinding>(
+    `/knowledge/project-bindings/${encodeURIComponent(bindingId)}`,
+    { method: "PATCH", body: payload, signal },
+  );
+}
+
+export async function deleteKnowledgeProjectBinding(
+  bindingId: string,
+  expectedRevision: number,
+  signal?: AbortSignal,
+) {
+  await request<void>(
+    `/knowledge/project-bindings/${encodeURIComponent(bindingId)}`,
+    { method: "DELETE", query: { expectedRevision }, signal },
+  );
+}
+
+export async function decideKnowledgeStatement(
+  statementId: string,
+  payload: KnowledgeReviewDecisionRequest,
+  signal?: AbortSignal,
+) {
+  return request<KnowledgeStatement>(
+    `/knowledge/reviews/${encodeURIComponent(statementId)}/decision`,
     { method: "POST", body: payload, signal },
   );
 }
@@ -2384,14 +2554,30 @@ export const api = {
     runQualityGate: runDeepAnalysisQualityGate,
   },
   knowledge: {
+    getAutoCapture: getKnowledgeAutoCapture,
+    updateAutoCapture: updateKnowledgeAutoCapture,
     listSpaces: listKnowledgeSpaces,
     createSpace: createKnowledgeSpace,
+    updateSpace: updateKnowledgeSpace,
+    archiveSpace: archiveKnowledgeSpace,
     listSources: listKnowledgeSources,
     createSource: createKnowledgeSource,
+    listIngestions: listKnowledgeIngestions,
+    startIngestion: startKnowledgeIngestion,
     listEntities: listKnowledgeEntities,
+    search: searchKnowledge,
     createEntity: createKnowledgeEntity,
+    listPages: listKnowledgePages,
+    listPageRevisions: listKnowledgePageRevisions,
+    updatePage: updateKnowledgePage,
+    listRevisions: listKnowledgeRevisions,
+    listProjectBindings: listKnowledgeProjectBindings,
+    createProjectBinding: createKnowledgeProjectBinding,
+    updateProjectBinding: updateKnowledgeProjectBinding,
+    deleteProjectBinding: deleteKnowledgeProjectBinding,
     listStatements: listKnowledgeStatements,
     createStatement: createKnowledgeStatement,
+    decideStatement: decideKnowledgeStatement,
     getNeighborhood: getKnowledgeNeighborhood,
   },
   projectMemberships: {

@@ -1,6 +1,6 @@
 # Lumina Knowledge 시스템 설계
 
-> 상태: 구현 전 설계 기준
+> 상태: 설계 기준 및 Phase 1 구현 추적
 >
 > 작성일: 2026-07-18
 >
@@ -406,6 +406,21 @@ knowledge.publish         publish
 knowledge.admin           admin
 ```
 
+### 5.3 완료된 리서치 Run 자동 축적
+
+계정에는 자동 축적 대상 Personal Knowledge Space를 최대 하나만 둡니다. 첫 개인 Space를 만들면 기본 대상으로 설정하며 사용자는 `설정` 화면에서 대상을 현재 Space로 전환하거나 전체 자동 축적을 끌 수 있습니다.
+
+자동 축적은 모든 대화를 무조건 저장하지 않습니다. `web_fetch`로 원문을 실제 확인했고 `fetched_content + complete` provenance가 남은 완료 Run만 다음 순서로 처리합니다.
+
+1. Run 완료 transaction을 먼저 확정합니다. Knowledge 저장 실패는 원래 답변 완료를 되돌리지 않습니다.
+2. 별도 transaction에서 assistant 분석문, conversation/run/message locator와 확인된 웹 출처 excerpt를 `conversation` Source Revision으로 보존합니다.
+3. 같은 captured content는 SHA-256 digest로 재사용합니다.
+4. AI extraction 입력은 최대 60,000자로 제한하고 계정의 기본 실행 모델 snapshot으로 ingestion job을 생성합니다.
+5. 추출 Statement는 자동 승인하지 않고 `proposed` 상태로 검토함에 둡니다.
+6. process가 job enqueue 전에 종료되어도 DB의 `queued` 상태를 startup recovery가 다시 실행합니다.
+
+검색 snippet만 있거나 자동 축적이 꺼진 경우에는 Source와 ingestion job을 만들지 않습니다. Source 저장에 성공했지만 Provider를 사용할 수 없으면 원문은 보존하고 추출만 보류합니다.
+
 ## 6. 검색과 답변 생성
 
 ### 6.1 검색 모드
@@ -521,7 +536,7 @@ SQLite는 초기 구현에 충분합니다.
 
 - Entity, Statement, Evidence와 Revision은 일반 관계형 테이블로 저장합니다.
 - [recursive CTE](https://www.sqlite.org/lang_with.html)로 제한된 깊이의 graph traversal을 구현합니다.
-- [FTS5](https://www.sqlite.org/fts5.html)로 Source, Wiki Page와 Statement text를 검색합니다.
+- [FTS5](https://www.sqlite.org/fts5.html) external-content index와 DB trigger로 Entity, Statement predicate/literal, Source 제목과 Evidence text를 증분 검색합니다.
 - 현재 Lumina의 `PRAGMA foreign_keys=ON`, WAL, busy timeout 설정을 그대로 사용합니다.
 - WAL은 reader와 writer의 상호 차단을 줄이지만 writer는 사실상 직렬화되므로 추출 worker 수를 제한하고 transaction을 짧게 유지합니다.
 
@@ -531,7 +546,7 @@ SQLite MVP 제약은 다음과 같습니다.
 - LLM 호출 중 DB transaction을 열어 두지 않습니다.
 - 후보 추출은 transaction 밖에서 수행하고 짧은 CAS transaction으로 적용합니다.
 - 그래프 탐색 기본 깊이는 3, node/edge 결과 상한을 둡니다.
-- FTS5가 없는 빌드는 startup diagnostics에서 감지하고 LIKE fallback이 아니라 기능 비활성 상태를 명확히 표시합니다.
+- FTS5 table이 없는 개발·호환 DB는 응답의 `retrieval_method`를 `bounded_keyword_v1`으로 표시하고 제한된 lexical query로 fallback합니다. 제품 배포용 SQLite는 startup diagnostics에서 FTS5 migration 상태를 확인합니다.
 - 대규모 vector를 JSON으로 저장해 SQL에서 거리 계산하지 않습니다.
 
 ### 8.2 운영 전환: PostgreSQL
@@ -709,6 +724,8 @@ GET    /api/knowledge/spaces
 POST   /api/knowledge/spaces
 GET    /api/knowledge/spaces/{space_id}
 PATCH  /api/knowledge/spaces/{space_id}
+GET    /api/knowledge/auto-capture
+PATCH  /api/knowledge/auto-capture
 
 POST   /api/knowledge/spaces/{space_id}/sources
 GET    /api/knowledge/spaces/{space_id}/sources
@@ -718,11 +735,19 @@ POST   /api/knowledge/ingestions/{job_id}/cancel
 
 GET    /api/knowledge/spaces/{space_id}/pages
 GET    /api/knowledge/pages/{page_id}
+GET    /api/knowledge/pages/{page_id}/revisions
 PATCH  /api/knowledge/pages/{page_id}
+
+GET    /api/knowledge/spaces/{space_id}/revisions
+GET    /api/knowledge/spaces/{space_id}/project-bindings
+POST   /api/knowledge/spaces/{space_id}/project-bindings
+PATCH  /api/knowledge/project-bindings/{binding_id}
+DELETE /api/knowledge/project-bindings/{binding_id}
 
 POST   /api/knowledge/search
 POST   /api/knowledge/context-packs
 GET    /api/knowledge/entities/{entity_id}/neighborhood
+POST   /api/knowledge/search
 
 GET    /api/knowledge/spaces/{space_id}/reviews
 POST   /api/knowledge/reviews/{review_id}/decision
@@ -733,6 +758,20 @@ POST   /api/knowledge/merge-proposals
 ```
 
 List API는 cursor pagination을 사용하고 모든 응답에서 접근 가능한 최소 metadata만 반환합니다. Graph API는 `max_depth`, `max_nodes`, `max_edges`의 서버 상한을 무시할 수 없게 합니다.
+
+### 11.1 현재 Phase 1 구현 범위
+
+현재 SQLite 개발 경로에는 `KnowledgePage`와 append-only `KnowledgePageRevision`이 구현되어 있습니다. Entity 생성 시 첫 Wiki Page를 만들고 승인 Statement가 추가되면 관련 Page의 생성 영역만 새 revision으로 갱신합니다. 사용자가 직접 쓴 Markdown은 수동 영역에 분리해 보존하므로 이후 AI 추출이나 승인으로 생성 영역이 바뀌어도 덮어쓰지 않습니다.
+
+`PATCH /api/knowledge/pages/{page_id}`는 `expectedRevision` CAS를 요구하며 충돌 시 `409`를 반환합니다. Wiki UI는 현재 revision, 인라인 사용자 메모 편집, revision 목록과 이전/현재 전체 Markdown 비교를 제공합니다. Page와 revision 조회·수정은 모두 Space 소유권을 Backend에서 다시 검사합니다.
+
+Project Binding은 승인된 `KnowledgeRevision`만 연결하며 `(project_id, space_id)`당 하나를 유지합니다. 초기 권한은 `read`, `follow_latest_approved`는 `false`로 고정합니다. 새 승인 revision이 생겨도 기존 Project에는 자동 반영되지 않고 사용자가 설정 화면에서 revision을 명시적으로 바꿔야 합니다. 생성·변경·해제 시 Space 소유권과 Project 쓰기 권한을 모두 다시 검사하고, 변경·해제는 `bindingRevision` CAS와 감사 이벤트를 남깁니다.
+
+연결된 Project 구성원은 개인 원본 Space 자체를 공개받는 대신 Binding이 유지되는 동안 `project_read` 접근을 얻습니다. 이 권한으로 고정 지식의 원문·Evidence, Wiki, Graph와 승인 Statement를 열람할 수 있지만 Source 추가, AI 추출, Wiki 편집, 검토 결정, Binding·Space 설정과 archive는 할 수 없습니다. Binding을 해제하거나 Project membership을 잃으면 Space 조회 권한도 즉시 사라집니다. Frontend는 이 접근을 `연결`과 `Project 연결 · 읽기 전용`으로 표시하고 사용할 수 없는 소유자 작업을 노출하지 않습니다.
+
+일반 Agent Run을 만들 때는 Project에 연결된 각 고정 revision 이하의 현재 승인 Statement를 질문과 lexical matching해 `knowledge-context-pack-v1` snapshot으로 저장합니다. 기본 상한은 24개 Statement와 16,000자이며, 관련 항목이 하나도 없으면 최신 4개만 fallback으로 사용합니다. Pack은 binding/revision/digest, Statement ID, Entity 관계, Evidence segment, Source revision, locator와 text digest를 포함하고 자체 digest를 계산합니다. 이 snapshot은 `prompt_prefix_hash`에도 포함되므로 이후 Binding이 바뀌어도 기존 Run의 입력은 변하지 않습니다. Agent system context에는 Evidence를 비신뢰 자료로 명시해 원문 속 지시를 실행하지 않도록 하며, `POST /api/knowledge/context-packs`도 같은 권한 검사·검색·예산 로직을 재사용합니다.
+
+탐색 화면은 `POST /api/knowledge/search`를 250ms debounce와 요청 취소로 호출합니다. Backend는 매 요청마다 Space의 소유자·조직 공개·Project Binding 읽기 권한을 다시 검사하고, query는 최대 2,000자, 중복 제거 후 검색 token은 최대 16개, 결과는 종류별 기본 20개·최대 50개로 제한합니다. SQLite migration `0039`는 external-content FTS5 index 4개와 insert/update/delete trigger 12개를 만들며 `sqlite_fts5_v1`은 한국어를 포함한 token prefix 검색을 사용합니다. 다중 token은 후보 ID를 교집합해 Entity 이름과 predicate, Source 제목과 Evidence처럼 서로 다른 필드에 걸친 질의도 유지합니다. Entity 이름·설명, Statement의 Entity 관계·predicate·literal, Source 제목·최신 Evidence에서 후보 ID만 먼저 조회하고 필요한 ORM 객체만 materialize하며, Source의 최신 revision과 Evidence는 결과 수와 무관하게 각각 한 번의 batch query로 가져옵니다. 검색 응답의 Evidence 본문은 segment당 1,200자로 잘라 전송합니다. FTS table이 없는 호환 DB에서는 같은 권한과 상한을 지키는 `bounded_keyword_v1`으로 fallback하고, PostgreSQL FTS는 운영 전환 단계에서 같은 API 계약 뒤에 연결합니다.
 
 ## 12. 보안, 품질과 감사
 

@@ -2002,6 +2002,50 @@ class KnowledgeRevision(UUIDPrimaryKeyMixin, Base):
     approved_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
 
 
+class KnowledgeProjectBinding(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "knowledge_project_bindings"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id", "space_id", name="uq_knowledge_project_bindings_scope"
+        ),
+        Index(
+            "ix_knowledge_project_bindings_space_revision",
+            "space_id",
+            "knowledge_revision_id",
+        ),
+    )
+
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    space_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_spaces.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    knowledge_revision_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_revisions.id", ondelete="RESTRICT"),
+        index=True,
+        nullable=False,
+    )
+    permission: Mapped[str] = mapped_column(
+        String(24), default="read", nullable=False
+    )
+    follow_latest_approved: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    namespace_filters_json: Mapped[list[str]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
+    tag_filters_json: Mapped[list[str]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
+    binding_revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    created_by_user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+
+
 class KnowledgeSource(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "knowledge_sources"
     __table_args__ = (Index("ix_knowledge_sources_space_status", "space_id", "status"),)
@@ -2091,6 +2135,61 @@ class KnowledgeEvidenceSegment(UUIDPrimaryKeyMixin, Base):
     token_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
 
+class KnowledgeIngestionJob(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "knowledge_ingestion_jobs"
+    __table_args__ = (
+        Index("ix_knowledge_ingestion_jobs_space_status", "space_id", "status"),
+        Index(
+            "ix_knowledge_ingestion_jobs_source_revision",
+            "source_revision_id",
+            "created_at",
+        ),
+    )
+
+    space_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_spaces.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    source_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_sources.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    source_revision_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_source_revisions.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    requested_by_user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(24), default="queued", index=True, nullable=False
+    )
+    provider_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    model_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    runtime_model_id: Mapped[str] = mapped_column(String(240), nullable=False)
+    extractor_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    input_segment_count: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )
+    input_character_count: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )
+    entity_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    statement_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    error_code: Mapped[str | None] = mapped_column(String(120))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    queued_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, nullable=False
+    )
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+
+
 class KnowledgeEntity(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "knowledge_entities"
     __table_args__ = (
@@ -2117,6 +2216,73 @@ class KnowledgeEntity(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     merged_into_entity_id: Mapped[str | None] = mapped_column(
         ForeignKey("knowledge_entities.id", ondelete="SET NULL"), index=True
+    )
+
+
+class KnowledgePage(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "knowledge_pages"
+    __table_args__ = (
+        UniqueConstraint("space_id", "slug", name="uq_knowledge_pages_space_slug"),
+        UniqueConstraint(
+            "space_id", "entity_id", name="uq_knowledge_pages_space_entity"
+        ),
+        Index("ix_knowledge_pages_space_status", "space_id", "status"),
+    )
+
+    space_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_spaces.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    entity_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_entities.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    slug: Mapped[str] = mapped_column(String(560), nullable=False)
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    page_type: Mapped[str] = mapped_column(
+        String(24), default="entity", nullable=False
+    )
+    current_revision_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    status: Mapped[str] = mapped_column(
+        String(24), default="active", index=True, nullable=False
+    )
+
+
+class KnowledgePageRevision(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "knowledge_page_revisions"
+    __table_args__ = (
+        UniqueConstraint(
+            "page_id", "revision_number", name="uq_knowledge_page_revisions_number"
+        ),
+        Index("ix_knowledge_page_revisions_page_created", "page_id", "created_at"),
+    )
+
+    page_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_pages.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    revision_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    markdown_body: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    generated_sections_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
+    manual_sections_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
+    source_statement_revision_id: Mapped[str | None] = mapped_column(
+        ForeignKey("knowledge_revisions.id", ondelete="SET NULL"), index=True
+    )
+    generation_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("runs.id", ondelete="SET NULL"), index=True
+    )
+    created_by_user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, nullable=False
     )
 
 
@@ -2217,6 +2383,9 @@ __all__ = [
     "HelpItem",
     "KnowledgeEntity",
     "KnowledgeEvidenceSegment",
+    "KnowledgePage",
+    "KnowledgePageRevision",
+    "KnowledgeProjectBinding",
     "KnowledgeRevision",
     "KnowledgeSource",
     "KnowledgeSourceRevision",

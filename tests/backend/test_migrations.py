@@ -5,15 +5,22 @@ from pathlib import Path
 from alembic import command
 from alembic.config import Config
 from alembic.migration import MigrationContext
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, select, text
+from sqlalchemy.orm import Session
 
 from lumina.db import Base
 from lumina.migrations import SERVER_ROOT, upgrade_database
 from lumina.models import (
     CompactedContextEntry,  # noqa: F401
     HelpItem,
+    KnowledgeEntity,
+    KnowledgePage,
+    KnowledgePageRevision,
+    KnowledgeSpace,
+    Organization,
     ProjectFolder,
     RuntimePromptOverride,
+    User,
 )
 
 
@@ -42,6 +49,12 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
         }
         with engine.connect() as connection:
             revision = MigrationContext.configure(connection).get_current_revision()
+            knowledge_fts_trigger_count = connection.scalar(
+                text(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' "
+                    "AND name LIKE 'trg_knowledge_%_fts_%'"
+                )
+            )
     finally:
         engine.dispose()
 
@@ -96,9 +109,17 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
         "knowledge_sources",
         "knowledge_source_revisions",
         "knowledge_evidence_segments",
+        "knowledge_ingestion_jobs",
         "knowledge_entities",
         "knowledge_statements",
         "knowledge_statement_evidence",
+        "knowledge_pages",
+        "knowledge_page_revisions",
+        "knowledge_project_bindings",
+        "knowledge_entity_fts",
+        "knowledge_statement_fts",
+        "knowledge_source_fts",
+        "knowledge_evidence_fts",
     } <= tables
     assert {"concept_revision", "concept_hash"} <= project_columns
     assert {
@@ -124,7 +145,100 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
     assert "creator_user_id" in extension_columns
     assert "is_liked" in conversation_columns
     assert "surface" in conversation_columns
-    assert revision == "0044"
+    assert knowledge_fts_trigger_count == 12
+    assert revision == "0048"
+
+
+def test_knowledge_fts_migration_0048_round_trip(tmp_path: Path) -> None:
+    database = tmp_path / "knowledge-fts-round-trip.db"
+    database_url = f"sqlite:///{database.as_posix()}"
+    upgrade_database(database_url, "0048")
+
+    config = Config(str(SERVER_ROOT / "alembic.ini"))
+    config.attributes["database_url"] = database_url
+    command.downgrade(config, "0047")
+
+    engine = create_engine(database_url)
+    try:
+        tables = set(inspect(engine).get_table_names())
+        with engine.connect() as connection:
+            revision = MigrationContext.configure(connection).get_current_revision()
+            trigger_count = connection.scalar(
+                text(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' "
+                    "AND name LIKE 'trg_knowledge_%_fts_%'"
+                )
+            )
+    finally:
+        engine.dispose()
+
+    assert not {
+        "knowledge_entity_fts",
+        "knowledge_statement_fts",
+        "knowledge_source_fts",
+        "knowledge_evidence_fts",
+    } & tables
+    assert trigger_count == 0
+    assert revision == "0047"
+
+
+def test_knowledge_wiki_migration_backfills_existing_personal_entities(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "knowledge-wiki-backfill.db"
+    database_url = f"sqlite:///{database.as_posix()}"
+    upgrade_database(database_url, "0045")
+
+    engine = create_engine(database_url)
+    try:
+        with Session(engine) as db:
+            organization = Organization(slug="wiki-backfill", name="Wiki Backfill")
+            db.add(organization)
+            db.flush()
+            user = User(
+                organization_id=organization.id,
+                login_name="wiki",
+                login_domain="example.com",
+                login_id="wiki@example.com",
+                display_name="Wiki User",
+                password_hash="test-only",
+            )
+            db.add(user)
+            db.flush()
+            space = KnowledgeSpace(
+                organization_id=organization.id,
+                owner_user_id=user.id,
+                name="철강 기술",
+            )
+            db.add(space)
+            db.flush()
+            entity = KnowledgeEntity(
+                space_id=space.id,
+                entity_type="concept",
+                canonical_name="수소환원제철",
+                normalized_key="수소환원제철",
+                description="수소를 환원제로 사용하는 제철 기술",
+            )
+            db.add(entity)
+            db.commit()
+            entity_id = entity.id
+    finally:
+        engine.dispose()
+
+    upgrade_database(database_url, "0046")
+
+    engine = create_engine(database_url)
+    try:
+        with Session(engine) as db:
+            page = db.scalar(select(KnowledgePage).where(KnowledgePage.entity_id == entity_id))
+            assert page is not None
+            revision = db.get(KnowledgePageRevision, page.current_revision_id)
+            assert revision is not None
+            assert revision.revision_number == 1
+            assert "수소를 환원제로 사용하는 제철 기술" in revision.markdown_body
+            assert revision.manual_sections_json == {"markdown": ""}
+    finally:
+        engine.dispose()
 
 
 def test_structured_plan_migration_round_trip(tmp_path: Path) -> None:
@@ -152,7 +266,7 @@ def test_structured_plan_migration_round_trip(tmp_path: Path) -> None:
         assert {"plans", "plan_steps"} <= set(inspect(engine).get_table_names())
         with engine.connect() as connection:
             assert (
-                MigrationContext.configure(connection).get_current_revision() == "0044"
+                MigrationContext.configure(connection).get_current_revision() == "0048"
             )
     finally:
         engine.dispose()
@@ -202,7 +316,7 @@ def test_context_compaction_memory_learning_migration_round_trip(
         }
         with engine.connect() as connection:
             assert (
-                MigrationContext.configure(connection).get_current_revision() == "0044"
+                MigrationContext.configure(connection).get_current_revision() == "0048"
             )
     finally:
         engine.dispose()
@@ -234,7 +348,7 @@ def test_context_migration_adopts_legacy_create_all_table(tmp_path: Path) -> Non
         }
         with engine.connect() as connection:
             assert (
-                MigrationContext.configure(connection).get_current_revision() == "0044"
+                MigrationContext.configure(connection).get_current_revision() == "0048"
             )
     finally:
         engine.dispose()
@@ -264,7 +378,7 @@ def test_recent_migrations_adopt_tables_precreated_by_runtime_schema(
     try:
         with engine.connect() as connection:
             revision = MigrationContext.configure(connection).get_current_revision()
-        assert revision == "0044"
+        assert revision == "0048"
     finally:
         engine.dispose()
 

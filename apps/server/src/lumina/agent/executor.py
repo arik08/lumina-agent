@@ -16,7 +16,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, BinaryIO, Literal
+from typing import TYPE_CHECKING, Any, BinaryIO, Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from sqlalchemy import func, select
@@ -160,6 +160,7 @@ from ..instructions import (
     RICH_CHAT_RENDERING_CONTRACT,
     WEB_RESEARCH_EFFICIENCY_CONTRACT,
 )
+from ..knowledge.context import render_project_knowledge_context
 from ..runs.state import (
     ACTIVE_STATUSES,
     AWAITING_APPROVAL,
@@ -180,6 +181,9 @@ from ..api.schemas import (
     RunCreate,
     RunMessageInput,
 )
+
+if TYPE_CHECKING:
+    from ..knowledge.capture import KnowledgeCaptureResult
 
 
 logger = logging.getLogger(__name__)
@@ -2944,6 +2948,12 @@ class LocalRunExecutor:
             # before this cost and latency contract was introduced.
             system += f"\n\n{WEB_RESEARCH_EFFICIENCY_CONTRACT}"
         turn_system_parts: list[str] = []
+        knowledge_snapshot = run.snapshot_json.get("knowledge_context")
+        knowledge_context = render_project_knowledge_context(
+            knowledge_snapshot if isinstance(knowledge_snapshot, dict) else None
+        )
+        if knowledge_context:
+            turn_system_parts.append(_bounded_text(knowledge_context, 60_000))
         user_message = str(run.snapshot_json.get("user_message_text", ""))
         clarification_mode = str(
             run.snapshot_json.get("clarification_mode", "balanced")
@@ -5517,7 +5527,55 @@ class LocalRunExecutor:
             completed = True
         if completed:
             self._emit_run_activity(run_id, "completed")
+            try:
+                capture_result = self._capture_completed_research_run(
+                    run_id, assistant_message_id
+                )
+            except Exception:
+                logger.exception(
+                    "Completed research run could not be captured to Knowledge",
+                    extra={"run_id": run_id},
+                )
+            else:
+                if (
+                    capture_result is not None
+                    and capture_result.job_id is not None
+                    and capture_result.job_created
+                ):
+                    from ..knowledge.executor import knowledge_ingestion_executor
+
+                    knowledge_ingestion_executor.enqueue(capture_result.job_id)
         await event_broker.notify(run_id)
+
+    def _capture_completed_research_run(
+        self, run_id: str, assistant_message_id: str
+    ) -> KnowledgeCaptureResult | None:
+        from ..knowledge.capture import capture_completed_research_run
+
+        with session_scope() as db:
+            result = capture_completed_research_run(
+                db,
+                run_id=run_id,
+                assistant_message_id=assistant_message_id,
+                settings=self.settings,
+            )
+            if result is None:
+                return None
+            run = db.get(Run, run_id)
+            if run is not None:
+                append_event(
+                    db,
+                    run,
+                    "knowledge_auto_capture_saved",
+                    {
+                        "sourceId": result.source_id,
+                        "sourceCreated": result.source_created,
+                        "ingestionJobId": result.job_id,
+                        "ingestionQueued": result.job_created,
+                        "ingestionErrorCode": result.ingestion_error_code,
+                    },
+                )
+            return result
 
     def _emit_run_activity(self, run_id: str, state: str) -> None:
         with SessionLocal() as db:

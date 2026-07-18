@@ -2,31 +2,53 @@ from __future__ import annotations
 
 from hashlib import sha256
 import json
+import re
 from typing import Any
 
-from sqlalchemy import case, func, literal, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy import String, and_, case, cast, delete, exists, func, literal, or_, select, text, update
+from sqlalchemy.orm import Session, aliased
 
 from ..api.errors import ApiProblem
+from ..authorization import project_access_query, require_project
+from ..config import Settings
 from ..models import (
     KnowledgeEntity,
     KnowledgeEvidenceSegment,
+    KnowledgeIngestionJob,
+    KnowledgePage,
+    KnowledgePageRevision,
+    KnowledgeProjectBinding,
     KnowledgeRevision,
     KnowledgeSource,
     KnowledgeSourceRevision,
     KnowledgeSpace,
     KnowledgeStatement,
     KnowledgeStatementEvidence,
+    ProviderModel,
+    Project,
     User,
+    UserSetting,
+    new_uuid,
     utc_now,
 )
+from ..providers.execution_defaults import initial_execution_selection
+from .extractor import KNOWLEDGE_EXTRACTOR_VERSION
 from .schemas import (
     EvidenceSegmentCreate,
+    KnowledgeAutoCaptureUpdate,
     KnowledgeEntityCreate,
+    KnowledgePageUpdate,
+    KnowledgeProjectBindingCreate,
+    KnowledgeProjectBindingUpdate,
+    KnowledgeReviewDecision,
     KnowledgeSourceCreate,
     KnowledgeSpaceCreate,
+    KnowledgeSpaceUpdate,
     KnowledgeStatementCreate,
 )
+
+
+KNOWLEDGE_AUTO_CAPTURE_SETTING_KEY = "knowledge.auto_capture"
 
 
 def knowledge_space_access_query(user: User, *, write: bool = False):
@@ -37,10 +59,16 @@ def knowledge_space_access_query(user: User, *, write: bool = False):
     )
     if write:
         return query.where(KnowledgeSpace.owner_user_id == user.id)
+    accessible_project_ids = project_access_query(user).with_only_columns(Project.id)
+    bound_space_ids = select(KnowledgeProjectBinding.space_id).where(
+        KnowledgeProjectBinding.project_id.in_(accessible_project_ids),
+        KnowledgeProjectBinding.permission == "read",
+    )
     return query.where(
         or_(
             KnowledgeSpace.owner_user_id == user.id,
             KnowledgeSpace.visibility == "organization",
+            KnowledgeSpace.id.in_(bound_space_ids),
         )
     )
 
@@ -140,6 +168,499 @@ def create_knowledge_space(
     )
     db.add(space)
     db.flush()
+    setting = db.scalar(
+        select(UserSetting).where(
+            UserSetting.user_id == user.id,
+            UserSetting.key == KNOWLEDGE_AUTO_CAPTURE_SETTING_KEY,
+        )
+    )
+    if setting is None:
+        db.add(
+            UserSetting(
+                user_id=user.id,
+                key=KNOWLEDGE_AUTO_CAPTURE_SETTING_KEY,
+                value_json={"enabled": True, "spaceId": space.id, "mode": "research"},
+            )
+        )
+    return space
+
+
+def search_knowledge(
+    db: Session, user: User, *, space_id: str, query: str, scope: str, limit: int
+) -> dict[str, Any]:
+    require_knowledge_space(db, user, space_id)
+    terms = list(
+        dict.fromkeys(re.findall(r"\w{2,}", query.casefold(), flags=re.UNICODE))
+    )[:16]
+    if not terms:
+        return {
+            "query": query.strip(),
+            "scope": scope,
+            "method": "bounded_keyword_v1",
+            "limit": limit,
+            "entities": [],
+            "statements": [],
+            "sources": [],
+        }
+
+    fts_candidates = _sqlite_knowledge_fts_candidates(
+        db, space_id=space_id, terms=terms, scope=scope, limit=limit
+    )
+    method = "sqlite_fts5_v1" if fts_candidates is not None else "bounded_keyword_v1"
+
+    entities: list[KnowledgeEntity] = []
+    if scope in {"all", "wiki"}:
+        if fts_candidates is not None:
+            entity_ids = fts_candidates["entities"]
+            items = list(
+                db.scalars(
+                    select(KnowledgeEntity).where(KnowledgeEntity.id.in_(entity_ids))
+                )
+            )
+            item_by_id = {item.id: item for item in items}
+            entities = [item_by_id[item_id] for item_id in entity_ids]
+        else:
+            entity_text = func.lower(
+                KnowledgeEntity.canonical_name
+                + " "
+                + KnowledgeEntity.entity_type
+                + " "
+                + KnowledgeEntity.description
+            )
+            entities = list(
+                db.scalars(
+                    select(KnowledgeEntity)
+                    .where(
+                        KnowledgeEntity.space_id == space_id,
+                        KnowledgeEntity.status == "active",
+                        and_(
+                            *(
+                                entity_text.contains(term, autoescape=True)
+                                for term in terms
+                            )
+                        ),
+                    )
+                    .order_by(KnowledgeEntity.canonical_name, KnowledgeEntity.id)
+                    .limit(limit)
+                )
+            )
+
+    statements: list[KnowledgeStatement] = []
+    if scope in {"all", "statement"}:
+        if fts_candidates is not None:
+            statement_ids = fts_candidates["statements"]
+            items = list(
+                db.scalars(
+                    select(KnowledgeStatement).where(
+                        KnowledgeStatement.id.in_(statement_ids)
+                    )
+                )
+            )
+            item_by_id = {item.id: item for item in items}
+            statements = [item_by_id[item_id] for item_id in statement_ids]
+        else:
+            subject = aliased(KnowledgeEntity)
+            object_entity = aliased(KnowledgeEntity)
+            successor = KnowledgeStatement.__table__.alias(
+                "search_statement_successor"
+            )
+            statement_text = func.lower(
+                subject.canonical_name
+                + " "
+                + KnowledgeStatement.predicate_key
+                + " "
+                + func.coalesce(object_entity.canonical_name, "")
+                + " "
+                + func.coalesce(
+                    cast(KnowledgeStatement.object_value_json, String), ""
+                )
+            )
+            statements = list(
+                db.scalars(
+                    select(KnowledgeStatement)
+                    .join(subject, subject.id == KnowledgeStatement.subject_entity_id)
+                    .outerjoin(
+                        object_entity,
+                        object_entity.id == KnowledgeStatement.object_entity_id,
+                    )
+                    .where(
+                        KnowledgeStatement.space_id == space_id,
+                        ~exists(
+                            select(successor.c.id).where(
+                                successor.c.supersedes_statement_id
+                                == KnowledgeStatement.id
+                            )
+                        ),
+                        and_(
+                            *(
+                                statement_text.contains(term, autoescape=True)
+                                for term in terms
+                            )
+                        ),
+                    )
+                    .order_by(
+                        KnowledgeStatement.recorded_at.desc(), KnowledgeStatement.id
+                    )
+                    .limit(limit)
+                )
+            )
+
+    sources: list[
+        tuple[KnowledgeSource, KnowledgeSourceRevision, list[KnowledgeEvidenceSegment]]
+    ] = []
+    if scope in {"all", "source"}:
+        if fts_candidates is not None:
+            source_ids = fts_candidates["sources"]
+            items = list(
+                db.scalars(
+                    select(KnowledgeSource).where(KnowledgeSource.id.in_(source_ids))
+                )
+            )
+            item_by_id = {item.id: item for item in items}
+            source_candidates = [item_by_id[item_id] for item_id in source_ids]
+        else:
+            latest_source_revision = aliased(KnowledgeSourceRevision)
+            latest_revision_number = (
+                select(func.max(latest_source_revision.revision_number))
+                .where(latest_source_revision.source_id == KnowledgeSource.id)
+                .correlate(KnowledgeSource)
+                .scalar_subquery()
+            )
+            source_filters = []
+            for term in terms:
+                evidence_match = exists(
+                    select(KnowledgeEvidenceSegment.id)
+                    .join(
+                        KnowledgeSourceRevision,
+                        KnowledgeSourceRevision.id
+                        == KnowledgeEvidenceSegment.source_revision_id,
+                    )
+                    .where(
+                        KnowledgeSourceRevision.source_id == KnowledgeSource.id,
+                        KnowledgeSourceRevision.revision_number
+                        == latest_revision_number,
+                        func.lower(KnowledgeEvidenceSegment.text).contains(
+                            term, autoescape=True
+                        ),
+                    )
+                )
+                source_filters.append(
+                    or_(
+                        func.lower(KnowledgeSource.title).contains(
+                            term, autoescape=True
+                        ),
+                        evidence_match,
+                    )
+                )
+            source_candidates = list(
+                db.scalars(
+                    select(KnowledgeSource)
+                    .where(
+                        KnowledgeSource.space_id == space_id,
+                        KnowledgeSource.status == "active",
+                        and_(*source_filters),
+                    )
+                    .order_by(KnowledgeSource.updated_at.desc(), KnowledgeSource.id)
+                    .limit(limit)
+                )
+            )
+        sources = _load_search_sources(db, source_candidates)
+
+    source_results = []
+    for source, revision, evidence in sources:
+        payload = source_payload(source, revision, evidence)
+        for segment in payload["evidenceSegments"]:
+            segment["text"] = segment["text"][:1_200]
+        source_results.append(payload)
+    return {
+        "query": query.strip(),
+        "scope": scope,
+        "method": method,
+        "limit": limit,
+        "entities": [entity_payload(item) for item in entities],
+        "statements": [statement_payload(db, item) for item in statements],
+        "sources": source_results,
+    }
+
+
+def _sqlite_knowledge_fts_candidates(
+    db: Session, *, space_id: str, terms: list[str], scope: str, limit: int
+) -> dict[str, list[str]] | None:
+    bind = db.get_bind()
+    if bind.dialect.name != "sqlite":
+        return None
+    available_count = db.scalar(
+        text(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ("
+            "'knowledge_entity_fts', 'knowledge_statement_fts', "
+            "'knowledge_source_fts', 'knowledge_evidence_fts')"
+        )
+    )
+    if available_count != 4:
+        return None
+
+    match_queries = {f"match_{index}": f'"{term}"*' for index, term in enumerate(terms)}
+    match_query = " AND ".join(match_queries.values())
+    parameters: dict[str, Any] = {
+        "space_id": space_id,
+        "match_query": match_query,
+        "limit": limit,
+        **match_queries,
+    }
+    candidates = {"entities": [], "statements": [], "sources": []}
+    if scope in {"all", "wiki"}:
+        candidates["entities"] = list(
+            db.scalars(
+                text(
+                    "SELECT entity.id FROM knowledge_entity_fts "
+                    "JOIN knowledge_entities AS entity "
+                    "ON entity.rowid = knowledge_entity_fts.rowid "
+                    "WHERE knowledge_entity_fts MATCH :match_query "
+                    "AND entity.space_id = :space_id AND entity.status = 'active' "
+                    "ORDER BY bm25(knowledge_entity_fts), entity.canonical_name "
+                    "LIMIT :limit"
+                ),
+                parameters,
+            )
+        )
+    if scope in {"all", "statement"}:
+        statement_matches = " INTERSECT ".join(
+            (
+                "SELECT statement.id FROM knowledge_statements AS statement "
+                "WHERE statement.space_id = :space_id "
+                "AND NOT EXISTS (SELECT 1 FROM knowledge_statements AS successor "
+                "WHERE successor.supersedes_statement_id = statement.id) "
+                "AND (statement.rowid IN (SELECT rowid FROM knowledge_statement_fts "
+                f"WHERE knowledge_statement_fts MATCH :match_{index}) "
+                "OR statement.subject_entity_id IN ("
+                "SELECT entity.id FROM knowledge_entity_fts "
+                "JOIN knowledge_entities AS entity "
+                "ON entity.rowid = knowledge_entity_fts.rowid "
+                f"WHERE knowledge_entity_fts MATCH :match_{index}) "
+                "OR statement.object_entity_id IN ("
+                "SELECT entity.id FROM knowledge_entity_fts "
+                "JOIN knowledge_entities AS entity "
+                "ON entity.rowid = knowledge_entity_fts.rowid "
+                f"WHERE knowledge_entity_fts MATCH :match_{index}))"
+            )
+            for index in range(len(terms))
+        )
+        candidates["statements"] = list(
+            db.scalars(
+                text(
+                    f"WITH matched_statements AS ({statement_matches}) "
+                    "SELECT statement.id FROM knowledge_statements AS statement "
+                    "JOIN matched_statements ON matched_statements.id = statement.id "
+                    "ORDER BY statement.recorded_at DESC, statement.id LIMIT :limit"
+                ),
+                parameters,
+            )
+        )
+    if scope in {"all", "source"}:
+        source_matches = " INTERSECT ".join(
+            (
+                "SELECT source.id FROM knowledge_sources AS source "
+                "WHERE source.space_id = :space_id AND source.status = 'active' "
+                "AND (source.rowid IN (SELECT rowid FROM knowledge_source_fts "
+                f"WHERE knowledge_source_fts MATCH :match_{index}) "
+                "OR source.id IN (SELECT revision.source_id "
+                "FROM knowledge_evidence_fts "
+                "JOIN knowledge_evidence_segments AS evidence "
+                "ON evidence.rowid = knowledge_evidence_fts.rowid "
+                "JOIN knowledge_source_revisions AS revision "
+                "ON revision.id = evidence.source_revision_id "
+                f"WHERE knowledge_evidence_fts MATCH :match_{index} "
+                "AND revision.revision_number = ("
+                "SELECT MAX(latest.revision_number) "
+                "FROM knowledge_source_revisions AS latest "
+                "WHERE latest.source_id = revision.source_id)))"
+            )
+            for index in range(len(terms))
+        )
+        candidates["sources"] = list(
+            db.scalars(
+                text(
+                    f"WITH matched_sources AS ({source_matches}) "
+                    "SELECT source.id FROM knowledge_sources AS source "
+                    "JOIN matched_sources ON matched_sources.id = source.id "
+                    "ORDER BY source.updated_at DESC, source.id LIMIT :limit"
+                ),
+                parameters,
+            )
+        )
+    return candidates
+
+
+def _load_search_sources(
+    db: Session, source_candidates: list[KnowledgeSource]
+) -> list[
+    tuple[KnowledgeSource, KnowledgeSourceRevision, list[KnowledgeEvidenceSegment]]
+]:
+    source_ids = [source.id for source in source_candidates]
+    if not source_ids:
+        return []
+    latest = (
+        select(
+            KnowledgeSourceRevision.source_id.label("source_id"),
+            func.max(KnowledgeSourceRevision.revision_number).label("revision_number"),
+        )
+        .where(KnowledgeSourceRevision.source_id.in_(source_ids))
+        .group_by(KnowledgeSourceRevision.source_id)
+        .subquery()
+    )
+    revisions = list(
+        db.scalars(
+            select(KnowledgeSourceRevision).join(
+                latest,
+                and_(
+                    KnowledgeSourceRevision.source_id == latest.c.source_id,
+                    KnowledgeSourceRevision.revision_number
+                    == latest.c.revision_number,
+                ),
+            )
+        )
+    )
+    revision_by_source = {revision.source_id: revision for revision in revisions}
+    revision_ids = [revision.id for revision in revisions]
+    evidence_by_revision: dict[str, list[KnowledgeEvidenceSegment]] = {
+        revision_id: [] for revision_id in revision_ids
+    }
+    if revision_ids:
+        for segment in db.scalars(
+            select(KnowledgeEvidenceSegment)
+            .where(KnowledgeEvidenceSegment.source_revision_id.in_(revision_ids))
+            .order_by(
+                KnowledgeEvidenceSegment.source_revision_id,
+                KnowledgeEvidenceSegment.segment_ordinal,
+            )
+        ):
+            evidence_by_revision[segment.source_revision_id].append(segment)
+    return [
+        (source, revision, evidence_by_revision[revision.id])
+        for source in source_candidates
+        if (revision := revision_by_source.get(source.id)) is not None
+    ]
+
+
+def knowledge_auto_capture_payload(db: Session, user: User) -> dict[str, Any]:
+    setting = db.scalar(
+        select(UserSetting).where(
+            UserSetting.user_id == user.id,
+            UserSetting.key == KNOWLEDGE_AUTO_CAPTURE_SETTING_KEY,
+        )
+    )
+    value = setting.value_json if setting is not None else None
+    if isinstance(value, dict) and value.get("enabled") is False:
+        return {"enabled": False, "spaceId": None, "mode": "research"}
+    configured_space_id = value.get("spaceId") if isinstance(value, dict) else None
+    space = None
+    if isinstance(configured_space_id, str):
+        space = db.scalar(
+            knowledge_space_access_query(user, write=True).where(
+                KnowledgeSpace.id == configured_space_id
+            )
+        )
+    if space is None and setting is None:
+        space = db.scalar(
+            knowledge_space_access_query(user, write=True)
+            .where(KnowledgeSpace.space_type == "personal")
+            .order_by(KnowledgeSpace.created_at, KnowledgeSpace.id)
+            .limit(1)
+        )
+    return {
+        "enabled": space is not None,
+        "spaceId": space.id if space is not None else None,
+        "mode": "research",
+    }
+
+
+def update_knowledge_auto_capture(
+    db: Session,
+    user: User,
+    payload: KnowledgeAutoCaptureUpdate,
+) -> dict[str, Any]:
+    space_id: str | None = None
+    if payload.enabled:
+        if payload.space_id is None:
+            raise ApiProblem(
+                422,
+                "knowledge_auto_capture_space_required",
+                "자동 축적을 켜려면 Knowledge Space를 선택해 주세요.",
+            )
+        space = require_knowledge_space(db, user, payload.space_id, write=True)
+        space_id = space.id
+    setting = db.scalar(
+        select(UserSetting).where(
+            UserSetting.user_id == user.id,
+            UserSetting.key == KNOWLEDGE_AUTO_CAPTURE_SETTING_KEY,
+        )
+    )
+    value = {"enabled": payload.enabled, "spaceId": space_id, "mode": "research"}
+    if setting is None:
+        setting = UserSetting(
+            user_id=user.id,
+            key=KNOWLEDGE_AUTO_CAPTURE_SETTING_KEY,
+            value_json=value,
+        )
+        db.add(setting)
+    else:
+        setting.value_json = value
+        setting.updated_at = utc_now()
+    db.flush()
+    return value
+
+
+def update_knowledge_space(
+    db: Session,
+    user: User,
+    space_id: str,
+    payload: KnowledgeSpaceUpdate,
+) -> KnowledgeSpace:
+    space = require_knowledge_space(db, user, space_id, write=True)
+    if space.settings_revision != payload.expected_revision:
+        raise ApiProblem(
+            409,
+            "knowledge_space_revision_conflict",
+            "지식 공간이 다른 곳에서 변경되었습니다. 최신 상태를 불러온 뒤 다시 시도해 주세요.",
+            details={"currentRevision": space.settings_revision},
+        )
+    changed = False
+    if payload.name is not None:
+        space.name = payload.name.strip()
+        changed = True
+    if payload.description is not None:
+        space.description = payload.description.strip()
+        changed = True
+    if payload.purpose is not None:
+        space.purpose = payload.purpose.strip()
+        changed = True
+    if changed:
+        space.settings_revision += 1
+        space.updated_at = utc_now()
+    db.flush()
+    return space
+
+
+def archive_knowledge_space(
+    db: Session,
+    user: User,
+    space_id: str,
+    *,
+    expected_revision: int,
+) -> KnowledgeSpace:
+    space = require_knowledge_space(db, user, space_id, write=True)
+    if space.settings_revision != expected_revision:
+        raise ApiProblem(
+            409,
+            "knowledge_space_revision_conflict",
+            "지식 공간이 다른 곳에서 변경되었습니다. 최신 상태를 불러온 뒤 다시 시도해 주세요.",
+            details={"currentRevision": space.settings_revision},
+        )
+    space.status = "archived"
+    space.archived_at = utc_now()
+    space.settings_revision += 1
+    space.updated_at = utc_now()
+    db.flush()
     return space
 
 
@@ -204,6 +725,193 @@ def create_knowledge_source(
     return source, revision, evidence, True
 
 
+def create_knowledge_ingestion_job(
+    db: Session,
+    user: User,
+    space_id: str,
+    source_id: str,
+    *,
+    settings: Settings,
+) -> tuple[KnowledgeIngestionJob, bool]:
+    require_knowledge_space(db, user, space_id, write=True)
+    source = db.get(KnowledgeSource, source_id)
+    if source is None or source.space_id != space_id or source.status != "active":
+        raise ApiProblem(
+            404, "knowledge_source_not_found", "지식 원문을 찾을 수 없습니다."
+        )
+    revision = db.scalar(
+        select(KnowledgeSourceRevision)
+        .where(KnowledgeSourceRevision.source_id == source.id)
+        .order_by(
+            KnowledgeSourceRevision.revision_number.desc(),
+            KnowledgeSourceRevision.id,
+        )
+        .limit(1)
+    )
+    if revision is None:
+        raise ApiProblem(
+            409,
+            "knowledge_source_revision_missing",
+            "지식 원문의 현재 revision을 찾을 수 없습니다.",
+        )
+    evidence_count = db.scalar(
+        select(func.count(KnowledgeEvidenceSegment.id)).where(
+            KnowledgeEvidenceSegment.source_revision_id == revision.id
+        )
+    )
+    if not evidence_count:
+        raise ApiProblem(
+            422,
+            "knowledge_evidence_required",
+            "AI 추출에는 한 개 이상의 근거 구간이 필요합니다.",
+        )
+    execution = _resolve_knowledge_execution(db, user=user, settings=settings)
+    existing = db.scalar(
+        select(KnowledgeIngestionJob)
+        .where(
+            KnowledgeIngestionJob.source_revision_id == revision.id,
+            KnowledgeIngestionJob.extractor_version == KNOWLEDGE_EXTRACTOR_VERSION,
+            KnowledgeIngestionJob.provider_id == execution["provider_id"],
+            KnowledgeIngestionJob.model_key == execution["model_key"],
+            KnowledgeIngestionJob.status.in_(("queued", "running", "completed")),
+        )
+        .order_by(KnowledgeIngestionJob.created_at.desc())
+        .limit(1)
+    )
+    if existing is not None:
+        return existing, False
+    job = KnowledgeIngestionJob(
+        space_id=space_id,
+        source_id=source.id,
+        source_revision_id=revision.id,
+        requested_by_user_id=user.id,
+        status="queued",
+        provider_id=execution["provider_id"],
+        model_key=execution["model_key"],
+        runtime_model_id=execution["runtime_model_id"],
+        extractor_version=KNOWLEDGE_EXTRACTOR_VERSION,
+    )
+    db.add(job)
+    db.flush()
+    return job, True
+
+
+def _resolve_knowledge_execution(
+    db: Session, *, user: User, settings: Settings
+) -> dict[str, str]:
+    setting = db.scalar(
+        select(UserSetting).where(
+            UserSetting.user_id == user.id,
+            UserSetting.key == "execution.default",
+        )
+    )
+    value = setting.value_json if setting is not None else None
+    provider_id = (
+        value.get("providerId", value.get("provider_id"))
+        if isinstance(value, dict)
+        else None
+    )
+    model_key = (
+        value.get("modelKey", value.get("model_key"))
+        if isinstance(value, dict)
+        else None
+    )
+    if not isinstance(provider_id, str) or not isinstance(model_key, str):
+        fallback, _source = initial_execution_selection(
+            db,
+            organization_id=user.organization_id,
+            environment=settings.environment,
+        )
+        provider_id = str(fallback["providerId"])
+        model_key = str(fallback["modelKey"])
+    if provider_id == "mock":
+        if settings.environment == "production":
+            raise ApiProblem(
+                409,
+                "knowledge_provider_unavailable",
+                "운영 환경에서는 Mock Provider로 지식을 추출할 수 없습니다.",
+            )
+        return {
+            "provider_id": "mock",
+            "model_key": "mock-agent",
+            "runtime_model_id": "mock-agent",
+        }
+    model = db.scalar(
+        select(ProviderModel).where(
+            ProviderModel.provider_id == provider_id,
+            ProviderModel.model_key == model_key,
+            ProviderModel.enabled.is_(True),
+        )
+    )
+    if model is None:
+        fallback, _source = initial_execution_selection(
+            db,
+            organization_id=user.organization_id,
+            environment=settings.environment,
+        )
+        fallback_provider_id = str(fallback["providerId"])
+        fallback_model_key = str(fallback["modelKey"])
+        if fallback_provider_id == "mock":
+            if settings.environment == "production":
+                raise ApiProblem(
+                    409,
+                    "knowledge_provider_unavailable",
+                    "Knowledge 추출에 사용할 Provider 모델이 없습니다.",
+                )
+            return {
+                "provider_id": "mock",
+                "model_key": "mock-agent",
+                "runtime_model_id": "mock-agent",
+            }
+        model = db.scalar(
+            select(ProviderModel).where(
+                ProviderModel.provider_id == fallback_provider_id,
+                ProviderModel.model_key == fallback_model_key,
+                ProviderModel.enabled.is_(True),
+            )
+        )
+        if model is None:
+            raise ApiProblem(
+                409,
+                "knowledge_provider_unavailable",
+                "Knowledge 추출에 사용할 Provider 모델이 없습니다.",
+            )
+    if not bool(model.capabilities_json.get("structured_output")):
+        raise ApiProblem(
+            409,
+            "knowledge_structured_output_required",
+            "선택한 모델은 Knowledge 구조화 추출을 지원하지 않습니다.",
+        )
+    return {
+        "provider_id": model.provider_id,
+        "model_key": model.model_key,
+        "runtime_model_id": model.runtime_model_id,
+    }
+
+
+def list_knowledge_ingestion_jobs(
+    db: Session,
+    user: User,
+    space_id: str,
+    *,
+    source_id: str | None = None,
+) -> list[KnowledgeIngestionJob]:
+    require_knowledge_space(db, user, space_id)
+    query = select(KnowledgeIngestionJob).where(
+        KnowledgeIngestionJob.space_id == space_id
+    )
+    if source_id is not None:
+        query = query.where(KnowledgeIngestionJob.source_id == source_id)
+    return list(
+        db.scalars(
+            query.order_by(
+                KnowledgeIngestionJob.created_at.desc(),
+                KnowledgeIngestionJob.id,
+            ).limit(200)
+        )
+    )
+
+
 def _create_evidence_segments(
     db: Session,
     source_revision_id: str,
@@ -245,6 +953,7 @@ def create_knowledge_entity(
         )
     )
     if existing is not None:
+        _ensure_knowledge_page(db, existing, user.id)
         return existing, False
     entity = KnowledgeEntity(
         space_id=space_id,
@@ -256,6 +965,7 @@ def create_knowledge_entity(
     )
     db.add(entity)
     db.flush()
+    _ensure_knowledge_page(db, entity, user.id)
     return entity, True
 
 
@@ -339,6 +1049,8 @@ def create_knowledge_statement(
         for item in evidence
     )
     db.flush()
+    if statement.status == "approved":
+        _refresh_knowledge_pages_for_statement(db, statement, user.id)
     return statement
 
 
@@ -346,13 +1058,618 @@ def list_knowledge_statements(
     db: Session, user: User, space_id: str
 ) -> list[KnowledgeStatement]:
     require_knowledge_space(db, user, space_id)
+    current_statement = KnowledgeStatement.__table__.alias("current_statement")
+    has_successor = exists(
+        select(current_statement.c.id).where(
+            current_statement.c.supersedes_statement_id == KnowledgeStatement.id
+        )
+    )
     return list(
         db.scalars(
             select(KnowledgeStatement)
-            .where(KnowledgeStatement.space_id == space_id)
+            .where(
+                KnowledgeStatement.space_id == space_id,
+                ~has_successor,
+            )
             .order_by(KnowledgeStatement.recorded_at.desc(), KnowledgeStatement.id)
         )
     )
+
+
+def decide_knowledge_statement(
+    db: Session,
+    user: User,
+    statement_id: str,
+    payload: KnowledgeReviewDecision,
+) -> KnowledgeStatement:
+    statement = db.get(KnowledgeStatement, statement_id)
+    if statement is None:
+        raise ApiProblem(
+            404, "knowledge_statement_not_found", "검토할 Statement를 찾을 수 없습니다."
+        )
+    require_knowledge_space(db, user, statement.space_id, write=True)
+    if statement.status != "proposed":
+        raise ApiProblem(
+            409,
+            "knowledge_statement_already_reviewed",
+            "이미 검토가 끝난 Statement입니다.",
+        )
+    successor = db.scalar(
+        select(KnowledgeStatement.id).where(
+            KnowledgeStatement.supersedes_statement_id == statement.id
+        )
+    )
+    if successor is not None:
+        raise ApiProblem(
+            409,
+            "knowledge_statement_already_reviewed",
+            "이미 검토가 끝난 Statement입니다.",
+        )
+    evidence_ids = list(
+        db.scalars(
+            select(KnowledgeStatementEvidence.evidence_segment_id).where(
+                KnowledgeStatementEvidence.statement_id == statement.id
+            )
+        )
+    )
+    if payload.decision == "approved" and not evidence_ids:
+        raise ApiProblem(
+            422,
+            "knowledge_evidence_required",
+            "승인하려면 한 개 이상의 근거가 필요합니다.",
+        )
+    latest = db.scalar(
+        select(KnowledgeRevision)
+        .where(KnowledgeRevision.space_id == statement.space_id)
+        .order_by(KnowledgeRevision.revision_number.desc())
+        .limit(1)
+    )
+    revision_number = 1 if latest is None else latest.revision_number + 1
+    digest = sha256(
+        json.dumps(
+            {
+                "statementId": statement.id,
+                "decision": payload.decision,
+                "reason": payload.reason.strip(),
+                "evidence": sorted(evidence_ids),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    revision = KnowledgeRevision(
+        space_id=statement.space_id,
+        revision_number=revision_number,
+        parent_revision_id=latest.id if latest else None,
+        status="approved",
+        content_digest=digest,
+        change_summary=payload.reason.strip()
+        or ("Statement 승인" if payload.decision == "approved" else "Statement 거절"),
+        created_by_user_id=user.id,
+        approved_by_user_id=user.id,
+        approved_at=utc_now(),
+    )
+    db.add(revision)
+    db.flush()
+    reviewed = KnowledgeStatement(
+        space_id=statement.space_id,
+        revision_id=revision.id,
+        subject_entity_id=statement.subject_entity_id,
+        predicate_key=statement.predicate_key,
+        object_kind=statement.object_kind,
+        object_entity_id=statement.object_entity_id,
+        object_value_json=statement.object_value_json,
+        status=payload.decision,
+        rank="deprecated" if payload.decision == "rejected" else statement.rank,
+        confidence=statement.confidence,
+        valid_from=statement.valid_from,
+        valid_to=statement.valid_to,
+        created_by_type="user",
+        created_by_user_id=user.id,
+        supersedes_statement_id=statement.id,
+    )
+    db.add(reviewed)
+    db.flush()
+    db.add_all(
+        KnowledgeStatementEvidence(
+            statement_id=reviewed.id, evidence_segment_id=evidence_id
+        )
+        for evidence_id in evidence_ids
+    )
+    db.flush()
+    if reviewed.status == "approved":
+        _refresh_knowledge_pages_for_statement(db, reviewed, user.id)
+    return reviewed
+
+
+def list_knowledge_pages(
+    db: Session, user: User, space_id: str
+) -> list[tuple[KnowledgePage, KnowledgePageRevision, int]]:
+    require_knowledge_space(db, user, space_id)
+    pages = list(
+        db.scalars(
+            select(KnowledgePage)
+            .where(
+                KnowledgePage.space_id == space_id,
+                KnowledgePage.status == "active",
+            )
+            .order_by(KnowledgePage.title, KnowledgePage.id)
+        )
+    )
+    result: list[tuple[KnowledgePage, KnowledgePageRevision, int]] = []
+    for page in pages:
+        revision = _current_knowledge_page_revision(db, page)
+        if revision is None:
+            continue
+        revision_count = int(
+            db.scalar(
+                select(func.count(KnowledgePageRevision.id)).where(
+                    KnowledgePageRevision.page_id == page.id
+                )
+            )
+            or 0
+        )
+        result.append((page, revision, revision_count))
+    return result
+
+
+def list_knowledge_page_revisions(
+    db: Session, user: User, page_id: str
+) -> tuple[KnowledgePage, list[KnowledgePageRevision]]:
+    page = _require_knowledge_page(db, user, page_id)
+    revisions = list(
+        db.scalars(
+            select(KnowledgePageRevision)
+            .where(KnowledgePageRevision.page_id == page.id)
+            .order_by(
+                KnowledgePageRevision.revision_number.desc(),
+                KnowledgePageRevision.id,
+            )
+        )
+    )
+    return page, revisions
+
+
+def list_knowledge_revisions(
+    db: Session, user: User, space_id: str
+) -> list[KnowledgeRevision]:
+    require_knowledge_space(db, user, space_id)
+    return list(
+        db.scalars(
+            select(KnowledgeRevision)
+            .where(
+                KnowledgeRevision.space_id == space_id,
+                KnowledgeRevision.status == "approved",
+            )
+            .order_by(
+                KnowledgeRevision.revision_number.desc(),
+                KnowledgeRevision.id,
+            )
+        )
+    )
+
+
+def list_knowledge_project_bindings(
+    db: Session, user: User, space_id: str
+) -> list[KnowledgeProjectBinding]:
+    require_knowledge_space(db, user, space_id)
+    accessible_project_ids = project_access_query(user).with_only_columns(Project.id)
+    return list(
+        db.scalars(
+            select(KnowledgeProjectBinding)
+            .where(
+                KnowledgeProjectBinding.space_id == space_id,
+                KnowledgeProjectBinding.project_id.in_(accessible_project_ids),
+            )
+            .order_by(
+                KnowledgeProjectBinding.created_at,
+                KnowledgeProjectBinding.id,
+            )
+        )
+    )
+
+
+def create_knowledge_project_binding(
+    db: Session,
+    user: User,
+    space_id: str,
+    payload: KnowledgeProjectBindingCreate,
+) -> KnowledgeProjectBinding:
+    require_knowledge_space(db, user, space_id, write=True)
+    require_project(db, user, payload.project_id, write=True)
+    revision = _require_bindable_knowledge_revision(
+        db, payload.knowledge_revision_id, space_id
+    )
+    existing = db.scalar(
+        select(KnowledgeProjectBinding.id).where(
+            KnowledgeProjectBinding.project_id == payload.project_id,
+            KnowledgeProjectBinding.space_id == space_id,
+        )
+    )
+    if existing is not None:
+        raise ApiProblem(
+            409,
+            "knowledge_project_binding_exists",
+            "이 Project에는 현재 Knowledge Space가 이미 연결되어 있습니다.",
+        )
+    binding = KnowledgeProjectBinding(
+        project_id=payload.project_id,
+        space_id=space_id,
+        knowledge_revision_id=revision.id,
+        permission="read",
+        follow_latest_approved=False,
+        namespace_filters_json=[],
+        tag_filters_json=[],
+        binding_revision=1,
+        created_by_user_id=user.id,
+    )
+    db.add(binding)
+    db.flush()
+    return binding
+
+
+def update_knowledge_project_binding(
+    db: Session,
+    user: User,
+    binding_id: str,
+    payload: KnowledgeProjectBindingUpdate,
+) -> KnowledgeProjectBinding:
+    binding = _require_knowledge_project_binding(db, user, binding_id, write=True)
+    revision = _require_bindable_knowledge_revision(
+        db, payload.knowledge_revision_id, binding.space_id
+    )
+    if binding.binding_revision != payload.expected_revision:
+        raise _knowledge_project_binding_conflict(binding.binding_revision)
+    if binding.knowledge_revision_id == revision.id:
+        return binding
+    result = db.execute(
+        update(KnowledgeProjectBinding)
+        .where(
+            KnowledgeProjectBinding.id == binding.id,
+            KnowledgeProjectBinding.binding_revision == payload.expected_revision,
+        )
+        .values(
+            knowledge_revision_id=revision.id,
+            binding_revision=payload.expected_revision + 1,
+            updated_at=utc_now(),
+        )
+    )
+    if result.rowcount != 1:
+        db.expire(binding)
+        raise _knowledge_project_binding_conflict(binding.binding_revision)
+    db.expire(binding)
+    return db.get(KnowledgeProjectBinding, binding.id) or binding
+
+
+def delete_knowledge_project_binding(
+    db: Session,
+    user: User,
+    binding_id: str,
+    *,
+    expected_revision: int,
+) -> KnowledgeProjectBinding:
+    binding = _require_knowledge_project_binding(db, user, binding_id, write=True)
+    if binding.binding_revision != expected_revision:
+        raise _knowledge_project_binding_conflict(binding.binding_revision)
+    result = db.execute(
+        delete(KnowledgeProjectBinding).where(
+            KnowledgeProjectBinding.id == binding.id,
+            KnowledgeProjectBinding.binding_revision == expected_revision,
+        )
+    )
+    if result.rowcount != 1:
+        raise _knowledge_project_binding_conflict(binding.binding_revision)
+    return binding
+
+
+def _require_bindable_knowledge_revision(
+    db: Session, revision_id: str, space_id: str
+) -> KnowledgeRevision:
+    revision = db.get(KnowledgeRevision, revision_id)
+    if (
+        revision is None
+        or revision.space_id != space_id
+        or revision.status != "approved"
+    ):
+        raise ApiProblem(
+            404,
+            "knowledge_revision_not_found",
+            "연결할 수 있는 승인 Knowledge Revision을 찾을 수 없습니다.",
+        )
+    return revision
+
+
+def _require_knowledge_project_binding(
+    db: Session,
+    user: User,
+    binding_id: str,
+    *,
+    write: bool,
+) -> KnowledgeProjectBinding:
+    binding = db.get(KnowledgeProjectBinding, binding_id)
+    if binding is None:
+        raise ApiProblem(
+            404,
+            "knowledge_project_binding_not_found",
+            "Knowledge Project 연결을 찾을 수 없습니다.",
+        )
+    require_knowledge_space(db, user, binding.space_id, write=write)
+    require_project(db, user, binding.project_id, write=write)
+    return binding
+
+
+def _knowledge_project_binding_conflict(current_revision: int) -> ApiProblem:
+    return ApiProblem(
+        409,
+        "knowledge_project_binding_conflict",
+        "Knowledge Project 연결이 다른 곳에서 변경되었습니다.",
+        details={"currentRevision": current_revision},
+    )
+
+
+def update_knowledge_page(
+    db: Session,
+    user: User,
+    page_id: str,
+    payload: KnowledgePageUpdate,
+) -> tuple[KnowledgePage, KnowledgePageRevision, int]:
+    page = _require_knowledge_page(db, user, page_id, write=True)
+    current = _current_knowledge_page_revision(db, page)
+    if current is None:
+        raise ApiProblem(
+            409,
+            "knowledge_page_revision_missing",
+            "Wiki Page의 현재 Revision을 찾을 수 없습니다.",
+        )
+    if current.revision_number != payload.expected_revision:
+        raise ApiProblem(
+            409,
+            "knowledge_page_revision_conflict",
+            "Wiki Page가 다른 곳에서 변경되었습니다. 최신 Revision을 확인해 주세요.",
+            details={"currentRevision": current.revision_number},
+        )
+    generated = _section_markdown(current.generated_sections_json)
+    revision, _created = _append_knowledge_page_revision(
+        db,
+        page,
+        generated_markdown=generated,
+        manual_markdown=payload.manual_markdown.strip(),
+        created_by_user_id=user.id,
+        source_statement_revision_id=current.source_statement_revision_id,
+        generated_metadata=current.generated_sections_json,
+    )
+    revision_count = int(
+        db.scalar(
+            select(func.count(KnowledgePageRevision.id)).where(
+                KnowledgePageRevision.page_id == page.id
+            )
+        )
+        or 0
+    )
+    return page, revision, revision_count
+
+
+def _require_knowledge_page(
+    db: Session,
+    user: User,
+    page_id: str,
+    *,
+    write: bool = False,
+) -> KnowledgePage:
+    page = db.get(KnowledgePage, page_id)
+    if page is None or page.status != "active":
+        raise ApiProblem(404, "knowledge_page_not_found", "Wiki Page를 찾을 수 없습니다.")
+    require_knowledge_space(db, user, page.space_id, write=write)
+    return page
+
+
+def _ensure_knowledge_page(
+    db: Session, entity: KnowledgeEntity, created_by_user_id: str
+) -> KnowledgePage:
+    page = db.scalar(
+        select(KnowledgePage).where(
+            KnowledgePage.space_id == entity.space_id,
+            KnowledgePage.entity_id == entity.id,
+        )
+    )
+    if page is not None:
+        return page
+    slug_base = re.sub(r"[^\w\-]+", "-", entity.canonical_name.casefold()).strip(
+        "-"
+    ) or "entity"
+    page = KnowledgePage(
+        space_id=entity.space_id,
+        entity_id=entity.id,
+        slug=f"{slug_base}-{entity.id[:8]}",
+        title=entity.canonical_name,
+        page_type="entity",
+        status="active",
+    )
+    db.add(page)
+    db.flush()
+    generated, metadata = _generated_page_section(db, entity)
+    _append_knowledge_page_revision(
+        db,
+        page,
+        generated_markdown=generated,
+        manual_markdown="",
+        created_by_user_id=created_by_user_id,
+        source_statement_revision_id=None,
+        generated_metadata=metadata,
+    )
+    return page
+
+
+def _refresh_knowledge_pages_for_statement(
+    db: Session, statement: KnowledgeStatement, created_by_user_id: str
+) -> None:
+    entity_ids = {statement.subject_entity_id}
+    if statement.object_entity_id is not None:
+        entity_ids.add(statement.object_entity_id)
+    for entity_id in entity_ids:
+        entity = db.get(KnowledgeEntity, entity_id)
+        if entity is None:
+            continue
+        page = _ensure_knowledge_page(db, entity, created_by_user_id)
+        current = _current_knowledge_page_revision(db, page)
+        manual = (
+            _section_markdown(current.manual_sections_json)
+            if current is not None
+            else ""
+        )
+        generated, metadata = _generated_page_section(db, entity)
+        _append_knowledge_page_revision(
+            db,
+            page,
+            generated_markdown=generated,
+            manual_markdown=manual,
+            created_by_user_id=created_by_user_id,
+            source_statement_revision_id=statement.revision_id,
+            generated_metadata=metadata,
+        )
+
+
+def _generated_page_section(
+    db: Session, entity: KnowledgeEntity
+) -> tuple[str, dict[str, Any]]:
+    successor = KnowledgeStatement.__table__.alias("page_statement_successor")
+    statements = list(
+        db.scalars(
+            select(KnowledgeStatement)
+            .where(
+                KnowledgeStatement.space_id == entity.space_id,
+                KnowledgeStatement.status == "approved",
+                or_(
+                    KnowledgeStatement.subject_entity_id == entity.id,
+                    KnowledgeStatement.object_entity_id == entity.id,
+                ),
+                ~exists(
+                    select(successor.c.id).where(
+                        successor.c.supersedes_statement_id == KnowledgeStatement.id
+                    )
+                ),
+            )
+            .order_by(KnowledgeStatement.recorded_at, KnowledgeStatement.id)
+        )
+    )
+    lines = [entity.description.strip()] if entity.description.strip() else []
+    statement_ids: list[str] = []
+    evidence_ids: list[str] = []
+    if statements:
+        lines.extend(["## 검증된 지식", ""])
+    for statement in statements:
+        subject = db.get(KnowledgeEntity, statement.subject_entity_id)
+        object_text = _statement_object_text(db, statement)
+        subject_name = subject.canonical_name if subject is not None else "알 수 없는 Entity"
+        lines.append(
+            f"- **{subject_name}** — `{statement.predicate_key}` → **{object_text}**"
+        )
+        statement_ids.append(statement.id)
+        evidence_ids.extend(
+            db.scalars(
+                select(KnowledgeStatementEvidence.evidence_segment_id).where(
+                    KnowledgeStatementEvidence.statement_id == statement.id
+                )
+            )
+        )
+    markdown = "\n".join(lines).strip()
+    return markdown, {
+        "markdown": markdown,
+        "statementIds": statement_ids,
+        "evidenceSegmentIds": list(dict.fromkeys(evidence_ids)),
+    }
+
+
+def _statement_object_text(db: Session, statement: KnowledgeStatement) -> str:
+    if statement.object_entity_id is not None:
+        entity = db.get(KnowledgeEntity, statement.object_entity_id)
+        return entity.canonical_name if entity is not None else "알 수 없는 Entity"
+    value = statement.object_value_json
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _append_knowledge_page_revision(
+    db: Session,
+    page: KnowledgePage,
+    *,
+    generated_markdown: str,
+    manual_markdown: str,
+    created_by_user_id: str,
+    source_statement_revision_id: str | None,
+    generated_metadata: dict[str, Any],
+) -> tuple[KnowledgePageRevision, bool]:
+    current = _current_knowledge_page_revision(db, page)
+    markdown_body = _compose_page_markdown(
+        page.title, manual_markdown, generated_markdown
+    )
+    if current is not None and current.markdown_body == markdown_body:
+        return current, False
+    revision = KnowledgePageRevision(
+        id=new_uuid(),
+        page_id=page.id,
+        revision_number=1 if current is None else current.revision_number + 1,
+        markdown_body=markdown_body,
+        generated_sections_json={**generated_metadata, "markdown": generated_markdown},
+        manual_sections_json={"markdown": manual_markdown},
+        source_statement_revision_id=source_statement_revision_id,
+        created_by_user_id=created_by_user_id,
+    )
+    expected_current_revision_id = page.current_revision_id
+    current_revision_condition = (
+        KnowledgePage.current_revision_id.is_(None)
+        if expected_current_revision_id is None
+        else KnowledgePage.current_revision_id == expected_current_revision_id
+    )
+    updated_at = utc_now()
+    result = db.execute(
+        update(KnowledgePage)
+        .where(
+            KnowledgePage.id == page.id,
+            current_revision_condition,
+        )
+        .values(current_revision_id=revision.id, updated_at=updated_at)
+    )
+    if result.rowcount != 1:
+        db.expire(page)
+        raise ApiProblem(
+            409,
+            "knowledge_page_revision_conflict",
+            "Wiki Page가 다른 곳에서 변경되었습니다. 최신 Revision을 확인해 주세요.",
+        )
+    db.add(revision)
+    db.flush()
+    page.current_revision_id = revision.id
+    page.updated_at = updated_at
+    return revision, True
+
+
+def _current_knowledge_page_revision(
+    db: Session, page: KnowledgePage
+) -> KnowledgePageRevision | None:
+    if page.current_revision_id is None:
+        return None
+    return db.get(KnowledgePageRevision, page.current_revision_id)
+
+
+def _section_markdown(value: Any) -> str:
+    if not isinstance(value, dict):
+        return ""
+    markdown = value.get("markdown")
+    return markdown if isinstance(markdown, str) else ""
+
+
+def _compose_page_markdown(
+    title: str, manual_markdown: str, generated_markdown: str
+) -> str:
+    sections = [f"# {title}"]
+    if manual_markdown:
+        sections.extend(["## 사용자 메모", manual_markdown])
+    if generated_markdown:
+        sections.append(generated_markdown)
+    return "\n\n".join(sections)
 
 
 def knowledge_neighborhood(
@@ -486,7 +1803,18 @@ def _normalize_entity_name(value: str) -> str:
     return " ".join(value.casefold().split())
 
 
-def space_payload(space: KnowledgeSpace) -> dict[str, Any]:
+def space_payload(db: Session, user: User, space: KnowledgeSpace) -> dict[str, Any]:
+    access_mode = "owner"
+    if space.owner_user_id != user.id:
+        accessible_project_ids = project_access_query(user).with_only_columns(Project.id)
+        project_binding = db.scalar(
+            select(KnowledgeProjectBinding.id).where(
+                KnowledgeProjectBinding.space_id == space.id,
+                KnowledgeProjectBinding.project_id.in_(accessible_project_ids),
+                KnowledgeProjectBinding.permission == "read",
+            )
+        )
+        access_mode = "project_read" if project_binding is not None else "organization_read"
     return {
         "id": space.id,
         "organizationId": space.organization_id,
@@ -498,6 +1826,7 @@ def space_payload(space: KnowledgeSpace) -> dict[str, Any]:
         "visibility": space.visibility,
         "status": space.status,
         "settingsRevision": space.settings_revision,
+        "accessMode": access_mode,
         "createdAt": space.created_at,
         "updatedAt": space.updated_at,
     }
@@ -540,6 +1869,32 @@ def evidence_payload(evidence: KnowledgeEvidenceSegment) -> dict[str, Any]:
     }
 
 
+def ingestion_job_payload(job: KnowledgeIngestionJob) -> dict[str, Any]:
+    return {
+        "id": job.id,
+        "spaceId": job.space_id,
+        "sourceId": job.source_id,
+        "sourceRevisionId": job.source_revision_id,
+        "status": job.status,
+        "providerId": job.provider_id,
+        "modelKey": job.model_key,
+        "extractorVersion": job.extractor_version,
+        "inputSegmentCount": job.input_segment_count,
+        "inputCharacterCount": job.input_character_count,
+        "entityCount": job.entity_count,
+        "statementCount": job.statement_count,
+        "inputTokens": job.input_tokens,
+        "outputTokens": job.output_tokens,
+        "errorCode": job.error_code,
+        "errorMessage": job.error_message,
+        "queuedAt": job.queued_at,
+        "startedAt": job.started_at,
+        "finishedAt": job.finished_at,
+        "createdAt": job.created_at,
+        "updatedAt": job.updated_at,
+    }
+
+
 def entity_payload(
     entity: KnowledgeEntity, *, depth: int | None = None
 ) -> dict[str, Any]:
@@ -556,6 +1911,90 @@ def entity_payload(
     if depth is not None:
         payload["depth"] = depth
     return payload
+
+
+def knowledge_page_payload(
+    page: KnowledgePage,
+    revision: KnowledgePageRevision,
+    revision_count: int,
+) -> dict[str, Any]:
+    return {
+        "id": page.id,
+        "spaceId": page.space_id,
+        "entityId": page.entity_id,
+        "slug": page.slug,
+        "title": page.title,
+        "pageType": page.page_type,
+        "status": page.status,
+        "revisionCount": revision_count,
+        "currentRevision": knowledge_page_revision_payload(revision),
+        "createdAt": page.created_at,
+        "updatedAt": page.updated_at,
+    }
+
+
+def knowledge_page_revision_payload(
+    revision: KnowledgePageRevision,
+) -> dict[str, Any]:
+    return {
+        "id": revision.id,
+        "pageId": revision.page_id,
+        "revisionNumber": revision.revision_number,
+        "markdownBody": revision.markdown_body,
+        "generatedMarkdown": _section_markdown(revision.generated_sections_json),
+        "manualMarkdown": _section_markdown(revision.manual_sections_json),
+        "statementIds": revision.generated_sections_json.get("statementIds", []),
+        "evidenceSegmentIds": revision.generated_sections_json.get(
+            "evidenceSegmentIds", []
+        ),
+        "sourceStatementRevisionId": revision.source_statement_revision_id,
+        "generationRunId": revision.generation_run_id,
+        "createdByUserId": revision.created_by_user_id,
+        "createdAt": revision.created_at,
+    }
+
+
+def knowledge_revision_payload(revision: KnowledgeRevision) -> dict[str, Any]:
+    return {
+        "id": revision.id,
+        "spaceId": revision.space_id,
+        "revisionNumber": revision.revision_number,
+        "status": revision.status,
+        "contentDigest": revision.content_digest,
+        "changeSummary": revision.change_summary,
+        "createdByUserId": revision.created_by_user_id,
+        "approvedByUserId": revision.approved_by_user_id,
+        "createdAt": revision.created_at,
+        "approvedAt": revision.approved_at,
+    }
+
+
+def knowledge_project_binding_payload(
+    db: Session, binding: KnowledgeProjectBinding
+) -> dict[str, Any]:
+    project = db.get(Project, binding.project_id)
+    revision = db.get(KnowledgeRevision, binding.knowledge_revision_id)
+    if project is None or revision is None:
+        raise ApiProblem(
+            409,
+            "knowledge_project_binding_invalid",
+            "Knowledge Project 연결의 참조가 유효하지 않습니다.",
+        )
+    return {
+        "id": binding.id,
+        "projectId": binding.project_id,
+        "projectName": project.name,
+        "spaceId": binding.space_id,
+        "knowledgeRevision": knowledge_revision_payload(revision),
+        "permission": binding.permission,
+        "followLatestApproved": binding.follow_latest_approved,
+        "namespaceFilters": binding.namespace_filters_json,
+        "tagFilters": binding.tag_filters_json,
+        "bindingRevision": binding.binding_revision,
+        "createdByUserId": binding.created_by_user_id,
+        "createdAt": binding.created_at,
+        "updatedAt": binding.updated_at,
+    }
 
 
 def statement_payload(db: Session, statement: KnowledgeStatement) -> dict[str, Any]:
