@@ -124,6 +124,30 @@ def test_skill_interface_can_disable_implicit_invocation() -> None:
     assert _skill_allows_implicit_invocation({"SKILL.md": "# Default"}) is True
 
 
+def test_scheduled_snapshot_keeps_skills_as_model_selected_candidates() -> None:
+    snapshot = {
+        "extensions": [
+            {
+                "extension_id": "frozen-skill-id",
+                "slug": "frozen-skill",
+                "name": "Frozen Skill",
+                "description": "A frozen candidate selected only when semantically useful.",
+                "instructions": "Follow the frozen workflow.",
+                "allow_implicit_invocation": True,
+            }
+        ],
+        "extension_application": "snapshot_candidates",
+        "prompt_references": [],
+    }
+
+    schema = _skill_activation_tool_schema(snapshot)
+
+    assert schema is not None
+    assert schema["function"]["parameters"]["properties"]["skillId"]["enum"] == [
+        "frozen-skill-id"
+    ]
+
+
 def test_skill_activities_show_which_skill_was_actually_applied() -> None:
     extensions = [
         {

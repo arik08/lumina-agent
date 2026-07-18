@@ -1670,7 +1670,7 @@ def test_scheduled_run_syncs_terminal_artifacts_and_in_app_delivery(
         }
 
 
-def test_scheduled_run_applies_frozen_skill_snapshot_to_hash_and_prompt(
+def test_scheduled_run_uses_frozen_skill_snapshot_as_model_selected_candidates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     frozen_extensions = [
@@ -1707,17 +1707,19 @@ def test_scheduled_run_applies_frozen_skill_snapshot_to_hash_and_prompt(
         assert run is not None
         snapshot = run.snapshot_json
         assert snapshot["extensions"] == frozen_extensions
-        assert snapshot["extension_application"] == "all_snapshot"
+        assert snapshot["extension_application"] == "snapshot_candidates"
         stable_prefix = {
             "contract_version": snapshot["contract_version"],
             "agent": snapshot["agent"],
             "project": snapshot["project"],
             "execution": snapshot["execution"],
             "output_mode": snapshot["output_mode"],
+            "analysis_depth": snapshot["analysis_depth"],
+            "answer_length": snapshot["answer_length"],
             "instructions": snapshot["instructions"],
             "runtime_prompts": snapshot["runtime_prompts"],
             "extensions": frozen_extensions,
-            "extension_application": "all_snapshot",
+            "extension_application": "snapshot_candidates",
             "environment_type": snapshot["environment_type"],
             "approval_mode": snapshot["approval_mode"],
             "clarification_mode": snapshot["clarification_mode"],
@@ -1738,8 +1740,9 @@ def test_scheduled_run_applies_frozen_skill_snapshot_to_hash_and_prompt(
     messages = LocalRunExecutor(settings)._conversation_messages(
         run_id, "점검 보고서를 작성해 주세요."
     )
-    assert "Scheduled Skill snapshot: 동결 점검 절차" in messages[0].content
-    assert "반드시 동결된 점검 절차 v1을 적용합니다." in messages[0].content
+    assert "Scheduled Skill snapshot:" not in messages[0].content
+    assert "Selected Skill:" not in messages[0].content
+    assert "반드시 동결된 점검 절차 v1을 적용합니다." not in messages[0].content
 
     interrupted_at = datetime.now(UTC)
     with SessionLocal() as db:
@@ -1759,7 +1762,7 @@ def test_scheduled_run_applies_frozen_skill_snapshot_to_hash_and_prompt(
         retry_run = db.get(Run, enqueue_ids[0])
         assert retry_run is not None
         assert retry_run.snapshot_json["extensions"] == frozen_extensions
-        assert retry_run.snapshot_json["extension_application"] == "all_snapshot"
+        assert retry_run.snapshot_json["extension_application"] == "snapshot_candidates"
         assert retry_run.snapshot_json["prompt_prefix_hash"] == expected_hash
         retry_run_id = retry_run.id
         db.commit()
@@ -1767,8 +1770,9 @@ def test_scheduled_run_applies_frozen_skill_snapshot_to_hash_and_prompt(
     retry_messages = LocalRunExecutor(settings)._conversation_messages(
         retry_run_id, "점검 보고서를 다시 작성해 주세요."
     )
-    assert "Scheduled Skill snapshot: 동결 점검 절차" in retry_messages[0].content
-    assert "반드시 동결된 점검 절차 v1을 적용합니다." in retry_messages[0].content
+    assert "Scheduled Skill snapshot:" not in retry_messages[0].content
+    assert "Selected Skill:" not in retry_messages[0].content
+    assert "반드시 동결된 점검 절차 v1을 적용합니다." not in retry_messages[0].content
 
 
 def test_scheduled_timeout_retries_once_and_duplicate_ticks_do_not_dispatch_twice(

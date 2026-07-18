@@ -596,7 +596,7 @@ def start_scheduled_run(
         ),
         idempotency_key=f"scheduled-run:{scheduled_run.id}:attempt:1",
         extension_snapshot_override=extension_snapshot,
-        apply_extension_snapshot=True,
+        use_extension_snapshot_candidates=True,
     )
     _patch_scheduled_run_snapshot(
         run,
@@ -866,7 +866,7 @@ def _start_retry_attempt(
         ),
         idempotency_key=(f"scheduled-run:{scheduled_run.id}:attempt:{next_attempt}"),
         extension_snapshot_override=extensions,
-        apply_extension_snapshot=True,
+        use_extension_snapshot_candidates=True,
     )
     scheduled_run.attempt = next_attempt
     run.parent_run_id = previous_run_id

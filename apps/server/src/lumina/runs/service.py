@@ -315,7 +315,7 @@ def create_run(
     payload: RunCreate,
     idempotency_key: str,
     extension_snapshot_override: list[dict[str, Any]] | None = None,
-    apply_extension_snapshot: bool = False,
+    use_extension_snapshot_candidates: bool = False,
     image_backend_model: str | None = None,
     settings: Settings | None = None,
 ) -> tuple[Run, Message, bool]:
@@ -463,7 +463,9 @@ def create_run(
         references=references,
     )
     extension_application = (
-        "all_snapshot" if apply_extension_snapshot else "explicit_references"
+        "snapshot_candidates"
+        if use_extension_snapshot_candidates
+        else "explicit_references"
     )
     agent_snapshot = agent_frontend_payload(
         conversation.agent_id, conversation.agent_version
