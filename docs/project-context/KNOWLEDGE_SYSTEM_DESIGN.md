@@ -738,6 +738,12 @@ GET    /api/knowledge/pages/{page_id}
 GET    /api/knowledge/pages/{page_id}/revisions
 PATCH  /api/knowledge/pages/{page_id}
 
+GET    /api/knowledge/spaces/{space_id}/revisions
+GET    /api/knowledge/spaces/{space_id}/project-bindings
+POST   /api/knowledge/spaces/{space_id}/project-bindings
+PATCH  /api/knowledge/project-bindings/{binding_id}
+DELETE /api/knowledge/project-bindings/{binding_id}
+
 POST   /api/knowledge/search
 POST   /api/knowledge/context-packs
 GET    /api/knowledge/entities/{entity_id}/neighborhood
@@ -757,6 +763,8 @@ List API는 cursor pagination을 사용하고 모든 응답에서 접근 가능�
 현재 SQLite 개발 경로에는 `KnowledgePage`와 append-only `KnowledgePageRevision`이 구현되어 있습니다. Entity 생성 시 첫 Wiki Page를 만들고 승인 Statement가 추가되면 관련 Page의 생성 영역만 새 revision으로 갱신합니다. 사용자가 직접 쓴 Markdown은 수동 영역에 분리해 보존하므로 이후 AI 추출이나 승인으로 생성 영역이 바뀌어도 덮어쓰지 않습니다.
 
 `PATCH /api/knowledge/pages/{page_id}`는 `expectedRevision` CAS를 요구하며 충돌 시 `409`를 반환합니다. Wiki UI는 현재 revision, 인라인 사용자 메모 편집, revision 목록과 이전/현재 전체 Markdown 비교를 제공합니다. Page와 revision 조회·수정은 모두 Space 소유권을 Backend에서 다시 검사합니다.
+
+Project Binding은 승인된 `KnowledgeRevision`만 연결하며 `(project_id, space_id)`당 하나를 유지합니다. 초기 권한은 `read`, `follow_latest_approved`는 `false`로 고정합니다. 새 승인 revision이 생겨도 기존 Project에는 자동 반영되지 않고 사용자가 설정 화면에서 revision을 명시적으로 바꿔야 합니다. 생성·변경·해제 시 Space 소유권과 Project 쓰기 권한을 모두 다시 검사하고, 변경·해제는 `bindingRevision` CAS와 감사 이벤트를 남깁니다.
 
 ## 12. 보안, 품질과 감사
 

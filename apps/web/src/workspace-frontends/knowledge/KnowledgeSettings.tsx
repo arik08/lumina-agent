@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { api } from "../../api";
 import type { KnowledgeAutoCaptureSetting, KnowledgeIngestionJob, KnowledgeSpace } from "../../api-types";
 import { formatDate } from "./knowledge-utils";
+import { KnowledgeProjectBindings } from "./KnowledgeProjectBindings";
 
 interface KnowledgeSettingsProps {
   space: KnowledgeSpace;
@@ -124,6 +125,8 @@ export function KnowledgeSettings({ space, ingestions, onUpdated, onArchived, on
             <footer>{saved && <span><Check size={13} /> 저장됨</span>}<button type="submit" disabled={!dirty || !name.trim() || saving}>{saving ? <LoaderCircle className="is-running" size={14} /> : <Save size={14} />} 변경 저장</button></footer>
           </form>
         </section>
+
+        <KnowledgeProjectBindings spaceId={space.id} onError={onError} />
 
         <section className="knowledge-card knowledge-danger-card">
           <header><div><strong>공간 삭제</strong><small>화면에서 제거하되 revision과 provenance는 보존 정책에 따라 archive합니다.</small></div></header>

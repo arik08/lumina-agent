@@ -402,6 +402,154 @@ def test_personal_knowledge_source_statement_and_bounded_graph(tmp_path: Path) -
         assert client.get(f"/api/knowledge/spaces/{space_id}").status_code == 404
 
 
+def test_project_binding_pins_an_approved_revision_until_explicit_update(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'knowledge-binding.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client, "admin", "1")
+        headers = {"X-CSRF-Token": csrf}
+        project = client.get("/api/projects").json()[0]
+        space = client.post(
+            "/api/knowledge/spaces",
+            headers=headers,
+            json={"name": "Project 고정 지식"},
+        ).json()
+        source_text = "수소환원제철은 탄소 배출 저감 기술과 연결됩니다."
+        source = client.post(
+            f"/api/knowledge/spaces/{space['id']}/sources",
+            headers=headers,
+            json={
+                "sourceType": "text",
+                "title": "고정 revision 근거",
+                "contentDigest": sha256(source_text.encode()).hexdigest(),
+                "mediaType": "text/plain",
+                "byteSize": len(source_text.encode()),
+                "capturedText": source_text,
+                "evidenceSegments": [{"text": source_text}],
+            },
+        ).json()
+        subject_id = _create_entity(client, headers, space["id"], "수소환원제철")
+        object_id = _create_entity(client, headers, space["id"], "탄소배출저감")
+        first = client.post(
+            f"/api/knowledge/spaces/{space['id']}/statements",
+            headers=headers,
+            json={
+                "subjectEntityId": subject_id,
+                "predicateKey": "REDUCES",
+                "objectKind": "entity",
+                "objectEntityId": object_id,
+                "evidenceSegmentIds": [source["evidenceSegments"][0]["id"]],
+                "status": "approved",
+                "changeSummary": "첫 승인",
+            },
+        )
+        assert first.status_code == 201, first.text
+
+        revisions = client.get(
+            f"/api/knowledge/spaces/{space['id']}/revisions"
+        )
+        assert revisions.status_code == 200, revisions.text
+        assert [item["revisionNumber"] for item in revisions.json()] == [1]
+        binding = client.post(
+            f"/api/knowledge/spaces/{space['id']}/project-bindings",
+            headers=headers,
+            json={
+                "projectId": project["id"],
+                "knowledgeRevisionId": first.json()["revisionId"],
+            },
+        )
+        assert binding.status_code == 201, binding.text
+        assert binding.json()["projectName"] == project["name"]
+        assert binding.json()["knowledgeRevision"]["revisionNumber"] == 1
+        assert binding.json()["bindingRevision"] == 1
+        assert binding.json()["followLatestApproved"] is False
+
+        duplicate = client.post(
+            f"/api/knowledge/spaces/{space['id']}/project-bindings",
+            headers=headers,
+            json={
+                "projectId": project["id"],
+                "knowledgeRevisionId": first.json()["revisionId"],
+            },
+        )
+        assert duplicate.status_code == 409
+        assert duplicate.json()["code"] == "knowledge_project_binding_exists"
+
+        second = client.post(
+            f"/api/knowledge/spaces/{space['id']}/statements",
+            headers=headers,
+            json={
+                "subjectEntityId": subject_id,
+                "predicateKey": "SUPPORTS",
+                "objectKind": "entity",
+                "objectEntityId": object_id,
+                "evidenceSegmentIds": [source["evidenceSegments"][0]["id"]],
+                "status": "approved",
+                "changeSummary": "두 번째 승인",
+            },
+        )
+        assert second.status_code == 201, second.text
+        pinned = client.get(
+            f"/api/knowledge/spaces/{space['id']}/project-bindings"
+        ).json()[0]
+        assert pinned["knowledgeRevision"]["revisionNumber"] == 1
+
+        updated = client.patch(
+            f"/api/knowledge/project-bindings/{binding.json()['id']}",
+            headers=headers,
+            json={
+                "expectedRevision": 1,
+                "knowledgeRevisionId": second.json()["revisionId"],
+            },
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["knowledgeRevision"]["revisionNumber"] == 2
+        assert updated.json()["bindingRevision"] == 2
+        stale = client.patch(
+            f"/api/knowledge/project-bindings/{binding.json()['id']}",
+            headers=headers,
+            json={
+                "expectedRevision": 1,
+                "knowledgeRevisionId": first.json()["revisionId"],
+            },
+        )
+        assert stale.status_code == 409
+        assert stale.json()["code"] == "knowledge_project_binding_conflict"
+
+        _create_user(client, csrf, login_name="binding-bob", display_name="Bob")
+        client.cookies.clear()
+        _login(client, "binding-bob", "binding-bob-password")
+        assert (
+            client.get(
+                f"/api/knowledge/spaces/{space['id']}/project-bindings"
+            ).status_code
+            == 404
+        )
+
+        client.cookies.clear()
+        csrf = _login(client, "admin", "1")
+        deleted = client.delete(
+            f"/api/knowledge/project-bindings/{binding.json()['id']}"
+            "?expectedRevision=2",
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert deleted.status_code == 204, deleted.text
+        assert (
+            client.get(
+                f"/api/knowledge/spaces/{space['id']}/project-bindings"
+            ).json()
+            == []
+        )
+
+
 def test_knowledge_ingestion_runs_structured_extraction_and_reuses_result(
     tmp_path: Path, monkeypatch
 ) -> None:

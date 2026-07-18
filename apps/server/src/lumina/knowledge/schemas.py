@@ -38,6 +38,16 @@ class KnowledgePageUpdate(ApiModel):
     manual_markdown: str = Field(default="", max_length=200_000)
 
 
+class KnowledgeProjectBindingCreate(ApiModel):
+    project_id: str
+    knowledge_revision_id: str
+
+
+class KnowledgeProjectBindingUpdate(ApiModel):
+    expected_revision: int = Field(ge=1)
+    knowledge_revision_id: str
+
+
 class KnowledgeReviewDecision(ApiModel):
     decision: Literal["approved", "rejected"]
     reason: str = Field(default="", max_length=10_000)

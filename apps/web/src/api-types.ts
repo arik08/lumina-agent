@@ -467,6 +467,45 @@ export interface UpdateKnowledgePageRequest {
   manualMarkdown: string;
 }
 
+export interface KnowledgeRevision {
+  id: UUID;
+  spaceId: UUID;
+  revisionNumber: number;
+  status: "approved";
+  contentDigest: string;
+  changeSummary: string;
+  createdByUserId: UUID;
+  approvedByUserId: UUID | null;
+  createdAt: IsoDateTime;
+  approvedAt: IsoDateTime | null;
+}
+
+export interface KnowledgeProjectBinding {
+  id: UUID;
+  projectId: UUID;
+  projectName: string;
+  spaceId: UUID;
+  knowledgeRevision: KnowledgeRevision;
+  permission: "read";
+  followLatestApproved: false;
+  namespaceFilters: string[];
+  tagFilters: string[];
+  bindingRevision: number;
+  createdByUserId: UUID;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+export interface CreateKnowledgeProjectBindingRequest {
+  projectId: UUID;
+  knowledgeRevisionId: UUID;
+}
+
+export interface UpdateKnowledgeProjectBindingRequest {
+  expectedRevision: number;
+  knowledgeRevisionId: UUID;
+}
+
 export interface KnowledgeReviewDecisionRequest {
   decision: "approved" | "rejected";
   reason?: string;

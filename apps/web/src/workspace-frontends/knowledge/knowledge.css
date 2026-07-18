@@ -388,6 +388,29 @@
 .knowledge-settings-card form footer span { display: inline-flex; align-items: center; gap: 4px; margin-right: auto; color: var(--success); font-size: 9px; }
 .knowledge-settings-card form footer button { display: inline-flex; min-height: 31px; align-items: center; gap: 5px; border: 1px solid var(--cobalt); border-radius: var(--radius-control); padding: 0 10px; background: var(--cobalt); color: white; font-size: 10px; cursor: pointer; }
 .knowledge-settings-card form footer button:disabled { opacity: .45; cursor: default; }
+.knowledge-project-binding-card > header strong { display: inline-flex; align-items: center; gap: 6px; }
+.knowledge-project-binding-card > header strong svg { color: var(--cobalt); }
+.knowledge-project-binding-card > header > span { color: var(--muted); font-size: 9px; white-space: nowrap; }
+.knowledge-project-binding-card > .knowledge-loading { min-height: 96px; }
+.knowledge-binding-create { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.35fr) auto; align-items: end; gap: 8px; border-bottom: 1px solid var(--line); padding: 11px 12px; background: var(--surface-soft); }
+.knowledge-binding-create label { display: grid; min-width: 0; gap: 5px; color: var(--muted); font-size: 9px; font-weight: 650; }
+.knowledge-binding-create > button { display: inline-flex; min-height: 30px; align-items: center; justify-content: center; gap: 4px; border: 1px solid var(--cobalt); border-radius: var(--radius-control); padding: 0 9px; background: var(--cobalt); color: #fff; font-size: 9.5px; cursor: pointer; }
+.knowledge-binding-create > button:disabled { cursor: default; opacity: .5; }
+.knowledge-binding-list { display: grid; }
+.knowledge-binding-list > div { display: grid; min-height: 58px; grid-template-columns: 18px minmax(0, 1fr) auto auto; align-items: center; gap: 8px; border-bottom: 1px solid var(--line); padding: 8px 11px; color: var(--cobalt); }
+.knowledge-binding-list > div > span { display: grid; min-width: 0; gap: 3px; }
+.knowledge-binding-list strong { overflow: hidden; color: var(--ink); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
+.knowledge-binding-list small { color: var(--muted); font-size: 8px; }
+.knowledge-binding-revision { min-width: 178px; }
+.knowledge-binding-delete { display: grid; width: 27px; height: 27px; place-items: center; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); color: var(--muted); cursor: pointer; }
+.knowledge-binding-delete:hover { border-color: color-mix(in srgb, var(--danger) 35%, var(--line)); color: var(--danger); }
+.knowledge-binding-confirm { display: flex; align-items: center; gap: 4px; }
+.knowledge-binding-confirm span { color: var(--danger); font-size: 8.5px; white-space: nowrap; }
+.knowledge-binding-confirm button { display: inline-flex; min-height: 27px; align-items: center; gap: 3px; border: 1px solid var(--line); border-radius: var(--radius-control); padding: 0 6px; background: var(--surface); color: var(--ink); font-size: 8.5px; cursor: pointer; }
+.knowledge-binding-confirm button:last-child { border-color: var(--danger); background: var(--danger); color: #fff; }
+.knowledge-binding-empty { display: flex; min-height: 86px; align-items: center; justify-content: center; gap: 7px; margin: 0; padding: 14px; color: var(--muted); font-size: 9.5px; text-align: center; }
+.knowledge-project-binding-card > footer { display: flex; align-items: flex-start; gap: 6px; padding: 9px 12px; color: var(--muted); font-size: 8.5px; line-height: 1.45; }
+.knowledge-project-binding-card > footer svg { flex: none; color: var(--cobalt); }
 .knowledge-danger-card { border-color: color-mix(in srgb, var(--danger) 22%, var(--line)); }
 .knowledge-danger-card > div { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 12px 13px; color: var(--danger); }
 .knowledge-danger-card p { margin: 0; color: var(--muted); font-size: 9.5px; line-height: 1.45; }
@@ -494,6 +517,11 @@
   .knowledge-review-detail > section { margin-inline: 12px; }
   .knowledge-settings-page { display: block; }
   .knowledge-settings-aside { display: grid; grid-template-columns: 1fr; margin-top: 12px; }
+  .knowledge-binding-create { grid-template-columns: 1fr; }
+  .knowledge-binding-list > div { grid-template-columns: 18px minmax(0, 1fr) auto; }
+  .knowledge-binding-revision { grid-column: 2 / -1; width: 100%; }
+  .knowledge-binding-delete { grid-column: 3; grid-row: 1; }
+  .knowledge-binding-confirm { grid-column: 2 / -1; justify-self: start; }
   .knowledge-danger-card > div { grid-template-columns: 22px minmax(0, 1fr); }
   .knowledge-danger-card > div > button,
   .knowledge-inline-confirm { grid-column: 2; justify-self: start; }

@@ -1999,6 +1999,50 @@ class KnowledgeRevision(UUIDPrimaryKeyMixin, Base):
     approved_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
 
 
+class KnowledgeProjectBinding(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "knowledge_project_bindings"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id", "space_id", name="uq_knowledge_project_bindings_scope"
+        ),
+        Index(
+            "ix_knowledge_project_bindings_space_revision",
+            "space_id",
+            "knowledge_revision_id",
+        ),
+    )
+
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    space_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_spaces.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    knowledge_revision_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_revisions.id", ondelete="RESTRICT"),
+        index=True,
+        nullable=False,
+    )
+    permission: Mapped[str] = mapped_column(
+        String(24), default="read", nullable=False
+    )
+    follow_latest_approved: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    namespace_filters_json: Mapped[list[str]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
+    tag_filters_json: Mapped[list[str]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
+    binding_revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    created_by_user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+
+
 class KnowledgeSource(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "knowledge_sources"
     __table_args__ = (Index("ix_knowledge_sources_space_status", "space_id", "status"),)
@@ -2338,6 +2382,7 @@ __all__ = [
     "KnowledgeEvidenceSegment",
     "KnowledgePage",
     "KnowledgePageRevision",
+    "KnowledgeProjectBinding",
     "KnowledgeRevision",
     "KnowledgeSource",
     "KnowledgeSourceRevision",

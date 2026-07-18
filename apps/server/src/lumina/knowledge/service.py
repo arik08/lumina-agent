@@ -5,10 +5,11 @@ import json
 import re
 from typing import Any
 
-from sqlalchemy import case, exists, func, literal, or_, select, update
+from sqlalchemy import case, delete, exists, func, literal, or_, select, update
 from sqlalchemy.orm import Session
 
 from ..api.errors import ApiProblem
+from ..authorization import project_access_query, require_project
 from ..config import Settings
 from ..models import (
     KnowledgeEntity,
@@ -16,6 +17,7 @@ from ..models import (
     KnowledgeIngestionJob,
     KnowledgePage,
     KnowledgePageRevision,
+    KnowledgeProjectBinding,
     KnowledgeRevision,
     KnowledgeSource,
     KnowledgeSourceRevision,
@@ -23,6 +25,7 @@ from ..models import (
     KnowledgeStatement,
     KnowledgeStatementEvidence,
     ProviderModel,
+    Project,
     User,
     UserSetting,
     new_uuid,
@@ -35,6 +38,8 @@ from .schemas import (
     KnowledgeAutoCaptureUpdate,
     KnowledgeEntityCreate,
     KnowledgePageUpdate,
+    KnowledgeProjectBindingCreate,
+    KnowledgeProjectBindingUpdate,
     KnowledgeReviewDecision,
     KnowledgeSourceCreate,
     KnowledgeSpaceCreate,
@@ -863,6 +868,183 @@ def list_knowledge_page_revisions(
     return page, revisions
 
 
+def list_knowledge_revisions(
+    db: Session, user: User, space_id: str
+) -> list[KnowledgeRevision]:
+    require_knowledge_space(db, user, space_id)
+    return list(
+        db.scalars(
+            select(KnowledgeRevision)
+            .where(
+                KnowledgeRevision.space_id == space_id,
+                KnowledgeRevision.status == "approved",
+            )
+            .order_by(
+                KnowledgeRevision.revision_number.desc(),
+                KnowledgeRevision.id,
+            )
+        )
+    )
+
+
+def list_knowledge_project_bindings(
+    db: Session, user: User, space_id: str
+) -> list[KnowledgeProjectBinding]:
+    require_knowledge_space(db, user, space_id)
+    accessible_project_ids = project_access_query(user).with_only_columns(Project.id)
+    return list(
+        db.scalars(
+            select(KnowledgeProjectBinding)
+            .where(
+                KnowledgeProjectBinding.space_id == space_id,
+                KnowledgeProjectBinding.project_id.in_(accessible_project_ids),
+            )
+            .order_by(
+                KnowledgeProjectBinding.created_at,
+                KnowledgeProjectBinding.id,
+            )
+        )
+    )
+
+
+def create_knowledge_project_binding(
+    db: Session,
+    user: User,
+    space_id: str,
+    payload: KnowledgeProjectBindingCreate,
+) -> KnowledgeProjectBinding:
+    require_knowledge_space(db, user, space_id, write=True)
+    require_project(db, user, payload.project_id, write=True)
+    revision = _require_bindable_knowledge_revision(
+        db, payload.knowledge_revision_id, space_id
+    )
+    existing = db.scalar(
+        select(KnowledgeProjectBinding.id).where(
+            KnowledgeProjectBinding.project_id == payload.project_id,
+            KnowledgeProjectBinding.space_id == space_id,
+        )
+    )
+    if existing is not None:
+        raise ApiProblem(
+            409,
+            "knowledge_project_binding_exists",
+            "이 Project에는 현재 Knowledge Space가 이미 연결되어 있습니다.",
+        )
+    binding = KnowledgeProjectBinding(
+        project_id=payload.project_id,
+        space_id=space_id,
+        knowledge_revision_id=revision.id,
+        permission="read",
+        follow_latest_approved=False,
+        namespace_filters_json=[],
+        tag_filters_json=[],
+        binding_revision=1,
+        created_by_user_id=user.id,
+    )
+    db.add(binding)
+    db.flush()
+    return binding
+
+
+def update_knowledge_project_binding(
+    db: Session,
+    user: User,
+    binding_id: str,
+    payload: KnowledgeProjectBindingUpdate,
+) -> KnowledgeProjectBinding:
+    binding = _require_knowledge_project_binding(db, user, binding_id, write=True)
+    revision = _require_bindable_knowledge_revision(
+        db, payload.knowledge_revision_id, binding.space_id
+    )
+    if binding.binding_revision != payload.expected_revision:
+        raise _knowledge_project_binding_conflict(binding.binding_revision)
+    if binding.knowledge_revision_id == revision.id:
+        return binding
+    result = db.execute(
+        update(KnowledgeProjectBinding)
+        .where(
+            KnowledgeProjectBinding.id == binding.id,
+            KnowledgeProjectBinding.binding_revision == payload.expected_revision,
+        )
+        .values(
+            knowledge_revision_id=revision.id,
+            binding_revision=payload.expected_revision + 1,
+            updated_at=utc_now(),
+        )
+    )
+    if result.rowcount != 1:
+        db.expire(binding)
+        raise _knowledge_project_binding_conflict(binding.binding_revision)
+    db.expire(binding)
+    return db.get(KnowledgeProjectBinding, binding.id) or binding
+
+
+def delete_knowledge_project_binding(
+    db: Session,
+    user: User,
+    binding_id: str,
+    *,
+    expected_revision: int,
+) -> KnowledgeProjectBinding:
+    binding = _require_knowledge_project_binding(db, user, binding_id, write=True)
+    if binding.binding_revision != expected_revision:
+        raise _knowledge_project_binding_conflict(binding.binding_revision)
+    result = db.execute(
+        delete(KnowledgeProjectBinding).where(
+            KnowledgeProjectBinding.id == binding.id,
+            KnowledgeProjectBinding.binding_revision == expected_revision,
+        )
+    )
+    if result.rowcount != 1:
+        raise _knowledge_project_binding_conflict(binding.binding_revision)
+    return binding
+
+
+def _require_bindable_knowledge_revision(
+    db: Session, revision_id: str, space_id: str
+) -> KnowledgeRevision:
+    revision = db.get(KnowledgeRevision, revision_id)
+    if (
+        revision is None
+        or revision.space_id != space_id
+        or revision.status != "approved"
+    ):
+        raise ApiProblem(
+            404,
+            "knowledge_revision_not_found",
+            "연결할 수 있는 승인 Knowledge Revision을 찾을 수 없습니다.",
+        )
+    return revision
+
+
+def _require_knowledge_project_binding(
+    db: Session,
+    user: User,
+    binding_id: str,
+    *,
+    write: bool,
+) -> KnowledgeProjectBinding:
+    binding = db.get(KnowledgeProjectBinding, binding_id)
+    if binding is None:
+        raise ApiProblem(
+            404,
+            "knowledge_project_binding_not_found",
+            "Knowledge Project 연결을 찾을 수 없습니다.",
+        )
+    require_knowledge_space(db, user, binding.space_id, write=write)
+    require_project(db, user, binding.project_id, write=write)
+    return binding
+
+
+def _knowledge_project_binding_conflict(current_revision: int) -> ApiProblem:
+    return ApiProblem(
+        409,
+        "knowledge_project_binding_conflict",
+        "Knowledge Project 연결이 다른 곳에서 변경되었습니다.",
+        details={"currentRevision": current_revision},
+    )
+
+
 def update_knowledge_page(
     db: Session,
     user: User,
@@ -1394,6 +1576,49 @@ def knowledge_page_revision_payload(
         "generationRunId": revision.generation_run_id,
         "createdByUserId": revision.created_by_user_id,
         "createdAt": revision.created_at,
+    }
+
+
+def knowledge_revision_payload(revision: KnowledgeRevision) -> dict[str, Any]:
+    return {
+        "id": revision.id,
+        "spaceId": revision.space_id,
+        "revisionNumber": revision.revision_number,
+        "status": revision.status,
+        "contentDigest": revision.content_digest,
+        "changeSummary": revision.change_summary,
+        "createdByUserId": revision.created_by_user_id,
+        "approvedByUserId": revision.approved_by_user_id,
+        "createdAt": revision.created_at,
+        "approvedAt": revision.approved_at,
+    }
+
+
+def knowledge_project_binding_payload(
+    db: Session, binding: KnowledgeProjectBinding
+) -> dict[str, Any]:
+    project = db.get(Project, binding.project_id)
+    revision = db.get(KnowledgeRevision, binding.knowledge_revision_id)
+    if project is None or revision is None:
+        raise ApiProblem(
+            409,
+            "knowledge_project_binding_invalid",
+            "Knowledge Project 연결의 참조가 유효하지 않습니다.",
+        )
+    return {
+        "id": binding.id,
+        "projectId": binding.project_id,
+        "projectName": project.name,
+        "spaceId": binding.space_id,
+        "knowledgeRevision": knowledge_revision_payload(revision),
+        "permission": binding.permission,
+        "followLatestApproved": binding.follow_latest_approved,
+        "namespaceFilters": binding.namespace_filters_json,
+        "tagFilters": binding.tag_filters_json,
+        "bindingRevision": binding.binding_revision,
+        "createdByUserId": binding.created_by_user_id,
+        "createdAt": binding.created_at,
+        "updatedAt": binding.updated_at,
     }
 
 

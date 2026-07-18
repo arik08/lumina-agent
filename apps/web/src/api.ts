@@ -21,6 +21,7 @@ import type {
   AttachmentSummary,
   AuthSession,
   CreateKnowledgeEntityRequest,
+  CreateKnowledgeProjectBindingRequest,
   CreateKnowledgeSourceRequest,
   CreateKnowledgeSpaceRequest,
   CreateKnowledgeStatementRequest,
@@ -37,6 +38,8 @@ import type {
   KnowledgeNeighborhood,
   KnowledgePage,
   KnowledgePageRevision,
+  KnowledgeProjectBinding,
+  KnowledgeRevision,
   KnowledgeSource,
   KnowledgeSpace,
   KnowledgeAutoCaptureSetting,
@@ -45,6 +48,7 @@ import type {
   UpdateKnowledgeSpaceRequest,
   UpdateKnowledgeAutoCaptureRequest,
   UpdateKnowledgePageRequest,
+  UpdateKnowledgeProjectBindingRequest,
   CursorPage,
   ListConversationsQuery,
   LoginRequest,
@@ -1417,6 +1421,53 @@ export async function updateKnowledgePage(
   });
 }
 
+export async function listKnowledgeRevisions(spaceId: string, signal?: AbortSignal) {
+  return request<KnowledgeRevision[]>(
+    `/knowledge/spaces/${encodeURIComponent(spaceId)}/revisions`,
+    { signal },
+  );
+}
+
+export async function listKnowledgeProjectBindings(spaceId: string, signal?: AbortSignal) {
+  return request<KnowledgeProjectBinding[]>(
+    `/knowledge/spaces/${encodeURIComponent(spaceId)}/project-bindings`,
+    { signal },
+  );
+}
+
+export async function createKnowledgeProjectBinding(
+  spaceId: string,
+  payload: CreateKnowledgeProjectBindingRequest,
+  signal?: AbortSignal,
+) {
+  return request<KnowledgeProjectBinding>(
+    `/knowledge/spaces/${encodeURIComponent(spaceId)}/project-bindings`,
+    { method: "POST", body: payload, signal },
+  );
+}
+
+export async function updateKnowledgeProjectBinding(
+  bindingId: string,
+  payload: UpdateKnowledgeProjectBindingRequest,
+  signal?: AbortSignal,
+) {
+  return request<KnowledgeProjectBinding>(
+    `/knowledge/project-bindings/${encodeURIComponent(bindingId)}`,
+    { method: "PATCH", body: payload, signal },
+  );
+}
+
+export async function deleteKnowledgeProjectBinding(
+  bindingId: string,
+  expectedRevision: number,
+  signal?: AbortSignal,
+) {
+  await request<void>(
+    `/knowledge/project-bindings/${encodeURIComponent(bindingId)}`,
+    { method: "DELETE", query: { expectedRevision }, signal },
+  );
+}
+
 export async function decideKnowledgeStatement(
   statementId: string,
   payload: KnowledgeReviewDecisionRequest,
@@ -2249,6 +2300,11 @@ export const api = {
     listPages: listKnowledgePages,
     listPageRevisions: listKnowledgePageRevisions,
     updatePage: updateKnowledgePage,
+    listRevisions: listKnowledgeRevisions,
+    listProjectBindings: listKnowledgeProjectBindings,
+    createProjectBinding: createKnowledgeProjectBinding,
+    updateProjectBinding: updateKnowledgeProjectBinding,
+    deleteProjectBinding: deleteKnowledgeProjectBinding,
     listStatements: listKnowledgeStatements,
     createStatement: createKnowledgeStatement,
     decideStatement: decideKnowledgeStatement,

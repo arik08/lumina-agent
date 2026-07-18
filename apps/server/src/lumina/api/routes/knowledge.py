@@ -13,6 +13,8 @@ from ...knowledge.schemas import (
     KnowledgeAutoCaptureUpdate,
     KnowledgeEntityCreate,
     KnowledgePageUpdate,
+    KnowledgeProjectBindingCreate,
+    KnowledgeProjectBindingUpdate,
     KnowledgeSourceCreate,
     KnowledgeSpaceCreate,
     KnowledgeSpaceUpdate,
@@ -21,22 +23,28 @@ from ...knowledge.schemas import (
 )
 from ...knowledge.service import (
     archive_knowledge_space,
+    create_knowledge_project_binding,
     create_knowledge_entity,
     create_knowledge_ingestion_job,
     create_knowledge_source,
     create_knowledge_space,
     create_knowledge_statement,
     decide_knowledge_statement,
+    delete_knowledge_project_binding,
     entity_payload,
     ingestion_job_payload,
     knowledge_auto_capture_payload,
     knowledge_page_payload,
     knowledge_page_revision_payload,
+    knowledge_project_binding_payload,
+    knowledge_revision_payload,
     knowledge_neighborhood,
     list_knowledge_entities,
     list_knowledge_ingestion_jobs,
     list_knowledge_page_revisions,
     list_knowledge_pages,
+    list_knowledge_project_bindings,
+    list_knowledge_revisions,
     list_knowledge_sources,
     list_knowledge_spaces,
     list_knowledge_statements,
@@ -47,6 +55,7 @@ from ...knowledge.service import (
     update_knowledge_space,
     update_knowledge_auto_capture,
     update_knowledge_page,
+    update_knowledge_project_binding,
 )
 from ...models import User
 from ..dependencies import AuthContext, get_current_user, require_csrf
@@ -290,6 +299,120 @@ def get_knowledge_pages(
             db, user, space_id
         )
     ]
+
+
+@router.get("/spaces/{space_id}/revisions")
+def get_knowledge_revisions(
+    space_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict[str, Any]]:
+    return [
+        knowledge_revision_payload(revision)
+        for revision in list_knowledge_revisions(db, user, space_id)
+    ]
+
+
+@router.get("/spaces/{space_id}/project-bindings")
+def get_knowledge_project_bindings(
+    space_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict[str, Any]]:
+    return [
+        knowledge_project_binding_payload(db, binding)
+        for binding in list_knowledge_project_bindings(db, user, space_id)
+    ]
+
+
+@router.post("/spaces/{space_id}/project-bindings", status_code=201)
+def post_knowledge_project_binding(
+    space_id: str,
+    payload: KnowledgeProjectBindingCreate,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    binding = create_knowledge_project_binding(db, context.user, space_id, payload)
+    record_audit(
+        db,
+        action="knowledge_project_binding_created",
+        target_type="knowledge_project_binding",
+        target_id=binding.id,
+        result="success",
+        actor=context.user,
+        request_id=_request_id(request),
+        metadata={
+            "project_id": binding.project_id,
+            "space_id": binding.space_id,
+            "knowledge_revision_id": binding.knowledge_revision_id,
+            "permission": binding.permission,
+        },
+    )
+    db.commit()
+    return knowledge_project_binding_payload(db, binding)
+
+
+@router.patch("/project-bindings/{binding_id}")
+def patch_knowledge_project_binding(
+    binding_id: str,
+    payload: KnowledgeProjectBindingUpdate,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    binding = update_knowledge_project_binding(
+        db, context.user, binding_id, payload
+    )
+    record_audit(
+        db,
+        action="knowledge_project_binding_updated",
+        target_type="knowledge_project_binding",
+        target_id=binding.id,
+        result="success",
+        actor=context.user,
+        request_id=_request_id(request),
+        metadata={
+            "project_id": binding.project_id,
+            "space_id": binding.space_id,
+            "knowledge_revision_id": binding.knowledge_revision_id,
+            "binding_revision": binding.binding_revision,
+        },
+    )
+    db.commit()
+    return knowledge_project_binding_payload(db, binding)
+
+
+@router.delete("/project-bindings/{binding_id}", status_code=204)
+def delete_knowledge_project_binding_route(
+    binding_id: str,
+    request: Request,
+    expected_revision: int = Query(ge=1, alias="expectedRevision"),
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> Response:
+    binding = delete_knowledge_project_binding(
+        db,
+        context.user,
+        binding_id,
+        expected_revision=expected_revision,
+    )
+    record_audit(
+        db,
+        action="knowledge_project_binding_deleted",
+        target_type="knowledge_project_binding",
+        target_id=binding.id,
+        result="success",
+        actor=context.user,
+        request_id=_request_id(request),
+        metadata={
+            "project_id": binding.project_id,
+            "space_id": binding.space_id,
+            "knowledge_revision_id": binding.knowledge_revision_id,
+        },
+    )
+    db.commit()
+    return Response(status_code=204)
 
 
 @router.get("/pages/{page_id}/revisions")
