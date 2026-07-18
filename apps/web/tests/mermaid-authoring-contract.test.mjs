@@ -10,9 +10,17 @@ const visualArtifactSkillSource = readFileSync(new URL("../../../extensions/skil
 test("LLM instructions require context-specific Mermaid classes in saved source", () => {
   assert.match(instructionSource, /infer a coherent grouping from the/);
   assert.match(instructionSource, /`classDef` and `class` assignments/);
-  assert.match(instructionSource, /Do not rely on the viewer to infer or reassign semantic colors/);
+  assert.match(instructionSource, /each top-level semantic branch one hue family/);
+  assert.match(instructionSource, /assign every node instead of leaving arbitrary/);
+  assert.match(instructionSource, /Reserve red, coral, and amber for explicit risk, warning/);
+  assert.match(instructionSource, /at least 4\.5:1/);
+  assert.match(instructionSource, /contrast against node fills/);
+  assert.match(instructionSource, /Do not rely on the/);
+  assert.match(instructionSource, /viewer to infer or reassign semantic colors/);
   assert.match(visualArtifactSkillSource, /infer a coherent color system from the actual subject/);
-  assert.match(visualArtifactSkillSource, /Encode those choices directly in Mermaid source with `classDef` and `class` assignments/);
+  assert.match(visualArtifactSkillSource, /Encode the complete system directly in Mermaid source with `classDef` and `class` assignments/);
+  assert.match(visualArtifactSkillSource, /apply it to every descendant in that branch/);
+  assert.match(visualArtifactSkillSource, /Keep meaning available in labels, grouping, or structure rather than color alone/);
   assert.doesNotMatch(visualArtifactSkillSource, /blue `#3288bd` for external inputs/);
 });
 

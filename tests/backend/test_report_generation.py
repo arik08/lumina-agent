@@ -117,6 +117,9 @@ def test_create_report_schema_advertises_every_supported_format() -> None:
     assert "`.mermaid` element" in html_description
     assert "expand/zoom controls" in html_description
     assert "do not include a Mermaid CDN script" in html_description
+    assert "one hue family per top-level semantic branch" in html_description
+    assert "Assign a class to every node" in html_description
+    assert "at least 4.5:1 contrast" in html_description
     for color in (
         "#3288bd",
         "#66c2a5",

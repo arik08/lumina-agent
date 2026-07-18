@@ -338,7 +338,13 @@ _REPORT_TOOL_SCHEMA: dict[str, Any] = {
                         "`.mermaid` element for process, sequence, architecture, dependency, or "
                         "decision diagrams; do not include a Mermaid CDN script or duplicate "
                         "expand button because the Artifact preview supplies both rendering and "
-                        "expand/zoom controls."
+                        "expand/zoom controls. For categorical or hierarchical Mermaid "
+                        "flowcharts, use one hue family per top-level semantic branch and apply "
+                        "it to every descendant in that branch. Assign a class to every node, "
+                        "keep the root visually distinct, and reserve red, coral, and amber for "
+                        "explicit risk, warning, or status meaning rather than isolated emphasis. "
+                        "The labels and structure must remain understandable without color, and "
+                        "node text must have at least 4.5:1 contrast against its fill."
                     ),
                 },
                 "key_metrics": {
