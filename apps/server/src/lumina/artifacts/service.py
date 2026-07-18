@@ -758,10 +758,13 @@ class _ArtifactHTMLValidator(HTMLParser):
         self.tags: set[str] = set()
         self.errors: list[str] = []
         self._title_depth = 0
+        self._html_closed = False
         self.title_text: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         lowered = tag.casefold()
+        if self._html_closed:
+            self.errors.append("trailing_content_after_html")
         self.tags.add(lowered)
         if lowered in self.forbidden_tags:
             self.errors.append(f"forbidden_tag:{lowered}")
@@ -776,12 +779,17 @@ class _ArtifactHTMLValidator(HTMLParser):
                 self.errors.append(f"unsafe_url:{attr_name}")
 
     def handle_endtag(self, tag: str) -> None:
-        if tag.casefold() == "title" and self._title_depth:
+        lowered = tag.casefold()
+        if lowered == "title" and self._title_depth:
             self._title_depth -= 1
+        elif lowered == "html":
+            self._html_closed = True
 
     def handle_data(self, data: str) -> None:
         if self._title_depth:
             self.title_text.append(data)
+        if self._html_closed and data.strip():
+            self.errors.append("trailing_content_after_html")
 
 
 def validate_artifact_content(
