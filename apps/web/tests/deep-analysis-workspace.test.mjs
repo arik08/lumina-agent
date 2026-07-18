@@ -164,6 +164,26 @@ test("Mission Charter is editable before start and immutable Quality Gates remai
   assert.match(css, /\.deep-analysis-quality-gate\.is-failed/);
 });
 
+test("Claim Evidence lineage is available as a dedicated ledger tab", async () => {
+  const [view, api, types, css] = await Promise.all([
+    readFile(viewPath, "utf8"),
+    readFile(apiPath, "utf8"),
+    readFile(new URL("../src/api-types.ts", import.meta.url), "utf8"),
+    readFile(cssPath, "utf8"),
+  ]);
+
+  assert.match(view, />결론·근거</);
+  assert.match(view, /function EvidenceLedger/);
+  assert.match(view, /Claim Ledger/);
+  assert.match(view, /stance === "support"/);
+  assert.match(view, /재검토 필요/);
+  assert.match(api, /missions\/\$\{missionId\}\/claims/);
+  assert.match(api, /getClaims: getDeepAnalysisClaims/);
+  assert.match(types, /interface DeepAnalysisClaim/);
+  assert.match(types, /openIssues: DeepAnalysisOpenIssue\[\]/);
+  assert.match(css, /\.deep-analysis-ledger \{/);
+});
+
 test("failed or cancelled Nodes can retry with visible attempts and calculation files", async () => {
   const [view, api] = await Promise.all([
     readFile(viewPath, "utf8"),

@@ -32,8 +32,11 @@ import type {
   CreateProjectLearningProposalRequest,
   CreateProjectRequest,
   CurrentSettings,
+  DeepAnalysisClaim,
+  DeepAnalysisEvidence,
   DeepAnalysisMissionDetail,
   DeepAnalysisMissionSummary,
+  DeepAnalysisOpenIssue,
   KnowledgeEntity,
   KnowledgeNeighborhood,
   KnowledgeSource,
@@ -1247,6 +1250,27 @@ export async function getDeepAnalysisMission(missionId: string, signal?: AbortSi
   );
 }
 
+export async function getDeepAnalysisClaims(missionId: string, signal?: AbortSignal) {
+  return request<DeepAnalysisClaim[]>(
+    `/api/deep-analysis/missions/${missionId}/claims`,
+    { signal },
+  );
+}
+
+export async function getDeepAnalysisEvidence(missionId: string, signal?: AbortSignal) {
+  return request<DeepAnalysisEvidence[]>(
+    `/api/deep-analysis/missions/${missionId}/evidence`,
+    { signal },
+  );
+}
+
+export async function getDeepAnalysisOpenIssues(missionId: string, signal?: AbortSignal) {
+  return request<DeepAnalysisOpenIssue[]>(
+    `/api/deep-analysis/missions/${missionId}/open-issues`,
+    { signal },
+  );
+}
+
 export async function startDeepAnalysisMission(
   missionId: string,
   payload: StartDeepAnalysisMissionRequest,
@@ -2197,6 +2221,9 @@ export const api = {
     listMissions: listDeepAnalysisMissions,
     createMission: createDeepAnalysisMission,
     getMission: getDeepAnalysisMission,
+    getClaims: getDeepAnalysisClaims,
+    getEvidence: getDeepAnalysisEvidence,
+    getOpenIssues: getDeepAnalysisOpenIssues,
     startMission: startDeepAnalysisMission,
     cancelMission: cancelDeepAnalysisMission,
     retryMission: retryDeepAnalysisMission,

@@ -8,6 +8,7 @@ from sqlalchemy import (
     BigInteger,
     DateTime,
     ForeignKey,
+    Float,
     Index,
     Integer,
     String,
@@ -266,3 +267,108 @@ class DeepAnalysisQualityGateResult(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         JSON, default=list, nullable=False
     )
     evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class DeepAnalysisClaim(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "deep_analysis_claims"
+    __table_args__ = (
+        Index("ix_deep_analysis_claims_mission_status", "mission_id", "status"),
+    )
+
+    mission_id: Mapped[str] = mapped_column(
+        ForeignKey("deep_analysis_missions.id", ondelete="CASCADE"), nullable=False
+    )
+    source_node_id: Mapped[str | None] = mapped_column(
+        ForeignKey("deep_analysis_workflow_nodes.id", ondelete="SET NULL")
+    )
+    statement: Mapped[str] = mapped_column(Text, nullable=False)
+    level: Mapped[str] = mapped_column(String(40), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    confidence: Mapped[float | None] = mapped_column(Float)
+    materiality: Mapped[str] = mapped_column(String(24), default="medium", nullable=False)
+    report_inclusion: Mapped[str] = mapped_column(
+        String(80), default="", nullable=False
+    )
+    validation_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
+    stale_status: Mapped[str] = mapped_column(
+        String(32), default="fresh", nullable=False
+    )
+
+
+class DeepAnalysisEvidenceReference(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "deep_analysis_evidence_references"
+    __table_args__ = (
+        Index(
+            "ix_deep_analysis_evidence_mission_source",
+            "mission_id",
+            "source_type",
+        ),
+    )
+
+    mission_id: Mapped[str] = mapped_column(
+        ForeignKey("deep_analysis_missions.id", ondelete="CASCADE"), nullable=False
+    )
+    source_node_id: Mapped[str | None] = mapped_column(
+        ForeignKey("deep_analysis_workflow_nodes.id", ondelete="SET NULL")
+    )
+    source_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    stable_id: Mapped[str] = mapped_column(String(1000), nullable=False)
+    version_id: Mapped[str | None] = mapped_column(String(128))
+    content_digest: Mapped[str | None] = mapped_column(String(128))
+    locator: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    title: Mapped[str] = mapped_column(String(500), default="", nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
+
+
+class DeepAnalysisClaimEvidenceLink(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "deep_analysis_claim_evidence_links"
+    __table_args__ = (
+        UniqueConstraint(
+            "claim_id",
+            "evidence_id",
+            "stance",
+            name="uq_deep_analysis_claim_evidence_stance",
+        ),
+    )
+
+    claim_id: Mapped[str] = mapped_column(
+        ForeignKey("deep_analysis_claims.id", ondelete="CASCADE"), nullable=False
+    )
+    evidence_id: Mapped[str] = mapped_column(
+        ForeignKey("deep_analysis_evidence_references.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    stance: Mapped[str] = mapped_column(String(24), nullable=False)
+    rationale: Mapped[str] = mapped_column(Text, default="", nullable=False)
+
+
+class DeepAnalysisOpenIssue(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "deep_analysis_open_issues"
+    __table_args__ = (
+        Index(
+            "ix_deep_analysis_open_issues_mission_status",
+            "mission_id",
+            "status",
+        ),
+    )
+
+    mission_id: Mapped[str] = mapped_column(
+        ForeignKey("deep_analysis_missions.id", ondelete="CASCADE"), nullable=False
+    )
+    source_node_id: Mapped[str | None] = mapped_column(
+        ForeignKey("deep_analysis_workflow_nodes.id", ondelete="SET NULL")
+    )
+    issue_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    statement: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="open", nullable=False)
+    materiality: Mapped[str] = mapped_column(String(24), default="medium", nullable=False)
+    residual_amount: Mapped[float | None] = mapped_column(Float)
+    residual_percent: Mapped[float | None] = mapped_column(Float)
+    required_action: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    report_inclusion: Mapped[str] = mapped_column(
+        String(80), default="open_issues", nullable=False
+    )

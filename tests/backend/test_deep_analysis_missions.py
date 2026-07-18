@@ -11,12 +11,17 @@ from lumina.config import Settings
 from lumina.db import SessionLocal
 from lumina.deep_analysis.calculations import execute_python_calculation
 from lumina.deep_analysis.models import (
+    DeepAnalysisClaim,
     DeepAnalysisDecision,
     DeepAnalysisDecisionResponse,
     DeepAnalysisMission,
     DeepAnalysisWorkflowEdge,
     DeepAnalysisWorkflowNode,
     DeepAnalysisWorkflowRevision,
+)
+from lumina.deep_analysis.ledger import (
+    extract_analysis_ledger,
+    persist_analysis_ledger,
 )
 from lumina.deep_analysis.planning import (
     apply_workflow_decision,
@@ -27,7 +32,14 @@ from lumina.deep_analysis.planning import (
 )
 from lumina.deep_analysis.quality import evaluate_quality_gate
 from lumina.main import create_app
-from lumina.models import Message, Organization, ProjectFile, Run, User
+from lumina.models import (
+    Message,
+    Organization,
+    ProjectFile,
+    ProjectFileVersion,
+    Run,
+    User,
+)
 from lumina.storage import ManagedLocalStorage
 
 
@@ -631,6 +643,112 @@ def test_charter_contract_quality_gate_and_immutable_waiver(
         assert rerun.json()["qualityGates"][-1]["result"] == "failed"
 
 
+def test_claim_evidence_ledger_resolves_exact_file_versions_and_lists_lineage(
+    tmp_path: Path,
+) -> None:
+    with TestClient(create_app(_settings(tmp_path))) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        uploaded = client.post(
+            f"/api/projects/{project_id}/files",
+            headers=headers,
+            data={"logicalPath": "inputs/variance.csv", "changeReason": "근거 테스트"},
+            files={
+                "file": (
+                    "variance.csv",
+                    "driver,amount\nmaterial,125\n".encode(),
+                    "text/csv",
+                )
+            },
+        )
+        assert uploaded.status_code == 201, uploaded.text
+        created = client.post(
+            f"/api/projects/{project_id}/deep-analysis/missions",
+            headers=headers,
+            json={"title": "Claim Evidence 검증", "objective": "변동 원인을 검증한다."},
+        ).json()
+
+        with SessionLocal() as db:
+            mission = db.get(DeepAnalysisMission, created["id"])
+            project_file = db.get(ProjectFile, uploaded.json()["id"])
+            assert mission is not None and project_file is not None
+            version = db.scalar(
+                select(ProjectFileVersion).where(
+                    ProjectFileVersion.project_file_id == project_file.id,
+                    ProjectFileVersion.version_number
+                    == project_file.current_version_number,
+                )
+            )
+            node = db.scalar(
+                select(DeepAnalysisWorkflowNode).where(
+                    DeepAnalysisWorkflowNode.workflow_revision_id
+                    == created["workflow"]["id"]
+                )
+            )
+            assert version is not None and node is not None
+            mission.source_manifest_json = [
+                {
+                    "projectFileId": project_file.id,
+                    "logicalPath": project_file.logical_path,
+                    "version": version.version_number,
+                    "versionId": version.id,
+                    "contentHash": version.content_hash,
+                        "mimeType": version.mime_type,
+                    "sizeBytes": version.size_bytes,
+                }
+            ]
+            markdown = f'''# 분석 결과
+원재료비가 핵심 원인입니다.
+<!-- LUMINA_ANALYSIS_LEDGER
+{{"claims":[{{"statement":"원재료비가 총 변동의 핵심 원인이다.","level":"key_finding","status":"verified","confidence":0.94,"materiality":"high","reportInclusion":"executive_summary","validation":{{"method":"행 합계 재계산"}},"evidence":[{{"sourceType":"project_file","stableId":"{project_file.id}","versionId":"{version.id}","contentDigest":"{version.content_hash}","locator":"row 2, amount","title":"변동 원본","stance":"support","rationale":"원재료비 125를 직접 확인"}}]}}],"openIssues":[{{"issueType":"missing_data","statement":"수량 효과 세부 데이터가 없다.","materiality":"medium","residualPercent":4.5,"requiredAction":"수량 명세 확보","reportInclusion":"open_issues"}}]}}
+-->
+'''
+            clean, ledger = extract_analysis_ledger(markdown)
+            assert "LUMINA_ANALYSIS_LEDGER" not in clean
+            persist_analysis_ledger(db, mission=mission, node=node, ledger=ledger)
+
+            _clean, invalid_ledger = extract_analysis_ledger(
+                f'''<!-- LUMINA_ANALYSIS_LEDGER
+{{"claims":[{{"statement":"잘못된 버전 근거 Claim","level":"key_finding","status":"verified","confidence":0.8,"materiality":"medium","evidence":[{{"sourceType":"project_file","stableId":"{project_file.id}","versionId":"wrong-version","contentDigest":"{version.content_hash}","locator":"row 2","stance":"support"}}]}}],"openIssues":[]}}
+-->'''
+            )
+            persist_analysis_ledger(
+                db, mission=mission, node=node, ledger=invalid_ledger
+            )
+            node_key = node.node_key
+            version_id = version.id
+            db.commit()
+
+        detail = client.get(
+            f"/api/deep-analysis/missions/{created['id']}"
+        )
+        assert detail.status_code == 200, detail.text
+        payload = detail.json()
+        assert len(payload["claims"]) == 2
+        verified = next(
+            claim for claim in payload["claims"] if claim["status"] == "verified"
+        )
+        assert verified["sourceNodeKey"] == node_key
+        assert verified["evidence"][0]["stance"] == "support"
+        assert verified["evidence"][0]["evidence"]["versionId"] == version_id
+        downgraded = next(
+            claim for claim in payload["claims"] if claim["statement"] == "잘못된 버전 근거 Claim"
+        )
+        assert downgraded["status"] == "proposed"
+        assert "downgradedReason" in downgraded["validation"]
+        assert payload["openIssues"][0]["residualPercent"] == 4.5
+
+        assert client.get(
+            f"/api/deep-analysis/missions/{created['id']}/claims"
+        ).json() == payload["claims"]
+        assert client.get(
+            f"/api/deep-analysis/missions/{created['id']}/evidence"
+        ).json() == payload["evidence"]
+        assert client.get(
+            f"/api/deep-analysis/missions/{created['id']}/open-issues"
+        ).json() == payload["openIssues"]
+
+
 def test_mission_endpoints_require_auth_and_project_access(tmp_path: Path) -> None:
     with TestClient(create_app(_settings(tmp_path))) as client:
         assert (
@@ -830,6 +948,7 @@ def test_cancelled_node_can_be_retried_with_attempt_history(
             headers=headers,
             json={"title": "재실행 검증"},
         ).json()
+
         started = client.post(
             f"/api/deep-analysis/missions/{created['id']}/start",
             headers=headers,
@@ -841,6 +960,28 @@ def test_cancelled_node_can_be_retried_with_attempt_history(
             headers=headers,
             json={"expectedRevision": 2},
         ).json()
+
+        with SessionLocal() as db:
+            source_node = db.scalar(
+                select(DeepAnalysisWorkflowNode).where(
+                    DeepAnalysisWorkflowNode.run_id == first_run_id
+                )
+            )
+            assert source_node is not None
+            stale_claim = DeepAnalysisClaim(
+                mission_id=created["id"],
+                source_node_id=source_node.id,
+                statement="재실행 전 결론",
+                level="key_finding",
+                status="supported",
+                confidence=0.8,
+                materiality="high",
+                report_inclusion="executive_summary",
+                validation_json={},
+            )
+            db.add(stale_claim)
+            db.commit()
+            stale_claim_id = stale_claim.id
 
         retried = client.post(
             f"/api/deep-analysis/missions/{created['id']}/retry",
@@ -866,6 +1007,10 @@ def test_cancelled_node_can_be_retried_with_attempt_history(
             }
         ]
         assert cancelled["revision"] == 3
+        with SessionLocal() as db:
+            refreshed_claim = db.get(DeepAnalysisClaim, stale_claim_id)
+            assert refreshed_claim is not None
+            assert refreshed_claim.stale_status == "review_required"
 
 
 def test_python_calculation_uses_frozen_csv_and_saves_script_and_result(

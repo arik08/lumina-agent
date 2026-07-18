@@ -126,6 +126,56 @@ class QualityGateResponse(ApiModel):
     created_at: datetime
 
 
+class EvidenceResponse(ApiModel):
+    id: str
+    source_node_key: str | None
+    source_type: str
+    stable_id: str
+    version_id: str | None
+    content_digest: str | None
+    locator: str
+    title: str
+    metadata: dict[str, Any]
+    created_at: datetime
+
+
+class ClaimEvidenceResponse(ApiModel):
+    evidence: EvidenceResponse
+    stance: str
+    rationale: str
+
+
+class ClaimResponse(ApiModel):
+    id: str
+    source_node_key: str | None
+    statement: str
+    level: str
+    status: str
+    confidence: float | None
+    materiality: str
+    report_inclusion: str
+    validation: dict[str, Any]
+    stale_status: str
+    evidence: list[ClaimEvidenceResponse]
+    created_at: datetime
+    updated_at: datetime
+
+
+class OpenIssueResponse(ApiModel):
+    id: str
+    source_node_key: str | None
+    issue_type: str
+    statement: str
+    status: str
+    materiality: str
+    residual_amount: float | None
+    residual_percent: float | None
+    required_action: str
+    report_inclusion: str
+    created_at: datetime
+    updated_at: datetime
+
+
 class WorkflowNodeResponse(ApiModel):
     id: str
     node_key: str
@@ -197,4 +247,7 @@ class MissionDetailResponse(MissionSummaryResponse):
     source_manifest: list[dict[str, Any]]
     decisions: list[DecisionResponse]
     quality_gates: list[QualityGateResponse]
+    claims: list[ClaimResponse]
+    evidence: list[EvidenceResponse]
+    open_issues: list[OpenIssueResponse]
     workflow: WorkflowRevisionResponse

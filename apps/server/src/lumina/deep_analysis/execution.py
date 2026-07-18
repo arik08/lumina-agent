@@ -35,6 +35,12 @@ from .models import (
     DeepAnalysisWorkflowNode,
     DeepAnalysisWorkflowRevision,
 )
+from .ledger import (
+    claim_context,
+    extract_analysis_ledger,
+    ledger_instruction,
+    persist_analysis_ledger,
+)
 from .planning import (
     adaptive_decision_instruction,
     apply_workflow_decision,
@@ -168,7 +174,11 @@ def _manifest_prompt(manifest: list[dict[str, Any]]) -> str:
     if not manifest:
         return "- 시작 시점에 등록된 Project 파일이 없습니다. 자료 부재를 결과에 명시하십시오."
     lines = [
-        f"- {item['logicalPath']} (v{item['version']}, sha256:{str(item['contentHash'])[:12]}…)"
+        (
+            f"- {item['logicalPath']} (fileId:{item['projectFileId']}, "
+            f"versionId:{item.get('versionId', 'unknown')}, v{item['version']}, "
+            f"sha256:{item['contentHash']})"
+        )
         for item in manifest[:200]
     ]
     if len(manifest) > 200:
@@ -246,6 +256,7 @@ def _run_prompt(
     manifest: list[dict[str, Any]],
     workflow_instruction: str,
     decision_context: str = "",
+    ledger_context: str = "",
 ) -> str:
     return f"""당신은 Lumina 심층분석 Workflow의 한 Node를 실행하고 있습니다.
 
@@ -258,6 +269,8 @@ Node 목적: {node.purpose}
 {_manifest_prompt(manifest)}
 
 {decision_context}
+
+{ledger_context}
 
 이번 단계 지시:
 {_stage_instruction(node)}
@@ -361,6 +374,8 @@ def create_node_run(
         else ""
     )
     decision_context = _resolved_decision_context(db, mission.id)
+    ledger_context = claim_context(db, mission.id)
+    workflow_instruction = f"{workflow_instruction}{ledger_instruction(node)}"
     analysis_depth, answer_length = _run_profile(node)
     attempt = len(node.run_history_json) + 1
     run, _message, created = create_run(
@@ -375,6 +390,7 @@ def create_node_run(
                     manifest,
                     workflow_instruction,
                     decision_context,
+                    ledger_context,
                 ),
                 output_mode="chat",
                 analysis_depth=analysis_depth,
@@ -566,9 +582,10 @@ def sync_terminal_run(
         return TerminalSyncResult(changed=True)
 
     if run.status == COMPLETED:
-        markdown, workflow_decision = extract_workflow_decision(
+        ledger_markdown, analysis_ledger = extract_analysis_ledger(
             run.assistant_draft.strip()
         )
+        markdown, workflow_decision = extract_workflow_decision(ledger_markdown)
         if not markdown:
             node.status = "failed"
             node.error_message = "모델이 비어 있는 출력을 반환했습니다."
@@ -588,6 +605,12 @@ def sync_terminal_run(
         node.output_summary = _summary(markdown)
         node.status = "completed"
         node.error_message = None
+        persist_analysis_ledger(
+            db,
+            mission=mission,
+            node=node,
+            ledger=analysis_ledger,
+        )
         mission.spent_microusd = _mission_spent(db, workflow_revision.id)
 
         if node.node_type != "report":

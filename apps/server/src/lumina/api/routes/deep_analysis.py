@@ -10,14 +10,21 @@ from ...config import Settings, get_settings
 from ...db import get_db
 from ...deep_analysis.execution import create_node_run
 from ...deep_analysis.models import (
+    DeepAnalysisClaim,
+    DeepAnalysisClaimEvidenceLink,
     DeepAnalysisDecision,
     DeepAnalysisDecisionResponse,
+    DeepAnalysisEvidenceReference,
     DeepAnalysisMission,
+    DeepAnalysisOpenIssue,
     DeepAnalysisQualityGateResult,
 )
+from ...deep_analysis.ledger import list_claims, list_evidence, list_open_issues
 from ...deep_analysis.schemas import (
     DecisionAnswer,
     DecisionResponse,
+    ClaimResponse,
+    EvidenceResponse,
     MissionCancel,
     MissionCreate,
     MissionDetailResponse,
@@ -26,6 +33,7 @@ from ...deep_analysis.schemas import (
     MissionRetry,
     MissionStart,
     MissionSummaryResponse,
+    OpenIssueResponse,
 )
 from ...deep_analysis.service import (
     active_workflow,
@@ -105,6 +113,75 @@ def _quality_gate_payload(
     }
 
 
+def _evidence_payload(
+    evidence: DeepAnalysisEvidenceReference,
+    source_node_key: str | None = None,
+) -> dict[str, object]:
+    return {
+        "id": evidence.id,
+        "source_node_key": source_node_key,
+        "source_type": evidence.source_type,
+        "stable_id": evidence.stable_id,
+        "version_id": evidence.version_id,
+        "content_digest": evidence.content_digest,
+        "locator": evidence.locator,
+        "title": evidence.title,
+        "metadata": evidence.metadata_json,
+        "created_at": evidence.created_at,
+    }
+
+
+def _claim_payload(
+    claim: DeepAnalysisClaim,
+    source_node_key: str | None,
+    evidence_rows: list[
+        tuple[DeepAnalysisClaimEvidenceLink, DeepAnalysisEvidenceReference]
+    ],
+) -> dict[str, object]:
+    return {
+        "id": claim.id,
+        "source_node_key": source_node_key,
+        "statement": claim.statement,
+        "level": claim.level,
+        "status": claim.status,
+        "confidence": claim.confidence,
+        "materiality": claim.materiality,
+        "report_inclusion": claim.report_inclusion,
+        "validation": claim.validation_json,
+        "stale_status": claim.stale_status,
+        "evidence": [
+            {
+                "evidence": _evidence_payload(evidence),
+                "stance": link.stance,
+                "rationale": link.rationale,
+            }
+            for link, evidence in evidence_rows
+        ],
+        "created_at": claim.created_at,
+        "updated_at": claim.updated_at,
+    }
+
+
+def _open_issue_payload(
+    issue: DeepAnalysisOpenIssue,
+    source_node_key: str | None,
+) -> dict[str, object]:
+    return {
+        "id": issue.id,
+        "source_node_key": source_node_key,
+        "issue_type": issue.issue_type,
+        "statement": issue.statement,
+        "status": issue.status,
+        "materiality": issue.materiality,
+        "residual_amount": issue.residual_amount,
+        "residual_percent": issue.residual_percent,
+        "required_action": issue.required_action,
+        "report_inclusion": issue.report_inclusion,
+        "created_at": issue.created_at,
+        "updated_at": issue.updated_at,
+    }
+
+
 def _summary_payload(mission: DeepAnalysisMission) -> dict[str, object]:
     return {
         "id": mission.id,
@@ -144,6 +221,18 @@ def _detail_payload(db: Session, mission: DeepAnalysisMission) -> dict[str, obje
         "quality_gates": [
             _quality_gate_payload(gate, node_key)
             for gate, node_key in list_quality_gates(db, mission.id)
+        ],
+        "claims": [
+            _claim_payload(claim, node_key, evidence_rows)
+            for claim, node_key, evidence_rows in list_claims(db, mission.id)
+        ],
+        "evidence": [
+            _evidence_payload(evidence)
+            for evidence in list_evidence(db, mission.id)
+        ],
+        "open_issues": [
+            _open_issue_payload(issue, node_key)
+            for issue, node_key in list_open_issues(db, mission.id)
         ],
         "workflow": {
             "id": revision.id,
@@ -284,6 +373,51 @@ def get_mission_decisions(
     return [
         _decision_payload(decision, response, node_key)
         for decision, response, node_key in list_decisions(db, mission.id)
+    ]
+
+
+@router.get(
+    "/deep-analysis/missions/{mission_id}/claims",
+    response_model=list[ClaimResponse],
+)
+def get_mission_claims(
+    mission_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict[str, object]]:
+    mission = require_mission(db, user, mission_id)
+    return [
+        _claim_payload(claim, node_key, evidence_rows)
+        for claim, node_key, evidence_rows in list_claims(db, mission.id)
+    ]
+
+
+@router.get(
+    "/deep-analysis/missions/{mission_id}/evidence",
+    response_model=list[EvidenceResponse],
+)
+def get_mission_evidence(
+    mission_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict[str, object]]:
+    mission = require_mission(db, user, mission_id)
+    return [_evidence_payload(item) for item in list_evidence(db, mission.id)]
+
+
+@router.get(
+    "/deep-analysis/missions/{mission_id}/open-issues",
+    response_model=list[OpenIssueResponse],
+)
+def get_mission_open_issues(
+    mission_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict[str, object]]:
+    mission = require_mission(db, user, mission_id)
+    return [
+        _open_issue_payload(issue, node_key)
+        for issue, node_key in list_open_issues(db, mission.id)
     ]
 
 

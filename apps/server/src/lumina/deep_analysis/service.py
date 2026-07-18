@@ -7,9 +7,11 @@ from ..api.errors import ApiProblem
 from ..authorization import require_project
 from ..models import Conversation, ProjectFile, User, utc_now
 from .models import (
+    DeepAnalysisClaim,
     DeepAnalysisDecision,
     DeepAnalysisDecisionResponse,
     DeepAnalysisMission,
+    DeepAnalysisOpenIssue,
     DeepAnalysisWorkflowEdge,
     DeepAnalysisWorkflowNode,
     DeepAnalysisWorkflowRevision,
@@ -698,6 +700,23 @@ def retry_mission_node(
 
     archive_current_attempt(db, target)
     reset_keys = descendant_node_keys(target.node_key, edges)
+    reset_node_ids = {node.id for node in nodes if node.node_key in reset_keys}
+    if reset_node_ids:
+        db.execute(
+            update(DeepAnalysisClaim)
+            .where(DeepAnalysisClaim.source_node_id.in_(reset_node_ids))
+            .values(stale_status="review_required")
+            .execution_options(synchronize_session=False)
+        )
+        db.execute(
+            update(DeepAnalysisOpenIssue)
+            .where(
+                DeepAnalysisOpenIssue.source_node_id.in_(reset_node_ids),
+                DeepAnalysisOpenIssue.status == "open",
+            )
+            .values(status="superseded")
+            .execution_options(synchronize_session=False)
+        )
     for node in nodes:
         if node.node_key not in reset_keys:
             continue

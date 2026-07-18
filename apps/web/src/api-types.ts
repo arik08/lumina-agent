@@ -361,6 +361,56 @@ export interface DeepAnalysisQualityGate {
   createdAt: IsoDateTime;
 }
 
+export interface DeepAnalysisEvidence {
+  id: UUID;
+  sourceNodeKey: string | null;
+  sourceType: "project_file" | "generated_file" | "node_output" | "external";
+  stableId: string;
+  versionId: string | null;
+  contentDigest: string | null;
+  locator: string;
+  title: string;
+  metadata: Record<string, unknown>;
+  createdAt: IsoDateTime;
+}
+
+export interface DeepAnalysisClaimEvidence {
+  evidence: DeepAnalysisEvidence;
+  stance: "support" | "contradict" | "context";
+  rationale: string;
+}
+
+export interface DeepAnalysisClaim {
+  id: UUID;
+  sourceNodeKey: string | null;
+  statement: string;
+  level: "observation" | "supporting_finding" | "key_finding" | "recommendation";
+  status: "proposed" | "supported" | "verified" | "disputed" | "unresolved" | "rejected";
+  confidence: number | null;
+  materiality: "low" | "medium" | "high" | "critical";
+  reportInclusion: string;
+  validation: Record<string, unknown>;
+  staleStatus: "fresh" | "review_required";
+  evidence: DeepAnalysisClaimEvidence[];
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+export interface DeepAnalysisOpenIssue {
+  id: UUID;
+  sourceNodeKey: string | null;
+  issueType: string;
+  statement: string;
+  status: "open" | "resolved" | "accepted" | "superseded";
+  materiality: "low" | "medium" | "high" | "critical";
+  residualAmount: number | null;
+  residualPercent: number | null;
+  requiredAction: string;
+  reportInclusion: string;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
 export interface DeepAnalysisMissionDetail extends DeepAnalysisMissionSummary {
   executionAvailable: boolean;
   charter: DeepAnalysisMissionCharter;
@@ -376,6 +426,9 @@ export interface DeepAnalysisMissionDetail extends DeepAnalysisMissionSummary {
   }>;
   decisions: DeepAnalysisDecision[];
   qualityGates: DeepAnalysisQualityGate[];
+  claims: DeepAnalysisClaim[];
+  evidence: DeepAnalysisEvidence[];
+  openIssues: DeepAnalysisOpenIssue[];
   workflow: DeepAnalysisWorkflowRevision;
 }
 

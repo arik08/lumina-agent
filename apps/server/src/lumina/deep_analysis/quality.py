@@ -7,7 +7,10 @@ from sqlalchemy.orm import Session
 
 from ..models import utc_now
 from .models import (
+    DeepAnalysisClaim,
+    DeepAnalysisClaimEvidenceLink,
     DeepAnalysisDecision,
+    DeepAnalysisOpenIssue,
     DeepAnalysisMission,
     DeepAnalysisQualityGateResult,
     DeepAnalysisWorkflowNode,
@@ -136,7 +139,38 @@ def evaluate_quality_gate(
         )
     )
     minimum_coverage = float(contract.get("minimumEvidenceCoverage") or 0.0)
-    measured_coverage = float(contract.get("measuredEvidenceCoverage") or 0.0)
+    key_claims = list(
+        db.scalars(
+            select(DeepAnalysisClaim).where(
+                DeepAnalysisClaim.mission_id == mission.id,
+                DeepAnalysisClaim.level.in_({"key_finding", "recommendation"}),
+                DeepAnalysisClaim.status.not_in({"rejected"}),
+            )
+        )
+    )
+    key_claim_ids = [claim.id for claim in key_claims]
+    supporting_claim_ids = (
+        set(
+            db.scalars(
+                select(DeepAnalysisClaimEvidenceLink.claim_id).where(
+                    DeepAnalysisClaimEvidenceLink.claim_id.in_(key_claim_ids),
+                    DeepAnalysisClaimEvidenceLink.stance == "support",
+                )
+            )
+        )
+        if key_claim_ids
+        else set()
+    )
+    covered_claim_ids = {
+        claim.id
+        for claim in key_claims
+        if claim.id in supporting_claim_ids
+        and claim.status in {"supported", "verified"}
+        and claim.stale_status == "fresh"
+    }
+    measured_coverage = (
+        len(covered_claim_ids) / len(key_claims) if key_claims else 0.0
+    )
     checks.append(
         _check(
             "evidence_coverage",
@@ -146,8 +180,16 @@ def evaluate_quality_gate(
             measured=measured_coverage,
         )
     )
+    open_issues = list(
+        db.scalars(
+            select(DeepAnalysisOpenIssue).where(
+                DeepAnalysisOpenIssue.mission_id == mission.id,
+                DeepAnalysisOpenIssue.status == "open",
+            )
+        )
+    )
     maximum_open_issues = int(contract.get("maximumOpenIssues") or 0)
-    measured_open_issues = int(contract.get("measuredOpenIssues") or 0)
+    measured_open_issues = len(open_issues)
     checks.append(
         _check(
             "open_issues",
@@ -158,7 +200,12 @@ def evaluate_quality_gate(
         )
     )
     maximum_residual = contract.get("maximumUnexplainedResidualPercent")
-    measured_residual = contract.get("measuredUnexplainedResidualPercent")
+    residual_values = [
+        issue.residual_percent
+        for issue in open_issues
+        if issue.residual_percent is not None
+    ]
+    measured_residual = max(residual_values) if residual_values else None
     residual_passed = maximum_residual is None or (
         measured_residual is not None
         and float(measured_residual) <= float(maximum_residual)
@@ -170,6 +217,60 @@ def evaluate_quality_gate(
             "미설명 수치 잔차가 허용 비율 이하여야 합니다.",
             maximumPercent=maximum_residual,
             measuredPercent=measured_residual,
+        )
+    )
+    contradicting_claim_ids = set(
+        db.scalars(
+            select(DeepAnalysisClaimEvidenceLink.claim_id).where(
+                DeepAnalysisClaimEvidenceLink.claim_id.in_(key_claim_ids),
+                DeepAnalysisClaimEvidenceLink.stance == "contradict",
+            )
+        )
+    ) if key_claim_ids else set()
+    unresolved_contradictions = [
+        claim.id
+        for claim in key_claims
+        if claim.id in contradicting_claim_ids
+        and claim.status not in {"verified", "rejected"}
+    ]
+    checks.append(
+        _check(
+            "contradiction_review",
+            not unresolved_contradictions,
+            "주요 반대 Evidence는 해소하거나 미해결로 명시해야 합니다.",
+            claimIds=unresolved_contradictions,
+        )
+    )
+    stale_claim_ids = [
+        claim.id for claim in key_claims if claim.stale_status != "fresh"
+    ]
+    checks.append(
+        _check(
+            "stale_check",
+            not bool(contract.get("requireNoStaleNodes", True))
+            or not stale_claim_ids,
+            "stale 또는 review_required 핵심 Claim이 없어야 합니다.",
+            claimIds=stale_claim_ids,
+        )
+    )
+    report_claims = [
+        claim
+        for claim in key_claims
+        if claim.report_inclusion
+        and claim.status in {"supported", "verified"}
+        and claim.stale_status == "fresh"
+    ]
+    missing_report_claims = [
+        claim.id
+        for claim in report_claims
+        if f"[Claim:{claim.id}]" not in report_node.output_markdown
+    ]
+    checks.append(
+        _check(
+            "report_integrity",
+            not missing_report_claims,
+            "보고서의 핵심 결론은 Claim ID로 역추적할 수 있어야 합니다.",
+            missingClaimIds=missing_report_claims,
         )
     )
     requires_review = bool(contract.get("requiresFinalReview", False))
@@ -237,6 +338,9 @@ def evaluate_quality_gate(
 
     mission.completion_contract_json = {
         **contract,
+        "measuredEvidenceCoverage": measured_coverage,
+        "measuredOpenIssues": measured_open_issues,
+        "measuredUnexplainedResidualPercent": measured_residual,
         "qualityGate": quality_status,
         "latestQualityGateResultId": gate.id,
         "finalOutputFileId": report_node.output_project_file_id,

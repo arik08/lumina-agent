@@ -136,6 +136,7 @@ export function DeepAnalysisView({
   const [contractOpen, setContractOpen] = useState(false);
   const [savingContract, setSavingContract] = useState(false);
   const [runningQualityGate, setRunningQualityGate] = useState(false);
+  const [activeTab, setActiveTab] = useState<"workflow" | "evidence">("workflow");
   const [charterDraft, setCharterDraft] = useState<DeepAnalysisMissionCharter | null>(null);
   const [completionDraft, setCompletionDraft] = useState<DeepAnalysisCompletionContract | null>(null);
   const [canvasScale, setCanvasScale] = useState(1);
@@ -155,6 +156,7 @@ export function DeepAnalysisView({
     setMission(null);
     setSelectedMissionId(null);
     setSelectedNodeKey(null);
+    setActiveTab("workflow");
     setCreateOpen(false);
     setError(null);
     if (!projectId) return;
@@ -183,6 +185,7 @@ export function DeepAnalysisView({
     setSelectedNodeKey(null);
     setCostDetailsOpen(false);
     setDeleteArmed(false);
+    setActiveTab("workflow");
     if (!projectId || !selectedMissionId) return;
 
     window.localStorage.setItem(
@@ -829,9 +832,14 @@ export function DeepAnalysisView({
                   </div>
                 </header>
                 <div className="deep-analysis-tabs" role="tablist" aria-label="심층분석 화면">
-                  <button className="is-active" type="button" role="tab" aria-selected="true">Workflow</button>
+                  <button className={activeTab === "workflow" ? "is-active" : ""} type="button" role="tab" aria-selected={activeTab === "workflow"} onClick={() => setActiveTab("workflow")}>Workflow</button>
+                  <button className={activeTab === "evidence" ? "is-active" : ""} type="button" role="tab" aria-selected={activeTab === "evidence"} onClick={() => setActiveTab("evidence")}>결론·근거</button>
                   <span>
-                    {completedNodeCount}/{mission.workflow.nodes.length} 완료 · 분기 {workflowTopology.branchCount} · 합류 {workflowTopology.mergeCount} · 입력 자료 {mission.sourceManifest.length}개 · Revision {mission.workflow.revisionNumber}
+                    {activeTab === "workflow" ? <>
+                      {completedNodeCount}/{mission.workflow.nodes.length} 완료 · 분기 {workflowTopology.branchCount} · 합류 {workflowTopology.mergeCount} · 입력 자료 {mission.sourceManifest.length}개 · Revision {mission.workflow.revisionNumber}
+                    </> : <>
+                      Claim {mission.claims.length}개 · Evidence {mission.evidence.length}개 · Open Issue {mission.openIssues.filter((item) => item.status === "open").length}개
+                    </>}
                   </span>
                 </div>
                 {contractOpen && charterDraft && completionDraft && (
@@ -894,6 +902,7 @@ export function DeepAnalysisView({
                     )}
                   </section>
                 )}
+                {activeTab === "workflow" ? <>
                 {latestGraphChange && (
                   <div className="deep-analysis-workflow-change" role="status">
                     <GitBranch size={15} />
@@ -1140,6 +1149,9 @@ export function DeepAnalysisView({
                     </aside>
                   )}
                 </div>
+                </> : (
+                  <EvidenceLedger mission={mission} />
+                )}
               </>
             ) : (
               <div className="deep-analysis-empty">
@@ -1152,6 +1164,66 @@ export function DeepAnalysisView({
         </div>
       )}
     </main>
+  );
+}
+
+function EvidenceLedger({ mission }: { mission: DeepAnalysisMissionDetail }) {
+  const linkedEvidenceIds = new Set(
+    mission.claims.flatMap((claim) => claim.evidence.map((item) => item.evidence.id)),
+  );
+  const orphanEvidence = mission.evidence.filter((item) => !linkedEvidenceIds.has(item.id));
+  return (
+    <div className="deep-analysis-ledger" aria-label="Claim과 Evidence 원장">
+      <section className="deep-analysis-ledger-main">
+        <header>
+          <div><strong>Claim Ledger</strong><span>결론에서 정확한 근거와 원본 revision까지 역추적합니다.</span></div>
+          <small>{mission.claims.filter((claim) => claim.status === "verified").length}개 검증됨</small>
+        </header>
+        {mission.claims.length ? mission.claims.map((claim) => (
+          <article className={`deep-analysis-claim is-${claim.materiality}`} key={claim.id}>
+            <div className="deep-analysis-claim-meta">
+              <span>{claim.level.replaceAll("_", " ")}</span>
+              <b>{claim.status}</b>
+              {claim.staleStatus !== "fresh" && <em>재검토 필요</em>}
+              <small>{claim.sourceNodeKey ?? "Mission"}{claim.confidence !== null ? ` · 신뢰도 ${Math.round(claim.confidence * 100)}%` : ""}</small>
+            </div>
+            <p>{claim.statement}</p>
+            <code>[Claim:{claim.id}]</code>
+            <div className="deep-analysis-evidence-links">
+              {claim.evidence.length ? claim.evidence.map(({ evidence, stance, rationale }) => (
+                <div className={`is-${stance}`} key={`${claim.id}:${evidence.id}:${stance}`}>
+                  <span><b>{stance === "support" ? "지지" : stance === "contradict" ? "상충" : "맥락"}</b><strong>{evidence.title || evidence.stableId}</strong></span>
+                  <small>{evidence.sourceType} · {evidence.locator || "위치 미지정"}</small>
+                  {evidence.contentDigest && <code>{evidence.contentDigest.slice(0, 16)}…</code>}
+                  {rationale && <p>{rationale}</p>}
+                </div>
+              )) : <span className="deep-analysis-no-evidence">연결된 exact Evidence가 없습니다.</span>}
+            </div>
+          </article>
+        )) : (
+          <div className="deep-analysis-ledger-empty"><GitBranch size={20} /><strong>아직 등록된 Claim이 없습니다.</strong><span>Node 실행 결과가 저장되면 근거와 함께 이곳에 누적됩니다.</span></div>
+        )}
+      </section>
+      <aside className="deep-analysis-ledger-aside">
+        <section>
+          <header><strong>Open Issue</strong><span>{mission.openIssues.filter((item) => item.status === "open").length}</span></header>
+          {mission.openIssues.length ? mission.openIssues.map((issue) => (
+            <article key={issue.id}>
+              <div><b>{issue.materiality}</b><small>{issue.status} · {issue.sourceNodeKey ?? "Mission"}</small></div>
+              <p>{issue.statement}</p>
+              {issue.requiredAction && <span>{issue.requiredAction}</span>}
+              {issue.residualPercent !== null && <em>잔여 {issue.residualPercent}%</em>}
+            </article>
+          )) : <p className="deep-analysis-ledger-none">등록된 미해결 항목이 없습니다.</p>}
+        </section>
+        {orphanEvidence.length > 0 && (
+          <section>
+            <header><strong>미연결 Evidence</strong><span>{orphanEvidence.length}</span></header>
+            {orphanEvidence.map((item) => <article key={item.id}><p>{item.title || item.stableId}</p><small>{item.sourceType} · {item.locator}</small></article>)}
+          </section>
+        )}
+      </aside>
+    </div>
   );
 }
 
