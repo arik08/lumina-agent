@@ -2211,6 +2211,8 @@ button:disabled { cursor: default; opacity: 0.5; }
 .clarification-footer { display: flex; min-height: 38px; align-items: center; justify-content: flex-end; gap: 12px; padding: 4px 13px; border-top: 1px solid var(--line); background: var(--surface-soft); }
 .clarification-footer button + span { margin-left: auto; }
 .clarification-footer button { display: inline-flex; min-height: 31px; align-items: center; gap: 6px; padding: 0 9px; border: 1px solid color-mix(in srgb, var(--cobalt) 38%, var(--line)); border-radius: 8px; background: var(--surface); color: var(--cobalt); font-size: 13.5px; font-weight: 650; cursor: pointer; }
+.clarification-footer .clarification-submit { border-color: var(--cobalt); background: var(--cobalt); color: var(--surface); }
+.clarification-footer .clarification-submit:disabled { opacity: 0.45; cursor: default; }
 .clarification-footer span { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .markdown-response { min-width: 0; overflow-wrap: anywhere; color: var(--ink); }
 .streaming-leading-edge {
