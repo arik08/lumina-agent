@@ -28,12 +28,20 @@ from ..runs.service import create_run
 from ..runs.state import CANCELLED, COMPLETED, TERMINAL_STATUSES
 from ..storage import ManagedStorage
 from .models import (
+    DeepAnalysisClaim,
     DeepAnalysisDecision,
     DeepAnalysisDecisionResponse,
+    DeepAnalysisEvidenceReference,
     DeepAnalysisMission,
     DeepAnalysisWorkflowEdge,
     DeepAnalysisWorkflowNode,
     DeepAnalysisWorkflowRevision,
+)
+from .events import emit_event
+from .context_manifest import (
+    current_file_version,
+    link_file,
+    persist_context_manifest,
 )
 from .ledger import (
     claim_context,
@@ -73,6 +81,120 @@ def pending_terminal_run_ids(db: Session) -> tuple[str, ...]:
     )
 
 
+def record_recovered_run_ids(db: Session, run_ids: tuple[str, ...]) -> None:
+    if not run_ids:
+        return
+    rows = db.execute(
+        select(DeepAnalysisWorkflowNode, DeepAnalysisWorkflowRevision, DeepAnalysisMission)
+        .join(
+            DeepAnalysisWorkflowRevision,
+            DeepAnalysisWorkflowRevision.id
+            == DeepAnalysisWorkflowNode.workflow_revision_id,
+        )
+        .join(
+            DeepAnalysisMission,
+            DeepAnalysisMission.id == DeepAnalysisWorkflowRevision.mission_id,
+        )
+        .where(DeepAnalysisWorkflowNode.run_id.in_(run_ids))
+    ).all()
+    for node, revision, mission in rows:
+        emit_event(
+            db,
+            mission,
+            "node_queued",
+            {
+                "nodeId": node.id,
+                "nodeKey": node.node_key,
+                "runId": node.run_id,
+                "status": "queued",
+                "recovered": True,
+                "workflowRevisionId": revision.id,
+            },
+        )
+
+
+def _run_context(
+    db: Session, run_id: str
+) -> tuple[
+    DeepAnalysisWorkflowNode,
+    DeepAnalysisWorkflowRevision,
+    DeepAnalysisMission,
+] | None:
+    return db.execute(
+        select(
+            DeepAnalysisWorkflowNode, DeepAnalysisWorkflowRevision, DeepAnalysisMission
+        )
+        .join(
+            DeepAnalysisWorkflowRevision,
+            DeepAnalysisWorkflowRevision.id
+            == DeepAnalysisWorkflowNode.workflow_revision_id,
+        )
+        .join(
+            DeepAnalysisMission,
+            DeepAnalysisMission.id == DeepAnalysisWorkflowRevision.mission_id,
+        )
+        .where(DeepAnalysisWorkflowNode.run_id == run_id)
+    ).one_or_none()
+
+
+def record_node_started(db: Session, run: Run) -> None:
+    deep_analysis = run.snapshot_json.get("deep_analysis")
+    if not isinstance(deep_analysis, dict) or deep_analysis.get("nodeStartedEvent"):
+        return
+    context = _run_context(db, run.id)
+    if context is None:
+        return
+    node, revision, mission = context
+    emit_event(
+        db,
+        mission,
+        "node_started",
+        {
+            "nodeId": node.id,
+            "nodeKey": node.node_key,
+            "runId": run.id,
+            "status": run.status,
+            "workflowRevisionId": revision.id,
+            "attempt": len(node.run_history_json) + 1,
+        },
+    )
+    run.snapshot_json = {
+        **run.snapshot_json,
+        "deep_analysis": {**deep_analysis, "nodeStartedEvent": True},
+    }
+
+
+def record_output_progress(db: Session, run: Run) -> None:
+    """Persist bounded progress markers without copying model text into Mission events."""
+    deep_analysis = run.snapshot_json.get("deep_analysis")
+    if not isinstance(deep_analysis, dict) or not run.assistant_draft:
+        return
+    output_characters = len(run.assistant_draft)
+    bucket = ((output_characters - 1) // 2000) + 1
+    if int(deep_analysis.get("outputEventBucket") or 0) >= bucket:
+        return
+    context = _run_context(db, run.id)
+    if context is None:
+        return
+    node, _revision, mission = context
+    emit_event(
+        db,
+        mission,
+        "node_output_delta",
+        {
+            "nodeId": node.id,
+            "nodeKey": node.node_key,
+            "runId": run.id,
+            "outputCharacters": output_characters,
+            "progressBucket": bucket,
+        },
+    )
+    run.snapshot_json = {
+        **run.snapshot_json,
+        "deep_analysis": {**deep_analysis, "outputEventBucket": bucket},
+    }
+
+
 _UNSAFE_PATH = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _MARKDOWN_MARKERS = re.compile(r"(?m)^#{1,6}\s+|\*\*|__|`+|^[-*+]\s+")
 
@@ -87,6 +209,12 @@ def _output_path(mission: DeepAnalysisMission, node: DeepAnalysisWorkflowNode) -
     mission_name = _path_segment(mission.title, fallback="심층분석")
     node_name = _path_segment(node.title, fallback=node.node_key)
     return f"심층분석/{mission_name}_{mission.id[:8]}/{node.node_key}_{node_name}.md"
+
+
+def _partial_output_path(
+    mission: DeepAnalysisMission, node: DeepAnalysisWorkflowNode
+) -> str:
+    return _output_path(mission, node).removesuffix(".md") + "_partial.md"
 
 
 def output_directory(mission: DeepAnalysisMission) -> str:
@@ -130,7 +258,9 @@ def capture_source_manifest(
 
 
 def _run_manifest(
-    db: Session, mission: DeepAnalysisMission
+    db: Session,
+    mission: DeepAnalysisMission,
+    node: DeepAnalysisWorkflowNode,
 ) -> list[dict[str, Any]]:
     manifest = [dict(item) for item in mission.source_manifest_json]
     known_ids = {
@@ -138,6 +268,44 @@ def _run_manifest(
         for item in manifest
         if item.get("projectFileId")
     }
+    workflow_nodes = list(
+        db.scalars(
+            select(DeepAnalysisWorkflowNode).where(
+                DeepAnalysisWorkflowNode.workflow_revision_id
+                == node.workflow_revision_id
+            )
+        )
+    )
+    edges = list(
+        db.scalars(
+            select(DeepAnalysisWorkflowEdge).where(
+                DeepAnalysisWorkflowEdge.workflow_revision_id
+                == node.workflow_revision_id
+            )
+        )
+    )
+    incoming: dict[str, set[str]] = {}
+    for edge in edges:
+        incoming.setdefault(edge.target_node_key, set()).add(edge.source_node_key)
+    ancestor_keys: set[str] = set()
+    queue = list(incoming.get(node.node_key, set()))
+    while queue:
+        key = queue.pop(0)
+        if key in ancestor_keys:
+            continue
+        ancestor_keys.add(key)
+        queue.extend(incoming.get(key, set()))
+    generated_ids: set[str] = set()
+    for candidate in workflow_nodes:
+        if candidate.node_key not in ancestor_keys:
+            continue
+        if candidate.output_project_file_id:
+            generated_ids.add(candidate.output_project_file_id)
+        for item in candidate.generated_files_json:
+            if isinstance(item, dict) and item.get("projectFileId"):
+                generated_ids.add(str(item["projectFileId"]))
+    if not generated_ids:
+        return manifest
     generated = db.execute(
         select(ProjectFile, ProjectFileVersion)
         .join(
@@ -148,7 +316,7 @@ def _run_manifest(
         .where(
             ProjectFile.project_id == mission.project_id,
             ProjectFile.deleted_at.is_(None),
-            ProjectFile.logical_path.startswith(f"{output_directory(mission)}/"),
+            ProjectFile.id.in_(generated_ids),
         )
         .order_by(ProjectFile.logical_path)
     ).tuples()
@@ -356,7 +524,7 @@ def create_node_run(
         if existing is not None:
             return existing, False
     conversation = _ensure_conversation(db, user=user, mission=mission)
-    manifest = _run_manifest(db, mission)
+    manifest = _run_manifest(db, mission, node)
     workflow_revision = db.get(DeepAnalysisWorkflowRevision, node.workflow_revision_id)
     workflow_nodes = list(
         db.scalars(
@@ -378,20 +546,21 @@ def create_node_run(
     workflow_instruction = f"{workflow_instruction}{ledger_instruction(node)}"
     analysis_depth, answer_length = _run_profile(node)
     attempt = len(node.run_history_json) + 1
+    prompt = _run_prompt(
+        mission,
+        node,
+        manifest,
+        workflow_instruction,
+        decision_context,
+        ledger_context,
+    )
     run, _message, created = create_run(
         db,
         user=user,
         conversation_id=conversation.id,
         payload=RunCreate(
             message=RunMessageInput(
-                text=_run_prompt(
-                    mission,
-                    node,
-                    manifest,
-                    workflow_instruction,
-                    decision_context,
-                    ledger_context,
-                ),
+                text=prompt,
                 output_mode="chat",
                 analysis_depth=analysis_depth,
                 answer_length=answer_length,
@@ -434,6 +603,31 @@ def create_node_run(
     node.started_at = node.started_at or utc_now()
     node.error_message = None
     db.flush()
+    context_manifest = persist_context_manifest(
+        db,
+        mission=mission,
+        node=node,
+        run=run,
+        files=manifest,
+        tool_profile="deep-analysis-core-v1",
+        dynamic_context_characters=len(prompt),
+    )
+    if created:
+        emit_event(
+            db,
+            mission,
+            "node_queued",
+            {
+                "nodeId": node.id,
+                "nodeKey": node.node_key,
+                "runId": run.id,
+                "status": run.status,
+                "attempt": attempt,
+                "workflowRevisionId": node.workflow_revision_id,
+                "contextManifestId": context_manifest.id,
+                "prefixHash": context_manifest.prefix_hash,
+            },
+        )
     return run, created
 
 
@@ -506,6 +700,7 @@ def _save_output(
     user: User,
     mission: DeepAnalysisMission,
     node: DeepAnalysisWorkflowNode,
+    run: Run,
     markdown: str,
     storage: ManagedStorage,
     settings: Settings,
@@ -523,8 +718,22 @@ def _save_output(
     if existing is not None:
         node.output_project_file_id = existing.id
         node.output_logical_path = existing.logical_path
+        version_row = current_file_version(db, existing.id)
+        if version_row is not None:
+            _file, version = version_row
+            link_file(
+                db,
+                mission=mission,
+                project_file_id=existing.id,
+                version_id=version.id,
+                node=node,
+                run=run,
+                purpose="node_output",
+                validation_status="completed",
+                metadata={"logicalPath": existing.logical_path},
+            )
         return
-    project_file, _version = create_project_file(
+    project_file, version = create_project_file(
         db,
         user=user,
         project_id=mission.project_id,
@@ -537,6 +746,112 @@ def _save_output(
     )
     node.output_project_file_id = project_file.id
     node.output_logical_path = project_file.logical_path
+    link_file(
+        db,
+        mission=mission,
+        project_file_id=project_file.id,
+        version_id=version.id,
+        node=node,
+        run=run,
+        purpose="node_output",
+        validation_status="completed",
+        metadata={"logicalPath": project_file.logical_path},
+    )
+
+
+def _save_partial_output(
+    db: Session,
+    *,
+    user: User,
+    mission: DeepAnalysisMission,
+    node: DeepAnalysisWorkflowNode,
+    run: Run,
+    markdown: str,
+    storage: ManagedStorage,
+    settings: Settings,
+) -> tuple[str, str] | None:
+    content = markdown.strip()
+    if not content:
+        return None
+    logical_path = _partial_output_path(mission, node)
+    existing = db.scalar(
+        select(ProjectFile).where(
+            ProjectFile.project_id == mission.project_id,
+            ProjectFile.active_path_key == logical_path_key(logical_path),
+            ProjectFile.deleted_at.is_(None),
+        )
+    )
+    if existing is not None:
+        version_row = current_file_version(db, existing.id)
+        if version_row is None:
+            return None
+        project_file, version = version_row
+    else:
+        project_file, version = create_project_file(
+            db,
+            user=user,
+            project_id=mission.project_id,
+            logical_path=logical_path,
+            original_filename=PurePosixPath(logical_path).name,
+            content=content.encode("utf-8"),
+            change_reason=f"심층분석 {mission.id} {node.node_key} 중단 출력 보존",
+            max_upload_bytes=settings.max_upload_bytes,
+            storage=storage,
+        )
+    link_file(
+        db,
+        mission=mission,
+        project_file_id=project_file.id,
+        version_id=version.id,
+        node=node,
+        run=run,
+        purpose="partial_output",
+        validation_status="interrupted",
+        metadata={
+            "logicalPath": project_file.logical_path,
+            "terminalRunStatus": run.status,
+        },
+    )
+    return project_file.id, project_file.logical_path
+
+
+def preserve_partial_output(
+    db: Session,
+    *,
+    user: User,
+    mission: DeepAnalysisMission,
+    node: DeepAnalysisWorkflowNode,
+    run: Run,
+    storage: ManagedStorage,
+    settings: Settings,
+) -> tuple[str, str] | None:
+    saved = _save_partial_output(
+        db,
+        user=user,
+        mission=mission,
+        node=node,
+        run=run,
+        markdown=run.assistant_draft,
+        storage=storage,
+        settings=settings,
+    )
+    if saved is None:
+        return None
+    project_file_id, logical_path = saved
+    emit_event(
+        db,
+        mission,
+        "mission_file_created",
+        {
+            "nodeId": node.id,
+            "nodeKey": node.node_key,
+            "projectFileId": project_file_id,
+            "logicalPath": logical_path,
+            "purpose": "partial_output",
+            "validationStatus": "interrupted",
+        },
+    )
+    return saved
 
 
 def sync_terminal_run(
@@ -582,6 +897,20 @@ def sync_terminal_run(
         return TerminalSyncResult(changed=True)
 
     if run.status == COMPLETED:
+        existing_claim_ids = set(
+            db.scalars(
+                select(DeepAnalysisClaim.id).where(
+                    DeepAnalysisClaim.mission_id == mission.id
+                )
+            )
+        )
+        existing_evidence_ids = set(
+            db.scalars(
+                select(DeepAnalysisEvidenceReference.id).where(
+                    DeepAnalysisEvidenceReference.mission_id == mission.id
+                )
+            )
+        )
         ledger_markdown, analysis_ledger = extract_analysis_ledger(
             run.assistant_draft.strip()
         )
@@ -597,6 +926,7 @@ def sync_terminal_run(
             user=user,
             mission=mission,
             node=node,
+            run=run,
             markdown=markdown,
             storage=storage,
             settings=settings,
@@ -611,17 +941,183 @@ def sync_terminal_run(
             node=node,
             ledger=analysis_ledger,
         )
+        db.flush()
+        for generated_file in node.generated_files_json:
+            if not isinstance(generated_file, dict) or not generated_file.get("projectFileId"):
+                continue
+            version_row = current_file_version(db, str(generated_file["projectFileId"]))
+            if version_row is None:
+                continue
+            project_file, version = version_row
+            link_file(
+                db,
+                mission=mission,
+                project_file_id=project_file.id,
+                version_id=version.id,
+                node=node,
+                run=run,
+                purpose="calculation_output",
+                validation_status="tool_completed",
+                metadata={
+                    "logicalPath": project_file.logical_path,
+                    "kind": generated_file.get("kind"),
+                },
+            )
+        new_claims = list(
+            db.scalars(
+                select(DeepAnalysisClaim).where(
+                    DeepAnalysisClaim.mission_id == mission.id,
+                    DeepAnalysisClaim.id.not_in(existing_claim_ids),
+                )
+            )
+        )
+        new_evidence = list(
+            db.scalars(
+                select(DeepAnalysisEvidenceReference).where(
+                    DeepAnalysisEvidenceReference.mission_id == mission.id,
+                    DeepAnalysisEvidenceReference.id.not_in(existing_evidence_ids),
+                )
+            )
+        )
+        emit_event(
+            db,
+            mission,
+            "node_completed",
+            {
+                "nodeId": node.id,
+                "nodeKey": node.node_key,
+                "runId": run.id,
+                "status": node.status,
+                "outputProjectFileId": node.output_project_file_id,
+                "outputLogicalPath": node.output_logical_path,
+                "actualCostMicrousd": node.actual_cost_microusd,
+            },
+        )
+        if node.output_project_file_id:
+            emit_event(
+                db,
+                mission,
+                "mission_file_created",
+                {
+                    "nodeId": node.id,
+                    "nodeKey": node.node_key,
+                    "projectFileId": node.output_project_file_id,
+                    "logicalPath": node.output_logical_path,
+                },
+            )
+        for claim in new_claims:
+            emit_event(
+                db,
+                mission,
+                "claim_recorded",
+                {
+                    "claimId": claim.id,
+                    "sourceNodeId": claim.source_node_id,
+                    "level": claim.level,
+                    "status": claim.status,
+                    "materiality": claim.materiality,
+                },
+            )
+        for evidence in new_evidence:
+            emit_event(
+                db,
+                mission,
+                "evidence_linked",
+                {
+                    "evidenceId": evidence.id,
+                    "sourceNodeId": evidence.source_node_id,
+                    "sourceType": evidence.source_type,
+                    "stableId": evidence.stable_id,
+                    "versionId": evidence.version_id,
+                    "contentDigest": evidence.content_digest,
+                },
+            )
         mission.spent_microusd = _mission_spent(db, workflow_revision.id)
+        emit_event(
+            db,
+            mission,
+            "mission_cost_updated",
+            {
+                "spentMicrousd": mission.spent_microusd,
+                "budgetMicrousd": mission.budget_microusd,
+                "nodeId": node.id,
+                "nodeKey": node.node_key,
+            },
+        )
 
         if node.node_type != "report":
-            apply_workflow_decision(
+            workflow_action = str(workflow_decision.get("action") or "continue")
+            if workflow_action != "continue":
+                emit_event(
+                    db,
+                    mission,
+                    "workflow_expansion_proposed",
+                    {
+                        "requestedByNodeKey": node.node_key,
+                        "action": workflow_action,
+                        "addCount": len(workflow_decision.get("add") or []),
+                        "removeCount": len(workflow_decision.get("remove") or []),
+                        "confidence": workflow_decision.get("confidence"),
+                    },
+                )
+            graph_changed = apply_workflow_decision(
                 db,
                 mission=mission,
                 revision=workflow_revision,
                 current_node=node,
                 decision=workflow_decision,
             )
+            if workflow_action != "continue":
+                emit_event(
+                    db,
+                    mission,
+                    "workflow_expansion_decided",
+                    {
+                        "requestedByNodeKey": node.node_key,
+                        "action": workflow_action,
+                        "graphChanged": graph_changed,
+                        "status": mission.status,
+                    },
+                )
+            if graph_changed:
+                emit_event(
+                    db,
+                    mission,
+                    "workflow_revision_activated",
+                    {
+                        "workflowRevision": workflow_revision.revision_number,
+                        "workflowRevisionId": workflow_revision.id,
+                        "action": workflow_decision.get("action"),
+                        "requestedByNodeKey": node.node_key,
+                        "graphDigest": workflow_revision.graph_digest,
+                    },
+                )
         if mission.status == "awaiting_input":
+            pending_decision = db.scalar(
+                select(DeepAnalysisDecision)
+                .where(
+                    DeepAnalysisDecision.mission_id == mission.id,
+                    DeepAnalysisDecision.status == "pending",
+                )
+                .order_by(DeepAnalysisDecision.created_at.desc())
+            )
+            if pending_decision is not None:
+                emit_event(
+                    db,
+                    mission,
+                    "decision_requested",
+                    {
+                        "decisionId": pending_decision.id,
+                        "requestedByNodeId": pending_decision.requested_by_node_id,
+                        "affectedNodeKeys": pending_decision.affected_node_keys_json,
+                    },
+                )
+            emit_event(
+                db,
+                mission,
+                "mission_status_changed",
+                {"status": "awaiting_input", "missionRevision": mission.revision + 1},
+            )
             mission.revision += 1
             return TerminalSyncResult(changed=True)
         nodes = list(
@@ -657,14 +1153,34 @@ def sync_terminal_run(
                     "blockedNodeKeys": [item.node_key for item in unresolved],
                 }
                 mission.revision += 1
+                emit_event(
+                    db,
+                    mission,
+                    "mission_status_changed",
+                    {
+                        "status": mission.status,
+                        "missionRevision": mission.revision,
+                        "blockedNodeKeys": [item.node_key for item in unresolved],
+                    },
+                )
                 return TerminalSyncResult(changed=True)
             if node.node_type == "report":
-                evaluate_quality_gate(
+                gate = evaluate_quality_gate(
                     db,
                     mission=mission,
                     revision=workflow_revision,
                     report_node=node,
                     nodes=nodes,
+                )
+                emit_event(
+                    db,
+                    mission,
+                    "quality_gate_completed",
+                    {
+                        "qualityGateId": gate.id,
+                        "result": gate.result,
+                        "completionOutcome": gate.completion_outcome,
+                    },
                 )
             else:
                 mission.status = "completed"
@@ -676,6 +1192,49 @@ def sync_terminal_run(
                     "finalOutputPath": node.output_logical_path,
                 }
             mission.revision += 1
+            if mission.status == "completed":
+                emit_event(
+                    db,
+                    mission,
+                    "mission_completed",
+                    {
+                        "status": mission.status,
+                        "completionOutcome": mission.completion_outcome,
+                        "missionRevision": mission.revision,
+                        "finalOutputFileId": node.output_project_file_id,
+                    },
+                )
+            else:
+                if mission.status == "awaiting_input":
+                    pending_decision = db.scalar(
+                        select(DeepAnalysisDecision)
+                        .where(
+                            DeepAnalysisDecision.mission_id == mission.id,
+                            DeepAnalysisDecision.status == "pending",
+                        )
+                        .order_by(DeepAnalysisDecision.created_at.desc())
+                    )
+                    if pending_decision is not None:
+                        emit_event(
+                            db,
+                            mission,
+                            "decision_requested",
+                            {
+                                "decisionId": pending_decision.id,
+                                "requestedByNodeId": pending_decision.requested_by_node_id,
+                                "affectedNodeKeys": pending_decision.affected_node_keys_json,
+                            },
+                        )
+                emit_event(
+                    db,
+                    mission,
+                    "mission_status_changed",
+                    {
+                        "status": mission.status,
+                        "completionOutcome": mission.completion_outcome,
+                        "missionRevision": mission.revision,
+                    },
+                )
             return TerminalSyncResult(changed=True)
 
         if (
@@ -688,6 +1247,17 @@ def sync_terminal_run(
                 "qualityGate": "budget_exhausted",
             }
             mission.revision += 1
+            emit_event(
+                db,
+                mission,
+                "mission_budget_warning",
+                {
+                    "status": mission.status,
+                    "spentMicrousd": mission.spent_microusd,
+                    "budgetMicrousd": mission.budget_microusd,
+                    "missionRevision": mission.revision,
+                },
+            )
             return TerminalSyncResult(changed=True)
 
         next_run, created = create_node_run(
@@ -703,6 +1273,15 @@ def sync_terminal_run(
             changed=True,
         )
 
+    preserve_partial_output(
+        db,
+        user=user,
+        mission=mission,
+        node=node,
+        run=run,
+        storage=storage,
+        settings=settings,
+    )
     node.status = "cancelled" if run.status == CANCELLED else "failed"
     node.error_message = (
         None
@@ -712,6 +1291,20 @@ def sync_terminal_run(
     mission.status = "cancelled" if run.status == CANCELLED else "failed"
     mission.spent_microusd = _mission_spent(db, workflow_revision.id)
     mission.revision += 1
+    emit_event(
+        db,
+        mission,
+        "node_failed" if node.status == "failed" else "node_cancelled",
+        {
+            "nodeId": node.id,
+            "nodeKey": node.node_key,
+            "runId": run.id,
+            "status": node.status,
+            "missionStatus": mission.status,
+            "missionRevision": mission.revision,
+            "actualCostMicrousd": node.actual_cost_microusd,
+        },
+    )
     return TerminalSyncResult(changed=True)
 
 
@@ -739,4 +1332,17 @@ def fail_terminal_sync(db: Session, *, run_id: str, message: str) -> bool:
     node.finished_at = utc_now()
     mission.status = "failed"
     mission.revision += 1
+    emit_event(
+        db,
+        mission,
+        "node_failed",
+        {
+            "nodeId": node.id,
+            "nodeKey": node.node_key,
+            "runId": run_id,
+            "status": node.status,
+            "missionStatus": mission.status,
+            "missionRevision": mission.revision,
+        },
+    )
     return True

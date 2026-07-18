@@ -248,6 +248,17 @@ export interface DeepAnalysisWorkflowNode {
     finishedAt: IsoDateTime | null;
   }>;
   runStatus: string | null;
+  contextManifest: {
+    id: UUID;
+    missionContextRevision: number;
+    prefixHash: string;
+    toolProfile: string;
+    itemCount: number;
+    tokenEstimate: number;
+    items: Array<Record<string, unknown>>;
+    lineage: Record<string, unknown>;
+    createdAt: IsoDateTime;
+  } | null;
   liveOutput: string;
   errorMessage: string | null;
   estimatedCostMicrousd: number;
@@ -450,6 +461,7 @@ export interface UpdateDeepAnalysisWorkflowDraftRequest {
 
 export interface DeepAnalysisMissionDetail extends DeepAnalysisMissionSummary {
   executionAvailable: boolean;
+  eventCursor: number;
   charter: DeepAnalysisMissionCharter;
   completionContract: DeepAnalysisCompletionContract;
   sourceManifest: Array<{
@@ -466,7 +478,71 @@ export interface DeepAnalysisMissionDetail extends DeepAnalysisMissionSummary {
   claims: DeepAnalysisClaim[];
   evidence: DeepAnalysisEvidence[];
   openIssues: DeepAnalysisOpenIssue[];
+  files: Array<{
+    id: UUID;
+    projectFileId: UUID;
+    projectFileVersionId: UUID;
+    logicalPath: string;
+    version: number;
+    contentHash: string;
+    producingNodeKey: string | null;
+    producingRunId: UUID | null;
+    purpose: string;
+    validationStatus: string;
+    staleStatus: string;
+    metadata: Record<string, unknown>;
+    createdAt: IsoDateTime;
+  }>;
   workflow: DeepAnalysisWorkflowRevision;
+}
+
+export interface DeepAnalysisMissionEvent {
+  missionId: UUID;
+  sequence: number;
+  type: string;
+  payload: Record<string, unknown>;
+  createdAt: IsoDateTime;
+}
+
+export interface DeepAnalysisMissionCosts {
+  missionId: UUID;
+  spentMicrousd: number;
+  budgetMicrousd: number | null;
+  budgetUsageRatio: number | null;
+  estimatedCompletionMicrousd: number;
+  noCacheUpperBoundMicrousd: number;
+  estimatedCacheSavingMicrousd: number;
+  cacheHitRatio: number;
+  totals: {
+    inputTokens: number;
+    cachedInputTokens: number;
+    cacheWriteTokens: number;
+    uncachedInputTokens: number;
+    outputTokens: number;
+  };
+  rows: Array<{
+    nodeKey: string;
+    nodeTitle: string;
+    stage: string;
+    attempt: number;
+    isRetry: boolean;
+    runId: UUID;
+    status: string;
+    providerId: string;
+    modelKey: string;
+    modelDisplayName: string;
+    date: string;
+    inputTokens: number;
+    cachedInputTokens: number;
+    cacheWriteTokens: number;
+    uncachedInputTokens: number;
+    outputTokens: number;
+    actualCostMicrousd: number;
+    noCacheCostMicrousd: number | null;
+    estimatedCacheSavingMicrousd: number | null;
+    pricingVersion: string | null;
+    costBasis: string;
+  }>;
 }
 
 export interface CreateDeepAnalysisMissionRequest {

@@ -11,6 +11,7 @@ from .models import (
     DeepAnalysisDecision,
     DeepAnalysisDecisionResponse,
     DeepAnalysisMission,
+    DeepAnalysisMissionFileLink,
     DeepAnalysisOpenIssue,
     DeepAnalysisWorkflowEdge,
     DeepAnalysisWorkflowNode,
@@ -536,7 +537,7 @@ def delete_mission(
     *,
     expected_revision: int,
 ) -> int:
-    if mission.status in {"running", "awaiting_input"}:
+    if mission.status in {"running", "paused", "awaiting_input"}:
         raise ApiProblem(
             409,
             "mission_running",
@@ -746,6 +747,14 @@ def retry_mission_node(
             .values(status="superseded")
             .execution_options(synchronize_session=False)
         )
+        db.execute(
+            update(DeepAnalysisMissionFileLink)
+            .where(
+                DeepAnalysisMissionFileLink.producing_node_id.in_(reset_node_ids)
+            )
+            .values(stale_status="review_required")
+            .execution_options(synchronize_session=False)
+        )
     for node in nodes:
         if node.node_key not in reset_keys:
             continue
@@ -830,7 +839,7 @@ def cancel_mission(
 ) -> DeepAnalysisMission:
     if mission.status == "cancelled":
         return mission
-    if mission.status not in {"running", "awaiting_input"}:
+    if mission.status not in {"running", "paused", "awaiting_input"}:
         raise ApiProblem(
             409,
             "mission_not_cancellable",
@@ -867,6 +876,80 @@ def cancel_mission(
         )
     ):
         decision.status = "cancelled"
+    db.flush()
+    db.refresh(mission)
+    return mission
+
+
+def pause_mission(
+    db: Session,
+    mission: DeepAnalysisMission,
+    *,
+    expected_revision: int,
+) -> DeepAnalysisMission:
+    if mission.status == "paused":
+        return mission
+    if mission.status != "running":
+        raise ApiProblem(
+            409,
+            "mission_not_pausable",
+            "진행 중인 심층분석만 일시 정지할 수 있습니다.",
+            details={"status": mission.status},
+        )
+    result = db.execute(
+        update(DeepAnalysisMission)
+        .where(
+            DeepAnalysisMission.id == mission.id,
+            DeepAnalysisMission.revision == expected_revision,
+        )
+        .values(status="paused", revision=expected_revision + 1)
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        db.refresh(mission)
+        raise ApiProblem(
+            409,
+            "revision_conflict",
+            "다른 변경사항이 먼저 저장되었습니다. 최신 상태를 불러와 다시 시도해 주세요.",
+            details={"currentRevision": mission.revision},
+        )
+    db.flush()
+    db.refresh(mission)
+    return mission
+
+
+def resume_mission(
+    db: Session,
+    mission: DeepAnalysisMission,
+    *,
+    expected_revision: int,
+) -> DeepAnalysisMission:
+    if mission.status == "running":
+        return mission
+    if mission.status != "paused":
+        raise ApiProblem(
+            409,
+            "mission_not_resumable",
+            "일시 정지된 심층분석만 재개할 수 있습니다.",
+            details={"status": mission.status},
+        )
+    result = db.execute(
+        update(DeepAnalysisMission)
+        .where(
+            DeepAnalysisMission.id == mission.id,
+            DeepAnalysisMission.revision == expected_revision,
+        )
+        .values(status="running", revision=expected_revision + 1)
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        db.refresh(mission)
+        raise ApiProblem(
+            409,
+            "revision_conflict",
+            "다른 변경사항이 먼저 저장되었습니다. 최신 상태를 불러와 다시 시도해 주세요.",
+            details={"currentRevision": mission.revision},
+        )
     db.flush()
     db.refresh(mission)
     return mission

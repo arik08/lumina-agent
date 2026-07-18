@@ -77,6 +77,10 @@ class MissionCancel(ApiModel):
     expected_revision: int = Field(ge=1)
 
 
+class MissionPause(ApiModel):
+    expected_revision: int = Field(ge=1)
+
+
 class MissionRetry(ApiModel):
     expected_revision: int = Field(ge=1)
     node_key: str = Field(min_length=1, max_length=32)
@@ -105,6 +109,67 @@ class MissionExportResponse(ApiModel):
     completed_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class MissionEventResponse(ApiModel):
+    mission_id: str
+    sequence: int
+    type: str
+    payload: dict[str, Any]
+    created_at: datetime
+
+
+class MissionCostRow(ApiModel):
+    node_key: str
+    node_title: str
+    stage: str
+    attempt: int
+    is_retry: bool
+    run_id: str
+    status: str
+    provider_id: str
+    model_key: str
+    model_display_name: str
+    date: str
+    input_tokens: int
+    cached_input_tokens: int
+    cache_write_tokens: int
+    uncached_input_tokens: int
+    output_tokens: int
+    actual_cost_microusd: int
+    no_cache_cost_microusd: int | None
+    estimated_cache_saving_microusd: int | None
+    pricing_version: str | None
+    cost_basis: str
+
+
+class MissionCostResponse(ApiModel):
+    mission_id: str
+    spent_microusd: int
+    budget_microusd: int | None
+    budget_usage_ratio: float | None
+    estimated_completion_microusd: int
+    no_cache_upper_bound_microusd: int
+    estimated_cache_saving_microusd: int
+    cache_hit_ratio: float
+    totals: dict[str, int]
+    rows: list[MissionCostRow]
+
+
+class MissionFileResponse(ApiModel):
+    id: str
+    project_file_id: str
+    project_file_version_id: str
+    logical_path: str
+    version: int
+    content_hash: str
+    producing_node_key: str | None
+    producing_run_id: str | None
+    purpose: str
+    validation_status: str
+    stale_status: str
+    metadata: dict[str, Any]
+    created_at: datetime
 
 
 class WorkflowDraftCreate(ApiModel):
@@ -280,6 +345,7 @@ class WorkflowNodeResponse(ApiModel):
     generated_files: list[dict[str, Any]]
     run_history: list[dict[str, Any]]
     run_status: str | None
+    context_manifest: dict[str, Any] | None
     live_output: str
     error_message: str | None
     estimated_cost_microusd: int
@@ -328,6 +394,7 @@ class MissionSummaryResponse(ApiModel):
 
 class MissionDetailResponse(MissionSummaryResponse):
     execution_available: bool
+    event_cursor: int
     charter: dict[str, Any]
     completion_contract: dict[str, Any]
     source_manifest: list[dict[str, Any]]
@@ -336,4 +403,5 @@ class MissionDetailResponse(MissionSummaryResponse):
     claims: list[ClaimResponse]
     evidence: list[EvidenceResponse]
     open_issues: list[OpenIssueResponse]
+    files: list[MissionFileResponse]
     workflow: WorkflowRevisionResponse

@@ -150,6 +150,14 @@
 .deep-analysis-cost-popover > span { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 10.5px; }
 .deep-analysis-cost-popover em { overflow: hidden; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
 .deep-analysis-cost-popover b { flex: none; color: var(--ink); font-size: 10.5px; font-weight: 600; }
+.deep-analysis-cost-token-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 8px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 7px 0; }
+.deep-analysis-cost-token-summary small { color: var(--muted); font-size: 9.5px; }
+.deep-analysis-cost-runs { display: grid; max-height: 210px; gap: 0; overflow: auto; }
+.deep-analysis-cost-runs > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--line); padding: 7px 0; }
+.deep-analysis-cost-runs > div:last-child { border-bottom: 0; }
+.deep-analysis-cost-runs span { display: grid; min-width: 0; gap: 2px; }
+.deep-analysis-cost-runs em { color: var(--ink); font-size: 10px; }
+.deep-analysis-cost-runs small { overflow: hidden; color: var(--faint); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 
 .deep-analysis-tabs { display: flex; height: 39px; min-height: 39px; align-items: flex-end; gap: 14px; padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--surface); }
 .deep-analysis-tabs button { height: 39px; border: 0; border-bottom: 2px solid transparent; padding: 0 4px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 650; }
@@ -321,6 +329,28 @@
 .deep-analysis-canvas-controls button:hover { background: var(--surface-soft); color: var(--ink); }
 .deep-analysis-canvas-controls button:disabled { opacity: .38; cursor: default; }
 
+.deep-analysis-execution-log { flex: none; border-top: 1px solid var(--line); background: var(--surface); }
+.deep-analysis-execution-log > button { display: flex; width: 100%; min-height: 34px; align-items: center; gap: 7px; border: 0; padding: 0 13px; background: var(--surface); color: var(--muted); text-align: left; cursor: pointer; }
+.deep-analysis-execution-log > button:hover { background: var(--surface-soft); }
+.deep-analysis-execution-log > button > svg:first-child { transition: transform var(--motion-fast); }
+.deep-analysis-execution-log.is-open > button > svg:first-child { transform: rotate(90deg); }
+.deep-analysis-execution-log > button strong { color: var(--ink); font-size: 10.5px; }
+.deep-analysis-execution-log > button span { margin-left: auto; font-size: 9.5px; }
+.deep-analysis-execution-log > button .is-running { margin-left: 2px; color: var(--cobalt); }
+.deep-analysis-execution-events { overflow: auto; max-height: 146px; border-top: 1px solid var(--line); padding: 7px 13px 9px; background: var(--canvas); }
+.deep-analysis-execution-events > div { display: grid; min-height: 23px; grid-template-columns: 68px 9px minmax(0, 1fr); align-items: center; gap: 6px; color: var(--muted); font-size: 10px; }
+.deep-analysis-execution-events time { color: var(--faint); font-family: var(--font-mono); font-size: 9px; }
+.deep-analysis-execution-events i { width: 6px; height: 6px; border-radius: 999px; background: var(--line-strong); }
+.deep-analysis-execution-events > div.is-node_started i,
+.deep-analysis-execution-events > div.is-node_output_delta i { background: var(--cobalt); }
+.deep-analysis-execution-events > div.is-node_completed i,
+.deep-analysis-execution-events > div.is-mission_completed i { background: var(--success); }
+.deep-analysis-execution-events > div.is-node_failed i,
+.deep-analysis-execution-events > div.is-node_cancelled i { background: var(--danger); }
+.deep-analysis-execution-events span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.deep-analysis-execution-events b { margin-right: 6px; color: var(--cobalt); font-size: 9.5px; }
+.deep-analysis-execution-events p { margin: 4px 0; color: var(--muted); font-size: 10px; }
+
 .deep-analysis-inspector { min-height: 0; overflow: auto; border-left: 1px solid var(--line); background: var(--surface); }
 .deep-analysis-inspector > header { display: grid; gap: 5px; padding: 15px; border-bottom: 1px solid var(--line); }
 .deep-analysis-inspector > header > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -344,6 +374,7 @@
 .deep-analysis-inspector .deep-analysis-node-error { color: var(--danger); }
 .deep-analysis-live-output { overflow: auto; max-height: 180px; margin: 9px 0 0; border: 1px solid var(--line); border-radius: var(--radius-field); padding: 9px; background: var(--canvas); color: var(--muted); font-family: var(--font-mono); font-size: 10px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
 .deep-analysis-output-path { display: block; overflow-wrap: anywhere; margin-top: 9px; color: var(--faint); font-size: 9.5px; line-height: 1.45; }
+.deep-analysis-prefix-hash { display: block; overflow: hidden; margin-top: 7px; color: var(--faint); font-family: var(--font-mono); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .deep-analysis-output-document { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
 .deep-analysis-output-document summary { color: var(--cobalt); font-size: 10.5px; font-weight: 650; cursor: pointer; }
 .deep-analysis-output-document pre { overflow: auto; max-height: 360px; margin: 9px 0 0; border-radius: var(--radius-field); padding: 9px; background: var(--canvas); color: var(--ink); font-family: var(--font-mono); font-size: 10px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }

@@ -71,6 +71,130 @@ class DeepAnalysisMission(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     spent_microusd: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     completion_outcome: Mapped[str | None] = mapped_column(String(40))
     revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    event_sequence: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
+class DeepAnalysisEvent(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "deep_analysis_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "mission_id", "sequence", name="uq_deep_analysis_event_sequence"
+        ),
+        Index("ix_deep_analysis_events_replay", "mission_id", "sequence"),
+    )
+
+    mission_id: Mapped[str] = mapped_column(
+        ForeignKey("deep_analysis_missions.id", ondelete="CASCADE"), nullable=False
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    actor_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    payload_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
+class DeepAnalysisCommand(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "deep_analysis_commands"
+    __table_args__ = (
+        UniqueConstraint(
+            "mission_id", "idempotency_key", name="uq_deep_analysis_command_key"
+        ),
+        Index("ix_deep_analysis_commands_mission_created", "mission_id", "created_at"),
+    )
+
+    mission_id: Mapped[str] = mapped_column(
+        ForeignKey("deep_analysis_missions.id", ondelete="CASCADE"), nullable=False
+    )
+    actor_user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    command_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    request_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="pending", nullable=False)
+    result_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class DeepAnalysisContextManifest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "deep_analysis_context_manifests"
+    __table_args__ = (
+        UniqueConstraint("run_id", name="uq_deep_analysis_context_manifest_run"),
+        Index("ix_deep_analysis_context_manifest_mission_node", "mission_id", "node_id"),
+    )
+
+    mission_id: Mapped[str] = mapped_column(
+        ForeignKey("deep_analysis_missions.id", ondelete="CASCADE"), nullable=False
+    )
+    node_id: Mapped[str] = mapped_column(
+        ForeignKey("deep_analysis_workflow_nodes.id", ondelete="CASCADE"), nullable=False
+    )
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("runs.id", ondelete="CASCADE"), nullable=False
+    )
+    mission_context_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    prefix_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    tool_profile: Mapped[str] = mapped_column(String(80), nullable=False)
+    item_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    token_estimate: Mapped[int] = mapped_column(Integer, nullable=False)
+    items_json: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
+    lineage_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
+
+
+class DeepAnalysisMissionFileLink(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "deep_analysis_mission_file_links"
+    __table_args__ = (
+        Index("ix_deep_analysis_file_links_mission_purpose", "mission_id", "purpose"),
+        UniqueConstraint(
+            "mission_id",
+            "project_file_id",
+            "project_file_version_id",
+            "purpose",
+            "producing_run_id",
+            name="uq_deep_analysis_file_link_lineage",
+        ),
+    )
+
+    mission_id: Mapped[str] = mapped_column(
+        ForeignKey("deep_analysis_missions.id", ondelete="CASCADE"), nullable=False
+    )
+    project_file_id: Mapped[str] = mapped_column(
+        ForeignKey("project_files.id", ondelete="CASCADE"), nullable=False
+    )
+    project_file_version_id: Mapped[str] = mapped_column(
+        ForeignKey("project_file_versions.id", ondelete="RESTRICT"), nullable=False
+    )
+    producing_node_id: Mapped[str | None] = mapped_column(
+        ForeignKey("deep_analysis_workflow_nodes.id", ondelete="SET NULL")
+    )
+    producing_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("runs.id", ondelete="SET NULL")
+    )
+    purpose: Mapped[str] = mapped_column(String(64), nullable=False)
+    validation_status: Mapped[str] = mapped_column(
+        String(32), default="unvalidated", nullable=False
+    )
+    stale_status: Mapped[str] = mapped_column(
+        String(32), default="fresh", nullable=False
+    )
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
 
 
 class DeepAnalysisWorkflowRevision(UUIDPrimaryKeyMixin, TimestampMixin, Base):

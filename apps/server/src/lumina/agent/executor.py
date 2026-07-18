@@ -674,9 +674,13 @@ class LocalRunExecutor:
         queue_recovery_run_ids: list[str] = []
         deep_analysis_terminal_ids: tuple[str, ...] = ()
         with session_scope() as db:
-            from ..deep_analysis.execution import pending_terminal_run_ids
+            from ..deep_analysis.execution import (
+                pending_terminal_run_ids,
+                record_recovered_run_ids,
+            )
 
             recovery = prepare_worker_recovery(db)
+            record_recovered_run_ids(db, recovery.resumable_run_ids)
             recovery_notify_ids = [
                 *recovery.resumable_run_ids,
                 *recovery.waiting_run_ids,
@@ -954,6 +958,9 @@ class LocalRunExecutor:
                 }
                 if isinstance(run.snapshot_json.get("tool_checkpoint"), dict):
                     transition_run(db, run, TOOLS_RUNNING)
+                    from ..deep_analysis.execution import record_node_started
+
+                    record_node_started(db, run)
                     return "claimed"
                 create_run_plan(
                     db,
@@ -961,6 +968,9 @@ class LocalRunExecutor:
                     goal=str(run.snapshot_json.get("user_message_text", "Run 작업")),
                 )
                 transition_run(db, run, PREPARING)
+                from ..deep_analysis.execution import record_node_started
+
+                record_node_started(db, run)
                 start_plan_step(db, run, "prepare", reason="run_preparing")
                 return "claimed"
 
@@ -4607,6 +4617,9 @@ class LocalRunExecutor:
             if run is None or run.status in TERMINAL_STATUSES:
                 return
             run.assistant_draft += text
+            from ..deep_analysis.execution import record_output_progress
+
+            record_output_progress(db, run)
             append_event(
                 db,
                 run,

@@ -36,6 +36,8 @@ import type {
   DeepAnalysisClaim,
   DeepAnalysisEvidence,
   DeepAnalysisMissionDetail,
+  DeepAnalysisMissionEvent,
+  DeepAnalysisMissionCosts,
   DeepAnalysisMissionExport,
   DeepAnalysisMissionSummary,
   DeepAnalysisOpenIssue,
@@ -1290,6 +1292,27 @@ export async function getDeepAnalysisMission(missionId: string, signal?: AbortSi
   );
 }
 
+export async function listDeepAnalysisMissionEvents(
+  missionId: string,
+  afterSequence: number,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisMissionEvent[]>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/events`,
+    { query: { afterSequence, limit: 200 }, signal },
+  );
+}
+
+export async function getDeepAnalysisMissionCosts(
+  missionId: string,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisMissionCosts>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/costs`,
+    { signal },
+  );
+}
+
 export async function getDeepAnalysisClaims(missionId: string, signal?: AbortSignal) {
   return request<DeepAnalysisClaim[]>(
     `/api/deep-analysis/missions/${missionId}/claims`,
@@ -1317,7 +1340,7 @@ export async function createDeepAnalysisMissionExport(
 ) {
   return request<DeepAnalysisMissionExport>(
     `/deep-analysis/missions/${encodeURIComponent(missionId)}/exports`,
-    { method: "POST", body: payload },
+    { method: "POST", body: payload, idempotencyKey: createClientId() },
   );
 }
 
@@ -1371,7 +1394,7 @@ export async function startDeepAnalysisMission(
 ) {
   return request<DeepAnalysisMissionDetail>(
     `/deep-analysis/missions/${encodeURIComponent(missionId)}/start`,
-    { method: "POST", body: payload, signal },
+    { method: "POST", body: payload, signal, idempotencyKey: createClientId() },
   );
 }
 
@@ -1382,7 +1405,29 @@ export async function cancelDeepAnalysisMission(
 ) {
   return request<DeepAnalysisMissionDetail>(
     `/deep-analysis/missions/${encodeURIComponent(missionId)}/cancel`,
-    { method: "POST", body: payload, signal },
+    { method: "POST", body: payload, signal, idempotencyKey: createClientId() },
+  );
+}
+
+export async function pauseDeepAnalysisMission(
+  missionId: string,
+  payload: CancelDeepAnalysisMissionRequest,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisMissionDetail>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/pause`,
+    { method: "POST", body: payload, signal, idempotencyKey: createClientId() },
+  );
+}
+
+export async function resumeDeepAnalysisMission(
+  missionId: string,
+  payload: CancelDeepAnalysisMissionRequest,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisMissionDetail>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/resume`,
+    { method: "POST", body: payload, signal, idempotencyKey: createClientId() },
   );
 }
 
@@ -1393,7 +1438,7 @@ export async function retryDeepAnalysisMission(
 ) {
   return request<DeepAnalysisMissionDetail>(
     `/deep-analysis/missions/${encodeURIComponent(missionId)}/retry`,
-    { method: "POST", body: payload, signal },
+    { method: "POST", body: payload, signal, idempotencyKey: createClientId() },
   );
 }
 
@@ -1427,7 +1472,7 @@ export async function answerDeepAnalysisDecision(
 ) {
   return request<DeepAnalysisMissionDetail>(
     `/deep-analysis/missions/${encodeURIComponent(missionId)}/decisions/${encodeURIComponent(decisionId)}/answer`,
-    { method: "POST", body: payload, signal },
+    { method: "POST", body: payload, signal, idempotencyKey: createClientId() },
   );
 }
 
@@ -1438,7 +1483,7 @@ export async function runDeepAnalysisQualityGate(
 ) {
   return request<DeepAnalysisMissionDetail>(
     `/deep-analysis/missions/${encodeURIComponent(missionId)}/quality-gate`,
-    { method: "POST", body: payload, signal },
+    { method: "POST", body: payload, signal, idempotencyKey: createClientId() },
   );
 }
 
@@ -2318,6 +2363,8 @@ export const api = {
     createPatternVersion: createDeepAnalysisPatternVersion,
     publishPatternVersion: publishDeepAnalysisPatternVersion,
     getMission: getDeepAnalysisMission,
+    listEvents: listDeepAnalysisMissionEvents,
+    getCosts: getDeepAnalysisMissionCosts,
     getClaims: getDeepAnalysisClaims,
     getEvidence: getDeepAnalysisEvidence,
     getOpenIssues: getDeepAnalysisOpenIssues,
@@ -2328,6 +2375,8 @@ export const api = {
     activateDraft: activateDeepAnalysisWorkflowDraft,
     startMission: startDeepAnalysisMission,
     cancelMission: cancelDeepAnalysisMission,
+    pauseMission: pauseDeepAnalysisMission,
+    resumeMission: resumeDeepAnalysisMission,
     retryMission: retryDeepAnalysisMission,
     deleteMission: deleteDeepAnalysisMission,
     updateMission: updateDeepAnalysisMission,

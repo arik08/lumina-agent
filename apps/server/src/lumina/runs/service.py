@@ -2964,7 +2964,7 @@ def apply_run_action(
                 "user_response_waiting",
                 "사용자 응답을 기다리는 Run은 이미 안전하게 정지되어 있습니다.",
             )
-        if run.status not in ACTIVE_STATUSES - {PAUSED}:
+        if run.status not in (ACTIVE_STATUSES - {PAUSED}) | {QUEUED}:
             raise ApiProblem(
                 409, "run_not_active", "현재 Run은 일시 정지할 수 없습니다."
             )

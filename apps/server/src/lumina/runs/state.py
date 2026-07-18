@@ -24,7 +24,7 @@ ACTIVE_STATUSES = frozenset(
 )
 
 ALLOWED_TRANSITIONS: Mapping[str, frozenset[str]] = {
-    QUEUED: frozenset({PREPARING, TOOLS_RUNNING, CANCELLED}),
+    QUEUED: frozenset({PREPARING, TOOLS_RUNNING, PAUSED, FAILED, CANCELLED}),
     PREPARING: frozenset(
         {MODEL_STREAMING, FAILED, CANCELLED, LIMIT_REACHED, INTERRUPTED}
     ),
@@ -58,7 +58,7 @@ ALLOWED_TRANSITIONS: Mapping[str, frozenset[str]] = {
         }
     ),
     PAUSED: frozenset(
-        {PREPARING, MODEL_STREAMING, TOOLS_RUNNING, CANCELLED, LIMIT_REACHED}
+        {QUEUED, PREPARING, MODEL_STREAMING, TOOLS_RUNNING, CANCELLED, LIMIT_REACHED}
     ),
     COMPLETED: frozenset(),
     FAILED: frozenset(),

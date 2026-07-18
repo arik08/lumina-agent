@@ -7,6 +7,7 @@ import {
   GitBranch,
   LoaderCircle,
   Menu,
+  Pause,
   Play,
   Plus,
   RefreshCw,
@@ -33,6 +34,8 @@ import type {
   DeepAnalysisCompletionContract,
   DeepAnalysisMissionCharter,
   DeepAnalysisMissionDetail,
+  DeepAnalysisMissionEvent,
+  DeepAnalysisMissionCosts,
   DeepAnalysisMissionSummary,
   DeepAnalysisWorkflowNode,
   DeepAnalysisWorkflowRevision,
@@ -109,6 +112,33 @@ function splitContractLines(value: string) {
     .filter(Boolean);
 }
 
+function eventDescription(event: DeepAnalysisMissionEvent) {
+  const nodeKey = typeof event.payload.nodeKey === "string" ? event.payload.nodeKey : null;
+  const characters = typeof event.payload.outputCharacters === "number"
+    ? event.payload.outputCharacters.toLocaleString()
+    : null;
+  const labels: Record<string, string> = {
+    mission_created: "Mission이 생성되었습니다.",
+    mission_status_changed: "Mission 상태가 변경되었습니다.",
+    node_queued: "실행 대기열에 등록되었습니다.",
+    node_started: "실행을 시작했습니다.",
+    node_output_delta: characters ? `응답 ${characters}자를 생성했습니다.` : "응답을 생성하고 있습니다.",
+    node_completed: "출력 문서 저장을 완료했습니다.",
+    node_failed: "실행에 실패했습니다.",
+    node_cancelled: "실행이 중단되었습니다.",
+    workflow_expansion_proposed: "중간 결과에 따라 Workflow 변경을 검토했습니다.",
+    workflow_expansion_decided: "Workflow 변경 판단을 기록했습니다.",
+    workflow_revision_activated: "새 Workflow revision을 활성화했습니다.",
+    decision_requested: "사용자 판단을 요청했습니다.",
+    decision_answered: "사용자 판단을 반영했습니다.",
+    mission_cost_updated: "누적 비용을 갱신했습니다.",
+    mission_file_created: "Mission 파일을 보존했습니다.",
+    quality_gate_completed: "Quality Gate 검사를 완료했습니다.",
+    mission_completed: "Mission을 완료했습니다.",
+  };
+  return { nodeKey, label: labels[event.type] ?? event.type.replaceAll("_", " ") };
+}
+
 export function DeepAnalysisView({
   projectId,
   canEdit,
@@ -118,6 +148,8 @@ export function DeepAnalysisView({
   const [patterns, setPatterns] = useState<DeepAnalysisWorkflowPattern[]>([]);
   const [selectedMissionId, setSelectedMissionId] = useState<string | null>(null);
   const [mission, setMission] = useState<DeepAnalysisMissionDetail | null>(null);
+  const [missionEvents, setMissionEvents] = useState<DeepAnalysisMissionEvent[]>([]);
+  const [executionLogOpen, setExecutionLogOpen] = useState(true);
   const [selectedNodeKey, setSelectedNodeKey] = useState<string | null>(null);
   const [loadingList, setLoadingList] = useState(false);
   const [loadingMission, setLoadingMission] = useState(false);
@@ -137,8 +169,11 @@ export function DeepAnalysisView({
   const [patternDraftVersion, setPatternDraftVersion] = useState<DeepAnalysisWorkflowPatternVersion | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [costDetailsOpen, setCostDetailsOpen] = useState(false);
+  const [costDetails, setCostDetails] = useState<DeepAnalysisMissionCosts | null>(null);
+  const [loadingCosts, setLoadingCosts] = useState(false);
   const [startingMission, setStartingMission] = useState(false);
   const [cancellingMission, setCancellingMission] = useState(false);
+  const [pausingMission, setPausingMission] = useState(false);
   const [retryingNodeKey, setRetryingNodeKey] = useState<string | null>(null);
   const [deleteArmed, setDeleteArmed] = useState(false);
   const [deletingMission, setDeletingMission] = useState(false);
@@ -164,6 +199,7 @@ export function DeepAnalysisView({
   const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
   const [canvasPanning, setCanvasPanning] = useState(false);
   const canvasViewportRef = useRef<HTMLDivElement>(null);
+  const eventCursorRef = useRef(0);
   const canvasPanRef = useRef<{
     pointerId: number;
     clientX: number;
@@ -185,6 +221,7 @@ export function DeepAnalysisView({
     setMissions([]);
     setPatterns([]);
     setMission(null);
+    setMissionEvents([]);
     setSelectedMissionId(null);
     setSelectedNodeKey(null);
     setWorkflowDraft(null);
@@ -220,6 +257,7 @@ export function DeepAnalysisView({
 
   useEffect(() => {
     setMission(null);
+    setMissionEvents([]);
     setSelectedNodeKey(null);
     setCostDetailsOpen(false);
     setDeleteArmed(false);
@@ -239,8 +277,14 @@ export function DeepAnalysisView({
     api.deepAnalysis
       .getMission(selectedMissionId, controller.signal)
       .then((detail) => {
+        eventCursorRef.current = detail.eventCursor;
         setMission(detail);
         setSelectedNodeKey(detail.workflow.nodes[0]?.nodeKey ?? null);
+        void api.deepAnalysis.listEvents(detail.id, 0, controller.signal)
+          .then((events) => setMissionEvents(events.slice(-200)))
+          .catch(() => {
+            // Snapshot remains usable even if the audit timeline cannot be loaded.
+          });
       })
       .catch((loadError) => {
         if (!(loadError instanceof DOMException && loadError.name === "AbortError")) {
@@ -257,20 +301,57 @@ export function DeepAnalysisView({
   }, [selectedMissionId]);
 
   useEffect(() => {
-    if (!selectedMissionId || mission?.status !== "running") return;
+    eventCursorRef.current = mission?.eventCursor ?? 0;
+  }, [mission?.id, mission?.eventCursor]);
+
+  useEffect(() => {
+    if (!costDetailsOpen || !mission) return;
+    const controller = new AbortController();
+    setLoadingCosts(true);
+    void api.deepAnalysis.getCosts(mission.id, controller.signal)
+      .then(setCostDetails)
+      .catch((costError) => {
+        if (!(costError instanceof DOMException && costError.name === "AbortError")) {
+          setError(errorMessage(costError));
+        }
+      })
+      .finally(() => setLoadingCosts(false));
+    return () => controller.abort();
+  }, [costDetailsOpen, mission?.id, mission?.eventCursor]);
+
+  useEffect(() => {
+    if (
+      !selectedMissionId
+      || !mission
+      || !["running", "paused", "awaiting_input"].includes(mission.status)
+    ) return;
     let active = true;
-    const refresh = () => {
-      void api.deepAnalysis.getMission(selectedMissionId).then((detail) => {
+    let snapshotTick = 0;
+    const refresh = async () => {
+      try {
+        const events = await api.deepAnalysis.listEvents(
+          selectedMissionId,
+          eventCursorRef.current,
+        );
         if (!active) return;
+        if (events.length) {
+          eventCursorRef.current = events.at(-1)?.sequence ?? eventCursorRef.current;
+          setMissionEvents((current) => [...current, ...events].slice(-200));
+        }
+        snapshotTick += 1;
+        if (!events.length && mission.status !== "running" && snapshotTick % 4 !== 0) return;
+        const detail = await api.deepAnalysis.getMission(selectedMissionId);
+        if (!active) return;
+        eventCursorRef.current = detail.eventCursor;
         setMission(detail);
         setMissions((current) =>
           current.map((item) => (item.id === detail.id ? detail : item)),
         );
-      }).catch(() => {
+      } catch {
         // A transient polling failure must not hide the last durable snapshot.
-      });
+      }
     };
-    const timer = window.setInterval(refresh, 1_500);
+    const timer = window.setInterval(() => void refresh(), 1_500);
     return () => {
       active = false;
       window.clearInterval(timer);
@@ -649,6 +730,24 @@ export function DeepAnalysisView({
       setError(errorMessage(cancelError));
     } finally {
       setCancellingMission(false);
+    }
+  }
+
+  async function toggleMissionPause() {
+    if (!mission || pausingMission) return;
+    setPausingMission(true);
+    setError(null);
+    try {
+      const updated = mission.status === "paused"
+        ? await api.deepAnalysis.resumeMission(mission.id, { expectedRevision: mission.revision })
+        : await api.deepAnalysis.pauseMission(mission.id, { expectedRevision: mission.revision });
+      eventCursorRef.current = updated.eventCursor;
+      setMission(updated);
+      setMissions((current) => current.map((item) => item.id === updated.id ? updated : item));
+    } catch (pauseError) {
+      setError(errorMessage(pauseError));
+    } finally {
+      setPausingMission(false);
     }
   }
 
@@ -1066,7 +1165,20 @@ export function DeepAnalysisView({
                         {startingMission ? "시작 중" : mission.executionAvailable ? "Workflow 시작" : "실행 엔진 준비 중"}
                       </button>
                     )}
-                    {canEdit && (mission.status === "running" || mission.status === "awaiting_input") && (
+                    {canEdit && (mission.status === "running" || mission.status === "paused") && (
+                      <button
+                        className="deep-analysis-contract-toggle"
+                        type="button"
+                        disabled={pausingMission}
+                        onClick={() => void toggleMissionPause()}
+                      >
+                        {pausingMission
+                          ? <LoaderCircle className="is-running" size={15} />
+                          : mission.status === "paused" ? <Play size={15} /> : <Pause size={15} />}
+                        {pausingMission ? "처리 중" : mission.status === "paused" ? "재개" : "일시정지"}
+                      </button>
+                    )}
+                    {canEdit && (mission.status === "running" || mission.status === "paused" || mission.status === "awaiting_input") && (
                       <button
                         className="deep-analysis-cancel"
                         type="button"
@@ -1131,13 +1243,27 @@ export function DeepAnalysisView({
                       </button>
                       {costDetailsOpen && (
                         <div className="deep-analysis-cost-popover">
-                          <strong>노드별 비용</strong>
-                          {mission.budgetMicrousd !== null && (
-                            <span className="is-budget"><em>설정 한도</em><b>{formatCost(mission.budgetMicrousd)}</b></span>
-                          )}
-                          {mission.workflow.nodes.map((node) => (
-                            <span key={node.id}><em>{node.nodeKey} · {node.title}</em><b>{formatCost(node.actualCostMicrousd)}</b></span>
-                          ))}
+                          <strong>비용 상세</strong>
+                          <span className="is-budget"><em>누적 비용</em><b>{formatCost(mission.spentMicrousd)}</b></span>
+                          {mission.budgetMicrousd !== null && <span><em>설정 예산</em><b>{formatCost(mission.budgetMicrousd)}</b></span>}
+                          {costDetails && <>
+                            <span><em>예상 완료 비용</em><b>{formatCost(costDetails.estimatedCompletionMicrousd)}</b></span>
+                            <span><em>Cache 미적용 상한</em><b>{formatCost(costDetails.noCacheUpperBoundMicrousd)}</b></span>
+                            <span><em>Cache hit ratio</em><b>{(costDetails.cacheHitRatio * 100).toFixed(1)}%</b></span>
+                            <div className="deep-analysis-cost-token-summary">
+                              <small>Uncached {costDetails.totals.uncachedInputTokens.toLocaleString()}</small>
+                              <small>Cached {costDetails.totals.cachedInputTokens.toLocaleString()}</small>
+                              <small>Cache write {costDetails.totals.cacheWriteTokens.toLocaleString()}</small>
+                              <small>Output {costDetails.totals.outputTokens.toLocaleString()}</small>
+                            </div>
+                            <div className="deep-analysis-cost-runs">
+                              {costDetails.rows.map((row) => <div key={`${row.runId}:${row.attempt}`}>
+                                <span><em>{row.nodeKey} · {row.nodeTitle}{row.isRetry ? ` · 재실행 ${row.attempt}` : ""}</em><small>{row.modelDisplayName} · {row.date}</small><small>{row.pricingVersion ?? "가격표 미확인"}</small></span>
+                                <b>{formatCost(row.actualCostMicrousd)}</b>
+                              </div>)}
+                            </div>
+                          </>}
+                          {loadingCosts && <span><em><LoaderCircle className="is-running" size={13} /> 불러오는 중</em></span>}
                         </div>
                       )}
                     </div>
@@ -1146,8 +1272,8 @@ export function DeepAnalysisView({
                         className={`deep-analysis-delete ${deleteArmed ? "is-armed" : ""}`}
                         type="button"
                         aria-label={deleteArmed ? "심층분석 삭제 확인, 한 번 더 누르면 삭제" : "심층분석 삭제"}
-                        data-tooltip={mission.status === "running" || mission.status === "awaiting_input" ? "먼저 실행을 중단해 주세요." : deleteArmed ? "한 번 더 눌러 삭제" : "삭제"}
-                        disabled={deletingMission || mission.status === "running" || mission.status === "awaiting_input"}
+                        data-tooltip={mission.status === "running" || mission.status === "paused" || mission.status === "awaiting_input" ? "먼저 실행을 중단해 주세요." : deleteArmed ? "한 번 더 눌러 삭제" : "삭제"}
+                        disabled={deletingMission || mission.status === "running" || mission.status === "paused" || mission.status === "awaiting_input"}
                         onClick={() => void deleteMission()}
                       >
                         {deletingMission ? <LoaderCircle className="is-running" size={14} /> : deleteArmed ? <AlertTriangle size={14} /> : <Trash2 size={14} />}
@@ -1307,6 +1433,12 @@ export function DeepAnalysisView({
                         ? `실제 Lumina Run ${activeNode.runStatus ? `· ${statusLabel(activeNode.runStatus)}` : ""} · ${completedNodeCount}/${mission.workflow.nodes.length} Node 완료`
                         : "실행 Run을 준비하고 있습니다."} 결과에 따라 남은 Workflow가 확장되거나 축소될 수 있습니다.</span>
                     </div>
+                  </div>
+                )}
+                {mission.status === "paused" && (
+                  <div className="deep-analysis-run-feedback is-cancelled" role="status">
+                    <Pause size={15} />
+                    <div><strong>일시정지됨</strong><span>실행 상태와 중간 출력은 보존되어 있습니다. 재개하면 같은 Run에서 계속 진행합니다.</span></div>
                   </div>
                 )}
                 {mission.status === "cancelled" && (
@@ -1503,6 +1635,17 @@ export function DeepAnalysisView({
                           </div>
                         </section>
                       )}
+                      {selectedNode.contextManifest && (
+                        <section>
+                          <h3>Context Manifest</h3>
+                          <dl>
+                            <div><dt>Exact item</dt><dd>{selectedNode.contextManifest.itemCount}</dd></div>
+                            <div><dt>Token 추정</dt><dd>{selectedNode.contextManifest.tokenEstimate.toLocaleString()}</dd></div>
+                            <div><dt>Tool profile</dt><dd>{selectedNode.contextManifest.toolProfile}</dd></div>
+                          </dl>
+                          <small className="deep-analysis-prefix-hash">Prefix {selectedNode.contextManifest.prefixHash.slice(0, 16)}… · Mission context r{selectedNode.contextManifest.missionContextRevision}</small>
+                        </section>
+                      )}
                       <section>
                         <h3>비용</h3>
                         <dl>
@@ -1513,6 +1656,34 @@ export function DeepAnalysisView({
                     </aside>
                   )}
                 </div>
+                <section className={`deep-analysis-execution-log ${executionLogOpen ? "is-open" : ""}`} aria-label="실행 과정">
+                  <button
+                    type="button"
+                    aria-expanded={executionLogOpen}
+                    onClick={() => setExecutionLogOpen((open) => !open)}
+                  >
+                    <ChevronRight size={14} />
+                    <strong>실행 과정</strong>
+                    <span>{missionEvents.length ? `Event ${missionEvents.at(-1)?.sequence}` : "기록 대기"}</span>
+                    {mission.status === "running" && <LoaderCircle className="is-running" size={13} />}
+                  </button>
+                  {executionLogOpen && (
+                    <div className="deep-analysis-execution-events" role="log" aria-live="polite">
+                      {missionEvents.length ? missionEvents.slice(-12).map((event) => {
+                        const description = eventDescription(event);
+                        return (
+                          <div key={event.sequence} className={`is-${event.type}`}>
+                            <time dateTime={event.createdAt}>{new Date(event.createdAt).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time>
+                            <i aria-hidden="true" />
+                            <span>{description.nodeKey && <b>{description.nodeKey}</b>}{description.label}</span>
+                          </div>
+                        );
+                      }) : (
+                        <p>실행을 시작하면 Node 대기·시작·출력·완료 기록이 여기에 순서대로 남습니다.</p>
+                      )}
+                    </div>
+                  )}
+                </section>
                 </> : (
                   <EvidenceLedger mission={mission} />
                 )}
@@ -1569,6 +1740,17 @@ function EvidenceLedger({ mission }: { mission: DeepAnalysisMissionDetail }) {
         )}
       </section>
       <aside className="deep-analysis-ledger-aside">
+        {mission.files.length > 0 && (
+          <section>
+            <header><strong>Mission 자료</strong><span>{mission.files.length}</span></header>
+            {mission.files.map((file) => <article key={file.id}>
+              <div><b>{file.purpose}</b><small>{file.producingNodeKey ?? "원본"} · v{file.version}</small></div>
+              <p>{file.logicalPath}</p>
+              <code>{file.contentHash.slice(0, 16)}…</code>
+              {file.staleStatus !== "fresh" && <em>재검토 필요</em>}
+            </article>)}
+          </section>
+        )}
         <section>
           <header><strong>Open Issue</strong><span>{mission.openIssues.filter((item) => item.status === "open").length}</span></header>
           {mission.openIssues.length ? mission.openIssues.map((issue) => (

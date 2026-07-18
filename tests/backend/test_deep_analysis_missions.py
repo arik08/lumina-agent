@@ -16,6 +16,8 @@ from lumina.db import SessionLocal
 from lumina.deep_analysis.calculations import execute_python_calculation
 from lumina.deep_analysis.models import (
     DeepAnalysisClaim,
+    DeepAnalysisCommand,
+    DeepAnalysisEvent,
     DeepAnalysisDecision,
     DeepAnalysisDecisionResponse,
     DeepAnalysisMission,
@@ -636,6 +638,12 @@ def test_charter_contract_quality_gate_and_immutable_waiver(
         assert resolved["qualityGates"][-1]["result"] == "waived"
         assert resolved["qualityGates"][-1]["parentResultId"] == failed_gate["id"]
         assert resolved["qualityGates"][-1]["waiverDecisionId"] == waiver_decision["id"]
+        completed_events = client.get(
+            f"/api/deep-analysis/missions/{created['id']}/events",
+            params={"afterSequence": 0, "limit": 500},
+        ).json()
+        assert completed_events[-1]["type"] == "mission_completed"
+        completed_cursor = completed_events[-1]["sequence"]
 
         rerun = client.post(
             f"/api/deep-analysis/missions/{created['id']}/quality-gate",
@@ -645,6 +653,13 @@ def test_charter_contract_quality_gate_and_immutable_waiver(
         assert rerun.status_code == 200, rerun.text
         assert rerun.json()["status"] == "awaiting_input"
         assert rerun.json()["qualityGates"][-1]["result"] == "failed"
+        awaiting_events = client.get(
+            f"/api/deep-analysis/missions/{created['id']}/events",
+            params={"afterSequence": completed_cursor},
+        ).json()
+        awaiting_types = [item["type"] for item in awaiting_events]
+        assert "decision_requested" in awaiting_types
+        assert "mission_completed" not in awaiting_types
 
 
 def test_claim_evidence_ledger_resolves_exact_file_versions_and_lists_lineage(
@@ -1040,6 +1055,48 @@ def test_mission_executes_all_nodes_and_persists_markdown_outputs(
         assert restored["completionContract"]["finalOutputPath"].endswith(
             "N040_최종 보고서.md"
         )
+        assert all(node["contextManifest"] for node in restored["workflow"]["nodes"])
+        assert len({
+            node["contextManifest"]["prefixHash"]
+            for node in restored["workflow"]["nodes"]
+        }) == 1
+        incoming: dict[str, set[str]] = {
+            node["nodeKey"]: set() for node in restored["workflow"]["nodes"]
+        }
+        for edge in restored["workflow"]["edges"]:
+            incoming[edge["targetNodeKey"]].add(edge["sourceNodeKey"])
+
+        def ancestors(node_key: str) -> set[str]:
+            direct = incoming[node_key]
+            return set(direct).union(*(ancestors(key) for key in direct))
+
+        for node in restored["workflow"]["nodes"]:
+            dependency_keys = {
+                str(item["logicalPath"]).rsplit("/", 1)[-1].split("_", 1)[0]
+                for item in node["contextManifest"]["items"]
+                if item["role"] == "dependency_output"
+            }
+            assert dependency_keys <= ancestors(node["nodeKey"])
+        assert len([
+            item for item in restored["files"] if item["purpose"] == "node_output"
+        ]) == len(restored["workflow"]["nodes"])
+        assert all(item["projectFileVersionId"] for item in restored["files"])
+
+        costs = client.get(
+            f"/api/deep-analysis/missions/{created['id']}/costs"
+        )
+        assert costs.status_code == 200, costs.text
+        assert len(costs.json()["rows"]) == len(restored["workflow"]["nodes"])
+        assert costs.json()["estimatedCompletionMicrousd"] >= restored["spentMicrousd"]
+
+        events = client.get(
+            f"/api/deep-analysis/missions/{created['id']}/events",
+            params={"afterSequence": 0, "limit": 500},
+        ).json()
+        event_types = [item["type"] for item in events]
+        assert event_types.count("node_started") == len(restored["workflow"]["nodes"])
+        assert event_types.count("node_output_delta") >= len(restored["workflow"]["nodes"])
+        assert event_types[-1] == "mission_completed"
 
         visible_conversations = client.get(
             f"/api/conversations?project_id={project_id}"
@@ -1164,6 +1221,169 @@ def test_running_mission_can_be_cancelled(tmp_path: Path, monkeypatch) -> None:
         assert duplicate_cancel.json()["revision"] == 3
 
 
+def test_mission_events_replay_and_start_command_are_idempotent(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "lumina.api.routes.deep_analysis.local_run_executor.enqueue",
+        lambda _run_id: None,
+    )
+    with TestClient(create_app(_settings(tmp_path))) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        created = client.post(
+            f"/api/projects/{project_id}/deep-analysis/missions",
+            headers=headers,
+            json={"title": "Replay audit", "objective": "sensitive objective"},
+        ).json()
+        assert created["eventCursor"] == 1
+
+        first_page = client.get(
+            f"/api/deep-analysis/missions/{created['id']}/events",
+            params={"afterSequence": 0},
+        )
+        assert first_page.status_code == 200, first_page.text
+        assert [item["type"] for item in first_page.json()] == ["mission_created"]
+        assert "objective" not in json.dumps(first_page.json()).lower()
+
+        command_headers = {**headers, "Idempotency-Key": "start-once"}
+        started = client.post(
+            f"/api/deep-analysis/missions/{created['id']}/start",
+            headers=command_headers,
+            json={"expectedRevision": 1},
+        )
+        assert started.status_code == 200, started.text
+        duplicate = client.post(
+            f"/api/deep-analysis/missions/{created['id']}/start",
+            headers=command_headers,
+            json={"expectedRevision": 1},
+        )
+        assert duplicate.status_code == 200, duplicate.text
+        assert duplicate.json()["revision"] == started.json()["revision"] == 2
+        assert duplicate.json()["workflow"]["nodes"][0]["runId"] == started.json()["workflow"]["nodes"][0]["runId"]
+
+        replay = client.get(
+            f"/api/deep-analysis/missions/{created['id']}/events",
+            params={"afterSequence": 1},
+        )
+        assert replay.status_code == 200, replay.text
+        replay_types = [item["type"] for item in replay.json()]
+        assert replay_types == ["node_queued", "mission_status_changed"]
+        assert [item["sequence"] for item in replay.json()] == [2, 3]
+
+        conflict = client.post(
+            f"/api/deep-analysis/missions/{created['id']}/cancel",
+            headers=command_headers,
+            json={"expectedRevision": 2},
+        )
+        assert conflict.status_code == 409
+        assert conflict.json()["code"] == "idempotency_conflict"
+        with SessionLocal() as db:
+            assert db.query(DeepAnalysisCommand).count() == 1
+            assert db.query(DeepAnalysisEvent).count() == 3
+
+
+def test_cost_breakdown_separates_cache_tokens_and_no_cache_upper_bound(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "lumina.api.routes.deep_analysis.local_run_executor.enqueue",
+        lambda _run_id: None,
+    )
+    with TestClient(create_app(_settings(tmp_path))) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        mission = client.post(
+            f"/api/projects/{project_id}/deep-analysis/missions",
+            headers=headers,
+            json={"title": "Cache cost audit", "budgetMicrousd": 1_000_000},
+        ).json()
+        started = client.post(
+            f"/api/deep-analysis/missions/{mission['id']}/start",
+            headers=headers,
+            json={"expectedRevision": 1},
+        ).json()
+        run_id = started["workflow"]["nodes"][0]["runId"]
+        with SessionLocal() as db:
+            run = db.get(Run, run_id)
+            assert run is not None
+            run.provider_id = "codex"
+            run.model_key = "gpt-5.5"
+            run.model_display_name = "GPT-5.5"
+            run.usage_json = {
+                "input_tokens": 1_000,
+                "cached_input_tokens": 400,
+                "cache_write_tokens": 100,
+                "uncached_input_tokens": 500,
+                "output_tokens": 200,
+                "estimated_cost_breakdown_usd": {"total": 0.009},
+                "pricing_version": "public-list-2026-07-12",
+                "cost_basis": "price_table_estimate",
+            }
+            db.commit()
+
+        response = client.get(
+            f"/api/deep-analysis/missions/{mission['id']}/costs"
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["totals"] == {
+            "inputTokens": 1_000,
+            "cachedInputTokens": 400,
+            "cacheWriteTokens": 100,
+            "uncachedInputTokens": 500,
+            "outputTokens": 200,
+        }
+        assert payload["cacheHitRatio"] == 400 / 900
+        assert payload["rows"][0]["pricingVersion"] == "public-list-2026-07-12"
+        assert payload["rows"][0]["noCacheCostMicrousd"] > payload["rows"][0]["actualCostMicrousd"]
+        assert payload["noCacheUpperBoundMicrousd"] >= payload["estimatedCompletionMicrousd"]
+
+
+def test_running_mission_can_pause_and_resume_same_run(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "lumina.api.routes.deep_analysis.local_run_executor.enqueue",
+        lambda _run_id: None,
+    )
+    with TestClient(create_app(_settings(tmp_path))) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        created = client.post(
+            f"/api/projects/{project_id}/deep-analysis/missions",
+            headers=headers,
+            json={"title": "Pause recovery"},
+        ).json()
+        started = client.post(
+            f"/api/deep-analysis/missions/{created['id']}/start",
+            headers=headers,
+            json={"expectedRevision": 1},
+        ).json()
+        run_id = started["workflow"]["nodes"][0]["runId"]
+
+        paused = client.post(
+            f"/api/deep-analysis/missions/{created['id']}/pause",
+            headers={**headers, "Idempotency-Key": "pause-once"},
+            json={"expectedRevision": 2},
+        )
+        assert paused.status_code == 200, paused.text
+        assert paused.json()["status"] == "paused"
+        assert paused.json()["workflow"]["nodes"][0]["runId"] == run_id
+        assert paused.json()["workflow"]["nodes"][0]["runStatus"] == "paused"
+
+        resumed = client.post(
+            f"/api/deep-analysis/missions/{created['id']}/resume",
+            headers={**headers, "Idempotency-Key": "resume-once"},
+            json={"expectedRevision": 3},
+        )
+        assert resumed.status_code == 200, resumed.text
+        assert resumed.json()["status"] == "running"
+        assert resumed.json()["revision"] == 4
+        assert resumed.json()["workflow"]["nodes"][0]["runId"] == run_id
+        assert resumed.json()["workflow"]["nodes"][0]["runStatus"] == "queued"
+
+
 def test_cancelled_node_can_be_retried_with_attempt_history(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -1186,11 +1406,22 @@ def test_cancelled_node_can_be_retried_with_attempt_history(
             json={"expectedRevision": 1},
         ).json()
         first_run_id = started["workflow"]["nodes"][0]["runId"]
+        with SessionLocal() as db:
+            run = db.get(Run, first_run_id)
+            assert run is not None
+            run.assistant_draft = "# 중단 전 부분 분석\n\n아직 검증 중인 내용입니다."
+            db.commit()
         cancelled = client.post(
             f"/api/deep-analysis/missions/{created['id']}/cancel",
             headers=headers,
             json={"expectedRevision": 2},
         ).json()
+        partial_outputs = [
+            item for item in cancelled["files"] if item["purpose"] == "partial_output"
+        ]
+        assert len(partial_outputs) == 1
+        assert partial_outputs[0]["validationStatus"] == "interrupted"
+        assert partial_outputs[0]["logicalPath"].endswith("_partial.md")
 
         with SessionLocal() as db:
             source_node = db.scalar(

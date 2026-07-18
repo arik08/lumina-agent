@@ -3,6 +3,7 @@ from __future__ import annotations
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Query, Request, Response
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ...audit import record_audit
@@ -11,7 +12,15 @@ from ...agent.executor import local_run_executor
 from ...api.schemas import RunActionRequest
 from ...config import Settings, get_settings
 from ...db import get_db
-from ...deep_analysis.execution import create_node_run
+from ...deep_analysis.execution import create_node_run, preserve_partial_output
+from ...deep_analysis.costs import mission_costs
+from ...deep_analysis.events import (
+    claim_command,
+    complete_command,
+    emit_event,
+    event_payload,
+    list_events,
+)
 from ...deep_analysis.exports import create_mission_export
 from ...deep_analysis.models import (
     DeepAnalysisClaim,
@@ -20,10 +29,13 @@ from ...deep_analysis.models import (
     DeepAnalysisDecisionResponse,
     DeepAnalysisEvidenceReference,
     DeepAnalysisMission,
+    DeepAnalysisContextManifest,
+    DeepAnalysisMissionFileLink,
     DeepAnalysisMissionExport,
     DeepAnalysisOpenIssue,
     DeepAnalysisQualityGateResult,
     DeepAnalysisWorkflowRevision,
+    DeepAnalysisWorkflowNode,
     DeepAnalysisWorkflowPattern,
     DeepAnalysisWorkflowPatternVersion,
 )
@@ -44,7 +56,11 @@ from ...deep_analysis.schemas import (
     MissionDetailResponse,
     MissionExportCreate,
     MissionExportResponse,
+    MissionEventResponse,
+    MissionCostResponse,
+    MissionFileResponse,
     MissionPatch,
+    MissionPause,
     MissionQualityGate,
     MissionRetry,
     MissionStart,
@@ -69,8 +85,10 @@ from ...deep_analysis.service import (
     execution_engine_available,
     list_decisions,
     list_missions,
+    pause_mission,
     require_mission,
     retry_mission_node,
+    resume_mission,
     run_quality_gate,
     start_mission,
     update_mission,
@@ -79,7 +97,7 @@ from ...deep_analysis.service import (
     workflow_revision,
 )
 from ...deep_analysis.quality import list_quality_gates
-from ...models import Run, User
+from ...models import ProjectFile, ProjectFileVersion, Run, User
 from ...storage import ManagedLocalStorage, StorageError
 from ...runs.broker import event_broker
 from ...runs.service import apply_run_action
@@ -285,7 +303,7 @@ def _summary_payload(mission: DeepAnalysisMission) -> dict[str, object]:
         "budget_microusd": mission.budget_microusd,
         "spent_microusd": mission.spent_microusd,
         "completion_outcome": mission.completion_outcome,
-        "revision": mission.revision,
+    "revision": mission.revision,
         "created_at": mission.created_at,
         "updated_at": mission.updated_at,
     }
@@ -299,6 +317,12 @@ def _workflow_revision_payload(
         run.id: run
         for run in db.query(Run).filter(Run.id.in_([node.run_id for node in nodes if node.run_id]))
     }
+    manifests = {
+        item.run_id: item
+        for item in db.query(DeepAnalysisContextManifest).filter(
+            DeepAnalysisContextManifest.run_id.in_(runs)
+        )
+    } if runs else {}
     return {
         "id": revision.id,
         "revision_number": revision.revision_number,
@@ -317,6 +341,10 @@ def _workflow_revision_payload(
                 "output_summary": node.output_summary, "output_markdown": node.output_markdown,
                 "generated_files": node.generated_files_json, "run_history": node.run_history_json,
                 "run_status": runs[node.run_id].status if node.run_id and node.run_id in runs else None,
+                "context_manifest": (
+                    _context_manifest_payload(manifests[node.run_id])
+                    if node.run_id and node.run_id in manifests else None
+                ),
                 "live_output": "", "error_message": node.error_message,
                 "estimated_cost_microusd": node.estimated_cost_microusd,
                 "actual_cost_microusd": node.actual_cost_microusd,
@@ -338,9 +366,16 @@ def _detail_payload(db: Session, mission: DeepAnalysisMission) -> dict[str, obje
             Run.id.in_([node.run_id for node in nodes if node.run_id])
         )
     }
+    manifests = {
+        item.run_id: item
+        for item in db.query(DeepAnalysisContextManifest).filter(
+            DeepAnalysisContextManifest.run_id.in_(runs)
+        )
+    } if runs else {}
     return {
         **_summary_payload(mission),
         "execution_available": execution_engine_available(),
+        "event_cursor": mission.event_sequence,
         "charter": mission.charter_json,
         "completion_contract": mission.completion_contract_json,
         "source_manifest": mission.source_manifest_json,
@@ -364,6 +399,7 @@ def _detail_payload(db: Session, mission: DeepAnalysisMission) -> dict[str, obje
             _open_issue_payload(issue, node_key)
             for issue, node_key in list_open_issues(db, mission.id)
         ],
+        "files": _mission_file_payloads(db, mission.id),
         "workflow": {
             "id": revision.id,
             "revision_number": revision.revision_number,
@@ -396,6 +432,10 @@ def _detail_payload(db: Session, mission: DeepAnalysisMission) -> dict[str, obje
                         if node.run_id and node.run_id in runs
                         else None
                     ),
+                    "context_manifest": (
+                        _context_manifest_payload(manifests[node.run_id])
+                        if node.run_id and node.run_id in manifests else None
+                    ),
                     "live_output": (
                         runs[node.run_id].assistant_draft[-6_000:]
                         if node.run_id
@@ -424,6 +464,60 @@ def _detail_payload(db: Session, mission: DeepAnalysisMission) -> dict[str, obje
             "updated_at": revision.updated_at,
         },
     }
+
+
+def _context_manifest_payload(item: DeepAnalysisContextManifest) -> dict[str, object]:
+    return {
+        "id": item.id,
+        "missionContextRevision": item.mission_context_revision,
+        "prefixHash": item.prefix_hash,
+        "toolProfile": item.tool_profile,
+        "itemCount": item.item_count,
+        "tokenEstimate": item.token_estimate,
+        "items": item.items_json,
+        "lineage": item.lineage_json,
+        "createdAt": item.created_at,
+    }
+
+
+def _mission_file_payloads(db: Session, mission_id: str) -> list[dict[str, object]]:
+    rows = db.execute(
+        select(
+            DeepAnalysisMissionFileLink,
+            ProjectFile,
+            ProjectFileVersion,
+            DeepAnalysisWorkflowNode.node_key,
+        )
+        .join(ProjectFile, ProjectFile.id == DeepAnalysisMissionFileLink.project_file_id)
+        .join(
+            ProjectFileVersion,
+            ProjectFileVersion.id == DeepAnalysisMissionFileLink.project_file_version_id,
+        )
+        .outerjoin(
+            DeepAnalysisWorkflowNode,
+            DeepAnalysisWorkflowNode.id == DeepAnalysisMissionFileLink.producing_node_id,
+        )
+        .where(DeepAnalysisMissionFileLink.mission_id == mission_id)
+        .order_by(DeepAnalysisMissionFileLink.created_at, DeepAnalysisMissionFileLink.id)
+    ).all()
+    return [
+        {
+            "id": link.id,
+            "projectFileId": project_file.id,
+            "projectFileVersionId": version.id,
+            "logicalPath": project_file.logical_path,
+            "version": version.version_number,
+            "contentHash": version.content_hash,
+            "producingNodeKey": node_key,
+            "producingRunId": link.producing_run_id,
+            "purpose": link.purpose,
+            "validationStatus": link.validation_status,
+            "staleStatus": link.stale_status,
+            "metadata": link.metadata_json,
+            "createdAt": link.created_at,
+        }
+        for link, project_file, version, node_key in rows
+    ]
 
 
 @router.get(
@@ -574,6 +668,18 @@ def post_mission(
         budget_microusd=payload.budget_microusd,
         pattern_version_id=payload.pattern_version_id,
     )
+    emit_event(
+        db,
+        mission,
+        "mission_created",
+        {
+            "status": mission.status,
+            "missionRevision": mission.revision,
+            "workflowRevision": 1,
+            "startMode": mission.start_mode,
+        },
+        actor_user_id=context.user.id,
+    )
     record_audit(
         db,
         action="deep_analysis_mission_created",
@@ -603,6 +709,52 @@ def get_mission(
     return _detail_payload(db, mission)
 
 
+@router.get(
+    "/deep-analysis/missions/{mission_id}/events",
+    response_model=list[MissionEventResponse],
+)
+def get_mission_events(
+    mission_id: str,
+    after_sequence: int = Query(default=0, alias="afterSequence", ge=0),
+    limit: int = Query(default=200, ge=1, le=500),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict[str, object]]:
+    mission = require_mission(db, user, mission_id)
+    return [
+        event_payload(item)
+        for item in list_events(
+            db, mission.id, after_sequence=after_sequence, limit=limit
+        )
+    ]
+
+
+@router.get(
+    "/deep-analysis/missions/{mission_id}/costs",
+    response_model=MissionCostResponse,
+)
+def get_mission_costs(
+    mission_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    mission = require_mission(db, user, mission_id)
+    return mission_costs(db, mission)
+
+
+@router.get(
+    "/deep-analysis/missions/{mission_id}/files",
+    response_model=list[MissionFileResponse],
+)
+def get_mission_files(
+    mission_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict[str, object]]:
+    mission = require_mission(db, user, mission_id)
+    return _mission_file_payloads(db, mission.id)
+
+
 @router.post(
     "/deep-analysis/missions/{mission_id}/revisions",
     response_model=WorkflowRevisionResponse,
@@ -616,6 +768,17 @@ def post_workflow_draft(
 ) -> dict[str, object]:
     mission = require_mission(db, context.user, mission_id, write=True)
     draft = create_workflow_draft(db, mission, expected_revision=payload.expected_revision)
+    emit_event(
+        db,
+        mission,
+        "workflow_draft_created",
+        {
+            "missionRevision": mission.revision,
+            "workflowRevision": draft.revision_number,
+            "workflowRevisionId": draft.id,
+        },
+        actor_user_id=context.user.id,
+    )
     db.commit()
     return _workflow_revision_payload(db, draft)
 
@@ -638,6 +801,18 @@ def patch_workflow_draft(
         nodes_payload=[item.model_dump(by_alias=True) for item in payload.nodes],
         edges_payload=[item.model_dump(by_alias=True) for item in payload.edges],
     )
+    emit_event(
+        db,
+        mission,
+        "workflow_draft_updated",
+        {
+            "missionRevision": mission.revision,
+            "workflowRevision": draft.revision_number,
+            "nodeCount": len(payload.nodes),
+            "edgeCount": len(payload.edges),
+        },
+        actor_user_id=context.user.id,
+    )
     db.commit()
     return _workflow_revision_payload(db, draft)
 
@@ -654,6 +829,20 @@ def post_workflow_draft_activate(
 ) -> dict[str, object]:
     mission = require_mission(db, context.user, mission_id, write=True)
     activate_workflow_draft(db, mission, expected_revision=payload.expected_revision)
+    active_revision, active_nodes, active_edges = active_workflow(db, mission.id)
+    emit_event(
+        db,
+        mission,
+        "workflow_revision_activated",
+        {
+            "missionRevision": mission.revision,
+            "workflowRevision": active_revision.revision_number,
+            "workflowRevisionId": active_revision.id,
+            "nodeCount": len(active_nodes),
+            "edgeCount": len(active_edges),
+        },
+        actor_user_id=context.user.id,
+    )
     db.commit()
     return _detail_payload(db, mission)
 
@@ -733,6 +922,16 @@ async def post_mission_decision_answer(
     settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
     mission = require_mission(db, context.user, mission_id, write=True)
+    command, should_apply = claim_command(
+        db,
+        mission=mission,
+        user=context.user,
+        command_type="decision_answer",
+        idempotency_key=request.headers.get("Idempotency-Key"),
+        payload=payload,
+    )
+    if not should_apply:
+        return _detail_payload(db, mission)
     decision, _response, next_node, changed = answer_decision(
         db,
         mission=mission,
@@ -753,6 +952,45 @@ async def post_mission_decision_answer(
             settings=settings,
         )
     if changed:
+        emit_event(
+            db,
+            mission,
+            "decision_resolved",
+            {
+                "decisionId": decision.id,
+                "selectedOptionId": payload.selected_option_id,
+                "missionRevision": mission.revision,
+                "workflowRevision": decision.applied_workflow_revision_number,
+                "nextNodeKey": next_node.node_key if next_node is not None else None,
+            },
+            actor_user_id=context.user.id,
+        )
+        if mission.status == "completed":
+            latest_gate_rows = list_quality_gates(db, mission.id)
+            latest_gate = latest_gate_rows[-1][0] if latest_gate_rows else None
+            if latest_gate is not None:
+                emit_event(
+                    db,
+                    mission,
+                    "quality_gate_completed",
+                    {
+                        "qualityGateId": latest_gate.id,
+                        "result": latest_gate.result,
+                        "completionOutcome": latest_gate.completion_outcome,
+                    },
+                    actor_user_id=context.user.id,
+                )
+            emit_event(
+                db,
+                mission,
+                "mission_completed",
+                {
+                    "status": mission.status,
+                    "completionOutcome": mission.completion_outcome,
+                    "missionRevision": mission.revision,
+                },
+                actor_user_id=context.user.id,
+            )
         record_audit(
             db,
             action="deep_analysis_decision_resolved",
@@ -769,6 +1007,7 @@ async def post_mission_decision_answer(
                 ),
             },
         )
+    complete_command(db, command, result={"decisionId": decision.id})
     db.commit()
     if created and next_run is not None:
         local_run_executor.enqueue(next_run.id)
@@ -788,11 +1027,51 @@ def post_mission_quality_gate(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     mission = require_mission(db, context.user, mission_id, write=True)
+    command, should_apply = claim_command(
+        db,
+        mission=mission,
+        user=context.user,
+        command_type="quality_gate",
+        idempotency_key=request.headers.get("Idempotency-Key"),
+        payload=payload,
+    )
+    if not should_apply:
+        return _detail_payload(db, mission)
     run_quality_gate(
         db,
         mission,
         expected_revision=payload.expected_revision,
     )
+    latest_gate = list_quality_gates(db, mission.id)[-1][0]
+    emit_event(
+        db,
+        mission,
+        "quality_gate_completed",
+        {
+            "qualityGateId": latest_gate.id,
+            "result": latest_gate.result,
+            "completionOutcome": latest_gate.completion_outcome,
+            "missionRevision": mission.revision,
+        },
+        actor_user_id=context.user.id,
+    )
+    if mission.status == "awaiting_input":
+        pending = next(
+            (item for item, _response, _node_key in list_decisions(db, mission.id) if item.status == "pending"),
+            None,
+        )
+        if pending is not None:
+            emit_event(
+                db,
+                mission,
+                "decision_requested",
+                {
+                    "decisionId": pending.id,
+                    "requestedByNodeId": pending.requested_by_node_id,
+                    "affectedNodeKeys": pending.affected_node_keys_json,
+                },
+                actor_user_id=context.user.id,
+            )
     record_audit(
         db,
         action="deep_analysis_quality_gate_evaluated",
@@ -803,6 +1082,7 @@ def post_mission_quality_gate(
         request_id=getattr(request.state, "request_id", None),
         metadata={"revision": mission.revision},
     )
+    complete_command(db, command, result={"qualityGateId": latest_gate.id})
     db.commit()
     return _detail_payload(db, mission)
 
@@ -837,6 +1117,32 @@ def patch_mission(
             if payload.completion_contract is not None
             else None
         ),
+    )
+    emit_event(
+        db,
+        mission,
+        (
+            "mission_charter_updated"
+            if payload.charter is not None or payload.completion_contract is not None
+            else "mission_updated"
+        ),
+        {
+            "missionRevision": mission.revision,
+            "status": mission.status,
+            "changedFields": [
+                key
+                for key, value in {
+                    "title": payload.title,
+                    "objective": payload.objective,
+                    "autonomyMode": payload.autonomy_mode,
+                    "budgetMicrousd": payload.budget_microusd,
+                    "charter": payload.charter,
+                    "completionContract": payload.completion_contract,
+                }.items()
+                if value is not None
+            ],
+        },
+        actor_user_id=context.user.id,
     )
     record_audit(
         db,
@@ -899,6 +1205,16 @@ async def post_mission_start(
     settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
     mission = require_mission(db, context.user, mission_id, write=True)
+    command, should_apply = claim_command(
+        db,
+        mission=mission,
+        user=context.user,
+        command_type="start",
+        idempotency_key=request.headers.get("Idempotency-Key"),
+        payload=payload,
+    )
+    if not should_apply:
+        return _detail_payload(db, mission)
     upgrade_legacy_draft_workflow(db, mission)
     start_mission(db, mission, expected_revision=payload.expected_revision)
     _workflow_revision, nodes, _edges = active_workflow(db, mission.id)
@@ -912,6 +1228,18 @@ async def post_mission_start(
         node=active_node,
         settings=settings,
     )
+    emit_event(
+        db,
+        mission,
+        "mission_status_changed",
+        {
+            "status": mission.status,
+            "missionRevision": mission.revision,
+            "nodeKey": active_node.node_key,
+            "runId": run.id,
+        },
+        actor_user_id=context.user.id,
+    )
     record_audit(
         db,
         action="deep_analysis_mission_started",
@@ -922,6 +1250,7 @@ async def post_mission_start(
         request_id=getattr(request.state, "request_id", None),
         metadata={"revision": mission.revision},
     )
+    complete_command(db, command, result={"runId": run.id})
     db.commit()
     if created:
         local_run_executor.enqueue(run.id)
@@ -939,14 +1268,48 @@ async def post_mission_cancel(
     request: Request,
     context: AuthContext = Depends(require_csrf),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
     mission = require_mission(db, context.user, mission_id, write=True)
+    command, should_apply = claim_command(
+        db,
+        mission=mission,
+        user=context.user,
+        command_type="cancel",
+        idempotency_key=request.headers.get("Idempotency-Key"),
+        payload=payload,
+    )
+    if not should_apply:
+        return _detail_payload(db, mission)
     _workflow_revision, nodes, _edges = active_workflow(db, mission.id)
-    active_run_id = next(
-        (node.run_id for node in nodes if node.status == "running" and node.run_id),
+    active_node = next(
+        (node for node in nodes if node.status == "running" and node.run_id),
         None,
     )
+    active_run_id = active_node.run_id if active_node is not None else None
+    active_run = db.get(Run, active_run_id) if active_run_id is not None else None
+    if active_node is not None and active_run is not None:
+        preserve_partial_output(
+            db,
+            user=context.user,
+            mission=mission,
+            node=active_node,
+            run=active_run,
+            storage=_storage(settings),
+            settings=settings,
+        )
     cancel_mission(db, mission, expected_revision=payload.expected_revision)
+    emit_event(
+        db,
+        mission,
+        "mission_status_changed",
+        {
+            "status": mission.status,
+            "missionRevision": mission.revision,
+            "runId": active_run_id,
+        },
+        actor_user_id=context.user.id,
+    )
     cancelled_run = None
     if active_run_id is not None:
         cancelled_run, _command, _message, _changed = apply_run_action(
@@ -968,10 +1331,126 @@ async def post_mission_cancel(
         request_id=getattr(request.state, "request_id", None),
         metadata={"revision": mission.revision},
     )
+    complete_command(db, command, result={"runId": active_run_id})
     db.commit()
     if cancelled_run is not None:
         local_run_executor.cancel(cancelled_run.id)
         await event_broker.notify(cancelled_run.id)
+    return _detail_payload(db, mission)
+
+
+@router.post(
+    "/deep-analysis/missions/{mission_id}/pause",
+    response_model=MissionDetailResponse,
+)
+async def post_mission_pause(
+    mission_id: str,
+    payload: MissionPause,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    mission = require_mission(db, context.user, mission_id, write=True)
+    command, should_apply = claim_command(
+        db,
+        mission=mission,
+        user=context.user,
+        command_type="pause",
+        idempotency_key=request.headers.get("Idempotency-Key"),
+        payload=payload,
+    )
+    if not should_apply:
+        return _detail_payload(db, mission)
+    _revision, nodes, _edges = active_workflow(db, mission.id)
+    active_run_id = next(
+        (node.run_id for node in nodes if node.status == "running" and node.run_id),
+        None,
+    )
+    if active_run_id is None:
+        raise ApiProblem(409, "mission_run_missing", "일시 정지할 활성 Run을 찾을 수 없습니다.")
+    run, _command, _message, _changed = apply_run_action(
+        db,
+        user=context.user,
+        run_id=active_run_id,
+        payload=RunActionRequest(type="pause"),
+        idempotency_key=(
+            request.headers.get("Idempotency-Key")
+            or f"deep-analysis-pause:{mission.id}:{payload.expected_revision}"
+        ),
+    )
+    pause_mission(db, mission, expected_revision=payload.expected_revision)
+    emit_event(
+        db,
+        mission,
+        "mission_status_changed",
+        {
+            "status": "paused",
+            "missionRevision": mission.revision,
+            "runId": run.id,
+        },
+        actor_user_id=context.user.id,
+    )
+    complete_command(db, command, result={"runId": run.id})
+    db.commit()
+    await event_broker.notify(run.id)
+    return _detail_payload(db, mission)
+
+
+@router.post(
+    "/deep-analysis/missions/{mission_id}/resume",
+    response_model=MissionDetailResponse,
+)
+async def post_mission_resume(
+    mission_id: str,
+    payload: MissionPause,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    mission = require_mission(db, context.user, mission_id, write=True)
+    command, should_apply = claim_command(
+        db,
+        mission=mission,
+        user=context.user,
+        command_type="resume",
+        idempotency_key=request.headers.get("Idempotency-Key"),
+        payload=payload,
+    )
+    if not should_apply:
+        return _detail_payload(db, mission)
+    _revision, nodes, _edges = active_workflow(db, mission.id)
+    active_run_id = next(
+        (node.run_id for node in nodes if node.status == "running" and node.run_id),
+        None,
+    )
+    if active_run_id is None:
+        raise ApiProblem(409, "mission_run_missing", "재개할 활성 Run을 찾을 수 없습니다.")
+    run, _command, _message, _changed = apply_run_action(
+        db,
+        user=context.user,
+        run_id=active_run_id,
+        payload=RunActionRequest(type="resume"),
+        idempotency_key=(
+            request.headers.get("Idempotency-Key")
+            or f"deep-analysis-resume:{mission.id}:{payload.expected_revision}"
+        ),
+    )
+    resume_mission(db, mission, expected_revision=payload.expected_revision)
+    emit_event(
+        db,
+        mission,
+        "mission_status_changed",
+        {
+            "status": "running",
+            "missionRevision": mission.revision,
+            "runId": run.id,
+        },
+        actor_user_id=context.user.id,
+    )
+    complete_command(db, command, result={"runId": run.id})
+    db.commit()
+    local_run_executor.enqueue(run.id)
+    await event_broker.notify(run.id)
     return _detail_payload(db, mission)
 
 
@@ -988,6 +1467,16 @@ async def post_mission_retry(
     settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
     mission = require_mission(db, context.user, mission_id, write=True)
+    command, should_apply = claim_command(
+        db,
+        mission=mission,
+        user=context.user,
+        command_type="retry",
+        idempotency_key=request.headers.get("Idempotency-Key"),
+        payload=payload,
+    )
+    if not should_apply:
+        return _detail_payload(db, mission)
     node = retry_mission_node(
         db,
         mission,
@@ -1000,6 +1489,18 @@ async def post_mission_retry(
         mission=mission,
         node=node,
         settings=settings,
+    )
+    emit_event(
+        db,
+        mission,
+        "node_retried",
+        {
+            "nodeId": node.id,
+            "nodeKey": node.node_key,
+            "runId": run.id,
+            "missionRevision": mission.revision,
+        },
+        actor_user_id=context.user.id,
     )
     record_audit(
         db,
@@ -1015,6 +1516,7 @@ async def post_mission_retry(
             "run_id": run.id,
         },
     )
+    complete_command(db, command, result={"runId": run.id, "nodeKey": node.node_key})
     db.commit()
     if created:
         local_run_executor.enqueue(run.id)
@@ -1036,6 +1538,20 @@ def post_mission_export(
     settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
     mission = require_mission(db, context.user, mission_id, write=True)
+    command, should_apply = claim_command(
+        db,
+        mission=mission,
+        user=context.user,
+        command_type="export",
+        idempotency_key=request.headers.get("Idempotency-Key"),
+        payload=payload,
+    )
+    if not should_apply and command is not None:
+        existing_id = command.result_json.get("exportId")
+        existing = db.get(DeepAnalysisMissionExport, existing_id) if existing_id else None
+        if existing is not None and existing.mission_id == mission.id:
+            return _export_payload(existing)
+        raise ApiProblem(409, "idempotent_result_missing", "기존 내보내기 결과를 복원할 수 없습니다.")
     item = create_mission_export(
         db,
         _storage(settings),
@@ -1043,6 +1559,19 @@ def post_mission_export(
         user=context.user,
         scope=payload.scope,
         include_originals=payload.include_originals,
+    )
+    emit_event(
+        db,
+        mission,
+        "mission_file_created",
+        {
+            "exportId": item.id,
+            "scope": item.scope,
+            "status": item.status,
+            "contentHash": item.content_hash,
+            "sizeBytes": item.size_bytes,
+        },
+        actor_user_id=context.user.id,
     )
     record_audit(
         db,
@@ -1059,6 +1588,7 @@ def post_mission_export(
             "entry_count": item.manifest_json.get("entryCount"),
         },
     )
+    complete_command(db, command, result={"exportId": item.id})
     db.commit()
     return _export_payload(item)
 
