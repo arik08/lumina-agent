@@ -699,8 +699,8 @@ interface SelectedComposerReference {
 const navigation = [
   { id: "chat", label: "에이전트", icon: Bot },
   { id: "deep-analysis", label: "심층분석", icon: Workflow },
-  { id: "knowledge", label: "지식", icon: BookOpenText },
   { id: "marketplace", label: "마켓스토어", icon: Store },
+  { id: "knowledge", label: "지식", icon: BookOpenText },
   { id: "library", label: "라이브러리", icon: Library },
   { id: "files", label: "파일 저장소", icon: FolderOpen },
   { id: "schedules", label: "예약 작업", icon: Clock3 },
