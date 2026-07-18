@@ -25,6 +25,7 @@ from lumina.models import AuditEvent, MessageReference, Project, ProjectFile, Ru
 from lumina.project_files.service import create_project_file
 from lumina.runs.service import create_run
 from lumina.storage import ManagedLocalStorage
+from lumina.tools.source_documents import project_file_source_document_id
 
 
 def _settings(tmp_path: Path, database_name: str = "workspace.db") -> Settings:
@@ -434,8 +435,12 @@ def test_composer_and_run_pin_exact_project_file_version_and_project(
             prompt_references=loaded_run.snapshot_json["prompt_references"],
             extensions=[],
         )
-        assert "첫 버전 기준: 베어링 온도 확인" in prepared
+        assert "첫 버전 기준: 베어링 온도 확인" not in prepared
         assert "둘째 버전 기준" not in prepared
+        assert "<source-document-index>" in prepared
+        assert project_file_source_document_id(
+            uploaded["id"], uploaded["contentHash"]
+        ) in prepared
 
         deleted = client.delete(
             f"/api/projects/{project_id}/files/{uploaded['id']}",

@@ -259,6 +259,7 @@ def test_small_attachment_remains_inline(tmp_path: Path) -> None:
 
 def test_project_file_and_artifact_source_documents_resolve_exact_versions(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings = _settings(tmp_path)
     executor = LocalRunExecutor(settings)
@@ -347,6 +348,73 @@ def test_project_file_and_artifact_source_documents_resolve_exact_versions(
             )
             db.commit()
 
+            document_id = project_file_source_document_id(
+                project_file.id, project_file_digest
+            )
+            original_read_bytes = executor.file_storage.read_bytes
+
+            def reject_eager_project_file_read(
+                *_args: object, **_kwargs: object
+            ) -> bytes:
+                raise AssertionError(
+                    "Project file bodies must be read only by source tools"
+                )
+
+            monkeypatch.setattr(
+                executor.file_storage, "read_bytes", reject_eager_project_file_read
+            )
+            direct_file_context = executor._message_with_context(
+                "Inspect the referenced file only when needed.",
+                attachment_ids=[],
+                prompt_references=[
+                    {
+                        "kind": "file",
+                        "reference_id": project_file.id,
+                        "version_or_digest": project_file_digest,
+                        "display_snapshot": {
+                            "targetType": "project_file",
+                            "logicalPath": project_file.logical_path,
+                        },
+                    }
+                ],
+                extensions=[],
+                context_window=128_000,
+            )
+            folder_context = executor._message_with_context(
+                "Inspect the referenced folder only when needed.",
+                attachment_ids=[],
+                prompt_references=[
+                    {
+                        "kind": "folder",
+                        "reference_id": "sources-folder",
+                        "version_or_digest": project_file_digest,
+                        "display_snapshot": {
+                            "targetType": "project_folder",
+                            "logicalPath": "sources",
+                            "fileVersions": [
+                                {
+                                    "id": project_file.id,
+                                    "path": project_file.logical_path,
+                                    "digest": project_file_digest,
+                                }
+                            ],
+                        },
+                    }
+                ],
+                extensions=[],
+                context_window=128_000,
+            )
+            monkeypatch.setattr(
+                executor.file_storage, "read_bytes", original_read_bytes
+            )
+
+            for prepared in (direct_file_context, folder_context):
+                assert "Project file exact version" not in prepared
+                assert "<source-document-index>" in prepared
+                assert document_id in prepared
+                assert "search_source_document" in prepared
+                assert "read_source_document" in prepared
+
             project_file_result = execute_source_document_tool(
                 db,
                 executor.file_storage,
@@ -354,9 +422,7 @@ def test_project_file_and_artifact_source_documents_resolve_exact_versions(
                 run=run,
                 name="read_source_document",
                 arguments={
-                    "document_id": project_file_source_document_id(
-                        project_file.id, project_file_digest
-                    ),
+                    "document_id": document_id,
                     "start_line": 1,
                     "limit": 2,
                 },

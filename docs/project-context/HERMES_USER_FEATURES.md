@@ -567,7 +567,7 @@ $mcp:internal-search
 - 접근 거부, 삭제된 파일과 연결 실패를 사용자용 오류로 반환
 - 누가 어떤 파일·Skill·MCP를 참조했는지 감사 기록
 
-대형 문서는 첫 Model 요청에 원문 전체나 임의로 잘린 앞부분을 넣지 않습니다. 단일 문서가 Model Context의 20%에 해당하는 추정 Token을 넘거나 현재 인라인 예산을 넘으면 Backend는 Run에 고정된 Message·파일 ID와 digest로 `source-document-manifest`를 구성합니다. Manifest에는 문서 ID, 줄 수, 크기, 짧은 head·middle·tail sample과 분리 가능한 사용자 요청만 포함하고, Agent는 `search_source_document`로 관련 구간을 찾은 뒤 `read_source_document`로 원문 줄 범위를 검증합니다. Composer에 직접 붙여 넣은 대형 원문, Attachment, Project file, Artifact 모두 같은 복구 계약을 사용하며 다른 Project나 Conversation의 Attachment는 문서 ID를 알아도 읽을 수 없습니다. 작은 문서는 불필요한 Tool 왕복을 피하기 위해 기존처럼 인라인합니다.
+대형 문서는 첫 Model 요청에 원문 전체나 임의로 잘린 앞부분을 넣지 않습니다. 단일 문서가 Model Context의 20%에 해당하는 추정 Token을 넘거나 현재 인라인 예산을 넘으면 Backend는 Run에 고정된 Message·파일 ID와 digest로 `source-document-manifest`를 구성합니다. Manifest에는 문서 ID, 줄 수, 크기, 짧은 head·middle·tail sample과 분리 가능한 사용자 요청만 포함하고, Agent는 `search_source_document`로 관련 구간을 찾은 뒤 `read_source_document`로 원문 줄 범위를 검증합니다. Project 저장소의 `@파일`과 `@폴더` 참조는 크기와 관계없이 본문을 첫 Model 요청에 넣지 않고, 고정된 파일 경로·버전·digest·문서 ID의 경량 `source-document-index`만 제공합니다. Agent는 요청과 관련된 파일만 `search_source_document`로 찾고 `read_source_document`로 필요한 원문 범위를 검증합니다. Composer에 직접 붙여 넣은 원문, Attachment와 Artifact는 기존 크기 기준을 적용하며, 작은 문서는 불필요한 Tool 왕복을 피하기 위해 인라인할 수 있습니다. 다른 Project나 Conversation의 Attachment는 문서 ID를 알아도 읽을 수 없습니다.
 
 ### 보안과 Project 공유
 
