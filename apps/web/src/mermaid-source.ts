@@ -1,9 +1,33 @@
 const flowchartNodePattern = /(^|[\s;])([A-Za-z_][A-Za-z0-9_-]*)\s*(\[\[|\(\(|\(\[|\[\(|\{\{|\[|\(|\{)/g;
+const mermaidStructuralClassNames = new Set(["root"]);
+const classDefinitionPattern = /((?:^|[;\n])\s*classDef\s+)([A-Za-z_][A-Za-z0-9_-]*)/gm;
+const classAssignmentPattern = /((?:^|[;\n])\s*class\s+[A-Za-z_][A-Za-z0-9_,-]*\s+)([A-Za-z_][A-Za-z0-9_-]*)/gm;
 const closingDelimiter = new Map([
   ["(", ")"],
   ["[", "]"],
   ["{", "}"],
 ]);
+
+function safeClassName(className: string) {
+  return mermaidStructuralClassNames.has(className) ? `lumina-${className}` : className;
+}
+
+export function repairMermaidClassNames(source: string) {
+  if (!/^\s*(?:flowchart|graph)\b/m.test(source)) return source;
+  const collidingNames = new Set(
+    [...source.matchAll(classDefinitionPattern)]
+      .map((match) => match[2])
+      .filter((className) => mermaidStructuralClassNames.has(className)),
+  );
+  if (collidingNames.size === 0) return source;
+
+  return source
+    .replace(classDefinitionPattern, (_match, prefix: string, className: string) => `${prefix}${safeClassName(className)}`)
+    .replace(classAssignmentPattern, (_match, prefix: string, className: string) => `${prefix}${safeClassName(className)}`)
+    .replace(/:::\s*([A-Za-z_][A-Za-z0-9_-]*)/g, (match, className: string) => (
+      collidingNames.has(className) ? match.replace(className, safeClassName(className)) : match
+    ));
+}
 
 function findLabelEnd(line: string, start: number, opening: string) {
   const stack = [...opening];

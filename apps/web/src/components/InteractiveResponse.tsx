@@ -17,7 +17,7 @@ import {
   type WheelEvent,
 } from "react";
 import { createPortal } from "react-dom";
-import { repairMermaidSource } from "../mermaid-source";
+import { repairMermaidClassNames, repairMermaidSource } from "../mermaid-source";
 import { SyntaxCode } from "./SyntaxCode";
 import "./InteractiveResponse.css";
 
@@ -372,7 +372,7 @@ function bindMermaidThemeTokens(svg: string, bindings: ReadonlyArray<readonly [s
 }
 
 export async function renderMermaidSvg(source: string) {
-  const normalizedSource = source.trim();
+  const normalizedSource = repairMermaidClassNames(source.trim());
   const appearance = mermaidAppearance();
   const cacheKey = `${appearance.signature}\u0000${normalizedSource}`;
   const activeJob = mermaidRenderJobs.get(cacheKey);

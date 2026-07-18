@@ -8,7 +8,32 @@ const typescriptSource = await readFile(sourceUrl, "utf8");
 const javascriptSource = ts.transpileModule(typescriptSource, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 }).outputText;
-const { repairMermaidSource } = await import(`data:text/javascript;base64,${Buffer.from(javascriptSource).toString("base64")}`);
+const { repairMermaidClassNames, repairMermaidSource } = await import(`data:text/javascript;base64,${Buffer.from(javascriptSource).toString("base64")}`);
+
+test("namespaces authored root classes that collide with Mermaid's SVG root", () => {
+  const source = `flowchart TD
+    A[Start] --> B[Done]
+    classDef root fill:#263238,color:#fff,stroke:#111;
+    class A root;
+    B:::root`;
+
+  assert.equal(repairMermaidClassNames(source), `flowchart TD
+    A[Start] --> B[Done]
+    classDef lumina-root fill:#263238,color:#fff,stroke:#111;
+    class A lumina-root;
+    B:::lumina-root`);
+});
+
+test("preserves ordinary authored class names and non-flowchart diagrams", () => {
+  assert.equal(
+    repairMermaidClassNames("flowchart TD\nA[Start]\nclassDef rootCause fill:#fff;\nclass A rootCause;"),
+    "flowchart TD\nA[Start]\nclassDef rootCause fill:#fff;\nclass A rootCause;",
+  );
+  assert.equal(
+    repairMermaidClassNames("classDiagram\nclass root"),
+    "classDiagram\nclass root",
+  );
+});
 
 test("quotes unquoted flowchart labels so parentheses remain label text", () => {
   const source = `flowchart TD

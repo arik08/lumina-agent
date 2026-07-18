@@ -15,6 +15,8 @@ test("LLM instructions require context-specific Mermaid classes in saved source"
   assert.match(instructionSource, /Reserve red, coral, and amber for explicit risk, warning/);
   assert.match(instructionSource, /at least 4\.5:1/);
   assert.match(instructionSource, /contrast against node fills/);
+  assert.match(instructionSource, /Prefix authored Mermaid class names with `lumina-`/);
+  assert.match(instructionSource, /structural class names such as `root`/);
   assert.match(instructionSource, /Do not rely on the/);
   assert.match(instructionSource, /viewer to infer or reassign semantic colors/);
   assert.match(visualArtifactSkillSource, /infer a coherent color system from the actual subject/);
@@ -25,6 +27,7 @@ test("LLM instructions require context-specific Mermaid classes in saved source"
 });
 
 test("Mermaid renderer does not infer or override authored colors", () => {
+  assert.match(rendererSource, /repairMermaidClassNames\(source\.trim\(\)\)/);
   assert.doesNotMatch(rendererSource, /inferMermaidNodeTone|decorateMermaidSvg|luminaTone/);
   assert.doesNotMatch(rendererStyles, /data-lumina-tone|--mermaid-node-fill|--mermaid-node-stroke/);
 });
