@@ -184,6 +184,22 @@ test("Claim Evidence lineage is available as a dedicated ledger tab", async () =
   assert.match(css, /\.deep-analysis-ledger \{/);
 });
 
+test("Mission export selects scope and downloads a checksum ZIP", async () => {
+  const [view, api, css] = await Promise.all([
+    readFile(viewPath, "utf8"),
+    readFile(apiPath, "utf8"),
+    readFile(cssPath, "utf8"),
+  ]);
+  assert.match(view, /Mission 내보내기/);
+  assert.match(view, /과거 version 포함 감사본/);
+  assert.match(view, /Project 원본 자료 포함/);
+  assert.match(view, /api\.deepAnalysis\.createExport/);
+  assert.match(view, /api\.deepAnalysis\.downloadExport/);
+  assert.match(api, /createExport: createDeepAnalysisMissionExport/);
+  assert.match(api, /downloadExport: downloadDeepAnalysisMissionExport/);
+  assert.match(css, /\.deep-analysis-export-popover \{/);
+});
+
 test("failed or cancelled Nodes can retry with visible attempts and calculation files", async () => {
   const [view, api] = await Promise.all([
     readFile(viewPath, "utf8"),

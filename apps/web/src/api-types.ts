@@ -411,6 +411,27 @@ export interface DeepAnalysisOpenIssue {
   updatedAt: IsoDateTime;
 }
 
+export interface DeepAnalysisMissionExport {
+  id: UUID;
+  missionId: UUID;
+  scope: "latest" | "report_evidence" | "audit";
+  includeOriginals: boolean;
+  status: "preparing" | "completed" | "failed";
+  filename: string;
+  contentHash: string | null;
+  sizeBytes: number | null;
+  manifest: Record<string, unknown>;
+  errorMessage: string;
+  completedAt: IsoDateTime | null;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+export interface CreateDeepAnalysisMissionExportRequest {
+  scope?: "latest" | "report_evidence" | "audit";
+  includeOriginals?: boolean;
+}
+
 export interface DeepAnalysisMissionDetail extends DeepAnalysisMissionSummary {
   executionAvailable: boolean;
   charter: DeepAnalysisMissionCharter;

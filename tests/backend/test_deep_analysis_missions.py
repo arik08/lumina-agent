@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import hashlib
+import io
+import json
 import time
 from pathlib import Path
+from zipfile import ZipFile
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -747,6 +751,85 @@ def test_claim_evidence_ledger_resolves_exact_file_versions_and_lists_lineage(
         assert client.get(
             f"/api/deep-analysis/missions/{created['id']}/open-issues"
         ).json() == payload["openIssues"]
+
+
+def test_mission_export_contains_portable_records_and_verified_checksums(
+    tmp_path: Path,
+) -> None:
+    with TestClient(create_app(_settings(tmp_path))) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        source = client.post(
+            f"/api/projects/{project_id}/files",
+            headers=headers,
+            data={"logicalPath": "inputs/source.csv", "changeReason": "export test"},
+            files={"file": ("source.csv", b"key,value\nA,1\n", "text/csv")},
+        ).json()
+        created = client.post(
+            f"/api/projects/{project_id}/deep-analysis/missions",
+            headers=headers,
+            json={"title": "내보내기 검증", "objective": "감사 가능한 ZIP을 만든다."},
+        ).json()
+        with SessionLocal() as db:
+            mission = db.get(DeepAnalysisMission, created["id"])
+            project_file = db.get(ProjectFile, source["id"])
+            assert mission is not None and project_file is not None
+            version = db.scalar(
+                select(ProjectFileVersion).where(
+                    ProjectFileVersion.project_file_id == project_file.id
+                )
+            )
+            assert version is not None
+            mission.source_manifest_json = [
+                {
+                    "projectFileId": project_file.id,
+                    "logicalPath": project_file.logical_path,
+                    "version": version.version_number,
+                    "versionId": version.id,
+                    "contentHash": version.content_hash,
+                    "mimeType": version.mime_type,
+                    "sizeBytes": version.size_bytes,
+                }
+            ]
+            db.commit()
+
+        operation = client.post(
+            f"/api/deep-analysis/missions/{created['id']}/exports",
+            headers=headers,
+            json={"scope": "audit", "includeOriginals": True},
+        )
+        assert operation.status_code == 201, operation.text
+        export = operation.json()
+        assert export["status"] == "completed"
+        assert export["contentHash"]
+        assert export["manifest"]["includeOriginals"] is True
+
+        download = client.get(
+            f"/api/deep-analysis/missions/{created['id']}/exports/{export['id']}/download"
+        )
+        assert download.status_code == 200, download.text
+        assert download.headers["content-type"] == "application/zip"
+        assert hashlib.sha256(download.content).hexdigest() == export["contentHash"]
+        with ZipFile(io.BytesIO(download.content)) as archive:
+            names = set(archive.namelist())
+            assert {
+                "README.md",
+                "mission.json",
+                "workflow.json",
+                "claims.json",
+                "decisions.csv",
+                "costs.csv",
+                "evidence-manifest.json",
+                "open-issues.csv",
+                "quality-gates.json",
+                "checksums.json",
+            } <= names
+            assert any(name.startswith("source-files/") for name in names)
+            checksums = json.loads(archive.read("checksums.json"))
+            for name, metadata in checksums["entries"].items():
+                content = archive.read(name)
+                assert hashlib.sha256(content).hexdigest() == metadata["sha256"]
+                assert len(content) == metadata["sizeBytes"]
 
 
 def test_mission_endpoints_require_auth_and_project_access(tmp_path: Path) -> None:

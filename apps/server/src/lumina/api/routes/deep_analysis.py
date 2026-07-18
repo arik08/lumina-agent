@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.orm import Session
 
@@ -9,6 +11,7 @@ from ...api.schemas import RunActionRequest
 from ...config import Settings, get_settings
 from ...db import get_db
 from ...deep_analysis.execution import create_node_run
+from ...deep_analysis.exports import create_mission_export
 from ...deep_analysis.models import (
     DeepAnalysisClaim,
     DeepAnalysisClaimEvidenceLink,
@@ -16,6 +19,7 @@ from ...deep_analysis.models import (
     DeepAnalysisDecisionResponse,
     DeepAnalysisEvidenceReference,
     DeepAnalysisMission,
+    DeepAnalysisMissionExport,
     DeepAnalysisOpenIssue,
     DeepAnalysisQualityGateResult,
 )
@@ -28,6 +32,8 @@ from ...deep_analysis.schemas import (
     MissionCancel,
     MissionCreate,
     MissionDetailResponse,
+    MissionExportCreate,
+    MissionExportResponse,
     MissionPatch,
     MissionQualityGate,
     MissionRetry,
@@ -53,12 +59,38 @@ from ...deep_analysis.service import (
 )
 from ...deep_analysis.quality import list_quality_gates
 from ...models import Run, User
+from ...storage import ManagedLocalStorage, StorageError
 from ...runs.broker import event_broker
 from ...runs.service import apply_run_action
 from ..dependencies import AuthContext, get_current_user, require_csrf
+from ..errors import ApiProblem
 
 
 router = APIRouter(tags=["deep-analysis"])
+
+
+def _storage(settings: Settings) -> ManagedLocalStorage:
+    if settings.files_dir is None:
+        raise RuntimeError("LUMINA_FILES_DIR is not configured")
+    return ManagedLocalStorage(settings.files_dir)
+
+
+def _export_payload(item: DeepAnalysisMissionExport) -> dict[str, object]:
+    return {
+        "id": item.id,
+        "mission_id": item.mission_id,
+        "scope": item.scope,
+        "include_originals": item.include_originals,
+        "status": item.status,
+        "filename": item.filename,
+        "content_hash": item.content_hash,
+        "size_bytes": item.size_bytes,
+        "manifest": item.manifest_json,
+        "error_message": item.error_message,
+        "completed_at": item.completed_at,
+        "created_at": item.created_at,
+        "updated_at": item.updated_at,
+    }
 
 
 def _decision_payload(
@@ -722,3 +754,91 @@ async def post_mission_retry(
         local_run_executor.enqueue(run.id)
         await event_broker.notify(run.id)
     return _detail_payload(db, mission)
+
+
+@router.post(
+    "/deep-analysis/missions/{mission_id}/exports",
+    response_model=MissionExportResponse,
+    status_code=201,
+)
+def post_mission_export(
+    mission_id: str,
+    payload: MissionExportCreate,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    mission = require_mission(db, context.user, mission_id, write=True)
+    item = create_mission_export(
+        db,
+        _storage(settings),
+        mission=mission,
+        user=context.user,
+        scope=payload.scope,
+        include_originals=payload.include_originals,
+    )
+    record_audit(
+        db,
+        action="deep_analysis_mission_exported",
+        target_type="deep_analysis_mission_export",
+        target_id=item.id,
+        result="success",
+        actor=context.user,
+        request_id=getattr(request.state, "request_id", None),
+        metadata={
+            "mission_id": mission.id,
+            "scope": item.scope,
+            "include_originals": item.include_originals,
+            "entry_count": item.manifest_json.get("entryCount"),
+        },
+    )
+    db.commit()
+    return _export_payload(item)
+
+
+@router.get(
+    "/deep-analysis/missions/{mission_id}/exports/{export_id}",
+    response_model=MissionExportResponse,
+)
+def get_mission_export(
+    mission_id: str,
+    export_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    mission = require_mission(db, user, mission_id)
+    item = db.get(DeepAnalysisMissionExport, export_id)
+    if item is None or item.mission_id != mission.id:
+        raise ApiProblem(404, "deep_analysis_export_not_found", "Mission 내보내기를 찾을 수 없습니다.")
+    return _export_payload(item)
+
+
+@router.get("/deep-analysis/missions/{mission_id}/exports/{export_id}/download")
+def download_mission_export(
+    mission_id: str,
+    export_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    mission = require_mission(db, user, mission_id)
+    item = db.get(DeepAnalysisMissionExport, export_id)
+    if item is None or item.mission_id != mission.id:
+        raise ApiProblem(404, "deep_analysis_export_not_found", "Mission 내보내기를 찾을 수 없습니다.")
+    if item.status != "completed" or not item.storage_key or not item.content_hash:
+        raise ApiProblem(409, "deep_analysis_export_not_ready", "Mission 내보내기가 아직 준비되지 않았습니다.")
+    try:
+        content = _storage(settings).read_bytes(
+            item.storage_key, expected_sha256=item.content_hash
+        )
+    except StorageError as exc:
+        raise ApiProblem(503, "deep_analysis_export_content_missing", "Mission 내보내기 파일을 읽을 수 없습니다.") from exc
+    return Response(
+        content=content,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f"attachment; filename=mission-export.zip; filename*=UTF-8''{quote(item.filename)}",
+            "X-Content-SHA256": item.content_hash,
+        },
+    )

@@ -3,6 +3,7 @@ import {
   ChevronRight,
   CircleAlert,
   CircleDollarSign,
+  Download,
   GitBranch,
   LoaderCircle,
   Menu,
@@ -136,6 +137,10 @@ export function DeepAnalysisView({
   const [contractOpen, setContractOpen] = useState(false);
   const [savingContract, setSavingContract] = useState(false);
   const [runningQualityGate, setRunningQualityGate] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportingMission, setExportingMission] = useState(false);
+  const [exportScope, setExportScope] = useState<"latest" | "report_evidence" | "audit">("latest");
+  const [exportIncludeOriginals, setExportIncludeOriginals] = useState(false);
   const [activeTab, setActiveTab] = useState<"workflow" | "evidence">("workflow");
   const [charterDraft, setCharterDraft] = useState<DeepAnalysisMissionCharter | null>(null);
   const [completionDraft, setCompletionDraft] = useState<DeepAnalysisCompletionContract | null>(null);
@@ -525,6 +530,30 @@ export function DeepAnalysisView({
     }
   }
 
+  async function exportMission() {
+    if (!mission || exportingMission) return;
+    setExportingMission(true);
+    setError(null);
+    try {
+      const operation = await api.deepAnalysis.createExport(mission.id, {
+        scope: exportScope,
+        includeOriginals: exportIncludeOriginals,
+      });
+      const download = await api.deepAnalysis.downloadExport(mission.id, operation.id);
+      const url = URL.createObjectURL(download.blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = download.fileName;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setExportOpen(false);
+    } catch (exportError) {
+      setError(errorMessage(exportError));
+    } finally {
+      setExportingMission(false);
+    }
+  }
+
   async function retryNode(node: DeepAnalysisWorkflowNode) {
     if (!mission || retryingNodeKey) return;
     setRetryingNodeKey(node.nodeKey);
@@ -793,6 +822,20 @@ export function DeepAnalysisView({
                     >
                       Mission 계약
                     </button>
+                    <div className="deep-analysis-export-wrap">
+                      <button className="deep-analysis-export tooltip-control" type="button" aria-label="Mission 내보내기" aria-expanded={exportOpen} data-tooltip="내보내기" onClick={() => setExportOpen((open) => !open)}>
+                        <Download size={15} />
+                      </button>
+                      {exportOpen && (
+                        <div className="deep-analysis-export-popover">
+                          <strong>Mission 내보내기</strong>
+                          <label>범위<select value={exportScope} onChange={(event) => setExportScope(event.target.value as typeof exportScope)}><option value="latest">최신 생성 파일 전체</option><option value="report_evidence">최종 보고서와 근거</option><option value="audit">과거 version 포함 감사본</option></select></label>
+                          <label className="deep-analysis-export-check"><input type="checkbox" checked={exportIncludeOriginals} onChange={(event) => setExportIncludeOriginals(event.target.checked)} /> Project 원본 자료 포함</label>
+                          <small>원본 자료를 포함하면 현재 권한과 exact frozen version을 다시 확인합니다.</small>
+                          <button type="button" disabled={exportingMission} onClick={() => void exportMission()}>{exportingMission ? <LoaderCircle className="is-running" size={13} /> : <Download size={13} />}{exportingMission ? "준비 중" : "ZIP 다운로드"}</button>
+                        </div>
+                      )}
+                    </div>
                     <div className="deep-analysis-cost-wrap">
                       <button
                         className="deep-analysis-cost tooltip-control"

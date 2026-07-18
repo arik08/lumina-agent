@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
     DateTime,
     ForeignKey,
     Float,
@@ -372,3 +373,29 @@ class DeepAnalysisOpenIssue(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     report_inclusion: Mapped[str] = mapped_column(
         String(80), default="open_issues", nullable=False
     )
+
+
+class DeepAnalysisMissionExport(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "deep_analysis_mission_exports"
+    __table_args__ = (
+        Index("ix_deep_analysis_exports_mission_created", "mission_id", "created_at"),
+    )
+
+    mission_id: Mapped[str] = mapped_column(
+        ForeignKey("deep_analysis_missions.id", ondelete="CASCADE"), nullable=False
+    )
+    requested_by_user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    include_originals: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="preparing", nullable=False)
+    filename: Mapped[str] = mapped_column(String(500), default="", nullable=False)
+    storage_key: Mapped[str | None] = mapped_column(String(1000))
+    content_hash: Mapped[str | None] = mapped_column(String(64))
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    manifest_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
+    error_message: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

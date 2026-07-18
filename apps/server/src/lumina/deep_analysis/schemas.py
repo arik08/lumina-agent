@@ -85,6 +85,27 @@ class MissionQualityGate(ApiModel):
     expected_revision: int = Field(ge=1)
 
 
+class MissionExportCreate(ApiModel):
+    scope: Literal["latest", "report_evidence", "audit"] = "latest"
+    include_originals: bool = False
+
+
+class MissionExportResponse(ApiModel):
+    id: str
+    mission_id: str
+    scope: str
+    include_originals: bool
+    status: str
+    filename: str
+    content_hash: str | None
+    size_bytes: int | None
+    manifest: dict[str, Any]
+    error_message: str
+    completed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
 class DecisionAnswer(ApiModel):
     expected_revision: int = Field(ge=1)
     selected_option_id: str = Field(min_length=1, max_length=64)

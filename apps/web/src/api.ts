@@ -29,12 +29,14 @@ import type {
   CreateAdminUserRequest,
   CreateConversationRequest,
   CreateDeepAnalysisMissionRequest,
+  CreateDeepAnalysisMissionExportRequest,
   CreateProjectLearningProposalRequest,
   CreateProjectRequest,
   CurrentSettings,
   DeepAnalysisClaim,
   DeepAnalysisEvidence,
   DeepAnalysisMissionDetail,
+  DeepAnalysisMissionExport,
   DeepAnalysisMissionSummary,
   DeepAnalysisOpenIssue,
   KnowledgeEntity,
@@ -1271,6 +1273,29 @@ export async function getDeepAnalysisOpenIssues(missionId: string, signal?: Abor
   );
 }
 
+export async function createDeepAnalysisMissionExport(
+  missionId: string,
+  payload: CreateDeepAnalysisMissionExportRequest = {},
+) {
+  return request<DeepAnalysisMissionExport>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/exports`,
+    { method: "POST", body: payload },
+  );
+}
+
+export async function downloadDeepAnalysisMissionExport(
+  missionId: string,
+  exportId: string,
+): Promise<ArtifactDownload> {
+  const response = await fetchApi(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/exports/${encodeURIComponent(exportId)}/download`,
+  );
+  return {
+    blob: await response.blob(),
+    fileName: downloadFileName(response, `mission-export-${missionId}.zip`),
+  };
+}
+
 export async function startDeepAnalysisMission(
   missionId: string,
   payload: StartDeepAnalysisMissionRequest,
@@ -2224,6 +2249,8 @@ export const api = {
     getClaims: getDeepAnalysisClaims,
     getEvidence: getDeepAnalysisEvidence,
     getOpenIssues: getDeepAnalysisOpenIssues,
+    createExport: createDeepAnalysisMissionExport,
+    downloadExport: downloadDeepAnalysisMissionExport,
     startMission: startDeepAnalysisMission,
     cancelMission: cancelDeepAnalysisMission,
     retryMission: retryDeepAnalysisMission,
