@@ -107,7 +107,12 @@ def classify_tool_risk(
         "classify_file_output_intent",
     }:
         return ToolRisk("read_only", "low", False)
-    if tool_name in {"create_report", "generate_image", "write_file"}:
+    if tool_name in {
+        "create_report",
+        "generate_image",
+        "write_file",
+        "run_python_calculation",
+    }:
         return ToolRisk("workspace_write", "low", approval_mode == "confirm_all")
     candidate = mcp_original_name or tool_name
     word_source = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", candidate)

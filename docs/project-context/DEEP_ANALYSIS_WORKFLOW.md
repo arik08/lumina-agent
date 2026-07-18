@@ -8,20 +8,37 @@
 
 ## 0. 구현 현황
 
-2026-07-18 기준으로 첫 Foundation Slice가 구현되어 있습니다. 이 상태는 아래 Target 전체의 완료가 아니라 Mission과 Workflow를 실제 제품 경로에 연결한 출발점입니다.
+2026-07-18 기준으로 첫 end-to-end 실행 Slice가 구현되어 있습니다. 아래 Target 전체가 완료된 것은 아니지만, Mission 생성부터 exact 자료 고정, 실제 Core Run 5단계 실행, Python 계산, Node별 산출물·비용 기록과 최종 보고서까지 제품 경로가 연결되어 있습니다.
 
 구현된 범위는 다음과 같습니다.
 
 - Lumina 공통 Shell의 독립 `심층분석` 메뉴와 lazy-loaded Workspace Frontend module
-- Project에 귀속되는 `Mission`, `WorkflowRevision`, `WorkflowNode`, `WorkflowEdge` 분리 entity와 migration `0034`
+- Project에 귀속되는 `Mission`, `WorkflowRevision`, `WorkflowNode`, `WorkflowEdge` 분리 entity와 실행 lineage migration `0034`, `0036`
 - Mission 목록·생성·상세 조회·revision CAS 수정 API, 기존 Project read/write 권한 재검증과 audit event
 - Mission 생성 시 서버에 고정되는 zero-based Workflow revision 1, 기본 5개 Node와 4개 Edge
 - Mission 생성 form, Mission 목록, `Workflow` Canvas, Node 선택·Inspector, 누적 비용과 opt-in Node별 비용 표시
+- Project write 권한과 revision을 확인하고 동일 버튼 2단계 확인으로 수행하는 Mission·Workflow cascade 삭제. Mission 산출물 ProjectFile도 soft delete하여 orphan folder를 남기지 않음
+- 각 Node를 기존 Lumina Core `Run`으로 실행하는 orchestration adapter, 숨김 `deep_analysis` Conversation과 Run·Node foreign reference
+- 완료된 LLM 응답 bytes를 추가 LLM 호출 없이 `심층분석/{Mission명}_{ID}/{Node ID}_{작업명}.md` Project 파일로 저장하는 평면 산출물 계약
+- Run 완료 시 다음 Node를 DB transaction으로 생성·연결하고 Worker Queue에 넣는 순차 실행, 실패·취소·Backend 재시작 뒤 terminal 동기화
+- Mission 시작 시 활성 ProjectFile의 `file ID·version ID·version·digest·path·MIME·size`를 고정하고 모든 후속 Node와 Workspace Tool이 해당 버전을 읽는 exact source manifest
+- 이전 Mission의 `심층분석/` 산출물은 새 Mission의 원본 입력에 자동 포함하지 않고, 현재 Mission이 생성한 선행 Node 산출물만 후속 Run manifest에 추가하는 Context 경계
+- CSV 입력만 허용하고 import·file·network·dynamic code·private attribute를 차단하는 `run_python_calculation` Tool. 격리 Python process, 12초 timeout, 입력·행·열·script·정적 반복 크기 한계를 적용하고 실행 `.py`와 결과 `.csv`를 평면 Mission 경로에 저장
+- 실패·중단 Node를 새 Core Run으로 재실행하고 이전 Run ID·상태·오류·시간·비용을 `runHistory`에 보존하며 선택 Node 이후 결과만 초기화하는 retry 계약
+- Provider usage의 `cost_usd`를 Node·Mission `microusd` projection으로 누적하고 Mission 예산을 다음 Run의 hard limit과 Node 전환 Gate에 반영
+- Node 특성별 기본 실행 Profile: 범위 확정은 `standard·brief`, 자료 확인은 `standard·standard`, 분석·합성은 `deep·standard`, 최종 보고서는 `deep·detailed`
+- 실행 중 현재 Node·실제 Run 상태와 최대 6,000자의 live output을 polling으로 표시하고, 완료 문서 요약·전체 Markdown·저장 경로·계산 파일·과거 시도·비용을 Inspector에 표시
+- revision CAS와 Project write 권한을 적용한 `중단` 동작과 기존 Mission·첫 활성 Node의 상태 정리
+- 배율과 무관한 transform 기반 Workflow 좌클릭 drag pan, 포인터 기준 wheel zoom(40~180%), 화면 내 확대·배율·축소·위치 초기화 control
+- 우상단 누적 비용 icon·hover 요약·Node별 opt-in 상세와 닫을 때 전체 Graph를 현재 viewport에 자동 맞춤하는 Node Inspector
+- Canvas 내부의 숨은 native scroll 상태를 금지하여 Inspector를 닫거나 viewport가 넓어져도 Node가 잘리지 않는 배치
 - Backend DB를 원본으로 한 새로고침 복원과 Project별 마지막 선택 Mission 복원
 
-아직 구현되지 않은 핵심 Target은 Node 실행·질문·Decision, LLM Markdown 파일 자동 저장, Python·CSV 계산 실행, drag·connect 편집과 Draft revision, canonical event replay, Workflow Pattern, Claim·Evidence·Quality Gate, Mission export입니다. 따라서 현재 UI의 비용은 영속 집계 필드를 표시하지만 실제 Provider usage가 연결되기 전까지 0이며, Workflow Node는 조회·선택만 가능하고 실행이나 이동이 가능한 것처럼 표현하지 않습니다.
+아직 구현되지 않은 핵심 Target은 질문·Decision Node, Node 위치 편집·connect와 Draft revision, 심층분석 canonical event projection, Workflow Pattern, Claim·Evidence·Quality Gate, Mission export입니다. 현재 기본 5개 Node는 순차 실행이고, typed source manifest는 구현됐지만 Claim·Evidence 단위의 선택형 Context 조립은 후속 Slice입니다.
 
-현재 Slice는 전용 Backend test, Ruff, Frontend typecheck·build와 사용자 runtime을 건드리지 않는 격리 port `15252`·`15253`의 Light·Dark browser flow로 검증했습니다. 브라우저에서 Mission 생성, 5개 Node 복원, Node Inspector 전환, 비용 상세와 재접속 후 동일 Mission 복원을 확인했습니다.
+현재 Slice는 전용 Backend test 10개에서 Mock 5단계 완주, 취소·재시도·시도 이력, source version 고정, Mission 산출물 입력 제외·삭제 연동, Python 계산의 frozen CSV 사용과 위험 script 차단을 검증했습니다. Ruff, Frontend 심층분석 test 8개, typecheck·production build와 migration `0001 → 0036`도 통과했습니다.
+
+격리 port `15252`·`15253`의 실제 GPT-5.5 검증에서는 `inputs/cost-variance.csv` 1개를 고정 입력으로 사용해 N001부터 N040까지 5개 Node를 완주했습니다. 5개 Markdown, N010·N020·N030의 Python·CSV 6개를 합쳐 총 11개 파일을 생성했고, 전기 1,850·당기 2,240·증감 +390과 기여율을 재현 계산했습니다. Node 비용은 N001 `US$0.0672`, N010 `US$0.2140`, N020 `US$0.3171`, N030 `US$0.4530`, N040 `US$0.0498`, Mission 합계 `US$1.1010`으로 기록됐습니다. 브라우저에서 live output, 중단, 삭제 2단계 확인, 40% 좌클릭 pan, wheel zoom, 빈 Canvas click Inspector 닫기, 닫은 뒤 전체 Node fit, 비용 popover, 파일 tree와 console error 0건을 확인했습니다.
 
 ## 1. 목적
 

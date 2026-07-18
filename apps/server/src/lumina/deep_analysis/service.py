@@ -3,18 +3,25 @@ from __future__ import annotations
 import hashlib
 import json
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from ..api.errors import ApiProblem
 from ..authorization import require_project
-from ..models import User
+from ..models import Conversation, ProjectFile, User, utc_now
 from .models import (
     DeepAnalysisMission,
     DeepAnalysisWorkflowEdge,
     DeepAnalysisWorkflowNode,
     DeepAnalysisWorkflowRevision,
 )
+
+
+DEEP_ANALYSIS_EXECUTION_AVAILABLE = True
+
+
+def execution_engine_available() -> bool:
+    return DEEP_ANALYSIS_EXECUTION_AVAILABLE
 
 
 DEFAULT_WORKFLOW_NODES = (
@@ -27,7 +34,9 @@ DEFAULT_WORKFLOW_NODES = (
 
 
 def _graph_digest() -> str:
-    canonical = json.dumps(DEFAULT_WORKFLOW_NODES, ensure_ascii=False, separators=(",", ":"))
+    canonical = json.dumps(
+        DEFAULT_WORKFLOW_NODES, ensure_ascii=False, separators=(",", ":")
+    )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -44,7 +53,9 @@ def create_mission(
     project = require_project(db, user, project_id, write=True)
     clean_title = title.strip()
     if not clean_title:
-        raise ApiProblem(422, "validation_failed", "분석 이름을 입력해 주세요.", field="title")
+        raise ApiProblem(
+            422, "validation_failed", "분석 이름을 입력해 주세요.", field="title"
+        )
 
     mission = DeepAnalysisMission(
         organization_id=project.organization_id,
@@ -102,13 +113,17 @@ def create_mission(
     return mission
 
 
-def list_missions(db: Session, user: User, project_id: str) -> list[DeepAnalysisMission]:
+def list_missions(
+    db: Session, user: User, project_id: str
+) -> list[DeepAnalysisMission]:
     project = require_project(db, user, project_id)
     return list(
         db.scalars(
             select(DeepAnalysisMission)
             .where(DeepAnalysisMission.project_id == project.id)
-            .order_by(DeepAnalysisMission.updated_at.desc(), DeepAnalysisMission.id.desc())
+            .order_by(
+                DeepAnalysisMission.updated_at.desc(), DeepAnalysisMission.id.desc()
+            )
         )
     )
 
@@ -175,9 +190,266 @@ def update_mission(
     return mission
 
 
+def delete_mission(
+    db: Session,
+    mission: DeepAnalysisMission,
+    *,
+    expected_revision: int,
+) -> int:
+    if mission.status == "running":
+        raise ApiProblem(
+            409,
+            "mission_running",
+            "진행 중인 심층분석은 중단한 뒤 삭제해 주세요.",
+        )
+    hidden_conversation = (
+        db.get(Conversation, mission.conversation_id)
+        if mission.conversation_id
+        else None
+    )
+    result = db.execute(
+        delete(DeepAnalysisMission).where(
+            DeepAnalysisMission.id == mission.id,
+            DeepAnalysisMission.revision == expected_revision,
+        )
+    )
+    if result.rowcount != 1:
+        db.refresh(mission)
+        raise ApiProblem(
+            409,
+            "revision_conflict",
+            "다른 변경사항이 먼저 저장되었습니다. 최신 상태를 불러와 다시 시도해 주세요.",
+            details={"currentRevision": mission.revision},
+        )
+    if hidden_conversation is not None:
+        db.delete(hidden_conversation)
+    from .execution import output_directory
+
+    now = utc_now()
+    deleted_files = db.execute(
+        update(ProjectFile)
+        .where(
+            ProjectFile.project_id == mission.project_id,
+            ProjectFile.deleted_at.is_(None),
+            ProjectFile.logical_path.startswith(f"{output_directory(mission)}/"),
+        )
+        .values(
+            active_path_key=None,
+            status="deleted",
+            deleted_at=now,
+            revision=ProjectFile.revision + 1,
+            updated_at=now,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    return int(getattr(deleted_files, "rowcount", 0) or 0)
+
+
+def start_mission(
+    db: Session,
+    mission: DeepAnalysisMission,
+    *,
+    expected_revision: int,
+) -> DeepAnalysisMission:
+    if mission.status == "running":
+        return mission
+    if not execution_engine_available():
+        raise ApiProblem(
+            503,
+            "deep_analysis_execution_unavailable",
+            "심층분석 실행 엔진이 아직 연결되지 않았습니다.",
+        )
+    if mission.status not in {"draft", "ready"}:
+        raise ApiProblem(
+            409,
+            "mission_not_startable",
+            "현재 상태에서는 심층분석을 시작할 수 없습니다.",
+            details={"status": mission.status},
+        )
+    if (
+        mission.budget_microusd is not None
+        and mission.spent_microusd >= mission.budget_microusd
+    ):
+        raise ApiProblem(
+            409,
+            "budget_exhausted",
+            "설정한 비용 한도가 남아 있지 않습니다. 예산을 늘린 뒤 다시 시작해 주세요.",
+        )
+
+    if not mission.source_manifest_json:
+        from .execution import capture_source_manifest
+
+        mission.source_manifest_json = capture_source_manifest(db, mission)
+
+    result = db.execute(
+        update(DeepAnalysisMission)
+        .where(
+            DeepAnalysisMission.id == mission.id,
+            DeepAnalysisMission.revision == expected_revision,
+        )
+        .values(
+            status="running",
+            revision=expected_revision + 1,
+            charter_json={**mission.charter_json, "confirmed": True},
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        db.refresh(mission)
+        raise ApiProblem(
+            409,
+            "revision_conflict",
+            "다른 변경사항이 먼저 저장되었습니다. 최신 상태를 불러와 다시 시도해 주세요.",
+            details={"currentRevision": mission.revision},
+        )
+
+    _revision, nodes, _edges = active_workflow(db, mission.id)
+    first_ready_node = next((node for node in nodes if node.status == "ready"), None)
+    if first_ready_node is not None:
+        first_ready_node.status = "running"
+        first_ready_node.started_at = utc_now()
+    db.flush()
+    db.refresh(mission)
+    return mission
+
+
+def retry_mission_node(
+    db: Session,
+    mission: DeepAnalysisMission,
+    *,
+    expected_revision: int,
+    node_key: str,
+) -> DeepAnalysisWorkflowNode:
+    if mission.status not in {"failed", "cancelled", "blocked"}:
+        raise ApiProblem(
+            409,
+            "mission_not_retryable",
+            "실패, 중단 또는 확인 필요 상태의 심층분석만 다시 실행할 수 있습니다.",
+            details={"status": mission.status},
+        )
+    revision, nodes, _edges = active_workflow(db, mission.id)
+    target = next((item for item in nodes if item.node_key == node_key), None)
+    if target is None:
+        raise ApiProblem(404, "node_not_found", "다시 실행할 Node를 찾을 수 없습니다.")
+    retryable_statuses = (
+        {"failed", "cancelled", "planned"}
+        if mission.status == "blocked"
+        else {"failed", "cancelled"}
+    )
+    if target.status not in retryable_statuses:
+        raise ApiProblem(
+            409,
+            "node_not_retryable",
+            "실패·중단된 Node 또는 비용 확인 후 대기 중인 Node만 다시 실행할 수 있습니다.",
+            details={"status": target.status},
+        )
+    if (
+        mission.budget_microusd is not None
+        and mission.spent_microusd >= mission.budget_microusd
+    ):
+        raise ApiProblem(
+            409,
+            "budget_exhausted",
+            "설정한 비용 한도가 남아 있지 않습니다. 예산을 늘린 뒤 다시 실행해 주세요.",
+        )
+
+    result = db.execute(
+        update(DeepAnalysisMission)
+        .where(
+            DeepAnalysisMission.id == mission.id,
+            DeepAnalysisMission.revision == expected_revision,
+        )
+        .values(
+            status="running",
+            revision=expected_revision + 1,
+            completion_contract_json={
+                **mission.completion_contract_json,
+                "qualityGate": "pending",
+            },
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        db.refresh(mission)
+        raise ApiProblem(
+            409,
+            "revision_conflict",
+            "다른 변경사항이 먼저 저장되었습니다. 최신 상태를 불러와 다시 시도해 주세요.",
+            details={"currentRevision": mission.revision},
+        )
+
+    from .execution import archive_current_attempt
+
+    archive_current_attempt(db, target)
+    for node in nodes:
+        if node.sequence < target.sequence:
+            continue
+        node.status = "running" if node.id == target.id else "planned"
+        node.run_id = None
+        node.output_project_file_id = None
+        node.output_logical_path = None
+        node.output_summary = ""
+        node.output_markdown = ""
+        node.generated_files_json = []
+        node.error_message = None
+        node.actual_cost_microusd = 0
+        node.started_at = utc_now() if node.id == target.id else None
+        node.finished_at = None
+    db.flush()
+    db.refresh(mission)
+    return target
+
+
+def cancel_mission(
+    db: Session,
+    mission: DeepAnalysisMission,
+    *,
+    expected_revision: int,
+) -> DeepAnalysisMission:
+    if mission.status == "cancelled":
+        return mission
+    if mission.status != "running":
+        raise ApiProblem(
+            409,
+            "mission_not_cancellable",
+            "진행 중인 심층분석만 중단할 수 있습니다.",
+            details={"status": mission.status},
+        )
+
+    result = db.execute(
+        update(DeepAnalysisMission)
+        .where(
+            DeepAnalysisMission.id == mission.id,
+            DeepAnalysisMission.revision == expected_revision,
+        )
+        .values(status="cancelled", revision=expected_revision + 1)
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        db.refresh(mission)
+        raise ApiProblem(
+            409,
+            "revision_conflict",
+            "다른 변경사항이 먼저 저장되었습니다. 최신 상태를 불러와 다시 시도해 주세요.",
+            details={"currentRevision": mission.revision},
+        )
+
+    _revision, nodes, _edges = active_workflow(db, mission.id)
+    for node in nodes:
+        if node.status == "running":
+            node.status = "cancelled"
+    db.flush()
+    db.refresh(mission)
+    return mission
+
+
 def active_workflow(
     db: Session, mission_id: str
-) -> tuple[DeepAnalysisWorkflowRevision, list[DeepAnalysisWorkflowNode], list[DeepAnalysisWorkflowEdge]]:
+) -> tuple[
+    DeepAnalysisWorkflowRevision,
+    list[DeepAnalysisWorkflowNode],
+    list[DeepAnalysisWorkflowEdge],
+]:
     revision = db.scalar(
         select(DeepAnalysisWorkflowRevision)
         .where(

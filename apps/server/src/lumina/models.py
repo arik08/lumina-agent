@@ -294,6 +294,9 @@ class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     status: Mapped[str] = mapped_column(
         String(24), default="active", index=True, nullable=False
     )
+    surface: Mapped[str] = mapped_column(
+        String(32), default="chat", index=True, nullable=False
+    )
     is_favorite: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_liked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     agent_id: Mapped[str] = mapped_column(String(80), default="general", nullable=False)

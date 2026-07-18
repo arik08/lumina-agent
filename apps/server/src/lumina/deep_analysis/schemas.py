@@ -37,6 +37,19 @@ class MissionPatch(ApiModel):
         return self
 
 
+class MissionStart(ApiModel):
+    expected_revision: int = Field(ge=1)
+
+
+class MissionCancel(ApiModel):
+    expected_revision: int = Field(ge=1)
+
+
+class MissionRetry(ApiModel):
+    expected_revision: int = Field(ge=1)
+    node_key: str = Field(min_length=1, max_length=32)
+
+
 class WorkflowNodeResponse(ApiModel):
     id: str
     node_key: str
@@ -48,9 +61,20 @@ class WorkflowNodeResponse(ApiModel):
     position_x: int
     position_y: int
     config: dict[str, Any]
+    run_id: str | None
+    output_project_file_id: str | None
+    output_logical_path: str | None
     output_summary: str
+    output_markdown: str
+    generated_files: list[dict[str, Any]]
+    run_history: list[dict[str, Any]]
+    run_status: str | None
+    live_output: str
+    error_message: str | None
     estimated_cost_microusd: int
     actual_cost_microusd: int
+    started_at: datetime | None
+    finished_at: datetime | None
 
 
 class WorkflowEdgeResponse(ApiModel):
@@ -89,6 +113,8 @@ class MissionSummaryResponse(ApiModel):
 
 
 class MissionDetailResponse(MissionSummaryResponse):
+    execution_available: bool
     charter: dict[str, Any]
     completion_contract: dict[str, Any]
+    source_manifest: list[dict[str, Any]]
     workflow: WorkflowRevisionResponse

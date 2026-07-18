@@ -94,7 +94,7 @@ def list_conversations(
     limit: int = 30,
 ) -> tuple[list[Conversation], str | None]:
     limit = max(1, min(limit, 100))
-    query = conversation_access_query(user)
+    query = conversation_access_query(user).where(Conversation.surface == "chat")
     if project_id:
         require_project(db, user, project_id)
         query = query.where(Conversation.project_id == project_id)
@@ -149,6 +149,7 @@ def list_auto_delete_candidates(
         db.scalars(
             select(Conversation)
             .where(
+                Conversation.surface == "chat",
                 Conversation.status == "active",
                 Conversation.deleted_at.is_(None),
                 Conversation.is_liked.is_(False),
@@ -172,7 +173,7 @@ def search_conversation_content(
     if not tokens:
         return [], ()
     limit = max(1, min(limit, 100))
-    query = conversation_access_query(user)
+    query = conversation_access_query(user).where(Conversation.surface == "chat")
     if project_id:
         require_project(db, user, project_id)
         query = query.where(Conversation.project_id == project_id)

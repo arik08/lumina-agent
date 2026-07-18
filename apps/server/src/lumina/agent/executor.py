@@ -113,6 +113,10 @@ from ..tools.workspace import (
     WORKSPACE_TOOL_SCHEMAS,
     execute_workspace_tool,
 )
+from ..deep_analysis.calculations import (
+    PYTHON_CALCULATION_TOOL_SCHEMA,
+    execute_python_calculation,
+)
 from ..runs.broker import event_broker
 from ..runs.recovery import (
     clear_model_turn_inflight,
@@ -668,7 +672,10 @@ class LocalRunExecutor:
         queued_ids: list[str] = []
         recovery_notify_ids: list[str] = []
         queue_recovery_run_ids: list[str] = []
+        deep_analysis_terminal_ids: tuple[str, ...] = ()
         with session_scope() as db:
+            from ..deep_analysis.execution import pending_terminal_run_ids
+
             recovery = prepare_worker_recovery(db)
             recovery_notify_ids = [
                 *recovery.resumable_run_ids,
@@ -701,12 +708,15 @@ class LocalRunExecutor:
                 )
                 if terminal_run_id is not None:
                     queue_recovery_run_ids.append(terminal_run_id)
+            deep_analysis_terminal_ids = pending_terminal_run_ids(db)
         for run_id in recovery_notify_ids:
             await event_broker.notify(run_id)
         for run_id in queue_recovery_run_ids:
             await self._promote_next_message(run_id)
         for run_id in queued_ids:
             self.enqueue(run_id)
+        for run_id in deep_analysis_terminal_ids:
+            await self._sync_deep_analysis(run_id)
         if self.settings.environment != "test":
             self._codex_warmup_task = asyncio.create_task(
                 self._warm_codex_provider(), name="lumina-codex-warmup"
@@ -802,6 +812,7 @@ class LocalRunExecutor:
                     continue
                 await event_broker.notify(run_id)
                 await self._execute(run_id)
+                await self._sync_deep_analysis(run_id)
                 await self._promote_next_message(run_id)
                 return
         except asyncio.CancelledError:
@@ -816,6 +827,7 @@ class LocalRunExecutor:
                 },
             )
             await self._fail_run(run_id, exc.code, str(exc))
+            await self._sync_deep_analysis(run_id)
             await self._promote_next_message(run_id)
         except ProviderConfigurationError as exc:
             logger.warning(
@@ -823,6 +835,7 @@ class LocalRunExecutor:
                 extra={"run_id": run_id, "provider_error": type(exc).__name__},
             )
             await self._fail_run(run_id, "provider_configuration", str(exc))
+            await self._sync_deep_analysis(run_id)
             await self._promote_next_message(run_id)
         except ProviderRequestError as exc:
             logger.warning(
@@ -841,6 +854,7 @@ class LocalRunExecutor:
                 str(exc),
                 provider_error=exc,
             )
+            await self._sync_deep_analysis(run_id)
             await self._promote_next_message(run_id)
         except ProviderError as exc:
             logger.warning(
@@ -848,6 +862,7 @@ class LocalRunExecutor:
                 extra={"run_id": run_id, "provider_error": type(exc).__name__},
             )
             await self._fail_run(run_id, "provider_request", str(exc))
+            await self._sync_deep_analysis(run_id)
             await self._promote_next_message(run_id)
         except Exception:
             logger.exception(
@@ -856,7 +871,35 @@ class LocalRunExecutor:
             await self._fail_run(
                 run_id, "executor_error", "로컬 실행기에서 오류가 발생했습니다."
             )
+            await self._sync_deep_analysis(run_id)
             await self._promote_next_message(run_id)
+
+    async def _sync_deep_analysis(self, run_id: str) -> None:
+        from ..deep_analysis.execution import fail_terminal_sync, sync_terminal_run
+
+        try:
+            with session_scope() as db:
+                result = sync_terminal_run(
+                    db,
+                    run_id=run_id,
+                    storage=self.file_storage,
+                    settings=self.settings,
+                )
+        except Exception:
+            logger.exception(
+                "Deep-analysis terminal synchronization failed",
+                extra={"run_id": run_id},
+            )
+            with session_scope() as db:
+                fail_terminal_sync(
+                    db,
+                    run_id=run_id,
+                    message="Node 출력 저장 또는 다음 단계 준비 중 오류가 발생했습니다.",
+                )
+            return
+        if result.next_run_id:
+            self.enqueue(result.next_run_id)
+            await event_broker.notify(result.next_run_id)
 
     async def _claim(self, run_id: str) -> ClaimResult:
         async with self._claim_lock:
@@ -1078,6 +1121,11 @@ class LocalRunExecutor:
             ),
             *((ARTIFACT_WRITE_TOOL_SCHEMA,) if artifact_tools_available else ()),
             *((GENERATE_IMAGE_TOOL_SCHEMA,) if image_generation_capable else ()),
+            *(
+                (PYTHON_CALCULATION_TOOL_SCHEMA,)
+                if isinstance(run.snapshot_json.get("deep_analysis"), Mapping)
+                else ()
+            ),
             *((_WEB_SEARCH_TOOL_SCHEMA,) if web_research_budget[0] > 0 else ()),
             *((_WEB_FETCH_TOOL_SCHEMA,) if web_research_budget[1] > 0 else ()),
             *SOURCE_DOCUMENT_TOOL_SCHEMAS,
@@ -3880,6 +3928,37 @@ class LocalRunExecutor:
                 tool_id,
                 payload,
                 f"대형 원문 {tool_call['name']} 작업을 완료했습니다.",
+            )
+            return payload
+
+        if tool_call["name"] == "run_python_calculation":
+            try:
+                with session_scope() as db:
+                    calculation_run = db.get(Run, run_id)
+                    calculation_user = (
+                        db.get(User, calculation_run.user_id)
+                        if calculation_run is not None
+                        else None
+                    )
+                    if calculation_run is None or calculation_user is None:
+                        raise RuntimeError(
+                            "Run context disappeared during Python calculation"
+                        )
+                    payload = execute_python_calculation(
+                        db,
+                        self.file_storage,
+                        run=calculation_run,
+                        user=calculation_user,
+                        arguments=arguments,
+                        max_upload_bytes=self.settings.max_upload_bytes,
+                    )
+            except (ApiProblem, TypeError, ValueError) as exc:
+                return await self._fail_tool_execution(run_id, tool_id, exc)
+            await self._complete_tool_execution(
+                run_id,
+                tool_id,
+                payload,
+                f"Python 계산 결과 {payload['rowCount']}행을 저장했습니다.",
             )
             return payload
 

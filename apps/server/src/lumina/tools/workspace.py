@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from ..audit import record_audit
 from ..extensions.package_policy import SKILL_TEXT_SUFFIXES
 from ..extensions.service import sync_workspace_skill
-from ..models import ProjectFile, Run, User
+from ..models import ProjectFile, ProjectFileVersion, Run, User
 from ..project_files.service import (
     create_project_file,
     create_project_file_version,
@@ -150,7 +150,7 @@ def execute_workspace_tool(
     arguments: dict[str, Any],
     max_upload_bytes: int,
 ) -> dict[str, Any]:
-    files = _active_files(db, run.project_id)
+    files = _active_files(db, run)
     if name == "glob":
         pattern = _glob_pattern(arguments.get("pattern"))
         limit = _limit(arguments.get("limit", 100))
@@ -164,7 +164,7 @@ def execute_workspace_tool(
         )
     if name == "read_file":
         item = _require_file(files, arguments.get("path"))
-        version = get_project_file_version(db, item)
+        version = _run_file_version(db, run, item)
         text = _decode_text(
             storage.read_bytes(
                 version.storage_key, expected_sha256=version.content_hash
@@ -191,7 +191,7 @@ def execute_workspace_tool(
             "truncated": bool(next_offset or truncated_by_chars),
         }
     if name == "grep":
-        return _grep(db, storage, files, arguments)
+        return _grep(db, storage, run, files, arguments)
     if name == "write_file":
         path = normalize_logical_path(str(arguments.get("path", "")))
         content = str(arguments.get("content", "")).encode("utf-8")
@@ -249,16 +249,51 @@ def execute_workspace_tool(
     raise ValueError(f"Unknown workspace tool: {name}")
 
 
-def _active_files(db: Session, project_id: str) -> list[ProjectFile]:
-    return list(
+def _active_files(db: Session, run: Run) -> list[ProjectFile]:
+    files = list(
         db.scalars(
             select(ProjectFile)
             .where(
-                ProjectFile.project_id == project_id, ProjectFile.deleted_at.is_(None)
+                ProjectFile.project_id == run.project_id, ProjectFile.deleted_at.is_(None)
             )
             .order_by(ProjectFile.logical_path)
         )
     )
+    manifest = run.snapshot_json.get("project_file_manifest")
+    if not isinstance(manifest, list):
+        return files
+    allowed_ids = {
+        str(item.get("projectFileId"))
+        for item in manifest
+        if isinstance(item, dict) and item.get("projectFileId")
+    }
+    return [item for item in files if item.id in allowed_ids]
+
+
+def _run_file_version(
+    db: Session, run: Run, item: ProjectFile
+) -> ProjectFileVersion:
+    manifest = run.snapshot_json.get("project_file_manifest")
+    if isinstance(manifest, list):
+        snapshot = next(
+            (
+                entry
+                for entry in manifest
+                if isinstance(entry, dict)
+                and entry.get("projectFileId") == item.id
+            ),
+            None,
+        )
+        if snapshot is not None:
+            version = db.get(ProjectFileVersion, str(snapshot.get("versionId") or ""))
+            if (
+                version is None
+                or version.project_file_id != item.id
+                or version.content_hash != snapshot.get("contentHash")
+            ):
+                raise ValueError(f"Frozen Project file version is unavailable: {item.logical_path}")
+            return version
+    return get_project_file_version(db, item)
 
 
 def _sync_workspace_skill_draft(
@@ -275,7 +310,7 @@ def _sync_workspace_skill_draft(
     slug = parts[1]
     root = f"{parts[0]}/{slug}"
     package: dict[str, str] = {}
-    for item in _active_files(db, run.project_id):
+    for item in _active_files(db, run):
         item_parts = PurePosixPath(item.logical_path).parts
         if (
             len(item_parts) < 3
@@ -424,6 +459,7 @@ def _list_dir(files: list[ProjectFile], raw_path: str, limit: int) -> dict[str, 
 def _grep(
     db: Session,
     storage: ManagedStorage,
+    run: Run,
     files: list[ProjectFile],
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
@@ -452,7 +488,7 @@ def _grep(
             continue
         if not _matches(item.logical_path, pattern):
             continue
-        version = get_project_file_version(db, item)
+        version = _run_file_version(db, run, item)
         try:
             text = _decode_text(
                 storage.read_bytes(

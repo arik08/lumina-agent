@@ -20,6 +20,7 @@ import type {
   AdminUserList,
   AttachmentSummary,
   AuthSession,
+  CancelDeepAnalysisMissionRequest,
   CreateKnowledgeEntityRequest,
   CreateKnowledgeSourceRequest,
   CreateKnowledgeSpaceRequest,
@@ -42,6 +43,7 @@ import type {
   LoginRequest,
   RegistrationRequest,
   RegistrationResponse,
+  RetryDeepAnalysisMissionRequest,
   InstructionDocument,
   RuntimePromptDocument,
   RuntimePromptKey,
@@ -67,6 +69,7 @@ import type {
   RunStreamHandlers,
   SaveArtifactVersionRequest,
   StartRunRequest,
+  StartDeepAnalysisMissionRequest,
   TurnSetPage,
   UserMemory,
   UpdateAdminUserRequest,
@@ -1243,6 +1246,50 @@ export async function getDeepAnalysisMission(missionId: string, signal?: AbortSi
   );
 }
 
+export async function startDeepAnalysisMission(
+  missionId: string,
+  payload: StartDeepAnalysisMissionRequest,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisMissionDetail>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/start`,
+    { method: "POST", body: payload, signal },
+  );
+}
+
+export async function cancelDeepAnalysisMission(
+  missionId: string,
+  payload: CancelDeepAnalysisMissionRequest,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisMissionDetail>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/cancel`,
+    { method: "POST", body: payload, signal },
+  );
+}
+
+export async function retryDeepAnalysisMission(
+  missionId: string,
+  payload: RetryDeepAnalysisMissionRequest,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisMissionDetail>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/retry`,
+    { method: "POST", body: payload, signal },
+  );
+}
+
+export async function deleteDeepAnalysisMission(
+  missionId: string,
+  expectedRevision: number,
+  signal?: AbortSignal,
+) {
+  await request<void>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}`,
+    { method: "DELETE", query: { expected_revision: expectedRevision }, signal },
+  );
+}
+
 export async function updateDeepAnalysisMission(
   missionId: string,
   payload: UpdateDeepAnalysisMissionRequest,
@@ -2126,6 +2173,10 @@ export const api = {
     listMissions: listDeepAnalysisMissions,
     createMission: createDeepAnalysisMission,
     getMission: getDeepAnalysisMission,
+    startMission: startDeepAnalysisMission,
+    cancelMission: cancelDeepAnalysisMission,
+    retryMission: retryDeepAnalysisMission,
+    deleteMission: deleteDeepAnalysisMission,
     updateMission: updateDeepAnalysisMission,
   },
   knowledge: {

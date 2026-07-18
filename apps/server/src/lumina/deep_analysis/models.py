@@ -1,8 +1,19 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, BigInteger, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..db import Base
@@ -28,14 +39,28 @@ class DeepAnalysisMission(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     created_by_user_id: Mapped[str] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), index=True, nullable=False
     )
+    conversation_id: Mapped[str | None] = mapped_column(
+        ForeignKey("conversations.id", ondelete="SET NULL"), unique=True
+    )
     title: Mapped[str] = mapped_column(String(240), nullable=False)
     objective: Mapped[str] = mapped_column(Text, default="", nullable=False)
-    status: Mapped[str] = mapped_column(String(32), default="draft", index=True, nullable=False)
-    start_mode: Mapped[str] = mapped_column(String(32), default="zero_based", nullable=False)
-    autonomy_mode: Mapped[str] = mapped_column(String(32), default="balanced", nullable=False)
-    charter_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), default="draft", index=True, nullable=False
+    )
+    start_mode: Mapped[str] = mapped_column(
+        String(32), default="zero_based", nullable=False
+    )
+    autonomy_mode: Mapped[str] = mapped_column(
+        String(32), default="balanced", nullable=False
+    )
+    charter_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
     completion_contract_json: Mapped[dict[str, Any]] = mapped_column(
         JSON, default=dict, nullable=False
+    )
+    source_manifest_json: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, default=list, nullable=False
     )
     budget_microusd: Mapped[int | None] = mapped_column(BigInteger)
     spent_microusd: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
@@ -94,10 +119,33 @@ class DeepAnalysisWorkflowNode(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     position_x: Mapped[int] = mapped_column(Integer, nullable=False)
     position_y: Mapped[int] = mapped_column(Integer, nullable=False)
-    config_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    config_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
+    run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("runs.id", ondelete="SET NULL"), unique=True
+    )
+    output_project_file_id: Mapped[str | None] = mapped_column(
+        ForeignKey("project_files.id", ondelete="SET NULL")
+    )
+    output_logical_path: Mapped[str | None] = mapped_column(String(1000))
     output_summary: Mapped[str] = mapped_column(Text, default="", nullable=False)
-    estimated_cost_microusd: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
-    actual_cost_microusd: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    output_markdown: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    generated_files_json: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
+    run_history_json: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
+    error_message: Mapped[str | None] = mapped_column(Text)
+    estimated_cost_microusd: Mapped[int] = mapped_column(
+        BigInteger, default=0, nullable=False
+    )
+    actual_cost_microusd: Mapped[int] = mapped_column(
+        BigInteger, default=0, nullable=False
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class DeepAnalysisWorkflowEdge(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -118,4 +166,6 @@ class DeepAnalysisWorkflowEdge(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     source_node_key: Mapped[str] = mapped_column(String(32), nullable=False)
     target_node_key: Mapped[str] = mapped_column(String(32), nullable=False)
-    edge_type: Mapped[str] = mapped_column(String(24), default="sequence", nullable=False)
+    edge_type: Mapped[str] = mapped_column(
+        String(24), default="sequence", nullable=False
+    )

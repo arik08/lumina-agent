@@ -1,25 +1,39 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.orm import Session
 
 from ...audit import record_audit
+from ...agent.executor import local_run_executor
+from ...api.schemas import RunActionRequest
+from ...config import Settings, get_settings
 from ...db import get_db
+from ...deep_analysis.execution import create_node_run
 from ...deep_analysis.models import DeepAnalysisMission
 from ...deep_analysis.schemas import (
+    MissionCancel,
     MissionCreate,
     MissionDetailResponse,
     MissionPatch,
+    MissionRetry,
+    MissionStart,
     MissionSummaryResponse,
 )
 from ...deep_analysis.service import (
     active_workflow,
+    cancel_mission,
     create_mission,
+    delete_mission,
+    execution_engine_available,
     list_missions,
     require_mission,
+    retry_mission_node,
+    start_mission,
     update_mission,
 )
-from ...models import User
+from ...models import Run, User
+from ...runs.broker import event_broker
+from ...runs.service import apply_run_action
 from ..dependencies import AuthContext, get_current_user, require_csrf
 
 
@@ -45,10 +59,18 @@ def _summary_payload(mission: DeepAnalysisMission) -> dict[str, object]:
 
 def _detail_payload(db: Session, mission: DeepAnalysisMission) -> dict[str, object]:
     revision, nodes, edges = active_workflow(db, mission.id)
+    runs = {
+        run.id: run
+        for run in db.query(Run).filter(
+            Run.id.in_([node.run_id for node in nodes if node.run_id])
+        )
+    }
     return {
         **_summary_payload(mission),
+        "execution_available": execution_engine_available(),
         "charter": mission.charter_json,
         "completion_contract": mission.completion_contract_json,
+        "source_manifest": mission.source_manifest_json,
         "workflow": {
             "id": revision.id,
             "revision_number": revision.revision_number,
@@ -68,9 +90,30 @@ def _detail_payload(db: Session, mission: DeepAnalysisMission) -> dict[str, obje
                     "position_x": node.position_x,
                     "position_y": node.position_y,
                     "config": node.config_json,
+                    "run_id": node.run_id,
+                    "output_project_file_id": node.output_project_file_id,
+                    "output_logical_path": node.output_logical_path,
                     "output_summary": node.output_summary,
+                    "output_markdown": node.output_markdown,
+                    "generated_files": node.generated_files_json,
+                    "run_history": node.run_history_json,
+                    "run_status": (
+                        runs[node.run_id].status
+                        if node.run_id and node.run_id in runs
+                        else None
+                    ),
+                    "live_output": (
+                        runs[node.run_id].assistant_draft[-6_000:]
+                        if node.run_id
+                        and node.run_id in runs
+                        and node.status == "running"
+                        else ""
+                    ),
+                    "error_message": node.error_message,
                     "estimated_cost_microusd": node.estimated_cost_microusd,
                     "actual_cost_microusd": node.actual_cost_microusd,
+                    "started_at": node.started_at,
+                    "finished_at": node.finished_at,
                 }
                 for node in nodes
             ],
@@ -98,7 +141,9 @@ def get_missions(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[dict[str, object]]:
-    return [_summary_payload(mission) for mission in list_missions(db, user, project_id)]
+    return [
+        _summary_payload(mission) for mission in list_missions(db, user, project_id)
+    ]
 
 
 @router.post(
@@ -134,6 +179,7 @@ def post_mission(
     )
     db.commit()
     return _detail_payload(db, mission)
+
 
 @router.get(
     "/deep-analysis/missions/{mission_id}",
@@ -179,4 +225,173 @@ def patch_mission(
         metadata={"revision": mission.revision},
     )
     db.commit()
+    return _detail_payload(db, mission)
+
+
+@router.delete("/deep-analysis/missions/{mission_id}", status_code=204)
+def remove_mission(
+    mission_id: str,
+    request: Request,
+    expected_revision: int = Query(ge=1),
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> Response:
+    mission = require_mission(db, context.user, mission_id, write=True)
+    project_id = mission.project_id
+    revision = mission.revision
+    deleted_file_count = delete_mission(
+        db,
+        mission,
+        expected_revision=expected_revision,
+    )
+    record_audit(
+        db,
+        action="deep_analysis_mission_deleted",
+        target_type="deep_analysis_mission",
+        target_id=mission_id,
+        result="success",
+        actor=context.user,
+        request_id=getattr(request.state, "request_id", None),
+        metadata={
+            "project_id": project_id,
+            "revision": revision,
+            "deleted_file_count": deleted_file_count,
+        },
+    )
+    db.commit()
+    return Response(status_code=204)
+
+
+@router.post(
+    "/deep-analysis/missions/{mission_id}/start",
+    response_model=MissionDetailResponse,
+)
+async def post_mission_start(
+    mission_id: str,
+    payload: MissionStart,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    mission = require_mission(db, context.user, mission_id, write=True)
+    start_mission(db, mission, expected_revision=payload.expected_revision)
+    _workflow_revision, nodes, _edges = active_workflow(db, mission.id)
+    active_node = next((node for node in nodes if node.status == "running"), None)
+    if active_node is None:
+        raise RuntimeError("Deep-analysis Workflow has no runnable Node")
+    run, created = create_node_run(
+        db,
+        user=context.user,
+        mission=mission,
+        node=active_node,
+        settings=settings,
+    )
+    record_audit(
+        db,
+        action="deep_analysis_mission_started",
+        target_type="deep_analysis_mission",
+        target_id=mission.id,
+        result="success",
+        actor=context.user,
+        request_id=getattr(request.state, "request_id", None),
+        metadata={"revision": mission.revision},
+    )
+    db.commit()
+    if created:
+        local_run_executor.enqueue(run.id)
+        await event_broker.notify(run.id)
+    return _detail_payload(db, mission)
+
+
+@router.post(
+    "/deep-analysis/missions/{mission_id}/cancel",
+    response_model=MissionDetailResponse,
+)
+async def post_mission_cancel(
+    mission_id: str,
+    payload: MissionCancel,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    mission = require_mission(db, context.user, mission_id, write=True)
+    _workflow_revision, nodes, _edges = active_workflow(db, mission.id)
+    active_run_id = next(
+        (node.run_id for node in nodes if node.status == "running" and node.run_id),
+        None,
+    )
+    cancel_mission(db, mission, expected_revision=payload.expected_revision)
+    cancelled_run = None
+    if active_run_id is not None:
+        cancelled_run, _command, _message, _changed = apply_run_action(
+            db,
+            user=context.user,
+            run_id=active_run_id,
+            payload=RunActionRequest(type="cancel"),
+            idempotency_key=(
+                f"deep-analysis-cancel:{mission.id}:{payload.expected_revision}"
+            ),
+        )
+    record_audit(
+        db,
+        action="deep_analysis_mission_cancelled",
+        target_type="deep_analysis_mission",
+        target_id=mission.id,
+        result="success",
+        actor=context.user,
+        request_id=getattr(request.state, "request_id", None),
+        metadata={"revision": mission.revision},
+    )
+    db.commit()
+    if cancelled_run is not None:
+        local_run_executor.cancel(cancelled_run.id)
+        await event_broker.notify(cancelled_run.id)
+    return _detail_payload(db, mission)
+
+
+@router.post(
+    "/deep-analysis/missions/{mission_id}/retry",
+    response_model=MissionDetailResponse,
+)
+async def post_mission_retry(
+    mission_id: str,
+    payload: MissionRetry,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    mission = require_mission(db, context.user, mission_id, write=True)
+    node = retry_mission_node(
+        db,
+        mission,
+        expected_revision=payload.expected_revision,
+        node_key=payload.node_key,
+    )
+    run, created = create_node_run(
+        db,
+        user=context.user,
+        mission=mission,
+        node=node,
+        settings=settings,
+    )
+    record_audit(
+        db,
+        action="deep_analysis_node_retried",
+        target_type="deep_analysis_workflow_node",
+        target_id=node.id,
+        result="success",
+        actor=context.user,
+        request_id=getattr(request.state, "request_id", None),
+        metadata={
+            "mission_id": mission.id,
+            "node_key": node.node_key,
+            "run_id": run.id,
+        },
+    )
+    db.commit()
+    if created:
+        local_run_executor.enqueue(run.id)
+        await event_broker.notify(run.id)
     return _detail_payload(db, mission)

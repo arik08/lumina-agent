@@ -224,9 +224,34 @@ export interface DeepAnalysisWorkflowNode {
   positionX: number;
   positionY: number;
   config: Record<string, unknown>;
+  runId: UUID | null;
+  outputProjectFileId: UUID | null;
+  outputLogicalPath: string | null;
   outputSummary: string;
+  outputMarkdown: string;
+  generatedFiles: Array<{
+    projectFileId: UUID;
+    path: string;
+    version: number;
+    contentHash: string;
+    kind: string;
+  }>;
+  runHistory: Array<{
+    attempt: number;
+    runId: UUID;
+    status: string;
+    costMicrousd: number;
+    errorMessage: string | null;
+    startedAt: IsoDateTime | null;
+    finishedAt: IsoDateTime | null;
+  }>;
+  runStatus: string | null;
+  liveOutput: string;
+  errorMessage: string | null;
   estimatedCostMicrousd: number;
   actualCostMicrousd: number;
+  startedAt: IsoDateTime | null;
+  finishedAt: IsoDateTime | null;
 }
 
 export interface DeepAnalysisWorkflowEdge {
@@ -250,8 +275,18 @@ export interface DeepAnalysisWorkflowRevision {
 }
 
 export interface DeepAnalysisMissionDetail extends DeepAnalysisMissionSummary {
+  executionAvailable: boolean;
   charter: Record<string, unknown>;
   completionContract: Record<string, unknown>;
+  sourceManifest: Array<{
+    projectFileId: UUID;
+    logicalPath: string;
+    version: number;
+    versionId: UUID;
+    contentHash: string;
+    mimeType: string;
+    sizeBytes: number;
+  }>;
   workflow: DeepAnalysisWorkflowRevision;
 }
 
@@ -268,6 +303,19 @@ export interface UpdateDeepAnalysisMissionRequest {
   objective?: string;
   autonomyMode?: DeepAnalysisAutonomyMode;
   budgetMicrousd?: number;
+}
+
+export interface StartDeepAnalysisMissionRequest {
+  expectedRevision: number;
+}
+
+export interface CancelDeepAnalysisMissionRequest {
+  expectedRevision: number;
+}
+
+export interface RetryDeepAnalysisMissionRequest {
+  expectedRevision: number;
+  nodeKey: string;
 }
 
 export type KnowledgeSourceType = "file" | "url" | "conversation" | "text" | "connector";

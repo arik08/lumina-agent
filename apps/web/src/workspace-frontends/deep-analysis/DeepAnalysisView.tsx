@@ -1,14 +1,30 @@
 import {
+  AlertTriangle,
   ChevronRight,
+  CircleAlert,
   CircleDollarSign,
   GitBranch,
   LoaderCircle,
   Menu,
+  Play,
   Plus,
   RefreshCw,
+  RotateCcw,
+  Square,
+  Trash2,
   X,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  type FormEvent,
+  type PointerEvent as ReactPointerEvent,
+  type WheelEvent as ReactWheelEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { api, ApiError } from "../../api";
 import type {
@@ -33,7 +49,20 @@ const statusLabels: Record<string, string> = {
   completed: "완료",
   failed: "실패",
   blocked: "확인 필요",
+  cancelled: "중단됨",
+  queued: "대기 중",
+  preparing: "준비 중",
+  model_streaming: "응답 생성 중",
+  tools_running: "도구 실행 중",
+  awaiting_approval: "승인 대기",
+  awaiting_input: "입력 대기",
+  paused: "일시정지",
+  limit_reached: "한도 도달",
+  interrupted: "복구 중",
 };
+
+const minimumCanvasScale = 0.4;
+const maximumCanvasScale = 1.8;
 
 function statusLabel(status: string) {
   return statusLabels[status] ?? status;
@@ -72,10 +101,27 @@ export function DeepAnalysisView({
   const [createOpen, setCreateOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [objective, setObjective] = useState("");
+  const [budgetUsd, setBudgetUsd] = useState("");
   const [autonomyMode, setAutonomyMode] =
     useState<DeepAnalysisAutonomyMode>("balanced");
   const [error, setError] = useState<string | null>(null);
   const [costDetailsOpen, setCostDetailsOpen] = useState(false);
+  const [startingMission, setStartingMission] = useState(false);
+  const [cancellingMission, setCancellingMission] = useState(false);
+  const [retryingNodeKey, setRetryingNodeKey] = useState<string | null>(null);
+  const [deleteArmed, setDeleteArmed] = useState(false);
+  const [deletingMission, setDeletingMission] = useState(false);
+  const [canvasScale, setCanvasScale] = useState(1);
+  const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
+  const [canvasPanning, setCanvasPanning] = useState(false);
+  const canvasViewportRef = useRef<HTMLDivElement>(null);
+  const canvasPanRef = useRef<{
+    pointerId: number;
+    clientX: number;
+    clientY: number;
+    offsetX: number;
+    offsetY: number;
+  } | null>(null);
 
   useEffect(() => {
     setMissions([]);
@@ -109,6 +155,7 @@ export function DeepAnalysisView({
     setMission(null);
     setSelectedNodeKey(null);
     setCostDetailsOpen(false);
+    setDeleteArmed(false);
     if (!projectId || !selectedMissionId) return;
 
     window.localStorage.setItem(
@@ -133,14 +180,234 @@ export function DeepAnalysisView({
     return () => controller.abort();
   }, [projectId, selectedMissionId]);
 
+  useEffect(() => {
+    setCanvasScale(1);
+    setCanvasOffset({ x: 0, y: 0 });
+  }, [selectedMissionId]);
+
+  useEffect(() => {
+    if (!selectedMissionId || mission?.status !== "running") return;
+    let active = true;
+    const refresh = () => {
+      void api.deepAnalysis.getMission(selectedMissionId).then((detail) => {
+        if (!active) return;
+        setMission(detail);
+        setMissions((current) =>
+          current.map((item) => (item.id === detail.id ? detail : item)),
+        );
+      }).catch(() => {
+        // A transient polling failure must not hide the last durable snapshot.
+      });
+    };
+    const timer = window.setInterval(refresh, 1_500);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [mission?.status, selectedMissionId]);
+
   const selectedNode = useMemo(
     () => mission?.workflow.nodes.find((node) => node.nodeKey === selectedNodeKey) ?? null,
     [mission, selectedNodeKey],
   );
+  const activeNode = useMemo(
+    () => mission?.workflow.nodes.find((node) => node.status === "running") ?? null,
+    [mission],
+  );
+  const completedNodeCount = useMemo(
+    () => mission?.workflow.nodes.filter((node) => node.status === "completed").length ?? 0,
+    [mission],
+  );
+
+  function updateCanvasScale(nextScale: number, originX?: number, originY?: number) {
+    const viewport = canvasViewportRef.current;
+    const boundedScale = Math.min(maximumCanvasScale, Math.max(minimumCanvasScale, nextScale));
+    if (!viewport || boundedScale === canvasScale) return;
+
+    const localX = originX ?? viewport.clientWidth / 2;
+    const localY = originY ?? viewport.clientHeight / 2;
+    const contentX = (localX - canvasOffset.x) / canvasScale;
+    const contentY = (localY - canvasOffset.y) / canvasScale;
+    setCanvasScale(boundedScale);
+    setCanvasOffset({
+      x: localX - contentX * boundedScale,
+      y: localY - contentY * boundedScale,
+    });
+  }
+
+  function handleCanvasWheel(event: ReactWheelEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const viewport = canvasViewportRef.current;
+    if (!viewport) return;
+    const rect = viewport.getBoundingClientRect();
+    const step = event.deltaY < 0 ? 0.1 : -0.1;
+    updateCanvasScale(
+      Math.round((canvasScale + step) * 10) / 10,
+      event.clientX - rect.left,
+      event.clientY - rect.top,
+    );
+  }
+
+  function fitCanvasToViewport() {
+    const viewport = canvasViewportRef.current;
+    const nodes = mission?.workflow.nodes ?? [];
+    if (!viewport || !nodes.length) return;
+
+    const padding = 36;
+    const minX = Math.min(...nodes.map((node) => node.positionX));
+    const minY = Math.min(...nodes.map((node) => node.positionY));
+    const maxX = Math.max(...nodes.map((node) => node.positionX + 176));
+    const maxY = Math.max(...nodes.map((node) => node.positionY + 86));
+    const contentWidth = Math.max(1, maxX - minX);
+    const contentHeight = Math.max(1, maxY - minY);
+    const fittedScale = Math.min(
+      1,
+      Math.max(
+        minimumCanvasScale,
+        Math.min(
+          (viewport.clientWidth - padding * 2) / contentWidth,
+          (viewport.clientHeight - padding * 2) / contentHeight,
+        ),
+      ),
+    );
+    setCanvasScale(fittedScale);
+    setCanvasOffset({
+      x: (viewport.clientWidth - contentWidth * fittedScale) / 2 - minX * fittedScale,
+      y: (viewport.clientHeight - contentHeight * fittedScale) / 2 - minY * fittedScale,
+    });
+  }
+
+  function closeNodeInspectorAndFit() {
+    setSelectedNodeKey(null);
+    window.requestAnimationFrame(() => window.requestAnimationFrame(fitCanvasToViewport));
+  }
+
+  function beginCanvasPan(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0 || (event.target as Element).closest("button")) return;
+    const viewport = canvasViewportRef.current;
+    if (!viewport) return;
+    event.preventDefault();
+    canvasPanRef.current = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      offsetX: canvasOffset.x,
+      offsetY: canvasOffset.y,
+    };
+    viewport.setPointerCapture(event.pointerId);
+    setCanvasPanning(true);
+  }
+
+  function moveCanvasPan(event: ReactPointerEvent<HTMLDivElement>) {
+    const pan = canvasPanRef.current;
+    const viewport = canvasViewportRef.current;
+    if (!pan || !viewport || pan.pointerId !== event.pointerId) return;
+    setCanvasOffset({
+      x: pan.offsetX + event.clientX - pan.clientX,
+      y: pan.offsetY + event.clientY - pan.clientY,
+    });
+  }
+
+  function endCanvasPan(event: ReactPointerEvent<HTMLDivElement>) {
+    const pan = canvasPanRef.current;
+    if (pan?.pointerId !== event.pointerId) return;
+    const wasBlankClick = Math.hypot(
+      event.clientX - pan.clientX,
+      event.clientY - pan.clientY,
+    ) <= 4;
+    canvasPanRef.current = null;
+    setCanvasPanning(false);
+    if (wasBlankClick) closeNodeInspectorAndFit();
+  }
+
+  async function startMission() {
+    if (!mission || startingMission) return;
+    setStartingMission(true);
+    setError(null);
+    try {
+      const started = await api.deepAnalysis.startMission(mission.id, {
+        expectedRevision: mission.revision,
+      });
+      setMission(started);
+      setMissions((current) => current.map((item) => item.id === started.id ? started : item));
+      setSelectedNodeKey(started.workflow.nodes[0]?.nodeKey ?? null);
+    } catch (startError) {
+      setError(errorMessage(startError));
+    } finally {
+      setStartingMission(false);
+    }
+  }
+
+  async function cancelMission() {
+    if (!mission || cancellingMission) return;
+    setCancellingMission(true);
+    setError(null);
+    try {
+      const cancelled = await api.deepAnalysis.cancelMission(mission.id, {
+        expectedRevision: mission.revision,
+      });
+      setMission(cancelled);
+      setMissions((current) => current.map((item) => item.id === cancelled.id ? cancelled : item));
+    } catch (cancelError) {
+      setError(errorMessage(cancelError));
+    } finally {
+      setCancellingMission(false);
+    }
+  }
+
+  async function retryNode(node: DeepAnalysisWorkflowNode) {
+    if (!mission || retryingNodeKey) return;
+    setRetryingNodeKey(node.nodeKey);
+    setError(null);
+    try {
+      const retried = await api.deepAnalysis.retryMission(mission.id, {
+        expectedRevision: mission.revision,
+        nodeKey: node.nodeKey,
+      });
+      setMission(retried);
+      setMissions((current) => current.map((item) => item.id === retried.id ? retried : item));
+      setSelectedNodeKey(node.nodeKey);
+    } catch (retryError) {
+      setError(errorMessage(retryError));
+    } finally {
+      setRetryingNodeKey(null);
+    }
+  }
+
+  async function deleteMission() {
+    if (!mission || deletingMission) return;
+    if (!deleteArmed) {
+      setDeleteArmed(true);
+      return;
+    }
+    setDeletingMission(true);
+    setError(null);
+    try {
+      await api.deepAnalysis.deleteMission(mission.id, mission.revision);
+      const remaining = missions.filter((item) => item.id !== mission.id);
+      setMissions(remaining);
+      setMission(null);
+      setSelectedNodeKey(null);
+      setSelectedMissionId(remaining[0]?.id ?? null);
+      if (!remaining.length && projectId) {
+        window.localStorage.removeItem(selectedMissionStorageKey(projectId));
+      }
+    } catch (deleteError) {
+      setError(errorMessage(deleteError));
+      setDeleteArmed(false);
+    } finally {
+      setDeletingMission(false);
+    }
+  }
 
   async function createMission(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!projectId || !title.trim()) return;
+    const parsedBudget = budgetUsd.trim() ? Number(budgetUsd) : null;
+    if (parsedBudget !== null && (!Number.isFinite(parsedBudget) || parsedBudget < 0)) {
+      setError("최대 비용은 0 이상의 숫자로 입력해 주세요.");
+      return;
+    }
     setCreating(true);
     setError(null);
     try {
@@ -148,6 +415,9 @@ export function DeepAnalysisView({
         title: title.trim(),
         objective: objective.trim(),
         autonomyMode,
+        budgetMicrousd: parsedBudget !== null
+          ? Math.round(parsedBudget * 1_000_000)
+          : null,
       });
       setMissions((current) => [created, ...current]);
       setSelectedMissionId(created.id);
@@ -156,6 +426,7 @@ export function DeepAnalysisView({
       setTitle("");
       setObjective("");
       setAutonomyMode("balanced");
+      setBudgetUsd("");
       setCreateOpen(false);
     } catch (createError) {
       setError(errorMessage(createError));
@@ -266,6 +537,18 @@ export function DeepAnalysisView({
                     </button>
                   ))}
                 </fieldset>
+                <label>
+                  최대 비용 (US$, 선택)
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
+                    value={budgetUsd}
+                    placeholder="예: 1.00"
+                    onChange={(event) => setBudgetUsd(event.target.value)}
+                  />
+                </label>
                 <button className="deep-analysis-create-submit" type="submit" disabled={creating || !title.trim()}>
                   {creating && <LoaderCircle className="is-running" size={14} />}
                   Mission 만들기
@@ -308,32 +591,123 @@ export function DeepAnalysisView({
                     <h2>{mission.title}</h2>
                     <p>{mission.objective || "분석 목적이 아직 입력되지 않았습니다."}</p>
                   </div>
-                  <div className="deep-analysis-cost-wrap">
-                    <button
-                      className="deep-analysis-cost"
-                      type="button"
-                      aria-expanded={costDetailsOpen}
-                      onClick={() => setCostDetailsOpen((open) => !open)}
-                    >
-                      <CircleDollarSign size={15} /> 누적 비용 {formatCost(mission.spentMicrousd)}
-                    </button>
-                    {costDetailsOpen && (
-                      <div className="deep-analysis-cost-popover">
-                        <strong>노드별 비용</strong>
-                        {mission.workflow.nodes.map((node) => (
-                          <span key={node.id}><em>{node.nodeKey} · {node.title}</em><b>{formatCost(node.actualCostMicrousd)}</b></span>
-                        ))}
-                      </div>
+                  <div className="deep-analysis-mission-actions">
+                    {canEdit && (mission.status === "draft" || mission.status === "ready") && (
+                      <button
+                        className={`deep-analysis-start ${!mission.executionAvailable ? "is-unavailable" : ""}`}
+                        type="button"
+                        disabled={startingMission || !mission.executionAvailable}
+                        data-tooltip={!mission.executionAvailable ? "실제 분석 실행기가 연결된 후 시작할 수 있습니다." : undefined}
+                        onClick={() => void startMission()}
+                      >
+                        {startingMission ? <LoaderCircle className="is-running" size={15} /> : <Play size={15} />}
+                        {startingMission ? "시작 중" : mission.executionAvailable ? "Workflow 시작" : "실행 엔진 준비 중"}
+                      </button>
+                    )}
+                    {canEdit && mission.status === "running" && (
+                      <button
+                        className="deep-analysis-cancel"
+                        type="button"
+                        disabled={cancellingMission}
+                        onClick={() => void cancelMission()}
+                      >
+                        {cancellingMission ? <LoaderCircle className="is-running" size={15} /> : <Square size={14} />}
+                        {cancellingMission ? "중단 중" : "중단"}
+                      </button>
+                    )}
+                    <div className="deep-analysis-cost-wrap">
+                      <button
+                        className="deep-analysis-cost tooltip-control"
+                        type="button"
+                        aria-label={`누적 비용 ${formatCost(mission.spentMicrousd)}`}
+                        aria-expanded={costDetailsOpen}
+                        data-tooltip={`누적 비용 ${formatCost(mission.spentMicrousd)}`}
+                        onClick={() => setCostDetailsOpen((open) => !open)}
+                      >
+                        <CircleDollarSign size={16} />
+                      </button>
+                      {costDetailsOpen && (
+                        <div className="deep-analysis-cost-popover">
+                          <strong>노드별 비용</strong>
+                          {mission.budgetMicrousd !== null && (
+                            <span className="is-budget"><em>설정 한도</em><b>{formatCost(mission.budgetMicrousd)}</b></span>
+                          )}
+                          {mission.workflow.nodes.map((node) => (
+                            <span key={node.id}><em>{node.nodeKey} · {node.title}</em><b>{formatCost(node.actualCostMicrousd)}</b></span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {canEdit && (
+                      <button
+                        className={`deep-analysis-delete ${deleteArmed ? "is-armed" : ""}`}
+                        type="button"
+                        aria-label={deleteArmed ? "심층분석 삭제 확인, 한 번 더 누르면 삭제" : "심층분석 삭제"}
+                        data-tooltip={mission.status === "running" ? "먼저 실행을 중단해 주세요." : deleteArmed ? "한 번 더 눌러 삭제" : "삭제"}
+                        disabled={deletingMission || mission.status === "running"}
+                        onClick={() => void deleteMission()}
+                      >
+                        {deletingMission ? <LoaderCircle className="is-running" size={14} /> : deleteArmed ? <AlertTriangle size={14} /> : <Trash2 size={14} />}
+                        {deleteArmed ? "한 번 더 눌러 삭제" : "삭제"}
+                      </button>
                     )}
                   </div>
                 </header>
                 <div className="deep-analysis-tabs" role="tablist" aria-label="심층분석 화면">
                   <button className="is-active" type="button" role="tab" aria-selected="true">Workflow</button>
-                  <span>Revision {mission.workflow.revisionNumber}</span>
+                  <span>
+                    {completedNodeCount}/{mission.workflow.nodes.length} 완료 · 입력 자료 {mission.sourceManifest.length}개 · Revision {mission.workflow.revisionNumber}
+                  </span>
                 </div>
-                <div className="deep-analysis-workflow-layout">
-                  <div className="deep-analysis-canvas-scroll">
-                    <div className="deep-analysis-canvas" aria-label="Workflow 캔버스">
+                {mission.status === "running" && (
+                  <div className="deep-analysis-run-feedback is-running" role="status">
+                    <LoaderCircle className="is-running" size={16} />
+                    <div>
+                      <strong>{activeNode ? `${activeNode.nodeKey} · ${activeNode.title} 실행 중` : "분석 작업 실행 중"}</strong>
+                      <span>{activeNode?.runId
+                        ? `실제 Lumina Run ${activeNode.runStatus ? `· ${statusLabel(activeNode.runStatus)}` : ""} · ${completedNodeCount}/${mission.workflow.nodes.length} Node 완료`
+                        : "실행 Run을 준비하고 있습니다."}</span>
+                    </div>
+                  </div>
+                )}
+                {mission.status === "cancelled" && (
+                  <div className="deep-analysis-run-feedback is-cancelled" role="status">
+                    <Square size={14} />
+                    <div><strong>중단됨</strong><span>현재 실행 중인 심층분석 작업이 없습니다.</span></div>
+                  </div>
+                )}
+                {(mission.status === "draft" || mission.status === "ready") && !mission.executionAvailable && (
+                  <div className="deep-analysis-run-feedback is-unavailable" role="status">
+                    <CircleAlert size={16} />
+                    <div><strong>실행 엔진 준비 중</strong><span>Workflow 설계와 검토는 가능하지만 실제 분석 실행은 아직 연결되지 않았습니다.</span></div>
+                  </div>
+                )}
+                <div className={`deep-analysis-workflow-layout ${selectedNode ? "has-inspector" : ""}`}>
+                  <div className="deep-analysis-canvas-shell">
+                  <div
+                    className={`deep-analysis-canvas-scroll ${canvasPanning ? "is-panning" : ""}`}
+                    ref={canvasViewportRef}
+                    onPointerDown={beginCanvasPan}
+                    onPointerMove={moveCanvasPan}
+                    onPointerUp={endCanvasPan}
+                    onPointerCancel={endCanvasPan}
+                    onLostPointerCapture={() => {
+                      canvasPanRef.current = null;
+                      setCanvasPanning(false);
+                    }}
+                    onWheel={handleCanvasWheel}
+                  >
+                    <div
+                      className="deep-analysis-canvas-stage"
+                      style={{
+                        backgroundPosition: `${canvasOffset.x}px ${canvasOffset.y}px`,
+                      }}
+                    >
+                    <div
+                      className="deep-analysis-canvas"
+                      aria-label="Workflow 캔버스"
+                      style={{ transform: `translate3d(${canvasOffset.x}px, ${canvasOffset.y}px, 0) scale(${canvasScale})` }}
+                    >
                       <svg aria-hidden="true">
                         <defs>
                           <marker id="deep-analysis-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
@@ -362,11 +736,22 @@ export function DeepAnalysisView({
                         />
                       ))}
                     </div>
+                    </div>
+                  </div>
+                    <div className="deep-analysis-canvas-controls" aria-label="Workflow 확대 및 축소">
+                      <button type="button" aria-label="확대" data-tooltip="확대" disabled={canvasScale >= maximumCanvasScale} onClick={() => updateCanvasScale(canvasScale + 0.1)}><ZoomIn size={14} /></button>
+                      <button type="button" aria-label="배율 초기화" onClick={() => updateCanvasScale(1)}>{Math.round(canvasScale * 100)}%</button>
+                      <button type="button" aria-label="축소" data-tooltip="축소" disabled={canvasScale <= minimumCanvasScale} onClick={() => updateCanvasScale(canvasScale - 0.1)}><ZoomOut size={14} /></button>
+                      <button type="button" aria-label="위치 초기화" onClick={() => {
+                        setCanvasScale(1);
+                        setCanvasOffset({ x: 0, y: 0 });
+                      }}><RotateCcw size={13} /></button>
+                    </div>
                   </div>
                   {selectedNode && (
                     <aside className="deep-analysis-inspector" aria-label={`${selectedNode.title} 상세 정보`}>
                       <header>
-                        <div><span>{selectedNode.nodeKey}</span><button type="button" aria-label="노드 상세 닫기" onClick={() => setSelectedNodeKey(null)}><X size={14} /></button></div>
+                        <div><span>{selectedNode.nodeKey}</span><button type="button" aria-label="노드 상세 닫기" onClick={closeNodeInspectorAndFit}><X size={14} /></button></div>
                         <strong>{selectedNode.title}</strong>
                         <small className={`node-status status-${selectedNode.status}`}>{statusLabel(selectedNode.status)}</small>
                       </header>
@@ -376,8 +761,64 @@ export function DeepAnalysisView({
                       </section>
                       <section>
                         <h3>출력</h3>
-                        <p>{selectedNode.outputSummary || "아직 생성된 출력이 없습니다."}</p>
+                        {selectedNode.status === "running" && !selectedNode.outputSummary ? (
+                          <>
+                            <p className="deep-analysis-node-progress"><LoaderCircle className="is-running" size={13} /> 모델 응답을 생성하고 있습니다.</p>
+                            {selectedNode.liveOutput && (
+                              <pre className="deep-analysis-live-output">{selectedNode.liveOutput}</pre>
+                            )}
+                          </>
+                        ) : selectedNode.errorMessage ? (
+                          <p className="deep-analysis-node-error">{selectedNode.errorMessage}</p>
+                        ) : (
+                          <p>{selectedNode.outputSummary || "아직 생성된 출력이 없습니다."}</p>
+                        )}
+                        {selectedNode.outputLogicalPath && (
+                          <small className="deep-analysis-output-path">{selectedNode.outputLogicalPath}</small>
+                        )}
+                        {selectedNode.outputMarkdown && (
+                          <details className="deep-analysis-output-document">
+                            <summary>문서 전체 보기</summary>
+                            <pre>{selectedNode.outputMarkdown}</pre>
+                          </details>
+                        )}
+                        {selectedNode.generatedFiles.length > 0 && (
+                          <div className="deep-analysis-generated-files">
+                            <strong>계산 산출물</strong>
+                            {selectedNode.generatedFiles.map((file) => (
+                              <span key={`${file.projectFileId}:${file.version}`}>
+                                <em>{file.kind.toUpperCase()}</em>{file.path}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {canEdit && (selectedNode.status === "failed" || selectedNode.status === "cancelled") && (
+                          <button
+                            className="deep-analysis-retry-node"
+                            type="button"
+                            disabled={retryingNodeKey !== null}
+                            onClick={() => void retryNode(selectedNode)}
+                          >
+                            {retryingNodeKey === selectedNode.nodeKey
+                              ? <LoaderCircle className="is-running" size={14} />
+                              : <RefreshCw size={14} />}
+                            이 Node부터 다시 실행
+                          </button>
+                        )}
                       </section>
+                      {selectedNode.runHistory.length > 0 && (
+                        <section>
+                          <h3>이전 실행</h3>
+                          <div className="deep-analysis-run-history">
+                            {selectedNode.runHistory.map((attempt) => (
+                              <span key={attempt.runId}>
+                                <em>시도 {attempt.attempt} · {statusLabel(attempt.status)}</em>
+                                <b>{formatCost(attempt.costMicrousd)}</b>
+                              </span>
+                            ))}
+                          </div>
+                        </section>
+                      )}
                       <section>
                         <h3>비용</h3>
                         <dl>
