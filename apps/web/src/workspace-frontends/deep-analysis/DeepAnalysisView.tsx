@@ -115,6 +115,50 @@ function splitContractLines(value: string) {
     .filter(Boolean);
 }
 
+function normalizeMissionCharter(
+  charter: Partial<DeepAnalysisMissionCharter> & { question?: string },
+  fallbackPurpose: string,
+): DeepAnalysisMissionCharter {
+  const purpose = charter.purpose ?? charter.question ?? fallbackPurpose;
+  return {
+    ...charter,
+    purpose,
+    keyQuestions: Array.isArray(charter.keyQuestions)
+      ? charter.keyQuestions
+      : purpose ? [purpose] : [],
+    deliverables: Array.isArray(charter.deliverables) ? charter.deliverables : [],
+    audience: charter.audience ?? "",
+    inScope: Array.isArray(charter.inScope) ? charter.inScope : [],
+    outOfScope: Array.isArray(charter.outOfScope) ? charter.outOfScope : [],
+    comparisonBasis: charter.comparisonBasis ?? "",
+    qualityStandards: Array.isArray(charter.qualityStandards) ? charter.qualityStandards : [],
+    confirmed: charter.confirmed ?? false,
+  };
+}
+
+function normalizeCompletionContract(
+  contract: Partial<DeepAnalysisCompletionContract>,
+): DeepAnalysisCompletionContract {
+  return {
+    ...contract,
+    requiredSections: Array.isArray(contract.requiredSections) ? contract.requiredSections : [],
+    requiredNodeTypes: Array.isArray(contract.requiredNodeTypes) ? contract.requiredNodeTypes : ["report"],
+    requireReport: contract.requireReport ?? true,
+    requireNoFailedNodes: contract.requireNoFailedNodes ?? true,
+    requireNoStaleNodes: contract.requireNoStaleNodes ?? true,
+    minimumEvidenceCoverage: typeof contract.minimumEvidenceCoverage === "number"
+      ? contract.minimumEvidenceCoverage
+      : 0,
+    maximumOpenIssues: typeof contract.maximumOpenIssues === "number" ? contract.maximumOpenIssues : 0,
+    maximumUnexplainedResidualPercent:
+      typeof contract.maximumUnexplainedResidualPercent === "number"
+        ? contract.maximumUnexplainedResidualPercent
+        : null,
+    requiresFinalReview: contract.requiresFinalReview ?? false,
+    allowWaiver: contract.allowWaiver ?? true,
+  };
+}
+
 function eventDescription(event: DeepAnalysisMissionEvent) {
   const nodeKey = typeof event.payload.nodeKey === "string" ? event.payload.nodeKey : null;
   const characters = typeof event.payload.outputCharacters === "number"
@@ -465,8 +509,8 @@ export function DeepAnalysisView({
       setCompletionDraft(null);
       return;
     }
-    setCharterDraft(mission.charter);
-    setCompletionDraft(mission.completionContract);
+    setCharterDraft(normalizeMissionCharter(mission.charter, mission.objective));
+    setCompletionDraft(normalizeCompletionContract(mission.completionContract));
   }, [mission?.id, mission?.revision]);
 
   function updateCanvasScale(nextScale: number, originX?: number, originY?: number) {
@@ -1358,30 +1402,35 @@ export function DeepAnalysisView({
                 </div>
                 {contractOpen && charterDraft && completionDraft && (
                   <section id="deep-analysis-goal-completion" className="deep-analysis-contract" aria-label="분석 목표와 완료 기준">
-                    <div className="deep-analysis-contract-grid">
-                      <div>
-                        <strong>분석 목표</strong>
-                        <label>목적<textarea rows={2} value={charterDraft.purpose} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCharterDraft({ ...charterDraft, purpose: event.target.value })} /></label>
-                        <label>반드시 답할 핵심 질문<textarea rows={3} value={charterDraft.keyQuestions.join("\n")} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCharterDraft({ ...charterDraft, keyQuestions: splitContractLines(event.target.value) })} /></label>
-                        <label>필수 산출물<textarea rows={2} value={charterDraft.deliverables.join("\n")} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCharterDraft({ ...charterDraft, deliverables: splitContractLines(event.target.value) })} /></label>
-                        <label>독자<input value={charterDraft.audience} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCharterDraft({ ...charterDraft, audience: event.target.value })} /></label>
-                      </div>
-                      <div>
-                        <strong>범위와 기준</strong>
-                        <label>포함 범위<textarea rows={2} value={charterDraft.inScope.join("\n")} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCharterDraft({ ...charterDraft, inScope: splitContractLines(event.target.value) })} /></label>
-                        <label>제외 범위<textarea rows={2} value={charterDraft.outOfScope.join("\n")} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCharterDraft({ ...charterDraft, outOfScope: splitContractLines(event.target.value) })} /></label>
-                        <label>비교 기준·기간·단위<textarea rows={2} value={charterDraft.comparisonBasis} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCharterDraft({ ...charterDraft, comparisonBasis: event.target.value })} /></label>
-                        <label>품질 기준<textarea rows={2} value={charterDraft.qualityStandards.join("\n")} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCharterDraft({ ...charterDraft, qualityStandards: splitContractLines(event.target.value) })} /></label>
-                      </div>
-                      <div>
-                        <strong>완료 기준</strong>
-                        <label>보고서 필수 섹션<textarea rows={2} value={completionDraft.requiredSections.join("\n")} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCompletionDraft({ ...completionDraft, requiredSections: splitContractLines(event.target.value) })} /></label>
-                        <label>최소 근거 coverage (%)<input type="number" min="0" max="100" value={Math.round(completionDraft.minimumEvidenceCoverage * 100)} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCompletionDraft({ ...completionDraft, minimumEvidenceCoverage: Math.min(1, Math.max(0, Number(event.target.value) / 100)) })} /></label>
-                        <label>허용 미해결 항목 수<input type="number" min="0" max="1000" value={completionDraft.maximumOpenIssues} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCompletionDraft({ ...completionDraft, maximumOpenIssues: Math.max(0, Number(event.target.value)) })} /></label>
-                        <label className="deep-analysis-contract-check"><input type="checkbox" checked={completionDraft.requiresFinalReview} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCompletionDraft({ ...completionDraft, requiresFinalReview: event.target.checked })} /> 최종 사용자 검토 필요</label>
-                        <label className="deep-analysis-contract-check"><input type="checkbox" checked={completionDraft.allowWaiver} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCompletionDraft({ ...completionDraft, allowWaiver: event.target.checked })} /> 미충족 시 명시적 예외 승인 허용</label>
-                      </div>
+                    <div className="deep-analysis-contract-primary">
+                      <label>분석 목표<textarea rows={2} value={charterDraft.purpose} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCharterDraft({ ...charterDraft, purpose: event.target.value })} /></label>
+                      <label>핵심 질문<textarea rows={2} value={charterDraft.keyQuestions.join("\n")} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCharterDraft({ ...charterDraft, keyQuestions: splitContractLines(event.target.value) })} /></label>
+                      <label>보고서 구성<textarea rows={2} value={completionDraft.requiredSections.join("\n")} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCompletionDraft({ ...completionDraft, requiredSections: splitContractLines(event.target.value) })} /></label>
                     </div>
+                    <details className="deep-analysis-contract-advanced">
+                      <summary>상세 설정 <span>산출물·범위·품질 기준</span></summary>
+                      <div className="deep-analysis-contract-grid">
+                        <div>
+                          <strong>산출물과 독자</strong>
+                          <label>필수 산출물<textarea rows={2} value={charterDraft.deliverables.join("\n")} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCharterDraft({ ...charterDraft, deliverables: splitContractLines(event.target.value) })} /></label>
+                          <label>독자<input value={charterDraft.audience} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCharterDraft({ ...charterDraft, audience: event.target.value })} /></label>
+                        </div>
+                        <div>
+                          <strong>분석 범위</strong>
+                          <label>포함 범위<textarea rows={2} value={charterDraft.inScope.join("\n")} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCharterDraft({ ...charterDraft, inScope: splitContractLines(event.target.value) })} /></label>
+                          <label>제외 범위<textarea rows={2} value={charterDraft.outOfScope.join("\n")} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCharterDraft({ ...charterDraft, outOfScope: splitContractLines(event.target.value) })} /></label>
+                          <label>비교 기준·기간·단위<textarea rows={2} value={charterDraft.comparisonBasis} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCharterDraft({ ...charterDraft, comparisonBasis: event.target.value })} /></label>
+                        </div>
+                        <div>
+                          <strong>품질과 승인</strong>
+                          <label>품질 기준<textarea rows={2} value={charterDraft.qualityStandards.join("\n")} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCharterDraft({ ...charterDraft, qualityStandards: splitContractLines(event.target.value) })} /></label>
+                          <label>최소 근거 coverage (%)<input type="number" min="0" max="100" value={Math.round(completionDraft.minimumEvidenceCoverage * 100)} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCompletionDraft({ ...completionDraft, minimumEvidenceCoverage: Math.min(1, Math.max(0, Number(event.target.value) / 100)) })} /></label>
+                          <label>허용 미해결 항목 수<input type="number" min="0" max="1000" value={completionDraft.maximumOpenIssues} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCompletionDraft({ ...completionDraft, maximumOpenIssues: Math.max(0, Number(event.target.value)) })} /></label>
+                          <label className="deep-analysis-contract-check"><input type="checkbox" checked={completionDraft.requiresFinalReview} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCompletionDraft({ ...completionDraft, requiresFinalReview: event.target.checked })} /> 최종 사용자 검토 필요</label>
+                          <label className="deep-analysis-contract-check"><input type="checkbox" checked={completionDraft.allowWaiver} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCompletionDraft({ ...completionDraft, allowWaiver: event.target.checked })} /> 미충족 시 명시적 예외 승인 허용</label>
+                        </div>
+                      </div>
+                    </details>
                     {(mission.status === "draft" || mission.status === "ready") && canEdit && (
                       <div className="deep-analysis-contract-actions">
                         <span>실행을 시작하면 이 계약이 해당 Mission revision에 고정됩니다.</span>

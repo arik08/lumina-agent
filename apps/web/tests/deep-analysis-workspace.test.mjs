@@ -258,11 +258,21 @@ test("Mission Charter is editable before start and immutable Quality Gates remai
   assert.match(view, /aria-controls="deep-analysis-goal-completion"/);
   assert.match(view, /function toggleGoalCompletionPanel\(\)[\s\S]*?setExecutionLogOpen\(false\)/);
   assert.match(view, /function toggleExecutionLog\(\)[\s\S]*?setContractOpen\(false\)/);
-  assert.match(view, /<strong>분석 목표<\/strong>/);
-  assert.match(view, /<strong>완료 기준<\/strong>/);
+  assert.match(view, /className="deep-analysis-contract-primary"/);
+  assert.match(view, /분석 목표<textarea/);
+  assert.match(view, /핵심 질문<textarea/);
+  assert.match(view, /보고서 구성<textarea/);
+  assert.match(view, /<summary>상세 설정 <span>산출물·범위·품질 기준<\/span><\/summary>/);
+  assert.match(css, /\.deep-analysis-contract-primary \{[^}]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/);
   assert.match(view, /api\.deepAnalysis\.updateMission/);
   assert.match(view, /charter: \{/);
   assert.match(view, /completionContract: \{/);
+  assert.match(view, /function normalizeMissionCharter\(/);
+  assert.match(view, /Array\.isArray\(charter\.keyQuestions\)/);
+  assert.match(view, /function normalizeCompletionContract\(/);
+  assert.match(view, /Array\.isArray\(contract\.requiredSections\)/);
+  assert.match(view, /setCharterDraft\(normalizeMissionCharter\(mission\.charter, mission\.objective\)\)/);
+  assert.match(view, /setCompletionDraft\(normalizeCompletionContract\(mission\.completionContract\)\)/);
   assert.match(view, /실행을 시작하면 이 계약이 해당 Mission revision에 고정됩니다/);
   assert.match(view, /mission\?\.qualityGates\.at\(-1\)/);
   assert.match(view, /Quality Gate ·/);
@@ -270,8 +280,8 @@ test("Mission Charter is editable before start and immutable Quality Gates remai
   assert.match(view, /api\.deepAnalysis\.runQualityGate/);
   assert.match(view, /Quality Gate 다시 검사/);
   assert.match(css, /\.deep-analysis-contract-grid \{/);
-  assert.match(css, /\.deep-analysis-contract \{[^}]*max-height: min\(520px, 60vh\);[^}]*grid-template-rows: minmax\(0, 1fr\) auto;[^}]*overflow: hidden;/);
-  assert.match(css, /\.deep-analysis-contract-grid \{[^}]*min-height: 0;[^}]*overflow-y: auto;/);
+  assert.match(css, /\.deep-analysis-contract \{[^}]*max-height: min\(520px, 60vh\);[^}]*overflow-y: auto;/);
+  assert.match(css, /\.deep-analysis-contract-advanced \{[^}]*border-top: 1px solid var\(--line\)/);
   assert.match(css, /\.deep-analysis-quality-gate\.is-failed/);
 });
 

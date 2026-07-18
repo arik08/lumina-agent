@@ -137,8 +137,12 @@
 .deep-analysis-tabs button.is-active { border-bottom-color: var(--cobalt); color: var(--ink); }
 .deep-analysis-tabs span { margin: 0 0 11px auto; color: var(--faint); font-size: 10.5px; }
 
-.deep-analysis-contract { display: grid; min-height: 0; max-height: min(520px, 60vh); grid-template-rows: minmax(0, 1fr) auto; gap: 11px; overflow: hidden; padding: 13px 16px; border-bottom: 1px solid var(--line); background: var(--surface); }
-.deep-analysis-contract-grid { display: grid; min-height: 0; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; overflow-y: auto; overscroll-behavior: contain; }
+.deep-analysis-contract { display: grid; min-height: 0; max-height: min(520px, 60vh); grid-template-rows: auto minmax(0, auto) auto; gap: 11px; overflow-y: auto; overscroll-behavior: contain; padding: 13px 16px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.deep-analysis-contract-primary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.deep-analysis-contract-advanced { border-top: 1px solid var(--line); padding-top: 9px; }
+.deep-analysis-contract-advanced > summary { width: fit-content; color: var(--ink); font-size: 11px; font-weight: 650; cursor: pointer; }
+.deep-analysis-contract-advanced > summary span { margin-left: 5px; color: var(--faint); font-size: 10px; font-weight: 500; }
+.deep-analysis-contract-grid { display: grid; min-height: 0; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; padding-top: 11px; }
 .deep-analysis-contract-grid > div { display: grid; align-content: start; gap: 8px; }
 .deep-analysis-contract-grid > div > strong { color: var(--ink); font-size: 11.5px; }
 .deep-analysis-contract label { display: grid; gap: 4px; color: var(--muted); font-size: 10px; font-weight: 620; }
@@ -355,6 +359,7 @@
 .deep-analysis-empty p { margin: 0; font-size: 12px; }
 
 @media (max-width: 1050px) {
+  .deep-analysis-contract-primary,
   .deep-analysis-contract-grid { grid-template-columns: 1fr; }
   .deep-analysis-workflow-layout.has-inspector { grid-template-columns: minmax(0, 1fr); }
   .deep-analysis-ledger { grid-template-columns: minmax(0, 1fr); overflow: auto; }
