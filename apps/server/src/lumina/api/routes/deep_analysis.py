@@ -30,6 +30,7 @@ from ...deep_analysis.service import (
     retry_mission_node,
     start_mission,
     update_mission,
+    upgrade_legacy_draft_workflow,
 )
 from ...models import Run, User
 from ...runs.broker import event_broker
@@ -78,6 +79,7 @@ def _detail_payload(db: Session, mission: DeepAnalysisMission) -> dict[str, obje
             "source": revision.source,
             "reason": revision.reason,
             "graph_digest": revision.graph_digest,
+            "change_log": revision.change_log_json,
             "nodes": [
                 {
                     "id": node.id,
@@ -190,7 +192,10 @@ def get_mission(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
-    return _detail_payload(db, require_mission(db, user, mission_id))
+    mission = require_mission(db, user, mission_id)
+    if upgrade_legacy_draft_workflow(db, mission):
+        db.commit()
+    return _detail_payload(db, mission)
 
 
 @router.patch(
@@ -275,6 +280,7 @@ async def post_mission_start(
     settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
     mission = require_mission(db, context.user, mission_id, write=True)
+    upgrade_legacy_draft_workflow(db, mission)
     start_mission(db, mission, expected_revision=payload.expected_revision)
     _workflow_revision, nodes, _edges = active_workflow(db, mission.id)
     active_node = next((node for node in nodes if node.status == "running"), None)

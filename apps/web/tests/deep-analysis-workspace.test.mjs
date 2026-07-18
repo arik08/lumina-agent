@@ -98,6 +98,22 @@ test("Workflow reports live Run progress and pans with transform at every zoom",
   assert.match(view, /aria-label="확대"[\s\S]*?Math\.round\(canvasScale \* 100\)[\s\S]*?aria-label="축소"/);
 });
 
+test("adaptive Workflow changes are explained and refitted on graph updates", async () => {
+  const [view, css] = await Promise.all([
+    readFile(viewPath, "utf8"),
+    readFile(cssPath, "utf8"),
+  ]);
+
+  assert.match(view, /mission\?\.workflow\.changeLog/);
+  assert.match(view, /\.find\(\(item\) => item\.graphChanged\)/);
+  assert.match(view, /initial: "질문 기반 초기 Workflow"/);
+  assert.match(view, /deep-analysis-workflow-change/);
+  assert.match(view, /결과에 따라 남은 Workflow가 확장되거나 축소될 수 있습니다/);
+  assert.match(view, /\[mission\?\.workflow\.graphDigest\]/);
+  assert.match(view, /typeof selectedNode\.config\.reason === "string"/);
+  assert.match(css, /\.deep-analysis-workflow-change \{/);
+});
+
 test("failed or cancelled Nodes can retry with visible attempts and calculation files", async () => {
   const [view, api] = await Promise.all([
     readFile(viewPath, "utf8"),

@@ -29,8 +29,15 @@ from ..runs.state import CANCELLED, COMPLETED, TERMINAL_STATUSES
 from ..storage import ManagedStorage
 from .models import (
     DeepAnalysisMission,
+    DeepAnalysisWorkflowEdge,
     DeepAnalysisWorkflowNode,
     DeepAnalysisWorkflowRevision,
+)
+from .planning import (
+    adaptive_decision_instruction,
+    apply_workflow_decision,
+    extract_workflow_decision,
+    next_runnable_node,
 )
 
 
@@ -196,9 +203,17 @@ def _stage_instruction(node: DeepAnalysisWorkflowNode) -> str:
             "Project 파일 목록과 관련 자료를 실제로 확인하십시오. 사용 가능한 근거, 기간·단위·누락·중복·정합성 "
             "문제를 구분하고, 자료가 부족하면 가능한 분석과 불가능한 분석을 명확히 나누십시오."
         ),
+        "research": (
+            "질문에 필요한 근거와 사례를 실제 자료에서 수집하고, 출처·시점·적용 범위와 빠진 근거를 구분하십시오. "
+            "근거가 부족하면 확인된 사실과 추정 영역을 명확히 나누십시오."
+        ),
         "analysis": (
             "확인된 자료와 앞 단계 정의를 사용해 핵심 원인과 기여도를 분석하십시오. 숫자 계산이 필요하면 "
             "직접 암산하지 말고 Python 등 실행 도구로 재현 가능한 계산을 수행하고 계산식·입력·결과를 남기십시오."
+        ),
+        "validation": (
+            "앞 단계 결과를 독립적으로 교차검증하고, 반대 근거·대안 설명·자료 품질 문제가 결론을 바꾸는지 점검하십시오. "
+            "통과한 주장과 추가 확인이 필요한 주장을 구분하십시오."
         ),
         "synthesis": (
             "앞 단계의 가설과 결과를 서로 교차 검증하고, 반대 근거와 대안 설명을 점검하십시오. "
@@ -226,6 +241,7 @@ def _run_prompt(
     mission: DeepAnalysisMission,
     node: DeepAnalysisWorkflowNode,
     manifest: list[dict[str, Any]],
+    workflow_instruction: str,
 ) -> str:
     return f"""당신은 Lumina 심층분석 Workflow의 한 Node를 실행하고 있습니다.
 
@@ -249,6 +265,7 @@ Node 목적: {node.purpose}
 - 확인하지 않은 사실이나 수치를 만들어내지 마십시오.
 - 다음 Node가 그대로 인계받을 수 있는 독립적인 Markdown 문서만 한국어로 작성하십시오.
 - 채팅 인사말이나 작업 예고 없이 완성된 본문부터 출력하십시오.
+{workflow_instruction}
 """
 
 
@@ -289,6 +306,22 @@ def create_node_run(
             return existing, False
     conversation = _ensure_conversation(db, user=user, mission=mission)
     manifest = _run_manifest(db, mission)
+    workflow_revision = db.get(DeepAnalysisWorkflowRevision, node.workflow_revision_id)
+    workflow_nodes = list(
+        db.scalars(
+            select(DeepAnalysisWorkflowNode)
+            .where(
+                DeepAnalysisWorkflowNode.workflow_revision_id
+                == node.workflow_revision_id
+            )
+            .order_by(DeepAnalysisWorkflowNode.sequence)
+        )
+    )
+    workflow_instruction = (
+        adaptive_decision_instruction(node, workflow_nodes, workflow_revision)
+        if workflow_revision is not None
+        else ""
+    )
     analysis_depth, answer_length = _run_profile(node)
     attempt = len(node.run_history_json) + 1
     run, _message, created = create_run(
@@ -297,7 +330,7 @@ def create_node_run(
         conversation_id=conversation.id,
         payload=RunCreate(
             message=RunMessageInput(
-                text=_run_prompt(mission, node, manifest),
+                text=_run_prompt(mission, node, manifest, workflow_instruction),
                 output_mode="chat",
                 analysis_depth=analysis_depth,
                 answer_length=answer_length,
@@ -488,7 +521,9 @@ def sync_terminal_run(
         return TerminalSyncResult(changed=True)
 
     if run.status == COMPLETED:
-        markdown = run.assistant_draft.strip()
+        markdown, workflow_decision = extract_workflow_decision(
+            run.assistant_draft.strip()
+        )
         if not markdown:
             node.status = "failed"
             node.error_message = "모델이 비어 있는 출력을 반환했습니다."
@@ -510,16 +545,48 @@ def sync_terminal_run(
         node.error_message = None
         mission.spent_microusd = _mission_spent(db, workflow_revision.id)
 
-        next_node = db.scalar(
-            select(DeepAnalysisWorkflowNode)
-            .where(
-                DeepAnalysisWorkflowNode.workflow_revision_id == workflow_revision.id,
-                DeepAnalysisWorkflowNode.sequence > node.sequence,
+        if node.node_type != "report":
+            apply_workflow_decision(
+                db,
+                mission=mission,
+                revision=workflow_revision,
+                current_node=node,
+                decision=workflow_decision,
             )
-            .order_by(DeepAnalysisWorkflowNode.sequence)
-            .limit(1)
+        nodes = list(
+            db.scalars(
+                select(DeepAnalysisWorkflowNode)
+                .where(
+                    DeepAnalysisWorkflowNode.workflow_revision_id
+                    == workflow_revision.id
+                )
+                .order_by(DeepAnalysisWorkflowNode.sequence)
+            )
         )
+        edges = list(
+            db.scalars(
+                select(DeepAnalysisWorkflowEdge).where(
+                    DeepAnalysisWorkflowEdge.workflow_revision_id
+                    == workflow_revision.id
+                )
+            )
+        )
+        next_node = next_runnable_node(nodes, edges)
         if next_node is None:
+            unresolved = [
+                item
+                for item in nodes
+                if item.status in {"planned", "ready", "running"}
+            ]
+            if unresolved:
+                mission.status = "blocked"
+                mission.completion_contract_json = {
+                    **mission.completion_contract_json,
+                    "qualityGate": "workflow_dependency_blocked",
+                    "blockedNodeKeys": [item.node_key for item in unresolved],
+                }
+                mission.revision += 1
+                return TerminalSyncResult(changed=True)
             mission.status = "completed"
             mission.completion_contract_json = {
                 **mission.completion_contract_json,

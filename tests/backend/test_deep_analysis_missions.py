@@ -16,6 +16,11 @@ from lumina.deep_analysis.models import (
     DeepAnalysisWorkflowNode,
     DeepAnalysisWorkflowRevision,
 )
+from lumina.deep_analysis.planning import (
+    apply_workflow_decision,
+    extract_workflow_decision,
+    next_runnable_node,
+)
 from lumina.main import create_app
 from lumina.models import Organization, ProjectFile, Run, User
 from lumina.storage import ManagedLocalStorage
@@ -101,10 +106,14 @@ def test_mission_workflow_persists_and_uses_revision_cas(tmp_path: Path) -> None
             "N001",
             "N010",
             "N020",
+            "N025",
             "N030",
+            "N035",
             "N040",
         ]
-        assert len(mission["workflow"]["edges"]) == 4
+        assert len(mission["workflow"]["edges"]) == 7
+        assert mission["workflow"]["changeLog"][0]["action"] == "initial"
+        assert "정량" in mission["workflow"]["reason"]
 
         listing = client.get(f"/api/projects/{project_id}/deep-analysis/missions")
         assert listing.status_code == 200
@@ -134,6 +143,160 @@ def test_mission_workflow_persists_and_uses_revision_cas(tmp_path: Path) -> None
         assert stale.status_code == 409
         assert stale.json()["code"] == "revision_conflict"
         assert stale.json()["details"] == {"currentRevision": 2}
+
+
+def test_draft_question_change_rebuilds_the_initial_workflow(tmp_path: Path) -> None:
+    with TestClient(create_app(_settings(tmp_path))) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        created = client.post(
+            f"/api/projects/{project_id}/deep-analysis/missions",
+            headers=headers,
+            json={"title": "열린 문제 진단", "objective": "현상을 분석해 설명한다."},
+        ).json()
+        assert len(created["workflow"]["nodes"]) == 5
+
+        updated = client.patch(
+            f"/api/deep-analysis/missions/{created['id']}",
+            headers=headers,
+            json={
+                "expectedRevision": 1,
+                "objective": "신규 시스템 도입 전략과 투자 리스크를 비교해 의사결정한다.",
+            },
+        )
+        assert updated.status_code == 200, updated.text
+        detail = updated.json()
+        assert detail["workflow"]["revisionNumber"] == 2
+        assert len(detail["workflow"]["nodes"]) == 7
+        assert detail["workflow"]["changeLog"][-1]["action"] == "question_updated"
+        assert "의사결정형" in detail["workflow"]["reason"]
+
+
+def test_legacy_unstarted_workflow_is_upgraded_once_on_restore(tmp_path: Path) -> None:
+    with TestClient(create_app(_settings(tmp_path))) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        created = client.post(
+            f"/api/projects/{project_id}/deep-analysis/missions",
+            headers=headers,
+            json={
+                "title": "기존 원가 분석",
+                "objective": "원가 변동 기여도를 정량적으로 분석한다.",
+            },
+        ).json()
+        with SessionLocal() as db:
+            revision = db.get(
+                DeepAnalysisWorkflowRevision, created["workflow"]["id"]
+            )
+            assert revision is not None
+            revision.change_log_json = []
+            db.commit()
+
+        restored = client.get(f"/api/deep-analysis/missions/{created['id']}")
+        assert restored.status_code == 200, restored.text
+        detail = restored.json()
+        assert detail["workflow"]["revisionNumber"] == 2
+        assert detail["workflow"]["changeLog"][-1]["action"] == "legacy_upgraded"
+
+        restored_again = client.get(f"/api/deep-analysis/missions/{created['id']}")
+        assert restored_again.json()["workflow"]["revisionNumber"] == 2
+
+
+def test_runtime_decision_expands_and_then_shrinks_the_dag(tmp_path: Path) -> None:
+    with TestClient(create_app(_settings(tmp_path))) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        created = client.post(
+            f"/api/projects/{project_id}/deep-analysis/missions",
+            headers=headers,
+            json={"title": "공급망 이슈", "objective": "공급망 지연 원인을 분석한다."},
+        ).json()
+
+        markdown, decision = extract_workflow_decision(
+            "# 중간 결과\n추가 검증이 필요합니다.\n"
+            '<!-- LUMINA_WORKFLOW_DECISION\n'
+            '{"action":"expand","reason":"지역별 지연 패턴을 별도로 확인해야 합니다.",'
+            '"confidence":0.88,"add":[{"title":"지역별 지연 분석",'
+            '"purpose":"지역별 리드타임과 병목 차이를 검증합니다.","nodeType":"analysis"}],'
+            '"remove":[]}\n-->'
+        )
+        assert "LUMINA_WORKFLOW_DECISION" not in markdown
+        assert decision["action"] == "expand"
+
+        with SessionLocal() as db:
+            mission = db.get(DeepAnalysisMission, created["id"])
+            revision = db.get(
+                DeepAnalysisWorkflowRevision, created["workflow"]["id"]
+            )
+            assert mission is not None and revision is not None
+            current = db.scalar(
+                select(DeepAnalysisWorkflowNode).where(
+                    DeepAnalysisWorkflowNode.workflow_revision_id == revision.id,
+                    DeepAnalysisWorkflowNode.node_key == "N001",
+                )
+            )
+            assert current is not None
+            current.status = "completed"
+            assert apply_workflow_decision(
+                db,
+                mission=mission,
+                revision=revision,
+                current_node=current,
+                decision=decision,
+            )
+            db.commit()
+
+            nodes = list(
+                db.scalars(
+                    select(DeepAnalysisWorkflowNode)
+                    .where(DeepAnalysisWorkflowNode.workflow_revision_id == revision.id)
+                    .order_by(DeepAnalysisWorkflowNode.sequence)
+                )
+            )
+            edges = list(
+                db.scalars(
+                    select(DeepAnalysisWorkflowEdge).where(
+                        DeepAnalysisWorkflowEdge.workflow_revision_id == revision.id
+                    )
+                )
+            )
+            added = next(node for node in nodes if node.title == "지역별 지연 분석")
+            assert revision.revision_number == 2
+            assert next_runnable_node(nodes, edges).node_key == added.node_key
+            assert revision.change_log_json[-1]["addedNodeKeys"] == [added.node_key]
+
+            shrink = {
+                "action": "shrink",
+                "reason": "기존 자료로 동일 내용을 이미 검증했습니다.",
+                "confidence": 0.93,
+                "add": [],
+                "remove": [added.node_key],
+            }
+            assert apply_workflow_decision(
+                db,
+                mission=mission,
+                revision=revision,
+                current_node=current,
+                decision=shrink,
+            )
+            db.commit()
+            remaining = list(
+                db.scalars(
+                    select(DeepAnalysisWorkflowNode)
+                    .where(DeepAnalysisWorkflowNode.workflow_revision_id == revision.id)
+                    .order_by(DeepAnalysisWorkflowNode.sequence)
+                )
+            )
+            remaining_edges = list(
+                db.scalars(
+                    select(DeepAnalysisWorkflowEdge).where(
+                        DeepAnalysisWorkflowEdge.workflow_revision_id == revision.id
+                    )
+                )
+            )
+            assert all(node.id != added.id for node in remaining)
+            assert next_runnable_node(remaining, remaining_edges).node_key == "N010"
+            assert revision.change_log_json[-1]["removedNodeKeys"] == [added.node_key]
 
 
 def test_mission_endpoints_require_auth_and_project_access(tmp_path: Path) -> None:

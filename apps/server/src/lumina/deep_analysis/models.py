@@ -90,6 +90,9 @@ class DeepAnalysisWorkflowRevision(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     source: Mapped[str] = mapped_column(String(32), default="generated", nullable=False)
     reason: Mapped[str] = mapped_column(Text, default="mission_created", nullable=False)
     graph_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    change_log_json: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
 
 
 class DeepAnalysisWorkflowNode(UUIDPrimaryKeyMixin, TimestampMixin, Base):

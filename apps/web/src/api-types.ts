@@ -268,6 +268,17 @@ export interface DeepAnalysisWorkflowRevision {
   source: string;
   reason: string;
   graphDigest: string;
+  changeLog: Array<{
+    revision: number;
+    action: string;
+    reason?: string | null;
+    confidence?: number | null;
+    requestedByNodeKey?: string;
+    addedNodeKeys?: string[];
+    removedNodeKeys?: string[];
+    graphChanged: boolean;
+    createdAt: IsoDateTime;
+  }>;
   nodes: DeepAnalysisWorkflowNode[];
   edges: DeepAnalysisWorkflowEdge[];
   createdAt: IsoDateTime;

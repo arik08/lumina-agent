@@ -123,6 +123,13 @@
 .deep-analysis-tabs button.is-active { border-bottom-color: var(--cobalt); color: var(--ink); }
 .deep-analysis-tabs span { margin: 0 0 11px auto; color: var(--faint); font-size: 10.5px; }
 
+.deep-analysis-workflow-change { display: flex; min-height: 43px; align-items: center; gap: 9px; padding: 7px 16px; border-bottom: 1px solid var(--line); background: var(--cobalt-pale); color: var(--cobalt); }
+.deep-analysis-workflow-change > svg { flex: none; }
+.deep-analysis-workflow-change > div { display: grid; min-width: 0; gap: 2px; }
+.deep-analysis-workflow-change strong { color: var(--ink); font-size: 11px; }
+.deep-analysis-workflow-change span { overflow: hidden; color: var(--muted); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
+.deep-analysis-workflow-change small { margin-left: auto; color: var(--cobalt); font-size: 10.5px; font-weight: 650; white-space: nowrap; }
+
 .deep-analysis-run-feedback { display: flex; min-height: 44px; align-items: center; gap: 9px; padding: 7px 16px; border-bottom: 1px solid var(--line); background: var(--surface); color: var(--muted); }
 .deep-analysis-run-feedback > svg { flex: none; }
 .deep-analysis-run-feedback > div { display: grid; min-width: 0; gap: 2px; }
@@ -134,6 +141,9 @@
 .deep-analysis-run-feedback.is-warning strong { color: var(--danger); }
 .deep-analysis-run-feedback.is-cancelled > svg { color: var(--danger); }
 .deep-analysis-run-feedback.is-unavailable > svg { color: var(--muted); }
+
+.deep-analysis-node-origin { display: flex; align-items: flex-start; gap: 5px; margin-top: 8px; color: var(--muted); font-size: 10.5px; line-height: 1.45; }
+.deep-analysis-node-origin svg { flex: none; margin-top: 1px; color: var(--cobalt); }
 
 .deep-analysis-workflow-layout { display: grid; min-width: 0; min-height: 0; flex: 1; grid-template-columns: minmax(0, 1fr); }
 .deep-analysis-workflow-layout.has-inspector { grid-template-columns: minmax(0, 1fr) 278px; }

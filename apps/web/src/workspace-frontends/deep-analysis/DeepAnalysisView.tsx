@@ -64,6 +64,16 @@ const statusLabels: Record<string, string> = {
 const minimumCanvasScale = 0.4;
 const maximumCanvasScale = 1.8;
 
+const workflowActionLabels: Record<string, string> = {
+  initial: "질문 기반 초기 Workflow",
+  legacy_upgraded: "질문 기반 Workflow로 승격",
+  question_updated: "질문 변경으로 재구성",
+  expand: "분석 단계 확장",
+  shrink: "불필요 단계 축소",
+  replace: "분석 단계 교체",
+  finish: "조기 합성 전환",
+};
+
 function statusLabel(status: string) {
   return statusLabels[status] ?? status;
 }
@@ -218,6 +228,13 @@ export function DeepAnalysisView({
     () => mission?.workflow.nodes.filter((node) => node.status === "completed").length ?? 0,
     [mission],
   );
+  const latestGraphChange = useMemo(
+    () => mission?.workflow.changeLog
+      .slice()
+      .reverse()
+      .find((item) => item.graphChanged) ?? null,
+    [mission],
+  );
 
   function updateCanvasScale(nextScale: number, originX?: number, originY?: number) {
     const viewport = canvasViewportRef.current;
@@ -281,6 +298,12 @@ export function DeepAnalysisView({
     setSelectedNodeKey(null);
     window.requestAnimationFrame(() => window.requestAnimationFrame(fitCanvasToViewport));
   }
+
+  useEffect(() => {
+    if (!mission?.workflow.graphDigest) return;
+    const frame = window.requestAnimationFrame(() => fitCanvasToViewport());
+    return () => window.cancelAnimationFrame(frame);
+  }, [mission?.workflow.graphDigest]);
 
   function beginCanvasPan(event: ReactPointerEvent<HTMLDivElement>) {
     if (event.button !== 0 || (event.target as Element).closest("button")) return;
@@ -659,6 +682,20 @@ export function DeepAnalysisView({
                     {completedNodeCount}/{mission.workflow.nodes.length} 완료 · 입력 자료 {mission.sourceManifest.length}개 · Revision {mission.workflow.revisionNumber}
                   </span>
                 </div>
+                {latestGraphChange && (
+                  <div className="deep-analysis-workflow-change" role="status">
+                    <GitBranch size={15} />
+                    <div>
+                      <strong>{workflowActionLabels[latestGraphChange.action] ?? "Workflow 조정"}</strong>
+                      <span>{latestGraphChange.reason || "중간 결과에 따라 남은 Workflow를 조정했습니다."}</span>
+                    </div>
+                    <small>
+                      {(latestGraphChange.addedNodeKeys?.length ?? 0) > 0 && `+${latestGraphChange.addedNodeKeys?.length}`}
+                      {(latestGraphChange.addedNodeKeys?.length ?? 0) > 0 && (latestGraphChange.removedNodeKeys?.length ?? 0) > 0 && " · "}
+                      {(latestGraphChange.removedNodeKeys?.length ?? 0) > 0 && `−${latestGraphChange.removedNodeKeys?.length}`}
+                    </small>
+                  </div>
+                )}
                 {mission.status === "running" && (
                   <div className="deep-analysis-run-feedback is-running" role="status">
                     <LoaderCircle className="is-running" size={16} />
@@ -666,7 +703,7 @@ export function DeepAnalysisView({
                       <strong>{activeNode ? `${activeNode.nodeKey} · ${activeNode.title} 실행 중` : "분석 작업 실행 중"}</strong>
                       <span>{activeNode?.runId
                         ? `실제 Lumina Run ${activeNode.runStatus ? `· ${statusLabel(activeNode.runStatus)}` : ""} · ${completedNodeCount}/${mission.workflow.nodes.length} Node 완료`
-                        : "실행 Run을 준비하고 있습니다."}</span>
+                        : "실행 Run을 준비하고 있습니다."} 결과에 따라 남은 Workflow가 확장되거나 축소될 수 있습니다.</span>
                     </div>
                   </div>
                 )}
@@ -758,6 +795,11 @@ export function DeepAnalysisView({
                       <section>
                         <h3>목적</h3>
                         <p>{selectedNode.purpose}</p>
+                        {typeof selectedNode.config.reason === "string" && (
+                          <small className="deep-analysis-node-origin">
+                            <GitBranch size={12} /> {selectedNode.config.reason}
+                          </small>
+                        )}
                       </section>
                       <section>
                         <h3>출력</h3>

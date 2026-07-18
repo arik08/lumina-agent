@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import json
-
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
@@ -15,6 +12,14 @@ from .models import (
     DeepAnalysisWorkflowNode,
     DeepAnalysisWorkflowRevision,
 )
+from .planning import (
+    descendant_node_keys,
+    graph_digest,
+    initial_change_log,
+    initial_workflow_plan,
+    plan_edges,
+    planned_positions,
+)
 
 
 DEEP_ANALYSIS_EXECUTION_AVAILABLE = True
@@ -24,20 +29,98 @@ def execution_engine_available() -> bool:
     return DEEP_ANALYSIS_EXECUTION_AVAILABLE
 
 
-DEFAULT_WORKFLOW_NODES = (
-    ("N001", "scope", "목표·범위 확정", "분석 질문, 범위와 완료 조건을 확정합니다."),
-    ("N010", "data_check", "자료·품질 확인", "필요 자료와 데이터 품질을 확인합니다."),
-    ("N020", "analysis", "핵심 분석", "근거와 계산을 바탕으로 핵심 원인을 분석합니다."),
-    ("N030", "synthesis", "검증·합성", "가설을 교차 검증하고 결론을 합성합니다."),
-    ("N040", "report", "최종 보고서", "결론, 근거와 한계를 보고서로 정리합니다."),
-)
+def _populate_initial_workflow(
+    db: Session,
+    *,
+    revision: DeepAnalysisWorkflowRevision,
+    title: str,
+    objective: str,
+) -> None:
+    plan = initial_workflow_plan(title, objective)
+    positions = planned_positions(plan)
+    for index, planned in enumerate(plan.nodes):
+        position_x, position_y, sequence = positions[planned.key]
+        db.add(
+            DeepAnalysisWorkflowNode(
+                workflow_revision_id=revision.id,
+                node_key=planned.key,
+                node_type=planned.node_type,
+                title=planned.title,
+                purpose=planned.purpose,
+                status="ready" if index == 0 else "planned",
+                sequence=sequence,
+                position_x=position_x,
+                position_y=position_y,
+                config_json={
+                    "origin": "question_hypothesis",
+                    "planKind": plan.kind,
+                    "reason": plan.reason,
+                    "dependsOn": list(planned.depends_on),
+                },
+            )
+        )
+    for source, target in plan_edges(plan):
+        db.add(
+            DeepAnalysisWorkflowEdge(
+                workflow_revision_id=revision.id,
+                source_node_key=source,
+                target_node_key=target,
+            )
+        )
 
 
-def _graph_digest() -> str:
-    canonical = json.dumps(
-        DEFAULT_WORKFLOW_NODES, ensure_ascii=False, separators=(",", ":")
+def _rebuild_draft_workflow(
+    db: Session,
+    mission: DeepAnalysisMission,
+    *,
+    workflow: tuple[
+        DeepAnalysisWorkflowRevision,
+        list[DeepAnalysisWorkflowNode],
+        list[DeepAnalysisWorkflowEdge],
+    ]
+    | None = None,
+    action: str = "question_updated",
+) -> None:
+    revision, nodes, _edges = workflow or active_workflow(db, mission.id)
+    if any(node.run_id for node in nodes):
+        return
+    plan = initial_workflow_plan(mission.title, mission.objective)
+    previous = (
+        revision.change_log_json[-1].get("after")
+        if revision.change_log_json and isinstance(revision.change_log_json[-1], dict)
+        else None
     )
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    db.execute(
+        delete(DeepAnalysisWorkflowEdge).where(
+            DeepAnalysisWorkflowEdge.workflow_revision_id == revision.id
+        )
+    )
+    db.execute(
+        delete(DeepAnalysisWorkflowNode).where(
+            DeepAnalysisWorkflowNode.workflow_revision_id == revision.id
+        )
+    )
+    revision.revision_number += 1
+    revision.source = "question_replan"
+    revision.reason = plan.reason
+    revision.graph_digest = graph_digest(plan.nodes, plan_edges(plan))
+    next_log = initial_change_log(plan)[0]
+    revision.change_log_json = [
+        *revision.change_log_json,
+        {
+            **next_log,
+            "revision": revision.revision_number,
+            "action": action,
+            "before": previous,
+        },
+    ]
+    _populate_initial_workflow(
+        db,
+        revision=revision,
+        title=mission.title,
+        objective=mission.objective,
+    )
+    db.flush()
 
 
 def create_mission(
@@ -74,41 +157,23 @@ def create_mission(
     db.add(mission)
     db.flush()
 
+    plan = initial_workflow_plan(clean_title, objective.strip())
     revision = DeepAnalysisWorkflowRevision(
         mission_id=mission.id,
         revision_number=1,
         source="generated",
-        reason="mission_created",
-        graph_digest=_graph_digest(),
+        reason=plan.reason,
+        graph_digest=graph_digest(plan.nodes, plan_edges(plan)),
+        change_log_json=initial_change_log(plan),
     )
     db.add(revision)
     db.flush()
-
-    for sequence, (node_key, node_type, node_title, purpose) in enumerate(
-        DEFAULT_WORKFLOW_NODES
-    ):
-        db.add(
-            DeepAnalysisWorkflowNode(
-                workflow_revision_id=revision.id,
-                node_key=node_key,
-                node_type=node_type,
-                title=node_title,
-                purpose=purpose,
-                status="ready" if sequence == 0 else "planned",
-                sequence=sequence,
-                position_x=80 + sequence * 220,
-                position_y=180,
-                config_json={},
-            )
-        )
-        if sequence:
-            db.add(
-                DeepAnalysisWorkflowEdge(
-                    workflow_revision_id=revision.id,
-                    source_node_key=DEFAULT_WORKFLOW_NODES[sequence - 1][0],
-                    target_node_key=node_key,
-                )
-            )
+    _populate_initial_workflow(
+        db,
+        revision=revision,
+        title=clean_title,
+        objective=objective.strip(),
+    )
     db.flush()
     return mission
 
@@ -187,6 +252,8 @@ def update_mission(
             details={"currentRevision": mission.revision},
         )
     db.refresh(mission)
+    if mission.status == "draft" and (title is not None or objective is not None):
+        _rebuild_draft_workflow(db, mission)
     return mission
 
 
@@ -327,7 +394,7 @@ def retry_mission_node(
             "실패, 중단 또는 확인 필요 상태의 심층분석만 다시 실행할 수 있습니다.",
             details={"status": mission.status},
         )
-    revision, nodes, _edges = active_workflow(db, mission.id)
+    revision, nodes, edges = active_workflow(db, mission.id)
     target = next((item for item in nodes if item.node_key == node_key), None)
     if target is None:
         raise ApiProblem(404, "node_not_found", "다시 실행할 Node를 찾을 수 없습니다.")
@@ -381,8 +448,9 @@ def retry_mission_node(
     from .execution import archive_current_attempt
 
     archive_current_attempt(db, target)
+    reset_keys = descendant_node_keys(target.node_key, edges)
     for node in nodes:
-        if node.sequence < target.sequence:
+        if node.node_key not in reset_keys:
             continue
         node.status = "running" if node.id == target.id else "planned"
         node.run_id = None
@@ -475,3 +543,23 @@ def active_workflow(
         )
     )
     return revision, nodes, edges
+
+
+def upgrade_legacy_draft_workflow(
+    db: Session, mission: DeepAnalysisMission
+) -> bool:
+    workflow = active_workflow(db, mission.id)
+    revision, nodes, _edges = workflow
+    if (
+        revision.change_log_json
+        or mission.status != "draft"
+        or any(node.run_id for node in nodes)
+    ):
+        return False
+    _rebuild_draft_workflow(
+        db,
+        mission,
+        workflow=workflow,
+        action="legacy_upgraded",
+    )
+    return True

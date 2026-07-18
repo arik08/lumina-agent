@@ -91,6 +91,7 @@ class WorkflowRevisionResponse(ApiModel):
     source: str
     reason: str
     graph_digest: str
+    change_log: list[dict[str, Any]]
     nodes: list[WorkflowNodeResponse]
     edges: list[WorkflowEdgeResponse]
     created_at: datetime

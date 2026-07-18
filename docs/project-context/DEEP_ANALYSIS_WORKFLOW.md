@@ -8,19 +8,24 @@
 
 ## 0. 구현 현황
 
-2026-07-18 기준으로 첫 end-to-end 실행 Slice가 구현되어 있습니다. 아래 Target 전체가 완료된 것은 아니지만, Mission 생성부터 exact 자료 고정, 실제 Core Run 5단계 실행, Python 계산, Node별 산출물·비용 기록과 최종 보고서까지 제품 경로가 연결되어 있습니다.
+2026-07-18 기준으로 적응형 end-to-end 실행 Slice가 구현되어 있습니다. 아래 Target 전체가 완료된 것은 아니지만, 질문별 초기 DAG 생성부터 exact 자료 고정, 실제 Core Run 실행, 실행 중 Workflow 재계획, Python 계산, Node별 산출물·비용 기록과 최종 보고서까지 제품 경로가 연결되어 있습니다.
 
 구현된 범위는 다음과 같습니다.
 
 - Lumina 공통 Shell의 독립 `심층분석` 메뉴와 lazy-loaded Workspace Frontend module
-- Project에 귀속되는 `Mission`, `WorkflowRevision`, `WorkflowNode`, `WorkflowEdge` 분리 entity와 실행 lineage migration `0034`, `0036`
+- Project에 귀속되는 `Mission`, `WorkflowRevision`, `WorkflowNode`, `WorkflowEdge` 분리 entity와 실행·적응 이력 migration `0034`, `0036`, `0037`
 - Mission 목록·생성·상세 조회·revision CAS 수정 API, 기존 Project read/write 권한 재검증과 audit event
-- Mission 생성 시 서버에 고정되는 zero-based Workflow revision 1, 기본 5개 Node와 4개 Edge
+- Mission 생성 시 질문을 정량 분석·비교 조사·의사결정·비정형 분석으로 판별해 서로 다른 5~7개 초기 가설 DAG를 구성하며, 분해 분석과 원인 가설 또는 대안 분석과 위험 분석은 병렬 Edge로 표현
+- Mission을 시작한 뒤 각 비보고서 Node가 결과와 함께 `continue`, `expand`, `shrink`, `replace`, `finish` 판단과 근거를 구조화해 반환하고, Backend가 허용 action·Node type·순환·상한·예산을 검증한 뒤 실제 Node·Edge를 추가·제거·연결
+- 순번의 다음 Node가 아니라 모든 선행 Edge가 완료된 실행 가능 Node를 선택하는 dependency-aware 순차 실행. 서로 다른 분기는 독립적으로 수행한 뒤 공통 검증·합성 Node에서 수렴
+- 실행 중 추가 Node는 판단당 최대 4개, 전체 14개, 그래프 변경 4회로 제한하며 제어값이 없거나 잘못된 경우 기존 Workflow를 유지하는 안전 fallback
+- 초기안과 모든 실행 중 판단에 대해 변경 전·후 Graph snapshot, 요청 Node, 추가·제거 Node, 판단 근거·신뢰도와 시각을 `changeLog`에 보존하고 실제 Graph가 바뀔 때 Workflow Revision과 digest를 갱신
+- 실행 전 Mission 질문을 수정하면 아직 Run이 없는 Draft Workflow를 새 질문 유형에 맞춰 재구성하고 `question_updated` 변경 이력으로 보존
 - Mission 생성 form, Mission 목록, `Workflow` Canvas, Node 선택·Inspector, 누적 비용과 opt-in Node별 비용 표시
 - Project write 권한과 revision을 확인하고 동일 버튼 2단계 확인으로 수행하는 Mission·Workflow cascade 삭제. Mission 산출물 ProjectFile도 soft delete하여 orphan folder를 남기지 않음
 - 각 Node를 기존 Lumina Core `Run`으로 실행하는 orchestration adapter, 숨김 `deep_analysis` Conversation과 Run·Node foreign reference
 - 완료된 LLM 응답 bytes를 추가 LLM 호출 없이 `심층분석/{Mission명}_{ID}/{Node ID}_{작업명}.md` Project 파일로 저장하는 평면 산출물 계약
-- Run 완료 시 다음 Node를 DB transaction으로 생성·연결하고 Worker Queue에 넣는 순차 실행, 실패·취소·Backend 재시작 뒤 terminal 동기화
+- Run 완료 시 적응 판단과 다음 실행 가능 Node를 DB transaction으로 반영하고 Worker Queue에 넣는 실행, 실패·취소·Backend 재시작 뒤 terminal 동기화
 - Mission 시작 시 활성 ProjectFile의 `file ID·version ID·version·digest·path·MIME·size`를 고정하고 모든 후속 Node와 Workspace Tool이 해당 버전을 읽는 exact source manifest
 - 이전 Mission의 `심층분석/` 산출물은 새 Mission의 원본 입력에 자동 포함하지 않고, 현재 Mission이 생성한 선행 Node 산출물만 후속 Run manifest에 추가하는 Context 경계
 - CSV 입력만 허용하고 import·file·network·dynamic code·private attribute를 차단하는 `run_python_calculation` Tool. 격리 Python process, 12초 timeout, 입력·행·열·script·정적 반복 크기 한계를 적용하고 실행 `.py`와 결과 `.csv`를 평면 Mission 경로에 저장
@@ -28,17 +33,20 @@
 - Provider usage의 `cost_usd`를 Node·Mission `microusd` projection으로 누적하고 Mission 예산을 다음 Run의 hard limit과 Node 전환 Gate에 반영
 - Node 특성별 기본 실행 Profile: 범위 확정은 `standard·brief`, 자료 확인은 `standard·standard`, 분석·합성은 `deep·standard`, 최종 보고서는 `deep·detailed`
 - 실행 중 현재 Node·실제 Run 상태와 최대 6,000자의 live output을 polling으로 표시하고, 완료 문서 요약·전체 Markdown·저장 경로·계산 파일·과거 시도·비용을 Inspector에 표시
+- 질문 기반 초기 Workflow 또는 실행 중 확장·축소·교체·조기 합성의 최신 사유와 증감 Node 수를 Canvas 상단에 표시하고, Graph digest가 바뀌면 가변 DAG를 viewport에 다시 맞춤
 - revision CAS와 Project write 권한을 적용한 `중단` 동작과 기존 Mission·첫 활성 Node의 상태 정리
 - 배율과 무관한 transform 기반 Workflow 좌클릭 drag pan, 포인터 기준 wheel zoom(40~180%), 화면 내 확대·배율·축소·위치 초기화 control
 - 우상단 누적 비용 icon·hover 요약·Node별 opt-in 상세와 닫을 때 전체 Graph를 현재 viewport에 자동 맞춤하는 Node Inspector
 - Canvas 내부의 숨은 native scroll 상태를 금지하여 Inspector를 닫거나 viewport가 넓어져도 Node가 잘리지 않는 배치
 - Backend DB를 원본으로 한 새로고침 복원과 Project별 마지막 선택 Mission 복원
 
-아직 구현되지 않은 핵심 Target은 질문·Decision Node, Node 위치 편집·connect와 Draft revision, 심층분석 canonical event projection, Workflow Pattern, Claim·Evidence·Quality Gate, Mission export입니다. 현재 기본 5개 Node는 순차 실행이고, typed source manifest는 구현됐지만 Claim·Evidence 단위의 선택형 Context 조립은 후속 Slice입니다.
+아직 구현되지 않은 핵심 Target은 사용자 응답을 기다리는 질문·Decision Node, Node 위치 편집·수동 connect와 별도 Draft revision, 심층분석 canonical event projection, Workflow Pattern, Claim·Evidence·Quality Gate, Mission export입니다. 현재 AI 재계획 판단은 `changeLog`에 보존되지만 별도 사용자 Decision entity와 승인 Gate는 후속 Slice입니다. typed source manifest는 구현됐지만 Claim·Evidence 단위의 선택형 Context 조립도 후속 Slice입니다.
 
-현재 Slice는 전용 Backend test 10개에서 Mock 5단계 완주, 취소·재시도·시도 이력, source version 고정, Mission 산출물 입력 제외·삭제 연동, Python 계산의 frozen CSV 사용과 위험 script 차단을 검증했습니다. Ruff, Frontend 심층분석 test 8개, typecheck·production build와 migration `0001 → 0036`도 통과했습니다.
+현재 Slice는 전용 Backend·migration test 22개에서 질문별 5·7 Node 초기안, Draft 질문 변경과 기존 미실행 Mission 승격, runtime expand·shrink와 dependency next-node 선택, Mock 전체 완주, 취소·재시도·시도 이력, source version 고정, Mission 산출물 입력 제외·삭제 연동, Python 계산의 frozen CSV 사용과 위험 script 차단을 검증했습니다. Ruff, Frontend 심층분석 test 9개, typecheck·production build와 migration `0001 → 0037`도 통과했습니다.
 
 격리 port `15252`·`15253`의 실제 GPT-5.5 검증에서는 `inputs/cost-variance.csv` 1개를 고정 입력으로 사용해 N001부터 N040까지 5개 Node를 완주했습니다. 5개 Markdown, N010·N020·N030의 Python·CSV 6개를 합쳐 총 11개 파일을 생성했고, 전기 1,850·당기 2,240·증감 +390과 기여율을 재현 계산했습니다. Node 비용은 N001 `US$0.0672`, N010 `US$0.2140`, N020 `US$0.3171`, N030 `US$0.4530`, N040 `US$0.0498`, Mission 합계 `US$1.1010`으로 기록됐습니다. 브라우저에서 live output, 중단, 삭제 2단계 확인, 40% 좌클릭 pan, wheel zoom, 빈 Canvas click Inspector 닫기, 닫은 뒤 전체 Node fit, 비용 popover, 파일 tree와 console error 0건을 확인했습니다.
+
+적응형 검증에서는 같은 격리 환경에서 정량 원가 질문이 분기 Edge를 포함한 7 Node 초기안으로, 비정형 고객 이탈 질문이 5 Node 최소 초기안으로 서로 다르게 생성됐습니다. 비정형 Mission의 N001을 실제 GPT-5.5로 실행하자 자료 부재와 계측 기준 필요성을 근거로 `expand`를 반환했고, Backend가 `N050 최소 데이터·계측 기준 설계`를 추가해 Workflow를 6 Node·Revision 2로 변경한 뒤 그 Node를 다음 실제 Run으로 시작했습니다. UI와 DB `changeLog`에서 변경 사유, `+1`, 요청 Node, before·after snapshot과 실제 Codex Run 연결을 확인했습니다.
 
 ## 1. 목적
 
