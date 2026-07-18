@@ -889,6 +889,18 @@ export function DeepAnalysisView({
     }
   }
 
+  function toggleGoalCompletionPanel() {
+    const nextOpen = !contractOpen;
+    setContractOpen(nextOpen);
+    if (nextOpen) setExecutionLogOpen(false);
+  }
+
+  function toggleExecutionLog() {
+    const nextOpen = !executionLogOpen;
+    setExecutionLogOpen(nextOpen);
+    if (nextOpen) setContractOpen(false);
+  }
+
   async function rerunQualityGate() {
     if (!mission || runningQualityGate) return;
     setRunningQualityGate(true);
@@ -1236,9 +1248,10 @@ export function DeepAnalysisView({
                       className={`deep-analysis-contract-toggle ${contractOpen ? "is-active" : ""}`}
                       type="button"
                       aria-expanded={contractOpen}
-                      onClick={() => setContractOpen((open) => !open)}
+                      aria-controls="deep-analysis-goal-completion"
+                      onClick={toggleGoalCompletionPanel}
                     >
-                      Mission 계약
+                      목표·완료 기준
                     </button>
                     <div className="deep-analysis-pattern-wrap">
                       <button className="deep-analysis-contract-toggle" type="button" aria-expanded={patternPanelOpen} onClick={() => setPatternPanelOpen((open) => !open)}>Pattern</button>
@@ -1344,10 +1357,10 @@ export function DeepAnalysisView({
                   </span>
                 </div>
                 {contractOpen && charterDraft && completionDraft && (
-                  <section className="deep-analysis-contract" aria-label="Mission Charter와 완료 조건">
+                  <section id="deep-analysis-goal-completion" className="deep-analysis-contract" aria-label="분석 목표와 완료 기준">
                     <div className="deep-analysis-contract-grid">
                       <div>
-                        <strong>Mission Charter</strong>
+                        <strong>분석 목표</strong>
                         <label>목적<textarea rows={2} value={charterDraft.purpose} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCharterDraft({ ...charterDraft, purpose: event.target.value })} /></label>
                         <label>반드시 답할 핵심 질문<textarea rows={3} value={charterDraft.keyQuestions.join("\n")} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCharterDraft({ ...charterDraft, keyQuestions: splitContractLines(event.target.value) })} /></label>
                         <label>필수 산출물<textarea rows={2} value={charterDraft.deliverables.join("\n")} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCharterDraft({ ...charterDraft, deliverables: splitContractLines(event.target.value) })} /></label>
@@ -1361,7 +1374,7 @@ export function DeepAnalysisView({
                         <label>품질 기준<textarea rows={2} value={charterDraft.qualityStandards.join("\n")} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCharterDraft({ ...charterDraft, qualityStandards: splitContractLines(event.target.value) })} /></label>
                       </div>
                       <div>
-                        <strong>Completion Contract</strong>
+                        <strong>완료 기준</strong>
                         <label>보고서 필수 섹션<textarea rows={2} value={completionDraft.requiredSections.join("\n")} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCompletionDraft({ ...completionDraft, requiredSections: splitContractLines(event.target.value) })} /></label>
                         <label>최소 근거 coverage (%)<input type="number" min="0" max="100" value={Math.round(completionDraft.minimumEvidenceCoverage * 100)} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCompletionDraft({ ...completionDraft, minimumEvidenceCoverage: Math.min(1, Math.max(0, Number(event.target.value) / 100)) })} /></label>
                         <label>허용 미해결 항목 수<input type="number" min="0" max="1000" value={completionDraft.maximumOpenIssues} disabled={mission.status !== "draft" && mission.status !== "ready"} onChange={(event) => setCompletionDraft({ ...completionDraft, maximumOpenIssues: Math.max(0, Number(event.target.value)) })} /></label>
@@ -1374,7 +1387,7 @@ export function DeepAnalysisView({
                         <span>실행을 시작하면 이 계약이 해당 Mission revision에 고정됩니다.</span>
                         <button type="button" disabled={savingContract || !charterDraft.purpose.trim()} onClick={() => void saveMissionContract()}>
                           {savingContract && <LoaderCircle className="is-running" size={14} />}
-                          {savingContract ? "저장 중" : "계약 저장"}
+                          {savingContract ? "저장 중" : "기준 저장"}
                         </button>
                       </div>
                     )}
@@ -1682,7 +1695,7 @@ export function DeepAnalysisView({
                   <button
                     type="button"
                     aria-expanded={executionLogOpen}
-                    onClick={() => setExecutionLogOpen((open) => !open)}
+                    onClick={toggleExecutionLog}
                   >
                     <ChevronRight size={14} />
                     <strong>실행 과정</strong>

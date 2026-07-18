@@ -254,9 +254,12 @@ test("Mission Charter is editable before start and immutable Quality Gates remai
     readFile(cssPath, "utf8"),
   ]);
 
-  assert.match(view, /Mission 계약/);
-  assert.match(view, /Mission Charter/);
-  assert.match(view, /Completion Contract/);
+  assert.match(view, /목표·완료 기준/);
+  assert.match(view, /aria-controls="deep-analysis-goal-completion"/);
+  assert.match(view, /function toggleGoalCompletionPanel\(\)[\s\S]*?setExecutionLogOpen\(false\)/);
+  assert.match(view, /function toggleExecutionLog\(\)[\s\S]*?setContractOpen\(false\)/);
+  assert.match(view, /<strong>분석 목표<\/strong>/);
+  assert.match(view, /<strong>완료 기준<\/strong>/);
   assert.match(view, /api\.deepAnalysis\.updateMission/);
   assert.match(view, /charter: \{/);
   assert.match(view, /completionContract: \{/);
@@ -267,6 +270,8 @@ test("Mission Charter is editable before start and immutable Quality Gates remai
   assert.match(view, /api\.deepAnalysis\.runQualityGate/);
   assert.match(view, /Quality Gate 다시 검사/);
   assert.match(css, /\.deep-analysis-contract-grid \{/);
+  assert.match(css, /\.deep-analysis-contract \{[^}]*max-height: min\(520px, 60vh\);[^}]*grid-template-rows: minmax\(0, 1fr\) auto;[^}]*overflow: hidden;/);
+  assert.match(css, /\.deep-analysis-contract-grid \{[^}]*min-height: 0;[^}]*overflow-y: auto;/);
   assert.match(css, /\.deep-analysis-quality-gate\.is-failed/);
 });
 

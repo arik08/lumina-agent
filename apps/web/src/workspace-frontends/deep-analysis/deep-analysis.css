@@ -137,8 +137,8 @@
 .deep-analysis-tabs button.is-active { border-bottom-color: var(--cobalt); color: var(--ink); }
 .deep-analysis-tabs span { margin: 0 0 11px auto; color: var(--faint); font-size: 10.5px; }
 
-.deep-analysis-contract { display: grid; gap: 11px; padding: 13px 16px; border-bottom: 1px solid var(--line); background: var(--surface); }
-.deep-analysis-contract-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.deep-analysis-contract { display: grid; min-height: 0; max-height: min(520px, 60vh); grid-template-rows: minmax(0, 1fr) auto; gap: 11px; overflow: hidden; padding: 13px 16px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.deep-analysis-contract-grid { display: grid; min-height: 0; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; overflow-y: auto; overscroll-behavior: contain; }
 .deep-analysis-contract-grid > div { display: grid; align-content: start; gap: 8px; }
 .deep-analysis-contract-grid > div > strong { color: var(--ink); font-size: 11.5px; }
 .deep-analysis-contract label { display: grid; gap: 4px; color: var(--muted); font-size: 10px; font-weight: 620; }
@@ -148,7 +148,7 @@
 .deep-analysis-contract textarea:disabled { opacity: .78; cursor: default; }
 .deep-analysis-contract .deep-analysis-contract-check { display: flex; align-items: center; gap: 6px; color: var(--ink); }
 .deep-analysis-contract-check input { margin: 0; accent-color: var(--cobalt); }
-.deep-analysis-contract-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+.deep-analysis-contract-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; border-top: 1px solid var(--line); padding-top: 10px; background: var(--surface); }
 .deep-analysis-contract-actions span { margin-right: auto; color: var(--faint); font-size: 10px; }
 .deep-analysis-contract-actions button { display: inline-flex; min-height: 30px; align-items: center; gap: 6px; border: 1px solid var(--cobalt); border-radius: var(--radius-control); padding: 0 10px; background: var(--cobalt); color: white; font-size: 10.5px; font-weight: 650; cursor: pointer; }
 .deep-analysis-contract-actions button:disabled { opacity: .5; cursor: default; }
