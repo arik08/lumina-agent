@@ -149,6 +149,7 @@
   width: min(1400px, 82vw);
   min-height: 55vh;
   max-height: none;
+  overflow: hidden;
 }
 
 .interactive-chart-error { border-color: var(--danger) !important; }

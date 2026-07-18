@@ -72,7 +72,7 @@ test("tall Mermaid workflows keep readable geometry inside a bounded scroll surf
   assert.match(rendererStyles, /\.mermaid-surface\.is-dragging \{[^}]*cursor: grabbing;[^}]*user-select: none;/);
   assert.match(rendererStyles, /\.mermaid-surface svg \{[\s\S]*width: auto;[\s\S]*max-width: 100%;[\s\S]*height: auto;/);
   assert.match(rendererStyles, /\.mermaid-surface:not\(\.is-expanded\) svg \{[^}]*transition: width 150ms var\(--ease-out-quint, ease-out\);/);
-  assert.match(rendererStyles, /\.mermaid-surface\.is-expanded \{[\s\S]*max-height: none;/);
+  assert.match(rendererStyles, /\.mermaid-surface\.is-expanded \{[\s\S]*max-height: none;[\s\S]*overflow: hidden;/);
   assert.doesNotMatch(rendererStyles, /\.mermaid-surface svg \{[\s\S]*max-height: 660px;/);
   assert.doesNotMatch(globalStyles, /\.mermaid-diagram svg/);
 });
@@ -82,7 +82,9 @@ test("chat Mermaid cards provide button-only zoom controls beside the expand but
   assert.match(rendererSource, /const \[initialZoom, setInitialZoom\] = useState\(1\)/);
   assert.match(rendererSource, /setZoom\(clamp\(next, 0\.3, 2\)\)/);
   assert.match(rendererSource, /baseWidthRef\.current = naturalWidth/);
-  assert.match(rendererSource, /clamp\(Math\.floor\(Math\.min\(widthFit, heightFit, 1\) \* 10\) \/ 10, 0\.7, 1\)/);
+  assert.match(rendererSource, /const fitZoom = Math\.min\(widthFit, heightFit, 1\)/);
+  assert.match(rendererSource, /expanded[\s\S]*?clamp\(fitZoom, 0\.3, 1\)/);
+  assert.match(rendererSource, /clamp\(Math\.floor\(fitZoom \* 10\) \/ 10, 0\.7, 1\)/);
   assert.match(rendererSource, /aria-label="Mermaid 다이어그램 축소"[\s\S]*?zoom - 0\.2/);
   assert.match(rendererSource, /aria-label="Mermaid 다이어그램 배율 초기화"[\s\S]*?setZoom\(initialZoom\)/);
   assert.match(rendererSource, /aria-label="Mermaid 다이어그램 확대"[\s\S]*?zoom \+ 0\.2/);

@@ -200,9 +200,10 @@ function MermaidSurface({ source, expanded = false, zoom = 1, onInitialFit }: {
         baseWidthRef.current = naturalWidth;
         const widthFit = containerRef.current.clientWidth / Math.max(naturalWidth, 1);
         const heightFit = containerRef.current.clientHeight / Math.max(naturalHeight, 1);
+        const fitZoom = Math.min(widthFit, heightFit, 1);
         const initialZoom = expanded
-          ? zoomRef.current
-          : clamp(Math.floor(Math.min(widthFit, heightFit, 1) * 10) / 10, 0.7, 1);
+          ? clamp(fitZoom, 0.3, 1)
+          : clamp(Math.floor(fitZoom * 10) / 10, 0.7, 1);
         zoomRef.current = initialZoom;
         renderedSvg.style.width = `${baseWidthRef.current * initialZoom}px`;
         renderedSvg.style.maxWidth = "none";
