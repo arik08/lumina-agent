@@ -84,7 +84,7 @@ test("project settings preserve the active deep-analysis sidebar", async () => {
   assert.match(app, /mainView === "project-settings"\) setMainView\(projectSettingsReturnView\);/);
 });
 
-test("Mission header keeps only the title and objective rows", async () => {
+test("Mission header keeps the title and objective on one row", async () => {
   const [view, css] = await Promise.all([
     readFile(viewPath, "utf8"),
     readFile(cssPath, "utf8"),
@@ -93,6 +93,7 @@ test("Mission header keeps only the title and objective rows", async () => {
 
   assert.match(missionHeader, /<h2>\{mission\.title\}<\/h2>/);
   assert.match(missionHeader, /mission\.objective/);
+  assert.match(css, /\.deep-analysis-mission-header > div:first-child \{[^}]*display: flex;[^}]*align-items: baseline;/);
   assert.doesNotMatch(missionHeader, /statusLabel\(mission\.status\)/);
   assert.doesNotMatch(css, /\.deep-analysis-mission-header \{[^}]*min-height:/);
 });
