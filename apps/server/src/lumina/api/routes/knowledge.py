@@ -13,14 +13,18 @@ from ...knowledge.schemas import (
     KnowledgeEntityCreate,
     KnowledgeSourceCreate,
     KnowledgeSpaceCreate,
+    KnowledgeSpaceUpdate,
+    KnowledgeReviewDecision,
     KnowledgeStatementCreate,
 )
 from ...knowledge.service import (
+    archive_knowledge_space,
     create_knowledge_entity,
     create_knowledge_ingestion_job,
     create_knowledge_source,
     create_knowledge_space,
     create_knowledge_statement,
+    decide_knowledge_statement,
     entity_payload,
     ingestion_job_payload,
     knowledge_neighborhood,
@@ -33,6 +37,7 @@ from ...knowledge.service import (
     source_payload,
     space_payload,
     statement_payload,
+    update_knowledge_space,
 )
 from ...models import User
 from ..dependencies import AuthContext, get_current_user, require_csrf
@@ -81,6 +86,56 @@ def get_knowledge_space(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     return space_payload(require_knowledge_space(db, user, space_id))
+
+
+@router.patch("/spaces/{space_id}")
+def patch_knowledge_space(
+    space_id: str,
+    payload: KnowledgeSpaceUpdate,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    space = update_knowledge_space(db, context.user, space_id, payload)
+    record_audit(
+        db,
+        action="knowledge_space_updated",
+        target_type="knowledge_space",
+        target_id=space.id,
+        result="success",
+        actor=context.user,
+        request_id=_request_id(request),
+        metadata={"settings_revision": space.settings_revision},
+    )
+    db.commit()
+    return space_payload(space)
+
+
+@router.delete("/spaces/{space_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_knowledge_space(
+    space_id: str,
+    request: Request,
+    expected_revision: int = Query(alias="expectedRevision", ge=1),
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> Response:
+    space = archive_knowledge_space(
+        db,
+        context.user,
+        space_id,
+        expected_revision=expected_revision,
+    )
+    record_audit(
+        db,
+        action="knowledge_space_archived",
+        target_type="knowledge_space",
+        target_id=space.id,
+        result="success",
+        actor=context.user,
+        request_id=_request_id(request),
+    )
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/spaces/{space_id}/sources", status_code=201)
@@ -150,9 +205,7 @@ def post_knowledge_ingestion(
     record_audit(
         db,
         action=(
-            "knowledge_ingestion_queued"
-            if created
-            else "knowledge_ingestion_reused"
+            "knowledge_ingestion_queued" if created else "knowledge_ingestion_reused"
         ),
         target_type="knowledge_ingestion_job",
         target_id=job.id,
@@ -254,6 +307,33 @@ def post_knowledge_statement(
         metadata={
             "revision_id": statement.revision_id,
             "status": statement.status,
+        },
+    )
+    db.commit()
+    return statement_payload(db, statement)
+
+
+@router.post("/reviews/{statement_id}/decision")
+def post_knowledge_review_decision(
+    statement_id: str,
+    payload: KnowledgeReviewDecision,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    statement = decide_knowledge_statement(db, context.user, statement_id, payload)
+    record_audit(
+        db,
+        action="knowledge_statement_reviewed",
+        target_type="knowledge_statement",
+        target_id=statement.id,
+        result="success",
+        actor=context.user,
+        request_id=_request_id(request),
+        metadata={
+            "decision": statement.status,
+            "revision_id": statement.revision_id,
+            "supersedes_statement_id": statement.supersedes_statement_id,
         },
     )
     db.commit()

@@ -294,6 +294,13 @@ export interface CreateKnowledgeSpaceRequest {
   purpose?: string;
 }
 
+export interface UpdateKnowledgeSpaceRequest {
+  expectedRevision: number;
+  name?: string;
+  description?: string;
+  purpose?: string;
+}
+
 export interface KnowledgeEvidenceSegment {
   id: UUID;
   sourceRevisionId: UUID;
@@ -393,7 +400,7 @@ export interface KnowledgeStatement {
   objectKind: KnowledgeObjectKind;
   objectEntityId: UUID | null;
   objectValue: unknown;
-  status: "proposed" | "approved";
+  status: "proposed" | "approved" | "rejected";
   rank: "preferred" | "normal" | "deprecated";
   confidence: number | null;
   validFrom: IsoDateTime | null;
@@ -413,6 +420,11 @@ export interface CreateKnowledgeStatementRequest {
   rank?: "preferred" | "normal" | "deprecated";
   confidence?: number | null;
   changeSummary?: string;
+}
+
+export interface KnowledgeReviewDecisionRequest {
+  decision: "approved" | "rejected";
+  reason?: string;
 }
 
 export interface KnowledgeNeighborhood {

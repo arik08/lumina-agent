@@ -4,7 +4,7 @@ from hashlib import sha256
 import json
 from typing import Any
 
-from sqlalchemy import case, func, literal, or_, select
+from sqlalchemy import case, exists, func, literal, or_, select
 from sqlalchemy.orm import Session
 
 from ..api.errors import ApiProblem
@@ -29,8 +29,10 @@ from .extractor import KNOWLEDGE_EXTRACTOR_VERSION
 from .schemas import (
     EvidenceSegmentCreate,
     KnowledgeEntityCreate,
+    KnowledgeReviewDecision,
     KnowledgeSourceCreate,
     KnowledgeSpaceCreate,
+    KnowledgeSpaceUpdate,
     KnowledgeStatementCreate,
 )
 
@@ -145,6 +147,60 @@ def create_knowledge_space(
         status="active",
     )
     db.add(space)
+    db.flush()
+    return space
+
+
+def update_knowledge_space(
+    db: Session,
+    user: User,
+    space_id: str,
+    payload: KnowledgeSpaceUpdate,
+) -> KnowledgeSpace:
+    space = require_knowledge_space(db, user, space_id, write=True)
+    if space.settings_revision != payload.expected_revision:
+        raise ApiProblem(
+            409,
+            "knowledge_space_revision_conflict",
+            "지식 공간이 다른 곳에서 변경되었습니다. 최신 상태를 불러온 뒤 다시 시도해 주세요.",
+            details={"currentRevision": space.settings_revision},
+        )
+    changed = False
+    if payload.name is not None:
+        space.name = payload.name.strip()
+        changed = True
+    if payload.description is not None:
+        space.description = payload.description.strip()
+        changed = True
+    if payload.purpose is not None:
+        space.purpose = payload.purpose.strip()
+        changed = True
+    if changed:
+        space.settings_revision += 1
+        space.updated_at = utc_now()
+    db.flush()
+    return space
+
+
+def archive_knowledge_space(
+    db: Session,
+    user: User,
+    space_id: str,
+    *,
+    expected_revision: int,
+) -> KnowledgeSpace:
+    space = require_knowledge_space(db, user, space_id, write=True)
+    if space.settings_revision != expected_revision:
+        raise ApiProblem(
+            409,
+            "knowledge_space_revision_conflict",
+            "지식 공간이 다른 곳에서 변경되었습니다. 최신 상태를 불러온 뒤 다시 시도해 주세요.",
+            details={"currentRevision": space.settings_revision},
+        )
+    space.status = "archived"
+    space.archived_at = utc_now()
+    space.settings_revision += 1
+    space.updated_at = utc_now()
     db.flush()
     return space
 
@@ -539,13 +595,127 @@ def list_knowledge_statements(
     db: Session, user: User, space_id: str
 ) -> list[KnowledgeStatement]:
     require_knowledge_space(db, user, space_id)
+    current_statement = KnowledgeStatement.__table__.alias("current_statement")
+    has_successor = exists(
+        select(current_statement.c.id).where(
+            current_statement.c.supersedes_statement_id == KnowledgeStatement.id
+        )
+    )
     return list(
         db.scalars(
             select(KnowledgeStatement)
-            .where(KnowledgeStatement.space_id == space_id)
+            .where(
+                KnowledgeStatement.space_id == space_id,
+                ~has_successor,
+            )
             .order_by(KnowledgeStatement.recorded_at.desc(), KnowledgeStatement.id)
         )
     )
+
+
+def decide_knowledge_statement(
+    db: Session,
+    user: User,
+    statement_id: str,
+    payload: KnowledgeReviewDecision,
+) -> KnowledgeStatement:
+    statement = db.get(KnowledgeStatement, statement_id)
+    if statement is None:
+        raise ApiProblem(
+            404, "knowledge_statement_not_found", "검토할 Statement를 찾을 수 없습니다."
+        )
+    require_knowledge_space(db, user, statement.space_id, write=True)
+    if statement.status != "proposed":
+        raise ApiProblem(
+            409,
+            "knowledge_statement_already_reviewed",
+            "이미 검토가 끝난 Statement입니다.",
+        )
+    successor = db.scalar(
+        select(KnowledgeStatement.id).where(
+            KnowledgeStatement.supersedes_statement_id == statement.id
+        )
+    )
+    if successor is not None:
+        raise ApiProblem(
+            409,
+            "knowledge_statement_already_reviewed",
+            "이미 검토가 끝난 Statement입니다.",
+        )
+    evidence_ids = list(
+        db.scalars(
+            select(KnowledgeStatementEvidence.evidence_segment_id).where(
+                KnowledgeStatementEvidence.statement_id == statement.id
+            )
+        )
+    )
+    if payload.decision == "approved" and not evidence_ids:
+        raise ApiProblem(
+            422,
+            "knowledge_evidence_required",
+            "승인하려면 한 개 이상의 근거가 필요합니다.",
+        )
+    latest = db.scalar(
+        select(KnowledgeRevision)
+        .where(KnowledgeRevision.space_id == statement.space_id)
+        .order_by(KnowledgeRevision.revision_number.desc())
+        .limit(1)
+    )
+    revision_number = 1 if latest is None else latest.revision_number + 1
+    digest = sha256(
+        json.dumps(
+            {
+                "statementId": statement.id,
+                "decision": payload.decision,
+                "reason": payload.reason.strip(),
+                "evidence": sorted(evidence_ids),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    revision = KnowledgeRevision(
+        space_id=statement.space_id,
+        revision_number=revision_number,
+        parent_revision_id=latest.id if latest else None,
+        status="approved",
+        content_digest=digest,
+        change_summary=payload.reason.strip()
+        or ("Statement 승인" if payload.decision == "approved" else "Statement 거절"),
+        created_by_user_id=user.id,
+        approved_by_user_id=user.id,
+        approved_at=utc_now(),
+    )
+    db.add(revision)
+    db.flush()
+    reviewed = KnowledgeStatement(
+        space_id=statement.space_id,
+        revision_id=revision.id,
+        subject_entity_id=statement.subject_entity_id,
+        predicate_key=statement.predicate_key,
+        object_kind=statement.object_kind,
+        object_entity_id=statement.object_entity_id,
+        object_value_json=statement.object_value_json,
+        status=payload.decision,
+        rank="deprecated" if payload.decision == "rejected" else statement.rank,
+        confidence=statement.confidence,
+        valid_from=statement.valid_from,
+        valid_to=statement.valid_to,
+        created_by_type="user",
+        created_by_user_id=user.id,
+        supersedes_statement_id=statement.id,
+    )
+    db.add(reviewed)
+    db.flush()
+    db.add_all(
+        KnowledgeStatementEvidence(
+            statement_id=reviewed.id, evidence_segment_id=evidence_id
+        )
+        for evidence_id in evidence_ids
+    )
+    db.flush()
+    return reviewed
 
 
 def knowledge_neighborhood(

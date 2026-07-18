@@ -38,6 +38,8 @@ import type {
   KnowledgeSource,
   KnowledgeSpace,
   KnowledgeStatement,
+  KnowledgeReviewDecisionRequest,
+  UpdateKnowledgeSpaceRequest,
   CursorPage,
   ListConversationsQuery,
   LoginRequest,
@@ -1288,6 +1290,30 @@ export async function createKnowledgeSource(
   );
 }
 
+export async function updateKnowledgeSpace(
+  spaceId: string,
+  payload: UpdateKnowledgeSpaceRequest,
+  signal?: AbortSignal,
+) {
+  return request<KnowledgeSpace>(`/knowledge/spaces/${encodeURIComponent(spaceId)}`, {
+    method: "PATCH",
+    body: payload,
+    signal,
+  });
+}
+
+export async function archiveKnowledgeSpace(
+  spaceId: string,
+  expectedRevision: number,
+  signal?: AbortSignal,
+) {
+  return request<void>(`/knowledge/spaces/${encodeURIComponent(spaceId)}`, {
+    method: "DELETE",
+    query: { expectedRevision },
+    signal,
+  });
+}
+
 export async function listKnowledgeIngestions(
   spaceId: string,
   signal?: AbortSignal,
@@ -1341,6 +1367,17 @@ export async function createKnowledgeStatement(
 ) {
   return request<KnowledgeStatement>(
     `/knowledge/spaces/${encodeURIComponent(spaceId)}/statements`,
+    { method: "POST", body: payload, signal },
+  );
+}
+
+export async function decideKnowledgeStatement(
+  statementId: string,
+  payload: KnowledgeReviewDecisionRequest,
+  signal?: AbortSignal,
+) {
+  return request<KnowledgeStatement>(
+    `/knowledge/reviews/${encodeURIComponent(statementId)}/decision`,
     { method: "POST", body: payload, signal },
   );
 }
@@ -2153,6 +2190,8 @@ export const api = {
   knowledge: {
     listSpaces: listKnowledgeSpaces,
     createSpace: createKnowledgeSpace,
+    updateSpace: updateKnowledgeSpace,
+    archiveSpace: archiveKnowledgeSpace,
     listSources: listKnowledgeSources,
     createSource: createKnowledgeSource,
     listIngestions: listKnowledgeIngestions,
@@ -2161,6 +2200,7 @@ export const api = {
     createEntity: createKnowledgeEntity,
     listStatements: listKnowledgeStatements,
     createStatement: createKnowledgeStatement,
+    decideStatement: decideKnowledgeStatement,
     getNeighborhood: getKnowledgeNeighborhood,
   },
   projectMemberships: {

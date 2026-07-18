@@ -336,9 +336,7 @@ def test_knowledge_ingestion_runs_structured_extraction_and_reuses_result(
         assert started.status_code == 202, started.text
         job = started.json()
         for _ in range(100):
-            jobs = client.get(
-                f"/api/knowledge/spaces/{space_id}/ingestions"
-            ).json()
+            jobs = client.get(f"/api/knowledge/spaces/{space_id}/ingestions").json()
             job = jobs[0]
             if job["status"] in {"completed", "failed"}:
                 break
@@ -349,16 +347,12 @@ def test_knowledge_ingestion_runs_structured_extraction_and_reuses_result(
         assert job["inputSegmentCount"] == 1
         assert job["inputTokens"] == 8
 
-        entities = client.get(
-            f"/api/knowledge/spaces/{space_id}/entities"
-        ).json()
+        entities = client.get(f"/api/knowledge/spaces/{space_id}/entities").json()
         assert {entity["canonicalName"] for entity in entities} == {
             "Lumina",
             "Knowledge",
         }
-        statements = client.get(
-            f"/api/knowledge/spaces/{space_id}/statements"
-        ).json()
+        statements = client.get(f"/api/knowledge/spaces/{space_id}/statements").json()
         assert len(statements) == 1
         assert statements[0]["status"] == "proposed"
         assert statements[0]["evidenceSegmentIds"] == [evidence_id]
@@ -369,3 +363,100 @@ def test_knowledge_ingestion_runs_structured_extraction_and_reuses_result(
         )
         assert reused.status_code == 200, reused.text
         assert reused.json()["id"] == job["id"]
+
+
+def test_knowledge_review_settings_and_archive_preserve_revision_history(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'knowledge-review.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client, "admin", "1")
+        headers = {"X-CSRF-Token": csrf}
+        space = client.post(
+            "/api/knowledge/spaces",
+            headers=headers,
+            json={"name": "검토 공간", "purpose": "승인 흐름 검증"},
+        ).json()
+        space_id = space["id"]
+        source_text = "Lumina Knowledge는 근거를 보존한다."
+        source = client.post(
+            f"/api/knowledge/spaces/{space_id}/sources",
+            headers=headers,
+            json={
+                "sourceType": "text",
+                "title": "검토 근거",
+                "contentDigest": sha256(source_text.encode()).hexdigest(),
+                "mediaType": "text/plain",
+                "byteSize": len(source_text.encode()),
+                "capturedText": source_text,
+                "evidenceSegments": [{"text": source_text}],
+            },
+        ).json()
+        subject_id = _create_entity(client, headers, space_id, "Lumina Knowledge")
+        object_id = _create_entity(client, headers, space_id, "Evidence")
+        proposed = client.post(
+            f"/api/knowledge/spaces/{space_id}/statements",
+            headers=headers,
+            json={
+                "subjectEntityId": subject_id,
+                "predicateKey": "PRESERVES",
+                "objectKind": "entity",
+                "objectEntityId": object_id,
+                "evidenceSegmentIds": [source["evidenceSegments"][0]["id"]],
+                "status": "proposed",
+            },
+        )
+        assert proposed.status_code == 201, proposed.text
+
+        reviewed = client.post(
+            f"/api/knowledge/reviews/{proposed.json()['id']}/decision",
+            headers=headers,
+            json={"decision": "approved", "reason": "원문 근거 확인"},
+        )
+        assert reviewed.status_code == 200, reviewed.text
+        assert reviewed.json()["id"] != proposed.json()["id"]
+        assert reviewed.json()["status"] == "approved"
+        assert reviewed.json()["revisionNumber"] == 2
+        current = client.get(f"/api/knowledge/spaces/{space_id}/statements").json()
+        assert [item["id"] for item in current] == [reviewed.json()["id"]]
+        duplicate = client.post(
+            f"/api/knowledge/reviews/{proposed.json()['id']}/decision",
+            headers=headers,
+            json={"decision": "rejected"},
+        )
+        assert duplicate.status_code == 409
+        assert duplicate.json()["code"] == "knowledge_statement_already_reviewed"
+
+        updated = client.patch(
+            f"/api/knowledge/spaces/{space_id}",
+            headers=headers,
+            json={
+                "expectedRevision": 1,
+                "name": "검토 완료 공간",
+                "description": "설정 revision 검증",
+            },
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["settingsRevision"] == 2
+        stale = client.patch(
+            f"/api/knowledge/spaces/{space_id}",
+            headers=headers,
+            json={"expectedRevision": 1, "name": "충돌"},
+        )
+        assert stale.status_code == 409
+        assert stale.json()["code"] == "knowledge_space_revision_conflict"
+
+        archived = client.delete(
+            f"/api/knowledge/spaces/{space_id}?expectedRevision=2",
+            headers=headers,
+        )
+        assert archived.status_code == 204, archived.text
+        assert client.get("/api/knowledge/spaces").json() == []
+        assert client.get(f"/api/knowledge/spaces/{space_id}").status_code == 404

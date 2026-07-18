@@ -1,12 +1,15 @@
 import {
   BookOpenText,
   CircleDot,
+  FileSearch,
   FileText,
   GitBranch,
+  Home,
   LoaderCircle,
   Menu,
   Plus,
-  RefreshCw,
+  Settings,
+  ShieldCheck,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
@@ -20,14 +23,31 @@ import type {
   KnowledgeSpace,
   KnowledgeStatement,
 } from "../../api-types";
+import { KnowledgeExplore } from "./KnowledgeExplore";
+import { KnowledgeGraph } from "./KnowledgeGraph";
+import { KnowledgeHome } from "./KnowledgeHome";
+import { KnowledgeReview } from "./KnowledgeReview";
+import { KnowledgeSettings } from "./KnowledgeSettings";
+import { KnowledgeSources } from "./KnowledgeSources";
+import { KnowledgeWiki } from "./KnowledgeWiki";
 import "./knowledge.css";
 
-type KnowledgeTab = "graph" | "records";
+export type KnowledgeTab = "home" | "explore" | "sources" | "wiki" | "graph" | "review" | "settings";
 type CreatePanel = "space" | "source" | "entity" | "statement" | null;
 
 interface KnowledgeViewProps {
   onOpenNavigation: () => void;
 }
+
+const tabs = [
+  { id: "home", label: "홈", icon: Home },
+  { id: "explore", label: "탐색", icon: FileSearch },
+  { id: "sources", label: "원문", icon: FileText },
+  { id: "wiki", label: "Wiki", icon: BookOpenText },
+  { id: "graph", label: "그래프", icon: GitBranch },
+  { id: "review", label: "검토", icon: ShieldCheck },
+  { id: "settings", label: "설정", icon: Settings },
+] as const;
 
 function errorMessage(error: unknown) {
   return error instanceof ApiError ? error.message : "지식 데이터를 처리하지 못했습니다.";
@@ -47,7 +67,9 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
   const [statements, setStatements] = useState<KnowledgeStatement[]>([]);
   const [neighborhood, setNeighborhood] = useState<KnowledgeNeighborhood | null>(null);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
-  const [tab, setTab] = useState<KnowledgeTab>("graph");
+  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
+  const [selectedEvidenceId, setSelectedEvidenceId] = useState<string | null>(null);
+  const [tab, setTab] = useState<KnowledgeTab>("home");
   const [createPanel, setCreatePanel] = useState<CreatePanel>(null);
   const [loadingSpaces, setLoadingSpaces] = useState(true);
   const [loadingContent, setLoadingContent] = useState(false);
@@ -59,6 +81,7 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
   const [spacePurpose, setSpacePurpose] = useState("");
   const [sourceTitle, setSourceTitle] = useState("");
   const [sourceText, setSourceText] = useState("");
+  const [extractAfterCreate, setExtractAfterCreate] = useState(true);
   const [entityName, setEntityName] = useState("");
   const [entityType, setEntityType] = useState("concept");
   const [subjectId, setSubjectId] = useState("");
@@ -67,10 +90,7 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
   const [evidenceId, setEvidenceId] = useState("");
 
   const selectedSpace = spaces.find((space) => space.id === selectedSpaceId) ?? null;
-  const entityById = useMemo(
-    () => new Map(entities.map((entity) => [entity.id, entity])),
-    [entities],
-  );
+  const entityById = useMemo(() => new Map(entities.map((entity) => [entity.id, entity])), [entities]);
   const evidenceOptions = useMemo(
     () => sources.flatMap((source) => source.evidenceSegments.map((item) => ({
       id: item.id,
@@ -79,10 +99,7 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
     [sources],
   );
   const entityOptions = useMemo(
-    () => [{ value: "", label: "선택" }, ...entities.map((entity) => ({
-      value: entity.id,
-      label: entity.canonicalName,
-    }))],
+    () => [{ value: "", label: "선택" }, ...entities.map((entity) => ({ value: entity.id, label: entity.canonicalName }))],
     [entities],
   );
   const objectEntityOptions = useMemo(
@@ -90,12 +107,10 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
     [entityOptions, subjectId],
   );
   const evidenceMenuOptions = useMemo(
-    () => [{ value: "", label: "없음 · 검토 제안으로 저장" }, ...evidenceOptions.map((item) => ({
-      value: item.id,
-      label: item.label,
-    }))],
+    () => [{ value: "", label: "없음 · 검토 제안으로 저장" }, ...evidenceOptions.map((item) => ({ value: item.id, label: item.label }))],
     [evidenceOptions],
   );
+  const pendingCount = statements.filter((statement) => statement.status === "proposed").length;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -138,6 +153,8 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
         setEntities(nextEntities);
         setStatements(nextStatements);
         setSelectedEntityId((current) => nextEntities.some((item) => item.id === current) ? current : (nextEntities[0]?.id ?? null));
+        setSelectedSourceId((current) => nextSources.some((item) => item.id === current) ? current : (nextSources[0]?.id ?? null));
+        setSelectedEvidenceId(null);
       })
       .catch((loadError) => {
         if (!controller.signal.aborted) setError(errorMessage(loadError));
@@ -162,7 +179,6 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
           setIngestions(nextIngestions);
           setEntities(nextEntities);
           setStatements(nextStatements);
-          setSelectedEntityId((current) => nextEntities.some((item) => item.id === current) ? current : (nextEntities[0]?.id ?? null));
         })
         .catch((loadError) => {
           if (!disposed) setError(errorMessage(loadError));
@@ -175,8 +191,8 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
   }, [ingestions, selectedSpaceId]);
 
   useEffect(() => {
-    if (!selectedEntityId) {
-      setNeighborhood(null);
+    if (!selectedEntityId || tab !== "graph") {
+      if (!selectedEntityId) setNeighborhood(null);
       return;
     }
     const controller = new AbortController();
@@ -186,7 +202,7 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
         if (!controller.signal.aborted) setError(errorMessage(loadError));
       });
     return () => controller.abort();
-  }, [selectedEntityId, statements]);
+  }, [selectedEntityId, statements, tab]);
 
   async function createSpace(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -194,15 +210,13 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
     setSaving(true);
     setError(null);
     try {
-      const created = await api.knowledge.createSpace({
-        name: spaceName.trim(),
-        purpose: spacePurpose.trim(),
-      });
+      const created = await api.knowledge.createSpace({ name: spaceName.trim(), purpose: spacePurpose.trim() });
       setSpaces((current) => [created, ...current]);
       setSelectedSpaceId(created.id);
       setSpaceName("");
       setSpacePurpose("");
       setCreatePanel(null);
+      setTab("home");
     } catch (createError) {
       setError(errorMessage(createError));
     } finally {
@@ -225,17 +239,15 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
         mediaType: "text/plain",
         byteSize: encoded.byteLength,
         capturedText: text,
-        evidenceSegments: [{
-          text,
-          locator: { section: "manual" },
-          language: "ko",
-          tokenCount: Math.ceil(text.length / 3),
-        }],
+        evidenceSegments: [{ text, locator: { section: "manual" }, language: "ko", tokenCount: Math.ceil(text.length / 3) }],
       });
       setSources((current) => [created, ...current.filter((item) => item.id !== created.id)]);
+      setSelectedSourceId(created.id);
       setSourceTitle("");
       setSourceText("");
       setCreatePanel(null);
+      setTab("sources");
+      if (extractAfterCreate) await startIngestion(created.id, selectedSpaceId);
     } catch (createError) {
       setError(errorMessage(createError));
     } finally {
@@ -258,6 +270,7 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
       setSelectedEntityId(created.id);
       setEntityName("");
       setCreatePanel(null);
+      setTab("wiki");
     } catch (createError) {
       setError(errorMessage(createError));
     } finally {
@@ -265,14 +278,14 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
     }
   }
 
-  async function startIngestion(sourceId: string) {
-    if (!selectedSpaceId || startingSourceId) return;
+  async function startIngestion(sourceId: string, spaceId = selectedSpaceId) {
+    if (!spaceId || startingSourceId) return;
     setStartingSourceId(sourceId);
     setError(null);
     try {
-      const job = await api.knowledge.startIngestion(selectedSpaceId, sourceId);
+      const job = await api.knowledge.startIngestion(spaceId, sourceId);
       setIngestions((current) => [job, ...current.filter((item) => item.id !== job.id)]);
-      setTab("records");
+      setTab("sources");
     } catch (startError) {
       setError(errorMessage(startError));
     } finally {
@@ -300,6 +313,7 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
       setObjectId("");
       setEvidenceId("");
       setCreatePanel(null);
+      setTab(created.status === "approved" ? "wiki" : "review");
     } catch (createError) {
       setError(errorMessage(createError));
     } finally {
@@ -307,8 +321,48 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
     }
   }
 
+  function openEntity(entityId: string, target: KnowledgeTab = "wiki") {
+    setSelectedEntityId(entityId);
+    setTab(target);
+  }
+
+  function openEvidence(evidenceSegmentId: string) {
+    const source = sources.find((item) => item.evidenceSegments.some((evidence) => evidence.id === evidenceSegmentId));
+    if (!source) return;
+    setSelectedSourceId(source.id);
+    setSelectedEvidenceId(evidenceSegmentId);
+    setTab("sources");
+  }
+
+  function updateReviewedStatement(originalId: string, reviewed: KnowledgeStatement) {
+    setStatements((current) => [reviewed, ...current.filter((item) => item.id !== originalId)]);
+  }
+
+  function updateSpace(updated: KnowledgeSpace) {
+    setSpaces((current) => current.map((space) => space.id === updated.id ? updated : space));
+  }
+
+  function archiveSpace(spaceId: string) {
+    const next = spaces.filter((space) => space.id !== spaceId);
+    setSpaces(next);
+    setSelectedSpaceId(next[0]?.id ?? null);
+    setTab("home");
+  }
+
   function togglePanel(panel: Exclude<CreatePanel, null>) {
     setCreatePanel((current) => current === panel ? null : panel);
+  }
+
+  let content = null;
+  if (selectedSpace) {
+    const shared = { sources, entities, statements, entityById };
+    if (tab === "home") content = <KnowledgeHome {...shared} ingestions={ingestions} onChangeTab={setTab} onOpenEntity={openEntity} />;
+    if (tab === "explore") content = <KnowledgeExplore {...shared} onOpenEntity={openEntity} onOpenEvidence={openEvidence} />;
+    if (tab === "sources") content = <KnowledgeSources sources={sources} ingestions={ingestions} selectedSourceId={selectedSourceId} selectedEvidenceId={selectedEvidenceId} startingSourceId={startingSourceId} onSelectSource={setSelectedSourceId} onSelectEvidence={setSelectedEvidenceId} onStartIngestion={startIngestion} />;
+    if (tab === "wiki") content = <KnowledgeWiki {...shared} selectedEntityId={selectedEntityId} onSelectEntity={setSelectedEntityId} onOpenEvidence={openEvidence} />;
+    if (tab === "graph") content = <KnowledgeGraph neighborhood={neighborhood} entities={entities} statements={statements} selectedEntityId={selectedEntityId} onSelectEntity={setSelectedEntityId} onOpenWiki={(id) => openEntity(id, "wiki")} />;
+    if (tab === "review") content = <KnowledgeReview sources={sources} statements={statements} entityById={entityById} onOpenEvidence={openEvidence} onReviewed={updateReviewedStatement} onError={(reviewError) => setError(errorMessage(reviewError))} />;
+    if (tab === "settings") content = <KnowledgeSettings key={selectedSpace.id} space={selectedSpace} ingestions={ingestions} onUpdated={updateSpace} onArchived={archiveSpace} onError={(settingsError) => setError(errorMessage(settingsError))} />;
   }
 
   return (
@@ -343,7 +397,7 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
             <div className="knowledge-space-list">
               {spaces.map((space) => (
                 <button className={selectedSpaceId === space.id ? "is-active" : ""} type="button" key={space.id} onClick={() => setSelectedSpaceId(space.id)}>
-                  <BookOpenText size={15} /><span><strong>{space.name}</strong><small>{space.purpose || "개인 지식 공간"}</small></span>
+                  <BookOpenText size={15} /><span><strong>{space.name}</strong><small>{space.purpose || "개인 지식 공간"}</small></span><em>개인</em>
                 </button>
               ))}
             </div>
@@ -354,39 +408,31 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
           {!selectedSpace ? <KnowledgeEmpty /> : (
             <>
               <header className="knowledge-space-header">
-                <div><small>개인 · 비공개</small><h2>{selectedSpace.name}</h2><p>{selectedSpace.purpose || selectedSpace.description || "원문과 검증된 관계를 축적하는 계정 단위 공간입니다."}</p></div>
+                <div><small>개인 · 비공개 · revision {selectedSpace.settingsRevision}</small><h2>{selectedSpace.name}</h2><p>{selectedSpace.purpose || selectedSpace.description || "원문과 검증된 관계를 축적하는 계정 단위 공간입니다."}</p></div>
                 <div className="knowledge-metrics" aria-label="지식 현황">
-                  <span><b>{sources.length}</b> 원문</span><span><b>{entities.length}</b> Entity</span><span><b>{statements.length}</b> Statement</span>
+                  <span><b>{sources.length}</b> 원문</span><span><b>{entities.length}</b> Entity</span><span><b>{statements.filter((item) => item.status === "approved").length}</b> 승인</span><span className={pendingCount ? "has-pending" : ""}><b>{pendingCount}</b> 검토</span>
                 </div>
               </header>
-              <div className="knowledge-toolbar">
-                <div role="tablist" aria-label="지식 화면">
-                  <button className={tab === "graph" ? "is-active" : ""} type="button" role="tab" aria-selected={tab === "graph"} onClick={() => setTab("graph")}><GitBranch size={14} /> 그래프</button>
-                  <button className={tab === "records" ? "is-active" : ""} type="button" role="tab" aria-selected={tab === "records"} onClick={() => setTab("records")}><FileText size={14} /> 원문·사실</button>
+              <nav className="knowledge-toolbar" aria-label="지식 화면">
+                <div role="tablist">
+                  {tabs.map(({ id, label, icon: Icon }) => (
+                    <button className={tab === id ? "is-active" : ""} type="button" role="tab" aria-selected={tab === id} key={id} onClick={() => setTab(id)}>
+                      <Icon size={14} /> {label}{id === "review" && pendingCount > 0 ? <span>{pendingCount}</span> : null}
+                    </button>
+                  ))}
                 </div>
                 <div>
                   <button type="button" onClick={() => togglePanel("source")}><Plus size={13} /> 원문</button>
                   <button type="button" onClick={() => togglePanel("entity")}><Plus size={13} /> Entity</button>
                   <button type="button" disabled={entities.length < 2} onClick={() => togglePanel("statement")}><Plus size={13} /> 관계</button>
                 </div>
-              </div>
+              </nav>
 
-              {createPanel === "source" && <form className="knowledge-inline-form" onSubmit={createSource}><label>원문 제목<input autoFocus value={sourceTitle} maxLength={500} onChange={(event) => setSourceTitle(event.target.value)} /></label><label className="is-wide">원문<textarea value={sourceText} rows={4} maxLength={2_000_000} placeholder="근거로 보존할 텍스트를 입력하세요." onChange={(event) => setSourceText(event.target.value)} /></label><button type="submit" disabled={saving || !sourceTitle.trim() || !sourceText.trim()}>{saving && <LoaderCircle className="is-running" size={14} />} 등록</button></form>}
+              {createPanel === "source" && <form className="knowledge-inline-form knowledge-source-form" onSubmit={createSource}><label>원문 제목<input autoFocus value={sourceTitle} maxLength={500} onChange={(event) => setSourceTitle(event.target.value)} /></label><label className="is-wide">원문<textarea value={sourceText} rows={4} maxLength={2_000_000} placeholder="근거로 보존할 텍스트나 Markdown을 입력하세요." onChange={(event) => setSourceText(event.target.value)} /></label><label className="knowledge-checkbox"><input type="checkbox" checked={extractAfterCreate} onChange={(event) => setExtractAfterCreate(event.target.checked)} /> 등록 후 AI로 Entity와 Statement 추출</label><button type="submit" disabled={saving || !sourceTitle.trim() || !sourceText.trim()}>{saving && <LoaderCircle className="is-running" size={14} />} 등록</button><p>동일한 내용은 digest로 재사용하며, 한 번의 추출은 최대 40개 근거 구간·60,000자로 제한됩니다.</p></form>}
               {createPanel === "entity" && <form className="knowledge-inline-form" onSubmit={createEntity}><label>Entity 이름<input autoFocus value={entityName} maxLength={500} onChange={(event) => setEntityName(event.target.value)} /></label><label>유형<input value={entityType} maxLength={80} placeholder="concept" onChange={(event) => setEntityType(event.target.value)} /></label><button type="submit" disabled={saving || !entityName.trim()}>{saving && <LoaderCircle className="is-running" size={14} />} 등록</button></form>}
               {createPanel === "statement" && <form className="knowledge-inline-form knowledge-statement-form" onSubmit={createStatement}><label>주체<SelectMenu size="small" value={subjectId} options={entityOptions} ariaLabel="관계 주체" onChange={(value) => { setSubjectId(value); if (value === objectId) setObjectId(""); }} /></label><label>관계<input value={predicate} maxLength={160} onChange={(event) => setPredicate(event.target.value)} /></label><label>대상<SelectMenu size="small" value={objectId} options={objectEntityOptions} ariaLabel="관계 대상" onChange={setObjectId} /></label><label className="is-wide">근거<SelectMenu size="small" value={evidenceId} options={evidenceMenuOptions} ariaLabel="관계 근거" onChange={setEvidenceId} /></label><button type="submit" disabled={saving || !subjectId || !objectId || !predicate.trim()}>{saving && <LoaderCircle className="is-running" size={14} />} 저장</button></form>}
 
-              {loadingContent ? <div className="knowledge-loading"><LoaderCircle className="is-running" size={18} /> 지식을 불러오는 중</div> : tab === "graph" ? (
-                <KnowledgeGraph neighborhood={neighborhood} entities={entities} selectedEntityId={selectedEntityId} onSelectEntity={setSelectedEntityId} />
-              ) : (
-                <KnowledgeRecords
-                  sources={sources}
-                  ingestions={ingestions}
-                  statements={statements}
-                  entityById={entityById}
-                  startingSourceId={startingSourceId}
-                  onStartIngestion={startIngestion}
-                />
-              )}
+              {loadingContent ? <div className="knowledge-loading knowledge-loading-content"><LoaderCircle className="is-running" size={18} /> 지식을 불러오는 중</div> : content}
             </>
           )}
         </section>
@@ -395,75 +441,6 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
   );
 }
 
-function KnowledgeGraph({ neighborhood, entities, selectedEntityId, onSelectEntity }: { neighborhood: KnowledgeNeighborhood | null; entities: KnowledgeEntity[]; selectedEntityId: string | null; onSelectEntity: (entityId: string) => void }) {
-  const nodes = neighborhood?.nodes ?? [];
-  const positions = useMemo(() => new Map(nodes.map((node, index) => {
-    const angle = nodes.length <= 1 ? 0 : (Math.PI * 2 * index) / nodes.length - Math.PI / 2;
-    return [node.id, { x: 360 + Math.cos(angle) * 225, y: 210 + Math.sin(angle) * 135 }];
-  })), [nodes]);
-  if (!entities.length) return <div className="knowledge-empty"><CircleDot size={24} /><h3>Entity를 먼저 등록해 주세요.</h3><p>Entity 두 개 이상을 관계로 연결하면 Knowledge Graph가 만들어집니다.</p></div>;
-  return <div className="knowledge-graph-layout"><aside className="knowledge-entity-list"><strong>Entity</strong>{entities.map((entity) => <button className={selectedEntityId === entity.id ? "is-active" : ""} type="button" key={entity.id} onClick={() => onSelectEntity(entity.id)}><CircleDot size={13} /><span>{entity.canonicalName}</span><small>{entity.entityType}</small></button>)}</aside><div className="knowledge-graph-scroll"><div className="knowledge-graph-canvas"><svg aria-hidden="true">{(neighborhood?.edges ?? []).map((edge) => { const source = positions.get(edge.subjectEntityId); const target = edge.objectEntityId ? positions.get(edge.objectEntityId) : null; return source && target ? <line key={edge.id} x1={source.x} y1={source.y} x2={target.x} y2={target.y} /> : null; })}</svg>{nodes.map((node) => { const position = positions.get(node.id)!; return <button className={node.id === neighborhood?.rootEntityId ? "is-root" : ""} style={{ left: position.x, top: position.y }} type="button" key={node.id} onClick={() => onSelectEntity(node.id)}><strong>{node.canonicalName}</strong><small>{node.entityType} · {node.depth ?? 0} hop</small></button>; })}{neighborhood?.truncated && <span className="knowledge-truncated">표시 한도에 맞춰 일부 관계만 보여줍니다.</span>}</div></div></div>;
-}
-
-function KnowledgeRecords({ sources, ingestions, statements, entityById, startingSourceId, onStartIngestion }: {
-  sources: KnowledgeSource[];
-  ingestions: KnowledgeIngestionJob[];
-  statements: KnowledgeStatement[];
-  entityById: Map<string, KnowledgeEntity>;
-  startingSourceId: string | null;
-  onStartIngestion: (sourceId: string) => void;
-}) {
-  const latestBySource = new Map<string, KnowledgeIngestionJob>();
-  for (const job of ingestions) {
-    if (!latestBySource.has(job.sourceId)) latestBySource.set(job.sourceId, job);
-  }
-  return (
-    <div className="knowledge-records">
-      <section>
-        <header><FileText size={15} /><strong>원문</strong><span>{sources.length}</span></header>
-        {sources.length ? sources.map((source) => {
-          const job = latestBySource.get(source.id);
-          const active = job?.status === "queued" || job?.status === "running";
-          return (
-            <article key={source.id}>
-              <div><strong>{source.title}</strong><small>{source.sourceType} · revision {source.revision.revisionNumber}</small></div>
-              <p>{source.evidenceSegments[0]?.text ?? "보존된 텍스트가 없습니다."}</p>
-              <div className="knowledge-source-actions">
-                <span>{source.evidenceSegments.length}개 근거 구간</span>
-                {job && <small className={`is-${job.status}`} role="status">{ingestionLabel(job)}</small>}
-                <button
-                  type="button"
-                  disabled={active || job?.status === "completed" || startingSourceId !== null}
-                  onClick={() => onStartIngestion(source.id)}
-                >
-                  {(active || startingSourceId === source.id) && <RefreshCw className="is-running" size={12} />}
-                  {job?.status === "completed" ? "추출 완료" : job?.status === "failed" ? "다시 추출" : active ? "AI 추출 중" : "AI 추출"}
-                </button>
-              </div>
-            </article>
-          );
-        }) : <p className="knowledge-section-empty">등록된 원문이 없습니다.</p>}
-      </section>
-      <section>
-        <header><GitBranch size={15} /><strong>Statement</strong><span>{statements.length}</span></header>
-        {statements.length ? statements.map((statement) => (
-          <article key={statement.id}>
-            <div><strong>{entityById.get(statement.subjectEntityId)?.canonicalName ?? "Unknown"} <em>{statement.predicateKey}</em> {statement.objectEntityId ? entityById.get(statement.objectEntityId)?.canonicalName ?? "Unknown" : String(statement.objectValue)}</strong><small>revision {statement.revisionNumber ?? "-"} · {statement.status === "approved" ? "승인" : "검토 제안"}</small></div>
-            <span>{statement.evidenceSegmentIds.length ? `${statement.evidenceSegmentIds.length}개 근거` : "근거 없음"}</span>
-          </article>
-        )) : <p className="knowledge-section-empty">등록된 Statement가 없습니다.</p>}
-      </section>
-    </div>
-  );
-}
-
-function ingestionLabel(job: KnowledgeIngestionJob) {
-  if (job.status === "queued") return "추출 대기";
-  if (job.status === "running") return "근거 기반 추출 중";
-  if (job.status === "failed") return job.errorMessage ?? "추출 실패";
-  return `${job.entityCount}개 Entity · ${job.statementCount}개 검토 제안`;
-}
-
 function KnowledgeEmpty() {
-  return <div className="knowledge-empty"><BookOpenText size={25} /><h3>Knowledge Space를 선택해 주세요.</h3><p>개인 공간의 원문, Entity와 관계는 계정 단위로 격리됩니다.</p></div>;
+  return <div className="knowledge-empty"><CircleDot size={25} /><h3>Knowledge Space를 선택해 주세요.</h3><p>개인 공간의 원문, Entity와 관계는 계정 단위로 격리됩니다.</p></div>;
 }
