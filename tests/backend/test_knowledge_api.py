@@ -121,10 +121,21 @@ def test_personal_knowledge_source_statement_and_bounded_graph(tmp_path: Path) -
         assert duplicate.status_code == 200, duplicate.text
         assert duplicate.json()["id"] == source.json()["id"]
         assert duplicate.json()["revision"]["id"] == source.json()["revision"]["id"]
+        sources = client.get(f"/api/knowledge/spaces/{space_id}/sources")
+        assert sources.status_code == 200
+        assert [item["title"] for item in sources.json()] == ["Knowledge 설계 메모"]
+        assert sources.json()[0]["evidenceSegments"][0]["id"] == evidence_id
 
         lumina_id = _create_entity(client, headers, space_id, "Lumina")
         knowledge_id = _create_entity(client, headers, space_id, "Knowledge")
         source_entity_id = _create_entity(client, headers, space_id, "Source")
+        entities = client.get(f"/api/knowledge/spaces/{space_id}/entities")
+        assert entities.status_code == 200
+        assert [item["canonicalName"] for item in entities.json()] == [
+            "Knowledge",
+            "Lumina",
+            "Source",
+        ]
 
         first_statement = client.post(
             f"/api/knowledge/spaces/{space_id}/statements",
@@ -202,8 +213,19 @@ def test_personal_knowledge_source_statement_and_bounded_graph(tmp_path: Path) -
         forbidden_space = client.get(f"/api/knowledge/spaces/{space_id}")
         assert forbidden_space.status_code == 404
         assert forbidden_space.json()["code"] == "knowledge_space_not_found"
+        assert (
+            client.get(f"/api/knowledge/spaces/{space_id}/sources").status_code == 404
+        )
+        assert (
+            client.get(f"/api/knowledge/spaces/{space_id}/entities").status_code == 404
+        )
         forbidden_graph = client.get(
             f"/api/knowledge/entities/{lumina_id}/neighborhood"
         )
         assert forbidden_graph.status_code == 404
         assert forbidden_graph.json()["code"] == "knowledge_space_not_found"
+
+        client.cookies.clear()
+        _login(client, "admin", "1")
+        assert client.get("/api/knowledge/spaces").json() == []
+        assert client.get(f"/api/knowledge/spaces/{space_id}").status_code == 404

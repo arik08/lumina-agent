@@ -20,6 +20,10 @@ import type {
   AdminUserList,
   AttachmentSummary,
   AuthSession,
+  CreateKnowledgeEntityRequest,
+  CreateKnowledgeSourceRequest,
+  CreateKnowledgeSpaceRequest,
+  CreateKnowledgeStatementRequest,
   CreateAdminUserRequest,
   CreateConversationRequest,
   CreateDeepAnalysisMissionRequest,
@@ -28,6 +32,11 @@ import type {
   CurrentSettings,
   DeepAnalysisMissionDetail,
   DeepAnalysisMissionSummary,
+  KnowledgeEntity,
+  KnowledgeNeighborhood,
+  KnowledgeSource,
+  KnowledgeSpace,
+  KnowledgeStatement,
   CursorPage,
   ListConversationsQuery,
   LoginRequest,
@@ -1245,6 +1254,86 @@ export async function updateDeepAnalysisMission(
   );
 }
 
+export async function listKnowledgeSpaces(signal?: AbortSignal) {
+  return request<KnowledgeSpace[]>("/knowledge/spaces", { signal });
+}
+
+export async function createKnowledgeSpace(
+  payload: CreateKnowledgeSpaceRequest,
+  signal?: AbortSignal,
+) {
+  return request<KnowledgeSpace>("/knowledge/spaces", {
+    method: "POST",
+    body: payload,
+    signal,
+  });
+}
+
+export async function listKnowledgeSources(spaceId: string, signal?: AbortSignal) {
+  return request<KnowledgeSource[]>(
+    `/knowledge/spaces/${encodeURIComponent(spaceId)}/sources`,
+    { signal },
+  );
+}
+
+export async function createKnowledgeSource(
+  spaceId: string,
+  payload: CreateKnowledgeSourceRequest,
+  signal?: AbortSignal,
+) {
+  return request<KnowledgeSource>(
+    `/knowledge/spaces/${encodeURIComponent(spaceId)}/sources`,
+    { method: "POST", body: payload, signal },
+  );
+}
+
+export async function listKnowledgeEntities(spaceId: string, signal?: AbortSignal) {
+  return request<KnowledgeEntity[]>(
+    `/knowledge/spaces/${encodeURIComponent(spaceId)}/entities`,
+    { signal },
+  );
+}
+
+export async function createKnowledgeEntity(
+  spaceId: string,
+  payload: CreateKnowledgeEntityRequest,
+  signal?: AbortSignal,
+) {
+  return request<KnowledgeEntity>(
+    `/knowledge/spaces/${encodeURIComponent(spaceId)}/entities`,
+    { method: "POST", body: payload, signal },
+  );
+}
+
+export async function listKnowledgeStatements(spaceId: string, signal?: AbortSignal) {
+  return request<KnowledgeStatement[]>(
+    `/knowledge/spaces/${encodeURIComponent(spaceId)}/statements`,
+    { signal },
+  );
+}
+
+export async function createKnowledgeStatement(
+  spaceId: string,
+  payload: CreateKnowledgeStatementRequest,
+  signal?: AbortSignal,
+) {
+  return request<KnowledgeStatement>(
+    `/knowledge/spaces/${encodeURIComponent(spaceId)}/statements`,
+    { method: "POST", body: payload, signal },
+  );
+}
+
+export async function getKnowledgeNeighborhood(
+  entityId: string,
+  maxDepth = 2,
+  signal?: AbortSignal,
+) {
+  return request<KnowledgeNeighborhood>(
+    `/knowledge/entities/${encodeURIComponent(entityId)}/neighborhood`,
+    { query: { maxDepth }, signal },
+  );
+}
+
 export async function getWebSourceContent(
   conversationId: string,
   runId: string,
@@ -2038,6 +2127,17 @@ export const api = {
     createMission: createDeepAnalysisMission,
     getMission: getDeepAnalysisMission,
     updateMission: updateDeepAnalysisMission,
+  },
+  knowledge: {
+    listSpaces: listKnowledgeSpaces,
+    createSpace: createKnowledgeSpace,
+    listSources: listKnowledgeSources,
+    createSource: createKnowledgeSource,
+    listEntities: listKnowledgeEntities,
+    createEntity: createKnowledgeEntity,
+    listStatements: listKnowledgeStatements,
+    createStatement: createKnowledgeStatement,
+    getNeighborhood: getKnowledgeNeighborhood,
   },
   projectMemberships: {
     list: listProjectMemberships,

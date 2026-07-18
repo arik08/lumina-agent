@@ -20,6 +20,8 @@ from ...knowledge.service import (
     create_knowledge_statement,
     entity_payload,
     knowledge_neighborhood,
+    list_knowledge_entities,
+    list_knowledge_sources,
     list_knowledge_spaces,
     list_knowledge_statements,
     require_knowledge_space,
@@ -106,6 +108,18 @@ def post_knowledge_source(
     return source_payload(source, revision, evidence)
 
 
+@router.get("/spaces/{space_id}/sources")
+def get_knowledge_sources(
+    space_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict[str, Any]]:
+    return [
+        source_payload(source, revision, evidence)
+        for source, revision, evidence in list_knowledge_sources(db, user, space_id)
+    ]
+
+
 @router.post("/spaces/{space_id}/entities", status_code=201)
 def post_knowledge_entity(
     space_id: str,
@@ -129,6 +143,17 @@ def post_knowledge_entity(
     )
     db.commit()
     return entity_payload(entity)
+
+
+@router.get("/spaces/{space_id}/entities")
+def get_knowledge_entities(
+    space_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict[str, Any]]:
+    return [
+        entity_payload(entity) for entity in list_knowledge_entities(db, user, space_id)
+    ]
 
 
 @router.get("/spaces/{space_id}/statements")

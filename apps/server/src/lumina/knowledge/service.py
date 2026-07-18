@@ -35,8 +35,6 @@ def knowledge_space_access_query(user: User, *, write: bool = False):
         KnowledgeSpace.archived_at.is_(None),
         KnowledgeSpace.status == "active",
     )
-    if user.role == "admin":
-        return query
     if write:
         return query.where(KnowledgeSpace.owner_user_id == user.id)
     return query.where(
@@ -68,6 +66,61 @@ def list_knowledge_spaces(db: Session, user: User) -> list[KnowledgeSpace]:
             knowledge_space_access_query(user).order_by(
                 KnowledgeSpace.updated_at.desc(), KnowledgeSpace.id
             )
+        )
+    )
+
+
+def list_knowledge_sources(
+    db: Session, user: User, space_id: str
+) -> list[
+    tuple[KnowledgeSource, KnowledgeSourceRevision, list[KnowledgeEvidenceSegment]]
+]:
+    require_knowledge_space(db, user, space_id)
+    sources = list(
+        db.scalars(
+            select(KnowledgeSource)
+            .where(
+                KnowledgeSource.space_id == space_id,
+                KnowledgeSource.status == "active",
+            )
+            .order_by(KnowledgeSource.updated_at.desc(), KnowledgeSource.id)
+        )
+    )
+    result: list[
+        tuple[KnowledgeSource, KnowledgeSourceRevision, list[KnowledgeEvidenceSegment]]
+    ] = []
+    for source in sources:
+        revision = db.scalar(
+            select(KnowledgeSourceRevision)
+            .where(KnowledgeSourceRevision.source_id == source.id)
+            .order_by(KnowledgeSourceRevision.revision_number.desc())
+            .limit(1)
+        )
+        if revision is None:
+            continue
+        evidence = list(
+            db.scalars(
+                select(KnowledgeEvidenceSegment)
+                .where(KnowledgeEvidenceSegment.source_revision_id == revision.id)
+                .order_by(KnowledgeEvidenceSegment.segment_ordinal)
+            )
+        )
+        result.append((source, revision, evidence))
+    return result
+
+
+def list_knowledge_entities(
+    db: Session, user: User, space_id: str
+) -> list[KnowledgeEntity]:
+    require_knowledge_space(db, user, space_id)
+    return list(
+        db.scalars(
+            select(KnowledgeEntity)
+            .where(
+                KnowledgeEntity.space_id == space_id,
+                KnowledgeEntity.status == "active",
+            )
+            .order_by(KnowledgeEntity.canonical_name, KnowledgeEntity.id)
         )
     )
 

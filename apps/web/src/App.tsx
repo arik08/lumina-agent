@@ -6,6 +6,7 @@ import {
   AtSign,
   Bell,
   Bot,
+  BookOpenText,
   Brain,
   Check,
   CheckCircle2,
@@ -135,6 +136,7 @@ const ProjectFilesView = lazy(() => import("./components/ProjectFilesView").then
 const ProjectSettings = lazy(() => import("./components/ProjectSettings").then(({ ProjectSettings }) => ({ default: ProjectSettings })));
 const SchedulesView = lazy(() => import("./components/SchedulesView").then(({ SchedulesView }) => ({ default: SchedulesView })));
 const DeepAnalysisView = lazy(() => import("./workspace-frontends/deep-analysis").then(({ DeepAnalysisView }) => ({ default: DeepAnalysisView })));
+const KnowledgeView = lazy(() => import("./workspace-frontends/knowledge").then(({ KnowledgeView }) => ({ default: KnowledgeView })));
 
 type ArtifactTab = "preview" | "source";
 type NotificationTab = "notifications" | "announcements";
@@ -674,7 +676,7 @@ function StarterPrompts({ onSelect }: { onSelect: (prompt: string) => void }) {
     </div>
   );
 }
-type MainView = "chat" | "deep-analysis" | "marketplace" | "library" | "files" | "help" | "schedules" | "memory" | "admin" | "settings" | "project-settings";
+type MainView = "chat" | "deep-analysis" | "knowledge" | "marketplace" | "library" | "files" | "help" | "schedules" | "memory" | "admin" | "settings" | "project-settings";
 
 const artifactPaneViews = new Set<MainView>(["chat", "library"]);
 
@@ -696,6 +698,7 @@ interface SelectedComposerReference {
 const navigation = [
   { id: "chat", label: "에이전트", icon: Bot },
   { id: "deep-analysis", label: "심층분석", icon: Workflow },
+  { id: "knowledge", label: "지식", icon: BookOpenText },
   { id: "marketplace", label: "마켓스토어", icon: Store },
   { id: "library", label: "라이브러리", icon: Library },
   { id: "files", label: "파일", icon: FolderOpen },
@@ -3699,6 +3702,7 @@ function App() {
           {mainView === "library" && <ArtifactLibraryView key={workspace.activeProjectId ?? "all"} projectId={workspace.activeProjectId} onOpenArtifact={(artifact) => void openArtifact(artifact)} onOpenNavigation={() => setSidebarOpen(true)} />}
           {mainView === "files" && <ProjectFilesView key={workspace.activeProjectId ?? "none"} projectId={workspace.activeProjectId} onOpenNavigation={() => setSidebarOpen(true)} />}
           {mainView === "deep-analysis" && <DeepAnalysisView key={workspace.activeProjectId ?? "none"} projectId={workspace.activeProjectId} canEdit={activeProject?.role !== "viewer"} onOpenNavigation={() => setSidebarOpen(true)} />}
+          {mainView === "knowledge" && <KnowledgeView onOpenNavigation={() => setSidebarOpen(true)} />}
           {mainView === "help" && <HelpCenterView canManage={isAdmin} initialAnnouncementId={helpAnnouncementId} onOpenNavigation={() => setSidebarOpen(true)} />}
           {mainView === "schedules" && <SchedulesView key={workspace.activeProjectId ?? "none"} projectId={workspace.activeProjectId} projects={workspace.projects} execution={workspace.settings?.execution ?? null} executionOptions={candidateModelOptions} onOpenNavigation={() => setSidebarOpen(true)} onProjectChange={workspace.setActiveProjectId} onConversationsChanged={workspace.refreshConversations} />}
           {mainView === "memory" && <MemoryView key={activeProject?.id ?? "none"} project={activeProject} completedRunId={completedProjectLearningRunId} canReviewProjectLearning={canReviewProjectLearning} onOpenNavigation={() => setSidebarOpen(true)} />}

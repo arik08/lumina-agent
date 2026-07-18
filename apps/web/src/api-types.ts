@@ -270,6 +270,133 @@ export interface UpdateDeepAnalysisMissionRequest {
   budgetMicrousd?: number;
 }
 
+export type KnowledgeSourceType = "file" | "url" | "conversation" | "text" | "connector";
+export type KnowledgeObjectKind = "entity" | "text" | "number" | "date" | "boolean" | "json";
+
+export interface KnowledgeSpace {
+  id: UUID;
+  organizationId: UUID;
+  ownerUserId: UUID | null;
+  spaceType: string;
+  name: string;
+  description: string;
+  purpose: string;
+  visibility: "private" | "organization";
+  status: string;
+  settingsRevision: number;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+export interface CreateKnowledgeSpaceRequest {
+  name: string;
+  description?: string;
+  purpose?: string;
+}
+
+export interface KnowledgeEvidenceSegment {
+  id: UUID;
+  sourceRevisionId: UUID;
+  segmentOrdinal: number;
+  locator: Record<string, unknown>;
+  text: string;
+  textDigest: string;
+  language: string | null;
+  tokenCount: number;
+}
+
+export interface KnowledgeSource {
+  id: UUID;
+  spaceId: UUID;
+  sourceType: KnowledgeSourceType;
+  title: string;
+  canonicalLocator: string | null;
+  status: string;
+  revision: {
+    id: UUID;
+    revisionNumber: number;
+    contentDigest: string;
+    mediaType: string;
+    byteSize: number;
+    capturedAt: IsoDateTime;
+  };
+  evidenceSegments: KnowledgeEvidenceSegment[];
+}
+
+export interface CreateKnowledgeSourceRequest {
+  sourceType: KnowledgeSourceType;
+  title: string;
+  canonicalLocator?: string | null;
+  contentDigest: string;
+  mediaType: string;
+  byteSize?: number;
+  capturedText?: string | null;
+  evidenceSegments?: Array<{
+    text: string;
+    locator?: Record<string, unknown>;
+    language?: string | null;
+    tokenCount?: number;
+  }>;
+}
+
+export interface KnowledgeEntity {
+  id: UUID;
+  spaceId: UUID;
+  entityType: string;
+  canonicalName: string;
+  description: string;
+  status: string;
+  depth?: number;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+export interface CreateKnowledgeEntityRequest {
+  entityType: string;
+  canonicalName: string;
+  description?: string;
+}
+
+export interface KnowledgeStatement {
+  id: UUID;
+  spaceId: UUID;
+  revisionId: UUID;
+  revisionNumber: number | null;
+  subjectEntityId: UUID;
+  predicateKey: string;
+  objectKind: KnowledgeObjectKind;
+  objectEntityId: UUID | null;
+  objectValue: unknown;
+  status: "proposed" | "approved";
+  rank: "preferred" | "normal" | "deprecated";
+  confidence: number | null;
+  validFrom: IsoDateTime | null;
+  validTo: IsoDateTime | null;
+  evidenceSegmentIds: UUID[];
+  recordedAt: IsoDateTime;
+}
+
+export interface CreateKnowledgeStatementRequest {
+  subjectEntityId: UUID;
+  predicateKey: string;
+  objectKind: KnowledgeObjectKind;
+  objectEntityId?: UUID | null;
+  objectValue?: unknown;
+  evidenceSegmentIds?: UUID[];
+  status?: "proposed" | "approved";
+  rank?: "preferred" | "normal" | "deprecated";
+  confidence?: number | null;
+  changeSummary?: string;
+}
+
+export interface KnowledgeNeighborhood {
+  rootEntityId: UUID;
+  maxDepth: number;
+  nodes: KnowledgeEntity[];
+  edges: KnowledgeStatement[];
+  truncated: boolean;
+}
+
 export interface AnnouncementMutationRequest {
   title: string;
   body: string;
