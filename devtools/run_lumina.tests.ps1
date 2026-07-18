@@ -962,10 +962,30 @@ if (
 ) {
     throw "Normal startup must stay quiet while failures retain log guidance."
 }
-$preparationCall = $source.LastIndexOf('Confirm-LuminaRuntimePrepared')
+$initialStartup = $source.IndexOf('$resetReason = "initial startup"')
+$preparationCall = $source.LastIndexOf(
+    'Confirm-LuminaRuntimePrepared',
+    $initialStartup
+)
 $supervisorLoop = $source.IndexOf('while ($true)', $preparationCall)
-if ($preparationCall -lt 0 -or $supervisorLoop -lt 0 -or $preparationCall -ge $supervisorLoop) {
+if (
+    $initialStartup -lt 0 -or
+    $preparationCall -lt 0 -or
+    $supervisorLoop -lt 0 -or
+    $preparationCall -ge $supervisorLoop
+) {
     throw "Runtime preparation must happen before the automatic supervisor loop."
+}
+$manualResetBlock = $source.Substring(
+    $source.LastIndexOf('if ($manualResetRequested)'),
+    $source.LastIndexOf('if (Test-LuminaDatabaseOwnershipFailure') -
+        $source.LastIndexOf('if ($manualResetRequested)')
+)
+if (
+    $manualResetBlock -notmatch '\$runtimePreparationRequired\s*=\s*\$true' -or
+    $source.Substring($supervisorLoop) -notmatch '(?s)if \(\$runtimePreparationRequired\).*?Confirm-LuminaRuntimePrepared.*?\$runtimePreparationRequired\s*=\s*\$false'
+) {
+    throw "Manual restart must prepare the runtime again before starting updated Backend code."
 }
 if (
     $source -match '\$MaxAutomaticRestarts' -or

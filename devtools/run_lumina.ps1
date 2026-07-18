@@ -1194,6 +1194,7 @@ catch {
 $resetReason = "initial startup"
 $automaticRestartCount = 0
 $userExitRequested = $false
+$runtimePreparationRequired = $false
 
 try {
     $preserveFrontend = $false
@@ -1203,6 +1204,12 @@ try {
         $attemptNumber = $automaticRestartCount + 1
         $currentPhase = "STARTING_PROCESSES"
         try {
+            if ($runtimePreparationRequired) {
+                $currentPhase = "PREFLIGHT"
+                Confirm-LuminaRuntimePrepared
+                $runtimePreparationRequired = $false
+                $currentPhase = "STARTING_PROCESSES"
+            }
             if ($script:StartupProgressVisible) {
                 Write-LuminaStartupProgress
             }
@@ -1327,6 +1334,7 @@ try {
         if ($manualResetRequested) {
             Clear-LuminaStartupProgress
             Write-Host "[Lumina] Restarting..."
+            $runtimePreparationRequired = $true
             Write-LuminaMonitoringEvent -Event "manual_restart" -Attempt $attemptNumber
             Write-LuminaStartupState `
                 -Status "restarting" `
