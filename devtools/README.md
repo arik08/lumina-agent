@@ -26,7 +26,7 @@ SQLite 개발 환경에서 PostgreSQL 이전 가능성을 확인하는 진단 �
 
 ### `install_lumina.ps1`
 
-`installer.bat`가 호출하는 실제 설치기입니다. Python 3.13·Node.js·npm·uv 요구 조건을 확인하고, `.env`와 데이터 디렉터리 준비, Python/Frontend 의존성 설치, 회사 CA trust bundle 생성, Alembic migration, Frontend build를 수행합니다. P-GPT 설정, 회사 CA 필수 여부, 네트워크 차단 설치, 파일을 바꾸지 않는 `-ValidateOnly` 같은 설치 옵션도 이 파일이 처리합니다. 일반 설치는 이 파일보다 루트의 `installer.bat` 사용을 권장합니다.
+`installer.bat`가 호출하는 실제 설치기입니다. Python 3.13·Node.js·npm·uv 요구 조건을 확인하고, `.env`와 데이터 디렉터리 준비, Python/Frontend 의존성 설치, 회사 CA trust bundle 생성, Alembic migration, Frontend build를 수행합니다. Codex Provider 선택 설치(`-InstallCodex`/`-SkipCodex`), P-GPT 설정, 회사 CA 필수 여부, 네트워크 차단 설치, 파일을 바꾸지 않는 `-ValidateOnly` 같은 설치 옵션도 이 파일이 처리합니다. 일반 설치는 이 파일보다 루트의 `installer.bat` 사용을 권장합니다.
 
 ### `LuminaCache.Env.ps1`
 

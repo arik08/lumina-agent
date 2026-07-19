@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import certifi
@@ -593,6 +594,79 @@ def test_installer_bootstraps_missing_uv_with_official_command() -> None:
     assert '$env:PATH = "$installDirectory;$env:PATH"' in installer
 
 
+def test_installer_makes_codex_provider_dependency_opt_in() -> None:
+    repository_root = Path(__file__).resolve().parents[2]
+    installer = (repository_root / "devtools" / "install_lumina.ps1").read_text(
+        encoding="utf-8"
+    )
+    pyproject = (repository_root / "apps" / "server" / "pyproject.toml").read_text(
+        encoding="utf-8"
+    )
+
+    core_dependencies, optional_dependencies = pyproject.split(
+        "[project.optional-dependencies]", maxsplit=1
+    )
+    assert "openai-codex" not in core_dependencies
+    assert 'codex = ["openai-codex>=0.1.0b2,<0.2"]' in optional_dependencies
+    assert '[switch]$InstallCodex' in installer
+    assert '[switch]$SkipCodex' in installer
+    assert 'Install the optional Codex Provider support? [y/N]' in installer
+    assert '$pythonInstallArguments += @("--extra", "codex")' in installer
+    assert '$enableCodex = [bool]$InstallCodex' in installer
+
+
+def test_server_imports_when_optional_codex_dependency_is_missing() -> None:
+    repository_root = Path(__file__).resolve().parents[2]
+    source_root = repository_root / "apps" / "server" / "src"
+    script = r'''
+import asyncio
+import builtins
+
+real_import = builtins.__import__
+
+def without_codex(name, *args, **kwargs):
+    if name == "openai_codex" or name.startswith("openai_codex."):
+        raise ModuleNotFoundError(
+            "No module named 'openai_codex'", name="openai_codex"
+        )
+    return real_import(name, *args, **kwargs)
+
+builtins.__import__ = without_codex
+
+from lumina.providers.codex import CodexResponsesAdapter, codex_oauth_available
+from lumina.providers.errors import ProviderConfigurationError
+from lumina.main import create_app
+
+assert codex_oauth_available() is False
+assert callable(create_app)
+
+async def verify_unavailable_adapter():
+    adapter = CodexResponsesAdapter()
+    try:
+        await adapter.warmup()
+    except ProviderConfigurationError as exc:
+        assert "installer.bat -InstallCodex" in str(exc)
+    else:
+        raise AssertionError("missing Codex dependency must be reported")
+    await adapter.close()
+
+asyncio.run(verify_unavailable_adapter())
+'''
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = str(source_root)
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+        env=environment,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
 def test_installer_enables_uv_system_certificates_before_uv_network_work() -> None:
     installer = (
         Path(__file__).resolve().parents[2] / "devtools" / "install_lumina.ps1"
@@ -725,6 +799,7 @@ def test_installer_uses_npm_cmd_instead_of_npm_ps1_on_windows(tmp_path: Path) ->
             str(installer),
             "-NonInteractive",
             "-SkipPgpt",
+            "-InstallCodex",
             "-SkipFrontendBuild",
         ],
         capture_output=True,
@@ -738,6 +813,8 @@ def test_installer_uses_npm_cmd_instead_of_npm_ps1_on_windows(tmp_path: Path) ->
     output = completed.stdout + completed.stderr
     assert completed.returncode == 0, output
     invocation = capture.read_text(encoding="utf-8")
+    assert "uv sync --project" in invocation
+    assert "--python 3.13 --extra codex" in invocation
     assert invocation.count("npm.cmd ci --prefix") == 2
     assert "extensions\\mcp\\korea_weather" in invocation
     assert "national_assembly_bootstrap.py --install-only" in invocation

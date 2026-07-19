@@ -594,7 +594,6 @@ dependencies = [
     { name = "httpcore" },
     { name = "httpx" },
     { name = "mcp" },
-    { name = "openai-codex" },
     { name = "openpyxl" },
     { name = "pillow" },
     { name = "psycopg", extra = ["binary"] },
@@ -610,6 +609,11 @@ dependencies = [
     { name = "tzdata" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "watchfiles" },
+]
+
+[package.optional-dependencies]
+codex = [
+    { name = "openai-codex" },
 ]
 
 [package.dev-dependencies]
@@ -633,7 +637,7 @@ requires-dist = [
     { name = "httpcore", specifier = ">=1.0.9,<2" },
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "mcp", specifier = ">=1.27,<2" },
-    { name = "openai-codex", specifier = ">=0.1.0b2,<0.2" },
+    { name = "openai-codex", marker = "extra == 'codex'", specifier = ">=0.1.0b2,<0.2" },
     { name = "openpyxl", specifier = ">=3.1,<4" },
     { name = "pillow", specifier = ">=11,<13" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2,<4" },
@@ -650,6 +654,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.35,<1" },
     { name = "watchfiles", specifier = ">=1.0,<2" },
 ]
+provides-extras = ["codex"]
 
 [package.metadata.requires-dev]
 dev = [

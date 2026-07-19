@@ -14,6 +14,8 @@
 installer.bat
 ```
 
+Codex Provider는 선택 설치입니다. 대화형 설치의 `Install the optional Codex Provider support? [y/N]` 질문은 기본값이 `N`이므로, 사용하지 않으면 `openai-codex`와 Codex CLI 바이너리를 설치하지 않습니다. Codex를 사용하는 개발 PC에서는 `installer.bat -InstallCodex`, 사용하지 않는 회사 PC나 자동 설치에서는 `installer.bat -SkipCodex`를 사용할 수 있습니다. `-NonInteractive`에서 별도 옵션이 없으면 Codex를 설치하지 않습니다.
+
 설치기는 dependency, data directory, `.env`, Alembic migration과 Frontend build를 준비합니다. 기존 `.env`는 통째로 덮어쓰지 않으며 사용자가 P-GPT 설정을 명시적으로 선택한 경우에만 해당 key를 갱신합니다. API Key, employee number와 company code는 숨김 입력으로 받고 완료 메시지나 오류에 값을 다시 표시하지 않습니다.
 
 네트워크를 사용하지 않는 CI 설치 예시는 다음과 같습니다.
@@ -119,7 +121,7 @@ Backend 회귀 테스트는 저장소 루트에서 다음 명령으로 실행합
 
 ```powershell
 $env:PYTHONPYCACHEPREFIX = "$PWD\.cache\pycache"
-uv run --project apps/server pytest -c apps/server/pyproject.toml
+uv run --project apps/server --extra codex pytest -c apps/server/pyproject.toml
 ```
 
 Frontend는 빠른 Node 단위 테스트를 먼저 실행한 뒤 TypeScript와 production bundle을 검증합니다.
