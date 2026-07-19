@@ -75,8 +75,10 @@ const defaultForceSettings: ForceSettings = {
 };
 
 const clamp = (value: number, minimum: number, maximum: number) => Math.min(maximum, Math.max(minimum, value));
+const lerp = (start: number, end: number, progress: number) => start + (end - start) * progress;
 
 const edgeHitRadius = 10;
+const hoverTransitionDuration = 160;
 const graphLayouts = new Map<string, GraphLayout>();
 
 function distanceToSegment(point: { x: number; y: number }, start: { x: number; y: number }, end: { x: number; y: number }) {
@@ -208,10 +210,13 @@ export function KnowledgeGraph({ graph, layoutKey, onSelectDocument }: Knowledge
     let height = 0;
     let pixelRatio = 1;
     let frame: number | null = null;
+    let hoverFrame: number | null = null;
+    let hoverAnimationTimestamp: number | null = null;
     let zoomFrame: number | null = null;
     let hasRenderedFrame = false;
     let hoveredNode: GraphNode | null = null;
     let hoveredLink: GraphLink | null = null;
+    const nodeHoverLevels = new Map<string, number>();
     let dragState: DragState | null = null;
     let panState: PanState | null = null;
     let colors = readColors();
@@ -250,37 +255,55 @@ export function KnowledgeGraph({ graph, layoutKey, onSelectDocument }: Knowledge
       context.translate(viewport.x, viewport.y);
       context.scale(viewport.scale, viewport.scale);
 
-      const hoveredId = hoveredNode?.id ?? null;
-      const adjacentIds = hoveredId ? adjacentByNode.get(hoveredId) ?? new Set<string>() : null;
+      let focusLevel = hoveredLink ? 1 : 0;
+      nodeHoverLevels.forEach((level) => { focusLevel = Math.max(focusLevel, level); });
       context.lineCap = "round";
       links.forEach((link) => {
         const source = typeof link.source === "object" ? link.source : nodeById.get(String(link.source));
         const target = typeof link.target === "object" ? link.target : nodeById.get(String(link.target));
         if (!source || !target || source.x === undefined || source.y === undefined || target.x === undefined || target.y === undefined) return;
-        const nodeActive = hoveredId !== null && (source.id === hoveredId || target.id === hoveredId);
-        const edgeActive = link === hoveredLink;
-        const active = nodeActive || edgeActive;
+        const activeLevel = Math.max(
+          nodeHoverLevels.get(source.id) ?? 0,
+          nodeHoverLevels.get(target.id) ?? 0,
+          link === hoveredLink ? 1 : 0,
+        );
+        const baseLineWidth = 1.15 + Math.min(0.35, link.weight * 0.08);
         context.beginPath();
         context.moveTo(source.x, source.y);
         context.lineTo(target.x, target.y);
-        context.strokeStyle = active ? colors.edgeHighlight : colors.line;
-        context.globalAlpha = hoveredId === null && hoveredLink === null ? 0.68 : active ? 0.95 : 0.16;
-        context.lineWidth = (active ? 1.65 : 1.15 + Math.min(0.35, link.weight * 0.08)) / viewport.scale;
+        context.strokeStyle = colors.line;
+        context.globalAlpha = lerp(0.68, 0.16, focusLevel);
+        context.lineWidth = lerp(baseLineWidth, 1.65, activeLevel) / viewport.scale;
         context.stroke();
+        if (activeLevel > 0.001) {
+          context.strokeStyle = colors.edgeHighlight;
+          context.globalAlpha = 0.95 * activeLevel;
+          context.stroke();
+        }
       });
 
       nodes.forEach((node) => {
         if (node.x === undefined || node.y === undefined) return;
-        const related = hoveredId === null || node.id === hoveredId || adjacentIds?.has(node.id);
-        context.globalAlpha = related ? 1 : 0.16;
+        const ownLevel = nodeHoverLevels.get(node.id) ?? 0;
+        let relatedLevel = ownLevel;
+        adjacentByNode.get(node.id)?.forEach((adjacentId) => {
+          relatedLevel = Math.max(relatedLevel, nodeHoverLevels.get(adjacentId) ?? 0);
+        });
+        const nodeAlpha = 1 - 0.84 * Math.max(0, focusLevel - relatedLevel);
+        context.globalAlpha = nodeAlpha;
         context.beginPath();
-        context.arc(node.x, node.y, node.radius * (node.id === hoveredId ? 1.2 : 1), 0, Math.PI * 2);
-        context.fillStyle = node.id === hoveredId ? colors.cobaltHover : colors.cobalt;
+        context.arc(node.x, node.y, node.radius * (1 + 0.2 * ownLevel), 0, Math.PI * 2);
+        context.fillStyle = colors.cobalt;
         context.fill();
+        if (ownLevel > 0.001) {
+          context.globalAlpha = nodeAlpha * ownLevel;
+          context.fillStyle = colors.cobaltHover;
+          context.fill();
+        }
 
-        const showLabel = node.id === hoveredId || adjacentIds?.has(node.id) || viewport.scale >= 0.82 || node.degree >= 5;
+        const showLabel = relatedLevel > 0.01 || viewport.scale >= 0.82 || node.degree >= 5;
         if (!showLabel) return;
-        context.globalAlpha = related ? (node.id === hoveredId ? 1 : 0.84) : 0.1;
+        context.globalAlpha = clamp(0.84 - 0.74 * Math.max(0, focusLevel - relatedLevel) + 0.16 * ownLevel, 0.1, 1);
         context.fillStyle = colors.ink;
         context.font = `${11 / viewport.scale}px ${colors.font}`;
         context.textBaseline = "middle";
@@ -294,7 +317,12 @@ export function KnowledgeGraph({ graph, layoutKey, onSelectDocument }: Knowledge
         const button = nodeButtons.get(node.id);
         if (!button || node.x === undefined || node.y === undefined) return;
         const hitRadius = node.radius * viewport.scale + 6;
-        const showLabel = node.id === hoveredId || adjacentIds?.has(node.id) || viewport.scale >= 0.82 || node.degree >= 5;
+        const ownLevel = nodeHoverLevels.get(node.id) ?? 0;
+        let relatedLevel = ownLevel;
+        adjacentByNode.get(node.id)?.forEach((adjacentId) => {
+          relatedLevel = Math.max(relatedLevel, nodeHoverLevels.get(adjacentId) ?? 0);
+        });
+        const showLabel = relatedLevel > 0.01 || viewport.scale >= 0.82 || node.degree >= 5;
         const label = node.name.length > 38 ? `${node.name.slice(0, 37)}…` : node.name;
         context.font = `${11 / viewport.scale}px ${colors.font}`;
         const labelWidth = showLabel ? context.measureText(label).width * viewport.scale : 0;
@@ -340,6 +368,47 @@ export function KnowledgeGraph({ graph, layoutKey, onSelectDocument }: Knowledge
     } else if (reducedMotion) {
       simulation.stop().tick(180);
       canvas.dataset.forceState = "settled";
+    }
+
+    const animateHover = (timestamp: number) => {
+      const delta = hoverAnimationTimestamp === null ? 16 : clamp(timestamp - hoverAnimationTimestamp, 0, hoverTransitionDuration);
+      hoverAnimationTimestamp = timestamp;
+      const blend = 1 - Math.exp((-5 * delta) / hoverTransitionDuration);
+      let unsettled = false;
+      nodes.forEach((node) => {
+        const target = node === hoveredNode ? 1 : 0;
+        const current = nodeHoverLevels.get(node.id) ?? 0;
+        let next = current + (target - current) * blend;
+        if (Math.abs(target - next) < 0.01) next = target;
+        else unsettled = true;
+        if (next > 0) nodeHoverLevels.set(node.id, next);
+        else nodeHoverLevels.delete(node.id);
+      });
+      requestDraw();
+      if (unsettled) hoverFrame = requestAnimationFrame(animateHover);
+      else {
+        hoverFrame = null;
+        hoverAnimationTimestamp = null;
+      }
+    };
+
+    function requestHoverTransition() {
+      if (reducedMotion) {
+        nodeHoverLevels.clear();
+        if (hoveredNode) nodeHoverLevels.set(hoveredNode.id, 1);
+        requestDraw();
+        return;
+      }
+      if (hoverFrame === null) {
+        hoverAnimationTimestamp = null;
+        hoverFrame = requestAnimationFrame(animateHover);
+      }
+    }
+
+    function setHoveredNode(node: GraphNode | null) {
+      if (node === hoveredNode) return;
+      hoveredNode = node;
+      requestHoverTransition();
     }
 
     function canvasPoint(event: PointerEvent | WheelEvent) {
@@ -429,9 +498,10 @@ export function KnowledgeGraph({ graph, layoutKey, onSelectDocument }: Knowledge
         node.fx = node.x;
         node.fy = node.y;
         dragState = { node, captureTarget, pointerId: event.pointerId, startX: point.x, startY: point.y, moved: false };
-        hoveredNode = node;
+        setHoveredNode(node);
         heatSimulation();
       } else {
+        setHoveredNode(null);
         panState = { captureTarget, pointerId: event.pointerId, startX: point.x, startY: point.y, originX: viewport.x, originY: viewport.y };
       }
       requestDraw();
@@ -457,7 +527,7 @@ export function KnowledgeGraph({ graph, layoutKey, onSelectDocument }: Knowledge
       const nextHoveredNode = findNode(point);
       const nextHoveredLink = nextHoveredNode ? null : findLink(point);
       if (nextHoveredNode !== hoveredNode || nextHoveredLink !== hoveredLink) {
-        hoveredNode = nextHoveredNode;
+        setHoveredNode(nextHoveredNode);
         hoveredLink = nextHoveredLink;
         canvas.style.cursor = hoveredNode ? "grab" : hoveredLink ? "help" : "move";
         if (hoveredLink) showLinkTooltip(hoveredLink, point);
@@ -478,8 +548,9 @@ export function KnowledgeGraph({ graph, layoutKey, onSelectDocument }: Knowledge
         if (openDocument && !completedDrag.moved) documentToOpen = completedDrag.node;
       }
       if (panState?.pointerId === event.pointerId) panState = null;
-      hoveredNode = findNode(canvasPoint(event));
-      hoveredLink = hoveredNode ? null : findLink(canvasPoint(event));
+      const nextHoveredNode = findNode(canvasPoint(event));
+      setHoveredNode(nextHoveredNode);
+      hoveredLink = nextHoveredNode ? null : findLink(canvasPoint(event));
       canvas.style.cursor = hoveredNode ? "grab" : hoveredLink ? "help" : "move";
       if (hoveredLink) showLinkTooltip(hoveredLink, canvasPoint(event));
       else hideTooltip();
@@ -556,7 +627,7 @@ export function KnowledgeGraph({ graph, layoutKey, onSelectDocument }: Knowledge
     const onPointerCancel = (event: PointerEvent) => finishPointer(event, false);
     const onPointerLeave = () => {
       if (dragState || panState || (!hoveredNode && !hoveredLink)) return;
-      hoveredNode = null;
+      setHoveredNode(null);
       hoveredLink = null;
       hideTooltip();
       canvas.style.cursor = "move";
@@ -568,15 +639,14 @@ export function KnowledgeGraph({ graph, layoutKey, onSelectDocument }: Knowledge
       if (!node) return;
       const onNodePointerDown = (event: PointerEvent) => onPointerDown(event, node, button);
       const onNodePointerEnter = () => {
-        hoveredNode = node;
+        setHoveredNode(node);
         hoveredLink = null;
         hideTooltip();
         requestDraw();
       };
       const onNodePointerLeave = () => {
         if (dragState?.node === node) return;
-        hoveredNode = null;
-        requestDraw();
+        setHoveredNode(null);
       };
       const onNodeKeyboardClick = (event: MouseEvent) => {
         if (event.detail === 0) onSelectDocumentRef.current(node.id);
@@ -639,6 +709,7 @@ export function KnowledgeGraph({ graph, layoutKey, onSelectDocument }: Knowledge
       canvas.removeEventListener("pointerleave", onPointerLeave);
       canvas.removeEventListener("wheel", onWheel);
       if (frame !== null) cancelAnimationFrame(frame);
+      if (hoverFrame !== null) cancelAnimationFrame(hoverFrame);
       if (zoomFrame !== null) cancelAnimationFrame(zoomFrame);
     };
   }, [graph, layoutKey]);

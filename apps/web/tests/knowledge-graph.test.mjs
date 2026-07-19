@@ -68,7 +68,7 @@ test("Knowledge graph exposes the four Obsidian-style force controls", async () 
 test("Knowledge graph shows shared tags when the pointer is near an edge", async () => {
   const graph = await readFile(graphPath, "utf8");
   assert.match(graph, /const nextHoveredNode = findNode\(point\)/);
-  assert.match(graph, /hoveredNode = findNode\(canvasPoint\(event\)\)/);
+  assert.match(graph, /const nextHoveredNode = findNode\(canvasPoint\(event\)\)/);
   assert.match(graph, /const edgeHitRadius = 10/);
   assert.match(graph, /distanceToSegment\(point, start, end\) <= edgeHitRadius/);
   assert.match(graph, /tagNames: edge\.sharedTagIds\.flatMap/);
@@ -84,10 +84,24 @@ test("Knowledge graph keeps idle edges visible and highlights active edges in gr
     readFile(new URL("../src/workspace-frontends/knowledge/knowledge.css", import.meta.url), "utf8"),
   ]);
   assert.match(graph, /edgeHighlight: token\("--success", "#2f9765"\)/);
-  assert.match(graph, /context\.strokeStyle = active \? colors\.edgeHighlight : colors\.line/);
-  assert.match(graph, /hoveredId === null && hoveredLink === null \? 0\.68 : active \? 0\.95 : 0\.16/);
-  assert.match(graph, /active \? 1\.65 : 1\.15 \+ Math\.min\(0\.35, link\.weight \* 0\.08\)/);
+  assert.match(graph, /context\.globalAlpha = lerp\(0\.68, 0\.16, focusLevel\)/);
+  assert.match(graph, /context\.lineWidth = lerp\(baseLineWidth, 1\.65, activeLevel\)/);
+  assert.match(graph, /context\.strokeStyle = colors\.edgeHighlight/);
+  assert.match(graph, /context\.globalAlpha = 0\.95 \* activeLevel/);
   assert.doesNotMatch(styles, /--knowledge-graph-edge-highlight/);
+});
+
+test("Knowledge graph eases node hover emphasis over a short animation", async () => {
+  const graph = await readFile(graphPath, "utf8");
+  assert.match(graph, /const hoverTransitionDuration = 160/);
+  assert.match(graph, /const animateHover = \(timestamp: number\) =>/);
+  assert.match(graph, /1 - Math\.exp\(\(-5 \* delta\) \/ hoverTransitionDuration\)/);
+  assert.match(graph, /hoverFrame = requestAnimationFrame\(animateHover\)/);
+  assert.match(graph, /const nodeAlpha = 1 - 0\.84 \* Math\.max\(0, focusLevel - relatedLevel\)/);
+  assert.match(graph, /0\.84 - 0\.74 \* Math\.max\(0, focusLevel - relatedLevel\) \+ 0\.16 \* ownLevel/);
+  assert.match(graph, /node\.radius \* \(1 \+ 0\.2 \* ownLevel\)/);
+  assert.match(graph, /if \(reducedMotion\) \{\s*nodeHoverLevels\.clear\(\)/);
+  assert.match(graph, /if \(hoverFrame !== null\) cancelAnimationFrame\(hoverFrame\)/);
 });
 
 test("Knowledge graph eases wheel zoom across animation frames", async () => {
