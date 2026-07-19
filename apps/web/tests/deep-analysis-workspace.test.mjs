@@ -348,6 +348,16 @@ test("failed or cancelled Nodes can retry with visible attempts and calculation 
   assert.match(api, /\/deep-analysis\/missions\/\$\{encodeURIComponent\(missionId\)\}\/retry/);
 });
 
+test("Node details omit the internal context manifest", async () => {
+  const [view, css] = await Promise.all([
+    readFile(viewPath, "utf8"),
+    readFile(cssPath, "utf8"),
+  ]);
+
+  assert.doesNotMatch(view, /Context Manifest|Exact item|Token 추정|Tool profile|Mission context/);
+  assert.doesNotMatch(view, /selectedNode\.contextManifest/);
+  assert.doesNotMatch(css, /deep-analysis-prefix-hash|deep-analysis-inspector (?:dl|dt|dd)/);
+});
 test("Mission deletion uses revision-checked API and same-button confirmation", async () => {
   const [view, api] = await Promise.all([
     readFile(viewPath, "utf8"),

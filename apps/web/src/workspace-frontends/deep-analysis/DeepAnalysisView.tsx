@@ -1705,17 +1705,6 @@ export function DeepAnalysisView({
                           </div>
                         </section>
                       )}
-                      {selectedNode.contextManifest && (
-                        <section>
-                          <h3>Context Manifest</h3>
-                          <dl>
-                            <div><dt>Exact item</dt><dd>{selectedNode.contextManifest.itemCount}</dd></div>
-                            <div><dt>Token 추정</dt><dd>{selectedNode.contextManifest.tokenEstimate.toLocaleString()}</dd></div>
-                            <div><dt>Tool profile</dt><dd>{selectedNode.contextManifest.toolProfile}</dd></div>
-                          </dl>
-                          <small className="deep-analysis-prefix-hash">Prefix {selectedNode.contextManifest.prefixHash.slice(0, 16)}… · Mission context r{selectedNode.contextManifest.missionContextRevision}</small>
-                        </section>
-                      )}
                       <section>
                         <h3>비용</h3>
                         <dl>

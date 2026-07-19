@@ -332,14 +332,9 @@
 .deep-analysis-inspector .deep-analysis-node-error { color: var(--danger); }
 .deep-analysis-live-output { overflow: auto; max-height: 180px; margin: 9px 0 0; border: 1px solid var(--line); border-radius: var(--radius-field); padding: 9px; background: var(--canvas); color: var(--muted); font-family: var(--font-mono); font-size: 10px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
 .deep-analysis-output-path { display: block; overflow-wrap: anywhere; margin-top: 9px; color: var(--faint); font-size: 9.5px; line-height: 1.45; }
-.deep-analysis-prefix-hash { display: block; overflow: hidden; margin-top: 7px; color: var(--faint); font-family: var(--font-mono); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .deep-analysis-output-document { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
 .deep-analysis-output-document summary { color: var(--cobalt); font-size: 10.5px; font-weight: 650; cursor: pointer; }
 .deep-analysis-output-document pre { overflow: auto; max-height: 360px; margin: 9px 0 0; border-radius: var(--radius-field); padding: 9px; background: var(--canvas); color: var(--ink); font-family: var(--font-mono); font-size: 10px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
-.deep-analysis-inspector dl { display: grid; margin: 0; gap: 7px; }
-.deep-analysis-inspector dl > div { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; }
-.deep-analysis-inspector dt { color: var(--muted); }
-.deep-analysis-inspector dd { margin: 0; font-weight: 600; }
 .deep-analysis-generated-files { display: grid; gap: 6px; margin-top: 11px; border-top: 1px solid var(--line); padding-top: 9px; }
 .deep-analysis-generated-files > strong { font-size: 10.5px; }
 .deep-analysis-generated-files > span { display: flex; gap: 6px; overflow-wrap: anywhere; color: var(--muted); font-size: 9.5px; line-height: 1.45; }
