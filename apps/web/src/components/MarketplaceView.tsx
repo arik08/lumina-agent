@@ -214,7 +214,7 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
   const visibleItems = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
     return currentItems.filter((item) => {
-      if (skillView === "drafts" && !item.draft) return false;
+      if (skillView === "drafts" && !item.draft?.dirty) return false;
       if (skillView === "installed" && !installations.some((entry) => entry.extensionId === item.id)) return false;
       const tags = skillTags(item);
       return !normalized || `${item.name} ${item.description} ${item.slug} ${tags.join(" ")} ${tags.map((tag) => `#${tag}`).join(" ")}`.toLocaleLowerCase().includes(normalized);
@@ -703,7 +703,7 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
     setDraggedPath(path);
   };
 
-  const counts = useMemo(() => ({ drafts: items.filter((item) => item.draft).length, installed: installations.filter((entry) => items.some((item) => item.id === entry.extensionId)).length, trashed: trashedItems.length }), [installations, items, trashedItems.length]);
+  const counts = useMemo(() => ({ drafts: items.filter((item) => item.draft?.dirty).length, installed: installations.filter((entry) => items.some((item) => item.id === entry.extensionId)).length, trashed: trashedItems.length }), [installations, items, trashedItems.length]);
   const pendingCatalogInstallIds = useMemo(() => new Set(Object.entries(pendingInstallationSurfaceById).filter(([, surface]) => surface === "catalog").map(([id]) => id)), [pendingInstallationSurfaceById]);
 
   const renderFileTree = (nodes: SkillFileNode[]): ReactNode => nodes.map((node) => {

@@ -60,6 +60,15 @@ test("skill visibility and version use the reviewed Publish.Merge.Feedback displ
   assert.doesNotMatch(view, /WorkingDraft/);
 });
 
+test("only modified Skill drafts appear in My Drafts", async () => {
+  const view = await readFile(viewPath, "utf8");
+
+  assert.match(view, /if \(skillView === "drafts" && !item\.draft\?\.dirty\) return false/);
+  assert.match(view, /drafts: items\.filter\(\(item\) => item\.draft\?\.dirty\)\.length/);
+  assert.doesNotMatch(view, /if \(skillView === "drafts" && !item\.draft\) return false/);
+  assert.doesNotMatch(view, /drafts: items\.filter\(\(item\) => item\.draft\)\.length/);
+});
+
 test("marketplace keeps Skill creation in the chat Skill Creator flow", async () => {
   const view = await readFile(viewPath, "utf8");
 
