@@ -119,6 +119,8 @@ test("Knowledge graph eases wheel zoom across animation frames", async () => {
   assert.match(graph, /targetScale = clamp\(targetScale \* Math\.exp\(-normalizedDelta \* 0\.0015\), 0\.28, 3\.5\)/);
   assert.match(graph, /zoomFrame = requestAnimationFrame\(animateZoom\)/);
   assert.match(graph, /if \(reducedMotion\)/);
+  assert.match(graph, /nodeLayer\.addEventListener\("wheel", onWheel, \{ passive: false \}\)/);
+  assert.match(graph, /nodeLayer\.removeEventListener\("wheel", onWheel\)/);
   assert.match(graph, /if \(zoomFrame !== null\) cancelAnimationFrame\(zoomFrame\)/);
 });
 

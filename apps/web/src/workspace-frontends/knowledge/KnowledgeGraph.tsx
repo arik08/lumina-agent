@@ -676,6 +676,7 @@ export function KnowledgeGraph({ graph, layoutKey, onSelectDocument }: Knowledge
     canvas.addEventListener("pointercancel", onPointerCancel);
     canvas.addEventListener("pointerleave", onPointerLeave);
     canvas.addEventListener("wheel", onWheel, { passive: false });
+    nodeLayer.addEventListener("wheel", onWheel, { passive: false });
     const resizeObserver = new ResizeObserver(resize);
     resizeObserver.observe(canvas);
     const shell = canvas.closest(".app-shell");
@@ -710,6 +711,7 @@ export function KnowledgeGraph({ graph, layoutKey, onSelectDocument }: Knowledge
       canvas.removeEventListener("pointercancel", onPointerCancel);
       canvas.removeEventListener("pointerleave", onPointerLeave);
       canvas.removeEventListener("wheel", onWheel);
+      nodeLayer.removeEventListener("wheel", onWheel);
       if (frame !== null) cancelAnimationFrame(frame);
       if (hoverFrame !== null) cancelAnimationFrame(hoverFrame);
       if (zoomFrame !== null) cancelAnimationFrame(zoomFrame);
