@@ -67,6 +67,7 @@ test("announcement summaries align the time with the title and omit the author",
   assert.match(app, /className="announcement-item-heading"><strong>\{announcement\.title\}<\/strong><small>\{formatNotificationTime\(announcement\.createdAt\)\}<\/small>/);
   assert.doesNotMatch(app, /announcement\.author\?\.displayName/);
   assert.match(stylesheet, /\.announcement-item-heading \{[^}]*display: grid !important;[^}]*grid-template-columns: minmax\(0, 1fr\) auto;[^}]*align-items: baseline;/s);
+  assert.doesNotMatch(stylesheet, /\.announcement-list \{[^}]*min-height:/s);
 });
 
 test("notification receipt shows more compact title-only rows", async () => {
