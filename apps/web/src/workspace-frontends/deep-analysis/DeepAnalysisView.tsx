@@ -108,10 +108,9 @@ function formatNodeElapsedTime(startedAt: string, now: number) {
   const startedAtMs = Date.parse(normalizeUtcDateTime(startedAt));
   if (!Number.isFinite(startedAtMs)) return null;
   const totalSeconds = Math.max(0, Math.floor((now - startedAtMs) / 1_000));
-  if (totalSeconds < 60) return `${totalSeconds}초째`;
   const totalMinutes = Math.floor(totalSeconds / 60);
-  if (totalMinutes < 60) return `${totalMinutes}분 ${totalSeconds % 60}초째`;
-  return `${Math.floor(totalMinutes / 60)}시간 ${totalMinutes % 60}분째`;
+  if (totalMinutes < 60) return `${totalMinutes}분 ${totalSeconds % 60}초`;
+  return `${Math.floor(totalMinutes / 60)}시간 ${totalMinutes % 60}분 ${totalSeconds % 60}초`;
 }
 
 function formatCost(microusd: number, usdKrwRate: number | null) {
@@ -394,6 +393,7 @@ export function DeepAnalysisView({
   const workflowLayoutRef = useRef<HTMLDivElement>(null);
   const createTitleRef = useRef<HTMLInputElement>(null);
   const workflowRegenerateTriggerRef = useRef<HTMLButtonElement>(null);
+  const liveOutputRef = useRef<HTMLPreElement>(null);
   const workflowRegenerateFontSize = workflowRegenerateTriggerRef.current
     ?.closest<HTMLElement>(".app-shell")
     ?.style.getPropertyValue("--conversation-font-size");
@@ -644,7 +644,7 @@ export function DeepAnalysisView({
     const refreshWhenVisible = () => {
       if (document.visibilityState === "visible") void refresh();
     };
-    const timer = window.setInterval(refreshWhenVisible, 1_500);
+    const timer = window.setInterval(refreshWhenVisible, 500);
     document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
       active = false;
@@ -691,6 +691,12 @@ export function DeepAnalysisView({
     () => shownWorkflow?.nodes.find((node) => node.nodeKey === selectedNodeKey) ?? null,
     [shownWorkflow, selectedNodeKey],
   );
+
+  useEffect(() => {
+    if (selectedNode?.status !== "running" || !selectedNode.liveOutput) return;
+    const output = liveOutputRef.current;
+    if (output) output.scrollTop = output.scrollHeight;
+  }, [selectedNode?.liveOutput, selectedNode?.nodeKey, selectedNode?.status]);
 
   function undoWorkflowChange() {
     const previous = workflowUndoStackRef.current.pop();
@@ -1790,9 +1796,7 @@ export function DeepAnalysisView({
                     <LoaderCircle className="is-running" size={16} />
                     <div>
                       <strong>{activeNode ? `${activeNode.nodeKey} · ${activeNode.title} 실행 중` : "분석 작업 실행 중"}</strong>
-                      <span>{activeNode?.runId
-                        ? `실제 Lumina Run ${activeNode.runStatus ? `· ${statusLabel(activeNode.runStatus)}` : ""} · ${completedNodeCount}/${mission.workflow.nodes.length} Node 완료`
-                        : "실행 Run을 준비하고 있습니다."}</span>
+                      <span>{completedNodeCount}/{mission.workflow.nodes.length} Node 완료</span>
                     </div>
                   </div>
                 )}
@@ -2161,16 +2165,16 @@ export function DeepAnalysisView({
                           <p>Node 실행 시 실제 입력 프롬프트가 이곳에 표시됩니다.</p>
                         )}
                       </section>
-                      <section>
+                      <section className="deep-analysis-output-section">
                         <h3>출력</h3>
                         {selectedNode.outputLogicalPath && (
                           <small className="deep-analysis-output-path">{selectedNode.outputLogicalPath}</small>
                         )}
-                        {selectedNode.status === "running" && !selectedNode.outputSummary ? (
+                        {selectedNode.status === "running" ? (
                           <>
                             <p className="deep-analysis-node-progress"><LoaderCircle className="is-running" size={13} /> 모델 응답을 생성하고 있습니다.</p>
                             {selectedNode.liveOutput && (
-                              <pre className="deep-analysis-live-output">{selectedNode.liveOutput}</pre>
+                              <pre ref={liveOutputRef} className="deep-analysis-live-output">{selectedNode.liveOutput}</pre>
                             )}
                           </>
                         ) : selectedNode.errorMessage ? (
@@ -2334,11 +2338,11 @@ function WorkflowNodeButton({
         <div className="deep-analysis-node-meta">
           <span><GitBranch size={14} />{node.nodeKey}</span>
           <small className={`node-status status-${node.status}`}>
-            {statusLabel(node.status)}
-            {elapsedTime && <> · <time className="deep-analysis-node-elapsed" dateTime={normalizedStartedAt ?? undefined}>{elapsedTime}</time></>}
+            <span>{statusLabel(node.status)}</span>
           </small>
         </div>
         <strong>{node.title}</strong>
+        {elapsedTime && <time className="deep-analysis-node-elapsed" dateTime={normalizedStartedAt ?? undefined}>{elapsedTime}</time>}
       </button>
       {editable && <>
         {workflowPortSides.map((side) => (

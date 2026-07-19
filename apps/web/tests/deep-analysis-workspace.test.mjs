@@ -50,7 +50,7 @@ test("Mission polling pauses offscreen and resumes immediately when visible", as
 
   assert.match(view, /let refreshing = false;[\s\S]*?if \(refreshing\) return;[\s\S]*?finally \{\s*refreshing = false;/);
   assert.match(view, /const refreshWhenVisible = \(\) => \{\s*if \(document\.visibilityState === "visible"\) void refresh\(\);/);
-  assert.match(view, /window\.setInterval\(refreshWhenVisible, 1_500\)/);
+  assert.match(view, /window\.setInterval\(refreshWhenVisible, 500\)/);
   assert.match(view, /document\.addEventListener\("visibilitychange", refreshWhenVisible\)/);
   assert.match(view, /document\.removeEventListener\("visibilitychange", refreshWhenVisible\)/);
 });
@@ -183,12 +183,51 @@ test("Node details expose the configured and actual execution prompts", async ()
 });
 
 test("Node output is one rendered Markdown document with its filename", async () => {
-  const view = await readFile(viewPath, "utf8");
+  const [view, css] = await Promise.all([
+    readFile(viewPath, "utf8"),
+    readFile(cssPath, "utf8"),
+  ]);
 
   assert.match(view, /className="deep-analysis-output-path"/);
+  assert.match(view, /className="deep-analysis-output-section"/);
+  assert.match(view, /selectedNode\.status === "running" \? \(/);
+  assert.doesNotMatch(view, /selectedNode\.status === "running" && !selectedNode\.outputSummary/);
+  assert.match(view, /ref=\{liveOutputRef\} className="deep-analysis-live-output"/);
+  assert.match(view, /output\.scrollTop = output\.scrollHeight/);
+  assert.match(view, /setInterval\(refreshWhenVisible, 500\)/);
   assert.match(view, /className="deep-analysis-output-document"/);
   assert.match(view, /<MarkdownResponse text=\{selectedNode\.outputMarkdown\} \/>/);
+  assert.match(css, /\.deep-analysis-inspector > \.deep-analysis-output-section \{[^}]*flex: 1 1 0;[^}]*overflow: auto/);
+  assert.match(css, /\.deep-analysis-live-output \{[^}]*min-height: 0;[^}]*flex: 1 1 0;[^}]*overflow: auto/);
   assert.doesNotMatch(view, /문서 전체 보기/);
+});
+
+test("Running Node status stays right-aligned and elapsed time sits below the title", async () => {
+  const [view, css] = await Promise.all([
+    readFile(viewPath, "utf8"),
+    readFile(cssPath, "utf8"),
+  ]);
+
+  assert.match(view, /if \(totalMinutes < 60\) return `\$\{totalMinutes\}분 \$\{totalSeconds % 60\}초`/);
+  assert.doesNotMatch(view, /초째|분째/);
+  assert.match(view, /<span>\{statusLabel\(node\.status\)\}<\/span>/);
+  assert.match(view, /<strong>\{node\.title\}<\/strong>\s*\{elapsedTime && <time className="deep-analysis-node-elapsed"/);
+  assert.match(css, /\.deep-analysis-node-meta > \.node-status \{[^}]*justify-self: end/);
+  assert.match(css, /\.deep-analysis-view\.deep-analysis-view \.deep-analysis-node > \.deep-analysis-node-elapsed \{[^}]*margin-top: -3px;[^}]*font-size: inherit/);
+  assert.match(css, /\.deep-analysis-node \{[^}]*height: 86px/);
+});
+
+test("Active run feedback keeps only the completion count on the right", async () => {
+  const [view, css] = await Promise.all([
+    readFile(viewPath, "utf8"),
+    readFile(cssPath, "utf8"),
+  ]);
+
+  assert.match(view, /<span>\{completedNodeCount\}\/\{mission\.workflow\.nodes\.length\} Node 완료<\/span>/);
+  assert.doesNotMatch(view, /실제 Lumina Run/);
+  assert.doesNotMatch(view, /실행 Run을 준비하고 있습니다/);
+  assert.match(css, /\.deep-analysis-run-feedback\.is-active > div \{[^}]*justify-content: space-between/);
+  assert.match(css, /\.deep-analysis-run-feedback\.is-active span \{[^}]*text-align: right/);
 });
 
 test("Node inspector width is pointer and keyboard resizable and persisted", async () => {
