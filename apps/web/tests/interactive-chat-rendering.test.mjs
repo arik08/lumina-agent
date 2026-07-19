@@ -61,6 +61,17 @@ test("Markdown code blocks provide inline copy feedback without changing interac
   assert.match(globalStyles, /\.markdown-code-copy\.is-copied,[\s\S]*?color: var\(--success\);/);
 });
 
+test("user messages expose an external copy action with inline feedback", () => {
+  assert.match(turnSource, /function UserMessageCopyButton\(\{ text \}/);
+  assert.match(turnSource, /await copyText\(text\)/);
+  assert.match(turnSource, /copyState === "copied" \? <Check size=\{14\}/);
+  assert.match(turnSource, /<div className="user-message-row">[\s\S]*?<UserMessageCopyButton text=\{message\.text\} \/>[\s\S]*?<div className="user-message">/);
+  assert.match(globalStyles, /\.user-message-row \{[^}]*display: flex;[^}]*align-items: flex-start;[^}]*gap: 8px;/);
+  assert.match(globalStyles, /\.user-message-copy \{[^}]*width: 28px; height: 28px;[^}]*background: transparent;[^}]*color: var\(--faint\);/);
+  assert.match(globalStyles, /\.user-message-copy:hover \{ background: transparent; color: var\(--muted\);/);
+  assert.match(globalStyles, /\.user-message-copy\.is-copied,[\s\S]*?color: var\(--success\);/);
+});
+
 test("Mermaid preserves authored semantic fills and repairs only unreadable node text", () => {
   for (const color of ["#3288bd", "#66c2a5", "#e6f598", "#d53e4f", "#9e0142", "#f46d43", "#fdae61", "#fee08b", "#abdda4", "#5e4fa2"]) {
     assert.match(rendererSource, new RegExp(color));

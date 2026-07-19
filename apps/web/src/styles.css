@@ -2085,6 +2085,14 @@ button:disabled { cursor: default; opacity: 0.5; }
 }
 .user-message-group:has(+ .turn-work-details) { margin-bottom: 0; }
 
+.user-message-row { display: flex; max-width: 100%; align-items: flex-start; gap: 8px; }
+.user-message-copy { position: relative; display: grid; width: 28px; height: 28px; flex: 0 0 28px; place-items: center; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--faint); cursor: pointer; }
+.user-message-copy:hover { background: transparent; color: var(--muted); }
+.user-message-copy:focus-visible { outline: 2px solid color-mix(in srgb, var(--cobalt) 58%, transparent); outline-offset: 2px; }
+.user-message-copy.is-copied,
+.user-message-copy.is-copied:hover { color: var(--success); }
+.user-message-copy.is-error,
+.user-message-copy.is-error:hover { color: var(--danger); }
 .user-message {
   width: fit-content;
   max-width: 100%;

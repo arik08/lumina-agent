@@ -1571,6 +1571,45 @@ function MarkdownCodeBlock({ children }: { children?: ReactNode }) {
   );
 }
 
+function UserMessageCopyButton({ text }: { text: string }) {
+  const feedbackTimerRef = useRef<number | null>(null);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
+
+  useEffect(() => () => {
+    if (feedbackTimerRef.current !== null) window.clearTimeout(feedbackTimerRef.current);
+  }, []);
+
+  const handleCopy = async () => {
+    try {
+      await copyText(text);
+      setCopyState("copied");
+    } catch {
+      setCopyState("error");
+    }
+    if (feedbackTimerRef.current !== null) window.clearTimeout(feedbackTimerRef.current);
+    feedbackTimerRef.current = window.setTimeout(() => {
+      setCopyState("idle");
+      feedbackTimerRef.current = null;
+    }, 1600);
+  };
+  const feedback = copyState === "copied" ? "메시지를 복사했습니다." : copyState === "error" ? "메시지를 복사하지 못했습니다." : "";
+
+  return (
+    <>
+      <button
+        className={`user-message-copy${copyState === "copied" ? " is-copied" : copyState === "error" ? " is-error" : ""}`}
+        type="button"
+        aria-label={copyState === "copied" ? "메시지 복사됨" : copyState === "error" ? "메시지 복사 실패" : "메시지 복사"}
+        data-tooltip={copyState === "copied" ? "복사됨" : copyState === "error" ? "복사 실패" : "메시지 복사"}
+        onClick={() => void handleCopy()}
+      >
+        {copyState === "copied" ? <Check size={14} aria-hidden="true" /> : copyState === "error" ? <AlertCircle size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
+      </button>
+      <span className="visually-hidden" role="status" aria-live="polite">{feedback}</span>
+    </>
+  );
+}
+
 const markdownPreComponent: NonNullable<Components["pre"]> = ({ children }) => <MarkdownCodeBlock>{children}</MarkdownCodeBlock>;
 
 const MemoizedMarkdownChunk = memo(function MarkdownChunk({
@@ -2029,8 +2068,11 @@ export const AssistantTurn = memo(function AssistantTurn({
               ))}
             </div>
           )}
-          <div className="user-message">
-            {message.text && <div className="user-message-text">{message.text}</div>}
+          <div className="user-message-row">
+            {message.text && <UserMessageCopyButton text={message.text} />}
+            <div className="user-message">
+              {message.text && <div className="user-message-text">{message.text}</div>}
+            </div>
           </div>
           {messageDeliveryLabel(message, pendingCommands) && <small className="message-state">{messageDeliveryLabel(message, pendingCommands)}</small>}
         </div>
