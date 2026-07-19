@@ -60,19 +60,21 @@ export function readableMermaidTextColor(foreground: string, background: string)
 export function ensureMermaidNodeTextContrast(svg: SVGSVGElement) {
   for (const node of svg.querySelectorAll<SVGGElement>("g.node")) {
     const shape = node.querySelector<SVGGraphicsElement>(":scope > rect, :scope > polygon, :scope > circle, :scope > ellipse, :scope > path");
-    const label = node.querySelector<SVGElement | HTMLElement>(".label text, .label tspan, .label span, .label div, .label");
+    const label = node.querySelector<SVGElement | HTMLElement>(".label .nodeLabel, .label text, .label tspan, .label span, .label div")
+      ?? node.querySelector<SVGElement | HTMLElement>(".label");
     if (!shape || !label) continue;
 
     const shapeStyle = getComputedStyle(shape);
     if (Number.parseFloat(shapeStyle.fillOpacity || "1") < 1) continue;
     const labelStyle = getComputedStyle(label);
-    const foreground = label instanceof SVGElement ? labelStyle.fill : labelStyle.color;
+    const foreground = label instanceof HTMLElement ? labelStyle.color : labelStyle.fill;
     const replacement = readableMermaidTextColor(foreground, shapeStyle.fill);
     if (!replacement) continue;
 
     node.dataset.luminaContrastAdjusted = "true";
     const labelRoot = node.querySelector<SVGElement>(".label");
     labelRoot?.style.setProperty("color", replacement, "important");
+    labelRoot?.style.setProperty("fill", replacement, "important");
     for (const element of node.querySelectorAll<SVGElement>(".label text, .label tspan")) {
       element.style.setProperty("fill", replacement, "important");
       element.style.setProperty("color", replacement, "important");

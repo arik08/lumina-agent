@@ -37,3 +37,10 @@ test("skips colors whose effective contrast cannot be safely resolved", () => {
   assert.equal(readableMermaidTextColor("currentColor", "url(#gradient)"), null);
   assert.equal(readableMermaidTextColor("rgba(0, 0, 0, 0.5)", "#ffffff"), null);
 });
+
+test("samples the rendered Mermaid label leaf and applies both SVG and HTML text colors", () => {
+  assert.match(source, /\.label \.nodeLabel, \.label text, \.label tspan, \.label span, \.label div/);
+  assert.doesNotMatch(source, /\.label text, \.label tspan, \.label span, \.label div, \.label/);
+  assert.match(source, /label instanceof HTMLElement \? labelStyle\.color : labelStyle\.fill/);
+  assert.match(source, /labelRoot\?\.style\.setProperty\("fill", replacement, "important"\)/);
+});
