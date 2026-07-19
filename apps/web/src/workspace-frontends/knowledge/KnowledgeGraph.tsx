@@ -268,7 +268,7 @@ export function KnowledgeGraph({ graph, layoutKey, onSelectDocument }: Knowledge
           nodeHoverLevels.get(source.id) ?? 0,
           nodeHoverLevels.get(target.id) ?? 0,
         );
-        const baseLineWidth = 1.15 + Math.min(0.35, link.weight * 0.08);
+        const baseLineWidth = 1.35 + Math.min(0.3, link.weight * 0.08);
         context.beginPath();
         context.moveTo(source.x, source.y);
         context.lineTo(target.x, target.y);

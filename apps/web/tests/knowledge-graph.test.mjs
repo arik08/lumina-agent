@@ -95,6 +95,7 @@ test("Knowledge graph keeps idle edges visible and highlights active edges in gr
     readFile(new URL("../src/workspace-frontends/knowledge/knowledge.css", import.meta.url), "utf8"),
   ]);
   assert.match(graph, /edgeHighlight: token\("--success", "#2f9765"\)/);
+  assert.match(graph, /const baseLineWidth = 1\.35 \+ Math\.min\(0\.3, link\.weight \* 0\.08\)/);
   assert.match(graph, /context\.globalAlpha = lerp\(0\.68, 0\.16, focusLevel\)/);
   assert.match(graph, /context\.lineWidth = lerp\(baseLineWidth, 1\.65, activeLevel\)/);
   assert.match(graph, /context\.strokeStyle = colors\.edgeHighlight/);
