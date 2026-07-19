@@ -50,8 +50,10 @@ test("cached tabs use the simplified two-tab contract", async () => {
 
   assert.match(view, /useCachedViewState<"workflow" \| "log">/);
   assert.match(view, /`deep-analysis:\$\{cacheScope\}:active-tab:v2`/);
-  assert.match(view, />Workflow<\/button>/);
-  assert.match(view, />실행 기록<\/button>/);
+  assert.match(view, /<header className="feature-header deep-analysis-header">[\s\S]*?<div className="feature-kind-tabs deep-analysis-view-tabs" role="tablist" aria-label="심층분석 화면">/);
+  assert.match(view, /<GitBranch size=\{14\} \/> Workflow/);
+  assert.match(view, /<History size=\{14\} \/> 실행 기록/);
+  assert.doesNotMatch(view, /className="deep-analysis-tabs"/);
   assert.doesNotMatch(view, /결론·근거|Claim Ledger|Quality Gate|Open Issue/);
 });
 

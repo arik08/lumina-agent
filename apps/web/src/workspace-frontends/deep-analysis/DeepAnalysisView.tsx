@@ -1466,6 +1466,26 @@ export function DeepAnalysisView({
           </button>
           <Waypoints size={17} />
           <h1>심층분석</h1>
+          <div className="feature-kind-tabs deep-analysis-view-tabs" role="tablist" aria-label="심층분석 화면">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={createOpen || activeTab === "workflow"}
+              disabled={!projectId}
+              onClick={() => setActiveTab("workflow")}
+            >
+              <GitBranch size={14} /> Workflow
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={!createOpen && activeTab === "log"}
+              disabled={!projectId || createOpen || !mission}
+              onClick={() => setActiveTab("log")}
+            >
+              <History size={14} /> 실행 기록
+            </button>
+          </div>
           <span>장기 분석을 Workflow 단위로 기록하고 이어갑니다.</span>
         </div>
         {activeTabSummary && <span className="deep-analysis-header-summary" role="status">{activeTabSummary}</span>}
@@ -1499,10 +1519,6 @@ export function DeepAnalysisView({
                     <p>{objective.trim() || "Mission 정보를 입력해 새로운 심층분석을 시작합니다."}</p>
                   </div>
                 </header>
-                <div className="deep-analysis-tabs" role="tablist" aria-label="새 심층분석 화면">
-                  <button className="is-active" type="button" role="tab" aria-selected="true"><GitBranch size={14} />Workflow</button>
-                  <button type="button" role="tab" aria-selected="false" disabled><History size={14} />실행 기록</button>
-                </div>
                 <div
                   ref={workflowLayoutRef}
                   className="deep-analysis-workflow-layout has-inspector is-creating"
@@ -1689,10 +1705,6 @@ export function DeepAnalysisView({
                     )}
                   </div>
                 </header>
-                <div className="deep-analysis-tabs" role="tablist" aria-label="심층분석 화면">
-                  <button className={activeTab === "workflow" ? "is-active" : ""} type="button" role="tab" aria-selected={activeTab === "workflow"} onClick={() => setActiveTab("workflow")}><GitBranch size={14} />Workflow</button>
-                  <button className={activeTab === "log" ? "is-active" : ""} type="button" role="tab" aria-selected={activeTab === "log"} onClick={() => setActiveTab("log")}><History size={14} />실행 기록</button>
-                </div>
                 {activeTab === "workflow" ? <>
                 <div
                   ref={workflowLayoutRef}
