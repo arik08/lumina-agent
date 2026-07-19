@@ -83,9 +83,21 @@ test("Workflow Canvas keeps the Mission root before every start Node", async () 
   assert.match(view, /const workflowMissionRoot = useMemo/);
   assert.match(view, /const startNodes = nodes\.filter\(\(node\) => !targetNodeKeys\.has\(node\.nodeKey\)\)/);
   assert.match(view, /workflowMissionRoot\?\.connectedNodes\.map/);
-  assert.match(view, /className="deep-analysis-goal-node deep-analysis-mission-root-node"/);
+  assert.match(view, /className=\{`deep-analysis-goal-node deep-analysis-mission-root-node/);
   assert.match(view, /<span><Target size=\{14\} \/>MISSION<\/span>[\s\S]*?<strong>작업 흐름<\/strong>[\s\S]*?<small>AI 자동 설계<\/small>/);
   assert.match(view, /fitNodesToViewport\(\[[\s\S]*?workflowMissionRoot\.position[\s\S]*?shownWorkflow\?\.nodes/);
+});
+
+test("Mission root opens the existing analysis information and persists edits", async () => {
+  const view = await readFile(viewPath, "utf8");
+
+  assert.match(view, /className=\{`deep-analysis-goal-node deep-analysis-mission-root-node \$\{missionRootSelected \? "is-selected" : ""\}`\}/);
+  assert.match(view, /aria-pressed=\{missionRootSelected\}/);
+  assert.match(view, /setMissionTitleDraft\(mission\.title\)[\s\S]*?setMissionObjectiveDraft\(mission\.objective\)[\s\S]*?setMissionRootSelected\(true\)/);
+  assert.match(view, /className="deep-analysis-inspector deep-analysis-create-inspector" aria-label="Mission 정보"/);
+  assert.match(view, /분석 이름[\s\S]*?value=\{missionTitleDraft\}[\s\S]*?분석 목적[\s\S]*?value=\{missionObjectiveDraft\}/);
+  assert.match(view, /api\.deepAnalysis\.updateMission\(mission\.id,[\s\S]*?title: nextTitle,[\s\S]*?objective: nextObjective/);
+  assert.match(view, /Mission 정보 저장/);
 });
 
 test("Canvas zoom value reserves enough width for triple-digit percentages", async () => {

@@ -332,6 +332,10 @@ export function DeepAnalysisView({
     `deep-analysis:${cacheScope}:selected-node`,
     null,
   );
+  const [missionRootSelected, setMissionRootSelected] = useState(false);
+  const [missionTitleDraft, setMissionTitleDraft] = useState("");
+  const [missionObjectiveDraft, setMissionObjectiveDraft] = useState("");
+  const [savingMissionSettings, setSavingMissionSettings] = useState(false);
   const [loadingList, setLoadingList] = useState(false);
   const [loadingMission, setLoadingMission] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -374,7 +378,11 @@ export function DeepAnalysisView({
     "running",
     "paused",
     "awaiting_input",
-  ].includes(mission?.status ?? "");
+  ].includes(mission?.status ?? "") && !editingWorkflow;
+  const missionSettingsDirty = mission !== null && (
+    missionTitleDraft.trim() !== mission.title
+    || missionObjectiveDraft.trim() !== mission.objective
+  );
   const [connectionDraft, setConnectionDraft] = useState<{
     sourceNodeKey: string;
     sourceSide: WorkflowPortSide;
@@ -423,7 +431,14 @@ export function DeepAnalysisView({
     setExportedFolderPath(null);
     setWorkflowRegenerateOpen(false);
     setWorkflowRegeneratePrompt("");
+    setMissionRootSelected(false);
+    setMissionTitleDraft(mission?.title ?? "");
+    setMissionObjectiveDraft(mission?.objective ?? "");
   }, [mission?.id]);
+
+  useEffect(() => {
+    if (selectedNodeKey) setMissionRootSelected(false);
+  }, [selectedNodeKey]);
 
   useEffect(() => {
     if (!workflowRegenerateOpen) return;
@@ -840,8 +855,9 @@ export function DeepAnalysisView({
     ]);
   }
 
-  function closeNodeInspectorAndFit() {
+  function closeInspectorAndFit() {
     setSelectedNodeKey(null);
+    setMissionRootSelected(false);
     window.requestAnimationFrame(() => window.requestAnimationFrame(fitCanvasToViewport));
   }
 
@@ -1408,6 +1424,30 @@ export function DeepAnalysisView({
     }
   }
 
+  async function saveMissionSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const nextTitle = missionTitleDraft.trim();
+    const nextObjective = missionObjectiveDraft.trim();
+    if (!mission || !missionSettingsEditable || !missionSettingsDirty || !nextTitle || savingMissionSettings) return;
+    setSavingMissionSettings(true);
+    setError(null);
+    try {
+      const updated = await api.deepAnalysis.updateMission(mission.id, {
+        expectedRevision: mission.revision,
+        title: nextTitle,
+        objective: nextObjective,
+      });
+      setMission(updated);
+      setMissions((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setMissionTitleDraft(updated.title);
+      setMissionObjectiveDraft(updated.objective);
+    } catch (saveError) {
+      setError(errorMessage(saveError));
+    } finally {
+      setSavingMissionSettings(false);
+    }
+  }
+
   async function deleteMission() {
     if (!mission || deletingMission) return;
     if (!deleteArmed) {
@@ -1731,7 +1771,7 @@ export function DeepAnalysisView({
                 {activeTab === "workflow" ? <>
                 <div
                   ref={workflowLayoutRef}
-                  className={`deep-analysis-workflow-layout ${selectedNode ? "has-inspector" : ""}`}
+                  className={`deep-analysis-workflow-layout ${selectedNode || missionRootSelected ? "has-inspector" : ""}`}
                   style={{ "--deep-analysis-inspector-width": `${inspectorWidth}px` } as CSSProperties}
                 >
                   <div className="deep-analysis-workflow-main">
@@ -1779,7 +1819,7 @@ export function DeepAnalysisView({
                     onPointerCancel={endCanvasPan}
                     onDoubleClick={(event) => {
                       if ((event.target as Element).closest("button")) return;
-                      closeNodeInspectorAndFit();
+                      closeInspectorAndFit();
                     }}
                     onLostPointerCapture={() => {
                       canvasPanRef.current = null;
@@ -1832,6 +1872,7 @@ export function DeepAnalysisView({
                                   onClick={() => {
                                     setSelectedEdgeId(edge.id);
                                     setSelectedNodeKey(null);
+                                    setMissionRootSelected(false);
                                   }}
                                 />
                               )}
@@ -1864,6 +1905,7 @@ export function DeepAnalysisView({
                           onSelect={() => {
                             setSelectedNodeKey(node.nodeKey);
                             setSelectedEdgeId(null);
+                            setMissionRootSelected(false);
                           }}
                           editable={editingWorkflow}
                           connectionPortsSuppressed={suppressedConnectionPortNodeKey === node.nodeKey}
@@ -1882,19 +1924,28 @@ export function DeepAnalysisView({
                         />
                       ))}
                       {workflowMissionRoot && (
-                        <div
-                          className="deep-analysis-goal-node deep-analysis-mission-root-node"
-                          role="group"
+                        <button
+                          className={`deep-analysis-goal-node deep-analysis-mission-root-node ${missionRootSelected ? "is-selected" : ""}`}
+                          type="button"
                           aria-label="MISSION 작업 흐름"
+                          aria-pressed={missionRootSelected}
                           style={{
                             left: workflowMissionRoot.position.positionX,
                             top: workflowMissionRoot.position.positionY,
+                          }}
+                          onClick={() => {
+                            setMissionTitleDraft(mission.title);
+                            setMissionObjectiveDraft(mission.objective);
+                            setMissionRootSelected(true);
+                            setSelectedNodeKey(null);
+                            setSelectedEdgeId(null);
+                            window.requestAnimationFrame(() => fitCanvasToViewport());
                           }}
                         >
                           <span><Target size={14} />MISSION</span>
                           <strong>작업 흐름</strong>
                           <small>AI 자동 설계</small>
-                        </div>
+                        </button>
                       )}
                       {editingWorkflow && selectedEdgeId && (() => {
                         const edge = shownWorkflow?.edges.find((item) => item.id === selectedEdgeId);
@@ -2005,7 +2056,7 @@ export function DeepAnalysisView({
                     </div>
                   </div>
                   </div>
-                  {selectedNode && (
+                  {(selectedNode || missionRootSelected) && (
                     <div
                       className="deep-analysis-inspector-resizer"
                       role="separator"
@@ -2019,13 +2070,55 @@ export function DeepAnalysisView({
                       onKeyDown={resizeInspectorWithKeyboard}
                     />
                   )}
+                  {missionRootSelected && (
+                    <aside className="deep-analysis-inspector deep-analysis-create-inspector" aria-label="Mission 정보">
+                      <header>
+                        <div>
+                          <span>MISSION</span>
+                          <button type="button" aria-label="Mission 정보 닫기" onClick={closeInspectorAndFit}><X size={14} /></button>
+                        </div>
+                        <strong>분석 정보</strong>
+                        <small>목표를 바탕으로 Node와 Edge를 한 번 자동 설계하며, 생성 후 직접 편집할 수 있습니다.</small>
+                      </header>
+                      <form className="deep-analysis-create" onSubmit={saveMissionSettings}>
+                        <label>
+                          분석 이름
+                          <input
+                            value={missionTitleDraft}
+                            maxLength={240}
+                            disabled={!missionSettingsEditable || savingMissionSettings}
+                            onChange={(event) => setMissionTitleDraft(event.target.value)}
+                          />
+                        </label>
+                        <label>
+                          분석 목적
+                          <textarea
+                            value={missionObjectiveDraft}
+                            rows={10}
+                            maxLength={20_000}
+                            disabled={!missionSettingsEditable || savingMissionSettings}
+                            onChange={(event) => setMissionObjectiveDraft(event.target.value)}
+                          />
+                        </label>
+                        <button
+                          className="deep-analysis-create-submit"
+                          type="submit"
+                          aria-busy={savingMissionSettings}
+                          disabled={!missionSettingsEditable || !missionSettingsDirty || !missionTitleDraft.trim() || savingMissionSettings}
+                        >
+                          {savingMissionSettings && <LoaderCircle className="is-running" size={14} />}
+                          {savingMissionSettings ? "저장 중..." : "Mission 정보 저장"}
+                        </button>
+                      </form>
+                    </aside>
+                  )}
                   {selectedNode && (
                     <aside className="deep-analysis-inspector" aria-label={`${selectedNode.title} 상세 정보`}>
                       <header>
                         <div>
                           <span>{selectedNode.nodeKey}</span>
                           <small className={`node-status status-${selectedNode.status}`}>{statusLabel(selectedNode.status)}</small>
-                          <button type="button" aria-label="노드 상세 닫기" onClick={closeNodeInspectorAndFit}><X size={14} /></button>
+                          <button type="button" aria-label="노드 상세 닫기" onClick={closeInspectorAndFit}><X size={14} /></button>
                         </div>
                         <strong>{selectedNode.title}</strong>
                       </header>
