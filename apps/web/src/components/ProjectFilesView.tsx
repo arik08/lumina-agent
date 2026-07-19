@@ -4,6 +4,7 @@ import {
   ChevronRight,
   Check,
   CheckCheck,
+  Code2,
   Download,
   FilePlus2,
   FileText,
@@ -256,7 +257,7 @@ function isMarkdownFile(detail: ProjectFileDetail) {
   return extension === "md" || extension === "markdown" || detail.mimeType.toLocaleLowerCase("en-US") === "text/markdown";
 }
 
-function renderFilePreview(preview: PreviewState, detail: ProjectFileDetail): ReactNode {
+function renderFilePreview(preview: PreviewState, detail: ProjectFileDetail, markdownSource: boolean): ReactNode {
   if (preview.status === "loading" || preview.status === "idle") {
     return <div className="feature-state"><LoaderCircle className="is-running" size={15} /> Preview 준비 중</div>;
   }
@@ -267,7 +268,7 @@ function renderFilePreview(preview: PreviewState, detail: ProjectFileDetail): Re
     return <div className="file-preview-message"><FileText size={28} /><strong>브라우저 Preview를 지원하지 않는 형식입니다.</strong><span>{preview.mimeType || "알 수 없는 파일 형식"} · 다운로드해서 확인해 주세요.</span></div>;
   }
   if (preview.kind === "text") {
-    return <>{isMarkdownFile(detail)
+    return <>{isMarkdownFile(detail) && !markdownSource
       ? <div className="file-preview-markdown"><MarkdownResponse text={preview.text} /></div>
       : <pre>{preview.text}</pre>}
     {preview.truncated && <div className="file-preview-truncated">Preview는 앞부분만 표시합니다.</div>}</>;
@@ -305,6 +306,7 @@ export function ProjectFilesView({ projectId, onOpenNavigation }: ProjectFilesVi
   const [deleteConfirming, setDeleteConfirming] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [preview, setPreview] = useState<PreviewState>({ status: "idle" });
+  const [markdownSource, setMarkdownSource] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -325,6 +327,10 @@ export function ProjectFilesView({ projectId, onOpenNavigation }: ProjectFilesVi
     setSelectedTreeKeys(new Set());
     setBulkDeleteArmed(false);
   }, [projectId, query]);
+
+  useEffect(() => {
+    setMarkdownSource(false);
+  }, [selectedId]);
 
   useEffect(() => {
     if (!projectId) {
@@ -878,12 +884,22 @@ export function ProjectFilesView({ projectId, onOpenNavigation }: ProjectFilesVi
                   <div><h2>{detail.displayName}</h2></div>
                   <div className="file-viewer-actions">
                     <div className="file-viewer-meta" aria-label="파일 정보"><span>{formatBytes(detail.size)}</span><span>{formatDate(detail.createdAt)}</span></div>
+                    {isMarkdownFile(detail) ? (
+                      <button
+                        className={`file-preview-mode-toggle tooltip-control ${markdownSource ? "is-active" : ""}`}
+                        type="button"
+                        aria-label={markdownSource ? "렌더링 보기" : "원문 보기"}
+                        aria-pressed={markdownSource}
+                        data-tooltip={markdownSource ? "렌더링 보기" : "원문 보기"}
+                        onClick={() => setMarkdownSource((current) => !current)}
+                      ><Code2 size={14} /></button>
+                    ) : null}
                     <button type="button" disabled={busy} onClick={() => void download()}><Download size={14} /> 다운로드</button>
                     <button className={`is-danger ${deleteConfirming ? "is-confirming" : ""}`} type="button" disabled={busy} onClick={() => void remove()}><Trash2 size={14} /> {deleteConfirming ? "한 번 더 눌러 삭제" : "삭제"}</button>
                   </div>
                 </header>
                 <div className="file-preview-surface thin-scrollbar">
-                  {renderFilePreview(preview, detail)}
+                  {renderFilePreview(preview, detail, markdownSource)}
                 </div>
               </div>
             )}

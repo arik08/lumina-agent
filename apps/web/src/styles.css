@@ -1461,6 +1461,8 @@ button:disabled { cursor: default; opacity: 0.5; }
 .file-viewer-actions { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; gap: 5px; }
 .file-viewer-actions button { display: inline-flex; height: 29px; flex: 0 0 auto; align-items: center; gap: 5px; padding: 0 8px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); color: var(--ink); font-size: 10.5px; white-space: nowrap; cursor: pointer; }
 .file-viewer-actions button:hover { background: var(--surface-soft); }
+.file-viewer-actions .file-preview-mode-toggle { width: 29px; justify-content: center; padding: 0; }
+.file-viewer-actions .file-preview-mode-toggle.is-active { border-color: var(--cobalt); background: var(--cobalt-pale); color: var(--cobalt); }
 .file-viewer-actions .is-danger { color: var(--danger); }
 .file-viewer-actions .is-confirming { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); background: color-mix(in srgb, var(--danger) 8%, var(--surface)); }
 .file-viewer-meta { display: inline-flex; min-height: 29px; flex: 0 0 auto; align-items: center; gap: 14px; margin-right: 5px; color: var(--muted); font-size: 10.5px; white-space: nowrap; }
