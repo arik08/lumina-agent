@@ -396,6 +396,7 @@ export function DeepAnalysisView({
   const canvasViewportRef = useRef<HTMLDivElement>(null);
   const workflowLayoutRef = useRef<HTMLDivElement>(null);
   const createTitleRef = useRef<HTMLInputElement>(null);
+  const costDetailsRef = useRef<HTMLDivElement>(null);
   const workflowRegenerateTriggerRef = useRef<HTMLButtonElement>(null);
   const liveOutputRef = useRef<HTMLPreElement>(null);
   const workflowRegenerateFontSize = workflowRegenerateTriggerRef.current
@@ -606,6 +607,16 @@ export function DeepAnalysisView({
       .finally(() => setLoadingCosts(false));
     return () => controller.abort();
   }, [costDetailsOpen, mission?.id, mission?.eventCursor]);
+
+  useEffect(() => {
+    if (!costDetailsOpen) return;
+    const closeCostDetailsOutside = (event: PointerEvent) => {
+      if (costDetailsRef.current?.contains(event.target as Node)) return;
+      setCostDetailsOpen(false);
+    };
+    document.addEventListener("pointerdown", closeCostDetailsOutside);
+    return () => document.removeEventListener("pointerdown", closeCostDetailsOutside);
+  }, [costDetailsOpen]);
 
   useEffect(() => {
     if (
@@ -1737,7 +1748,7 @@ export function DeepAnalysisView({
                         {exportingMission ? <LoaderCircle className="is-running" size={15} /> : exportedFolderPath ? <Check size={15} /> : <FolderDown size={15} />}
                       </button>
                     </div>
-                    <div className="deep-analysis-cost-wrap">
+                    <div ref={costDetailsRef} className="deep-analysis-cost-wrap">
                       <button
                         className={`deep-analysis-cost tooltip-control ${costDetailsOpen ? "is-active" : ""}`}
                         type="button"

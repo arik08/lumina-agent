@@ -232,6 +232,10 @@ test("Accumulated cost button toggles each Node's third row between cost and ela
   assert.match(view, /className=\{`deep-analysis-cost tooltip-control \$\{costDetailsOpen \? "is-active" : ""\}`\}/);
   assert.match(view, /aria-pressed=\{costDetailsOpen\}/);
   assert.match(view, /showCost=\{costDetailsOpen\}/);
+  assert.match(view, /document\.addEventListener\("pointerdown", closeCostDetailsOutside\)/);
+  assert.match(view, /costDetailsRef\.current\?\.contains\(event\.target as Node\)/);
+  assert.match(view, /document\.removeEventListener\("pointerdown", closeCostDetailsOutside\)/);
+  assert.match(view, /<div ref=\{costDetailsRef\} className="deep-analysis-cost-wrap">/);
   assert.match(view, /showCost\s*\? <span className="deep-analysis-node-cost">\{formatCost\(node\.actualCostMicrousd, usdKrwRate\)\}<\/span>\s*:\s*elapsedTime && <time className="deep-analysis-node-elapsed"/);
   assert.match(css, /\.deep-analysis-cost\.is-active \{[^}]*border-color: var\(--cobalt\);[^}]*background: var\(--cobalt-pale\);[^}]*color: var\(--cobalt\);/);
   assert.match(css, /\.deep-analysis-node > \.deep-analysis-node-elapsed,[\s\S]*\.deep-analysis-node > \.deep-analysis-node-cost \{ font-size: inherit; line-height: 1\.2; \}/);
