@@ -192,7 +192,8 @@ test("Node output is one rendered Markdown document with its filename", async ()
   assert.match(view, /className="deep-analysis-output-section"/);
   assert.match(view, /selectedNode\.status === "running" \? \(/);
   assert.doesNotMatch(view, /selectedNode\.status === "running" && !selectedNode\.outputSummary/);
-  assert.match(view, /ref=\{liveOutputRef\} className="deep-analysis-live-output"/);
+  assert.match(view, /ref=\{liveOutputRef\} className="deep-analysis-live-output">\{displayLiveOutput\(selectedNode\.liveOutput\)\}/);
+  assert.match(view, /return value\.replace\(\/\\\\r\\\\n\|\\\\n\|\\\\r\/g, "\\n"\)/);
   assert.match(view, /output\.scrollTop = output\.scrollHeight/);
   assert.match(view, /setInterval\(refreshWhenVisible, 500\)/);
   assert.match(view, /className="deep-analysis-output-document"/);
@@ -202,7 +203,7 @@ test("Node output is one rendered Markdown document with its filename", async ()
   assert.doesNotMatch(view, /문서 전체 보기/);
 });
 
-test("Running Node status stays right-aligned and elapsed time sits below the title", async () => {
+test("Running and completed Nodes keep evenly spaced elapsed time below the title", async () => {
   const [view, css] = await Promise.all([
     readFile(viewPath, "utf8"),
     readFile(cssPath, "utf8"),
@@ -210,11 +211,13 @@ test("Running Node status stays right-aligned and elapsed time sits below the ti
 
   assert.match(view, /if \(totalMinutes < 60\) return `\$\{totalMinutes\}분 \$\{totalSeconds % 60\}초`/);
   assert.doesNotMatch(view, /초째|분째/);
+  assert.match(view, /node\.status === "completed" && node\.finishedAt/);
+  assert.match(view, /Date\.parse\(normalizeUtcDateTime\(node\.finishedAt\)\)/);
   assert.match(view, /<span>\{statusLabel\(node\.status\)\}<\/span>/);
   assert.match(view, /<strong>\{node\.title\}<\/strong>\s*\{elapsedTime && <time className="deep-analysis-node-elapsed"/);
   assert.match(css, /\.deep-analysis-node-meta > \.node-status \{[^}]*justify-self: end/);
-  assert.match(css, /\.deep-analysis-view\.deep-analysis-view \.deep-analysis-node > \.deep-analysis-node-elapsed \{[^}]*margin-top: -3px;[^}]*font-size: inherit/);
-  assert.match(css, /\.deep-analysis-node \{[^}]*height: 86px/);
+  assert.match(css, /\.deep-analysis-view\.deep-analysis-view \.deep-analysis-node > \.deep-analysis-node-elapsed \{[^}]*font-size: inherit/);
+  assert.match(css, /\.deep-analysis-node \{[^}]*height: 86px;[^}]*gap: 4px/);
 });
 
 test("Active run feedback keeps only the completion count on the right", async () => {

@@ -316,7 +316,7 @@
 .deep-analysis-edge-port { fill: var(--deep-analysis-graph-line); }
 
 .deep-analysis-node-shell { position: absolute; width: 176px; min-height: 86px; }
-.deep-analysis-node { position: relative; display: grid; width: 100%; height: 86px; align-content: start; gap: 6px; border: 1px solid var(--deep-analysis-graph-line); border-radius: var(--radius-select); padding: 10px 11px; background: var(--surface); text-align: left; cursor: pointer; transition: border-color var(--motion-fast); }
+.deep-analysis-node { position: relative; display: grid; width: 100%; height: 86px; align-content: start; gap: 4px; border: 1px solid var(--deep-analysis-graph-line); border-radius: var(--radius-select); padding: 10px 11px; background: var(--surface); text-align: left; cursor: pointer; transition: border-color var(--motion-fast); }
 .deep-analysis-node:hover { border-color: color-mix(in srgb, var(--cobalt) 40%, var(--line)); }
 .deep-analysis-node:focus-visible { outline: 0; border-color: var(--cobalt); }
 .deep-analysis-node.is-editable { cursor: move; touch-action: none; }
@@ -325,7 +325,7 @@
 .deep-analysis-node-meta > span { display: flex; min-width: 0; align-items: center; gap: 5px; color: var(--cobalt); font-size: 10.5px; font-weight: 650; }
 .deep-analysis-node-meta > .node-status { justify-self: end; text-align: right; }
 .deep-analysis-node > strong { overflow: hidden; color: var(--ink); font-size: 12px; font-weight: 670; text-overflow: ellipsis; white-space: nowrap; }
-.deep-analysis-view.deep-analysis-view .deep-analysis-node > .deep-analysis-node-elapsed { margin-top: -3px; color: var(--muted); font-size: inherit; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.deep-analysis-view.deep-analysis-view .deep-analysis-node > .deep-analysis-node-elapsed { color: var(--muted); font-size: inherit; font-variant-numeric: tabular-nums; line-height: 1.2; }
 .deep-analysis-goal-node { position: absolute; display: grid; width: 176px; height: 86px; align-content: start; gap: 6px; border: 1px solid color-mix(in srgb, var(--cobalt) 45%, var(--line-strong)); border-radius: var(--radius-select); padding: 10px 11px; background: color-mix(in srgb, var(--cobalt-pale) 42%, var(--surface)); color: var(--ink); text-align: left; cursor: pointer; }
 .deep-analysis-goal-node:hover,
 .deep-analysis-goal-node.is-selected { border-color: var(--cobalt); background: var(--cobalt-pale); }

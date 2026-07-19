@@ -106,11 +106,15 @@ function normalizeUtcDateTime(value: string) {
 
 function formatNodeElapsedTime(startedAt: string, now: number) {
   const startedAtMs = Date.parse(normalizeUtcDateTime(startedAt));
-  if (!Number.isFinite(startedAtMs)) return null;
+  if (!Number.isFinite(startedAtMs) || !Number.isFinite(now)) return null;
   const totalSeconds = Math.max(0, Math.floor((now - startedAtMs) / 1_000));
   const totalMinutes = Math.floor(totalSeconds / 60);
   if (totalMinutes < 60) return `${totalMinutes}분 ${totalSeconds % 60}초`;
   return `${Math.floor(totalMinutes / 60)}시간 ${totalMinutes % 60}분 ${totalSeconds % 60}초`;
+}
+
+function displayLiveOutput(value: string) {
+  return value.replace(/\\r\\n|\\n|\\r/g, "\n");
 }
 
 function formatCost(microusd: number, usdKrwRate: number | null) {
@@ -2174,7 +2178,7 @@ export function DeepAnalysisView({
                           <>
                             <p className="deep-analysis-node-progress"><LoaderCircle className="is-running" size={13} /> 모델 응답을 생성하고 있습니다.</p>
                             {selectedNode.liveOutput && (
-                              <pre ref={liveOutputRef} className="deep-analysis-live-output">{selectedNode.liveOutput}</pre>
+                              <pre ref={liveOutputRef} className="deep-analysis-live-output">{displayLiveOutput(selectedNode.liveOutput)}</pre>
                             )}
                           </>
                         ) : selectedNode.errorMessage ? (
@@ -2314,8 +2318,11 @@ function WorkflowNodeButton({
     return () => window.clearInterval(timer);
   }, [node.startedAt, node.status]);
   const normalizedStartedAt = node.startedAt ? normalizeUtcDateTime(node.startedAt) : null;
-  const elapsedTime = node.status === "running" && node.startedAt
-    ? formatNodeElapsedTime(node.startedAt, clockNow)
+  const completedAt = node.status === "completed" && node.finishedAt
+    ? Date.parse(normalizeUtcDateTime(node.finishedAt))
+    : null;
+  const elapsedTime = node.startedAt
+    ? formatNodeElapsedTime(node.startedAt, node.status === "running" ? clockNow : completedAt ?? Number.NaN)
     : null;
 
   return (
