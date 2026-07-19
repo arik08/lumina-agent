@@ -209,6 +209,11 @@ export interface DeepAnalysisMissionSummary {
   startMode: string;
   patternVersionId: UUID | null;
   autonomyMode: DeepAnalysisAutonomyMode;
+  analysisDepth: "auto" | "brief" | "standard" | "deep";
+  answerLength: "auto" | "brief" | "standard" | "detailed";
+  outputMode: OutputMode;
+  targetOutputTokens: number | null;
+  promptReferences: PromptReference[];
   budgetMicrousd: number | null;
   spentMicrousd: number;
   completionOutcome: "satisfied" | "satisfied_with_exceptions" | "not_satisfied" | null;
@@ -547,6 +552,11 @@ export interface CreateDeepAnalysisMissionRequest {
   objective?: string;
   autonomyMode?: DeepAnalysisAutonomyMode;
   budgetMicrousd?: number | null;
+  analysisDepth?: "auto" | "brief" | "standard" | "deep";
+  answerLength?: "auto" | "brief" | "standard" | "detailed";
+  outputMode?: OutputMode;
+  targetOutputTokens?: number | null;
+  promptReferences?: PromptReference[];
   workflowStartMode?: DeepAnalysisWorkflowStartMode;
   patternVersionId?: UUID | null;
 }

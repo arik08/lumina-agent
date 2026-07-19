@@ -358,6 +358,8 @@ def create_mission(
     objective: str,
     autonomy_mode: str,
     budget_microusd: int | None,
+    execution_settings: dict[str, object] | None = None,
+    source_manifest: list[dict[str, object]] | None = None,
     pattern_version_id: str | None = None,
     initial_plan: InitialWorkflowPlan | None = None,
     start_mode: str = "ai_fallback",
@@ -379,6 +381,8 @@ def create_mission(
         start_mode=start_mode,
         autonomy_mode=autonomy_mode,
         budget_microusd=budget_microusd,
+        execution_settings_json=execution_settings or {},
+        source_manifest_json=source_manifest or [],
         charter_json=default_charter(clean_title, objective),
         completion_contract_json=default_completion_contract(),
     )

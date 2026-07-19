@@ -1837,6 +1837,8 @@ Agent Frontend 모듈화는 외부 생태계나 무제한 확장을 위한 Plugi
 
 새 Mission은 한 번의 LLM 호출로 목표에 맞는 초기 Node·Edge·프롬프트를 설계하고, 실패하면 규칙 기반 Workflow로 대체합니다. 사용자는 생성된 Workflow를 직접 편집하며 실행기는 DAG 순서와 결과 전달만 담당합니다. 실행 중 재계획과 검증 장부 생성을 위해 별도 모델을 호출하지 않습니다.
 
+새 Mission의 초기 설정은 일반 Composer와 같은 `분석 범위`, `답변 분량`, `출력 방식`, `출력 토큰` 계약을 사용합니다. 사용자는 새 문서를 Project 파일로 첨부하거나 `@`로 기존 파일·폴더·Artifact를, `$`로 Project에서 허용된 Skill·MCP를 명시할 수 있습니다. Backend는 선택한 참조의 version·revision·digest와 실행 설정을 Mission에 고정하고 각 Node Run snapshot에 전달하며, 명시적으로 선택한 Project 파일이 있으면 그 파일 revision만 Mission source manifest로 사용합니다.
+
 심층분석 model 요청은 공통 prompt-cache 계약을 사용하되 `Core → Mission 설명과 Project 자료 → 선행 Node 출력 → 현재 Node 프롬프트` 순서로 조립합니다. 비용은 실제 Node Run 사용량을 기준으로 집계합니다.
 
 추가 최적화는 실제 Node Run의 Context 크기와 cache 효과를 측정한 뒤 도입합니다. 실행 중 Workflow 탐색이나 별도 LLM 판정은 기본 경로에 추가하지 않습니다.

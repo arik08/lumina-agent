@@ -1,18 +1,23 @@
 import {
   AlertTriangle,
+  AlignLeft,
+  AtSign,
   Check,
   CircleAlert,
   CircleDollarSign,
   FolderDown,
+  FileText,
   GitBranch,
   History,
   LoaderCircle,
   Menu,
   Pause,
+  Paperclip,
   Pencil,
   Play,
   Plus,
   RefreshCw,
+  Search,
   Square,
   Target,
   Trash2,
@@ -28,6 +33,7 @@ import {
   type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
   type WheelEvent as ReactWheelEvent,
   useEffect,
   useMemo,
@@ -46,6 +52,9 @@ import type {
   DeepAnalysisMissionSummary,
   DeepAnalysisWorkflowNode,
   DeepAnalysisWorkflowRevision,
+  ComposerSuggestion,
+  OutputMode,
+  PromptReference,
 } from "../../api-types";
 import "./deep-analysis.css";
 
@@ -60,6 +69,123 @@ interface DeepAnalysisViewProps {
   onMissionsLoadingChange: (loading: boolean) => void;
   onSelectedMissionChange: (missionId: string | null) => void;
   onOpenNavigation: () => void;
+}
+
+type MissionAnalysisDepth = "auto" | "brief" | "standard" | "deep";
+type MissionAnswerLength = "auto" | "brief" | "standard" | "detailed";
+
+interface MissionOption {
+  id: string;
+  label: string;
+  description: string;
+}
+
+interface SelectedMissionReference {
+  key: string;
+  token: string;
+  name: string;
+  kind: PromptReference["kind"];
+  reference: PromptReference;
+}
+
+const missionAnalysisDepthOptions: MissionOption[] = [
+  { id: "auto", label: "자동", description: "목표에 맞춰 분석 범위를 결정합니다." },
+  { id: "brief", label: "간단", description: "핵심 사실만 빠르게 확인합니다." },
+  { id: "standard", label: "충분", description: "필요한 근거와 예외를 함께 확인합니다." },
+  { id: "deep", label: "심층", description: "다양한 근거와 반례까지 폭넓게 검증합니다." },
+];
+
+const missionAnswerLengthOptions: MissionOption[] = [
+  { id: "auto", label: "자동", description: "목표에 맞춰 답변 분량을 결정합니다." },
+  { id: "brief", label: "짧게", description: "결론과 핵심만 간결하게 답합니다." },
+  { id: "standard", label: "보통", description: "이해에 필요한 설명을 함께 답합니다." },
+  { id: "detailed", label: "상세", description: "배경과 예외까지 상세하게 답합니다." },
+];
+
+const missionOutputModeOptions: MissionOption[] = [
+  { id: "auto", label: "자동", description: "목표와 요청 형식에 맞춰 출력합니다." },
+  { id: "chat", label: "채팅", description: "각 Node 결과를 채팅 답변 중심으로 생성합니다." },
+  { id: "file", label: "파일", description: "파일 산출물 생성을 우선합니다." },
+];
+
+const missionOutputTokenOptions: MissionOption[] = [8_000, 10_000, 20_000, 30_000, 40_000]
+  .map((value) => ({
+    id: String(value),
+    label: `${value / 1_000}k`,
+    description: `파일 출력 목표를 최대 ${value.toLocaleString()} 토큰으로 설정합니다.`,
+  }));
+
+function MissionOptionPicker({
+  icon,
+  label,
+  options,
+  value,
+  onChange,
+  onOpen,
+  closeSignal,
+  disabled = false,
+}: {
+  icon: ReactNode;
+  label: string;
+  options: MissionOption[];
+  value: string;
+  onChange: (value: string) => void;
+  onOpen?: () => void;
+  closeSignal?: string | null;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const selected = options.find((option) => option.id === value) ?? options[0];
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [open]);
+
+  useEffect(() => {
+    if (closeSignal) setOpen(false);
+  }, [closeSignal]);
+
+  return (
+    <div className={`deep-analysis-create-picker ${open ? "is-open" : ""}`} ref={rootRef}>
+      <button
+        type="button"
+        aria-label={label}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        disabled={disabled}
+        onClick={() => {
+          if (!open) onOpen?.();
+          setOpen((current) => !current);
+        }}
+      >
+        {icon}<span>{selected?.label}</span>
+      </button>
+      {open && (
+        <div className="deep-analysis-create-picker-menu" role="listbox" aria-label={label}>
+          <strong>{label}</strong>
+          {options.map((option) => (
+            <button
+              type="button"
+              role="option"
+              aria-selected={option.id === value}
+              className={option.id === value ? "is-selected" : ""}
+              key={option.id}
+              onClick={() => { onChange(option.id); setOpen(false); }}
+            >
+              <span>{option.label}</span><small>{option.description}</small>
+              {option.id === value && <Check size={13} />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 const statusLabels: Record<string, string> = {
@@ -91,7 +217,7 @@ const workflowLayerGap = 74;
 const workflowSiblingGap = 36;
 const defaultInspectorWidth = 760;
 const minimumInspectorWidth = 420;
-const maximumInspectorWidth = 1040;
+const maximumInspectorWidthRatio = 0.84;
 const inspectorWidthStorageKey = "lumina:deep-analysis:inspector-width:v2";
 const workflowPortSides = ["north", "east", "south", "west"] as const;
 type WorkflowPortSide = typeof workflowPortSides[number];
@@ -345,6 +471,16 @@ export function DeepAnalysisView({
   const [createOpen, setCreateOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [objective, setObjective] = useState("");
+  const [analysisDepth, setAnalysisDepth] = useState<MissionAnalysisDepth>("auto");
+  const [answerLength, setAnswerLength] = useState<MissionAnswerLength>("auto");
+  const [outputMode, setOutputMode] = useState<OutputMode>("auto");
+  const [targetOutputTokens, setTargetOutputTokens] = useState(10_000);
+  const [selectedReferences, setSelectedReferences] = useState<SelectedMissionReference[]>([]);
+  const [referenceTrigger, setReferenceTrigger] = useState<"@" | "$" | null>(null);
+  const [referenceQuery, setReferenceQuery] = useState("");
+  const [referenceSuggestions, setReferenceSuggestions] = useState<ComposerSuggestion[]>([]);
+  const [loadingReferences, setLoadingReferences] = useState(false);
+  const [uploadingSources, setUploadingSources] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [costDetailsOpen, setCostDetailsOpen] = useState(false);
   const [costDetails, setCostDetails] = useState<DeepAnalysisMissionCosts | null>(null);
@@ -397,6 +533,7 @@ export function DeepAnalysisView({
   const workflowLayoutRef = useRef<HTMLDivElement>(null);
   const createTitleRef = useRef<HTMLInputElement>(null);
   const costDetailsRef = useRef<HTMLDivElement>(null);
+  const createFileInputRef = useRef<HTMLInputElement>(null);
   const workflowRegenerateTriggerRef = useRef<HTMLButtonElement>(null);
   const liveOutputRef = useRef<HTMLPreElement>(null);
   const workflowRegenerateFontSize = workflowRegenerateTriggerRef.current
@@ -473,9 +610,7 @@ export function DeepAnalysisView({
 
   useEffect(() => {
     const fitInspectorToViewport = () => {
-      const available = workflowLayoutRef.current?.getBoundingClientRect().width ?? window.innerWidth;
-      const maximum = Math.min(maximumInspectorWidth, Math.max(minimumInspectorWidth, available * 0.68));
-      setInspectorWidth((current) => Math.round(Math.min(Math.max(minimumInspectorWidth, current), maximum)));
+      setInspectorWidth((current) => Math.round(Math.min(Math.max(minimumInspectorWidth, current), maximumInspectorWidth())));
     };
     fitInspectorToViewport();
     const observer = new ResizeObserver(fitInspectorToViewport);
@@ -493,6 +628,35 @@ export function DeepAnalysisView({
     setCreateOpen(true);
     onCreateRequestHandled();
   }, [createRequest, onCreateRequestHandled]);
+
+  useEffect(() => {
+    if (!projectId || !referenceTrigger) {
+      setReferenceSuggestions([]);
+      setLoadingReferences(false);
+      return;
+    }
+    const controller = new AbortController();
+    setLoadingReferences(true);
+    const timer = window.setTimeout(() => {
+      api.composer.listSuggestions(
+        projectId,
+        referenceTrigger,
+        referenceQuery.trim(),
+        controller.signal,
+      )
+        .then((page) => setReferenceSuggestions(page.items))
+        .catch((caught) => {
+          if (!controller.signal.aborted) setError(errorMessage(caught));
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setLoadingReferences(false);
+        });
+    }, 120);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [projectId, referenceQuery, referenceTrigger]);
   useEffect(() => {
     setWorkflowDraft(null);
     setEditingWorkflow(false);
@@ -886,16 +1050,13 @@ export function DeepAnalysisView({
     ]);
   }
 
-  function closeInspectorAndFit() {
-    setSelectedNodeKey(null);
-    setMissionRootSelected(false);
-    window.requestAnimationFrame(() => window.requestAnimationFrame(fitCanvasToViewport));
+  function maximumInspectorWidth() {
+    const available = workflowLayoutRef.current?.getBoundingClientRect().width ?? window.innerWidth;
+    return Math.max(minimumInspectorWidth, available * maximumInspectorWidthRatio);
   }
 
   function clampInspectorWidth(value: number) {
-    const available = workflowLayoutRef.current?.getBoundingClientRect().width ?? window.innerWidth;
-    const maximum = Math.min(maximumInspectorWidth, Math.max(minimumInspectorWidth, available * 0.68));
-    return Math.round(Math.min(Math.max(minimumInspectorWidth, value), maximum));
+    return Math.round(Math.min(Math.max(minimumInspectorWidth, value), maximumInspectorWidth()));
   }
 
   function rememberInspectorWidth(value: number) {
@@ -1017,7 +1178,7 @@ export function DeepAnalysisView({
       setWorkflowDraft(arranged);
       setWorkflowDraftDirty(true);
       setEditingWorkflow(true);
-      setSelectedNodeKey(null);
+      setSelectedNodeKey(arranged.nodes[0]?.nodeKey ?? null);
       window.requestAnimationFrame(() => fitNodesToViewport(arranged.nodes));
     } catch (draftError) {
       setError(errorMessage(draftError));
@@ -1345,6 +1506,7 @@ export function DeepAnalysisView({
     if (!workflowDraft) return;
     const node = workflowDraft.nodes.find((item) => item.nodeKey === nodeKey);
     if (!node || workflowDraft.nodes.length === 1) return;
+    const remainingNodes = workflowDraft.nodes.filter((item) => item.nodeKey !== nodeKey);
     workflowUndoStackRef.current.push({
       draft: workflowDraft,
       dirty: workflowDraftDirty,
@@ -1353,11 +1515,11 @@ export function DeepAnalysisView({
     });
     setWorkflowDraft({
       ...workflowDraft,
-      nodes: workflowDraft.nodes.filter((item) => item.nodeKey !== nodeKey),
+      nodes: remainingNodes,
       edges: workflowDraft.edges.filter((edge) => edge.sourceNodeKey !== nodeKey && edge.targetNodeKey !== nodeKey),
     });
     setWorkflowDraftDirty(true);
-    setSelectedNodeKey(null);
+    setSelectedNodeKey(remainingNodes[0]?.nodeKey ?? null);
   }
 
   async function startMission() {
@@ -1505,6 +1667,78 @@ export function DeepAnalysisView({
     }
   }
 
+  function addMissionReference(
+    suggestion: Pick<ComposerSuggestion, "id" | "referenceId" | "kind" | "name" | "insertText" | "versionOrDigest" | "displaySnapshot">,
+  ) {
+    const referenceId = suggestion.referenceId ?? suggestion.id;
+    const key = `${suggestion.kind}:${referenceId}:${suggestion.versionOrDigest ?? ""}`;
+    if (selectedReferences.some((item) => item.key === key)) {
+      setReferenceTrigger(null);
+      return;
+    }
+    const token = suggestion.insertText ?? `${suggestion.kind === "skill" || suggestion.kind === "mcp" ? "$" : "@"}${suggestion.name}`;
+    setObjective((current) => `${current.trimEnd()}${current.trim() ? " " : ""}${token} `);
+    setSelectedReferences((current) => [
+      ...current,
+      {
+        key,
+        token,
+        name: suggestion.name,
+        kind: suggestion.kind,
+        reference: {
+          kind: suggestion.kind,
+          referenceId,
+          versionOrDigest: suggestion.versionOrDigest,
+          displaySnapshot: suggestion.displaySnapshot,
+        },
+      },
+    ]);
+    setReferenceTrigger(null);
+    setReferenceQuery("");
+  }
+
+  function removeMissionReference(key: string) {
+    const selected = selectedReferences.find((item) => item.key === key);
+    if (!selected) return;
+    setSelectedReferences((current) => current.filter((item) => item.key !== key));
+    setObjective((current) => current.replace(selected.token, "").replace(/ {2,}/g, " "));
+  }
+
+  async function uploadMissionSources(files: File[]) {
+    if (!projectId || !files.length || uploadingSources) return;
+    setUploadingSources(true);
+    setError(null);
+    try {
+      for (const file of files) {
+        const uploaded = await api.projectFiles.upload(
+          projectId,
+          file,
+          file.name,
+          "심층분석 초기 자료 첨부",
+        );
+        addMissionReference({
+          id: uploaded.id,
+          kind: "file",
+          name: uploaded.displayName,
+          insertText: `@${uploaded.displayName}`,
+          versionOrDigest: uploaded.contentHash,
+          displaySnapshot: {
+            name: uploaded.displayName,
+            targetType: "project_file",
+            logicalPath: uploaded.logicalPath,
+            mimeType: uploaded.mimeType,
+            version: uploaded.currentVersion,
+            contentHash: uploaded.contentHash,
+          },
+        });
+      }
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setUploadingSources(false);
+    }
+  }
+
   async function createMission(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!projectId || !title.trim()) return;
@@ -1515,6 +1749,16 @@ export function DeepAnalysisView({
         title: title.trim(),
         objective: objective.trim(),
         autonomyMode: "balanced",
+        analysisDepth,
+        answerLength,
+        outputMode,
+        targetOutputTokens: outputMode === "chat" ? null : targetOutputTokens,
+        promptReferences: selectedReferences.flatMap(({ reference, token }) => {
+          const tokenStart = objective.indexOf(token);
+          return tokenStart < 0
+            ? []
+            : [{ ...reference, tokenStart, tokenEnd: tokenStart + token.length }];
+        }),
       });
       setMissions((current) => [created, ...current]);
       setSelectedMissionId(created.id);
@@ -1522,6 +1766,12 @@ export function DeepAnalysisView({
       setSelectedNodeKey(created.workflow.nodes[0]?.nodeKey ?? null);
       setTitle("");
       setObjective("");
+      setAnalysisDepth("auto");
+      setAnswerLength("auto");
+      setOutputMode("auto");
+      setTargetOutputTokens(10_000);
+      setSelectedReferences([]);
+      setReferenceTrigger(null);
       setCreateOpen(false);
     } catch (createError) {
       setError(errorMessage(createError));
@@ -1580,7 +1830,7 @@ export function DeepAnalysisView({
               <History size={14} /> 실행 기록
             </button>
           </div>
-          <span>장기 분석을 Workflow 단위로 기록하고 이어갑니다.</span>
+          <span>여러 단계의 분석을 Workflow 단위로 기록하고 이어갑니다.</span>
         </div>
         {activeTabSummary && <span className="deep-analysis-header-summary" role="status">{activeTabSummary}</span>}
       </header>
@@ -1643,7 +1893,7 @@ export function DeepAnalysisView({
                     aria-label="우측 입력 패널 폭 조절"
                     aria-orientation="vertical"
                     aria-valuemin={minimumInspectorWidth}
-                    aria-valuemax={maximumInspectorWidth}
+                    aria-valuemax={Math.round(maximumInspectorWidth())}
                     aria-valuenow={inspectorWidth}
                     tabIndex={0}
                     onPointerDown={beginInspectorResize}
@@ -1677,6 +1927,134 @@ export function DeepAnalysisView({
                           onChange={(event) => setObjective(event.target.value)}
                         />
                       </label>
+                      {selectedReferences.length > 0 && (
+                        <div className="deep-analysis-create-references" aria-label="선택한 분석 자료와 도구">
+                          {selectedReferences.map((item) => (
+                            <span key={item.key}>
+                              {item.kind === "skill" || item.kind === "mcp"
+                                ? <CircleDollarSign size={13} />
+                                : <FileText size={13} />}
+                              <strong>{item.name}</strong>
+                              <button type="button" aria-label={`${item.name} 연결 해제`} onClick={() => removeMissionReference(item.key)}><X size={11} /></button>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      <div className="deep-analysis-create-toolbar" aria-label="심층분석 초기 설정">
+                        <input
+                          ref={createFileInputRef}
+                          className="visually-hidden"
+                          type="file"
+                          multiple
+                          accept=".pdf,.docx,.xlsx,.pptx,.txt,.md,.csv,.tsv,.png,.jpg,.jpeg,.webp,.gif"
+                          onChange={(event) => {
+                            const files = Array.from(event.currentTarget.files ?? []);
+                            event.currentTarget.value = "";
+                            void uploadMissionSources(files);
+                          }}
+                        />
+                        <button
+                          className="deep-analysis-create-utility tooltip-control"
+                          type="button"
+                          aria-label="분석 자료 첨부"
+                          data-tooltip="첨부"
+                          disabled={uploadingSources}
+                          onClick={() => createFileInputRef.current?.click()}
+                        >
+                          {uploadingSources ? <LoaderCircle className="is-running" size={16} /> : <Paperclip size={16} />}
+                        </button>
+                        <button
+                          className={`deep-analysis-create-utility tooltip-control ${referenceTrigger === "@" ? "is-active" : ""}`}
+                          type="button"
+                          aria-label="기존 문서 연결"
+                          data-tooltip="참고문서"
+                          aria-pressed={referenceTrigger === "@"}
+                          onClick={() => setReferenceTrigger((current) => current === "@" ? null : "@")}
+                        ><AtSign size={16} /></button>
+                        <button
+                          className={`deep-analysis-create-utility tooltip-control ${referenceTrigger === "$" ? "is-active" : ""}`}
+                          type="button"
+                          aria-label="Skill 및 MCP 연결"
+                          data-tooltip="Skill / MCP"
+                          aria-pressed={referenceTrigger === "$"}
+                          onClick={() => setReferenceTrigger((current) => current === "$" ? null : "$")}
+                        ><CircleDollarSign size={16} /></button>
+                        <MissionOptionPicker
+                          icon={<Search size={14} />}
+                          label="분석 범위"
+                          options={missionAnalysisDepthOptions}
+                          value={analysisDepth}
+                          closeSignal={referenceTrigger}
+                          onOpen={() => setReferenceTrigger(null)}
+                          onChange={(value) => setAnalysisDepth(value as MissionAnalysisDepth)}
+                        />
+                        <MissionOptionPicker
+                          icon={<AlignLeft size={14} />}
+                          label="답변 분량"
+                          options={missionAnswerLengthOptions}
+                          value={answerLength}
+                          closeSignal={referenceTrigger}
+                          onOpen={() => setReferenceTrigger(null)}
+                          onChange={(value) => setAnswerLength(value as MissionAnswerLength)}
+                        />
+                        <MissionOptionPicker
+                          icon={<FileText size={14} />}
+                          label="출력 방식"
+                          options={missionOutputModeOptions}
+                          value={outputMode}
+                          closeSignal={referenceTrigger}
+                          onOpen={() => setReferenceTrigger(null)}
+                          onChange={(value) => setOutputMode(value as OutputMode)}
+                        />
+                        <MissionOptionPicker
+                          icon={<span className="deep-analysis-token-mark">T</span>}
+                          label="출력 토큰"
+                          options={missionOutputTokenOptions}
+                          value={String(targetOutputTokens)}
+                          closeSignal={referenceTrigger}
+                          onOpen={() => setReferenceTrigger(null)}
+                          disabled={outputMode === "chat"}
+                          onChange={(value) => setTargetOutputTokens(Number(value))}
+                        />
+                        {referenceTrigger && (
+                          <div className="deep-analysis-create-reference-menu">
+                            <header>
+                              <strong>{referenceTrigger === "@" ? "기존 문서 연결" : "Skill / MCP 연결"}</strong>
+                              <button type="button" aria-label="연결 메뉴 닫기" onClick={() => setReferenceTrigger(null)}><X size={13} /></button>
+                            </header>
+                            <input
+                              autoFocus
+                              value={referenceQuery}
+                              placeholder={referenceTrigger === "@" ? "파일, 폴더, Artifact 검색" : "Skill 또는 MCP 검색"}
+                              aria-label={referenceTrigger === "@" ? "기존 문서 검색" : "Skill 및 MCP 검색"}
+                              onChange={(event) => setReferenceQuery(event.target.value)}
+                            />
+                            <div role="listbox">
+                              {loadingReferences && <span className="deep-analysis-reference-state"><LoaderCircle className="is-running" size={13} /> 불러오는 중</span>}
+                              {!loadingReferences && referenceSuggestions.length === 0 && <span className="deep-analysis-reference-state">사용 가능한 항목이 없습니다.</span>}
+                              {!loadingReferences && referenceSuggestions.map((suggestion) => {
+                                const referenceId = suggestion.referenceId ?? suggestion.id;
+                                const selected = selectedReferences.some((item) => item.key === `${suggestion.kind}:${referenceId}:${suggestion.versionOrDigest ?? ""}`);
+                                const disabled = selected || suggestion.status !== undefined && suggestion.status !== "available";
+                                return (
+                                  <button
+                                    type="button"
+                                    role="option"
+                                    aria-selected={selected}
+                                    disabled={disabled}
+                                    key={`${suggestion.kind}:${suggestion.id}`}
+                                    onClick={() => addMissionReference(suggestion)}
+                                  >
+                                    <span>{suggestion.kind === "skill" || suggestion.kind === "mcp" ? <CircleDollarSign size={14} /> : <FileText size={14} />}</span>
+                                    <span><strong>{suggestion.displayName ?? suggestion.name}</strong><small>{suggestion.subtitle}</small></span>
+                                    {selected && <Check size={13} />}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                       <button
                         className="deep-analysis-create-submit"
                         type="submit"
@@ -1849,7 +2227,7 @@ export function DeepAnalysisView({
                     onPointerCancel={endCanvasPan}
                     onDoubleClick={(event) => {
                       if ((event.target as Element).closest("button")) return;
-                      closeInspectorAndFit();
+                      fitCanvasToViewport();
                     }}
                     onLostPointerCapture={() => {
                       canvasPanRef.current = null;
@@ -1901,8 +2279,6 @@ export function DeepAnalysisView({
                                   onPointerDown={(event) => event.stopPropagation()}
                                   onClick={() => {
                                     setSelectedEdgeId(edge.id);
-                                    setSelectedNodeKey(null);
-                                    setMissionRootSelected(false);
                                   }}
                                 />
                               )}
@@ -2095,7 +2471,7 @@ export function DeepAnalysisView({
                       aria-label="우측 상세 패널 폭 조절"
                       aria-orientation="vertical"
                       aria-valuemin={minimumInspectorWidth}
-                      aria-valuemax={maximumInspectorWidth}
+                      aria-valuemax={Math.round(maximumInspectorWidth())}
                       aria-valuenow={inspectorWidth}
                       tabIndex={0}
                       onPointerDown={beginInspectorResize}
@@ -2107,7 +2483,6 @@ export function DeepAnalysisView({
                       <header>
                         <div>
                           <span>MISSION</span>
-                          <button type="button" aria-label="Mission 정보 닫기" onClick={closeInspectorAndFit}><X size={14} /></button>
                         </div>
                         <strong>분석 정보</strong>
                         <small>목표를 바탕으로 Node와 Edge를 한 번 자동 설계하며, 생성 후 직접 편집할 수 있습니다.</small>
@@ -2155,7 +2530,6 @@ export function DeepAnalysisView({
                         <div>
                           <span>{selectedNode.nodeKey}</span>
                           <small className={`node-status status-${selectedNode.status}`}>{statusLabel(selectedNode.status)}</small>
-                          <button type="button" aria-label="노드 상세 닫기" onClick={closeInspectorAndFit}><X size={14} /></button>
                         </div>
                         <strong>{selectedNode.title}</strong>
                       </header>
@@ -2183,7 +2557,7 @@ export function DeepAnalysisView({
                           <p>Node 실행 시 실제 입력 프롬프트가 이곳에 표시됩니다.</p>
                         )}
                       </section>
-                      <section className="deep-analysis-output-section">
+                      <section className={`deep-analysis-output-section ${selectedNode.status === "running" ? "is-streaming" : ""}`}>
                         <h3>출력</h3>
                         {selectedNode.outputLogicalPath && (
                           <small className="deep-analysis-output-path">{selectedNode.outputLogicalPath}</small>

@@ -105,6 +105,7 @@ from ...deep_analysis.service import (
 from ...deep_analysis.quality import list_quality_gates
 from ...deep_analysis.planning import initial_workflow_plan
 from ...models import Message, ProjectFile, ProjectFileVersion, Run, User, utc_now
+from ...runs.service import validate_project_references
 from ...providers.execution_defaults import initial_execution_selection
 from ...storage import ManagedLocalStorage
 from ...runs.broker import event_broker
@@ -300,6 +301,19 @@ def _open_issue_payload(
 
 
 def _summary_payload(mission: DeepAnalysisMission) -> dict[str, object]:
+    execution_settings = mission.execution_settings_json or {}
+    prompt_references = [
+        {
+            "kind": reference.get("kind"),
+            "referenceId": reference.get("reference_id"),
+            "versionOrDigest": reference.get("version_or_digest"),
+            "displaySnapshot": reference.get("display_snapshot", {}),
+            "tokenStart": reference.get("token_start"),
+            "tokenEnd": reference.get("token_end"),
+        }
+        for reference in execution_settings.get("promptReferences", [])
+        if isinstance(reference, dict)
+    ]
     return {
         "id": mission.id,
         "project_id": mission.project_id,
@@ -311,6 +325,11 @@ def _summary_payload(mission: DeepAnalysisMission) -> dict[str, object]:
         "start_mode": mission.start_mode,
         "pattern_version_id": mission.pattern_version_id,
         "autonomy_mode": mission.autonomy_mode,
+        "analysis_depth": execution_settings.get("analysisDepth", "auto"),
+        "answer_length": execution_settings.get("answerLength", "auto"),
+        "output_mode": execution_settings.get("outputMode", "auto"),
+        "target_output_tokens": execution_settings.get("targetOutputTokens", 10_000),
+        "prompt_references": prompt_references,
         "budget_microusd": mission.budget_microusd,
         "spent_microusd": mission.spent_microusd,
         "completion_outcome": mission.completion_outcome,
@@ -697,6 +716,45 @@ async def post_mission(
     settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
     project = require_project(db, context.user, project_id, write=True)
+    validated_references = validate_project_references(
+        db, context.user, project.id, payload.prompt_references, message_text=payload.objective
+    )
+    selected_file_versions: dict[str, str] = {}
+    for reference in validated_references:
+        snapshot = reference.get("display_snapshot")
+        if not isinstance(snapshot, dict):
+            continue
+        if snapshot.get("targetType") == "project_file":
+            selected_file_versions[str(reference["reference_id"])] = str(
+                snapshot.get("contentHash") or reference.get("version_or_digest") or ""
+            )
+        if snapshot.get("targetType") == "project_folder":
+            for item in snapshot.get("fileVersions", []):
+                if isinstance(item, dict) and item.get("id") and item.get("digest"):
+                    selected_file_versions[str(item["id"])] = str(item["digest"])
+    source_manifest: list[dict[str, object]] = []
+    if selected_file_versions:
+        rows = db.execute(
+            select(ProjectFile, ProjectFileVersion)
+            .join(ProjectFileVersion, ProjectFileVersion.project_file_id == ProjectFile.id)
+            .where(
+                ProjectFile.project_id == project.id,
+                ProjectFile.id.in_(selected_file_versions),
+            )
+        ).tuples()
+        source_manifest = [
+            {
+                "projectFileId": project_file.id,
+                "logicalPath": project_file.logical_path,
+                "version": version.version_number,
+                "versionId": version.id,
+                "contentHash": version.content_hash,
+                "mimeType": version.mime_type,
+                "sizeBytes": version.size_bytes,
+            }
+            for project_file, version in rows
+            if selected_file_versions.get(project_file.id) == version.content_hash
+        ]
     execution, _source = initial_execution_selection(
         db,
         organization_id=project.organization_id,
@@ -735,6 +793,14 @@ async def post_mission(
         objective=payload.objective,
         autonomy_mode=payload.autonomy_mode,
         budget_microusd=payload.budget_microusd,
+        execution_settings={
+            "analysisDepth": payload.analysis_depth,
+            "answerLength": payload.answer_length,
+            "outputMode": payload.output_mode,
+            "targetOutputTokens": payload.target_output_tokens if payload.output_mode != "chat" else None,
+            "promptReferences": validated_references,
+        },
+        source_manifest=source_manifest,
         initial_plan=initial_plan,
         start_mode=start_mode,
         planning_metadata=planning_metadata,

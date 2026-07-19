@@ -80,6 +80,29 @@ test("new Missions automatically create a workflow without preset controls", asy
   assert.doesNotMatch(view, /preset_|listPatterns|savePattern|Pattern 저장/);
 });
 
+test("new Mission setup exposes source references and execution controls", async () => {
+  const [view, types, css] = await Promise.all([
+    readFile(viewPath, "utf8"),
+    readFile(typesPath, "utf8"),
+    readFile(cssPath, "utf8"),
+  ]);
+
+  assert.match(view, /aria-label="분석 자료 첨부"/);
+  assert.match(view, /aria-label="기존 문서 연결"/);
+  assert.match(view, /aria-label="Skill 및 MCP 연결"/);
+  assert.match(view, /label="분석 범위"/);
+  assert.match(view, /label="답변 분량"/);
+  assert.match(view, /label="출력 방식"/);
+  assert.match(view, /label="출력 토큰"/);
+  assert.match(view, /api\.composer\.listSuggestions/);
+  assert.match(view, /api\.projectFiles\.upload/);
+  assert.match(view, /analysisDepth,[\s\S]*answerLength,[\s\S]*outputMode,[\s\S]*targetOutputTokens:[\s\S]*promptReferences:/);
+  assert.match(types, /analysisDepth: "auto" \| "brief" \| "standard" \| "deep"/);
+  assert.match(types, /promptReferences: PromptReference\[\]/);
+  assert.match(css, /\.deep-analysis-create-toolbar/);
+  assert.match(css, /\.deep-analysis-create-reference-menu/);
+});
+
 test("deep-analysis header prevents selection and native dragging across tabs", async () => {
   const css = await readFile(cssPath, "utf8");
 
@@ -89,7 +112,7 @@ test("deep-analysis header prevents selection and native dragging across tabs", 
   );
 });
 
-test("Canvas blank space supports pointer dragging", async () => {
+test("Canvas blank space supports pointer dragging and refits without closing the inspector", async () => {
   const view = await readFile(viewPath, "utf8");
 
   assert.match(view, /className=\{`deep-analysis-canvas-scroll/);
@@ -98,6 +121,10 @@ test("Canvas blank space supports pointer dragging", async () => {
   assert.match(view, /onPointerUp=\{endCanvasPan\}/);
   assert.match(view, /viewport\.setPointerCapture\(event\.pointerId\)/);
   assert.match(view, /pan\.offsetX \+ event\.clientX - pan\.clientX/);
+  assert.match(view, /onDoubleClick=\{\(event\) => \{\s*if \(\(event\.target as Element\)\.closest\("button"\)\) return;\s*fitCanvasToViewport\(\);/);
+  assert.doesNotMatch(view, /onDoubleClick=\{\(event\) => \{[^}]*closeInspectorAndFit\(\);/);
+  assert.doesNotMatch(view, /aria-label="(?:Mission 정보|노드 상세) 닫기"/);
+  assert.doesNotMatch(view, /function closeInspectorAndFit\(/);
 });
 
 test("Workflow Canvas keeps the Mission root before every start Node", async () => {
@@ -192,7 +219,7 @@ test("Node output is one rendered Markdown document with its filename", async ()
   ]);
 
   assert.match(view, /className="deep-analysis-output-path"/);
-  assert.match(view, /className="deep-analysis-output-section"/);
+  assert.match(view, /className=\{`deep-analysis-output-section \$\{selectedNode\.status === "running" \? "is-streaming" : ""\}`\}/);
   assert.match(view, /selectedNode\.status === "running" \? \(/);
   assert.doesNotMatch(view, /selectedNode\.status === "running" && !selectedNode\.outputSummary/);
   assert.match(view, /ref=\{liveOutputRef\} className="deep-analysis-live-output">\{displayLiveOutput\(selectedNode\.liveOutput\)\}/);
@@ -201,7 +228,8 @@ test("Node output is one rendered Markdown document with its filename", async ()
   assert.match(view, /setInterval\(refreshWhenVisible, 500\)/);
   assert.match(view, /className="deep-analysis-output-document"/);
   assert.match(view, /<MarkdownResponse text=\{selectedNode\.outputMarkdown\} \/>/);
-  assert.match(css, /\.deep-analysis-inspector > \.deep-analysis-output-section \{[^}]*flex: 1 1 0;[^}]*overflow: auto/);
+  assert.match(css, /\.deep-analysis-inspector > \.deep-analysis-output-section \{[^}]*display: flex;[^}]*flex-direction: column;[^}]*\}/);
+  assert.match(css, /\.deep-analysis-inspector > \.deep-analysis-output-section\.is-streaming \{[^}]*flex: 1 1 0;[^}]*overflow: auto/);
   assert.match(css, /\.deep-analysis-live-output \{[^}]*min-height: 0;[^}]*flex: 1 1 0;[^}]*overflow: auto/);
   assert.doesNotMatch(view, /문서 전체 보기/);
 });
@@ -264,6 +292,10 @@ test("Node inspector width is pointer and keyboard resizable and persisted", asy
   assert.match(view, /role="separator"/);
   assert.match(view, /onPointerDown=\{beginInspectorResize\}/);
   assert.match(view, /onKeyDown=\{resizeInspectorWithKeyboard\}/);
+  assert.match(view, /const maximumInspectorWidthRatio = 0\.84/);
+  assert.match(view, /available \* maximumInspectorWidthRatio/);
+  assert.doesNotMatch(view, /const maximumInspectorWidth = 1040/);
+  assert.doesNotMatch(view, /available \* 0\.68/);
   assert.match(view, /localStorage\.setItem\(inspectorWidthStorageKey/);
   assert.match(css, /--deep-analysis-inspector-width/);
   assert.match(css, /\.deep-analysis-inspector-resizer/);

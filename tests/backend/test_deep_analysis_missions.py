@@ -170,6 +170,71 @@ def test_mission_workflow_persists_and_uses_revision_cas(tmp_path: Path) -> None
         assert stale.json()["details"] == {"currentRevision": 2}
 
 
+def test_mission_creation_freezes_sources_and_applies_run_output_settings(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "lumina.api.routes.deep_analysis.local_run_executor.enqueue",
+        lambda _run_id: None,
+    )
+    with TestClient(create_app(_settings(tmp_path))) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        uploaded = client.post(
+            f"/api/projects/{project_id}/files",
+            headers=headers,
+            data={"logicalPath": "자료.csv", "changeReason": "심층분석 입력"},
+            files={"file": ("자료.csv", "항목,값\nA,1\n".encode(), "text/csv")},
+        )
+        assert uploaded.status_code == 201, uploaded.text
+        source = uploaded.json()
+        token = "@자료.csv"
+        objective = f"{token}의 값을 근거로 상세 분석한다."
+        created = client.post(
+            f"/api/projects/{project_id}/deep-analysis/missions",
+            headers=headers,
+            json={
+                "title": "설정 반영 분석",
+                "objective": objective,
+                "analysisDepth": "deep",
+                "answerLength": "detailed",
+                "outputMode": "file",
+                "targetOutputTokens": 20_000,
+                "promptReferences": [{
+                    "kind": "file",
+                    "referenceId": source["id"],
+                    "versionOrDigest": source["contentHash"],
+                    "tokenStart": 0,
+                    "tokenEnd": len(token),
+                }],
+            },
+        )
+        assert created.status_code == 201, created.text
+        mission = created.json()
+        assert mission["analysisDepth"] == "deep"
+        assert mission["answerLength"] == "detailed"
+        assert mission["outputMode"] == "file"
+        assert mission["targetOutputTokens"] == 20_000
+        assert mission["promptReferences"][0]["versionOrDigest"] == source["contentHash"]
+        assert mission["sourceManifest"][0]["projectFileId"] == source["id"]
+
+        started = client.post(
+            f"/api/deep-analysis/missions/{mission['id']}/start",
+            headers=headers,
+            json={"expectedRevision": mission["revision"]},
+        )
+        assert started.status_code == 200, started.text
+        run_id = started.json()["workflow"]["nodes"][0]["runId"]
+        with SessionLocal() as db:
+            run = db.get(Run, run_id)
+            assert run is not None
+            assert run.snapshot_json["analysis_depth"] == "deep"
+            assert run.snapshot_json["answer_length"] == "detailed"
+            assert run.snapshot_json["output_mode"] == "file"
+            assert run.snapshot_json["target_output_tokens"] == 20_000
+            assert run.snapshot_json["prompt_references"][0]["reference_id"] == source["id"]
+
+
 def test_mission_sidebar_preferences_rename_and_project_move_persist(tmp_path: Path) -> None:
     with TestClient(create_app(_settings(tmp_path))) as client:
         headers = _login(client)

@@ -74,6 +74,9 @@ class DeepAnalysisMission(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     source_manifest_json: Mapped[list[dict[str, Any]]] = mapped_column(
         JSON, default=list, nullable=False
     )
+    execution_settings_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
     budget_microusd: Mapped[int | None] = mapped_column(BigInteger)
     spent_microusd: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     completion_outcome: Mapped[str | None] = mapped_column(String(40))

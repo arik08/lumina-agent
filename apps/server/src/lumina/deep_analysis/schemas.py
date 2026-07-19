@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from pydantic import Field, model_validator
 
-from ..api.schemas import ApiModel
+from ..api.schemas import ApiModel, MessageReferenceInput
 
 
 class MissionCreate(ApiModel):
@@ -13,6 +13,11 @@ class MissionCreate(ApiModel):
     objective: str = Field(default="", max_length=20_000)
     autonomy_mode: Literal["guided", "balanced", "autonomous"] = "balanced"
     budget_microusd: int | None = Field(default=None, ge=0)
+    analysis_depth: Literal["auto", "brief", "standard", "deep"] = "auto"
+    answer_length: Literal["auto", "brief", "standard", "detailed"] = "auto"
+    output_mode: Literal["auto", "chat", "file"] = "auto"
+    target_output_tokens: int | None = Field(default=10_000, ge=1, le=40_000)
+    prompt_references: list[MessageReferenceInput] = Field(default_factory=list, max_length=100)
 
 
 class MissionPatch(ApiModel):
@@ -366,6 +371,11 @@ class MissionSummaryResponse(ApiModel):
     start_mode: str
     pattern_version_id: str | None
     autonomy_mode: str
+    analysis_depth: str
+    answer_length: str
+    output_mode: str
+    target_output_tokens: int | None
+    prompt_references: list[dict[str, Any]]
     budget_microusd: int | None
     spent_microusd: int
     completion_outcome: str | None

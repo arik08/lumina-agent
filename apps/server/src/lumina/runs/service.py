@@ -20,7 +20,7 @@ from ..api.schemas import (
 from ..artifacts.service import artifact_summary, current_artifact_version
 from ..config import Settings, get_settings
 from ..audit import record_audit
-from ..authorization import require_conversation
+from ..authorization import require_conversation, require_project
 from ..extensions.service import resolve_skill_snapshot
 from ..instructions import (
     resolve_instruction_stack_from_models,
@@ -659,17 +659,27 @@ def _validate_references(
     message_text: str,
 ) -> list[dict[str, Any]]:
     conversation = require_conversation(db, user, conversation_id)
+    return validate_project_references(
+        db, user, conversation.project_id, references, message_text=message_text
+    )
+
+
+def validate_project_references(
+    db: Session,
+    user: User,
+    project_id: str,
+    references: Iterable[MessageReferenceInput],
+    *,
+    message_text: str,
+) -> list[dict[str, Any]]:
+    require_project(db, user, project_id)
     skill_snapshots = {
         str(item["extension_id"]): item
-        for item in resolve_skill_snapshot(
-            db, user=user, project_id=conversation.project_id
-        )
+        for item in resolve_skill_snapshot(db, user=user, project_id=project_id)
     }
     mcp_snapshots = {
         str(item["definition_id"]): item
-        for item in resolve_mcp_snapshot(
-            db, user=user, project_id=conversation.project_id
-        )
+        for item in resolve_mcp_snapshot(db, user=user, project_id=project_id)
     }
     validated: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str | None]] = set()
@@ -681,7 +691,7 @@ def _validate_references(
             if (
                 artifact is None
                 or artifact.deleted_at is not None
-                or artifact.project_id != conversation.project_id
+                or artifact.project_id != project_id
             ):
                 raise ApiProblem(
                     404, "reference_not_found", "Artifact 참조를 찾을 수 없습니다."
@@ -742,7 +752,7 @@ def _validate_references(
                         ),
                     )
                     .where(
-                        ProjectFile.project_id == conversation.project_id,
+                        ProjectFile.project_id == project_id,
                         ProjectFile.deleted_at.is_(None),
                         ProjectFile.status == "active",
                     )
@@ -753,7 +763,7 @@ def _validate_references(
                 (
                     item
                     for item in build_project_folder_references(
-                        conversation.project_id, workspace_rows
+                        project_id, workspace_rows
                     )
                     if item.id == reference.reference_id
                 ),
@@ -786,7 +796,7 @@ def _validate_references(
             if project_file is not None:
                 if (
                     project_file.deleted_at is not None
-                    or project_file.project_id != conversation.project_id
+                    or project_file.project_id != project_id
                     or project_file.status != "active"
                 ):
                     raise ApiProblem(
@@ -810,7 +820,7 @@ def _validate_references(
                 if (
                     attachment is None
                     or attachment.deleted_at is not None
-                    or attachment.project_id != conversation.project_id
+                    or attachment.project_id != project_id
                     or attachment.status not in {"ready", "completed"}
                 ):
                     raise ApiProblem(

@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..agent_frontends import DEFAULT_AGENT_FRONTEND
-from ..api.schemas import RunCreate, RunMessageInput
+from ..api.schemas import MessageReferenceInput, RunCreate, RunMessageInput
 from ..config import Settings
 from ..models import (
     Conversation,
@@ -385,8 +385,12 @@ def _stage_instruction(node: DeepAnalysisWorkflowNode) -> str:
     return instructions.get(node.node_type, node.purpose)
 
 
-def _run_profile(node: DeepAnalysisWorkflowNode) -> tuple[str, str]:
-    return "standard", "standard"
+def _run_profile(mission: DeepAnalysisMission) -> tuple[str, str]:
+    settings = mission.execution_settings_json or {}
+    return (
+        str(settings.get("analysisDepth") or "auto"),
+        str(settings.get("answerLength") or "auto"),
+    )
 
 
 def _run_prompt(
@@ -460,13 +464,31 @@ def create_node_run(
         node=node,
     )
     manifest = _run_manifest(db, mission, node)
-    analysis_depth, answer_length = _run_profile(node)
+    analysis_depth, answer_length = _run_profile(mission)
     attempt = len(node.run_history_json) + 1
     prompt = _run_prompt(
         mission,
         node,
         manifest,
     )
+    execution_settings = mission.execution_settings_json or {}
+    objective_offset = prompt.find(mission.objective) if mission.objective else -1
+    prompt_references = []
+    for item in execution_settings.get("promptReferences", []):
+        if not isinstance(item, dict):
+            continue
+        reference = {
+            key: item.get(key)
+            for key in (
+                "kind", "reference_id", "version_or_digest", "display_snapshot",
+                "token_start", "token_end",
+            )
+        }
+        if objective_offset >= 0 and isinstance(reference.get("token_start"), int):
+            reference["token_start"] = int(reference["token_start"]) + objective_offset
+            reference["token_end"] = int(reference["token_end"]) + objective_offset
+        prompt_references.append(MessageReferenceInput.model_validate(reference))
+    output_mode = str(execution_settings.get("outputMode") or "auto")
     run, _message, created = create_run(
         db,
         user=user,
@@ -474,15 +496,18 @@ def create_node_run(
         payload=RunCreate(
             message=RunMessageInput(
                 text=prompt,
-                output_mode="chat",
+                prompt_references=prompt_references,
+                output_mode=output_mode,
                 analysis_depth=analysis_depth,
                 answer_length=answer_length,
+                target_output_tokens=(
+                    execution_settings.get("targetOutputTokens") if output_mode != "chat" else None
+                ),
             )
         ),
         idempotency_key=(
             f"deep-analysis:{mission.id}:{node.node_key}:attempt:{attempt}"
         ),
-        extension_snapshot_override=[],
         image_backend_model=settings.codex_image_model,
         settings=settings,
     )
