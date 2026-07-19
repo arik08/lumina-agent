@@ -41,9 +41,10 @@ test("file workspace keeps refresh at the far right of the header", async () => 
 });
 
 test("file repository is an explorer and viewer with recursive folder upload", async () => {
-  const [view, resizer] = await Promise.all([
+  const [view, resizer, styles] = await Promise.all([
     read("../src/components/ProjectFilesView.tsx"),
     read("../src/components/ResizableSplitPane.tsx"),
+    read("../src/styles.css"),
   ]);
 
   assert.match(view, /webkitGetAsEntry/);
@@ -52,6 +53,10 @@ test("file repository is an explorer and viewer with recursive folder upload", a
   assert.match(view, /file-workspace-explorer/);
   assert.match(view, /file-workspace-viewer/);
   assert.match(view, /renderFilePreview/);
+  assert.match(view, /import \{ MarkdownResponse \} from "\.\/ConversationTurn"/);
+  assert.match(view, /isMarkdownFile\(detail\)[\s\S]*?<MarkdownResponse text=\{preview\.text\} \/>/);
+  assert.match(view, /extension === "md" \|\| extension === "markdown" \|\| detail\.mimeType/);
+  assert.match(styles, /\.file-preview-markdown\s*\{[^}]*font-size:\s*var\(--conversation-font-size\);/s);
   assert.match(view, /sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock allow-downloads"/);
   assert.doesNotMatch(view, /allow-same-origin/);
   assert.doesNotMatch(view, /folder-reference-note/);

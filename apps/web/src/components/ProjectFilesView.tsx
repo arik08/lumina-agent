@@ -26,6 +26,7 @@ import { createPortal } from "react-dom";
 import { api, ApiError } from "../api";
 import type { ArtifactDownload, ProjectFileDetail, ProjectFileSummary, ProjectFolderSummary } from "../api-types";
 import { useCachedViewState } from "../view-data-cache";
+import { MarkdownResponse } from "./ConversationTurn";
 import { ResizableSplitPane } from "./ResizableSplitPane";
 
 interface ProjectFilesViewProps {
@@ -250,6 +251,11 @@ function classifyPreview(detail: ProjectFileDetail, blob: Blob) {
   return "unsupported";
 }
 
+function isMarkdownFile(detail: ProjectFileDetail) {
+  const extension = detail.displayName.split(".").at(-1)?.toLocaleLowerCase("en-US");
+  return extension === "md" || extension === "markdown" || detail.mimeType.toLocaleLowerCase("en-US") === "text/markdown";
+}
+
 function renderFilePreview(preview: PreviewState, detail: ProjectFileDetail): ReactNode {
   if (preview.status === "loading" || preview.status === "idle") {
     return <div className="feature-state"><LoaderCircle className="is-running" size={15} /> Preview 준비 중</div>;
@@ -261,7 +267,10 @@ function renderFilePreview(preview: PreviewState, detail: ProjectFileDetail): Re
     return <div className="file-preview-message"><FileText size={28} /><strong>브라우저 Preview를 지원하지 않는 형식입니다.</strong><span>{preview.mimeType || "알 수 없는 파일 형식"} · 다운로드해서 확인해 주세요.</span></div>;
   }
   if (preview.kind === "text") {
-    return <><pre>{preview.text}</pre>{preview.truncated && <div className="file-preview-truncated">Preview는 앞부분만 표시합니다.</div>}</>;
+    return <>{isMarkdownFile(detail)
+      ? <div className="file-preview-markdown"><MarkdownResponse text={preview.text} /></div>
+      : <pre>{preview.text}</pre>}
+    {preview.truncated && <div className="file-preview-truncated">Preview는 앞부분만 표시합니다.</div>}</>;
   }
   if (preview.kind === "image") return <img src={preview.url} alt={`${detail.displayName} Preview`} />;
   if (preview.kind === "pdf") return <iframe src={preview.url} title={`${detail.displayName} PDF Preview`} />;
