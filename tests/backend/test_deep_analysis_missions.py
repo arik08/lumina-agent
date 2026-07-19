@@ -1868,7 +1868,20 @@ def test_python_calculation_uses_frozen_csv_and_saves_script_and_result(
         assert [item["logicalPath"] for item in started["sourceManifest"]] == [
             "inputs/cost.csv"
         ]
+        execution_prompt = started["workflow"]["nodes"][0]["executionPrompt"]
+        assert "- inputs/cost.csv" in execution_prompt
+        assert "fileId:" not in execution_prompt
+        assert "versionId:" not in execution_prompt
+        assert "sha256:" not in execution_prompt
+        assert "고정 manifest" not in execution_prompt
+        assert uploaded.json()["id"] not in execution_prompt
+        assert started["sourceManifest"][0]["versionId"] not in execution_prompt
+        assert started["sourceManifest"][0]["contentHash"] not in execution_prompt
         run_id = started["workflow"]["nodes"][0]["runId"]
+        with SessionLocal() as db:
+            run = db.get(Run, run_id)
+            assert run is not None
+            assert run.snapshot_json["project_file_manifest"] == started["sourceManifest"]
         changed_after_start = client.post(
             f"/api/projects/{project_id}/files/{uploaded.json()['id']}/versions",
             headers=headers,

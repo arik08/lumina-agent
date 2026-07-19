@@ -325,16 +325,9 @@ def _run_manifest(
 def _manifest_prompt(manifest: list[dict[str, Any]]) -> str:
     if not manifest:
         return "- 시작 시점에 등록된 Project 파일이 없습니다. 자료 부재를 결과에 명시하십시오."
-    lines = [
-        (
-            f"- {item['logicalPath']} (fileId:{item['projectFileId']}, "
-            f"versionId:{item.get('versionId', 'unknown')}, v{item['version']}, "
-            f"sha256:{item['contentHash']})"
-        )
-        for item in manifest[:200]
-    ]
+    lines = [f"- {item['logicalPath']}" for item in manifest[:200]]
     if len(manifest) > 200:
-        lines.append(f"- 외 {len(manifest) - 200}개 파일은 고정 manifest에 포함되어 있습니다.")
+        lines.append(f"- 외 {len(manifest) - 200}개 파일이 있습니다.")
     return "\n".join(lines)
 
 
@@ -414,8 +407,7 @@ Mission 설명: {mission.objective or mission.title}
 {node.purpose or node.title}
 
 실행 규칙:
-- 선행 세션 출력은 위 manifest에 고정된 버전을 사용하십시오.
-- 필요한 경우 Project 파일과 도구를 실제로 확인·사용하십시오.
+- 필요한 경우 위 Project 파일과 선행 세션 출력을 실제로 확인·사용하십시오.
 - 확인하지 않은 사실이나 수치를 만들어내지 마십시오.
 - 다음 Node가 그대로 인계받을 수 있는 독립적인 Markdown 문서만 한국어로 작성하십시오.
 - 채팅 인사말이나 작업 예고 없이 완성된 본문부터 출력하십시오.
