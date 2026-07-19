@@ -114,6 +114,9 @@ test("Knowledge graph restores the last layout when its tab remounts", async () 
 
 test("Graph documents provide visible and browser-history return paths", async () => {
   const view = await readFile(viewPath, "utf8");
+  assert.match(view, /import \{ createClientId \} from "\.\.\/\.\.\/client-id"/);
+  assert.match(view, /const entryId = createClientId\(\)/);
+  assert.doesNotMatch(view, /crypto\.randomUUID\(\)/);
   assert.match(view, /window\.history\.pushState/);
   assert.match(view, /window\.addEventListener\("popstate", returnFromDocument\)/);
   assert.match(view, /openDocument\(id, "wiki", "graph"\)/);

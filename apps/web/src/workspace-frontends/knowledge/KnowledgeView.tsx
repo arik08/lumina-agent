@@ -21,6 +21,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api, ApiError } from "../../api";
 import type { KnowledgeDocument, KnowledgeDocumentSummary, KnowledgeGraphResponse, KnowledgeSpace, KnowledgeTag, ProjectSummary } from "../../api-types";
+import { createClientId } from "../../client-id";
 import { MarkdownResponse } from "../../components/ConversationTurn";
 import { KnowledgeGraph } from "./KnowledgeGraph";
 import "./knowledge.css";
@@ -240,11 +241,16 @@ export function KnowledgeView() {
 
   function openDocument(documentId: string, nextTab: KnowledgeTab = "wiki", returnTab?: KnowledgeTab) {
     if (returnTab) {
-      const entryId = crypto.randomUUID();
-      const currentState = window.history.state && typeof window.history.state === "object" ? window.history.state : {};
-      window.history.pushState({ ...currentState, [knowledgeDocumentHistoryKey]: entryId }, "");
-      documentHistoryEntryRef.current = entryId;
-      documentReturnTabRef.current = returnTab;
+      try {
+        const entryId = createClientId();
+        const currentState = window.history.state && typeof window.history.state === "object" ? window.history.state : {};
+        window.history.pushState({ ...currentState, [knowledgeDocumentHistoryKey]: entryId }, "");
+        documentHistoryEntryRef.current = entryId;
+        documentReturnTabRef.current = returnTab;
+      } catch {
+        documentHistoryEntryRef.current = null;
+        documentReturnTabRef.current = null;
+      }
     }
     setTab(nextTab);
     void loadDocument(documentId);
