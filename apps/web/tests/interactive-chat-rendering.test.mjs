@@ -67,7 +67,7 @@ test("user messages expose an external copy action with inline feedback", () => 
   assert.match(turnSource, /copyState === "copied" \? <Check size=\{14\}/);
   assert.match(turnSource, /<div className="user-message-row">[\s\S]*?<UserMessageCopyButton text=\{message\.text\} \/>[\s\S]*?<div className="user-message">/);
   assert.match(globalStyles, /\.user-message-row \{[^}]*display: flex;[^}]*align-items: flex-start;[^}]*gap: 8px;/);
-  assert.match(globalStyles, /\.user-message-copy \{[^}]*width: 28px; height: 28px;[^}]*background: transparent;[^}]*color: var\(--faint\);/);
+  assert.match(globalStyles, /\.user-message-copy \{[^}]*width: 28px; height: 28px;[^}]*margin-top: 8px;[^}]*background: transparent;[^}]*color: var\(--faint\);/);
   assert.match(globalStyles, /\.user-message-copy:hover \{ background: transparent; color: var\(--muted\);/);
   assert.match(globalStyles, /\.user-message-copy\.is-copied,[\s\S]*?color: var\(--success\);/);
 });
