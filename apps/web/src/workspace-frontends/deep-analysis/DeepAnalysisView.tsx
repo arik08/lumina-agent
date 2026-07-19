@@ -1612,9 +1612,12 @@ export function DeepAnalysisView({
                   {selectedNode && (
                     <aside className="deep-analysis-inspector" aria-label={`${selectedNode.title} 상세 정보`}>
                       <header>
-                        <div><span>{selectedNode.nodeKey}</span><button type="button" aria-label="노드 상세 닫기" onClick={closeNodeInspectorAndFit}><X size={14} /></button></div>
+                        <div>
+                          <span>{selectedNode.nodeKey}</span>
+                          <small className={`node-status status-${selectedNode.status}`}>{statusLabel(selectedNode.status)}</small>
+                          <button type="button" aria-label="노드 상세 닫기" onClick={closeNodeInspectorAndFit}><X size={14} /></button>
+                        </div>
                         <strong>{selectedNode.title}</strong>
-                        <small className={`node-status status-${selectedNode.status}`}>{statusLabel(selectedNode.status)}</small>
                       </header>
                       <section>
                         <h3>목적</h3>
@@ -1864,9 +1867,11 @@ function WorkflowNodeButton({
       onPointerCancel={onPointerUp}
       onKeyDown={onKeyDown}
     >
-      <span><GitBranch size={14} />{node.nodeKey}</span>
+      <div className="deep-analysis-node-meta">
+        <span><GitBranch size={14} />{node.nodeKey}</span>
+        <small className={`node-status status-${node.status}`}>{statusLabel(node.status)}</small>
+      </div>
       <strong>{node.title}</strong>
-      <small className={`node-status status-${node.status}`}>{statusLabel(node.status)}</small>
     </button>
   );
 }

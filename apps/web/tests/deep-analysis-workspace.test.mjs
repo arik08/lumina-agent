@@ -107,6 +107,18 @@ test("Workflow keeps cost detail opt-in and exposes selectable Node inspection",
   assert.match(view, /deep-analysis-inspector/);
 });
 
+test("Node status shares the identity row in cards and the inspector", async () => {
+  const [view, css] = await Promise.all([
+    readFile(viewPath, "utf8"),
+    readFile(cssPath, "utf8"),
+  ]);
+
+  assert.match(view, /<div className="deep-analysis-node-meta">[\s\S]*?\{node\.nodeKey\}[\s\S]*?status-\$\{node\.status\}[\s\S]*?<strong>\{node\.title\}<\/strong>/);
+  assert.match(view, /<span>\{selectedNode\.nodeKey\}<\/span>[\s\S]*?status-\$\{selectedNode\.status\}[\s\S]*?aria-label="노드 상세 닫기"/);
+  assert.match(css, /\.deep-analysis-node-meta \{[^}]*justify-content: space-between;/);
+  assert.match(css, /\.deep-analysis-inspector > header > div \{[^}]*grid-template-columns: minmax\(0, 1fr\) auto auto;/);
+});
+
 test("Workflow starts through the backend and supports pan and pointer-centered zoom", async () => {
   const [view, api] = await Promise.all([
     readFile(viewPath, "utf8"),
