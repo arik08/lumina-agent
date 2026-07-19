@@ -385,6 +385,9 @@ export function DeepAnalysisView({
   const workflowLayoutRef = useRef<HTMLDivElement>(null);
   const createTitleRef = useRef<HTMLInputElement>(null);
   const workflowRegenerateTriggerRef = useRef<HTMLButtonElement>(null);
+  const workflowRegenerateFontSize = workflowRegenerateTriggerRef.current
+    ?.closest<HTMLElement>(".app-shell")
+    ?.style.getPropertyValue("--conversation-font-size");
   const eventCursorRef = useRef(0);
   const workflowUndoStackRef = useRef<Array<{
     draft: DeepAnalysisWorkflowRevision;
@@ -427,7 +430,7 @@ export function DeepAnalysisView({
       const trigger = workflowRegenerateTriggerRef.current;
       if (!trigger) return;
       const rect = trigger.getBoundingClientRect();
-      const width = Math.min(340, window.innerWidth - 24);
+      const width = Math.min(400, window.innerWidth - 24);
       setWorkflowRegeneratePosition({
         top: rect.bottom + 8,
         left: Math.min(Math.max(12, rect.left), window.innerWidth - width - 12),
@@ -1905,7 +1908,10 @@ export function DeepAnalysisView({
                         <form
                           className="deep-analysis-workflow-regenerate-popover"
                           aria-label="workflow 재생성 프롬프트"
-                          style={workflowRegeneratePosition}
+                          style={{
+                            ...workflowRegeneratePosition,
+                            ...(workflowRegenerateFontSize ? { "--conversation-font-size": workflowRegenerateFontSize } : {}),
+                          } as CSSProperties}
                           onSubmit={regenerateWorkflow}
                           onPointerDown={(event) => event.stopPropagation()}
                         >

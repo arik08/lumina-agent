@@ -98,9 +98,15 @@ test("Workflow regeneration is a separate icon control with a prompt", async () 
   assert.match(view, /data-tooltip="workflow 재생성"/);
   assert.match(view, /aria-label="workflow 재생성 프롬프트"/);
   assert.match(view, /api\.deepAnalysis\.regenerateWorkflow/);
+  assert.match(view, /const width = Math\.min\(400, window\.innerWidth - 24\)/);
+  assert.match(view, /"--conversation-font-size": workflowRegenerateFontSize/);
   assert.match(api, /\/workflow\/regenerate/);
   assert.match(css, /\.deep-analysis-workflow-regenerate-trigger \{[^}]*border: 1px solid var\(--line\)/);
-  assert.match(css, /\.deep-analysis-workflow-regenerate-popover/);
+  assert.match(css, /\.deep-analysis-workflow-regenerate-popover \{[^}]*width: min\(400px, calc\(100vw - 24px\)\)/);
+  assert.match(css, /\.deep-analysis-workflow-regenerate-heading strong \{[^}]*font-size: calc\(var\(--conversation-font-size\) - 1px\)/);
+  assert.match(css, /\.deep-analysis-workflow-regenerate-popover label \{[^}]*font-size: calc\(var\(--conversation-font-size\) - 1px\)/);
+  assert.match(css, /\.deep-analysis-workflow-regenerate-popover textarea \{[^}]*font-size: calc\(var\(--conversation-font-size\) - 1px\)/);
+  assert.match(css, /\.deep-analysis-workflow-regenerate-actions button \{[^}]*font-size: calc\(var\(--conversation-font-size\) - 1px\)/);
 });
 
 test("Node details expose the configured and actual execution prompts", async () => {

@@ -356,15 +356,15 @@
 .deep-analysis-canvas-controls .deep-analysis-workflow-regenerate-trigger { overflow: visible; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); }
 .deep-analysis-canvas-controls > .deep-analysis-workflow-regenerate-control > .deep-analysis-workflow-regenerate-trigger { border-right: 1px solid var(--line); }
 .deep-analysis-canvas-controls .deep-analysis-workflow-regenerate-trigger:hover { border-color: color-mix(in srgb, var(--cobalt) 48%, var(--line)); }
-.deep-analysis-workflow-regenerate-popover { position: fixed; z-index: 40; display: grid; width: min(340px, calc(100vw - 24px)); gap: 9px; border: 1px solid var(--line); border-radius: var(--radius-menu); padding: 12px; background: var(--surface); box-shadow: var(--shadow-overlay); }
+.deep-analysis-workflow-regenerate-popover { position: fixed; z-index: 40; display: grid; width: min(400px, calc(100vw - 24px)); gap: 9px; border: 1px solid var(--line); border-radius: var(--radius-menu); padding: 12px; background: var(--surface); box-shadow: var(--shadow-overlay); }
 .deep-analysis-workflow-regenerate-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.deep-analysis-workflow-regenerate-heading strong { color: var(--ink); font-size: 12px; }
+.deep-analysis-workflow-regenerate-heading strong { color: var(--ink); font-size: calc(var(--conversation-font-size) - 1px); }
 .deep-analysis-workflow-regenerate-heading button { display: grid; min-width: 24px; height: 24px; place-items: center; border: 0; border-radius: var(--radius-control); padding: 0; background: transparent; color: var(--muted); cursor: pointer; }
-.deep-analysis-workflow-regenerate-popover label { color: var(--muted); font-size: 10.5px; line-height: 1.45; }
-.deep-analysis-workflow-regenerate-popover textarea { width: 100%; min-height: 82px; border: 1px solid var(--line); border-radius: var(--radius-field); padding: 8px 9px; background: var(--canvas); color: var(--ink); font: inherit; font-size: 11px; line-height: 1.5; resize: vertical; }
+.deep-analysis-workflow-regenerate-popover label { color: var(--muted); font-size: calc(var(--conversation-font-size) - 1px); line-height: 1.45; }
+.deep-analysis-workflow-regenerate-popover textarea { width: 100%; min-height: 82px; border: 1px solid var(--line); border-radius: var(--radius-field); padding: 8px 9px; background: var(--canvas); color: var(--ink); font: inherit; font-size: calc(var(--conversation-font-size) - 1px); line-height: 1.5; resize: vertical; }
 .deep-analysis-workflow-regenerate-popover textarea:focus { border-color: var(--cobalt); outline: 2px solid color-mix(in srgb, var(--cobalt) 14%, transparent); outline-offset: 0; }
 .deep-analysis-workflow-regenerate-actions { display: flex; justify-content: flex-end; gap: 7px; }
-.deep-analysis-workflow-regenerate-actions button { display: inline-flex; min-width: 0; height: 28px; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: var(--radius-control); padding: 0 10px; background: var(--surface); color: var(--muted); font-size: 10.5px; cursor: pointer; }
+.deep-analysis-workflow-regenerate-actions button { display: inline-flex; min-width: 0; height: 28px; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: var(--radius-control); padding: 0 10px; background: var(--surface); color: var(--muted); font-size: calc(var(--conversation-font-size) - 1px); cursor: pointer; }
 .deep-analysis-workflow-regenerate-actions button[type="submit"] { border-color: var(--cobalt); background: var(--cobalt); color: white; }
 .deep-analysis-workflow-regenerate-actions button:hover { color: var(--ink); }
 .deep-analysis-workflow-regenerate-actions button[type="submit"]:hover { color: white; }
