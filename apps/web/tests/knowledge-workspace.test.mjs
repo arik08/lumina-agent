@@ -43,11 +43,12 @@ test("Knowledge Wiki reuses the default chat Markdown renderer", async () => {
 test("Knowledge keeps the full workspace navigation around the document model", async () => {
   const [view, styles] = await Promise.all([readFile(viewPath, "utf8"), readFile(stylesPath, "utf8")]);
   assert.doesNotMatch(view, /knowledge-mobile-menu|onOpenNavigation|knowledge-spaces|knowledge-pane-title|knowledge-space-list/);
-  for (const label of ["홈", "탐색", "원문", "Wiki", "그래프", "검토", "설정"]) {
+  for (const label of ["홈", "탐색", "문서", "검토", "설정"]) {
     assert.match(view, new RegExp(`label: "${label}"`));
   }
+  assert.doesNotMatch(view.match(/const tabs = \[[\s\S]*?\] as const;/)?.[0] ?? "", /label: "(?:원문|Wiki|그래프)"/);
   assert.match(view, /새 지식 그래프/);
-  assert.match(view, /원문과 근거를 보존하면서 Wiki와 Knowledge Graph를 함께 관리/);
+  assert.match(view, /참조와 근거를 보존하면서 문서와 Knowledge Graph를 함께 관리/);
   assert.match(view, />\{selectedSpace\?\.name \?\? "그래프 선택"\} /);
   assert.match(view, /프로젝트 연결/);
   assert.match(view, /className="project-options knowledge-project-picker" role="listbox"[^>]*aria-multiselectable="true"/);
@@ -71,6 +72,12 @@ test("Knowledge keeps the full workspace navigation around the document model", 
   assert.match(styles, /\.knowledge-toolbar \{[^}]*padding: 0 16px;/);
   assert.match(styles, /\.knowledge-toolbar button \{[^}]*padding: 0 8px;/);
   assert.doesNotMatch(styles, /\.knowledge-space-header \{[^}]*min-height: 54px;/);
+  assert.match(view, /const documentViews = \[[\s\S]*?label: "그래프"[\s\S]*?label: "문서"[\s\S]*?label: "참조"/);
+  assert.match(view, /<DocumentList[\s\S]*?label=\{`\$\{documents\.length\}개 지식 문서`\}[\s\S]*?activeView=\{tab\}/);
+  assert.match(view, /className="knowledge-document-view-toggle" role="tablist" aria-label="지식 문서 보기"/);
+  assert.match(styles, /\.knowledge-master-list > header \{[^}]*justify-content: space-between;/);
+  assert.match(styles, /\.knowledge-document-view-toggle \{[^}]*border: 1px solid var\(--line\);[^}]*border-radius: var\(--radius-control\);/);
+  assert.match(styles, /\.knowledge-document-view-toggle button\.is-active \{[^}]*background: var\(--surface\);[^}]*color: var\(--cobalt\);/);
   assert.match(view, /className="knowledge-settings-inline-value"[\s\S]*?이름 편집/);
   assert.match(view, /className="knowledge-settings-inline-value"[\s\S]*?지식 그래프 설명 편집/);
   assert.match(view, /editingSpaceField === "name"[\s\S]*?className="knowledge-settings-inline-form"/);
