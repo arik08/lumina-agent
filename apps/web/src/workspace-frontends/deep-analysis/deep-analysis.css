@@ -242,7 +242,7 @@
 .deep-analysis-run-feedback.is-cancelled > svg { color: var(--danger); }
 .deep-analysis-run-feedback.is-unavailable > svg { color: var(--muted); }
 
-.deep-analysis-node-origin { display: flex; align-items: flex-start; gap: 5px; margin-top: 8px; color: var(--muted); font-size: 10.5px; line-height: 1.45; }
+.deep-analysis-node-origin { display: flex; align-items: flex-start; gap: 5px; margin-top: 2px; color: var(--muted); font-size: 10.5px; line-height: 1.45; }
 .deep-analysis-node-origin svg { flex: none; margin-top: 1px; color: var(--cobalt); }
 
 .deep-analysis-workflow-layout { position: relative; display: grid; min-width: 0; min-height: 0; flex: 1; grid-template-columns: minmax(0, 1fr); }
