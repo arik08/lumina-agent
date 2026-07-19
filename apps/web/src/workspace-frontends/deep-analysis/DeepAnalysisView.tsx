@@ -2098,6 +2098,11 @@ export function DeepAnalysisView({
                         <strong>분석 정보</strong>
                         <small>목표를 바탕으로 Node와 Edge를 한 번 자동 설계하며, 생성 후 직접 편집할 수 있습니다.</small>
                       </header>
+                      {shownWorkflow?.reason && (
+                        <small className="deep-analysis-node-origin">
+                          <GitBranch size={12} /> {shownWorkflow.reason}
+                        </small>
+                      )}
                       <form className="deep-analysis-create" onSubmit={saveMissionSettings}>
                         <label>
                           분석 이름
@@ -2152,11 +2157,6 @@ export function DeepAnalysisView({
                             setWorkflowDraftDirty(true);
                           }} /></label>
                         </> : <p>{selectedNode.purpose}</p>}
-                        {typeof selectedNode.config.reason === "string" && (
-                          <small className="deep-analysis-node-origin">
-                            <GitBranch size={12} /> {selectedNode.config.reason}
-                          </small>
-                        )}
                       </section>
                       <section>
                         <h3>실행 프롬프트</h3>

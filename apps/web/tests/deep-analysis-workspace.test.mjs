@@ -178,6 +178,8 @@ test("Node details expose the configured and actual execution prompts", async ()
   assert.match(view, /<h3>실행 프롬프트<\/h3>/);
   assert.match(view, /실제 입력 프롬프트 보기/);
   assert.match(view, /<pre>\{selectedNode\.executionPrompt\}<\/pre>/);
+  assert.match(view, /missionRootSelected && \([\s\S]*\{shownWorkflow\?\.reason && \([\s\S]*\{shownWorkflow\.reason\}/);
+  assert.doesNotMatch(view, /selectedNode\.config\.reason/);
   assert.match(types, /conversationId: UUID \| null/);
   assert.match(types, /executionPrompt: string \| null/);
 });
