@@ -9,6 +9,7 @@ const streamSettleDurationMs = 180;
 const nearBottomPx = 140;
 const streamingRejoinPx = 360;
 const jumpButtonThresholdPx = 40;
+const instantJumpDistanceViewports = 2;
 const exactBottomPx = 2;
 const scrollPositionStoragePrefix = "lumina:conversation-scroll:";
 
@@ -405,9 +406,13 @@ export function useConversationAutoFollow(
   }, [onUserIntent]);
 
   const jumpToLatest = useCallback(() => {
+    const container = containerRef.current;
+    const distance = container
+      ? container.scrollHeight - container.clientHeight - container.scrollTop
+      : 0;
     followingRef.current = true;
     setShowJumpToLatest(false);
-    follow(false, true, true);
+    follow(distance > (container?.clientHeight ?? 0) * instantJumpDistanceViewports, true, true);
   }, [follow]);
 
   return {
