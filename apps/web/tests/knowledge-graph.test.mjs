@@ -73,7 +73,7 @@ test("Knowledge graph exposes the four Obsidian-style force controls", async () 
   assert.match(graph, /setForceSettings\(defaultForceSettings\)/);
 });
 
-test("Knowledge graph shows shared tags when the pointer is near an edge", async () => {
+test("Knowledge graph shows only shared tags when the pointer is near an edge", async () => {
   const graph = await readFile(graphPath, "utf8");
   assert.match(graph, /const nextHoveredNode = findNode\(point\)/);
   assert.match(graph, /const nextHoveredNode = findNode\(canvasPoint\(event\)\)/);
@@ -81,8 +81,11 @@ test("Knowledge graph shows shared tags when the pointer is near an edge", async
   assert.match(graph, /distanceToSegment\(point, start, end\) <= edgeHitRadius/);
   assert.match(graph, /tagNames: edge\.sharedTagIds\.flatMap/);
   assert.match(graph, /link\.tagNames\.map\(\(name\) => `#\$\{name\}`\)/);
-  assert.match(graph, /canvas\.style\.cursor = hoveredNode \? "grab" : hoveredLink \? "help" : "move"/);
+  assert.match(graph, /canvas\.style\.cursor = hoveredNode \? "grab" : "move"/);
   assert.match(graph, /className="knowledge-graph-edge-tooltip" role="tooltip" hidden/);
+  assert.match(graph, /let focusLevel = 0/);
+  assert.doesNotMatch(graph, /let focusLevel = hoveredLink/);
+  assert.doesNotMatch(graph, /link === hoveredLink \? 1 : 0/);
   assert.doesNotMatch(graph, /tooltip\.textContent\s*=\s*["'`]공통 태그/);
 });
 

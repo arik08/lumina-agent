@@ -257,7 +257,7 @@ export function KnowledgeGraph({ graph, layoutKey, onSelectDocument }: Knowledge
       context.translate(viewport.x, viewport.y);
       context.scale(viewport.scale, viewport.scale);
 
-      let focusLevel = hoveredLink ? 1 : 0;
+      let focusLevel = 0;
       nodeHoverLevels.forEach((level) => { focusLevel = Math.max(focusLevel, level); });
       context.lineCap = "round";
       links.forEach((link) => {
@@ -267,7 +267,6 @@ export function KnowledgeGraph({ graph, layoutKey, onSelectDocument }: Knowledge
         const activeLevel = Math.max(
           nodeHoverLevels.get(source.id) ?? 0,
           nodeHoverLevels.get(target.id) ?? 0,
-          link === hoveredLink ? 1 : 0,
         );
         const baseLineWidth = 1.15 + Math.min(0.35, link.weight * 0.08);
         context.beginPath();
@@ -531,7 +530,7 @@ export function KnowledgeGraph({ graph, layoutKey, onSelectDocument }: Knowledge
       if (nextHoveredNode !== hoveredNode || nextHoveredLink !== hoveredLink) {
         setHoveredNode(nextHoveredNode);
         hoveredLink = nextHoveredLink;
-        canvas.style.cursor = hoveredNode ? "grab" : hoveredLink ? "help" : "move";
+        canvas.style.cursor = hoveredNode ? "grab" : "move";
         if (hoveredLink) showLinkTooltip(hoveredLink, point);
         else hideTooltip();
         requestDraw();
@@ -553,7 +552,7 @@ export function KnowledgeGraph({ graph, layoutKey, onSelectDocument }: Knowledge
       const nextHoveredNode = findNode(canvasPoint(event));
       setHoveredNode(nextHoveredNode);
       hoveredLink = nextHoveredNode ? null : findLink(canvasPoint(event));
-      canvas.style.cursor = hoveredNode ? "grab" : hoveredLink ? "help" : "move";
+      canvas.style.cursor = hoveredNode ? "grab" : "move";
       if (hoveredLink) showLinkTooltip(hoveredLink, canvasPoint(event));
       else hideTooltip();
       requestDraw();
