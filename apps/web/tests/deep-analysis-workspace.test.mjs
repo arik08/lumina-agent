@@ -77,6 +77,13 @@ test("Canvas blank space supports pointer dragging", async () => {
   assert.match(view, /pan\.offsetX \+ event\.clientX - pan\.clientX/);
 });
 
+test("Canvas zoom value reserves enough width for triple-digit percentages", async () => {
+  const [view, css] = await Promise.all([readFile(viewPath, "utf8"), readFile(cssPath, "utf8")]);
+
+  assert.match(view, /className="deep-analysis-canvas-zoom-value"[^>]*aria-label="배율 초기화"/);
+  assert.match(css, /\.deep-analysis-canvas-controls \.deep-analysis-canvas-zoom-value \{[^}]*width: 44px; min-width: 44px;[^}]*font-variant-numeric: tabular-nums;/);
+});
+
 test("Workflow editing supports Node movement and Edge connections", async () => {
   const view = await readFile(viewPath, "utf8");
 

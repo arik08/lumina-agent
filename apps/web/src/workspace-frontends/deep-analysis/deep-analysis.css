@@ -346,6 +346,7 @@
 .deep-analysis-canvas-controls button:hover { background: var(--surface-soft); color: var(--ink); }
 .deep-analysis-canvas-controls button.is-active { background: var(--cobalt-pale); color: var(--cobalt); }
 .deep-analysis-canvas-controls button:disabled { opacity: .38; cursor: default; }
+.deep-analysis-canvas-controls .deep-analysis-canvas-zoom-value { width: 44px; min-width: 44px; padding-right: 0; padding-left: 0; font-variant-numeric: tabular-nums; }
 .deep-analysis-canvas-controls > .deep-analysis-workflow-regenerate-control { position: relative; overflow: visible; border: 0; background: transparent; }
 .deep-analysis-canvas-controls .deep-analysis-workflow-regenerate-trigger { overflow: visible; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); }
 .deep-analysis-canvas-controls > .deep-analysis-workflow-regenerate-control > .deep-analysis-workflow-regenerate-trigger { border-right: 1px solid var(--line); }
