@@ -58,6 +58,17 @@ test("announcement summaries link to the selected Help detail", async () => {
   assert.match(stylesheet, /\.chat-actions \.announcement-item \{[^}]*height: auto;[^}]*min-height: 78px/s);
 });
 
+test("announcement summaries align the time with the title and omit the author", async () => {
+  const [app, stylesheet] = await Promise.all([
+    read("../src/App.tsx"),
+    read("../src/styles.css"),
+  ]);
+
+  assert.match(app, /className="announcement-item-heading"><strong>\{announcement\.title\}<\/strong><small>\{formatNotificationTime\(announcement\.createdAt\)\}<\/small>/);
+  assert.doesNotMatch(app, /announcement\.author\?\.displayName/);
+  assert.match(stylesheet, /\.announcement-item-heading \{[^}]*display: grid !important;[^}]*grid-template-columns: minmax\(0, 1fr\) auto;[^}]*align-items: baseline;/s);
+});
+
 test("notification receipt shows more compact title-only rows", async () => {
   const [app, stylesheet] = await Promise.all([
     read("../src/App.tsx"),

@@ -3323,7 +3323,7 @@ function App() {
                     >
                       {!notificationLoading && notificationError && <div className="notification-state is-error"><AlertCircle size={15} /> {notificationError}</div>}
                       {!notificationLoading && !notificationError && announcements.length === 0 && <div className="announcement-empty"><Megaphone size={18} /><strong>게시된 공지사항이 없습니다.</strong><span>새 공지가 등록되면 이곳에서 확인할 수 있습니다.</span></div>}
-                      {announcements.map((announcement) => <button className="announcement-item" type="button" key={announcement.id} onClick={() => openAnnouncementInHelp(announcement.id)}><Megaphone size={16} aria-hidden="true" /><span><strong>{announcement.title}</strong><p>{announcement.body}</p><small>{announcement.author?.displayName || announcement.author?.loginId || "관리자"} · {formatNotificationTime(announcement.createdAt)}</small></span></button>)}
+                      {announcements.map((announcement) => <button className="announcement-item" type="button" key={announcement.id} onClick={() => openAnnouncementInHelp(announcement.id)}><Megaphone size={16} aria-hidden="true" /><span><span className="announcement-item-heading"><strong>{announcement.title}</strong><small>{formatNotificationTime(announcement.createdAt)}</small></span><p>{announcement.body}</p></span></button>)}
                     </div>
                   )}
                 </section>
