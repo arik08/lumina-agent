@@ -104,6 +104,9 @@ test("Knowledge separates Markdown registration from model-selected batch taggin
   assert.match(view, /미태깅 \$\{untaggedCount\}개 일괄 태깅/);
   assert.match(view, /providerId: selectedModel\.providerId,[\s\S]*?modelKey: selectedModel\.modelKey/);
   assert.match(styles, /\.knowledge-graph-tag-actions \{[^}]*position: absolute;[^}]*top: 12px;[^}]*left: 12px;/);
+  assert.match(styles, /\.knowledge-graph-tag-actions > button \{[^}]*font-size: var\(--conversation-font-size\)/);
+  assert.match(styles, /\.knowledge-tagging-model-select\.lumina-select\.size-small \.lumina-select-trigger \{[^}]*font-size: var\(--conversation-font-size\)/);
+  assert.match(styles, /\.knowledge-tagging-model-menu\.lumina-select-menu-global\.size-small \.lumina-select-option \{[^}]*height: 32px;[^}]*font-size: var\(--conversation-font-size\)/);
 });
 
 test("legacy approval, ingestion, and entity workspaces are absent", async () => {
