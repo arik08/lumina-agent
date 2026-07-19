@@ -219,8 +219,8 @@ test("Running and completed Nodes keep evenly spaced elapsed time below the titl
   assert.match(view, /<span>\{statusLabel\(node\.status\)\}<\/span>/);
   assert.match(view, /<strong>\{node\.title\}<\/strong>\s*\{elapsedTime && <time className="deep-analysis-node-elapsed"/);
   assert.match(css, /\.deep-analysis-node-meta > \.node-status \{[^}]*justify-self: end/);
-  assert.match(css, /\.deep-analysis-view\.deep-analysis-view \.deep-analysis-node > \.deep-analysis-node-elapsed \{[^}]*font-size: inherit/);
-  assert.match(css, /\.deep-analysis-node \{[^}]*height: 86px;[^}]*gap: 4px/);
+  assert.match(css, /\.deep-analysis-node \{[^}]*height: 86px;[^}]*grid-auto-rows: 1\.2em;[^}]*gap: 4px/);
+  assert.match(css, /\.deep-analysis-view\.deep-analysis-view \.deep-analysis-node-meta > span,[\s\S]*\.deep-analysis-node > \.deep-analysis-node-elapsed \{ font-size: inherit; line-height: 1\.2; \}/);
 });
 
 test("Active run feedback keeps only the completion count on the right", async () => {
