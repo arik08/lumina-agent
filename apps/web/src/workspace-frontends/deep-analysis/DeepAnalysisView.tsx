@@ -1875,22 +1875,6 @@ export function DeepAnalysisView({
                     </div>
                     </div>
                     <div className="deep-analysis-canvas-controls" aria-label="Workflow 조작">
-                      <div className="deep-analysis-canvas-edit-controls" aria-label="Node 편집">
-                        <button
-                          className={editingWorkflow ? "is-active" : undefined}
-                          type="button"
-                          aria-label={editingWorkflow ? "편집 종료" : "노드 편집"}
-                          data-tooltip={editingWorkflow ? "편집 종료" : "노드 편집"}
-                          disabled={!canEdit || (mission.status !== "draft" && mission.status !== "ready") || savingWorkflow || activatingWorkflow}
-                          onClick={() => void (editingWorkflow ? activateWorkflowDraft() : beginWorkflowEdit())}
-                        >
-                          {savingWorkflow || activatingWorkflow ? <LoaderCircle className="is-running" size={14} /> : <Pencil size={14} />}
-                        </button>
-                        <button type="button" aria-label="Node 추가" data-tooltip="Node 추가" disabled={!editingWorkflow || !workflowDraft} onClick={addDraftNode}><Plus size={14} /></button>
-                        <button type="button" aria-label="Node 자동 정렬" data-tooltip="Node 자동 정렬" disabled={arrangingWorkflow || !canEdit || (mission.status !== "draft" && mission.status !== "ready")} onClick={() => void autoArrangeWorkflow()}>{arrangingWorkflow ? <LoaderCircle className="is-running" size={14} /> : <WandSparkles size={14} />}</button>
-                        <button type="button" aria-label="되돌리기" data-tooltip="되돌리기 (Ctrl+Z)" disabled={!editingWorkflow || workflowUndoStackRef.current.length === 0} onClick={() => undoWorkflowChange()}><Undo2 size={14} /></button>
-                        <button type="button" aria-label="Node 지우기" data-tooltip="Node 지우기" disabled={!editingWorkflow || !selectedNode || workflowDraft?.nodes.length === 1} onClick={() => selectedNode && removeDraftNode(selectedNode.nodeKey)}><Trash2 size={14} /></button>
-                      </div>
                       <div className="deep-analysis-workflow-regenerate-control">
                       <button
                         ref={workflowRegenerateTriggerRef}
@@ -1936,6 +1920,22 @@ export function DeepAnalysisView({
                           </div>
                         </form>
                       ), document.body)}
+                      </div>
+                      <div className="deep-analysis-canvas-edit-controls" aria-label="Node 편집">
+                        <button
+                          className={editingWorkflow ? "is-active" : undefined}
+                          type="button"
+                          aria-label={editingWorkflow ? "편집 종료" : "노드 편집"}
+                          data-tooltip={editingWorkflow ? "편집 종료" : "노드 편집"}
+                          disabled={!canEdit || (mission.status !== "draft" && mission.status !== "ready") || savingWorkflow || activatingWorkflow}
+                          onClick={() => void (editingWorkflow ? activateWorkflowDraft() : beginWorkflowEdit())}
+                        >
+                          {savingWorkflow || activatingWorkflow ? <LoaderCircle className="is-running" size={14} /> : <Pencil size={14} />}
+                        </button>
+                        <button type="button" aria-label="Node 추가" data-tooltip="Node 추가" disabled={!editingWorkflow || !workflowDraft} onClick={addDraftNode}><Plus size={14} /></button>
+                        <button type="button" aria-label="Node 자동 정렬" data-tooltip="Node 자동 정렬" disabled={arrangingWorkflow || !canEdit || (mission.status !== "draft" && mission.status !== "ready")} onClick={() => void autoArrangeWorkflow()}>{arrangingWorkflow ? <LoaderCircle className="is-running" size={14} /> : <WandSparkles size={14} />}</button>
+                        <button type="button" aria-label="되돌리기" data-tooltip="되돌리기 (Ctrl+Z)" disabled={!editingWorkflow || workflowUndoStackRef.current.length === 0} onClick={() => undoWorkflowChange()}><Undo2 size={14} /></button>
+                        <button type="button" aria-label="Node 지우기" data-tooltip="Node 지우기" disabled={!editingWorkflow || !selectedNode || workflowDraft?.nodes.length === 1} onClick={() => selectedNode && removeDraftNode(selectedNode.nodeKey)}><Trash2 size={14} /></button>
                       </div>
                       <div className="deep-analysis-canvas-zoom-controls" aria-label="확대 및 축소">
                         <button type="button" aria-label="확대" data-tooltip="확대" disabled={canvasScale >= maximumCanvasScale} onClick={() => updateCanvasScale(canvasScale + 0.1)}><ZoomIn size={14} /></button>

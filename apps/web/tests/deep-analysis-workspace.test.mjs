@@ -98,6 +98,9 @@ test("Workflow regeneration is a separate icon control with a prompt", async () 
   assert.match(view, /data-tooltip="workflow 재생성"/);
   assert.match(view, /aria-label="workflow 재생성 프롬프트"/);
   assert.match(view, /api\.deepAnalysis\.regenerateWorkflow/);
+  const regenerateControlIndex = view.indexOf('className="deep-analysis-workflow-regenerate-control"');
+  const editControlsIndex = view.indexOf('className="deep-analysis-canvas-edit-controls"');
+  assert.ok(regenerateControlIndex >= 0 && regenerateControlIndex < editControlsIndex);
   assert.match(view, /const width = Math\.min\(400, window\.innerWidth - 24\)/);
   assert.match(view, /"--conversation-font-size": workflowRegenerateFontSize/);
   assert.match(api, /\/workflow\/regenerate/);
