@@ -77,6 +77,17 @@ test("Canvas blank space supports pointer dragging", async () => {
   assert.match(view, /pan\.offsetX \+ event\.clientX - pan\.clientX/);
 });
 
+test("Workflow Canvas keeps the Mission root before every start Node", async () => {
+  const view = await readFile(viewPath, "utf8");
+
+  assert.match(view, /const workflowMissionRoot = useMemo/);
+  assert.match(view, /const startNodes = nodes\.filter\(\(node\) => !targetNodeKeys\.has\(node\.nodeKey\)\)/);
+  assert.match(view, /workflowMissionRoot\?\.connectedNodes\.map/);
+  assert.match(view, /className="deep-analysis-goal-node deep-analysis-mission-root-node"/);
+  assert.match(view, /<span><Target size=\{14\} \/>MISSION<\/span>[\s\S]*?<strong>작업 흐름<\/strong>[\s\S]*?<small>AI 자동 설계<\/small>/);
+  assert.match(view, /fitNodesToViewport\(\[[\s\S]*?workflowMissionRoot\.position[\s\S]*?shownWorkflow\?\.nodes/);
+});
+
 test("Canvas zoom value reserves enough width for triple-digit percentages", async () => {
   const [view, css] = await Promise.all([readFile(viewPath, "utf8"), readFile(cssPath, "utf8")]);
 

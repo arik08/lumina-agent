@@ -95,6 +95,7 @@ const maximumInspectorWidth = 1040;
 const inspectorWidthStorageKey = "lumina:deep-analysis:inspector-width:v2";
 const workflowPortSides = ["north", "east", "south", "west"] as const;
 type WorkflowPortSide = typeof workflowPortSides[number];
+type WorkflowNodePosition = Pick<DeepAnalysisWorkflowNode, "positionX" | "positionY">;
 function statusLabel(status: string) {
   return statusLabels[status] ?? status;
 }
@@ -214,7 +215,7 @@ function arrangeWorkflowTopDown(workflow: DeepAnalysisWorkflowRevision) {
   };
 }
 
-function workflowPortPoint(node: DeepAnalysisWorkflowNode, side: WorkflowPortSide) {
+function workflowPortPoint(node: WorkflowNodePosition, side: WorkflowPortSide) {
   if (side === "north") return { x: node.positionX + workflowNodeWidth / 2, y: node.positionY };
   if (side === "east") return { x: node.positionX + workflowNodeWidth, y: node.positionY + workflowNodeHeight / 2 };
   if (side === "south") return { x: node.positionX + workflowNodeWidth / 2, y: node.positionY + workflowNodeHeight };
@@ -229,8 +230,8 @@ function workflowPortVector(side: WorkflowPortSide) {
 }
 
 function workflowEdgeSides(
-  source: DeepAnalysisWorkflowNode,
-  target: DeepAnalysisWorkflowNode,
+  source: WorkflowNodePosition,
+  target: WorkflowNodePosition,
 ): [WorkflowPortSide, WorkflowPortSide] {
   const deltaX = target.positionX - source.positionX;
   const deltaY = target.positionY - source.positionY;
@@ -241,8 +242,8 @@ function workflowEdgeSides(
 }
 
 function workflowEdgeGeometry(
-  source: DeepAnalysisWorkflowNode,
-  target: DeepAnalysisWorkflowNode,
+  source: WorkflowNodePosition,
+  target: WorkflowNodePosition,
 ) {
   const [sourceSide, targetSide] = workflowEdgeSides(source, target);
   const sourcePoint = workflowPortPoint(source, sourceSide);
@@ -632,16 +633,35 @@ export function DeepAnalysisView({
     () => rawWorkflow && !editingWorkflow ? arrangeWorkflowTopDown(rawWorkflow) : rawWorkflow,
     [editingWorkflow, rawWorkflow],
   );
+  const workflowMissionRoot = useMemo(() => {
+    const nodes = shownWorkflow?.nodes ?? [];
+    if (!nodes.length) return null;
+    const targetNodeKeys = new Set((shownWorkflow?.edges ?? []).map((edge) => edge.targetNodeKey));
+    const startNodes = nodes.filter((node) => !targetNodeKeys.has(node.nodeKey));
+    const connectedNodes = startNodes.length ? startNodes : nodes;
+    const left = Math.min(...connectedNodes.map((node) => node.positionX));
+    const right = Math.max(...connectedNodes.map((node) => node.positionX + workflowNodeWidth));
+    const top = Math.min(...connectedNodes.map((node) => node.positionY));
+    return {
+      connectedNodes,
+      position: {
+        positionX: (left + right - workflowNodeWidth) / 2,
+        positionY: top - workflowNodeHeight - workflowLayerGap,
+      },
+    };
+  }, [shownWorkflow]);
   const workflowCanvasSize = useMemo(() => ({
     width: Math.max(
       720,
       ...(shownWorkflow?.nodes ?? []).map((node) => node.positionX + workflowNodeWidth + 48),
+      ...(workflowMissionRoot ? [workflowMissionRoot.position.positionX + workflowNodeWidth + 48] : []),
     ),
     height: Math.max(
       540,
       ...(shownWorkflow?.nodes ?? []).map((node) => node.positionY + workflowNodeHeight + 48),
+      ...(workflowMissionRoot ? [workflowMissionRoot.position.positionY + workflowNodeHeight + 48] : []),
     ),
-  }), [shownWorkflow?.nodes]);
+  }), [shownWorkflow?.nodes, workflowMissionRoot]);
   const selectedNode = useMemo(
     () => shownWorkflow?.nodes.find((node) => node.nodeKey === selectedNodeKey) ?? null,
     [shownWorkflow, selectedNodeKey],
@@ -784,7 +804,7 @@ export function DeepAnalysisView({
     );
   }
 
-  function fitNodesToViewport(nodes: DeepAnalysisWorkflowNode[]) {
+  function fitNodesToViewport(nodes: WorkflowNodePosition[]) {
     const viewport = canvasViewportRef.current;
     if (!viewport || !nodes.length) return;
     const availableHeight = viewport.clientHeight;
@@ -814,7 +834,10 @@ export function DeepAnalysisView({
   }
 
   function fitCanvasToViewport() {
-    fitNodesToViewport(shownWorkflow?.nodes ?? []);
+    fitNodesToViewport([
+      ...(workflowMissionRoot ? [workflowMissionRoot.position] : []),
+      ...(shownWorkflow?.nodes ?? []),
+    ]);
   }
 
   function closeNodeInspectorAndFit() {
@@ -1780,6 +1803,16 @@ export function DeepAnalysisView({
                       }}
                     >
                       <svg className="deep-analysis-edge-layer" aria-hidden="true">
+                        {workflowMissionRoot?.connectedNodes.map((node) => {
+                          const geometry = workflowEdgeGeometry(workflowMissionRoot.position, node);
+                          return (
+                            <path
+                              key={`mission:${node.nodeKey}`}
+                              className="deep-analysis-edge deep-analysis-mission-edge"
+                              d={geometry.path}
+                            />
+                          );
+                        })}
                         {(shownWorkflow?.edges ?? []).map((edge) => {
                           const source = shownWorkflow?.nodes.find((node) => node.nodeKey === edge.sourceNodeKey);
                           const target = shownWorkflow?.nodes.find((node) => node.nodeKey === edge.targetNodeKey);
@@ -1848,6 +1881,21 @@ export function DeepAnalysisView({
                           onConnectionComplete={() => completeConnection(node.nodeKey)}
                         />
                       ))}
+                      {workflowMissionRoot && (
+                        <div
+                          className="deep-analysis-goal-node deep-analysis-mission-root-node"
+                          role="group"
+                          aria-label="MISSION 작업 흐름"
+                          style={{
+                            left: workflowMissionRoot.position.positionX,
+                            top: workflowMissionRoot.position.positionY,
+                          }}
+                        >
+                          <span><Target size={14} />MISSION</span>
+                          <strong>작업 흐름</strong>
+                          <small>AI 자동 설계</small>
+                        </div>
+                      )}
                       {editingWorkflow && selectedEdgeId && (() => {
                         const edge = shownWorkflow?.edges.find((item) => item.id === selectedEdgeId);
                         const source = shownWorkflow?.nodes.find((node) => node.nodeKey === edge?.sourceNodeKey);
