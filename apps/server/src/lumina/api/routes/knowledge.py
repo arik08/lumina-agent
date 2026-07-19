@@ -3,13 +3,19 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request, Response, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ...agent.executor import local_run_executor
 from ...audit import record_audit
 from ...authorization import require_project
 from ...db import get_db
-from ...knowledge.schemas import KnowledgeSpaceCreate, KnowledgeSpaceUpdate
+from ...config import Settings, get_settings
+from ...knowledge.schemas import (
+    KnowledgeBatchTagRequest,
+    KnowledgeSpaceCreate,
+    KnowledgeSpaceUpdate,
+)
 from ...knowledge.service import (
     create_knowledge_space,
     document_list_payload,
@@ -20,9 +26,11 @@ from ...knowledge.service import (
     require_knowledge_document,
     save_message_as_knowledge_document,
     space_payload,
+    tag_untagged_knowledge_documents,
     update_knowledge_space,
 )
-from ...models import User
+from ...models import ProviderModel, User
+from ..errors import ApiProblem
 from ..dependencies import AuthContext, get_current_user, require_csrf
 
 
@@ -107,19 +115,14 @@ def get_knowledge_document(
 
 
 @router.post("/documents/from-message/{message_id}")
-async def post_knowledge_document_from_message(
+def post_knowledge_document_from_message(
     message_id: str,
     request: Request,
     response: Response,
     context: AuthContext = Depends(require_csrf),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    document, created = await save_message_as_knowledge_document(
-        db,
-        context.user,
-        message_id,
-        provider_factory=local_run_executor.provider_for_probe,
-    )
+    document, created = save_message_as_knowledge_document(db, context.user, message_id)
     record_audit(
         db,
         action="knowledge_document_saved" if created else "knowledge_document_reused",
@@ -134,6 +137,58 @@ async def post_knowledge_document_from_message(
     db.refresh(document)
     response.status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
     return {**document_payload(db, document), "created": created}
+
+
+@router.post("/documents/tag-batch")
+async def post_knowledge_document_batch_tags(
+    payload: KnowledgeBatchTagRequest,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, int]:
+    if payload.provider_id == "mock":
+        if settings.environment == "production" or payload.model_key != "mock-agent":
+            raise ApiProblem(
+                409, "provider_unavailable", "사용 가능한 태깅 모델이 아닙니다."
+            )
+        runtime_model_id = "mock-agent"
+    else:
+        model = db.scalar(
+            select(ProviderModel).where(
+                ProviderModel.provider_id == payload.provider_id,
+                ProviderModel.model_key == payload.model_key,
+                ProviderModel.enabled.is_(True),
+            )
+        )
+        if model is None:
+            raise ApiProblem(
+                409, "provider_unavailable", "사용 가능한 태깅 모델이 아닙니다."
+            )
+        runtime_model_id = model.runtime_model_id
+    result = await tag_untagged_knowledge_documents(
+        db,
+        context.user,
+        space_id=payload.space_id,
+        provider=local_run_executor.provider_for_probe(payload.provider_id),
+        model=runtime_model_id,
+    )
+    record_audit(
+        db,
+        action="knowledge_documents_batch_tagged",
+        target_type="knowledge_space",
+        target_id=payload.space_id,
+        result="success" if result["failedCount"] == 0 else "partial",
+        actor=context.user,
+        request_id=getattr(request.state, "request_id", None),
+        metadata={
+            "provider_id": payload.provider_id,
+            "model_key": payload.model_key,
+            **result,
+        },
+    )
+    db.commit()
+    return result
 
 
 @router.get("/graph")

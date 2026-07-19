@@ -1516,6 +1516,9 @@ export async function getKnowledgeDocument(documentId: string, signal?: AbortSig
 export async function saveKnowledgeDocumentFromMessage(messageId: string, signal?: AbortSignal) {
   return request<KnowledgeDocument>(`/knowledge/documents/from-message/${encodeURIComponent(messageId)}`, { method: "POST", signal });
 }
+export async function batchTagKnowledgeDocuments(payload: { spaceId: string; providerId: string; modelKey: string }, signal?: AbortSignal) {
+  return request<{ requestedCount: number; taggedCount: number; failedCount: number; remainingCount: number }>("/knowledge/documents/tag-batch", { method: "POST", body: payload, signal });
+}
 export async function getKnowledgeGraph(spaceId?: string, signal?: AbortSignal) {
   return request<KnowledgeGraphResponse>("/knowledge/graph", { query: { spaceId }, signal });
 }
@@ -2344,6 +2347,7 @@ export const api = {
     listDocuments: listKnowledgeDocuments,
     getDocument: getKnowledgeDocument,
     saveMessage: saveKnowledgeDocumentFromMessage,
+    batchTagDocuments: batchTagKnowledgeDocuments,
     getGraph: getKnowledgeGraph,
   },
   projectMemberships: {

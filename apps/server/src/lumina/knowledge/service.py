@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from hashlib import sha256
 import logging
 import re
 from unicodedata import normalize
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from ..api.errors import ApiProblem
@@ -184,12 +184,10 @@ def require_knowledge_document(
     return document
 
 
-async def save_message_as_knowledge_document(
+def save_message_as_knowledge_document(
     db: Session,
     user: User,
     message_id: str,
-    *,
-    provider_factory: Callable[[str], ProviderAdapter],
 ) -> tuple[KnowledgeDocument, bool]:
     existing = db.scalar(
         select(KnowledgeDocument).where(
@@ -214,26 +212,6 @@ async def save_message_as_knowledge_document(
     run = db.get(Run, message.run_id) if message.run_id else None
     space = ensure_default_space(db, user)
     title = _document_title(conversation.title, body)
-    candidates = _tag_candidates(db, space.id)
-    suggested_ids: tuple[str, ...] = ()
-    new_tags: tuple[NewTagSuggestion, ...] = ()
-    if run is not None:
-        try:
-            suggestion = await suggest_document_tags(
-                provider=provider_factory(run.provider_id),
-                model=run.runtime_model_id,
-                title=title,
-                body=body,
-                candidates=candidates,
-            )
-            suggested_ids = suggestion.tag_ids
-            new_tags = suggestion.new_tags
-        except Exception:
-            logger.warning(
-                "Knowledge document tag generation failed; saving without generated tags",
-                exc_info=True,
-                extra={"message_id": message.id, "run_id": message.run_id},
-            )
 
     document = KnowledgeDocument(
         space_id=space.id,
@@ -251,16 +229,80 @@ async def save_message_as_knowledge_document(
     )
     db.add(document)
     db.flush()
-    tag_ids = _resolve_document_tags(
-        db,
-        space_id=space.id,
-        suggested_ids=suggested_ids,
-        new_tags=new_tags,
-    )
-    for tag_id in tag_ids[:MAX_DOCUMENT_TAGS]:
-        db.add(KnowledgeDocumentTag(document_id=document.id, tag_id=tag_id))
-    db.flush()
     return document, True
+
+
+async def tag_untagged_knowledge_documents(
+    db: Session,
+    user: User,
+    *,
+    space_id: str,
+    provider: ProviderAdapter,
+    model: str,
+) -> dict[str, int]:
+    require_knowledge_space(db, user, space_id, write=True)
+    tagged_document_ids = select(KnowledgeDocumentTag.document_id)
+    documents = list(
+        db.scalars(
+            select(KnowledgeDocument)
+            .where(
+                KnowledgeDocument.owner_user_id == user.id,
+                KnowledgeDocument.space_id == space_id,
+                KnowledgeDocument.status == "active",
+                KnowledgeDocument.id.not_in(tagged_document_ids),
+            )
+            .order_by(KnowledgeDocument.researched_at, KnowledgeDocument.id)
+            .limit(200)
+        )
+    )
+    tagged_count = 0
+    failed_count = 0
+    for document in documents:
+        try:
+            suggestion = await suggest_document_tags(
+                provider=provider,
+                model=model,
+                title=document.title,
+                body=document.body,
+                candidates=_tag_candidates(db, space_id),
+            )
+            tag_ids = _resolve_document_tags(
+                db,
+                space_id=space_id,
+                suggested_ids=suggestion.tag_ids,
+                new_tags=suggestion.new_tags,
+            )
+            if not tag_ids:
+                failed_count += 1
+                continue
+            for tag_id in tag_ids[:MAX_DOCUMENT_TAGS]:
+                db.add(KnowledgeDocumentTag(document_id=document.id, tag_id=tag_id))
+            db.flush()
+            tagged_count += 1
+        except Exception:
+            failed_count += 1
+            logger.warning(
+                "Knowledge document batch tagging failed",
+                exc_info=True,
+                extra={"document_id": document.id, "space_id": space_id},
+            )
+    remaining_count = (
+        db.scalar(
+            select(func.count(KnowledgeDocument.id)).where(
+                KnowledgeDocument.owner_user_id == user.id,
+                KnowledgeDocument.space_id == space_id,
+                KnowledgeDocument.status == "active",
+                KnowledgeDocument.id.not_in(select(KnowledgeDocumentTag.document_id)),
+            )
+        )
+        or 0
+    )
+    return {
+        "requestedCount": len(documents),
+        "taggedCount": tagged_count,
+        "failedCount": failed_count,
+        "remainingCount": remaining_count,
+    }
 
 
 def document_payload(db: Session, document: KnowledgeDocument) -> dict[str, object]:
@@ -554,5 +596,6 @@ __all__ = [
     "require_knowledge_space",
     "save_message_as_knowledge_document",
     "space_payload",
+    "tag_untagged_knowledge_documents",
     "update_knowledge_space",
 ]

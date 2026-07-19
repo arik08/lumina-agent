@@ -32,8 +32,15 @@ class KnowledgeDocumentListQuery(ApiModel):
     query: str = Field(default="", max_length=500)
 
 
+class KnowledgeBatchTagRequest(ApiModel):
+    space_id: str
+    provider_id: str = Field(min_length=1, max_length=120)
+    model_key: str = Field(min_length=1, max_length=240)
+
+
 __all__ = [
     "KnowledgeDocumentListQuery",
+    "KnowledgeBatchTagRequest",
     "KnowledgeSpaceCreate",
     "KnowledgeSpaceUpdate",
 ]

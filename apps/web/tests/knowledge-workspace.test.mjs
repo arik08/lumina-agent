@@ -97,6 +97,15 @@ test("answer action places Knowledge save immediately before branch", async () =
   assert.match(turn, /api\.knowledge\.saveMessage\(finalMessage\.id\)/);
 });
 
+test("Knowledge separates Markdown registration from model-selected batch tagging", async () => {
+  const [view, api, styles] = await Promise.all([readFile(viewPath, "utf8"), readFile(apiPath, "utf8"), readFile(stylesPath, "utf8")]);
+  assert.match(api, /\/knowledge\/documents\/tag-batch/);
+  assert.match(view, /ariaLabel="일괄 태깅 모델"/);
+  assert.match(view, /미태깅 \$\{untaggedCount\}개 일괄 태깅/);
+  assert.match(view, /providerId: selectedModel\.providerId,[\s\S]*?modelKey: selectedModel\.modelKey/);
+  assert.match(styles, /\.knowledge-graph-tag-actions \{[^}]*position: absolute;[^}]*top: 12px;[^}]*left: 12px;/);
+});
+
 test("legacy approval, ingestion, and entity workspaces are absent", async () => {
   const [view, api] = await Promise.all([readFile(viewPath, "utf8"), readFile(apiPath, "utf8")]);
   assert.doesNotMatch(view, /KnowledgeReview|KnowledgeSources|KnowledgeWiki|KnowledgeEntity/);

@@ -18,11 +18,12 @@ import {
   Tags,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { api, ApiError } from "../../api";
 import type { KnowledgeDocument, KnowledgeDocumentSummary, KnowledgeGraphResponse, KnowledgeSpace, KnowledgeTag, ProjectSummary } from "../../api-types";
 import { createClientId } from "../../client-id";
 import { MarkdownResponse } from "../../components/ConversationTurn";
+import { SelectMenu, type SelectMenuOption } from "../../components/SelectMenu";
 import { KnowledgeGraph } from "./KnowledgeGraph";
 import "./knowledge.css";
 
@@ -43,6 +44,7 @@ const documentViews = [
 ] as const;
 type KnowledgeDocumentView = typeof documentViews[number]["id"];
 const isDocumentView = (tab: KnowledgeTab): tab is KnowledgeDocumentView => documentViews.some(({ id }) => id === tab);
+type TaggingModelOption = SelectMenuOption & { providerId: string; modelKey: string };
 
 function errorMessage(error: unknown) {
   return error instanceof ApiError ? error.message : "지식 그래프를 불러오지 못했습니다.";
@@ -74,6 +76,11 @@ export function KnowledgeView() {
   const [spaceEditValue, setSpaceEditValue] = useState("");
   const [savingSpaceDetails, setSavingSpaceDetails] = useState(false);
   const [spaceEditError, setSpaceEditError] = useState<string | null>(null);
+  const [taggingModels, setTaggingModels] = useState<TaggingModelOption[]>([]);
+  const [taggingModelValue, setTaggingModelValue] = useState("");
+  const [taggingModelsLoading, setTaggingModelsLoading] = useState(true);
+  const [batchTagging, setBatchTagging] = useState(false);
+  const [batchTaggingStatus, setBatchTaggingStatus] = useState<string | null>(null);
   const productActionsRef = useRef<HTMLDivElement>(null);
   const documentHistoryEntryRef = useRef<string | null>(null);
   const documentReturnTabRef = useRef<KnowledgeTab | null>(null);
@@ -95,6 +102,32 @@ export function KnowledgeView() {
         setSelectedSpaceId((current) => items.some((item) => item.id === current) ? current : (items[0]?.id ?? null));
       })
       .catch((loadError) => { if (!controller.signal.aborted) setError(errorMessage(loadError)); });
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setTaggingModelsLoading(true);
+    api.providers.list(undefined, controller.signal)
+      .then(async (providerItems) => {
+        const modelGroups = await Promise.all(providerItems.filter((provider) => provider.enabled).map(async (provider) => ({
+          provider,
+          models: await api.providers.listModels(provider.id, undefined, controller.signal),
+        })));
+        if (controller.signal.aborted) return;
+        const options = modelGroups.flatMap(({ provider, models }) => models
+          .filter((model) => model.enabled && model.capabilities.structuredOutput)
+          .map((model) => ({
+            value: `${provider.id}:${model.modelKey}`,
+            label: `${provider.displayName} · ${model.displayName}`,
+            providerId: provider.id,
+            modelKey: model.modelKey,
+          })));
+        setTaggingModels(options);
+        setTaggingModelValue((current) => options.some((option) => option.value === current) ? current : (options[0]?.value ?? ""));
+      })
+      .catch((loadError) => { if (!controller.signal.aborted) setError(errorMessage(loadError)); })
+      .finally(() => { if (!controller.signal.aborted) setTaggingModelsLoading(false); });
     return () => controller.abort();
   }, []);
 
@@ -169,6 +202,7 @@ export function KnowledgeView() {
   }, [documents]);
 
   const citationCount = documents.reduce((sum, document) => sum + document.citationCount, 0);
+  const untaggedCount = documents.filter((document) => document.tags.length === 0).length;
 
   async function createSpace(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -244,6 +278,37 @@ export function KnowledgeView() {
     finally { setSavingSpaceDetails(false); }
   }
 
+  async function batchTagDocuments() {
+    const selectedModel = taggingModels.find((option) => option.value === taggingModelValue);
+    if (!selectedSpaceId || !selectedModel || batchTagging || untaggedCount === 0) return;
+    setBatchTagging(true);
+    setBatchTaggingStatus(null);
+    setError(null);
+    try {
+      const result = await api.knowledge.batchTagDocuments({
+        spaceId: selectedSpaceId,
+        providerId: selectedModel.providerId,
+        modelKey: selectedModel.modelKey,
+      });
+      const [loadedDocuments, loadedGraph] = await Promise.all([
+        api.knowledge.listDocuments({ spaceId: selectedSpaceId }),
+        api.knowledge.getGraph(selectedSpaceId),
+      ]);
+      setDocuments(loadedDocuments);
+      setGraph(loadedGraph);
+      if (selectedDocument && loadedDocuments.some((document) => document.id === selectedDocument.id)) {
+        void loadDocument(selectedDocument.id);
+      }
+      setBatchTaggingStatus(result.failedCount
+        ? `${result.taggedCount}개 완료 · ${result.failedCount}개 실패`
+        : `${result.taggedCount}개 문서 태깅 완료`);
+    } catch (tagError) {
+      setError(errorMessage(tagError));
+    } finally {
+      setBatchTagging(false);
+    }
+  }
+
   function openDocument(documentId: string, nextTab: KnowledgeTab = "wiki", returnTab?: KnowledgeTab) {
     if (returnTab) {
       try {
@@ -313,7 +378,7 @@ export function KnowledgeView() {
               return <button key={id} className={active ? "is-active" : ""} type="button" role="tab" aria-selected={active} onClick={() => setTab(id)}><Icon size={14} /> {label}</button>;
             })}</div></nav>
           </header>
-          {loadingContent ? <div className="knowledge-loading knowledge-loading-content"><LoaderCircle className="is-running" size={18} /> 지식을 불러오는 중</div> : <KnowledgeContent tab={tab} documents={documents} filteredDocuments={filteredDocuments} selectedDocument={selectedDocument} graph={graph} tags={tags} query={query} citationCount={citationCount} space={selectedSpace} editingSpaceField={editingSpaceField} spaceEditValue={spaceEditValue} savingSpaceDetails={savingSpaceDetails} spaceEditError={spaceEditError} setTab={setTab} setQuery={setQuery} setSpaceEditValue={setSpaceEditValue} beginSpaceDetailsEdit={beginSpaceDetailsEdit} cancelSpaceDetailsEdit={cancelSpaceDetailsEdit} saveSpaceDetails={saveSpaceDetails} openDocument={openDocument} returnToGraph={returnToGraph} />}
+          {loadingContent ? <div className="knowledge-loading knowledge-loading-content"><LoaderCircle className="is-running" size={18} /> 지식을 불러오는 중</div> : <KnowledgeContent tab={tab} documents={documents} filteredDocuments={filteredDocuments} selectedDocument={selectedDocument} graph={graph} tags={tags} query={query} citationCount={citationCount} space={selectedSpace} editingSpaceField={editingSpaceField} spaceEditValue={spaceEditValue} savingSpaceDetails={savingSpaceDetails} spaceEditError={spaceEditError} setTab={setTab} setQuery={setQuery} setSpaceEditValue={setSpaceEditValue} beginSpaceDetailsEdit={beginSpaceDetailsEdit} cancelSpaceDetailsEdit={cancelSpaceDetailsEdit} saveSpaceDetails={saveSpaceDetails} openDocument={openDocument} returnToGraph={returnToGraph} graphActions={<div className="knowledge-graph-tag-actions"><SelectMenu className="knowledge-tagging-model-select" menuClassName="knowledge-tagging-model-menu" size="small" width="auto" value={taggingModelValue} options={taggingModels} placeholder={taggingModelsLoading ? "모델 불러오는 중" : "태깅 모델 없음"} ariaLabel="일괄 태깅 모델" disabled={taggingModelsLoading || batchTagging || taggingModels.length === 0} onChange={(value) => { setTaggingModelValue(value); setBatchTaggingStatus(null); }} /><button type="button" disabled={batchTagging || untaggedCount === 0 || !taggingModelValue} onClick={() => void batchTagDocuments()}>{batchTagging ? <LoaderCircle className="is-running" size={13} /> : <Tags size={13} />}{batchTagging ? "태깅 중" : `미태깅 ${untaggedCount}개 일괄 태깅`}</button>{batchTaggingStatus && <span role="status">{batchTaggingStatus}</span>}</div>} />}
         </> : <div className="knowledge-empty"><BookOpenText size={25} /><h3>새 지식 그래프를 만들어 주세요.</h3><p>저장한 AI 답변이 문서 단위로 이 그래프에 쌓입니다.</p></div>}
       </section>
     </div>
@@ -342,10 +407,11 @@ interface KnowledgeContentProps {
   saveSpaceDetails: (event: FormEvent<HTMLFormElement>) => void;
   openDocument: (documentId: string, tab?: KnowledgeTab, returnTab?: KnowledgeTab) => void;
   returnToGraph: () => void;
+  graphActions: ReactNode;
 }
 
 function KnowledgeContent(props: KnowledgeContentProps) {
-  const { tab, documents, filteredDocuments, selectedDocument, graph, tags, query, citationCount, space, editingSpaceField, spaceEditValue, savingSpaceDetails, spaceEditError, setTab, setQuery, setSpaceEditValue, beginSpaceDetailsEdit, cancelSpaceDetailsEdit, saveSpaceDetails, openDocument, returnToGraph } = props;
+  const { tab, documents, filteredDocuments, selectedDocument, graph, tags, query, citationCount, space, editingSpaceField, spaceEditValue, savingSpaceDetails, spaceEditError, setTab, setQuery, setSpaceEditValue, beginSpaceDetailsEdit, cancelSpaceDetailsEdit, saveSpaceDetails, openDocument, returnToGraph, graphActions } = props;
   if (tab === "home") return <div className="knowledge-page knowledge-home">
     <section className="knowledge-hero-card"><div><small>DOCUMENT KNOWLEDGE</small><h3>답변은 문서로, 관계는 태그로</h3><p>AI 답변을 문서 단위로 저장하고 citation을 그대로 보존하며, 공통 태그를 통해 문서 사이의 연결을 탐색합니다.</p></div><div className="knowledge-hero-metrics" aria-label="지식 현황"><button type="button" onClick={() => documents[0] && openDocument(documents[0].id, "wiki")}><BookOpenText size={14} /><span><b>{documents.length}</b><small>문서</small></span></button><button type="button" onClick={() => documents[0] && openDocument(documents[0].id, "sources")}><FileText size={14} /><span><b>{citationCount}</b><small>참조</small></span></button><button type="button" onClick={() => documents[0] && openDocument(documents[0].id, "review")}><Tags size={14} /><span><b>{tags.length}</b><small>태그</small></span></button><button type="button" onClick={() => documents[0] && openDocument(documents[0].id, "graph")}><GitBranch size={14} /><span><b>{graph.edges.length}</b><small>연결</small></span></button></div></section>
     <section className="knowledge-card"><header><div><strong>최근 문서</strong><small>최근 조사한 AI 답변 문서입니다.</small></div></header><DocumentRows documents={documents.slice(0, 6)} onOpen={openDocument} /></section>
@@ -355,7 +421,7 @@ function KnowledgeContent(props: KnowledgeContentProps) {
 
   if (isDocumentView(tab)) return <div className="knowledge-master-detail">
     <DocumentList documents={documents} selectedId={selectedDocument?.id ?? null} onOpen={(id) => openDocument(id, tab === "graph" ? "wiki" : tab)} label={`${documents.length}개 지식 문서`} activeView={tab} onViewChange={(view) => setTab(view)} />
-    {tab === "graph" && <section className="knowledge-graph-detail"><KnowledgeGraph graph={graph} layoutKey={space.id} onSelectDocument={(id) => openDocument(id, "wiki", "graph")} /></section>}
+    {tab === "graph" && <section className="knowledge-graph-detail">{graphActions}<KnowledgeGraph graph={graph} layoutKey={space.id} onSelectDocument={(id) => openDocument(id, "wiki", "graph")} /></section>}
     {tab === "wiki" && <WikiDocument document={selectedDocument} onBackToGraph={returnToGraph} />}
     {tab === "sources" && <section className="knowledge-source-detail">{selectedDocument ? <><header><small>보존된 citation</small><h3>{selectedDocument.title}</h3><p>{selectedDocument.citations.length}개의 참조가 답변과 함께 저장되어 있습니다.</p></header><div className="knowledge-source-cards">{selectedDocument.citations.map((citation, index) => <a key={`${citation.sourceId}-${index}`} href={citation.url || undefined} target="_blank" rel="noreferrer"><span>[{citation.markerNumber ?? index + 1}]</span><strong>{citation.title}</strong><small>{citation.domain || citation.url || "참조 정보"}</small>{citation.excerpt && <p>{citation.excerpt}</p>}</a>)}{!selectedDocument.citations.length && <EmptyState text="이 문서에는 참조가 없습니다." />}</div></> : <EmptyState text="문서를 선택해 주세요." />}</section>}
   </div>;

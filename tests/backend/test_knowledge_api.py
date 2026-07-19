@@ -22,7 +22,7 @@ def _login(client: TestClient) -> str:
     return response.json()["csrfToken"]
 
 
-def test_answer_is_saved_once_as_one_document_with_metadata_and_alias_tags(
+def test_answer_is_saved_without_tags_then_batch_tagged_with_selected_model(
     tmp_path: Path, monkeypatch
 ) -> None:
     settings = Settings(
@@ -34,7 +34,10 @@ def test_answer_is_saved_once_as_one_document_with_metadata_and_alias_tags(
         cookie_secure=False,
     )
 
-    async def fake_tags(**_kwargs) -> DocumentTagSuggestion:
+    tag_models: list[str] = []
+
+    async def fake_tags(**kwargs) -> DocumentTagSuggestion:
+        tag_models.append(kwargs["model"])
         return DocumentTagSuggestion(
             tag_ids=(),
             new_tags=(
@@ -122,7 +125,8 @@ def test_answer_is_saved_once_as_one_document_with_metadata_and_alias_tags(
         assert saved["title"] == "LLM Wiki 설계"
         assert saved["body"] == body
         assert saved["researchedAt"] == researched_at.isoformat().replace("+00:00", "Z")
-        assert saved["tags"][0]["name"] == "인공지능"
+        assert saved["tags"] == []
+        assert tag_models == []
         assert saved["citations"][0]["title"] == "Obsidian Help"
         assert "description" not in saved
         assert "author" not in saved
@@ -134,6 +138,30 @@ def test_answer_is_saved_once_as_one_document_with_metadata_and_alias_tags(
         assert duplicate.status_code == 200, duplicate.text
         assert duplicate.json()["id"] == saved["id"]
         assert duplicate.json()["created"] is False
+
+        tagged = client.post(
+            "/api/knowledge/documents/tag-batch",
+            headers=headers,
+            json={
+                "spaceId": saved["spaceId"],
+                "providerId": "mock",
+                "modelKey": "mock-agent",
+            },
+        )
+        assert tagged.status_code == 200, tagged.text
+        assert tagged.json() == {
+            "requestedCount": 1,
+            "taggedCount": 1,
+            "failedCount": 0,
+            "remainingCount": 0,
+        }
+        assert tag_models == ["mock-agent"]
+        assert (
+            client.get(f"/api/knowledge/documents/{saved['id']}").json()["tags"][0][
+                "name"
+            ]
+            == "인공지능"
+        )
 
         listing = client.get("/api/knowledge/documents")
         assert listing.status_code == 200
