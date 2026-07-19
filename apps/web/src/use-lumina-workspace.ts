@@ -760,16 +760,16 @@ export function useLuminaWorkspace() {
       });
       runIds.forEach((runId) => void reconcileRunSnapshot(runId));
     };
-    const onVisibilityChange = () => {
+    const reconcileActiveRunsWhenVisible = () => {
       if (document.visibilityState === "visible") reconcileActiveRuns();
     };
-    const interval = window.setInterval(reconcileActiveRuns, ACTIVE_RUN_RECONCILIATION_INTERVAL_MS);
-    window.addEventListener("focus", reconcileActiveRuns);
-    document.addEventListener("visibilitychange", onVisibilityChange);
+    const interval = window.setInterval(reconcileActiveRunsWhenVisible, ACTIVE_RUN_RECONCILIATION_INTERVAL_MS);
+    window.addEventListener("focus", reconcileActiveRunsWhenVisible);
+    document.addEventListener("visibilitychange", reconcileActiveRunsWhenVisible);
     return () => {
       window.clearInterval(interval);
-      window.removeEventListener("focus", reconcileActiveRuns);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("focus", reconcileActiveRunsWhenVisible);
+      document.removeEventListener("visibilitychange", reconcileActiveRunsWhenVisible);
     };
   }, [authSession, reconcileRunSnapshot]);
 

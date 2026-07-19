@@ -27,6 +27,15 @@ test("completed chat turns keep stable props and skip offscreen rendering work",
   assert.match(styles, /\.conversation-scroll \{[^}]*overflow-anchor: none;/);
 });
 
+test("the live work clock does not rerender the full assistant turn", async () => {
+  const turn = await read("../src/components/ConversationTurn.tsx");
+
+  assert.match(turn, /function WorkDurationLabel\([\s\S]*?setInterval\(\(\) => setClockNow\(Date\.now\(\)\), 1000\)/);
+  assert.match(turn, /function RunActivityTimeline\([\s\S]*?setInterval\(\(\) => setTimelineClock\(Date\.now\(\)\), 1000\)/);
+  assert.doesNotMatch(turn, /const \[workClock, setWorkClock\]/);
+  assert.match(turn, /<WorkDurationLabel[\s\S]*?running=\{!terminal && !awaitingInput\}/);
+});
+
 test("streaming block placeholders keep their compact shared height", async () => {
   const styles = await read("../src/styles.css");
 

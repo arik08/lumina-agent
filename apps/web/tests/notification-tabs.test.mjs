@@ -83,6 +83,16 @@ test("notification trigger does not render an empty tooltip while the panel is o
   assert.doesNotMatch(stylesheet, /tooltip-control:not\(\[data-tooltip\]\)::after/);
 });
 
+test("notification polling pauses offscreen without overlapping requests", async () => {
+  const app = await read("../src/App.tsx");
+
+  assert.match(app, /let refreshing = false;[\s\S]*?const refresh = async \(\) => \{\s*if \(refreshing\) return;/);
+  assert.match(app, /const refreshWhenVisible = \(\) => \{\s*if \(document\.visibilityState === "visible"\) void refresh\(\);/);
+  assert.match(app, /window\.setInterval\(refreshWhenVisible, 30_000\)/);
+  assert.match(app, /document\.addEventListener\("visibilitychange", refreshWhenVisible\)/);
+  assert.match(app, /document\.removeEventListener\("visibilitychange", refreshWhenVisible\)/);
+});
+
 test("notification trigger separates unread notifications and announcements", async () => {
   const [app, stylesheet] = await Promise.all([
     read("../src/App.tsx"),

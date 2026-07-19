@@ -45,6 +45,16 @@ test("Mission switching keeps the last stable workspace until the next snapshot 
   assert.match(view, /mission\.id !== selectedMissionId/);
 });
 
+test("Mission polling pauses offscreen and resumes immediately when visible", async () => {
+  const view = await readFile(viewPath, "utf8");
+
+  assert.match(view, /let refreshing = false;[\s\S]*?if \(refreshing\) return;[\s\S]*?finally \{\s*refreshing = false;/);
+  assert.match(view, /const refreshWhenVisible = \(\) => \{\s*if \(document\.visibilityState === "visible"\) void refresh\(\);/);
+  assert.match(view, /window\.setInterval\(refreshWhenVisible, 1_500\)/);
+  assert.match(view, /document\.addEventListener\("visibilitychange", refreshWhenVisible\)/);
+  assert.match(view, /document\.removeEventListener\("visibilitychange", refreshWhenVisible\)/);
+});
+
 test("cached tabs use the simplified two-tab contract", async () => {
   const [view, css] = await Promise.all([readFile(viewPath, "utf8"), readFile(cssPath, "utf8")]);
 

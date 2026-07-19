@@ -2028,7 +2028,10 @@ function App() {
       return;
     }
     const controller = new AbortController();
+    let refreshing = false;
     const refresh = async () => {
+      if (refreshing) return;
+      refreshing = true;
       try {
         const [count, announcementCount] = await Promise.all([
           api.notifications.getUnreadCount(controller.signal),
@@ -2055,17 +2058,22 @@ function App() {
           setNotificationError(error instanceof Error ? error.message : "알림을 불러오지 못했습니다.");
         }
       } finally {
+        refreshing = false;
         if (!controller.signal.aborted) setNotificationLoading(false);
       }
     };
-    const onFocus = () => void refresh();
-    void refresh();
-    const interval = window.setInterval(() => void refresh(), 30_000);
-    window.addEventListener("focus", onFocus);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    refreshWhenVisible();
+    const interval = window.setInterval(refreshWhenVisible, 30_000);
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
       controller.abort();
       window.clearInterval(interval);
-      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [notificationOpen, workspace.authSession?.user.id]);
 

@@ -827,6 +827,33 @@ function useStaggeredRunActivities(activities: RunActivity[], enabled: boolean) 
   return activities.slice(0, visibleCount);
 }
 
+function WorkDurationLabel({
+  startedAtMs,
+  finishedAtMs,
+  running,
+  statusSuffix,
+}: {
+  startedAtMs: number;
+  finishedAtMs: number | null;
+  running: boolean;
+  statusSuffix: string;
+}) {
+  const [clockNow, setClockNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!running) return undefined;
+    setClockNow(Date.now());
+    const timer = window.setInterval(() => setClockNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [running]);
+
+  const effectiveFinishedAtMs = finishedAtMs ?? clockNow;
+  const duration = Number.isFinite(startedAtMs) && Number.isFinite(effectiveFinishedAtMs)
+    ? formatWorkDuration(effectiveFinishedAtMs - startedAtMs)
+    : "0초";
+  return <span>{duration} 동안 작업{statusSuffix}</span>;
+}
+
 function RunActivityTimeline({
   activities,
   timelineStartedAtMs,
@@ -850,7 +877,7 @@ function RunActivityTimeline({
 }: {
   activities: RunActivity[];
   timelineStartedAtMs: number;
-  timelineFinishedAtMs: number;
+  timelineFinishedAtMs: number | null;
   timelineRunning: boolean;
   awaitingInput: boolean;
   runOutcome: RunActivityOutcome;
@@ -872,6 +899,7 @@ function RunActivityTimeline({
   ) => Promise<boolean>;
   onClarificationModeChange: (mode: ClarificationMode) => Promise<unknown>;
 }) {
+  const [timelineClock, setTimelineClock] = useState(() => Date.now());
   const [openSummaryIds, setOpenSummaryIds] = useState<Set<string>>(new Set());
   const [collapsingSummaryIds, setCollapsingSummaryIds] = useState<Set<string>>(new Set());
   const previousAutoOpenSummaryIds = useRef<Set<string>>(new Set());
@@ -882,6 +910,13 @@ function RunActivityTimeline({
   const settleTimers = useRef<Map<string, number>>(new Map());
   const collapseTimers = useRef<Map<string, number>>(new Map());
   const visibleActivities = useStaggeredRunActivities(activities, timelineRunning);
+  useEffect(() => {
+    if (!timelineRunning) return undefined;
+    setTimelineClock(Date.now());
+    const timer = window.setInterval(() => setTimelineClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [timelineRunning]);
+  const effectiveTimelineFinishedAtMs = timelineFinishedAtMs ?? timelineClock;
   const activityGroups = visibleActivities.reduce<RunActivity[][]>((groups, activity) => {
     if (activity.type === "progress_summary" || activity.type === "skill" || activity.type === "input_request" || groups.length === 0) groups.push([]);
     groups.at(-1)?.push(activity);
@@ -893,7 +928,7 @@ function RunActivityTimeline({
       return summary ? [{ id: summary.id, createdAt: summary.createdAt }] : [];
     }),
     timelineStartedAtMs,
-    timelineFinishedAtMs,
+    effectiveTimelineFinishedAtMs,
   );
   const activeSummaryIds = new Set(activityGroups.flatMap((group) => {
     const summary = group[0]?.type === "progress_summary" ? group[0] : null;
@@ -1126,7 +1161,7 @@ function RunActivityTimeline({
                     isOpen={openCalls.has(activity.execution.id)}
                     key={activity.id}
                     runOutcome={runOutcome}
-                    terminalAtMs={timelineFinishedAtMs}
+                    terminalAtMs={effectiveTimelineFinishedAtMs}
                     onCopy={onCopy}
                     onToggle={() => onToggleCall(activity.execution.id)}
                   />
@@ -1738,7 +1773,6 @@ export const AssistantTurn = memo(function AssistantTurn({
   const [previewAttachment, setPreviewAttachment] = useState<AttachmentSummary | null>(null);
   const [textPreviewAttachment, setTextPreviewAttachment] = useState<AttachmentSummary | null>(null);
   const [workDetailsOpen, setWorkDetailsOpen] = useState(!collapseWorkDetails);
-  const [workClock, setWorkClock] = useState(() => Date.now());
   const expandedSourceTarget = sourceTargets.find(({ source }) => source.sourceId === expandedSourceId) ?? null;
   const workStartedAt = snapshot?.startedAt ?? turnSet.createdAt;
   const workFinishedAt = snapshot?.finishedAt ?? turnSet.completedAt;
@@ -1748,10 +1782,7 @@ export const AssistantTurn = memo(function AssistantTurn({
     ? new Date(workFinishedAt).getTime()
     : awaitingInput && Number.isFinite(inputWaitStartedAtMs)
       ? inputWaitStartedAtMs
-      : workClock;
-  const workDuration = Number.isFinite(workStartedAtMs) && Number.isFinite(workFinishedAtMs)
-    ? formatWorkDuration(workFinishedAtMs - workStartedAtMs)
-    : "0초";
+      : null;
   const hasWorkDetails = activities.length > 0;
 
   useEffect(() => {
@@ -1762,13 +1793,6 @@ export const AssistantTurn = memo(function AssistantTurn({
     setAnswerRating(null);
     setKnowledgeSaved(false);
   }, [finalMessage?.id]);
-
-  useEffect(() => {
-    if (terminal || awaitingInput || !hasWorkDetails) return;
-    setWorkClock(Date.now());
-    const timer = window.setInterval(() => setWorkClock(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [awaitingInput, hasWorkDetails, terminal]);
 
   const openSourceDetail = useCallback((sourceId: string) => {
     const currentDetail = window.history.state?.luminaSourceDetail;
@@ -2020,7 +2044,12 @@ export const AssistantTurn = memo(function AssistantTurn({
             aria-expanded={workDetailsOpen}
             onClick={(event) => preserveConversationScrollPosition(event.currentTarget, () => setWorkDetailsOpen((open) => !open))}
           >
-            <span>{workDuration} 동안 작업{awaitingInput ? " · 답변 대기" : terminal && status !== "completed" ? ` · ${runStatusLabel(status)}` : ""}</span>
+            <WorkDurationLabel
+              startedAtMs={workStartedAtMs}
+              finishedAtMs={workFinishedAtMs}
+              running={!terminal && !awaitingInput}
+              statusSuffix={awaitingInput ? " · 답변 대기" : terminal && status !== "completed" ? ` · ${runStatusLabel(status)}` : ""}
+            />
             <ChevronRight size={15} aria-hidden="true" />
           </button>
           {workDetailsOpen && (

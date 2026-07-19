@@ -611,8 +611,11 @@ export function DeepAnalysisView({
       || !["running", "paused", "awaiting_input"].includes(mission.status)
     ) return;
     let active = true;
+    let refreshing = false;
     let snapshotTick = 0;
     const refresh = async () => {
+      if (refreshing) return;
+      refreshing = true;
       try {
         const events = await api.deepAnalysis.listEvents(
           selectedMissionId,
@@ -634,12 +637,19 @@ export function DeepAnalysisView({
         );
       } catch {
         // A transient polling failure must not hide the last durable snapshot.
+      } finally {
+        refreshing = false;
       }
     };
-    const timer = window.setInterval(() => void refresh(), 1_500);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    const timer = window.setInterval(refreshWhenVisible, 1_500);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
       active = false;
       window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [mission?.id, mission?.status, selectedMissionId]);
 

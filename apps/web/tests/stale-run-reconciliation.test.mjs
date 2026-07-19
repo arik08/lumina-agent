@@ -10,9 +10,10 @@ const workspaceSource = await readFile(
 test("active runs periodically reconcile with the authoritative server snapshot", () => {
   assert.match(workspaceSource, /ACTIVE_RUN_RECONCILIATION_INTERVAL_MS = 15_000/);
   assert.match(workspaceSource, /mergeAuthoritativeRunSnapshot\(await api\.runs\.getSnapshot\(runId\)\)/);
-  assert.match(workspaceSource, /window\.setInterval\(reconcileActiveRuns, ACTIVE_RUN_RECONCILIATION_INTERVAL_MS\)/);
-  assert.match(workspaceSource, /window\.addEventListener\("focus", reconcileActiveRuns\)/);
-  assert.match(workspaceSource, /document\.addEventListener\("visibilitychange", onVisibilityChange\)/);
+  assert.match(workspaceSource, /if \(document\.visibilityState === "visible"\) reconcileActiveRuns\(\)/);
+  assert.match(workspaceSource, /window\.setInterval\(reconcileActiveRunsWhenVisible, ACTIVE_RUN_RECONCILIATION_INTERVAL_MS\)/);
+  assert.match(workspaceSource, /window\.addEventListener\("focus", reconcileActiveRunsWhenVisible\)/);
+  assert.match(workspaceSource, /document\.addEventListener\("visibilitychange", reconcileActiveRunsWhenVisible\)/);
 });
 
 test("stream errors reconcile immediately and terminal snapshots close stale streams", () => {
