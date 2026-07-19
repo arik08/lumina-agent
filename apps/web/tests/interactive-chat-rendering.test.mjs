@@ -55,6 +55,7 @@ test("Markdown code blocks provide inline copy feedback without changing interac
   assert.match(turnSource, /language === "mermaid" \|\| language === "mmd" \|\| language === "lumina-chart"/);
   assert.match(turnSource, /pre: markdownPreComponent/);
   assert.match(globalStyles, /\.markdown-code-copy \{[^}]*position: absolute;[^}]*top: 6px; right: 6px;[^}]*width: 28px; height: 28px;/);
+  assert.match(globalStyles, /\.markdown-code-copy \{[^}]*border: 0;/);
   assert.match(globalStyles, /\.markdown-code-copy \{[^}]*background: transparent;/);
   assert.match(globalStyles, /\.markdown-code-copy:hover \{ background: transparent;/);
   assert.match(globalStyles, /\.markdown-code-copy\.is-copied,[\s\S]*?color: var\(--success\);/);
