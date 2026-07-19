@@ -59,6 +59,7 @@ test("file repository is an explorer and viewer with recursive folder upload", a
   assert.match(view, /isMarkdownFile\(detail\) && !markdownSource/);
   assert.match(view, /aria-label=\{markdownSource \? "렌더링 보기" : "원문 보기"\}/);
   assert.match(view, /aria-pressed=\{markdownSource\}/);
+  assert.match(view, /markdownSource \? <Eye size=\{14\} \/> : <Code2 size=\{14\} \/>/);
   assert.match(view, /setMarkdownSource\(false\);[\s\S]*?\}, \[selectedId\]\);/);
   assert.match(styles, /\.file-viewer-actions \.file-preview-mode-toggle\.is-active\s*\{[^}]*border-color:\s*var\(--cobalt\);[^}]*background:\s*var\(--cobalt-pale\);/s);
   assert.match(styles, /\.file-preview-markdown\s*\{[^}]*font-size:\s*var\(--conversation-font-size\);/s);

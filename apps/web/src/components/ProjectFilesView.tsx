@@ -6,6 +6,7 @@ import {
   CheckCheck,
   Code2,
   Download,
+  Eye,
   FilePlus2,
   FileText,
   Folder,
@@ -892,7 +893,7 @@ export function ProjectFilesView({ projectId, onOpenNavigation }: ProjectFilesVi
                         aria-pressed={markdownSource}
                         data-tooltip={markdownSource ? "렌더링 보기" : "원문 보기"}
                         onClick={() => setMarkdownSource((current) => !current)}
-                      ><Code2 size={14} /></button>
+                      >{markdownSource ? <Eye size={14} /> : <Code2 size={14} />}</button>
                     ) : null}
                     <button type="button" disabled={busy} onClick={() => void download()}><Download size={14} /> 다운로드</button>
                     <button className={`is-danger ${deleteConfirming ? "is-confirming" : ""}`} type="button" disabled={busy} onClick={() => void remove()}><Trash2 size={14} /> {deleteConfirming ? "한 번 더 눌러 삭제" : "삭제"}</button>
