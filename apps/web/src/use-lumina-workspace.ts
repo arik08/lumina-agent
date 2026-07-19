@@ -131,12 +131,16 @@ function apiMessage(error: unknown) {
   return "요청을 처리하지 못했습니다.";
 }
 
+const CONVERSATION_LIST_PAGE_SIZE = 20;
+
 export function useLuminaWorkspace() {
   const [authSession, setAuthSession] = useState<AuthSession | null | undefined>(undefined);
   const [bootError, setBootError] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [activeProjectId, setActiveProjectIdState] = useState<string | null>(null);
   const [conversations, setConversations] = useState<ConversationListItem[]>([]);
+  const [conversationNextCursor, setConversationNextCursor] = useState<string | null>(null);
+  const [loadingMoreConversations, setLoadingMoreConversations] = useState(false);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [settings, setSettings] = useState<CurrentSettings | null>(null);
   const [providers, setProviders] = useState<ProviderSummary[]>([]);
@@ -153,6 +157,8 @@ export function useLuminaWorkspace() {
 
   const activeProjectIdRef = useRef<string | null>(null);
   const conversationsRef = useRef<ConversationListItem[]>([]);
+  const conversationNextCursorRef = useRef<string | null>(null);
+  const loadingMoreConversationsRef = useRef(false);
   const settingsRef = useRef<CurrentSettings | null>(null);
   const runtimesRef = useRef<Record<string, ConversationRuntime>>({});
   const composerAttachmentsRef = useRef<AttachmentSummary[]>([]);
@@ -169,6 +175,9 @@ export function useLuminaWorkspace() {
   useEffect(() => {
     conversationsRef.current = conversations;
   }, [conversations]);
+  useEffect(() => {
+    conversationNextCursorRef.current = conversationNextCursor;
+  }, [conversationNextCursor]);
   useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
@@ -210,12 +219,41 @@ export function useLuminaWorkspace() {
   const refreshConversations = useCallback(async (projectId?: string | null) => {
     const targetProjectId = projectId ?? activeProjectIdRef.current;
     if (!targetProjectId) return [];
-    const page = await api.conversations.list({ projectId: targetProjectId, limit: 60 });
+    const page = await api.conversations.list({ projectId: targetProjectId, limit: CONVERSATION_LIST_PAGE_SIZE });
     setConversations(page.items);
+    conversationNextCursorRef.current = page.nextCursor;
+    setConversationNextCursor(page.nextCursor);
     setActiveConversationId((current) =>
       current && page.items.some((item) => item.id === current) ? current : (page.items[0]?.id ?? null),
     );
     return page.items;
+  }, []);
+
+  const loadMoreConversations = useCallback(async () => {
+    const projectId = activeProjectIdRef.current;
+    const cursor = conversationNextCursorRef.current;
+    if (!projectId || !cursor || loadingMoreConversationsRef.current) return;
+    loadingMoreConversationsRef.current = true;
+    setLoadingMoreConversations(true);
+    try {
+      const page = await api.conversations.list({
+        projectId,
+        cursor,
+        limit: CONVERSATION_LIST_PAGE_SIZE,
+      });
+      if (activeProjectIdRef.current !== projectId) return;
+      setConversations((current) => {
+        const currentIds = new Set(current.map((item) => item.id));
+        return [...current, ...page.items.filter((item) => !currentIds.has(item.id))];
+      });
+      conversationNextCursorRef.current = page.nextCursor;
+      setConversationNextCursor(page.nextCursor);
+    } catch (error) {
+      setNotice(apiMessage(error));
+    } finally {
+      loadingMoreConversationsRef.current = false;
+      setLoadingMoreConversations(false);
+    }
   }, []);
 
   const loadConversation = useCallback(async (conversationId: string, force = false) => {
@@ -803,16 +841,20 @@ export function useLuminaWorkspace() {
   useEffect(() => {
     if (!authSession || !activeProjectId) return;
     const controller = new AbortController();
+    conversationNextCursorRef.current = null;
+    setConversationNextCursor(null);
     setLoadingWorkspace(true);
     Promise.all([
       api.settings.getCurrent(activeProjectId, controller.signal),
       api.providers.list(activeProjectId, controller.signal),
-      api.conversations.list({ projectId: activeProjectId, limit: 60 }, controller.signal),
+      api.conversations.list({ projectId: activeProjectId, limit: CONVERSATION_LIST_PAGE_SIZE }, controller.signal),
     ])
       .then(([currentSettings, providerItems, conversationPage]) => {
         setSettings(currentSettings);
         setProviders(providerItems);
         setConversations(conversationPage.items);
+        conversationNextCursorRef.current = conversationPage.nextCursor;
+        setConversationNextCursor(conversationPage.nextCursor);
         setActiveConversationId((current) =>
           current && conversationPage.items.some((item) => item.id === current)
             ? current
@@ -1513,6 +1555,9 @@ export function useLuminaWorkspace() {
     updateProjectDetails,
     archiveProject,
     conversations,
+    hasMoreConversations: conversationNextCursor !== null,
+    loadingMoreConversations,
+    loadMoreConversations,
     activeConversation,
     activeConversationId,
     selectConversation: setActiveConversationId,

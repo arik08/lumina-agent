@@ -50,6 +50,8 @@ interface SidebarRecentItemsProps {
   onBulkMove: (ids: string[], projectId: string) => Promise<string[]>;
   onBulkDelete: (ids: string[]) => Promise<string[]>;
   onScroll?: UIEventHandler<HTMLDivElement>;
+  onLoadMore?: () => void;
+  hasMore?: boolean;
 }
 
 export function SidebarRecentItems({
@@ -68,6 +70,8 @@ export function SidebarRecentItems({
   onBulkMove,
   onBulkDelete,
   onScroll,
+  onLoadMore,
+  hasMore = false,
 }: SidebarRecentItemsProps) {
   const [likedOnly, setLikedOnly] = useState(false);
   const [menuId, setMenuId] = useState<string | null>(null);
@@ -186,7 +190,14 @@ export function SidebarRecentItems({
           </div>
         )}
       </div>
-      <div className="session-list" onScroll={onScroll}>
+      <div className="session-list" onScroll={(event) => {
+        onScroll?.(event);
+        const list = event.currentTarget;
+        const prefetchDistance = Math.max(132, list.clientHeight * 0.35);
+        if (hasMore && list.scrollHeight - list.scrollTop - list.clientHeight <= prefetchDistance) {
+          onLoadMore?.();
+        }
+      }}>
         {visibleItems.map((item) => (
           <div className={`session-item ${item.id === activeId && !bulkMode ? "is-selected" : ""} ${bulkMode ? "is-bulk" : ""}`} data-recent-item-id={item.id} key={item.id}>
             {bulkMode ? (

@@ -3093,7 +3093,7 @@ function App() {
               }))}
               projects={workspace.projects.filter((project) => project.id !== workspace.activeProjectId)}
               activeId={workspace.activeConversationId}
-              loading={workspace.loadingWorkspace}
+              loading={workspace.loadingWorkspace || workspace.loadingMoreConversations}
               emptyText="새 채팅을 만들어 시작하세요."
               likedEmptyText="좋아요한 채팅이 없습니다."
               onSelect={(conversationId) => {
@@ -3110,6 +3110,8 @@ function App() {
               onBulkMove={workspace.moveConversations}
               onBulkDelete={workspace.deleteConversations}
               onScroll={handleSessionListScroll}
+              hasMore={workspace.hasMoreConversations}
+              onLoadMore={() => void workspace.loadMoreConversations()}
             />
           )}
         </div>
