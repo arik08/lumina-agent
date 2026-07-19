@@ -13,7 +13,7 @@
 | Cowork 계열 기능 | Lumina의 기존 설계 | 통합 결과 |
 |---|---|---|
 | 자율 다단계 작업 | `AGENT_LOOP.md`의 Turn·Tool·Queue·중단/재개 | Plan·Subtask·Steering·단계 재실행을 추가 |
-| 장기·대형 심층분석 | 구조화된 Plan, Project 파일과 Artifact | 독립 `심층분석` Mission, 제로베이스 Workflow 설계와 필요할 때만 재사용하는 적응형 Pattern, 단위별 LLM 출력 보존과 계산·비용 추적은 [`DEEP_ANALYSIS_WORKFLOW.md`](DEEP_ANALYSIS_WORKFLOW.md)를 기준으로 추가 |
+| 장기·대형 심층분석 | 구조화된 Plan, Project 파일과 Artifact | 독립 `심층분석` Mission에서 Node별 채팅 세션과 Edge 기반 결과 전달, 단위별 LLM 출력 보존과 실제 비용 추적은 [`DEEP_ANALYSIS_WORKFLOW.md`](DEEP_ANALYSIS_WORKFLOW.md)를 기준으로 추가 |
 | 로컬 파일 작업 공간 | `@파일명`, Artifact, Storage | 명시 연결 Workspace와 Local Bridge를 추가 |
 | 전문 업무 산출물 | Artifact Library | 형식별 생성·Preview·검증·부분 수정 추가 |
 | Project 지속성 | 사용자·조직·세션 구조 | `Organization → Project → Session → Run`으로 확장 |
@@ -392,7 +392,7 @@ Project, 파일, Connector, Skill, Plugin, Browser와 Computer Use 모두 현재
 5. Upload·Server Workspace와 파일 버전
 6. DOCX/XLSX/PPTX/PDF/HTML 생성·Preview·검증 기반
 7. Connector·Skill·MCP 동적 로딩
-8. 심층분석 Mission, 제로베이스 Workflow·선택적 Pattern·revision과 단위별 LLM 출력 Markdown 보존
+8. 심층분석 Mission, 초기 AI Node·Edge 자동 설계와 편집 가능한 Workflow revision, Node별 채팅 세션·Markdown 출력 보존
 
 ### 2단계: 반복 업무와 지속성
 
@@ -424,9 +424,9 @@ Project, 파일, Connector, Skill, Plugin, Browser와 Computer Use 모두 현재
 8. 예약 작업은 중복 실행 없이 입력 snapshot과 결과 이력을 보존합니다.
 9. Live Artifact는 버전 이력과 복원을 지원합니다.
 10. Frontend 연결이 끊겨도 Run과 예약 작업은 Backend에서 계속됩니다.
-11. 심층분석 Mission의 각 완료 Node 출력은 추가 모델 재작성 없이 고유한 Markdown version으로 보존되고, 계산 입력·코드·CSV 결과와 비용을 역추적할 수 있습니다.
-12. Mission은 Pattern 없이 새 Workflow를 설계할 수 있고, 반복 업무에 Pattern을 사용한 경우에도 목표·답변·자료·정책에 맞는 별도 Workflow revision으로 적응하며 민감한 Mission 내용은 Pattern에 포함하지 않습니다.
-13. 심층분석은 Mission Charter·Completion Contract, Claim·supporting·contradicting Evidence, 미해결 항목과 최종 Quality Gate를 보존하고 보고서 생성만으로 완료를 판정하지 않습니다.
+11. 심층분석 Mission의 각 Node는 독립 채팅 세션에서 실행되고, 완료 출력은 추가 모델 재작성 없이 Markdown으로 보존되며 실제 Run 비용을 역추적할 수 있습니다.
+12. Mission은 목표에 맞는 Node·Edge·프롬프트를 한 번 자동 설계하고 사용자가 이를 편집합니다. 선행 Node의 출력은 연결된 후행 Node의 입력 문맥으로 전달됩니다.
+13. 심층분석 자체는 Claim·Evidence·Quality Gate 같은 별도 감사 구조를 만들지 않습니다. 필요한 검토와 출처 형식은 일반 Node 프롬프트로 지정합니다.
 
 ## 참고한 공식 설명 주제
 

@@ -370,6 +370,8 @@ class SettingsPatch(ApiModel):
     conversation_width: int | None = Field(default=None, ge=600, le=1400)
     conversation_font_size: int | None = Field(default=None, ge=14, le=24)
     output_mode: Literal["auto", "chat", "file"] | None = None
+    analysis_depth: Literal["auto", "brief", "standard", "deep"] | None = None
+    answer_length: Literal["auto", "brief", "standard", "detailed"] | None = None
     clarification_mode: Literal["autonomous", "balanced", "confirming"] | None = None
     execution: ExecutionSelection | None = None
     model_candidates: dict[str, list[str]] | None = None

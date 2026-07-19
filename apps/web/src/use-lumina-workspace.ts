@@ -875,6 +875,8 @@ export function useLuminaWorkspace() {
     | Pick<CurrentSettings, "conversationWidth">
     | Pick<CurrentSettings, "conversationFontSize">
     | Pick<CurrentSettings, "outputMode">
+    | Pick<CurrentSettings, "analysisDepth">
+    | Pick<CurrentSettings, "answerLength">
     | Pick<CurrentSettings, "clarificationMode">
     | { execution: CurrentSettings["execution"] }
     | { modelCandidates: CurrentSettings["modelCandidates"] }
@@ -972,6 +974,14 @@ export function useLuminaWorkspace() {
 
   const selectOutputMode = useCallback(async (outputMode: CurrentSettings["outputMode"]) => {
     await persistSettings({ outputMode });
+  }, [persistSettings]);
+
+  const selectAnalysisDepth = useCallback(async (analysisDepth: AnalysisDepth) => {
+    await persistSettings({ analysisDepth });
+  }, [persistSettings]);
+
+  const selectAnswerLength = useCallback(async (answerLength: AnswerLength) => {
+    await persistSettings({ answerLength });
   }, [persistSettings]);
 
   const selectConversationWidth = useCallback(async (conversationWidth: number) => {
@@ -1523,6 +1533,8 @@ export function useLuminaWorkspace() {
     setModelCandidates,
     selectEffort,
     selectOutputMode,
+    selectAnalysisDepth,
+    selectAnswerLength,
     selectConversationWidth,
     selectConversationFontSize,
     selectClarificationMode,

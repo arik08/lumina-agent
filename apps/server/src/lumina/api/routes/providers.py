@@ -27,6 +27,8 @@ _USER_SETTINGS_FIELDS = {
     "theme",
     "conversation_width",
     "conversation_font_size",
+    "analysis_depth",
+    "answer_length",
     "model_candidates",
     "clarification_mode",
 }
@@ -267,6 +269,14 @@ def _resolved_settings(
         else _setting(db, user.id, output_mode_key)
     )
     output_mode = output_mode_setting.value_json if output_mode_setting else "auto"
+    analysis_depth_setting = _setting(db, user.id, "composer.analysis_depth")
+    answer_length_setting = _setting(db, user.id, "composer.answer_length")
+    analysis_depth = (
+        analysis_depth_setting.value_json if analysis_depth_setting else "auto"
+    )
+    answer_length = (
+        answer_length_setting.value_json if answer_length_setting else "auto"
+    )
     execution_setting: UserSetting | ProjectSetting | None
     execution_source: str
     if project.project_type == "shared":
@@ -308,6 +318,12 @@ def _resolved_settings(
         ),
         "outputMode": output_mode
         if output_mode in {"auto", "chat", "file"}
+        else "auto",
+        "analysisDepth": analysis_depth
+        if analysis_depth in {"auto", "brief", "standard", "deep"}
+        else "auto",
+        "answerLength": answer_length
+        if answer_length in {"auto", "brief", "standard", "detailed"}
         else "auto",
         "execution": execution,
         "modelCandidates": model_candidates,
@@ -497,6 +513,8 @@ def patch_current_settings(
     for field_name, key in (
         ("conversation_width", "ui.conversation_width"),
         ("conversation_font_size", "ui.conversation_font_size"),
+        ("analysis_depth", "composer.analysis_depth"),
+        ("answer_length", "composer.answer_length"),
     ):
         value = getattr(payload, field_name)
         if value is None:

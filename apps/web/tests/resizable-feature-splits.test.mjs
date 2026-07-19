@@ -21,4 +21,5 @@ test("file schedules and marketplace remember independent split widths", async (
   assert.match(resizer, /ArrowLeft/);
   assert.match(resizer, /ArrowRight/);
   assert.match(resizer, /localStorage/);
+  assert.match(resizer, /is-primary-\$\{primarySide\}/);
 });

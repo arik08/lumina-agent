@@ -25,6 +25,9 @@ import "./InteractiveResponse.css";
 let mermaidRenderSequence = 0;
 let mermaidModulePromise: Promise<typeof import("mermaid")> | null = null;
 const mermaidRenderJobs = new Map<string, ReturnType<(typeof import("mermaid"))["default"]["render"]>>();
+type MermaidRenderResult = Awaited<ReturnType<(typeof import("mermaid"))["default"]["render"]>>;
+const mermaidRenderCache = new Map<string, MermaidRenderResult>();
+const mermaidRenderCacheLimit = 24;
 const artifactVisualPalette = {
   blue: "#3288bd",
   teal: "#66c2a5",
@@ -410,6 +413,12 @@ export async function renderMermaidSvg(source: string) {
   const normalizedSource = repairMermaidClassNames(source.trim());
   const appearance = mermaidAppearance();
   const cacheKey = `${appearance.signature}\u0000${normalizedSource}`;
+  const cachedResult = mermaidRenderCache.get(cacheKey);
+  if (cachedResult) {
+    mermaidRenderCache.delete(cacheKey);
+    mermaidRenderCache.set(cacheKey, cachedResult);
+    return cachedResult;
+  }
   const activeJob = mermaidRenderJobs.get(cacheKey);
   if (activeJob) return activeJob;
 
@@ -423,7 +432,13 @@ export async function renderMermaidSvg(source: string) {
       if (repairedSource === normalizedSource) throw error;
       result = await mermaid.render(`lumina-mermaid-${++mermaidRenderSequence}`, repairedSource);
     }
-    return { ...result, svg: bindMermaidThemeTokens(result.svg, appearance.tokenBindings) };
+    const themedResult = { ...result, svg: bindMermaidThemeTokens(result.svg, appearance.tokenBindings) };
+    mermaidRenderCache.set(cacheKey, themedResult);
+    if (mermaidRenderCache.size > mermaidRenderCacheLimit) {
+      const oldestKey = mermaidRenderCache.keys().next().value;
+      if (typeof oldestKey === "string") mermaidRenderCache.delete(oldestKey);
+    }
+    return themedResult;
   });
   mermaidRenderJobs.set(cacheKey, renderJob);
   void renderJob.finally(() => {

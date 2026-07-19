@@ -51,7 +51,7 @@ test("composer defaults file length to 10k and sends the selected target", async
   assert.match(app, /targetOutputTokens \?\? undefined/);
   assert.match(app, /value === "chat" \? null : current \?\? defaultArtifactOutputTokens/);
   assert.match(app, /useState<number \| null>\(defaultArtifactOutputTokens\)/);
-  assert.match(app, /setTargetOutputTokens\(defaultArtifactOutputTokens\)/);
+  assert.match(app, /setTargetOutputTokens\(\(current\) => \([\s\S]*?current !== null && current >= 20_000 \? defaultArtifactOutputTokens : current[\s\S]*?\)\)/);
   assert.match(workspace, /targetOutputTokens\?: number/);
   assert.match(workspace, /currentSettings\.outputMode !== "chat" && targetOutputTokens/);
   assert.match(types, /targetOutputTokens\?: number/);

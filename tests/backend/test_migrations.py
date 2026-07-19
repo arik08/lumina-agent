@@ -5,22 +5,15 @@ from pathlib import Path
 from alembic import command
 from alembic.config import Config
 from alembic.migration import MigrationContext
-from sqlalchemy import create_engine, inspect, select, text
-from sqlalchemy.orm import Session
+from sqlalchemy import create_engine, inspect, text
 
 from lumina.db import Base
 from lumina.migrations import SERVER_ROOT, upgrade_database
 from lumina.models import (
     CompactedContextEntry,  # noqa: F401
     HelpItem,
-    KnowledgeEntity,
-    KnowledgePage,
-    KnowledgePageRevision,
-    KnowledgeSpace,
-    Organization,
     ProjectFolder,
     RuntimePromptOverride,
-    User,
 )
 
 
@@ -46,6 +39,10 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
         }
         conversation_columns = {
             column["name"] for column in inspector.get_columns("conversations")
+        }
+        workflow_node_columns = {
+            column["name"]
+            for column in inspector.get_columns("deep_analysis_workflow_nodes")
         }
         with engine.connect() as connection:
             revision = MigrationContext.configure(connection).get_current_revision()
@@ -105,21 +102,10 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
         "deep_analysis_context_manifests",
         "deep_analysis_mission_file_links",
         "knowledge_spaces",
-        "knowledge_revisions",
-        "knowledge_sources",
-        "knowledge_source_revisions",
-        "knowledge_evidence_segments",
-        "knowledge_ingestion_jobs",
-        "knowledge_entities",
-        "knowledge_statements",
-        "knowledge_statement_evidence",
-        "knowledge_pages",
-        "knowledge_page_revisions",
-        "knowledge_project_bindings",
-        "knowledge_entity_fts",
-        "knowledge_statement_fts",
-        "knowledge_source_fts",
-        "knowledge_evidence_fts",
+        "knowledge_documents",
+        "knowledge_tags",
+        "knowledge_tag_aliases",
+        "knowledge_document_tags",
     } <= tables
     assert {"concept_revision", "concept_hash"} <= project_columns
     assert {
@@ -145,8 +131,17 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
     assert "creator_user_id" in extension_columns
     assert "is_liked" in conversation_columns
     assert "surface" in conversation_columns
-    assert knowledge_fts_trigger_count == 12
-    assert revision == "0048"
+    assert "actual_cost_microusd" in workflow_node_columns
+    assert "estimated_cost_microusd" not in workflow_node_columns
+    assert knowledge_fts_trigger_count == 0
+    assert {"is_favorite", "is_liked", "last_export_requested_at"} <= {
+        column["name"] for column in inspector.get_columns("deep_analysis_missions")
+    }
+    assert "project_ids_json" in {
+        column["name"] for column in inspector.get_columns("knowledge_spaces")
+    }
+    assert "conversation_id" in workflow_node_columns
+    assert revision == "0055"
 
 
 def test_knowledge_fts_migration_0048_round_trip(tmp_path: Path) -> None:
@@ -182,69 +177,45 @@ def test_knowledge_fts_migration_0048_round_trip(tmp_path: Path) -> None:
     assert revision == "0047"
 
 
-def test_knowledge_wiki_migration_backfills_existing_personal_entities(
+def test_deep_analysis_node_estimated_cost_migration_0049_round_trip(
     tmp_path: Path,
 ) -> None:
-    database = tmp_path / "knowledge-wiki-backfill.db"
+    database = tmp_path / "deep-analysis-node-cost-round-trip.db"
     database_url = f"sqlite:///{database.as_posix()}"
-    upgrade_database(database_url, "0045")
+    upgrade_database(database_url, "0049")
 
     engine = create_engine(database_url)
     try:
-        with Session(engine) as db:
-            organization = Organization(slug="wiki-backfill", name="Wiki Backfill")
-            db.add(organization)
-            db.flush()
-            user = User(
-                organization_id=organization.id,
-                login_name="wiki",
-                login_domain="example.com",
-                login_id="wiki@example.com",
-                display_name="Wiki User",
-                password_hash="test-only",
-            )
-            db.add(user)
-            db.flush()
-            space = KnowledgeSpace(
-                organization_id=organization.id,
-                owner_user_id=user.id,
-                name="철강 기술",
-            )
-            db.add(space)
-            db.flush()
-            entity = KnowledgeEntity(
-                space_id=space.id,
-                entity_type="concept",
-                canonical_name="수소환원제철",
-                normalized_key="수소환원제철",
-                description="수소를 환원제로 사용하는 제철 기술",
-            )
-            db.add(entity)
-            db.commit()
-            entity_id = entity.id
+        columns = {
+            column["name"]
+            for column in inspect(engine).get_columns("deep_analysis_workflow_nodes")
+        }
     finally:
         engine.dispose()
+    assert "estimated_cost_microusd" not in columns
 
-    upgrade_database(database_url, "0046")
+    config = Config(str(SERVER_ROOT / "alembic.ini"))
+    config.attributes["database_url"] = database_url
+    command.downgrade(config, "0048")
 
     engine = create_engine(database_url)
     try:
-        with Session(engine) as db:
-            page = db.scalar(select(KnowledgePage).where(KnowledgePage.entity_id == entity_id))
-            assert page is not None
-            revision = db.get(KnowledgePageRevision, page.current_revision_id)
-            assert revision is not None
-            assert revision.revision_number == 1
-            assert "수소를 환원제로 사용하는 제철 기술" in revision.markdown_body
-            assert revision.manual_sections_json == {"markdown": ""}
+        columns = {
+            column["name"]
+            for column in inspect(engine).get_columns("deep_analysis_workflow_nodes")
+        }
+        with engine.connect() as connection:
+            revision = MigrationContext.configure(connection).get_current_revision()
     finally:
         engine.dispose()
+    assert "estimated_cost_microusd" in columns
+    assert revision == "0048"
 
 
 def test_structured_plan_migration_round_trip(tmp_path: Path) -> None:
     database = tmp_path / "round-trip.db"
     database_url = f"sqlite:///{database.as_posix()}"
-    upgrade_database(database_url)
+    upgrade_database(database_url, "0051")
 
     config = Config(str(SERVER_ROOT / "alembic.ini"))
     config.attributes["database_url"] = database_url
@@ -260,13 +231,13 @@ def test_structured_plan_migration_round_trip(tmp_path: Path) -> None:
     finally:
         engine.dispose()
 
-    command.upgrade(config, "head")
+    command.upgrade(config, "0051")
     engine = create_engine(database_url)
     try:
         assert {"plans", "plan_steps"} <= set(inspect(engine).get_table_names())
         with engine.connect() as connection:
             assert (
-                MigrationContext.configure(connection).get_current_revision() == "0048"
+                MigrationContext.configure(connection).get_current_revision() == "0051"
             )
     finally:
         engine.dispose()
@@ -277,7 +248,7 @@ def test_context_compaction_memory_learning_migration_round_trip(
 ) -> None:
     database = tmp_path / "context-memory-round-trip.db"
     database_url = f"sqlite:///{database.as_posix()}"
-    upgrade_database(database_url)
+    upgrade_database(database_url, "0051")
 
     engine = create_engine(database_url)
     try:
@@ -306,7 +277,7 @@ def test_context_compaction_memory_learning_migration_round_trip(
     finally:
         engine.dispose()
 
-    command.upgrade(config, "head")
+    command.upgrade(config, "0051")
     engine = create_engine(database_url)
     try:
         inspector = inspect(engine)
@@ -316,7 +287,7 @@ def test_context_compaction_memory_learning_migration_round_trip(
         }
         with engine.connect() as connection:
             assert (
-                MigrationContext.configure(connection).get_current_revision() == "0048"
+                MigrationContext.configure(connection).get_current_revision() == "0051"
             )
     finally:
         engine.dispose()
@@ -348,7 +319,7 @@ def test_context_migration_adopts_legacy_create_all_table(tmp_path: Path) -> Non
         }
         with engine.connect() as connection:
             assert (
-                MigrationContext.configure(connection).get_current_revision() == "0048"
+                MigrationContext.configure(connection).get_current_revision() == "0055"
             )
     finally:
         engine.dispose()
@@ -378,7 +349,7 @@ def test_recent_migrations_adopt_tables_precreated_by_runtime_schema(
     try:
         with engine.connect() as connection:
             revision = MigrationContext.configure(connection).get_current_revision()
-        assert revision == "0048"
+        assert revision == "0055"
     finally:
         engine.dispose()
 

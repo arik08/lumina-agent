@@ -3,6 +3,7 @@ import {
   ArrowDown,
   ArrowLeft,
   Bot,
+  BookPlus,
   Brain,
   Check,
   CheckCircle2,
@@ -240,6 +241,17 @@ export function cumulativeSessionUsageByTurnSet(
     if (cumulativeUsage) usageByTurnSetId[turnSet.id] = cumulativeUsage;
   }
   return usageByTurnSetId;
+}
+
+export function sessionUsageRevision(
+  turnSets: TurnSet[],
+  snapshots: Record<string, RunSnapshot>,
+) {
+  return turnSets.map((turnSet) => {
+    const finalAssistantMessage = turnSet.messages.filter((message) => message.role === "assistant").at(-1);
+    const snapshot = turnSet.runId ? snapshots[turnSet.runId] : undefined;
+    return `${turnSet.id}:${JSON.stringify(finalAssistantMessage?.metadata?.usage ?? snapshot?.usage ?? null)}`;
+  }).join("|");
 }
 
 type UsageRow = {
@@ -828,7 +840,6 @@ function RunActivityTimeline({
   openCalls,
   onToggleCall,
   onCopy,
-  onVisibleGrowth,
   clarificationMode,
   inputBusy,
   onSubmitUserInput,
@@ -849,7 +860,6 @@ function RunActivityTimeline({
   openCalls: Set<string>;
   onToggleCall: (id: string) => void;
   onCopy: (execution: ToolExecution) => void;
-  onVisibleGrowth?: () => void;
   clarificationMode: ClarificationMode;
   inputBusy: boolean;
   onSubmitUserInput: (
@@ -869,7 +879,6 @@ function RunActivityTimeline({
   const settleTimers = useRef<Map<string, number>>(new Map());
   const collapseTimers = useRef<Map<string, number>>(new Map());
   const visibleActivities = useStaggeredRunActivities(activities, timelineRunning);
-  const latestVisibleActivityId = visibleActivities.at(-1)?.id ?? "";
   const activityGroups = visibleActivities.reduce<RunActivity[][]>((groups, activity) => {
     if (activity.type === "progress_summary" || activity.type === "skill" || activity.type === "input_request" || groups.length === 0) groups.push([]);
     groups.at(-1)?.push(activity);
@@ -991,10 +1000,6 @@ function RunActivityTimeline({
     settleTimers.current.forEach((timer) => window.clearTimeout(timer));
     collapseTimers.current.forEach((timer) => window.clearTimeout(timer));
   }, []);
-
-  useEffect(() => {
-    if (timelineRunning && latestVisibleActivityId) onVisibleGrowth?.();
-  }, [latestVisibleActivityId, onVisibleGrowth, timelineRunning]);
 
   return (
     <section className="run-activity-timeline" aria-label="실행 과정">
@@ -1383,7 +1388,8 @@ function remarkStreamingLeadingEdge() {
 
 function splitStreamingMarkdown(text: string) {
   const source = text.replace(/\r\n/g, "\n");
-  let stableBoundary = 0;
+  const stableBlocks: string[] = [];
+  let blockStart = 0;
   let position = 0;
   let inFence = false;
   let fenceMarker = "";
@@ -1400,14 +1406,18 @@ function splitStreamingMarkdown(text: string) {
         fenceMarker = marker;
       } else if (marker[0] === fenceMarker[0] && marker.length >= fenceMarker.length) {
         inFence = false;
-        stableBoundary = lineEnd;
+        const block = source.slice(blockStart, lineEnd).trimEnd();
+        if (block.trim()) stableBlocks.push(block);
+        blockStart = lineEnd;
       }
     } else if (!inFence && line.trim() === "") {
-      stableBoundary = lineEnd;
+      const block = source.slice(blockStart, lineEnd).trimEnd();
+      if (block.trim()) stableBlocks.push(block);
+      blockStart = lineEnd;
     }
     position = lineEnd;
   }
-  return { prefix: source.slice(0, stableBoundary).trimEnd(), liveTail: source.slice(stableBoundary) };
+  return { stableBlocks, liveTail: source.slice(blockStart) };
 }
 
 function markdownTableCells(line: string) {
@@ -1540,15 +1550,22 @@ export function MarkdownResponse({
   settling?: boolean;
   artifact?: boolean;
 }) {
-  const targets = useMemo(() => citationTargets(text, sources, citations), [citations, sources, text]);
-  const streamingParts = useMemo(() => streaming ? splitStreamingMarkdown(text) : { prefix: text, liveTail: "" }, [streaming, text]);
+  const streamingParts = useMemo(
+    () => streaming ? splitStreamingMarkdown(text) : { stableBlocks: [text], liveTail: "" },
+    [streaming, text],
+  );
   const pendingKind = useMemo(() => streaming ? pendingStreamingKind(streamingParts.liveTail) : null, [streaming, streamingParts.liveTail]);
-  const prefixText = useMemo(() => normalizeKoreanMarkdownEmphasis(streamingParts.prefix), [streamingParts.prefix]);
+  const stableBlocks = useMemo(
+    () => streamingParts.stableBlocks.map(normalizeKoreanMarkdownEmphasis),
+    [streamingParts.stableBlocks],
+  );
   const tailText = useMemo(() => normalizeKoreanMarkdownEmphasis(streamingParts.liveTail), [streamingParts.liveTail]);
 
   return (
     <div className={`markdown-response ${streaming ? "streaming-text" : ""} ${settling ? "streaming-text-settling" : ""} ${artifact ? "artifact-markdown-content" : ""}`}>
-      {prefixText && <MemoizedMarkdownChunk text={prefixText} sources={sources} citations={citations} leadingEdge={false} />}
+      {stableBlocks.map((block, index) => (
+        <MemoizedMarkdownChunk key={index} text={block} sources={sources} citations={citations} leadingEdge={false} />
+      ))}
       {pendingKind
         ? <StreamingBlockPending kind={pendingKind} />
         : tailText && <MemoizedMarkdownChunk text={tailText} sources={sources} citations={citations} leadingEdge />}
@@ -1556,7 +1573,7 @@ export function MarkdownResponse({
   );
 }
 
-export function AssistantTurn({
+export const AssistantTurn = memo(function AssistantTurn({
   turnSet,
   snapshot,
   sessionUsage,
@@ -1568,7 +1585,6 @@ export function AssistantTurn({
   onBranch,
   onShare,
   onToast,
-  onVisibleGrowth,
   clarificationMode,
   inputBusy,
   onSubmitUserInput,
@@ -1585,7 +1601,6 @@ export function AssistantTurn({
   onBranch: (anchorMessageId: string) => Promise<void>;
   onShare: (anchorMessageId: string | null) => void;
   onToast: (message: string) => void;
-  onVisibleGrowth: () => void;
   clarificationMode: ClarificationMode;
   inputBusy: boolean;
   onSubmitUserInput: (
@@ -1639,8 +1654,11 @@ export function AssistantTurn({
   const copyableAnswerText = sanitizedAssistantText || terminalReason;
   const streaming = !finalMessage && Boolean(snapshot?.assistantDraft);
   const { visibleText: displayedText, revealing, settling } = useStreamingText(sanitizedAssistantText, streaming);
+  const terminalPresentationReady = terminal && displayedText === sanitizedAssistantText;
   const [reportOpen, setReportOpen] = useState(false);
   const [markdownSaving, setMarkdownSaving] = useState(false);
+  const [knowledgeSaving, setKnowledgeSaving] = useState(false);
+  const [knowledgeSaved, setKnowledgeSaved] = useState(false);
   const [branching, setBranching] = useState(false);
   const [reportText, setReportText] = useState("");
   const [reportSubmitting, setReportSubmitting] = useState(false);
@@ -1686,6 +1704,7 @@ export function AssistantTurn({
 
   useEffect(() => {
     setAnswerRating(null);
+    setKnowledgeSaved(false);
   }, [finalMessage?.id]);
 
   useEffect(() => {
@@ -1796,10 +1815,6 @@ export function AssistantTurn({
     return () => window.removeEventListener("popstate", handlePopState);
   }, [turnSet.id]);
 
-  useEffect(() => {
-    if (revealing && displayedText) onVisibleGrowth();
-  }, [displayedText, onVisibleGrowth, revealing]);
-
   const copyAnswer = async () => {
     if (!copyableAnswerText) {
       onToast("복사할 내용이 없습니다.");
@@ -1825,6 +1840,18 @@ export function AssistantTurn({
       onToast("답변을 Markdown Artifact로 저장하지 못했습니다.");
     } finally {
       setMarkdownSaving(false);
+    }
+  };
+  const saveAnswerToKnowledge = async () => {
+    if (!finalMessage || knowledgeSaving || knowledgeSaved) return;
+    setKnowledgeSaving(true);
+    try {
+      await api.knowledge.saveMessage(finalMessage.id);
+      setKnowledgeSaved(true);
+    } catch {
+      onToast("지식 그래프에 답변을 저장하지 못했습니다.");
+    } finally {
+      setKnowledgeSaving(false);
     }
   };
   const branchAnswer = async () => {
@@ -1885,7 +1912,7 @@ export function AssistantTurn({
     artifactUsage?.modelOutputTokens ?? 0,
   );
   return (
-    <div className="turn-set" data-run-id={turnSet.runId ?? undefined}>
+    <div className={`turn-set ${terminalPresentationReady ? "is-terminal" : "is-active"}`} data-run-id={turnSet.runId ?? undefined}>
       {userMessages.map((message) => (
         <div className="user-message-group" data-question-anchor={message.id} key={message.id}>
           {message.attachments?.length > 0 && (
@@ -1958,7 +1985,6 @@ export function AssistantTurn({
                 openCalls={openCalls}
                 onCopy={onCopyTool}
                 onToggleCall={onToggleCall}
-                onVisibleGrowth={onVisibleGrowth}
                 clarificationMode={clarificationMode}
                 inputBusy={inputBusy}
                 onSubmitUserInput={onSubmitUserInput}
@@ -1973,7 +1999,7 @@ export function AssistantTurn({
         <section className="assistant-turn">
           <div className="assistant-content">
             {assistantText && <MarkdownResponse text={displayedText} sources={sources} citations={citations} streaming={revealing} settling={settling} />}
-            {terminal && researchVerification === "unverified" && (
+            {terminalPresentationReady && researchVerification === "unverified" && (
               <div className="research-verification-warning" role="status">
                 최신성 또는 중요도가 높은 정보에 필요한 웹 본문을 확인하지 못했습니다. 답변의 관련 내용을 미검증 정보로 봐 주세요.
               </div>
@@ -2008,7 +2034,7 @@ export function AssistantTurn({
                 <span className="artifact-result-action">문서 열기 <ChevronRight size={14} /></span>
               </button>
             ))}
-            {terminal && (
+            {terminalPresentationReady && (
               <div className="final-answer">
                 <div className="final-answer-meta">
                   <div className={`final-answer-status ${status !== "completed" ? "is-error" : ""}`}>
@@ -2023,10 +2049,11 @@ export function AssistantTurn({
                       model={snapshot?.execution.runtimeModelId}
                       provider={snapshot?.execution.providerId}
                     />
-                    <button className="tooltip-control" type="button" aria-label="답변 복사" data-tooltip="복사" disabled={!copyableAnswerText} onClick={() => void copyAnswer()}><Copy size={16} /></button>
-                    <button className="tooltip-control" type="button" aria-label="답변 저장" data-tooltip="저장" disabled={!finalMessage || !sanitizedAssistantText || markdownSaving} onClick={() => void saveAnswerAsMarkdown()}>{markdownSaving ? <LoaderCircle className="is-running" size={16} /> : <Download size={16} />}</button>
+                    <button className="tooltip-control" type="button" aria-label="원문 복사" data-tooltip="원문 복사" disabled={!copyableAnswerText} onClick={() => void copyAnswer()}><Copy size={16} /></button>
+                    <button className="tooltip-control" type="button" aria-label="라이브러리 저장" data-tooltip="라이브러리 저장" disabled={!finalMessage || !sanitizedAssistantText || markdownSaving} onClick={() => void saveAnswerAsMarkdown()}>{markdownSaving ? <LoaderCircle className="is-running" size={16} /> : <Download size={16} />}</button>
+                    <button className={`tooltip-control knowledge-save-control ${knowledgeSaving ? "is-saving" : knowledgeSaved ? "is-saved" : ""}`} type="button" aria-label="지식 그래프 등록" data-tooltip="지식 그래프 등록" aria-pressed={knowledgeSaved} disabled={!finalMessage || !sanitizedAssistantText || knowledgeSaving || knowledgeSaved} onClick={() => void saveAnswerToKnowledge()}>{knowledgeSaving ? <LoaderCircle className="is-running" size={16} /> : <BookPlus size={16} />}</button>
                     <button className="tooltip-control" type="button" aria-label="이 답변까지 새 채팅으로 분기" data-tooltip="여기서 분기" disabled={!finalMessage || branching} onClick={() => void branchAnswer()}>{branching ? <LoaderCircle className="is-running" size={16} /> : <BranchFromHereIcon size={16} />}</button>
-                    <button className="tooltip-control" type="button" aria-label="답변 공유" data-tooltip="공유" disabled={!assistantText} onClick={() => onShare(finalMessage?.id ?? null)}><ShareActionIcon size={16} /></button>
+                    <button className="tooltip-control" type="button" aria-label="링크 공유" data-tooltip="링크 공유" disabled={!assistantText} onClick={() => onShare(finalMessage?.id ?? null)}><ShareActionIcon size={16} /></button>
                     <button className={`tooltip-control answer-rating-control ${answerRating === "like" ? "is-like" : ""}`} type="button" aria-label="좋아요" aria-pressed={answerRating === "like"} data-tooltip="좋아요" disabled={!finalMessage || ratingSubmitting} onClick={() => void rateAnswer("like")}><ThumbsUp size={16} /></button>
                     <button className={`tooltip-control answer-rating-control ${answerRating === "dislike" ? "is-dislike" : ""}`} type="button" aria-label="싫어요" aria-pressed={answerRating === "dislike"} data-tooltip="싫어요" disabled={!finalMessage || ratingSubmitting} onClick={() => void rateAnswer("dislike")}><ThumbsDown size={16} /></button>
                     <button className={`tooltip-control ${reportOpen ? "is-active" : ""}`} type="button" aria-label="의견 게시" aria-expanded={reportOpen} data-tooltip="의견 게시" disabled={!finalMessage} onClick={() => { setReportOpen((open) => !open); setReportError(null); }}><MessageSquarePlus size={16} /></button>
@@ -2133,4 +2160,4 @@ export function AssistantTurn({
       )}
     </div>
   );
-}
+});

@@ -5,162 +5,44 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.orm import Session
 
+from ...agent.executor import local_run_executor
 from ...audit import record_audit
 from ...authorization import require_project
 from ...db import get_db
-from ...config import Settings, get_settings
-from ...knowledge.context import (
-    build_project_knowledge_context_snapshot,
-    knowledge_context_api_payload,
-)
-from ...knowledge.executor import knowledge_ingestion_executor
-from ...knowledge.schemas import (
-    KnowledgeAutoCaptureUpdate,
-    KnowledgeContextPackCreate,
-    KnowledgeEntityCreate,
-    KnowledgePageUpdate,
-    KnowledgeProjectBindingCreate,
-    KnowledgeProjectBindingUpdate,
-    KnowledgeSourceCreate,
-    KnowledgeSpaceCreate,
-    KnowledgeSpaceUpdate,
-    KnowledgeReviewDecision,
-    KnowledgeSearchRequest,
-    KnowledgeStatementCreate,
-)
+from ...knowledge.schemas import KnowledgeSpaceCreate, KnowledgeSpaceUpdate
 from ...knowledge.service import (
-    archive_knowledge_space,
-    create_knowledge_project_binding,
-    create_knowledge_entity,
-    create_knowledge_ingestion_job,
-    create_knowledge_source,
     create_knowledge_space,
-    create_knowledge_statement,
-    decide_knowledge_statement,
-    delete_knowledge_project_binding,
-    entity_payload,
-    ingestion_job_payload,
-    knowledge_auto_capture_payload,
-    knowledge_page_payload,
-    knowledge_page_revision_payload,
-    knowledge_project_binding_payload,
-    knowledge_revision_payload,
-    knowledge_neighborhood,
-    list_knowledge_entities,
-    list_knowledge_ingestion_jobs,
-    list_knowledge_page_revisions,
-    list_knowledge_pages,
-    list_knowledge_project_bindings,
-    list_knowledge_revisions,
-    list_knowledge_sources,
+    document_list_payload,
+    document_payload,
+    knowledge_graph_payload,
+    list_knowledge_documents,
     list_knowledge_spaces,
-    list_knowledge_statements,
-    require_knowledge_space,
-    search_knowledge,
-    source_payload,
+    require_knowledge_document,
+    save_message_as_knowledge_document,
     space_payload,
-    statement_payload,
     update_knowledge_space,
-    update_knowledge_auto_capture,
-    update_knowledge_page,
-    update_knowledge_project_binding,
 )
 from ...models import User
 from ..dependencies import AuthContext, get_current_user, require_csrf
-from ..errors import ApiProblem
 
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
 
-def _request_id(request: Request) -> str | None:
-    return getattr(request.state, "request_id", None)
-
-
-@router.post("/context-packs")
-def post_knowledge_context_pack(
-    payload: KnowledgeContextPackCreate,
-    context: AuthContext = Depends(require_csrf),
-    db: Session = Depends(get_db),
-) -> dict[str, Any]:
-    project = require_project(db, context.user, payload.project_id)
-    snapshot = build_project_knowledge_context_snapshot(
-        db,
-        project=project,
-        query=payload.query,
-        max_statements=payload.max_statements,
-        character_budget=payload.character_budget,
-    )
-    if snapshot is None:
-        raise ApiProblem(
-            404,
-            "knowledge_context_unavailable",
-            "Project에 연결된 Knowledge Revision이 없습니다.",
-        )
-    return knowledge_context_api_payload(snapshot)
-
-
-@router.post("/search")
-def post_knowledge_search(
-    payload: KnowledgeSearchRequest,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict[str, Any]:
-    return search_knowledge(
-        db,
-        user,
-        space_id=payload.space_id,
-        query=payload.query,
-        scope=payload.scope,
-        limit=payload.limit,
-    )
-
-
-@router.get("/auto-capture")
-def get_knowledge_auto_capture(
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict[str, Any]:
-    return knowledge_auto_capture_payload(db, user)
-
-
-@router.patch("/auto-capture")
-def patch_knowledge_auto_capture(
-    payload: KnowledgeAutoCaptureUpdate,
-    request: Request,
-    context: AuthContext = Depends(require_csrf),
-    db: Session = Depends(get_db),
-) -> dict[str, Any]:
-    updated = update_knowledge_auto_capture(db, context.user, payload)
-    record_audit(
-        db,
-        action="knowledge_auto_capture_updated",
-        target_type="knowledge_space",
-        target_id=updated.get("spaceId"),
-        result="success",
-        actor=context.user,
-        request_id=_request_id(request),
-        metadata={"enabled": updated["enabled"], "mode": updated["mode"]},
-    )
-    db.commit()
-    return updated
-
-
 @router.get("/spaces")
 def get_knowledge_spaces(
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> list[dict[str, Any]]:
-    return [space_payload(db, user, space) for space in list_knowledge_spaces(db, user)]
+    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> list[dict[str, object]]:
+    return [space_payload(item) for item in list_knowledge_spaces(db, user)]
 
 
-@router.post("/spaces", status_code=201)
+@router.post("/spaces", status_code=status.HTTP_201_CREATED)
 def post_knowledge_space(
     payload: KnowledgeSpaceCreate,
     request: Request,
     context: AuthContext = Depends(require_csrf),
     db: Session = Depends(get_db),
-) -> dict[str, Any]:
+) -> dict[str, object]:
     space = create_knowledge_space(db, context.user, payload)
     record_audit(
         db,
@@ -169,19 +51,11 @@ def post_knowledge_space(
         target_id=space.id,
         result="success",
         actor=context.user,
-        request_id=_request_id(request),
+        request_id=getattr(request.state, "request_id", None),
     )
     db.commit()
-    return space_payload(db, context.user, space)
-
-
-@router.get("/spaces/{space_id}")
-def get_knowledge_space(
-    space_id: str,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict[str, Any]:
-    return space_payload(db, user, require_knowledge_space(db, user, space_id))
+    db.refresh(space)
+    return space_payload(space)
 
 
 @router.patch("/spaces/{space_id}")
@@ -191,7 +65,7 @@ def patch_knowledge_space(
     request: Request,
     context: AuthContext = Depends(require_csrf),
     db: Session = Depends(get_db),
-) -> dict[str, Any]:
+) -> dict[str, object]:
     space = update_knowledge_space(db, context.user, space_id, payload)
     record_audit(
         db,
@@ -200,419 +74,72 @@ def patch_knowledge_space(
         target_id=space.id,
         result="success",
         actor=context.user,
-        request_id=_request_id(request),
-        metadata={"settings_revision": space.settings_revision},
+        request_id=getattr(request.state, "request_id", None),
     )
     db.commit()
-    return space_payload(db, context.user, space)
+    db.refresh(space)
+    return space_payload(space)
 
 
-@router.delete("/spaces/{space_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_knowledge_space(
-    space_id: str,
-    request: Request,
-    expected_revision: int = Query(alias="expectedRevision", ge=1),
-    context: AuthContext = Depends(require_csrf),
+@router.get("/documents")
+def get_knowledge_documents(
+    space_id: str | None = Query(default=None, alias="spaceId"),
+    project_id: str | None = Query(default=None, alias="projectId"),
+    query: str = Query(default="", max_length=500),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> Response:
-    space = archive_knowledge_space(
-        db,
-        context.user,
-        space_id,
-        expected_revision=expected_revision,
+) -> list[dict[str, object]]:
+    if project_id:
+        require_project(db, user, project_id)
+    documents = list_knowledge_documents(
+        db, user, space_id=space_id, project_id=project_id, query=query
     )
-    record_audit(
-        db,
-        action="knowledge_space_archived",
-        target_type="knowledge_space",
-        target_id=space.id,
-        result="success",
-        actor=context.user,
-        request_id=_request_id(request),
-    )
-    db.commit()
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return document_list_payload(db, documents)
 
 
-@router.post("/spaces/{space_id}/sources", status_code=201)
-def post_knowledge_source(
-    space_id: str,
-    payload: KnowledgeSourceCreate,
+@router.get("/documents/{document_id}")
+def get_knowledge_document(
+    document_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    return document_payload(db, require_knowledge_document(db, user, document_id))
+
+
+@router.post("/documents/from-message/{message_id}")
+async def post_knowledge_document_from_message(
+    message_id: str,
     request: Request,
     response: Response,
     context: AuthContext = Depends(require_csrf),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    source, revision, evidence, created = create_knowledge_source(
-        db, context.user, space_id, payload
-    )
-    if not created:
-        response.status_code = 200
-    record_audit(
-        db,
-        action="knowledge_source_created"
-        if created
-        else "knowledge_source_deduplicated",
-        target_type="knowledge_source",
-        target_id=source.id,
-        result="success",
-        actor=context.user,
-        request_id=_request_id(request),
-        metadata={"revision_id": revision.id, "evidence_count": len(evidence)},
-    )
-    db.commit()
-    return source_payload(source, revision, evidence)
-
-
-@router.get("/spaces/{space_id}/sources")
-def get_knowledge_sources(
-    space_id: str,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> list[dict[str, Any]]:
-    return [
-        source_payload(source, revision, evidence)
-        for source, revision, evidence in list_knowledge_sources(db, user, space_id)
-    ]
-
-
-@router.post(
-    "/spaces/{space_id}/sources/{source_id}/ingestions",
-    status_code=status.HTTP_202_ACCEPTED,
-)
-def post_knowledge_ingestion(
-    space_id: str,
-    source_id: str,
-    request: Request,
-    response: Response,
-    context: AuthContext = Depends(require_csrf),
-    db: Session = Depends(get_db),
-    settings: Settings = Depends(get_settings),
-) -> dict[str, Any]:
-    job, created = create_knowledge_ingestion_job(
+    document, created = await save_message_as_knowledge_document(
         db,
         context.user,
-        space_id,
-        source_id,
-        settings=settings,
-    )
-    if not created:
-        response.status_code = status.HTTP_200_OK
-    record_audit(
-        db,
-        action=(
-            "knowledge_ingestion_queued" if created else "knowledge_ingestion_reused"
-        ),
-        target_type="knowledge_ingestion_job",
-        target_id=job.id,
-        result="success",
-        actor=context.user,
-        request_id=_request_id(request),
-        metadata={
-            "source_id": source_id,
-            "provider_id": job.provider_id,
-            "model_key": job.model_key,
-        },
-    )
-    db.commit()
-    if created:
-        knowledge_ingestion_executor.enqueue(job.id)
-    return ingestion_job_payload(job)
-
-
-@router.get("/spaces/{space_id}/ingestions")
-def get_knowledge_ingestions(
-    space_id: str,
-    source_id: str | None = Query(default=None, alias="sourceId"),
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> list[dict[str, Any]]:
-    return [
-        ingestion_job_payload(job)
-        for job in list_knowledge_ingestion_jobs(
-            db, user, space_id, source_id=source_id
-        )
-    ]
-
-
-@router.get("/spaces/{space_id}/pages")
-def get_knowledge_pages(
-    space_id: str,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> list[dict[str, Any]]:
-    return [
-        knowledge_page_payload(page, revision, revision_count)
-        for page, revision, revision_count in list_knowledge_pages(
-            db, user, space_id
-        )
-    ]
-
-
-@router.get("/spaces/{space_id}/revisions")
-def get_knowledge_revisions(
-    space_id: str,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> list[dict[str, Any]]:
-    return [
-        knowledge_revision_payload(revision)
-        for revision in list_knowledge_revisions(db, user, space_id)
-    ]
-
-
-@router.get("/spaces/{space_id}/project-bindings")
-def get_knowledge_project_bindings(
-    space_id: str,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> list[dict[str, Any]]:
-    return [
-        knowledge_project_binding_payload(db, binding)
-        for binding in list_knowledge_project_bindings(db, user, space_id)
-    ]
-
-
-@router.post("/spaces/{space_id}/project-bindings", status_code=201)
-def post_knowledge_project_binding(
-    space_id: str,
-    payload: KnowledgeProjectBindingCreate,
-    request: Request,
-    context: AuthContext = Depends(require_csrf),
-    db: Session = Depends(get_db),
-) -> dict[str, Any]:
-    binding = create_knowledge_project_binding(db, context.user, space_id, payload)
-    record_audit(
-        db,
-        action="knowledge_project_binding_created",
-        target_type="knowledge_project_binding",
-        target_id=binding.id,
-        result="success",
-        actor=context.user,
-        request_id=_request_id(request),
-        metadata={
-            "project_id": binding.project_id,
-            "space_id": binding.space_id,
-            "knowledge_revision_id": binding.knowledge_revision_id,
-            "permission": binding.permission,
-        },
-    )
-    db.commit()
-    return knowledge_project_binding_payload(db, binding)
-
-
-@router.patch("/project-bindings/{binding_id}")
-def patch_knowledge_project_binding(
-    binding_id: str,
-    payload: KnowledgeProjectBindingUpdate,
-    request: Request,
-    context: AuthContext = Depends(require_csrf),
-    db: Session = Depends(get_db),
-) -> dict[str, Any]:
-    binding = update_knowledge_project_binding(
-        db, context.user, binding_id, payload
+        message_id,
+        provider_factory=local_run_executor.provider_for_probe,
     )
     record_audit(
         db,
-        action="knowledge_project_binding_updated",
-        target_type="knowledge_project_binding",
-        target_id=binding.id,
+        action="knowledge_document_saved" if created else "knowledge_document_reused",
+        target_type="knowledge_document",
+        target_id=document.id,
         result="success",
         actor=context.user,
-        request_id=_request_id(request),
-        metadata={
-            "project_id": binding.project_id,
-            "space_id": binding.space_id,
-            "knowledge_revision_id": binding.knowledge_revision_id,
-            "binding_revision": binding.binding_revision,
-        },
+        request_id=getattr(request.state, "request_id", None),
+        metadata={"message_id": message_id},
     )
     db.commit()
-    return knowledge_project_binding_payload(db, binding)
+    db.refresh(document)
+    response.status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+    return {**document_payload(db, document), "created": created}
 
 
-@router.delete("/project-bindings/{binding_id}", status_code=204)
-def delete_knowledge_project_binding_route(
-    binding_id: str,
-    request: Request,
-    expected_revision: int = Query(ge=1, alias="expectedRevision"),
-    context: AuthContext = Depends(require_csrf),
-    db: Session = Depends(get_db),
-) -> Response:
-    binding = delete_knowledge_project_binding(
-        db,
-        context.user,
-        binding_id,
-        expected_revision=expected_revision,
-    )
-    record_audit(
-        db,
-        action="knowledge_project_binding_deleted",
-        target_type="knowledge_project_binding",
-        target_id=binding.id,
-        result="success",
-        actor=context.user,
-        request_id=_request_id(request),
-        metadata={
-            "project_id": binding.project_id,
-            "space_id": binding.space_id,
-            "knowledge_revision_id": binding.knowledge_revision_id,
-        },
-    )
-    db.commit()
-    return Response(status_code=204)
-
-
-@router.get("/pages/{page_id}/revisions")
-def get_knowledge_page_revisions(
-    page_id: str,
+@router.get("/graph")
+def get_knowledge_graph(
+    space_id: str | None = Query(default=None, alias="spaceId"),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> list[dict[str, Any]]:
-    _page, revisions = list_knowledge_page_revisions(db, user, page_id)
-    return [knowledge_page_revision_payload(revision) for revision in revisions]
-
-
-@router.patch("/pages/{page_id}")
-def patch_knowledge_page(
-    page_id: str,
-    payload: KnowledgePageUpdate,
-    request: Request,
-    context: AuthContext = Depends(require_csrf),
-    db: Session = Depends(get_db),
-) -> dict[str, Any]:
-    page, revision, revision_count = update_knowledge_page(
-        db, context.user, page_id, payload
-    )
-    record_audit(
-        db,
-        action="knowledge_page_updated",
-        target_type="knowledge_page",
-        target_id=page.id,
-        result="success",
-        actor=context.user,
-        request_id=_request_id(request),
-        metadata={"revision_number": revision.revision_number},
-    )
-    db.commit()
-    return knowledge_page_payload(page, revision, revision_count)
-
-
-@router.post("/spaces/{space_id}/entities", status_code=201)
-def post_knowledge_entity(
-    space_id: str,
-    payload: KnowledgeEntityCreate,
-    request: Request,
-    response: Response,
-    context: AuthContext = Depends(require_csrf),
-    db: Session = Depends(get_db),
-) -> dict[str, Any]:
-    entity, created = create_knowledge_entity(db, context.user, space_id, payload)
-    if not created:
-        response.status_code = 200
-    record_audit(
-        db,
-        action="knowledge_entity_created" if created else "knowledge_entity_reused",
-        target_type="knowledge_entity",
-        target_id=entity.id,
-        result="success",
-        actor=context.user,
-        request_id=_request_id(request),
-    )
-    db.commit()
-    return entity_payload(entity)
-
-
-@router.get("/spaces/{space_id}/entities")
-def get_knowledge_entities(
-    space_id: str,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> list[dict[str, Any]]:
-    return [
-        entity_payload(entity) for entity in list_knowledge_entities(db, user, space_id)
-    ]
-
-
-@router.get("/spaces/{space_id}/statements")
-def get_knowledge_statements(
-    space_id: str,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> list[dict[str, Any]]:
-    return [
-        statement_payload(db, statement)
-        for statement in list_knowledge_statements(db, user, space_id)
-    ]
-
-
-@router.post("/spaces/{space_id}/statements", status_code=201)
-def post_knowledge_statement(
-    space_id: str,
-    payload: KnowledgeStatementCreate,
-    request: Request,
-    context: AuthContext = Depends(require_csrf),
-    db: Session = Depends(get_db),
-) -> dict[str, Any]:
-    statement = create_knowledge_statement(db, context.user, space_id, payload)
-    record_audit(
-        db,
-        action="knowledge_statement_created",
-        target_type="knowledge_statement",
-        target_id=statement.id,
-        result="success",
-        actor=context.user,
-        request_id=_request_id(request),
-        metadata={
-            "revision_id": statement.revision_id,
-            "status": statement.status,
-        },
-    )
-    db.commit()
-    return statement_payload(db, statement)
-
-
-@router.post("/reviews/{statement_id}/decision")
-def post_knowledge_review_decision(
-    statement_id: str,
-    payload: KnowledgeReviewDecision,
-    request: Request,
-    context: AuthContext = Depends(require_csrf),
-    db: Session = Depends(get_db),
-) -> dict[str, Any]:
-    statement = decide_knowledge_statement(db, context.user, statement_id, payload)
-    record_audit(
-        db,
-        action="knowledge_statement_reviewed",
-        target_type="knowledge_statement",
-        target_id=statement.id,
-        result="success",
-        actor=context.user,
-        request_id=_request_id(request),
-        metadata={
-            "decision": statement.status,
-            "revision_id": statement.revision_id,
-            "supersedes_statement_id": statement.supersedes_statement_id,
-        },
-    )
-    db.commit()
-    return statement_payload(db, statement)
-
-
-@router.get("/entities/{entity_id}/neighborhood")
-def get_knowledge_neighborhood(
-    entity_id: str,
-    max_depth: int = Query(default=1, alias="maxDepth", ge=1, le=3),
-    max_nodes: int = Query(default=100, alias="maxNodes", ge=1, le=500),
-    max_edges: int = Query(default=200, alias="maxEdges", ge=1, le=1_000),
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict[str, Any]:
-    return knowledge_neighborhood(
-        db,
-        user,
-        entity_id,
-        max_depth=max_depth,
-        max_nodes=max_nodes,
-        max_edges=max_edges,
-    )
+) -> dict[str, object]:
+    return knowledge_graph_payload(db, user, space_id=space_id)

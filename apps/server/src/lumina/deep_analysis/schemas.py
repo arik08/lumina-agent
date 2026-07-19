@@ -13,34 +13,6 @@ class MissionCreate(ApiModel):
     objective: str = Field(default="", max_length=20_000)
     autonomy_mode: Literal["guided", "balanced", "autonomous"] = "balanced"
     budget_microusd: int | None = Field(default=None, ge=0)
-    pattern_version_id: str | None = None
-
-
-class MissionCharter(ApiModel):
-    purpose: str = Field(default="", max_length=20_000)
-    key_questions: list[str] = Field(default_factory=list, max_length=12)
-    deliverables: list[str] = Field(default_factory=list, max_length=12)
-    audience: str = Field(default="", max_length=500)
-    in_scope: list[str] = Field(default_factory=list, max_length=20)
-    out_of_scope: list[str] = Field(default_factory=list, max_length=20)
-    comparison_basis: str = Field(default="", max_length=2000)
-    quality_standards: list[str] = Field(default_factory=list, max_length=20)
-    confirmed: bool = False
-
-
-class CompletionContract(ApiModel):
-    required_sections: list[str] = Field(default_factory=list, max_length=12)
-    required_node_types: list[str] = Field(default_factory=list, max_length=12)
-    require_report: bool = True
-    require_no_failed_nodes: bool = True
-    require_no_stale_nodes: bool = True
-    minimum_evidence_coverage: float = Field(default=0.0, ge=0.0, le=1.0)
-    maximum_open_issues: int = Field(default=0, ge=0, le=1000)
-    maximum_unexplained_residual_percent: float | None = Field(
-        default=None, ge=0.0, le=100.0
-    )
-    requires_final_review: bool = False
-    allow_waiver: bool = True
 
 
 class MissionPatch(ApiModel):
@@ -49,8 +21,8 @@ class MissionPatch(ApiModel):
     objective: str | None = Field(default=None, max_length=20_000)
     autonomy_mode: Literal["guided", "balanced", "autonomous"] | None = None
     budget_microusd: int | None = Field(default=None, ge=0)
-    charter: MissionCharter | None = None
-    completion_contract: CompletionContract | None = None
+    is_favorite: bool | None = None
+    is_liked: bool | None = None
 
     @model_validator(mode="after")
     def require_change(self) -> "MissionPatch":
@@ -61,12 +33,16 @@ class MissionPatch(ApiModel):
                 self.objective,
                 self.autonomy_mode,
                 self.budget_microusd,
-                self.charter,
-                self.completion_contract,
+                self.is_favorite,
+                self.is_liked,
             )
         ):
             raise ValueError("at least one mission field is required")
         return self
+
+
+class MissionMove(ApiModel):
+    project_id: str
 
 
 class MissionStart(ApiModel):
@@ -91,8 +67,7 @@ class MissionQualityGate(ApiModel):
 
 
 class MissionExportCreate(ApiModel):
-    scope: Literal["latest", "report_evidence", "audit"] = "latest"
-    include_originals: bool = False
+    pass
 
 
 class MissionExportResponse(ApiModel):
@@ -176,6 +151,11 @@ class WorkflowDraftCreate(ApiModel):
     expected_revision: int = Field(ge=1)
 
 
+class WorkflowRegenerate(ApiModel):
+    expected_revision: int = Field(ge=1)
+    prompt: str = Field(min_length=1, max_length=20_000)
+
+
 class WorkflowDraftNode(ApiModel):
     node_key: str = Field(min_length=1, max_length=32)
     node_type: str = Field(min_length=1, max_length=40)
@@ -184,7 +164,6 @@ class WorkflowDraftNode(ApiModel):
     position_x: int = Field(ge=-100_000, le=100_000)
     position_y: int = Field(ge=-100_000, le=100_000)
     config: dict[str, Any] = Field(default_factory=dict)
-    estimated_cost_microusd: int = Field(default=0, ge=0)
 
 
 class WorkflowDraftEdge(ApiModel):
@@ -337,6 +316,7 @@ class WorkflowNodeResponse(ApiModel):
     position_x: int
     position_y: int
     config: dict[str, Any]
+    conversation_id: str | None
     run_id: str | None
     output_project_file_id: str | None
     output_logical_path: str | None
@@ -345,10 +325,10 @@ class WorkflowNodeResponse(ApiModel):
     generated_files: list[dict[str, Any]]
     run_history: list[dict[str, Any]]
     run_status: str | None
+    execution_prompt: str | None
     context_manifest: dict[str, Any] | None
     live_output: str
     error_message: str | None
-    estimated_cost_microusd: int
     actual_cost_microusd: int
     started_at: datetime | None
     finished_at: datetime | None
@@ -379,6 +359,8 @@ class MissionSummaryResponse(ApiModel):
     id: str
     project_id: str
     title: str
+    is_favorite: bool
+    is_liked: bool
     objective: str
     status: str
     start_mode: str
@@ -395,13 +377,6 @@ class MissionSummaryResponse(ApiModel):
 class MissionDetailResponse(MissionSummaryResponse):
     execution_available: bool
     event_cursor: int
-    charter: dict[str, Any]
-    completion_contract: dict[str, Any]
     source_manifest: list[dict[str, Any]]
-    decisions: list[DecisionResponse]
-    quality_gates: list[QualityGateResponse]
-    claims: list[ClaimResponse]
-    evidence: list[EvidenceResponse]
-    open_issues: list[OpenIssueResponse]
     files: list[MissionFileResponse]
     workflow: WorkflowRevisionResponse

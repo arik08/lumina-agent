@@ -28,10 +28,6 @@ from ..runs.service import create_run
 from ..runs.state import CANCELLED, COMPLETED, TERMINAL_STATUSES
 from ..storage import ManagedStorage
 from .models import (
-    DeepAnalysisClaim,
-    DeepAnalysisDecision,
-    DeepAnalysisDecisionResponse,
-    DeepAnalysisEvidenceReference,
     DeepAnalysisMission,
     DeepAnalysisWorkflowEdge,
     DeepAnalysisWorkflowNode,
@@ -43,19 +39,7 @@ from .context_manifest import (
     link_file,
     persist_context_manifest,
 )
-from .ledger import (
-    claim_context,
-    extract_analysis_ledger,
-    ledger_instruction,
-    persist_analysis_ledger,
-)
-from .planning import (
-    adaptive_decision_instruction,
-    apply_workflow_decision,
-    extract_workflow_decision,
-    next_runnable_node,
-)
-from .quality import evaluate_quality_gate
+from .planning import next_runnable_node
 
 
 @dataclass(frozen=True, slots=True)
@@ -409,97 +393,51 @@ def _stage_instruction(node: DeepAnalysisWorkflowNode) -> str:
 
 
 def _run_profile(node: DeepAnalysisWorkflowNode) -> tuple[str, str]:
-    if node.node_type == "scope":
-        return "standard", "brief"
-    if node.node_type == "data_check":
-        return "standard", "standard"
-    if node.node_type == "report":
-        return "deep", "detailed"
-    return "deep", "standard"
+    return "standard", "standard"
 
 
 def _run_prompt(
     mission: DeepAnalysisMission,
     node: DeepAnalysisWorkflowNode,
     manifest: list[dict[str, Any]],
-    workflow_instruction: str,
-    decision_context: str = "",
-    ledger_context: str = "",
 ) -> str:
-    return f"""당신은 Lumina 심층분석 Workflow의 한 Node를 실행하고 있습니다.
+    return f"""당신은 Lumina Workflow에서 하나의 작업 세션을 실행하고 있습니다.
 
 Mission: {mission.title}
-최종 목적: {mission.objective or mission.title}
-현재 Node: {node.node_key} · {node.title}
-Node 목적: {node.purpose}
+Mission 설명: {mission.objective or mission.title}
+작업 세션: {node.node_key} · {node.title}
 
-고정 입력 자료 manifest:
+선행 세션 출력과 Project 파일:
 {_manifest_prompt(manifest)}
 
-{decision_context}
-
-{ledger_context}
-
-이번 단계 지시:
-{_stage_instruction(node)}
+작업 프롬프트:
+{node.purpose or node.title}
 
 실행 규칙:
-- 같은 대화의 이전 Node 결과를 인계 자료로 사용하십시오.
+- 선행 세션 출력은 위 manifest에 고정된 버전을 사용하십시오.
 - 필요한 경우 Project 파일과 도구를 실제로 확인·사용하십시오.
-- 위 manifest의 경로와 버전은 이 Run의 고정 입력입니다. 현재 파일이 바뀌어도 고정 버전을 사용하십시오.
-- 수치 계산이 필요하면 암산하지 말고 `run_python_calculation`을 사용하십시오. 이 도구는 검증된 Python과 결과 CSV를 Mission 경로에 함께 저장합니다.
-- 사용자에게 추가 질문을 보내거나 승인을 기다리지 말고, 합리적인 가정을 세운 뒤 가정과 한계를 출력에 명시하십시오.
 - 확인하지 않은 사실이나 수치를 만들어내지 마십시오.
 - 다음 Node가 그대로 인계받을 수 있는 독립적인 Markdown 문서만 한국어로 작성하십시오.
 - 채팅 인사말이나 작업 예고 없이 완성된 본문부터 출력하십시오.
-{workflow_instruction}
 """
 
 
-def _resolved_decision_context(db: Session, mission_id: str) -> str:
-    rows = db.execute(
-        select(DeepAnalysisDecision, DeepAnalysisDecisionResponse)
-        .join(
-            DeepAnalysisDecisionResponse,
-            DeepAnalysisDecisionResponse.decision_id == DeepAnalysisDecision.id,
-        )
-        .where(
-            DeepAnalysisDecision.mission_id == mission_id,
-            DeepAnalysisDecision.status == "resolved",
-        )
-        .order_by(DeepAnalysisDecision.created_at, DeepAnalysisDecision.id)
-    )
-    lines: list[str] = []
-    for decision, response in rows:
-        option = next(
-            (
-                item
-                for item in decision.options_json
-                if isinstance(item, dict)
-                and item.get("id") == response.selected_option_id
-            ),
-            {},
-        )
-        selected = str(option.get("label") or response.selected_option_id)
-        detail = f" — {response.answer_text}" if response.answer_text else ""
-        lines.append(f"- {decision.question}: {selected}{detail}")
-    if not lines:
-        return "사용자 확정 판단: 없음"
-    return "사용자 확정 판단(후속 Node의 고정 입력):\n" + "\n".join(lines)
-
-
-def _ensure_conversation(
-    db: Session, *, user: User, mission: DeepAnalysisMission
+def _ensure_node_conversation(
+    db: Session,
+    *,
+    user: User,
+    mission: DeepAnalysisMission,
+    node: DeepAnalysisWorkflowNode,
 ) -> Conversation:
-    if mission.conversation_id:
-        existing = db.get(Conversation, mission.conversation_id)
+    if node.conversation_id:
+        existing = db.get(Conversation, node.conversation_id)
         if existing is not None:
             return existing
     conversation = Conversation(
         organization_id=mission.organization_id,
         project_id=mission.project_id,
         owner_user_id=user.id,
-        title=f"심층분석 · {mission.title}",
+        title=f"{mission.title} · {node.node_key} {node.title}",
         surface="deep_analysis",
         agent_id=DEFAULT_AGENT_FRONTEND.agent_id,
         agent_version=DEFAULT_AGENT_FRONTEND.agent_version,
@@ -507,7 +445,7 @@ def _ensure_conversation(
     )
     db.add(conversation)
     db.flush()
-    mission.conversation_id = conversation.id
+    node.conversation_id = conversation.id
     return conversation
 
 
@@ -523,36 +461,19 @@ def create_node_run(
         existing = db.get(Run, node.run_id)
         if existing is not None:
             return existing, False
-    conversation = _ensure_conversation(db, user=user, mission=mission)
+    conversation = _ensure_node_conversation(
+        db,
+        user=user,
+        mission=mission,
+        node=node,
+    )
     manifest = _run_manifest(db, mission, node)
-    workflow_revision = db.get(DeepAnalysisWorkflowRevision, node.workflow_revision_id)
-    workflow_nodes = list(
-        db.scalars(
-            select(DeepAnalysisWorkflowNode)
-            .where(
-                DeepAnalysisWorkflowNode.workflow_revision_id
-                == node.workflow_revision_id
-            )
-            .order_by(DeepAnalysisWorkflowNode.sequence)
-        )
-    )
-    workflow_instruction = (
-        adaptive_decision_instruction(node, workflow_nodes, workflow_revision)
-        if workflow_revision is not None
-        else ""
-    )
-    decision_context = _resolved_decision_context(db, mission.id)
-    ledger_context = claim_context(db, mission.id)
-    workflow_instruction = f"{workflow_instruction}{ledger_instruction(node)}"
     analysis_depth, answer_length = _run_profile(node)
     attempt = len(node.run_history_json) + 1
     prompt = _run_prompt(
         mission,
         node,
         manifest,
-        workflow_instruction,
-        decision_context,
-        ledger_context,
     )
     run, _message, created = create_run(
         db,
@@ -897,24 +818,7 @@ def sync_terminal_run(
         return TerminalSyncResult(changed=True)
 
     if run.status == COMPLETED:
-        existing_claim_ids = set(
-            db.scalars(
-                select(DeepAnalysisClaim.id).where(
-                    DeepAnalysisClaim.mission_id == mission.id
-                )
-            )
-        )
-        existing_evidence_ids = set(
-            db.scalars(
-                select(DeepAnalysisEvidenceReference.id).where(
-                    DeepAnalysisEvidenceReference.mission_id == mission.id
-                )
-            )
-        )
-        ledger_markdown, analysis_ledger = extract_analysis_ledger(
-            run.assistant_draft.strip()
-        )
-        markdown, workflow_decision = extract_workflow_decision(ledger_markdown)
+        markdown = run.assistant_draft.strip()
         if not markdown:
             node.status = "failed"
             node.error_message = "모델이 비어 있는 출력을 반환했습니다."
@@ -935,12 +839,6 @@ def sync_terminal_run(
         node.output_summary = _summary(markdown)
         node.status = "completed"
         node.error_message = None
-        persist_analysis_ledger(
-            db,
-            mission=mission,
-            node=node,
-            ledger=analysis_ledger,
-        )
         db.flush()
         for generated_file in node.generated_files_json:
             if not isinstance(generated_file, dict) or not generated_file.get("projectFileId"):
@@ -963,22 +861,6 @@ def sync_terminal_run(
                     "kind": generated_file.get("kind"),
                 },
             )
-        new_claims = list(
-            db.scalars(
-                select(DeepAnalysisClaim).where(
-                    DeepAnalysisClaim.mission_id == mission.id,
-                    DeepAnalysisClaim.id.not_in(existing_claim_ids),
-                )
-            )
-        )
-        new_evidence = list(
-            db.scalars(
-                select(DeepAnalysisEvidenceReference).where(
-                    DeepAnalysisEvidenceReference.mission_id == mission.id,
-                    DeepAnalysisEvidenceReference.id.not_in(existing_evidence_ids),
-                )
-            )
-        )
         emit_event(
             db,
             mission,
@@ -1005,33 +887,6 @@ def sync_terminal_run(
                     "logicalPath": node.output_logical_path,
                 },
             )
-        for claim in new_claims:
-            emit_event(
-                db,
-                mission,
-                "claim_recorded",
-                {
-                    "claimId": claim.id,
-                    "sourceNodeId": claim.source_node_id,
-                    "level": claim.level,
-                    "status": claim.status,
-                    "materiality": claim.materiality,
-                },
-            )
-        for evidence in new_evidence:
-            emit_event(
-                db,
-                mission,
-                "evidence_linked",
-                {
-                    "evidenceId": evidence.id,
-                    "sourceNodeId": evidence.source_node_id,
-                    "sourceType": evidence.source_type,
-                    "stableId": evidence.stable_id,
-                    "versionId": evidence.version_id,
-                    "contentDigest": evidence.content_digest,
-                },
-            )
         mission.spent_microusd = _mission_spent(db, workflow_revision.id)
         emit_event(
             db,
@@ -1045,81 +900,6 @@ def sync_terminal_run(
             },
         )
 
-        if node.node_type != "report":
-            workflow_action = str(workflow_decision.get("action") or "continue")
-            if workflow_action != "continue":
-                emit_event(
-                    db,
-                    mission,
-                    "workflow_expansion_proposed",
-                    {
-                        "requestedByNodeKey": node.node_key,
-                        "action": workflow_action,
-                        "addCount": len(workflow_decision.get("add") or []),
-                        "removeCount": len(workflow_decision.get("remove") or []),
-                        "confidence": workflow_decision.get("confidence"),
-                    },
-                )
-            graph_changed = apply_workflow_decision(
-                db,
-                mission=mission,
-                revision=workflow_revision,
-                current_node=node,
-                decision=workflow_decision,
-            )
-            if workflow_action != "continue":
-                emit_event(
-                    db,
-                    mission,
-                    "workflow_expansion_decided",
-                    {
-                        "requestedByNodeKey": node.node_key,
-                        "action": workflow_action,
-                        "graphChanged": graph_changed,
-                        "status": mission.status,
-                    },
-                )
-            if graph_changed:
-                emit_event(
-                    db,
-                    mission,
-                    "workflow_revision_activated",
-                    {
-                        "workflowRevision": workflow_revision.revision_number,
-                        "workflowRevisionId": workflow_revision.id,
-                        "action": workflow_decision.get("action"),
-                        "requestedByNodeKey": node.node_key,
-                        "graphDigest": workflow_revision.graph_digest,
-                    },
-                )
-        if mission.status == "awaiting_input":
-            pending_decision = db.scalar(
-                select(DeepAnalysisDecision)
-                .where(
-                    DeepAnalysisDecision.mission_id == mission.id,
-                    DeepAnalysisDecision.status == "pending",
-                )
-                .order_by(DeepAnalysisDecision.created_at.desc())
-            )
-            if pending_decision is not None:
-                emit_event(
-                    db,
-                    mission,
-                    "decision_requested",
-                    {
-                        "decisionId": pending_decision.id,
-                        "requestedByNodeId": pending_decision.requested_by_node_id,
-                        "affectedNodeKeys": pending_decision.affected_node_keys_json,
-                    },
-                )
-            emit_event(
-                db,
-                mission,
-                "mission_status_changed",
-                {"status": "awaiting_input", "missionRevision": mission.revision + 1},
-            )
-            mission.revision += 1
-            return TerminalSyncResult(changed=True)
         nodes = list(
             db.scalars(
                 select(DeepAnalysisWorkflowNode)
@@ -1147,11 +927,6 @@ def sync_terminal_run(
             ]
             if unresolved:
                 mission.status = "blocked"
-                mission.completion_contract_json = {
-                    **mission.completion_contract_json,
-                    "qualityGate": "workflow_dependency_blocked",
-                    "blockedNodeKeys": [item.node_key for item in unresolved],
-                }
                 mission.revision += 1
                 emit_event(
                     db,
@@ -1164,77 +939,19 @@ def sync_terminal_run(
                     },
                 )
                 return TerminalSyncResult(changed=True)
-            if node.node_type == "report":
-                gate = evaluate_quality_gate(
-                    db,
-                    mission=mission,
-                    revision=workflow_revision,
-                    report_node=node,
-                    nodes=nodes,
-                )
-                emit_event(
-                    db,
-                    mission,
-                    "quality_gate_completed",
-                    {
-                        "qualityGateId": gate.id,
-                        "result": gate.result,
-                        "completionOutcome": gate.completion_outcome,
-                    },
-                )
-            else:
-                mission.status = "completed"
-                mission.completion_outcome = "not_satisfied"
-                mission.completion_contract_json = {
-                    **mission.completion_contract_json,
-                    "qualityGate": "report_missing",
-                    "finalOutputFileId": node.output_project_file_id,
-                    "finalOutputPath": node.output_logical_path,
-                }
+            mission.status = "completed"
+            mission.completion_outcome = "satisfied"
             mission.revision += 1
-            if mission.status == "completed":
-                emit_event(
-                    db,
-                    mission,
-                    "mission_completed",
-                    {
-                        "status": mission.status,
-                        "completionOutcome": mission.completion_outcome,
-                        "missionRevision": mission.revision,
-                        "finalOutputFileId": node.output_project_file_id,
-                    },
-                )
-            else:
-                if mission.status == "awaiting_input":
-                    pending_decision = db.scalar(
-                        select(DeepAnalysisDecision)
-                        .where(
-                            DeepAnalysisDecision.mission_id == mission.id,
-                            DeepAnalysisDecision.status == "pending",
-                        )
-                        .order_by(DeepAnalysisDecision.created_at.desc())
-                    )
-                    if pending_decision is not None:
-                        emit_event(
-                            db,
-                            mission,
-                            "decision_requested",
-                            {
-                                "decisionId": pending_decision.id,
-                                "requestedByNodeId": pending_decision.requested_by_node_id,
-                                "affectedNodeKeys": pending_decision.affected_node_keys_json,
-                            },
-                        )
-                emit_event(
-                    db,
-                    mission,
-                    "mission_status_changed",
-                    {
-                        "status": mission.status,
-                        "completionOutcome": mission.completion_outcome,
-                        "missionRevision": mission.revision,
-                    },
-                )
+            emit_event(
+                db,
+                mission,
+                "mission_completed",
+                {
+                    "status": mission.status,
+                    "missionRevision": mission.revision,
+                    "finalOutputFileId": node.output_project_file_id,
+                },
+            )
             return TerminalSyncResult(changed=True)
 
         if (
@@ -1242,10 +959,6 @@ def sync_terminal_run(
             and mission.spent_microusd >= mission.budget_microusd
         ):
             mission.status = "blocked"
-            mission.completion_contract_json = {
-                **mission.completion_contract_json,
-                "qualityGate": "budget_exhausted",
-            }
             mission.revision += 1
             emit_event(
                 db,

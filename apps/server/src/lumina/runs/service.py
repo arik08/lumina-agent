@@ -438,6 +438,7 @@ def create_run(
     knowledge_context = build_project_knowledge_context_snapshot(
         db,
         project=project,
+        owner_user_id=user.id,
         query=payload.message.text,
     )
     normalized_login_id = user.login_id.strip().casefold()

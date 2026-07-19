@@ -18,6 +18,7 @@ from .models import (
     DeepAnalysisWorkflowRevision,
 )
 from .planning import (
+    InitialWorkflowPlan,
     descendant_node_keys,
     graph_digest,
     initial_change_log,
@@ -259,8 +260,9 @@ def _populate_initial_workflow(
     revision: DeepAnalysisWorkflowRevision,
     title: str,
     objective: str,
+    plan: InitialWorkflowPlan | None = None,
 ) -> None:
-    plan = initial_workflow_plan(title, objective)
+    plan = plan or initial_workflow_plan(title, objective)
     positions = planned_positions(plan)
     for index, planned in enumerate(plan.nodes):
         position_x, position_y, sequence = positions[planned.key]
@@ -357,6 +359,9 @@ def create_mission(
     autonomy_mode: str,
     budget_microusd: int | None,
     pattern_version_id: str | None = None,
+    initial_plan: InitialWorkflowPlan | None = None,
+    start_mode: str = "ai_fallback",
+    planning_metadata: dict[str, object] | None = None,
 ) -> DeepAnalysisMission:
     project = require_project(db, user, project_id, write=True)
     clean_title = title.strip()
@@ -371,6 +376,7 @@ def create_mission(
         created_by_user_id=user.id,
         title=clean_title,
         objective=objective.strip(),
+        start_mode=start_mode,
         autonomy_mode=autonomy_mode,
         budget_microusd=budget_microusd,
         charter_json=default_charter(clean_title, objective),
@@ -379,14 +385,17 @@ def create_mission(
     db.add(mission)
     db.flush()
 
-    plan = initial_workflow_plan(clean_title, objective.strip())
+    plan = initial_plan or initial_workflow_plan(clean_title, objective.strip())
+    change_log = initial_change_log(plan)
+    if planning_metadata:
+        change_log[0] = {**change_log[0], "planner": planning_metadata}
     revision = DeepAnalysisWorkflowRevision(
         mission_id=mission.id,
         revision_number=1,
         source="generated",
         reason=plan.reason,
         graph_digest=graph_digest(plan.nodes, plan_edges(plan)),
-        change_log_json=initial_change_log(plan),
+        change_log_json=change_log,
     )
     db.add(revision)
     db.flush()
@@ -395,6 +404,7 @@ def create_mission(
         revision=revision,
         title=clean_title,
         objective=objective.strip(),
+        plan=plan,
     )
     if pattern_version_id:
         from .models import (
@@ -437,6 +447,7 @@ def list_missions(
             select(DeepAnalysisMission)
             .where(DeepAnalysisMission.project_id == project.id)
             .order_by(
+                DeepAnalysisMission.is_favorite.desc(),
                 DeepAnalysisMission.updated_at.desc(), DeepAnalysisMission.id.desc()
             )
         )
@@ -462,6 +473,8 @@ def update_mission(
     objective: str | None,
     autonomy_mode: str | None,
     budget_microusd: int | None,
+    is_favorite: bool | None,
+    is_liked: bool | None,
     charter: dict[str, object] | None = None,
     completion_contract: dict[str, object] | None = None,
 ) -> DeepAnalysisMission:
@@ -495,6 +508,10 @@ def update_mission(
         values["autonomy_mode"] = autonomy_mode
     if budget_microusd is not None:
         values["budget_microusd"] = budget_microusd
+    if is_favorite is not None:
+        values["is_favorite"] = is_favorite
+    if is_liked is not None:
+        values["is_liked"] = is_liked
     if charter is not None:
         values["charter_json"] = {
             **charter,
@@ -530,6 +547,44 @@ def update_mission(
     return mission
 
 
+def move_mission(
+    db: Session,
+    user: User,
+    mission: DeepAnalysisMission,
+    destination_project_id: str,
+) -> DeepAnalysisMission:
+    destination = require_project(db, user, destination_project_id, write=True)
+    if mission.project_id == destination.id:
+        return mission
+    if mission.status in {"running", "paused", "awaiting_input"}:
+        raise ApiProblem(
+            409,
+            "mission_running",
+            "진행 중인 심층분석은 중단한 뒤 프로젝트를 이동해 주세요.",
+        )
+    linked_file = db.scalar(
+        select(DeepAnalysisMissionFileLink.id).where(
+            DeepAnalysisMissionFileLink.mission_id == mission.id
+        )
+    )
+    if linked_file is not None:
+        raise ApiProblem(
+            409,
+            "mission_has_project_files",
+            "프로젝트 파일을 사용하는 심층분석은 현재 프로젝트에서 유지해 주세요.",
+        )
+    from ..conversations.service import move_conversation
+
+    revision, nodes, _edges = active_workflow(db, mission.id)
+    for node in nodes:
+        if node.conversation_id:
+            move_conversation(db, user, node.conversation_id, destination.id)
+    mission.project_id = destination.id
+    mission.revision += 1
+    db.flush()
+    return mission
+
+
 def delete_mission(
     db: Session,
     mission: DeepAnalysisMission,
@@ -542,11 +597,13 @@ def delete_mission(
             "mission_running",
             "진행 중인 심층분석은 중단한 뒤 삭제해 주세요.",
         )
-    hidden_conversation = (
-        db.get(Conversation, mission.conversation_id)
-        if mission.conversation_id
-        else None
-    )
+    _workflow_revision, nodes, _edges = active_workflow(db, mission.id)
+    conversations = [
+        conversation
+        for node in nodes
+        if node.conversation_id
+        and (conversation := db.get(Conversation, node.conversation_id)) is not None
+    ]
     result = db.execute(
         delete(DeepAnalysisMission).where(
             DeepAnalysisMission.id == mission.id,
@@ -561,8 +618,8 @@ def delete_mission(
             "다른 변경사항이 먼저 저장되었습니다. 최신 상태를 불러와 다시 시도해 주세요.",
             details={"currentRevision": mission.revision},
         )
-    if hidden_conversation is not None:
-        db.delete(hidden_conversation)
+    for conversation in conversations:
+        db.delete(conversation)
     from .execution import output_directory
 
     now = utc_now()
@@ -631,12 +688,6 @@ def start_mission(
             status="running",
             completion_outcome=None,
             revision=expected_revision + 1,
-            charter_json={
-                **mission.charter_json,
-                "confirmed": True,
-                "confirmedMissionRevision": expected_revision + 1,
-                "confirmedAt": utc_now().isoformat(),
-            },
         )
         .execution_options(synchronize_session=False)
     )
@@ -709,10 +760,6 @@ def retry_mission_node(
             status="running",
             completion_outcome=None,
             revision=expected_revision + 1,
-            completion_contract_json={
-                **mission.completion_contract_json,
-                "qualityGate": "pending",
-            },
         )
         .execution_options(synchronize_session=False)
     )
@@ -731,21 +778,6 @@ def retry_mission_node(
     reset_keys = descendant_node_keys(target.node_key, edges)
     reset_node_ids = {node.id for node in nodes if node.node_key in reset_keys}
     if reset_node_ids:
-        db.execute(
-            update(DeepAnalysisClaim)
-            .where(DeepAnalysisClaim.source_node_id.in_(reset_node_ids))
-            .values(stale_status="review_required")
-            .execution_options(synchronize_session=False)
-        )
-        db.execute(
-            update(DeepAnalysisOpenIssue)
-            .where(
-                DeepAnalysisOpenIssue.source_node_id.in_(reset_node_ids),
-                DeepAnalysisOpenIssue.status == "open",
-            )
-            .values(status="superseded")
-            .execution_options(synchronize_session=False)
-        )
         db.execute(
             update(DeepAnalysisMissionFileLink)
             .where(
@@ -868,13 +900,6 @@ def cancel_mission(
     for node in nodes:
         if node.status == "running":
             node.status = "cancelled"
-    for decision in db.scalars(
-        select(DeepAnalysisDecision).where(
-            DeepAnalysisDecision.mission_id == mission.id,
-            DeepAnalysisDecision.status == "pending",
-        )
-    ):
-        decision.status = "cancelled"
     db.flush()
     db.refresh(mission)
     return mission
@@ -1048,7 +1073,6 @@ def create_workflow_draft(
             workflow_revision_id=draft.id, node_key=node.node_key, node_type=node.node_type,
             title=node.title, purpose=node.purpose, status="planned", sequence=node.sequence,
             position_x=node.position_x, position_y=node.position_y, config_json=node.config_json,
-            estimated_cost_microusd=node.estimated_cost_microusd,
         ))
     for edge in edges:
         db.add(DeepAnalysisWorkflowEdge(
@@ -1071,8 +1095,6 @@ def update_workflow_draft(
     keys = [str(item["nodeKey"]) for item in nodes_payload]
     if len(keys) != len(set(keys)) or not keys:
         raise ApiProblem(422, "invalid_workflow_nodes", "Node key는 비어 있지 않고 중복될 수 없습니다.")
-    if not any(str(item["nodeType"]) == "report" for item in nodes_payload):
-        raise ApiProblem(422, "workflow_report_required", "Workflow에는 report Node가 하나 이상 필요합니다.")
     edge_pairs = [(item["sourceNodeKey"], item["targetNodeKey"]) for item in edges_payload]
     if len(edge_pairs) != len(set(edge_pairs)) or any(source not in keys or target not in keys or source == target for source, target in edge_pairs):
         raise ApiProblem(422, "invalid_workflow_edges", "연결은 존재하는 서로 다른 Node 사이에서 중복 없이 만들어야 합니다.")
@@ -1099,7 +1121,7 @@ def update_workflow_draft(
             workflow_revision_id=draft.id, node_key=str(item["nodeKey"]), node_type=str(item["nodeType"]),
             title=str(item["title"]), purpose=str(item.get("purpose") or ""), status="planned", sequence=sequence,
             position_x=int(item["positionX"]), position_y=int(item["positionY"]),
-            config_json=dict(item.get("config") or {}), estimated_cost_microusd=int(item.get("estimatedCostMicrousd") or 0),
+            config_json=dict(item.get("config") or {}),
         ))
     for source, target in edge_pairs:
         db.add(DeepAnalysisWorkflowEdge(workflow_revision_id=draft.id, source_node_key=source, target_node_key=target, edge_type="sequence"))
@@ -1109,6 +1131,97 @@ def update_workflow_draft(
     draft.change_log_json = [*draft.change_log_json, {"revision": draft.revision_number, "action": "manual_edit", "graphChanged": True, "createdAt": utc_now().isoformat()}]
     db.flush()
     return draft
+
+
+def regenerate_workflow(
+    db: Session,
+    mission: DeepAnalysisMission,
+    *,
+    expected_revision: int,
+    prompt: str,
+    plan: InitialWorkflowPlan,
+    planning_metadata: dict[str, object],
+) -> DeepAnalysisWorkflowRevision:
+    if mission.status in {"running", "paused", "awaiting_input"}:
+        raise ApiProblem(
+            409,
+            "workflow_regeneration_not_allowed",
+            "실행 중인 Mission의 Workflow는 재생성할 수 없습니다.",
+            details={"status": mission.status},
+        )
+    result = db.execute(
+        update(DeepAnalysisMission)
+        .where(
+            DeepAnalysisMission.id == mission.id,
+            DeepAnalysisMission.revision == expected_revision,
+        )
+        .values(
+            status="ready",
+            completion_outcome=None,
+            completion_contract_json={
+                **mission.completion_contract_json,
+                "qualityGate": "pending",
+                "latestQualityGateResultId": None,
+                "finalOutputFileId": None,
+                "finalOutputPath": None,
+            },
+            revision=expected_revision + 1,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        db.refresh(mission)
+        raise ApiProblem(
+            409,
+            "revision_conflict",
+            "다른 변경사항이 먼저 저장되었습니다. 최신 상태를 불러온 뒤 다시 시도해 주세요.",
+            details={"currentRevision": mission.revision},
+        )
+
+    previous_revisions = list(
+        db.scalars(
+            select(DeepAnalysisWorkflowRevision).where(
+                DeepAnalysisWorkflowRevision.mission_id == mission.id,
+                DeepAnalysisWorkflowRevision.state.in_(("active", "draft")),
+            )
+        )
+    )
+    for previous in previous_revisions:
+        previous.state = "archived"
+    revision_number = db.scalar(
+        select(DeepAnalysisWorkflowRevision.revision_number)
+        .where(DeepAnalysisWorkflowRevision.mission_id == mission.id)
+        .order_by(DeepAnalysisWorkflowRevision.revision_number.desc())
+    ) or 0
+    change_log = initial_change_log(plan)
+    change_log[0] = {
+        **change_log[0],
+        "revision": revision_number + 1,
+        "action": "workflow_regenerated",
+        "regenerationPrompt": prompt.strip(),
+        "planner": planning_metadata,
+    }
+    revision = DeepAnalysisWorkflowRevision(
+        mission_id=mission.id,
+        revision_number=revision_number + 1,
+        state="active",
+        source="ai_regenerated",
+        reason=plan.reason,
+        graph_digest=graph_digest(plan.nodes, plan_edges(plan)),
+        change_log_json=change_log,
+    )
+    db.add(revision)
+    db.flush()
+    _populate_initial_workflow(
+        db,
+        revision=revision,
+        title=mission.title,
+        objective=mission.objective,
+        plan=plan,
+    )
+    db.flush()
+    db.refresh(mission)
+    return revision
 
 
 def activate_workflow_draft(

@@ -4,7 +4,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any, Iterable, Literal
 
 from sqlalchemy.orm import Session
 
@@ -52,9 +52,22 @@ class InitialWorkflowPlan:
     nodes: tuple[PlannedNode, ...]
 
 
-def initial_workflow_plan(title: str, objective: str) -> InitialWorkflowPlan:
+WorkflowPreset = Literal[
+    "quantitative",
+    "comparative_research",
+    "decision",
+    "open_analysis",
+]
+
+
+def initial_workflow_plan(
+    title: str,
+    objective: str,
+    *,
+    preset: WorkflowPreset | None = None,
+) -> InitialWorkflowPlan:
     question = f"{title} {objective}".lower()
-    if any(
+    if preset == "quantitative" or preset is None and any(
         token in question
         for token in (
             "원가",
@@ -124,7 +137,7 @@ def initial_workflow_plan(title: str, objective: str) -> InitialWorkflowPlan:
                 ),
             ),
         )
-    if any(
+    if preset == "comparative_research" or preset is None and any(
         token in question
         for token in ("비교", "벤치마크", "시장", "경쟁", "동향", "조사", "사례", "리서치")
     ) and not any(
@@ -144,7 +157,7 @@ def initial_workflow_plan(title: str, objective: str) -> InitialWorkflowPlan:
                 PlannedNode("N040", "report", "최종 보고서", "비교 결과, 근거, 반대 관점, 한계와 적용 시사점을 보고서로 정리합니다.", ("N030",)),
             ),
         )
-    if any(
+    if preset == "decision" or preset is None and any(
         token in question
         for token in ("전략", "투자", "도입", "선택", "의사결정", "정책", "리스크", "사업성")
     ):
@@ -193,15 +206,15 @@ def planned_positions(plan: InitialWorkflowPlan) -> dict[str, tuple[int, int, in
     groups: dict[int, list[PlannedNode]] = {}
     for node in plan.nodes:
         groups.setdefault(level[node.key], []).append(node)
-    max_rows = max((len(group) for group in groups.values()), default=1)
+    max_columns = max((len(group) for group in groups.values()), default=1)
     positions: dict[str, tuple[int, int, int]] = {}
     sequence = 0
-    for column in sorted(groups):
-        group = groups[column]
-        height = (len(group) - 1) * 130
-        top = 180 + ((max_rows - 1) * 130 - height) // 2
-        for row, node in enumerate(group):
-            positions[node.key] = (80 + column * 220, top + row * 130, sequence)
+    for row in sorted(groups):
+        group = groups[row]
+        width = (len(group) - 1) * 212
+        left = 48 + ((max_columns - 1) * 212 - width) // 2
+        for column, node in enumerate(group):
+            positions[node.key] = (left + column * 212, 160 + row * 160, sequence)
             sequence += 1
     return positions
 
@@ -331,13 +344,13 @@ def layout_workflow(
     for sequence, node in enumerate(ordered):
         node.sequence = sequence
         groups.setdefault(level[node.node_key], []).append(node)
-    max_rows = max((len(group) for group in groups.values()), default=1)
-    for column, group in groups.items():
-        height = (len(group) - 1) * 130
-        top = 180 + ((max_rows - 1) * 130 - height) // 2
-        for row, node in enumerate(group):
-            node.position_x = 80 + column * 220
-            node.position_y = top + row * 130
+    max_columns = max((len(group) for group in groups.values()), default=1)
+    for row, group in groups.items():
+        width = (len(group) - 1) * 212
+        left = 48 + ((max_columns - 1) * 212 - width) // 2
+        for column, node in enumerate(group):
+            node.position_x = left + column * 212
+            node.position_y = 160 + row * 160
 
 
 def adaptive_decision_instruction(

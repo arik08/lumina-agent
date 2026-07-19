@@ -54,6 +54,8 @@ test("file repository is an explorer and viewer with recursive folder upload", a
   assert.match(view, /renderFilePreview/);
   assert.match(view, /sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock allow-downloads"/);
   assert.doesNotMatch(view, /allow-same-origin/);
+  assert.doesNotMatch(view, /folder-reference-note/);
+  assert.doesNotMatch(view, /채팅에서 이 폴더를 선택하면/);
   assert.doesNotMatch(view, /새 버전 사유|버전 기록|uploadVersion|currentVersion/);
   assert.match(view, /storageKey="lumina:file-explorer-width"/);
   assert.match(resizer, /window\.localStorage\.setItem/);

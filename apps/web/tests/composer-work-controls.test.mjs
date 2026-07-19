@@ -59,6 +59,11 @@ test("composer keeps model controls intact and sends independent analysis and an
   assert.match(workspace, /analysisDepth: AnalysisDepth = "auto"/);
   assert.match(workspace, /answerLength: AnswerLength = "auto"/);
   assert.match(workspace, /outputMode: currentSettings\.outputMode,[\s\S]*?analysisDepth,[\s\S]*?answerLength/);
+  assert.match(app, /setAnalysisDepth\(workspace\.settings\.analysisDepth\)/);
+  assert.match(app, /setAnswerLength\(workspace\.settings\.answerLength\)/);
+  assert.match(app, /workspace\.selectAnalysisDepth\(next\)/);
+  assert.match(app, /workspace\.selectAnswerLength\(next\)/);
+  assert.doesNotMatch(app, /setTargetOutputTokens\(defaultArtifactOutputTokens\);\s*setAnalysisDepth\("auto"\)/);
   assert.match(types, /analysisDepth: AnalysisDepth/);
   assert.match(types, /answerLength: AnswerLength/);
 });

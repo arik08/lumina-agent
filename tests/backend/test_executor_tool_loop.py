@@ -1547,12 +1547,6 @@ def test_web_fetch_starts_visible_report_drafting_before_create_report_output(
     monkeypatch.setattr(local_run_executor, "_provider", provider)
     with TestClient(create_app(settings)) as client:
         csrf = _login(client)
-        knowledge_space = client.post(
-            "/api/knowledge/spaces",
-            headers={"X-CSRF-Token": csrf},
-            json={"name": "기술 동향 자동 축적"},
-        )
-        assert knowledge_space.status_code == 201, knowledge_space.text
         project_id = client.get("/api/projects").json()[0]["id"]
         conversation = client.post(
             "/api/conversations",
@@ -1569,19 +1563,6 @@ def test_web_fetch_starts_visible_report_drafting_before_create_report_output(
         )
         assert started.status_code == 202, started.text
         snapshot = _wait_for_terminal(client, started.json()["run"]["runId"])
-        captured_sources = client.get(
-            f"/api/knowledge/spaces/{knowledge_space.json()['id']}/sources"
-        )
-        assert captured_sources.status_code == 200, captured_sources.text
-        assert len(captured_sources.json()) == 1
-        assert captured_sources.json()[0]["sourceType"] == "conversation"
-        assert captured_sources.json()[0]["canonicalLocator"].endswith(
-            f"/runs/{started.json()['run']['runId']}"
-        )
-        assert {
-            item["locator"].get("kind")
-            for item in captured_sources.json()[0]["evidenceSegments"]
-        } == {"assistant_analysis", "web_source"}
         turn_sets = client.get(
             f"/api/conversations/{conversation['id']}/turn-sets"
         ).json()["turnSets"]

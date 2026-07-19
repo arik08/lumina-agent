@@ -18,7 +18,6 @@ from starlette.types import Scope
 from sqlalchemy import text
 
 from .agent.executor import local_run_executor
-from .knowledge.executor import knowledge_ingestion_executor
 from .api.errors import install_error_handlers
 from .api.routes import (
     admin,
@@ -166,10 +165,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             startup_tracker.enter("recovering_worker")
             local_run_executor.configure(config, trust_profile=trust_profile)
             await local_run_executor.start()
-            knowledge_ingestion_executor.configure(
-                provider_factory=local_run_executor.provider_for_probe
-            )
-            await knowledge_ingestion_executor.start()
             startup_tracker.enter("starting_scheduler")
             if config.environment != "test":
                 scheduler_task = asyncio.create_task(
@@ -201,7 +196,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 repository_watch_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await repository_watch_task
-            await knowledge_ingestion_executor.stop()
             await local_run_executor.stop()
 
     application = FastAPI(

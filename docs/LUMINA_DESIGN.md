@@ -40,7 +40,7 @@
 | [`AGENT_LOOP.md`](project-context/AGENT_LOOP.md) | Run 상태, Tool Loop, Queue, replay, streaming, steer, pause·resume·retry |
 | [`AUTH_AND_CONVERSATION_SHARING.md`](project-context/AUTH_AND_CONVERSATION_SHARING.md) | ID/PW 인증, 관리자, 사용자 격리, 대화 snapshot 공유, 감사 |
 | [`COWORK_FEATURE_REQUIREMENTS.md`](project-context/COWORK_FEATURE_REQUIREMENTS.md) | Project, Plan, Workspace, 전문 산출물, 예약 작업, Live Artifact |
-| [`DEEP_ANALYSIS_WORKFLOW.md`](project-context/DEEP_ANALYSIS_WORKFLOW.md) | 독립 심층분석 Mission의 최종 Target 계약: Charter·Completion Contract, 제로베이스 설계와 선택적 Pattern, drag·connect Workflow, Claim·Evidence·Quality Gate, 단위별 MD·Python·CSV, 비용·Context·복구·API·event와 연구 근거 |
+| [`DEEP_ANALYSIS_WORKFLOW.md`](project-context/DEEP_ANALYSIS_WORKFLOW.md) | 독립 심층분석 Mission의 계약: Node별 채팅 세션, drag·connect Workflow, Edge 기반 결과 전달, Markdown 출력, 비용·Context·복구·API·event |
 | [`EXTENSION_MARKETPLACE.md`](project-context/EXTENSION_MARKETPLACE.md) | Skill·MCP·Plugin 카탈로그, 불변 버전, 설치·검토·폐기 |
 | [`HERMES_USER_FEATURES.md`](project-context/HERMES_USER_FEATURES.md) | 세션 UX, 검색·분기·내보내기, 알림, 사용량, `@`·`$` Composer |
 | [`MANUS_DESIGN_LESSONS.md`](project-context/MANUS_DESIGN_LESSONS.md) | 실행 환경, 복원 가능한 Context, Batch Fan-out, 승인형 학습, 권한 Lease |
@@ -70,7 +70,7 @@
 | 동적 업무 계획·Codex OAuth·prompt cache | Implemented | `update_plan`, `work_plan_updated`, Codex App Server catalog와 Provider별 cache payload test가 존재 |
 | 대화 좋아요·Composer 중단·예약 작업 삭제·복원 loading | Implemented | 현재 Backend·Frontend와 UI 계약 test에 반영되어 있으며 삭제는 물리 삭제가 아닌 보관 처리 |
 | 일반 문서 RAG MCP | Target | 새 설계는 일반 문서·자연 위치 계약이지만 현재 `vector_db` source와 Skill은 아직 Markdown 조직 문서·`explore_org` 계약 |
-| 심층분석 Mission Workflow | Foundation 구현 / Target 진행 중 | 독립 메뉴와 Workspace Frontend, Project 귀속 Mission·Workflow revision·Node·Edge, 생성·조회·CAS 수정 API, 기본 Canvas·Inspector·누적 비용 UI와 migration `0034`는 구현됨. Node 실행, 단위별 LLM 출력 MD, Python·CSV 계산, Pattern, Claim·Evidence·Quality Gate, event replay와 export는 [`DEEP_ANALYSIS_WORKFLOW.md`](project-context/DEEP_ANALYSIS_WORKFLOW.md)의 후속 Target |
+| 심층분석 Mission Workflow | 구현 | 독립 메뉴와 Workspace Frontend, Project 귀속 Mission·Workflow revision·Node·Edge, 초기 AI 자동 설계 1회, Node별 채팅 세션과 Run, Canvas·Inspector·실제 프롬프트·Markdown 출력·누적 비용·event replay·export를 제공합니다. Pattern·실행 중 재계획·Claim·Evidence·Quality Gate는 계약에서 제외합니다. |
 | Skill Change Request·Blob/Tree CAS·자동 Eval | Target | 개인 Draft·복수 Owner 기반은 구현되었으나 진화 pipeline과 저장 최적화는 후속 단계 |
 
 `lumina_agent_assessment_report_2026-07-12.html`은 해당 날짜의 정적 평가 snapshot입니다. 이후 source·test로 해소된 항목의 현재 상태를 이 보고서의 수치로 다시 판정하지 않습니다.
@@ -145,7 +145,7 @@ Frontend application
 - `Organization → Project → Session → Run` 업무 계층
 - `@파일명` Context 연결과 `$Skill`·`$MCP` 명시 호출
 - 구조화된 Plan, 병렬 Subtask, steer, Queue, pause, resume, cancel과 retry
-- 장기·대형 업무를 위한 독립 심층분석 Mission, Charter·완료 기준, 새로 설계하거나 필요할 때만 Pattern을 재사용하는 시각 Workflow, Claim·반대 근거·미해결 항목·Quality Gate와 단위별 LLM 출력·계산·비용 보존
+- 장기·대형 업무를 위한 독립 심층분석 Mission, Node별 채팅 세션과 Edge로 구성하는 시각 Workflow, 단위별 LLM 출력·실제 비용 보존
 - DOCX, XLSX, PPTX, PDF, HTML과 기타 Artifact의 생성·Preview·편집·검증
 - 회사 CA, proxy와 P-GPT를 포함한 사내 네트워크 지원
 - 서버 상태를 원본으로 하는 재접속·세션 전환·다중 기기 복구
@@ -1833,13 +1833,13 @@ Agent Package
 
 Agent Frontend 모듈화는 외부 생태계나 무제한 확장을 위한 Plugin architecture가 아니라, 업무별 UI를 Core와 섞지 않고 실험·교체·삭제하기 위한 Modular Monolith 경계입니다.
 
-`deep-analysis`는 일반 채팅과 다른 Mission 목록, Workflow Pattern Library, Workflow Canvas, Node Inspector, 실행 Drawer, 자료·의사결정·Claim·Evidence·Quality Gate·비용·보고서 화면을 가지므로 이 경계를 사용하는 첫 특수목적 builtin Workspace Frontend입니다. Mission Charter·Completion Contract·Workflow Pattern·Workflow Revision·Node·Claim·Open Issue와 단위별 MD·CSV·PY orchestration은 같은 선택 module의 Backend domain이 소유하고, 인증·Project 권한·Run·Queue·Provider·Tool 승인·Storage·usage 원시 계측·감사·replay는 Core를 재사용합니다. 심층분석을 위해 일반 채팅, `App.tsx`, Project 파일과 Run 내부에 module ID 조건문을 흩뿌리지 않습니다.
+`deep-analysis`는 일반 채팅과 다른 Mission 목록, Workflow Canvas, Node Inspector, 실행 기록과 비용 화면을 가지므로 이 경계를 사용하는 첫 특수목적 builtin Workspace Frontend입니다. Workflow Revision·Node·Edge와 Node별 채팅 세션 연결은 같은 선택 module의 Backend domain이 소유하고, 인증·Project 권한·Run·Queue·Provider·Tool 승인·Storage·usage 원시 계측·감사·replay는 Core를 재사용합니다. 심층분석을 위해 일반 채팅, `App.tsx`, Project 파일과 Run 내부에 module ID 조건문을 흩뿌리지 않습니다.
 
-모든 Mission이 Workflow Pattern을 필요로 하지는 않습니다. 새롭거나 일회성인 업무는 AI가 제로베이스로 Workflow Draft를 설계하고, 유사 업무의 반복 가치가 있을 때만 Pattern을 추천하거나 사용자가 직접 선택합니다. Pattern은 과거 실행을 그대로 복제하는 고정 pipeline이 아니라 필수 단계, typed 입출력, 조건부 branch, adaptive slot과 예산·승인 한계를 보존하는 versioned 설계 자산입니다. Pattern을 사용하면 목표·질문 답변·자료 상태·조직 정책에 맞게 인스턴스화하고, 사용하지 않으면 nullable Pattern reference를 가진 완전한 Mission으로 실행합니다. 완료 Mission의 변경은 기존 Pattern을 자동 갱신하지 않고 검토 가능한 개선 후보와 새 immutable version으로만 승격합니다. Canvas·durable execution·장기 조사·lineage·비용 계측에 관한 Dify, Flowise, Langflow, LangGraph, Open Deep Research, DeerFlow, GPT Researcher, Nexus Agents, Dagster와 Langfuse의 부분 설계는 상세 문서의 선택적 도입 원칙을 따르며 외부 제품 모델이나 별도 실행 engine을 통째로 도입하지 않습니다.
+새 Mission은 한 번의 LLM 호출로 목표에 맞는 초기 Node·Edge·프롬프트를 설계하고, 실패하면 규칙 기반 Workflow로 대체합니다. 사용자는 생성된 Workflow를 직접 편집하며 실행기는 DAG 순서와 결과 전달만 담당합니다. 실행 중 재계획과 검증 장부 생성을 위해 별도 모델을 호출하지 않습니다.
 
-심층분석 model 요청은 이 문서의 공통 prompt-cache 계약을 그대로 사용하되 `Core → Mission context revision → 안정된 Tool·Node Profile → 변동 Node tail` 순서로 조립합니다. 예상 완료 비용은 uncached input만 가정하지 않고 Provider별 cache write·read 할인, 예상 재사용 횟수와 TTL을 반영하며 hard limit에는 cache miss 상한을 사용합니다. Prompt cache는 model 호출과 output 비용이 남는 할인 수단이고, 입력 fingerprint가 동일한 Node 결과 재사용은 호출 자체를 생략하는 별도 상위 최적화입니다.
+심층분석 model 요청은 공통 prompt-cache 계약을 사용하되 `Core → Mission 설명과 Project 자료 → 선행 Node 출력 → 현재 Node 프롬프트` 순서로 조립합니다. 비용은 실제 Node Run 사용량을 기준으로 집계합니다.
 
-관련 연구 검토는 상세 문서의 `17.3 비용·Context·Workflow 최적화 관련 논문 검토`를 기준으로 합니다. Prompt Cache·SGLang·Preble·CacheBlend의 자체 서빙 KV cache 결과를 외부 API 할인율로 해석하지 않고, LLMLingua 계열의 압축은 원본을 대체하지 않는 검증된 파생 Context에만 사용합니다. FrugalGPT·RouteLLM의 cascade·routing은 scope별 평가와 OOD fallback 뒤에 적용하고, LLMCompiler·Parrot의 dataflow 최적화는 Workflow dependency compile과 typed semantic output으로 구현합니다. AFlow식 Workflow 탐색은 실제 Mission의 online 기본 동작이 아니라 별도 예산과 회귀 평가를 가진 offline Pattern 개선 과정으로 제한합니다.
+추가 최적화는 실제 Node Run의 Context 크기와 cache 효과를 측정한 뒤 도입합니다. 실행 중 Workflow 탐색이나 별도 LLM 판정은 기본 경로에 추가하지 않습니다.
 
 현재 Frontend Host가 Conversation 중심 slot만 제공하므로 `deep-analysis` 도입 시 공통 Shell에 최소 builtin `Workspace Frontend Slot`을 추가합니다. Conversation Frontend와 Workspace Frontend의 실제 공통점만 contract로 추출하고, `moduleKind`, package loader와 추상 base class는 세 번째 사용 사례 없이 일반화하지 않습니다.
 
@@ -2653,7 +2653,7 @@ PDF 실제 렌더는 `pdftoppm`, DOCX·XLSX·PPTX 실제 렌더는 LibreOffice�
 1. persistent·user-managed Execution Environment
 2. Local Workspace Bridge
 3. Batch Fan-out
-4. `deep-analysis` 두 번째 builtin Workspace Frontend PoC, 전용 Backend domain module, 제로베이스 Workflow 설계와 선택적 재사용 Pattern
+4. `deep-analysis` 두 번째 builtin Workspace Frontend PoC, 전용 Backend domain module, Node별 채팅 세션과 수동 Node·Edge Workflow
 5. declarative UI와 MCP Apps sandbox
 6. Computer Use
 7. Redis·Object Storage·Kubernetes 기반 multi-node scale-out

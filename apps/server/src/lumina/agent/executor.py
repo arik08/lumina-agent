@@ -210,10 +210,6 @@ from ..api.schemas import (
     RunMessageInput,
 )
 
-if TYPE_CHECKING:
-    from ..knowledge.capture import KnowledgeCaptureResult
-
-
 logger = logging.getLogger(__name__)
 _PROVIDER_RETRY_DELAYS_SECONDS = (1.0, 2.0, 4.0)
 _MAX_PROVIDER_RETRY_AFTER_SECONDS = 600.0
@@ -5383,55 +5379,7 @@ class LocalRunExecutor:
             completed = True
         if completed:
             self._emit_run_activity(run_id, "completed")
-            try:
-                capture_result = self._capture_completed_research_run(
-                    run_id, assistant_message_id
-                )
-            except Exception:
-                logger.exception(
-                    "Completed research run could not be captured to Knowledge",
-                    extra={"run_id": run_id},
-                )
-            else:
-                if (
-                    capture_result is not None
-                    and capture_result.job_id is not None
-                    and capture_result.job_created
-                ):
-                    from ..knowledge.executor import knowledge_ingestion_executor
-
-                    knowledge_ingestion_executor.enqueue(capture_result.job_id)
         await event_broker.notify(run_id)
-
-    def _capture_completed_research_run(
-        self, run_id: str, assistant_message_id: str
-    ) -> KnowledgeCaptureResult | None:
-        from ..knowledge.capture import capture_completed_research_run
-
-        with session_scope() as db:
-            result = capture_completed_research_run(
-                db,
-                run_id=run_id,
-                assistant_message_id=assistant_message_id,
-                settings=self.settings,
-            )
-            if result is None:
-                return None
-            run = db.get(Run, run_id)
-            if run is not None:
-                append_event(
-                    db,
-                    run,
-                    "knowledge_auto_capture_saved",
-                    {
-                        "sourceId": result.source_id,
-                        "sourceCreated": result.source_created,
-                        "ingestionJobId": result.job_id,
-                        "ingestionQueued": result.job_created,
-                        "ingestionErrorCode": result.ingestion_error_code,
-                    },
-                )
-            return result
 
     def _emit_run_activity(self, run_id: str, state: str) -> None:
         with SessionLocal() as db:

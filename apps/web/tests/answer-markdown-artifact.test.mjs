@@ -10,8 +10,10 @@ const [turnSource, apiSource] = await Promise.all([
 test("completed answers expose Markdown Artifact save immediately after copy", () => {
   assert.match(
     turnSource,
-    /aria-label="답변 복사"[\s\S]*?aria-label="답변 저장"[\s\S]*?aria-label="답변 공유"/,
+    /aria-label="원문 복사"[\s\S]*?aria-label="라이브러리 저장"[\s\S]*?aria-label="링크 공유"/,
   );
+  assert.match(turnSource, /aria-label="원문 복사" data-tooltip="원문 복사"/);
+  assert.match(turnSource, /aria-label="라이브러리 저장" data-tooltip="라이브러리 저장"/);
   assert.match(turnSource, /api\.artifacts\.createFromMessage\(finalMessage\.id\)/);
   assert.match(turnSource, /onOpenArtifact\(artifact\)/);
   assert.match(turnSource, /disabled=\{!finalMessage \|\| !sanitizedAssistantText \|\| markdownSaving\}/);

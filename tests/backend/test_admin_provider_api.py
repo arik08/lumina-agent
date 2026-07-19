@@ -60,6 +60,8 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
             {"conversationWidth": None},
             {"conversationFontSize": None},
             {"outputMode": None},
+            {"analysisDepth": None},
+            {"answerLength": None},
             {"clarificationMode": None},
             {"execution": None},
             {"modelCandidates": None},

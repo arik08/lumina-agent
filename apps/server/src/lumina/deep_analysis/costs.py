@@ -148,9 +148,7 @@ def mission_costs(db: Session, mission: DeepAnalysisMission) -> dict[str, Any]:
         if completed_nodes
         else 0
     )
-    estimated_remaining = sum(
-        node.estimated_cost_microusd or average_actual for node in remaining_nodes
-    )
+    estimated_remaining = average_actual * len(remaining_nodes)
     average_no_cache = round(sum(no_cache_known) / len(no_cache_known)) if no_cache_known else average_actual
     estimated_completion = mission.spent_microusd + estimated_remaining
     no_cache_upper = sum(no_cache_known) + average_no_cache * len(remaining_nodes)

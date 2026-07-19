@@ -162,6 +162,31 @@ def test_conversation_appearance_settings_are_persisted_per_user(tmp_path: Path)
         assert restored["conversationFontSize"] == 16
 
 
+def test_composer_work_settings_are_persisted_per_user(tmp_path: Path) -> None:
+    with TestClient(create_app(_settings(tmp_path))) as client:
+        csrf = _login(client)
+        current = client.get("/api/settings/current").json()
+        assert current["analysisDepth"] == "auto"
+        assert current["answerLength"] == "auto"
+
+        changed = client.patch(
+            "/api/settings/current",
+            headers={"X-CSRF-Token": csrf},
+            json={
+                "analysisDepth": "deep",
+                "answerLength": "detailed",
+                "expectedRevision": current["revision"],
+            },
+        )
+        assert changed.status_code == 200, changed.text
+        assert changed.json()["analysisDepth"] == "deep"
+        assert changed.json()["answerLength"] == "detailed"
+
+        restored = client.get("/api/settings/current").json()
+        assert restored["analysisDepth"] == "deep"
+        assert restored["answerLength"] == "detailed"
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     (

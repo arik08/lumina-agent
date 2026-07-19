@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from urllib.parse import quote
+from datetime import timedelta
+import logging
 
 from fastapi import APIRouter, Depends, Query, Request, Response
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
 from ...audit import record_audit
@@ -13,6 +14,7 @@ from ...api.schemas import RunActionRequest
 from ...config import Settings, get_settings
 from ...db import get_db
 from ...deep_analysis.execution import create_node_run, preserve_partial_output
+from ...deep_analysis.ai_planner import design_initial_workflow
 from ...deep_analysis.costs import mission_costs
 from ...deep_analysis.events import (
     claim_command,
@@ -41,6 +43,7 @@ from ...deep_analysis.models import (
 )
 from ...deep_analysis.ledger import list_claims, list_evidence, list_open_issues
 from ...deep_analysis.patterns import (
+    archive_pattern,
     create_pattern,
     create_pattern_version,
     list_patterns,
@@ -60,6 +63,7 @@ from ...deep_analysis.schemas import (
     MissionCostResponse,
     MissionFileResponse,
     MissionPatch,
+    MissionMove,
     MissionPause,
     MissionQualityGate,
     MissionRetry,
@@ -72,6 +76,7 @@ from ...deep_analysis.schemas import (
     PatternVersionResponse,
     WorkflowDraftCreate,
     WorkflowDraftPatch,
+    WorkflowRegenerate,
     WorkflowRevisionResponse,
 )
 from ...deep_analysis.service import (
@@ -85,7 +90,9 @@ from ...deep_analysis.service import (
     execution_engine_available,
     list_decisions,
     list_missions,
+    move_mission,
     pause_mission,
+    regenerate_workflow,
     require_mission,
     retry_mission_node,
     resume_mission,
@@ -93,12 +100,13 @@ from ...deep_analysis.service import (
     start_mission,
     update_mission,
     update_workflow_draft,
-    upgrade_legacy_draft_workflow,
     workflow_revision,
 )
 from ...deep_analysis.quality import list_quality_gates
-from ...models import ProjectFile, ProjectFileVersion, Run, User
-from ...storage import ManagedLocalStorage, StorageError
+from ...deep_analysis.planning import initial_workflow_plan
+from ...models import Message, ProjectFile, ProjectFileVersion, Run, User, utc_now
+from ...providers.execution_defaults import initial_execution_selection
+from ...storage import ManagedLocalStorage
 from ...runs.broker import event_broker
 from ...runs.service import apply_run_action
 from ..dependencies import AuthContext, get_current_user, require_csrf
@@ -106,6 +114,7 @@ from ..errors import ApiProblem
 
 
 router = APIRouter(tags=["deep-analysis"])
+logger = logging.getLogger(__name__)
 
 
 def _storage(settings: Settings) -> ManagedLocalStorage:
@@ -295,6 +304,8 @@ def _summary_payload(mission: DeepAnalysisMission) -> dict[str, object]:
         "id": mission.id,
         "project_id": mission.project_id,
         "title": mission.title,
+        "is_favorite": mission.is_favorite,
+        "is_liked": mission.is_liked,
         "objective": mission.objective,
         "status": mission.status,
         "start_mode": mission.start_mode,
@@ -303,7 +314,7 @@ def _summary_payload(mission: DeepAnalysisMission) -> dict[str, object]:
         "budget_microusd": mission.budget_microusd,
         "spent_microusd": mission.spent_microusd,
         "completion_outcome": mission.completion_outcome,
-    "revision": mission.revision,
+        "revision": mission.revision,
         "created_at": mission.created_at,
         "updated_at": mission.updated_at,
     }
@@ -313,10 +324,20 @@ def _workflow_revision_payload(
     db: Session, revision: DeepAnalysisWorkflowRevision
 ) -> dict[str, object]:
     nodes, edges = workflow_revision(db, revision)
+    run_ids = [node.run_id for node in nodes if node.run_id]
     runs = {
         run.id: run
-        for run in db.query(Run).filter(Run.id.in_([node.run_id for node in nodes if node.run_id]))
+        for run in db.query(Run).filter(Run.id.in_(run_ids))
     }
+    execution_prompts = {
+        run_id: prompt
+        for run_id, prompt in db.execute(
+            select(Message.run_id, Message.canonical_text).where(
+                Message.run_id.in_(run_ids), Message.role == "user"
+            )
+        ).all()
+        if run_id is not None
+    } if run_ids else {}
     manifests = {
         item.run_id: item
         for item in db.query(DeepAnalysisContextManifest).filter(
@@ -336,17 +357,18 @@ def _workflow_revision_payload(
                 "id": node.id, "node_key": node.node_key, "node_type": node.node_type,
                 "title": node.title, "purpose": node.purpose, "status": node.status,
                 "sequence": node.sequence, "position_x": node.position_x, "position_y": node.position_y,
-                "config": node.config_json, "run_id": node.run_id,
+                "config": node.config_json, "conversation_id": node.conversation_id,
+                "run_id": node.run_id,
                 "output_project_file_id": node.output_project_file_id, "output_logical_path": node.output_logical_path,
                 "output_summary": node.output_summary, "output_markdown": node.output_markdown,
                 "generated_files": node.generated_files_json, "run_history": node.run_history_json,
                 "run_status": runs[node.run_id].status if node.run_id and node.run_id in runs else None,
+                "execution_prompt": execution_prompts.get(node.run_id),
                 "context_manifest": (
                     _context_manifest_payload(manifests[node.run_id])
                     if node.run_id and node.run_id in manifests else None
                 ),
                 "live_output": "", "error_message": node.error_message,
-                "estimated_cost_microusd": node.estimated_cost_microusd,
                 "actual_cost_microusd": node.actual_cost_microusd,
                 "started_at": node.started_at, "finished_at": node.finished_at,
             }
@@ -360,12 +382,22 @@ def _workflow_revision_payload(
 
 def _detail_payload(db: Session, mission: DeepAnalysisMission) -> dict[str, object]:
     revision, nodes, edges = active_workflow(db, mission.id)
+    run_ids = [node.run_id for node in nodes if node.run_id]
     runs = {
         run.id: run
         for run in db.query(Run).filter(
-            Run.id.in_([node.run_id for node in nodes if node.run_id])
+            Run.id.in_(run_ids)
         )
     }
+    execution_prompts = {
+        run_id: prompt
+        for run_id, prompt in db.execute(
+            select(Message.run_id, Message.canonical_text).where(
+                Message.run_id.in_(run_ids), Message.role == "user"
+            )
+        ).all()
+        if run_id is not None
+    } if run_ids else {}
     manifests = {
         item.run_id: item
         for item in db.query(DeepAnalysisContextManifest).filter(
@@ -376,29 +408,7 @@ def _detail_payload(db: Session, mission: DeepAnalysisMission) -> dict[str, obje
         **_summary_payload(mission),
         "execution_available": execution_engine_available(),
         "event_cursor": mission.event_sequence,
-        "charter": mission.charter_json,
-        "completion_contract": mission.completion_contract_json,
         "source_manifest": mission.source_manifest_json,
-        "decisions": [
-            _decision_payload(decision, response, node_key)
-            for decision, response, node_key in list_decisions(db, mission.id)
-        ],
-        "quality_gates": [
-            _quality_gate_payload(gate, node_key)
-            for gate, node_key in list_quality_gates(db, mission.id)
-        ],
-        "claims": [
-            _claim_payload(claim, node_key, evidence_rows)
-            for claim, node_key, evidence_rows in list_claims(db, mission.id)
-        ],
-        "evidence": [
-            _evidence_payload(evidence)
-            for evidence in list_evidence(db, mission.id)
-        ],
-        "open_issues": [
-            _open_issue_payload(issue, node_key)
-            for issue, node_key in list_open_issues(db, mission.id)
-        ],
         "files": _mission_file_payloads(db, mission.id),
         "workflow": {
             "id": revision.id,
@@ -420,6 +430,7 @@ def _detail_payload(db: Session, mission: DeepAnalysisMission) -> dict[str, obje
                     "position_x": node.position_x,
                     "position_y": node.position_y,
                     "config": node.config_json,
+                    "conversation_id": node.conversation_id,
                     "run_id": node.run_id,
                     "output_project_file_id": node.output_project_file_id,
                     "output_logical_path": node.output_logical_path,
@@ -432,6 +443,7 @@ def _detail_payload(db: Session, mission: DeepAnalysisMission) -> dict[str, obje
                         if node.run_id and node.run_id in runs
                         else None
                     ),
+                    "execution_prompt": execution_prompts.get(node.run_id),
                     "context_manifest": (
                         _context_manifest_payload(manifests[node.run_id])
                         if node.run_id and node.run_id in manifests else None
@@ -444,7 +456,6 @@ def _detail_payload(db: Session, mission: DeepAnalysisMission) -> dict[str, obje
                         else ""
                     ),
                     "error_message": node.error_message,
-                    "estimated_cost_microusd": node.estimated_cost_microusd,
                     "actual_cost_microusd": node.actual_cost_microusd,
                     "started_at": node.started_at,
                     "finished_at": node.finished_at,
@@ -550,6 +561,32 @@ def get_patterns(
     ]
 
 
+@router.delete("/deep-analysis/patterns/{pattern_id}", status_code=204)
+def remove_pattern(
+    pattern_id: str,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> Response:
+    pattern = db.get(DeepAnalysisWorkflowPattern, pattern_id)
+    if pattern is None or pattern.project_id is None or pattern.status != "active":
+        raise ApiProblem(404, "pattern_not_found", "Pattern을 찾을 수 없습니다.")
+    require_project(db, context.user, pattern.project_id, write=True)
+    archive_pattern(db, pattern=pattern)
+    record_audit(
+        db,
+        action="deep_analysis_pattern_archived",
+        target_type="deep_analysis_workflow_pattern",
+        target_id=pattern.id,
+        result="success",
+        actor=context.user,
+        request_id=getattr(request.state, "request_id", None),
+        metadata={"project_id": pattern.project_id},
+    )
+    db.commit()
+    return Response(status_code=204)
+
+
 @router.post(
     "/projects/{project_id}/deep-analysis/patterns",
     response_model=PatternVersionResponse,
@@ -651,13 +688,45 @@ def post_pattern_version_publish(
     response_model=MissionDetailResponse,
     status_code=201,
 )
-def post_mission(
+async def post_mission(
     project_id: str,
     payload: MissionCreate,
     request: Request,
     context: AuthContext = Depends(require_csrf),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
+    project = require_project(db, context.user, project_id, write=True)
+    execution, _source = initial_execution_selection(
+        db,
+        organization_id=project.organization_id,
+        environment=settings.environment,
+    )
+    initial_plan = None
+    start_mode = "ai_fallback"
+    planning_metadata: dict[str, object] = {"mode": "fallback"}
+    try:
+        provider_id = str(execution["providerId"])
+        model_key = str(execution["modelKey"])
+        design = await design_initial_workflow(
+            provider=local_run_executor.provider_for_probe(provider_id),
+            model=model_key,
+            title=payload.title,
+            objective=payload.objective,
+            effort=execution.get("effortId"),
+        )
+        initial_plan = design.plan
+        start_mode = "ai_designed"
+        planning_metadata = {
+            "mode": "ai",
+            "providerId": provider_id,
+            "modelKey": model_key,
+        }
+    except Exception as exc:
+        logger.warning(
+            "Deep Analysis initial workflow planning failed; using deterministic fallback: %s",
+            type(exc).__name__,
+        )
     mission = create_mission(
         db,
         context.user,
@@ -666,7 +735,9 @@ def post_mission(
         objective=payload.objective,
         autonomy_mode=payload.autonomy_mode,
         budget_microusd=payload.budget_microusd,
-        pattern_version_id=payload.pattern_version_id,
+        initial_plan=initial_plan,
+        start_mode=start_mode,
+        planning_metadata=planning_metadata,
     )
     emit_event(
         db,
@@ -704,8 +775,99 @@ def get_mission(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     mission = require_mission(db, user, mission_id)
-    if upgrade_legacy_draft_workflow(db, mission):
-        db.commit()
+    return _detail_payload(db, mission)
+
+
+@router.post(
+    "/deep-analysis/missions/{mission_id}/workflow/regenerate",
+    response_model=MissionDetailResponse,
+)
+async def post_workflow_regenerate(
+    mission_id: str,
+    payload: WorkflowRegenerate,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    mission = require_mission(db, context.user, mission_id, write=True)
+    if mission.revision != payload.expected_revision:
+        raise ApiProblem(
+            409,
+            "revision_conflict",
+            "다른 변경사항이 먼저 저장되었습니다. 최신 상태를 불러온 뒤 다시 시도해 주세요.",
+            details={"currentRevision": mission.revision},
+        )
+    if mission.status in {"running", "paused", "awaiting_input"}:
+        raise ApiProblem(
+            409,
+            "workflow_regeneration_not_allowed",
+            "실행 중인 Mission의 Workflow는 재생성할 수 없습니다.",
+            details={"status": mission.status},
+        )
+    execution, _source = initial_execution_selection(
+        db,
+        organization_id=mission.organization_id,
+        environment=settings.environment,
+    )
+    planning_metadata: dict[str, object] = {"mode": "fallback"}
+    try:
+        provider_id = str(execution["providerId"])
+        model_key = str(execution["modelKey"])
+        design = await design_initial_workflow(
+            provider=local_run_executor.provider_for_probe(provider_id),
+            model=model_key,
+            title=mission.title,
+            objective=mission.objective,
+            effort=execution.get("effortId"),
+            instruction=payload.prompt,
+        )
+        plan = design.plan
+        planning_metadata = {
+            "mode": "ai",
+            "providerId": provider_id,
+            "modelKey": model_key,
+        }
+    except Exception as exc:
+        logger.warning(
+            "Deep Analysis workflow regeneration failed; using deterministic fallback: %s",
+            type(exc).__name__,
+        )
+        plan = initial_workflow_plan(
+            mission.title,
+            f"{mission.objective}\n\nWorkflow 재설계 요청: {payload.prompt.strip()}",
+        )
+    revision = regenerate_workflow(
+        db,
+        mission,
+        expected_revision=payload.expected_revision,
+        prompt=payload.prompt,
+        plan=plan,
+        planning_metadata=planning_metadata,
+    )
+    emit_event(
+        db,
+        mission,
+        "workflow_regenerated",
+        {
+            "missionRevision": mission.revision,
+            "workflowRevision": revision.revision_number,
+            "workflowRevisionId": revision.id,
+            "nodeCount": len(plan.nodes),
+        },
+        actor_user_id=context.user.id,
+    )
+    record_audit(
+        db,
+        action="deep_analysis_workflow_regenerated",
+        target_type="deep_analysis_mission",
+        target_id=mission.id,
+        result="success",
+        actor=context.user,
+        request_id=getattr(request.state, "request_id", None),
+        metadata={"workflow_revision": revision.revision_number},
+    )
+    db.commit()
     return _detail_payload(db, mission)
 
 
@@ -716,16 +878,13 @@ def get_mission(
 def get_mission_events(
     mission_id: str,
     after_sequence: int = Query(default=0, alias="afterSequence", ge=0),
-    limit: int = Query(default=200, ge=1, le=500),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[dict[str, object]]:
     mission = require_mission(db, user, mission_id)
     return [
         event_payload(item)
-        for item in list_events(
-            db, mission.id, after_sequence=after_sequence, limit=limit
-        )
+        for item in list_events(db, mission.id, after_sequence=after_sequence)
     ]
 
 
@@ -1107,25 +1266,13 @@ def patch_mission(
         objective=payload.objective,
         autonomy_mode=payload.autonomy_mode,
         budget_microusd=payload.budget_microusd,
-        charter=(
-            payload.charter.model_dump(mode="json", by_alias=True)
-            if payload.charter is not None
-            else None
-        ),
-        completion_contract=(
-            payload.completion_contract.model_dump(mode="json", by_alias=True)
-            if payload.completion_contract is not None
-            else None
-        ),
+        is_favorite=payload.is_favorite,
+        is_liked=payload.is_liked,
     )
     emit_event(
         db,
         mission,
-        (
-            "mission_charter_updated"
-            if payload.charter is not None or payload.completion_contract is not None
-            else "mission_updated"
-        ),
+        "mission_updated",
         {
             "missionRevision": mission.revision,
             "status": mission.status,
@@ -1136,8 +1283,8 @@ def patch_mission(
                     "objective": payload.objective,
                     "autonomyMode": payload.autonomy_mode,
                     "budgetMicrousd": payload.budget_microusd,
-                    "charter": payload.charter,
-                    "completionContract": payload.completion_contract,
+                    "isFavorite": payload.is_favorite,
+                    "isLiked": payload.is_liked,
                 }.items()
                 if value is not None
             ],
@@ -1156,6 +1303,33 @@ def patch_mission(
     )
     db.commit()
     return _detail_payload(db, mission)
+
+
+@router.post(
+    "/deep-analysis/missions/{mission_id}/move",
+    response_model=MissionSummaryResponse,
+)
+def post_mission_move(
+    mission_id: str,
+    payload: MissionMove,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    mission = require_mission(db, context.user, mission_id, write=True)
+    move_mission(db, context.user, mission, payload.project_id)
+    record_audit(
+        db,
+        action="deep_analysis_mission_moved",
+        target_type="deep_analysis_mission",
+        target_id=mission.id,
+        result="success",
+        actor=context.user,
+        request_id=getattr(request.state, "request_id", None),
+        metadata={"project_id": payload.project_id},
+    )
+    db.commit()
+    return _summary_payload(mission)
 
 
 @router.delete("/deep-analysis/missions/{mission_id}", status_code=204)
@@ -1215,7 +1389,6 @@ async def post_mission_start(
     )
     if not should_apply:
         return _detail_payload(db, mission)
-    upgrade_legacy_draft_workflow(db, mission)
     start_mission(db, mission, expected_revision=payload.expected_revision)
     _workflow_revision, nodes, _edges = active_workflow(db, mission.id)
     active_node = next((node for node in nodes if node.status == "running"), None)
@@ -1552,13 +1725,32 @@ def post_mission_export(
         if existing is not None and existing.mission_id == mission.id:
             return _export_payload(existing)
         raise ApiProblem(409, "idempotent_result_missing", "기존 내보내기 결과를 복원할 수 없습니다.")
+    requested_at = utc_now()
+    cooldown_boundary = requested_at - timedelta(seconds=1)
+    claimed = db.execute(
+        update(DeepAnalysisMission)
+        .where(
+            DeepAnalysisMission.id == mission.id,
+            or_(
+                DeepAnalysisMission.last_export_requested_at.is_(None),
+                DeepAnalysisMission.last_export_requested_at <= cooldown_boundary,
+            ),
+        )
+        .values(last_export_requested_at=requested_at)
+    )
+    if claimed.rowcount != 1:
+        raise ApiProblem(
+            429,
+            "mission_export_cooldown",
+            "Mission은 1초에 한 번만 저장할 수 있습니다.",
+        )
     item = create_mission_export(
         db,
         _storage(settings),
         mission=mission,
         user=context.user,
-        scope=payload.scope,
-        include_originals=payload.include_originals,
+        max_upload_bytes=settings.max_upload_bytes,
+        requested_at=requested_at,
     )
     emit_event(
         db,
@@ -1568,8 +1760,8 @@ def post_mission_export(
             "exportId": item.id,
             "scope": item.scope,
             "status": item.status,
-            "contentHash": item.content_hash,
-            "sizeBytes": item.size_bytes,
+            "folderPath": item.manifest_json.get("folderPath"),
+            "fileCount": item.manifest_json.get("fileCount"),
         },
         actor_user_id=context.user.id,
     )
@@ -1585,7 +1777,8 @@ def post_mission_export(
             "mission_id": mission.id,
             "scope": item.scope,
             "include_originals": item.include_originals,
-            "entry_count": item.manifest_json.get("entryCount"),
+            "folder_path": item.manifest_json.get("folderPath"),
+            "file_count": item.manifest_json.get("fileCount"),
         },
     )
     complete_command(db, command, result={"exportId": item.id})
@@ -1608,33 +1801,3 @@ def get_mission_export(
     if item is None or item.mission_id != mission.id:
         raise ApiProblem(404, "deep_analysis_export_not_found", "Mission 내보내기를 찾을 수 없습니다.")
     return _export_payload(item)
-
-
-@router.get("/deep-analysis/missions/{mission_id}/exports/{export_id}/download")
-def download_mission_export(
-    mission_id: str,
-    export_id: str,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-    settings: Settings = Depends(get_settings),
-) -> Response:
-    mission = require_mission(db, user, mission_id)
-    item = db.get(DeepAnalysisMissionExport, export_id)
-    if item is None or item.mission_id != mission.id:
-        raise ApiProblem(404, "deep_analysis_export_not_found", "Mission 내보내기를 찾을 수 없습니다.")
-    if item.status != "completed" or not item.storage_key or not item.content_hash:
-        raise ApiProblem(409, "deep_analysis_export_not_ready", "Mission 내보내기가 아직 준비되지 않았습니다.")
-    try:
-        content = _storage(settings).read_bytes(
-            item.storage_key, expected_sha256=item.content_hash
-        )
-    except StorageError as exc:
-        raise ApiProblem(503, "deep_analysis_export_content_missing", "Mission 내보내기 파일을 읽을 수 없습니다.") from exc
-    return Response(
-        content=content,
-        media_type="application/zip",
-        headers={
-            "Content-Disposition": f"attachment; filename=mission-export.zip; filename*=UTF-8''{quote(item.filename)}",
-            "X-Content-SHA256": item.content_hash,
-        },
-    )

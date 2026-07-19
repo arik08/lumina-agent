@@ -1,5 +1,5 @@
 import { Check, ChevronDown } from "lucide-react";
-import { type CSSProperties, type KeyboardEvent, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, type CSSProperties, type KeyboardEvent, type ReactNode, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import "./SelectMenu.css";
 
@@ -21,6 +21,8 @@ interface SelectMenuProps {
   align?: "start" | "end";
   className?: string;
   menuClassName?: string;
+  onOpenChange?: (open: boolean) => void;
+  renderOptionAction?: (option: SelectMenuOption) => ReactNode;
 }
 
 interface SelectMenuPosition {
@@ -46,6 +48,8 @@ export function SelectMenu({
   align = "start",
   className = "",
   menuClassName = "",
+  onOpenChange,
+  renderOptionAction,
 }: SelectMenuProps) {
   const [open, setOpen] = useState(false);
   const [menuPosition, setMenuPosition] = useState<SelectMenuPosition | null>(null);
@@ -54,8 +58,13 @@ export function SelectMenu({
   const menuRef = useRef<HTMLDivElement>(null);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const listId = useId();
+  const conversationFontSize = rootRef.current
+    ?.closest<HTMLElement>(".app-shell")
+    ?.style.getPropertyValue("--conversation-font-size");
   const selectedIndex = options.findIndex((option) => option.value === value);
   const selected = options[selectedIndex];
+
+  useEffect(() => onOpenChange?.(open), [onOpenChange, open]);
 
   const positionMenu = useCallback(() => {
     if (!rootRef.current || !menuRef.current) return;
@@ -171,23 +180,31 @@ export function SelectMenu({
         minWidth: menuPosition?.minWidth,
         maxHeight: menuPosition?.maxHeight,
         visibility: menuPosition ? "visible" : "hidden",
+        ...(conversationFontSize ? { "--conversation-font-size": conversationFontSize } : {}),
       } as CSSProperties}
     >
-      {options.map((option, index) => (
-        <button
-          className={option.value === value ? "is-selected" : ""}
-          type="button"
-          role="option"
-          aria-selected={option.value === value}
-          disabled={option.disabled}
-          key={option.value}
-          ref={(element) => { optionRefs.current[index] = element; }}
-          onClick={() => choose(option.value)}
-        >
-          <span>{option.label}</span>
-          <Check size={12} aria-hidden="true" />
-        </button>
-      ))}
+      {options.map((option, index) => {
+        const optionButton = (
+          <button
+            className={`lumina-select-option ${option.value === value ? "is-selected" : ""}`.trim()}
+            type="button"
+            role="option"
+            aria-selected={option.value === value}
+            disabled={option.disabled}
+            ref={(element) => { optionRefs.current[index] = element; }}
+            onClick={() => choose(option.value)}
+          >
+            <span>{option.label}</span>
+            <Check size={12} aria-hidden="true" />
+          </button>
+        );
+        return renderOptionAction ? (
+          <div className="lumina-select-option-row" role="presentation" key={option.value}>
+            {optionButton}
+            {renderOptionAction(option)}
+          </div>
+        ) : <Fragment key={option.value}>{optionButton}</Fragment>;
+      })}
     </div>,
     document.body,
   );

@@ -4,13 +4,21 @@ import test from "node:test";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
-test("streamed text is visually paced near 60fps without changing event ingestion", async () => {
+test("streamed text keeps smooth buffering within a 180ms visual-lag deadline", async () => {
   const source = await read("../src/streaming-ui.ts");
 
+  assert.match(source, /const streamStartBufferMs = 40;/);
+  assert.match(source, /const maxVisualLagMs = 180;/);
+  assert.match(source, /const renderCommitReserveMs = 80;/);
   assert.match(source, /const visibleFrameIntervalMs = 15;/);
   assert.match(source, /frameTimerRef\.current = window\.setTimeout\(\(\) => \{[\s\S]*?window\.requestAnimationFrame/s);
-  assert.match(source, /function smoothRevealCount\(pendingLength: number, desiredCount: number\)/);
-  assert.match(source, /Math\.max\(streamCatchUpDeadlineMs, streamRevealDurationMs \* 3\)/);
+  assert.match(source, /pendingRef\.current = targetText;/);
+  assert.match(source, /function commonPrefixLength\(left: string, right: string\)/);
+  assert.match(source, /function smoothBufferedRevealCount\(pendingLength: number, remainingMs: number\)/);
+  assert.match(source, /pendingStartedAt \+ maxVisualLagMs - renderCommitReserveMs - timestamp/);
+  assert.match(source, /Math\.ceil\(pendingLength \/ remainingFrames\)/);
+  assert.doesNotMatch(source, /maxBufferedRevealCharsPerFrame|revealRateRef|recentChunksRef|streamCatchUpDeadlineMs/);
+  assert.doesNotMatch(source, /if \(!target\.startsWith\(visibleRef\.current\)\) \{\s*visibleRef\.current = target;/);
   assert.match(source, /prefers-reduced-motion: reduce/);
 });
 
@@ -21,7 +29,7 @@ test("new run activities reveal sequentially only while the timeline is live", a
   assert.match(source, /function useStaggeredRunActivities\(activities: RunActivity\[\], enabled: boolean\)/);
   assert.match(source, /window\.setTimeout\(\(\) => \{[\s\S]*?Math\.min\(activities\.length, current \+ 1\)/s);
   assert.match(source, /const visibleActivities = useStaggeredRunActivities\(activities, timelineRunning\)/);
-  assert.match(source, /onVisibleGrowth=\{onVisibleGrowth\}/);
+  assert.doesNotMatch(source, /onVisibleGrowth/);
 });
 
 test("artifact resizing coalesces pointer movement into animation frames", async () => {

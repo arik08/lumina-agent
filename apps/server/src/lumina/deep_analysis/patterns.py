@@ -88,7 +88,6 @@ def definition_from_mission(
                 "purpose": _sanitize_value(node.purpose, mission),
                 "positionX": node.position_x,
                 "positionY": node.position_y,
-                "estimatedCostMicrousd": node.estimated_cost_microusd,
                 "config": {
                     key: _sanitize_value(value, mission)
                     for key, value in node.config_json.items()
@@ -137,6 +136,15 @@ def list_patterns(
         )
         result.append((pattern, latest))
     return result
+
+
+def archive_pattern(
+    db: Session,
+    *,
+    pattern: DeepAnalysisWorkflowPattern,
+) -> None:
+    pattern.status = "archived"
+    db.flush()
 
 
 def create_pattern(
@@ -233,6 +241,8 @@ def apply_pattern_version(
     version: DeepAnalysisWorkflowPatternVersion,
     pattern: DeepAnalysisWorkflowPattern,
 ) -> None:
+    if pattern.status != "active":
+        raise ApiProblem(409, "pattern_archived", "보관된 Pattern은 새 Mission에 사용할 수 없습니다.")
     if version.status != "published" or version.pattern_id != pattern.id:
         raise ApiProblem(409, "pattern_version_not_published", "게시된 Pattern version만 사용할 수 있습니다.")
     if pattern.project_id != mission.project_id or pattern.organization_id != mission.organization_id:
@@ -256,7 +266,6 @@ def apply_pattern_version(
                     **dict(item.get("config") or {}),
                     "patternVersionId": version.id,
                 },
-                estimated_cost_microusd=int(item.get("estimatedCostMicrousd") or 0),
             )
         )
     for item in definition.get("edges", []):

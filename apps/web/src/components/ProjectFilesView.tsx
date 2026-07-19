@@ -856,7 +856,6 @@ export function ProjectFilesView({ projectId, onOpenNavigation }: ProjectFilesVi
             {selectedFolderPath ? (
               <div className="folder-viewer">
                 <header className="file-viewer-heading"><span className="file-viewer-icon"><FolderOpen size={22} /></span><div><h2>{selectedFolderPath.split("/").at(-1)}</h2><p>{selectedFolderPath}</p></div></header>
-                <div className="folder-reference-note"><strong>@{selectedFolderPath.split("/").at(-1)}</strong><span>채팅에서 이 폴더를 선택하면 하위 {selectedFolderFiles.length}개 파일을 함께 참고합니다.</span></div>
                 <div className="folder-file-list">
                   {selectedFolderFiles.map((file) => <button type="button" key={file.id} onClick={() => chooseFile(file.id)}><FileText size={14} /><span><strong>{file.displayName}</strong><small>{file.logicalPath} · {formatBytes(file.size)}</small></span><ChevronRight size={14} /></button>)}
                 </div>

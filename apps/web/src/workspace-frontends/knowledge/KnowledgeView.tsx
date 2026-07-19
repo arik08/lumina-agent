@@ -1,45 +1,33 @@
 import {
+  ArrowLeft,
   BookOpenText,
-  CircleDot,
+  Check,
+  CheckCircle2,
+  ChevronDown,
   FileSearch,
   FileText,
+  Folder,
   GitBranch,
   Home,
   LoaderCircle,
-  Menu,
+  Pencil,
   Plus,
+  Search,
   Settings,
   ShieldCheck,
+  Tags,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api, ApiError } from "../../api";
-import { SelectMenu } from "../../components/SelectMenu";
-import type {
-  KnowledgeEntity,
-  KnowledgeIngestionJob,
-  KnowledgeNeighborhood,
-  KnowledgePage,
-  KnowledgeSource,
-  KnowledgeSpace,
-  KnowledgeStatement,
-} from "../../api-types";
-import { KnowledgeExplore } from "./KnowledgeExplore";
+import type { KnowledgeDocument, KnowledgeDocumentSummary, KnowledgeGraphResponse, KnowledgeSpace, KnowledgeTag, ProjectSummary } from "../../api-types";
+import { MarkdownResponse } from "../../components/ConversationTurn";
 import { KnowledgeGraph } from "./KnowledgeGraph";
-import { KnowledgeHome } from "./KnowledgeHome";
-import { KnowledgeReview } from "./KnowledgeReview";
-import { KnowledgeSettings } from "./KnowledgeSettings";
-import { KnowledgeSources } from "./KnowledgeSources";
-import { KnowledgeWiki } from "./KnowledgeWiki";
 import "./knowledge.css";
 
-export type KnowledgeTab = "home" | "explore" | "sources" | "wiki" | "graph" | "review" | "settings";
-type CreatePanel = "space" | "source" | "entity" | "statement" | null;
-
-interface KnowledgeViewProps {
-  onOpenNavigation: () => void;
-}
-
+type KnowledgeTab = "home" | "explore" | "sources" | "wiki" | "graph" | "review" | "settings";
+const emptyGraph: KnowledgeGraphResponse = { nodes: [], edges: [], truncated: false };
+const knowledgeDocumentHistoryKey = "luminaKnowledgeDocument";
 const tabs = [
   { id: "home", label: "홈", icon: Home },
   { id: "explore", label: "탐색", icon: FileSearch },
@@ -51,181 +39,135 @@ const tabs = [
 ] as const;
 
 function errorMessage(error: unknown) {
-  return error instanceof ApiError ? error.message : "지식 데이터를 처리하지 못했습니다.";
+  return error instanceof ApiError ? error.message : "지식 그래프를 불러오지 못했습니다.";
 }
 
-async function sha256Hex(value: string) {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+function researchedDate(value: string) {
+  return new Intl.DateTimeFormat("ko-KR", { year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(value));
 }
 
-export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
+export function KnowledgeView() {
   const [spaces, setSpaces] = useState<KnowledgeSpace[]>([]);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(null);
-  const [sources, setSources] = useState<KnowledgeSource[]>([]);
-  const [ingestions, setIngestions] = useState<KnowledgeIngestionJob[]>([]);
-  const [entities, setEntities] = useState<KnowledgeEntity[]>([]);
-  const [pages, setPages] = useState<KnowledgePage[]>([]);
-  const [statements, setStatements] = useState<KnowledgeStatement[]>([]);
-  const [neighborhood, setNeighborhood] = useState<KnowledgeNeighborhood | null>(null);
-  const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
-  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
-  const [selectedEvidenceId, setSelectedEvidenceId] = useState<string | null>(null);
+  const [documents, setDocuments] = useState<KnowledgeDocumentSummary[]>([]);
+  const [selectedDocument, setSelectedDocument] = useState<KnowledgeDocument | null>(null);
+  const [graph, setGraph] = useState<KnowledgeGraphResponse>(emptyGraph);
   const [tab, setTab] = useState<KnowledgeTab>("home");
-  const [createPanel, setCreatePanel] = useState<CreatePanel>(null);
-  const [loadingSpaces, setLoadingSpaces] = useState(true);
+  const [query, setQuery] = useState("");
   const [loadingContent, setLoadingContent] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [startingSourceId, setStartingSourceId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-
+  const [showCreateSpace, setShowCreateSpace] = useState(false);
   const [spaceName, setSpaceName] = useState("");
   const [spacePurpose, setSpacePurpose] = useState("");
-  const [sourceTitle, setSourceTitle] = useState("");
-  const [sourceText, setSourceText] = useState("");
-  const [extractAfterCreate, setExtractAfterCreate] = useState(true);
-  const [entityName, setEntityName] = useState("");
-  const [entityType, setEntityType] = useState("concept");
-  const [subjectId, setSubjectId] = useState("");
-  const [predicate, setPredicate] = useState("RELATED_TO");
-  const [objectId, setObjectId] = useState("");
-  const [evidenceId, setEvidenceId] = useState("");
+  const [savingSpace, setSavingSpace] = useState(false);
+  const [openPicker, setOpenPicker] = useState<"graph" | "projects" | null>(null);
+  const [projectDraft, setProjectDraft] = useState<Set<string>>(new Set());
+  const [savingProjects, setSavingProjects] = useState(false);
+  const [editingSpaceField, setEditingSpaceField] = useState<"name" | "purpose" | null>(null);
+  const [spaceEditValue, setSpaceEditValue] = useState("");
+  const [savingSpaceDetails, setSavingSpaceDetails] = useState(false);
+  const [spaceEditError, setSpaceEditError] = useState<string | null>(null);
+  const productActionsRef = useRef<HTMLDivElement>(null);
+  const documentHistoryEntryRef = useRef<string | null>(null);
+  const documentReturnTabRef = useRef<KnowledgeTab | null>(null);
 
   const selectedSpace = spaces.find((space) => space.id === selectedSpaceId) ?? null;
-  const canEditSelectedSpace = selectedSpace?.accessMode === "owner";
-  const entityById = useMemo(() => new Map(entities.map((entity) => [entity.id, entity])), [entities]);
-  const evidenceOptions = useMemo(
-    () => sources.flatMap((source) => source.evidenceSegments.map((item) => ({
-      id: item.id,
-      label: `${source.title} · ${item.text.slice(0, 54)}`,
-    }))),
-    [sources],
-  );
-  const entityOptions = useMemo(
-    () => [{ value: "", label: "선택" }, ...entities.map((entity) => ({ value: entity.id, label: entity.canonicalName }))],
-    [entities],
-  );
-  const objectEntityOptions = useMemo(
-    () => entityOptions.filter((option) => !option.value || option.value !== subjectId),
-    [entityOptions, subjectId],
-  );
-  const evidenceMenuOptions = useMemo(
-    () => [{ value: "", label: "없음 · 검토 제안으로 저장" }, ...evidenceOptions.map((item) => ({ value: item.id, label: item.label }))],
-    [evidenceOptions],
-  );
-  const pendingCount = statements.filter((statement) => statement.status === "proposed").length;
-  const handleSettingsError = useCallback((settingsError: unknown) => {
-    setError(errorMessage(settingsError));
-  }, []);
-  const handleExploreError = useCallback((searchError: unknown) => {
-    setError(errorMessage(searchError));
-  }, []);
 
-  useEffect(() => {
-    if (!canEditSelectedSpace && createPanel !== "space") setCreatePanel(null);
-  }, [canEditSelectedSpace, createPanel]);
+  const loadDocument = useCallback(async (documentId: string) => {
+    setError(null);
+    try { setSelectedDocument(await api.knowledge.getDocument(documentId)); }
+    catch (loadError) { setError(errorMessage(loadError)); }
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
-    setLoadingSpaces(true);
-    api.knowledge.listSpaces(controller.signal)
-      .then((items) => {
+    Promise.all([api.knowledge.listSpaces(controller.signal), api.projects.list(controller.signal)])
+      .then(([items, projectItems]) => {
         setSpaces(items);
+        setProjects(projectItems);
         setSelectedSpaceId((current) => items.some((item) => item.id === current) ? current : (items[0]?.id ?? null));
       })
-      .catch((loadError) => {
-        if (!controller.signal.aborted) setError(errorMessage(loadError));
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoadingSpaces(false);
-      });
+      .catch((loadError) => { if (!controller.signal.aborted) setError(errorMessage(loadError)); });
     return () => controller.abort();
   }, []);
 
   useEffect(() => {
+    if (!openPicker) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (event.target instanceof Node && !productActionsRef.current?.contains(event.target)) setOpenPicker(null);
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    return () => document.removeEventListener("pointerdown", closeOnOutsidePointer);
+  }, [openPicker]);
+
+  useEffect(() => {
+    const returnFromDocument = () => {
+      const returnTab = documentReturnTabRef.current;
+      if (!returnTab) return;
+      documentHistoryEntryRef.current = null;
+      documentReturnTabRef.current = null;
+      setTab(returnTab);
+    };
+    window.addEventListener("popstate", returnFromDocument);
+    return () => window.removeEventListener("popstate", returnFromDocument);
+  }, []);
+
+  useEffect(() => {
+    setEditingSpaceField(null);
+    setSpaceEditError(null);
+  }, [selectedSpaceId]);
+
+  useEffect(() => {
     if (!selectedSpaceId) {
-      setSources([]);
-      setIngestions([]);
-      setEntities([]);
-      setPages([]);
-      setStatements([]);
-      setNeighborhood(null);
+      setDocuments([]);
+      setSelectedDocument(null);
+      setGraph(emptyGraph);
       return;
     }
     const controller = new AbortController();
     setLoadingContent(true);
     setError(null);
     Promise.all([
-      api.knowledge.listSources(selectedSpaceId, controller.signal),
-      api.knowledge.listIngestions(selectedSpaceId, controller.signal),
-      api.knowledge.listEntities(selectedSpaceId, controller.signal),
-      api.knowledge.listPages(selectedSpaceId, controller.signal),
-      api.knowledge.listStatements(selectedSpaceId, controller.signal),
-    ])
-      .then(([nextSources, nextIngestions, nextEntities, nextPages, nextStatements]) => {
-        setSources(nextSources);
-        setIngestions(nextIngestions);
-        setEntities(nextEntities);
-        setPages(nextPages);
-        setStatements(nextStatements);
-        setSelectedEntityId((current) => nextEntities.some((item) => item.id === current) ? current : (nextEntities[0]?.id ?? null));
-        setSelectedSourceId((current) => nextSources.some((item) => item.id === current) ? current : (nextSources[0]?.id ?? null));
-        setSelectedEvidenceId(null);
-      })
-      .catch((loadError) => {
-        if (!controller.signal.aborted) setError(errorMessage(loadError));
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoadingContent(false);
-      });
+      api.knowledge.listDocuments({ spaceId: selectedSpaceId }, controller.signal),
+      api.knowledge.getGraph(selectedSpaceId, controller.signal),
+    ]).then(([loadedDocuments, loadedGraph]) => {
+      if (controller.signal.aborted) return;
+      setDocuments(loadedDocuments);
+      setGraph(loadedGraph);
+      const nextId = loadedDocuments.some((item) => item.id === selectedDocument?.id)
+        ? selectedDocument?.id
+        : loadedDocuments[0]?.id;
+      if (nextId) void loadDocument(nextId); else setSelectedDocument(null);
+    }).catch((loadError) => {
+      if (!controller.signal.aborted) setError(errorMessage(loadError));
+    }).finally(() => {
+      if (!controller.signal.aborted) setLoadingContent(false);
+    });
     return () => controller.abort();
-  }, [selectedSpaceId]);
+  }, [loadDocument, selectedSpaceId]);
 
-  useEffect(() => {
-    if (!selectedSpaceId || !ingestions.some((job) => job.status === "queued" || job.status === "running")) return;
-    let disposed = false;
-    const timer = window.setInterval(() => {
-      Promise.all([
-        api.knowledge.listIngestions(selectedSpaceId),
-        api.knowledge.listEntities(selectedSpaceId),
-        api.knowledge.listPages(selectedSpaceId),
-        api.knowledge.listStatements(selectedSpaceId),
-      ])
-        .then(([nextIngestions, nextEntities, nextPages, nextStatements]) => {
-          if (disposed) return;
-          setIngestions(nextIngestions);
-          setEntities(nextEntities);
-          setPages(nextPages);
-          setStatements(nextStatements);
-        })
-        .catch((loadError) => {
-          if (!disposed) setError(errorMessage(loadError));
-        });
-    }, 1_200);
-    return () => {
-      disposed = true;
-      window.clearInterval(timer);
-    };
-  }, [ingestions, selectedSpaceId]);
+  const filteredDocuments = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase("ko-KR");
+    if (!needle) return documents;
+    return documents.filter((document) => `${document.title} ${document.bodyPreview} ${document.tags.map((tag) => tag.name).join(" ")}`.toLocaleLowerCase("ko-KR").includes(needle));
+  }, [documents, query]);
 
-  useEffect(() => {
-    if (!selectedEntityId || tab !== "graph") {
-      if (!selectedEntityId) setNeighborhood(null);
-      return;
+  const tags = useMemo(() => {
+    const byId = new Map<string, KnowledgeTag & { count: number }>();
+    for (const document of documents) for (const tag of document.tags) {
+      const current = byId.get(tag.id);
+      byId.set(tag.id, { ...tag, count: (current?.count ?? 0) + 1 });
     }
-    const controller = new AbortController();
-    api.knowledge.getNeighborhood(selectedEntityId, 2, controller.signal)
-      .then(setNeighborhood)
-      .catch((loadError) => {
-        if (!controller.signal.aborted) setError(errorMessage(loadError));
-      });
-    return () => controller.abort();
-  }, [selectedEntityId, statements, tab]);
+    return [...byId.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "ko"));
+  }, [documents]);
+
+  const citationCount = documents.reduce((sum, document) => sum + document.citationCount, 0);
 
   async function createSpace(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!spaceName.trim() || saving) return;
-    setSaving(true);
+    if (!spaceName.trim() || savingSpace) return;
+    setSavingSpace(true);
     setError(null);
     try {
       const created = await api.knowledge.createSpace({ name: spaceName.trim(), purpose: spacePurpose.trim() });
@@ -233,248 +175,194 @@ export function KnowledgeView({ onOpenNavigation }: KnowledgeViewProps) {
       setSelectedSpaceId(created.id);
       setSpaceName("");
       setSpacePurpose("");
-      setCreatePanel(null);
+      setShowCreateSpace(false);
       setTab("home");
-    } catch (createError) {
-      setError(errorMessage(createError));
-    } finally {
-      setSaving(false);
-    }
+    } catch (createError) { setError(errorMessage(createError)); }
+    finally { setSavingSpace(false); }
   }
 
-  async function createSource(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!selectedSpaceId || !sourceTitle.trim() || !sourceText.trim() || saving) return;
-    setSaving(true);
+  function openProjectPicker() {
+    if (!selectedSpace) return;
+    setProjectDraft(new Set(selectedSpace.projectIds));
+    setOpenPicker((current) => current === "projects" ? null : "projects");
+  }
+
+  function toggleProject(projectId: string) {
+    setProjectDraft((current) => {
+      const next = new Set(current);
+      if (next.has(projectId)) next.delete(projectId); else next.add(projectId);
+      return next;
+    });
+  }
+
+  async function saveProjectLinks() {
+    if (!selectedSpace || savingProjects) return;
+    setSavingProjects(true);
     setError(null);
     try {
-      const text = sourceText.trim();
-      const encoded = new TextEncoder().encode(text);
-      const created = await api.knowledge.createSource(selectedSpaceId, {
-        sourceType: "text",
-        title: sourceTitle.trim(),
-        contentDigest: await sha256Hex(text),
-        mediaType: "text/plain",
-        byteSize: encoded.byteLength,
-        capturedText: text,
-        evidenceSegments: [{ text, locator: { section: "manual" }, language: "ko", tokenCount: Math.ceil(text.length / 3) }],
+      const updated = await api.knowledge.updateSpace(selectedSpace.id, {
+        expectedRevision: selectedSpace.settingsRevision,
+        projectIds: [...projectDraft],
       });
-      setSources((current) => [created, ...current.filter((item) => item.id !== created.id)]);
-      setSelectedSourceId(created.id);
-      setSourceTitle("");
-      setSourceText("");
-      setCreatePanel(null);
-      setTab("sources");
-      if (extractAfterCreate) await startIngestion(created.id, selectedSpaceId);
-    } catch (createError) {
-      setError(errorMessage(createError));
-    } finally {
-      setSaving(false);
-    }
+      setSpaces((current) => current.map((space) => space.id === updated.id ? updated : space));
+      setOpenPicker(null);
+    } catch (saveError) { setError(errorMessage(saveError)); }
+    finally { setSavingProjects(false); }
   }
 
-  async function createEntity(event: FormEvent<HTMLFormElement>) {
+  function beginSpaceDetailsEdit(field: "name" | "purpose") {
+    if (!selectedSpace) return;
+    setSpaceEditValue(field === "name" ? selectedSpace.name : selectedSpace.purpose);
+    setSpaceEditError(null);
+    setEditingSpaceField(field);
+  }
+
+  function cancelSpaceDetailsEdit() {
+    setEditingSpaceField(null);
+    setSpaceEditError(null);
+  }
+
+  async function saveSpaceDetails(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!selectedSpaceId || !entityName.trim() || saving) return;
-    setSaving(true);
-    setError(null);
+    if (!selectedSpace || !editingSpaceField || (editingSpaceField === "name" && !spaceEditValue.trim()) || savingSpaceDetails) return;
+    setSavingSpaceDetails(true);
+    setSpaceEditError(null);
     try {
-      const created = await api.knowledge.createEntity(selectedSpaceId, {
-        canonicalName: entityName.trim(),
-        entityType: entityType.trim() || "concept",
+      const updated = await api.knowledge.updateSpace(selectedSpace.id, {
+        expectedRevision: selectedSpace.settingsRevision,
+        [editingSpaceField]: spaceEditValue.trim(),
       });
-      setEntities((current) => [...current.filter((item) => item.id !== created.id), created]
-        .sort((left, right) => left.canonicalName.localeCompare(right.canonicalName)));
-      const nextPages = await api.knowledge.listPages(selectedSpaceId);
-      setPages(nextPages);
-      setSelectedEntityId(created.id);
-      setEntityName("");
-      setCreatePanel(null);
-      setTab("wiki");
-    } catch (createError) {
-      setError(errorMessage(createError));
-    } finally {
-      setSaving(false);
+      setSpaces((current) => current.map((space) => space.id === updated.id ? updated : space));
+      setEditingSpaceField(null);
+    } catch (saveError) { setSpaceEditError(errorMessage(saveError)); }
+    finally { setSavingSpaceDetails(false); }
+  }
+
+  function openDocument(documentId: string, nextTab: KnowledgeTab = "wiki", returnTab?: KnowledgeTab) {
+    if (returnTab) {
+      const entryId = crypto.randomUUID();
+      const currentState = window.history.state && typeof window.history.state === "object" ? window.history.state : {};
+      window.history.pushState({ ...currentState, [knowledgeDocumentHistoryKey]: entryId }, "");
+      documentHistoryEntryRef.current = entryId;
+      documentReturnTabRef.current = returnTab;
     }
+    setTab(nextTab);
+    void loadDocument(documentId);
   }
 
-  async function startIngestion(sourceId: string, spaceId = selectedSpaceId) {
-    if (!spaceId || startingSourceId) return;
-    setStartingSourceId(sourceId);
-    setError(null);
-    try {
-      const job = await api.knowledge.startIngestion(spaceId, sourceId);
-      setIngestions((current) => [job, ...current.filter((item) => item.id !== job.id)]);
-      setTab("sources");
-    } catch (startError) {
-      setError(errorMessage(startError));
-    } finally {
-      setStartingSourceId(null);
+  function returnToGraph() {
+    const entryId = documentHistoryEntryRef.current;
+    if (entryId && window.history.state?.[knowledgeDocumentHistoryKey] === entryId) {
+      window.history.back();
+      return;
     }
+    documentHistoryEntryRef.current = null;
+    documentReturnTabRef.current = null;
+    setTab("graph");
   }
 
-  async function createStatement(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!selectedSpaceId || !subjectId || !objectId || !predicate.trim() || saving) return;
-    setSaving(true);
-    setError(null);
-    try {
-      const created = await api.knowledge.createStatement(selectedSpaceId, {
-        subjectEntityId: subjectId,
-        predicateKey: predicate.trim().toUpperCase().replace(/\s+/g, "_"),
-        objectKind: "entity",
-        objectEntityId: objectId,
-        evidenceSegmentIds: evidenceId ? [evidenceId] : [],
-        status: evidenceId ? "approved" : "proposed",
-        changeSummary: "Knowledge 화면에서 관계 등록",
-      });
-      setStatements((current) => [created, ...current]);
-      if (created.status === "approved") {
-        setPages(await api.knowledge.listPages(selectedSpaceId));
-      }
-      setSelectedEntityId(subjectId);
-      setObjectId("");
-      setEvidenceId("");
-      setCreatePanel(null);
-      setTab(created.status === "approved" ? "wiki" : "review");
-    } catch (createError) {
-      setError(errorMessage(createError));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  function openEntity(entityId: string, target: KnowledgeTab = "wiki") {
-    setSelectedEntityId(entityId);
-    setTab(target);
-  }
-
-  function openEvidence(evidenceSegmentId: string) {
-    const source = sources.find((item) => item.evidenceSegments.some((evidence) => evidence.id === evidenceSegmentId));
-    if (!source) return;
-    setSelectedSourceId(source.id);
-    setSelectedEvidenceId(evidenceSegmentId);
-    setTab("sources");
-  }
-
-  async function updateReviewedStatement(originalId: string, reviewed: KnowledgeStatement) {
-    setStatements((current) => [reviewed, ...current.filter((item) => item.id !== originalId)]);
-    if (reviewed.status === "approved" && selectedSpaceId) {
-      try {
-        setPages(await api.knowledge.listPages(selectedSpaceId));
-      } catch (refreshError) {
-        setError(errorMessage(refreshError));
-      }
-    }
-  }
-
-  function updatePage(updated: KnowledgePage) {
-    setPages((current) => current.map((page) => page.id === updated.id ? updated : page));
-  }
-
-  function updateSpace(updated: KnowledgeSpace) {
-    setSpaces((current) => current.map((space) => space.id === updated.id ? updated : space));
-  }
-
-  function archiveSpace(spaceId: string) {
-    const next = spaces.filter((space) => space.id !== spaceId);
-    setSpaces(next);
-    setSelectedSpaceId(next[0]?.id ?? null);
-    setTab("home");
-  }
-
-  function togglePanel(panel: Exclude<CreatePanel, null>) {
-    setCreatePanel((current) => current === panel ? null : panel);
-  }
-
-  let content = null;
-  if (selectedSpace) {
-    const shared = { sources, entities, statements, entityById };
-    if (tab === "home") content = <KnowledgeHome {...shared} ingestions={ingestions} onChangeTab={setTab} onOpenEntity={openEntity} />;
-    if (tab === "explore") content = <KnowledgeExplore {...shared} spaceId={selectedSpace.id} onOpenEntity={openEntity} onOpenEvidence={openEvidence} onError={handleExploreError} />;
-    if (tab === "sources") content = <KnowledgeSources sources={sources} ingestions={ingestions} selectedSourceId={selectedSourceId} selectedEvidenceId={selectedEvidenceId} startingSourceId={startingSourceId} readOnly={!canEditSelectedSpace} onSelectSource={setSelectedSourceId} onSelectEvidence={setSelectedEvidenceId} onStartIngestion={startIngestion} />;
-    if (tab === "wiki") content = <KnowledgeWiki {...shared} pages={pages} selectedEntityId={selectedEntityId} readOnly={!canEditSelectedSpace} onSelectEntity={setSelectedEntityId} onOpenEvidence={openEvidence} onPageUpdated={updatePage} onError={(wikiError) => setError(errorMessage(wikiError))} />;
-    if (tab === "graph") content = <KnowledgeGraph neighborhood={neighborhood} entities={entities} statements={statements} selectedEntityId={selectedEntityId} onSelectEntity={setSelectedEntityId} onOpenWiki={(id) => openEntity(id, "wiki")} />;
-    if (tab === "review") content = <KnowledgeReview sources={sources} statements={statements} entityById={entityById} readOnly={!canEditSelectedSpace} onOpenEvidence={openEvidence} onReviewed={updateReviewedStatement} onError={(reviewError) => setError(errorMessage(reviewError))} />;
-    if (tab === "settings") content = <KnowledgeSettings key={selectedSpace.id} space={selectedSpace} ingestions={ingestions} onUpdated={updateSpace} onArchived={archiveSpace} onError={handleSettingsError} />;
-  }
-
-  return (
-    <main className="feature-view knowledge-view" aria-label="지식">
-      <header className="feature-header knowledge-header">
-        <div>
-          <button className="knowledge-mobile-menu" type="button" aria-label="메뉴 열기" onClick={onOpenNavigation}><Menu size={17} /></button>
-          <BookOpenText size={17} />
-          <h1>지식</h1>
-          <span>원문과 근거를 보존하면서 Wiki와 Knowledge Graph를 함께 관리합니다.</span>
-        </div>
-        <button type="button" onClick={() => togglePanel("space")}>
-          {createPanel === "space" ? <X size={15} /> : <Plus size={15} />}
-          {createPanel === "space" ? "닫기" : "새 공간"}
-        </button>
-      </header>
-
-      {error && <div className="knowledge-error" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}><X size={14} /> 닫기</button></div>}
-
-      {createPanel === "space" && (
-        <form className="knowledge-inline-form knowledge-space-form" onSubmit={createSpace}>
-          <label>공간 이름<input autoFocus value={spaceName} maxLength={240} placeholder="예: 제품 설계 지식" onChange={(event) => setSpaceName(event.target.value)} /></label>
-          <label>목적<input value={spacePurpose} maxLength={20_000} placeholder="이 공간에서 축적할 지식의 범위" onChange={(event) => setSpacePurpose(event.target.value)} /></label>
-          <button type="submit" disabled={saving || !spaceName.trim()}>{saving && <LoaderCircle className="is-running" size={14} />} 만들기</button>
-        </form>
-      )}
-
-      <div className="knowledge-layout">
-        <aside className="knowledge-spaces" aria-label="Knowledge Space 목록">
-          <div className="knowledge-pane-title"><strong>Knowledge Space</strong><span>{spaces.length}</span></div>
-          {loadingSpaces ? <div className="knowledge-loading"><LoaderCircle className="is-running" size={16} /> 불러오는 중</div> : spaces.length ? (
-            <div className="knowledge-space-list">
-              {spaces.map((space) => (
-                <button className={selectedSpaceId === space.id ? "is-active" : ""} type="button" key={space.id} onClick={() => setSelectedSpaceId(space.id)}>
-                  <BookOpenText size={15} /><span><strong>{space.name}</strong><small>{space.purpose || "개인 지식 공간"}</small></span><em>{space.accessMode === "owner" ? "개인" : "연결"}</em>
-                </button>
-              ))}
-            </div>
-          ) : <div className="knowledge-list-empty"><p>아직 지식 공간이 없습니다.</p><button type="button" onClick={() => setCreatePanel("space")}><Plus size={14} /> 첫 공간 만들기</button></div>}
-        </aside>
-
-        <section className="knowledge-workspace">
-          {!selectedSpace ? <KnowledgeEmpty /> : (
-            <>
-              <header className="knowledge-space-header">
-                <div><small>{canEditSelectedSpace ? "개인 · 비공개" : "Project 연결 · 읽기 전용"} · revision {selectedSpace.settingsRevision}</small><h2>{selectedSpace.name}</h2><p>{selectedSpace.purpose || selectedSpace.description || "원문과 검증된 관계를 축적하는 계정 단위 공간입니다."}</p></div>
-                <div className="knowledge-metrics" aria-label="지식 현황">
-                  <span><b>{sources.length}</b> 원문</span><span><b>{entities.length}</b> Entity</span><span><b>{statements.filter((item) => item.status === "approved").length}</b> 승인</span><span className={pendingCount ? "has-pending" : ""}><b>{pendingCount}</b> 검토</span>
-                </div>
-              </header>
-              <nav className="knowledge-toolbar" aria-label="지식 화면">
-                <div role="tablist">
-                  {tabs.map(({ id, label, icon: Icon }) => (
-                    <button className={tab === id ? "is-active" : ""} type="button" role="tab" aria-selected={tab === id} key={id} onClick={() => setTab(id)}>
-                      <Icon size={14} /> {label}{id === "review" && pendingCount > 0 ? <span>{pendingCount}</span> : null}
-                    </button>
-                  ))}
-                </div>
-                {canEditSelectedSpace && <div>
-                  <button type="button" onClick={() => togglePanel("source")}><Plus size={13} /> 원문</button>
-                  <button type="button" onClick={() => togglePanel("entity")}><Plus size={13} /> Entity</button>
-                  <button type="button" disabled={entities.length < 2} onClick={() => togglePanel("statement")}><Plus size={13} /> 관계</button>
-                </div>}
-              </nav>
-
-              {createPanel === "source" && <form className="knowledge-inline-form knowledge-source-form" onSubmit={createSource}><label>원문 제목<input autoFocus value={sourceTitle} maxLength={500} onChange={(event) => setSourceTitle(event.target.value)} /></label><label className="is-wide">원문<textarea value={sourceText} rows={4} maxLength={2_000_000} placeholder="근거로 보존할 텍스트나 Markdown을 입력하세요." onChange={(event) => setSourceText(event.target.value)} /></label><label className="knowledge-checkbox"><input type="checkbox" checked={extractAfterCreate} onChange={(event) => setExtractAfterCreate(event.target.checked)} /> 등록 후 AI로 Entity와 Statement 추출</label><button type="submit" disabled={saving || !sourceTitle.trim() || !sourceText.trim()}>{saving && <LoaderCircle className="is-running" size={14} />} 등록</button><p>동일한 내용은 digest로 재사용하며, 한 번의 추출은 최대 40개 근거 구간·60,000자로 제한됩니다.</p></form>}
-              {createPanel === "entity" && <form className="knowledge-inline-form" onSubmit={createEntity}><label>Entity 이름<input autoFocus value={entityName} maxLength={500} onChange={(event) => setEntityName(event.target.value)} /></label><label>유형<input value={entityType} maxLength={80} placeholder="concept" onChange={(event) => setEntityType(event.target.value)} /></label><button type="submit" disabled={saving || !entityName.trim()}>{saving && <LoaderCircle className="is-running" size={14} />} 등록</button></form>}
-              {createPanel === "statement" && <form className="knowledge-inline-form knowledge-statement-form" onSubmit={createStatement}><label>주체<SelectMenu size="small" value={subjectId} options={entityOptions} ariaLabel="관계 주체" onChange={(value) => { setSubjectId(value); if (value === objectId) setObjectId(""); }} /></label><label>관계<input value={predicate} maxLength={160} onChange={(event) => setPredicate(event.target.value)} /></label><label>대상<SelectMenu size="small" value={objectId} options={objectEntityOptions} ariaLabel="관계 대상" onChange={setObjectId} /></label><label className="is-wide">근거<SelectMenu size="small" value={evidenceId} options={evidenceMenuOptions} ariaLabel="관계 근거" onChange={setEvidenceId} /></label><button type="submit" disabled={saving || !subjectId || !objectId || !predicate.trim()}>{saving && <LoaderCircle className="is-running" size={14} />} 저장</button></form>}
-
-              {loadingContent ? <div className="knowledge-loading knowledge-loading-content"><LoaderCircle className="is-running" size={18} /> 지식을 불러오는 중</div> : content}
-            </>
-          )}
-        </section>
+  return <main className="feature-view knowledge-view" aria-label="지식">
+    <header className="feature-header knowledge-product-header">
+      <div>
+        <BookOpenText size={17} />
+        <h1>지식 그래프</h1>
+        <span>원문과 근거를 보존하면서 Wiki와 Knowledge Graph를 함께 관리합니다.</span>
       </div>
-    </main>
-  );
+      <div className="knowledge-product-actions" ref={productActionsRef}>
+        <div className="knowledge-picker-control">
+          <button type="button" aria-haspopup="menu" aria-expanded={openPicker === "graph"} onClick={() => setOpenPicker((current) => current === "graph" ? null : "graph")}>{selectedSpace?.name ?? "그래프 선택"} <ChevronDown size={13} /></button>
+          {openPicker === "graph" && <div className="knowledge-picker-menu knowledge-graph-picker" role="menu" aria-label="지식 그래프 선택">
+            {spaces.map((space) => <button key={space.id} type="button" role="menuitemradio" aria-checked={space.id === selectedSpaceId} onClick={() => { setSelectedSpaceId(space.id); setOpenPicker(null); }}><BookOpenText size={14} /><span>{space.name}</span><Check size={13} /></button>)}
+          </div>}
+        </div>
+        <div className="knowledge-picker-control">
+          <button className="knowledge-project-picker-trigger" type="button" aria-haspopup="dialog" aria-expanded={openPicker === "projects"} disabled={!selectedSpace} onClick={openProjectPicker}><Folder size={14} /> 프로젝트 연결{selectedSpace?.projectIds.length ? ` ${selectedSpace.projectIds.length}` : ""} <ChevronDown size={13} /></button>
+          {openPicker === "projects" && <div className="project-options knowledge-project-picker" role="listbox" aria-label="프로젝트 연결" aria-multiselectable="true">
+            <div className="knowledge-project-option-list">{projects.length ? projects.map((project) => <button key={project.id} type="button" role="option" aria-selected={projectDraft.has(project.id)} onClick={(event) => { toggleProject(project.id); if (event.detail > 0) event.currentTarget.blur(); }}><span className="knowledge-project-checkbox" aria-hidden="true">{projectDraft.has(project.id) && <Check size={11} strokeWidth={2.5} />}</span><span className="knowledge-project-option-label">{project.name}</span></button>) : <p>연결할 수 있는 프로젝트가 없습니다.</p>}</div>
+            <footer><span>{projectDraft.size}개 선택</span><button className="lumina-primary-action" type="button" disabled={savingProjects} onClick={() => void saveProjectLinks()}>{savingProjects && <LoaderCircle className="is-running" size={13} />} 저장</button></footer>
+          </div>}
+        </div>
+        <button className="knowledge-create-button" type="button" onClick={() => setShowCreateSpace((current) => !current)}>{showCreateSpace ? <X size={15} /> : <Plus size={15} />}{showCreateSpace ? "닫기" : "새 지식 그래프"}</button>
+      </div>
+    </header>
+
+    {error && <div className="knowledge-error" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}><X size={14} /> 닫기</button></div>}
+    {showCreateSpace && <form className="knowledge-space-form" onSubmit={createSpace}>
+      <label>지식 그래프 이름<input autoFocus value={spaceName} maxLength={240} placeholder="예: 제품 설계 지식" onChange={(event) => setSpaceName(event.target.value)} /></label>
+      <label>목적<input value={spacePurpose} maxLength={20_000} placeholder="이 지식 그래프에서 축적할 지식의 범위" onChange={(event) => setSpacePurpose(event.target.value)} /></label>
+      <button type="submit" disabled={!spaceName.trim() || savingSpace}>{savingSpace && <LoaderCircle className="is-running" size={14} />} 만들기</button>
+    </form>}
+
+    <div className="knowledge-layout">
+      <section className="knowledge-workspace">
+        {selectedSpace ? <>
+          <header className="knowledge-space-header">
+            <nav className="knowledge-toolbar" aria-label="지식 화면"><div role="tablist">{tabs.map(({ id, label, icon: Icon }) => <button key={id} className={tab === id ? "is-active" : ""} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}><Icon size={14} /> {label}</button>)}</div></nav>
+          </header>
+          {loadingContent ? <div className="knowledge-loading knowledge-loading-content"><LoaderCircle className="is-running" size={18} /> 지식을 불러오는 중</div> : <KnowledgeContent tab={tab} documents={documents} filteredDocuments={filteredDocuments} selectedDocument={selectedDocument} graph={graph} tags={tags} query={query} citationCount={citationCount} space={selectedSpace} editingSpaceField={editingSpaceField} spaceEditValue={spaceEditValue} savingSpaceDetails={savingSpaceDetails} spaceEditError={spaceEditError} setQuery={setQuery} setSpaceEditValue={setSpaceEditValue} beginSpaceDetailsEdit={beginSpaceDetailsEdit} cancelSpaceDetailsEdit={cancelSpaceDetailsEdit} saveSpaceDetails={saveSpaceDetails} openDocument={openDocument} returnToGraph={returnToGraph} />}
+        </> : <div className="knowledge-empty"><BookOpenText size={25} /><h3>새 지식 그래프를 만들어 주세요.</h3><p>저장한 AI 답변이 문서 단위로 이 그래프에 쌓입니다.</p></div>}
+      </section>
+    </div>
+  </main>;
 }
 
-function KnowledgeEmpty() {
-  return <div className="knowledge-empty"><CircleDot size={25} /><h3>Knowledge Space를 선택해 주세요.</h3><p>개인 공간의 원문, Entity와 관계는 계정 단위로 격리됩니다.</p></div>;
+interface KnowledgeContentProps {
+  tab: KnowledgeTab;
+  documents: KnowledgeDocumentSummary[];
+  filteredDocuments: KnowledgeDocumentSummary[];
+  selectedDocument: KnowledgeDocument | null;
+  graph: KnowledgeGraphResponse;
+  tags: Array<KnowledgeTag & { count: number }>;
+  query: string;
+  citationCount: number;
+  space: KnowledgeSpace;
+  editingSpaceField: "name" | "purpose" | null;
+  spaceEditValue: string;
+  savingSpaceDetails: boolean;
+  spaceEditError: string | null;
+  setQuery: (value: string) => void;
+  setSpaceEditValue: (value: string) => void;
+  beginSpaceDetailsEdit: (field: "name" | "purpose") => void;
+  cancelSpaceDetailsEdit: () => void;
+  saveSpaceDetails: (event: FormEvent<HTMLFormElement>) => void;
+  openDocument: (documentId: string, tab?: KnowledgeTab, returnTab?: KnowledgeTab) => void;
+  returnToGraph: () => void;
 }
+
+function KnowledgeContent(props: KnowledgeContentProps) {
+  const { tab, documents, filteredDocuments, selectedDocument, graph, tags, query, citationCount, space, editingSpaceField, spaceEditValue, savingSpaceDetails, spaceEditError, setQuery, setSpaceEditValue, beginSpaceDetailsEdit, cancelSpaceDetailsEdit, saveSpaceDetails, openDocument, returnToGraph } = props;
+  if (tab === "home") return <div className="knowledge-page knowledge-home">
+    <section className="knowledge-hero-card"><div><small>DOCUMENT KNOWLEDGE</small><h3>답변은 문서로, 관계는 태그로</h3><p>AI 답변을 문서 단위로 저장하고 citation을 그대로 보존하며, 공통 태그를 통해 문서 사이의 연결을 탐색합니다.</p></div><div className="knowledge-hero-metrics" aria-label="지식 현황"><button type="button" onClick={() => documents[0] && openDocument(documents[0].id, "wiki")}><BookOpenText size={14} /><span><b>{documents.length}</b><small>문서</small></span></button><button type="button" onClick={() => documents[0] && openDocument(documents[0].id, "sources")}><FileText size={14} /><span><b>{citationCount}</b><small>원문</small></span></button><button type="button" onClick={() => documents[0] && openDocument(documents[0].id, "review")}><Tags size={14} /><span><b>{tags.length}</b><small>태그</small></span></button><button type="button" onClick={() => documents[0] && openDocument(documents[0].id, "graph")}><GitBranch size={14} /><span><b>{graph.edges.length}</b><small>연결</small></span></button></div></section>
+    <section className="knowledge-card"><header><div><strong>최근 문서</strong><small>최근 조사한 AI 답변 문서입니다.</small></div></header><DocumentRows documents={documents.slice(0, 6)} onOpen={openDocument} /></section>
+  </div>;
+
+  if (tab === "explore") return <div className="knowledge-page knowledge-explore"><label className="knowledge-search-box"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="문서 제목, 본문 또는 태그 검색" /></label><p className="knowledge-search-caption">{filteredDocuments.length}개의 문서를 찾았습니다.</p><section className="knowledge-card"><DocumentRows documents={filteredDocuments} onOpen={openDocument} /></section></div>;
+
+  if (tab === "sources") return <div className="knowledge-master-detail"><DocumentList documents={documents} selectedId={selectedDocument?.id ?? null} onOpen={(id) => openDocument(id, "sources")} label="원문이 포함된 문서" />
+    <section className="knowledge-source-detail">{selectedDocument ? <><header><small>보존된 citation</small><h3>{selectedDocument.title}</h3><p>{selectedDocument.citations.length}개의 출처가 답변과 함께 저장되어 있습니다.</p></header><div className="knowledge-source-cards">{selectedDocument.citations.map((citation, index) => <a key={`${citation.sourceId}-${index}`} href={citation.url || undefined} target="_blank" rel="noreferrer"><span>[{citation.markerNumber ?? index + 1}]</span><strong>{citation.title}</strong><small>{citation.domain || citation.url || "출처 정보"}</small>{citation.excerpt && <p>{citation.excerpt}</p>}</a>)}{!selectedDocument.citations.length && <EmptyState text="이 문서에는 citation이 없습니다." />}</div></> : <EmptyState text="문서를 선택해 주세요." />}</section>
+  </div>;
+
+  if (tab === "wiki") return <div className="knowledge-master-detail"><DocumentList documents={documents} selectedId={selectedDocument?.id ?? null} onOpen={(id) => openDocument(id, "wiki")} label={`${documents.length}개 지식 문서`} /><WikiDocument document={selectedDocument} onBackToGraph={returnToGraph} /></div>;
+
+  if (tab === "graph") return <KnowledgeGraph graph={graph} layoutKey={space.id} onSelectDocument={(id) => openDocument(id, "wiki", "graph")} />;
+
+  if (tab === "review") return <div className="knowledge-page knowledge-review"><section className="knowledge-review-summary"><CheckCircle2 size={22} /><div><h3>승인 대기 지식이 없습니다.</h3><p>문서 본문은 그대로 저장되며, 이곳에서는 동의어·동음이의어로 의심되는 태그만 검토합니다.</p></div></section><section className="knowledge-card"><header><div><strong>Canonical 태그 사전</strong><small>현재 문서에서 사용 중인 정규화 태그입니다.</small></div><span>{tags.length}</span></header><div className="knowledge-tag-registry">{tags.map((tag) => <article key={tag.id}><Tags size={14} /><div><strong>#{tag.name}</strong><small>{tag.scopeNote || tag.namespace}</small></div><em>{tag.count}개 문서</em></article>)}{!tags.length && <EmptyState text="아직 생성된 태그가 없습니다." />}</div></section></div>;
+
+  return <div className="knowledge-page knowledge-settings"><section className="knowledge-card"><header><div><strong>지식 그래프</strong><small>현재 지식 그래프의 저장 정책과 범위입니다.</small></div></header><dl><div><dt>이름</dt><dd>{editingSpaceField === "name" ? <form className="knowledge-settings-inline-form" onSubmit={saveSpaceDetails}><input autoFocus aria-label="지식 그래프 이름" maxLength={240} value={spaceEditValue} onChange={(event) => setSpaceEditValue(event.target.value)} /><button type="submit" aria-label="이름 저장" disabled={!spaceEditValue.trim() || savingSpaceDetails}>{savingSpaceDetails ? <LoaderCircle className="is-running" size={13} /> : <Check size={13} />}</button><button type="button" aria-label="이름 편집 취소" disabled={savingSpaceDetails} onClick={cancelSpaceDetailsEdit}><X size={13} /></button>{spaceEditError && <span role="alert">{spaceEditError}</span>}</form> : <button className="knowledge-settings-inline-value" type="button" aria-label={`${space.name} 이름 편집`} onClick={() => beginSpaceDetailsEdit("name")}><span>{space.name}</span><Pencil size={12} /></button>}</dd></div><div><dt>목적</dt><dd>{editingSpaceField === "purpose" ? <form className="knowledge-settings-inline-form" onSubmit={saveSpaceDetails}><input autoFocus aria-label="지식 그래프 설명" maxLength={10_000} value={spaceEditValue} placeholder="설정되지 않음" onChange={(event) => setSpaceEditValue(event.target.value)} /><button type="submit" aria-label="설명 저장" disabled={savingSpaceDetails}>{savingSpaceDetails ? <LoaderCircle className="is-running" size={13} /> : <Check size={13} />}</button><button type="button" aria-label="설명 편집 취소" disabled={savingSpaceDetails} onClick={cancelSpaceDetailsEdit}><X size={13} /></button>{spaceEditError && <span role="alert">{spaceEditError}</span>}</form> : <button className="knowledge-settings-inline-value" type="button" aria-label="지식 그래프 설명 편집" onClick={() => beginSpaceDetailsEdit("purpose")}><span>{space.purpose || "설정되지 않음"}</span><Pencil size={12} /></button>}</dd></div><div><dt>공개 범위</dt><dd>{space.visibility === "private" ? "개인 · 비공개" : "조직 공유"}</dd></div><div><dt>저장 단위</dt><dd>AI 답변 1개 = Wiki 문서 1개</dd></div><div><dt>연결 규칙</dt><dd>Canonical 태그를 공유하는 문서끼리 연결</dd></div><div><dt>검토 정책</dt><dd>본문 승인은 생략하고 태그 중복 후보만 검토</dd></div></dl></section></div>;
+}
+
+function DocumentRows({ documents, onOpen }: { documents: KnowledgeDocumentSummary[]; onOpen: (id: string, tab?: KnowledgeTab) => void }) {
+  if (!documents.length) return <EmptyState text="저장된 문서가 없습니다. AI 답변 아래의 지식 그래프 저장 버튼으로 추가할 수 있습니다." />;
+  return <div className="knowledge-document-rows">{documents.map((document) => <button key={document.id} type="button" onClick={() => onOpen(document.id, "wiki")}><BookOpenText size={14} /><span><strong>{document.title}</strong><small>{document.bodyPreview}</small></span><em>{researchedDate(document.researchedAt)}</em></button>)}</div>;
+}
+
+function DocumentList({ documents, selectedId, onOpen, label }: { documents: KnowledgeDocumentSummary[]; selectedId: string | null; onOpen: (id: string) => void; label: string }) {
+  return <aside className="knowledge-master-list"><header><strong>{label}</strong></header>{documents.map((document) => <button key={document.id} className={document.id === selectedId ? "is-active" : ""} type="button" onClick={() => onOpen(document.id)}><BookOpenText size={14} /><span><strong>{document.title}</strong><small>조사일 {researchedDate(document.researchedAt)}</small></span><em>{document.citationCount}</em></button>)}</aside>;
+}
+
+function WikiDocument({ document, onBackToGraph }: { document: KnowledgeDocument | null; onBackToGraph: () => void }) {
+  if (!document) return <EmptyState text="답변 하단의 지식 그래프 저장 버튼을 눌러 문서를 추가해 주세요." />;
+  return <article className="knowledge-wiki-article"><header><div className="knowledge-wiki-navigation"><button type="button" onClick={onBackToGraph}><ArrowLeft size={13} /> 그래프로 돌아가기</button><span>Wiki › 문서</span></div><h2>{document.title}</h2><p>{document.bodyPreview}</p><div className="knowledge-wiki-metrics"><span>조사일 {researchedDate(document.researchedAt)}</span><span>태그 {document.tags.length}</span><span>citation {document.citations.length}</span></div><div className="knowledge-tag-row">{document.tags.map((tag) => <span key={tag.id}>#{tag.name}</span>)}</div></header><div className="knowledge-markdown"><MarkdownResponse text={document.body} /></div>{!!document.citations.length && <footer className="knowledge-citations">{document.citations.map((citation, index) => <a key={`${citation.sourceId}-${index}`} href={citation.url || undefined} target="_blank" rel="noreferrer">[{citation.markerNumber ?? index + 1}] {citation.title}</a>)}</footer>}</article>;
+}
+
+function EmptyState({ text }: { text: string }) { return <div className="knowledge-empty-state"><BookOpenText size={22} /><p>{text}</p></div>; }

@@ -2,87 +2,96 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const appPath = new URL("../src/App.tsx", import.meta.url);
-const viewPath = new URL(
-  "../src/workspace-frontends/knowledge/KnowledgeView.tsx",
-  import.meta.url,
-);
+const viewPath = new URL("../src/workspace-frontends/knowledge/KnowledgeView.tsx", import.meta.url);
+const stylesPath = new URL("../src/workspace-frontends/knowledge/knowledge.css", import.meta.url);
+const globalStylesPath = new URL("../src/styles.css", import.meta.url);
 const apiPath = new URL("../src/api.ts", import.meta.url);
+const typesPath = new URL("../src/api-types.ts", import.meta.url);
+const turnPath = new URL("../src/components/ConversationTurn.tsx", import.meta.url);
 
-test("Knowledge is a top-level lazy Workspace view", async () => {
-  const app = await readFile(appPath, "utf8");
-
-  assert.match(app, /lazy\(\(\) => import\("\.\/workspace-frontends\/knowledge"\)/);
-  assert.match(app, /id: "knowledge", label: "지식"/);
-  assert.match(app, /mainView === "knowledge" && <KnowledgeView/);
+test("Knowledge stores and displays one node per AI answer document", async () => {
+  const [view, api, types] = await Promise.all([readFile(viewPath, "utf8"), readFile(apiPath, "utf8"), readFile(typesPath, "utf8")]);
+  assert.match(view, /<h1>지식 그래프<\/h1>/);
+  assert.match(view, /AI 답변을 문서 단위로 저장/);
+  assert.match(view, /조사일/);
+  assert.match(view, /<WikiDocument document=\{selectedDocument\}/);
+  assert.match(view, /\{document\.body\}/);
+  assert.match(view, /document\.citations\.map/);
+  assert.match(api, /\/knowledge\/documents\/from-message/);
+  assert.match(api, /\/knowledge\/graph/);
+  assert.match(types, /interface KnowledgeDocument/);
+  assert.doesNotMatch(types, /KnowledgeEntity|KnowledgeStatement|KnowledgeReviewDecision/);
 });
 
-test("Knowledge uses account-scoped Space and typed source, entity, statement APIs", async () => {
-  const [view, api] = await Promise.all([
+test("Knowledge Wiki reuses the default chat Markdown renderer", async () => {
+  const [view, styles, globalStyles, turn] = await Promise.all([
     readFile(viewPath, "utf8"),
-    readFile(apiPath, "utf8"),
+    readFile(stylesPath, "utf8"),
+    readFile(globalStylesPath, "utf8"),
+    readFile(turnPath, "utf8"),
   ]);
-
-  assert.match(view, /api\.knowledge\.listSpaces/);
-  assert.match(view, /api\.knowledge\.createSource/);
-  assert.match(view, /api\.knowledge\.createEntity/);
-  assert.match(view, /api\.knowledge\.createStatement/);
-  assert.match(view, /api\.knowledge\.startIngestion/);
-  assert.match(view, /api\.knowledge\.listIngestions/);
-  assert.match(api, /\/knowledge\/spaces\/\$\{encodeURIComponent\(spaceId\)\}\/sources/);
-  assert.match(api, /\/knowledge\/spaces\/\$\{encodeURIComponent\(spaceId\)\}\/entities/);
-  assert.match(api, /sources\/\$\{encodeURIComponent\(sourceId\)\}\/ingestions/);
+  assert.match(view, /import \{ MarkdownResponse \} from "\.\.\/\.\.\/components\/ConversationTurn"/);
+  assert.match(view, /<MarkdownResponse text=\{document\.body\} \/>/);
+  assert.doesNotMatch(view, /ReactMarkdown|remarkGfm/);
+  assert.match(turn, /table: \(\{ children \}\) => <div className="markdown-table-scroll"><table>\{children\}<\/table><\/div>/);
+  assert.doesNotMatch(styles, /\.knowledge-markdown (?:img|pre)/);
+  assert.match(globalStyles, /\.assistant-content, \.feature-view\.feature-view \.knowledge-markdown \{ min-width: 0; font-size: calc\(var\(--conversation-font-size\) \+ \.5px\); line-height: 1\.68; \}/);
+  assert.match(globalStyles, /\.chat-pane\.view-chat :is\(\.chat-header, \.conversation-scroll, \.dock-area\) \*,[\s\S]*?\.feature-view\.feature-view \.knowledge-markdown,[\s\S]*?\.feature-view\.feature-view \.knowledge-markdown \* \{[\s\S]*?font-size: var\(--conversation-font-size\);/);
+  assert.match(styles, /\.knowledge-wiki-navigation button \{[^}]*border: 0;[^}]*background: transparent;[^}]*color: var\(--cobalt\);/);
 });
 
-test("Knowledge AI ingestion exposes durable progress and review-only results", async () => {
-  const [view, sources] = await Promise.all([
-    readFile(viewPath, "utf8"),
-    readFile(new URL("../src/workspace-frontends/knowledge/KnowledgeSources.tsx", import.meta.url), "utf8"),
-  ]);
-
-  assert.match(view, /job\.status === "queued" \|\| job\.status === "running"/);
-  assert.match(sources, /근거 기반 추출 중/);
-  assert.match(view, /검토 제안/);
-  assert.match(sources, /추출 완료/);
-});
-
-test("Knowledge graph stays bounded and approved relations preserve evidence", async () => {
-  const view = await readFile(viewPath, "utf8");
-
-  assert.match(view, /getNeighborhood\(selectedEntityId, 2/);
-  assert.match(view, /evidenceSegmentIds: evidenceId \? \[evidenceId\] : \[\]/);
-  assert.match(view, /status: evidenceId \? "approved" : "proposed"/);
-  assert.match(view, /원문과 근거를 보존하면서 Wiki와 Knowledge Graph/);
-});
-
-test("Knowledge exposes the complete personal operating workspace", async () => {
-  const view = await readFile(viewPath, "utf8");
-
+test("Knowledge keeps the full workspace navigation around the document model", async () => {
+  const [view, styles] = await Promise.all([readFile(viewPath, "utf8"), readFile(stylesPath, "utf8")]);
+  assert.doesNotMatch(view, /knowledge-mobile-menu|onOpenNavigation|knowledge-spaces|knowledge-pane-title|knowledge-space-list/);
   for (const label of ["홈", "탐색", "원문", "Wiki", "그래프", "검토", "설정"]) {
     assert.match(view, new RegExp(`label: "${label}"`));
   }
-  assert.match(view, /<KnowledgeHome/);
-  assert.match(view, /<KnowledgeExplore/);
-  assert.match(view, /<KnowledgeSources/);
-  assert.match(view, /<KnowledgeWiki/);
-  assert.match(view, /<KnowledgeGraph/);
-  assert.match(view, /<KnowledgeReview/);
-  assert.match(view, /<KnowledgeSettings/);
+  assert.match(view, /새 지식 그래프/);
+  assert.match(view, /원문과 근거를 보존하면서 Wiki와 Knowledge Graph를 함께 관리/);
+  assert.match(view, />\{selectedSpace\?\.name \?\? "그래프 선택"\} /);
+  assert.match(view, /프로젝트 연결/);
+  assert.match(view, /className="project-options knowledge-project-picker" role="listbox"[^>]*aria-multiselectable="true"/);
+  assert.match(view, /role="option" aria-selected=\{projectDraft\.has\(project\.id\)\}/);
+  assert.match(view, /if \(event\.detail > 0\) event\.currentTarget\.blur\(\)/);
+  assert.match(view, /className="knowledge-project-checkbox"[^>]*>\{projectDraft\.has\(project\.id\) && <Check size=\{11\}/);
+  assert.doesNotMatch(view, /type="checkbox" checked=\{projectDraft\.has\(project\.id\)\}/);
+  assert.match(styles, /\.knowledge-project-picker\.project-options \.knowledge-project-option-list > button \{[^}]*height: 32px;[^}]*gap: 9px;[^}]*padding: 0 8px;[^}]*font-size: 13px;/);
+  assert.match(styles, /\.knowledge-project-picker\.project-options \.knowledge-project-option-list > button:hover \{[^}]*background: color-mix\(in srgb, var\(--ink\) 6%, var\(--menu-surface\)\)/);
+  assert.match(styles, /\.knowledge-project-picker\.project-options \.knowledge-project-checkbox \{[^}]*width: 14px;[^}]*border: 1px solid var\(--line-strong\);/);
+  assert.match(styles, /\[aria-selected="true"\] > \.knowledge-project-checkbox \{[^}]*background: var\(--surface\);[^}]*color: var\(--cobalt\);/);
+  assert.match(styles, /\.knowledge-picker-control > \.knowledge-project-picker-trigger\[aria-expanded="true"\] \{[^}]*background: rgba\(63, 102, 201, 0\.075\);/);
+  assert.match(view, /api\.knowledge\.updateSpace\(selectedSpace\.id/);
+  assert.match(view, /projectIds: \[\.\.\.projectDraft\]/);
+  assert.match(view, /<header className="knowledge-space-header">[\s\S]*?<nav className="knowledge-toolbar"/);
+  assert.doesNotMatch(view, /knowledge-space-context/);
+  assert.doesNotMatch(view, /<\/header>\s*<nav className="knowledge-toolbar"/);
+  assert.match(styles, /\.knowledge-space-header \{[^}]*height: 39px;[^}]*min-height: 39px;/);
+  assert.match(styles, /\.knowledge-toolbar button \{[^}]*height: 39px;/);
+  assert.match(styles, /\.knowledge-space-header \{[^}]*padding: 0;/);
+  assert.match(styles, /\.knowledge-toolbar \{[^}]*padding: 0 16px;/);
+  assert.match(styles, /\.knowledge-toolbar button \{[^}]*padding: 0 8px;/);
+  assert.doesNotMatch(styles, /\.knowledge-space-header \{[^}]*min-height: 54px;/);
+  assert.match(view, /className="knowledge-settings-inline-value"[\s\S]*?이름 편집/);
+  assert.match(view, /className="knowledge-settings-inline-value"[\s\S]*?지식 그래프 설명 편집/);
+  assert.match(view, /editingSpaceField === "name"[\s\S]*?className="knowledge-settings-inline-form"/);
+  assert.match(view, /editingSpaceField === "purpose"[\s\S]*?className="knowledge-settings-inline-form"/);
+  assert.match(view, /api\.knowledge\.updateSpace\(selectedSpace\.id, \{[\s\S]*?\[editingSpaceField\]: spaceEditValue\.trim\(\)/);
+  assert.doesNotMatch(view, /className="knowledge-metrics"/);
+  assert.match(view, /className="knowledge-hero-metrics"/);
+  assert.doesNotMatch(view, /className="knowledge-stat-grid"/);
+  assert.doesNotMatch(view, /Wiki 열기/);
 });
 
-test("Knowledge review and settings controls call durable backend mutations", async () => {
-  const [api, review, settings] = await Promise.all([
-    readFile(apiPath, "utf8"),
-    readFile(new URL("../src/workspace-frontends/knowledge/KnowledgeReview.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../src/workspace-frontends/knowledge/KnowledgeSettings.tsx", import.meta.url), "utf8"),
-  ]);
+test("answer action places Knowledge save immediately before branch", async () => {
+  const turn = await readFile(turnPath, "utf8");
+  const savePosition = turn.indexOf('aria-label="지식 그래프 등록"');
+  const branchPosition = turn.indexOf('data-tooltip="여기서 분기"');
+  assert.ok(savePosition > 0 && branchPosition > savePosition);
+  assert.match(turn, /api\.knowledge\.saveMessage\(finalMessage\.id\)/);
+});
 
-  assert.match(api, /\/knowledge\/reviews\/\$\{encodeURIComponent\(statementId\)\}\/decision/);
-  assert.match(api, /method: "PATCH"/);
-  assert.match(api, /method: "DELETE"/);
-  assert.match(review, /api\.knowledge\.decideStatement/);
-  assert.match(review, /기존 제안을 덮어쓰지 않고 새 Knowledge revision/);
-  assert.match(settings, /api\.knowledge\.updateSpace/);
-  assert.match(settings, /api\.knowledge\.archiveSpace/);
-  assert.match(settings, /정말 삭제하시겠습니까/);
+test("legacy approval, ingestion, and entity workspaces are absent", async () => {
+  const [view, api] = await Promise.all([readFile(viewPath, "utf8"), readFile(apiPath, "utf8")]);
+  assert.doesNotMatch(view, /KnowledgeReview|KnowledgeSources|KnowledgeWiki|KnowledgeEntity/);
+  assert.doesNotMatch(api, /listKnowledgeEntities|listKnowledgeStatements|decideKnowledgeStatement|startKnowledgeIngestion/);
 });

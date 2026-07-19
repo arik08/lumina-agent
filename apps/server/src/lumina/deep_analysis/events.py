@@ -30,7 +30,6 @@ _FORBIDDEN_PAYLOAD_KEYS = {
     "token",
 }
 
-
 def _safe_payload(value: Any) -> Any:
     if isinstance(value, dict):
         return {
@@ -148,7 +147,6 @@ def list_events(
     mission_id: str,
     *,
     after_sequence: int = 0,
-    limit: int = 200,
 ) -> list[DeepAnalysisEvent]:
     return list(
         db.scalars(
@@ -158,7 +156,6 @@ def list_events(
                 DeepAnalysisEvent.sequence > max(0, after_sequence),
             )
             .order_by(DeepAnalysisEvent.sequence)
-            .limit(min(max(limit, 1), 500))
         )
     )
 

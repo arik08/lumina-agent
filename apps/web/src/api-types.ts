@@ -202,6 +202,8 @@ export interface DeepAnalysisMissionSummary {
   id: UUID;
   projectId: UUID;
   title: string;
+  isFavorite: boolean;
+  isLiked: boolean;
   objective: string;
   status: string;
   startMode: string;
@@ -226,6 +228,7 @@ export interface DeepAnalysisWorkflowNode {
   positionX: number;
   positionY: number;
   config: Record<string, unknown>;
+  conversationId: UUID | null;
   runId: UUID | null;
   outputProjectFileId: UUID | null;
   outputLogicalPath: string | null;
@@ -248,6 +251,7 @@ export interface DeepAnalysisWorkflowNode {
     finishedAt: IsoDateTime | null;
   }>;
   runStatus: string | null;
+  executionPrompt: string | null;
   contextManifest: {
     id: UUID;
     missionContextRevision: number;
@@ -261,7 +265,6 @@ export interface DeepAnalysisWorkflowNode {
   } | null;
   liveOutput: string;
   errorMessage: string | null;
-  estimatedCostMicrousd: number;
   actualCostMicrousd: number;
   startedAt: IsoDateTime | null;
   finishedAt: IsoDateTime | null;
@@ -439,11 +442,6 @@ export interface DeepAnalysisMissionExport {
   updatedAt: IsoDateTime;
 }
 
-export interface CreateDeepAnalysisMissionExportRequest {
-  scope?: "latest" | "report_evidence" | "audit";
-  includeOriginals?: boolean;
-}
-
 export interface UpdateDeepAnalysisWorkflowDraftRequest {
   expectedRevision: number;
   nodes: Array<{
@@ -454,7 +452,6 @@ export interface UpdateDeepAnalysisWorkflowDraftRequest {
     positionX: number;
     positionY: number;
     config: Record<string, unknown>;
-    estimatedCostMicrousd: number;
   }>;
   edges: Array<{ sourceNodeKey: string; targetNodeKey: string }>;
 }
@@ -550,8 +547,22 @@ export interface CreateDeepAnalysisMissionRequest {
   objective?: string;
   autonomyMode?: DeepAnalysisAutonomyMode;
   budgetMicrousd?: number | null;
+  workflowStartMode?: DeepAnalysisWorkflowStartMode;
   patternVersionId?: UUID | null;
 }
+
+export interface RegenerateDeepAnalysisWorkflowRequest {
+  expectedRevision: number;
+  prompt: string;
+}
+
+export type DeepAnalysisWorkflowStartMode =
+  | "ai"
+  | "preset_quantitative"
+  | "preset_comparative_research"
+  | "preset_decision"
+  | "preset_open_analysis"
+  | "pattern";
 
 export interface DeepAnalysisWorkflowPatternVersion {
   id: UUID;
@@ -594,6 +605,8 @@ export interface UpdateDeepAnalysisMissionRequest {
   objective?: string;
   autonomyMode?: DeepAnalysisAutonomyMode;
   budgetMicrousd?: number;
+  isFavorite?: boolean;
+  isLiked?: boolean;
   charter?: Omit<DeepAnalysisMissionCharter, "confirmed" | "confirmedMissionRevision" | "confirmedAt">;
   completionContract?: Omit<DeepAnalysisCompletionContract, "qualityGate" | "latestQualityGateResultId" | "finalOutputFileId" | "finalOutputPath">;
 }
@@ -617,266 +630,40 @@ export interface AnswerDeepAnalysisDecisionRequest {
   answerText?: string;
 }
 
-export type KnowledgeSourceType = "file" | "url" | "conversation" | "text" | "connector";
-export type KnowledgeObjectKind = "entity" | "text" | "number" | "date" | "boolean" | "json";
-
 export interface KnowledgeSpace {
   id: UUID;
-  organizationId: UUID;
-  ownerUserId: UUID | null;
-  spaceType: string;
   name: string;
-  description: string;
   purpose: string;
   visibility: "private" | "organization";
-  status: string;
   settingsRevision: number;
-  accessMode: "owner" | "project_read" | "organization_read";
+  projectIds: UUID[];
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
 }
 
-export interface CreateKnowledgeSpaceRequest {
-  name: string;
-  description?: string;
-  purpose?: string;
+export interface CreateKnowledgeSpaceRequest { name: string; purpose?: string; visibility?: "private" | "organization"; }
+export interface UpdateKnowledgeSpaceRequest { expectedRevision: number; name?: string; purpose?: string; projectIds?: UUID[]; }
+export interface KnowledgeTag { id: UUID; name: string; namespace: string; scopeNote: string; }
+export interface KnowledgeDocumentSummary {
+  id: UUID; spaceId: UUID; projectId: UUID; title: string; researchedAt: IsoDateTime;
+  tags: KnowledgeTag[]; citationCount: number; bodyPreview: string; createdAt: IsoDateTime; updatedAt: IsoDateTime;
 }
-
-export interface UpdateKnowledgeSpaceRequest {
-  expectedRevision: number;
-  name?: string;
-  description?: string;
-  purpose?: string;
+export interface KnowledgeCitation {
+  sourceId: string; title: string; url: string; domain: string; excerpt: string;
+  evidenceKind: string; markerNumber: number | null; status: string;
 }
-
-export interface KnowledgeAutoCaptureSetting {
-  enabled: boolean;
-  spaceId: UUID | null;
-  mode: "research";
-}
-
-export interface UpdateKnowledgeAutoCaptureRequest {
-  enabled: boolean;
-  spaceId?: UUID | null;
-}
-
-export interface KnowledgeEvidenceSegment {
-  id: UUID;
-  sourceRevisionId: UUID;
-  segmentOrdinal: number;
-  locator: Record<string, unknown>;
-  text: string;
-  textDigest: string;
-  language: string | null;
-  tokenCount: number;
-}
-
-export interface KnowledgeSource {
-  id: UUID;
-  spaceId: UUID;
-  sourceType: KnowledgeSourceType;
-  title: string;
-  canonicalLocator: string | null;
-  status: string;
-  revision: {
-    id: UUID;
-    revisionNumber: number;
-    contentDigest: string;
-    mediaType: string;
-    byteSize: number;
-    capturedAt: IsoDateTime;
-  };
-  evidenceSegments: KnowledgeEvidenceSegment[];
-}
-
-export type KnowledgeIngestionStatus = "queued" | "running" | "completed" | "failed";
-
-export interface KnowledgeIngestionJob {
-  id: UUID;
-  spaceId: UUID;
-  sourceId: UUID;
-  sourceRevisionId: UUID;
-  status: KnowledgeIngestionStatus;
-  providerId: string;
-  modelKey: string;
-  extractorVersion: string;
-  inputSegmentCount: number;
-  inputCharacterCount: number;
-  entityCount: number;
-  statementCount: number;
-  inputTokens: number;
-  outputTokens: number;
-  errorCode: string | null;
-  errorMessage: string | null;
-  queuedAt: IsoDateTime;
-  startedAt: IsoDateTime | null;
-  finishedAt: IsoDateTime | null;
-  createdAt: IsoDateTime;
-  updatedAt: IsoDateTime;
-}
-
-export interface CreateKnowledgeSourceRequest {
-  sourceType: KnowledgeSourceType;
-  title: string;
-  canonicalLocator?: string | null;
+export interface KnowledgeDocument extends KnowledgeDocumentSummary {
+  body: string;
+  source: { messageId: UUID | null; runId: UUID | null; conversationId: UUID | null };
+  citations: KnowledgeCitation[];
   contentDigest: string;
-  mediaType: string;
-  byteSize?: number;
-  capturedText?: string | null;
-  evidenceSegments?: Array<{
-    text: string;
-    locator?: Record<string, unknown>;
-    language?: string | null;
-    tokenCount?: number;
-  }>;
+  created?: boolean;
 }
-
-export interface KnowledgeEntity {
-  id: UUID;
-  spaceId: UUID;
-  entityType: string;
-  canonicalName: string;
-  description: string;
-  status: string;
-  depth?: number;
-  createdAt: IsoDateTime;
-  updatedAt: IsoDateTime;
+export interface KnowledgeGraphNode { id: UUID; title: string; researchedAt: IsoDateTime; tags: KnowledgeTag[]; }
+export interface KnowledgeGraphEdge {
+  id: string; sourceDocumentId: UUID; targetDocumentId: UUID; sharedTagIds: UUID[]; weight: number;
 }
-
-export interface CreateKnowledgeEntityRequest {
-  entityType: string;
-  canonicalName: string;
-  description?: string;
-}
-
-export interface KnowledgeStatement {
-  id: UUID;
-  spaceId: UUID;
-  revisionId: UUID;
-  revisionNumber: number | null;
-  subjectEntityId: UUID;
-  predicateKey: string;
-  objectKind: KnowledgeObjectKind;
-  objectEntityId: UUID | null;
-  objectValue: unknown;
-  status: "proposed" | "approved" | "rejected";
-  rank: "preferred" | "normal" | "deprecated";
-  confidence: number | null;
-  validFrom: IsoDateTime | null;
-  validTo: IsoDateTime | null;
-  evidenceSegmentIds: UUID[];
-  recordedAt: IsoDateTime;
-}
-
-export interface CreateKnowledgeStatementRequest {
-  subjectEntityId: UUID;
-  predicateKey: string;
-  objectKind: KnowledgeObjectKind;
-  objectEntityId?: UUID | null;
-  objectValue?: unknown;
-  evidenceSegmentIds?: UUID[];
-  status?: "proposed" | "approved";
-  rank?: "preferred" | "normal" | "deprecated";
-  confidence?: number | null;
-  changeSummary?: string;
-}
-
-export interface KnowledgePageRevision {
-  id: UUID;
-  pageId: UUID;
-  revisionNumber: number;
-  markdownBody: string;
-  generatedMarkdown: string;
-  manualMarkdown: string;
-  statementIds: UUID[];
-  evidenceSegmentIds: UUID[];
-  sourceStatementRevisionId: UUID | null;
-  generationRunId: UUID | null;
-  createdByUserId: UUID;
-  createdAt: IsoDateTime;
-}
-
-export interface KnowledgePage {
-  id: UUID;
-  spaceId: UUID;
-  entityId: UUID;
-  slug: string;
-  title: string;
-  pageType: string;
-  status: string;
-  revisionCount: number;
-  currentRevision: KnowledgePageRevision;
-  createdAt: IsoDateTime;
-  updatedAt: IsoDateTime;
-}
-
-export interface UpdateKnowledgePageRequest {
-  expectedRevision: number;
-  manualMarkdown: string;
-}
-
-export interface KnowledgeRevision {
-  id: UUID;
-  spaceId: UUID;
-  revisionNumber: number;
-  status: "approved";
-  contentDigest: string;
-  changeSummary: string;
-  createdByUserId: UUID;
-  approvedByUserId: UUID | null;
-  createdAt: IsoDateTime;
-  approvedAt: IsoDateTime | null;
-}
-
-export interface KnowledgeProjectBinding {
-  id: UUID;
-  projectId: UUID;
-  projectName: string;
-  spaceId: UUID;
-  knowledgeRevision: KnowledgeRevision;
-  permission: "read";
-  followLatestApproved: false;
-  namespaceFilters: string[];
-  tagFilters: string[];
-  bindingRevision: number;
-  createdByUserId: UUID;
-  createdAt: IsoDateTime;
-  updatedAt: IsoDateTime;
-}
-
-export interface CreateKnowledgeProjectBindingRequest {
-  projectId: UUID;
-  knowledgeRevisionId: UUID;
-}
-
-export interface UpdateKnowledgeProjectBindingRequest {
-  expectedRevision: number;
-  knowledgeRevisionId: UUID;
-}
-
-export interface KnowledgeReviewDecisionRequest {
-  decision: "approved" | "rejected";
-  reason?: string;
-}
-
-export interface KnowledgeNeighborhood {
-  rootEntityId: UUID;
-  maxDepth: number;
-  nodes: KnowledgeEntity[];
-  edges: KnowledgeStatement[];
-  truncated: boolean;
-}
-
-export interface KnowledgeSearchResponse {
-  query: string;
-  scope: "all" | "wiki" | "statement" | "source";
-  method: "bounded_keyword_v1" | "sqlite_fts5_v1";
-  limit: number;
-  entities: KnowledgeEntity[];
-  statements: KnowledgeStatement[];
-  sources: KnowledgeSource[];
-}
-
+export interface KnowledgeGraphResponse { nodes: KnowledgeGraphNode[]; edges: KnowledgeGraphEdge[]; truncated: boolean; }
 export interface AnnouncementMutationRequest {
   title: string;
   body: string;
@@ -934,6 +721,8 @@ export interface CurrentSettings {
   conversationWidth: number;
   conversationFontSize: number;
   outputMode: OutputMode;
+  analysisDepth: AnalysisDepth;
+  answerLength: AnswerLength;
   clarificationMode: ClarificationMode;
   execution: ExecutionSelection;
   modelCandidates: Record<string, string[]>;
@@ -953,6 +742,8 @@ export interface UpdateCurrentSettingsRequest {
   conversationWidth?: number;
   conversationFontSize?: number;
   outputMode?: OutputMode;
+  analysisDepth?: AnalysisDepth;
+  answerLength?: AnswerLength;
   clarificationMode?: ClarificationMode;
   execution?: ExecutionSelection;
   modelCandidates?: Record<string, string[]>;

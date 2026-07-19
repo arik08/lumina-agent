@@ -25,12 +25,15 @@ test("chat renders Mermaid and full ECharts options as interactive blocks", () =
   assert.match(rendererSource, /withReadableCategoryAxes\(spec\.option, container\.clientWidth\)/);
 });
 
-test("streaming diagram, chart, and table placeholders use an accessible light sweep", () => {
+test("streaming diagram, chart, and table placeholders sweep light across the card background", () => {
   assert.match(turnSource, /kind === "mermaid" \? "다이어그램 작성 중" : kind === "chart" \? "인터랙티브 차트 작성 중" : "표 작성 중"/);
   assert.match(turnSource, /className={`stream-block-pending is-\${kind}`} role="status"/);
-  assert.match(globalStyles, /\.stream-block-pending > span \{[^}]*linear-gradient[^}]*background-clip: text;[^}]*animation: stream-block-light-sweep/s);
+  assert.match(globalStyles, /\.stream-block-pending::before \{[^}]*linear-gradient[^}]*animation: stream-block-light-sweep/s);
+  assert.doesNotMatch(globalStyles, /\.stream-block-pending > span \{[^}]*background-clip: text/s);
   assert.match(globalStyles, /@keyframes stream-block-light-sweep/);
-  assert.match(globalStyles, /@media \(prefers-reduced-motion: reduce\) \{ \.stream-block-pending > span \{[^}]*animation: none;[^}]*\} \}/);
+  assert.match(globalStyles, /\.stream-block-pending::before \{[^}]*left: -45%; width: 45%;[^}]*animation: stream-block-light-sweep 1\.8s linear infinite/);
+  assert.match(globalStyles, /@keyframes stream-block-light-sweep \{ from \{ transform: translate3d\(0, 0, 0\); \} to \{ transform: translate3d\(322\.222%, 0, 0\); \} \}/);
+  assert.match(globalStyles, /@media \(prefers-reduced-motion: reduce\) \{ \.stream-block-pending::before \{[^}]*animation: none;[^}]*\} \}/);
 });
 
 test("Mermaid preloads once, deduplicates active renders, and stays mounted while Markdown grows", () => {
@@ -50,7 +53,8 @@ test("Mermaid preserves authored semantic fills and repairs only unreadable node
   assert.match(rendererSource, /pie10: artifactVisualPalette\.purple/);
   assert.match(rendererSource, /cScale9: artifactVisualPalette\.purple/);
   assert.match(rendererSource, /plotColorPalette: artifactVisualPaletteSequence\.join\(","\)/);
-  assert.match(rendererSource, /return \{ \.\.\.result, svg: bindMermaidThemeTokens/);
+  assert.match(rendererSource, /const themedResult = \{ \.\.\.result, svg: bindMermaidThemeTokens/);
+  assert.match(rendererSource, /return themedResult/);
   assert.match(rendererSource, /ensureMermaidNodeTextContrast\(renderedSvg\)/);
   assert.doesNotMatch(rendererSource, /inferMermaidNodeTone|decorateMermaidSvg|luminaTone/);
   assert.doesNotMatch(rendererStyles, /data-lumina-tone|--mermaid-node-fill|--mermaid-node-stroke/);

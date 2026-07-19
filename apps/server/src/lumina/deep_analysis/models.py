@@ -19,7 +19,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..db import Base
-from ..models import TimestampMixin, UUIDPrimaryKeyMixin
+from ..models import TimestampMixin, UTCDateTime, UUIDPrimaryKeyMixin
 
 
 class DeepAnalysisMission(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -45,6 +45,8 @@ class DeepAnalysisMission(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("conversations.id", ondelete="SET NULL"), unique=True
     )
     title: Mapped[str] = mapped_column(String(240), nullable=False)
+    is_favorite: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_liked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     objective: Mapped[str] = mapped_column(Text, default="", nullable=False)
     status: Mapped[str] = mapped_column(
         String(32), default="draft", index=True, nullable=False
@@ -77,6 +79,7 @@ class DeepAnalysisMission(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     completion_outcome: Mapped[str | None] = mapped_column(String(40))
     revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     event_sequence: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_export_requested_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
 
 
 class DeepAnalysisEvent(UUIDPrimaryKeyMixin, Base):
@@ -260,6 +263,9 @@ class DeepAnalysisWorkflowNode(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     config_json: Mapped[dict[str, Any]] = mapped_column(
         JSON, default=dict, nullable=False
     )
+    conversation_id: Mapped[str | None] = mapped_column(
+        ForeignKey("conversations.id", ondelete="SET NULL"), unique=True
+    )
     run_id: Mapped[str | None] = mapped_column(
         ForeignKey("runs.id", ondelete="SET NULL"), unique=True
     )
@@ -276,9 +282,6 @@ class DeepAnalysisWorkflowNode(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         JSON, default=list, nullable=False
     )
     error_message: Mapped[str | None] = mapped_column(Text)
-    estimated_cost_microusd: Mapped[int] = mapped_column(
-        BigInteger, default=0, nullable=False
-    )
     actual_cost_microusd: Mapped[int] = mapped_column(
         BigInteger, default=0, nullable=False
     )

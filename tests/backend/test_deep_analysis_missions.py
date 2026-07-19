@@ -1,19 +1,22 @@
 from __future__ import annotations
 
-import hashlib
-import io
+import asyncio
 import json
+import re
 import time
 from pathlib import Path
-from zipfile import ZipFile
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from lumina.auth.service import create_user
+from lumina.agent.executor import local_run_executor
 from lumina.config import Settings
 from lumina.db import SessionLocal
 from lumina.deep_analysis.calculations import execute_python_calculation
+from lumina.deep_analysis.ai_planner import design_initial_workflow
+from lumina.deep_analysis.events import emit_event
 from lumina.deep_analysis.models import (
     DeepAnalysisClaim,
     DeepAnalysisCommand,
@@ -21,8 +24,10 @@ from lumina.deep_analysis.models import (
     DeepAnalysisDecision,
     DeepAnalysisDecisionResponse,
     DeepAnalysisMission,
+    DeepAnalysisMissionExport,
     DeepAnalysisWorkflowEdge,
     DeepAnalysisWorkflowNode,
+    DeepAnalysisWorkflowPattern,
     DeepAnalysisWorkflowRevision,
 )
 from lumina.deep_analysis.ledger import (
@@ -35,6 +40,7 @@ from lumina.deep_analysis.planning import (
     initial_workflow_plan,
     next_runnable_node,
     plan_edges,
+    planned_positions,
 )
 from lumina.deep_analysis.quality import evaluate_quality_gate
 from lumina.main import create_app
@@ -43,9 +49,11 @@ from lumina.models import (
     Organization,
     ProjectFile,
     ProjectFileVersion,
+    ProjectFolder,
     Run,
     User,
 )
+from lumina.providers.mock import MockProvider
 from lumina.storage import ManagedLocalStorage
 
 
@@ -125,16 +133,10 @@ def test_mission_workflow_persists_and_uses_revision_cas(tmp_path: Path) -> None
         assert mission["executionAvailable"] is True
         assert mission["spentMicrousd"] == 0
         assert mission["workflow"]["revisionNumber"] == 1
-        assert [node["nodeKey"] for node in mission["workflow"]["nodes"]] == [
-            "N001",
-            "N010",
-            "N020",
-            "N025",
-            "N030",
-            "N035",
-            "N040",
-        ]
+        assert len(mission["workflow"]["nodes"]) == 7
+        assert mission["workflow"]["nodes"][0]["nodeType"] == "scope"
         assert len(mission["workflow"]["edges"]) == 7
+        assert mission["startMode"] == "ai_fallback"
         assert mission["workflow"]["changeLog"][0]["action"] == "initial"
         assert "정량" in mission["workflow"]["reason"]
 
@@ -168,6 +170,53 @@ def test_mission_workflow_persists_and_uses_revision_cas(tmp_path: Path) -> None
         assert stale.json()["details"] == {"currentRevision": 2}
 
 
+def test_mission_sidebar_preferences_rename_and_project_move_persist(tmp_path: Path) -> None:
+    with TestClient(create_app(_settings(tmp_path))) as client:
+        headers = _login(client)
+        source_project_id = client.get("/api/projects").json()[0]["id"]
+        destination = client.post(
+            "/api/projects",
+            headers=headers,
+            json={"name": "분석 이동 대상", "description": ""},
+        )
+        assert destination.status_code == 201, destination.text
+        destination_project_id = destination.json()["id"]
+        created = client.post(
+            f"/api/projects/{source_project_id}/deep-analysis/missions",
+            headers=headers,
+            json={"title": "이동 전 분석", "objective": "사이드바 동작을 검증한다."},
+        ).json()
+
+        updated = client.patch(
+            f"/api/deep-analysis/missions/{created['id']}",
+            headers=headers,
+            json={
+                "expectedRevision": created["revision"],
+                "title": "이동 후 분석",
+                "isFavorite": True,
+                "isLiked": True,
+            },
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["title"] == "이동 후 분석"
+        assert updated.json()["isFavorite"] is True
+        assert updated.json()["isLiked"] is True
+
+        moved = client.post(
+            f"/api/deep-analysis/missions/{created['id']}/move",
+            headers=headers,
+            json={"projectId": destination_project_id},
+        )
+        assert moved.status_code == 200, moved.text
+        assert moved.json()["projectId"] == destination_project_id
+        destination_items = client.get(
+            f"/api/projects/{destination_project_id}/deep-analysis/missions"
+        ).json()
+        assert [(item["title"], item["isFavorite"], item["isLiked"]) for item in destination_items] == [
+            ("이동 후 분석", True, True)
+        ]
+
+
 def test_draft_question_change_rebuilds_the_initial_workflow(tmp_path: Path) -> None:
     with TestClient(create_app(_settings(tmp_path))) as client:
         headers = _login(client)
@@ -191,10 +240,12 @@ def test_draft_question_change_rebuilds_the_initial_workflow(tmp_path: Path) -> 
         detail = updated.json()
         assert detail["workflow"]["revisionNumber"] == 2
         assert len(detail["workflow"]["nodes"]) == 7
+        assert detail["workflow"]["nodes"][0]["title"] == "의사결정 문제 정의"
         assert detail["workflow"]["changeLog"][-1]["action"] == "question_updated"
         assert "의사결정형" in detail["workflow"]["reason"]
 
 
+@pytest.mark.skip(reason="legacy missions are deleted by migration 0055")
 def test_legacy_unstarted_workflow_is_upgraded_once_on_restore(tmp_path: Path) -> None:
     with TestClient(create_app(_settings(tmp_path))) as client:
         headers = _login(client)
@@ -234,15 +285,168 @@ def test_every_initial_workflow_contains_a_branch_and_merge() -> None:
     )
     for title, objective in questions:
         plan = initial_workflow_plan(title, objective)
-        outgoing: dict[str, int] = {}
-        incoming: dict[str, int] = {}
-        for source, target in plan_edges(plan):
-            outgoing[source] = outgoing.get(source, 0) + 1
-            incoming[target] = incoming.get(target, 0) + 1
-        assert max(outgoing.values()) >= 2, plan.kind
-        assert max(incoming.values()) >= 2, plan.kind
+        edges = plan_edges(plan)
+        assert len(plan.nodes) >= 6
+        assert edges
+        dependency_counts = [len(node.depends_on) for node in plan.nodes]
+        outgoing_counts = {
+            node.key: sum(source == node.key for source, _target in edges)
+            for node in plan.nodes
+        }
+        assert max(dependency_counts) >= 2
+        assert max(outgoing_counts.values()) >= 2
 
 
+def test_explicit_workflow_presets_do_not_depend_on_question_keywords() -> None:
+    assert initial_workflow_plan("1", "2", preset="quantitative").kind == "quantitative"
+    assert initial_workflow_plan("1", "2", preset="comparative_research").kind == "comparative_research"
+    assert initial_workflow_plan("1", "2", preset="decision").kind == "decision"
+    assert initial_workflow_plan("1", "2", preset="open_analysis").kind == "open_analysis"
+
+
+def test_ai_planner_builds_a_valid_branching_workflow() -> None:
+    response = {
+        "reason": "원인 가설을 독립 검증한 뒤 합성합니다.",
+        "nodes": [
+            {"ref": "scope", "nodeType": "scope", "title": "범위 설계", "purpose": "질문과 기준을 확정합니다.", "dependsOn": []},
+            {"ref": "cause", "nodeType": "analysis", "title": "주요 원인 분석", "purpose": "주요 원인을 검증합니다.", "dependsOn": ["scope"]},
+            {"ref": "counter", "nodeType": "analysis", "title": "대안 원인 분석", "purpose": "대안 설명을 검증합니다.", "dependsOn": ["scope"]},
+            {"ref": "merge", "nodeType": "synthesis", "title": "원인 합성", "purpose": "두 분석을 합성합니다.", "dependsOn": ["cause", "counter"]},
+            {"ref": "report", "nodeType": "report", "title": "최종 보고서", "purpose": "결론과 근거를 정리합니다.", "dependsOn": ["merge"]},
+        ],
+    }
+    design = asyncio.run(
+        design_initial_workflow(
+            provider=MockProvider(text_chunks=(json.dumps(response, ensure_ascii=False),)),
+            model="mock-agent",
+            title="공급망 지연 원인",
+            objective="주요 원인과 반대 가설을 검증한다.",
+            effort="medium",
+        )
+    )
+
+    assert design.plan.kind == "ai_designed"
+    assert [node.key for node in design.plan.nodes] == ["N001", "N010", "N020", "N030", "N040"]
+    assert design.plan.nodes[3].depends_on == ("N010", "N020")
+    assert design.plan.nodes[-1].node_type == "report"
+
+
+def test_mission_api_uses_ai_design(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    ai_response = {
+        "reason": "질문별 근거 수집과 반대 관점을 합성합니다.",
+        "nodes": [
+            {"ref": "scope", "nodeType": "scope", "title": "AI 범위 설계", "purpose": "질문 범위를 정합니다.", "dependsOn": []},
+            {"ref": "research", "nodeType": "research", "title": "AI 근거 조사", "purpose": "근거를 수집합니다.", "dependsOn": ["scope"]},
+            {"ref": "report", "nodeType": "report", "title": "AI 최종 보고서", "purpose": "결론을 보고합니다.", "dependsOn": ["research"]},
+        ],
+    }
+    monkeypatch.setattr(
+        local_run_executor,
+        "provider_for_probe",
+        lambda _provider_id: MockProvider(
+            text_chunks=(json.dumps(ai_response, ensure_ascii=False),)
+        ),
+    )
+    with TestClient(create_app(_settings(tmp_path))) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        ai_created = client.post(
+            f"/api/projects/{project_id}/deep-analysis/missions",
+            headers=headers,
+            json={
+                "title": "맞춤 조사",
+                "objective": "입력에 맞는 Workflow를 설계한다.",
+            },
+        )
+        assert ai_created.status_code == 201, ai_created.text
+        ai_payload = ai_created.json()
+        assert ai_payload["startMode"] == "ai_designed"
+        assert [node["title"] for node in ai_payload["workflow"]["nodes"]] == [
+            "AI 범위 설계",
+            "AI 근거 조사",
+            "AI 최종 보고서",
+        ]
+        assert ai_payload["workflow"]["changeLog"][0]["planner"]["mode"] == "ai"
+
+
+def test_workflow_regeneration_creates_a_new_active_revision(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    responses = (
+        {
+            "reason": "처음에는 순차 실행합니다.",
+            "nodes": [
+                {"ref": "scope", "nodeType": "scope", "title": "범위 설정", "purpose": "범위를 정합니다.", "dependsOn": []},
+                {"ref": "research", "nodeType": "research", "title": "자료 조사", "purpose": "자료를 조사합니다.", "dependsOn": ["scope"]},
+                {"ref": "report", "nodeType": "report", "title": "보고서", "purpose": "결과를 정리합니다.", "dependsOn": ["research"]},
+            ],
+        },
+        {
+            "reason": "두 분석을 병렬로 실행한 뒤 합칩니다.",
+            "nodes": [
+                {"ref": "scope", "nodeType": "scope", "title": "쟁점 정의", "purpose": "분석 범위를 정합니다.", "dependsOn": []},
+                {"ref": "market", "nodeType": "research", "title": "시장 조사", "purpose": "시장 자료를 조사합니다.", "dependsOn": ["scope"]},
+                {"ref": "finance", "nodeType": "analysis", "title": "재무 분석", "purpose": "재무 자료를 분석합니다.", "dependsOn": ["scope"]},
+                {"ref": "report", "nodeType": "report", "title": "통합 보고서", "purpose": "두 결과를 합칩니다.", "dependsOn": ["market", "finance"]},
+            ],
+        },
+    )
+    provider_calls = 0
+
+    def provider_for_probe(_provider_id: str) -> MockProvider:
+        nonlocal provider_calls
+        response = responses[min(provider_calls, len(responses) - 1)]
+        provider_calls += 1
+        return MockProvider(text_chunks=(json.dumps(response, ensure_ascii=False),))
+
+    monkeypatch.setattr(local_run_executor, "provider_for_probe", provider_for_probe)
+    with TestClient(create_app(_settings(tmp_path))) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        created = client.post(
+            f"/api/projects/{project_id}/deep-analysis/missions",
+            headers=headers,
+            json={"title": "경쟁사 분석", "objective": "시장과 재무를 분석합니다."},
+        ).json()
+        previous_workflow_id = created["workflow"]["id"]
+
+        regenerated = client.post(
+            f"/api/deep-analysis/missions/{created['id']}/workflow/regenerate",
+            headers=headers,
+            json={
+                "expectedRevision": created["revision"],
+                "prompt": "시장 조사와 재무 분석을 병렬로 진행한 뒤 합쳐 주세요.",
+            },
+        )
+        assert regenerated.status_code == 200, regenerated.text
+        detail = regenerated.json()
+        assert detail["revision"] == 2
+        assert detail["status"] == "ready"
+        assert detail["workflow"]["id"] != previous_workflow_id
+        assert detail["workflow"]["revisionNumber"] == 2
+        assert [node["title"] for node in detail["workflow"]["nodes"]] == [
+            "쟁점 정의", "시장 조사", "재무 분석", "통합 보고서",
+        ]
+        assert detail["workflow"]["changeLog"][0]["action"] == "workflow_regenerated"
+        assert detail["workflow"]["changeLog"][0]["regenerationPrompt"].startswith("시장 조사")
+
+        with SessionLocal() as db:
+            previous = db.get(DeepAnalysisWorkflowRevision, previous_workflow_id)
+            assert previous is not None
+            assert previous.state == "archived"
+
+        stale = client.post(
+            f"/api/deep-analysis/missions/{created['id']}/workflow/regenerate",
+            headers=headers,
+            json={"expectedRevision": 1, "prompt": "다시 그려 주세요."},
+        )
+        assert stale.status_code == 409
+        assert stale.json()["code"] == "revision_conflict"
+        assert provider_calls == 2
+
+@pytest.mark.skip(reason="runtime LLM replanning was removed")
 def test_runtime_decision_branches_merges_and_then_shrinks_the_dag(
     tmp_path: Path,
 ) -> None:
@@ -365,6 +569,7 @@ def test_runtime_decision_branches_merges_and_then_shrinks_the_dag(
             }
 
 
+@pytest.mark.skip(reason="runtime LLM decisions were removed")
 def test_runtime_decision_waits_for_durable_user_answer_and_resumes(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -510,6 +715,7 @@ def test_runtime_decision_waits_for_durable_user_answer_and_resumes(
         assert listed.json()[0]["appliedWorkflowRevisionNumber"] == 1
 
 
+@pytest.mark.skip(reason="charter and quality gate were removed")
 def test_charter_contract_quality_gate_and_immutable_waiver(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -662,6 +868,7 @@ def test_charter_contract_quality_gate_and_immutable_waiver(
         assert "mission_completed" not in awaiting_types
 
 
+@pytest.mark.skip(reason="claim and evidence ledger were removed")
 def test_claim_evidence_ledger_resolves_exact_file_versions_and_lists_lineage(
     tmp_path: Path,
 ) -> None:
@@ -768,7 +975,7 @@ def test_claim_evidence_ledger_resolves_exact_file_versions_and_lists_lineage(
         ).json() == payload["openIssues"]
 
 
-def test_mission_export_contains_portable_records_and_verified_checksums(
+def test_mission_export_saves_generated_and_frozen_source_files_as_project_folder(
     tmp_path: Path,
 ) -> None:
     with TestClient(create_app(_settings(tmp_path))) as client:
@@ -780,10 +987,19 @@ def test_mission_export_contains_portable_records_and_verified_checksums(
             data={"logicalPath": "inputs/source.csv", "changeReason": "export test"},
             files={"file": ("source.csv", b"key,value\nA,1\n", "text/csv")},
         ).json()
+        generated = client.post(
+            f"/api/projects/{project_id}/files",
+            headers=headers,
+            data={
+                "logicalPath": "심층분석/내보내기 검증/N040_최종 보고서.md",
+                "changeReason": "generated export test",
+            },
+            files={"file": ("report.md", b"# final report\n", "text/markdown")},
+        ).json()
         created = client.post(
             f"/api/projects/{project_id}/deep-analysis/missions",
             headers=headers,
-            json={"title": "내보내기 검증", "objective": "감사 가능한 ZIP을 만든다."},
+            json={"title": "내보내기 검증", "objective": "파일 저장소에 결과 폴더를 만든다."},
         ).json()
         with SessionLocal() as db:
             mission = db.get(DeepAnalysisMission, created["id"])
@@ -806,45 +1022,78 @@ def test_mission_export_contains_portable_records_and_verified_checksums(
                     "sizeBytes": version.size_bytes,
                 }
             ]
+            node = db.scalar(
+                select(DeepAnalysisWorkflowNode)
+                .join(
+                    DeepAnalysisWorkflowRevision,
+                    DeepAnalysisWorkflowRevision.id
+                    == DeepAnalysisWorkflowNode.workflow_revision_id,
+                )
+                .where(DeepAnalysisWorkflowRevision.mission_id == mission.id)
+                .order_by(DeepAnalysisWorkflowNode.sequence.desc())
+            )
+            assert node is not None
+            node.output_project_file_id = generated["id"]
+            node.output_logical_path = generated["logicalPath"]
             db.commit()
 
         operation = client.post(
             f"/api/deep-analysis/missions/{created['id']}/exports",
             headers=headers,
-            json={"scope": "audit", "includeOriginals": True},
+            json={},
         )
         assert operation.status_code == 201, operation.text
         export = operation.json()
         assert export["status"] == "completed"
-        assert export["contentHash"]
+        assert export["scope"] == "latest"
+        assert export["contentHash"] is None
         assert export["manifest"]["includeOriginals"] is True
-
-        download = client.get(
-            f"/api/deep-analysis/missions/{created['id']}/exports/{export['id']}/download"
+        assert export["manifest"]["generatedFileCount"] == 1
+        assert export["manifest"]["sourceFileCount"] == 1
+        folder_path = export["manifest"]["folderPath"]
+        assert export["filename"] == folder_path
+        assert re.fullmatch(
+            r"Mission 내보내기/내보내기 검증_\d{6}_\d{6}", folder_path
         )
-        assert download.status_code == 200, download.text
-        assert download.headers["content-type"] == "application/zip"
-        assert hashlib.sha256(download.content).hexdigest() == export["contentHash"]
-        with ZipFile(io.BytesIO(download.content)) as archive:
-            names = set(archive.namelist())
-            assert {
-                "README.md",
-                "mission.json",
-                "workflow.json",
-                "claims.json",
-                "decisions.csv",
-                "costs.csv",
-                "evidence-manifest.json",
-                "open-issues.csv",
-                "quality-gates.json",
-                "checksums.json",
-            } <= names
-            assert any(name.startswith("source-files/") for name in names)
-            checksums = json.loads(archive.read("checksums.json"))
-            for name, metadata in checksums["entries"].items():
-                content = archive.read(name)
-                assert hashlib.sha256(content).hexdigest() == metadata["sha256"]
-                assert len(content) == metadata["sizeBytes"]
+
+        duplicate = client.post(
+            f"/api/deep-analysis/missions/{created['id']}/exports",
+            headers=headers,
+            json={},
+        )
+        assert duplicate.status_code == 429, duplicate.text
+        assert duplicate.json()["code"] == "mission_export_cooldown"
+
+        stored_files = client.get(f"/api/projects/{project_id}/files").json()
+        exported_files = [
+            item for item in stored_files if item["logicalPath"].startswith(f"{folder_path}/")
+        ]
+        assert {item["logicalPath"] for item in exported_files} == {
+            f"{folder_path}/생성 파일/N040_최종 보고서.md",
+            f"{folder_path}/원본 자료/source.csv",
+        }
+        with SessionLocal() as db:
+            assert db.scalar(
+                select(ProjectFolder).where(
+                    ProjectFolder.project_id == project_id,
+                    ProjectFolder.logical_path == folder_path,
+                )
+            ) is not None
+            assert len(
+                db.scalars(
+                    select(DeepAnalysisMissionExport).where(
+                        DeepAnalysisMissionExport.mission_id == created["id"]
+                    )
+                ).all()
+            ) == 1
+        contents = {
+            item["logicalPath"]: client.get(
+                f"/api/projects/{project_id}/files/{item['id']}/download"
+            ).content
+            for item in exported_files
+        }
+        assert contents[f"{folder_path}/생성 파일/N040_최종 보고서.md"] == b"# final report\n"
+        assert contents[f"{folder_path}/원본 자료/source.csv"] == b"key,value\nA,1\n"
 
 
 def test_workflow_draft_is_separate_validated_and_activated_atomically(
@@ -881,16 +1130,26 @@ def test_workflow_draft_is_separate_validated_and_activated_atomically(
                 "title": node["title"], "purpose": node["purpose"],
                 "positionX": node["positionX"], "positionY": node["positionY"],
                 "config": node["config"],
-                "estimatedCostMicrousd": node["estimatedCostMicrousd"],
             }
             for node in nodes
         ]
+        payload_nodes.append(
+            {
+                    "nodeKey": "N999",
+                "nodeType": "task",
+                "title": "두 번째 작업",
+                "purpose": "첫 작업 결과를 이어서 정리한다.",
+                "positionX": nodes[0]["positionX"],
+                "positionY": nodes[0]["positionY"] + 160,
+                "config": {},
+            }
+        )
         cycle = client.patch(
             f"/api/deep-analysis/missions/{created['id']}/draft",
             headers=headers,
             json={"expectedRevision": 1, "nodes": payload_nodes, "edges": [
-                {"sourceNodeKey": nodes[0]["nodeKey"], "targetNodeKey": nodes[1]["nodeKey"]},
-                {"sourceNodeKey": nodes[1]["nodeKey"], "targetNodeKey": nodes[0]["nodeKey"]},
+                {"sourceNodeKey": nodes[0]["nodeKey"], "targetNodeKey": "N999"},
+                {"sourceNodeKey": "N999", "targetNodeKey": nodes[0]["nodeKey"]},
             ]},
         )
         assert cycle.status_code == 422
@@ -898,8 +1157,7 @@ def test_workflow_draft_is_separate_validated_and_activated_atomically(
             f"/api/deep-analysis/missions/{created['id']}/draft",
             headers=headers,
             json={"expectedRevision": 1, "nodes": payload_nodes, "edges": [
-                {"sourceNodeKey": edge["sourceNodeKey"], "targetNodeKey": edge["targetNodeKey"]}
-                for edge in edges
+                {"sourceNodeKey": nodes[0]["nodeKey"], "targetNodeKey": "N999"}
             ]},
         )
         assert saved.status_code == 200, saved.text
@@ -925,6 +1183,7 @@ def test_workflow_draft_is_separate_validated_and_activated_atomically(
             assert previous is not None and previous.state == "archived"
 
 
+@pytest.mark.skip(reason="workflow pattern creation was removed from the UI contract")
 def test_published_pattern_is_sanitized_versioned_and_optional_for_new_mission(
     tmp_path: Path,
 ) -> None:
@@ -1006,6 +1265,28 @@ def test_published_pattern_is_sanitized_versioned_and_optional_for_new_mission(
         assert second.json()["versionNumber"] == 2
         assert published.json()["definitionDigest"] == draft["definitionDigest"]
 
+        deleted = client.delete(
+            f"/api/deep-analysis/patterns/{draft['patternId']}",
+            headers=headers,
+        )
+        assert deleted.status_code == 204, deleted.text
+        assert client.get(
+            f"/api/projects/{project_id}/deep-analysis/patterns"
+        ).json() == []
+        with SessionLocal() as db:
+            archived = db.get(DeepAnalysisWorkflowPattern, draft["patternId"])
+            assert archived is not None and archived.status == "archived"
+        unavailable = client.post(
+            f"/api/projects/{project_id}/deep-analysis/missions",
+            headers=headers,
+            json={
+                "title": "보관된 Pattern 적용",
+                "patternVersionId": draft["id"],
+            },
+        )
+        assert unavailable.status_code == 409
+        assert unavailable.json()["code"] == "pattern_archived"
+
 
 def test_mission_endpoints_require_auth_and_project_access(tmp_path: Path) -> None:
     with TestClient(create_app(_settings(tmp_path))) as client:
@@ -1054,24 +1335,29 @@ def test_mission_executes_all_nodes_and_persists_markdown_outputs(
 
         assert restored["status"] == "completed"
         assert restored["completionOutcome"] == "satisfied"
-        assert restored["qualityGates"][-1]["result"] == "passed"
+        assert "qualityGates" not in restored
+        assert "claims" not in restored
         assert all(
             node["status"] == "completed" for node in restored["workflow"]["nodes"]
         )
         assert all(node["runId"] for node in restored["workflow"]["nodes"])
+        assert all(node["conversationId"] for node in restored["workflow"]["nodes"])
         assert all(node["outputMarkdown"] for node in restored["workflow"]["nodes"])
+        assert all(
+            "LUMINA_ANALYSIS_LEDGER" not in node["executionPrompt"]
+            and "LUMINA_WORKFLOW_DECISION" not in node["executionPrompt"]
+            and "Claim·Evidence" not in node["executionPrompt"]
+            for node in restored["workflow"]["nodes"]
+        )
         assert all(
             node["outputLogicalPath"].startswith("심층분석/실행 가능한 분석_")
             for node in restored["workflow"]["nodes"]
         )
-        assert restored["completionContract"]["finalOutputPath"].endswith(
-            "N040_최종 보고서.md"
-        )
         assert all(node["contextManifest"] for node in restored["workflow"]["nodes"])
-        assert len({
+        assert all(
             node["contextManifest"]["prefixHash"]
             for node in restored["workflow"]["nodes"]
-        }) == 1
+        )
         incoming: dict[str, set[str]] = {
             node["nodeKey"]: set() for node in restored["workflow"]["nodes"]
         }
@@ -1093,6 +1379,8 @@ def test_mission_executes_all_nodes_and_persists_markdown_outputs(
             item for item in restored["files"] if item["purpose"] == "node_output"
         ]) == len(restored["workflow"]["nodes"])
         assert all(item["projectFileVersionId"] for item in restored["files"])
+        assert all("estimatedCostMicrousd" not in node for node in restored["workflow"]["nodes"])
+        assert all("actualCostMicrousd" in node for node in restored["workflow"]["nodes"])
 
         costs = client.get(
             f"/api/deep-analysis/missions/{created['id']}/costs"
@@ -1201,6 +1489,10 @@ def test_running_mission_can_be_cancelled(tmp_path: Path, monkeypatch) -> None:
             headers=headers,
             json={"title": "시작할 분석"},
         ).json()
+        assert all(
+            node["executionPrompt"] is None
+            for node in created["workflow"]["nodes"]
+        )
 
         started = client.post(
             f"/api/deep-analysis/missions/{created['id']}/start",
@@ -1211,8 +1503,17 @@ def test_running_mission_can_be_cancelled(tmp_path: Path, monkeypatch) -> None:
         assert started.json()["status"] == "running"
         assert started.json()["executionAvailable"] is True
         assert started.json()["revision"] == 2
-        assert started.json()["charter"]["confirmed"] is True
         assert started.json()["workflow"]["nodes"][0]["status"] == "running"
+        running_node = started.json()["workflow"]["nodes"][0]
+        assert running_node["executionPrompt"] is not None
+        assert f"작업 세션: {running_node['nodeKey']}" in running_node["executionPrompt"]
+        with SessionLocal() as db:
+            stored_prompt = db.scalar(
+                select(Message.canonical_text).where(
+                    Message.run_id == running_node["runId"], Message.role == "user"
+                )
+            )
+        assert running_node["executionPrompt"] == stored_prompt
 
         cancelled = client.post(
             f"/api/deep-analysis/missions/{created['id']}/cancel",
@@ -1293,6 +1594,57 @@ def test_mission_events_replay_and_start_command_are_idempotent(
         with SessionLocal() as db:
             assert db.query(DeepAnalysisCommand).count() == 1
             assert db.query(DeepAnalysisEvent).count() == 3
+
+
+def test_mission_events_are_not_capped_and_are_deleted_with_the_mission(
+    tmp_path: Path,
+) -> None:
+    with TestClient(create_app(_settings(tmp_path))) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        created = client.post(
+            f"/api/projects/{project_id}/deep-analysis/missions",
+            headers=headers,
+            json={"title": "Retention audit", "objective": "Keep recent events"},
+        ).json()
+
+        with SessionLocal() as db:
+            mission = db.get(DeepAnalysisMission, created["id"])
+            assert mission is not None
+            for index in range(250):
+                emit_event(db, mission, "retention_test", {"index": index})
+            db.commit()
+
+            retained = list(
+                db.scalars(
+                    select(DeepAnalysisEvent)
+                    .where(DeepAnalysisEvent.mission_id == mission.id)
+                    .order_by(DeepAnalysisEvent.sequence)
+                )
+            )
+            assert len(retained) == 251
+            assert [retained[0].sequence, retained[-1].sequence] == [1, 251]
+
+        response = client.get(
+            f"/api/deep-analysis/missions/{created['id']}/events",
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        assert len(response.json()) == 251
+        assert [response.json()[0]["sequence"], response.json()[-1]["sequence"]] == [1, 251]
+
+        deleted = client.delete(
+            f"/api/deep-analysis/missions/{created['id']}",
+            headers=headers,
+            params={"expected_revision": created["revision"]},
+        )
+        assert deleted.status_code == 204, deleted.text
+        with SessionLocal() as db:
+            assert db.scalars(
+                select(DeepAnalysisEvent).where(
+                    DeepAnalysisEvent.mission_id == created["id"]
+                )
+            ).all() == []
 
 
 def test_cost_breakdown_separates_cache_tokens_and_no_cache_upper_bound(
@@ -1418,6 +1770,7 @@ def test_cancelled_node_can_be_retried_with_attempt_history(
             json={"expectedRevision": 1},
         ).json()
         first_run_id = started["workflow"]["nodes"][0]["runId"]
+        first_conversation_id = started["workflow"]["nodes"][0]["conversationId"]
         with SessionLocal() as db:
             run = db.get(Run, first_run_id)
             assert run is not None
@@ -1435,28 +1788,6 @@ def test_cancelled_node_can_be_retried_with_attempt_history(
         assert partial_outputs[0]["validationStatus"] == "interrupted"
         assert partial_outputs[0]["logicalPath"].endswith("_partial.md")
 
-        with SessionLocal() as db:
-            source_node = db.scalar(
-                select(DeepAnalysisWorkflowNode).where(
-                    DeepAnalysisWorkflowNode.run_id == first_run_id
-                )
-            )
-            assert source_node is not None
-            stale_claim = DeepAnalysisClaim(
-                mission_id=created["id"],
-                source_node_id=source_node.id,
-                statement="재실행 전 결론",
-                level="key_finding",
-                status="supported",
-                confidence=0.8,
-                materiality="high",
-                report_inclusion="executive_summary",
-                validation_json={},
-            )
-            db.add(stale_claim)
-            db.commit()
-            stale_claim_id = stale_claim.id
-
         retried = client.post(
             f"/api/deep-analysis/missions/{created['id']}/retry",
             headers=headers,
@@ -1469,6 +1800,7 @@ def test_cancelled_node_can_be_retried_with_attempt_history(
         assert payload["revision"] == 4
         assert node["status"] == "running"
         assert node["runId"] != first_run_id
+        assert node["conversationId"] == first_conversation_id
         assert node["runHistory"] == [
             {
                 "attempt": 1,
@@ -1481,10 +1813,6 @@ def test_cancelled_node_can_be_retried_with_attempt_history(
             }
         ]
         assert cancelled["revision"] == 3
-        with SessionLocal() as db:
-            refreshed_claim = db.get(DeepAnalysisClaim, stale_claim_id)
-            assert refreshed_claim is not None
-            assert refreshed_claim.stale_status == "review_required"
 
 
 def test_python_calculation_uses_frozen_csv_and_saves_script_and_result(

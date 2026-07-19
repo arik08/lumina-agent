@@ -72,10 +72,7 @@ def test_sqlalchemy_metadata_compiles_for_postgres_json_and_partial_indexes() ->
     assert isinstance(revision_table.c.allowed_ip_ranges_json.type, JSON)
     assert isinstance(revision_table.c.header_templates_json.type, JSON)
     assert isinstance(
-        Base.metadata.tables["knowledge_evidence_segments"].c.locator_json.type, JSON
-    )
-    assert isinstance(
-        Base.metadata.tables["knowledge_statements"].c.object_value_json.type, JSON
+        Base.metadata.tables["knowledge_documents"].c.citations_json.type, JSON
     )
 
 
