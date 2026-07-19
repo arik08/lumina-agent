@@ -1,5 +1,7 @@
 .deep-analysis-view { overflow: hidden; }
 
+.deep-analysis-header,
+.deep-analysis-header :where(*) { user-select: none; -webkit-user-drag: none; }
 .deep-analysis-header > div:first-child { min-width: 0; }
 .deep-analysis-header > div:first-child > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .deep-analysis-header > button,

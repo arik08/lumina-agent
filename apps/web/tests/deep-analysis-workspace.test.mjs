@@ -66,6 +66,15 @@ test("new Missions automatically create a workflow without preset controls", asy
   assert.doesNotMatch(view, /preset_|listPatterns|savePattern|Pattern 저장/);
 });
 
+test("deep-analysis header prevents selection and native dragging across tabs", async () => {
+  const css = await readFile(cssPath, "utf8");
+
+  assert.match(
+    css,
+    /\.deep-analysis-header,\s*\.deep-analysis-header :where\(\*\) \{ user-select: none; -webkit-user-drag: none; \}/,
+  );
+});
+
 test("Canvas blank space supports pointer dragging", async () => {
   const view = await readFile(viewPath, "utf8");
 
