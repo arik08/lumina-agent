@@ -219,7 +219,7 @@ const defaultInspectorWidth = 760;
 const minimumInspectorWidth = 420;
 const maximumInspectorWidthRatio = 0.84;
 const inspectorWidthStorageKey = "lumina:deep-analysis:inspector-width:v2";
-const workflowPortSides = ["north", "east", "south", "west"] as const;
+const workflowPortSides = ["north", "south"] as const;
 type WorkflowPortSide = typeof workflowPortSides[number];
 type WorkflowNodePosition = Pick<DeepAnalysisWorkflowNode, "positionX" | "positionY">;
 function statusLabel(status: string) {
@@ -346,27 +346,19 @@ function arrangeWorkflowTopDown(workflow: DeepAnalysisWorkflowRevision) {
 
 function workflowPortPoint(node: WorkflowNodePosition, side: WorkflowPortSide) {
   if (side === "north") return { x: node.positionX + workflowNodeWidth / 2, y: node.positionY };
-  if (side === "east") return { x: node.positionX + workflowNodeWidth, y: node.positionY + workflowNodeHeight / 2 };
-  if (side === "south") return { x: node.positionX + workflowNodeWidth / 2, y: node.positionY + workflowNodeHeight };
-  return { x: node.positionX, y: node.positionY + workflowNodeHeight / 2 };
+  return { x: node.positionX + workflowNodeWidth / 2, y: node.positionY + workflowNodeHeight };
 }
 
 function workflowPortVector(side: WorkflowPortSide) {
   if (side === "north") return { x: 0, y: -1 };
-  if (side === "east") return { x: 1, y: 0 };
-  if (side === "south") return { x: 0, y: 1 };
-  return { x: -1, y: 0 };
+  return { x: 0, y: 1 };
 }
 
 function workflowEdgeSides(
   source: WorkflowNodePosition,
   target: WorkflowNodePosition,
 ): [WorkflowPortSide, WorkflowPortSide] {
-  const deltaX = target.positionX - source.positionX;
   const deltaY = target.positionY - source.positionY;
-  if (Math.abs(deltaX) > Math.abs(deltaY) * 1.8) {
-    return deltaX >= 0 ? ["east", "west"] : ["west", "east"];
-  }
   return deltaY >= 0 ? ["south", "north"] : ["north", "south"];
 }
 
@@ -379,7 +371,6 @@ function workflowEdgeGeometry(
   const targetPoint = workflowPortPoint(target, targetSide);
   const sourceVector = workflowPortVector(sourceSide);
   const targetVector = workflowPortVector(targetSide);
-  const vertical = sourceSide === "north" || sourceSide === "south";
   const stemLength = 12;
   const sourceStem = {
     x: sourcePoint.x + sourceVector.x * stemLength,
@@ -391,9 +382,7 @@ function workflowEdgeGeometry(
   };
   const controlOffset = Math.max(
     18,
-    (vertical
-      ? Math.abs(targetStem.y - sourceStem.y)
-      : Math.abs(targetStem.x - sourceStem.x)) * .5,
+    Math.abs(targetStem.y - sourceStem.y) * .5,
   );
   return {
     sourcePoint,

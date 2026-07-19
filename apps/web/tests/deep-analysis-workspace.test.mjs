@@ -251,6 +251,18 @@ test("Running and completed Nodes keep evenly spaced elapsed time below the titl
   assert.match(css, /\.deep-analysis-view\.deep-analysis-view \.deep-analysis-node-meta > span,[\s\S]*\.deep-analysis-node > \.deep-analysis-node-elapsed,[\s\S]*\.deep-analysis-node > \.deep-analysis-node-cost \{ font-size: inherit; line-height: 1\.2; \}/);
 });
 
+test("Workflow connections only use top and bottom node ports", async () => {
+  const [view, css] = await Promise.all([
+    readFile(viewPath, "utf8"),
+    readFile(cssPath, "utf8"),
+  ]);
+
+  assert.match(view, /const workflowPortSides = \["north", "south"\] as const/);
+  assert.doesNotMatch(view, /\["north", "east", "south", "west"\]/);
+  assert.doesNotMatch(view, /return deltaX >= 0 \? \["east", "west"\]/);
+  assert.doesNotMatch(css, /\.deep-analysis-connection-port\.port-(?:east|west)/);
+});
+
 test("Accumulated cost mode survives submenu dismissal and only the button restores elapsed time", async () => {
   const [view, css] = await Promise.all([
     readFile(viewPath, "utf8"),
