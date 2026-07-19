@@ -112,6 +112,7 @@
 .deep-analysis-cost-wrap { position: relative; flex: none; }
 .deep-analysis-cost { display: inline-flex; width: 30px; min-height: 30px; align-items: center; justify-content: center; border: 1px solid var(--line); border-radius: var(--radius-control); padding: 0; background: var(--surface); color: var(--muted); cursor: pointer; }
 .deep-analysis-cost:hover { background: var(--surface-soft); }
+.deep-analysis-cost.is-active { border-color: var(--cobalt); background: var(--cobalt-pale); color: var(--cobalt); }
 .deep-analysis-delete { display: inline-flex; width: 30px; min-height: 30px; align-items: center; justify-content: center; gap: 5px; border: 1px solid var(--line); border-radius: var(--radius-control); padding: 0; background: var(--surface); color: var(--muted); font-size: 11.5px; cursor: pointer; }
 .deep-analysis-delete:hover,
 .deep-analysis-delete.is-armed { border-color: color-mix(in srgb, var(--danger) 48%, var(--line)); background: color-mix(in srgb, var(--danger) 8%, var(--surface)); color: var(--danger); }
@@ -328,8 +329,10 @@
 .deep-analysis-view.deep-analysis-view .deep-analysis-node-meta > span,
 .deep-analysis-view.deep-analysis-view .deep-analysis-node-meta > .node-status,
 .deep-analysis-view.deep-analysis-view .deep-analysis-node > strong,
-.deep-analysis-view.deep-analysis-view .deep-analysis-node > .deep-analysis-node-elapsed { font-size: inherit; line-height: 1.2; }
-.deep-analysis-view.deep-analysis-view .deep-analysis-node > .deep-analysis-node-elapsed { color: var(--muted); font-variant-numeric: tabular-nums; }
+.deep-analysis-view.deep-analysis-view .deep-analysis-node > .deep-analysis-node-elapsed,
+.deep-analysis-view.deep-analysis-view .deep-analysis-node > .deep-analysis-node-cost { font-size: inherit; line-height: 1.2; }
+.deep-analysis-view.deep-analysis-view .deep-analysis-node > .deep-analysis-node-elapsed,
+.deep-analysis-view.deep-analysis-view .deep-analysis-node > .deep-analysis-node-cost { color: var(--muted); font-variant-numeric: tabular-nums; }
 .deep-analysis-goal-node { position: absolute; display: grid; width: 176px; height: 86px; align-content: start; gap: 6px; border: 1px solid color-mix(in srgb, var(--cobalt) 45%, var(--line-strong)); border-radius: var(--radius-select); padding: 10px 11px; background: color-mix(in srgb, var(--cobalt-pale) 42%, var(--surface)); color: var(--ink); text-align: left; cursor: pointer; }
 .deep-analysis-goal-node:hover,
 .deep-analysis-goal-node.is-selected { border-color: var(--cobalt); background: var(--cobalt-pale); }

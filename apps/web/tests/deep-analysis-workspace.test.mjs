@@ -217,10 +217,24 @@ test("Running and completed Nodes keep evenly spaced elapsed time below the titl
   assert.match(view, /node\.status === "completed" && node\.finishedAt/);
   assert.match(view, /Date\.parse\(normalizeUtcDateTime\(node\.finishedAt\)\)/);
   assert.match(view, /<span>\{statusLabel\(node\.status\)\}<\/span>/);
-  assert.match(view, /<strong>\{node\.title\}<\/strong>\s*\{elapsedTime && <time className="deep-analysis-node-elapsed"/);
+  assert.match(view, /<strong>\{node\.title\}<\/strong>\s*\{showCost[\s\S]*: elapsedTime && <time className="deep-analysis-node-elapsed"/);
   assert.match(css, /\.deep-analysis-node-meta > \.node-status \{[^}]*justify-self: end/);
   assert.match(css, /\.deep-analysis-node \{[^}]*height: 86px;[^}]*grid-auto-rows: 1\.2em;[^}]*align-content: center;[^}]*gap: 4px/);
-  assert.match(css, /\.deep-analysis-view\.deep-analysis-view \.deep-analysis-node-meta > span,[\s\S]*\.deep-analysis-node > \.deep-analysis-node-elapsed \{ font-size: inherit; line-height: 1\.2; \}/);
+  assert.match(css, /\.deep-analysis-view\.deep-analysis-view \.deep-analysis-node-meta > span,[\s\S]*\.deep-analysis-node > \.deep-analysis-node-elapsed,[\s\S]*\.deep-analysis-node > \.deep-analysis-node-cost \{ font-size: inherit; line-height: 1\.2; \}/);
+});
+
+test("Accumulated cost button toggles each Node's third row between cost and elapsed time", async () => {
+  const [view, css] = await Promise.all([
+    readFile(viewPath, "utf8"),
+    readFile(cssPath, "utf8"),
+  ]);
+
+  assert.match(view, /className=\{`deep-analysis-cost tooltip-control \$\{costDetailsOpen \? "is-active" : ""\}`\}/);
+  assert.match(view, /aria-pressed=\{costDetailsOpen\}/);
+  assert.match(view, /showCost=\{costDetailsOpen\}/);
+  assert.match(view, /showCost\s*\? <span className="deep-analysis-node-cost">\{formatCost\(node\.actualCostMicrousd, usdKrwRate\)\}<\/span>\s*:\s*elapsedTime && <time className="deep-analysis-node-elapsed"/);
+  assert.match(css, /\.deep-analysis-cost\.is-active \{[^}]*border-color: var\(--cobalt\);[^}]*background: var\(--cobalt-pale\);[^}]*color: var\(--cobalt\);/);
+  assert.match(css, /\.deep-analysis-node > \.deep-analysis-node-elapsed,[\s\S]*\.deep-analysis-node > \.deep-analysis-node-cost \{ font-size: inherit; line-height: 1\.2; \}/);
 });
 
 test("Active run feedback keeps only the completion count on the right", async () => {

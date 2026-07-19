@@ -1739,10 +1739,11 @@ export function DeepAnalysisView({
                     </div>
                     <div className="deep-analysis-cost-wrap">
                       <button
-                        className="deep-analysis-cost tooltip-control"
+                        className={`deep-analysis-cost tooltip-control ${costDetailsOpen ? "is-active" : ""}`}
                         type="button"
                         aria-label={`누적 비용 ${formatCost(mission.spentMicrousd, usdKrwRate)}`}
                         aria-expanded={costDetailsOpen}
+                        aria-pressed={costDetailsOpen}
                         data-tooltip={`누적 비용 ${formatCost(mission.spentMicrousd, usdKrwRate)}`}
                         onClick={() => setCostDetailsOpen((open) => !open)}
                       >
@@ -1920,6 +1921,8 @@ export function DeepAnalysisView({
                           key={node.id}
                           node={node}
                           selected={selectedNodeKey === node.nodeKey}
+                          showCost={costDetailsOpen}
+                          usdKrwRate={usdKrwRate}
                           onSelect={() => {
                             setSelectedNodeKey(node.nodeKey);
                             setSelectedEdgeId(null);
@@ -2276,6 +2279,8 @@ function ExecutionLog({ events }: { events: DeepAnalysisMissionEvent[] }) {
 function WorkflowNodeButton({
   node,
   selected,
+  showCost,
+  usdKrwRate,
   onSelect,
   editable,
   connectionPortsSuppressed,
@@ -2294,6 +2299,8 @@ function WorkflowNodeButton({
 }: {
   node: DeepAnalysisWorkflowNode;
   selected: boolean;
+  showCost: boolean;
+  usdKrwRate: number | null;
   onSelect: () => void;
   editable: boolean;
   connectionPortsSuppressed: boolean;
@@ -2349,7 +2356,9 @@ function WorkflowNodeButton({
           </small>
         </div>
         <strong>{node.title}</strong>
-        {elapsedTime && <time className="deep-analysis-node-elapsed" dateTime={normalizedStartedAt ?? undefined}>{elapsedTime}</time>}
+        {showCost
+          ? <span className="deep-analysis-node-cost">{formatCost(node.actualCostMicrousd, usdKrwRate)}</span>
+          : elapsedTime && <time className="deep-analysis-node-elapsed" dateTime={normalizedStartedAt ?? undefined}>{elapsedTime}</time>}
       </button>
       {editable && <>
         {workflowPortSides.map((side) => (
