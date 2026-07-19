@@ -251,15 +251,17 @@ test("Running and completed Nodes keep evenly spaced elapsed time below the titl
   assert.match(css, /\.deep-analysis-view\.deep-analysis-view \.deep-analysis-node-meta > span,[\s\S]*\.deep-analysis-node > \.deep-analysis-node-elapsed,[\s\S]*\.deep-analysis-node > \.deep-analysis-node-cost \{ font-size: inherit; line-height: 1\.2; \}/);
 });
 
-test("Accumulated cost button toggles each Node's third row between cost and elapsed time", async () => {
+test("Accumulated cost mode survives submenu dismissal and only the button restores elapsed time", async () => {
   const [view, css] = await Promise.all([
     readFile(viewPath, "utf8"),
     readFile(cssPath, "utf8"),
   ]);
 
-  assert.match(view, /className=\{`deep-analysis-cost tooltip-control \$\{costDetailsOpen \? "is-active" : ""\}`\}/);
-  assert.match(view, /aria-pressed=\{costDetailsOpen\}/);
-  assert.match(view, /showCost=\{costDetailsOpen\}/);
+  assert.match(view, /className=\{`deep-analysis-cost tooltip-control \$\{costModeActive \? "is-active" : ""\}`\}/);
+  assert.match(view, /aria-expanded=\{costDetailsOpen\}/);
+  assert.match(view, /aria-pressed=\{costModeActive\}/);
+  assert.match(view, /showCost=\{costModeActive\}/);
+  assert.match(view, /const nextActive = !costModeActive;\s*setCostModeActive\(nextActive\);\s*setCostDetailsOpen\(nextActive\);/);
   assert.match(view, /document\.addEventListener\("pointerdown", closeCostDetailsOutside\)/);
   assert.match(view, /costDetailsRef\.current\?\.contains\(event\.target as Node\)/);
   assert.match(view, /document\.removeEventListener\("pointerdown", closeCostDetailsOutside\)/);

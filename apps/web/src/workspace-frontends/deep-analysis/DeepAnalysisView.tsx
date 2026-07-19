@@ -482,6 +482,7 @@ export function DeepAnalysisView({
   const [loadingReferences, setLoadingReferences] = useState(false);
   const [uploadingSources, setUploadingSources] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [costModeActive, setCostModeActive] = useState(false);
   const [costDetailsOpen, setCostDetailsOpen] = useState(false);
   const [costDetails, setCostDetails] = useState<DeepAnalysisMissionCosts | null>(null);
   const [usdKrwRate, setUsdKrwRate] = useState<number | null>(null);
@@ -717,6 +718,7 @@ export function DeepAnalysisView({
         eventCursorRef.current = detail.eventCursor;
         setMissionEvents([]);
         setSelectedNodeKey(detail.workflow.nodes[0]?.nodeKey ?? null);
+        setCostModeActive(false);
         setCostDetailsOpen(false);
         setDeleteArmed(false);
         setWorkflowDraft(null);
@@ -2128,13 +2130,17 @@ export function DeepAnalysisView({
                     </div>
                     <div ref={costDetailsRef} className="deep-analysis-cost-wrap">
                       <button
-                        className={`deep-analysis-cost tooltip-control ${costDetailsOpen ? "is-active" : ""}`}
+                        className={`deep-analysis-cost tooltip-control ${costModeActive ? "is-active" : ""}`}
                         type="button"
                         aria-label={`누적 비용 ${formatCost(mission.spentMicrousd, usdKrwRate)}`}
                         aria-expanded={costDetailsOpen}
-                        aria-pressed={costDetailsOpen}
+                        aria-pressed={costModeActive}
                         data-tooltip={`누적 비용 ${formatCost(mission.spentMicrousd, usdKrwRate)}`}
-                        onClick={() => setCostDetailsOpen((open) => !open)}
+                        onClick={() => {
+                          const nextActive = !costModeActive;
+                          setCostModeActive(nextActive);
+                          setCostDetailsOpen(nextActive);
+                        }}
                       >
                         <CircleDollarSign size={16} />
                       </button>
@@ -2308,7 +2314,7 @@ export function DeepAnalysisView({
                           key={node.id}
                           node={node}
                           selected={selectedNodeKey === node.nodeKey}
-                          showCost={costDetailsOpen}
+                          showCost={costModeActive}
                           usdKrwRate={usdKrwRate}
                           onSelect={() => {
                             setSelectedNodeKey(node.nodeKey);
