@@ -571,7 +571,7 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
     const animateZoom = () => {
       const scaleRatio = targetScale / viewport.scale;
       const settled = Math.abs(Math.log(scaleRatio)) < 0.001;
-      const nextScale = settled ? targetScale : viewport.scale * Math.exp(Math.log(scaleRatio) * 0.24);
+      const nextScale = settled ? targetScale : viewport.scale * Math.exp(Math.log(scaleRatio) * 0.128);
       viewport.scale = nextScale;
       viewport.x = zoomPoint.x - zoomWorld.x * nextScale;
       viewport.y = zoomPoint.y - zoomWorld.y * nextScale;

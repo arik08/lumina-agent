@@ -119,7 +119,7 @@ test("Knowledge graph eases node hover emphasis over a short animation", async (
 test("Knowledge graph eases wheel zoom across animation frames", async () => {
   const graph = await readFile(graphPath, "utf8");
   assert.match(graph, /const animateZoom = \(\) =>/);
-  assert.match(graph, /Math\.exp\(Math\.log\(scaleRatio\) \* 0\.24\)/);
+  assert.match(graph, /Math\.exp\(Math\.log\(scaleRatio\) \* 0\.128\)/);
   assert.match(graph, /targetScale = clamp\(targetScale \* Math\.exp\(-normalizedDelta \* 0\.0015\), 0\.28, 3\.5\)/);
   assert.match(graph, /zoomFrame = requestAnimationFrame\(animateZoom\)/);
   assert.match(graph, /if \(reducedMotion\)/);
