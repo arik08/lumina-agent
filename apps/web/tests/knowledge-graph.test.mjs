@@ -89,12 +89,12 @@ test("Knowledge graph shows only shared tags when the pointer is near an edge", 
   assert.doesNotMatch(graph, /tooltip\.textContent\s*=\s*["'`]공통 태그/);
 });
 
-test("Knowledge graph keeps idle edges visible and highlights active edges in green", async () => {
+test("Knowledge graph keeps idle edges visible and highlights active edges in ink", async () => {
   const [graph, styles] = await Promise.all([
     readFile(graphPath, "utf8"),
     readFile(new URL("../src/workspace-frontends/knowledge/knowledge.css", import.meta.url), "utf8"),
   ]);
-  assert.match(graph, /edgeHighlight: token\("--success", "#2f9765"\)/);
+  assert.match(graph, /edgeHighlight: token\("--ink", "#20242c"\)/);
   assert.match(graph, /const baseLineWidth = 1\.35 \+ Math\.min\(0\.3, link\.weight \* 0\.08\)/);
   assert.match(graph, /context\.globalAlpha = lerp\(0\.68, 0\.16, focusLevel\)/);
   assert.match(graph, /context\.lineWidth = lerp\(baseLineWidth, 1\.65, activeLevel\)/);
@@ -140,13 +140,13 @@ test("Knowledge graph restores the last layout when its tab remounts", async () 
   assert.match(graph, /viewport: \{ \.\.\.viewport \}/);
 });
 
-test("Graph document list selection stays on the graph and highlights the matching node in red", async () => {
+test("Graph document list selection stays on the graph and highlights the matching node and label in green", async () => {
   const [graph, view] = await Promise.all([readFile(graphPath, "utf8"), readFile(viewPath, "utf8")]);
   assert.match(view, /tab === "graph" \? setSelectedGraphNodeId\(id\) : openDocument\(id, tab\)/);
   assert.match(view, /selectedNodeId=\{selectedGraphNodeId\}/);
-  assert.match(graph, /danger: token\("--danger", "#c34f51"\)/);
-  assert.match(graph, /context\.fillStyle = selected \? colors\.danger : colors\.cobalt/);
-  assert.match(graph, /context\.fillStyle = selected \? colors\.danger : colors\.ink/);
+  assert.match(graph, /success: token\("--success", "#2f9765"\)/);
+  assert.match(graph, /context\.fillStyle = selected \? colors\.success : colors\.cobalt/);
+  assert.match(graph, /context\.fillStyle = selected \? colors\.success : colors\.ink/);
   assert.match(graph, /button\.toggleAttribute\("aria-current", selected\)/);
 });
 

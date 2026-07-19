@@ -240,8 +240,8 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
         line: token("--line-strong", "#d4d8de"),
         cobalt: token("--cobalt", "#3f66c9"),
         cobaltHover: token("--cobalt-hover", "#3158b8"),
-        danger: token("--danger", "#c34f51"),
-        edgeHighlight: token("--success", "#2f9765"),
+        success: token("--success", "#2f9765"),
+        edgeHighlight: token("--ink", "#20242c"),
         font: token("--font-ui", '"Segoe UI", sans-serif'),
       };
     }
@@ -300,7 +300,7 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
         context.globalAlpha = nodeAlpha;
         context.beginPath();
         context.arc(node.x, node.y, node.radius * (selected ? 1.32 : 1 + 0.2 * ownLevel), 0, Math.PI * 2);
-        context.fillStyle = selected ? colors.danger : colors.cobalt;
+        context.fillStyle = selected ? colors.success : colors.cobalt;
         context.fill();
         if (!selected && ownLevel > 0.001) {
           context.globalAlpha = nodeAlpha * ownLevel;
@@ -311,7 +311,7 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
         const showLabel = selected || relatedLevel > 0.01 || viewport.scale >= 0.82 || node.degree >= 5;
         if (!showLabel) return;
         context.globalAlpha = clamp(0.84 - 0.74 * Math.max(0, focusLevel - relatedLevel) + 0.16 * ownLevel, 0.1, 1);
-        context.fillStyle = selected ? colors.danger : colors.ink;
+        context.fillStyle = selected ? colors.success : colors.ink;
         context.font = `${graphLabelFontSize / viewport.scale}px ${colors.font}`;
         context.textBaseline = "middle";
         const label = node.name.length > 38 ? `${node.name.slice(0, 37)}…` : node.name;
