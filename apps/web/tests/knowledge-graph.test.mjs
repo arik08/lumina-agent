@@ -53,6 +53,14 @@ test("Knowledge graph opens documents from the node circle and its visible label
   assert.match(graph, /if \(documentToOpen\) onSelectDocumentRef\.current\(documentToOpen\.id\)/);
 });
 
+test("Knowledge graph labels use an Obsidian-like readable size", async () => {
+  const graph = await readFile(graphPath, "utf8");
+  assert.match(graph, /const graphLabelFontSize = 14/);
+  assert.match(graph, /const graphLabelGap = 7/);
+  assert.match(graph, /context\.font = `\$\{graphLabelFontSize \/ viewport\.scale\}px \$\{colors\.font\}`/);
+  assert.match(graph, /node\.x \+ node\.radius \+ graphLabelGap \/ viewport\.scale/);
+});
+
 test("Knowledge graph exposes the four Obsidian-style force controls", async () => {
   const graph = await readFile(graphPath, "utf8");
   assert.match(graph, /label="중심 장력"/);

@@ -78,6 +78,8 @@ const clamp = (value: number, minimum: number, maximum: number) => Math.min(maxi
 const lerp = (start: number, end: number, progress: number) => start + (end - start) * progress;
 
 const edgeHitRadius = 10;
+const graphLabelFontSize = 14;
+const graphLabelGap = 7;
 const hoverTransitionDuration = 160;
 const graphLayouts = new Map<string, GraphLayout>();
 
@@ -305,10 +307,10 @@ export function KnowledgeGraph({ graph, layoutKey, onSelectDocument }: Knowledge
         if (!showLabel) return;
         context.globalAlpha = clamp(0.84 - 0.74 * Math.max(0, focusLevel - relatedLevel) + 0.16 * ownLevel, 0.1, 1);
         context.fillStyle = colors.ink;
-        context.font = `${11 / viewport.scale}px ${colors.font}`;
+        context.font = `${graphLabelFontSize / viewport.scale}px ${colors.font}`;
         context.textBaseline = "middle";
         const label = node.name.length > 38 ? `${node.name.slice(0, 37)}…` : node.name;
-        context.fillText(label, node.x + node.radius + 5 / viewport.scale, node.y);
+        context.fillText(label, node.x + node.radius + graphLabelGap / viewport.scale, node.y);
       });
 
       context.restore();
@@ -324,7 +326,7 @@ export function KnowledgeGraph({ graph, layoutKey, onSelectDocument }: Knowledge
         });
         const showLabel = relatedLevel > 0.01 || viewport.scale >= 0.82 || node.degree >= 5;
         const label = node.name.length > 38 ? `${node.name.slice(0, 37)}…` : node.name;
-        context.font = `${11 / viewport.scale}px ${colors.font}`;
+        context.font = `${graphLabelFontSize / viewport.scale}px ${colors.font}`;
         const labelWidth = showLabel ? context.measureText(label).width * viewport.scale : 0;
         const hitWidth = showLabel ? hitRadius + node.radius * viewport.scale + 8 + labelWidth : hitRadius * 2;
         button.style.width = `${hitWidth}px`;
