@@ -2250,6 +2250,14 @@ button:disabled { cursor: default; opacity: 0.5; }
 .markdown-response a:not(.inline-citation) { color: var(--cobalt); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--cobalt) 38%, transparent); text-underline-offset: 2px; }
 .markdown-response a:not(.inline-citation):hover { text-decoration-color: currentColor; }
 .markdown-response :not(pre) > code { padding: 1px 4px; border-radius: 3px; background: var(--surface-soft); color: var(--ink); font: 0.88em/1.5 var(--font-code); }
+.markdown-code-block { position: relative; max-width: 100%; margin: 0 0 1em; }
+.markdown-response .markdown-code-block > pre { margin: 0; padding-right: 45px; }
+.markdown-code-copy { position: absolute; z-index: 1; top: 6px; right: 6px; display: grid; width: 28px; height: 28px; place-items: center; padding: 0; border: 1px solid var(--line); border-radius: 5px; background: color-mix(in srgb, var(--surface) 92%, transparent); color: var(--muted); cursor: pointer; }
+.markdown-code-copy:hover { background: var(--surface); color: var(--ink); }
+.markdown-code-copy.is-copied,
+.markdown-code-copy.is-copied:hover { border-color: color-mix(in srgb, var(--success) 30%, var(--line)); background: color-mix(in srgb, var(--success) 10%, var(--surface)); color: var(--success); }
+.markdown-code-copy.is-error,
+.markdown-code-copy.is-error:hover { border-color: color-mix(in srgb, var(--danger) 38%, var(--line)); background: color-mix(in srgb, var(--danger) 8%, var(--surface)); color: var(--danger); }
 .markdown-response pre { max-width: 100%; overflow: auto; margin: 0 0 1em; padding: 11px 13px; border-left: 2px solid #9db0db; background: var(--surface-soft); color: var(--ink); }
 .markdown-response pre code { font: 0.86em/1.62 var(--font-code); white-space: pre; }
 .hljs { color: var(--syntax-text, #24292f); background: transparent; }

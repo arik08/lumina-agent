@@ -41,6 +41,8 @@ import { copyText } from "../clipboard";
 import { isTerminalRunStatus, runActivityOutcome, shouldCollapseRunWorkDetails, type RunActivityOutcome } from "../run-status";
 import type { Link, Parent, PhrasingContent, Root, Text } from "mdast";
 import {
+  Children,
+  isValidElement,
   memo,
   useCallback,
   useEffect,
@@ -51,6 +53,7 @@ import {
   type CSSProperties,
   type FormEvent,
   type MouseEvent as ReactMouseEvent,
+  type ReactNode,
   type UIEvent as ReactUIEvent,
 } from "react";
 import ReactMarkdown, {
@@ -1483,6 +1486,58 @@ const markdownCodeComponent: NonNullable<Components["code"]> = ({ className, chi
         : <code className={className}>{children}</code>;
 };
 
+function MarkdownCodeBlock({ children }: { children?: ReactNode }) {
+  const preRef = useRef<HTMLPreElement>(null);
+  const feedbackTimerRef = useRef<number | null>(null);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
+  const child = Children.toArray(children)[0];
+  const childClassName = isValidElement<{ className?: string }>(child)
+    ? String(child.props.className || "")
+    : "";
+  const language = /language-([\w-]+)/.exec(childClassName)?.[1]?.toLowerCase();
+  const interactive = language === "mermaid" || language === "mmd" || language === "lumina-chart";
+
+  useEffect(() => () => {
+    if (feedbackTimerRef.current !== null) window.clearTimeout(feedbackTimerRef.current);
+  }, []);
+
+  if (interactive) return <pre>{children}</pre>;
+
+  const handleCopy = async () => {
+    try {
+      const source = preRef.current?.querySelector("code")?.textContent?.replace(/\n$/, "") ?? "";
+      await copyText(source);
+      setCopyState("copied");
+    } catch {
+      setCopyState("error");
+    }
+    if (feedbackTimerRef.current !== null) window.clearTimeout(feedbackTimerRef.current);
+    feedbackTimerRef.current = window.setTimeout(() => {
+      setCopyState("idle");
+      feedbackTimerRef.current = null;
+    }, 1600);
+  };
+  const feedback = copyState === "copied" ? "코드를 복사했습니다." : copyState === "error" ? "코드를 복사하지 못했습니다." : "";
+
+  return (
+    <div className="markdown-code-block">
+      <pre ref={preRef}>{children}</pre>
+      <button
+        className={`markdown-code-copy${copyState === "copied" ? " is-copied" : copyState === "error" ? " is-error" : ""}`}
+        type="button"
+        aria-label={copyState === "copied" ? "코드 복사됨" : copyState === "error" ? "코드 복사 실패" : "코드 복사"}
+        data-tooltip={copyState === "copied" ? "복사됨" : copyState === "error" ? "복사 실패" : "코드 복사"}
+        onClick={() => void handleCopy()}
+      >
+        {copyState === "copied" ? <Check size={14} aria-hidden="true" /> : copyState === "error" ? <AlertCircle size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
+      </button>
+      <span className="visually-hidden" role="status" aria-live="polite">{feedback}</span>
+    </div>
+  );
+}
+
+const markdownPreComponent: NonNullable<Components["pre"]> = ({ children }) => <MarkdownCodeBlock>{children}</MarkdownCodeBlock>;
+
 const MemoizedMarkdownChunk = memo(function MarkdownChunk({
   text,
   sources,
@@ -1526,6 +1581,7 @@ const MemoizedMarkdownChunk = memo(function MarkdownChunk({
     },
     table: ({ children }) => <div className="markdown-table-scroll"><table>{children}</table></div>,
     code: markdownCodeComponent,
+    pre: markdownPreComponent,
   }), [targetById]);
 
   return (

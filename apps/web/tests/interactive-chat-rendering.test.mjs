@@ -46,6 +46,18 @@ test("Mermaid preloads once, deduplicates active renders, and stays mounted whil
   assert.doesNotMatch(turnSource, /code: \(\{ className, children \}\) =>/);
 });
 
+test("Markdown code blocks provide inline copy feedback without changing interactive blocks", () => {
+  assert.match(turnSource, /function MarkdownCodeBlock\(\{ children \}/);
+  assert.match(turnSource, /preRef\.current\?\.querySelector\("code"\)\?\.textContent/);
+  assert.match(turnSource, /await copyText\(source\)/);
+  assert.match(turnSource, /copyState === "copied" \? <Check size=\{14\}/);
+  assert.match(turnSource, /className="visually-hidden" role="status" aria-live="polite"/);
+  assert.match(turnSource, /language === "mermaid" \|\| language === "mmd" \|\| language === "lumina-chart"/);
+  assert.match(turnSource, /pre: markdownPreComponent/);
+  assert.match(globalStyles, /\.markdown-code-copy \{[^}]*position: absolute;[^}]*top: 6px; right: 6px;[^}]*width: 28px; height: 28px;/);
+  assert.match(globalStyles, /\.markdown-code-copy\.is-copied,[\s\S]*?color: var\(--success\);/);
+});
+
 test("Mermaid preserves authored semantic fills and repairs only unreadable node text", () => {
   for (const color of ["#3288bd", "#66c2a5", "#e6f598", "#d53e4f", "#9e0142", "#f46d43", "#fdae61", "#fee08b", "#abdda4", "#5e4fa2"]) {
     assert.match(rendererSource, new RegExp(color));
