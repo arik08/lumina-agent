@@ -46,7 +46,7 @@ test("Mission switching keeps the last stable workspace until the next snapshot 
 });
 
 test("cached tabs use the simplified two-tab contract", async () => {
-  const view = await readFile(viewPath, "utf8");
+  const [view, css] = await Promise.all([readFile(viewPath, "utf8"), readFile(cssPath, "utf8")]);
 
   assert.match(view, /useCachedViewState<"workflow" \| "log">/);
   assert.match(view, /`deep-analysis:\$\{cacheScope\}:active-tab:v2`/);
@@ -54,6 +54,10 @@ test("cached tabs use the simplified two-tab contract", async () => {
   assert.match(view, /<GitBranch size=\{14\} \/> Workflow/);
   assert.match(view, /<History size=\{14\} \/> 실행 기록/);
   assert.doesNotMatch(view, /className="deep-analysis-tabs"/);
+  assert.match(css, /\.deep-analysis-view-tabs \{ display: inline-flex; flex: none; \}/);
+  assert.match(css, /\.deep-analysis-view-tabs > button \{ white-space: nowrap; \}/);
+  assert.match(css, /\.deep-analysis-view-tabs > button:first-child \{ width: 100px; min-width: 100px; \}/);
+  assert.match(css, /\.deep-analysis-view-tabs > button:last-child \{ width: 92px; min-width: 92px; \}/);
   assert.doesNotMatch(view, /결론·근거|Claim Ledger|Quality Gate|Open Issue/);
 });
 
