@@ -17,6 +17,7 @@ import {
   type WheelEvent,
 } from "react";
 import { createPortal } from "react-dom";
+import { ensureMermaidNodeTextContrast } from "../mermaid-contrast";
 import { repairMermaidClassNames, repairMermaidSource } from "../mermaid-source";
 import { SyntaxCode } from "./SyntaxCode";
 import "./InteractiveResponse.css";
@@ -229,6 +230,7 @@ function MermaidSurface({ source, expanded = false, zoom = 1, onInitialFit }: {
       bindFunctions?.(containerRef.current);
       const renderedSvg = containerRef.current.querySelector("svg");
       if (renderedSvg) {
+        ensureMermaidNodeTextContrast(renderedSvg);
         const naturalWidth = renderedSvg.viewBox.baseVal.width || renderedSvg.getBoundingClientRect().width;
         const naturalHeight = renderedSvg.viewBox.baseVal.height || renderedSvg.getBoundingClientRect().height;
         baseWidthRef.current = naturalWidth;

@@ -43,7 +43,7 @@ test("Mermaid preloads once, deduplicates active renders, and stays mounted whil
   assert.doesNotMatch(turnSource, /code: \(\{ className, children \}\) =>/);
 });
 
-test("Mermaid preserves LLM-authored styles without runtime recoloring", () => {
+test("Mermaid preserves authored semantic fills and repairs only unreadable node text", () => {
   for (const color of ["#3288bd", "#66c2a5", "#e6f598", "#d53e4f", "#9e0142", "#f46d43", "#fdae61", "#fee08b", "#abdda4", "#5e4fa2"]) {
     assert.match(rendererSource, new RegExp(color));
   }
@@ -51,6 +51,7 @@ test("Mermaid preserves LLM-authored styles without runtime recoloring", () => {
   assert.match(rendererSource, /cScale9: artifactVisualPalette\.purple/);
   assert.match(rendererSource, /plotColorPalette: artifactVisualPaletteSequence\.join\(","\)/);
   assert.match(rendererSource, /return \{ \.\.\.result, svg: bindMermaidThemeTokens/);
+  assert.match(rendererSource, /ensureMermaidNodeTextContrast\(renderedSvg\)/);
   assert.doesNotMatch(rendererSource, /inferMermaidNodeTone|decorateMermaidSvg|luminaTone/);
   assert.doesNotMatch(rendererStyles, /data-lumina-tone|--mermaid-node-fill|--mermaid-node-stroke/);
   assert.doesNotMatch(rendererStyles, /\.mermaid-surface svg :is\(\.edgePath|\.mermaid-surface svg marker/);

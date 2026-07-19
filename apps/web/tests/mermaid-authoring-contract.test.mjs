@@ -26,8 +26,9 @@ test("LLM instructions require context-specific Mermaid classes in saved source"
   assert.doesNotMatch(visualArtifactSkillSource, /blue `#3288bd` for external inputs/);
 });
 
-test("Mermaid renderer does not infer or override authored colors", () => {
+test("Mermaid renderer preserves authored semantic colors while enforcing readable node labels", () => {
   assert.match(rendererSource, /repairMermaidClassNames\(source\.trim\(\)\)/);
+  assert.match(rendererSource, /ensureMermaidNodeTextContrast\(renderedSvg\)/);
   assert.doesNotMatch(rendererSource, /inferMermaidNodeTone|decorateMermaidSvg|luminaTone/);
   assert.doesNotMatch(rendererStyles, /data-lumina-tone|--mermaid-node-fill|--mermaid-node-stroke/);
 });
