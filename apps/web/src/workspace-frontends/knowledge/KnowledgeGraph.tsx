@@ -17,7 +17,7 @@ import {
 } from "d3-force";
 import type { KnowledgeGraphResponse } from "../../api-types";
 
-interface KnowledgeGraphProps { graph: KnowledgeGraphResponse; layoutKey: string; onSelectDocument: (documentId: string) => void; }
+interface KnowledgeGraphProps { graph: KnowledgeGraphResponse; layoutKey: string; selectedNodeId: string | null; onSelectDocument: (documentId: string) => void; }
 
 interface GraphNode extends SimulationNodeDatum {
   id: string;
@@ -110,7 +110,7 @@ function ForceControl({ label, value, minimum, maximum, step, onChange }: {
   </label>;
 }
 
-export function KnowledgeGraph({ graph, layoutKey, onSelectDocument }: KnowledgeGraphProps) {
+export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocument }: KnowledgeGraphProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const nodeLayerRef = useRef<HTMLDivElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
@@ -123,9 +123,13 @@ export function KnowledgeGraph({ graph, layoutKey, onSelectDocument }: Knowledge
   } | null>(null);
   const drawRef = useRef<() => void>(() => undefined);
   const onSelectDocumentRef = useRef(onSelectDocument);
+  const selectedNodeIdRef = useRef(selectedNodeId);
   const [forceSettings, setForceSettings] = useState(defaultForceSettings);
   const [settingsOpen, setSettingsOpen] = useState(false);
   onSelectDocumentRef.current = onSelectDocument;
+  selectedNodeIdRef.current = selectedNodeId;
+
+  useEffect(() => { drawRef.current(); }, [selectedNodeId]);
 
   useEffect(() => {
     const simulation = simulationRef.current;
@@ -236,6 +240,7 @@ export function KnowledgeGraph({ graph, layoutKey, onSelectDocument }: Knowledge
         line: token("--line-strong", "#d4d8de"),
         cobalt: token("--cobalt", "#3f66c9"),
         cobaltHover: token("--cobalt-hover", "#3158b8"),
+        danger: token("--danger", "#c34f51"),
         edgeHighlight: token("--success", "#2f9765"),
         font: token("--font-ui", '"Segoe UI", sans-serif'),
       };
@@ -285,27 +290,28 @@ export function KnowledgeGraph({ graph, layoutKey, onSelectDocument }: Knowledge
 
       nodes.forEach((node) => {
         if (node.x === undefined || node.y === undefined) return;
+        const selected = node.id === selectedNodeIdRef.current;
         const ownLevel = nodeHoverLevels.get(node.id) ?? 0;
         let relatedLevel = ownLevel;
         adjacentByNode.get(node.id)?.forEach((adjacentId) => {
           relatedLevel = Math.max(relatedLevel, nodeHoverLevels.get(adjacentId) ?? 0);
         });
-        const nodeAlpha = 1 - 0.84 * Math.max(0, focusLevel - relatedLevel);
+        const nodeAlpha = selected ? 1 : 1 - 0.84 * Math.max(0, focusLevel - relatedLevel);
         context.globalAlpha = nodeAlpha;
         context.beginPath();
-        context.arc(node.x, node.y, node.radius * (1 + 0.2 * ownLevel), 0, Math.PI * 2);
-        context.fillStyle = colors.cobalt;
+        context.arc(node.x, node.y, node.radius * (selected ? 1.32 : 1 + 0.2 * ownLevel), 0, Math.PI * 2);
+        context.fillStyle = selected ? colors.danger : colors.cobalt;
         context.fill();
-        if (ownLevel > 0.001) {
+        if (!selected && ownLevel > 0.001) {
           context.globalAlpha = nodeAlpha * ownLevel;
           context.fillStyle = colors.cobaltHover;
           context.fill();
         }
 
-        const showLabel = relatedLevel > 0.01 || viewport.scale >= 0.82 || node.degree >= 5;
+        const showLabel = selected || relatedLevel > 0.01 || viewport.scale >= 0.82 || node.degree >= 5;
         if (!showLabel) return;
         context.globalAlpha = clamp(0.84 - 0.74 * Math.max(0, focusLevel - relatedLevel) + 0.16 * ownLevel, 0.1, 1);
-        context.fillStyle = colors.ink;
+        context.fillStyle = selected ? colors.danger : colors.ink;
         context.font = `${graphLabelFontSize / viewport.scale}px ${colors.font}`;
         context.textBaseline = "middle";
         const label = node.name.length > 38 ? `${node.name.slice(0, 37)}…` : node.name;
@@ -317,13 +323,15 @@ export function KnowledgeGraph({ graph, layoutKey, onSelectDocument }: Knowledge
       nodes.forEach((node) => {
         const button = nodeButtons.get(node.id);
         if (!button || node.x === undefined || node.y === undefined) return;
+        const selected = node.id === selectedNodeIdRef.current;
+        button.toggleAttribute("aria-current", selected);
         const hitRadius = node.radius * viewport.scale + 6;
         const ownLevel = nodeHoverLevels.get(node.id) ?? 0;
         let relatedLevel = ownLevel;
         adjacentByNode.get(node.id)?.forEach((adjacentId) => {
           relatedLevel = Math.max(relatedLevel, nodeHoverLevels.get(adjacentId) ?? 0);
         });
-        const showLabel = relatedLevel > 0.01 || viewport.scale >= 0.82 || node.degree >= 5;
+        const showLabel = selected || relatedLevel > 0.01 || viewport.scale >= 0.82 || node.degree >= 5;
         const label = node.name.length > 38 ? `${node.name.slice(0, 37)}…` : node.name;
         context.font = `${graphLabelFontSize / viewport.scale}px ${colors.font}`;
         const labelWidth = showLabel ? context.measureText(label).width * viewport.scale : 0;

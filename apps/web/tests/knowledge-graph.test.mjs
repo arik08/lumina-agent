@@ -109,9 +109,9 @@ test("Knowledge graph eases node hover emphasis over a short animation", async (
   assert.match(graph, /const animateHover = \(timestamp: number\) =>/);
   assert.match(graph, /1 - Math\.exp\(\(-5 \* delta\) \/ hoverTransitionDuration\)/);
   assert.match(graph, /hoverFrame = requestAnimationFrame\(animateHover\)/);
-  assert.match(graph, /const nodeAlpha = 1 - 0\.84 \* Math\.max\(0, focusLevel - relatedLevel\)/);
+  assert.match(graph, /const nodeAlpha = selected \? 1 : 1 - 0\.84 \* Math\.max\(0, focusLevel - relatedLevel\)/);
   assert.match(graph, /0\.84 - 0\.74 \* Math\.max\(0, focusLevel - relatedLevel\) \+ 0\.16 \* ownLevel/);
-  assert.match(graph, /node\.radius \* \(1 \+ 0\.2 \* ownLevel\)/);
+  assert.match(graph, /node\.radius \* \(selected \? 1\.32 : 1 \+ 0\.2 \* ownLevel\)/);
   assert.match(graph, /if \(reducedMotion\) \{\s*nodeHoverLevels\.clear\(\)/);
   assert.match(graph, /if \(hoverFrame !== null\) cancelAnimationFrame\(hoverFrame\)/);
 });
@@ -138,6 +138,16 @@ test("Knowledge graph restores the last layout when its tab remounts", async () 
   assert.match(graph, /if \(restoresCompleteLayout\) \{\s*simulation\.alpha\(0\)\.stop\(\)/);
   assert.match(graph, /graphLayouts\.set\(layoutKey, \{/);
   assert.match(graph, /viewport: \{ \.\.\.viewport \}/);
+});
+
+test("Graph document list selection stays on the graph and highlights the matching node in red", async () => {
+  const [graph, view] = await Promise.all([readFile(graphPath, "utf8"), readFile(viewPath, "utf8")]);
+  assert.match(view, /tab === "graph" \? setSelectedGraphNodeId\(id\) : openDocument\(id, tab\)/);
+  assert.match(view, /selectedNodeId=\{selectedGraphNodeId\}/);
+  assert.match(graph, /danger: token\("--danger", "#c34f51"\)/);
+  assert.match(graph, /context\.fillStyle = selected \? colors\.danger : colors\.cobalt/);
+  assert.match(graph, /context\.fillStyle = selected \? colors\.danger : colors\.ink/);
+  assert.match(graph, /button\.toggleAttribute\("aria-current", selected\)/);
 });
 
 test("Graph documents provide visible and browser-history return paths", async () => {

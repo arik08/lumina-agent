@@ -14,7 +14,6 @@ import {
   Plus,
   Search,
   Settings,
-  ShieldCheck,
   Tags,
   X,
 } from "lucide-react";
@@ -34,7 +33,7 @@ const tabs = [
   { id: "home", label: "홈", icon: Home },
   { id: "explore", label: "탐색", icon: FileSearch },
   { id: "wiki", label: "문서", icon: BookOpenText },
-  { id: "review", label: "검토", icon: ShieldCheck },
+  { id: "review", label: "태그 관리", icon: Tags },
   { id: "settings", label: "설정", icon: Settings },
 ] as const;
 const documentViews = [
@@ -45,6 +44,16 @@ const documentViews = [
 type KnowledgeDocumentView = typeof documentViews[number]["id"];
 const isDocumentView = (tab: KnowledgeTab): tab is KnowledgeDocumentView => documentViews.some(({ id }) => id === tab);
 type TaggingModelOption = SelectMenuOption & { providerId: string; modelKey: string };
+const tagNamespaces = [
+  { value: "purpose", label: "연구 목적" },
+  { value: "company", label: "대상 기업" },
+  { value: "industry", label: "산업" },
+  { value: "topic", label: "주제" },
+  { value: "technology", label: "기술" },
+  { value: "region", label: "지역" },
+  { value: "metric", label: "지표" },
+  { value: "product", label: "제품" },
+] as const;
 
 function errorMessage(error: unknown) {
   return error instanceof ApiError ? error.message : "지식 그래프를 불러오지 못했습니다.";
@@ -59,7 +68,9 @@ export function KnowledgeView() {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(null);
   const [documents, setDocuments] = useState<KnowledgeDocumentSummary[]>([]);
+  const [tags, setTags] = useState<KnowledgeTag[]>([]);
   const [selectedDocument, setSelectedDocument] = useState<KnowledgeDocument | null>(null);
+  const [selectedGraphNodeId, setSelectedGraphNodeId] = useState<string | null>(null);
   const [graph, setGraph] = useState<KnowledgeGraphResponse>(emptyGraph);
   const [tab, setTab] = useState<KnowledgeTab>("home");
   const [query, setQuery] = useState("");
@@ -160,7 +171,9 @@ export function KnowledgeView() {
   useEffect(() => {
     if (!selectedSpaceId) {
       setDocuments([]);
+      setTags([]);
       setSelectedDocument(null);
+      setSelectedGraphNodeId(null);
       setGraph(emptyGraph);
       return;
     }
@@ -170,13 +183,16 @@ export function KnowledgeView() {
     Promise.all([
       api.knowledge.listDocuments({ spaceId: selectedSpaceId }, controller.signal),
       api.knowledge.getGraph(selectedSpaceId, controller.signal),
-    ]).then(([loadedDocuments, loadedGraph]) => {
+      api.knowledge.listTags(selectedSpaceId, controller.signal),
+    ]).then(([loadedDocuments, loadedGraph, loadedTags]) => {
       if (controller.signal.aborted) return;
       setDocuments(loadedDocuments);
       setGraph(loadedGraph);
+      setTags(loadedTags);
       const nextId = loadedDocuments.some((item) => item.id === selectedDocument?.id)
         ? selectedDocument?.id
         : loadedDocuments[0]?.id;
+      setSelectedGraphNodeId(nextId ?? null);
       if (nextId) void loadDocument(nextId); else setSelectedDocument(null);
     }).catch((loadError) => {
       if (!controller.signal.aborted) setError(errorMessage(loadError));
@@ -191,15 +207,6 @@ export function KnowledgeView() {
     if (!needle) return documents;
     return documents.filter((document) => `${document.title} ${document.bodyPreview} ${document.tags.map((tag) => tag.name).join(" ")}`.toLocaleLowerCase("ko-KR").includes(needle));
   }, [documents, query]);
-
-  const tags = useMemo(() => {
-    const byId = new Map<string, KnowledgeTag & { count: number }>();
-    for (const document of documents) for (const tag of document.tags) {
-      const current = byId.get(tag.id);
-      byId.set(tag.id, { ...tag, count: (current?.count ?? 0) + 1 });
-    }
-    return [...byId.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "ko"));
-  }, [documents]);
 
   const citationCount = documents.reduce((sum, document) => sum + document.citationCount, 0);
   const untaggedCount = documents.filter((document) => document.tags.length === 0).length;
@@ -378,7 +385,7 @@ export function KnowledgeView() {
               return <button key={id} className={active ? "is-active" : ""} type="button" role="tab" aria-selected={active} onClick={() => setTab(id)}><Icon size={14} /> {label}</button>;
             })}</div></nav>
           </header>
-          {loadingContent ? <div className="knowledge-loading knowledge-loading-content"><LoaderCircle className="is-running" size={18} /> 지식을 불러오는 중</div> : <KnowledgeContent tab={tab} documents={documents} filteredDocuments={filteredDocuments} selectedDocument={selectedDocument} graph={graph} tags={tags} query={query} citationCount={citationCount} space={selectedSpace} editingSpaceField={editingSpaceField} spaceEditValue={spaceEditValue} savingSpaceDetails={savingSpaceDetails} spaceEditError={spaceEditError} setTab={setTab} setQuery={setQuery} setSpaceEditValue={setSpaceEditValue} beginSpaceDetailsEdit={beginSpaceDetailsEdit} cancelSpaceDetailsEdit={cancelSpaceDetailsEdit} saveSpaceDetails={saveSpaceDetails} openDocument={openDocument} returnToGraph={returnToGraph} graphActions={<div className="knowledge-graph-tag-actions"><SelectMenu className="knowledge-tagging-model-select" menuClassName="knowledge-tagging-model-menu" size="small" width="auto" value={taggingModelValue} options={taggingModels} placeholder={taggingModelsLoading ? "모델 불러오는 중" : "태깅 모델 없음"} ariaLabel="일괄 태깅 모델" disabled={taggingModelsLoading || batchTagging || taggingModels.length === 0} onChange={(value) => { setTaggingModelValue(value); setBatchTaggingStatus(null); }} /><button type="button" disabled={batchTagging || untaggedCount === 0 || !taggingModelValue} onClick={() => void batchTagDocuments()}>{batchTagging ? <LoaderCircle className="is-running" size={13} /> : <Tags size={13} />}{batchTagging ? "태깅 중" : `미태깅 ${untaggedCount}개 일괄 태깅`}</button>{batchTaggingStatus && <span role="status">{batchTaggingStatus}</span>}</div>} />}
+          {loadingContent ? <div className="knowledge-loading knowledge-loading-content"><LoaderCircle className="is-running" size={18} /> 지식을 불러오는 중</div> : <KnowledgeContent tab={tab} documents={documents} filteredDocuments={filteredDocuments} selectedDocument={selectedDocument} selectedGraphNodeId={selectedGraphNodeId} graph={graph} tags={tags} query={query} citationCount={citationCount} space={selectedSpace} editingSpaceField={editingSpaceField} spaceEditValue={spaceEditValue} savingSpaceDetails={savingSpaceDetails} spaceEditError={spaceEditError} setTab={setTab} setQuery={setQuery} setSpaceEditValue={setSpaceEditValue} setSelectedGraphNodeId={setSelectedGraphNodeId} beginSpaceDetailsEdit={beginSpaceDetailsEdit} cancelSpaceDetailsEdit={cancelSpaceDetailsEdit} saveSpaceDetails={saveSpaceDetails} openDocument={openDocument} returnToGraph={returnToGraph} graphActions={<div className="knowledge-graph-tag-actions"><SelectMenu className="knowledge-tagging-model-select" menuClassName="knowledge-tagging-model-menu" size="small" width="auto" value={taggingModelValue} options={taggingModels} placeholder={taggingModelsLoading ? "모델 불러오는 중" : "태깅 모델 없음"} ariaLabel="일괄 태깅 모델" disabled={taggingModelsLoading || batchTagging || taggingModels.length === 0} onChange={(value) => { setTaggingModelValue(value); setBatchTaggingStatus(null); }} /><button type="button" disabled={batchTagging || untaggedCount === 0 || !taggingModelValue} onClick={() => void batchTagDocuments()}>{batchTagging ? <LoaderCircle className="is-running" size={13} /> : <Tags size={13} />}{batchTagging ? "태깅 중" : `미태깅 ${untaggedCount}개 일괄 태깅`}</button>{batchTaggingStatus && <span role="status">{batchTaggingStatus}</span>}</div>} />}
         </> : <div className="knowledge-empty"><BookOpenText size={25} /><h3>새 지식 그래프를 만들어 주세요.</h3><p>저장한 AI 답변이 문서 단위로 이 그래프에 쌓입니다.</p></div>}
       </section>
     </div>
@@ -390,6 +397,7 @@ interface KnowledgeContentProps {
   documents: KnowledgeDocumentSummary[];
   filteredDocuments: KnowledgeDocumentSummary[];
   selectedDocument: KnowledgeDocument | null;
+  selectedGraphNodeId: string | null;
   graph: KnowledgeGraphResponse;
   tags: Array<KnowledgeTag & { count: number }>;
   query: string;
@@ -402,6 +410,7 @@ interface KnowledgeContentProps {
   setTab: (tab: KnowledgeTab) => void;
   setQuery: (value: string) => void;
   setSpaceEditValue: (value: string) => void;
+  setSelectedGraphNodeId: (documentId: string) => void;
   beginSpaceDetailsEdit: (field: "name" | "purpose") => void;
   cancelSpaceDetailsEdit: () => void;
   saveSpaceDetails: (event: FormEvent<HTMLFormElement>) => void;
@@ -411,7 +420,7 @@ interface KnowledgeContentProps {
 }
 
 function KnowledgeContent(props: KnowledgeContentProps) {
-  const { tab, documents, filteredDocuments, selectedDocument, graph, tags, query, citationCount, space, editingSpaceField, spaceEditValue, savingSpaceDetails, spaceEditError, setTab, setQuery, setSpaceEditValue, beginSpaceDetailsEdit, cancelSpaceDetailsEdit, saveSpaceDetails, openDocument, returnToGraph, graphActions } = props;
+  const { tab, documents, filteredDocuments, selectedDocument, selectedGraphNodeId, graph, tags, query, citationCount, space, editingSpaceField, spaceEditValue, savingSpaceDetails, spaceEditError, setTab, setQuery, setSpaceEditValue, setSelectedGraphNodeId, beginSpaceDetailsEdit, cancelSpaceDetailsEdit, saveSpaceDetails, openDocument, returnToGraph, graphActions } = props;
   if (tab === "home") return <div className="knowledge-page knowledge-home">
     <section className="knowledge-hero-card"><div><small>DOCUMENT KNOWLEDGE</small><h3>답변은 문서로, 관계는 태그로</h3><p>AI 답변을 문서 단위로 저장하고 citation을 그대로 보존하며, 공통 태그를 통해 문서 사이의 연결을 탐색합니다.</p></div><div className="knowledge-hero-metrics" aria-label="지식 현황"><button type="button" onClick={() => documents[0] && openDocument(documents[0].id, "wiki")}><BookOpenText size={14} /><span><b>{documents.length}</b><small>문서</small></span></button><button type="button" onClick={() => documents[0] && openDocument(documents[0].id, "sources")}><FileText size={14} /><span><b>{citationCount}</b><small>참조</small></span></button><button type="button" onClick={() => documents[0] && openDocument(documents[0].id, "review")}><Tags size={14} /><span><b>{tags.length}</b><small>태그</small></span></button><button type="button" onClick={() => documents[0] && openDocument(documents[0].id, "graph")}><GitBranch size={14} /><span><b>{graph.edges.length}</b><small>연결</small></span></button></div></section>
     <section className="knowledge-card"><header><div><strong>최근 문서</strong><small>최근 조사한 AI 답변 문서입니다.</small></div></header><DocumentRows documents={documents.slice(0, 6)} onOpen={openDocument} /></section>
@@ -420,8 +429,8 @@ function KnowledgeContent(props: KnowledgeContentProps) {
   if (tab === "explore") return <div className="knowledge-page knowledge-explore"><label className="knowledge-search-box"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="문서 제목, 본문 또는 태그 검색" /></label><p className="knowledge-search-caption">{filteredDocuments.length}개의 문서를 찾았습니다.</p><section className="knowledge-card"><DocumentRows documents={filteredDocuments} onOpen={openDocument} /></section></div>;
 
   if (isDocumentView(tab)) return <div className="knowledge-master-detail">
-    <DocumentList documents={documents} selectedId={selectedDocument?.id ?? null} onOpen={(id) => openDocument(id, tab === "graph" ? "wiki" : tab)} label={`${documents.length}개 지식 문서`} activeView={tab} onViewChange={(view) => setTab(view)} />
-    {tab === "graph" && <section className="knowledge-graph-detail">{graphActions}<KnowledgeGraph graph={graph} layoutKey={space.id} onSelectDocument={(id) => openDocument(id, "wiki", "graph")} /></section>}
+    <DocumentList documents={documents} selectedId={tab === "graph" ? selectedGraphNodeId : selectedDocument?.id ?? null} onOpen={(id) => tab === "graph" ? setSelectedGraphNodeId(id) : openDocument(id, tab)} label={`${documents.length}개 지식 문서`} activeView={tab} onViewChange={(view) => setTab(view)} />
+    {tab === "graph" && <section className="knowledge-graph-detail">{graphActions}<KnowledgeGraph graph={graph} layoutKey={space.id} selectedNodeId={selectedGraphNodeId} onSelectDocument={(id) => openDocument(id, "wiki", "graph")} /></section>}
     {tab === "wiki" && <WikiDocument document={selectedDocument} onBackToGraph={returnToGraph} />}
     {tab === "sources" && <section className="knowledge-source-detail">{selectedDocument ? <><header><small>보존된 citation</small><h3>{selectedDocument.title}</h3><p>{selectedDocument.citations.length}개의 참조가 답변과 함께 저장되어 있습니다.</p></header><div className="knowledge-source-cards">{selectedDocument.citations.map((citation, index) => <a key={`${citation.sourceId}-${index}`} href={citation.url || undefined} target="_blank" rel="noreferrer"><span>[{citation.markerNumber ?? index + 1}]</span><strong>{citation.title}</strong><small>{citation.domain || citation.url || "참조 정보"}</small>{citation.excerpt && <p>{citation.excerpt}</p>}</a>)}{!selectedDocument.citations.length && <EmptyState text="이 문서에는 참조가 없습니다." />}</div></> : <EmptyState text="문서를 선택해 주세요." />}</section>}
   </div>;
