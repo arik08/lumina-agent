@@ -6,7 +6,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy import func, select
+from sqlalchemy import case, func, literal, or_, select
 from sqlalchemy.orm import Session
 
 from ...agent_frontends import agent_frontend_payload
@@ -17,6 +17,7 @@ from ...citations import resolve_inline_citations
 from ...config import Settings, get_settings
 from ...conversations.service import (
     branch_conversation,
+    conversation_summaries,
     conversation_summary,
     create_conversation,
     list_conversations,
@@ -78,8 +79,12 @@ def _message_response_with_artifact_citations(
     return payload
 
 
-def _summary(db: Session, conversation) -> dict[str, object]:
-    result = conversation_summary(db, conversation)
+def _summary(
+    db: Session,
+    conversation,
+    result: dict[str, object] | None = None,
+) -> dict[str, object]:
+    result = result or conversation_summary(db, conversation)
     result["revision"] = str(result["revision"])
     return {
         "id": result["id"],
@@ -112,8 +117,12 @@ def get_conversations(
     conversations, next_cursor = list_conversations(
         db, user, project_id=project_id, cursor=cursor, limit=limit
     )
+    summaries = conversation_summaries(db, conversations)
     return {
-        "items": [_summary(db, conversation) for conversation in conversations],
+        "items": [
+            _summary(db, conversation, summaries[conversation.id])
+            for conversation in conversations
+        ],
         "nextCursor": next_cursor,
         "hasMore": next_cursor is not None,
     }
@@ -136,8 +145,12 @@ def search_conversations(
         cursor=cursor,
         limit=limit,
     )
+    summaries = conversation_summaries(db, conversations)
     return {
-        "items": [_summary(db, conversation) for conversation in conversations],
+        "items": [
+            _summary(db, conversation, summaries[conversation.id])
+            for conversation in conversations
+        ],
         "nextCursor": next_cursor,
         "hasMore": next_cursor is not None,
     }
@@ -158,40 +171,52 @@ def search_conversation_messages(
         project_id=project_id,
         limit=limit,
     )
+    conversation_ids = [conversation.id for conversation in conversations]
+    matched_by_conversation: dict[str, list[Message]] = defaultdict(list)
+    if tokens and conversation_ids:
+        predicate = None
+        for token in tokens:
+            token_predicate = func.lower(Message.canonical_text).contains(token)
+            predicate = (
+                token_predicate if predicate is None else predicate & token_predicate
+            )
+        assert predicate is not None
+        ranked_matches = (
+            select(
+                Message.id.label("message_id"),
+                func.row_number()
+                .over(
+                    partition_by=Message.conversation_id,
+                    order_by=(Message.created_at.desc(), Message.id),
+                )
+                .label("rank"),
+            )
+            .where(
+                Message.conversation_id.in_(conversation_ids),
+                predicate,
+            )
+            .subquery()
+        )
+        for message in db.scalars(
+            select(Message)
+            .join(ranked_matches, ranked_matches.c.message_id == Message.id)
+            .where(ranked_matches.c.rank <= 3)
+            .order_by(Message.conversation_id, Message.created_at.desc(), Message.id)
+        ):
+            matched_by_conversation[message.conversation_id].append(message)
+    summaries = conversation_summaries(db, conversations)
     items: list[dict[str, object]] = []
     for conversation in conversations:
-        message_matches = []
-        if tokens:
-            predicate = None
-            for token in tokens:
-                token_predicate = func.lower(Message.canonical_text).contains(token)
-                predicate = (
-                    token_predicate
-                    if predicate is None
-                    else predicate & token_predicate
-                )
-            assert predicate is not None
-            matched_messages = list(
-                db.scalars(
-                    select(Message)
-                    .where(
-                        Message.conversation_id == conversation.id,
-                        predicate,
-                    )
-                    .order_by(Message.created_at.desc(), Message.id)
-                    .limit(3)
-                )
-            )
-            message_matches = [
-                {
-                    "messageId": message.id,
-                    "role": message.role,
-                    "snippet": _search_snippet(message.canonical_text, tokens),
-                    "createdAt": message.created_at,
-                }
-                for message in matched_messages
-            ]
-        item = _summary(db, conversation)
+        message_matches = [
+            {
+                "messageId": message.id,
+                "role": message.role,
+                "snippet": _search_snippet(message.canonical_text, tokens),
+                "createdAt": message.created_at,
+            }
+            for message in matched_by_conversation[conversation.id]
+        ]
+        item = _summary(db, conversation, summaries[conversation.id])
         item["matches"] = message_matches
         items.append(item)
     return {"items": items, "queryTokens": list(tokens)}
@@ -343,54 +368,87 @@ def get_turn_sets(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     conversation = require_conversation(db, user, conversation_id)
-    total_question_count = db.scalar(
-        select(func.count(Message.id)).where(
-            Message.conversation_id == conversation.id,
-            Message.role == "user",
-            func.trim(Message.canonical_text) != "",
+    total_question_count = (
+        db.scalar(
+            select(func.count(Message.id)).where(
+                Message.conversation_id == conversation.id,
+                Message.role == "user",
+                func.trim(Message.canonical_text) != "",
+            )
         )
-    ) or 0
-    run_order: list[str] = []
-    message_ids_by_key: dict[str, list[str]] = defaultdict(list)
-    message_rows = db.execute(
-        select(Message.id, Message.run_id, Message.metadata_json)
-        .where(Message.conversation_id == conversation.id)
-        .order_by(Message.created_at, Message.id)
+        or 0
     )
-    for message_id, run_id, metadata_json in message_rows:
-        branch_source_run_id = (metadata_json or {}).get("branchSourceRunId")
-        key = run_id or (
-            f"branch:{branch_source_run_id}"
-            if isinstance(branch_source_run_id, str) and branch_source_run_id
-            else f"message:{message_id}"
+    branch_run_id = Message.metadata_json["branchSourceRunId"].as_string()
+    turn_key = case(
+        (Message.run_id.is_not(None), Message.run_id),
+        (
+            branch_run_id.is_not(None) & (branch_run_id != ""),
+            literal("branch:") + branch_run_id,
+        ),
+        else_=literal("message:") + Message.id,
+    )
+    grouped_turns = (
+        select(
+            turn_key.label("turn_key"),
+            func.min(Message.created_at).label("first_created_at"),
+            func.min(Message.id).label("first_message_id"),
         )
-        if key not in message_ids_by_key:
-            run_order.append(key)
-        message_ids_by_key[key].append(message_id)
-    end = len(run_order)
+        .where(Message.conversation_id == conversation.id)
+        .group_by(turn_key)
+        .subquery()
+    )
+    page_query = select(
+        grouped_turns.c.turn_key,
+        grouped_turns.c.first_created_at,
+        grouped_turns.c.first_message_id,
+    )
     if before_cursor is not None:
-        try:
-            end = run_order.index(before_cursor)
-        except ValueError as exc:
+        cursor_row = db.execute(
+            select(
+                grouped_turns.c.first_created_at,
+                grouped_turns.c.first_message_id,
+            ).where(grouped_turns.c.turn_key == before_cursor)
+        ).one_or_none()
+        if cursor_row is None:
             raise ApiProblem(
                 400,
                 "invalid_turn_cursor",
                 "대화 기록 cursor가 올바르지 않습니다.",
-            ) from exc
-    start = max(0, end - limit_turn_sets)
-    selected_keys = run_order[start:end]
-    selected_message_ids = [
-        message_id
-        for key in selected_keys
-        for message_id in message_ids_by_key[key]
-    ]
-    selected_messages = list(
-        db.scalars(
-            select(Message)
-            .where(Message.id.in_(selected_message_ids))
-            .order_by(Message.created_at, Message.id)
+            )
+        cursor_created_at, cursor_message_id = cursor_row
+        page_query = page_query.where(
+            or_(
+                grouped_turns.c.first_created_at < cursor_created_at,
+                (
+                    (grouped_turns.c.first_created_at == cursor_created_at)
+                    & (grouped_turns.c.first_message_id < cursor_message_id)
+                ),
+            )
         )
-    ) if selected_message_ids else []
+    page_rows = list(
+        db.execute(
+            page_query.order_by(
+                grouped_turns.c.first_created_at.desc(),
+                grouped_turns.c.first_message_id.desc(),
+            ).limit(limit_turn_sets + 1)
+        )
+    )
+    has_more = len(page_rows) > limit_turn_sets
+    selected_keys = [str(row.turn_key) for row in reversed(page_rows[:limit_turn_sets])]
+    selected_messages = (
+        list(
+            db.scalars(
+                select(Message)
+                .where(
+                    Message.conversation_id == conversation.id,
+                    turn_key.in_(selected_keys),
+                )
+                .order_by(Message.created_at, Message.id)
+            )
+        )
+        if selected_keys
+        else []
+    )
     grouped: dict[str, list[Message]] = defaultdict(list)
     for message in selected_messages:
         branch_source_run_id = (message.metadata_json or {}).get("branchSourceRunId")
@@ -438,7 +496,6 @@ def get_turn_sets(
                 "completedAt": run.finished_at if run else group[-1].updated_at,
             }
         )
-    has_more = start > 0
     return {
         "turnSets": turn_sets,
         "previousCursor": selected_keys[0] if has_more and selected_keys else None,

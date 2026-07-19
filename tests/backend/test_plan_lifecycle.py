@@ -553,6 +553,16 @@ def test_executor_persists_db_owned_plan_timeline_and_events(tmp_path: Path) -> 
             for event in events
             if event["type"] == "plan_step_changed"
         )
+        assert all(
+            "subtasks" not in event["payload"]["step"]
+            for event in events
+            if event["type"] == "plan_step_changed"
+        )
+        assert any(
+            event["payload"].get("subtasks")
+            for event in events
+            if event["type"] == "plan_step_changed"
+        )
         for expected in (
             ("prepare", "running"),
             ("prepare", "completed"),
@@ -564,6 +574,11 @@ def test_executor_persists_db_owned_plan_timeline_and_events(tmp_path: Path) -> 
             ("final", "completed"),
         ):
             assert expected in plan_changes
+
+        with SessionLocal() as db:
+            stored_run = db.get(Run, run_id)
+            assert stored_run is not None
+            assert "plan" not in stored_run.snapshot_json
 
         plain = client.post(
             f"/api/conversations/{conversation['id']}/runs",

@@ -488,6 +488,103 @@ def test_compaction_failure_keeps_the_existing_full_context(tmp_path: Path) -> N
         )
 
 
+def test_incremental_compaction_keeps_cumulative_source_lineage(
+    tmp_path: Path,
+) -> None:
+    user, project, conversation = _configure(tmp_path, "incremental-lineage")
+    with SessionLocal() as db:
+        user = db.merge(user)
+        project = db.merge(project)
+        conversation = db.merge(conversation)
+        first_run = _run(
+            db,
+            user=user,
+            project=project,
+            conversation=conversation,
+            sequence=1,
+            context_window=1_500,
+        )
+        first_history = [
+            _message(
+                db,
+                run=first_run,
+                user=user,
+                role="user" if index % 2 == 0 else "assistant",
+                text=f"first segment {index} " * 220,
+                turn_index=index // 2 + 1,
+                offset=index,
+            )
+            for index in range(8)
+        ]
+        first_history[0].metadata_json = {
+            "prompt_references": [{"kind": "file", "reference_id": "old-ref"}]
+        }
+        first = prepare_context(
+            db,
+            run=first_run,
+            history=first_history,
+            content_by_message_id={
+                message.id: message.canonical_text for message in first_history
+            },
+            prefix_texts=(),
+            tool_schemas=(),
+        )
+        assert first.compaction is not None
+        assert first.compaction.status == "active"
+        first_source_ids = list(first.compaction.source_message_ids_json)
+        first_range = dict(first.compaction.source_message_range_json)
+        first_hash = first.compaction.source_hash
+
+        second_run = _run(
+            db,
+            user=user,
+            project=project,
+            conversation=conversation,
+            sequence=2,
+            context_window=1_500,
+        )
+        new_history = [
+            _message(
+                db,
+                run=second_run,
+                user=user,
+                role="user" if index % 2 == 0 else "assistant",
+                text=f"second segment {index} " * 220,
+                turn_index=5 + index // 2,
+                offset=index,
+            )
+            for index in range(8)
+        ]
+        second = prepare_context(
+            db,
+            run=second_run,
+            history=new_history,
+            content_by_message_id={
+                message.id: message.canonical_text for message in new_history
+            },
+            prefix_texts=(),
+            tool_schemas=(),
+            now=first.compaction.cooldown_until + timedelta(seconds=1),
+        )
+
+        assert second.compaction is not None
+        assert second.compaction.status == "active"
+        assert second.compaction.parent_compaction_id == first.compaction.id
+        assert set(first_source_ids) < set(second.compaction.source_message_ids_json)
+        assert (
+            second.compaction.source_message_range_json["firstMessageId"]
+            == (first_range["firstMessageId"])
+        )
+        assert second.compaction.source_message_range_json["lastMessageId"] in {
+            message.id for message in new_history
+        }
+        assert any(
+            reference.get("reference_id") == "old-ref"
+            for reference in second.compaction.source_refs_json
+        )
+        assert second.compaction.source_hash != first_hash
+
+
 def test_runtime_compaction_preserves_recent_tool_pairs_and_marks_summary(
     tmp_path: Path,
 ) -> None:
@@ -643,7 +740,9 @@ def test_runtime_compaction_microcompacts_old_tool_payload_before_summarizing(
                                 "type": "function",
                                 "function": {
                                     "name": "web_search",
-                                    "arguments": json.dumps({"query": f"topic {index}"}),
+                                    "arguments": json.dumps(
+                                        {"query": f"topic {index}"}
+                                    ),
                                 },
                             },
                         ),
@@ -685,7 +784,9 @@ def test_runtime_compaction_microcompacts_old_tool_payload_before_summarizing(
     assert "full result remains stored" in str(prepared.messages[2].content)
 
 
-def test_runtime_payload_compaction_deduplicates_old_results_and_removes_images() -> None:
+def test_runtime_payload_compaction_deduplicates_old_results_and_removes_images() -> (
+    None
+):
     repeated = "same external result " * 200
     messages = (
         ProviderMessage(
@@ -1337,7 +1438,9 @@ def test_automatic_memory_learning_merge_conflict_delete_and_modes(
         )
 
 
-def test_general_inline_llm_fact_is_stored_without_local_extraction(tmp_path: Path) -> None:
+def test_general_inline_llm_fact_is_stored_without_local_extraction(
+    tmp_path: Path,
+) -> None:
     user, project, conversation = _configure(tmp_path, "inline-memory")
     with SessionLocal() as db:
         user = db.merge(user)

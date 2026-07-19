@@ -3,7 +3,8 @@ from __future__ import annotations
 import base64
 from datetime import datetime
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import case, func, or_, select, text, update
+from sqlalchemy.exc import DatabaseError
 from sqlalchemy.orm import Session
 
 from ..agent_frontends import DEFAULT_AGENT_FRONTEND
@@ -177,14 +178,28 @@ def search_conversation_content(
     if project_id:
         require_project(db, user, project_id)
         query = query.where(Conversation.project_id == project_id)
+    fts_available = _sqlite_message_fts_available(db)
     for token in tokens:
+        title_match = func.lower(Conversation.title).contains(token)
+        candidate_ids = (
+            _fts_conversation_ids(db, token)
+            if fts_available and len(token) >= 3
+            else None
+        )
+        if candidate_ids is not None:
+            query = query.where(
+                or_(
+                    title_match,
+                    Conversation.id.in_(candidate_ids),
+                )
+            )
         message_match = select(Message.conversation_id).where(
             Message.conversation_id == Conversation.id,
             func.lower(Message.canonical_text).contains(token),
         )
         query = query.where(
             or_(
-                func.lower(Conversation.title).contains(token),
+                title_match,
                 message_match.exists(),
             )
         )
@@ -196,6 +211,37 @@ def search_conversation_content(
         )
     )
     return rows, tokens
+
+
+def _sqlite_message_fts_available(db: Session) -> bool:
+    bind = db.get_bind()
+    if bind.dialect.name != "sqlite":
+        return False
+    return bool(
+        db.scalar(
+            text(
+                "SELECT 1 FROM sqlite_master "
+                "WHERE type = 'table' AND name = 'message_search_fts'"
+            )
+        )
+    )
+
+
+def _fts_conversation_ids(db: Session, token: str) -> tuple[str, ...] | None:
+    match_query = f'"{token.replace(chr(34), chr(34) * 2)}"'
+    try:
+        return tuple(
+            str(conversation_id)
+            for conversation_id in db.scalars(
+                text(
+                    "SELECT DISTINCT conversation_id FROM message_search_fts "
+                    "WHERE message_search_fts MATCH :match_query"
+                ),
+                {"match_query": match_query},
+            )
+        )
+    except DatabaseError:
+        return None
 
 
 def conversation_summary(db: Session, conversation: Conversation) -> dict[str, object]:
@@ -211,15 +257,84 @@ def conversation_summary(db: Session, conversation: Conversation) -> dict[str, o
         .order_by(Run.created_at.desc())
         .limit(1)
     )
+    return _conversation_summary_payload(conversation, active or latest, active)
+
+
+def conversation_summaries(
+    db: Session, conversations: list[Conversation]
+) -> dict[str, dict[str, object]]:
+    if not conversations:
+        return {}
+    conversation_ids = [conversation.id for conversation in conversations]
+    ranked = (
+        select(
+            Run.conversation_id.label("conversation_id"),
+            Run.id.label("run_id"),
+            Run.status.label("status"),
+            Run.last_sequence.label("last_sequence"),
+            func.row_number()
+            .over(
+                partition_by=Run.conversation_id,
+                order_by=(
+                    case((Run.status.in_(ACTIVE_STATUSES), 0), else_=1),
+                    Run.created_at.desc(),
+                    Run.id.desc(),
+                ),
+            )
+            .label("rank"),
+        )
+        .where(Run.conversation_id.in_(conversation_ids))
+        .subquery()
+    )
+    selected = {
+        str(conversation_id): (str(run_id), str(status), int(last_sequence))
+        for conversation_id, run_id, status, last_sequence in db.execute(
+            select(
+                ranked.c.conversation_id,
+                ranked.c.run_id,
+                ranked.c.status,
+                ranked.c.last_sequence,
+            ).where(ranked.c.rank == 1)
+        )
+    }
+    return {
+        conversation.id: _conversation_summary_payload(
+            conversation,
+            selected.get(conversation.id),
+            (
+                selected[conversation.id]
+                if conversation.id in selected
+                and selected[conversation.id][1] in ACTIVE_STATUSES
+                else None
+            ),
+        )
+        for conversation in conversations
+    }
+
+
+def _conversation_summary_payload(
+    conversation: Conversation,
+    latest: Run | tuple[str, str, int] | None,
+    active: Run | tuple[str, str, int] | None,
+) -> dict[str, object]:
+    latest_status = (
+        latest.status if isinstance(latest, Run) else latest[1] if latest else None
+    )
+    latest_sequence = (
+        latest.last_sequence if isinstance(latest, Run) else latest[2] if latest else 0
+    )
+    active_run_id = (
+        active.id if isinstance(active, Run) else active[0] if active else None
+    )
     return {
         "id": conversation.id,
         "project_id": conversation.project_id,
         "title": conversation.title,
         "is_favorite": conversation.is_favorite,
         "is_liked": conversation.is_liked,
-        "last_run_status": sidebar_status(latest.status) if latest else None,
-        "active_run_id": active.id if active else None,
-        "last_sequence": latest.last_sequence if latest else 0,
+        "last_run_status": sidebar_status(latest_status) if latest_status else None,
+        "active_run_id": active_run_id,
+        "last_sequence": latest_sequence,
         "revision": conversation.revision,
         "created_at": conversation.created_at,
         "updated_at": conversation.updated_at,

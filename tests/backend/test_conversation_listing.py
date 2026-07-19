@@ -6,11 +6,16 @@ import time
 
 from fastapi.testclient import TestClient
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
 
 from lumina.api.errors import ApiProblem
 from lumina.config import Settings
-from lumina.conversations.service import list_auto_delete_candidates, update_conversation
+from lumina.conversations.service import (
+    conversation_summaries,
+    list_auto_delete_candidates,
+    list_conversations,
+    update_conversation,
+)
 from lumina.db import SessionLocal
 from lumina.main import create_app
 from lumina.models import Conversation, Message, ToolExecution, User, utc_now
@@ -98,9 +103,14 @@ def test_cursor_preserves_favorite_order_and_search_is_whitespace_tolerant(
             "/api/conversations",
             params={"project_id": project_id, "limit": 10},
         )
-        assert next(
-            item for item in persisted.json()["items"] if item["id"] == created[1]["id"]
-        )["isLiked"] is True
+        assert (
+            next(
+                item
+                for item in persisted.json()["items"]
+                if item["id"] == created[1]["id"]
+            )["isLiked"]
+            is True
+        )
 
         with SessionLocal() as db:
             candidate_ids = {
@@ -190,6 +200,105 @@ def test_project_and_conversation_patch_reject_noop_payloads(tmp_path: Path) -> 
             item for item in conversations if item["id"] == conversation["id"]
         )
         assert unchanged_conversation["revision"] == conversation["revision"]
+
+
+def test_content_search_keeps_substring_and_short_token_semantics_with_fts(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'content-search.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation_id = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "unrelated title"},
+        ).json()["id"]
+        with SessionLocal() as db:
+            conversation = db.get(Conversation, conversation_id)
+            assert conversation is not None
+            db.add(
+                Message(
+                    conversation_id=conversation.id,
+                    author_user_id=conversation.owner_user_id,
+                    role="user",
+                    status="completed",
+                    canonical_text="prefixNeedleSuffix 가나다검색마침",
+                    turn_index=1,
+                    metadata_json={},
+                )
+            )
+            db.commit()
+
+        substring = client.get(
+            "/api/conversations/content-search",
+            params={"q": "needles", "project_id": project_id},
+        )
+        assert substring.status_code == 200, substring.text
+        assert [item["id"] for item in substring.json()["items"]] == [conversation_id]
+        assert substring.json()["items"][0]["matches"]
+
+        korean = client.get(
+            "/api/conversations/content-search",
+            params={"q": "나다검", "project_id": project_id},
+        )
+        assert [item["id"] for item in korean.json()["items"]] == [conversation_id]
+
+        short_token = client.get(
+            "/api/conversations/content-search",
+            params={"q": "ee", "project_id": project_id},
+        )
+        assert [item["id"] for item in short_token.json()["items"]] == [conversation_id]
+
+
+def test_conversation_list_summaries_use_constant_query_count(tmp_path: Path) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'bulk-summary.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        for index in range(30):
+            created = client.post(
+                "/api/conversations",
+                headers={"X-CSRF-Token": csrf},
+                json={"projectId": project_id, "title": f"bulk {index:02d}"},
+            )
+            assert created.status_code == 201
+
+        with SessionLocal() as db:
+            user = db.scalar(select(User).where(User.login_id == "admin@posco.com"))
+            assert user is not None
+            bind = db.get_bind()
+            statement_count = 0
+
+            def count_statement(*_args: object) -> None:
+                nonlocal statement_count
+                statement_count += 1
+
+            event.listen(bind, "before_cursor_execute", count_statement)
+            try:
+                conversations, cursor = list_conversations(db, user, limit=30)
+                summaries = conversation_summaries(db, conversations)
+            finally:
+                event.remove(bind, "before_cursor_execute", count_statement)
+
+        assert cursor is None
+        assert len(conversations) == 30
+        assert len(summaries) == 30
+        assert statement_count == 2
 
 
 def test_conversation_revision_compare_and_swap_rejects_stale_session(
@@ -333,7 +442,9 @@ def test_turn_set_cursor_pages_backwards_without_overlap(tmp_path: Path) -> None
         )
 
 
-def test_turn_set_cursor_reaches_messages_older_than_legacy_limit(tmp_path: Path) -> None:
+def test_turn_set_cursor_reaches_messages_older_than_legacy_limit(
+    tmp_path: Path,
+) -> None:
     settings = Settings(
         environment="test",
         database_url=f"sqlite:///{(tmp_path / 'long-turns.db').as_posix()}",
@@ -361,12 +472,15 @@ def test_turn_set_cursor_reaches_messages_older_than_legacy_limit(tmp_path: Path
                     db.add(
                         Message(
                             conversation_id=conversation_id,
-                            author_user_id=conversation.owner_user_id if role == "user" else None,
+                            author_user_id=conversation.owner_user_id
+                            if role == "user"
+                            else None,
                             role=role,
                             canonical_text=f"turn {index} {role}",
                             turn_index=role_index,
                             metadata_json={"branchSourceRunId": branch_source_run_id},
-                            created_at=created_at + timedelta(microseconds=index * 2 + role_index),
+                            created_at=created_at
+                            + timedelta(microseconds=index * 2 + role_index),
                         )
                     )
             db.commit()
@@ -393,7 +507,9 @@ def test_turn_set_cursor_reaches_messages_older_than_legacy_limit(tmp_path: Path
         assert len(set(collected_ids)) == 205
 
 
-def test_web_source_content_pages_stored_text_with_delivery_counts(tmp_path: Path) -> None:
+def test_web_source_content_pages_stored_text_with_delivery_counts(
+    tmp_path: Path,
+) -> None:
     settings = Settings(
         environment="test",
         database_url=f"sqlite:///{(tmp_path / 'source-content.db').as_posix()}",
@@ -414,8 +530,16 @@ def test_web_source_content_pages_stored_text_with_delivery_counts(tmp_path: Pat
             f"/api/conversations/{conversation_id}/runs",
             headers={"X-CSRF-Token": csrf, "Idempotency-Key": "source-body-run"},
             json={
-                "message": {"text": "source", "attachmentIds": [], "promptReferences": []},
-                "execution": {"providerId": "mock", "modelKey": "mock-agent", "effortId": "medium"},
+                "message": {
+                    "text": "source",
+                    "attachmentIds": [],
+                    "promptReferences": [],
+                },
+                "execution": {
+                    "providerId": "mock",
+                    "modelKey": "mock-agent",
+                    "effortId": "medium",
+                },
             },
         )
         run_id = started.json()["run"]["runId"]

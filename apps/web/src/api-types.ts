@@ -2168,7 +2168,7 @@ export type RunEvent =
   | RunEventEnvelope<"conversation_title_updated", { title: string; revision: number; source: "llm" }>
   | RunEventEnvelope<"artifact_progress", { tokens: number; lines: number }>
   | RunEventEnvelope<"work_plan_updated", { steps: WorkPlanStep[] }>
-  | RunEventEnvelope<"plan_step_changed", { planId: UUID; step: PlanStep }>
+  | RunEventEnvelope<"plan_step_changed", { planId: UUID; step: PlanStep; subtasks?: PlanSubtask[] }>
   | RunEventEnvelope<"tool_started" | "tool_progress" | "tool_completed", { execution: ToolExecution }>
   | RunEventEnvelope<"approval_requested", { approval: ToolApproval }>
   | RunEventEnvelope<"approval_resolved", { approval: ToolApproval; decision: ToolApproval["status"]; command?: RunCommand }>

@@ -53,10 +53,10 @@ _PLAN_STEP_TRANSITIONS = {
     PLAN_STEP_COMPLETED: set(),
 }
 
+
 def create_run_plan(db: Session, run: Run, *, goal: str) -> Plan:
     existing = db.scalar(select(Plan).where(Plan.run_id == run.id))
     if existing is not None:
-        _sync_plan_snapshot(db, run)
         return existing
 
     plan = Plan(run_id=run.id, goal=goal.strip(), status="active")
@@ -84,7 +84,7 @@ def create_run_plan(db: Session, run: Run, *, goal: str) -> Plan:
         db.add(step)
         previous_step_id = step.id
     db.flush()
-    snapshot = _sync_plan_snapshot(db, run)
+    snapshot = _plan_snapshot_payload(db, run)
     append_event(db, run, "plan_created", {"plan": snapshot})
     return plan
 
@@ -390,8 +390,10 @@ def align_work_plan_for_tool_start(
     return steps
 
 
-def _plan_step_payload(db: Session, step: PlanStep) -> dict[str, Any]:
-    return {
+def _plan_step_payload(
+    db: Session, step: PlanStep, *, include_subtasks: bool = True
+) -> dict[str, Any]:
+    payload = {
         "id": step.id,
         "key": step.step_key,
         "label": step.label,
@@ -408,17 +410,17 @@ def _plan_step_payload(db: Session, step: PlanStep) -> dict[str, Any]:
         "completedAt": step.completed_at,
         "errorCode": step.error_code,
         "error": step.error_message,
-        "subtasks": list_step_subtasks(db, step.id),
     }
+    if include_subtasks:
+        payload["subtasks"] = list_step_subtasks(db, step.id)
+    return payload
 
 
-def _sync_plan_snapshot(db: Session, run: Run) -> dict[str, Any]:
+def _plan_snapshot_payload(db: Session, run: Run) -> dict[str, Any]:
     snapshot = plan_snapshot(db, run)
     if snapshot is None:
         raise ApiProblem(409, "plan_missing", "Run의 Plan을 찾을 수 없습니다.")
-    encoded_snapshot = jsonable_encoder(snapshot)
-    run.snapshot_json = {**run.snapshot_json, "plan": encoded_snapshot}
-    return encoded_snapshot
+    return jsonable_encoder(snapshot)
 
 
 def _plan_rows(db: Session, run: Run) -> tuple[Plan, list[PlanStep]]:
@@ -472,6 +474,7 @@ def change_plan_step(
     artifact_ids: Iterable[str] = (),
     error_code: str | None = None,
     error_message: str | None = None,
+    changed_subtasks: Iterable[dict[str, Any]] = (),
     reason: str,
 ) -> PlanStep:
     plan, steps = _plan_rows(db, run)
@@ -532,7 +535,7 @@ def change_plan_step(
     step.updated_at = now
     _refresh_plan_status(plan, steps)
     db.flush()
-    _sync_plan_snapshot(db, run)
+    changed_subtask_payloads = list(changed_subtasks)
     append_event(
         db,
         run,
@@ -540,7 +543,12 @@ def change_plan_step(
         {
             "planId": plan.id,
             "planStatus": plan.status,
-            "step": _plan_step_payload(db, step),
+            "step": _plan_step_payload(db, step, include_subtasks=False),
+            **(
+                {"subtasks": changed_subtask_payloads}
+                if changed_subtask_payloads
+                else {}
+            ),
             "reason": reason,
         },
     )
@@ -647,7 +655,6 @@ def cancel_plan(db: Session, run: Run, *, reason: str = "run_cancelled") -> None
     plan.status = "cancelled"
     plan.updated_at = utc_now()
     db.flush()
-    _sync_plan_snapshot(db, run)
 
 
 def fail_plan(db: Session, run: Run, *, code: str, message: str) -> None:
@@ -765,7 +772,6 @@ def retry_plan_step(db: Session, run: Run, step_id: str | None) -> PlanStep:
         },
     }
     db.flush()
-    _sync_plan_snapshot(db, run)
     append_event(
         db,
         run,

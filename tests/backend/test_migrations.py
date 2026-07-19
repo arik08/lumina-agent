@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from alembic import command
@@ -50,6 +51,12 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
                 text(
                     "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' "
                     "AND name LIKE 'trg_knowledge_%_fts_%'"
+                )
+            )
+            message_fts_trigger_count = connection.scalar(
+                text(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' "
+                    "AND name LIKE 'trg_messages_search_fts_%'"
                 )
             )
     finally:
@@ -134,6 +141,8 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
     assert "actual_cost_microusd" in workflow_node_columns
     assert "estimated_cost_microusd" not in workflow_node_columns
     assert knowledge_fts_trigger_count == 0
+    assert "message_search_fts" in tables
+    assert message_fts_trigger_count == 3
     assert {"is_favorite", "is_liked", "last_export_requested_at"} <= {
         column["name"] for column in inspector.get_columns("deep_analysis_missions")
     }
@@ -141,6 +150,84 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
         column["name"] for column in inspector.get_columns("knowledge_spaces")
     }
     assert "conversation_id" in workflow_node_columns
+    assert revision == "0056"
+
+
+def test_message_search_fts_migration_0056_round_trip(tmp_path: Path) -> None:
+    database = tmp_path / "message-fts-round-trip.db"
+    database_url = f"sqlite:///{database.as_posix()}"
+    upgrade_database(database_url, "0055")
+
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO run_events "
+                    "(id, run_id, conversation_id, sequence, event_type, "
+                    "payload_json, created_at) VALUES "
+                    "(:id, :run_id, :conversation_id, 1, "
+                    "'plan_step_changed', :payload, :created_at)"
+                ),
+                {
+                    "id": "event-legacy-plan",
+                    "run_id": "run-legacy-plan",
+                    "conversation_id": "conversation-legacy-plan",
+                    "payload": json.dumps(
+                        {
+                            "plan": {"steps": [{"large": "duplicate"}]},
+                            "step": {
+                                "stepKey": "tools",
+                                "subtasks": [{"id": "duplicate-subtask"}],
+                            },
+                            "reason": "preserved",
+                        }
+                    ),
+                    "created_at": "2026-07-19T00:00:00+00:00",
+                },
+            )
+    finally:
+        engine.dispose()
+
+    upgrade_database(database_url, "0056")
+
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            cleaned_payload = json.loads(
+                connection.scalar(
+                    text(
+                        "SELECT payload_json FROM run_events "
+                        "WHERE id = 'event-legacy-plan'"
+                    )
+                )
+            )
+    finally:
+        engine.dispose()
+    assert "plan" not in cleaned_payload
+    assert "subtasks" not in cleaned_payload["step"]
+    assert cleaned_payload["reason"] == "preserved"
+
+    config = Config(str(SERVER_ROOT / "alembic.ini"))
+    config.attributes["database_url"] = database_url
+    command.downgrade(config, "0055")
+
+    engine = create_engine(database_url)
+    try:
+        tables = set(inspect(engine).get_table_names())
+        with engine.connect() as connection:
+            revision = MigrationContext.configure(connection).get_current_revision()
+            trigger_count = connection.scalar(
+                text(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' "
+                    "AND name LIKE 'trg_messages_search_fts_%'"
+                )
+            )
+    finally:
+        engine.dispose()
+
+    assert "message_search_fts" not in tables
+    assert trigger_count == 0
     assert revision == "0055"
 
 
@@ -167,12 +254,15 @@ def test_knowledge_fts_migration_0048_round_trip(tmp_path: Path) -> None:
     finally:
         engine.dispose()
 
-    assert not {
-        "knowledge_entity_fts",
-        "knowledge_statement_fts",
-        "knowledge_source_fts",
-        "knowledge_evidence_fts",
-    } & tables
+    assert (
+        not {
+            "knowledge_entity_fts",
+            "knowledge_statement_fts",
+            "knowledge_source_fts",
+            "knowledge_evidence_fts",
+        }
+        & tables
+    )
     assert trigger_count == 0
     assert revision == "0047"
 
@@ -319,7 +409,7 @@ def test_context_migration_adopts_legacy_create_all_table(tmp_path: Path) -> Non
         }
         with engine.connect() as connection:
             assert (
-                MigrationContext.configure(connection).get_current_revision() == "0055"
+                MigrationContext.configure(connection).get_current_revision() == "0056"
             )
     finally:
         engine.dispose()
@@ -349,7 +439,7 @@ def test_recent_migrations_adopt_tables_precreated_by_runtime_schema(
     try:
         with engine.connect() as connection:
             revision = MigrationContext.configure(connection).get_current_revision()
-        assert revision == "0055"
+        assert revision == "0056"
     finally:
         engine.dispose()
 

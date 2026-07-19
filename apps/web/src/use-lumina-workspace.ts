@@ -426,9 +426,21 @@ export function useLuminaWorkspace() {
       } else if (event.type === "work_plan_updated") {
         nextSnapshot.workPlan = event.payload.steps;
       } else if (event.type === "plan_step_changed" && nextSnapshot.plan) {
+        const previousStep = nextSnapshot.plan.steps.find((step) => step.id === event.payload.step.id);
+        const changedSubtasks = event.payload.subtasks ?? event.payload.step.subtasks;
+        const nextSubtasks = changedSubtasks
+          ? changedSubtasks.reduce(
+            (subtasks, subtask) => upsertById(subtasks, subtask),
+            previousStep?.subtasks ?? [],
+          )
+          : previousStep?.subtasks;
         nextSnapshot.plan = {
           ...nextSnapshot.plan,
-          steps: upsertById(nextSnapshot.plan.steps, event.payload.step),
+          steps: upsertById(nextSnapshot.plan.steps, {
+            ...previousStep,
+            ...event.payload.step,
+            ...(nextSubtasks ? { subtasks: nextSubtasks } : {}),
+          }),
         };
       } else if (event.type === "tool_started" || event.type === "tool_progress" || event.type === "tool_completed") {
         nextSnapshot.toolExecutions = upsertTool(nextSnapshot.toolExecutions, event.payload.execution);

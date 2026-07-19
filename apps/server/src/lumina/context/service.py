@@ -417,7 +417,6 @@ def prepare_context(
             effective_budget,
             retained_tool_context=retained_tool_context,
         )
-    source_ids = [message.id for message in source_messages]
     newly_compacted = [
         message for message in source_messages if message.id not in represented_ids
     ]
@@ -429,11 +428,20 @@ def prepare_context(
             effective_budget,
             retained_tool_context=retained_tool_context,
         )
+    source_ids = _merge_source_message_ids(active, newly_compacted)
 
     run_ids = {message.run_id for message in source_messages if message.run_id}
     source_runs = {
         source_run.id: source_run
         for source_run in db.scalars(select(Run).where(Run.id.in_(run_ids)))
+    }
+    newly_compacted_run_ids = {
+        message.run_id for message in newly_compacted if message.run_id
+    }
+    newly_compacted_runs = {
+        run_id: source_runs[run_id]
+        for run_id in newly_compacted_run_ids
+        if run_id in source_runs
     }
     summary_request = ContextSummaryRequest(
         previous_summary=active.summary if active else None,
@@ -453,7 +461,15 @@ def prepare_context(
         if not result.summary.strip():
             raise ValueError("summarizer produced an empty summary")
     except Exception:
-        failed_tools = _tools_for_messages(tools, source_messages)
+        failed_tools = _tools_for_messages(tools, newly_compacted)
+        failed_source_runs = _source_event_range(newly_compacted_runs)
+        failed_source_refs = _source_refs(source_messages, failed_tools)
+        failed_segment_hash = _source_hash(
+            newly_compacted,
+            content_by_message_id,
+            newly_compacted_runs,
+            failed_tools,
+        )
         failed_version = (
             int(
                 db.scalar(
@@ -475,15 +491,12 @@ def prepare_context(
             status="failed",
             summary=active.summary if active else "",
             source_message_ids_json=source_ids,
-            source_message_range_json=_source_range(source_messages),
-            source_event_range_json=_source_event_range(source_runs),
-            source_refs_json=_source_refs(source_messages, failed_tools),
-            source_hash=_source_hash(
-                source_messages,
-                content_by_message_id,
-                source_runs,
-                failed_tools,
+            source_message_range_json=_merge_source_range(active, newly_compacted),
+            source_event_range_json=_merge_source_event_range(
+                active, failed_source_runs
             ),
+            source_refs_json=_merge_source_refs(active, failed_source_refs),
+            source_hash=_merge_source_hash(active, failed_segment_hash),
             estimated_tokens_before=estimated_before,
             estimated_tokens_after=estimated_before,
             context_window=context_window,
@@ -552,6 +565,15 @@ def prepare_context(
     )
     if effective and active is not None:
         active.status = "superseded"
+    source_tools = _tools_for_messages(tools, newly_compacted)
+    current_source_events = _source_event_range(newly_compacted_runs)
+    current_source_refs = _source_refs(source_messages, source_tools)
+    current_segment_hash = _source_hash(
+        newly_compacted,
+        content_by_message_id,
+        newly_compacted_runs,
+        source_tools,
+    )
     entry = CompactedContextEntry(
         conversation_id=run.conversation_id,
         run_id=run.id,
@@ -560,17 +582,12 @@ def prepare_context(
         status="active" if effective else "ineffective",
         summary=result.summary,
         source_message_ids_json=source_ids,
-        source_message_range_json=_source_range(source_messages),
-        source_event_range_json=_source_event_range(source_runs),
-        source_refs_json=_source_refs(
-            source_messages, _tools_for_messages(tools, source_messages)
+        source_message_range_json=_merge_source_range(active, newly_compacted),
+        source_event_range_json=_merge_source_event_range(
+            active, current_source_events
         ),
-        source_hash=_source_hash(
-            source_messages,
-            content_by_message_id,
-            source_runs,
-            _tools_for_messages(tools, source_messages),
-        ),
+        source_refs_json=_merge_source_refs(active, current_source_refs),
+        source_hash=_merge_source_hash(active, current_segment_hash),
         estimated_tokens_before=estimated_before,
         estimated_tokens_after=estimated_after,
         context_window=context_window,
@@ -1090,12 +1107,88 @@ def _source_range(messages: Sequence[Message]) -> dict[str, Any]:
     }
 
 
+def _merge_source_message_ids(
+    active: CompactedContextEntry | None, messages: Sequence[Message]
+) -> list[str]:
+    result = list(active.source_message_ids_json if active else [])
+    seen = set(result)
+    for message in messages:
+        if message.id not in seen:
+            result.append(message.id)
+            seen.add(message.id)
+    return result
+
+
+def _merge_source_range(
+    active: CompactedContextEntry | None, messages: Sequence[Message]
+) -> dict[str, Any]:
+    current = _source_range(messages)
+    if active is None:
+        return current
+    previous = active.source_message_range_json
+    previous_first = (
+        str(previous.get("firstCreatedAt", "")),
+        str(previous.get("firstMessageId", "")),
+    )
+    current_first = (
+        str(current["firstCreatedAt"]),
+        str(current["firstMessageId"]),
+    )
+    previous_last = (
+        str(previous.get("lastCreatedAt", "")),
+        str(previous.get("lastMessageId", "")),
+    )
+    current_last = (
+        str(current["lastCreatedAt"]),
+        str(current["lastMessageId"]),
+    )
+    first = previous if previous_first and previous_first <= current_first else current
+    last = previous if previous_last >= current_last else current
+    return {
+        "firstMessageId": first.get("firstMessageId", current["firstMessageId"]),
+        "lastMessageId": last.get("lastMessageId", current["lastMessageId"]),
+        "firstTurnIndex": first.get("firstTurnIndex", current["firstTurnIndex"]),
+        "lastTurnIndex": last.get("lastTurnIndex", current["lastTurnIndex"]),
+        "firstCreatedAt": first.get("firstCreatedAt", current["firstCreatedAt"]),
+        "lastCreatedAt": last.get("lastCreatedAt", current["lastCreatedAt"]),
+    }
+
+
 def _source_event_range(source_runs: Mapping[str, Run]) -> dict[str, Any]:
     return {
         "runIds": sorted(source_runs),
         "throughSequenceByRun": {
             run_id: source_runs[run_id].last_sequence for run_id in sorted(source_runs)
         },
+    }
+
+
+def _merge_source_event_range(
+    active: CompactedContextEntry | None, current: Mapping[str, Any]
+) -> dict[str, Any]:
+    previous = active.source_event_range_json if active else {}
+    run_ids = {
+        str(run_id)
+        for run_id in [
+            *previous.get("runIds", []),
+            *current.get("runIds", []),
+        ]
+        if isinstance(run_id, str)
+    }
+    through: dict[str, int] = {}
+    for source in (
+        previous.get("throughSequenceByRun", {}),
+        current.get("throughSequenceByRun", {}),
+    ):
+        if not isinstance(source, Mapping):
+            continue
+        for run_id, sequence in source.items():
+            if isinstance(run_id, str) and isinstance(sequence, int):
+                through[run_id] = max(through.get(run_id, 0), sequence)
+                run_ids.add(run_id)
+    return {
+        "runIds": sorted(run_ids),
+        "throughSequenceByRun": {run_id: through[run_id] for run_id in sorted(through)},
     }
 
 
@@ -1134,6 +1227,26 @@ def _source_refs(
         if canonical not in seen:
             seen.add(canonical)
             result.append(reference)
+    return result
+
+
+def _merge_source_refs(
+    active: CompactedContextEntry | None,
+    current: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    sources = [*(active.source_refs_json if active else []), *current]
+    for reference in sources:
+        if not isinstance(reference, Mapping):
+            continue
+        canonical = json.dumps(
+            reference, ensure_ascii=False, sort_keys=True, default=str
+        )
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        result.append(dict(reference))
     return result
 
 
@@ -1186,6 +1299,23 @@ def _source_hash(
         json.dumps(
             payload,
             ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _merge_source_hash(
+    active: CompactedContextEntry | None, current_segment_hash: str
+) -> str:
+    if active is None:
+        return current_segment_hash
+    return hashlib.sha256(
+        json.dumps(
+            {
+                "parentSourceHash": active.source_hash,
+                "segmentSourceHash": current_segment_hash,
+            },
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")

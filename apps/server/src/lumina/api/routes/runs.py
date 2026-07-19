@@ -91,6 +91,7 @@ async def post_run_action(
     )
     db.commit()
     if changed:
+        local_run_executor.invalidate_control(run.id)
         if payload.type == "cancel":
             local_run_executor.cancel(run.id)
         if payload.type in {"retry_step", "submit_user_input"} or (

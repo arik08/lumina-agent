@@ -13,10 +13,10 @@ from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from ..api.errors import ApiProblem
@@ -90,6 +90,7 @@ from ..models import (
     Attachment,
     Artifact,
     ArtifactVersion,
+    CompactedContextEntry,
     Message,
     ProjectFileVersion,
     QueuedMessage,
@@ -218,6 +219,7 @@ _MAX_EMPTY_RESPONSE_RETRIES = 1
 _MAX_ARTIFACT_LENGTH_RETRIES = 2
 _ARTIFACT_PROGRESS_INTERVAL_SECONDS = 0.1
 _RUN_CANCELLATION_POLL_SECONDS = 0.2
+_RUN_CONTROL_CACHE_SECONDS = 0.05
 _WEB_SEARCH_CALL_SAFETY_LIMIT = 10
 _WEB_FETCH_PAGE_SAFETY_LIMIT = 15
 _BRIEF_WEB_SEARCH_CALL_SAFETY_LIMIT = 3
@@ -441,9 +443,14 @@ class LocalRunExecutor:
         self._worker_id = new_uuid()
         self._started = False
         self._claim_lock = asyncio.Lock()
+        self._claim_event = asyncio.Event()
+        self._claim_revision = 0
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._reenqueue_after_task: set[str] = set()
+        self._run_control_cache: dict[
+            str, tuple[float, str | None, RunLimitViolation | None, bool]
+        ] = {}
         self._codex_warmup_task: asyncio.Task[None] | None = None
 
     def configure(
@@ -597,17 +604,41 @@ class LocalRunExecutor:
         )
         self._tasks[run_id] = task
         task.add_done_callback(self._discard_task)
+        self._signal_claim_change()
 
     def cancel(self, run_id: str) -> bool:
         self._reenqueue_after_task.discard(run_id)
+        self.invalidate_control(run_id)
         task = self._tasks.get(run_id)
         if task is None or task.done():
             return False
         task.cancel()
+        self._signal_claim_change()
         return True
 
     def cancel_many(self, run_ids: list[str]) -> int:
         return sum(1 for run_id in run_ids if self.cancel(run_id))
+
+    def invalidate_control(self, run_id: str) -> None:
+        self._run_control_cache.pop(run_id, None)
+
+    def _signal_claim_change(self) -> None:
+        self._claim_revision += 1
+        self._claim_event.set()
+
+    async def _wait_for_claim_change(self, observed_revision: int) -> None:
+        if self._claim_revision != observed_revision:
+            return
+        self._claim_event.clear()
+        if self._claim_revision != observed_revision:
+            return
+        if self.settings.database_url.startswith("sqlite"):
+            await self._claim_event.wait()
+            return
+        try:
+            await asyncio.wait_for(self._claim_event.wait(), timeout=0.2)
+        except TimeoutError:
+            return
 
     def _run_is_terminal(self, run_id: str) -> bool:
         with SessionLocal() as db:
@@ -647,6 +678,8 @@ class LocalRunExecutor:
         for run_id, current in list(self._tasks.items()):
             if current is task:
                 self._tasks.pop(run_id, None)
+                self.invalidate_control(run_id)
+                self._signal_claim_change()
                 should_reenqueue = run_id in self._reenqueue_after_task
                 self._reenqueue_after_task.discard(run_id)
                 if should_reenqueue and self._started:
@@ -659,11 +692,12 @@ class LocalRunExecutor:
     async def _run_when_claimable(self, run_id: str) -> None:
         try:
             while self._started:
+                observed_revision = self._claim_revision
                 result = await self._claim(run_id)
                 if result == "stop":
                     return
                 if result == "wait":
-                    await asyncio.sleep(0.2)
+                    await self._wait_for_claim_change(observed_revision)
                     continue
                 await event_broker.notify(run_id)
                 await self._execute(run_id)
@@ -1654,6 +1688,7 @@ class LocalRunExecutor:
                             active_run,
                             "tools",
                             result={"subtask_count": len(created_subtasks)},
+                            changed_subtasks=created_subtasks,
                             reason="tool_subtasks_created",
                         )
             if created_subtasks:
@@ -1915,6 +1950,7 @@ class LocalRunExecutor:
     ) -> bool:
         approval_ids: list[str] = []
         checkpoint_calls: list[dict[str, Any]] = []
+        changed_approval_subtasks: list[dict[str, Any]] = []
         with session_scope() as db:
             run = db.get(Run, run_id)
             if run is None or run.status in TERMINAL_STATUSES:
@@ -1969,13 +2005,15 @@ class LocalRunExecutor:
                     checkpoint_call["approval_id"] = approval.id
                     call["approval_id"] = approval.id
                     approval_ids.append(approval.id)
-                    mark_tool_subtask_approval(
+                    changed_subtask = mark_tool_subtask_approval(
                         db,
                         run.id,
                         approval.tool_call_id,
                         approval_id=approval.id,
                         effect=risk.effect,
                     )
+                    if changed_subtask is not None:
+                        changed_approval_subtasks.append(changed_subtask)
                     append_event(
                         db,
                         run,
@@ -2001,6 +2039,7 @@ class LocalRunExecutor:
                 "tools",
                 status="blocked",
                 result={"pending_approval_ids": approval_ids},
+                changed_subtasks=changed_approval_subtasks,
                 reason="tool_approval_required",
             )
             transition_run(db, run, AWAITING_APPROVAL)
@@ -2764,17 +2803,71 @@ class LocalRunExecutor:
             run = db.get(Run, run_id)
             if run is None:
                 raise RuntimeError("Run disappeared while building model context")
-            history = list(
-                db.scalars(
-                    select(Message)
-                    .where(
-                        Message.conversation_id == run.conversation_id,
-                        Message.status == "completed",
-                        Message.role.in_(("user", "assistant")),
-                    )
-                    .order_by(Message.created_at, Message.id)
-                )
+            history_conditions = (
+                Message.conversation_id == run.conversation_id,
+                Message.status == "completed",
+                Message.role.in_(("user", "assistant")),
             )
+            history_query = (
+                select(Message)
+                .where(*history_conditions)
+                .order_by(Message.created_at, Message.id)
+            )
+            active_compaction = db.scalar(
+                select(CompactedContextEntry)
+                .where(
+                    CompactedContextEntry.conversation_id == run.conversation_id,
+                    CompactedContextEntry.status == "active",
+                )
+                .order_by(
+                    CompactedContextEntry.version.desc(),
+                    CompactedContextEntry.id.desc(),
+                )
+                .limit(1)
+            )
+            if active_compaction is not None:
+                source_range = active_compaction.source_message_range_json
+                last_created_at = source_range.get("lastCreatedAt")
+                last_message_id = source_range.get("lastMessageId")
+                if isinstance(last_created_at, str) and isinstance(
+                    last_message_id, str
+                ):
+                    try:
+                        compacted_through = datetime.fromisoformat(last_created_at)
+                    except ValueError:
+                        pass
+                    else:
+                        through_boundary = or_(
+                            Message.created_at < compacted_through,
+                            (
+                                (Message.created_at == compacted_through)
+                                & (Message.id <= last_message_id)
+                            ),
+                        )
+                        messages_through_boundary = db.scalar(
+                            select(func.count(Message.id)).where(
+                                *history_conditions,
+                                through_boundary,
+                            )
+                        )
+                        compacted_source_count = len(
+                            {
+                                source_id
+                                for source_id in active_compaction.source_message_ids_json
+                                if isinstance(source_id, str)
+                            }
+                        )
+                        if messages_through_boundary == compacted_source_count:
+                            history_query = history_query.where(
+                                or_(
+                                    Message.created_at > compacted_through,
+                                    (
+                                        (Message.created_at == compacted_through)
+                                        & (Message.id > last_message_id)
+                                    ),
+                                )
+                            )
+            history = list(db.scalars(history_query))
         runtime_prompts = run.snapshot_json.get("runtime_prompts", {})
         system_document = (
             runtime_prompts.get("system", {})
@@ -3615,6 +3708,7 @@ class LocalRunExecutor:
                     run,
                     "tools",
                     result={"active_subtask_id": subtask["id"]},
+                    changed_subtasks=[subtask],
                     reason="tool_subtask_started",
                 )
             tool_id = tool.id
@@ -4126,7 +4220,7 @@ class LocalRunExecutor:
             )
             completed_tool.artifact_id = artifact.id
             completed_tool.finished_at = utc_now()
-            finish_tool_subtask(db, completed_tool)
+            finished_subtask = finish_tool_subtask(db, completed_tool)
             append_event(
                 db,
                 run,
@@ -4165,6 +4259,9 @@ class LocalRunExecutor:
                     "last_tool_status": completed_tool.status,
                 },
                 artifact_ids=[artifact.id],
+                changed_subtasks=(
+                    [finished_subtask] if finished_subtask is not None else []
+                ),
                 reason="tool_completed",
             )
             artifact_id = artifact.id
@@ -4224,7 +4321,7 @@ class LocalRunExecutor:
                 )
                 completed_tool.artifact_id = persisted.artifact_id
                 completed_tool.finished_at = utc_now()
-                finish_tool_subtask(db, completed_tool)
+                finished_subtask = finish_tool_subtask(db, completed_tool)
                 append_event(
                     db,
                     run,
@@ -4256,6 +4353,9 @@ class LocalRunExecutor:
                         "last_tool_status": completed_tool.status,
                     },
                     artifact_ids=[persisted.artifact_id],
+                    changed_subtasks=(
+                        [finished_subtask] if finished_subtask is not None else []
+                    ),
                     reason="tool_completed",
                 )
         except ProviderConfigurationError as exc:
@@ -4310,7 +4410,7 @@ class LocalRunExecutor:
             tool.result_summary = summary
             tool.artifact_id = artifact_id
             tool.finished_at = utc_now()
-            finish_tool_subtask(db, tool)
+            finished_subtask = finish_tool_subtask(db, tool)
             append_event(db, run, "tool_completed", {"execution": _tool_event(tool)})
             if artifact_id is not None:
                 user = db.get(User, run.user_id)
@@ -4341,6 +4441,9 @@ class LocalRunExecutor:
                 "tools",
                 result={"last_tool": tool.tool_name, "last_tool_status": tool.status},
                 artifact_ids=[artifact_id] if artifact_id is not None else [],
+                changed_subtasks=(
+                    [finished_subtask] if finished_subtask is not None else []
+                ),
                 reason="tool_completed",
             )
         await event_broker.notify(run_id)
@@ -4365,7 +4468,7 @@ class LocalRunExecutor:
                 tool.error_code = code
                 tool.error_message = message
                 tool.finished_at = utc_now()
-                finish_tool_subtask(db, tool)
+                finished_subtask = finish_tool_subtask(db, tool)
                 append_event(
                     db,
                     run,
@@ -4381,6 +4484,9 @@ class LocalRunExecutor:
                         "last_tool_status": tool.status,
                         "last_error_code": code,
                     },
+                    changed_subtasks=(
+                        [finished_subtask] if finished_subtask is not None else []
+                    ),
                     reason="tool_failed",
                 )
         await event_broker.notify(run_id)
@@ -4403,7 +4509,7 @@ class LocalRunExecutor:
             tool.error_code = "tool_cancelled"
             tool.error_message = "도구 실행이 취소되었습니다."
             tool.finished_at = utc_now()
-            finish_tool_subtask(db, tool)
+            finished_subtask = finish_tool_subtask(db, tool)
             append_event(db, run, "tool_completed", {"execution": _tool_event(tool)})
             change_plan_step(
                 db,
@@ -4414,6 +4520,9 @@ class LocalRunExecutor:
                     "last_tool_status": tool.status,
                     "last_error_code": tool.error_code,
                 },
+                changed_subtasks=(
+                    [finished_subtask] if finished_subtask is not None else []
+                ),
                 reason="tool_cancelled",
             )
         await event_broker.notify(run_id)
@@ -5105,14 +5214,7 @@ class LocalRunExecutor:
 
     async def _wait_until_runnable(self, run_id: str) -> bool:
         while self._started:
-            with SessionLocal() as db:
-                run = db.get(Run, run_id)
-                status = run.status if run is not None else None
-                violation = (
-                    _run_limit_violation(run)
-                    if run is not None and run.status not in TERMINAL_STATUSES
-                    else None
-                )
+            status, violation, _has_pending_steers = self._run_control_state(run_id)
             if status is None or status in TERMINAL_STATUSES:
                 return False
             if violation is not None:
@@ -5120,11 +5222,29 @@ class LocalRunExecutor:
                 return False
             if status != PAUSED:
                 return True
-            await asyncio.sleep(0.15)
+            await event_broker.wait(run_id, timeout=0.15)
+            self.invalidate_control(run_id)
         return False
 
     async def _has_pending_steers(self, run_id: str) -> bool:
+        _status, _violation, has_pending_steers = self._run_control_state(run_id)
+        return has_pending_steers
+
+    def _run_control_state(
+        self, run_id: str
+    ) -> tuple[str | None, RunLimitViolation | None, bool]:
+        now = time.monotonic()
+        cached = self._run_control_cache.get(run_id)
+        if cached is not None and now - cached[0] < _RUN_CONTROL_CACHE_SECONDS:
+            return cached[1], cached[2], cached[3]
         with SessionLocal() as db:
+            run = db.get(Run, run_id)
+            status = run.status if run is not None else None
+            violation = (
+                _run_limit_violation(run)
+                if run is not None and run.status not in TERMINAL_STATUSES
+                else None
+            )
             command_id = db.scalar(
                 select(RunCommand.id).where(
                     RunCommand.run_id == run_id,
@@ -5132,7 +5252,9 @@ class LocalRunExecutor:
                     RunCommand.status == "waiting_safe_boundary",
                 )
             )
-        return command_id is not None
+        state = (status, violation, command_id is not None)
+        self._run_control_cache[run_id] = (now, *state)
+        return state
 
     async def _mark_turn_interrupted_by_steer(
         self, run_id: str, message_id: str, partial_text: str
@@ -6068,16 +6190,16 @@ def _provider_tool_result_reference_content(
             "instruction": "Use read_tool_result with offset and limit to read the stored result.",
         }
     else:
-        payload["instruction"] = "The complete result is not replayable; use this bounded summary."
+        payload["instruction"] = (
+            "The complete result is not replayable; use this bounded summary."
+        )
     if include_preview:
         payload["providerContextPreview"] = _bounded_text(
             serialized, _WEB_PROVIDER_PREVIEW_CHARS
         )
     bounded = json.dumps(payload, ensure_ascii=False)
     return (
-        wrap_untrusted_tool_result(bounded, source=tool_name)
-        if untrusted
-        else bounded
+        wrap_untrusted_tool_result(bounded, source=tool_name) if untrusted else bounded
     )
 
 

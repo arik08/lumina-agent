@@ -107,6 +107,40 @@ def test_executor_cancel_many_actively_cancels_matching_tasks(tmp_path: Path) ->
     asyncio.run(exercise())
 
 
+def test_sqlite_claim_waiter_wakes_on_signal_without_polling(tmp_path: Path) -> None:
+    settings = Settings(
+        environment="test",
+        DATABASE_URL=f"sqlite:///{(tmp_path / 'claim-wait.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    executor = LocalRunExecutor(settings)
+
+    async def exercise() -> None:
+        claim_count = 0
+
+        async def claim(_run_id: str):
+            nonlocal claim_count
+            claim_count += 1
+            return "wait" if claim_count == 1 else "stop"
+
+        executor._started = True
+        executor._claim = claim  # type: ignore[method-assign]
+        task = asyncio.create_task(executor._run_when_claimable("queued-run"))
+        await asyncio.sleep(0.25)
+        assert claim_count == 1
+
+        executor._signal_claim_change()
+        await asyncio.wait_for(task, timeout=1)
+        assert claim_count == 2
+        if executor._background_tasks:
+            await asyncio.gather(*executor._background_tasks)
+
+    asyncio.run(exercise())
+
+
 def test_provider_wait_stops_when_database_run_becomes_terminal(tmp_path: Path) -> None:
     settings = Settings(
         environment="test",
