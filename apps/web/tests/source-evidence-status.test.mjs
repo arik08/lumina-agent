@@ -35,6 +35,9 @@ test("source evidence distinguishes cited, reviewed, and search-only material", 
   assert.match(stylesheet, /\.is-reference-only[^}]*background: var\(--surface-soft\)/s);
   assert.match(stylesheet, /\.inline-citation \{[^}]*font-size: 1em;[^}]*vertical-align: baseline;/s);
   assert.match(stylesheet, /\.final-answer-meta \{[^}]*container-type: inline-size;/s);
+  assert.match(app, /sourcesOpen && createPortal\(\(/);
+  assert.match(app, /document\.querySelector\("\.app-shell"\) \?\? document\.body/);
+  assert.match(stylesheet, /\.answer-sources-layer \{ display: contents; \}/);
   assert.match(stylesheet, /\.research-verification-warning \{[^}]*var\(--danger-border\)/s);
   assert.match(stylesheet, /@container \(max-width: 820px\)[^{]*\{[^}]*\.answer-completed-time \{ display: none; \}/s);
   assert.match(stylesheet, /@container \(max-width: 690px\)[^{]*\{[^}]*\.answer-source-count\.is-reference-only \{ display: none; \}/s);

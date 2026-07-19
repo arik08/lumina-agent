@@ -2200,8 +2200,8 @@ export const AssistantTurn = memo(function AssistantTurn({
                         {reviewedSourceCount > 0 && <span className="answer-source-count is-reviewed"> · 본문 확인 {reviewedSourceCount}</span>}
                         {referenceSourceCount > 0 && <span className="answer-source-count is-reference-only"> · 검색 참고 {referenceSourceCount}</span>}
                       </button>
-                      {sourcesOpen && (
-                        <>
+                      {sourcesOpen && createPortal((
+                        <div className="answer-sources answer-sources-layer">
                           <button className="answer-sources-backdrop" type="button" aria-label="검색 및 참고 출처 닫기" onClick={closeSources} />
                           <div className="answer-sources-popover" onScroll={handleSourcesScroll}>
                             {expandedSourceTarget ? (
@@ -2266,8 +2266,8 @@ export const AssistantTurn = memo(function AssistantTurn({
                               </>
                             )}
                           </div>
-                        </>
-                      )}
+                        </div>
+                      ), document.querySelector(".app-shell") ?? document.body)}
                     </div>
                   )}
                 </div>
