@@ -40,3 +40,7 @@ def test_production_bundle_falls_back_for_client_side_routes(
         health = client.get("/api/health/live")
         assert health.status_code == 200
         assert health.json()["status"] == "ok"
+
+        missing_api = client.get("/api/definitely-not-a-route")
+        assert missing_api.status_code == 404
+        assert missing_api.headers["content-type"].startswith("application/json")

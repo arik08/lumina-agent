@@ -133,6 +133,7 @@ interface ApiRequestOptions extends Omit<RequestInit, "body"> {
 
 const apiBase = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
 const streamBase = (import.meta.env.VITE_STREAM_BASE_URL || "/stream").replace(/\/$/, "");
+const BACKEND_CONTRACT_MISMATCH_MESSAGE = "Frontend와 Backend 버전이 일치하지 않습니다. Lumina 실행 창에서 R을 눌러 다시 시작해 주세요.";
 
 export function attachmentContentUrl(attachmentId: string) {
   return `${apiBase}/attachments/${encodeURIComponent(attachmentId)}/content`;
@@ -220,11 +221,16 @@ async function parseBody(response: Response): Promise<unknown> {
 
 function apiErrorFrom(response: Response, payload: unknown) {
   if (isRecord(payload)) {
+    const routeMissing = response.status === 404 && payload.detail === "Not Found";
     return new ApiError(
-      typeof payload.message === "string" ? payload.message : "요청을 처리하지 못했습니다.",
+      routeMissing
+        ? BACKEND_CONTRACT_MISMATCH_MESSAGE
+        : typeof payload.message === "string" ? payload.message : "요청을 처리하지 못했습니다.",
       {
         status: response.status,
-        code: typeof payload.code === "string" ? payload.code : "request_failed",
+        code: routeMissing
+          ? "backend_contract_mismatch"
+          : typeof payload.code === "string" ? payload.code : "request_failed",
         requestId: typeof payload.requestId === "string" ? payload.requestId : undefined,
         field: typeof payload.field === "string" ? payload.field : undefined,
         details: payload.details,
@@ -311,10 +317,13 @@ async function request<T>(path: string, options?: ApiRequestOptions): Promise<T>
   const response = await fetchApi(path, options);
   const contentType = response.headers.get("content-type") ?? "";
   if (response.status !== 204 && !contentType.includes("application/json")) {
-    throw new ApiError("서버가 예상하지 못한 응답을 반환했습니다. Lumina 실행 상태를 확인해 주세요.", {
+    const backendContractMismatch = contentType.includes("text/html");
+    throw new ApiError(backendContractMismatch
+      ? BACKEND_CONTRACT_MISMATCH_MESSAGE
+      : "서버가 예상하지 못한 응답을 반환했습니다. Lumina 실행 상태를 확인해 주세요.", {
       status: 502,
-      code: "invalid_api_response",
-      details: { contentType },
+      code: backendContractMismatch ? "backend_contract_mismatch" : "invalid_api_response",
+      details: { contentType, path, method: (options?.method ?? "GET").toUpperCase() },
     });
   }
   const payload = await parseBody(response);

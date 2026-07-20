@@ -315,6 +315,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def startup_status() -> dict[str, Any]:
         return startup_tracker.snapshot(executor_started=local_run_executor.started)
 
+    @application.api_route(
+        "/api/{path:path}",
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+        include_in_schema=False,
+    )
+    @application.api_route(
+        "/stream/{path:path}",
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+        include_in_schema=False,
+    )
+    def backend_route_not_found(path: str) -> JSONResponse:
+        del path
+        return JSONResponse(status_code=404, content={"detail": "Not Found"})
+
     frontend_dist = REPOSITORY_ROOT / "apps" / "web" / "dist"
     if frontend_dist.is_dir():
         application.mount(
