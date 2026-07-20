@@ -52,6 +52,7 @@ from lumina.runs.service import (
     create_run,
     run_snapshot,
     run_snapshots,
+    runs_for_user,
 )
 
 
@@ -523,6 +524,50 @@ def test_run_snapshot_batch_query_count_is_independent_of_page_size(
             return count
 
         assert query_count(runs[:1]) == query_count(runs)
+
+
+def test_run_access_batch_uses_one_query_for_multiple_sessions(tmp_path: Path) -> None:
+    _app, ids = _setup(tmp_path)
+    with SessionLocal() as db:
+        admin = db.get(User, ids["admin_id"])
+        assert admin is not None
+        runs = [
+            Run(
+                organization_id=admin.organization_id,
+                project_id=ids["project_id"],
+                conversation_id=ids["conversation_id"],
+                user_id=admin.id,
+                status="queued",
+                provider_id="mock",
+                model_key="mock-agent",
+                runtime_model_id="mock-agent",
+                model_display_name="Mock Agent",
+                snapshot_json={},
+                usage_json={},
+            )
+            for _index in range(20)
+        ]
+        db.add_all(runs)
+        db.commit()
+        run_ids = [run.id for run in runs]
+        bind = db.get_bind()
+
+        def query_count(selected_ids: list[str]) -> int:
+            count = 0
+
+            def increment(*_args: object) -> None:
+                nonlocal count
+                count += 1
+
+            sqlalchemy_event.listen(bind, "before_cursor_execute", increment)
+            try:
+                assert len(runs_for_user(db, admin, selected_ids)) == len(selected_ids)
+            finally:
+                sqlalchemy_event.remove(bind, "before_cursor_execute", increment)
+            return count
+
+        assert query_count(run_ids[:1]) == 1
+        assert query_count(run_ids) == 1
 
 
 def test_context_candidate_query_count_is_independent_of_artifact_count(

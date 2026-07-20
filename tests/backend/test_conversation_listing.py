@@ -452,6 +452,9 @@ def test_turn_set_cursor_pages_backwards_without_overlap(tmp_path: Path) -> None
             params={"limit_turn_sets": 2},
         ).json()
         assert len(latest["turnSets"]) == 2
+        assert {item["runId"] for item in latest["runSnapshots"]} == {
+            item["runId"] for item in latest["turnSets"]
+        }
         assert latest["hasMoreBefore"] is True
         assert latest["totalQuestionCount"] == 5
         assert latest["usageBeforePage"]["input_tokens"] == 600
@@ -467,6 +470,9 @@ def test_turn_set_cursor_pages_backwards_without_overlap(tmp_path: Path) -> None
             },
         ).json()
         assert len(older["turnSets"]) == 2
+        assert {item["runId"] for item in older["runSnapshots"]} == {
+            item["runId"] for item in older["turnSets"]
+        }
         assert older["totalQuestionCount"] == 5
         assert older["usageBeforePage"]["input_tokens"] == 100
         assert {item["id"] for item in latest["turnSets"]}.isdisjoint(

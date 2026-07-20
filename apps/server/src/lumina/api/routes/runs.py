@@ -25,6 +25,7 @@ from ...runs.service import (
     run_for_user,
     run_snapshot,
     run_snapshots,
+    runs_for_user,
 )
 from ...runs.state import TERMINAL_STATUSES
 from ..dependencies import (
@@ -138,7 +139,7 @@ def post_run_snapshots(
     run_ids = list(dict.fromkeys(str(item) for item in raw_run_ids if item))
     if len(run_ids) != len(raw_run_ids):
         raise ApiProblem(422, "invalid_run_ids", "Run ID가 올바르지 않습니다.")
-    runs = [run_for_user(db, context.user, run_id) for run_id in run_ids]
+    runs = runs_for_user(db, context.user, run_ids)
     return run_snapshots(db, runs)
 
 

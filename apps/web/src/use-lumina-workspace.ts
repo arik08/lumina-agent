@@ -139,6 +139,17 @@ function apiMessage(error: unknown) {
   return "요청을 처리하지 못했습니다.";
 }
 
+async function getRunSnapshotsBestEffort(runIds: string[]) {
+  try {
+    return await api.runs.getSnapshots(runIds);
+  } catch (batchError) {
+    const settled = await Promise.allSettled(runIds.map((runId) => api.runs.getSnapshot(runId)));
+    const snapshots = settled.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+    if (snapshots.length === 0) throw batchError;
+    return snapshots;
+  }
+}
+
 const CONVERSATION_LIST_PAGE_SIZE = 20;
 const CACHED_CONVERSATION_RUNTIME_LIMIT = 8;
 
@@ -331,7 +342,8 @@ export function useLuminaWorkspace() {
       }));
       const runIds = page.turnSets.flatMap((turnSet) => turnSet.runId ? [turnSet.runId] : []);
       if (runIds.length > 0) {
-        const restoredSnapshots = await api.runs.getSnapshots(runIds).catch(() => []);
+        const restoredSnapshots = page.runSnapshots
+          ?? await api.runs.getSnapshots(runIds).catch(() => []);
         restoredSnapshots.forEach((snapshot) => {
           setRunAssistantDraft(snapshot.runId, snapshot.assistantDraft);
           setRunArtifactProgress(snapshot.runId, snapshot.artifactProgress ?? null);
@@ -395,10 +407,14 @@ export function useLuminaWorkspace() {
       let totalQuestionCount = runtime.totalQuestionCount;
       let usageBeforeLoadedTurnSets = runtime.usageBeforeLoadedTurnSets;
       let fetchedTurnSets: TurnSet[] = [];
+      let fetchedSnapshots: RunSnapshot[] | null = [];
 
       do {
         const page = await api.conversations.getTurnSets(conversationId, cursor, pageSize);
         fetchedTurnSets = [...page.turnSets, ...fetchedTurnSets];
+        fetchedSnapshots = page.runSnapshots && fetchedSnapshots
+          ? [...page.runSnapshots, ...fetchedSnapshots]
+          : null;
         unloadedQuestionCount = Math.max(
           0,
           unloadedQuestionCount - page.turnSets.reduce(
@@ -420,9 +436,10 @@ export function useLuminaWorkspace() {
         && cursor
       );
 
-      const restoredSnapshots = await api.runs.getSnapshots(
-        fetchedTurnSets.flatMap((turnSet) => turnSet.runId ? [turnSet.runId] : []),
-      ).catch(() => []);
+      const restoredSnapshots = fetchedSnapshots
+        ?? await api.runs.getSnapshots(
+          fetchedTurnSets.flatMap((turnSet) => turnSet.runId ? [turnSet.runId] : []),
+        ).catch(() => []);
       restoredSnapshots.forEach((snapshot) => {
         setRunAssistantDraft(snapshot.runId, snapshot.assistantDraft);
         setRunArtifactProgress(snapshot.runId, snapshot.artifactProgress ?? null);
@@ -845,18 +862,26 @@ export function useLuminaWorkspace() {
     }
   }, []);
 
-  const reconcileRunSnapshot = useCallback(async (runId: string) => {
-    if (reconcilingRunIdsRef.current.has(runId)) return;
-    reconcilingRunIdsRef.current.add(runId);
+  const reconcileRunSnapshots = useCallback(async (runIds: Iterable<string>) => {
+    const pendingRunIds = [...new Set(runIds)].filter(
+      (runId) => !reconcilingRunIdsRef.current.has(runId),
+    );
+    if (pendingRunIds.length === 0) return;
+    pendingRunIds.forEach((runId) => reconcilingRunIdsRef.current.add(runId));
     try {
-      mergeAuthoritativeRunSnapshot(await api.runs.getSnapshot(runId));
+      const snapshots = await getRunSnapshotsBestEffort(pendingRunIds);
+      snapshots.forEach(mergeAuthoritativeRunSnapshot);
     } catch {
       // The SSE reconnect path keeps retrying. A later interval or focus event
       // will reconcile the authoritative state when the Backend is reachable.
     } finally {
-      reconcilingRunIdsRef.current.delete(runId);
+      pendingRunIds.forEach((runId) => reconcilingRunIdsRef.current.delete(runId));
     }
   }, [mergeAuthoritativeRunSnapshot]);
+
+  const reconcileRunSnapshot = useCallback(async (runId: string) => {
+    await reconcileRunSnapshots([runId]);
+  }, [reconcileRunSnapshots]);
 
   const openSnapshotStream = useCallback((snapshot: RunSnapshot) => {
     if (isTerminalRunStatus(snapshot.status) || streamsRef.current.has(snapshot.runId)) return;
@@ -895,46 +920,31 @@ export function useLuminaWorkspace() {
     streamsRef.current.set(snapshot.runId, close);
   }, [applyRunEvent, reconcileRunSnapshot]);
 
-  const hydrateRun = useCallback(async (runId: string, conversationId: string) => {
-    if (streamsRef.current.has(runId) || hydratingRef.current.has(runId)) return;
-    hydratingRef.current.add(runId);
+  const hydrateRuns = useCallback(async (runIds: Iterable<string>) => {
+    const pendingRunIds = [...new Set(runIds)].filter(
+      (runId) => !streamsRef.current.has(runId) && !hydratingRef.current.has(runId),
+    );
+    if (pendingRunIds.length === 0) return;
+    pendingRunIds.forEach((runId) => hydratingRef.current.add(runId));
     try {
-      const snapshot = await api.runs.getSnapshot(runId);
-      const knownEventSequence = eventSequencesRef.current.get(runId) ?? 0;
-      if (snapshot.lastSequence >= knownEventSequence) {
-        setRunAssistantDraft(runId, snapshot.assistantDraft);
-        setRunArtifactProgress(runId, snapshot.artifactProgress ?? null);
-      }
-      eventSequencesRef.current.set(runId, Math.max(knownEventSequence, snapshot.lastSequence));
-      setRuntimes((current) => {
-        const runtime = current[conversationId] ?? emptyRuntime();
-        return {
-          ...current,
-          [conversationId]: {
-            ...runtime,
-            turnSets: ensureTurnSet(runtime, runId).map((turnSet) =>
-              turnSet.runId === runId
-                ? { ...turnSet, plan: snapshot.plan, toolExecutions: snapshot.toolExecutions, artifacts: snapshot.artifacts }
-                : turnSet,
-            ),
-            snapshots: { ...runtime.snapshots, [runId]: snapshot },
-            lastSequences: { ...runtime.lastSequences, [runId]: snapshot.lastSequence },
-          },
-        };
+      const snapshots = await getRunSnapshotsBestEffort(pendingRunIds);
+      snapshots.forEach((snapshot) => {
+        mergeAuthoritativeRunSnapshot(snapshot);
+        openSnapshotStream(snapshot);
       });
-      openSnapshotStream(snapshot);
     } catch (error) {
       setNotice(apiMessage(error));
     } finally {
-      hydratingRef.current.delete(runId);
+      pendingRunIds.forEach((runId) => hydratingRef.current.delete(runId));
     }
-  }, [openSnapshotStream]);
+  }, [mergeAuthoritativeRunSnapshot, openSnapshotStream]);
 
   useEffect(() => {
-    conversations.forEach((conversation) => {
-      if (conversation.activeRunId) void hydrateRun(conversation.activeRunId, conversation.id);
-    });
-  }, [conversations, hydrateRun]);
+    const runIds = conversations.flatMap(
+      (conversation) => conversation.activeRunId ? [conversation.activeRunId] : [],
+    );
+    void hydrateRuns(runIds);
+  }, [conversations, hydrateRuns]);
 
   useEffect(() => {
     if (!authSession) return;
@@ -948,7 +958,7 @@ export function useLuminaWorkspace() {
       conversationsRef.current.forEach((conversation) => {
         if (conversation.activeRunId) runIds.add(conversation.activeRunId);
       });
-      runIds.forEach((runId) => void reconcileRunSnapshot(runId));
+      void reconcileRunSnapshots(runIds);
     };
     const reconcileActiveRunsWhenVisible = () => {
       if (document.visibilityState === "visible") reconcileActiveRuns();
@@ -961,7 +971,7 @@ export function useLuminaWorkspace() {
       window.removeEventListener("focus", reconcileActiveRunsWhenVisible);
       document.removeEventListener("visibilitychange", reconcileActiveRunsWhenVisible);
     };
-  }, [authSession, reconcileRunSnapshot]);
+  }, [authSession, reconcileRunSnapshots]);
 
   useEffect(() => {
     if (!activeConversationId) return;

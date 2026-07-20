@@ -21,7 +21,7 @@ from ..api.schemas import (
 from ..artifacts.service import artifact_summary
 from ..config import Settings, get_settings
 from ..audit import record_audit
-from ..authorization import require_conversation, require_project
+from ..authorization import conversation_access_query, require_conversation, require_project
 from ..extensions.service import resolve_skill_snapshot
 from ..instructions import (
     resolve_instruction_stack_from_models,
@@ -112,6 +112,7 @@ __all__ = (
     "fail_plan",
     "pause_plan",
     "plan_snapshot",
+    "runs_for_user",
     "run_snapshots",
     "resume_plan",
     "retry_plan_step",
@@ -1149,11 +1150,35 @@ def transition_run(
 
 
 def run_for_user(db: Session, user: User, run_id: str, *, write: bool = False) -> Run:
-    run = db.get(Run, run_id)
-    if run is None:
+    return runs_for_user(db, user, [run_id], write=write)[0]
+
+
+def runs_for_user(
+    db: Session,
+    user: User,
+    run_ids: Sequence[str],
+    *,
+    write: bool = False,
+) -> list[Run]:
+    ordered_ids = list(dict.fromkeys(run_ids))
+    if not ordered_ids:
+        return []
+    accessible_conversation_ids = conversation_access_query(
+        user,
+        write=write,
+    ).with_only_columns(Conversation.id)
+    rows = list(
+        db.scalars(
+            select(Run).where(
+                Run.id.in_(ordered_ids),
+                Run.conversation_id.in_(accessible_conversation_ids),
+            )
+        )
+    )
+    by_id = {run.id: run for run in rows}
+    if any(run_id not in by_id for run_id in ordered_ids):
         raise ApiProblem(404, "not_found", "Run을 찾을 수 없습니다.")
-    require_conversation(db, user, run.conversation_id, write=write)
-    return run
+    return [by_id[run_id] for run_id in ordered_ids]
 
 
 def event_response(event: RunEvent) -> dict[str, Any]:

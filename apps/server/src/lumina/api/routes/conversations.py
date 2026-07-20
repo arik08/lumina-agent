@@ -679,6 +679,7 @@ def get_turn_sets(
         )
     return {
         "turnSets": turn_sets,
+        "runSnapshots": list(snapshots_by_run.values()),
         "previousCursor": selected_keys[0] if has_more and selected_keys else None,
         "hasMoreBefore": has_more,
         "totalQuestionCount": total_question_count,

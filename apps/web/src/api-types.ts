@@ -2127,6 +2127,7 @@ export interface TurnSet {
 
 export interface TurnSetPage {
   turnSets: TurnSet[];
+  runSnapshots?: RunSnapshot[];
   previousCursor: string | null;
   hasMoreBefore: boolean;
   totalQuestionCount?: number;

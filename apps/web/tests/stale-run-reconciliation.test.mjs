@@ -9,11 +9,24 @@ const workspaceSource = await readFile(
 
 test("active runs periodically reconcile with the authoritative server snapshot", () => {
   assert.match(workspaceSource, /ACTIVE_RUN_RECONCILIATION_INTERVAL_MS = 15_000/);
-  assert.match(workspaceSource, /mergeAuthoritativeRunSnapshot\(await api\.runs\.getSnapshot\(runId\)\)/);
+  assert.match(workspaceSource, /getRunSnapshotsBestEffort\(pendingRunIds\)/);
+  assert.match(workspaceSource, /void reconcileRunSnapshots\(runIds\)/);
+  assert.doesNotMatch(workspaceSource, /runIds\.forEach\(\(runId\) => void reconcileRunSnapshot\(runId\)\)/);
   assert.match(workspaceSource, /if \(document\.visibilityState === "visible"\) reconcileActiveRuns\(\)/);
   assert.match(workspaceSource, /window\.setInterval\(reconcileActiveRunsWhenVisible, ACTIVE_RUN_RECONCILIATION_INTERVAL_MS\)/);
   assert.match(workspaceSource, /window\.addEventListener\("focus", reconcileActiveRunsWhenVisible\)/);
   assert.match(workspaceSource, /document\.addEventListener\("visibilitychange", reconcileActiveRunsWhenVisible\)/);
+});
+
+test("active run hydration batches sessions and retains an isolated failure fallback", () => {
+  assert.match(workspaceSource, /const hydrateRuns = useCallback\(async \(runIds: Iterable<string>\)/);
+  assert.match(workspaceSource, /void hydrateRuns\(runIds\)/);
+  assert.match(workspaceSource, /Promise\.allSettled\(runIds\.map\(\(runId\) => api\.runs\.getSnapshot\(runId\)\)\)/);
+});
+
+test("conversation paging reuses snapshots already serialized by the server", () => {
+  assert.match(workspaceSource, /const restoredSnapshots = page\.runSnapshots[\s\S]*?\?\? await api\.runs\.getSnapshots/);
+  assert.match(workspaceSource, /let fetchedSnapshots: RunSnapshot\[\] \| null = \[\]/);
 });
 
 test("stream errors reconcile immediately and terminal snapshots close stale streams", () => {
