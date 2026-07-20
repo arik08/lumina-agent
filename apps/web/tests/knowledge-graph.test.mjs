@@ -19,6 +19,8 @@ test("Knowledge graph runs the coupled D3 force simulation in a worker", async (
   assert.match(worker, /forceCollide<LayoutNode>\(\)/);
   assert.match(worker, /\.velocityDecay\(0\.36\)/);
   assert.match(worker, /new Float32Array\(nodes\.length \* 2\)/);
+  assert.match(worker, /const positionPublishIntervalMs = 16;/);
+  assert.match(worker, /now - lastPublishedAt < positionPublishIntervalMs/);
   assert.match(graph, /data-force-engine="d3-worker"/);
   assert.match(graph, /centerStrength: 0\.032/);
   assert.match(graph, /<ForceControl label="중력" value=\{forceSettings\.centerStrength\}/);
@@ -35,6 +37,15 @@ test("Knowledge graph sends drag and release work to the layout worker", async (
   assert.match(graph, /node\.fy = null/);
   assert.match(graph, /type: "pin"/);
   assert.match(graph, /type: "release"/);
+  assert.match(graph, /if \(dragState\?\.node === node\) return;/);
+  assert.match(graph, /let dragSyncFrame: number \| null = null;/);
+  assert.match(graph, /function requestDraggedNodeSync\(\)[\s\S]*?dragSyncFrame = requestAnimationFrame/);
+  assert.match(graph, /function flushDraggedNodeSync\(node: GraphNode\)[\s\S]*?cancelAnimationFrame\(dragSyncFrame\)/);
+  assert.match(graph, /requestDraggedNodeSync\(\);/);
+  assert.ok(
+    graph.indexOf("flushDraggedNodeSync(completedDrag.node)") < graph.indexOf("releaseNode(completedDrag.node)"),
+    "the latest coalesced drag position must reach the worker before release",
+  );
   assert.match(worker, /simulation\.alphaTarget\(0\)/);
   assert.match(graph, /if \(openDocument && !completedDrag\.moved\) documentToOpen = completedDrag\.node/);
   assert.doesNotMatch(graph, /canvas\.addEventListener\("click"/);

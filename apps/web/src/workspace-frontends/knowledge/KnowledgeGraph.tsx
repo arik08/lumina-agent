@@ -204,6 +204,7 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
     let height = 0;
     let pixelRatio = 1;
     let frame: number | null = null;
+    let dragSyncFrame: number | null = null;
     let hoverFrame: number | null = null;
     let hoverAnimationTimestamp: number | null = null;
     let zoomFrame: number | null = null;
@@ -345,6 +346,7 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
       if (event.data?.type !== "positions" || !(event.data.positions instanceof ArrayBuffer)) return;
       const positions = new Float32Array(event.data.positions);
       nodes.forEach((node, index) => {
+        if (dragState?.node === node) return;
         node.x = positions[index * 2];
         node.y = positions[index * 2 + 1];
       });
@@ -455,6 +457,30 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
       layoutWorkerRef.current?.postMessage({ type: "heat", alpha });
     }
 
+    function postDraggedNodePosition(node: GraphNode) {
+      if (node.x === undefined || node.y === undefined) return;
+      layoutWorkerRef.current?.postMessage({
+        type: "pin",
+        nodeId: node.id,
+        x: node.x,
+        y: node.y,
+      });
+    }
+
+    function requestDraggedNodeSync() {
+      if (dragSyncFrame !== null) return;
+      dragSyncFrame = requestAnimationFrame(() => {
+        dragSyncFrame = null;
+        if (dragState) postDraggedNodePosition(dragState.node);
+      });
+    }
+
+    function flushDraggedNodeSync(node: GraphNode) {
+      if (dragSyncFrame !== null) cancelAnimationFrame(dragSyncFrame);
+      dragSyncFrame = null;
+      postDraggedNodePosition(node);
+    }
+
     function releaseNode(node: GraphNode) {
       node.fx = null;
       node.fy = null;
@@ -504,12 +530,7 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
         dragState.node.x = world.x;
         dragState.node.y = world.y;
         dragState.moved ||= Math.hypot(point.x - dragState.startX, point.y - dragState.startY) > 4;
-        layoutWorkerRef.current?.postMessage({
-          type: "pin",
-          nodeId: dragState.node.id,
-          x: world.x,
-          y: world.y,
-        });
+        requestDraggedNodeSync();
         requestDraw();
         return;
       }
@@ -538,6 +559,7 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
       let documentToOpen: GraphNode | null = null;
       if (dragState?.pointerId === event.pointerId) {
         const completedDrag = dragState;
+        flushDraggedNodeSync(completedDrag.node);
         releaseNode(completedDrag.node);
         dragState = null;
         if (openDocument && !completedDrag.moved) documentToOpen = completedDrag.node;
@@ -706,6 +728,7 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
       canvas.removeEventListener("wheel", onWheel);
       nodeLayer.removeEventListener("wheel", onWheel);
       if (frame !== null) cancelAnimationFrame(frame);
+      if (dragSyncFrame !== null) cancelAnimationFrame(dragSyncFrame);
       if (hoverFrame !== null) cancelAnimationFrame(hoverFrame);
       if (zoomFrame !== null) cancelAnimationFrame(zoomFrame);
     };

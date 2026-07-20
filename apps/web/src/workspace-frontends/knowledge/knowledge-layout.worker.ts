@@ -50,10 +50,11 @@ let forces: {
 } | null = null;
 let reducedMotion = false;
 let lastPublishedAt = 0;
+const positionPublishIntervalMs = 16;
 
 function publish(state: "running" | "settled", force = false) {
   const now = performance.now();
-  if (!force && state === "running" && now - lastPublishedAt < 32) return;
+  if (!force && state === "running" && now - lastPublishedAt < positionPublishIntervalMs) return;
   lastPublishedAt = now;
   const positions = new Float32Array(nodes.length * 2);
   nodes.forEach((node, index) => {
