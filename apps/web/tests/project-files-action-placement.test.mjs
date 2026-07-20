@@ -73,6 +73,19 @@ test("file repository is an explorer and viewer with recursive folder upload", a
   assert.match(resizer, /window\.localStorage\.setItem/);
 });
 
+test("file tree construction indexes folders instead of rescanning siblings", async () => {
+  const view = await read("../src/components/ProjectFilesView.tsx");
+  const buildFileTree = view.slice(
+    view.indexOf("function buildFileTree"),
+    view.indexOf("function parentPath"),
+  );
+
+  assert.match(buildFileTree, /const folderByPath = new Map<string, FileTreeNode>\(\)/);
+  assert.match(buildFileTree, /folderByPath\.get\(currentPath\)/);
+  assert.match(buildFileTree, /folderByPath\.set\(currentPath, folder\)/);
+  assert.doesNotMatch(buildFileTree, /children\.find\(/);
+});
+
 test("file detail keeps compact metadata immediately before download", async () => {
   const [view, styles] = await Promise.all([
     read("../src/components/ProjectFilesView.tsx"),

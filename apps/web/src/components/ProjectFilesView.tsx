@@ -129,15 +129,17 @@ function saveDownload(download: ArtifactDownload) {
 
 function buildFileTree(files: ProjectFileSummary[], folders: ProjectFolderSummary[]) {
   const roots: FileTreeNode[] = [];
+  const folderByPath = new Map<string, FileTreeNode>();
   const ensureFolder = (path: string) => {
     const parts = path.split("/").filter(Boolean);
     let children = roots;
     let currentPath = "";
     for (const part of parts) {
       currentPath = currentPath ? `${currentPath}/${part}` : part;
-      let folder = children.find((item) => item.type === "folder" && item.name === part);
+      let folder = folderByPath.get(currentPath);
       if (!folder) {
         folder = { key: `folder:${currentPath}`, type: "folder", name: part, path: currentPath, children: [] };
+        folderByPath.set(currentPath, folder);
         children.push(folder);
       }
       children = folder.children;
