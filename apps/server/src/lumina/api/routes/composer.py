@@ -107,13 +107,21 @@ def _context_candidates(db: Session, project_id: str) -> list[dict[str, Any]]:
             .limit(100)
         )
     )
-    artifacts = list(
-        db.scalars(
-            select(Artifact)
+    artifact_rows = list(
+        db.execute(
+            select(Artifact, ArtifactVersion)
+            .outerjoin(
+                ArtifactVersion,
+                (ArtifactVersion.artifact_id == Artifact.id)
+                & (
+                    ArtifactVersion.version_number
+                    == Artifact.current_version_number
+                ),
+            )
             .where(Artifact.project_id == project_id, Artifact.deleted_at.is_(None))
             .order_by(Artifact.updated_at.desc(), Artifact.id)
             .limit(100)
-        )
+        ).tuples()
     )
     folder_items: list[dict[str, Any]] = [
         {
@@ -190,13 +198,7 @@ def _context_candidates(db: Session, project_id: str) -> list[dict[str, Any]]:
         for attachment in attachments
     ]
     artifact_items: list[dict[str, Any]] = []
-    for artifact in artifacts:
-        version = db.scalar(
-            select(ArtifactVersion).where(
-                ArtifactVersion.artifact_id == artifact.id,
-                ArtifactVersion.version_number == artifact.current_version_number,
-            )
-        )
+    for artifact, version in artifact_rows:
         if version is None:
             continue
         artifact_items.append(

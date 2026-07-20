@@ -524,6 +524,65 @@ def test_run_snapshot_batch_query_count_is_independent_of_page_size(
 
         assert query_count(runs[:1]) == query_count(runs)
 
+
+def test_context_candidate_query_count_is_independent_of_artifact_count(
+    tmp_path: Path,
+) -> None:
+    _app, ids = _setup(tmp_path)
+    with SessionLocal() as db:
+        admin = db.get(User, ids["admin_id"])
+        assert admin is not None
+        bind = db.get_bind()
+
+        def query_count() -> tuple[int, list[dict[str, Any]]]:
+            count = 0
+
+            def increment(*_args: object) -> None:
+                nonlocal count
+                count += 1
+
+            sqlalchemy_event.listen(bind, "before_cursor_execute", increment)
+            try:
+                candidates = composer._context_candidates(db, ids["project_id"])
+            finally:
+                sqlalchemy_event.remove(bind, "before_cursor_execute", increment)
+            return count, candidates
+
+        initial_count, initial_candidates = query_count()
+        for index in range(12):
+            artifact = Artifact(
+                organization_id=admin.organization_id,
+                project_id=ids["project_id"],
+                conversation_id=ids["conversation_id"],
+                created_by_user_id=admin.id,
+                display_name=f"성능 검증 산출물 {index}",
+                kind="html",
+                mime_type="text/html",
+                current_version_number=1,
+            )
+            db.add(artifact)
+            db.flush()
+            db.add(
+                ArtifactVersion(
+                    artifact_id=artifact.id,
+                    version_number=1,
+                    storage_key=f"artifacts/query-count/{index}.html",
+                    content_hash=f"{index + 1:064x}",
+                    size_bytes=128,
+                    change_type="create",
+                    validation_status="valid",
+                    created_by_user_id=admin.id,
+                )
+            )
+        db.commit()
+
+        expanded_count, expanded_candidates = query_count()
+
+        assert initial_count == expanded_count == 3
+        assert sum(item["kind"] == "artifact" for item in initial_candidates) == 1
+        assert sum(item["kind"] == "artifact" for item in expanded_candidates) == 13
+
+
 def _login(client: TestClient) -> None:
     response = client.post(
         "/api/auth/login",
