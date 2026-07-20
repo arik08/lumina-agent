@@ -4,6 +4,7 @@ import { api } from "../api";
 import type { ArtifactSummary } from "../api-types";
 import { useCachedViewState } from "../view-data-cache";
 import { SelectMenu, type SelectMenuOption } from "./SelectMenu";
+import "./ArtifactLibraryView.css";
 
 type ArtifactSortOrder = "latest" | "alphabetical";
 

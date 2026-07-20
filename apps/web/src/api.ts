@@ -911,6 +911,15 @@ function isRunEvent(value: unknown): value is RunEvent {
     && typeof value.createdAt === "string";
 }
 
+function isRunArtifactProgressMessage(value: unknown): value is {
+  runId: string;
+  progress: NonNullable<RunSnapshot["artifactProgress"]>;
+} {
+  if (!isRecord(value) || typeof value.runId !== "string" || !isRecord(value.progress)) return false;
+  return typeof value.progress.tokens === "number"
+    && typeof value.progress.lines === "number";
+}
+
 export function openRunEventStream(
   runId: string,
   afterSequence: number,
@@ -936,10 +945,27 @@ export function openRunEventStream(
     }
   };
 
+  const handleArtifactProgress = (message: MessageEvent<string>) => {
+    try {
+      const parsed: unknown = JSON.parse(message.data);
+      if (!isRunArtifactProgressMessage(parsed) || parsed.runId !== runId) {
+        throw new Error("Artifact 진행 event 형식이 올바르지 않습니다.");
+      }
+      handlers.onArtifactProgress?.(parsed.runId, parsed.progress);
+    } catch (error) {
+      handlers.onError?.(
+        error instanceof Error
+          ? error
+          : new Error("Artifact 진행 event를 읽지 못했습니다."),
+      );
+    }
+  };
+
   source.onopen = () => handlers.onOpen?.();
   source.onerror = (event) => handlers.onError?.(event);
   source.onmessage = handleMessage;
   source.addEventListener("run_event", handleMessage as EventListener);
+  source.addEventListener("artifact_progress", handleArtifactProgress as EventListener);
 
   return () => source.close();
 }
@@ -1398,6 +1424,7 @@ export function openDeepAnalysisMissionEventStream(
   source.onopen = () => handlers.onOpen?.();
   source.onerror = (event) => handlers.onError?.(event);
   source.addEventListener("mission_event", handleMessage as EventListener);
+
   return () => source.close();
 }
 

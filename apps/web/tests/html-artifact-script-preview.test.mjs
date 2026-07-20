@@ -2,46 +2,64 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
-const interactiveResponseSource = readFileSync(new URL("../src/components/InteractiveResponse.tsx", import.meta.url), "utf8");
-const stylesSource = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
-const visualArtifactSkillSource = readFileSync(new URL("../../../extensions/skills/visual-artifact/SKILL.md", import.meta.url), "utf8");
+const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
+const appSource = read("../src/App.tsx");
+const previewSource = read("../src/components/ArtifactHtmlPreview.tsx");
+const previewStyles = read("../src/components/ArtifactHtmlPreview.css");
+const previewBridge = read("../public/artifact-preview-bridge.js");
+const interactiveResponseSource = read("../src/components/InteractiveResponse.tsx");
+const visualArtifactSkillSource = read("../../../extensions/skills/visual-artifact/SKILL.md");
 
-test("HTML Artifact preview executes JavaScript without same-origin access", () => {
-  assert.match(
-    appSource,
-    /sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock allow-downloads allow-popups allow-popups-to-escape-sandbox"/,
-  );
-  assert.doesNotMatch(appSource, /allow-scripts allow-same-origin/);
-  assert.match(stylesSource, /\.artifact-preview-frame \{[^}]*background: #fff;[^}]*color-scheme: light;/);
+test("HTML Artifact preview paints loading feedback before mounting its streamed iframe", () => {
+  assert.match(appSource, /const ArtifactHtmlPreview = lazy\(\(\) => import\("\.\/components\/ArtifactHtmlPreview"\)/);
+  assert.match(appSource, /<Suspense fallback=\{<div className="artifact-loading" role="progressbar" aria-label="HTML 미리보기 준비 중"/);
+  assert.match(appSource, /previewUrl=\{artifactEditing \? null : artifactPreviewUrl\}/);
+  assert.match(previewSource, /setFrameContent\(null\);[\s\S]*?requestAnimationFrame\(\(\) => \{/);
+  assert.match(previewSource, /previewUrl \? \{ src: previewUrl \} : \{ srcDoc: source \?\? "" \}/);
+  assert.match(previewSource, /role="progressbar" aria-label="HTML 미리보기 준비 중"/);
+  assert.match(previewSource, /sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock allow-downloads allow-popups allow-popups-to-escape-sandbox"/);
+  assert.doesNotMatch(previewSource, /allow-scripts allow-same-origin/);
+  assert.match(previewSource, /src=\{frameContent\.src\}/);
+  assert.match(previewStyles, /\.artifact-preview-frame \{[^}]*background: #fff;[^}]*color-scheme: light;/s);
+  assert.match(previewStyles, /@media \(prefers-reduced-motion: reduce\)/);
 });
 
-test("legacy HTML report footnotes match chat citations and remain clickable", () => {
-  assert.match(appSource, /function previewArtifactHtml\(source: string\)/);
-  assert.match(appSource, /sup\.source-ref \{[^}]*vertical-align: baseline;/s);
-  assert.match(appSource, /a\.source-ref:hover, sup\.source-ref > a:hover \{ text-decoration: none !important; \}/);
+test("HTML Artifact preview bridge preserves clickable citations without cloning the report in React", () => {
+  assert.match(previewBridge, /sup\.source-ref \{[^}]*vertical-align:baseline;/s);
+  assert.match(previewBridge, /a\.source-ref, sup\.source-ref > a/);
   assert.match(visualArtifactSkillSource, /\.source-ref:hover \{ text-decoration:none; \}/);
-  assert.match(appSource, /link\.textContent = markers\[number - 1\]/);
-  assert.match(appSource, /link\.target = "_blank"/);
-  assert.match(appSource, /card\.setAttribute\("aria-label", "출처 링크"\)/);
-  assert.match(appSource, /sourceLink\.textContent = link\.href/);
-  assert.match(appSource, /<ArtifactHtmlPreview[\s\S]*?renderMermaid=\{!artifactEditing\}/);
-  assert.match(appSource, /srcDoc=\{previewHtml\}/);
+  assert.match(previewBridge, /link\.textContent = markers\[number - 1\]/);
+  assert.match(previewBridge, /link\.target = "_blank"/);
+  assert.match(previewBridge, /card\.setAttribute\("aria-label", "출처 링크"\)/);
+  assert.match(previewBridge, /sourceLink\.textContent = link\.href/);
+  assert.doesNotMatch(previewSource, /DOMParser|cloneNode/);
 });
 
-test("HTML Artifact Mermaid blocks use the bundled renderer and expandable viewer", () => {
-  assert.match(appSource, /await import\("\.\/components\/InteractiveResponse"\)/);
-  assert.match(appSource, /const artifactMermaidCodeSelector = "pre > code\.language-mermaid/);
-  assert.match(appSource, /await renderMermaidSvg\(task\.source\)/);
-  assert.match(appSource, /task\.target\.dataset\.luminaRenderedMermaid = "true"/);
-  assert.match(appSource, /id="lumina-artifact-mermaid-zoom-style"/);
-  assert.match(appSource, /aria-label", "Mermaid 다이어그램 크게 보기"/);
-  assert.match(appSource, /clonedSvg\.setAttribute\("width", String\(viewBox\[2\]\)\)/);
-  assert.match(appSource, /clonedSvg\.setAttribute\("height", String\(viewBox\[3\]\)\)/);
-  assert.match(appSource, /changeZoom\(zoom \* \(event\.deltaY > 0 \? \.9 : 1\.1\)\)/);
-  assert.match(appSource, /viewport\.addEventListener\("pointermove"/);
+test("HTML Artifact Mermaid blocks render sequentially through the bundled renderer", () => {
+  assert.match(previewSource, /let renderQueue = Promise\.resolve\(\)/);
+  assert.match(previewSource, /renderQueue = renderQueue\.then\(async \(\) =>/);
+  assert.match(previewSource, /await import\("\.\/InteractiveResponse"\)/);
+  assert.match(previewBridge, /const renderNextMermaid = \(\) =>/);
+  assert.match(previewBridge, /if \(pendingMermaid \|\| mermaidIndex >= rawMermaid\.length\) return/);
+  assert.match(previewBridge, /parent\.postMessage\(\{ type: "lumina:artifact-mermaid-request"/);
+  assert.match(previewBridge, /pendingMermaid = null;[\s\S]*?renderNextMermaid\(\)/);
+  assert.match(previewBridge, /new MutationObserver\(scheduleEnhanceZoom\)/);
+  assert.match(previewBridge, /aria-label", "Mermaid 다이어그램 크게 보기"/);
+  assert.match(previewBridge, /changeZoom\(zoom \* \(event\.deltaY > 0 \? \.9 : 1\.1\)\)/);
+  assert.match(previewBridge, /viewport\.addEventListener\("pointermove"/);
   assert.match(visualArtifactSkillSource, /Lumina automatically adds a visible expand button/);
   assert.match(visualArtifactSkillSource, /Do not add a CDN script or initialize Mermaid/);
+});
+
+test("HTML direct editing sends cheap dirty signals and serializes only when source or save needs it", () => {
+  assert.match(appSource, /document\.addEventListener\('input', publishArtifactEditDirty\)/);
+  assert.match(appSource, /parent\.postMessage\(\{ type: '\$\{artifactPreviewEditDirtyMessage\}' \}, '\*'\)/);
+  assert.match(appSource, /event\.data\?\.type === '\$\{artifactPreviewEditSnapshotRequest\}'/);
+  assert.match(appSource, /nextTab === "source"[\s\S]*?setArtifactDraft\(await requestArtifactEditSnapshot\(\)\)/);
+  assert.match(appSource, /const sourceText = await requestArtifactEditSnapshot\(\);[\s\S]*?api\.artifacts\.saveDraft/);
+  assert.match(appSource, /const sourceText = await requestArtifactEditSnapshot\(\);[\s\S]*?api\.artifacts\.saveVersion/);
+  assert.doesNotMatch(appSource, /document\.addEventListener\('input', publishArtifactEdit\)/);
+  assert.doesNotMatch(appSource, /requestIdleCallback\(checkpoint/);
 });
 
 test("HTML Artifact generation keeps the user-designated visual palette", () => {

@@ -718,10 +718,35 @@ def test_write_file_progress_counts_streamed_tokens_and_lines() -> None:
 
 def test_artifact_progress_refreshes_at_100ms_with_live_model_output() -> None:
     assert executor_module._ARTIFACT_PROGRESS_INTERVAL_SECONDS == 0.1
+    assert executor_module._ARTIFACT_PROGRESS_CHECKPOINT_INTERVAL_SECONDS == 1.0
     assert executor_module._artifact_progress_due(None, 10.0)
     assert not executor_module._artifact_progress_due(10.0, 10.099)
     assert executor_module._artifact_progress_due(10.0, 10.1)
+    assert not executor_module._artifact_progress_due(
+        10.0, 10.999, interval_seconds=1.0
+    )
+    assert executor_module._artifact_progress_due(
+        10.0, 11.0, interval_seconds=1.0
+    )
     assert executor_module._live_model_output_tokens(3_204, 400) == 3_304
+
+
+def test_artifact_progress_counts_tool_arguments_incrementally() -> None:
+    call: dict[str, object] = {
+        "arguments": "",
+        "argument_chunks": [],
+        "artifact_argument_characters": 0,
+        "artifact_argument_escaped_newlines": 0,
+        "artifact_argument_escape_tail": False,
+    }
+    chunks = ['{"html_source":"first\\', 'nsecond\\nthird"}']
+    progress = (0, 0)
+    for chunk in chunks:
+        progress = executor_module._append_tool_call_argument_delta(call, chunk)
+
+    arguments = executor_module._materialize_tool_call_arguments(call)
+    assert arguments == "".join(chunks)
+    assert progress == executor_module._artifact_argument_progress(arguments)
 
 
 def test_report_progress_waits_for_artifact_tool_output(

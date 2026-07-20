@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Iterator
 from contextlib import suppress
 from datetime import datetime
 from urllib.parse import quote
@@ -51,6 +52,8 @@ _INTERNAL_ARTIFACT_METADATA_LINE = re.compile(
 )
 _REPORT_OPEN_LINE = re.compile(r"^[ \t]*보고서 열기[ \t]*\r?\n?", re.MULTILINE)
 _UNSAFE_FILE_NAME_CHARACTER = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_HTML_PREVIEW_BRIDGE = b'<script src="/artifact-preview-bridge.js"></script>'
+_HTML_PREVIEW_CHUNK_SIZE = 16 * 1024
 
 
 def _storage(settings: Settings) -> ManagedLocalStorage:
@@ -86,7 +89,8 @@ def _version_payload(version: ArtifactVersion, content: bytes) -> dict[str, obje
         "sourceText": source_text,
         "previewUrl": (
             f"/api/artifacts/{version.artifact_id}/preview?version={version.version_number}"
-            if mime_type.startswith("image/") or mime_type == "application/pdf"
+            if mime_type.startswith("image/")
+            or mime_type in {"application/pdf", "text/html"}
             else None
         ),
         "contentHash": version.content_hash,
@@ -517,12 +521,12 @@ def preview_artifact(
     artifact = require_artifact(db, user, artifact_id)
     if not (
         artifact.mime_type.startswith("image/")
-        or artifact.mime_type == "application/pdf"
+        or artifact.mime_type in {"application/pdf", "text/html"}
     ):
         raise ApiProblem(
             415,
             "artifact_preview_unsupported",
-            "이미지와 PDF Artifact만 바이너리 미리보기를 지원합니다.",
+            "HTML, 이미지와 PDF Artifact만 미리보기를 지원합니다.",
         )
     selected_version = version or artifact.current_version_number
     if selected_version is None:
@@ -534,6 +538,17 @@ def preview_artifact(
         artifact_id=artifact.id,
         version_number=selected_version,
     )
+    if artifact.mime_type == "text/html":
+        return StreamingResponse(
+            _stream_html_preview(content),
+            media_type="text/html",
+            headers={
+                "Content-Disposition": "inline",
+                "ETag": f'W/"{stored_version.content_hash}-preview-v1"',
+                "Cache-Control": "private, no-store",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
     return Response(
         content=content,
         media_type=artifact.mime_type,
@@ -544,6 +559,16 @@ def preview_artifact(
             "X-Content-Type-Options": "nosniff",
         },
     )
+
+
+def _stream_html_preview(content: bytes) -> Iterator[bytes]:
+    closing_body = content.lower().rfind(b"</body")
+    insertion = closing_body if closing_body >= 0 else len(content)
+    for offset in range(0, insertion, _HTML_PREVIEW_CHUNK_SIZE):
+        yield content[offset : min(insertion, offset + _HTML_PREVIEW_CHUNK_SIZE)]
+    yield _HTML_PREVIEW_BRIDGE
+    for offset in range(insertion, len(content), _HTML_PREVIEW_CHUNK_SIZE):
+        yield content[offset : offset + _HTML_PREVIEW_CHUNK_SIZE]
 
 
 def _mime_from_key(key: str) -> str:

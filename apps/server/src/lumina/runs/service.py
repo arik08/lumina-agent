@@ -7,7 +7,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import func, or_, select, tuple_, update
+from sqlalchemy import and_, func, or_, select, tuple_, update
 from sqlalchemy.orm import Session
 
 from ..agent_frontends import agent_frontend_payload, normalize_agent_frontend_payload
@@ -1371,7 +1371,6 @@ def _load_run_snapshot_batch(db: Session, runs: Sequence[Run]) -> _RunSnapshotBa
             artifact_run_ids.setdefault(tool.artifact_id, set()).add(tool.run_id)
 
     activity_events = {run_id: [] for run_id in run_ids}
-    artifact_progress: dict[str, RunEvent] = {}
     event_rows = (
         list(
             db.scalars(
@@ -1380,7 +1379,6 @@ def _load_run_snapshot_batch(db: Session, runs: Sequence[Run]) -> _RunSnapshotBa
                     RunEvent.run_id.in_(run_ids),
                     RunEvent.event_type.in_(
                         (
-                            "artifact_progress",
                             "progress_summary",
                             "skill_selected",
                             "tool_started",
@@ -1395,10 +1393,37 @@ def _load_run_snapshot_batch(db: Session, runs: Sequence[Run]) -> _RunSnapshotBa
         else []
     )
     for event in event_rows:
-        if event.event_type == "artifact_progress":
-            artifact_progress[event.run_id] = event
-        else:
-            activity_events.setdefault(event.run_id, []).append(event)
+        activity_events.setdefault(event.run_id, []).append(event)
+
+    legacy_progress_run_ids = [
+        run.id
+        for run in unique_runs
+        if not isinstance(run.snapshot_json.get("artifact_usage"), Mapping)
+    ]
+    artifact_progress: dict[str, RunEvent] = {}
+    if legacy_progress_run_ids:
+        latest_progress = (
+            select(
+                RunEvent.run_id.label("run_id"),
+                func.max(RunEvent.sequence).label("sequence"),
+            )
+            .where(
+                RunEvent.run_id.in_(legacy_progress_run_ids),
+                RunEvent.event_type == "artifact_progress",
+            )
+            .group_by(RunEvent.run_id)
+            .subquery()
+        )
+        progress_rows = db.scalars(
+            select(RunEvent).join(
+                latest_progress,
+                and_(
+                    RunEvent.run_id == latest_progress.c.run_id,
+                    RunEvent.sequence == latest_progress.c.sequence,
+                ),
+            )
+        )
+        artifact_progress = {event.run_id: event for event in progress_rows}
 
     artifact_scope = Artifact.source_run_id.in_(run_ids) if run_ids else None
     if artifact_run_ids:

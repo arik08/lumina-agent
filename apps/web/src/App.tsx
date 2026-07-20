@@ -76,7 +76,7 @@ import {
   defaultArtifactOutputTokens,
 } from "./components/ComposerControls";
 import { copyText } from "./clipboard";
-import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject, type UIEvent as ReactUIEvent } from "react";
+import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent as ReactUIEvent } from "react";
 import { createPortal } from "react-dom";
 import { api, ApiError, attachmentContentUrl } from "./api";
 import { deepAnalysisSidebarApi } from "./feature-api";
@@ -131,6 +131,7 @@ import { ImageAttachmentViewer } from "./components/ImageAttachmentViewer";
 import { TextAttachmentViewer } from "./components/TextAttachmentViewer";
 
 const AdminView = lazy(() => import("./components/AdminView").then(({ AdminView }) => ({ default: AdminView })));
+const ArtifactHtmlPreview = lazy(() => import("./components/ArtifactHtmlPreview").then(({ ArtifactHtmlPreview }) => ({ default: ArtifactHtmlPreview })));
 const ArtifactLibraryView = lazy(() => import("./components/ArtifactLibraryView").then(({ ArtifactLibraryView }) => ({ default: ArtifactLibraryView })));
 const HelpCenterView = lazy(() => import("./components/HelpCenterView").then(({ HelpCenterView }) => ({ default: HelpCenterView })));
 const MarketplaceView = lazy(() => import("./components/MarketplaceView").then(({ MarketplaceView }) => ({ default: MarketplaceView })));
@@ -144,7 +145,9 @@ const KnowledgeView = lazy(() => import("./workspace-frontends/knowledge").then(
 type ArtifactTab = "preview" | "source";
 type NotificationTab = "notifications" | "announcements";
 
-const artifactPreviewEditMessage = "lumina:artifact-preview-edit";
+const artifactPreviewEditDirtyMessage = "lumina:artifact-preview-edit-dirty";
+const artifactPreviewEditSnapshotRequest = "lumina:artifact-preview-edit-snapshot-request";
+const artifactPreviewEditSnapshotMessage = "lumina:artifact-preview-edit-snapshot";
 const artifactAiCommentMessage = "lumina:artifact-ai-comment";
 const artifactAiCommentsMessage = "lumina:artifact-ai-comments";
 const artifactPaneMinWidth = 360;
@@ -443,32 +446,6 @@ a.source-ref:focus-visible, sup.source-ref > a:focus-visible { outline: 2px soli
     : `${source}${compatibilityLayer}`;
 }
 
-function ArtifactHtmlPreview({
-  frameRef,
-  source,
-  title,
-  renderMermaid,
-}: {
-  frameRef: RefObject<HTMLIFrameElement | null>;
-  source: string;
-  title: string;
-  renderMermaid: boolean;
-}) {
-  const [previewHtml, setPreviewHtml] = useState(() => previewArtifactHtml(source));
-  useEffect(() => {
-    let cancelled = false;
-    if (!renderMermaid || !hasRawArtifactMermaid(source)) {
-      setPreviewHtml(previewArtifactHtml(source));
-      return undefined;
-    }
-    void renderArtifactMermaidHtml(source).then((rendered) => {
-      if (!cancelled) setPreviewHtml(previewArtifactHtml(rendered));
-    });
-    return () => { cancelled = true; };
-  }, [renderMermaid, source]);
-  return <iframe ref={frameRef} className="artifact-preview-frame" title={title} sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock allow-downloads allow-popups allow-popups-to-escape-sandbox" srcDoc={previewHtml} />;
-}
-
 type ArtifactAiComment = {
   id: string;
   text: string;
@@ -514,18 +491,22 @@ function editableArtifactHtml(source: string) {
   bridge.id = "lumina-artifact-edit-bridge";
   bridge.textContent = `
     window.__luminaArtifactEditBridgeReady = true;
-    const publishArtifactEdit = () => {
+    const publishArtifactEdit = (requestId = null) => {
       const clone = document.documentElement.cloneNode(true);
       clone.querySelector('#lumina-artifact-edit-bridge')?.remove();
       clone.querySelector('#lumina-artifact-edit-style')?.remove();
+      clone.querySelector('#lumina-artifact-preview-style')?.remove();
       clone.querySelectorAll('.lumina-ai-comment-highlight').forEach((mark) => mark.replaceWith(...mark.childNodes));
       clone.querySelectorAll('.lumina-ai-comment-popover').forEach((item) => item.remove());
       const body = clone.querySelector('body');
       body?.removeAttribute('contenteditable');
       body?.removeAttribute('data-lumina-editable');
-      parent.postMessage({ type: '${artifactPreviewEditMessage}', html: '<!doctype html>\\n' + clone.outerHTML }, '*');
+      parent.postMessage({ type: '${artifactPreviewEditSnapshotMessage}', requestId, html: '<!doctype html>\\n' + clone.outerHTML }, '*');
     };
-    document.addEventListener('input', publishArtifactEdit);
+    const publishArtifactEditDirty = () => {
+      parent.postMessage({ type: '${artifactPreviewEditDirtyMessage}' }, '*');
+    };
+    document.addEventListener('input', publishArtifactEditDirty);
     let pendingRange = null;
     let savedRange = null;
     const pendingHighlightName = 'lumina-comment-pending';
@@ -539,6 +520,10 @@ function editableArtifactHtml(source: string) {
       document.querySelectorAll('[data-lumina-comment-id="' + CSS.escape(id) + '"]').forEach((mark) => mark.replaceWith(...mark.childNodes));
     };
     window.addEventListener('message', (event) => {
+      if (event.data?.type === '${artifactPreviewEditSnapshotRequest}') {
+        publishArtifactEdit(typeof event.data.requestId === 'string' ? event.data.requestId : null);
+        return;
+      }
       if (event.data?.type !== '${artifactAiCommentsMessage}') return;
       const comments = Array.isArray(event.data.comments) ? event.data.comments : [];
       document.querySelectorAll('.lumina-ai-comment-highlight').forEach((mark) => {
@@ -943,6 +928,8 @@ function App() {
   const artifactOpenRequestRef = useRef(0);
   const artifactHistoryOpenRef = useRef(false);
   const artifactPreviewFrameRef = useRef<HTMLIFrameElement>(null);
+  const artifactEditSnapshotResolversRef = useRef(new Map<string, (html: string) => void>());
+  const artifactEditSnapshotCounterRef = useRef(0);
   const dockAreaRef = useRef<HTMLDivElement>(null);
   const notificationMenuRef = useRef<HTMLDivElement>(null);
   const modelNameTooltipTimerRef = useRef<number | null>(null);
@@ -1037,10 +1024,18 @@ function App() {
     if (!artifactEditing || artifactVersion?.mimeType !== "text/html") return;
     const receivePreviewEdit = (event: MessageEvent) => {
       if (event.source !== artifactPreviewFrameRef.current?.contentWindow) return;
-      if (event.data?.type === artifactPreviewEditMessage && typeof event.data.html === "string") {
+      if (event.data?.type === artifactPreviewEditDirtyMessage) {
+        setArtifactDraftSaved(false);
+        setArtifactDraftNotice(null);
+      }
+      if (event.data?.type === artifactPreviewEditSnapshotMessage && typeof event.data.html === "string") {
         setArtifactDraft(event.data.html);
         setArtifactDraftSaved(false);
         setArtifactDraftNotice(null);
+        if (typeof event.data.requestId === "string") {
+          artifactEditSnapshotResolversRef.current.get(event.data.requestId)?.(event.data.html);
+          artifactEditSnapshotResolversRef.current.delete(event.data.requestId);
+        }
       }
       if (event.data?.type === artifactAiCommentMessage && event.data.comment) {
         const comment = event.data.comment as ArtifactAiComment;
@@ -1053,6 +1048,38 @@ function App() {
     window.addEventListener("message", receivePreviewEdit);
     return () => window.removeEventListener("message", receivePreviewEdit);
   }, [artifactEditing, artifactVersion?.mimeType]);
+
+  const requestArtifactEditSnapshot = useCallback(() => {
+    if (!artifactEditing || artifactVersion?.mimeType !== "text/html") {
+      return Promise.resolve(artifactDraft);
+    }
+    const target = artifactPreviewFrameRef.current?.contentWindow;
+    if (!target) return Promise.resolve(artifactDraft);
+    const requestId = `artifact-edit-${++artifactEditSnapshotCounterRef.current}`;
+    return new Promise<string>((resolve) => {
+      const timeout = window.setTimeout(() => {
+        artifactEditSnapshotResolversRef.current.delete(requestId);
+        resolve(artifactDraft);
+      }, 3_000);
+      artifactEditSnapshotResolversRef.current.set(requestId, (html) => {
+        window.clearTimeout(timeout);
+        resolve(html);
+      });
+      target.postMessage({ type: artifactPreviewEditSnapshotRequest, requestId }, "*");
+    });
+  }, [artifactDraft, artifactEditing, artifactVersion?.mimeType]);
+
+  const toggleArtifactTab = useCallback(async () => {
+    const nextTab: ArtifactTab = artifactTab === "preview" ? "source" : "preview";
+    if (
+      nextTab === "source"
+      && artifactEditing
+      && artifactVersion?.mimeType === "text/html"
+    ) {
+      setArtifactDraft(await requestArtifactEditSnapshot());
+    }
+    setArtifactTab(nextTab);
+  }, [artifactEditing, artifactTab, artifactVersion?.mimeType, requestArtifactEditSnapshot]);
 
   useEffect(() => {
     if (!artifactEditing || artifactVersion?.mimeType !== "text/html") return;
@@ -1679,7 +1706,7 @@ function App() {
     : [];
   const artifactDownloadVersion = artifactVersion?.version ?? artifactSummary?.currentVersion ?? null;
   const artifactPreviewUrl = artifactVersion?.previewUrl
-    ?? (artifactSummary && artifactVersion?.mimeType === "application/pdf"
+    ?? (artifactSummary && artifactVersion && ["application/pdf", "text/html"].includes(artifactVersion.mimeType)
       ? `/api/artifacts/${encodeURIComponent(artifactSummary.id)}/preview?version=${encodeURIComponent(String(artifactVersion.version))}`
       : null);
   const sharedViewerToken = sharedTokenFromPath(window.location.pathname);
@@ -2302,10 +2329,11 @@ function App() {
     if (!artifactSummary || !artifactVersion || artifactVersion.sourceText === null || !artifactIsCurrentVersion || artifactSaveBusy) return;
     setArtifactSaveBusy("draft");
     try {
+      const sourceText = await requestArtifactEditSnapshot();
       const saved = await api.artifacts.saveDraft(
         artifactSummary.id,
         artifactVersion.version,
-        artifactDraft,
+        sourceText,
         artifactDraftEtag,
       );
       setArtifactDraftEtag(saved.etag);
@@ -2363,12 +2391,13 @@ function App() {
     if (!artifactSummary || !artifactVersion || artifactVersion.sourceText === null || !artifactIsCurrentVersion || artifactSaveBusy) return;
     setArtifactSaveBusy("version");
     try {
+      const sourceText = await requestArtifactEditSnapshot();
       const cleanupDraftEtag = artifactDraftSaved ? artifactDraftEtag : undefined;
       const version = await api.artifacts.saveVersion(
         artifactSummary.id,
         {
           baseVersion: artifactVersion.version,
-          sourceText: artifactDraft,
+          sourceText,
           changeSummary: "Artifact 패널에서 직접 편집",
           idempotencyKey: createClientId(),
         },
@@ -3714,7 +3743,7 @@ function App() {
                   }}><Undo2 size={16} /></button>
                 </>
               )}
-              <button className="artifact-view-control tooltip-control" type="button" aria-label={artifactTab === "preview" ? "코드 보기" : "미리보기"} data-tooltip={artifactHasTextSource ? artifactTab === "preview" ? "코드 보기" : "미리보기" : "Binary 형식은 소스 보기 없음"} disabled={!artifactHasTextSource} onClick={() => setArtifactTab((current) => current === "preview" ? "source" : "preview")}>
+              <button className="artifact-view-control tooltip-control" type="button" aria-label={artifactTab === "preview" ? "코드 보기" : "미리보기"} data-tooltip={artifactHasTextSource ? artifactTab === "preview" ? "코드 보기" : "미리보기" : "Binary 형식은 소스 보기 없음"} disabled={!artifactHasTextSource} onClick={() => void toggleArtifactTab()}>
                 {artifactTab === "preview" ? <Code2 size={17} /> : <Eye size={17} />}
               </button>
               <button className="tooltip-control" type="button" aria-label="Artifact 공유 링크 복사" data-tooltip={artifactSummary?.conversationId ? "공유 링크 복사" : "대화에 연결된 Artifact만 공유 가능"} disabled={!artifactSummary?.conversationId} onClick={() => void shareArtifact()}><ShareActionIcon size={17} /></button>
@@ -3781,12 +3810,14 @@ function App() {
               artifactVersion.mimeType === "text/markdown" || artifactSummary?.kind === "markdown" ? (
                 <div className="artifact-markdown-preview"><MarkdownResponse text={artifactEditing ? artifactDraft : artifactVersion.sourceText ?? ""} artifact /></div>
               ) : artifactVersion.mimeType === "text/html" ? (
-                <ArtifactHtmlPreview
-                  frameRef={artifactPreviewFrameRef}
-                  source={artifactEditing ? artifactEditablePreview : artifactVersion.sourceText ?? ""}
-                  title={artifactSummary?.displayName ?? "Artifact 미리보기"}
-                  renderMermaid={!artifactEditing}
-                />
+                <Suspense fallback={<div className="artifact-loading" role="progressbar" aria-label="HTML 미리보기 준비 중"><LoaderCircle className="is-running" size={17} /> HTML 미리보기를 준비하고 있습니다.</div>}>
+                  <ArtifactHtmlPreview
+                    frameRef={artifactPreviewFrameRef}
+                    source={artifactEditing ? artifactEditablePreview : null}
+                    previewUrl={artifactEditing ? null : artifactPreviewUrl}
+                    title={artifactSummary?.displayName ?? "Artifact 미리보기"}
+                  />
+                </Suspense>
               ) : (
                 <SyntaxCode className="artifact-text-preview" value={artifactEditing ? artifactDraft : artifactVersion.sourceText ?? ""} fileName={artifactSummary?.displayName} mimeType={artifactVersion.mimeType} />
               )

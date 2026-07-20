@@ -176,6 +176,7 @@ async def stream_run(
 
     async def events() -> AsyncIterator[str]:
         nonlocal cursor
+        progress_revision = 0
         while True:
             if await request.is_disconnected():
                 return
@@ -209,7 +210,20 @@ async def stream_run(
                     yield f"id: {cursor}\nevent: run_event\ndata: {data}\n\n"
                 continue
             if terminal and cursor >= last_sequence:
+                event_broker.clear_artifact_progress(run_id)
                 return
+            transient_progress = event_broker.latest_artifact_progress(
+                run_id, after_revision=progress_revision
+            )
+            if transient_progress is not None:
+                progress_revision, progress = transient_progress
+                data = json.dumps(
+                    {"runId": run_id, "progress": progress},
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+                yield f"event: artifact_progress\ndata: {data}\n\n"
+                continue
             yield ": keep-alive\n\n"
             await event_broker.wait(run_id, timeout=10.0)
 

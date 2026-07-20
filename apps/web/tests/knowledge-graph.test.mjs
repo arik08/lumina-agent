@@ -4,35 +4,38 @@ import test from "node:test";
 
 const graphPath = new URL("../src/workspace-frontends/knowledge/KnowledgeGraph.tsx", import.meta.url);
 const viewPath = new URL("../src/workspace-frontends/knowledge/KnowledgeView.tsx", import.meta.url);
+const workerPath = new URL("../src/workspace-frontends/knowledge/knowledge-layout.worker.ts", import.meta.url);
 
-test("Knowledge graph uses a coupled D3 force simulation", async () => {
-  const graph = await readFile(graphPath, "utf8");
-  assert.match(graph, /from "d3-force"/);
-  assert.match(graph, /forceSimulation<GraphNode>\(nodes\)/);
-  assert.match(graph, /forceLink<GraphNode, GraphLink>\(links\)/);
-  assert.match(graph, /forceManyBody<GraphNode>\(\)\.strength\(-forceSettings\.repulsion\)/);
-  assert.match(graph, /forceX<GraphNode>\(0\)\.strength\(forceSettings\.centerStrength\)/);
-  assert.match(graph, /forceY<GraphNode>\(0\)\.strength\(forceSettings\.centerStrength\)/);
-  assert.match(graph, /forceCollide<GraphNode>\(\)/);
-  assert.match(graph, /\.strength\(forceSettings\.linkStrength\)/);
-  assert.match(graph, /\.distance\(forceSettings\.linkDistance\)/);
-  assert.match(graph, /\.velocityDecay\(0\.36\)/);
-  assert.match(graph, /data-force-engine="d3"/);
+test("Knowledge graph runs the coupled D3 force simulation in a worker", async () => {
+  const [graph, worker] = await Promise.all([readFile(graphPath, "utf8"), readFile(workerPath, "utf8")]);
+  assert.doesNotMatch(graph, /from "d3-force"/);
+  assert.match(graph, /new Worker\(\s*new URL\("\.\/knowledge-layout\.worker\.ts", import\.meta\.url\)/);
+  assert.match(worker, /from "d3-force"/);
+  assert.match(worker, /forceSimulation<LayoutNode>\(nodes\)/);
+  assert.match(worker, /forceLink<LayoutNode, LayoutLink>\(links\)/);
+  assert.match(worker, /forceManyBody<LayoutNode>\(\)/);
+  assert.match(worker, /forceX<LayoutNode>\(0\)/);
+  assert.match(worker, /forceY<LayoutNode>\(0\)/);
+  assert.match(worker, /forceCollide<LayoutNode>\(\)/);
+  assert.match(worker, /\.velocityDecay\(0\.36\)/);
+  assert.match(worker, /new Float32Array\(nodes\.length \* 2\)/);
+  assert.match(graph, /data-force-engine="d3-worker"/);
   assert.match(graph, /centerStrength: 0\.032/);
   assert.match(graph, /<ForceControl label="중력" value=\{forceSettings\.centerStrength\}/);
 });
 
-test("Knowledge graph reheats every force while dragging and releases the node", async () => {
-  const graph = await readFile(graphPath, "utf8");
-  assert.match(graph, /simulation\.alpha\(Math\.max\(simulation\.alpha\(\), alpha\)\)\.alphaTarget\(alpha\)/);
-  assert.match(graph, /simulation\.restart\(\)/);
+test("Knowledge graph sends drag and release work to the layout worker", async () => {
+  const [graph, worker] = await Promise.all([readFile(graphPath, "utf8"), readFile(workerPath, "utf8")]);
+  assert.match(graph, /layoutWorkerRef\.current\?\.postMessage\(\{ type: "heat", alpha \}\)/);
   assert.match(graph, /node\.fx = node\.x/);
   assert.match(graph, /node\.fy = node\.y/);
   assert.match(graph, /dragState\.node\.fx = world\.x/);
   assert.match(graph, /dragState\.node\.fy = world\.y/);
   assert.match(graph, /node\.fx = null/);
   assert.match(graph, /node\.fy = null/);
-  assert.match(graph, /simulation\.alphaTarget\(0\)/);
+  assert.match(graph, /type: "pin"/);
+  assert.match(graph, /type: "release"/);
+  assert.match(worker, /simulation\.alphaTarget\(0\)/);
   assert.match(graph, /if \(openDocument && !completedDrag\.moved\) documentToOpen = completedDrag\.node/);
   assert.doesNotMatch(graph, /canvas\.addEventListener\("click"/);
   assert.ok(
@@ -64,14 +67,15 @@ test("Knowledge graph labels use an Obsidian-like readable size", async () => {
 });
 
 test("Knowledge graph exposes the four Obsidian-style force controls", async () => {
-  const graph = await readFile(graphPath, "utf8");
+  const [graph, worker] = await Promise.all([readFile(graphPath, "utf8"), readFile(workerPath, "utf8")]);
   assert.match(graph, /label="중력"/);
   assert.match(graph, /label="반발력"/);
   assert.match(graph, /label="링크 장력"/);
   assert.match(graph, /label="링크 거리"/);
-  assert.match(graph, /forces\.x\.strength\(forceSettings\.centerStrength\)/);
-  assert.match(graph, /forces\.charge\.strength\(-forceSettings\.repulsion\)/);
-  assert.match(graph, /forces\.link\.strength\(forceSettings\.linkStrength\)\.distance\(forceSettings\.linkDistance\)/);
+  assert.match(graph, /postMessage\(\{ type: "settings", settings: forceSettings \}\)/);
+  assert.match(worker, /forces\.x\.strength\(settings\.centerStrength\)/);
+  assert.match(worker, /forces\.charge\.strength\(-settings\.repulsion\)/);
+  assert.match(worker, /forces\.link\.strength\(settings\.linkStrength\)\.distance\(settings\.linkDistance\)/);
   assert.match(graph, /setForceSettings\(defaultForceSettings\)/);
 });
 
@@ -137,7 +141,9 @@ test("Knowledge graph restores the last layout when its tab remounts", async () 
   assert.match(graph, /const savedLayout = graphLayouts\.get\(layoutKey\)/);
   assert.match(graph, /const restoresCompleteLayout = savedLayout\?\.graphSignature === graphSignature/);
   assert.match(graph, /canvas\.dataset\.layoutRestored = restoresCompleteLayout \? "true" : "false"/);
-  assert.match(graph, /if \(restoresCompleteLayout\) \{\s*simulation\.alpha\(0\)\.stop\(\)/);
+  assert.match(graph, /settled: restoresCompleteLayout/);
+  const worker = await readFile(workerPath, "utf8");
+  assert.match(worker, /if \(request\.settled\) \{\s*simulation\.alpha\(0\)\.stop\(\)/);
   assert.match(graph, /rememberGraphLayout\(layoutKey, \{/);
   assert.match(graph, /viewport: \{ \.\.\.viewport \}/);
 });

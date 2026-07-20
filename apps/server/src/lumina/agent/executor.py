@@ -225,6 +225,7 @@ _ARTIFACT_EMPTY_RESPONSE_FALLBACK = (
 )
 _MAX_ARTIFACT_LENGTH_RETRIES = 2
 _ARTIFACT_PROGRESS_INTERVAL_SECONDS = 0.1
+_ARTIFACT_PROGRESS_CHECKPOINT_INTERVAL_SECONDS = 1.0
 _RUN_CANCELLATION_POLL_SECONDS = 0.2
 _RUN_CONTROL_CACHE_SECONDS = 0.05
 _WEB_SEARCH_CALL_SAFETY_LIMIT = 10
@@ -1078,6 +1079,9 @@ class LocalRunExecutor:
                 if isinstance(execution_snapshot, dict)
                 else {}
             )
+            artifact_target_tokens = _optional_positive_int(
+                run.snapshot_json.get("target_output_tokens")
+            )
             image_generation_capable = bool(
                 provider_id == "codex"
                 and isinstance(capabilities, dict)
@@ -1290,6 +1294,7 @@ class LocalRunExecutor:
                     0,
                     0,
                     drafting_started_at=utc_now(),
+                    target_tokens=artifact_target_tokens,
                 )
                 artifact_drafting_started = True
             provider = self._provider(
@@ -1436,6 +1441,10 @@ class LocalRunExecutor:
                                 "id": call_id,
                                 "name": event.tool_name or "unknown",
                                 "arguments": "",
+                                "argument_chunks": [],
+                                "artifact_argument_characters": 0,
+                                "artifact_argument_escaped_newlines": 0,
+                                "artifact_argument_escape_tail": False,
                                 "provider_metadata": _safe_provider_metadata(
                                     event.provider_metadata
                                 ),
@@ -1457,35 +1466,35 @@ class LocalRunExecutor:
                                 await self._start_streaming_artifact_tool(
                                     run_id, tool_calls[call_id]
                                 )
-                            if tool_calls[call_id][
-                                "name"
-                            ] == "create_report" and not tool_calls[call_id].get(
-                                "blocked_error"
-                            ):
+                            if tool_calls[call_id]["name"] in {
+                                "create_report",
+                                "write_file",
+                            } and not tool_calls[call_id].get("blocked_error"):
                                 await self._publish_artifact_progress(
                                     run_id,
                                     0,
                                     0,
+                                    target_tokens=artifact_target_tokens,
                                 )
                                 tool_calls[call_id]["artifact_progress"] = (0, 0)
                                 tool_calls[call_id][
                                     "artifact_progress_published_at"
                                 ] = time.monotonic()
+                                tool_calls[call_id][
+                                    "artifact_progress_checkpointed_at"
+                                ] = time.monotonic()
                         elif event.type == "tool_call_delta":
                             await flush_pending_text()
                             delta_call_id = event.tool_call_id or active_call_id
                             if delta_call_id and delta_call_id in tool_calls:
-                                tool_calls[delta_call_id]["arguments"] += (
-                                    event.arguments_delta or ""
-                                )
                                 call = tool_calls[delta_call_id]
+                                progress = _append_tool_call_argument_delta(
+                                    call, event.arguments_delta or ""
+                                )
                                 if call["name"] in {
                                     "create_report",
                                     "write_file",
                                 } and not call.get("blocked_error"):
-                                    progress = _artifact_argument_progress(
-                                        call["arguments"]
-                                    )
                                     previous = call.get("artifact_progress")
                                     now = time.monotonic()
                                     last_published_at = call.get(
@@ -1497,15 +1506,30 @@ class LocalRunExecutor:
                                     ):
                                         call["artifact_progress"] = progress
                                         call["artifact_progress_published_at"] = now
-                                        if call["name"] == "create_report":
-                                            await self._publish_artifact_progress(
-                                                run_id,
-                                                *progress,
-                                                model_output_tokens=(
-                                                    estimated_model_output_tokens
-                                                ),
-                                            )
-                                        else:
+                                        checkpoint_due = _artifact_progress_due(
+                                            call.get(
+                                                "artifact_progress_checkpointed_at"
+                                            ),
+                                            now,
+                                            interval_seconds=(
+                                                _ARTIFACT_PROGRESS_CHECKPOINT_INTERVAL_SECONDS
+                                            ),
+                                        )
+                                        await self._publish_artifact_progress(
+                                            run_id,
+                                            *progress,
+                                            model_output_tokens=(
+                                                estimated_model_output_tokens
+                                            ),
+                                            target_tokens=artifact_target_tokens,
+                                            persist=checkpoint_due,
+                                            durable_event=False,
+                                        )
+                                        if checkpoint_due:
+                                            call[
+                                                "artifact_progress_checkpointed_at"
+                                            ] = now
+                                        if call["name"] == "write_file" and checkpoint_due:
                                             await self._update_streaming_write_file(
                                                 run_id, call, *progress
                                             )
@@ -1519,8 +1543,11 @@ class LocalRunExecutor:
                                 call = tool_calls[completed_call_id]
                                 if event.tool_name:
                                     call["name"] = event.tool_name
+                                streamed_arguments = _materialize_tool_call_arguments(
+                                    call
+                                )
                                 call["arguments"] = (
-                                    event.arguments_json or call["arguments"]
+                                    event.arguments_json or streamed_arguments
                                 )
                                 if call["name"] in {"create_report", "write_file"}:
                                     progress = _artifact_argument_progress(
@@ -1528,15 +1555,15 @@ class LocalRunExecutor:
                                     )
                                     if call.get("artifact_progress") != progress:
                                         call["artifact_progress"] = progress
-                                        if call["name"] == "create_report":
-                                            await self._publish_artifact_progress(
-                                                run_id,
-                                                *progress,
-                                                model_output_tokens=(
-                                                    estimated_model_output_tokens
-                                                ),
-                                            )
-                                        else:
+                                        await self._publish_artifact_progress(
+                                            run_id,
+                                            *progress,
+                                            model_output_tokens=(
+                                                estimated_model_output_tokens
+                                            ),
+                                            target_tokens=artifact_target_tokens,
+                                        )
+                                        if call["name"] == "write_file":
                                             await self._update_streaming_write_file(
                                                 run_id, call, *progress
                                             )
@@ -1711,6 +1738,8 @@ class LocalRunExecutor:
                 continue
 
             calls = [tool_calls[call_id] for call_id in tool_order]
+            for call in calls:
+                _materialize_tool_call_arguments(call)
             if not calls:
                 steer_messages = await self._apply_pending_steers(run_id)
                 if steer_messages:
@@ -4558,6 +4587,7 @@ class LocalRunExecutor:
                 reason="tool_completed",
             )
             artifact_id = artifact.id
+        event_broker.clear_artifact_progress(run_id)
         await event_broker.notify(run_id)
         return {
             "artifact_id": artifact_id,
@@ -4742,6 +4772,8 @@ class LocalRunExecutor:
                 ),
                 reason="tool_completed",
             )
+        if artifact_usage is not None:
+            event_broker.clear_artifact_progress(run_id)
         await event_broker.notify(run_id)
 
     async def _fail_tool_execution(
@@ -4957,35 +4989,44 @@ class LocalRunExecutor:
         estimated: bool = True,
         model_output_tokens: int | None = None,
         drafting_started_at: datetime | None = None,
+        target_tokens: int | None = None,
+        persist: bool = True,
+        durable_event: bool = True,
     ) -> None:
-        with session_scope() as db:
-            run = db.get(Run, run_id)
-            if run is None or run.status in TERMINAL_STATUSES:
-                return
-            progress: dict[str, Any] = {
-                "tokens": max(0, tokens),
-                "lines": max(0, lines),
-                "estimated": estimated,
-            }
-            target_tokens = _optional_positive_int(
-                run.snapshot_json.get("target_output_tokens")
-            )
-            if target_tokens is not None:
-                progress["targetTokens"] = target_tokens
-            if model_output_tokens is not None and model_output_tokens > 0:
-                progress["modelOutputTokens"] = max(0, model_output_tokens)
-            snapshot = {
-                **run.snapshot_json,
-                "artifact_progress": progress,
-                "artifact_usage": progress,
-            }
-            if drafting_started_at is not None:
-                snapshot["artifact_drafting_started_at"] = (
-                    drafting_started_at.isoformat()
-                )
-            run.snapshot_json = snapshot
-            append_event(db, run, "artifact_progress", progress)
-        await event_broker.notify(run_id)
+        progress: dict[str, Any] = {
+            "tokens": max(0, tokens),
+            "lines": max(0, lines),
+            "estimated": estimated,
+        }
+        normalized_target_tokens = _optional_positive_int(target_tokens)
+        if normalized_target_tokens is not None:
+            progress["targetTokens"] = normalized_target_tokens
+        if model_output_tokens is not None and model_output_tokens > 0:
+            progress["modelOutputTokens"] = max(0, model_output_tokens)
+        if persist:
+            with session_scope() as db:
+                run = db.get(Run, run_id)
+                if run is None or run.status in TERMINAL_STATUSES:
+                    return
+                if normalized_target_tokens is None:
+                    normalized_target_tokens = _optional_positive_int(
+                        run.snapshot_json.get("target_output_tokens")
+                    )
+                    if normalized_target_tokens is not None:
+                        progress["targetTokens"] = normalized_target_tokens
+                snapshot = {
+                    **run.snapshot_json,
+                    "artifact_progress": progress,
+                    "artifact_usage": progress,
+                }
+                if drafting_started_at is not None:
+                    snapshot["artifact_drafting_started_at"] = (
+                        drafting_started_at.isoformat()
+                    )
+                run.snapshot_json = snapshot
+                if durable_event:
+                    append_event(db, run, "artifact_progress", progress)
+        await event_broker.publish_artifact_progress(run_id, progress)
 
     async def _start_streaming_artifact_tool(
         self, run_id: str, tool_call: dict[str, Any]
@@ -5112,8 +5153,6 @@ class LocalRunExecutor:
             if file_name:
                 progress_state["__lumina_stream_file_name"] = file_name
             tool.validated_input_json = progress_state
-            append_event(db, run, "tool_progress", {"execution": _tool_event(tool)})
-        await event_broker.notify(run_id)
 
     async def _compact_runtime_context(
         self,
@@ -5813,6 +5852,7 @@ class LocalRunExecutor:
             completed = True
         if completed:
             self._emit_run_activity(run_id, "completed")
+        event_broker.clear_artifact_progress(run_id)
         await event_broker.notify(run_id)
 
     def _emit_run_activity(self, run_id: str, state: str) -> None:
@@ -5851,6 +5891,7 @@ class LocalRunExecutor:
                     _provider_failure_payload(provider_error),
                 )
             transition_run(db, run, FAILED, event_type="run_failed")
+        event_broker.clear_artifact_progress(run_id)
         await event_broker.notify(run_id)
 
     async def _limit_run(self, run_id: str, violation: RunLimitViolation) -> None:
@@ -5892,6 +5933,7 @@ class LocalRunExecutor:
                 violation.event_payload(),
             )
             transition_run(db, run, LIMIT_REACHED, event_type="run_failed")
+        event_broker.clear_artifact_progress(run_id)
         await event_broker.notify(run_id)
 
     async def _promote_next_message(self, completed_run_id: str) -> None:
@@ -6690,9 +6732,58 @@ def _artifact_argument_progress(arguments: str) -> tuple[int, int]:
     return tokens, lines
 
 
-def _artifact_progress_due(last_published_at: Any, now: float) -> bool:
+def _artifact_progress_from_counts(
+    character_count: int, escaped_newline_count: int
+) -> tuple[int, int]:
+    if character_count <= 0:
+        return 0, 0
+    tokens = max(1, math.ceil(character_count / 4))
+    lines = max(1, escaped_newline_count + 1, math.ceil(character_count / 80))
+    return tokens, lines
+
+
+def _append_tool_call_argument_delta(
+    tool_call: dict[str, Any], delta: str
+) -> tuple[int, int]:
+    chunks = tool_call.setdefault("argument_chunks", [])
+    if not isinstance(chunks, list):
+        chunks = []
+        tool_call["argument_chunks"] = chunks
+    if delta:
+        chunks.append(delta)
+    character_count = int(tool_call.get("artifact_argument_characters", 0)) + len(
+        delta
+    )
+    escaped_newlines = int(
+        tool_call.get("artifact_argument_escaped_newlines", 0)
+    )
+    if tool_call.get("artifact_argument_escape_tail") and delta.startswith("n"):
+        escaped_newlines += 1
+    escaped_newlines += delta.count("\\n")
+    tool_call["artifact_argument_characters"] = character_count
+    tool_call["artifact_argument_escaped_newlines"] = escaped_newlines
+    if delta:
+        tool_call["artifact_argument_escape_tail"] = delta.endswith("\\")
+    return _artifact_progress_from_counts(character_count, escaped_newlines)
+
+
+def _materialize_tool_call_arguments(tool_call: dict[str, Any]) -> str:
+    chunks = tool_call.pop("argument_chunks", None)
+    if isinstance(chunks, list) and chunks:
+        tool_call["arguments"] = "".join(str(chunk) for chunk in chunks)
+    arguments = str(tool_call.get("arguments", ""))
+    tool_call["arguments"] = arguments
+    return arguments
+
+
+def _artifact_progress_due(
+    last_published_at: Any,
+    now: float,
+    *,
+    interval_seconds: float = _ARTIFACT_PROGRESS_INTERVAL_SECONDS,
+) -> bool:
     return not isinstance(last_published_at, (int, float)) or (
-        now - last_published_at + 1e-9 >= _ARTIFACT_PROGRESS_INTERVAL_SECONDS
+        now - last_published_at + 1e-9 >= interval_seconds
     )
 
 

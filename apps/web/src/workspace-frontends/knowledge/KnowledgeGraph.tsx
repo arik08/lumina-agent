@@ -1,33 +1,24 @@
 import { GitBranch, RotateCcw, SlidersHorizontal, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import {
-  forceCollide,
-  forceLink,
-  forceManyBody,
-  forceSimulation,
-  forceX,
-  forceY,
-  type ForceLink,
-  type ForceManyBody,
-  type ForceX,
-  type ForceY,
-  type Simulation,
-  type SimulationLinkDatum,
-  type SimulationNodeDatum,
-} from "d3-force";
 import type { KnowledgeGraphResponse } from "../../api-types";
 
 interface KnowledgeGraphProps { graph: KnowledgeGraphResponse; layoutKey: string; selectedNodeId: string | null; onSelectDocument: (documentId: string) => void; }
 
-interface GraphNode extends SimulationNodeDatum {
+interface GraphNode {
   id: string;
   name: string;
   radius: number;
   degree: number;
+  x?: number;
+  y?: number;
+  fx?: number | null;
+  fy?: number | null;
 }
 
-interface GraphLink extends SimulationLinkDatum<GraphNode> {
+interface GraphLink {
   id: string;
+  source: GraphNode | string;
+  target: GraphNode | string;
   weight: number;
   tagNames: string[];
 }
@@ -125,13 +116,7 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const nodeLayerRef = useRef<HTMLDivElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
-  const simulationRef = useRef<Simulation<GraphNode, GraphLink> | null>(null);
-  const forceRefs = useRef<{
-    link: ForceLink<GraphNode, GraphLink>;
-    charge: ForceManyBody<GraphNode>;
-    x: ForceX<GraphNode>;
-    y: ForceY<GraphNode>;
-  } | null>(null);
+  const layoutWorkerRef = useRef<Worker | null>(null);
   const drawRef = useRef<() => void>(() => undefined);
   const onSelectDocumentRef = useRef(onSelectDocument);
   const selectedNodeIdRef = useRef(selectedNodeId);
@@ -143,21 +128,7 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
   useEffect(() => { drawRef.current(); }, [selectedNodeId]);
 
   useEffect(() => {
-    const simulation = simulationRef.current;
-    const forces = forceRefs.current;
-    if (!simulation || !forces) return;
-    forces.x.strength(forceSettings.centerStrength);
-    forces.y.strength(forceSettings.centerStrength);
-    forces.charge.strength(-forceSettings.repulsion);
-    forces.link.strength(forceSettings.linkStrength).distance(forceSettings.linkDistance);
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    simulation.alpha(0.55).alphaTarget(0);
-    if (reducedMotion) {
-      simulation.stop().tick(90);
-      drawRef.current();
-    } else {
-      simulation.restart();
-    }
+    layoutWorkerRef.current?.postMessage({ type: "settings", settings: forceSettings });
   }, [forceSettings]);
 
   useEffect(() => {
@@ -355,41 +326,34 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
     }
     drawRef.current = draw;
 
-    const linkForce = forceLink<GraphNode, GraphLink>(links)
-      .id((node) => node.id)
-      .distance(forceSettings.linkDistance)
-      .strength(forceSettings.linkStrength);
-    const chargeForce = forceManyBody<GraphNode>().strength(-forceSettings.repulsion).distanceMin(18).distanceMax(900);
-    const xForce = forceX<GraphNode>(0).strength(forceSettings.centerStrength);
-    const yForce = forceY<GraphNode>(0).strength(forceSettings.centerStrength);
-    const simulation = forceSimulation<GraphNode>(nodes)
-      .force("link", linkForce)
-      .force("charge", chargeForce)
-      .force("center-x", xForce)
-      .force("center-y", yForce)
-      .force("collide", forceCollide<GraphNode>().radius((node) => node.radius + 7).strength(0.75).iterations(2))
-      .alphaDecay(0.026)
-      .velocityDecay(0.36)
-      .on("tick", requestDraw)
-      .on("end", () => {
-        canvas.dataset.forceState = "settled";
-        requestDraw();
-      });
-    simulationRef.current = simulation;
-    forceRefs.current = { link: linkForce, charge: chargeForce, x: xForce, y: yForce };
-    canvas.dataset.forceState = "running";
-
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const restoresCompleteLayout = savedLayout?.graphSignature === graphSignature
       && nodes.every((node) => savedLayout.nodePositions.has(node.id));
     canvas.dataset.layoutRestored = restoresCompleteLayout ? "true" : "false";
-    if (restoresCompleteLayout) {
-      simulation.alpha(0).stop();
-      canvas.dataset.forceState = "settled";
-    } else if (reducedMotion) {
-      simulation.stop().tick(180);
-      canvas.dataset.forceState = "settled";
-    }
+    const layoutWorker = new Worker(
+      new URL("./knowledge-layout.worker.ts", import.meta.url),
+      { type: "module" },
+    );
+    layoutWorkerRef.current = layoutWorker;
+    canvas.dataset.forceState = restoresCompleteLayout ? "settled" : "running";
+    layoutWorker.addEventListener("message", (event: MessageEvent) => {
+      if (event.data?.type !== "positions" || !(event.data.positions instanceof ArrayBuffer)) return;
+      const positions = new Float32Array(event.data.positions);
+      nodes.forEach((node, index) => {
+        node.x = positions[index * 2];
+        node.y = positions[index * 2 + 1];
+      });
+      canvas.dataset.forceState = event.data.state === "settled" ? "settled" : "running";
+      requestDraw();
+    });
+    layoutWorker.postMessage({
+      type: "init",
+      nodes: nodes.map((node) => ({ id: node.id, radius: node.radius, x: node.x, y: node.y })),
+      links: links.map((link) => ({ source: endpointId(link.source), target: endpointId(link.target) })),
+      settings: forceSettings,
+      reducedMotion,
+      settled: restoresCompleteLayout,
+    });
 
     const animateHover = (timestamp: number) => {
       const delta = hoverAnimationTimestamp === null ? 16 : clamp(timestamp - hoverAnimationTimestamp, 0, hoverTransitionDuration);
@@ -483,24 +447,14 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
 
     function heatSimulation(alpha = 0.28) {
       canvas.dataset.forceState = "running";
-      simulation.alpha(Math.max(simulation.alpha(), alpha)).alphaTarget(alpha);
-      if (reducedMotion) {
-        simulation.stop().alpha(alpha).tick(8);
-        requestDraw();
-      } else {
-        simulation.restart();
-      }
+      layoutWorkerRef.current?.postMessage({ type: "heat", alpha });
     }
 
     function releaseNode(node: GraphNode) {
       node.fx = null;
       node.fy = null;
-      simulation.alphaTarget(0);
-      if (reducedMotion) {
-        simulation.stop().alpha(0.18).tick(70);
-        canvas.dataset.forceState = "settled";
-        requestDraw();
-      }
+      layoutWorkerRef.current?.postMessage({ type: "release", nodeId: node.id });
+      if (!layoutWorkerRef.current) canvas.dataset.forceState = "settled";
     }
 
     const onPointerDown = (event: PointerEvent, forcedNode: GraphNode | null = null, captureTarget: Element = canvas) => {
@@ -518,6 +472,14 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
       if (node) {
         node.fx = node.x;
         node.fy = node.y;
+        if (node.x !== undefined && node.y !== undefined) {
+          layoutWorkerRef.current?.postMessage({
+            type: "pin",
+            nodeId: node.id,
+            x: node.x,
+            y: node.y,
+          });
+        }
         dragState = { node, captureTarget, pointerId: event.pointerId, startX: point.x, startY: point.y, moved: false };
         setHoveredNode(node);
         heatSimulation();
@@ -534,8 +496,15 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
         const world = worldPoint(point);
         dragState.node.fx = world.x;
         dragState.node.fy = world.y;
+        dragState.node.x = world.x;
+        dragState.node.y = world.y;
         dragState.moved ||= Math.hypot(point.x - dragState.startX, point.y - dragState.startY) > 4;
-        if (reducedMotion) simulation.tick(2);
+        layoutWorkerRef.current?.postMessage({
+          type: "pin",
+          nodeId: dragState.node.id,
+          x: world.x,
+          y: world.y,
+        });
         requestDraw();
         return;
       }
@@ -717,9 +686,9 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
           height,
         });
       }
-      simulation.stop();
-      simulationRef.current = null;
-      forceRefs.current = null;
+      layoutWorkerRef.current?.postMessage({ type: "stop" });
+      layoutWorkerRef.current?.terminate();
+      layoutWorkerRef.current = null;
       resizeObserver.disconnect();
       themeObserver.disconnect();
       nodeButtonCleanups.forEach((cleanup) => cleanup());
@@ -741,7 +710,7 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
 
   if (!graph.nodes.length) return <div className="knowledge-empty-graph"><GitBranch size={28} /><p>연결할 문서가 아직 없습니다.</p></div>;
   return <div className="knowledge-graph-canvas">
-    <canvas ref={canvasRef} data-force-engine="d3" role="img" aria-label="공통 태그로 연결된 문서 그래프" />
+    <canvas ref={canvasRef} data-force-engine="d3-worker" role="img" aria-label="공통 태그로 연결된 문서 그래프" />
     <div ref={nodeLayerRef} className="knowledge-graph-node-layer" aria-label="지식 문서 노드" />
     <div ref={tooltipRef} className="knowledge-graph-edge-tooltip" role="tooltip" hidden />
     <button className="knowledge-graph-force-trigger" type="button" aria-label="그래프 장력 설정" aria-expanded={settingsOpen} onClick={() => setSettingsOpen((open) => !open)}><SlidersHorizontal size={15} /></button>

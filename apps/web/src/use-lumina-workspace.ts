@@ -26,6 +26,7 @@ import type {
 } from "./api-types";
 import { isTerminalRunEvent, isTerminalRunStatus } from "./run-status";
 import { appendRunAssistantDraft, setRunAssistantDraft } from "./run-assistant-draft-store";
+import { setRunArtifactProgress } from "./run-artifact-progress-store";
 
 export type StreamState = "idle" | "connecting" | "connected" | "reconnecting";
 export type RunControlAction = "pause" | "resume" | "cancel" | "retry_step" | "approve" | "reject";
@@ -290,6 +291,7 @@ export function useLuminaWorkspace() {
         const restoredSnapshots = await api.runs.getSnapshots(runIds).catch(() => []);
         restoredSnapshots.forEach((snapshot) => {
           setRunAssistantDraft(snapshot.runId, snapshot.assistantDraft);
+          setRunArtifactProgress(snapshot.runId, snapshot.artifactProgress ?? null);
           eventSequencesRef.current.set(
             snapshot.runId,
             Math.max(eventSequencesRef.current.get(snapshot.runId) ?? 0, snapshot.lastSequence),
@@ -380,6 +382,7 @@ export function useLuminaWorkspace() {
       ).catch(() => []);
       restoredSnapshots.forEach((snapshot) => {
         setRunAssistantDraft(snapshot.runId, snapshot.assistantDraft);
+        setRunArtifactProgress(snapshot.runId, snapshot.artifactProgress ?? null);
         eventSequencesRef.current.set(
           snapshot.runId,
           Math.max(eventSequencesRef.current.get(snapshot.runId) ?? 0, snapshot.lastSequence),
@@ -424,6 +427,7 @@ export function useLuminaWorkspace() {
   const mergeRunMutation = useCallback((mutation: RunMutationResponse) => {
     const { run, message } = mutation;
     setRunAssistantDraft(run.runId, run.assistantDraft);
+    setRunArtifactProgress(run.runId, run.artifactProgress ?? null);
     eventSequencesRef.current.set(run.runId, run.lastSequence);
     setRuntimes((current) => {
       const runtime = current[run.conversationId] ?? emptyRuntime();
@@ -482,6 +486,15 @@ export function useLuminaWorkspace() {
     if (event.type === "assistant_text_delta") {
       appendRunAssistantDraft(event.runId, event.payload.messageId, event.payload.delta);
       return;
+    }
+    if (event.type === "artifact_progress") {
+      setRunArtifactProgress(event.runId, event.payload);
+    } else if (
+      event.type === "artifact_created"
+      || isTerminalRunEvent(event)
+      || (event.type === "output_intent_classified" && event.payload.fileCreationRequested === false)
+    ) {
+      setRunArtifactProgress(event.runId, null);
     }
     if (event.type === "assistant_turn_completed" || isTerminalRunEvent(event)) {
       setRunAssistantDraft(event.runId, null);
@@ -722,6 +735,7 @@ export function useLuminaWorkspace() {
     const knownEventSequence = eventSequencesRef.current.get(snapshot.runId) ?? 0;
     if (snapshot.lastSequence >= knownEventSequence) {
       setRunAssistantDraft(snapshot.runId, snapshot.assistantDraft);
+      setRunArtifactProgress(snapshot.runId, snapshot.artifactProgress ?? null);
     }
     eventSequencesRef.current.set(
       snapshot.runId,
@@ -811,6 +825,7 @@ export function useLuminaWorkspace() {
         },
       })),
       onEvent: applyRunEvent,
+      onArtifactProgress: setRunArtifactProgress,
       onError: () => {
         setRuntimes((current) => ({
           ...current,
@@ -833,6 +848,7 @@ export function useLuminaWorkspace() {
       const knownEventSequence = eventSequencesRef.current.get(runId) ?? 0;
       if (snapshot.lastSequence >= knownEventSequence) {
         setRunAssistantDraft(runId, snapshot.assistantDraft);
+        setRunArtifactProgress(runId, snapshot.artifactProgress ?? null);
       }
       eventSequencesRef.current.set(runId, Math.max(knownEventSequence, snapshot.lastSequence));
       setRuntimes((current) => {

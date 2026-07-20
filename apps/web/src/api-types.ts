@@ -2358,7 +2358,7 @@ export type RunEvent =
   | RunEventEnvelope<"skill_selected", { activity: Extract<RunActivity, { type: "skill" }> }>
   | RunEventEnvelope<"assistant_turn_completed", { message: ChatMessage }>
   | RunEventEnvelope<"conversation_title_updated", { title: string; revision: number; source: "llm" }>
-  | RunEventEnvelope<"artifact_progress", { tokens: number; lines: number }>
+  | RunEventEnvelope<"artifact_progress", NonNullable<RunSnapshot["artifactProgress"]>>
   | RunEventEnvelope<"work_plan_updated", { steps: WorkPlanStep[] }>
   | RunEventEnvelope<"plan_step_changed", { planId: UUID; step: PlanStep; subtasks?: PlanSubtask[] }>
   | RunEventEnvelope<"tool_started" | "tool_progress" | "tool_completed", { execution: ToolExecution }>
@@ -2406,5 +2406,9 @@ export type RunEvent =
 export interface RunStreamHandlers {
   onOpen?: () => void;
   onEvent: (event: RunEvent) => void;
+  onArtifactProgress?: (
+    runId: UUID,
+    progress: NonNullable<RunSnapshot["artifactProgress"]>,
+  ) => void;
   onError?: (error: Event | Error) => void;
 }

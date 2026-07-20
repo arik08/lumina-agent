@@ -144,6 +144,26 @@ def test_event_broker_releases_idle_channels_after_waiters_leave() -> None:
     asyncio.run(exercise())
 
 
+def test_event_broker_keeps_only_latest_transient_artifact_progress() -> None:
+    broker = RunEventBroker()
+
+    async def exercise() -> None:
+        await broker.publish_artifact_progress("run-1", {"tokens": 10, "lines": 2})
+        first = broker.latest_artifact_progress("run-1")
+        assert first == (1, {"tokens": 10, "lines": 2})
+
+        await broker.publish_artifact_progress("run-1", {"tokens": 20, "lines": 3})
+        assert broker.latest_artifact_progress("run-1", after_revision=1) == (
+            2,
+            {"tokens": 20, "lines": 3},
+        )
+        assert broker.latest_artifact_progress("run-1", after_revision=2) is None
+        broker.clear_artifact_progress("run-1")
+        assert broker.latest_artifact_progress("run-1") is None
+
+    asyncio.run(exercise())
+
+
 def test_dispatcher_wakes_on_signal_without_per_run_waiter_tasks(
     tmp_path: Path,
 ) -> None:
