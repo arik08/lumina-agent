@@ -28,12 +28,14 @@ from ...extensions.schemas import (
     PublishVersion,
     SkillFolderMove,
     SkillOwnershipCreate,
+    SkillVersionRollback,
 )
 from ...extensions.service import (
     activate_draft,
     add_skill_ownership,
     can_view_skill_package,
     can_manage_skill,
+    compare_skill_versions,
     create_folder,
     create_skill,
     checkout_draft,
@@ -57,6 +59,7 @@ from ...extensions.service import (
     require_extension,
     remove_skill_ownership,
     restore_skill,
+    rollback_skill_version,
     save_draft_version,
     update_installation,
     uninstall,
@@ -545,7 +548,69 @@ def get_extension_version(
             "version_not_found",
             "설치된 Skill version만 열 수 있습니다.",
         )
-    return version_payload(version, include_package=True)
+    creator = db.get(User, version.created_by_user_id)
+    return version_payload(
+        version,
+        include_package=True,
+        created_by_display_name=(
+            creator.display_name or creator.login_id if creator else None
+        ),
+    )
+
+
+@router.get("/skills/{skill_id}/compare")
+def get_skill_version_comparison(
+    skill_id: str,
+    from_version_id: str,
+    to_version_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    return compare_skill_versions(
+        db,
+        user=user,
+        extension_id=skill_id,
+        from_version_id=from_version_id,
+        to_version_id=to_version_id,
+    )
+
+
+@router.post("/skills/{skill_id}/rollbacks", status_code=201)
+def post_skill_version_rollback(
+    skill_id: str,
+    payload: SkillVersionRollback,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    extension, version = rollback_skill_version(
+        db,
+        user=context.user,
+        extension_id=skill_id,
+        target_version_id=payload.target_version_id,
+        expected_current_version_id=payload.expected_current_version_id,
+        change_summary=payload.change_summary,
+    )
+    record_audit(
+        db,
+        action="skill_version_rolled_back",
+        target_type="extension_version",
+        target_id=version.id,
+        result="success",
+        actor=context.user,
+        request_id=_request_id(request),
+        metadata={
+            "extension_id": extension.id,
+            "version": version.version_number,
+            "restored_from_version_id": version.restored_from_version_id,
+        },
+    )
+    db.commit()
+    return version_payload(
+        version,
+        include_package=False,
+        created_by_display_name=context.user.display_name or context.user.login_id,
+    )
 
 
 @router.post("/extension-versions/{version_id}/publish")

@@ -1,16 +1,17 @@
-import { AlertTriangle, ArrowLeft, Braces, Check, ChevronDown, ChevronRight, Code2, Download, Eye, FileCode2, FileJson, FileText, Folder, FolderOpen, Info, LoaderCircle, Maximize2, Menu, Minimize2, Package, Pencil, Power, RefreshCw, Save, Search, ServerCog, Settings2, Sparkles, Store, Trash2, Undo2, Wrench, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Braces, Check, ChevronDown, ChevronRight, Code2, Download, Eye, FileCode2, FileJson, FileText, Folder, FolderOpen, History, Info, LoaderCircle, Maximize2, Menu, Minimize2, Package, Pencil, Power, RefreshCw, Save, Search, ServerCog, Settings2, Sparkles, Store, Trash2, Undo2, Wrench, X } from "lucide-react";
 import { type DragEvent, type KeyboardEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api, ApiError } from "../api";
-import type { ExtensionInstallation, ProjectSummary, SkillCatalogItem, SkillCatalogResponse, SkillExtension, SkillVersion } from "../api-types";
+import type { ExtensionInstallation, ProjectSummary, SkillCatalogItem, SkillCatalogResponse, SkillExtension, SkillVersion, SkillVersionComparison } from "../api-types";
 import { useCachedViewState } from "../view-data-cache";
 import { AdminMcpPanel } from "./AdminMcpPanel";
 import { McpMarketplacePanel } from "./McpMarketplacePanel";
 import { MarketplaceInstallButton } from "./MarketplaceInstallButton";
 import { ResizableSplitPane } from "./ResizableSplitPane";
 import { SkillCatalogPanel, type SkillCatalogSort } from "./SkillCatalogPanel";
+import { SkillVersionHistory } from "./SkillVersionHistory";
 import { SyntaxCode, SyntaxTextarea } from "./SyntaxCode";
 import { useDismissablePopover } from "./useDismissablePopover";
 import "./MarketplaceTagEditor.css";
@@ -175,6 +176,8 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
   const [catalogLoading, setCatalogLoading] = useState(!hasCachedCatalog);
   const [catalogLoadingMore, setCatalogLoadingMore] = useState(false);
   const [versionDetail, setVersionDetail] = useState<SkillVersion | null>(null);
+  const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
+  const [versionComparison, setVersionComparison] = useState<SkillVersionComparison | null>(null);
   const [activeFile, setActiveFile] = useState("SKILL.md");
   const [skillContentView, setSkillContentView] = useState<"source" | "rendered">("rendered");
   const [skillContentExpanded, setSkillContentExpanded] = useState(false);
@@ -183,6 +186,7 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
   const [editableFiles, setEditableFiles] = useState<Record<string, string>>({});
   const [editableName, setEditableName] = useState("");
   const [editableDescription, setEditableDescription] = useState("");
+  const [editableChangeSummary, setEditableChangeSummary] = useState("");
   const [editableTags, setEditableTags] = useState<string[]>([]);
   const [editableTagInput, setEditableTagInput] = useState("");
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
@@ -368,6 +372,8 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
 
   useEffect(() => {
     setEditMode(false);
+    setVersionHistoryOpen(false);
+    setVersionComparison(null);
     setRenamingPath(null);
     setDraggedPath(null);
     setDropTarget(null);
@@ -391,6 +397,39 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
       await refresh(selected.id);
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "새 Skill 버전을 저장하지 못했습니다.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const compareVersions = async (fromVersionId: string, toVersionId: string) => {
+    if (!selected || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setVersionComparison(await api.extensions.compareVersions(selected.id, fromVersionId, toVersionId));
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : "Skill 버전을 비교하지 못했습니다.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const rollbackVersion = async (target: SkillVersion, changeSummary: string) => {
+    if (!selected?.latestPublishedVersionId || selected.currentUserRole !== "owner" || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.extensions.rollbackVersion(
+        selected.id,
+        target.id,
+        selected.latestPublishedVersionId,
+        changeSummary,
+      );
+      setVersionComparison(null);
+      await refresh(selected.id);
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : "Skill 버전을 복원하지 못했습니다.");
     } finally {
       setBusy(false);
     }
@@ -622,9 +661,11 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
       setEditableFiles({ ...draft.package.files });
       setEditableName(selected.name);
       setEditableDescription(selected.description);
+      setEditableChangeSummary("");
       setEditableTags(selected.tags);
       setEditableTagInput("");
       setActiveFile(draft.package.files[activeFile] !== undefined ? activeFile : "SKILL.md");
+      setVersionHistoryOpen(false);
       setEditMode(true);
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "Skill 편집을 시작하지 못했습니다.");
@@ -642,7 +683,11 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
     setBusy(true);
     setError(null);
     try {
-      await api.extensions.updateDraft(selected.draft, editableFiles, "Marketplace 패키지 편집");
+      await api.extensions.updateDraft(
+        selected.draft,
+        editableFiles,
+        editableChangeSummary.trim() || "Marketplace 패키지 편집",
+      );
       if (selected.canEdit) {
         await api.extensions.updateMetadata(selected.id, {
           name: editableName.trim(),
@@ -777,11 +822,12 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
           </header>
           <div className={`marketplace-package-detail ${editMode ? "is-editing" : ""}`}>
             <div className="marketplace-package-summary">
-              <div>{skillView === "trash" && <strong>{trashRetentionLabel(selected.purgesAt)}</strong>}<span>Owner {selected.ownerships.filter((item) => item.role === "owner").map((item) => item.displayName).join(", ") || "미지정"}</span></div>
+              <div>{skillView === "trash" && <strong>{trashRetentionLabel(selected.purgesAt)}</strong>}<span>Owner {selected.ownerships.filter((item) => item.role === "owner").map((item) => item.displayName).join(", ") || "미지정"}</span>{editMode && <input className="marketplace-change-summary" aria-label="Skill 변경 요약" placeholder="이번 변경 요약" value={editableChangeSummary} maxLength={500} onChange={(event) => setEditableChangeSummary(event.currentTarget.value)} />}</div>
               <div className="marketplace-package-actions">
                 {skillView === "trash" ? <button className="lumina-primary-action" type="button" disabled={busy} onClick={() => void restoreSelectedSkill()}>{busy ? <LoaderCircle className="is-running" size={14} /> : <Undo2 size={14} />} 복원</button> : <>
                   {editMode ? <><button type="button" disabled={busy} onClick={() => { setEditMode(false); setRenamingPath(null); }}><X size={14} /> 취소</button><button className="lumina-primary-action" type="button" disabled={busy || (selected.canEdit && !editableName.trim())} onClick={() => void savePackageEdit()}><Save size={14} /> 초안 저장</button></> : selected.canCreateDraft && <button type="button" disabled={busy} onClick={() => void beginPackageEdit()}><Pencil size={14} /> {selected.canEdit ? "편집" : "내 버전으로 수정"}</button>}
                   {!editMode && selected.draft?.dirty && <button type="button" disabled={busy} onClick={() => void saveVersion()}><Check size={14} /> {nextSavedSkillDisplayVersion(selected)}로 저장</button>}
+                  {!editMode && selected.versions.length > 0 && <button type="button" aria-pressed={versionHistoryOpen} disabled={busy} onClick={() => setVersionHistoryOpen((current) => !current)}><History size={14} /> {versionHistoryOpen ? "패키지 보기" : "버전 이력"}</button>}
                   {!editMode && installation && <div className="marketplace-project-selector" onClick={(event) => event.stopPropagation()}>
                     <button ref={projectScopeButtonRef} type="button" aria-haspopup="listbox" aria-expanded={projectScopeOpen} onClick={openProjectScope}><Settings2 size={14} /> 프로젝트 설정</button>
                     {projectScopeOpen && createPortal(<div ref={projectScopeMenuRef} className="marketplace-project-options project-options" style={{ top: projectScopePosition.top, right: projectScopePosition.right }} role="listbox" aria-label="Skill을 사용할 프로젝트" aria-multiselectable="true" onClick={(event) => event.stopPropagation()}>
@@ -798,7 +844,15 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
                 </>}
               </div>
             </div>
-            {skillView === "trash" ? <div className="feature-state">복원하면 Skill 파일과 버전을 다시 사용할 수 있습니다.</div> : renderPackageBrowser()}
+            {skillView === "trash" ? <div className="feature-state">복원하면 Skill 파일과 버전을 다시 사용할 수 있습니다.</div> : versionHistoryOpen ? <SkillVersionHistory
+              versions={selected.versions}
+              latestPublishedVersionId={selected.latestPublishedVersionId}
+              comparison={versionComparison}
+              busy={busy}
+              canRollback={selected.currentUserRole === "owner" && Boolean(selected.latestPublishedVersionId)}
+              onCompare={(fromVersionId, toVersionId) => void compareVersions(fromVersionId, toVersionId)}
+              onRollback={(target, changeSummary) => void rollbackVersion(target, changeSummary)}
+            /> : renderPackageBrowser()}
           </div>
         </>
       )}

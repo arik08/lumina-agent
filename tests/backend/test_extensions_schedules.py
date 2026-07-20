@@ -1373,6 +1373,190 @@ def test_skill_trash_requires_owner_or_admin_and_supports_restore_and_expiry(
         assert {"extension_trashed", "extension_restored"} <= actions
 
 
+def test_skill_version_history_compare_and_revert_style_rollback(
+    tmp_path: Path,
+) -> None:
+    app, _settings = _test_app(tmp_path)
+    with SessionLocal() as db:
+        organization = db.scalar(select(Organization))
+        admin = db.scalar(select(User).where(User.login_id == "admin@posco.com"))
+        assert organization is not None and admin is not None
+        maintainer = create_user(
+            db,
+            login_name="version-maintainer",
+            password="pw",
+            organization_id=organization.id,
+            created_by_user_id=admin.id,
+        )
+        maintainer_id = maintainer.id
+        db.commit()
+
+    with TestClient(app) as client:
+        admin_csrf = _login(client)
+        admin_headers = {"X-CSRF-Token": admin_csrf}
+        created = client.post(
+            "/api/extensions",
+            headers=admin_headers,
+            json={
+                "name": "Versioned report skill",
+                "slug": "versioned-report-skill",
+                "description": "Exercises immutable skill history.",
+                "package": {
+                    "files": {
+                        "SKILL.md": "# Report\n\nCreate the original report.\n",
+                        "scripts/old.py": "print('old')\n",
+                    }
+                },
+            },
+        )
+        assert created.status_code == 201, created.text
+        skill = created.json()
+        draft = skill["draft"]
+        saved_v1 = client.post(
+            f"/api/skill-drafts/{draft['id']}/save-version",
+            headers=admin_headers,
+            json={
+                "expectedRevision": draft["revision"],
+                "expectedDigest": draft["digest"],
+                "baseVersionId": None,
+                "manifest": {},
+            },
+        )
+        assert saved_v1.status_code == 201, saved_v1.text
+        v1 = saved_v1.json()
+        assert v1["changeType"] == "save"
+        assert v1["restoredFromVersionId"] is None
+        assert (
+            client.post(
+                f"/api/extension-versions/{v1['id']}/publish",
+                headers=admin_headers,
+                json={},
+            ).status_code
+            == 200
+        )
+
+        current_draft = client.get(f"/api/extensions/{skill['id']}/draft").json()
+        changed = client.patch(
+            f"/api/skill-drafts/{current_draft['id']}",
+            headers=admin_headers,
+            json={
+                "expectedRevision": current_draft["revision"],
+                "expectedDigest": current_draft["digest"],
+                "package": {
+                    "files": {
+                        "SKILL.md": "# Report\n\nCreate the safer report.\n",
+                        "scripts/new.py": "print('new')\n",
+                    }
+                },
+                "changeSummary": "Use the safer report workflow",
+            },
+        )
+        assert changed.status_code == 200, changed.text
+        changed_draft = changed.json()
+        saved_v2 = client.post(
+            f"/api/skill-drafts/{changed_draft['id']}/save-version",
+            headers=admin_headers,
+            json={
+                "expectedRevision": changed_draft["revision"],
+                "expectedDigest": changed_draft["digest"],
+                "baseVersionId": v1["id"],
+                "manifest": {},
+            },
+        )
+        assert saved_v2.status_code == 201, saved_v2.text
+        v2 = saved_v2.json()
+        assert v2["changeSummary"] == "Use the safer report workflow"
+        assert v2["parentVersionId"] == v1["id"]
+        assert (
+            client.post(
+                f"/api/extension-versions/{v2['id']}/publish",
+                headers=admin_headers,
+                json={},
+            ).status_code
+            == 200
+        )
+
+        comparison = client.get(
+            f"/api/skills/{skill['id']}/compare",
+            params={"from_version_id": v1["id"], "to_version_id": v2["id"]},
+        )
+        assert comparison.status_code == 200, comparison.text
+        diff = comparison.json()
+        assert diff["summary"] == {"filesChanged": 3, "additions": 2, "deletions": 2}
+        assert {item["path"]: item["status"] for item in diff["files"]} == {
+            "SKILL.md": "modified",
+            "scripts/new.py": "added",
+            "scripts/old.py": "deleted",
+        }
+        skill_diff = next(item for item in diff["files"] if item["path"] == "SKILL.md")
+        assert {line["kind"] for line in skill_diff["hunks"][0]["lines"]} >= {
+            "add",
+            "delete",
+        }
+
+        ownership = client.post(
+            f"/api/skills/{skill['id']}/ownerships",
+            headers=admin_headers,
+            json={"userId": maintainer_id, "role": "maintainer"},
+        )
+        assert ownership.status_code == 201, ownership.text
+        client.cookies.clear()
+        maintainer_csrf = _login(client, "version-maintainer", "pw")
+        forbidden = client.post(
+            f"/api/skills/{skill['id']}/rollbacks",
+            headers={"X-CSRF-Token": maintainer_csrf},
+            json={
+                "targetVersionId": v1["id"],
+                "expectedCurrentVersionId": v2["id"],
+                "changeSummary": "Maintainer should not publish",
+            },
+        )
+        assert forbidden.status_code == 403
+        assert forbidden.json()["code"] == "skill_rollback_forbidden"
+
+        client.cookies.clear()
+        admin_csrf = _login(client)
+        rollback = client.post(
+            f"/api/skills/{skill['id']}/rollbacks",
+            headers={"X-CSRF-Token": admin_csrf},
+            json={
+                "targetVersionId": v1["id"],
+                "expectedCurrentVersionId": v2["id"],
+                "changeSummary": "Restore the proven workflow",
+            },
+        )
+        assert rollback.status_code == 201, rollback.text
+        restored = rollback.json()
+        assert restored["version"] == 3
+        assert restored["changeType"] == "rollback"
+        assert restored["changeSummary"] == "Restore the proven workflow"
+        assert restored["parentVersionId"] == v2["id"]
+        assert restored["restoredFromVersionId"] == v1["id"]
+        assert restored["status"] == "published"
+
+        restored_package = client.get(f"/api/extension-versions/{restored['id']}")
+        assert restored_package.status_code == 200, restored_package.text
+        assert restored_package.json()["package"] == v1["package"]
+        refreshed = client.get(f"/api/extensions/{skill['id']}").json()
+        assert refreshed["latestPublishedVersionId"] == restored["id"]
+        assert [version["version"] for version in refreshed["versions"]] == [1, 2, 3]
+
+        stale = client.post(
+            f"/api/skills/{skill['id']}/rollbacks",
+            headers={"X-CSRF-Token": admin_csrf},
+            json={
+                "targetVersionId": v2["id"],
+                "expectedCurrentVersionId": v2["id"],
+                "changeSummary": "Stale restore",
+            },
+        )
+        assert stale.status_code == 409
+        assert stale.json()["code"] == "published_version_conflict"
+
+    with SessionLocal() as db:
+        assert "skill_version_rolled_back" in set(db.scalars(select(AuditEvent.action)))
+
+
 def test_schedule_run_now_enable_disable_and_due_dispatch(tmp_path: Path) -> None:
     app, _settings = _test_app(tmp_path)
     with TestClient(app) as client:

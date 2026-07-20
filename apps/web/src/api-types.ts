@@ -1625,12 +1625,51 @@ export interface SkillVersion {
   extensionId: UUID;
   version: number;
   parentVersionId: UUID | null;
+  restoredFromVersionId: UUID | null;
   digest: string;
   status: string;
+  changeType: "save" | "rollback";
+  changeSummary: string;
+  createdByUserId: UUID;
+  createdByDisplayName: string | null;
   manifest: Record<string, unknown>;
   package?: SkillPackage;
   createdAt: IsoDateTime;
   publishedAt: IsoDateTime | null;
+}
+
+export interface SkillVersionDiffLine {
+  kind: "context" | "add" | "delete";
+  oldLine: number | null;
+  newLine: number | null;
+  content: string;
+}
+
+export interface SkillVersionDiffHunk {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: SkillVersionDiffLine[];
+}
+
+export interface SkillVersionFileDiff {
+  path: string;
+  status: "added" | "modified" | "deleted";
+  additions: number;
+  deletions: number;
+  hunks: SkillVersionDiffHunk[];
+}
+
+export interface SkillVersionComparison {
+  fromVersion: SkillVersion;
+  toVersion: SkillVersion;
+  files: SkillVersionFileDiff[];
+  summary: {
+    filesChanged: number;
+    additions: number;
+    deletions: number;
+  };
 }
 
 export interface SkillOwnership {

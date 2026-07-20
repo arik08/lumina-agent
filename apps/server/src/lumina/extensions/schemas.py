@@ -103,6 +103,12 @@ class PublishVersion(ApiModel):
     visibility: Literal["organization"] = "organization"
 
 
+class SkillVersionRollback(ApiModel):
+    target_version_id: str
+    expected_current_version_id: str
+    change_summary: str = Field(default="", max_length=500)
+
+
 class ExtensionQuery(ApiModel):
     kind: Literal["skill"] | None = None
     query: str | None = Field(default=None, max_length=200)

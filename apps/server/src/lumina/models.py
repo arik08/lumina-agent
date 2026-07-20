@@ -1493,6 +1493,11 @@ class ExtensionVersion(UUIDPrimaryKeyMixin, Base):
     manifest_json: Mapped[dict[str, Any]] = mapped_column(
         JSON, default=dict, nullable=False
     )
+    change_summary: Mapped[str] = mapped_column(String(500), default="", nullable=False)
+    change_type: Mapped[str] = mapped_column(String(24), default="save", nullable=False)
+    restored_from_version_id: Mapped[str | None] = mapped_column(
+        ForeignKey("extension_versions.id", ondelete="SET NULL"), index=True
+    )
     status: Mapped[str] = mapped_column(String(24), default="private", nullable=False)
     created_by_user_id: Mapped[str] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
