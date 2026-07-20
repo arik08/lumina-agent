@@ -14,7 +14,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from lumina.auth.service import create_user
-from lumina.agent.executor import local_run_executor
+from lumina.agent.executor import (
+    _filter_web_sources_for_policy,
+    _source_domain_allowed,
+    local_run_executor,
+)
 from lumina.config import Settings
 from lumina.db import SessionLocal
 from lumina.deep_analysis.calculations import execute_python_calculation
@@ -514,6 +518,314 @@ def test_mission_creation_freezes_sources_and_applies_run_output_settings(
             assert run.model_key == "mock-agent"
             assert run.effort == "low"
             assert run.snapshot_json["prompt_references"][0]["reference_id"] == source["id"]
+
+
+def test_mission_research_controls_are_frozen_and_future_nodes_receive_guidance(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "lumina.api.routes.deep_analysis.local_run_executor.enqueue",
+        lambda _run_id: None,
+    )
+    with TestClient(create_app(_settings(tmp_path))) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        created = client.post(
+            f"/api/projects/{project_id}/deep-analysis/missions",
+            headers=headers,
+            json={
+                "title": "연구 제어 검증",
+                "objective": "지정 기간의 공식 자료를 분석한다.",
+                "researchPeriod": {
+                    "startDate": "2024-01-01",
+                    "endDate": "2025-12-31",
+                },
+                "webSourcePolicy": {
+                    "mode": "restrict",
+                    "domains": ["Example.COM"],
+                    "excludedDomains": ["ads.example.net"],
+                },
+            },
+        )
+        assert created.status_code == 201, created.text
+        mission = created.json()
+        assert mission["researchPeriod"] == {
+            "startDate": "2024-01-01",
+            "endDate": "2025-12-31",
+        }
+        assert mission["webSourcePolicy"] == {
+            "mode": "restrict",
+            "domains": ["example.com"],
+            "excludedDomains": ["ads.example.net"],
+        }
+
+        started = client.post(
+            f"/api/deep-analysis/missions/{mission['id']}/start",
+            headers=headers,
+            json={"expectedRevision": mission["revision"]},
+        )
+        assert started.status_code == 200, started.text
+        running = started.json()
+        first_node = next(
+            item for item in running["workflow"]["nodes"] if item["status"] == "running"
+        )
+        assert "2024-01-01 ~ 2025-12-31" in first_node["executionPrompt"]
+        assert "웹 출처 모드: restrict" in first_node["executionPrompt"]
+
+        steered = client.post(
+            f"/api/deep-analysis/missions/{mission['id']}/steer",
+            headers=headers,
+            json={
+                "expectedRevision": running["revision"],
+                "instruction": "향후 Node에서는 공급망 위험을 별도 절로 다뤄 주세요.",
+                "promptReferences": [],
+            },
+        )
+        assert steered.status_code == 200, steered.text
+        steered_payload = steered.json()
+        assert steered_payload["guidanceCount"] == 1
+        unchanged_first = next(
+            item
+            for item in steered_payload["workflow"]["nodes"]
+            if item["id"] == first_node["id"]
+        )
+        assert "공급망 위험" not in unchanged_first["executionPrompt"]
+
+        with SessionLocal() as db:
+            stored_mission = db.get(DeepAnalysisMission, mission["id"])
+            future_node = db.scalar(
+                select(DeepAnalysisWorkflowNode)
+                .where(
+                    DeepAnalysisWorkflowNode.workflow_revision_id
+                    == steered_payload["workflow"]["id"],
+                    DeepAnalysisWorkflowNode.status == "planned",
+                )
+                .order_by(DeepAnalysisWorkflowNode.sequence)
+            )
+            run = db.get(Run, first_node["runId"])
+            assert stored_mission is not None and future_node is not None and run is not None
+            assert "공급망 위험" in _run_prompt(stored_mission, future_node, [])
+            assert run.snapshot_json["deep_analysis"]["web_source_policy"]["mode"] == "restrict"
+            assert run.snapshot_json["deep_analysis"]["guidance_history"] == []
+
+
+def test_deep_analysis_web_source_policy_filters_search_and_blocks_fetch() -> None:
+    policy = {
+        "mode": "restrict",
+        "domains": ["example.com"],
+        "excludedDomains": ["blocked.example.com"],
+    }
+    assert _source_domain_allowed("docs.example.com", policy) is True
+    assert _source_domain_allowed("blocked.example.com", policy) is False
+    assert _source_domain_allowed("outside.test", policy) is False
+    assert _filter_web_sources_for_policy(
+        [
+            {"sourceId": "allowed", "normalizedUrl": "https://docs.example.com/a"},
+            {"sourceId": "blocked", "normalizedUrl": "https://blocked.example.com/b"},
+            {"sourceId": "outside", "normalizedUrl": "https://outside.test/c"},
+        ],
+        policy,
+    ) == [
+        {"sourceId": "allowed", "normalizedUrl": "https://docs.example.com/a"}
+    ]
+
+
+def test_mission_research_inspector_and_changed_source_refresh(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "lumina.api.routes.deep_analysis.local_run_executor.enqueue",
+        lambda _run_id: None,
+    )
+    with TestClient(create_app(_settings(tmp_path))) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        uploaded = client.post(
+            f"/api/projects/{project_id}/files",
+            headers=headers,
+            data={"logicalPath": "inputs/base.csv", "changeReason": "초기 자료"},
+            files={"file": ("base.csv", b"value\n10\n", "text/csv")},
+        )
+        assert uploaded.status_code == 201, uploaded.text
+        source = uploaded.json()
+        token = "@base.csv"
+        created = client.post(
+            f"/api/projects/{project_id}/deep-analysis/missions",
+            headers=headers,
+            json={
+                "title": "자료 갱신 검증",
+                "objective": f"{token}의 수치를 분석한다.",
+                "promptReferences": [
+                    {
+                        "kind": "file",
+                        "referenceId": source["id"],
+                        "versionOrDigest": source["contentHash"],
+                        "tokenStart": 0,
+                        "tokenEnd": len(token),
+                    }
+                ],
+            },
+        ).json()
+        started = client.post(
+            f"/api/deep-analysis/missions/{created['id']}/start",
+            headers=headers,
+            json={"expectedRevision": created["revision"]},
+        ).json()
+        running_node = next(
+            item for item in started["workflow"]["nodes"] if item["status"] == "running"
+        )
+
+        with SessionLocal() as db:
+            assistant = db.scalar(
+                select(Message).where(
+                    Message.run_id == running_node["runId"], Message.role == "assistant"
+                )
+            )
+            run = db.get(Run, running_node["runId"])
+            if assistant is None and run is not None:
+                assistant = Message(
+                    conversation_id=run.conversation_id,
+                    run_id=run.id,
+                    role="assistant",
+                    status="completed",
+                    canonical_text="",
+                    turn_index=1,
+                )
+                db.add(assistant)
+            report = db.scalar(
+                select(DeepAnalysisWorkflowNode).where(
+                    DeepAnalysisWorkflowNode.workflow_revision_id
+                    == started["workflow"]["id"],
+                    DeepAnalysisWorkflowNode.node_type == "report",
+                )
+            )
+            project_file = db.get(ProjectFile, source["id"])
+            assert assistant is not None and report is not None and project_file is not None
+            assistant.status = "completed"
+            assistant.canonical_text = "공식 통계는 10%입니다.[1]"
+            assistant.metadata_json = {
+                "sources": [
+                    {
+                        "sourceId": "official-1",
+                        "title": "Official",
+                        "normalizedUrl": "https://official.example/report",
+                        "citationStatus": "cited",
+                    }
+                ],
+                "citations": [{"sourceId": "official-1", "marker": "[1]"}],
+                "researchVerification": "verified",
+            }
+            report.output_markdown = (
+                "# 결과\ninputs/base.csv 기준 값은 10%입니다.[1]\n"
+                "추정 성장률은 25%입니다.\n"
+            )
+            assert run is not None
+            current_report_run = Run(
+                organization_id=run.organization_id,
+                project_id=run.project_id,
+                conversation_id=run.conversation_id,
+                user_id=run.user_id,
+                status="completed",
+                provider_id=run.provider_id,
+                model_key=run.model_key,
+                runtime_model_id=run.runtime_model_id,
+                model_display_name=run.model_display_name,
+                effort=run.effort,
+                snapshot_json={},
+                usage_json={},
+                idempotency_key="report-diff-current",
+            )
+            db.add(current_report_run)
+            db.flush()
+            db.add(
+                Message(
+                    conversation_id=run.conversation_id,
+                    run_id=current_report_run.id,
+                    role="assistant",
+                    status="completed",
+                    canonical_text="# 결과\n기준 값은 12%입니다.[1]\n새 결론입니다.\n",
+                    turn_index=2,
+                )
+            )
+            report.run_history_json = [
+                {"attempt": 1, "runId": run.id, "status": "completed"}
+            ]
+            report.run_id = current_report_run.id
+            current_version = db.scalar(
+                select(ProjectFileVersion).where(
+                    ProjectFileVersion.project_file_id == project_file.id,
+                    ProjectFileVersion.version_number == 1,
+                )
+            )
+            assert current_version is not None
+            next_version = ProjectFileVersion(
+                project_file_id=project_file.id,
+                version_number=2,
+                storage_backend=current_version.storage_backend,
+                storage_key=f"{current_version.storage_key}.v2",
+                content_hash="b" * 64,
+                size_bytes=12,
+                mime_type="text/csv",
+                original_filename="base.csv",
+                parent_version_id=current_version.id,
+                extraction_status="ready",
+                metadata_json={},
+                created_by_user_id=current_version.created_by_user_id,
+            )
+            db.add(next_version)
+            project_file.current_version_number = 2
+            mission = db.get(DeepAnalysisMission, created["id"])
+            assert mission is not None
+            mission.status = "completed"
+            for node in db.scalars(
+                select(DeepAnalysisWorkflowNode).where(
+                    DeepAnalysisWorkflowNode.workflow_revision_id
+                    == started["workflow"]["id"]
+                )
+            ):
+                node.status = "completed"
+            db.commit()
+
+        inspector = client.get(
+            f"/api/deep-analysis/missions/{created['id']}/research-inspector"
+        )
+        assert inspector.status_code == 200, inspector.text
+        inspected = inspector.json()
+        assert inspected["summary"]["sourceCount"] == 2
+        assert inspected["summary"]["citedSourceCount"] == 2
+        assert inspected["summary"]["citationReviewNeededCount"] == 1
+        assert inspected["citationReviewCandidates"][0]["text"] == "추정 성장률은 25%입니다."
+
+        preview = client.get(
+            f"/api/deep-analysis/missions/{created['id']}/refresh-preview"
+        )
+        assert preview.status_code == 200, preview.text
+        preview_payload = preview.json()
+        assert preview_payload["hasChanges"] is True
+        assert preview_payload["canRefresh"] is True
+        assert preview_payload["changedSources"][0]["fromVersion"] == 1
+        assert preview_payload["changedSources"][0]["toVersion"] == 2
+        assert len(preview_payload["affectedNodeKeys"]) == len(
+            started["workflow"]["nodes"]
+        )
+        assert preview_payload["reportDiff"]["available"] is True
+        assert preview_payload["reportDiff"]["addedLines"] == 3
+        assert preview_payload["reportDiff"]["removedLines"] == 1
+
+        refreshed = client.post(
+            f"/api/deep-analysis/missions/{created['id']}/refresh",
+            headers=headers,
+            json={"expectedRevision": started["revision"]},
+        )
+        assert refreshed.status_code == 200, refreshed.text
+        refreshed_payload = refreshed.json()
+        assert refreshed_payload["status"] == "running"
+        assert refreshed_payload["sourceManifest"][0]["version"] == 2
+        assert refreshed_payload["promptReferences"][0]["versionOrDigest"] == "b" * 64
+        assert sum(
+            item["status"] == "running"
+            for item in refreshed_payload["workflow"]["nodes"]
+        ) == 1
 
 
 def test_mission_without_references_does_not_include_project_files(

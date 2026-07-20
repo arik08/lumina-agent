@@ -381,6 +381,39 @@ test("Mission execution, retry, export, and deletion stay explicit", async () =>
   assert.match(view, /deleteArmed \? "한 번 더 눌러 삭제"/);
 });
 
+test("Mission research controls, steering, citations, and source refresh are explicit", async () => {
+  const [view, api, types, css] = await Promise.all([
+    readFile(viewPath, "utf8"),
+    readFile(apiPath, "utf8"),
+    readFile(typesPath, "utf8"),
+    readFile(cssPath, "utf8"),
+  ]);
+
+  assert.match(view, /연구 범위 · 웹 출처/);
+  assert.match(view, /지정 출처 우선/);
+  assert.match(view, /지정 출처만/);
+  assert.match(view, /researchPeriod: \{/);
+  assert.match(view, /webSourcePolicy: \{/);
+  assert.match(view, /새 지침·자료 추가/);
+  assert.match(view, /다음에 시작되는 Node부터 적용/);
+  assert.match(view, /api\.deepAnalysis\.steerMission/);
+  assert.match(view, /출처·인용 검사/);
+  assert.match(view, /citationReviewCandidates/);
+  assert.match(view, /api\.deepAnalysis\.getResearchInspector/);
+  assert.match(view, /자료 변경 확인/);
+  assert.match(view, /직전 보고서 차이/);
+  assert.match(view, /api\.deepAnalysis\.refreshMission/);
+  assert.match(api, /\/research-inspector/);
+  assert.match(api, /\/refresh-preview/);
+  assert.match(api, /\/steer/);
+  assert.match(api, /\/refresh/);
+  assert.match(types, /interface DeepAnalysisWebSourcePolicy/);
+  assert.match(types, /interface DeepAnalysisResearchInspector/);
+  assert.match(types, /interface DeepAnalysisRefreshPreview/);
+  assert.match(css, /\.deep-analysis-steer-panel/);
+  assert.match(css, /\.deep-analysis-research-inspector/);
+});
+
 test("Mission event streaming uses a lightweight projection for live progress", async () => {
   const view = await readFile(viewPath, "utf8");
 

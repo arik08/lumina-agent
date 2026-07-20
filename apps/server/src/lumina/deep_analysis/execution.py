@@ -462,6 +462,28 @@ def _run_prompt(
     node: DeepAnalysisWorkflowNode,
     manifest: list[dict[str, Any]],
 ) -> str:
+    settings = mission.execution_settings_json or {}
+    research_period = settings.get("researchPeriod")
+    if not isinstance(research_period, dict):
+        research_period = {}
+    start_date = research_period.get("startDate") or "제한 없음"
+    end_date = research_period.get("endDate") or "제한 없음"
+    source_policy = settings.get("webSourcePolicy")
+    if not isinstance(source_policy, dict):
+        source_policy = {}
+    source_mode = str(source_policy.get("mode") or "all")
+    source_domains = ", ".join(
+        str(value) for value in source_policy.get("domains", []) if value
+    ) or "없음"
+    excluded_domains = ", ".join(
+        str(value) for value in source_policy.get("excludedDomains", []) if value
+    ) or "없음"
+    guidance_lines = [
+        f"{index}. {item.get('instruction')}"
+        for index, item in enumerate(settings.get("guidanceHistory", []), start=1)
+        if isinstance(item, dict) and item.get("instruction")
+    ]
+    guidance = "\n".join(guidance_lines[-50:]) or "- 추가 지침 없음"
     return f"""당신은 Lumina Workflow에서 하나의 작업 세션을 실행하고 있습니다.
 
 Mission: {mission.title}
@@ -470,6 +492,16 @@ Mission 설명: {mission.objective or mission.title}
 
 선행 세션 출력과 Project 파일:
 {_manifest_prompt(manifest)}
+
+연구 범위와 출처 정책:
+- 연구 기간: {start_date} ~ {end_date}
+- 웹 출처 모드: {source_mode}
+- 우선 또는 허용 도메인: {source_domains}
+- 제외 도메인: {excluded_domains}
+- restrict 모드에서는 허용 도메인 밖의 웹 출처를 사용하지 마십시오. prioritize 모드에서는 지정 도메인을 우선하되 필요한 보완 출처를 사용할 수 있습니다.
+
+실행 중 추가 지침(이 Node 시작 전에 제출된 항목):
+{guidance}
 
 작업 프롬프트:
 {node.purpose or node.title}
@@ -652,6 +684,14 @@ def create_node_run(
             "node_key": node.node_key,
             "attempt": attempt,
             "output_directory": output_directory(mission),
+            "research_period": execution_settings.get(
+                "researchPeriod", {"startDate": None, "endDate": None}
+            ),
+            "web_source_policy": execution_settings.get(
+                "webSourcePolicy",
+                {"mode": "all", "domains": [], "excludedDomains": []},
+            ),
+            "guidance_history": execution_settings.get("guidanceHistory", []),
         },
         "project_file_manifest": manifest,
     }

@@ -400,6 +400,63 @@ def _web_call_signature(tool_name: str, arguments: Mapping[str, Any]) -> str:
         return " ".join(value.casefold().split())
 
 
+def _deep_analysis_web_source_policy(snapshot: Mapping[str, Any]) -> dict[str, Any]:
+    deep_analysis = snapshot.get("deep_analysis")
+    if not isinstance(deep_analysis, Mapping):
+        return {"mode": "all", "domains": [], "excludedDomains": []}
+    policy = deep_analysis.get("web_source_policy")
+    if not isinstance(policy, Mapping):
+        return {"mode": "all", "domains": [], "excludedDomains": []}
+    return {
+        "mode": str(policy.get("mode") or "all"),
+        "domains": [str(value) for value in policy.get("domains", []) if value],
+        "excludedDomains": [
+            str(value) for value in policy.get("excludedDomains", []) if value
+        ],
+    }
+
+
+def _source_domain_allowed(hostname: str, policy: Mapping[str, Any]) -> bool:
+    host = hostname.casefold().rstrip(".")
+
+    def matches(domain: str) -> bool:
+        normalized = domain.casefold().rstrip(".")
+        return host == normalized or host.endswith(f".{normalized}")
+
+    if any(matches(str(domain)) for domain in policy.get("excludedDomains", [])):
+        return False
+    if policy.get("mode") == "restrict":
+        return any(matches(str(domain)) for domain in policy.get("domains", []))
+    return True
+
+
+def _filter_web_sources_for_policy(
+    sources: Sequence[Mapping[str, Any]], policy: Mapping[str, Any]
+) -> list[dict[str, Any]]:
+    filtered: list[tuple[bool, dict[str, Any]]] = []
+    preferred_domains = [str(value) for value in policy.get("domains", []) if value]
+    for source in sources:
+        hostname = (
+            urlsplit(str(source.get("normalizedUrl") or source.get("originalUrl") or ""))
+            .hostname
+            or ""
+        )
+        if hostname and _source_domain_allowed(hostname, policy):
+            preferred = any(
+                hostname.casefold().rstrip(".") == domain.casefold().rstrip(".")
+                or hostname.casefold().rstrip(".").endswith(
+                    f".{domain.casefold().rstrip('.')}"
+                )
+                for domain in preferred_domains
+            )
+            filtered.append((preferred, dict(source)))
+        elif not hostname and policy.get("mode") != "restrict":
+            filtered.append((False, dict(source)))
+    if policy.get("mode") == "prioritize":
+        filtered.sort(key=lambda item: not item[0])
+    return [source for _preferred, source in filtered]
+
+
 def _recalled_memory_context(snapshot: Mapping[str, Any]) -> str:
     memory_lines = [
         f"[memory_id={memory.get('id')}; category={memory.get('category')}] "
@@ -3722,12 +3779,20 @@ class LocalRunExecutor:
                 ),
             }
         analysis_depth = "auto"
+        web_source_policy: dict[str, Any] = {
+            "mode": "all",
+            "domains": [],
+            "excludedDomains": [],
+        }
         if tool_call["name"] in {"web_search", "web_fetch"}:
             with SessionLocal() as db:
                 active_run = db.get(Run, run_id)
                 if active_run is not None:
                     analysis_depth = str(
                         active_run.snapshot_json.get("analysis_depth", "auto")
+                    )
+                    web_source_policy = _deep_analysis_web_source_policy(
+                        active_run.snapshot_json
                     )
         web_research_budget = _web_research_budget(user_message, analysis_depth)
         if tool_call["name"] == "web_search":
@@ -4042,19 +4107,37 @@ class LocalRunExecutor:
                     trust_profile=self.trust_profile,
                 )
                 payload = search_result.to_dict()
+                raw_sources = payload.get("sources", [])
+                if isinstance(raw_sources, list):
+                    payload["sources"] = _filter_web_sources_for_policy(
+                        raw_sources, web_source_policy
+                    )
+                    payload["policyFilteredCount"] = len(raw_sources) - len(
+                        payload["sources"]
+                    )
             except (WebToolError, TypeError, ValueError) as exc:
                 return await self._fail_tool_execution(run_id, tool_id, exc)
             await self._complete_tool_execution(
                 run_id,
                 tool_id,
                 payload,
-                f"검색 결과 {len(search_result.sources)}건을 확인했습니다.",
+                f"검색 결과 {len(payload.get('sources', []))}건을 확인했습니다.",
             )
             return payload
 
         if tool_call["name"] == "web_fetch":
             try:
                 url = str(arguments.get("url", ""))
+                hostname = (urlsplit(url).hostname or "").casefold()
+                if hostname and not _source_domain_allowed(
+                    hostname, web_source_policy
+                ):
+                    raise WebToolError(
+                        "source_domain_blocked",
+                        "MISSION 출처 정책에서 허용하지 않은 도메인입니다.",
+                        stage="policy",
+                        retryable=False,
+                    )
                 raw_query_ids = arguments.get("query_ids", [])
                 if not isinstance(raw_query_ids, list):
                     raise ValueError("query_ids must be an array")

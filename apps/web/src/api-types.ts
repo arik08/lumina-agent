@@ -203,6 +203,17 @@ export interface AnnouncementList {
 
 export type DeepAnalysisAutonomyMode = "guided" | "balanced" | "autonomous";
 
+export interface DeepAnalysisResearchPeriod {
+  startDate: string | null;
+  endDate: string | null;
+}
+
+export interface DeepAnalysisWebSourcePolicy {
+  mode: "all" | "prioritize" | "restrict";
+  domains: string[];
+  excludedDomains: string[];
+}
+
 export interface DeepAnalysisMissionSummary {
   id: UUID;
   projectId: UUID;
@@ -221,6 +232,9 @@ export interface DeepAnalysisMissionSummary {
   targetOutputTokens: number | null;
   execution: ExecutionSelection | null;
   promptReferences: PromptReference[];
+  researchPeriod: DeepAnalysisResearchPeriod;
+  webSourcePolicy: DeepAnalysisWebSourcePolicy;
+  guidanceCount: number;
   budgetMicrousd: number | null;
   spentMicrousd: number;
   completionOutcome: "satisfied" | "satisfied_with_exceptions" | "not_satisfied" | null;
@@ -505,6 +519,70 @@ export interface DeepAnalysisMissionDetail extends DeepAnalysisMissionSummary {
   workflow: DeepAnalysisWorkflowRevision;
 }
 
+export interface DeepAnalysisResearchInspector {
+  missionId: UUID;
+  generatedAt: IsoDateTime;
+  summary: {
+    sourceCount: number;
+    citedSourceCount: number;
+    referenceOnlyCount: number;
+    webSourceCount: number;
+    projectSourceCount: number;
+    citationCount: number;
+    citationReviewNeededCount: number;
+    policyViolationCount: number;
+    researchVerification: string[];
+  };
+  sources: Array<{
+    sourceId: string;
+    sourceKind: "web" | "project_file";
+    title?: string;
+    normalizedUrl?: string;
+    logicalPath?: string;
+    citationStatus?: "cited" | "reference_only";
+    policyStatus: string;
+    occurrences: Array<{
+      nodeKey?: string;
+      nodeTitle?: string;
+      attempt?: number;
+      runId?: UUID;
+    }>;
+  }>;
+  citations: Array<Record<string, unknown>>;
+  citationReviewCandidates: Array<{
+    nodeKey: string;
+    lineNumber: number;
+    text: string;
+    status: "citation_review_needed";
+  }>;
+}
+
+export interface DeepAnalysisRefreshPreview {
+  missionId: UUID;
+  checkedAt: IsoDateTime;
+  hasChanges: boolean;
+  canRefresh: boolean;
+  changedSources: Array<{
+    projectFileId: UUID;
+    logicalPath: string;
+    status: "changed" | "missing";
+    fromVersion: number | null;
+    toVersion: number | null;
+  }>;
+  missingSourceCount: number;
+  affectedNodeKeys: string[];
+  refreshedSourceManifest: DeepAnalysisMissionDetail["sourceManifest"];
+  reportDiff: {
+    available: boolean;
+    fromAttempt?: number;
+    toAttempt?: number;
+    addedLines: number;
+    removedLines: number;
+    truncated?: boolean;
+    lines: string[];
+  };
+}
+
 export interface DeepAnalysisMissionEvent {
   missionId: UUID;
   sequence: number;
@@ -586,6 +664,8 @@ export interface CreateDeepAnalysisMissionRequest {
   targetOutputTokens?: number | null;
   execution?: ExecutionSelection;
   promptReferences?: PromptReference[];
+  researchPeriod?: DeepAnalysisResearchPeriod;
+  webSourcePolicy?: DeepAnalysisWebSourcePolicy;
   workflowStartMode?: DeepAnalysisWorkflowStartMode;
   patternVersionId?: UUID | null;
 }
@@ -651,6 +731,8 @@ export interface UpdateDeepAnalysisMissionRequest {
   targetOutputTokens?: number | null;
   execution?: ExecutionSelection;
   promptReferences?: PromptReference[];
+  researchPeriod?: DeepAnalysisResearchPeriod;
+  webSourcePolicy?: DeepAnalysisWebSourcePolicy;
   isFavorite?: boolean;
   isLiked?: boolean;
   charter?: Omit<DeepAnalysisMissionCharter, "confirmed" | "confirmedMissionRevision" | "confirmedAt">;
@@ -689,6 +771,12 @@ export interface KnowledgeSpace {
 
 export interface RestartDeepAnalysisMissionRequest {
   expectedRevision: number;
+}
+
+export interface SteerDeepAnalysisMissionRequest {
+  expectedRevision: number;
+  instruction: string;
+  promptReferences?: PromptReference[];
 }
 
 export interface CreateKnowledgeSpaceRequest { name: string; purpose?: string; visibility?: "private" | "organization"; }

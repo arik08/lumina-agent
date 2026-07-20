@@ -57,6 +57,8 @@ import type {
   DeepAnalysisMissionDetail,
   DeepAnalysisMissionEvent,
   DeepAnalysisMissionCosts,
+  DeepAnalysisRefreshPreview,
+  DeepAnalysisResearchInspector,
   DeepAnalysisMissionSummary,
   DeepAnalysisOutputFormat,
   DeepAnalysisWorkflowNode,
@@ -86,6 +88,77 @@ interface DeepAnalysisViewProps {
 
 type MissionAnalysisDepth = "auto" | "brief" | "standard" | "deep";
 type MissionAnswerLength = "auto" | "brief" | "standard" | "detailed";
+type WebSourceMode = "all" | "prioritize" | "restrict";
+
+const webSourceModeLabels: Record<WebSourceMode, string> = {
+  all: "전체 웹",
+  prioritize: "지정 출처 우선",
+  restrict: "지정 출처만",
+};
+
+function parseDomainList(value: string) {
+  return [...new Set(value.split(/[\s,]+/).map((item) => item.trim().toLowerCase()).filter(Boolean))];
+}
+
+function ResearchSettingsFields({
+  startDate,
+  endDate,
+  sourceMode,
+  domains,
+  excludedDomains,
+  disabled,
+  onStartDateChange,
+  onEndDateChange,
+  onSourceModeChange,
+  onDomainsChange,
+  onExcludedDomainsChange,
+}: {
+  startDate: string;
+  endDate: string;
+  sourceMode: WebSourceMode;
+  domains: string;
+  excludedDomains: string;
+  disabled: boolean;
+  onStartDateChange: (value: string) => void;
+  onEndDateChange: (value: string) => void;
+  onSourceModeChange: (value: WebSourceMode) => void;
+  onDomainsChange: (value: string) => void;
+  onExcludedDomainsChange: (value: string) => void;
+}) {
+  return (
+    <details className="deep-analysis-research-settings">
+      <summary>연구 범위 · 웹 출처</summary>
+      <div className="deep-analysis-research-date-grid">
+        <label>시작일<input type="date" value={startDate} disabled={disabled} onChange={(event) => onStartDateChange(event.target.value)} /></label>
+        <label>종료일<input type="date" value={endDate} disabled={disabled} onChange={(event) => onEndDateChange(event.target.value)} /></label>
+      </div>
+      <fieldset>
+        <legend>웹 출처 정책</legend>
+        {(Object.keys(webSourceModeLabels) as WebSourceMode[]).map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            className={sourceMode === mode ? "is-active" : undefined}
+            aria-pressed={sourceMode === mode}
+            disabled={disabled}
+            onClick={() => onSourceModeChange(mode)}
+          >{webSourceModeLabels[mode]}</button>
+        ))}
+      </fieldset>
+      {sourceMode !== "all" && (
+        <label>
+          {sourceMode === "restrict" ? "허용 도메인" : "우선 도메인"}
+          <input value={domains} disabled={disabled} placeholder="example.com, data.go.kr" onChange={(event) => onDomainsChange(event.target.value)} />
+          <small>쉼표나 공백으로 구분합니다. 하위 도메인도 함께 적용됩니다.</small>
+        </label>
+      )}
+      <label>
+        제외 도메인
+        <input value={excludedDomains} disabled={disabled} placeholder="blog.example.com" onChange={(event) => onExcludedDomainsChange(event.target.value)} />
+      </label>
+    </details>
+  );
+}
 
 const outputFormatOptions = [
   { value: "markdown", label: "Markdown (.md)" },
@@ -220,9 +293,11 @@ function promptReferencesForObjective(
 ): PromptReference[] {
   return references.flatMap(({ reference, token }) => {
     const tokenStart = objective.indexOf(token);
-    return tokenStart < 0
-      ? []
-      : [{ ...reference, tokenStart, tokenEnd: tokenStart + token.length }];
+    return [{
+      ...reference,
+      tokenStart: tokenStart < 0 ? null : tokenStart,
+      tokenEnd: tokenStart < 0 ? null : tokenStart + token.length,
+    }];
   });
 }
 
@@ -541,6 +616,22 @@ export function DeepAnalysisView({
   const [targetOutputTokens, setTargetOutputTokens] = useState(10_000);
   const [createExecution, setCreateExecution] = useState<ExecutionSelection | null>(execution);
   const [selectedReferences, setSelectedReferences] = useState<SelectedMissionReference[]>([]);
+  const [researchStartDate, setResearchStartDate] = useState("");
+  const [researchEndDate, setResearchEndDate] = useState("");
+  const [webSourceMode, setWebSourceMode] = useState<WebSourceMode>("all");
+  const [webSourceDomains, setWebSourceDomains] = useState("");
+  const [excludedWebSourceDomains, setExcludedWebSourceDomains] = useState("");
+  const [steerInstruction, setSteerInstruction] = useState("");
+  const [steerReferences, setSteerReferences] = useState<SelectedMissionReference[]>([]);
+  const [steeringMission, setSteeringMission] = useState(false);
+  const [uploadingSteerSources, setUploadingSteerSources] = useState(false);
+  const [researchInspectorOpen, setResearchInspectorOpen] = useState(false);
+  const [researchInspector, setResearchInspector] = useState<DeepAnalysisResearchInspector | null>(null);
+  const [loadingResearchInspector, setLoadingResearchInspector] = useState(false);
+  const [refreshPreview, setRefreshPreview] = useState<DeepAnalysisRefreshPreview | null>(null);
+  const [loadingRefreshPreview, setLoadingRefreshPreview] = useState(false);
+  const [refreshArmed, setRefreshArmed] = useState(false);
+  const [refreshingMission, setRefreshingMission] = useState(false);
   const [referenceTrigger, setReferenceTrigger] = useState<"@" | "$" | null>(null);
   const [referenceQuery, setReferenceQuery] = useState("");
   const [referenceSuggestions, setReferenceSuggestions] = useState<ComposerSuggestion[]>([]);
@@ -596,7 +687,13 @@ export function DeepAnalysisView({
     || (outputMode === "chat" ? null : targetOutputTokens) !== mission.targetOutputTokens
     || JSON.stringify(createExecution) !== JSON.stringify(mission.execution)
     || JSON.stringify(promptReferencesForObjective(selectedReferences, missionObjectiveDraft)) !== JSON.stringify(mission.promptReferences)
+    || researchStartDate !== (mission.researchPeriod.startDate ?? "")
+    || researchEndDate !== (mission.researchPeriod.endDate ?? "")
+    || webSourceMode !== mission.webSourcePolicy.mode
+    || JSON.stringify(parseDomainList(webSourceDomains)) !== JSON.stringify(mission.webSourcePolicy.domains)
+    || JSON.stringify(parseDomainList(excludedWebSourceDomains)) !== JSON.stringify(mission.webSourcePolicy.excludedDomains)
   );
+  const sourcePolicyValid = webSourceMode === "all" || parseDomainList(webSourceDomains).length > 0;
   const [connectionDraft, setConnectionDraft] = useState<{
     sourceNodeKey: string;
     sourceSide: WorkflowPortSide;
@@ -611,6 +708,7 @@ export function DeepAnalysisView({
   const createToolbarRef = useRef<HTMLDivElement>(null);
   const costDetailsRef = useRef<HTMLDivElement>(null);
   const createFileInputRef = useRef<HTMLInputElement>(null);
+  const steerFileInputRef = useRef<HTMLInputElement>(null);
   const workflowRegenerateTriggerRef = useRef<HTMLButtonElement>(null);
   const liveOutputRef = useRef<HTMLPreElement>(null);
   const workflowRegenerateFontSize = workflowRegenerateTriggerRef.current
@@ -678,6 +776,17 @@ export function DeepAnalysisView({
     setTargetOutputTokens(mission?.targetOutputTokens ?? 10_000);
     setCreateExecution(mission?.execution ?? execution);
     setSelectedReferences(mission ? selectedReferencesFromMission(mission) : []);
+    setResearchStartDate(mission?.researchPeriod.startDate ?? "");
+    setResearchEndDate(mission?.researchPeriod.endDate ?? "");
+    setWebSourceMode(mission?.webSourcePolicy.mode ?? "all");
+    setWebSourceDomains(mission?.webSourcePolicy.domains.join(", ") ?? "");
+    setExcludedWebSourceDomains(mission?.webSourcePolicy.excludedDomains.join(", ") ?? "");
+    setSteerInstruction("");
+    setSteerReferences([]);
+    setResearchInspectorOpen(false);
+    setResearchInspector(null);
+    setRefreshPreview(null);
+    setRefreshArmed(false);
   }, [mission?.id]);
 
   useEffect(() => {
@@ -747,6 +856,11 @@ export function DeepAnalysisView({
     setTargetOutputTokens(10_000);
     setCreateExecution(execution);
     setSelectedReferences([]);
+    setResearchStartDate("");
+    setResearchEndDate("");
+    setWebSourceMode("all");
+    setWebSourceDomains("");
+    setExcludedWebSourceDomains("");
     setReferenceTrigger(null);
     setReferenceQuery("");
     setCreateOpen(true);
@@ -1848,6 +1962,131 @@ export function DeepAnalysisView({
     }
   }
 
+  async function uploadSteerSources(files: File[]) {
+    if (!projectId || !files.length || uploadingSteerSources) return;
+    setUploadingSteerSources(true);
+    setError(null);
+    try {
+      const uploadedReferences: SelectedMissionReference[] = [];
+      for (const file of files) {
+        const uploaded = await api.projectFiles.upload(
+          projectId,
+          file,
+          file.name,
+          "심층분석 실행 중 추가 자료",
+        );
+        uploadedReferences.push({
+          key: `file:${uploaded.id}:${uploaded.contentHash}`,
+          token: `@${uploaded.displayName}`,
+          name: uploaded.displayName,
+          kind: "file",
+          reference: {
+            kind: "file",
+            referenceId: uploaded.id,
+            versionOrDigest: uploaded.contentHash,
+            displaySnapshot: {
+              name: uploaded.displayName,
+              targetType: "project_file",
+              logicalPath: uploaded.logicalPath,
+              mimeType: uploaded.mimeType,
+              version: uploaded.currentVersion,
+              contentHash: uploaded.contentHash,
+            },
+          },
+        });
+      }
+      setSteerReferences((current) => [
+        ...current,
+        ...uploadedReferences.filter((item) => !current.some((existing) => existing.key === item.key)),
+      ]);
+    } catch (uploadError) {
+      setError(errorMessage(uploadError));
+    } finally {
+      setUploadingSteerSources(false);
+    }
+  }
+
+  async function steerActiveMission(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!mission || !steerInstruction.trim() || steeringMission) return;
+    setSteeringMission(true);
+    setError(null);
+    try {
+      const updated = await api.deepAnalysis.steerMission(mission.id, {
+        expectedRevision: mission.revision,
+        instruction: steerInstruction.trim(),
+        promptReferences: steerReferences.map((item) => item.reference),
+      });
+      setMission(updated);
+      setMissions((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setSelectedReferences(selectedReferencesFromMission(updated));
+      setSteerInstruction("");
+      setSteerReferences([]);
+    } catch (steerError) {
+      setError(errorMessage(steerError));
+    } finally {
+      setSteeringMission(false);
+    }
+  }
+
+  async function toggleResearchInspector() {
+    if (!mission) return;
+    if (researchInspectorOpen) {
+      setResearchInspectorOpen(false);
+      return;
+    }
+    setResearchInspectorOpen(true);
+    setLoadingResearchInspector(true);
+    try {
+      setResearchInspector(await api.deepAnalysis.getResearchInspector(mission.id));
+    } catch (inspectorError) {
+      setError(errorMessage(inspectorError));
+    } finally {
+      setLoadingResearchInspector(false);
+    }
+  }
+
+  async function inspectSourceChanges() {
+    if (!mission || loadingRefreshPreview) return;
+    setLoadingRefreshPreview(true);
+    setRefreshArmed(false);
+    setError(null);
+    try {
+      setRefreshPreview(await api.deepAnalysis.getRefreshPreview(mission.id));
+    } catch (previewError) {
+      setError(errorMessage(previewError));
+    } finally {
+      setLoadingRefreshPreview(false);
+    }
+  }
+
+  async function refreshMissionSources() {
+    if (!mission || !refreshPreview?.canRefresh || refreshingMission) return;
+    if (!refreshArmed) {
+      setRefreshArmed(true);
+      return;
+    }
+    setRefreshingMission(true);
+    setError(null);
+    try {
+      const refreshed = await api.deepAnalysis.refreshMission(mission.id, {
+        expectedRevision: mission.revision,
+      });
+      setMission(refreshed);
+      setMissions((current) => current.map((item) => item.id === refreshed.id ? refreshed : item));
+      setSelectedReferences(selectedReferencesFromMission(refreshed));
+      setRefreshPreview(null);
+      setRefreshArmed(false);
+      setMissionRootSelected(false);
+      setSelectedNodeKey(refreshed.workflow.nodes.find((node) => node.status === "running")?.nodeKey ?? null);
+    } catch (refreshError) {
+      setError(errorMessage(refreshError));
+      setRefreshArmed(false);
+    } finally {
+      setRefreshingMission(false);
+    }
+  }
+
   async function saveMissionSettings(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const nextTitle = missionTitleDraft.trim();
@@ -1868,6 +2107,15 @@ export function DeepAnalysisView({
         targetOutputTokens: outputMode === "chat" ? null : targetOutputTokens,
         execution: createExecution ?? undefined,
         promptReferences: promptReferencesForObjective(selectedReferences, nextObjective),
+        researchPeriod: {
+          startDate: researchStartDate || null,
+          endDate: researchEndDate || null,
+        },
+        webSourcePolicy: {
+          mode: webSourceMode,
+          domains: parseDomainList(webSourceDomains),
+          excludedDomains: parseDomainList(excludedWebSourceDomains),
+        },
       });
       setMission(updated);
       setMissions((current) => current.map((item) => item.id === updated.id ? updated : item));
@@ -1880,6 +2128,11 @@ export function DeepAnalysisView({
       setTargetOutputTokens(updated.targetOutputTokens ?? 10_000);
       setCreateExecution(updated.execution);
       setSelectedReferences(selectedReferencesFromMission(updated));
+      setResearchStartDate(updated.researchPeriod.startDate ?? "");
+      setResearchEndDate(updated.researchPeriod.endDate ?? "");
+      setWebSourceMode(updated.webSourcePolicy.mode);
+      setWebSourceDomains(updated.webSourcePolicy.domains.join(", "));
+      setExcludedWebSourceDomains(updated.webSourcePolicy.excludedDomains.join(", "));
     } catch (saveError) {
       setError(errorMessage(saveError));
     } finally {
@@ -2006,6 +2259,15 @@ export function DeepAnalysisView({
         targetOutputTokens: outputMode === "chat" ? null : targetOutputTokens,
         execution: createExecution ?? undefined,
         promptReferences: promptReferencesForObjective(selectedReferences, objective),
+        researchPeriod: {
+          startDate: researchStartDate || null,
+          endDate: researchEndDate || null,
+        },
+        webSourcePolicy: {
+          mode: webSourceMode,
+          domains: parseDomainList(webSourceDomains),
+          excludedDomains: parseDomainList(excludedWebSourceDomains),
+        },
       });
       setMissions((current) => [created, ...current]);
       setSelectedMissionId(created.id);
@@ -2020,6 +2282,11 @@ export function DeepAnalysisView({
       setTargetOutputTokens(10_000);
       setCreateExecution(execution);
       setSelectedReferences([]);
+      setResearchStartDate("");
+      setResearchEndDate("");
+      setWebSourceMode("all");
+      setWebSourceDomains("");
+      setExcludedWebSourceDomains("");
       setReferenceTrigger(null);
       setCreateOpen(false);
     } catch (createError) {
@@ -2184,6 +2451,19 @@ export function DeepAnalysisView({
                         />
                         <small>Markdown이 기본입니다. HTML을 고르거나 원하는 형태를 직접 입력할 수 있습니다.</small>
                       </div>
+                      <ResearchSettingsFields
+                        startDate={researchStartDate}
+                        endDate={researchEndDate}
+                        sourceMode={webSourceMode}
+                        domains={webSourceDomains}
+                        excludedDomains={excludedWebSourceDomains}
+                        disabled={creating}
+                        onStartDateChange={setResearchStartDate}
+                        onEndDateChange={setResearchEndDate}
+                        onSourceModeChange={setWebSourceMode}
+                        onDomainsChange={setWebSourceDomains}
+                        onExcludedDomainsChange={setExcludedWebSourceDomains}
+                      />
                       {selectedReferences.length > 0 && (
                         <div className="deep-analysis-create-references" aria-label="선택한 분석 자료와 도구">
                           {selectedReferences.map((item) => (
@@ -2348,7 +2628,7 @@ export function DeepAnalysisView({
                         className="deep-analysis-create-submit"
                         type="submit"
                         aria-busy={creating}
-                        disabled={creating || !title.trim() || !outputFormat.trim()}
+                        disabled={creating || !title.trim() || !outputFormat.trim() || !sourcePolicyValid}
                       >
                         {creating && <LoaderCircle className="is-running" size={14} />}
                         {creating ? `Workflow 설계 중... (${createElapsedSeconds}s)` : "Workflow 자동 만들기"}
@@ -2505,6 +2785,63 @@ export function DeepAnalysisView({
                     <div><strong>실행 엔진 준비 중</strong><span>Workflow 설계와 검토는 가능하지만 실제 분석 실행은 아직 연결되지 않았습니다.</span></div>
                   </div>
                 )}
+                {canEdit && ["running", "paused", "awaiting_input"].includes(mission.status) && (
+                  <details className="deep-analysis-steer-panel">
+                    <summary>
+                      <span>새 지침·자료 추가</span>
+                      <small>다음에 시작되는 Node부터 적용 · {mission.guidanceCount}건 반영됨</small>
+                    </summary>
+                    <form onSubmit={steerActiveMission}>
+                      <label>
+                        추가 지침
+                        <textarea
+                          rows={3}
+                          maxLength={10_000}
+                          value={steerInstruction}
+                          placeholder="예: 공급망 위험을 별도 절로 비교하고 공식 통계를 우선해 주세요."
+                          onChange={(event) => setSteerInstruction(event.target.value)}
+                        />
+                      </label>
+                      {steerReferences.length > 0 && (
+                        <div className="deep-analysis-create-references" aria-label="실행 중 추가할 자료">
+                          {steerReferences.map((item) => (
+                            <span key={item.key}>
+                              <FileText size={13} />
+                              <strong>{item.name}</strong>
+                              <button
+                                type="button"
+                                aria-label={`${item.name} 추가 취소`}
+                                onClick={() => setSteerReferences((current) => current.filter((candidate) => candidate.key !== item.key))}
+                              ><X size={11} /></button>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      <input
+                        ref={steerFileInputRef}
+                        className="visually-hidden"
+                        type="file"
+                        multiple
+                        accept=".pdf,.docx,.xlsx,.pptx,.txt,.md,.csv,.tsv,.png,.jpg,.jpeg,.webp,.gif"
+                        onChange={(event) => {
+                          const files = Array.from(event.currentTarget.files ?? []);
+                          event.currentTarget.value = "";
+                          void uploadSteerSources(files);
+                        }}
+                      />
+                      <div>
+                        <button type="button" disabled={uploadingSteerSources} onClick={() => steerFileInputRef.current?.click()}>
+                          {uploadingSteerSources ? <LoaderCircle className="is-running" size={14} /> : <Paperclip size={14} />}
+                          새 자료 첨부
+                        </button>
+                        <button type="submit" disabled={!steerInstruction.trim() || steeringMission}>
+                          {steeringMission ? <LoaderCircle className="is-running" size={14} /> : <Check size={14} />}
+                          {steeringMission ? "반영 중" : "이후 Node에 반영"}
+                        </button>
+                      </div>
+                    </form>
+                  </details>
+                )}
                   <div
                     className="deep-analysis-canvas-shell"
                     onPointerDownCapture={() => window.getSelection()?.removeAllRanges()}
@@ -2644,6 +2981,11 @@ export function DeepAnalysisView({
                             setTargetOutputTokens(mission.targetOutputTokens ?? 10_000);
                             setCreateExecution(mission.execution);
                             setSelectedReferences(selectedReferencesFromMission(mission));
+                            setResearchStartDate(mission.researchPeriod.startDate ?? "");
+                            setResearchEndDate(mission.researchPeriod.endDate ?? "");
+                            setWebSourceMode(mission.webSourcePolicy.mode);
+                            setWebSourceDomains(mission.webSourcePolicy.domains.join(", "));
+                            setExcludedWebSourceDomains(mission.webSourcePolicy.excludedDomains.join(", "));
                             setMissionRootSelected(true);
                             setSelectedNodeKey(null);
                             setSelectedEdgeId(null);
@@ -2821,6 +3163,19 @@ export function DeepAnalysisView({
                           />
                           <small>Markdown이 기본입니다. HTML을 고르거나 원하는 형태를 직접 입력할 수 있습니다.</small>
                         </div>
+                        <ResearchSettingsFields
+                          startDate={researchStartDate}
+                          endDate={researchEndDate}
+                          sourceMode={webSourceMode}
+                          domains={webSourceDomains}
+                          excludedDomains={excludedWebSourceDomains}
+                          disabled={!missionSettingsEditable || savingMissionSettings}
+                          onStartDateChange={setResearchStartDate}
+                          onEndDateChange={setResearchEndDate}
+                          onSourceModeChange={setWebSourceMode}
+                          onDomainsChange={setWebSourceDomains}
+                          onExcludedDomainsChange={setExcludedWebSourceDomains}
+                        />
                         {selectedReferences.length > 0 && (
                           <div className="deep-analysis-create-references" aria-label="선택한 분석 자료와 도구">
                             {selectedReferences.map((item) => (
@@ -3000,12 +3355,105 @@ export function DeepAnalysisView({
                           className="deep-analysis-create-submit"
                           type="submit"
                           aria-busy={savingMissionSettings}
-                          disabled={!missionSettingsEditable || !missionSettingsDirty || !missionTitleDraft.trim() || !outputFormat.trim() || savingMissionSettings}
+                          disabled={!missionSettingsEditable || !missionSettingsDirty || !missionTitleDraft.trim() || !outputFormat.trim() || !sourcePolicyValid || savingMissionSettings}
                         >
                           {savingMissionSettings && <LoaderCircle className="is-running" size={14} />}
                           {savingMissionSettings ? "저장 중..." : "Mission 정보 저장"}
                         </button>
                       </form>
+                      <section className="deep-analysis-research-inspector">
+                        <button type="button" aria-expanded={researchInspectorOpen} onClick={() => void toggleResearchInspector()}>
+                          {loadingResearchInspector ? <LoaderCircle className="is-running" size={14} /> : <Search size={14} />}
+                          <span>출처·인용 검사</span>
+                          <ChevronDown size={14} />
+                        </button>
+                        {researchInspectorOpen && (
+                          <div>
+                            {loadingResearchInspector && <p>출처와 인용을 확인하고 있습니다.</p>}
+                            {!loadingResearchInspector && researchInspector && <>
+                              <div className="deep-analysis-research-metrics">
+                                <span><strong>{researchInspector.summary.citedSourceCount}</strong> 인용됨</span>
+                                <span><strong>{researchInspector.summary.referenceOnlyCount}</strong> 참고만 함</span>
+                                <span className={researchInspector.summary.citationReviewNeededCount ? "is-warning" : undefined}>
+                                  <strong>{researchInspector.summary.citationReviewNeededCount}</strong> 확인 필요
+                                </span>
+                              </div>
+                              <ul className="deep-analysis-source-list">
+                                {researchInspector.sources.map((source) => (
+                                  <li key={source.sourceId}>
+                                    <span className={`is-${source.citationStatus ?? "reference_only"}`}>
+                                      {source.citationStatus === "cited" ? "인용" : "참고"}
+                                    </span>
+                                    <div>
+                                      {source.normalizedUrl
+                                        ? <a href={source.normalizedUrl} target="_blank" rel="noreferrer">{source.title || source.normalizedUrl}</a>
+                                        : <strong>{source.title || source.logicalPath || source.sourceId}</strong>}
+                                      <small>{source.sourceKind === "web" ? "웹" : "Project 자료"} · {source.policyStatus}</small>
+                                    </div>
+                                  </li>
+                                ))}
+                              </ul>
+                              {researchInspector.citationReviewCandidates.length > 0 && (
+                                <details className="deep-analysis-citation-review">
+                                  <summary>인용 확인 필요 문장 {researchInspector.citationReviewCandidates.length}개</summary>
+                                  <ul>
+                                    {researchInspector.citationReviewCandidates.map((candidate) => (
+                                      <li key={`${candidate.nodeKey}:${candidate.lineNumber}`}>
+                                        <small>{candidate.nodeKey} · {candidate.lineNumber}행</small>
+                                        <span>{candidate.text}</span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </details>
+                              )}
+                            </>}
+                          </div>
+                        )}
+                      </section>
+                      {canEdit && ["completed", "failed", "cancelled", "blocked"].includes(mission.status) && (
+                        <section className="deep-analysis-refresh-section">
+                          <button type="button" disabled={loadingRefreshPreview || refreshingMission} onClick={() => void inspectSourceChanges()}>
+                            {loadingRefreshPreview ? <LoaderCircle className="is-running" size={14} /> : <RefreshCw size={14} />}
+                            자료 변경 확인
+                          </button>
+                          {refreshPreview && <div>
+                            <p>
+                              {refreshPreview.hasChanges
+                                ? `${refreshPreview.changedSources.length}개 자료 변경 · ${refreshPreview.affectedNodeKeys.length}개 Node 영향`
+                                : "MISSION 생성 이후 변경된 자료가 없습니다."}
+                            </p>
+                            {refreshPreview.changedSources.length > 0 && (
+                              <ul>
+                                {refreshPreview.changedSources.map((source) => (
+                                  <li key={source.projectFileId}>
+                                    <strong>{source.logicalPath}</strong>
+                                    <span>{source.status === "missing" ? "자료 없음" : `v${source.fromVersion} → v${source.toVersion}`}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                            {refreshPreview.reportDiff.available && (
+                              <details className="deep-analysis-report-diff">
+                                <summary>직전 보고서 차이 +{refreshPreview.reportDiff.addedLines} / -{refreshPreview.reportDiff.removedLines}</summary>
+                                <pre>{refreshPreview.reportDiff.lines.join("\n")}</pre>
+                              </details>
+                            )}
+                            {refreshPreview.canRefresh && (
+                              <button
+                                type="button"
+                                className={refreshArmed ? "is-armed" : undefined}
+                                disabled={refreshingMission || !mission.executionAvailable}
+                                onClick={() => void refreshMissionSources()}
+                              >
+                                {refreshingMission
+                                  ? <LoaderCircle className="is-running" size={14} />
+                                  : refreshArmed ? <AlertTriangle size={14} /> : <RefreshCw size={14} />}
+                                {refreshingMission ? "갱신 중" : refreshArmed ? "한 번 더 눌러 갱신 실행" : "변경 자료로 다시 분석"}
+                              </button>
+                            )}
+                          </div>}
+                        </section>
+                      )}
                       {canEdit && ["completed", "failed", "cancelled", "blocked"].includes(mission.status) && (
                         <button
                           className={`deep-analysis-retry-node ${restartArmed ? "is-armed" : ""}`}

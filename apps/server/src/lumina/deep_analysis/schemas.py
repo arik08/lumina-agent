@@ -1,11 +1,54 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator, model_validator
 
 from ..api.schemas import ApiModel, ExecutionSelection, MessageReferenceInput
+
+
+class ResearchPeriod(ApiModel):
+    start_date: date | None = None
+    end_date: date | None = None
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "ResearchPeriod":
+        if self.start_date and self.end_date and self.start_date > self.end_date:
+            raise ValueError("research start date must not be after end date")
+        return self
+
+
+class WebSourcePolicy(ApiModel):
+    mode: Literal["all", "prioritize", "restrict"] = "all"
+    domains: list[str] = Field(default_factory=list, max_length=100)
+    excluded_domains: list[str] = Field(default_factory=list, max_length=100)
+
+    @field_validator("domains", "excluded_domains")
+    @classmethod
+    def normalize_domains(cls, values: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for value in values:
+            candidate = value.strip().casefold().rstrip(".")
+            if not candidate:
+                continue
+            parsed = urlsplit(candidate if "://" in candidate else f"//{candidate}")
+            hostname = (parsed.hostname or "").casefold().rstrip(".")
+            if not hostname or parsed.path not in {"", "/"}:
+                raise ValueError("source domains must be host names, not URLs or paths")
+            if hostname not in normalized:
+                normalized.append(hostname)
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_policy(self) -> "WebSourcePolicy":
+        if self.mode in {"prioritize", "restrict"} and not self.domains:
+            raise ValueError("prioritize and restrict modes require at least one domain")
+        overlap = set(self.domains) & set(self.excluded_domains)
+        if overlap:
+            raise ValueError("a domain cannot be both included and excluded")
+        return self
 
 
 class MissionCreate(ApiModel):
@@ -20,6 +63,8 @@ class MissionCreate(ApiModel):
     target_output_tokens: int | None = Field(default=10_000, ge=1, le=40_000)
     execution: ExecutionSelection | None = None
     prompt_references: list[MessageReferenceInput] = Field(default_factory=list, max_length=100)
+    research_period: ResearchPeriod = Field(default_factory=ResearchPeriod)
+    web_source_policy: WebSourcePolicy = Field(default_factory=WebSourcePolicy)
 
     @field_validator("output_format")
     @classmethod
@@ -43,6 +88,8 @@ class MissionPatch(ApiModel):
     target_output_tokens: int | None = Field(default=None, ge=1, le=40_000)
     execution: ExecutionSelection | None = None
     prompt_references: list[MessageReferenceInput] | None = Field(default=None, max_length=100)
+    research_period: ResearchPeriod | None = None
+    web_source_policy: WebSourcePolicy | None = None
     is_favorite: bool | None = None
     is_liked: bool | None = None
 
@@ -85,6 +132,24 @@ class MissionRetry(ApiModel):
 
 
 class MissionRestart(ApiModel):
+    expected_revision: int = Field(ge=1)
+
+
+class MissionSteer(ApiModel):
+    expected_revision: int = Field(ge=1)
+    instruction: str = Field(min_length=1, max_length=10_000)
+    prompt_references: list[MessageReferenceInput] = Field(default_factory=list, max_length=100)
+
+    @field_validator("instruction")
+    @classmethod
+    def normalize_instruction(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("instruction must not be blank")
+        return normalized
+
+
+class MissionRefresh(ApiModel):
     expected_revision: int = Field(ge=1)
 
 
@@ -155,6 +220,27 @@ class MissionCostResponse(ApiModel):
     cache_hit_ratio: float
     totals: dict[str, int]
     rows: list[MissionCostRow]
+
+
+class MissionResearchInspectorResponse(ApiModel):
+    mission_id: str
+    generated_at: datetime
+    summary: dict[str, Any]
+    sources: list[dict[str, Any]]
+    citations: list[dict[str, Any]]
+    citation_review_candidates: list[dict[str, Any]]
+
+
+class MissionRefreshPreviewResponse(ApiModel):
+    mission_id: str
+    checked_at: datetime
+    has_changes: bool
+    can_refresh: bool
+    changed_sources: list[dict[str, Any]]
+    missing_source_count: int
+    affected_node_keys: list[str]
+    refreshed_source_manifest: list[dict[str, Any]]
+    report_diff: dict[str, Any]
 
 
 class MissionFileResponse(ApiModel):
@@ -399,6 +485,9 @@ class MissionSummaryResponse(ApiModel):
     target_output_tokens: int | None
     execution: ExecutionSelection | None
     prompt_references: list[dict[str, Any]]
+    research_period: dict[str, Any]
+    web_source_policy: dict[str, Any]
+    guidance_count: int
     budget_microusd: int | None
     spent_microusd: int
     completion_outcome: str | None

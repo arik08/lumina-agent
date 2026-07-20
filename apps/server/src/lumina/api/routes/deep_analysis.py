@@ -76,7 +76,11 @@ from ...deep_analysis.schemas import (
     MissionPause,
     MissionQualityGate,
     MissionRetry,
+    MissionRefresh,
+    MissionRefreshPreviewResponse,
     MissionRestart,
+    MissionResearchInspectorResponse,
+    MissionSteer,
     MissionStart,
     MissionSummaryResponse,
     OpenIssueResponse,
@@ -109,11 +113,16 @@ from ...deep_analysis.service import (
     resume_mission,
     run_quality_gate,
     start_mission,
+    steer_mission,
     update_mission,
     update_workflow_draft,
     workflow_revision,
 )
 from ...deep_analysis.quality import list_quality_gates
+from ...deep_analysis.research import (
+    mission_refresh_preview,
+    mission_research_inspector,
+)
 from ...deep_analysis.planning import initial_workflow_plan
 from ...models import Message, ProjectFile, ProjectFileVersion, Run, User, utc_now
 from ...runs.service import resolve_execution, validate_project_references
@@ -347,6 +356,14 @@ def _summary_payload(mission: DeepAnalysisMission) -> dict[str, object]:
         "target_output_tokens": execution_settings.get("targetOutputTokens", 10_000),
         "execution": execution_settings.get("execution"),
         "prompt_references": prompt_references,
+        "research_period": execution_settings.get(
+            "researchPeriod", {"startDate": None, "endDate": None}
+        ),
+        "web_source_policy": execution_settings.get(
+            "webSourcePolicy",
+            {"mode": "all", "domains": [], "excludedDomains": []},
+        ),
+        "guidance_count": len(execution_settings.get("guidanceHistory", [])),
         "budget_microusd": mission.budget_microusd,
         "spent_microusd": mission.spent_microusd,
         "completion_outcome": mission.completion_outcome,
@@ -398,6 +415,79 @@ def _source_manifest(
         for project_file, version in rows
         if selected_file_versions.get(project_file.id) == version.content_hash
     ]
+
+
+def _merge_prompt_references(
+    existing: list[dict[str, object]], additions: list[dict[str, object]]
+) -> list[dict[str, object]]:
+    merged: dict[tuple[str, str], dict[str, object]] = {}
+    for reference in [*existing, *additions]:
+        key = (
+            str(reference.get("kind") or ""),
+            str(reference.get("reference_id") or ""),
+        )
+        if all(key):
+            merged[key] = dict(reference)
+    if len(merged) > 100:
+        raise ApiProblem(
+            422,
+            "too_many_prompt_references",
+            "MISSION 자료는 최대 100개까지 연결할 수 있습니다.",
+        )
+    return list(merged.values())
+
+
+def _merge_source_manifests(
+    existing: list[dict[str, object]], additions: list[dict[str, object]]
+) -> list[dict[str, object]]:
+    merged = {
+        str(item.get("projectFileId")): dict(item)
+        for item in existing
+        if item.get("projectFileId")
+    }
+    for item in additions:
+        if item.get("projectFileId"):
+            merged[str(item["projectFileId"])] = dict(item)
+    return list(merged.values())
+
+
+def _refresh_prompt_reference_versions(
+    references: list[dict[str, object]], manifest: list[dict[str, object]]
+) -> list[dict[str, object]]:
+    current = {
+        str(item.get("projectFileId")): item
+        for item in manifest
+        if item.get("projectFileId")
+    }
+    refreshed: list[dict[str, object]] = []
+    for raw in references:
+        reference = dict(raw)
+        snapshot = reference.get("display_snapshot")
+        if not isinstance(snapshot, dict):
+            refreshed.append(reference)
+            continue
+        next_snapshot = dict(snapshot)
+        if snapshot.get("targetType") == "project_file":
+            latest = current.get(str(reference.get("reference_id") or ""))
+            if latest is not None:
+                reference["version_or_digest"] = latest.get("contentHash")
+                next_snapshot["contentHash"] = latest.get("contentHash")
+                next_snapshot["version"] = latest.get("version")
+        elif snapshot.get("targetType") == "project_folder":
+            versions = []
+            for item in snapshot.get("fileVersions", []):
+                if not isinstance(item, dict):
+                    continue
+                next_item = dict(item)
+                latest = current.get(str(item.get("id") or ""))
+                if latest is not None:
+                    next_item["digest"] = latest.get("contentHash")
+                    next_item["version"] = latest.get("version")
+                versions.append(next_item)
+            next_snapshot["fileVersions"] = versions
+        reference["display_snapshot"] = next_snapshot
+        refreshed.append(reference)
+    return refreshed
 
 
 def _workflow_revision_payload(
@@ -900,6 +990,12 @@ async def post_mission(
             else None,
             "execution": execution,
             "promptReferences": validated_references,
+            "researchPeriod": payload.research_period.model_dump(
+                mode="json", by_alias=True
+            ),
+            "webSourcePolicy": payload.web_source_policy.model_dump(
+                mode="json", by_alias=True
+            ),
         },
         source_manifest=source_manifest,
         initial_plan=initial_plan,
@@ -1566,10 +1662,18 @@ def patch_mission(
         "output_mode": "outputMode",
         "output_format": "outputFormat",
         "target_output_tokens": "targetOutputTokens",
+        "research_period": "researchPeriod",
+        "web_source_policy": "webSourcePolicy",
     }
     for field_name, stored_name in field_mapping.items():
         if field_name in changed_fields:
-            execution_settings[stored_name] = getattr(payload, field_name)
+            value = getattr(payload, field_name)
+            execution_settings[stored_name] = (
+                value.model_dump(mode="json", by_alias=True)
+                if field_name in {"research_period", "web_source_policy"}
+                and value is not None
+                else value
+            )
     if "execution" in changed_fields and payload.execution is not None:
         resolved_execution = resolve_execution(
             db,
@@ -1636,6 +1740,8 @@ def patch_mission(
                     "output_mode": "outputMode",
                     "output_format": "outputFormat",
                     "target_output_tokens": "targetOutputTokens",
+                    "research_period": "researchPeriod",
+                    "web_source_policy": "webSourcePolicy",
                     "prompt_references": "promptReferences",
                     "is_favorite": "isFavorite",
                     "is_liked": "isLiked",
@@ -2118,6 +2224,231 @@ async def post_mission_restart(
         actor=context.user,
         request_id=getattr(request.state, "request_id", None),
         metadata={"node_key": node.node_key, "run_id": run.id},
+    )
+    complete_command(db, command, result={"runId": run.id, "nodeKey": node.node_key})
+    db.commit()
+    if created:
+        local_run_executor.enqueue(run.id)
+        await event_broker.notify(run.id)
+    return _detail_payload(db, mission)
+
+
+@router.get(
+    "/deep-analysis/missions/{mission_id}/research-inspector",
+    response_model=MissionResearchInspectorResponse,
+)
+def get_mission_research_inspector(
+    mission_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    mission = require_mission(db, user, mission_id)
+    return mission_research_inspector(db, mission)
+
+
+@router.get(
+    "/deep-analysis/missions/{mission_id}/refresh-preview",
+    response_model=MissionRefreshPreviewResponse,
+)
+def get_mission_refresh_preview(
+    mission_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    mission = require_mission(db, user, mission_id)
+    return mission_refresh_preview(db, mission)
+
+
+@router.post(
+    "/deep-analysis/missions/{mission_id}/steer",
+    response_model=MissionDetailResponse,
+)
+def post_mission_steer(
+    mission_id: str,
+    payload: MissionSteer,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    mission = require_mission(db, context.user, mission_id, write=True)
+    command, should_apply = claim_command(
+        db,
+        mission=mission,
+        user=context.user,
+        command_type="steer",
+        idempotency_key=request.headers.get("Idempotency-Key"),
+        payload=payload,
+    )
+    if not should_apply:
+        return _detail_payload(db, mission)
+    additions = validate_project_references(
+        db,
+        context.user,
+        mission.project_id,
+        payload.prompt_references,
+        message_text=payload.instruction,
+    )
+    additions = [
+        {**item, "token_start": None, "token_end": None} for item in additions
+    ]
+    settings = dict(mission.execution_settings_json or {})
+    references = _merge_prompt_references(
+        [
+            dict(item)
+            for item in settings.get("promptReferences", [])
+            if isinstance(item, dict)
+        ],
+        additions,
+    )
+    added_manifest = _source_manifest(
+        db,
+        project_id=mission.project_id,
+        references=additions,
+    )
+    source_manifest = _merge_source_manifests(
+        [dict(item) for item in mission.source_manifest_json], added_manifest
+    )
+    history = [
+        dict(item)
+        for item in settings.get("guidanceHistory", [])
+        if isinstance(item, dict)
+    ]
+    history.append(
+        {
+            "instruction": payload.instruction,
+            "submittedAt": utc_now().isoformat(),
+            "submittedByUserId": context.user.id,
+            "addedReferenceCount": len(additions),
+        }
+    )
+    settings["promptReferences"] = references
+    settings["guidanceHistory"] = history[-100:]
+    steer_mission(
+        db,
+        mission,
+        expected_revision=payload.expected_revision,
+        execution_settings=settings,
+        source_manifest=source_manifest,
+    )
+    emit_event(
+        db,
+        mission,
+        "mission_steered",
+        {
+            "missionRevision": mission.revision,
+            "guidanceCount": len(settings["guidanceHistory"]),
+            "addedReferenceCount": len(additions),
+            "appliesTo": "future_nodes",
+        },
+        actor_user_id=context.user.id,
+    )
+    record_audit(
+        db,
+        action="deep_analysis_mission_steered",
+        target_type="deep_analysis_mission",
+        target_id=mission.id,
+        result="success",
+        actor=context.user,
+        request_id=getattr(request.state, "request_id", None),
+        metadata={"added_reference_count": len(additions)},
+    )
+    complete_command(
+        db,
+        command,
+        result={"missionRevision": mission.revision, "appliesTo": "future_nodes"},
+    )
+    db.commit()
+    return _detail_payload(db, mission)
+
+
+@router.post(
+    "/deep-analysis/missions/{mission_id}/refresh",
+    response_model=MissionDetailResponse,
+)
+async def post_mission_refresh(
+    mission_id: str,
+    payload: MissionRefresh,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    mission = require_mission(db, context.user, mission_id, write=True)
+    command, should_apply = claim_command(
+        db,
+        mission=mission,
+        user=context.user,
+        command_type="refresh",
+        idempotency_key=request.headers.get("Idempotency-Key"),
+        payload=payload,
+    )
+    if not should_apply:
+        return _detail_payload(db, mission)
+    preview = mission_refresh_preview(db, mission)
+    if not preview["hasChanges"]:
+        raise ApiProblem(
+            409,
+            "mission_sources_unchanged",
+            "MISSION을 만든 뒤 변경된 Project 자료가 없습니다.",
+        )
+    if not preview["canRefresh"]:
+        raise ApiProblem(
+            409,
+            "mission_sources_missing",
+            "삭제되거나 찾을 수 없는 자료가 있어 갱신을 시작할 수 없습니다.",
+            details={"missingSourceCount": preview["missingSourceCount"]},
+        )
+    refreshed_manifest = [
+        dict(item) for item in preview["refreshedSourceManifest"]
+    ]
+    execution_settings = dict(mission.execution_settings_json or {})
+    execution_settings["promptReferences"] = _refresh_prompt_reference_versions(
+        [
+            dict(item)
+            for item in execution_settings.get("promptReferences", [])
+            if isinstance(item, dict)
+        ],
+        refreshed_manifest,
+    )
+    node = restart_mission(
+        db,
+        mission,
+        expected_revision=payload.expected_revision,
+        source_manifest=refreshed_manifest,
+        execution_settings=execution_settings,
+    )
+    run, created = create_node_run(
+        db,
+        user=context.user,
+        mission=mission,
+        node=node,
+        settings=settings,
+    )
+    emit_event(
+        db,
+        mission,
+        "mission_sources_refreshed",
+        {
+            "nodeId": node.id,
+            "nodeKey": node.node_key,
+            "runId": run.id,
+            "missionRevision": mission.revision,
+            "changedSourceCount": len(preview["changedSources"]),
+        },
+        actor_user_id=context.user.id,
+    )
+    record_audit(
+        db,
+        action="deep_analysis_mission_sources_refreshed",
+        target_type="deep_analysis_mission",
+        target_id=mission.id,
+        result="success",
+        actor=context.user,
+        request_id=getattr(request.state, "request_id", None),
+        metadata={
+            "changed_source_count": len(preview["changedSources"]),
+            "run_id": run.id,
+        },
     )
     complete_command(db, command, result={"runId": run.id, "nodeKey": node.node_key})
     db.commit()

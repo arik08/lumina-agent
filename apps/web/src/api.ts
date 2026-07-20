@@ -34,6 +34,8 @@ import type {
   DeepAnalysisEvidence,
   DeepAnalysisMissionDetail,
   DeepAnalysisMissionEvent,
+  DeepAnalysisRefreshPreview,
+  DeepAnalysisResearchInspector,
   DeepAnalysisMissionProjection,
   DeepAnalysisMissionCosts,
   DeepAnalysisMissionExport,
@@ -56,6 +58,7 @@ import type {
   RegistrationResponse,
   RetryDeepAnalysisMissionRequest,
   RestartDeepAnalysisMissionRequest,
+  SteerDeepAnalysisMissionRequest,
   RegenerateDeepAnalysisWorkflowRequest,
   InstructionDocument,
   RuntimePromptDocument,
@@ -1556,6 +1559,48 @@ export async function restartDeepAnalysisMission(
   );
 }
 
+export async function getDeepAnalysisResearchInspector(
+  missionId: string,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisResearchInspector>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/research-inspector`,
+    { signal },
+  );
+}
+
+export async function getDeepAnalysisRefreshPreview(
+  missionId: string,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisRefreshPreview>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/refresh-preview`,
+    { signal },
+  );
+}
+
+export async function steerDeepAnalysisMission(
+  missionId: string,
+  payload: SteerDeepAnalysisMissionRequest,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisMissionDetail>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/steer`,
+    { method: "POST", body: payload, signal, idempotencyKey: createClientId() },
+  );
+}
+
+export async function refreshDeepAnalysisMission(
+  missionId: string,
+  payload: RestartDeepAnalysisMissionRequest,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisMissionDetail>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/refresh`,
+    { method: "POST", body: payload, signal, idempotencyKey: createClientId() },
+  );
+}
+
 export async function regenerateDeepAnalysisWorkflow(
   missionId: string,
   payload: RegenerateDeepAnalysisWorkflowRequest,
@@ -2457,6 +2502,10 @@ export const api = {
     resumeMission: resumeDeepAnalysisMission,
     retryMission: retryDeepAnalysisMission,
     restartMission: restartDeepAnalysisMission,
+    getResearchInspector: getDeepAnalysisResearchInspector,
+    getRefreshPreview: getDeepAnalysisRefreshPreview,
+    steerMission: steerDeepAnalysisMission,
+    refreshMission: refreshDeepAnalysisMission,
     deleteMission: deleteDeepAnalysisMission,
     updateMission: updateDeepAnalysisMission,
     moveMission: moveDeepAnalysisMission,

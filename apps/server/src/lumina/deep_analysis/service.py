@@ -555,6 +555,36 @@ def update_mission(
     return mission
 
 
+def steer_mission(
+    db: Session,
+    mission: DeepAnalysisMission,
+    *,
+    expected_revision: int,
+    execution_settings: dict[str, object],
+    source_manifest: list[dict[str, object]],
+) -> DeepAnalysisMission:
+    if mission.status not in {"running", "paused", "awaiting_input"}:
+        raise ApiProblem(
+            409,
+            "mission_not_steerable",
+            "진행 중이거나 일시 정지된 심층분석에만 새 지침을 추가할 수 있습니다.",
+            details={"status": mission.status},
+        )
+    return update_mission(
+        db,
+        mission,
+        expected_revision=expected_revision,
+        title=None,
+        objective=None,
+        autonomy_mode=None,
+        budget_microusd=None,
+        is_favorite=None,
+        is_liked=None,
+        execution_settings=execution_settings,
+        source_manifest=source_manifest,
+    )
+
+
 def move_mission(
     db: Session,
     user: User,
@@ -813,6 +843,8 @@ def restart_mission(
     mission: DeepAnalysisMission,
     *,
     expected_revision: int,
+    source_manifest: list[dict[str, object]] | None = None,
+    execution_settings: dict[str, object] | None = None,
 ) -> DeepAnalysisWorkflowNode:
     if mission.status not in {"completed", "failed", "cancelled", "blocked"}:
         raise ApiProblem(
@@ -832,17 +864,22 @@ def restart_mission(
         )
 
     _revision, nodes, edges = active_workflow(db, mission.id)
+    mission_values: dict[str, object] = {
+        "status": "running",
+        "completion_outcome": None,
+        "revision": expected_revision + 1,
+    }
+    if source_manifest is not None:
+        mission_values["source_manifest_json"] = source_manifest
+    if execution_settings is not None:
+        mission_values["execution_settings_json"] = execution_settings
     result = db.execute(
         update(DeepAnalysisMission)
         .where(
             DeepAnalysisMission.id == mission.id,
             DeepAnalysisMission.revision == expected_revision,
         )
-        .values(
-            status="running",
-            completion_outcome=None,
-            revision=expected_revision + 1,
-        )
+        .values(**mission_values)
         .execution_options(synchronize_session=False)
     )
     if result.rowcount != 1:
