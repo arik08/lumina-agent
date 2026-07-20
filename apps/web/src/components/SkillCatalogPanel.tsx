@@ -1,5 +1,5 @@
 import { Eye, LoaderCircle, Play, RotateCcw, Search, SlidersHorizontal, ThumbsUp, UserRoundCheck, X } from "lucide-react";
-import { type ReactNode, useLayoutEffect, useRef } from "react";
+import { memo, type ReactNode, useCallback, useLayoutEffect, useRef } from "react";
 import type { SkillCatalogItem, SkillCatalogResponse } from "../api-types";
 import { MarketplaceInstallButton } from "./MarketplaceInstallButton";
 import { SelectMenu } from "./SelectMenu";
@@ -59,7 +59,7 @@ function CatalogMetric({
   </span>;
 }
 
-function CatalogCard({
+const CatalogCard = memo(function CatalogCard({
   item,
   installPending,
   likePending,
@@ -118,7 +118,7 @@ function CatalogCard({
       </footer>
     </article>
   );
-}
+});
 
 export function SkillCatalogPanel({
   catalog,
@@ -143,6 +143,11 @@ export function SkillCatalogPanel({
   onLoadMore,
 }: SkillCatalogPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const cardActionsRef = useRef({ onTagChange, onToggleInstall, onToggleLike, onView, onScrollPositionChange });
+  cardActionsRef.current = { onTagChange, onToggleInstall, onToggleLike, onView, onScrollPositionChange };
+  const changeCardTag = useCallback((value: string) => cardActionsRef.current.onTagChange(value), []);
+  const toggleCardInstall = useCallback((item: SkillCatalogItem) => cardActionsRef.current.onToggleInstall(item), []);
+  const toggleCardLike = useCallback((item: SkillCatalogItem) => cardActionsRef.current.onToggleLike(item), []);
   const hasFilters = Boolean(query.trim() || category || tag);
   useLayoutEffect(() => {
     const restoreScrollPosition = () => {
@@ -152,10 +157,10 @@ export function SkillCatalogPanel({
     const frame = window.requestAnimationFrame(restoreScrollPosition);
     return () => window.cancelAnimationFrame(frame);
   }, [scrollPosition]);
-  const viewInstalledSkill = (item: SkillCatalogItem) => {
-    onScrollPositionChange(scrollRef.current?.scrollTop ?? 0);
-    onView(item);
-  };
+  const viewInstalledSkill = useCallback((item: SkillCatalogItem) => {
+    cardActionsRef.current.onScrollPositionChange(scrollRef.current?.scrollTop ?? 0);
+    cardActionsRef.current.onView(item);
+  }, []);
   return (
     <div className="skill-catalog-layout">
       <aside className="skill-catalog-filters" aria-label="Skill 카탈로그 필터">
@@ -185,7 +190,7 @@ export function SkillCatalogPanel({
         <div className="skill-catalog-scroll" ref={scrollRef}>
           {loading ? <div className="skill-catalog-grid is-loading" aria-label="Skill 카탈로그를 불러오는 중">{Array.from({ length: 6 }, (_, index) => <div className="skill-catalog-skeleton" aria-hidden="true" key={index}><span /><strong /><p /><p /><footer /></div>)}</div>
             : catalog.items.length === 0 ? <div className="skill-catalog-empty"><Search size={20} /><strong>검색 결과가 없습니다.</strong><span>검색어나 필터를 바꿔 다시 확인해 주세요.</span>{hasFilters && <button type="button" onClick={onReset}>필터 초기화</button>}</div>
-              : <><div className="skill-catalog-grid">{catalog.items.map((item) => <CatalogCard item={item} installPending={pendingInstallIds.has(item.id)} likePending={pendingLikeIds.has(item.id)} key={item.id} onTagChange={onTagChange} onToggleInstall={onToggleInstall} onToggleLike={onToggleLike} onView={viewInstalledSkill} />)}</div>{catalog.hasMore && <button className="skill-catalog-more" type="button" disabled={loadingMore} onClick={onLoadMore}>{loadingMore ? <LoaderCircle className="is-running" size={14} /> : null} 더 보기</button>}</>}
+              : <><div className="skill-catalog-grid">{catalog.items.map((item) => <CatalogCard item={item} installPending={pendingInstallIds.has(item.id)} likePending={pendingLikeIds.has(item.id)} key={item.id} onTagChange={changeCardTag} onToggleInstall={toggleCardInstall} onToggleLike={toggleCardLike} onView={viewInstalledSkill} />)}</div>{catalog.hasMore && <button className="skill-catalog-more" type="button" disabled={loadingMore} onClick={onLoadMore}>{loadingMore ? <LoaderCircle className="is-running" size={14} /> : null} 더 보기</button>}</>}
         </div>
       </section>
     </div>

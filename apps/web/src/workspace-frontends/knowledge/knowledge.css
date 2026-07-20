@@ -75,13 +75,17 @@
 .knowledge-search-box input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: 13px; }
 .knowledge-search-caption { margin: 8px 2px 14px; color: var(--muted); font-size: 10px; }
 .knowledge-master-detail { display: grid; min-width: 0; min-height: 0; flex: 1; grid-template-columns: 280px minmax(0, 1fr); }
-.knowledge-master-list { min-height: 0; overflow: auto; border-right: 1px solid var(--line); background: var(--surface); }
+.knowledge-master-list { display: flex; min-height: 0; flex-direction: column; overflow: hidden; border-right: 1px solid var(--line); background: var(--surface); }
 .knowledge-master-list > header { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); font-size: 11px; }
 .knowledge-master-list > header > strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .knowledge-document-view-toggle { display: inline-flex; flex: none; align-items: center; gap: 1px; border: 1px solid var(--line); border-radius: var(--radius-control); padding: 2px; background: var(--surface-soft); }
 .knowledge-document-view-toggle button { height: 22px; border: 0; border-radius: 3px; padding: 0 6px; background: transparent; color: var(--muted); font-size: 9px; font-weight: 650; }
 .knowledge-document-view-toggle button:hover { color: var(--ink); }
 .knowledge-document-view-toggle button.is-active { background: var(--surface); color: var(--cobalt); }
+.knowledge-document-list-body { min-height: 0; flex: 1; overflow: auto; }
+.knowledge-document-list-space { display: grid; }
+.knowledge-document-list-space.is-virtualized { position: relative; display: block; width: 100%; }
+.knowledge-document-list-space.is-virtualized > .knowledge-document-list-row { position: absolute; right: 0; left: 0; }
 .knowledge-document-list-row { display: grid; min-height: 62px; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border-bottom: 1px solid var(--line); background: transparent; color: var(--muted); }
 .knowledge-document-list-row:hover { background: var(--surface-soft); }
 .knowledge-document-list-row.is-active { background: var(--surface-selected); color: var(--cobalt); }

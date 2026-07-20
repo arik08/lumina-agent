@@ -67,7 +67,7 @@ import ReactMarkdown, {
 import { createPortal, flushSync } from "react-dom";
 import remarkGfm from "remark-gfm";
 import { visit } from "unist-util-visit";
-import { api, attachmentContentUrl, type UsdKrwExchangeRate } from "../api";
+import { api, attachmentContentUrl, saveKnowledgeDocumentFromMessage, type UsdKrwExchangeRate } from "../api";
 import { ImageAttachmentViewer } from "./ImageAttachmentViewer";
 import { TextAttachmentViewer } from "./TextAttachmentViewer";
 import type {
@@ -93,6 +93,8 @@ import {
   progressStageTimingById,
 } from "../run-activity-duration";
 import { useStreamingText } from "../streaming-ui";
+import { useRunAssistantDraft } from "../run-assistant-draft-store";
+import { useStreamingMarkdownParts, type StreamingPendingKind } from "../streaming-markdown";
 import { SyntaxCode, SyntaxCodeContent } from "./SyntaxCode";
 import { BranchFromHereIcon, ShareActionIcon } from "./ActionIcons";
 import { UserInputRequestCard } from "./UserInputRequestCard";
@@ -1346,7 +1348,6 @@ function normalizeKoreanMarkdownEmphasis(text: string) {
   return text.replace(/(\*\*[^*\n]+?\*\*)(?=[가-힣])/gu, "$1<!-- -->");
 }
 
-type StreamingPendingKind = "mermaid" | "chart" | "table" | null;
 const streamingLeadingEdgeLength = 24;
 const streamingLeadingEdgeRankSize = 4;
 const streamingLeadingEdgeRanks = 6;
@@ -1415,75 +1416,6 @@ function remarkStreamingLeadingEdge() {
       return index + replacement.length;
     });
   };
-}
-
-function splitStreamingMarkdown(text: string) {
-  const source = text.replace(/\r\n/g, "\n");
-  const stableBlocks: string[] = [];
-  let blockStart = 0;
-  let position = 0;
-  let inFence = false;
-  let fenceMarker = "";
-  for (const match of source.matchAll(/[^\n]*(?:\n|$)/g)) {
-    const rawLine = match[0];
-    if (!rawLine) break;
-    const lineEnd = position + rawLine.length;
-    const line = rawLine.endsWith("\n") ? rawLine.slice(0, -1) : rawLine;
-    const fence = line.match(/^ {0,3}(`{3,}|~{3,})/);
-    if (fence) {
-      const marker = fence[1];
-      if (!inFence) {
-        inFence = true;
-        fenceMarker = marker;
-      } else if (marker[0] === fenceMarker[0] && marker.length >= fenceMarker.length) {
-        inFence = false;
-        const block = source.slice(blockStart, lineEnd).trimEnd();
-        if (block.trim()) stableBlocks.push(block);
-        blockStart = lineEnd;
-      }
-    } else if (!inFence && line.trim() === "") {
-      const block = source.slice(blockStart, lineEnd).trimEnd();
-      if (block.trim()) stableBlocks.push(block);
-      blockStart = lineEnd;
-    }
-    position = lineEnd;
-  }
-  return { stableBlocks, liveTail: source.slice(blockStart) };
-}
-
-function markdownTableCells(line: string) {
-  const trimmed = line.trim();
-  if (!trimmed.includes("|")) return [];
-  return trimmed.replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
-}
-
-function isMarkdownTableRow(line: string) {
-  const cells = markdownTableCells(line);
-  return cells.length >= 2 && cells.some(Boolean);
-}
-
-function isMarkdownTableDivider(line: string) {
-  const cells = markdownTableCells(line);
-  return cells.length >= 2 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
-}
-
-function pendingStreamingKind(liveTail: string): StreamingPendingKind {
-  const lines = liveTail.replace(/\r\n/g, "\n").trimStart().split("\n");
-  const fence = lines[0]?.match(/^(`{3,}|~{3,})\s*([A-Za-z0-9_-]+)?/);
-  if (fence) {
-    const marker = fence[1];
-    const closed = lines.slice(1).some((line) => {
-      const close = line.match(/^ {0,3}(`{3,}|~{3,})\s*$/);
-      return Boolean(close && close[1][0] === marker[0] && close[1].length >= marker.length);
-    });
-    const language = String(fence[2] || "").toLowerCase();
-    if (!closed && (language === "mermaid" || language === "mmd")) return "mermaid";
-    if (!closed && language === "lumina-chart") return "chart";
-  }
-  for (let index = 1; index < lines.length; index += 1) {
-    if (isMarkdownTableRow(lines[index - 1]) && isMarkdownTableDivider(lines[index])) return "table";
-  }
-  return null;
 }
 
 function StreamingBlockPending({ kind }: { kind: Exclude<StreamingPendingKind, null> }) {
@@ -1673,11 +1605,8 @@ export function MarkdownResponse({
   settling?: boolean;
   artifact?: boolean;
 }) {
-  const streamingParts = useMemo(
-    () => streaming ? splitStreamingMarkdown(text) : { stableBlocks: [text], liveTail: "" },
-    [streaming, text],
-  );
-  const pendingKind = useMemo(() => streaming ? pendingStreamingKind(streamingParts.liveTail) : null, [streaming, streamingParts.liveTail]);
+  const streamingParts = useStreamingMarkdownParts(text, streaming);
+  const pendingKind = streamingParts.pendingKind;
   const stableBlocks = useMemo(
     () => streamingParts.stableBlocks.map(normalizeKoreanMarkdownEmphasis),
     [streamingParts.stableBlocks],
@@ -1701,8 +1630,6 @@ export const AssistantTurn = memo(function AssistantTurn({
   snapshot,
   sessionUsage,
   showSessionUsage,
-  openCalls,
-  onToggleCall,
   onCopyTool,
   onOpenArtifact,
   onBranch,
@@ -1717,8 +1644,6 @@ export const AssistantTurn = memo(function AssistantTurn({
   snapshot: RunSnapshot | null;
   sessionUsage: Record<string, unknown> | undefined;
   showSessionUsage: boolean;
-  openCalls: Set<string>;
-  onToggleCall: (id: string) => void;
   onCopyTool: (execution: ToolExecution) => void;
   onOpenArtifact: (artifact: ArtifactSummary) => void;
   onBranch: (anchorMessageId: string) => Promise<void>;
@@ -1736,12 +1661,13 @@ export const AssistantTurn = memo(function AssistantTurn({
   const userMessages = turnSet.messages.filter((message) => message.role === "user");
   const assistantMessages = turnSet.messages.filter((message) => message.role === "assistant");
   const finalMessage = assistantMessages.at(-1) ?? null;
+  const liveAssistantDraft = useRunAssistantDraft(turnSet.runId, snapshot?.assistantDraft ?? null);
   const sources = finalMessage?.metadata?.sources ?? emptySources;
   const citations = finalMessage?.metadata?.citations ?? emptyCitations;
   const searches = finalMessage?.metadata?.searchInvocations ?? [];
   const researchVerification = finalMessage?.metadata?.researchVerification;
   const artifacts = snapshot?.artifacts ?? turnSet.artifacts;
-  const assistantText = finalMessage?.text || snapshot?.assistantDraft?.text || "";
+  const assistantText = finalMessage?.text || liveAssistantDraft?.text || "";
   const sanitizedAssistantText = sanitizeAssistantResponse(assistantText, artifacts.length > 0);
   const sourceTargets = citationTargets(sanitizedAssistantText, sources, citations);
   const citedSourceCount = sourceTargets.filter((target) => target.cited).length;
@@ -1775,7 +1701,7 @@ export const AssistantTurn = memo(function AssistantTurn({
     ? snapshot?.errorMessage?.trim() || (status === "cancelled" ? "요청에 따라 작업을 중지했습니다." : "작업을 완료하지 못했습니다. 다시 실행해 주세요.")
     : "";
   const copyableAnswerText = sanitizedAssistantText || terminalReason;
-  const streaming = !finalMessage && Boolean(snapshot?.assistantDraft);
+  const streaming = !finalMessage && Boolean(liveAssistantDraft);
   const { visibleText: displayedText, revealing, settling } = useStreamingText(sanitizedAssistantText, streaming);
   const terminalPresentationReady = terminal && displayedText === sanitizedAssistantText;
   const [reportOpen, setReportOpen] = useState(false);
@@ -1783,6 +1709,15 @@ export const AssistantTurn = memo(function AssistantTurn({
   const [knowledgeSaving, setKnowledgeSaving] = useState(false);
   const [knowledgeSaved, setKnowledgeSaved] = useState(false);
   const [branching, setBranching] = useState(false);
+  const [openCalls, setOpenCalls] = useState<Set<string>>(new Set());
+  const toggleOpenCall = useCallback((id: string) => {
+    setOpenCalls((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
   const [reportText, setReportText] = useState("");
   const [reportSubmitting, setReportSubmitting] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
@@ -1958,7 +1893,7 @@ export const AssistantTurn = memo(function AssistantTurn({
     if (!finalMessage || knowledgeSaving || knowledgeSaved) return;
     setKnowledgeSaving(true);
     try {
-      await api.knowledge.saveMessage(finalMessage.id);
+      await saveKnowledgeDocumentFromMessage(finalMessage.id);
       setKnowledgeSaved(true);
     } catch {
       onToast("지식 그래프에 답변을 저장하지 못했습니다.");
@@ -2104,7 +2039,7 @@ export const AssistantTurn = memo(function AssistantTurn({
                 reasoningTokens={reasoningTokens}
                 openCalls={openCalls}
                 onCopy={onCopyTool}
-                onToggleCall={onToggleCall}
+                onToggleCall={toggleOpenCall}
                 clarificationMode={clarificationMode}
                 inputBusy={inputBusy}
                 onSubmitUserInput={onSubmitUserInput}

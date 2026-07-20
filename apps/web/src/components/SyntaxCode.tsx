@@ -1,14 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent, type CSSProperties, type UIEvent } from "react";
-import { splitMarkdownFrontmatter } from "./markdownFrontmatter";
-
-type Highlighter = typeof import("highlight.js/lib/common")["default"];
-
-let highlighterPromise: Promise<Highlighter> | null = null;
-
-function loadHighlighter() {
-  highlighterPromise ??= import("highlight.js/lib/common").then((module) => module.default);
-  return highlighterPromise;
-}
+import { requestSyntaxHighlight } from "./syntax-highlight-client";
 
 const aliases: Record<string, string> = {
   cjs: "javascript", htm: "xml", html: "xml", js: "javascript", jsx: "javascript", md: "markdown", mjs: "javascript",
@@ -28,36 +19,48 @@ export function codeLanguage(fileName?: string | null, mimeType?: string | null,
   return "plaintext";
 }
 
-function highlightedHtml(hljs: Highlighter, value: string, language: string) {
-  if (language === "markdown") {
-    const frontmatter = splitMarkdownFrontmatter(value);
-    if (frontmatter) {
-      const { opening, openingBreak, yaml, closingBreak, closing, body: markdown } = frontmatter;
-      return `<span class="hljs-meta">${opening}</span>${openingBreak}${hljs.highlight(yaml, { language: "yaml", ignoreIllegals: true }).value}${closingBreak}<span class="hljs-meta">${closing}</span>${hljs.highlight(markdown, { language: "markdown", ignoreIllegals: true }).value}`;
-    }
-  }
-  return hljs.getLanguage(language)
-    ? hljs.highlight(value, { language, ignoreIllegals: true }).value
-    : hljs.highlight(value, { language: "plaintext" }).value;
-}
-
 function useHighlightedHtml(value: string, language: string) {
   const [result, setResult] = useState<{
     value: string;
     language: string;
     html: string;
   } | null>(null);
+  const mountedRef = useRef(true);
+  const runningRef = useRef(false);
+  const queuedRef = useRef<{ value: string; language: string } | null>(null);
+  const latestRef = useRef({ value, language });
+  const pumpRef = useRef<() => void>(() => undefined);
+  latestRef.current = { value, language };
+  pumpRef.current = () => {
+    if (runningRef.current || !queuedRef.current) return;
+    const job = queuedRef.current;
+    queuedRef.current = null;
+    runningRef.current = true;
+    void requestSyntaxHighlight(job.value, job.language)
+      .then((html) => {
+        if (
+          mountedRef.current
+          && latestRef.current.value === job.value
+          && latestRef.current.language === job.language
+        ) setResult({ ...job, html });
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        runningRef.current = false;
+        pumpRef.current();
+      });
+  };
   useEffect(() => {
-    let active = true;
-    void loadHighlighter().then((hljs) => {
-      if (active) {
-        setResult({ value, language, html: highlightedHtml(hljs, value, language) });
-      }
-    });
-    return () => {
-      active = false;
-    };
+    queuedRef.current = { value, language };
+    pumpRef.current();
   }, [language, value]);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      queuedRef.current = null;
+    };
+  }, []);
   return result?.value === value && result.language === language
     ? result.html
     : null;

@@ -5,8 +5,9 @@ import test from "node:test";
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
 test("source evidence distinguishes cited, reviewed, and search-only material", async () => {
-  const [app, apiTypes, stylesheet] = await Promise.all([
+  const [app, streamingMarkdown, apiTypes, stylesheet] = await Promise.all([
     read("../src/components/ConversationTurn.tsx"),
+    read("../src/streaming-markdown.ts"),
     read("../src/api-types.ts"),
     read("../src/styles.css"),
   ]);
@@ -20,7 +21,8 @@ test("source evidence distinguishes cited, reviewed, and search-only material", 
   assert.match(app, /return left\.citationOrder - right\.citationOrder/);
   assert.match(app, /return left\.sourceOrder - right\.sourceOrder/);
   assert.doesNotMatch(app, /normalizeCitationPositions/);
-  assert.match(app, /streaming \? splitStreamingMarkdown\(text\) : \{ stableBlocks: \[text\], liveTail: "" \}/);
+  assert.match(app, /useStreamingMarkdownParts\(text, streaming\)/);
+  assert.match(streamingMarkdown, /if \(!streaming\) \{[\s\S]*stableBlocks: \[text\], liveTail: "", pendingKind: null/);
   assert.match(app, /"본문 확인" : "검색 참고"/);
   assert.match(app, /function searchPurposeLabel\(purpose\?: string\)/);
   assert.match(app, /researchVerification === "unverified"/);

@@ -112,7 +112,7 @@ test("answer action places Knowledge save immediately before branch", async () =
   const savePosition = turn.indexOf('aria-label="지식 그래프 등록"');
   const branchPosition = turn.indexOf('data-tooltip="여기서 분기"');
   assert.ok(savePosition > 0 && branchPosition > savePosition);
-  assert.match(turn, /api\.knowledge\.saveMessage\(finalMessage\.id\)/);
+  assert.match(turn, /saveKnowledgeDocumentFromMessage\(finalMessage\.id\)/);
 });
 
 test("Knowledge keeps batch tagging out of the graph workspace", async () => {
@@ -123,9 +123,10 @@ test("Knowledge keeps batch tagging out of the graph workspace", async () => {
 });
 
 test("Knowledge tag management creates and edits typed hierarchical tags", async () => {
-  const [view, api, types, styles] = await Promise.all([
+  const [view, api, featureApi, types, styles] = await Promise.all([
     readFile(viewPath, "utf8"),
     readFile(apiPath, "utf8"),
+    readFile(new URL("../src/feature-api.ts", import.meta.url), "utf8"),
     readFile(typesPath, "utf8"),
     readFile(stylesPath, "utf8"),
   ]);
@@ -139,8 +140,8 @@ test("Knowledge tag management creates and edits typed hierarchical tags", async
   assert.match(view, /parentTagId: draft\.parentTagId \|\| null/);
   assert.match(view, /expectedRevision: tag\.revision/);
   assert.match(api, /\/knowledge\/tags/);
-  assert.match(api, /createTag: createKnowledgeTag/);
-  assert.match(api, /updateTag: updateKnowledgeTag/);
+  assert.match(featureApi, /createTag: createKnowledgeTag/);
+  assert.match(featureApi, /updateTag: updateKnowledgeTag/);
   assert.match(types, /interface KnowledgeTag extends KnowledgeDocumentTag/);
   assert.match(types, /definition: string/);
   assert.match(types, /parentTagId: UUID \| null/);

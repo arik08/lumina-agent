@@ -36,9 +36,10 @@ test("streaming diagram, chart, and table placeholders sweep light across the ca
   assert.match(globalStyles, /@media \(prefers-reduced-motion: reduce\) \{ \.stream-block-pending::before \{[^}]*animation: none;[^}]*\} \}/);
 });
 
-test("Mermaid preloads once, deduplicates active renders, and stays mounted while Markdown grows", () => {
+test("Mermaid loads on demand, deduplicates active renders, and stays mounted while Markdown grows", () => {
   assert.match(rendererSource, /let mermaidModulePromise: Promise<typeof import\("mermaid"\)> \| null = null/);
-  assert.match(rendererSource, /window\.requestIdleCallback\(preloadMermaid, \{ timeout: 1500 \}\)/);
+  assert.match(rendererSource, /mermaidModulePromise = import\("mermaid"\)/);
+  assert.doesNotMatch(rendererSource, /requestIdleCallback\(preloadMermaid/);
   assert.match(rendererSource, /const mermaidRenderJobs = new Map/);
   assert.match(rendererSource, /const activeJob = mermaidRenderJobs\.get\(cacheKey\)/);
   assert.match(turnSource, /const markdownCodeComponent: NonNullable<Components\["code"\]>/);

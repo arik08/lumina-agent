@@ -25,7 +25,10 @@ import {
 } from "lucide-react";
 import { type CSSProperties, type DragEvent, type MouseEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { api, ApiError } from "../api";
+import { ApiError } from "../api";
+import { projectFilesApi } from "../feature-api";
+
+const api = { projectFiles: projectFilesApi };
 import type { ArtifactDownload, ProjectFileDetail, ProjectFileSummary, ProjectFolderSummary } from "../api-types";
 import { useCachedViewState } from "../view-data-cache";
 import { MarkdownResponse } from "./ConversationTurn";

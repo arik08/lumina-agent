@@ -5,14 +5,15 @@ import test from "node:test";
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
 test("scheduled tasks expose an inline two-step delete control", async () => {
-  const [view, api, styles] = await Promise.all([
+  const [view, api, featureApi, styles] = await Promise.all([
     read("../src/components/SchedulesView.tsx"),
     read("../src/api.ts"),
+    read("../src/feature-api.ts"),
     read("../src/styles.css"),
   ]);
 
   assert.match(api, /request<void>\(`\/scheduled-tasks\/\$\{encodeURIComponent\(taskId\)\}`,[\s\S]*?method: "DELETE"/);
-  assert.match(api, /schedules:\s*\{[\s\S]*?delete: deleteScheduledTask/);
+  assert.match(featureApi, /export const schedulesApi = \{[\s\S]*?delete: deleteScheduledTask/);
   assert.match(view, /deleteConfirmId !== selected\.id[\s\S]*?setDeleteConfirmId\(selected\.id\)/);
   assert.match(view, /await api\.schedules\.delete\(selected\.id\)/);
   assert.match(view, /"한 번 더 눌러 삭제"/);
@@ -101,13 +102,14 @@ test("new schedules choose the project where each session is saved", async () =>
 });
 
 test("existing schedules can edit project timing and execution in place", async () => {
-  const [view, api] = await Promise.all([
+  const [view, api, featureApi] = await Promise.all([
     read("../src/components/SchedulesView.tsx"),
     read("../src/api.ts"),
+    read("../src/feature-api.ts"),
   ]);
 
   assert.match(api, /updateScheduledTask[\s\S]*?method: "PATCH"/);
-  assert.match(api, /schedules:\s*\{[\s\S]*?update: updateScheduledTask/);
+  assert.match(featureApi, /export const schedulesApi = \{[\s\S]*?update: updateScheduledTask/);
   assert.match(view, /setDraftProjectId\(selected\.projectId\)/);
   assert.match(view, /setDraftExecution\(selected\.execution\)/);
   assert.match(view, /setKind\(selected\.scheduleKind\)/);

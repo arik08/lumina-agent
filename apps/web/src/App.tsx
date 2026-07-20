@@ -79,6 +79,7 @@ import { copyText } from "./clipboard";
 import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject, type UIEvent as ReactUIEvent } from "react";
 import { createPortal } from "react-dom";
 import { api, ApiError, attachmentContentUrl } from "./api";
+import { deepAnalysisSidebarApi } from "./feature-api";
 import { isTerminalRunStatus } from "./run-status";
 import { SyntaxCode, SyntaxTextarea } from "./components/SyntaxCode";
 import { GlobalTooltipLayer } from "./components/GlobalTooltip";
@@ -853,7 +854,6 @@ function App() {
   const [progressOpen, setProgressOpen] = useState(false);
   const progressRunIdRef = useRef<string | null>(null);
   const progressPlanIdRef = useRef<string | null>(null);
-  const [openCalls, setOpenCalls] = useState<Set<string>>(new Set());
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const sidebarAutoCollapsedRef = useRef(false);
@@ -1671,9 +1671,6 @@ function App() {
     activeRuntime.turnSets.length,
     loadOlderTurnSetsNearTop,
   ]);
-  useEffect(() => {
-    setOpenCalls(new Set());
-  }, [activeRun?.runId]);
   const effortOptions = workspace.selectedModel?.capabilities.effortOptions ?? [];
   const artifactHasTextSource = artifactVersion?.sourceText !== null && artifactVersion?.sourceText !== undefined;
   const artifactIsCurrentVersion = Boolean(artifactSummary && artifactVersion && artifactVersion.version === artifactSummary.currentVersion);
@@ -1841,7 +1838,6 @@ function App() {
     previousConversationRef.current = workspace.activeConversationId;
     setSessionTitleEditing(false);
     setSessionMenuId(null);
-    setOpenCalls(new Set());
     if (!preservePendingComposer) {
       setDraft("");
       setSelectedReferences([]);
@@ -1967,7 +1963,7 @@ function App() {
     const mission = deepAnalysisMissions.find((item) => item.id === missionId);
     if (!mission) return false;
     try {
-      const updated = await api.deepAnalysis.updateMission(missionId, {
+      const updated = await deepAnalysisSidebarApi.updateMission(missionId, {
         expectedRevision: mission.revision,
         ...patch,
       });
@@ -1984,7 +1980,7 @@ function App() {
 
   const moveDeepAnalysisSidebarMission = async (missionId: string, projectId: string) => {
     try {
-      await api.deepAnalysis.moveMission(missionId, projectId);
+      await deepAnalysisSidebarApi.moveMission(missionId, projectId);
       setDeepAnalysisRemovedMissionIds((current) => new Set(current).add(missionId));
       setDeepAnalysisMissions((items) => {
         const remaining = items.filter((item) => item.id !== missionId);
@@ -2004,7 +2000,7 @@ function App() {
     const mission = deepAnalysisMissions.find((item) => item.id === missionId);
     if (!mission) return false;
     try {
-      await api.deepAnalysis.deleteMission(missionId, mission.revision);
+      await deepAnalysisSidebarApi.deleteMission(missionId, mission.revision);
       setDeepAnalysisRemovedMissionIds((current) => new Set(current).add(missionId));
       setDeepAnalysisMissions((items) => {
         const remaining = items.filter((item) => item.id !== missionId);
@@ -2282,15 +2278,6 @@ function App() {
       if (artifactOpenRequestRef.current === requestId) setArtifactLoading(false);
     }
   }, [artifactOpen, artifactSaveBusy, showToast, sidebarCollapsed]);
-
-  const toggleOpenCall = useCallback((id: string) => {
-    setOpenCalls((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
 
   const branchFromMessage = useCallback(async (anchorMessageId: string) => {
     if (!workspace.activeConversationId) return;
@@ -2629,6 +2616,51 @@ function App() {
     setSidebarOpen(false);
   };
 
+  const sidebarProjectOptions = useMemo(
+    () => workspace.projects
+      .filter((project) => project.id !== workspace.activeProjectId)
+      .map((project) => ({ id: project.id, name: project.name })),
+    [workspace.activeProjectId, workspace.projects],
+  );
+  const conversationSidebarItems = useMemo(
+    () => workspace.conversations.map((conversation) => ({
+      id: conversation.id,
+      projectId: conversation.projectId,
+      title: isUntitledConversation(conversation.title) ? "제목 없음" : conversation.title,
+      isFavorite: conversation.isFavorite,
+      isLiked: conversation.isLiked,
+      status: conversation.lastRunStatus ?? undefined,
+      kind: "conversation" as const,
+    })),
+    [workspace.conversations],
+  );
+  const deepAnalysisSidebarItems = useMemo(
+    () => deepAnalysisMissions.map((mission) => ({ ...mission, kind: "deep-analysis" as const })),
+    [deepAnalysisMissions],
+  );
+  const selectSidebarConversation = useCallback((conversationId: string) => {
+    setSessionTitleEditing(false);
+    setMainView("chat");
+    workspace.selectConversation(conversationId);
+    setSidebarOpen(false);
+  }, [workspace.selectConversation]);
+  const renameSidebarConversation = useCallback(
+    async (conversationId: string, title: string) => Boolean(await workspace.renameConversation(conversationId, title)),
+    [workspace.renameConversation],
+  );
+  const toggleSidebarConversationFavorite = useCallback(
+    async (conversationId: string) => { await workspace.toggleFavoriteConversation(conversationId); },
+    [workspace.toggleFavoriteConversation],
+  );
+  const toggleSidebarConversationLiked = useCallback(
+    async (conversationId: string) => { await workspace.toggleLikedConversation(conversationId); },
+    [workspace.toggleLikedConversation],
+  );
+  const loadMoreSidebarConversations = useCallback(
+    () => { void workspace.loadMoreConversations(); },
+    [workspace.loadMoreConversations],
+  );
+
   if (workspace.authSession === undefined) {
     return <div className="app-boot"><Sparkles size={22} /><span>Lumina를 준비하고 있습니다.</span><LoaderCircle className="is-running" size={18} /></div>;
   }
@@ -2766,8 +2798,8 @@ function App() {
 
           {sidebarView === "deep-analysis" ? (
             <SidebarRecentItems
-              items={deepAnalysisMissions.map((mission) => ({ ...mission, kind: "deep-analysis" as const }))}
-              projects={workspace.projects.filter((project) => project.id !== workspace.activeProjectId)}
+              items={deepAnalysisSidebarItems}
+              projects={sidebarProjectOptions}
               activeId={deepAnalysisSelectedMissionId}
               loading={deepAnalysisMissionsLoading}
               emptyText="새 분석을 만들어 시작하세요."
@@ -2793,36 +2825,23 @@ function App() {
             />
           ) : (
             <SidebarRecentItems
-              items={workspace.conversations.map((conversation) => ({
-                id: conversation.id,
-                projectId: conversation.projectId,
-                title: isUntitledConversation(conversation.title) ? "제목 없음" : conversation.title,
-                isFavorite: conversation.isFavorite,
-                isLiked: conversation.isLiked,
-                status: conversation.lastRunStatus ?? undefined,
-                kind: "conversation" as const,
-              }))}
-              projects={workspace.projects.filter((project) => project.id !== workspace.activeProjectId)}
+              items={conversationSidebarItems}
+              projects={sidebarProjectOptions}
               activeId={workspace.activeConversationId}
               loading={workspace.loadingWorkspace || workspace.loadingMoreConversations}
               emptyText="새 채팅을 만들어 시작하세요."
               likedEmptyText="좋아요한 채팅이 없습니다."
-              onSelect={(conversationId) => {
-                setSessionTitleEditing(false);
-                setMainView("chat");
-                workspace.selectConversation(conversationId);
-                setSidebarOpen(false);
-              }}
-              onRename={async (conversationId, title) => Boolean(await workspace.renameConversation(conversationId, title))}
-              onToggleFavorite={async (conversationId) => { await workspace.toggleFavoriteConversation(conversationId); }}
-              onToggleLiked={async (conversationId) => { await workspace.toggleLikedConversation(conversationId); }}
+              onSelect={selectSidebarConversation}
+              onRename={renameSidebarConversation}
+              onToggleFavorite={toggleSidebarConversationFavorite}
+              onToggleLiked={toggleSidebarConversationLiked}
               onMove={workspace.moveConversation}
               onDelete={workspace.deleteConversation}
               onBulkMove={workspace.moveConversations}
               onBulkDelete={workspace.deleteConversations}
               onScroll={handleSessionListScroll}
               hasMore={workspace.hasMoreConversations}
-              onLoadMore={() => void workspace.loadMoreConversations()}
+              onLoadMore={loadMoreSidebarConversations}
             />
           )}
         </div>
@@ -3088,8 +3107,6 @@ function App() {
                 snapshot={turnSet.runId ? activeRuntime.snapshots[turnSet.runId] ?? null : null}
                 sessionUsage={cumulativeUsageByTurnSetId[turnSet.id]}
                 showSessionUsage={turnIndex > 0 || activeRuntime.hasMoreTurnSetsBefore}
-                openCalls={openCalls}
-                onToggleCall={toggleOpenCall}
                 onCopyTool={copyTool}
                 onOpenArtifact={openArtifact}
                 onBranch={branchFromMessage}

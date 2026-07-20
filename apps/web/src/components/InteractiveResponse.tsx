@@ -56,14 +56,6 @@ export function preloadMermaid() {
   void loadMermaid().catch(() => undefined);
 }
 
-if (typeof window !== "undefined") {
-  if (typeof window.requestIdleCallback === "function") {
-    window.requestIdleCallback(preloadMermaid, { timeout: 1500 });
-  } else {
-    window.setTimeout(preloadMermaid, 0);
-  }
-}
-
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(maximum, Math.max(minimum, value));
 }
@@ -548,6 +540,42 @@ function isSafeChartJson(value: unknown, depth = 0): boolean {
   ));
 }
 
+const leanChartOptionKeys = new Set([
+  "animation",
+  "animationDuration",
+  "animationEasing",
+  "backgroundColor",
+  "color",
+  "dataZoom",
+  "dataset",
+  "grid",
+  "legend",
+  "series",
+  "textStyle",
+  "title",
+  "tooltip",
+  "xAxis",
+  "yAxis",
+]);
+const leanChartSeriesTypes = new Set(["bar", "line", "pie", "scatter"]);
+
+function canUseLeanChartRuntime(option: Record<string, unknown>) {
+  if (Object.keys(option).some((key) => !leanChartOptionKeys.has(key))) return false;
+  const series = Array.isArray(option.series) ? option.series : option.series ? [option.series] : [];
+  return series.length > 0 && series.every((item) => (
+    isRecord(item)
+    && typeof item.type === "string"
+    && leanChartSeriesTypes.has(item.type)
+    && item.coordinateSystem !== "polar"
+  ));
+}
+
+function loadChartRuntime(option: Record<string, unknown>) {
+  return canUseLeanChartRuntime(option)
+    ? import("./echarts-lean-runtime").then(({ echarts }) => echarts)
+    : import("echarts");
+}
+
 function chartTitle(option: Record<string, unknown>, fallback = "데이터 차트") {
   const rawTitle = Array.isArray(option.title) ? option.title[0] : option.title;
   return isRecord(rawTitle) ? shortText(rawTitle.text, 120, fallback) : fallback;
@@ -621,7 +649,7 @@ function InteractiveChartContent({ spec, expanded = false }: { spec: Interactive
     let cancelled = false;
     let dispose = () => {};
     setError(false);
-    void import("echarts").then((echarts) => {
+    void loadChartRuntime(spec.option).then((echarts) => {
       if (cancelled) return;
       const chart = echarts.init(container, undefined, { renderer: "canvas" });
       const applyOption = () => {

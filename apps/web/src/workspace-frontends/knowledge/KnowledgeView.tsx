@@ -19,13 +19,17 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
-import { api, ApiError } from "../../api";
+import { api as coreApi, ApiError } from "../../api";
+import { knowledgeApi } from "../../feature-api";
 import type { KnowledgeDocument, KnowledgeDocumentSummary, KnowledgeGraphResponse, KnowledgeSpace, KnowledgeTag, ProjectSummary } from "../../api-types";
 import { createClientId } from "../../client-id";
 import { MarkdownResponse } from "../../components/ConversationTurn";
 import { SelectMenu } from "../../components/SelectMenu";
+import { useFixedVirtualList } from "../../use-fixed-virtual-list";
 import { KnowledgeGraph } from "./KnowledgeGraph";
 import "./knowledge.css";
+
+const api = { ...coreApi, knowledge: knowledgeApi };
 
 type KnowledgeTab = "home" | "explore" | "sources" | "wiki" | "graph" | "review" | "settings";
 const emptyGraph: KnowledgeGraphResponse = { nodes: [], edges: [], truncated: false };
@@ -625,8 +629,47 @@ function DocumentList({ documents, selectedId, onOpen, onRead, onDelete, label, 
       setDeleteBusyId(null);
     }
   }
+  const virtualList = useFixedVirtualList(documents.length, 62, {
+    threshold: 80,
+    overscan: 8,
+    disabled: deleteError !== null,
+  });
+  const renderedDocuments = documents.slice(virtualList.start, virtualList.end);
 
-  return <aside className="knowledge-master-list"><header><strong>{label}</strong><div className="knowledge-document-view-toggle" role="tablist" aria-label="지식 문서 보기">{documentViews.map(({ id, label: viewLabel }) => <button key={id} className={activeView === id ? "is-active" : ""} type="button" role="tab" aria-selected={activeView === id} onClick={() => onViewChange(id)}>{viewLabel}</button>)}</div></header>{documents.map((document) => <div key={document.id} className={`knowledge-document-list-row ${document.id === selectedId ? "is-active" : ""}`}><button className="knowledge-document-open" type="button" onClick={() => { setDeleteArmedId(null); setDeleteError(null); onOpen(document.id); }} onDoubleClick={() => onRead?.(document.id)}><BookOpenText size={14} /><span><strong>{document.title}</strong><small>조사일 {researchedDate(document.researchedAt)}</small></span></button><div className="knowledge-document-row-actions"><em aria-label={`${document.linkedDocumentCount}개 문서와 연결`}>{document.linkedDocumentCount}</em><button className={`knowledge-document-delete tooltip-control ${deleteArmedId === document.id ? "is-delete-armed" : ""}`} type="button" aria-label={deleteArmedId === document.id ? `${document.title} 삭제 확인, 한 번 더 누르면 삭제` : `${document.title} 삭제`} data-tooltip={deleteArmedId === document.id ? "한 번 더 눌러 삭제" : "삭제"} disabled={deleteBusyId !== null} onClick={() => void remove(document)}>{deleteBusyId === document.id ? <LoaderCircle className="is-running" size={13} /> : deleteArmedId === document.id ? <AlertTriangle size={13} /> : <Trash2 size={13} />}</button></div>{deleteError?.id === document.id && <small className="knowledge-document-delete-error" role="alert">{deleteError.message}</small>}</div>)}</aside>;
+  return (
+    <aside className="knowledge-master-list">
+      <header>
+        <strong>{label}</strong>
+        <div className="knowledge-document-view-toggle" role="tablist" aria-label="지식 문서 보기">
+          {documentViews.map(({ id, label: viewLabel }) => <button key={id} className={activeView === id ? "is-active" : ""} type="button" role="tab" aria-selected={activeView === id} onClick={() => onViewChange(id)}>{viewLabel}</button>)}
+        </div>
+      </header>
+      <div className="knowledge-document-list-body" ref={virtualList.containerRef} onScroll={(event) => virtualList.onScroll(event.currentTarget)}>
+        <div
+          className={`knowledge-document-list-space ${virtualList.virtualized ? "is-virtualized" : ""}`}
+          style={virtualList.virtualized ? { height: `${virtualList.totalHeight}px` } : undefined}
+        >
+          {renderedDocuments.map((document, renderedIndex) => (
+            <div
+              key={document.id}
+              className={`knowledge-document-list-row ${document.id === selectedId ? "is-active" : ""}`}
+              style={virtualList.virtualized ? { top: `${(virtualList.start + renderedIndex) * 62}px` } : undefined}
+            >
+              <button className="knowledge-document-open" type="button" onClick={() => { setDeleteArmedId(null); setDeleteError(null); onOpen(document.id); }} onDoubleClick={() => onRead?.(document.id)}>
+                <BookOpenText size={14} />
+                <span><strong>{document.title}</strong><small>조사일 {researchedDate(document.researchedAt)}</small></span>
+              </button>
+              <div className="knowledge-document-row-actions">
+                <em aria-label={`${document.linkedDocumentCount}개 문서와 연결`}>{document.linkedDocumentCount}</em>
+                <button className={`knowledge-document-delete tooltip-control ${deleteArmedId === document.id ? "is-delete-armed" : ""}`} type="button" aria-label={deleteArmedId === document.id ? `${document.title} 삭제 확인, 한 번 더 누르면 삭제` : `${document.title} 삭제`} data-tooltip={deleteArmedId === document.id ? "한 번 더 눌러 삭제" : "삭제"} disabled={deleteBusyId !== null} onClick={() => void remove(document)}>{deleteBusyId === document.id ? <LoaderCircle className="is-running" size={13} /> : deleteArmedId === document.id ? <AlertTriangle size={13} /> : <Trash2 size={13} />}</button>
+              </div>
+              {deleteError?.id === document.id && <small className="knowledge-document-delete-error" role="alert">{deleteError.message}</small>}
+            </div>
+          ))}
+        </div>
+      </div>
+    </aside>
+  );
 }
 
 function WikiDocument({ document, onBackToGraph }: { document: KnowledgeDocument | null; onBackToGraph: () => void }) {

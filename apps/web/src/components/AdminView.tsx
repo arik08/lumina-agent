@@ -18,7 +18,7 @@ import {
   Users,
 } from "lucide-react";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
-import { api } from "../api";
+import { adminApi } from "../feature-api";
 import type {
   AdminAuditEvent,
   AdminConversationDetail,
@@ -28,6 +28,8 @@ import type {
   UserRole,
   UserStatus,
 } from "../api-types";
+
+const api = { admin: adminApi };
 import { AdminTrafficChart } from "./AdminTrafficChart";
 import { OrganizationInstructionsPanel } from "./OrganizationInstructionsPanel";
 import { SelectMenu } from "./SelectMenu";

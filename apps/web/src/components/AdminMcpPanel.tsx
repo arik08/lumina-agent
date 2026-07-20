@@ -1,8 +1,11 @@
 import { Ban, Check, ChevronDown, LoaderCircle, Plus, RefreshCw, Save, ServerCog, ShieldCheck } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
-import { api, ApiError } from "../api";
+import { ApiError } from "../api";
+import { adminApi } from "../feature-api";
 import type { McpConfiguration, McpDefinition, McpToolDefinition, McpTransport } from "../api-types";
 import { SyntaxTextarea } from "./SyntaxCode";
+
+const api = { admin: adminApi };
 
 const defaultConfiguration: McpConfiguration = {
   transport: "streamable_http",

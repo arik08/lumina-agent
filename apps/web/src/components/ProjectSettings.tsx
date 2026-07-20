@@ -1,10 +1,12 @@
 import { AlertTriangle, Archive, Check, FileText, Folder, FolderPlus, LoaderCircle, Menu, Save, Sparkles, Trash2, UserPlus, Users, Wrench } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { api } from "../api";
+import { extensionsApi, mcpApi, projectMembershipsApi } from "../feature-api";
 import type { ExtensionInstallation, McpInstallation, ProjectMembership, ProjectRole, ProjectSummary } from "../api-types";
 import { InstructionEditor } from "./InstructionEditor";
 import { SelectMenu } from "./SelectMenu";
 import "./ProjectSettings.css";
+
+const api = { extensions: extensionsApi, mcp: mcpApi, projectMemberships: projectMembershipsApi };
 
 type AssignableRole = Exclude<ProjectRole, "owner">;
 

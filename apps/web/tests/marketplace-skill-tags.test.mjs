@@ -4,6 +4,7 @@ import test from "node:test";
 
 const viewPath = new URL("../src/components/MarketplaceView.tsx", import.meta.url);
 const apiPath = new URL("../src/api.ts", import.meta.url);
+const featureApiPath = new URL("../src/feature-api.ts", import.meta.url);
 const stylesPath = new URL("../src/styles.css", import.meta.url);
 const tagEditorStylesPath = new URL("../src/components/MarketplaceTagEditor.css", import.meta.url);
 const catalogPath = new URL("../../../extensions/skills/catalog.json", import.meta.url);
@@ -26,10 +27,14 @@ test("repository skills display searchable hashtag metadata instead of a source 
 });
 
 test("marketplace detects repository changes and keeps manual full refresh as fallback", async () => {
-  const [view, api] = await Promise.all([readFile(viewPath, "utf8"), readFile(apiPath, "utf8")]);
+  const [view, api, featureApi] = await Promise.all([
+    readFile(viewPath, "utf8"),
+    readFile(apiPath, "utf8"),
+    readFile(featureApiPath, "utf8"),
+  ]);
 
   assert.match(api, /skillsChanged: number; mcpChanged: number; revision: string/);
-  assert.match(api, /getRepositoryState: getRepositoryExtensionState/);
+  assert.match(featureApi, /getRepositoryState: getRepositoryExtensionState/);
   assert.match(view, /window\.setInterval\(pollWhenVisible, 15_000\)/);
   assert.match(view, /document\.addEventListener\("visibilitychange", pollWhenVisible\)/);
   assert.match(view, /previousRevision === state\.revision/);

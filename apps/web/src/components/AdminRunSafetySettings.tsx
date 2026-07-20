@@ -1,7 +1,9 @@
 import { AlertTriangle, CircleStop, LoaderCircle, Save, ShieldAlert } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
-import { api } from "../api";
+import { adminApi } from "../feature-api";
 import type { AdminRunSafetySettings as RunSafetySettings } from "../api-types";
+
+const api = { admin: adminApi };
 
 interface AdminRunSafetySettingsProps {
   onToast: (message: string) => void;

@@ -20,7 +20,8 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { api } from "../api";
+import { api as coreApi } from "../api";
+import { adminApi } from "../feature-api";
 import type {
   AdminAuditEvent,
   InstructionDocument,
@@ -31,6 +32,8 @@ import type {
 import { InstructionEditor } from "./InstructionEditor";
 import { SelectMenu } from "./SelectMenu";
 import "./OrganizationInstructionsPanel.css";
+
+const api = { ...coreApi, admin: adminApi };
 
 type PromptLayerKey = RuntimePromptKey | "organization" | "project" | "personal";
 

@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState, type KeyboardEvent, type PointerEvent } from "react";
-import { api } from "../api";
+import { adminApi } from "../feature-api";
 import type { AdminAuditTraffic } from "../api-types";
 import { SelectMenu } from "./SelectMenu";
 import "./AdminTrafficChart.css";
+
+const api = { admin: adminApi };
 
 interface AdminTrafficChartProps {
   refreshKey: number;

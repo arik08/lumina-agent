@@ -42,7 +42,8 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
-import { api, ApiError } from "../../api";
+import { api as coreApi, ApiError } from "../../api";
+import { deepAnalysisApi, projectFilesApi } from "../../feature-api";
 import {
   analysisDepthOptions,
   answerLengthOptions,
@@ -53,6 +54,13 @@ import {
 import { MarkdownResponse } from "../../components/ConversationTurn";
 import { useCachedViewState } from "../../view-data-cache";
 import { useSharedNow } from "../../shared-clock";
+import { useFixedVirtualList } from "../../use-fixed-virtual-list";
+import {
+  appendMissionEvent,
+  setMissionEvents,
+  useMissionEventCount,
+  useMissionEvents,
+} from "./mission-event-store";
 import type {
   DeepAnalysisMissionDetail,
   DeepAnalysisMissionEvent,
@@ -70,6 +78,8 @@ import type {
   PromptReference,
 } from "../../api-types";
 import "./deep-analysis.css";
+
+const api = { ...coreApi, deepAnalysis: deepAnalysisApi, projectFiles: projectFilesApi };
 
 interface DeepAnalysisViewProps {
   projectId: string | null;
@@ -547,22 +557,6 @@ const DETAIL_REFRESH_EVENT_TYPES = new Set([
   "workflow_revision_activated",
 ]);
 
-function compactExecutionLogEvents(events: DeepAnalysisMissionEvent[]) {
-  const seenOutputProgress = new Set<string>();
-  const compacted: DeepAnalysisMissionEvent[] = [];
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index];
-    if (event.type === "node_output_delta") {
-      const nodeIdentity = event.payload.nodeKey ?? event.payload.nodeId ?? event.payload.runId ?? "mission";
-      const progressKey = `${event.type}:${String(nodeIdentity)}`;
-      if (seenOutputProgress.has(progressKey)) continue;
-      seenOutputProgress.add(progressKey);
-    }
-    compacted.push(event);
-  }
-  return compacted.reverse();
-}
-
 export function DeepAnalysisView({
   projectId,
   canEdit,
@@ -589,10 +583,6 @@ export function DeepAnalysisView({
   const [mission, setMission, hasCachedMission] = useCachedViewState<DeepAnalysisMissionDetail | null>(
     `deep-analysis:${cacheScope}:mission`,
     null,
-  );
-  const [missionEvents, setMissionEvents] = useCachedViewState<DeepAnalysisMissionEvent[]>(
-    `deep-analysis:${cacheScope}:events`,
-    [],
   );
   const [selectedNodeKey, setSelectedNodeKey] = useCachedViewState<string | null>(
     `deep-analysis:${cacheScope}:selected-node`,
@@ -742,6 +732,12 @@ export function DeepAnalysisView({
     positionY: number;
     moved: boolean;
   } | null>(null);
+  const pendingNodeDragRef = useRef<{
+    nodeKey: string;
+    positionX: number;
+    positionY: number;
+  } | null>(null);
+  const nodeDragFrameRef = useRef<number | null>(null);
   const connectionDragRef = useRef<{
     pointerId: number;
     sourceNodeKey: string;
@@ -939,7 +935,6 @@ export function DeepAnalysisView({
   useEffect(() => {
     if (!projectId || !selectedMissionId) {
       setMission(null);
-      setMissionEvents([]);
       setSelectedNodeKey(null);
       setWorkflowDraft(null);
       setEditingWorkflow(false);
@@ -957,7 +952,7 @@ export function DeepAnalysisView({
       .getMission(selectedMissionId, controller.signal)
       .then((detail) => {
         eventCursorRef.current = detail.eventCursor;
-        setMissionEvents([]);
+        setMissionEvents(detail.id, []);
         setSelectedNodeKey(detail.workflow.nodes[0]?.nodeKey ?? null);
         setCostModeActive(false);
         setCostDetailsOpen(false);
@@ -968,7 +963,7 @@ export function DeepAnalysisView({
         setEditingWorkflow(false);
         setMission(detail);
         void api.deepAnalysis.listEvents(detail.id, 0, controller.signal)
-          .then((events) => setMissionEvents(events.slice(-1000)))
+          .then((events) => setMissionEvents(detail.id, events))
           .catch(() => {
             // Snapshot remains usable even if the audit log cannot be loaded.
           });
@@ -1120,10 +1115,7 @@ export function DeepAnalysisView({
         onEvent: (event) => {
           if (!active || event.sequence <= eventCursorRef.current) return;
           eventCursorRef.current = event.sequence;
-          setMissionEvents((current) => {
-            if (current.some((item) => item.sequence === event.sequence)) return current;
-            return [...current, event].slice(-1000);
-          });
+          appendMissionEvent(selectedMissionId, event);
           if (DETAIL_REFRESH_EVENT_TYPES.has(event.type)) scheduleDetailRefresh();
           else scheduleProjectionRefresh();
         },
@@ -1146,6 +1138,10 @@ export function DeepAnalysisView({
   const shownWorkflow = useMemo(
     () => rawWorkflow && !editingWorkflow ? arrangeWorkflowTopDown(rawWorkflow) : rawWorkflow,
     [editingWorkflow, rawWorkflow],
+  );
+  const shownWorkflowNodeByKey = useMemo(
+    () => new Map((shownWorkflow?.nodes ?? []).map((node) => [node.nodeKey, node])),
+    [shownWorkflow?.nodes],
   );
   const workflowMissionRoot = useMemo(() => {
     const nodes = shownWorkflow?.nodes ?? [];
@@ -1177,8 +1173,8 @@ export function DeepAnalysisView({
     ),
   }), [shownWorkflow?.nodes, workflowMissionRoot]);
   const selectedNode = useMemo(
-    () => shownWorkflow?.nodes.find((node) => node.nodeKey === selectedNodeKey) ?? null,
-    [shownWorkflow, selectedNodeKey],
+    () => selectedNodeKey ? shownWorkflowNodeByKey.get(selectedNodeKey) ?? null : null,
+    [selectedNodeKey, shownWorkflowNodeByKey],
   );
 
   useEffect(() => {
@@ -1287,19 +1283,13 @@ export function DeepAnalysisView({
       mergeNodeKeys,
     };
   }, [shownWorkflow?.edges]);
-  const visibleMissionEventCount = useMemo(
-    () => compactExecutionLogEvents(missionEvents).length,
-    [missionEvents],
-  );
   const activeTabSummary = createOpen
     ? "0/1 완료 · 작성 중"
     : !mission
       ? null
       : activeTab === "workflow"
         ? `${completedNodeCount}/${shownWorkflow?.nodes.length ?? 0} 완료 · 분기 ${workflowTopology.branchCount} · 합류 ${workflowTopology.mergeCount} · 입력 자료 ${mission.sourceManifest.length}개 · Revision ${shownWorkflow?.revisionNumber}`
-        : visibleMissionEventCount
-          ? `기록 ${visibleMissionEventCount}개`
-          : "기록 대기";
+        : null;
 
   function updateCanvasScale(nextScale: number, originX?: number, originY?: number) {
     const viewport = canvasViewportRef.current;
@@ -1611,7 +1601,24 @@ export function DeepAnalysisView({
       positionY: node.positionY,
       moved: false,
     };
+    pendingNodeDragRef.current = null;
+    if (nodeDragFrameRef.current !== null) window.cancelAnimationFrame(nodeDragFrameRef.current);
+    nodeDragFrameRef.current = null;
     event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function applyPendingNodeDrag() {
+    nodeDragFrameRef.current = null;
+    const pending = pendingNodeDragRef.current;
+    pendingNodeDragRef.current = null;
+    if (!pending) return;
+    setWorkflowDraft((current) => current ? {
+      ...current,
+      nodes: current.nodes.map((node) => node.nodeKey === pending.nodeKey
+        ? { ...node, positionX: pending.positionX, positionY: pending.positionY }
+        : node),
+    } : current);
+    setWorkflowDraftDirty(true);
   }
 
   function moveNodeDrag(event: ReactPointerEvent<HTMLButtonElement>) {
@@ -1620,22 +1627,29 @@ export function DeepAnalysisView({
     const dx = (event.clientX - drag.clientX) / canvasScale;
     const dy = (event.clientY - drag.clientY) / canvasScale;
     drag.moved = drag.moved || Math.hypot(dx, dy) > 3;
-    setWorkflowDraft({
-      ...workflowDraft,
-      nodes: workflowDraft.nodes.map((node) => node.nodeKey === drag.nodeKey
-        ? { ...node, positionX: drag.positionX + dx, positionY: drag.positionY + dy }
-        : node),
-    });
-    setWorkflowDraftDirty(true);
+    pendingNodeDragRef.current = {
+      nodeKey: drag.nodeKey,
+      positionX: drag.positionX + dx,
+      positionY: drag.positionY + dy,
+    };
+    if (nodeDragFrameRef.current === null) {
+      nodeDragFrameRef.current = window.requestAnimationFrame(applyPendingNodeDrag);
+    }
   }
 
   function endNodeDrag(event: ReactPointerEvent<HTMLButtonElement>) {
     const drag = nodeDragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
+    if (nodeDragFrameRef.current !== null) window.cancelAnimationFrame(nodeDragFrameRef.current);
+    applyPendingNodeDrag();
     nodeDragRef.current = null;
     if (drag.moved) setSuppressedConnectionPortNodeKey(drag.nodeKey);
     setSelectedNodeKey(drag.nodeKey);
   }
+
+  useEffect(() => () => {
+    if (nodeDragFrameRef.current !== null) window.cancelAnimationFrame(nodeDragFrameRef.current);
+  }, []);
 
   function canvasPointFromClient(clientX: number, clientY: number) {
     const viewport = canvasViewportRef.current;
@@ -2348,7 +2362,9 @@ export function DeepAnalysisView({
           </div>
           <span>여러 단계의 분석을 Workflow 단위로 기록하고 이어갑니다.</span>
         </div>
-        {activeTabSummary && <span className="deep-analysis-header-summary" role="status">{activeTabSummary}</span>}
+        {activeTab === "log" && mission && !createOpen
+          ? <MissionEventSummary missionId={mission.id} />
+          : activeTabSummary && <span className="deep-analysis-header-summary" role="status">{activeTabSummary}</span>}
       </header>
 
       {error && (
@@ -2892,8 +2908,8 @@ export function DeepAnalysisView({
                           );
                         })}
                         {(shownWorkflow?.edges ?? []).map((edge) => {
-                          const source = shownWorkflow?.nodes.find((node) => node.nodeKey === edge.sourceNodeKey);
-                          const target = shownWorkflow?.nodes.find((node) => node.nodeKey === edge.targetNodeKey);
+                          const source = shownWorkflowNodeByKey.get(edge.sourceNodeKey);
+                          const target = shownWorkflowNodeByKey.get(edge.targetNodeKey);
                           if (!source || !target) return null;
                           const geometry = workflowEdgeGeometry(source, target);
                           return (
@@ -2916,7 +2932,7 @@ export function DeepAnalysisView({
                           );
                         })}
                         {connectionDraft && (() => {
-                          const source = shownWorkflow?.nodes.find((node) => node.nodeKey === connectionDraft.sourceNodeKey);
+                          const source = shownWorkflowNodeByKey.get(connectionDraft.sourceNodeKey);
                           if (!source) return null;
                           const sourcePoint = workflowPortPoint(source, connectionDraft.sourceSide);
                           const sourceVector = workflowPortVector(connectionDraft.sourceSide);
@@ -2999,8 +3015,8 @@ export function DeepAnalysisView({
                       )}
                       {editingWorkflow && selectedEdgeId && (() => {
                         const edge = shownWorkflow?.edges.find((item) => item.id === selectedEdgeId);
-                        const source = shownWorkflow?.nodes.find((node) => node.nodeKey === edge?.sourceNodeKey);
-                        const target = shownWorkflow?.nodes.find((node) => node.nodeKey === edge?.targetNodeKey);
+                        const source = edge ? shownWorkflowNodeByKey.get(edge.sourceNodeKey) : undefined;
+                        const target = edge ? shownWorkflowNodeByKey.get(edge.targetNodeKey) : undefined;
                         if (!edge || !source || !target) return null;
                         const geometry = workflowEdgeGeometry(source, target);
                         return (
@@ -3020,8 +3036,8 @@ export function DeepAnalysisView({
                       })()}
                       <svg className="deep-analysis-port-layer" aria-hidden="true">
                         {(shownWorkflow?.edges ?? []).map((edge) => {
-                          const source = shownWorkflow?.nodes.find((node) => node.nodeKey === edge.sourceNodeKey);
-                          const target = shownWorkflow?.nodes.find((node) => node.nodeKey === edge.targetNodeKey);
+                          const source = shownWorkflowNodeByKey.get(edge.sourceNodeKey);
+                          const target = shownWorkflowNodeByKey.get(edge.targetNodeKey);
                           if (!source || !target) return null;
                           const geometry = workflowEdgeGeometry(source, target);
                           return (
@@ -3565,7 +3581,7 @@ export function DeepAnalysisView({
                   )}
                 </div>
                 </> : (
-                  <ExecutionLog events={missionEvents} />
+                  <ExecutionLog missionId={mission.id} />
                 )}
               </>
             ) : (
@@ -3582,25 +3598,40 @@ export function DeepAnalysisView({
   );
 }
 
-function ExecutionLog({ events }: { events: DeepAnalysisMissionEvent[] }) {
-  const visibleEvents = compactExecutionLogEvents(events);
+function MissionEventSummary({ missionId }: { missionId: string }) {
+  const eventCount = useMissionEventCount(missionId);
+  return <span className="deep-analysis-header-summary" role="status">{eventCount ? `기록 ${eventCount}개` : "기록 대기"}</span>;
+}
+
+function ExecutionLog({ missionId }: { missionId: string }) {
+  const visibleEvents = useMissionEvents(missionId);
+  const newestEvents = useMemo(() => visibleEvents.slice().reverse(), [visibleEvents]);
+  const virtualList = useFixedVirtualList(newestEvents.length, 31, { threshold: 100, overscan: 10 });
+  const renderedEvents = newestEvents.slice(virtualList.start, virtualList.end);
   return (
     <section className="deep-analysis-log-view" aria-label="실행 기록">
       <header>
         <div><strong>실행 기록</strong><span>Mission과 Node의 실행 기록을 최신순으로 확인합니다.</span></div>
       </header>
-      <div className="deep-analysis-log-rows" role="log" aria-live="polite">
-        {visibleEvents.length ? visibleEvents.slice().reverse().map((event) => {
+      <div className="deep-analysis-log-rows" ref={virtualList.containerRef} role="log" aria-live="polite" onScroll={(event) => virtualList.onScroll(event.currentTarget)}>
+        {visibleEvents.length ? <div
+          className={`deep-analysis-log-virtual-space ${virtualList.virtualized ? "is-virtualized" : ""}`}
+          style={virtualList.virtualized ? { height: `${virtualList.totalHeight}px` } : undefined}
+        >{renderedEvents.map((event, renderedIndex) => {
           const description = eventDescription(event);
           const isError = event.type.includes("failed") || event.type.includes("error");
           return (
-            <div key={event.sequence} className={`is-${event.type}${isError ? " is-error" : ""}`}>
+            <div
+              key={event.sequence}
+              className={`deep-analysis-log-row is-${event.type}${isError ? " is-error" : ""}`}
+              style={virtualList.virtualized ? { top: `${(virtualList.start + renderedIndex) * 31}px` } : undefined}
+            >
               <time dateTime={event.createdAt}>{new Date(event.createdAt).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time>
               <i aria-hidden="true" />
               <span>{description.nodeKey && <b>{description.nodeKey}</b>}{description.label}</span>
             </div>
           );
-        }) : (
+        })}</div> : (
           <div className="deep-analysis-log-empty"><strong>아직 실행 기록이 없습니다.</strong><span>Mission을 실행하면 Node 대기·시작·출력·완료 기록이 여기에 표시됩니다.</span></div>
         )}
       </div>

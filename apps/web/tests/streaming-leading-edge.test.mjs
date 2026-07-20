@@ -37,15 +37,17 @@ test("the leading edge settles before streaming markup is removed", async () => 
 });
 
 test("streaming keeps completed markdown blocks immutable with buffered smooth frames", async () => {
-  const [turnSource, streamingSource] = await Promise.all([
+  const [turnSource, streamingSource, streamingMarkdownSource] = await Promise.all([
     read("../src/components/ConversationTurn.tsx"),
     read("../src/streaming-ui.ts"),
+    read("../src/streaming-markdown.ts"),
   ]);
 
   assert.match(streamingSource, /const visibleFrameIntervalMs = 15;/);
   assert.match(streamingSource, /function smoothBufferedRevealCount\(pendingLength: number, remainingMs: number\)/);
   assert.match(turnSource, /const MemoizedMarkdownChunk = memo\(function MarkdownChunk/);
-  assert.match(turnSource, /const stableBlocks: string\[\] = \[\]/);
+  assert.match(streamingMarkdownSource, /stableBlocks: \[\]/);
+  assert.match(streamingMarkdownSource, /!input\.startsWith\(previous\.input\)/);
   assert.match(turnSource, /stableBlocks\.map\(\(block, index\) => \([\s\S]*?<MemoizedMarkdownChunk key=\{index\} text=\{block\}[\s\S]*?leadingEdge=\{false\}/);
   assert.match(turnSource, /tailText && <MemoizedMarkdownChunk text=\{tailText\}[\s\S]*?leadingEdge \/>/);
   assert.doesNotMatch(turnSource, /prefixText/);

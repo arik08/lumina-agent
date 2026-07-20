@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type UIEventHandler } from "react";
+import { memo, useEffect, useMemo, useState, type UIEventHandler } from "react";
 import {
   AlertCircle,
   Check,
@@ -18,6 +18,7 @@ import {
   Waypoints,
   X,
 } from "lucide-react";
+import { useFixedVirtualList } from "../use-fixed-virtual-list";
 
 export interface SidebarRecentItem {
   id: string;
@@ -54,7 +55,7 @@ interface SidebarRecentItemsProps {
   hasMore?: boolean;
 }
 
-export function SidebarRecentItems({
+export const SidebarRecentItems = memo(function SidebarRecentItems({
   items,
   projects,
   activeId,
@@ -89,10 +90,15 @@ export function SidebarRecentItems({
     () => items.filter((item) => !likedOnly || item.isLiked),
     [items, likedOnly],
   );
+  const virtualList = useFixedVirtualList(visibleItems.length, 34, { threshold: 60, overscan: 8 });
+  const renderedItems = visibleItems.slice(virtualList.start, virtualList.end);
 
   useEffect(() => {
     const ids = new Set(items.map((item) => item.id));
-    setBulkIds((current) => new Set([...current].filter((id) => ids.has(id))));
+    setBulkIds((current) => {
+      const retained = [...current].filter((id) => ids.has(id));
+      return retained.length === current.size ? current : new Set(retained);
+    });
     if (menuId && !ids.has(menuId)) setMenuId(null);
   }, [items, menuId]);
 
@@ -190,7 +196,8 @@ export function SidebarRecentItems({
           </div>
         )}
       </div>
-      <div className="session-list" onScroll={(event) => {
+      <div className="session-list" ref={virtualList.containerRef} onScroll={(event) => {
+        virtualList.onScroll(event.currentTarget);
         onScroll?.(event);
         const list = event.currentTarget;
         const prefetchDistance = Math.max(132, list.clientHeight * 0.35);
@@ -198,8 +205,17 @@ export function SidebarRecentItems({
           onLoadMore?.();
         }
       }}>
-        {visibleItems.map((item) => (
-          <div className={`session-item ${item.id === activeId && !bulkMode ? "is-selected" : ""} ${bulkMode ? "is-bulk" : ""}`} data-recent-item-id={item.id} key={item.id}>
+        <div
+          className={`session-list-items ${virtualList.virtualized ? "is-virtualized" : ""}`}
+          style={virtualList.virtualized ? { height: `${virtualList.totalHeight}px` } : undefined}
+        >
+        {renderedItems.map((item, renderedIndex) => (
+          <div
+            className={`session-item ${item.id === activeId && !bulkMode ? "is-selected" : ""} ${bulkMode ? "is-bulk" : ""}`}
+            data-recent-item-id={item.id}
+            key={item.id}
+            style={virtualList.virtualized ? { top: `${(virtualList.start + renderedIndex) * 34}px` } : undefined}
+          >
             {bulkMode ? (
               <button className="session-row" type="button" onClick={() => setBulkIds((current) => {
                 const next = new Set(current);
@@ -245,8 +261,9 @@ export function SidebarRecentItems({
             )}
           </div>
         ))}
+        </div>
         {!loading && visibleItems.length === 0 && <p className="sidebar-empty">{likedOnly ? likedEmptyText : emptyText}</p>}
       </div>
     </section>
   );
-}
+});

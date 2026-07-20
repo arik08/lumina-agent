@@ -20,7 +20,8 @@ import {
   X,
 } from "lucide-react";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
-import { api, ApiError } from "../api";
+import { ApiError } from "../api";
+import { memoriesApi, projectMemoriesApi } from "../feature-api";
 import { useCachedViewState } from "../view-data-cache";
 import { SelectMenu } from "./SelectMenu";
 import { SyntaxCode } from "./SyntaxCode";
@@ -34,6 +35,8 @@ import type {
   ProjectSummary,
   UserMemory,
 } from "../api-types";
+
+const api = { memories: memoriesApi, projectMemories: projectMemoriesApi };
 
 interface MemoryViewProps {
   onOpenNavigation: () => void;

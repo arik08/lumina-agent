@@ -21,10 +21,13 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 
-import { api } from "../api";
+import { api as coreApi } from "../api";
+import { adminApi, helpApi } from "../feature-api";
 import type { AnnouncementItem, HelpItem, HelpItemKind } from "../api-types";
 import { MarkdownResponse } from "./ConversationTurn";
 import { ResizableSplitPane } from "./ResizableSplitPane";
+
+const api = { ...coreApi, admin: adminApi, help: helpApi };
 
 type HelpSection = "manuals" | "announcements";
 const helpTreeDragMime = "application/x-lumina-help-tree";

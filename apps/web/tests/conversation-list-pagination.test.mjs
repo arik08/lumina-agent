@@ -19,5 +19,6 @@ test("conversation sidebar preloads before reaching the bottom", () => {
   assert.match(recentItems, /list\.scrollHeight - list\.scrollTop - list\.clientHeight <= prefetchDistance/);
   assert.match(recentItems, /hasMore &&[\s\S]*onLoadMore\?\.\(\)/);
   assert.match(app, /hasMore=\{workspace\.hasMoreConversations\}/);
-  assert.match(app, /onLoadMore=\{\(\) => void workspace\.loadMoreConversations\(\)\}/);
+  assert.match(app, /const loadMoreSidebarConversations = useCallback\([\s\S]*workspace\.loadMoreConversations\(\)/);
+  assert.match(app, /onLoadMore=\{loadMoreSidebarConversations\}/);
 });

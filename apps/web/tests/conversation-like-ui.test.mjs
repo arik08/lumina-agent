@@ -18,7 +18,9 @@ test("conversation like is available below favorite and drives the sidebar heart
   assert.match(recentItemsSource, /!likedOnly \|\| item\.isLiked/);
   assert.match(recentItemsSource, /session-heading-actions[\s\S]*liked-sessions-filter[\s\S]*bulk-session-open/);
   assert.match(recentItemsSource, /liked-sessions-filter[\s\S]*setLikedOnly\(\(active\) => !active\)/);
-  assert.match(appSource, /items=\{deepAnalysisMissions\.map[\s\S]*<SidebarRecentItems[\s\S]*items=\{workspace\.conversations\.map/);
+  assert.match(appSource, /const conversationSidebarItems = useMemo\([\s\S]*workspace\.conversations\.map/);
+  assert.match(appSource, /const deepAnalysisSidebarItems = useMemo\([\s\S]*deepAnalysisMissions\.map/);
+  assert.match(appSource, /items=\{deepAnalysisSidebarItems\}[\s\S]*<SidebarRecentItems[\s\S]*items=\{conversationSidebarItems\}/);
   assert.match(workspaceSource, /isLiked: !conversation\.isLiked/);
   assert.doesNotMatch(workspaceSource, /좋아요로 표시했습니다|좋아요 표시를 해제했습니다/);
 });

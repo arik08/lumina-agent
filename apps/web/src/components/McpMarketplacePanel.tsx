@@ -1,10 +1,13 @@
 import { Check, Folder, FolderOpen, KeyRound, LoaderCircle, Plug, Power, Save, Send, Settings2, ShieldCheck, Trash2, Wrench } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { api, ApiError } from "../api";
+import { api as coreApi, ApiError } from "../api";
+import { mcpApi } from "../feature-api";
 import type { McpAnswerTestResult, McpDefinition, McpInstallation, ProjectSummary } from "../api-types";
 import { ResizableSplitPane } from "./ResizableSplitPane";
 import { useDismissablePopover } from "./useDismissablePopover";
+
+const api = { ...coreApi, mcp: mcpApi };
 
 interface McpMarketplacePanelProps {
   projectId: string | null;

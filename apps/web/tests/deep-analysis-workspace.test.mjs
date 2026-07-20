@@ -13,6 +13,10 @@ const cssPath = new URL(
   "../src/workspace-frontends/deep-analysis/deep-analysis.css",
   import.meta.url,
 );
+const eventStorePath = new URL(
+  "../src/workspace-frontends/deep-analysis/mission-event-store.ts",
+  import.meta.url,
+);
 
 test("deep analysis is an independent lazy Workspace view", async () => {
   const app = await readFile(appPath, "utf8");
@@ -48,7 +52,7 @@ test("Mission switching keeps the last stable workspace until the next snapshot 
 test("Mission event streaming coalesces refreshes and resumes immediately when visible", async () => {
   const view = await readFile(viewPath, "utf8");
 
-  assert.match(view, /api\.deepAnalysis\.openEventStream\([\s\S]*?setMissionEvents\([\s\S]*?\.slice\(-1000\)/);
+  assert.match(view, /api\.deepAnalysis\.openEventStream\([\s\S]*?appendMissionEvent\(selectedMissionId, event\)/);
   assert.match(view, /const scheduleDetailRefresh = \(\) => \{[\s\S]*?window\.setTimeout\([\s\S]*?100\);/);
   assert.match(view, /if \(refreshing \|\| document\.visibilityState !== "visible"\) return;/);
   assert.match(view, /const refreshWhenVisible = \(\) => \{\s*if \(document\.visibilityState === "visible"\) void refreshDetail\(\);/);
@@ -75,15 +79,18 @@ test("cached tabs use the simplified two-tab contract", async () => {
 });
 
 test("execution log keeps only the latest output progress row for each Node", async () => {
-  const view = await readFile(viewPath, "utf8");
+  const [view, eventStore] = await Promise.all([
+    readFile(viewPath, "utf8"),
+    readFile(eventStorePath, "utf8"),
+  ]);
 
-  assert.match(view, /function compactExecutionLogEvents\(events: DeepAnalysisMissionEvent\[\]\)/);
-  assert.match(view, /for \(let index = events\.length - 1; index >= 0; index -= 1\)/);
-  assert.match(view, /event\.type === "node_output_delta"/);
-  assert.match(view, /event\.payload\.nodeKey \?\? event\.payload\.nodeId \?\? event\.payload\.runId/);
-  assert.match(view, /if \(seenOutputProgress\.has\(progressKey\)\) continue/);
-  assert.match(view, /const visibleEvents = compactExecutionLogEvents\(events\)/);
-  assert.match(view, /visibleEvents\.slice\(\)\.reverse\(\)\.map/);
+  assert.match(eventStore, /function compactMissionEvents\(events: DeepAnalysisMissionEvent\[\]\)/);
+  assert.match(eventStore, /for \(let index = events\.length - 1; index >= 0; index -= 1\)/);
+  assert.match(eventStore, /event\.type !== "node_output_delta"/);
+  assert.match(eventStore, /event\.payload\.nodeKey \?\? event\.payload\.nodeId \?\? event\.payload\.runId/);
+  assert.match(eventStore, /if \(seenOutputProgress\.has\(progressKey\)\) continue/);
+  assert.match(view, /const visibleEvents = useMissionEvents\(missionId\)/);
+  assert.match(view, /const newestEvents = useMemo\(\(\) => visibleEvents\.slice\(\)\.reverse\(\)/);
 });
 
 test("new Missions automatically create a workflow without preset controls", async () => {

@@ -71,6 +71,8 @@ export function useStreamingText(targetText: string, streaming: boolean) {
   const [settling, setSettling] = useState(false);
   const visibleRef = useRef(visibleText);
   const pendingRef = useRef(targetText);
+  const pendingCharactersRef = useRef<string[]>(streaming ? Array.from(targetText) : []);
+  const pendingOffsetRef = useRef(0);
   const startTimerRef = useRef<number | null>(null);
   const frameTimerRef = useRef<number | null>(null);
   const animationRef = useRef<number | null>(null);
@@ -96,6 +98,8 @@ export function useStreamingText(targetText: string, streaming: boolean) {
     displayStartedRef.current = true;
     lastFrameAtRef.current = timestamp;
     const nextText = pendingRef.current;
+    pendingCharactersRef.current = [];
+    pendingOffsetRef.current = 0;
     if (visibleRef.current === nextText) return;
     visibleRef.current = nextText;
     pendingStartedAtRef.current = null;
@@ -145,13 +149,20 @@ export function useStreamingText(targetText: string, streaming: boolean) {
     }
     const pendingStartedAt = pendingStartedAtRef.current ?? timestamp;
     pendingStartedAtRef.current = pendingStartedAt;
-    const pendingCharacters = Array.from(target.slice(visibleRef.current.length));
+    const pendingCharacters = pendingCharactersRef.current;
+    const pendingOffset = pendingOffsetRef.current;
+    const pendingLength = pendingCharacters.length - pendingOffset;
     const remainingMs = Math.max(
       visibleFrameIntervalMs,
       pendingStartedAt + maxVisualLagMs - renderCommitReserveMs - timestamp,
     );
-    const revealCount = smoothBufferedRevealCount(pendingCharacters.length, remainingMs);
-    visibleRef.current += pendingCharacters.slice(0, revealCount).join("");
+    const revealCount = smoothBufferedRevealCount(pendingLength, remainingMs);
+    visibleRef.current += pendingCharacters.slice(pendingOffset, pendingOffset + revealCount).join("");
+    pendingOffsetRef.current += revealCount;
+    if (pendingOffsetRef.current > 2_048 && pendingOffsetRef.current * 2 >= pendingCharacters.length) {
+      pendingCharactersRef.current = pendingCharacters.slice(pendingOffsetRef.current);
+      pendingOffsetRef.current = 0;
+    }
     setVisibleText(visibleRef.current);
     if (visibleRef.current !== pendingRef.current) scheduleFrame();
     else pendingStartedAtRef.current = null;
@@ -174,10 +185,17 @@ export function useStreamingText(targetText: string, streaming: boolean) {
   }, [flushAll, scheduleFrame]);
 
   useEffect(() => {
+    const previousTarget = pendingRef.current;
     pendingRef.current = targetText;
-    if (!targetText.startsWith(visibleRef.current)) {
+    if (targetText.startsWith(previousTarget)) {
+      for (const character of targetText.slice(previousTarget.length)) {
+        pendingCharactersRef.current.push(character);
+      }
+    } else {
       clearScheduled();
       visibleRef.current = targetText.slice(0, commonPrefixLength(visibleRef.current, targetText));
+      pendingCharactersRef.current = Array.from(targetText.slice(visibleRef.current.length));
+      pendingOffsetRef.current = 0;
       displayStartedRef.current = visibleRef.current.length > 0;
       setVisibleText((current) => current === visibleRef.current ? current : visibleRef.current);
     }

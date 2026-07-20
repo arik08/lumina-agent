@@ -5,9 +5,10 @@ import test from "node:test";
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
 test("completed chat turns keep stable props and skip offscreen rendering work", async () => {
-  const [app, turn, styles] = await Promise.all([
+  const [app, turn, draftStore, styles] = await Promise.all([
     read("../src/App.tsx"),
     read("../src/components/ConversationTurn.tsx"),
+    read("../src/run-assistant-draft-store.ts"),
     read("../src/styles.css"),
   ]);
 
@@ -18,7 +19,10 @@ test("completed chat turns keep stable props and skip offscreen rendering work",
   assert.match(turn, /\{terminalPresentationReady && \(/);
   assert.match(turn, /export function sessionUsageRevision/);
   assert.match(app, /cumulativeUsageCacheRef\.current\?\.revision !== activeSessionUsageRevision/);
-  assert.match(app, /onToggleCall=\{toggleOpenCall\}/);
+  assert.match(turn, /const \[openCalls, setOpenCalls\] = useState<Set<string>>\(new Set\(\)\)/);
+  assert.match(turn, /const liveAssistantDraft = useRunAssistantDraft\(turnSet\.runId/);
+  assert.match(draftStore, /useSyncExternalStore/);
+  assert.doesNotMatch(app, /toggleOpenCall/);
   assert.match(app, /onCopyTool=\{copyTool\}/);
   assert.match(app, /onOpenArtifact=\{openArtifact\}/);
   assert.match(app, /onBranch=\{branchFromMessage\}/);

@@ -25,6 +25,7 @@ import type {
   UserInputAnswer,
 } from "./api-types";
 import { isTerminalRunEvent, isTerminalRunStatus } from "./run-status";
+import { appendRunAssistantDraft, setRunAssistantDraft } from "./run-assistant-draft-store";
 
 export type StreamState = "idle" | "connecting" | "connected" | "reconnecting";
 export type RunControlAction = "pause" | "resume" | "cancel" | "retry_step" | "approve" | "reject";
@@ -171,6 +172,7 @@ export function useLuminaWorkspace() {
   const hydratingRef = useRef(new Set<string>());
   const reconcilingRunIdsRef = useRef(new Set<string>());
   const reconciliationTimersRef = useRef(new Set<number>());
+  const eventSequencesRef = useRef(new Map<string, number>());
 
   useEffect(() => {
     activeProjectIdRef.current = activeProjectId;
@@ -286,6 +288,13 @@ export function useLuminaWorkspace() {
       const runIds = page.turnSets.flatMap((turnSet) => turnSet.runId ? [turnSet.runId] : []);
       if (runIds.length > 0) {
         const restoredSnapshots = await api.runs.getSnapshots(runIds).catch(() => []);
+        restoredSnapshots.forEach((snapshot) => {
+          setRunAssistantDraft(snapshot.runId, snapshot.assistantDraft);
+          eventSequencesRef.current.set(
+            snapshot.runId,
+            Math.max(eventSequencesRef.current.get(snapshot.runId) ?? 0, snapshot.lastSequence),
+          );
+        });
         setRuntimes((current) => {
           const runtime = current[conversationId] ?? emptyRuntime();
           const snapshots = { ...runtime.snapshots };
@@ -369,6 +378,13 @@ export function useLuminaWorkspace() {
       const restoredSnapshots = await api.runs.getSnapshots(
         fetchedTurnSets.flatMap((turnSet) => turnSet.runId ? [turnSet.runId] : []),
       ).catch(() => []);
+      restoredSnapshots.forEach((snapshot) => {
+        setRunAssistantDraft(snapshot.runId, snapshot.assistantDraft);
+        eventSequencesRef.current.set(
+          snapshot.runId,
+          Math.max(eventSequencesRef.current.get(snapshot.runId) ?? 0, snapshot.lastSequence),
+        );
+      });
       const knownTurnSetIds = new Set(runtime.turnSets.map((turnSet) => turnSet.id));
       const added = fetchedTurnSets.some((turnSet) => !knownTurnSetIds.has(turnSet.id));
       setRuntimes((current) => {
@@ -407,6 +423,8 @@ export function useLuminaWorkspace() {
 
   const mergeRunMutation = useCallback((mutation: RunMutationResponse) => {
     const { run, message } = mutation;
+    setRunAssistantDraft(run.runId, run.assistantDraft);
+    eventSequencesRef.current.set(run.runId, run.lastSequence);
     setRuntimes((current) => {
       const runtime = current[run.conversationId] ?? emptyRuntime();
       const addsQuestion = message?.role === "user"
@@ -456,6 +474,18 @@ export function useLuminaWorkspace() {
   }, []);
 
   const applyRunEvent = useCallback((event: RunEvent) => {
+    const knownSequence = eventSequencesRef.current.get(event.runId)
+      ?? runtimesRef.current[event.conversationId]?.lastSequences[event.runId]
+      ?? 0;
+    if (event.sequence <= knownSequence) return;
+    eventSequencesRef.current.set(event.runId, event.sequence);
+    if (event.type === "assistant_text_delta") {
+      appendRunAssistantDraft(event.runId, event.payload.messageId, event.payload.delta);
+      return;
+    }
+    if (event.type === "assistant_turn_completed" || isTerminalRunEvent(event)) {
+      setRunAssistantDraft(event.runId, null);
+    }
     setRuntimes((current) => {
       const runtime = current[event.conversationId] ?? emptyRuntime();
       const previousSequence = runtime.lastSequences[event.runId] ?? 0;
@@ -468,12 +498,6 @@ export function useLuminaWorkspace() {
 
       if (event.type === "run_started" || event.type === "run_status_changed") {
         nextSnapshot.status = event.payload.status;
-      } else if (event.type === "assistant_text_delta") {
-        const previousDraft = nextSnapshot.assistantDraft;
-        nextSnapshot.assistantDraft = {
-          messageId: event.payload.messageId,
-          text: `${previousDraft?.text ?? ""}${event.payload.delta}`,
-        };
       } else if (event.type === "progress_summary") {
         nextSnapshot.activities = [
           ...nextSnapshot.activities,
@@ -580,6 +604,7 @@ export function useLuminaWorkspace() {
       } else if (isTerminalRunEvent(event)) {
         nextSnapshot.status = event.payload.status;
         nextSnapshot.finishedAt = event.payload.finishedAt;
+        nextSnapshot.assistantDraft = null;
         nextSnapshot.artifactProgress = null;
       } else if (
         event.type === "steer_received"
@@ -626,6 +651,7 @@ export function useLuminaWorkspace() {
         ? event.payload.status
         : null;
     const titleUpdate = event.type === "conversation_title_updated" ? event.payload : null;
+    if (!status && !titleUpdate) return;
     setConversations((items) => items.map((item) =>
       item.id === event.conversationId
         ? {
@@ -693,6 +719,14 @@ export function useLuminaWorkspace() {
 
   const mergeAuthoritativeRunSnapshot = useCallback((snapshot: RunSnapshot) => {
     const terminal = isTerminalRunStatus(snapshot.status);
+    const knownEventSequence = eventSequencesRef.current.get(snapshot.runId) ?? 0;
+    if (snapshot.lastSequence >= knownEventSequence) {
+      setRunAssistantDraft(snapshot.runId, snapshot.assistantDraft);
+    }
+    eventSequencesRef.current.set(
+      snapshot.runId,
+      Math.max(knownEventSequence, snapshot.lastSequence),
+    );
     setRuntimes((current) => {
       const runtime = current[snapshot.conversationId] ?? emptyRuntime();
       const existing = runtime.snapshots[snapshot.runId];
@@ -796,6 +830,11 @@ export function useLuminaWorkspace() {
     hydratingRef.current.add(runId);
     try {
       const snapshot = await api.runs.getSnapshot(runId);
+      const knownEventSequence = eventSequencesRef.current.get(runId) ?? 0;
+      if (snapshot.lastSequence >= knownEventSequence) {
+        setRunAssistantDraft(runId, snapshot.assistantDraft);
+      }
+      eventSequencesRef.current.set(runId, Math.max(knownEventSequence, snapshot.lastSequence));
       setRuntimes((current) => {
         const runtime = current[conversationId] ?? emptyRuntime();
         return {

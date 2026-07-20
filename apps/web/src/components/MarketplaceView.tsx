@@ -3,7 +3,8 @@ import { type DragEvent, type KeyboardEvent, type ReactNode, useCallback, useEff
 import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { api, ApiError } from "../api";
+import { api as coreApi, ApiError } from "../api";
+import { extensionsApi } from "../feature-api";
 import type { ExtensionInstallation, ProjectSummary, SkillCatalogItem, SkillCatalogResponse, SkillExtension, SkillVersion } from "../api-types";
 import { useCachedViewState } from "../view-data-cache";
 import { AdminMcpPanel } from "./AdminMcpPanel";
@@ -15,6 +16,8 @@ import { SyntaxCode, SyntaxTextarea } from "./SyntaxCode";
 import { useDismissablePopover } from "./useDismissablePopover";
 import "./MarketplaceTagEditor.css";
 import { markdownBodyAfterFrontmatter, splitMarkdownFrontmatter } from "./markdownFrontmatter";
+
+const api = { ...coreApi, extensions: extensionsApi };
 
 interface MarketplaceViewProps {
   projectId: string | null;

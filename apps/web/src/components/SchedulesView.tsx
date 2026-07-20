@@ -14,10 +14,13 @@ import {
   X,
 } from "lucide-react";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
-import { api, ApiError } from "../api";
+import { ApiError } from "../api";
+import { schedulesApi } from "../feature-api";
 import type { EffortOption, ExecutionSelection, ProjectSummary, ScheduleKind, ScheduledRun, ScheduledTask } from "../api-types";
 import { useCachedViewState } from "../view-data-cache";
 import { SelectMenu } from "./SelectMenu";
+
+const api = { schedules: schedulesApi };
 import { ResizableSplitPane } from "./ResizableSplitPane";
 
 interface ScheduleExecutionOption {
