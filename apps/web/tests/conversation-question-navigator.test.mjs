@@ -41,7 +41,7 @@ test("hovered marker tapers its neighbors and click scrolling accelerates then d
 
   assert.match(navigator, /if \(distance === 1\) return 0\.76/);
   assert.match(navigator, /onMouseEnter=\{\(\) => \{\s*setActiveIndex\(questionIndex\);/s);
-  assert.match(navigator, /const target = \[\.\.\.container\.querySelectorAll<HTMLElement>\("\[data-question-anchor\]"\)\]/);
+  assert.match(navigator, /const target = findQuestionTarget\(\)/);
   assert.match(navigator, /Math\.min\(340, Math\.max\(190,/);
   assert.match(navigator, /window\.requestAnimationFrame\(step\)/);
   assert.match(navigator, /container\.scrollTop \+ renderedTargetRect\.top - renderedContainerRect\.top - 24/);
@@ -62,4 +62,17 @@ test("hovered marker tapers its neighbors and click scrolling accelerates then d
   assert.doesNotMatch(styles, /\.question-navigator-tooltip\.is-dark\s*\{/);
   assert.match(styles, /\.question-navigator-preview-row\.is-answer \{[^}]*border-top:/s);
   assert.doesNotMatch(styles, /question-tooltip-enter/);
+});
+
+test("offscreen windowed turns keep lightweight anchors for direct question jumps", async () => {
+  const [app, navigator] = await Promise.all([
+    read("../src/App.tsx"),
+    read("../src/components/ConversationQuestionNavigator.tsx"),
+  ]);
+
+  assert.match(app, /questionAnchorIds: string\[\]/);
+  assert.match(app, /questionAnchorIds\.map\(\(anchorId\) => \([\s\S]*?data-question-anchor-placeholder=\{anchorId\}[\s\S]*?\)\)/s);
+  assert.match(app, /questionAnchorIds=\{turnSet\.messages[\s\S]*?message\.role === "user"[\s\S]*?message\.id/s);
+  assert.match(navigator, /const findQuestionTarget = \(\) =>[\s\S]*?\[data-question-anchor\][\s\S]*?\[data-question-anchor-placeholder\]/s);
+  assert.match(navigator, /const renderedTarget = findQuestionTarget\(\)/);
 });

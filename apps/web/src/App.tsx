@@ -832,10 +832,12 @@ function FeatureViewLoading() {
 function WindowedTurn({
   root,
   retain,
+  questionAnchorIds,
   children,
 }: {
   root: { current: HTMLDivElement | null };
   retain: boolean;
+  questionAnchorIds: string[];
   children: ReactNode;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -874,6 +876,14 @@ function WindowedTurn({
       ref={hostRef}
       style={!renderContent && retainedHeight > 0 ? { height: retainedHeight } : undefined}
     >
+      {questionAnchorIds.map((anchorId) => (
+        <span
+          className="turn-window-question-anchor"
+          data-question-anchor-placeholder={anchorId}
+          aria-hidden="true"
+          key={anchorId}
+        />
+      ))}
       {renderContent ? children : null}
     </div>
   );
@@ -3280,6 +3290,9 @@ function App() {
                   turnSet.runId
                   && !isTerminalRunStatus(activeRuntime.snapshots[turnSet.runId]?.status ?? "completed"),
                 )}
+                questionAnchorIds={turnSet.messages
+                  .filter((message) => message.role === "user" && Boolean(message.text.trim()))
+                  .map((message) => message.id)}
               >
                 <AssistantTurn
                   turnSet={turnSet}

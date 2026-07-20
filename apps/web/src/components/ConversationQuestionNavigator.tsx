@@ -124,8 +124,13 @@ export function ConversationQuestionNavigator({
   const navigateToQuestion = (item: QuestionNavigatorItem) => {
     const container = scrollContainerRef.current;
     if (!container) return;
-    const target = [...container.querySelectorAll<HTMLElement>("[data-question-anchor]")]
-      .find((element) => element.dataset.questionAnchor === item.anchorId);
+    const findQuestionTarget = () => (
+      [...container.querySelectorAll<HTMLElement>("[data-question-anchor]")]
+        .find((element) => element.dataset.questionAnchor === item.anchorId)
+      ?? [...container.querySelectorAll<HTMLElement>("[data-question-anchor-placeholder]")]
+        .find((element) => element.dataset.questionAnchorPlaceholder === item.anchorId)
+    );
+    const target = findQuestionTarget();
     if (!target) return;
 
     onNavigateStart();
@@ -137,8 +142,15 @@ export function ConversationQuestionNavigator({
     const targetTop = Math.max(0, Math.min(maximumTop, startTop + targetRect.top - containerRect.top - 24));
     const distance = targetTop - startTop;
     const alignToRenderedTarget = (remainingAttempts = 8) => {
+      const renderedTarget = findQuestionTarget();
+      if (!renderedTarget) {
+        animationFrameRef.current = remainingAttempts > 1
+          ? window.requestAnimationFrame(() => alignToRenderedTarget(remainingAttempts - 1))
+          : null;
+        return;
+      }
       const renderedContainerRect = container.getBoundingClientRect();
-      const renderedTargetRect = target.getBoundingClientRect();
+      const renderedTargetRect = renderedTarget.getBoundingClientRect();
       const renderedMaximumTop = Math.max(0, container.scrollHeight - container.clientHeight);
       container.scrollTop = Math.max(
         0,
