@@ -5,12 +5,14 @@ import test from "node:test";
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
 test("composer defaults file length to 10k and sends the selected target", async () => {
-  const [app, styles, workspace, types] = await Promise.all([
+  const [rawApp, controls, styles, workspace, types] = await Promise.all([
     read("../src/App.tsx"),
+    read("../src/components/ComposerControls.tsx"),
     read("../src/styles.css"),
     read("../src/use-lumina-workspace.ts"),
     read("../src/api-types.ts"),
   ]);
+  const app = `${rawApp}\n${controls}`;
 
   assert.match(app, /defaultArtifactOutputTokens = 10_000/);
   assert.doesNotMatch(app, /value: null, label: "자동"/);

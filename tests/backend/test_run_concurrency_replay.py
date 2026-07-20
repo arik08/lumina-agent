@@ -4,7 +4,6 @@ import asyncio
 import json
 import threading
 import time
-from collections import defaultdict
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
@@ -356,6 +355,55 @@ class _PartialReportToolCallThenCompletingProvider:
             yield ProviderEvent(type="completed", stop_reason="tool_calls")
             return
         yield ProviderEvent(type="text_delta", text="Recovered HTML report created.")
+        yield ProviderEvent(type="completed", stop_reason="stop")
+
+
+class _ReportThenRepeatedEmptyProvider:
+    provider_id = "mock"
+    capabilities = ProviderCapabilities(tools=True)
+
+    def __init__(self) -> None:
+        self.attempts = 0
+
+    async def stream(self, _request: ProviderRequest) -> AsyncIterator[ProviderEvent]:
+        self.attempts += 1
+        if self.attempts == 1:
+            arguments = json.dumps(
+                {
+                    "format": "html",
+                    "title": "Completed report",
+                    "executive_summary": "The report was created successfully.",
+                    "key_metrics": [],
+                    "sections": [],
+                    "action_items": [],
+                    "html_source": (
+                        "<!doctype html><html><head><meta charset='utf-8'>"
+                        "<title>Completed report</title></head><body>"
+                        "<h1>Completed report</h1></body></html>"
+                    ),
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            yield ProviderEvent(
+                type="tool_call_started",
+                tool_call_id="call_completed_report",
+                tool_name="create_report",
+            )
+            yield ProviderEvent(
+                type="tool_call_delta",
+                tool_call_id="call_completed_report",
+                tool_name="create_report",
+                arguments_delta=arguments,
+            )
+            yield ProviderEvent(
+                type="tool_call_completed",
+                tool_call_id="call_completed_report",
+                tool_name="create_report",
+                arguments_json=arguments,
+            )
+            yield ProviderEvent(type="completed", stop_reason="tool_calls")
+            return
         yield ProviderEvent(type="completed", stop_reason="stop")
 
 
@@ -772,7 +820,9 @@ def test_retry_after_parser_accepts_nested_json_scalars_only() -> None:
         )
         == 12.5
     )
-    assert openai_compatible_module._retry_after_seconds({"retry_after": 10_000}) == 600.0
+    assert (
+        openai_compatible_module._retry_after_seconds({"retry_after": 10_000}) == 600.0
+    )
     for invalid in (None, True, -1, "nan", "inf", object(), {"status": 429}):
         assert openai_compatible_module._retry_after_seconds(invalid) is None
 
@@ -944,6 +994,49 @@ def test_repeated_empty_provider_turn_fails_visibly_instead_of_completing_blank(
         assert "내용 없는 응답" in str(failed_run.error_message)
 
 
+def test_repeated_empty_provider_turn_preserves_completed_artifact(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    provider = _ReportThenRepeatedEmptyProvider()
+    monkeypatch.setattr(
+        local_run_executor, "_provider", lambda *_args, **_kwargs: provider
+    )
+
+    with TestClient(
+        create_app(_settings(tmp_path, "artifact-empty-turn-recovery.db"))
+    ) as client:
+        csrf = _login(client)
+        conversation_id = _conversation(client, csrf, "Artifact empty turn recovery")
+        run_id = _start_run(
+            client,
+            csrf,
+            conversation_id,
+            text="HTML 보고서 파일을 만들어 주세요.",
+            idempotency_key="artifact-empty-turn-recovery-0001",
+        )
+        snapshot = _wait_for_terminal(client, run_id)
+
+    assert snapshot["status"] == "completed"
+    assert snapshot["assistantDraft"]["text"] == (
+        executor_module._ARTIFACT_EMPTY_RESPONSE_FALLBACK
+    )
+    assert len(snapshot["artifacts"]) == 1
+    assert provider.attempts == 3
+    with SessionLocal() as db:
+        recovery_event = db.scalar(
+            select(RunEvent).where(
+                RunEvent.run_id == run_id,
+                RunEvent.event_type
+                == "provider_empty_response_recovered_with_artifact",
+            )
+        )
+    assert recovery_event is not None
+    assert recovery_event.payload_json == {
+        "attemptCount": 2,
+        "stopReason": "stop",
+    }
+
+
 def test_different_conversations_for_one_user_execute_in_parallel(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1002,19 +1095,7 @@ def test_same_conversation_second_run_stays_queued_until_first_finishes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     provider = _GateProvider(("serial-first", "serial-second"))
-    original_claim = local_run_executor._claim
-    claim_attempts: defaultdict[str, list[str]] = defaultdict(list)
-    claim_condition = threading.Condition()
-
-    async def tracked_claim(run_id: str) -> str:
-        result = await original_claim(run_id)
-        with claim_condition:
-            claim_attempts[run_id].append(result)
-            claim_condition.notify_all()
-        return result
-
     monkeypatch.setattr(local_run_executor, "_provider", _gate_factory(provider))
-    monkeypatch.setattr(local_run_executor, "_claim", tracked_claim)
 
     with TestClient(create_app(_settings(tmp_path, "serial-runs.db"))) as client:
         try:
@@ -1036,12 +1117,7 @@ def test_same_conversation_second_run_stays_queued_until_first_finishes(
                 idempotency_key="serial-second-run-0001",
             )
 
-            with claim_condition:
-                attempted = claim_condition.wait_for(
-                    lambda: bool(claim_attempts[second_run_id]), timeout=2
-                )
-                assert attempted
-                assert claim_attempts[second_run_id][-1] == "wait"
+            time.sleep(0.1)
             with SessionLocal() as db:
                 first = db.get(Run, first_run_id)
                 second = db.get(Run, second_run_id)

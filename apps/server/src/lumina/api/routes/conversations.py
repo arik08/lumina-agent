@@ -37,7 +37,7 @@ from ...models import (
     ToolExecution,
     User,
 )
-from ...runs.service import message_response, run_snapshot
+from ...runs.service import message_response, preload_message_attachments, run_snapshots
 from ...storage import ManagedLocalStorage
 from ..dependencies import AuthContext, get_current_user, require_csrf
 from ..errors import ApiProblem
@@ -52,12 +52,84 @@ from ..schemas import (
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
 
+def _usage_number(usage: dict[str, object], key: str) -> float:
+    value = usage.get(key)
+    return (
+        float(value)
+        if isinstance(value, int | float) and not isinstance(value, bool)
+        else 0.0
+    )
+
+
+def _add_usage(
+    left: dict[str, object] | None,
+    right: dict[str, object],
+) -> dict[str, object]:
+    input_tokens = int(_usage_number(right, "input_tokens"))
+    cached_tokens = int(_usage_number(right, "cached_input_tokens"))
+    normalized_right: dict[str, object] = {
+        **right,
+        "input_tokens": input_tokens,
+        "cached_input_tokens": cached_tokens,
+        "cache_write_tokens": int(_usage_number(right, "cache_write_tokens")),
+        "uncached_input_tokens": int(
+            _usage_number(right, "uncached_input_tokens")
+            if "uncached_input_tokens" in right
+            else max(0, input_tokens - cached_tokens)
+        ),
+        "output_tokens": int(_usage_number(right, "output_tokens")),
+    }
+    if left is None:
+        return normalized_right
+    result = {
+        **normalized_right,
+        **{
+            key: int(_usage_number(left, key))
+            + int(_usage_number(normalized_right, key))
+            for key in (
+                "input_tokens",
+                "cached_input_tokens",
+                "cache_write_tokens",
+                "uncached_input_tokens",
+                "output_tokens",
+            )
+        },
+    }
+    if "cost_usd" in left and "cost_usd" in normalized_right:
+        result["cost_usd"] = _usage_number(left, "cost_usd") + _usage_number(
+            normalized_right, "cost_usd"
+        )
+    else:
+        result.pop("cost_usd", None)
+    left_breakdown = left.get("estimated_cost_breakdown_usd")
+    right_breakdown = normalized_right.get("estimated_cost_breakdown_usd")
+    if isinstance(left_breakdown, dict) and isinstance(right_breakdown, dict):
+        result["estimated_cost_breakdown_usd"] = {
+            key: _usage_number(left_breakdown, key)
+            + _usage_number(right_breakdown, key)
+            for key in ("cached_input", "uncached_input", "input", "output", "total")
+        }
+    else:
+        result.pop("estimated_cost_breakdown_usd", None)
+    result["cost_basis"] = (
+        normalized_right.get("cost_basis")
+        if left.get("cost_basis") == normalized_right.get("cost_basis")
+        else "mixed"
+    )
+    return result
+
+
 def _message_response_with_artifact_citations(
     message: Message,
     db: Session,
     artifact_texts_by_run: dict[str, tuple[str, ...]],
+    attachments_by_message: dict[str, list[dict[str, object]]] | None = None,
 ) -> dict[str, object]:
-    payload = message_response(message, db)
+    payload = message_response(
+        message,
+        db,
+        preloaded_attachments=(attachments_by_message or {}).get(message.id),
+    )
     metadata = message.metadata_json or {}
     sources = metadata.get("sources")
     if (
@@ -434,7 +506,100 @@ def get_turn_sets(
         )
     )
     has_more = len(page_rows) > limit_turn_sets
-    selected_keys = [str(row.turn_key) for row in reversed(page_rows[:limit_turn_sets])]
+    selected_rows = list(reversed(page_rows[:limit_turn_sets]))
+    selected_keys = [str(row.turn_key) for row in selected_rows]
+    usage_before_page: dict[str, object] | None = None
+    if selected_rows:
+        oldest = selected_rows[0]
+        older_turn = or_(
+            grouped_turns.c.first_created_at < oldest.first_created_at,
+            (
+                (grouped_turns.c.first_created_at == oldest.first_created_at)
+                & (grouped_turns.c.first_message_id < oldest.first_message_id)
+            ),
+        )
+        input_tokens = Run.usage_json["input_tokens"].as_integer()
+        cached_tokens = Run.usage_json["cached_input_tokens"].as_integer()
+        cache_write_tokens = Run.usage_json["cache_write_tokens"].as_integer()
+        uncached_tokens = Run.usage_json["uncached_input_tokens"].as_integer()
+        output_tokens = Run.usage_json["output_tokens"].as_integer()
+        cost_usd = Run.usage_json["cost_usd"].as_float()
+        cost_basis = Run.usage_json["cost_basis"].as_string()
+        breakdown = Run.usage_json["estimated_cost_breakdown_usd"]
+        aggregate = db.execute(
+            select(
+                func.count(Run.id),
+                func.sum(func.coalesce(input_tokens, 0)),
+                func.sum(func.coalesce(cached_tokens, 0)),
+                func.sum(func.coalesce(cache_write_tokens, 0)),
+                func.sum(
+                    func.coalesce(
+                        uncached_tokens,
+                        func.coalesce(input_tokens, 0)
+                        - func.coalesce(cached_tokens, 0),
+                    )
+                ),
+                func.sum(func.coalesce(output_tokens, 0)),
+                func.count(cost_usd),
+                func.sum(cost_usd),
+                func.min(cost_basis),
+                func.max(cost_basis),
+                *[
+                    func.sum(func.coalesce(breakdown[key].as_float(), 0.0))
+                    for key in (
+                        "cached_input",
+                        "uncached_input",
+                        "input",
+                        "output",
+                        "total",
+                    )
+                ],
+                func.count(breakdown["total"].as_float()),
+            )
+            .select_from(Run)
+            .join(grouped_turns, grouped_turns.c.turn_key == Run.id)
+            .where(
+                Run.conversation_id == conversation.id,
+                older_turn,
+            )
+        ).one()
+        (
+            usage_count,
+            input_total,
+            cached_total,
+            cache_write_total,
+            uncached_total,
+            output_total,
+            cost_count,
+            cost_total,
+            basis_min,
+            basis_max,
+            cached_cost,
+            uncached_cost,
+            input_cost,
+            output_cost,
+            breakdown_total,
+            breakdown_count,
+        ) = aggregate
+        if usage_count:
+            usage_before_page = {
+                "input_tokens": int(input_total or 0),
+                "cached_input_tokens": int(cached_total or 0),
+                "cache_write_tokens": int(cache_write_total or 0),
+                "uncached_input_tokens": max(0, int(uncached_total or 0)),
+                "output_tokens": int(output_total or 0),
+                "cost_basis": basis_min if basis_min == basis_max else "mixed",
+            }
+            if cost_count == usage_count:
+                usage_before_page["cost_usd"] = float(cost_total or 0.0)
+            if breakdown_count == usage_count:
+                usage_before_page["estimated_cost_breakdown_usd"] = {
+                    "cached_input": float(cached_cost or 0.0),
+                    "uncached_input": float(uncached_cost or 0.0),
+                    "input": float(input_cost or 0.0),
+                    "output": float(output_cost or 0.0),
+                    "total": float(breakdown_total or 0.0),
+                }
     selected_messages = (
         list(
             db.scalars(
@@ -474,10 +639,23 @@ def get_turn_sets(
         if settings.artifacts_dir is not None and legacy_citation_run_ids
         else {}
     )
+    attachments_by_message = preload_message_attachments(db, selected_messages)
+    selected_run_ids = [
+        key for key in selected_keys if not key.startswith(("message:", "branch:"))
+    ]
+    selected_runs = (
+        list(db.scalars(select(Run).where(Run.id.in_(selected_run_ids))))
+        if selected_run_ids
+        else []
+    )
+    runs_by_id = {run.id: run for run in selected_runs}
+    snapshots_by_run = {
+        snapshot["runId"]: snapshot for snapshot in run_snapshots(db, selected_runs)
+    }
     turn_sets: list[dict[str, object]] = []
     for key in selected_keys:
-        run = db.get(Run, key) if not key.startswith(("message:", "branch:")) else None
-        snapshot = run_snapshot(db, run) if run else None
+        run = runs_by_id.get(key)
+        snapshot = snapshots_by_run.get(key)
         group = grouped[key]
         turn_sets.append(
             {
@@ -485,7 +663,10 @@ def get_turn_sets(
                 "runId": run.id if run else None,
                 "messages": [
                     _message_response_with_artifact_citations(
-                        message, db, artifact_texts_by_run
+                        message,
+                        db,
+                        artifact_texts_by_run,
+                        attachments_by_message,
                     )
                     for message in group
                 ],
@@ -501,6 +682,7 @@ def get_turn_sets(
         "previousCursor": selected_keys[0] if has_more and selected_keys else None,
         "hasMoreBefore": has_more,
         "totalQuestionCount": total_question_count,
+        "usageBeforePage": usage_before_page or {},
     }
 
 

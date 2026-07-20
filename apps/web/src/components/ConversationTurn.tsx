@@ -38,12 +38,15 @@ import {
   X,
 } from "lucide-react";
 import { copyText } from "../clipboard";
+import { useSharedNow } from "../shared-clock";
 import { isTerminalRunStatus, runActivityOutcome, shouldCollapseRunWorkDetails, type RunActivityOutcome } from "../run-status";
 import type { Link, Parent, PhrasingContent, Root, Text } from "mdast";
 import {
   Children,
   isValidElement,
+  lazy,
   memo,
+  Suspense,
   useCallback,
   useEffect,
   useId,
@@ -92,12 +95,17 @@ import {
 import { useStreamingText } from "../streaming-ui";
 import { SyntaxCode, SyntaxCodeContent } from "./SyntaxCode";
 import { BranchFromHereIcon, ShareActionIcon } from "./ActionIcons";
-import {
-  InlineMarkdownImage,
-  InteractiveChart,
-  MermaidDiagram,
-} from "./InteractiveResponse";
 import { UserInputRequestCard } from "./UserInputRequestCard";
+
+const InlineMarkdownImage = lazy(() => import("./InteractiveResponse").then((module) => ({
+  default: module.InlineMarkdownImage,
+})));
+const InteractiveChart = lazy(() => import("./InteractiveResponse").then((module) => ({
+  default: module.InteractiveChart,
+})));
+const MermaidDiagram = lazy(() => import("./InteractiveResponse").then((module) => ({
+  default: module.MermaidDiagram,
+})));
 
 function toolCallIcon(toolName: string, size = 15) {
   const normalizedName = toolName.toLowerCase().replace(/[\s-]+/g, "_");
@@ -231,11 +239,14 @@ function estimatedModelCostParts(usage: Record<string, unknown> | undefined) {
 }
 
 export function cumulativeSessionUsageByTurnSet(
+  initialUsage: Record<string, unknown> | undefined,
   turnSets: TurnSet[],
   snapshots: Record<string, RunSnapshot>,
 ) {
   const usageByTurnSetId: Record<string, Record<string, unknown>> = {};
-  let cumulativeUsage: Record<string, unknown> | undefined;
+  let cumulativeUsage = usageHasData(initialUsage)
+    ? normalizedUsage(initialUsage!)
+    : undefined;
   for (const turnSet of turnSets) {
     const finalAssistantMessage = turnSet.messages.filter((message) => message.role === "assistant").at(-1);
     const snapshot = turnSet.runId ? snapshots[turnSet.runId] : undefined;
@@ -247,14 +258,15 @@ export function cumulativeSessionUsageByTurnSet(
 }
 
 export function sessionUsageRevision(
+  initialUsage: Record<string, unknown> | undefined,
   turnSets: TurnSet[],
   snapshots: Record<string, RunSnapshot>,
 ) {
-  return turnSets.map((turnSet) => {
+  return `${JSON.stringify(initialUsage ?? null)}|${turnSets.map((turnSet) => {
     const finalAssistantMessage = turnSet.messages.filter((message) => message.role === "assistant").at(-1);
     const snapshot = turnSet.runId ? snapshots[turnSet.runId] : undefined;
     return `${turnSet.id}:${JSON.stringify(finalAssistantMessage?.metadata?.usage ?? snapshot?.usage ?? null)}`;
-  }).join("|");
+  }).join("|")}`;
 }
 
 type UsageRow = {
@@ -576,13 +588,7 @@ function ToolCallRow({
   const stoppedByRun = executionActive && (runOutcome === "stopped" || runOutcome === "failed");
   const running = executionActive && !stoppedByRun;
   const writeFileActive = execution.toolName === "write_file" && running;
-  const [liveNow, setLiveNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!running || !execution.startedAt) return;
-    setLiveNow(Date.now());
-    const timer = window.setInterval(() => setLiveNow(Date.now()), 100);
-    return () => window.clearInterval(timer);
-  }, [execution.startedAt, running]);
+  const liveNow = useSharedNow(running && Boolean(execution.startedAt), 100);
   const liveDurationMs = execution.durationMs ?? (
     (running || stoppedByRun) && execution.startedAt
       ? Math.max(0, (stoppedByRun ? terminalAtMs : liveNow) - Date.parse(execution.startedAt))
@@ -838,14 +844,7 @@ function WorkDurationLabel({
   running: boolean;
   statusSuffix: string;
 }) {
-  const [clockNow, setClockNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    if (!running) return undefined;
-    setClockNow(Date.now());
-    const timer = window.setInterval(() => setClockNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [running]);
+  const clockNow = useSharedNow(running);
 
   const effectiveFinishedAtMs = finishedAtMs ?? clockNow;
   const duration = Number.isFinite(startedAtMs) && Number.isFinite(effectiveFinishedAtMs)
@@ -899,7 +898,7 @@ function RunActivityTimeline({
   ) => Promise<boolean>;
   onClarificationModeChange: (mode: ClarificationMode) => Promise<unknown>;
 }) {
-  const [timelineClock, setTimelineClock] = useState(() => Date.now());
+  const timelineClock = useSharedNow(timelineRunning);
   const [openSummaryIds, setOpenSummaryIds] = useState<Set<string>>(new Set());
   const [collapsingSummaryIds, setCollapsingSummaryIds] = useState<Set<string>>(new Set());
   const previousAutoOpenSummaryIds = useRef<Set<string>>(new Set());
@@ -910,12 +909,6 @@ function RunActivityTimeline({
   const settleTimers = useRef<Map<string, number>>(new Map());
   const collapseTimers = useRef<Map<string, number>>(new Map());
   const visibleActivities = useStaggeredRunActivities(activities, timelineRunning);
-  useEffect(() => {
-    if (!timelineRunning) return undefined;
-    setTimelineClock(Date.now());
-    const timer = window.setInterval(() => setTimelineClock(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [timelineRunning]);
   const effectiveTimelineFinishedAtMs = timelineFinishedAtMs ?? timelineClock;
   const activityGroups = visibleActivities.reduce<RunActivity[][]>((groups, activity) => {
     if (activity.type === "progress_summary" || activity.type === "skill" || activity.type === "input_request" || groups.length === 0) groups.push([]);
@@ -1513,9 +1506,9 @@ const markdownCodeComponent: NonNullable<Components["code"]> = ({ className, chi
   const language = /language-([\w-]+)/.exec(className || "")?.[1]?.toLowerCase();
   const source = String(children).replace(/\n$/, "");
   return language === "mermaid" || language === "mmd"
-    ? <MermaidDiagram source={source} />
+    ? <Suspense fallback={<StreamingBlockPending kind="mermaid" />}><MermaidDiagram source={source} /></Suspense>
     : language === "lumina-chart"
-      ? <InteractiveChart source={source} />
+      ? <Suspense fallback={<StreamingBlockPending kind="chart" />}><InteractiveChart source={source} /></Suspense>
       : language
         ? <SyntaxCodeContent value={source} language={language} className={className} />
         : <code className={className}>{children}</code>;
@@ -1650,7 +1643,7 @@ const MemoizedMarkdownChunk = memo(function MarkdownChunk({
     img: ({ src, alt }) => {
       const safeSrc = src ? defaultUrlTransform(src) : "";
       return safeSrc
-        ? <InlineMarkdownImage src={safeSrc} alt={alt || ""} />
+        ? <Suspense fallback={<span>{alt || "이미지 불러오는 중"}</span>}><InlineMarkdownImage src={safeSrc} alt={alt || ""} /></Suspense>
         : <span>{alt || "이미지"}</span>;
     },
     table: ({ children }) => <div className="markdown-table-scroll"><table>{children}</table></div>,
@@ -2124,7 +2117,7 @@ export const AssistantTurn = memo(function AssistantTurn({
       {previewAttachment && <ImageAttachmentViewer attachment={previewAttachment} onClose={() => setPreviewAttachment(null)} />}
       {(assistantText || tools.length > 0 || artifacts.length > 0 || snapshot) && (
         <section className="assistant-turn">
-          <div className="assistant-content">
+          <div className="assistant-content conversation-response-typography">
             {assistantText && <MarkdownResponse text={displayedText} sources={sources} citations={citations} streaming={revealing} settling={settling} />}
             {terminalPresentationReady && researchVerification === "unverified" && (
               <div className="research-verification-warning" role="status">

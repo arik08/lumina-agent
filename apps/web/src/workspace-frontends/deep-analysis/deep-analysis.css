@@ -6,6 +6,7 @@
 .deep-analysis-header > div:first-child > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .deep-analysis-view-tabs { display: inline-flex; flex: none; }
 .deep-analysis-view-tabs > button { white-space: nowrap; }
+.deep-analysis-view-tabs > button > svg { flex: none; }
 .deep-analysis-view-tabs > button:first-child { width: 100px; min-width: 100px; }
 .deep-analysis-view-tabs > button:last-child { width: 92px; min-width: 92px; }
 .deep-analysis-header > button,
@@ -54,39 +55,69 @@
 }
 .deep-analysis-view .deep-analysis-create.deep-analysis-create label > small,
 .deep-analysis-view .deep-analysis-create.deep-analysis-create .deep-analysis-select-field > small { color: var(--faint); font-size: var(--conversation-font-size); font-weight: 400; line-height: 1.4; }
+.deep-analysis-output-format-input { position: relative; }
+.deep-analysis-view .deep-analysis-create .deep-analysis-output-format-input > input { padding-right: 34px; }
+.deep-analysis-output-format-input > button {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  display: grid;
+  width: 32px;
+  height: calc(100% - 2px);
+  place-items: center;
+  border: 0;
+  border-radius: 0 var(--radius-field) var(--radius-field) 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.deep-analysis-output-format-input > button:hover:not(:disabled) { background: var(--surface-soft); color: var(--ink); }
+.deep-analysis-output-format-input > button:disabled { cursor: default; opacity: .5; }
+.deep-analysis-output-format-input > div {
+  position: absolute;
+  z-index: 12;
+  top: calc(100% + 5px);
+  left: 0;
+  display: grid;
+  width: 100%;
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 5px;
+  background: var(--menu-surface);
+  box-shadow: var(--shadow-overlay);
+}
+.deep-analysis-output-format-input > div > button {
+  min-height: 32px;
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--conversation-font-size);
+  text-align: left;
+  cursor: pointer;
+}
+.deep-analysis-output-format-input > div > button:hover,
+.deep-analysis-output-format-input > div > button:focus-visible { background: var(--surface-soft); }
+.deep-analysis-output-format-input > div > button[aria-selected="true"] { background: var(--cobalt-pale); color: var(--cobalt); }
 .deep-analysis-create-references { display: flex; flex-wrap: wrap; gap: 5px; }
 .deep-analysis-create-references > span { display: inline-flex; min-width: 0; max-width: 100%; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 999px; padding: 3px 4px 3px 7px; background: var(--surface-soft); color: var(--muted); font-size: calc(var(--conversation-font-size) - 1px); }
 .deep-analysis-create-references strong { overflow: hidden; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .deep-analysis-create-references button { display: grid; width: 20px; height: 20px; place-items: center; border: 0; border-radius: 50%; padding: 0; background: transparent; color: var(--muted); cursor: pointer; }
 .deep-analysis-create-references button:hover { background: var(--surface); color: var(--ink); }
-.deep-analysis-create-toolbar { position: relative; display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 3px; }
-.deep-analysis-create-utility,
-.deep-analysis-create-picker > button { display: inline-flex; min-height: 28px; align-items: center; justify-content: center; gap: 4px; border: 1px solid transparent; border-radius: var(--radius-control); padding: 0 6px; background: transparent; color: var(--muted); font-size: calc(var(--conversation-font-size) - 1px); font-weight: 500; cursor: pointer; white-space: nowrap; }
-.deep-analysis-create-utility { width: 28px; padding: 0; }
-.deep-analysis-create-utility:hover,
-.deep-analysis-create-utility.is-active,
-.deep-analysis-create-picker > button:hover,
-.deep-analysis-create-picker.is-open > button { border-color: var(--line); background: var(--surface-soft); color: var(--ink); }
-.deep-analysis-create-utility:disabled,
-.deep-analysis-create-picker > button:disabled { opacity: .5; cursor: default; }
-.deep-analysis-create-picker { position: relative; }
-.deep-analysis-create-picker-menu { position: absolute; z-index: 8; top: calc(100% + 5px); left: 0; display: grid; width: 270px; border: 1px solid var(--line); border-radius: 10px; padding: 6px; background: var(--menu-surface); box-shadow: var(--shadow-overlay); }
-.deep-analysis-create-picker-menu > strong { padding: 5px 7px 7px; color: var(--muted); font-size: calc(var(--conversation-font-size) - 1px); }
-.deep-analysis-create-picker-menu > button { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; border: 0; border-radius: 6px; padding: 7px; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
-.deep-analysis-create-picker-menu > button:hover { background: var(--surface-soft); }
-.deep-analysis-create-picker-menu > button.is-selected { background: var(--cobalt-pale); color: var(--cobalt); }
-.deep-analysis-create-picker-menu > button span { font-size: calc(var(--conversation-font-size) - 1px); font-weight: 550; }
-.deep-analysis-create-picker-menu > button small { grid-column: 1; color: var(--muted); font-size: calc(var(--conversation-font-size) - 2px); line-height: 1.35; }
-.deep-analysis-create-picker-menu > button svg { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
-.deep-analysis-token-mark { font-size: 11px; font-weight: 700; }
-.deep-analysis-create-reference-menu { position: absolute; z-index: 9; top: calc(100% + 5px); left: 0; display: grid; width: min(360px, 100%); border: 1px solid var(--line); border-radius: 10px; padding: 7px; background: var(--menu-surface); box-shadow: var(--shadow-overlay); }
+.deep-analysis-create-toolbar { position: relative; width: 100%; min-width: 0; flex-wrap: wrap; }
+.deep-analysis-create-toolbar > .deep-analysis-create-reference-menu { display: grid; }
+.deep-analysis-create-toolbar .composer-utility-button.is-active { background: var(--surface-soft); color: var(--ink); }
+.deep-analysis-create-toolbar :is(.composer-picker-trigger, .artifact-length-trigger) { font-size: var(--conversation-font-size); }
+.deep-analysis-create-reference-menu { position: absolute; z-index: 9; bottom: calc(100% + 5px); left: 0; display: grid; width: min(360px, 100%); border: 1px solid var(--line); border-radius: 10px; padding: 7px; background: var(--menu-surface); box-shadow: var(--shadow-overlay); }
 .deep-analysis-create-reference-menu > header { display: flex; align-items: center; justify-content: space-between; padding: 2px 3px 7px; }
 .deep-analysis-create-reference-menu > header strong { color: var(--ink); font-size: calc(var(--conversation-font-size) - 1px); }
 .deep-analysis-create-reference-menu > header button { display: grid; width: 24px; height: 24px; place-items: center; border: 0; border-radius: var(--radius-control); padding: 0; background: transparent; color: var(--muted); cursor: pointer; }
 .deep-analysis-create-reference-menu > header button:hover { background: var(--surface-soft); color: var(--ink); }
 .deep-analysis-view .deep-analysis-create .deep-analysis-create-reference-menu > input { min-height: 30px; padding: 5px 7px; }
 .deep-analysis-create-reference-menu > div { display: grid; max-height: 250px; overflow: auto; padding-top: 5px; }
-.deep-analysis-create-reference-menu > div > button { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 6px; border: 0; border-radius: 6px; padding: 7px 6px; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
+.deep-analysis-create-reference-menu > div > button { display: grid; min-height: 48px; height: auto; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 6px; border: 0; border-radius: 6px; padding: 7px 6px; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
 .deep-analysis-create-reference-menu > div > button:hover { background: var(--surface-soft); }
 .deep-analysis-create-reference-menu > div > button:disabled { opacity: .5; cursor: default; }
 .deep-analysis-create-reference-menu > div > button > span:nth-child(2) { display: grid; min-width: 0; gap: 2px; }
@@ -459,7 +490,7 @@
 .deep-analysis-contract-inspector-actions > button:disabled { opacity: .5; cursor: default; }
 .deep-analysis-node-edit-field { display: grid; gap: 5px; margin-bottom: 9px; color: var(--muted); font-size: 9.5px; font-weight: 620; }
 .deep-analysis-node-edit-field input,
-.deep-analysis-node-edit-field textarea { width: 100%; border: 1px solid var(--line); border-radius: var(--radius-field); padding: 7px 8px; background: var(--canvas); color: var(--ink); font-size: 10.5px; line-height: 1.45; resize: vertical; }
+.deep-analysis-node-edit-field textarea { width: 100%; border: 1px solid var(--line); border-radius: var(--radius-field); padding: 7px 8px; background: var(--canvas); color: var(--ink); font-size: 10.5px; font-weight: 400; line-height: 1.45; resize: vertical; }
 .deep-analysis-inspector .deep-analysis-node-progress { display: flex; align-items: center; gap: 6px; color: var(--cobalt); }
 .deep-analysis-inspector .deep-analysis-node-error { color: var(--danger); }
 .deep-analysis-node-prompt { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-field); background: var(--canvas); }
@@ -468,7 +499,7 @@
 .deep-analysis-node-prompt > pre { overflow: auto; max-height: 360px; margin: 0; padding: 10px; color: var(--ink); font-family: var(--font-mono); font-size: 10px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
 .deep-analysis-live-output { min-height: 0; flex: 1 1 0; overflow: auto; margin: 9px 0 0; border: 1px solid var(--line); border-radius: var(--radius-field); padding: 9px; background: var(--canvas); color: var(--muted); font-family: var(--font-mono); font-size: 10px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
 .deep-analysis-output-path { display: block; overflow-wrap: anywhere; margin-bottom: 9px; color: var(--faint); font-size: 9.5px; line-height: 1.45; }
-.deep-analysis-output-document { min-width: 0; color: var(--ink); font-size: 11.5px; line-height: 1.65; }
+.deep-analysis-output-document { min-width: 0; color: var(--ink); }
 .deep-analysis-output-document > .markdown-response > :last-child { margin-bottom: 0; }
 .deep-analysis-inspector .deep-analysis-output-document p { margin: 0 0 .9em; color: var(--ink); font-size: inherit; line-height: inherit; }
 .deep-analysis-generated-files { display: grid; gap: 6px; margin-top: 11px; border-top: 1px solid var(--line); padding-top: 9px; }

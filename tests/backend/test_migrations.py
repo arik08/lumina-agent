@@ -41,9 +41,18 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
         conversation_columns = {
             column["name"] for column in inspector.get_columns("conversations")
         }
+        run_columns = {column["name"] for column in inspector.get_columns("runs")}
+        run_indexes = {index["name"] for index in inspector.get_indexes("runs")}
+        run_unique_constraints = {
+            constraint["name"]
+            for constraint in inspector.get_unique_constraints("runs")
+        }
         workflow_node_columns = {
             column["name"]
             for column in inspector.get_columns("deep_analysis_workflow_nodes")
+        }
+        knowledge_tag_columns = {
+            column["name"] for column in inspector.get_columns("knowledge_tags")
         }
         with engine.connect() as connection:
             revision = MigrationContext.configure(connection).get_current_revision()
@@ -138,6 +147,7 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
     assert "creator_user_id" in extension_columns
     assert "is_liked" in conversation_columns
     assert "surface" in conversation_columns
+    assert "next_turn_index" in conversation_columns
     assert "actual_cost_microusd" in workflow_node_columns
     assert "estimated_cost_microusd" not in workflow_node_columns
     assert knowledge_fts_trigger_count == 0
@@ -150,7 +160,15 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
         column["name"] for column in inspector.get_columns("knowledge_spaces")
     }
     assert "conversation_id" in workflow_node_columns
-    assert revision == "0056"
+    assert {"definition", "parent_tag_id", "revision"} <= knowledge_tag_columns
+    assert revision == "0061"
+    assert "ix_run_events_run_type" in {
+        index["name"] for index in inspector.get_indexes("run_events")
+    }
+    assert "ix_runs_queue_claim" in run_indexes
+    assert "ix_runs_worker_lease" in run_indexes
+    assert "uq_runs_conversation_user_idempotency" in run_unique_constraints
+    assert {"worker_id", "heartbeat_at", "lease_expires_at"}.issubset(run_columns)
 
 
 def test_message_search_fts_migration_0056_round_trip(tmp_path: Path) -> None:
@@ -409,7 +427,7 @@ def test_context_migration_adopts_legacy_create_all_table(tmp_path: Path) -> Non
         }
         with engine.connect() as connection:
             assert (
-                MigrationContext.configure(connection).get_current_revision() == "0056"
+                MigrationContext.configure(connection).get_current_revision() == "0061"
             )
     finally:
         engine.dispose()
@@ -439,7 +457,7 @@ def test_recent_migrations_adopt_tables_precreated_by_runtime_schema(
     try:
         with engine.connect() as connection:
             revision = MigrationContext.configure(connection).get_current_revision()
-        assert revision == "0056"
+        assert revision == "0061"
     finally:
         engine.dispose()
 

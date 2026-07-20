@@ -2,18 +2,27 @@ from __future__ import annotations
 
 from datetime import timedelta
 import logging
+import json
+from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Header, Query, Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import StreamingResponse
 from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
 from ...audit import record_audit
 from ...authorization import require_project
 from ...agent.executor import local_run_executor
-from ...api.schemas import RunActionRequest
+from ...api.schemas import RunActionRequest, RunCreate, RunMessageInput
 from ...config import Settings, get_settings
-from ...db import get_db
-from ...deep_analysis.execution import create_node_run, preserve_partial_output
+from ...db import SessionLocal, get_db
+from ...auth import resolve_server_session
+from ...deep_analysis.execution import (
+    create_node_run,
+    create_runnable_node_runs,
+    preserve_partial_output,
+)
 from ...deep_analysis.ai_planner import design_initial_workflow
 from ...deep_analysis.costs import mission_costs
 from ...deep_analysis.events import (
@@ -105,16 +114,22 @@ from ...deep_analysis.service import (
 from ...deep_analysis.quality import list_quality_gates
 from ...deep_analysis.planning import initial_workflow_plan
 from ...models import Message, ProjectFile, ProjectFileVersion, Run, User, utc_now
-from ...runs.service import validate_project_references
+from ...runs.service import resolve_execution, validate_project_references
 from ...providers.execution_defaults import initial_execution_selection
 from ...storage import ManagedLocalStorage
 from ...runs.broker import event_broker
 from ...runs.service import apply_run_action
-from ..dependencies import AuthContext, get_current_user, require_csrf
+from ..dependencies import (
+    AuthContext,
+    get_current_user,
+    get_stream_auth_context,
+    require_csrf,
+)
 from ..errors import ApiProblem
 
 
 router = APIRouter(tags=["deep-analysis"])
+stream_router = APIRouter(tags=["deep-analysis-stream"])
 logger = logging.getLogger(__name__)
 
 
@@ -203,9 +218,7 @@ def _decision_payload(
         "decided_by_user_id": (
             response.decided_by_user_id if response is not None else None
         ),
-        "applied_workflow_revision_number": (
-            decision.applied_workflow_revision_number
-        ),
+        "applied_workflow_revision_number": (decision.applied_workflow_revision_number),
         "resolved_at": decision.resolved_at,
         "created_at": decision.created_at,
         "updated_at": decision.updated_at,
@@ -328,7 +341,9 @@ def _summary_payload(mission: DeepAnalysisMission) -> dict[str, object]:
         "analysis_depth": execution_settings.get("analysisDepth", "auto"),
         "answer_length": execution_settings.get("answerLength", "auto"),
         "output_mode": execution_settings.get("outputMode", "auto"),
+        "output_format": execution_settings.get("outputFormat", "markdown"),
         "target_output_tokens": execution_settings.get("targetOutputTokens", 10_000),
+        "execution": execution_settings.get("execution"),
         "prompt_references": prompt_references,
         "budget_microusd": mission.budget_microusd,
         "spent_microusd": mission.spent_microusd,
@@ -339,30 +354,79 @@ def _summary_payload(mission: DeepAnalysisMission) -> dict[str, object]:
     }
 
 
+def _source_manifest(
+    db: Session,
+    *,
+    project_id: str,
+    references: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    selected_file_versions: dict[str, str] = {}
+    for reference in references:
+        snapshot = reference.get("display_snapshot")
+        if not isinstance(snapshot, dict):
+            continue
+        if snapshot.get("targetType") == "project_file":
+            selected_file_versions[str(reference["reference_id"])] = str(
+                snapshot.get("contentHash") or reference.get("version_or_digest") or ""
+            )
+        if snapshot.get("targetType") == "project_folder":
+            for item in snapshot.get("fileVersions", []):
+                if isinstance(item, dict) and item.get("id") and item.get("digest"):
+                    selected_file_versions[str(item["id"])] = str(item["digest"])
+    if not selected_file_versions:
+        return []
+    rows = db.execute(
+        select(ProjectFile, ProjectFileVersion)
+        .join(ProjectFileVersion, ProjectFileVersion.project_file_id == ProjectFile.id)
+        .where(
+            ProjectFile.project_id == project_id,
+            ProjectFile.id.in_(selected_file_versions),
+        )
+    ).tuples()
+    return [
+        {
+            "projectFileId": project_file.id,
+            "logicalPath": project_file.logical_path,
+            "version": version.version_number,
+            "versionId": version.id,
+            "contentHash": version.content_hash,
+            "mimeType": version.mime_type,
+            "sizeBytes": version.size_bytes,
+        }
+        for project_file, version in rows
+        if selected_file_versions.get(project_file.id) == version.content_hash
+    ]
+
+
 def _workflow_revision_payload(
     db: Session, revision: DeepAnalysisWorkflowRevision
 ) -> dict[str, object]:
     nodes, edges = workflow_revision(db, revision)
     run_ids = [node.run_id for node in nodes if node.run_id]
-    runs = {
-        run.id: run
-        for run in db.query(Run).filter(Run.id.in_(run_ids))
-    }
-    execution_prompts = {
-        run_id: prompt
-        for run_id, prompt in db.execute(
-            select(Message.run_id, Message.canonical_text).where(
-                Message.run_id.in_(run_ids), Message.role == "user"
+    runs = {run.id: run for run in db.query(Run).filter(Run.id.in_(run_ids))}
+    execution_prompts = (
+        {
+            run_id: prompt
+            for run_id, prompt in db.execute(
+                select(Message.run_id, Message.canonical_text).where(
+                    Message.run_id.in_(run_ids), Message.role == "user"
+                )
+            ).all()
+            if run_id is not None
+        }
+        if run_ids
+        else {}
+    )
+    manifests = (
+        {
+            item.run_id: item
+            for item in db.query(DeepAnalysisContextManifest).filter(
+                DeepAnalysisContextManifest.run_id.in_(runs)
             )
-        ).all()
-        if run_id is not None
-    } if run_ids else {}
-    manifests = {
-        item.run_id: item
-        for item in db.query(DeepAnalysisContextManifest).filter(
-            DeepAnalysisContextManifest.run_id.in_(runs)
-        )
-    } if runs else {}
+        }
+        if runs
+        else {}
+    )
     return {
         "id": revision.id,
         "revision_number": revision.revision_number,
@@ -373,27 +437,50 @@ def _workflow_revision_payload(
         "change_log": revision.change_log_json,
         "nodes": [
             {
-                "id": node.id, "node_key": node.node_key, "node_type": node.node_type,
-                "title": node.title, "purpose": node.purpose, "status": node.status,
-                "sequence": node.sequence, "position_x": node.position_x, "position_y": node.position_y,
-                "config": node.config_json, "conversation_id": node.conversation_id,
+                "id": node.id,
+                "node_key": node.node_key,
+                "node_type": node.node_type,
+                "title": node.title,
+                "purpose": node.purpose,
+                "status": node.status,
+                "sequence": node.sequence,
+                "position_x": node.position_x,
+                "position_y": node.position_y,
+                "config": node.config_json,
+                "conversation_id": node.conversation_id,
                 "run_id": node.run_id,
-                "output_project_file_id": node.output_project_file_id, "output_logical_path": node.output_logical_path,
-                "output_summary": node.output_summary, "output_markdown": node.output_markdown,
-                "generated_files": node.generated_files_json, "run_history": node.run_history_json,
-                "run_status": runs[node.run_id].status if node.run_id and node.run_id in runs else None,
+                "output_project_file_id": node.output_project_file_id,
+                "output_logical_path": node.output_logical_path,
+                "output_summary": node.output_summary,
+                "output_markdown": node.output_markdown,
+                "generated_files": node.generated_files_json,
+                "run_history": node.run_history_json,
+                "run_status": runs[node.run_id].status
+                if node.run_id and node.run_id in runs
+                else None,
                 "execution_prompt": execution_prompts.get(node.run_id),
                 "context_manifest": (
                     _context_manifest_payload(manifests[node.run_id])
-                    if node.run_id and node.run_id in manifests else None
+                    if node.run_id and node.run_id in manifests
+                    else None
                 ),
-                "live_output": "", "error_message": node.error_message,
+                "live_output": "",
+                "error_message": node.error_message,
                 "actual_cost_microusd": node.actual_cost_microusd,
-                "started_at": node.started_at, "finished_at": node.finished_at,
+                "started_at": node.started_at,
+                "finished_at": node.finished_at,
             }
             for node in nodes
         ],
-        "edges": [{"id": edge.id, "source_node_key": edge.source_node_key, "target_node_key": edge.target_node_key, "edge_type": edge.edge_type} for edge in edges],
+        "edges": [
+            {
+                "id": edge.id,
+                "source_node_key": edge.source_node_key,
+                "target_node_key": edge.target_node_key,
+                "edge_type": edge.edge_type,
+            }
+            for edge in edges
+        ],
         "created_at": revision.created_at,
         "updated_at": revision.updated_at,
     }
@@ -402,27 +489,30 @@ def _workflow_revision_payload(
 def _detail_payload(db: Session, mission: DeepAnalysisMission) -> dict[str, object]:
     revision, nodes, edges = active_workflow(db, mission.id)
     run_ids = [node.run_id for node in nodes if node.run_id]
-    runs = {
-        run.id: run
-        for run in db.query(Run).filter(
-            Run.id.in_(run_ids)
-        )
-    }
-    execution_prompts = {
-        run_id: prompt
-        for run_id, prompt in db.execute(
-            select(Message.run_id, Message.canonical_text).where(
-                Message.run_id.in_(run_ids), Message.role == "user"
+    runs = {run.id: run for run in db.query(Run).filter(Run.id.in_(run_ids))}
+    execution_prompts = (
+        {
+            run_id: prompt
+            for run_id, prompt in db.execute(
+                select(Message.run_id, Message.canonical_text).where(
+                    Message.run_id.in_(run_ids), Message.role == "user"
+                )
+            ).all()
+            if run_id is not None
+        }
+        if run_ids
+        else {}
+    )
+    manifests = (
+        {
+            item.run_id: item
+            for item in db.query(DeepAnalysisContextManifest).filter(
+                DeepAnalysisContextManifest.run_id.in_(runs)
             )
-        ).all()
-        if run_id is not None
-    } if run_ids else {}
-    manifests = {
-        item.run_id: item
-        for item in db.query(DeepAnalysisContextManifest).filter(
-            DeepAnalysisContextManifest.run_id.in_(runs)
-        )
-    } if runs else {}
+        }
+        if runs
+        else {}
+    )
     return {
         **_summary_payload(mission),
         "execution_available": execution_engine_available(),
@@ -465,7 +555,8 @@ def _detail_payload(db: Session, mission: DeepAnalysisMission) -> dict[str, obje
                     "execution_prompt": execution_prompts.get(node.run_id),
                     "context_manifest": (
                         _context_manifest_payload(manifests[node.run_id])
-                        if node.run_id and node.run_id in manifests else None
+                        if node.run_id and node.run_id in manifests
+                        else None
                     ),
                     "live_output": (
                         runs[node.run_id].assistant_draft[-6_000:]
@@ -518,17 +609,23 @@ def _mission_file_payloads(db: Session, mission_id: str) -> list[dict[str, objec
             ProjectFileVersion,
             DeepAnalysisWorkflowNode.node_key,
         )
-        .join(ProjectFile, ProjectFile.id == DeepAnalysisMissionFileLink.project_file_id)
+        .join(
+            ProjectFile, ProjectFile.id == DeepAnalysisMissionFileLink.project_file_id
+        )
         .join(
             ProjectFileVersion,
-            ProjectFileVersion.id == DeepAnalysisMissionFileLink.project_file_version_id,
+            ProjectFileVersion.id
+            == DeepAnalysisMissionFileLink.project_file_version_id,
         )
         .outerjoin(
             DeepAnalysisWorkflowNode,
-            DeepAnalysisWorkflowNode.id == DeepAnalysisMissionFileLink.producing_node_id,
+            DeepAnalysisWorkflowNode.id
+            == DeepAnalysisMissionFileLink.producing_node_id,
         )
         .where(DeepAnalysisMissionFileLink.mission_id == mission_id)
-        .order_by(DeepAnalysisMissionFileLink.created_at, DeepAnalysisMissionFileLink.id)
+        .order_by(
+            DeepAnalysisMissionFileLink.created_at, DeepAnalysisMissionFileLink.id
+        )
     ).all()
     return [
         {
@@ -621,7 +718,9 @@ def post_pattern(
     require_project(db, context.user, project_id, write=True)
     mission = require_mission(db, context.user, payload.mission_id, write=True)
     if mission.project_id != project_id:
-        raise ApiProblem(404, "mission_not_found", "Project에서 Mission을 찾을 수 없습니다.")
+        raise ApiProblem(
+            404, "mission_not_found", "Project에서 Mission을 찾을 수 없습니다."
+        )
     pattern, version = create_pattern(
         db,
         mission=mission,
@@ -660,7 +759,11 @@ def post_pattern_version(
     require_project(db, context.user, pattern.project_id, write=True)
     mission = require_mission(db, context.user, payload.mission_id, write=True)
     if mission.project_id != pattern.project_id:
-        raise ApiProblem(403, "pattern_scope_mismatch", "같은 Project의 Mission만 Pattern version 근거로 사용할 수 있습니다.")
+        raise ApiProblem(
+            403,
+            "pattern_scope_mismatch",
+            "같은 Project의 Mission만 Pattern version 근거로 사용할 수 있습니다.",
+        )
     version = create_pattern_version(
         db,
         pattern=pattern,
@@ -685,7 +788,9 @@ def post_pattern_version_publish(
     pattern = db.get(DeepAnalysisWorkflowPattern, pattern_id)
     version = db.get(DeepAnalysisWorkflowPatternVersion, version_id)
     if pattern is None or version is None or pattern.project_id is None:
-        raise ApiProblem(404, "pattern_version_not_found", "Pattern version을 찾을 수 없습니다.")
+        raise ApiProblem(
+            404, "pattern_version_not_found", "Pattern version을 찾을 수 없습니다."
+        )
     require_project(db, context.user, pattern.project_id, write=True)
     publish_pattern_version(db, pattern=pattern, version=version, user=context.user)
     record_audit(
@@ -717,49 +822,38 @@ async def post_mission(
 ) -> dict[str, object]:
     project = require_project(db, context.user, project_id, write=True)
     validated_references = validate_project_references(
-        db, context.user, project.id, payload.prompt_references, message_text=payload.objective
+        db,
+        context.user,
+        project.id,
+        payload.prompt_references,
+        message_text=payload.objective,
     )
-    selected_file_versions: dict[str, str] = {}
-    for reference in validated_references:
-        snapshot = reference.get("display_snapshot")
-        if not isinstance(snapshot, dict):
-            continue
-        if snapshot.get("targetType") == "project_file":
-            selected_file_versions[str(reference["reference_id"])] = str(
-                snapshot.get("contentHash") or reference.get("version_or_digest") or ""
-            )
-        if snapshot.get("targetType") == "project_folder":
-            for item in snapshot.get("fileVersions", []):
-                if isinstance(item, dict) and item.get("id") and item.get("digest"):
-                    selected_file_versions[str(item["id"])] = str(item["digest"])
-    source_manifest: list[dict[str, object]] = []
-    if selected_file_versions:
-        rows = db.execute(
-            select(ProjectFile, ProjectFileVersion)
-            .join(ProjectFileVersion, ProjectFileVersion.project_file_id == ProjectFile.id)
-            .where(
-                ProjectFile.project_id == project.id,
-                ProjectFile.id.in_(selected_file_versions),
-            )
-        ).tuples()
-        source_manifest = [
-            {
-                "projectFileId": project_file.id,
-                "logicalPath": project_file.logical_path,
-                "version": version.version_number,
-                "versionId": version.id,
-                "contentHash": version.content_hash,
-                "mimeType": version.mime_type,
-                "sizeBytes": version.size_bytes,
-            }
-            for project_file, version in rows
-            if selected_file_versions.get(project_file.id) == version.content_hash
-        ]
+    source_manifest = _source_manifest(
+        db,
+        project_id=project.id,
+        references=validated_references,
+    )
     execution, _source = initial_execution_selection(
         db,
         organization_id=project.organization_id,
         environment=settings.environment,
     )
+    if payload.execution is not None:
+        resolved_execution = resolve_execution(
+            db,
+            RunCreate(
+                message=RunMessageInput(text=payload.objective or payload.title),
+                execution=payload.execution,
+            ),
+            user=context.user,
+            project=project,
+            settings=settings,
+        )
+        execution = {
+            "providerId": resolved_execution["provider_id"],
+            "modelKey": resolved_execution["model_key"],
+            "effortId": resolved_execution["effort"],
+        }
     initial_plan = None
     start_mode = "ai_fallback"
     planning_metadata: dict[str, object] = {"mode": "fallback"}
@@ -779,6 +873,7 @@ async def post_mission(
             "mode": "ai",
             "providerId": provider_id,
             "modelKey": model_key,
+            "effortId": execution.get("effortId"),
         }
     except Exception as exc:
         logger.warning(
@@ -797,7 +892,11 @@ async def post_mission(
             "analysisDepth": payload.analysis_depth,
             "answerLength": payload.answer_length,
             "outputMode": payload.output_mode,
-            "targetOutputTokens": payload.target_output_tokens if payload.output_mode != "chat" else None,
+            "outputFormat": payload.output_format,
+            "targetOutputTokens": payload.target_output_tokens
+            if payload.output_mode != "chat"
+            else None,
+            "execution": execution,
             "promptReferences": validated_references,
         },
         source_manifest=source_manifest,
@@ -844,6 +943,51 @@ def get_mission(
     return _detail_payload(db, mission)
 
 
+@router.get("/deep-analysis/missions/{mission_id}/projection")
+def get_mission_projection(
+    mission_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    mission = require_mission(db, user, mission_id)
+    _revision, nodes, _edges = active_workflow(db, mission.id)
+    run_ids = [node.run_id for node in nodes if node.run_id]
+    runs = (
+        {run.id: run for run in db.scalars(select(Run).where(Run.id.in_(run_ids)))}
+        if run_ids
+        else {}
+    )
+    return {
+        "missionId": mission.id,
+        "eventCursor": mission.event_sequence,
+        "status": mission.status,
+        "spentMicrousd": mission.spent_microusd,
+        "revision": mission.revision,
+        "nodes": [
+            {
+                "id": node.id,
+                "status": node.status,
+                "runId": node.run_id,
+                "runStatus": (
+                    runs[node.run_id].status
+                    if node.run_id and node.run_id in runs
+                    else None
+                ),
+                "liveOutput": (
+                    runs[node.run_id].assistant_draft[-6_000:]
+                    if node.run_id and node.run_id in runs and node.status == "running"
+                    else ""
+                ),
+                "errorMessage": node.error_message,
+                "actualCostMicrousd": node.actual_cost_microusd,
+                "startedAt": node.started_at,
+                "finishedAt": node.finished_at,
+            }
+            for node in nodes
+        ],
+    }
+
+
 @router.post(
     "/deep-analysis/missions/{mission_id}/workflow/regenerate",
     response_model=MissionDetailResponse,
@@ -876,6 +1020,9 @@ async def post_workflow_regenerate(
         organization_id=mission.organization_id,
         environment=settings.environment,
     )
+    frozen_execution = (mission.execution_settings_json or {}).get("execution")
+    if isinstance(frozen_execution, dict):
+        execution = frozen_execution
     planning_metadata: dict[str, object] = {"mode": "fallback"}
     try:
         provider_id = str(execution["providerId"])
@@ -893,6 +1040,7 @@ async def post_workflow_regenerate(
             "mode": "ai",
             "providerId": provider_id,
             "modelKey": model_key,
+            "effortId": execution.get("effortId"),
         }
     except Exception as exc:
         logger.warning(
@@ -944,14 +1092,90 @@ async def post_workflow_regenerate(
 def get_mission_events(
     mission_id: str,
     after_sequence: int = Query(default=0, alias="afterSequence", ge=0),
+    limit: int = Query(default=1000, ge=1, le=1000),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[dict[str, object]]:
     mission = require_mission(db, user, mission_id)
     return [
         event_payload(item)
-        for item in list_events(db, mission.id, after_sequence=after_sequence)
+        for item in list_events(
+            db, mission.id, after_sequence=after_sequence, limit=limit
+        )
     ]
+
+
+@stream_router.get(
+    "/stream/deep-analysis/missions/{mission_id}", include_in_schema=False
+)
+async def stream_mission_events(
+    mission_id: str,
+    request: Request,
+    after_sequence: int = 0,
+    last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+    context: AuthContext = Depends(get_stream_auth_context),
+    db: Session = Depends(get_db, scope="function"),
+) -> StreamingResponse:
+    require_mission(db, context.user, mission_id)
+    cursor = max(0, after_sequence)
+    if last_event_id:
+        try:
+            cursor = max(cursor, int(last_event_id))
+        except ValueError as exc:
+            raise ApiProblem(
+                400,
+                "invalid_event_cursor",
+                "Mission event cursor가 올바르지 않습니다.",
+            ) from exc
+
+    async def events() -> AsyncIterator[str]:
+        nonlocal cursor
+        while True:
+            if await request.is_disconnected():
+                return
+            with SessionLocal() as event_db:
+                resolved = resolve_server_session(event_db, context.session_token)
+                if resolved is None:
+                    return
+                try:
+                    mission = require_mission(event_db, resolved.user, mission_id)
+                except ApiProblem:
+                    return
+                rows = list_events(
+                    event_db,
+                    mission.id,
+                    after_sequence=cursor,
+                    limit=200,
+                )
+                encoded = [
+                    jsonable_encoder(
+                        MissionEventResponse.model_validate(event_payload(item)),
+                        by_alias=True,
+                    )
+                    for item in rows
+                ]
+            if encoded:
+                for event in encoded:
+                    cursor = int(event["sequence"])
+                    data = json.dumps(
+                        event,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                    yield (f"id: {cursor}\nevent: mission_event\ndata: {data}\n\n")
+                continue
+            yield ": keep-alive\n\n"
+            await event_broker.wait(f"mission:{mission_id}", timeout=1.0)
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get(
@@ -992,7 +1216,9 @@ def post_workflow_draft(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     mission = require_mission(db, context.user, mission_id, write=True)
-    draft = create_workflow_draft(db, mission, expected_revision=payload.expected_revision)
+    draft = create_workflow_draft(
+        db, mission, expected_revision=payload.expected_revision
+    )
     emit_event(
         db,
         mission,
@@ -1282,7 +1508,11 @@ def post_mission_quality_gate(
     )
     if mission.status == "awaiting_input":
         pending = next(
-            (item for item, _response, _node_key in list_decisions(db, mission.id) if item.status == "pending"),
+            (
+                item
+                for item, _response, _node_key in list_decisions(db, mission.id)
+                if item.status == "pending"
+            ),
             None,
         )
         if pending is not None:
@@ -1322,8 +1552,57 @@ def patch_mission(
     request: Request,
     context: AuthContext = Depends(require_csrf),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
     mission = require_mission(db, context.user, mission_id, write=True)
+    project = require_project(db, context.user, mission.project_id, write=True)
+    changed_fields = payload.model_fields_set - {"expected_revision"}
+    execution_settings = dict(mission.execution_settings_json or {})
+    field_mapping = {
+        "analysis_depth": "analysisDepth",
+        "answer_length": "answerLength",
+        "output_mode": "outputMode",
+        "output_format": "outputFormat",
+        "target_output_tokens": "targetOutputTokens",
+    }
+    for field_name, stored_name in field_mapping.items():
+        if field_name in changed_fields:
+            execution_settings[stored_name] = getattr(payload, field_name)
+    if "execution" in changed_fields and payload.execution is not None:
+        resolved_execution = resolve_execution(
+            db,
+            RunCreate(
+                message=RunMessageInput(
+                    text=payload.objective or mission.objective or mission.title
+                ),
+                execution=payload.execution,
+            ),
+            user=context.user,
+            project=project,
+            settings=settings,
+        )
+        execution_settings["execution"] = {
+            "providerId": resolved_execution["provider_id"],
+            "modelKey": resolved_execution["model_key"],
+            "effortId": resolved_execution["effort"],
+        }
+    source_manifest = None
+    if "prompt_references" in changed_fields:
+        validated_references = validate_project_references(
+            db,
+            context.user,
+            project.id,
+            payload.prompt_references or [],
+            message_text=payload.objective
+            if payload.objective is not None
+            else mission.objective,
+        )
+        execution_settings["promptReferences"] = validated_references
+        source_manifest = _source_manifest(
+            db,
+            project_id=project.id,
+            references=validated_references,
+        )
     update_mission(
         db,
         mission,
@@ -1334,6 +1613,10 @@ def patch_mission(
         budget_microusd=payload.budget_microusd,
         is_favorite=payload.is_favorite,
         is_liked=payload.is_liked,
+        execution_settings=execution_settings
+        if changed_fields & (set(field_mapping) | {"execution", "prompt_references"})
+        else None,
+        source_manifest=source_manifest,
     )
     emit_event(
         db,
@@ -1343,16 +1626,19 @@ def patch_mission(
             "missionRevision": mission.revision,
             "status": mission.status,
             "changedFields": [
-                key
-                for key, value in {
-                    "title": payload.title,
-                    "objective": payload.objective,
-                    "autonomyMode": payload.autonomy_mode,
-                    "budgetMicrousd": payload.budget_microusd,
-                    "isFavorite": payload.is_favorite,
-                    "isLiked": payload.is_liked,
-                }.items()
-                if value is not None
+                {
+                    "autonomy_mode": "autonomyMode",
+                    "budget_microusd": "budgetMicrousd",
+                    "analysis_depth": "analysisDepth",
+                    "answer_length": "answerLength",
+                    "output_mode": "outputMode",
+                    "output_format": "outputFormat",
+                    "target_output_tokens": "targetOutputTokens",
+                    "prompt_references": "promptReferences",
+                    "is_favorite": "isFavorite",
+                    "is_liked": "isLiked",
+                }.get(field_name, field_name)
+                for field_name in changed_fields
             ],
         },
         actor_user_id=context.user.id,
@@ -1456,17 +1742,19 @@ async def post_mission_start(
     if not should_apply:
         return _detail_payload(db, mission)
     start_mission(db, mission, expected_revision=payload.expected_revision)
-    _workflow_revision, nodes, _edges = active_workflow(db, mission.id)
-    active_node = next((node for node in nodes if node.status == "running"), None)
-    if active_node is None:
-        raise RuntimeError("Deep-analysis Workflow has no runnable Node")
-    run, created = create_node_run(
+    _workflow_revision, nodes, edges = active_workflow(db, mission.id)
+    runs = create_runnable_node_runs(
         db,
         user=context.user,
         mission=mission,
-        node=active_node,
+        nodes=nodes,
+        edges=edges,
         settings=settings,
     )
+    if not runs:
+        raise RuntimeError("Deep-analysis Workflow has no runnable Node")
+    run = runs[0]
+    active_node = next(node for node in nodes if node.run_id == run.id)
     emit_event(
         db,
         mission,
@@ -1476,6 +1764,7 @@ async def post_mission_start(
             "missionRevision": mission.revision,
             "nodeKey": active_node.node_key,
             "runId": run.id,
+            "runIds": [item.id for item in runs],
         },
         actor_user_id=context.user.id,
     )
@@ -1489,11 +1778,15 @@ async def post_mission_start(
         request_id=getattr(request.state, "request_id", None),
         metadata={"revision": mission.revision},
     )
-    complete_command(db, command, result={"runId": run.id})
+    complete_command(
+        db,
+        command,
+        result={"runId": run.id, "runIds": [item.id for item in runs]},
+    )
     db.commit()
-    if created:
-        local_run_executor.enqueue(run.id)
-        await event_broker.notify(run.id)
+    for queued_run in runs:
+        local_run_executor.enqueue(queued_run.id)
+        await event_broker.notify(queued_run.id)
     return _detail_payload(db, mission)
 
 
@@ -1606,7 +1899,9 @@ async def post_mission_pause(
         None,
     )
     if active_run_id is None:
-        raise ApiProblem(409, "mission_run_missing", "일시 정지할 활성 Run을 찾을 수 없습니다.")
+        raise ApiProblem(
+            409, "mission_run_missing", "일시 정지할 활성 Run을 찾을 수 없습니다."
+        )
     run, _command, _message, _changed = apply_run_action(
         db,
         user=context.user,
@@ -1663,7 +1958,9 @@ async def post_mission_resume(
         None,
     )
     if active_run_id is None:
-        raise ApiProblem(409, "mission_run_missing", "재개할 활성 Run을 찾을 수 없습니다.")
+        raise ApiProblem(
+            409, "mission_run_missing", "재개할 활성 Run을 찾을 수 없습니다."
+        )
     run, _command, _message, _changed = apply_run_action(
         db,
         user=context.user,
@@ -1787,10 +2084,14 @@ def post_mission_export(
     )
     if not should_apply and command is not None:
         existing_id = command.result_json.get("exportId")
-        existing = db.get(DeepAnalysisMissionExport, existing_id) if existing_id else None
+        existing = (
+            db.get(DeepAnalysisMissionExport, existing_id) if existing_id else None
+        )
         if existing is not None and existing.mission_id == mission.id:
             return _export_payload(existing)
-        raise ApiProblem(409, "idempotent_result_missing", "기존 내보내기 결과를 복원할 수 없습니다.")
+        raise ApiProblem(
+            409, "idempotent_result_missing", "기존 내보내기 결과를 복원할 수 없습니다."
+        )
     requested_at = utc_now()
     cooldown_boundary = requested_at - timedelta(seconds=1)
     claimed = db.execute(
@@ -1865,5 +2166,9 @@ def get_mission_export(
     mission = require_mission(db, user, mission_id)
     item = db.get(DeepAnalysisMissionExport, export_id)
     if item is None or item.mission_id != mission.id:
-        raise ApiProblem(404, "deep_analysis_export_not_found", "Mission 내보내기를 찾을 수 없습니다.")
+        raise ApiProblem(
+            404,
+            "deep_analysis_export_not_found",
+            "Mission 내보내기를 찾을 수 없습니다.",
+        )
     return _export_payload(item)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -39,6 +40,21 @@ from lumina.runs.state import (
     TOOLS_RUNNING,
 )
 from lumina.runs.subtasks import bind_tool_subtask, ensure_tool_subtasks
+
+
+def test_executor_can_restart_on_a_new_event_loop(tmp_path: Path) -> None:
+    settings = _settings(tmp_path, "new-event-loop")
+    configure_database(settings.database_url)
+    create_schema()
+    bootstrap_database(settings=settings)
+    executor = LocalRunExecutor(settings)
+
+    async def lifecycle() -> None:
+        await executor.start()
+        await executor.stop()
+
+    asyncio.run(lifecycle())
+    asyncio.run(lifecycle())
 
 
 def test_worker_recovery_rewinds_only_the_inflight_model_draft(tmp_path: Path) -> None:
@@ -177,6 +193,35 @@ def test_stale_worker_shutdown_does_not_interrupt_reclaimed_run(
         assert interrupted == ()
         assert run.status == MODEL_STREAMING
         assert run.error_code is None
+
+
+def test_worker_recovery_respects_live_lease_and_reclaims_expired_lease(
+    tmp_path: Path,
+) -> None:
+    run_id = _direct_run(tmp_path, "lease-recovery")
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        assert run is not None
+        _move_to_model(db, run)
+        run.worker_id = "live-worker"
+        run.heartbeat_at = utc_now()
+        run.lease_expires_at = utc_now() + timedelta(minutes=1)
+        db.commit()
+
+    with SessionLocal() as db:
+        assert prepare_worker_recovery(db).resumable_run_ids == ()
+        run = db.get(Run, run_id)
+        assert run is not None and run.status == MODEL_STREAMING
+        run.lease_expires_at = utc_now() - timedelta(seconds=1)
+        db.commit()
+
+    with SessionLocal() as db:
+        assert prepare_worker_recovery(db).resumable_run_ids == (run_id,)
+        run = db.get(Run, run_id)
+        assert run is not None and run.status == QUEUED
+        assert run.worker_id is None
+        assert run.heartbeat_at is None
+        assert run.lease_expires_at is None
 
 
 def test_sqlite_database_allows_only_one_live_run_executor(tmp_path: Path) -> None:

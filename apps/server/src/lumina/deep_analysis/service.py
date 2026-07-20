@@ -7,12 +7,10 @@ from ..api.errors import ApiProblem
 from ..authorization import require_project
 from ..models import Conversation, ProjectFile, User, utc_now
 from .models import (
-    DeepAnalysisClaim,
     DeepAnalysisDecision,
     DeepAnalysisDecisionResponse,
     DeepAnalysisMission,
     DeepAnalysisMissionFileLink,
-    DeepAnalysisOpenIssue,
     DeepAnalysisWorkflowEdge,
     DeepAnalysisWorkflowNode,
     DeepAnalysisWorkflowRevision,
@@ -479,6 +477,8 @@ def update_mission(
     budget_microusd: int | None,
     is_favorite: bool | None,
     is_liked: bool | None,
+    execution_settings: dict[str, object] | None = None,
+    source_manifest: list[dict[str, object]] | None = None,
     charter: dict[str, object] | None = None,
     completion_contract: dict[str, object] | None = None,
 ) -> DeepAnalysisMission:
@@ -516,6 +516,10 @@ def update_mission(
         values["is_favorite"] = is_favorite
     if is_liked is not None:
         values["is_liked"] = is_liked
+    if execution_settings is not None:
+        values["execution_settings_json"] = execution_settings
+    if source_manifest is not None:
+        values["source_manifest_json"] = source_manifest
     if charter is not None:
         values["charter_json"] = {
             **charter,
@@ -676,11 +680,6 @@ def start_mission(
             "budget_exhausted",
             "설정한 비용 한도가 남아 있지 않습니다. 예산을 늘린 뒤 다시 시작해 주세요.",
         )
-
-    if not mission.source_manifest_json:
-        from .execution import capture_source_manifest
-
-        mission.source_manifest_json = capture_source_manifest(db, mission)
 
     result = db.execute(
         update(DeepAnalysisMission)

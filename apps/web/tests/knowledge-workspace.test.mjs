@@ -23,6 +23,22 @@ test("Knowledge stores and displays one node per AI answer document", async () =
   assert.doesNotMatch(types, /KnowledgeEntity|KnowledgeStatement|KnowledgeReviewDecision/);
 });
 
+test("Knowledge document rows show linked document counts and support inline deletion", async () => {
+  const [view, api, types, styles] = await Promise.all([
+    readFile(viewPath, "utf8"),
+    readFile(apiPath, "utf8"),
+    readFile(typesPath, "utf8"),
+    readFile(stylesPath, "utf8"),
+  ]);
+  assert.match(types, /linkedDocumentCount: number/);
+  assert.match(view, />\{document\.linkedDocumentCount\}<\/em>/);
+  assert.doesNotMatch(view, />\{document\.citationCount\}<\/em>/);
+  assert.match(api, /method: "DELETE"/);
+  assert.match(view, /deleteArmedId !== document\.id/);
+  assert.match(view, /한 번 더 눌러 삭제/);
+  assert.match(styles, /\.knowledge-document-delete\.is-delete-armed/);
+});
+
 test("Knowledge Wiki reuses the default chat Markdown renderer", async () => {
   const [view, styles, globalStyles, turn] = await Promise.all([
     readFile(viewPath, "utf8"),
@@ -32,18 +48,19 @@ test("Knowledge Wiki reuses the default chat Markdown renderer", async () => {
   ]);
   assert.match(view, /import \{ MarkdownResponse \} from "\.\.\/\.\.\/components\/ConversationTurn"/);
   assert.match(view, /<MarkdownResponse text=\{document\.body\} \/>/);
+  assert.match(view, /className="knowledge-markdown conversation-response-typography"/);
   assert.doesNotMatch(view, /ReactMarkdown|remarkGfm/);
   assert.match(turn, /table: \(\{ children \}\) => <div className="markdown-table-scroll"><table>\{children\}<\/table><\/div>/);
   assert.doesNotMatch(styles, /\.knowledge-markdown (?:img|pre)/);
-  assert.match(globalStyles, /\.assistant-content, \.feature-view\.feature-view \.knowledge-markdown \{ min-width: 0; font-size: calc\(var\(--conversation-font-size\) \+ \.5px\); line-height: 1\.68; \}/);
-  assert.match(globalStyles, /\.chat-pane\.view-chat :is\(\.chat-header, \.conversation-scroll, \.dock-area\) \*,[\s\S]*?\.feature-view\.feature-view \.knowledge-markdown,[\s\S]*?\.feature-view\.feature-view \.knowledge-markdown \* \{[\s\S]*?font-size: var\(--conversation-font-size\);/);
+  assert.match(globalStyles, /\.conversation-response-typography \{ min-width: 0; font-family: inherit; font-size: var\(--conversation-font-size\); line-height: 1\.68; \}/);
+  assert.match(globalStyles, /\.conversation-response-typography,\s*\.conversation-response-typography \*,\s*\.feature-view\.feature-view \.conversation-response-typography,\s*\.feature-view\.feature-view \.conversation-response-typography \* \{\s*font-size: var\(--conversation-font-size\);/);
   assert.match(styles, /\.knowledge-wiki-navigation button \{[^}]*border: 0;[^}]*background: transparent;[^}]*color: var\(--cobalt\);/);
 });
 
 test("Knowledge keeps the full workspace navigation around the document model", async () => {
   const [view, styles] = await Promise.all([readFile(viewPath, "utf8"), readFile(stylesPath, "utf8")]);
   assert.doesNotMatch(view, /knowledge-mobile-menu|onOpenNavigation|knowledge-spaces|knowledge-pane-title|knowledge-space-list/);
-  for (const label of ["홈", "탐색", "문서", "검토", "설정"]) {
+  for (const label of ["홈", "탐색", "문서", "태그 관리", "설정"]) {
     assert.match(view, new RegExp(`label: "${label}"`));
   }
   assert.doesNotMatch(view.match(/const tabs = \[[\s\S]*?\] as const;/)?.[0] ?? "", /label: "(?:원문|Wiki|그래프)"/);
@@ -73,6 +90,7 @@ test("Knowledge keeps the full workspace navigation around the document model", 
   assert.match(styles, /\.knowledge-toolbar button \{[^}]*padding: 0 8px;/);
   assert.doesNotMatch(styles, /\.knowledge-space-header \{[^}]*min-height: 54px;/);
   assert.match(view, /const documentViews = \[[\s\S]*?label: "그래프"[\s\S]*?label: "문서"[\s\S]*?label: "참조"/);
+  assert.match(view, /onClick=\{\(\) => setTab\(id === "wiki" \? "graph" : id\)\}/);
   assert.match(view, /<DocumentList[\s\S]*?label=\{`\$\{documents\.length\}개 지식 문서`\}[\s\S]*?activeView=\{tab\}/);
   assert.match(view, /className="knowledge-document-view-toggle" role="tablist" aria-label="지식 문서 보기"/);
   assert.match(styles, /\.knowledge-master-list > header \{[^}]*justify-content: space-between;/);
@@ -97,16 +115,59 @@ test("answer action places Knowledge save immediately before branch", async () =
   assert.match(turn, /api\.knowledge\.saveMessage\(finalMessage\.id\)/);
 });
 
-test("Knowledge separates Markdown registration from model-selected batch tagging", async () => {
+test("Knowledge keeps batch tagging out of the graph workspace", async () => {
   const [view, api, styles] = await Promise.all([readFile(viewPath, "utf8"), readFile(apiPath, "utf8"), readFile(stylesPath, "utf8")]);
   assert.match(api, /\/knowledge\/documents\/tag-batch/);
-  assert.match(view, /ariaLabel="일괄 태깅 모델"/);
-  assert.match(view, /미태깅 \$\{untaggedCount\}개 일괄 태깅/);
-  assert.match(view, /providerId: selectedModel\.providerId,[\s\S]*?modelKey: selectedModel\.modelKey/);
-  assert.match(styles, /\.knowledge-graph-tag-actions \{[^}]*position: absolute;[^}]*top: 12px;[^}]*left: 12px;/);
-  assert.match(styles, /\.knowledge-graph-tag-actions > button \{[^}]*font-size: var\(--conversation-font-size\)/);
-  assert.match(styles, /\.knowledge-tagging-model-select\.lumina-select\.size-small \.lumina-select-trigger \{[^}]*font-size: var\(--conversation-font-size\)/);
-  assert.match(styles, /\.knowledge-tagging-model-menu\.lumina-select-menu-global\.size-small \.lumina-select-option \{[^}]*height: 32px;[^}]*font-size: var\(--conversation-font-size\)/);
+  assert.doesNotMatch(view, /일괄 태깅 모델|미태깅 .*일괄 태깅|batchTagDocuments|taggingModels/);
+  assert.doesNotMatch(styles, /knowledge-graph-tag-actions|knowledge-tagging-model/);
+});
+
+test("Knowledge tag management creates and edits typed hierarchical tags", async () => {
+  const [view, api, types, styles] = await Promise.all([
+    readFile(viewPath, "utf8"),
+    readFile(apiPath, "utf8"),
+    readFile(typesPath, "utf8"),
+    readFile(stylesPath, "utf8"),
+  ]);
+  assert.match(view, /label: "태그 관리"/);
+  assert.match(view, /<strong>태그 사전<\/strong>/);
+  assert.match(view, /> 새 태그<\/button>/);
+  assert.match(view, /태그 이름, 정의 또는 별칭 검색/);
+  assert.doesNotMatch(view, /승인 대기 태그가 없습니다/);
+  assert.match(view, /initialNamespace=\{createNamespace\}/);
+  assert.match(view, /company: "포스코"/);
+  assert.match(view, /parentTagId: draft\.parentTagId \|\| null/);
+  assert.match(view, /expectedRevision: tag\.revision/);
+  assert.match(api, /\/knowledge\/tags/);
+  assert.match(api, /createTag: createKnowledgeTag/);
+  assert.match(api, /updateTag: updateKnowledgeTag/);
+  assert.match(types, /interface KnowledgeTag extends KnowledgeDocumentTag/);
+  assert.match(types, /definition: string/);
+  assert.match(types, /parentTagId: UUID \| null/);
+  assert.match(styles, /\.knowledge-tag-editor-grid/);
+  assert.match(styles, /\.knowledge-review \{[^}]*display: flex;[^}]*overflow: hidden;/);
+  assert.match(styles, /\.knowledge-tag-card \{[^}]*min-height: 0;[^}]*flex: 1;[^}]*overflow: hidden;/);
+  assert.match(styles, /\.knowledge-tag-registry \{[^}]*min-height: 0;[^}]*overflow-y: auto;/);
+  assert.match(styles, /\.knowledge-tag-management-row \{[^}]*border: 0;[^}]*background: transparent;/);
+  assert.match(styles, /\.knowledge-tag-editor input \{[^}]*height: var\(--control-height-md\);[^}]*font-size: var\(--conversation-font-size\);/);
+  assert.match(styles, /\.knowledge-tag-management-row strong \{[^}]*font-size: var\(--conversation-font-size\);/);
+});
+
+test("Knowledge keeps documents available when the optional tag-management API is stale", async () => {
+  const view = await readFile(viewPath, "utf8");
+  assert.match(view, /const tagsRequest = api\.knowledge\.listTags/);
+  assert.match(view, /\.catch\(\(\) => \(\{ loadedTags: \[\] as KnowledgeTag\[\], tagError:/);
+  assert.match(view, /Promise\.all\(\[[\s\S]*?listDocuments[\s\S]*?getGraph[\s\S]*?tagsRequest/);
+  assert.match(view, /className="knowledge-inline-error" role="alert"/);
+});
+
+test("Knowledge document tags keep their chip layout separate from tag-management rows", async () => {
+  const [view, styles] = await Promise.all([readFile(viewPath, "utf8"), readFile(stylesPath, "utf8")]);
+  assert.match(view, /className="knowledge-tag-management-row"/);
+  assert.match(view, /className="knowledge-tag-row">\{document\.tags\.map/);
+  assert.match(styles, /\.knowledge-wiki-metrics, \.knowledge-tag-row \{ display: flex; flex-wrap: wrap; gap: 6px; \}/);
+  assert.match(styles, /\.knowledge-tag-management-row \{ display: grid; width: 100%;/);
+  assert.doesNotMatch(styles, /\.knowledge-tag-row \{ display: grid;/);
 });
 
 test("legacy approval, ingestion, and entity workspaces are absent", async () => {

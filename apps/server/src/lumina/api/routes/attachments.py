@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
+from functools import partial
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
@@ -21,6 +24,24 @@ from ..errors import ApiProblem
 router = APIRouter(tags=["attachments"])
 
 _MIME_BY_EXTENSION = MIME_BY_EXTENSION
+_EXTRACTION_WORKERS = ThreadPoolExecutor(
+    max_workers=2,
+    thread_name_prefix="lumina-attachment-extraction",
+)
+
+
+async def _extract_attachment(
+    *, filename: str, mime_type: str, content: bytes
+):
+    return await asyncio.get_running_loop().run_in_executor(
+        _EXTRACTION_WORKERS,
+        partial(
+            extract_attachment_text,
+            filename=filename,
+            mime_type=mime_type,
+            content=content,
+        ),
+    )
 
 
 def _storage(settings: Settings) -> ManagedLocalStorage:
@@ -110,7 +131,7 @@ async def post_attachment(
 
     if not content or (mime_type.startswith("text/") and not content.strip()):
         raise ApiProblem(422, "attachment_empty", "빈 파일은 첨부할 수 없습니다.")
-    extraction = extract_attachment_text(
+    extraction = await _extract_attachment(
         filename=filename, mime_type=mime_type, content=content
     )
     if extraction.status == "failed":

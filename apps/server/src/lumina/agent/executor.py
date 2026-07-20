@@ -11,13 +11,13 @@ import re
 import time
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy import exists, func, or_, select, update
+from sqlalchemy.orm import Session, aliased
 
 from ..api.errors import ApiProblem
 from ..artifact_citations import run_artifact_citation_texts
@@ -182,7 +182,11 @@ from ..runs.subtasks import (
     finish_tool_subtask,
     mark_tool_subtask_approval,
 )
-from ..context import compact_runtime_messages, prepare_context
+from ..context import (
+    CURRENT_RUN_CONTEXT_METADATA_KEY,
+    compact_runtime_messages,
+    prepare_context,
+)
 from ..instructions import (
     CORE_AGENT_EXECUTION_CONTRACT,
     DEFAULT_SYSTEM_PROMPT,
@@ -216,6 +220,9 @@ _PROVIDER_RETRY_DELAYS_SECONDS = (1.0, 2.0, 4.0)
 _MAX_PROVIDER_RETRY_AFTER_SECONDS = 600.0
 _MAX_AUTO_CONTINUATIONS = 4
 _MAX_EMPTY_RESPONSE_RETRIES = 1
+_ARTIFACT_EMPTY_RESPONSE_FALLBACK = (
+    "요청하신 파일을 생성했습니다. 생성된 Artifact에서 결과를 확인하실 수 있습니다."
+)
 _MAX_ARTIFACT_LENGTH_RETRIES = 2
 _ARTIFACT_PROGRESS_INTERVAL_SECONDS = 0.1
 _RUN_CANCELLATION_POLL_SECONDS = 0.2
@@ -302,7 +309,10 @@ _TRUNCATED_AFTER_CONTINUATIONS_NOTICE = (
     "\n\n[응답이 모델 출력 한도에 반복해서 도달하여 여기까지 보존했습니다. "
     "계속해 달라고 요청하면 이어서 진행할 수 있습니다.]"
 )
-ClaimResult = Literal["claimed", "wait", "stop"]
+_WORKER_LEASE_SECONDS = 30
+_WORKER_HEARTBEAT_SECONDS = 10
+_CROSS_PROCESS_CLAIM_POLL_SECONDS = 1.0
+_POSTGRES_CLAIM_LOCK_ID = 4_823_971_043
 
 
 @dataclass(frozen=True, slots=True)
@@ -448,6 +458,8 @@ class LocalRunExecutor:
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._reenqueue_after_task: set[str] = set()
+        self._dispatcher_task: asyncio.Task[None] | None = None
+        self._heartbeat_task: asyncio.Task[None] | None = None
         self._run_control_cache: dict[
             str, tuple[float, str | None, RunLimitViolation | None, bool]
         ] = {}
@@ -484,6 +496,15 @@ class LocalRunExecutor:
                 "Set DATABASE_URL to an isolated QA database before starting "
                 "another Backend."
             )
+        # TestClient and embedded hosts may start the shared executor on a new
+        # event loop after a clean shutdown. Async primitives must belong to
+        # the current lifecycle's loop.
+        self._worker_id = new_uuid()
+        self._claim_lock = asyncio.Lock()
+        self._claim_event = asyncio.Event()
+        self._tasks.clear()
+        self._reenqueue_after_task.clear()
+        self._run_control_cache.clear()
         self._started = True
         try:
             await self._start_owned()
@@ -493,7 +514,6 @@ class LocalRunExecutor:
             raise
 
     async def _start_owned(self) -> None:
-        queued_ids: list[str] = []
         recovery_notify_ids: list[str] = []
         queue_recovery_run_ids: list[str] = []
         deep_analysis_terminal_ids: tuple[str, ...] = ()
@@ -509,42 +529,53 @@ class LocalRunExecutor:
                 *recovery.resumable_run_ids,
                 *recovery.waiting_run_ids,
             ]
-            queued_ids = list(
-                db.scalars(
-                    select(Run.id)
-                    .where(Run.status == QUEUED)
-                    .order_by(Run.queued_at, Run.id)
-                )
+            queued_conversations = (
+                select(QueuedMessage.conversation_id)
+                .where(QueuedMessage.status == "queued")
+                .distinct()
+                .limit(200)
             )
-            queued_conversation_ids = list(
-                db.scalars(
-                    select(QueuedMessage.conversation_id)
-                    .where(QueuedMessage.status == "queued")
-                    .distinct()
-                    .limit(200)
-                )
-            )
-            for conversation_id in queued_conversation_ids:
-                terminal_run_id = db.scalar(
-                    select(Run.id)
-                    .where(
-                        Run.conversation_id == conversation_id,
-                        Run.status.in_(TERMINAL_STATUSES),
+            ranked_terminal_runs = (
+                select(
+                    Run.id.label("run_id"),
+                    func.row_number()
+                    .over(
+                        partition_by=Run.conversation_id,
+                        order_by=(
+                            Run.finished_at.desc(),
+                            Run.queued_at.desc(),
+                            Run.id,
+                        ),
                     )
-                    .order_by(Run.finished_at.desc(), Run.queued_at.desc(), Run.id)
-                    .limit(1)
+                    .label("rank"),
                 )
-                if terminal_run_id is not None:
-                    queue_recovery_run_ids.append(terminal_run_id)
+                .where(
+                    Run.conversation_id.in_(queued_conversations),
+                    Run.status.in_(TERMINAL_STATUSES),
+                )
+                .subquery()
+            )
+            queue_recovery_run_ids = list(
+                db.scalars(
+                    select(ranked_terminal_runs.c.run_id).where(
+                        ranked_terminal_runs.c.rank == 1
+                    )
+                )
+            )
             deep_analysis_terminal_ids = pending_terminal_run_ids(db)
         for run_id in recovery_notify_ids:
             await event_broker.notify(run_id)
         for run_id in queue_recovery_run_ids:
             await self._promote_next_message(run_id)
-        for run_id in queued_ids:
-            self.enqueue(run_id)
         for run_id in deep_analysis_terminal_ids:
             await self._sync_deep_analysis(run_id)
+        self._dispatcher_task = asyncio.create_task(
+            self._dispatch_runs(), name="lumina-run-dispatcher"
+        )
+        self._heartbeat_task = asyncio.create_task(
+            self._heartbeat_worker_leases(), name="lumina-run-heartbeat"
+        )
+        self._signal_claim_change()
         if self.settings.environment != "test":
             self._codex_warmup_task = asyncio.create_task(
                 self._warm_codex_provider(), name="lumina-codex-warmup"
@@ -568,11 +599,24 @@ class LocalRunExecutor:
 
     async def stop(self) -> None:
         self._started = False
+        self._signal_claim_change()
+        dispatcher_task = self._dispatcher_task
+        self._dispatcher_task = None
+        if dispatcher_task is not None:
+            dispatcher_task.cancel()
         tasks = list(self._tasks.values())
         for task in tasks:
             task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+        stopping_tasks = [
+            task for task in (dispatcher_task, *tasks) if task is not None
+        ]
+        if stopping_tasks:
+            await asyncio.gather(*stopping_tasks, return_exceptions=True)
+        heartbeat_task = self._heartbeat_task
+        self._heartbeat_task = None
+        if heartbeat_task is not None:
+            heartbeat_task.cancel()
+            await asyncio.gather(heartbeat_task, return_exceptions=True)
         warmup_task = self._codex_warmup_task
         if warmup_task is not None:
             await asyncio.gather(warmup_task, return_exceptions=True)
@@ -598,12 +642,6 @@ class LocalRunExecutor:
             return
         if run_id in self._tasks:
             self._reenqueue_after_task.add(run_id)
-            return
-        task = asyncio.create_task(
-            self._run_when_claimable(run_id), name=f"lumina-run-{run_id}"
-        )
-        self._tasks[run_id] = task
-        task.add_done_callback(self._discard_task)
         self._signal_claim_change()
 
     def cancel(self, run_id: str) -> bool:
@@ -632,11 +670,13 @@ class LocalRunExecutor:
         self._claim_event.clear()
         if self._claim_revision != observed_revision:
             return
-        if self.settings.database_url.startswith("sqlite"):
-            await self._claim_event.wait()
-            return
         try:
-            await asyncio.wait_for(self._claim_event.wait(), timeout=0.2)
+            if self.settings.environment == "test":
+                await self._claim_event.wait()
+            else:
+                await asyncio.wait_for(
+                    self._claim_event.wait(), timeout=_CROSS_PROCESS_CLAIM_POLL_SECONDS
+                )
         except TimeoutError:
             return
 
@@ -683,27 +723,76 @@ class LocalRunExecutor:
                 should_reenqueue = run_id in self._reenqueue_after_task
                 self._reenqueue_after_task.discard(run_id)
                 if should_reenqueue and self._started:
-                    with SessionLocal() as db:
-                        status = db.scalar(select(Run.status).where(Run.id == run_id))
-                    if status == QUEUED:
-                        self.enqueue(run_id)
+                    self.enqueue(run_id)
                 return
 
-    async def _run_when_claimable(self, run_id: str) -> None:
+    async def _dispatch_runs(self) -> None:
         try:
             while self._started:
-                observed_revision = self._claim_revision
-                result = await self._claim(run_id)
-                if result == "stop":
-                    return
-                if result == "wait":
-                    await self._wait_for_claim_change(observed_revision)
+                claimed_any = False
+                while (
+                    self._started
+                    and len(self._tasks) < self.settings.server_concurrency_limit
+                ):
+                    run_id = await self._claim_next()
+                    if run_id is None:
+                        break
+                    claimed_any = True
+                    task = asyncio.create_task(
+                        self._run_claimed(run_id), name=f"lumina-run-{run_id}"
+                    )
+                    self._tasks[run_id] = task
+                    task.add_done_callback(self._discard_task)
+                if claimed_any:
+                    await asyncio.sleep(0)
                     continue
-                await event_broker.notify(run_id)
-                await self._execute(run_id)
-                await self._sync_deep_analysis(run_id)
-                await self._promote_next_message(run_id)
-                return
+                if not self._started:
+                    return
+                observed_revision = self._claim_revision
+                await self._wait_for_claim_change(observed_revision)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Run dispatcher failed")
+            if self._started:
+                self._dispatcher_task = asyncio.create_task(
+                    self._dispatch_runs(), name="lumina-run-dispatcher-restarted"
+                )
+
+    async def _heartbeat_worker_leases(self) -> None:
+        try:
+            while self._started:
+                await asyncio.sleep(_WORKER_HEARTBEAT_SECONDS)
+                now = utc_now()
+                with session_scope() as db:
+                    db.execute(
+                        update(Run)
+                        .where(
+                            Run.worker_id == self._worker_id,
+                            Run.status.in_(ACTIVE_STATUSES),
+                        )
+                        .values(
+                            heartbeat_at=now,
+                            lease_expires_at=now
+                            + timedelta(seconds=_WORKER_LEASE_SECONDS),
+                        )
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Run worker heartbeat failed")
+            if self._started:
+                self._heartbeat_task = asyncio.create_task(
+                    self._heartbeat_worker_leases(),
+                    name="lumina-run-heartbeat-restarted",
+                )
+
+    async def _run_claimed(self, run_id: str) -> None:
+        try:
+            await event_broker.notify(run_id)
+            await self._execute(run_id)
+            await self._sync_deep_analysis(run_id)
+            await self._promote_next_message(run_id)
         except asyncio.CancelledError:
             raise
         except McpRuntimeError as exc:
@@ -767,7 +856,16 @@ class LocalRunExecutor:
         from ..deep_analysis.execution import fail_terminal_sync, sync_terminal_run
 
         try:
+            mission_id: str | None = None
             with session_scope() as db:
+                run = db.get(Run, run_id)
+                deep_analysis = (
+                    run.snapshot_json.get("deep_analysis") if run is not None else None
+                )
+                if isinstance(deep_analysis, dict):
+                    raw_mission_id = deep_analysis.get("mission_id")
+                    if isinstance(raw_mission_id, str):
+                        mission_id = raw_mission_id
                 result = sync_terminal_run(
                     db,
                     run_id=run_id,
@@ -786,43 +884,20 @@ class LocalRunExecutor:
                     message="Node 출력 저장 또는 다음 단계 준비 중 오류가 발생했습니다.",
                 )
             return
-        if result.next_run_id:
-            self.enqueue(result.next_run_id)
-            await event_broker.notify(result.next_run_id)
+        if mission_id:
+            await event_broker.notify(f"mission:{mission_id}")
+        for next_run_id in result.next_run_ids:
+            self.enqueue(next_run_id)
+            await event_broker.notify(next_run_id)
 
-    async def _claim(self, run_id: str) -> ClaimResult:
+    async def _claim_next(self) -> str | None:
         async with self._claim_lock:
             with session_scope() as db:
-                run = db.get(Run, run_id)
-                if run is None or run.status != QUEUED:
-                    return "stop"
-                older = db.scalar(
-                    select(Run.id).where(
-                        Run.conversation_id == run.conversation_id,
-                        Run.status == QUEUED,
-                        Run.queued_at < run.queued_at,
+                dialect_name = db.get_bind().dialect.name
+                if dialect_name == "postgresql":
+                    db.execute(
+                        select(func.pg_advisory_xact_lock(_POSTGRES_CLAIM_LOCK_ID))
                     )
-                )
-                if older:
-                    return "wait"
-                conversation_active = (
-                    db.scalar(
-                        select(func.count(Run.id)).where(
-                            Run.conversation_id == run.conversation_id,
-                            Run.status.in_(ACTIVE_STATUSES),
-                        )
-                    )
-                    or 0
-                )
-                user_active = (
-                    db.scalar(
-                        select(func.count(Run.id)).where(
-                            Run.user_id == run.user_id,
-                            Run.status.in_(ACTIVE_STATUSES),
-                        )
-                    )
-                    or 0
-                )
                 server_active = (
                     db.scalar(
                         select(func.count(Run.id)).where(
@@ -831,22 +906,79 @@ class LocalRunExecutor:
                     )
                     or 0
                 )
-                if (
-                    conversation_active >= self.settings.session_concurrency_limit
-                    or user_active >= self.settings.user_concurrency_limit
-                    or server_active >= self.settings.server_concurrency_limit
-                ):
-                    return "wait"
+                if server_active >= self.settings.server_concurrency_limit:
+                    return None
+
+                candidate = aliased(Run)
+                older = aliased(Run)
+                conversation_active = aliased(Run)
+                user_active = aliased(Run)
+                conversation_active_count = (
+                    select(func.count(conversation_active.id))
+                    .where(
+                        conversation_active.conversation_id
+                        == candidate.conversation_id,
+                        conversation_active.status.in_(ACTIVE_STATUSES),
+                    )
+                    .correlate(candidate)
+                    .scalar_subquery()
+                )
+                user_active_count = (
+                    select(func.count(user_active.id))
+                    .where(
+                        user_active.user_id == candidate.user_id,
+                        user_active.status.in_(ACTIVE_STATUSES),
+                    )
+                    .correlate(candidate)
+                    .scalar_subquery()
+                )
+                has_older_queued = exists(
+                    select(older.id).where(
+                        older.conversation_id == candidate.conversation_id,
+                        older.status == QUEUED,
+                        or_(
+                            older.queued_at < candidate.queued_at,
+                            (
+                                (older.queued_at == candidate.queued_at)
+                                & (older.id < candidate.id)
+                            ),
+                        ),
+                    )
+                )
+                statement = (
+                    select(candidate)
+                    .where(
+                        candidate.status == QUEUED,
+                        conversation_active_count
+                        < self.settings.session_concurrency_limit,
+                        user_active_count < self.settings.user_concurrency_limit,
+                        ~has_older_queued,
+                    )
+                    .order_by(candidate.queued_at, candidate.id)
+                    .limit(1)
+                )
+                if dialect_name == "postgresql":
+                    statement = statement.with_for_update(
+                        of=candidate, skip_locked=True
+                    )
+                run = db.scalar(statement)
+                if run is None:
+                    return None
+
+                now = utc_now()
                 run.snapshot_json = {
                     **run.snapshot_json,
                     "workerId": self._worker_id,
                 }
+                run.worker_id = self._worker_id
+                run.heartbeat_at = now
+                run.lease_expires_at = now + timedelta(seconds=_WORKER_LEASE_SECONDS)
                 if isinstance(run.snapshot_json.get("tool_checkpoint"), dict):
                     transition_run(db, run, TOOLS_RUNNING)
                     from ..deep_analysis.execution import record_node_started
 
                     record_node_started(db, run)
-                    return "claimed"
+                    return run.id
                 create_run_plan(
                     db,
                     run,
@@ -857,7 +989,7 @@ class LocalRunExecutor:
 
                 record_node_started(db, run)
                 start_plan_step(db, run, "prepare", reason="run_preparing")
-                return "claimed"
+                return run.id
 
     async def _execute(self, run_id: str) -> None:
         with SessionLocal() as db:
@@ -1591,11 +1723,34 @@ class LocalRunExecutor:
                             phase="retrying",
                         )
                         continue
-                    raise ProviderRequestError(
-                        "Provider가 내용 없는 응답을 반복해 빈 답변으로 완료하지 않았습니다.",
-                        retryable=False,
-                        stage="response",
-                    )
+                    if artifact_created:
+                        await self._append_text(
+                            run_id,
+                            assistant_message_id,
+                            _ARTIFACT_EMPTY_RESPONSE_FALLBACK,
+                        )
+                        round_text.append(_ARTIFACT_EMPTY_RESPONSE_FALLBACK)
+                        with session_scope() as db:
+                            active_run = db.get(Run, run_id)
+                            if active_run is not None:
+                                append_event(
+                                    db,
+                                    active_run,
+                                    "provider_empty_response_recovered_with_artifact",
+                                    {
+                                        "attemptCount": (
+                                            _MAX_EMPTY_RESPONSE_RETRIES + 1
+                                        ),
+                                        "stopReason": provider_stop_reason,
+                                    },
+                                )
+                        await event_broker.notify(run_id)
+                    else:
+                        raise ProviderRequestError(
+                            "Provider가 내용 없는 응답을 반복해 빈 답변으로 완료하지 않았습니다.",
+                            retryable=False,
+                            stage="response",
+                        )
                 else:
                     empty_response_retry_attempt = 0
                     output_continuation_count = 0
@@ -1806,11 +1961,15 @@ class LocalRunExecutor:
         *,
         assistant_content: str | None,
     ) -> bool:
-        request_calls = [call for call in calls if call.get("name") == "request_user_input"]
+        request_calls = [
+            call for call in calls if call.get("name") == "request_user_input"
+        ]
         if not request_calls:
             return False
         if len(calls) != 1 or len(request_calls) != 1:
-            request_calls[0]["input_request_error"] = "request_user_input_must_be_called_alone"
+            request_calls[0]["input_request_error"] = (
+                "request_user_input_must_be_called_alone"
+            )
             return False
         call = request_calls[0]
         try:
@@ -1866,7 +2025,9 @@ class LocalRunExecutor:
                         option["description"] = description
                     options.append(option)
                 question_ids.add(question_id)
-                questions.append({"id": question_id, "prompt": prompt, "options": options})
+                questions.append(
+                    {"id": question_id, "prompt": prompt, "options": options}
+                )
         except (json.JSONDecodeError, ValueError) as exc:
             call["input_request_error"] = str(exc)
             return False
@@ -2100,9 +2261,7 @@ class LocalRunExecutor:
                                 raw_call.get("provider_arguments", "{}")
                             )
                         if raw_call.get("input_request_id"):
-                            call["input_request_id"] = str(
-                                raw_call["input_request_id"]
-                            )
+                            call["input_request_id"] = str(raw_call["input_request_id"])
                         approval_id = raw_call.get("approval_id")
                         if isinstance(approval_id, str):
                             approval = approval_rows.get(approval_id)
@@ -2171,7 +2330,9 @@ class LocalRunExecutor:
                 (
                     {"inputRequestId": str(calls[0].get("input_request_id", ""))}
                     if checkpoint_kind == "user_input"
-                    else {"toolCallIds": [str(call["id"]) for call, _ in resolved_calls]}
+                    else {
+                        "toolCallIds": [str(call["id"]) for call, _ in resolved_calls]
+                    }
                 ),
             )
         await event_broker.notify(run_id)
@@ -2497,8 +2658,15 @@ class LocalRunExecutor:
         sections: list[str] = []
         remaining = 120_000
         with SessionLocal() as db:
-            for attachment_id in dict.fromkeys(attachment_ids):
-                attachment = db.get(Attachment, attachment_id)
+            unique_ids = tuple(dict.fromkeys(attachment_ids))
+            attachments = {
+                attachment.id: attachment
+                for attachment in db.scalars(
+                    select(Attachment).where(Attachment.id.in_(unique_ids))
+                )
+            } if unique_ids else {}
+            for attachment_id in unique_ids:
+                attachment = attachments.get(attachment_id)
                 if attachment is None or attachment.extraction_status != "completed":
                     continue
                 key = attachment.metadata_json.get("extractedStorageKey")
@@ -2544,8 +2712,15 @@ class LocalRunExecutor:
     def _provider_images(self, attachment_ids: list[str]) -> tuple[ProviderImage, ...]:
         images: list[ProviderImage] = []
         with SessionLocal() as db:
-            for attachment_id in dict.fromkeys(attachment_ids):
-                attachment = db.get(Attachment, attachment_id)
+            unique_ids = tuple(dict.fromkeys(attachment_ids))
+            attachments = {
+                attachment.id: attachment
+                for attachment in db.scalars(
+                    select(Attachment).where(Attachment.id.in_(unique_ids))
+                )
+            } if unique_ids else {}
+            for attachment_id in unique_ids:
+                attachment = attachments.get(attachment_id)
                 if (
                     attachment is None
                     or attachment.status != "ready"
@@ -2637,15 +2812,23 @@ class LocalRunExecutor:
                         )
                 if not targets:
                     continue
+                versions_by_target: dict[tuple[str, str], ProjectFileVersion] = {}
+                target_ids = [target["id"] for target in targets]
+                target_digests = [target["digest"] for target in targets]
+                for candidate in db.scalars(
+                    select(ProjectFileVersion)
+                    .where(
+                        ProjectFileVersion.project_file_id.in_(target_ids),
+                        ProjectFileVersion.content_hash.in_(target_digests),
+                    )
+                    .order_by(ProjectFileVersion.version_number.desc())
+                ):
+                    versions_by_target.setdefault(
+                        (candidate.project_file_id, candidate.content_hash), candidate
+                    )
                 for target in targets:
-                    workspace_version = db.scalar(
-                        select(ProjectFileVersion)
-                        .where(
-                            ProjectFileVersion.project_file_id == target["id"],
-                            ProjectFileVersion.content_hash == target["digest"],
-                        )
-                        .order_by(ProjectFileVersion.version_number.desc())
-                        .limit(1)
+                    workspace_version = versions_by_target.get(
+                        (target["id"], target["digest"])
                     )
                     if workspace_version is None:
                         continue
@@ -2892,6 +3075,7 @@ class LocalRunExecutor:
             # Keep bounded web research active for administrator prompts saved
             # before this cost and latency contract was introduced.
             system += f"\n\n{WEB_RESEARCH_EFFICIENCY_CONTRACT}"
+        stable_system_parts: list[str] = []
         turn_system_parts: list[str] = []
         knowledge_snapshot = run.snapshot_json.get("knowledge_context")
         knowledge_context = render_project_knowledge_context(
@@ -2920,7 +3104,7 @@ class LocalRunExecutor:
                 "details yourself."
             ),
         }
-        turn_system_parts.append(
+        stable_system_parts.append(
             clarification_contracts.get(
                 clarification_mode, clarification_contracts["balanced"]
             )
@@ -2940,7 +3124,7 @@ class LocalRunExecutor:
             "you do not need an answer from the person, answer directly without asking. Put the "
             "highest-value questions in each UI interaction."
         )
-        turn_system_parts.append(
+        stable_system_parts.append(
             "Personalized-guidance intake: Do not replace missing intake with a generic list of "
             "conditional 'if X, then Y' advice when the user asks what they personally should do, "
             "choose, prioritize, diagnose, respond to, or plan. First identify whether missing "
@@ -2955,7 +3139,7 @@ class LocalRunExecutor:
             "that already includes enough facts for a responsible answer. Ask only facts the user "
             "can provide; research externally discoverable facts yourself."
         )
-        turn_system_parts.append(
+        stable_system_parts.append(
             "Underspecified retrieval intake: Before using local files, enterprise search, an MCP, "
             "web search, or another retrieval tool, check whether the conversation identifies a "
             "search target well enough to produce a relevant result set. A bare request such as "
@@ -2986,7 +3170,7 @@ class LocalRunExecutor:
             ),
         }
         if analysis_depth in analysis_contracts:
-            turn_system_parts.append(analysis_contracts[analysis_depth])
+            stable_system_parts.append(analysis_contracts[analysis_depth])
         if (
             isinstance(web_research_requirement, Mapping)
             and web_research_requirement.get("mode") == "required"
@@ -3013,14 +3197,14 @@ class LocalRunExecutor:
             run.snapshot_json.get("output_mode", "auto")
         )
         if output_mode == "chat":
-            turn_system_parts.append(
+            stable_system_parts.append(
                 "Output mode: Chat. Return the complete final result directly in the chat "
                 "response. Never call `create_report` or `write_file`, and never create or "
                 "save an Artifact or file, even when the user explicitly asks for a report, "
                 "document, or file. The selected Chat mode is an absolute delivery constraint."
             )
         elif output_mode == "file":
-            turn_system_parts.append(
+            stable_system_parts.append(
                 "Output mode: File preference. This is a delivery preference, not proof "
                 "that the current request needs a file. Use artifact tools only when the "
                 "request's meaning or useful outcome calls for a reusable deliverable. "
@@ -3028,7 +3212,7 @@ class LocalRunExecutor:
                 "this selected mode. If you create a file, keep the chat response concise "
                 "and refer to the file by its display name only."
             )
-            turn_system_parts.append(
+            stable_system_parts.append(
                 "File intent JSON contract: Before visible answer text, call "
                 "`classify_file_output_intent` exactly once. Judge semantically whether the "
                 "current user message explicitly asks to create, save, export, or deliver a "
@@ -3056,9 +3240,9 @@ class LocalRunExecutor:
             ),
         }
         if answer_length in answer_length_contracts:
-            turn_system_parts.append(answer_length_contracts[answer_length])
+            stable_system_parts.append(answer_length_contracts[answer_length])
         if run.snapshot_json.get("memory_learning_mode", "auto") != "off":
-            turn_system_parts.append(
+            stable_system_parts.append(
                 "Memory capture contract: In the same final response, after all user-visible "
                 "answer text, append exactly one hidden Memory envelope in this form: "
                 '<lumina_memory>{"candidates":[]}</lumina_memory>. Populate candidates by '
@@ -3082,7 +3266,7 @@ class LocalRunExecutor:
             and schema["function"].get("name") == "activate_skill"
             for schema in tool_schemas
         ):
-            turn_system_parts.append(
+            stable_system_parts.append(
                 "Skill selection contract: Use semantic judgment, not keyword matching. There is "
                 "no preferred number of Skills: zero, one, or several are all valid. For each "
                 "candidate independently, activate it only when its core workflow directly matches "
@@ -3101,7 +3285,7 @@ class LocalRunExecutor:
                 "them on the next model turn. Skills explicitly selected with $Skill or fixed "
                 "by a scheduled Run are already active."
             )
-        turn_system_parts.append(
+        stable_system_parts.append(
             "Plan efficiency contract: Do not call `update_plan` alone when substantive "
             "tool calls can be chosen in the same response. Pair the plan update with those "
             "tool calls so planning does not add another model round trip."
@@ -3191,6 +3375,8 @@ class LocalRunExecutor:
                 "`write_file` for an obviously conversational request. If a file is useful, "
                 "create exactly one fitting deliverable; otherwise finish directly in chat."
             )
+        if stable_system_parts:
+            system += "\n\n" + "\n\n".join(stable_system_parts)
         instruction_snapshot = run.snapshot_json.get("instructions", {})
         instruction_prompt = (
             str(instruction_snapshot.get("prompt_text", "")).strip()
@@ -3244,10 +3430,6 @@ class LocalRunExecutor:
         messages: list[ProviderMessage] = [
             ProviderMessage(role="system", content=system)
         ]
-        if turn_system_parts:
-            messages.append(
-                ProviderMessage(role="system", content="\n\n".join(turn_system_parts))
-            )
         content_by_message_id: dict[str, str] = {}
         history_execution = run.snapshot_json.get("execution", {})
         history_context_window = _optional_positive_int(
@@ -3303,6 +3485,7 @@ class LocalRunExecutor:
                 content_by_message_id=content_by_message_id,
                 prefix_texts=(
                     *(message.content or "" for message in messages),
+                    *(turn_system_parts or ()),
                     *recalled_context_by_run_id.values(),
                 ),
                 tool_schemas=tool_schemas,
@@ -3318,25 +3501,44 @@ class LocalRunExecutor:
                     ),
                 )
             )
-        if prepared.retained_tool_context:
-            messages.append(
-                ProviderMessage(
-                    role="system",
-                    content=prepared.retained_tool_context,
-                )
-            )
         retained_ids = set(prepared.retained_message_ids)
+        current_run_context_metadata = {CURRENT_RUN_CONTEXT_METADATA_KEY: True}
         for message in history:
             if message.id not in retained_ids:
                 continue
             content = content_by_message_id.get(message.id, message.canonical_text)
             if not content:
                 continue
+            if message.role == "user" and message.run_id == run_id:
+                if turn_system_parts:
+                    messages.append(
+                        ProviderMessage(
+                            role="system",
+                            content="\n\n".join(turn_system_parts),
+                            provider_metadata=current_run_context_metadata,
+                        )
+                    )
+                if prepared.retained_tool_context:
+                    messages.append(
+                        ProviderMessage(
+                            role="system",
+                            content=prepared.retained_tool_context,
+                            provider_metadata=current_run_context_metadata,
+                        )
+                    )
             if message.role == "user":
                 recalled_context = recalled_context_by_run_id.get(message.run_id or "")
                 if recalled_context:
                     messages.append(
-                        ProviderMessage(role="system", content=recalled_context)
+                        ProviderMessage(
+                            role="system",
+                            content=recalled_context,
+                            provider_metadata=(
+                                current_run_context_metadata
+                                if message.run_id == run_id
+                                else {}
+                            ),
+                        )
                     )
             messages.append(
                 ProviderMessage(
@@ -3346,6 +3548,11 @@ class LocalRunExecutor:
                         images
                         if message.run_id == run_id and message.role == "user"
                         else ()
+                    ),
+                    provider_metadata=(
+                        current_run_context_metadata
+                        if message.run_id == run_id and message.role == "user"
+                        else {}
                     ),
                 )
             )
@@ -3735,7 +3942,8 @@ class LocalRunExecutor:
                 if (
                     source_execution is None
                     or source_execution.tool_call_id == str(tool_call["id"])
-                    or source_execution.status not in {"completed", "failed", "cancelled"}
+                    or source_execution.status
+                    not in {"completed", "failed", "cancelled"}
                 ):
                     payload = {
                         "error": {
@@ -3978,9 +4186,10 @@ class LocalRunExecutor:
                     ".txt": "text",
                 }.get(suffix, suffix.lstrip(".") or "text")
                 mime_type = mimetypes.guess_type(display_name)[0] or "text/plain"
-                with cleanup_artifact_storage_on_error(
-                    self.storage
-                ) as storage_keys, session_scope() as db:
+                with (
+                    cleanup_artifact_storage_on_error(self.storage) as storage_keys,
+                    session_scope() as db,
+                ):
                     workspace_run = db.get(Run, run_id)
                     workspace_user = (
                         db.get(User, workspace_run.user_id)
@@ -4163,9 +4372,10 @@ class LocalRunExecutor:
                 "선택한 목표 분량보다 짧아 보고서 확장 작성을 요청했습니다.",
             )
             return length_check
-        with cleanup_artifact_storage_on_error(
-            self.storage
-        ) as storage_keys, session_scope() as db:
+        with (
+            cleanup_artifact_storage_on_error(self.storage) as storage_keys,
+            session_scope() as db,
+        ):
             run = db.get(Run, run_id)
             completed_tool = db.get(ToolExecution, tool_id)
             user = db.get(User, run.user_id) if run else None
@@ -4297,9 +4507,10 @@ class LocalRunExecutor:
             except asyncio.CancelledError:
                 await self._cancel_tool_execution(run_id, tool_id)
                 raise
-            with cleanup_artifact_storage_on_error(
-                self.storage
-            ) as storage_keys, session_scope() as db:
+            with (
+                cleanup_artifact_storage_on_error(self.storage) as storage_keys,
+                session_scope() as db,
+            ):
                 persisted = persist_generated_image(
                     db,
                     self.storage,
@@ -4415,7 +4626,9 @@ class LocalRunExecutor:
             if artifact_id is not None:
                 user = db.get(User, run.user_id)
                 if user is None:
-                    raise RuntimeError("Run user disappeared during artifact completion")
+                    raise RuntimeError(
+                        "Run user disappeared during artifact completion"
+                    )
                 artifact = require_artifact(db, user, artifact_id)
                 append_event(
                     db,
@@ -4583,6 +4796,8 @@ class LocalRunExecutor:
         await event_broker.notify(run_id)
 
     async def _append_text(self, run_id: str, message_id: str, text: str) -> None:
+        mission_id: str | None = None
+        mission_event_created = False
         with session_scope() as db:
             run = db.get(Run, run_id)
             if run is None or run.status in TERMINAL_STATUSES:
@@ -4590,7 +4805,12 @@ class LocalRunExecutor:
             run.assistant_draft += text
             from ..deep_analysis.execution import record_output_progress
 
-            record_output_progress(db, run)
+            mission_event_created = record_output_progress(db, run)
+            deep_analysis = run.snapshot_json.get("deep_analysis")
+            if isinstance(deep_analysis, dict):
+                raw_mission_id = deep_analysis.get("mission_id")
+                if isinstance(raw_mission_id, str):
+                    mission_id = raw_mission_id
             append_event(
                 db,
                 run,
@@ -4598,6 +4818,8 @@ class LocalRunExecutor:
                 {"messageId": message_id, "delta": text},
             )
         await event_broker.notify(run_id)
+        if mission_id and mission_event_created:
+            await event_broker.notify(f"mission:{mission_id}")
 
     async def _publish_progress_summary(
         self, run_id: str, text: str, *, phase: str
@@ -4675,7 +4897,9 @@ class LocalRunExecutor:
                 "artifact_usage": progress,
             }
             if drafting_started_at is not None:
-                snapshot["artifact_drafting_started_at"] = drafting_started_at.isoformat()
+                snapshot["artifact_drafting_started_at"] = (
+                    drafting_started_at.isoformat()
+                )
             run.snapshot_json = snapshot
             append_event(db, run, "artifact_progress", progress)
         await event_broker.notify(run_id)
@@ -5167,10 +5391,10 @@ class LocalRunExecutor:
         cached_input_tokens = _nonnegative_int(
             observed_usage.get("cached_input_tokens")
         )
+        cache_write_tokens = _nonnegative_int(observed_usage.get("cache_write_tokens"))
         uncached_input_tokens = _nonnegative_int(
             observed_usage.get("uncached_input_tokens")
         )
-        cacheable_input_tokens = cached_input_tokens + uncached_input_tokens
         payload = {
             "turnIndex": turn_index,
             "attempt": attempt,
@@ -5183,6 +5407,7 @@ class LocalRunExecutor:
             "stopReason": stop_reason,
             "inputTokens": _nonnegative_int(observed_usage.get("input_tokens")),
             "cachedInputTokens": cached_input_tokens,
+            "cacheWriteTokens": cache_write_tokens,
             "uncachedInputTokens": uncached_input_tokens,
             "outputTokens": _nonnegative_int(observed_usage.get("output_tokens")),
             "reasoningTokens": (
@@ -5191,8 +5416,12 @@ class LocalRunExecutor:
                 else None
             ),
             "cacheHitRatio": (
-                round(cached_input_tokens / cacheable_input_tokens, 4)
-                if cacheable_input_tokens > 0
+                round(
+                    cached_input_tokens
+                    / _nonnegative_int(observed_usage.get("input_tokens")),
+                    4,
+                )
+                if _nonnegative_int(observed_usage.get("input_tokens")) > 0
                 else 0.0
             ),
         }

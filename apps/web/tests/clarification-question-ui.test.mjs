@@ -63,4 +63,8 @@ test("clarification mode is an account setting available in settings and the que
   assert.match(cardSource, /균형 있게/);
   assert.match(cardSource, /먼저 확인/);
   assert.match(workspaceSource, /type: "submit_user_input"/);
+  assert.match(stylesheet, /\.settings-card h2 \{[^}]*font-size: 16px;/);
+  assert.match(stylesheet, /\.settings-row strong \{ font-size: 14px; \}/);
+  assert.match(stylesheet, /\.settings-row small \{[^}]*font-size: 13px; \}/);
+  assert.match(stylesheet, /\.settings-row \.settings-select \.lumina-select-trigger \{[^}]*font-size: 14px; \}/);
 });

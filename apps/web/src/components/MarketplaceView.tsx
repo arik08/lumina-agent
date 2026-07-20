@@ -220,7 +220,7 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
       return !normalized || `${item.name} ${item.description} ${item.slug} ${tags.join(" ")} ${tags.map((tag) => `#${tag}`).join(" ")}`.toLocaleLowerCase().includes(normalized);
     });
   }, [currentItems, installations, query, skillView]);
-  const sourceDetailFiles = selected?.draft?.package.files ?? versionDetail?.package?.files ?? {};
+  const sourceDetailFiles = selected?.draft?.package?.files ?? versionDetail?.package?.files ?? {};
   const detailFiles = editMode ? editableFiles : sourceDetailFiles;
   const activeFileIsMarkdown = activeFile.toLocaleLowerCase().endsWith(".md");
   const fileTree = useMemo(() => buildSkillFileTree(Object.keys(detailFiles)), [detailFiles]);
@@ -309,13 +309,29 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
         else setMcpRefreshKey((value) => value + 1);
       }).catch(() => undefined);
     };
-    pollRepositoryState();
-    const timer = window.setInterval(pollRepositoryState, 3_000);
+    const pollWhenVisible = () => {
+      if (document.visibilityState === "visible") pollRepositoryState();
+    };
+    pollWhenVisible();
+    const timer = window.setInterval(pollWhenVisible, 15_000);
+    document.addEventListener("visibilitychange", pollWhenVisible);
     return () => {
       window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", pollWhenVisible);
       controller.abort();
     };
   }, [marketKind, projectId]);
+
+  useEffect(() => {
+    if (!selected?.draft || selected.draft.package) return;
+    const controller = new AbortController();
+    void api.extensions.getDraft(selected.id, controller.signal).then((draft) => {
+      setItems((current) => current.map((item) => (
+        item.id === selected.id ? { ...item, draft } : item
+      )));
+    }).catch(() => undefined);
+    return () => controller.abort();
+  }, [selected?.draft?.id, selected?.draft?.package, selected?.id]);
 
   const refreshRepository = async () => {
     setError(null);
@@ -599,10 +615,10 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
     setBusy(true);
     setError(null);
     try {
-      const draft = selected.draft ?? await api.extensions.checkoutDraft(selected.id);
-      if (!selected.draft) {
-        setItems((current) => current.map((item) => item.id === selected.id ? { ...item, draft } : item));
-      }
+      let draft = selected.draft ?? await api.extensions.checkoutDraft(selected.id);
+      if (!draft.package) draft = await api.extensions.getDraft(selected.id);
+      if (!draft.package) throw new Error("Skill Draft package is unavailable.");
+      setItems((current) => current.map((item) => item.id === selected.id ? { ...item, draft } : item));
       setEditableFiles({ ...draft.package.files });
       setEditableName(selected.name);
       setEditableDescription(selected.description);

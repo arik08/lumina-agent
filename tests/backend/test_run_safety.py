@@ -8,6 +8,7 @@ from lumina.agent.executor import LocalRunExecutor, _run_limit_violation
 from lumina.config import Settings
 from lumina.models import Run, utc_now
 from lumina.providers import ProviderCapabilities, ProviderRequest
+from lumina.runs.broker import RunEventBroker
 from lumina.runs.safety import normalize_run_safety_settings, run_limit_snapshot
 
 
@@ -107,7 +108,45 @@ def test_executor_cancel_many_actively_cancels_matching_tasks(tmp_path: Path) ->
     asyncio.run(exercise())
 
 
-def test_sqlite_claim_waiter_wakes_on_signal_without_polling(tmp_path: Path) -> None:
+def test_enqueue_keeps_large_waiting_queue_out_of_asyncio_tasks(tmp_path: Path) -> None:
+    settings = Settings(
+        environment="test",
+        DATABASE_URL=f"sqlite:///{(tmp_path / 'bounded-queue.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    executor = LocalRunExecutor(settings)
+    executor._started = True
+
+    for index in range(10_000):
+        executor.enqueue(f"queued-{index}")
+
+    assert executor._tasks == {}
+    assert executor._claim_revision == 10_000
+
+
+def test_event_broker_releases_idle_channels_after_waiters_leave() -> None:
+    broker = RunEventBroker()
+
+    async def exercise() -> None:
+        waiters = [asyncio.create_task(broker.wait("run-1", timeout=1)) for _ in range(3)]
+        await asyncio.sleep(0)
+        await broker.notify("run-1")
+        await asyncio.gather(*waiters)
+        assert broker._conditions == {}
+        assert broker._waiters == {}
+
+        await broker.notify("run-without-listener")
+        assert broker._conditions == {}
+
+    asyncio.run(exercise())
+
+
+def test_dispatcher_wakes_on_signal_without_per_run_waiter_tasks(
+    tmp_path: Path,
+) -> None:
     settings = Settings(
         environment="test",
         DATABASE_URL=f"sqlite:///{(tmp_path / 'claim-wait.db').as_posix()}",
@@ -121,16 +160,19 @@ def test_sqlite_claim_waiter_wakes_on_signal_without_polling(tmp_path: Path) -> 
     async def exercise() -> None:
         claim_count = 0
 
-        async def claim(_run_id: str):
+        async def claim_next():
             nonlocal claim_count
             claim_count += 1
-            return "wait" if claim_count == 1 else "stop"
+            if claim_count > 1:
+                executor._started = False
+            return None
 
         executor._started = True
-        executor._claim = claim  # type: ignore[method-assign]
-        task = asyncio.create_task(executor._run_when_claimable("queued-run"))
+        executor._claim_next = claim_next  # type: ignore[method-assign]
+        task = asyncio.create_task(executor._dispatch_runs())
         await asyncio.sleep(0.25)
         assert claim_count == 1
+        assert executor._tasks == {}
 
         executor._signal_claim_change()
         await asyncio.wait_for(task, timeout=1)

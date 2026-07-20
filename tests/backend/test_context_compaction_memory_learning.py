@@ -13,7 +13,11 @@ from sqlalchemy.orm import Session
 from lumina.agent.executor import LocalRunExecutor
 from lumina.auth import bootstrap_database
 from lumina.config import Settings
-from lumina.context import compact_runtime_messages, prepare_context
+from lumina.context import (
+    CURRENT_RUN_CONTEXT_METADATA_KEY,
+    compact_runtime_messages,
+    prepare_context,
+)
 from lumina.context import service as context_service
 from lumina.db import SessionLocal, configure_database, create_schema
 from lumina.memories.service import (
@@ -260,6 +264,31 @@ def test_memory_context_is_pinned_per_turn_without_mutating_user_text(
             artifacts_dir=root / "artifacts",
         )
     )._conversation_messages(second_id, "두 번째 질문")
+    first_user_index = next(
+        index
+        for index, message in enumerate(messages)
+        if message.role == "user" and message.content == "첫 번째 질문"
+    )
+    assert messages[0].role == "system"
+    assert "Clarification mode:" in str(messages[0].content)
+    current_context_index = next(
+        index
+        for index, message in enumerate(messages)
+        if message.role == "system"
+        and "memory-two" in str(message.content)
+    )
+    current_user_index = next(
+        index
+        for index, message in enumerate(messages)
+        if message.role == "user" and message.content == "두 번째 질문"
+    )
+    assert first_user_index < current_context_index < current_user_index
+    assert messages[current_context_index].provider_metadata.get(
+        CURRENT_RUN_CONTEXT_METADATA_KEY
+    ) is True
+    assert messages[current_user_index].provider_metadata.get(
+        CURRENT_RUN_CONTEXT_METADATA_KEY
+    ) is True
     relevant = [
         (message.role, str(message.content))
         for message in messages
@@ -638,6 +667,106 @@ def test_runtime_compaction_preserves_recent_tool_pairs_and_marks_summary(
         assert assistant.role == "assistant" and assistant.tool_calls
         assert tool.role == "tool"
         assert tool.tool_call_id == assistant.tool_calls[0]["id"]
+
+
+@pytest.mark.parametrize("force", (False, True))
+def test_runtime_compaction_preserves_current_run_required_context(
+    tmp_path: Path,
+    force: bool,
+) -> None:
+    user, project, conversation = _configure(
+        tmp_path, f"runtime-required-context-{force}"
+    )
+    with SessionLocal() as db:
+        run = _run(
+            db,
+            user=db.merge(user),
+            project=db.merge(project),
+            conversation=db.merge(conversation),
+            sequence=1,
+            context_window=2_500,
+        )
+        marker = {CURRENT_RUN_CONTEXT_METADATA_KEY: True}
+        messages = [ProviderMessage(role="system", content="Stable system contract")]
+        for index in range(5):
+            messages.extend(
+                (
+                    ProviderMessage(
+                        role="user",
+                        content=f"old question {index} " * 120,
+                    ),
+                    ProviderMessage(
+                        role="assistant",
+                        content=f"old answer {index} " * 120,
+                    ),
+                )
+            )
+        required = (
+            ProviderMessage(
+                role="system",
+                content="CURRENT DYNAMIC CONTRACT " * 120,
+                provider_metadata=marker,
+            ),
+            ProviderMessage(
+                role="system",
+                content="CURRENT RETAINED TOOL CONTEXT " * 80,
+                provider_metadata=marker,
+            ),
+            ProviderMessage(
+                role="system",
+                content="CURRENT RECALLED MEMORY " * 80,
+                provider_metadata=marker,
+            ),
+            ProviderMessage(
+                role="user",
+                content="CURRENT USER REQUEST " * 80,
+                provider_metadata=marker,
+            ),
+        )
+        messages.extend(required)
+        for index in range(5):
+            messages.extend(
+                (
+                    ProviderMessage(
+                        role="assistant",
+                        content=f"tool round {index}",
+                        tool_calls=(
+                            {
+                                "id": f"call-{index}",
+                                "name": "web_search",
+                                "arguments": '{"query":"cache context"}',
+                            },
+                        ),
+                    ),
+                    ProviderMessage(
+                        role="tool",
+                        name="web_search",
+                        tool_call_id=f"call-{index}",
+                        content=f"large result {index} " * 180,
+                    ),
+                )
+            )
+
+        prepared = compact_runtime_messages(
+            run,
+            messages,
+            ({"name": "web_search"},),
+            force=force,
+        )
+
+    assert prepared.compacted is True
+    for required_message in required:
+        assert required_message in prepared.messages
+        assert next(
+            message
+            for message in prepared.messages
+            if message is required_message
+        ).content == required_message.content
+    required_indices = [prepared.messages.index(message) for message in required]
+    assert required_indices == list(
+        range(required_indices[0], required_indices[0] + len(required))
+    )
+    assert prepared.estimated_tokens_after < prepared.estimated_tokens_before
 
 
 def test_runtime_compaction_shrinks_oversized_recent_tool_pair_as_valid_json(

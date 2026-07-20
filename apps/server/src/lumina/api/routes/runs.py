@@ -24,9 +24,15 @@ from ...runs.service import (
     plan_snapshot,
     run_for_user,
     run_snapshot,
+    run_snapshots,
 )
 from ...runs.state import TERMINAL_STATUSES
-from ..dependencies import AuthContext, get_auth_context, get_current_user, require_csrf
+from ..dependencies import (
+    AuthContext,
+    get_current_user,
+    get_stream_auth_context,
+    require_csrf,
+)
 from ..errors import ApiProblem
 from ..schemas import RunActionRequest, RunCreate
 
@@ -116,6 +122,26 @@ def get_run_snapshot(
     return run_snapshot(db, run)
 
 
+@router.post("/runs/snapshots")
+def post_run_snapshots(
+    payload: dict[str, object],
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db, scope="function"),
+) -> list[dict[str, object]]:
+    raw_run_ids = payload.get("runIds")
+    if not isinstance(raw_run_ids, list) or not 1 <= len(raw_run_ids) <= 20:
+        raise ApiProblem(
+            422,
+            "invalid_run_ids",
+            "Run snapshot은 한 번에 1개 이상 20개 이하로 요청해야 합니다.",
+        )
+    run_ids = list(dict.fromkeys(str(item) for item in raw_run_ids if item))
+    if len(run_ids) != len(raw_run_ids):
+        raise ApiProblem(422, "invalid_run_ids", "Run ID가 올바르지 않습니다.")
+    runs = [run_for_user(db, context.user, run_id) for run_id in run_ids]
+    return run_snapshots(db, runs)
+
+
 @router.get("/runs/{run_id}/plan")
 def get_run_plan(
     run_id: str,
@@ -135,8 +161,8 @@ async def stream_run(
     request: Request,
     after_sequence: int = 0,
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
-    context: AuthContext = Depends(get_auth_context),
-    db: Session = Depends(get_db),
+    context: AuthContext = Depends(get_stream_auth_context),
+    db: Session = Depends(get_db, scope="function"),
 ) -> StreamingResponse:
     run_for_user(db, context.user, run_id)
     cursor = max(0, after_sequence)

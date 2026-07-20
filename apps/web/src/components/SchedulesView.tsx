@@ -187,10 +187,17 @@ export function SchedulesView({ projectId, projects, execution, executionOptions
   useEffect(() => {
     if (!selected?.id || !hasActiveHistory) return;
     const controller = new AbortController();
+    let refreshing = false;
     const timer = window.setInterval(() => {
+      if (document.visibilityState !== "visible" || refreshing) return;
+      refreshing = true;
       api.schedules.listRuns(selected.id, controller.signal)
-        .then(setRuns)
+        .then((nextRuns) => {
+          setRuns(nextRuns);
+          refreshing = false;
+        })
         .catch((caught) => {
+          refreshing = false;
           if (!controller.signal.aborted) setError(caught instanceof ApiError ? caught.message : "실행 이력을 갱신하지 못했습니다.");
         });
     }, 1500);

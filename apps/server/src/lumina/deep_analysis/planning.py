@@ -817,17 +817,26 @@ def apply_workflow_decision(
 def next_runnable_node(
     nodes: list[DeepAnalysisWorkflowNode], edges: list[DeepAnalysisWorkflowEdge]
 ) -> DeepAnalysisWorkflowNode | None:
+    candidates = runnable_nodes(nodes, edges)
+    return candidates[0] if candidates else None
+
+
+def runnable_nodes(
+    nodes: list[DeepAnalysisWorkflowNode], edges: list[DeepAnalysisWorkflowEdge]
+) -> list[DeepAnalysisWorkflowNode]:
     status = {node.node_key: node.status for node in nodes}
     predecessors: dict[str, set[str]] = {node.node_key: set() for node in nodes}
     for edge in edges:
         if edge.target_node_key in predecessors:
             predecessors[edge.target_node_key].add(edge.source_node_key)
-    for node in sorted(nodes, key=lambda item: item.sequence):
-        if node.status not in {"planned", "ready"}:
-            continue
-        if all(status.get(key) == "completed" for key in predecessors[node.node_key]):
-            return node
-    return None
+    return [
+        node
+        for node in sorted(nodes, key=lambda item: item.sequence)
+        if node.status in {"planned", "ready"}
+        and all(
+            status.get(key) == "completed" for key in predecessors[node.node_key]
+        )
+    ]
 
 
 def descendant_node_keys(

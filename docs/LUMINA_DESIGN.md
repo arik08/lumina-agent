@@ -2,7 +2,7 @@
 
 > 문서 상태: 통합 기준안
 > 작성일: 2026-07-11
-> 최종 동기화: 2026-07-18 (현재 source 작업 트리와 migration `0030` 기준)
+> 최종 동기화: 2026-07-20 (현재 source 작업 트리와 migration `0058` 기준)
 > 적용 범위: Lumina Agent 제품, Frontend, Backend, Agent Worker, 확장 시스템과 운영 환경
 > 구현 상태: 이 문서는 설계 문서의 통합본이며, 각 항목의 실제 구현 완료 여부를 뜻하지 않습니다.
 
@@ -48,9 +48,8 @@
 | [`PGPT_CORPORATE_NETWORK.md`](project-context/PGPT_CORPORATE_NETWORK.md) | P-GPT 인증, 회사 CA, HTTP Client, Web Search, 설치 진단 |
 | [`PURPOSE_DRIVEN_AGENT_UI_RESEARCH.md`](project-context/PURPOSE_DRIVEN_AGENT_UI_RESEARCH.md) | 교체 가능한 Agent Frontend와 공통 Frontend 계약 |
 | [`INSTALLATION_AND_DIAGNOSTICS.md`](project-context/INSTALLATION_AND_DIAGNOSTICS.md) | Windows 설치, 조건부 Artifact renderer, 진단 CLI, PostgreSQL 호환성, 개발 검증과 격리 포트 |
-| [`lumina_skill_management_design.md`](lumina_skill_management_design.md) | 개인 작업본, Creator·Owner 분리, Merge·Change Request·Publish·Rollback과 Skill Evolution 방향 |
-| [`2026-07-12-general-document-rag-design.md`](superpowers/specs/2026-07-12-general-document-rag-design.md) | 조직 전용 GraphRAG를 일반 로컬 문서 RAG MCP로 전환하는 목표 계약 |
-| [`2026-07-12-login-development-account-icon-design.md`](superpowers/specs/2026-07-12-login-development-account-icon-design.md) | 개발 build 전용 Bootstrap 계정 입력 helper의 절제된 접근성 UI |
+| [`KNOWLEDGE_TAG_TAXONOMY.md`](project-context/KNOWLEDGE_TAG_TAXONOMY.md) | 지식 문서, canonical 태그 사전·계층·별칭과 제안·승인 운영의 단계별 계약 |
+| [`lumina_skill_management_design.md`](project-context/lumina_skill_management_design.md) | 개인 작업본, Creator·Owner 분리, Merge·Change Request·Publish·Rollback과 Skill Evolution 방향 |
 
 ### 1.3 문서 분류와 구현 상태 판정
 
@@ -61,7 +60,7 @@
 3. 승인된 기능 상세 문서가 있지만 source가 아직 이전 계약이면 `Target`입니다.
 4. 평가 보고서, 조사 문서와 구현 plan은 근거·Roadmap이며 현재 지원을 주장하지 않습니다.
 
-2026-07-17 동기화 시점의 주요 상태는 다음과 같습니다.
+2026-07-20 동기화 시점의 주요 상태는 다음과 같습니다.
 
 | 영역 | 상태 | 근거와 해석 |
 |---|---|---|
@@ -71,32 +70,34 @@
 | 대화 좋아요·Composer 중단·예약 작업 삭제·복원 loading | Implemented | 현재 Backend·Frontend와 UI 계약 test에 반영되어 있으며 삭제는 물리 삭제가 아닌 보관 처리 |
 | 일반 문서 RAG MCP | Target | 새 설계는 일반 문서·자연 위치 계약이지만 현재 `vector_db` source와 Skill은 아직 Markdown 조직 문서·`explore_org` 계약 |
 | 심층분석 Mission Workflow | 구현 | 독립 메뉴와 Workspace Frontend, Project 귀속 Mission·Workflow revision·Node·Edge, 초기 AI 자동 설계 1회, Node별 채팅 세션과 Run, Canvas·Inspector·실제 프롬프트·Markdown 출력·누적 비용·event replay·export를 제공합니다. Pattern·실행 중 재계획·Claim·Evidence·Quality Gate는 계약에서 제외합니다. |
+| 지식 문서 그래프·태그 사전 | 부분 구현 | 대화 답변의 명시 저장, 일괄 자동 태깅, active canonical 태그 공유 기반 문서 그래프, Project scope, 태그 이름·유형·정의·범위 메모·별칭·부모 계층의 조회·생성·수정이 구현되었습니다. 문서별 수동 태그 편집과 신규 태그 proposal·승인·병합·거절·deprecated 운영은 Target입니다. |
 | Skill Change Request·Blob/Tree CAS·자동 Eval | Target | 개인 Draft·복수 Owner 기반은 구현되었으나 진화 pipeline과 저장 최적화는 후속 단계 |
 
 `lumina_agent_assessment_report_2026-07-12.html`은 해당 날짜의 정적 평가 snapshot입니다. 이후 source·test로 해소된 항목의 현재 상태를 이 보고서의 수치로 다시 판정하지 않습니다.
 
 ### 1.4 현재 구현 상세 인벤토리
 
-아래 표는 2026-07-17의 migration `0001`~`0030`, 현재 route·service·Frontend source와 회귀 test로 확인한 실제 구현 범위입니다. `Implemented`는 source가 존재하고 해당 계약 test가 있다는 뜻이며 운영 규모·보안 심사·실사용 품질까지 완료되었다는 뜻은 아닙니다.
+아래 표는 2026-07-20의 migration `0001`~`0058`, 현재 route·service·Frontend source와 회귀 test로 확인한 실제 구현 범위입니다. `Implemented`는 source가 존재하고 해당 계약 test가 있다는 뜻이며 운영 규모·보안 심사·실사용 품질까지 완료되었다는 뜻은 아닙니다.
 
 | 영역 | 구현된 세부 기능 | 주요 source·test 근거 |
 |---|---|---|
 | 인증·가입 | idempotent Bootstrap admin과 기본 catalog seed, login ID 정규화, 사용자별 Default Project 자동 생성, 로그인 실패 count·잠금 복구, 다음 Asia/Seoul 자정 만료 server session, CSRF, production secure cookie, idempotent logout, `invited` 가입 신청과 관리자 승인 알림 | `auth/service.py`, `routes/auth.py`, `test_auth_core.py`, `test_registration_approval.py` |
-| 관리자 | 사용자 생성·조회·수정·비밀번호 reset·role/status 변경, 마지막 active admin 보호, 조직 범위 사용량 통계, 다른 사용자 대화·Turn Set 감사 조회, audit event 검색, 공유 링크 목록과 token 비노출 강제 revoke, 조직 Run 안전 한도 설정과 비상 전체 중단 | `routes/admin.py`, `test_admin_api.py`, `test_admin_share_revoke.py`, `test_run_safety.py` |
+| 관리자 | 사용자 생성·조회·수정·비밀번호 reset·role/status 변경, 마지막 active admin 보호, 조직 범위 사용량 통계, 첫 호출·후속 호출·고정 prompt digest별 cached/uncached input과 cache hit ratio 집계, 다른 사용자 대화·Turn Set 감사 조회, audit event 검색, 공유 링크 목록과 token 비노출 강제 revoke, 조직 Run 안전 한도 설정과 비상 전체 중단 | `routes/admin.py`, `test_admin_api.py`, `admin-cache-monitoring.test.mjs`, `test_admin_share_revoke.py`, `test_run_safety.py` |
 | Project·지침 | Project CRUD와 Default 삭제 방지, owner·editor·viewer membership 생명주기와 조직 격리, Organization→Agent default→Project→Personal 지침 합성, 관리자용 고정 system·Agent 기본 프롬프트 override와 기본값 복원, Run snapshot 고정, 사용자에게 노출하지 않는 revision·digest·ETag 동시성, 프로젝트 쓰기 구성원의 지침 편집, 조직 지침 과거 revision label·내용 수정, Secret 패턴 차단 | `projects/`, `routes/project_memberships.py`, `instructions/`, `test_project_memberships.py`, `test_instruction_hierarchy.py` |
-| Project File·Workspace | Project 파일 upload·목록·상세·rename·새 version·download·삭제, 안전한 상대 경로, content hash와 immutable version, DB commit 실패 시 storage cleanup, Composer와 Run의 exact file version 고정, `read_file`·`write_file`·`glob` Project scope 강제 | `project_files/`, `tools/workspace.py`, `test_project_workspace.py`, `test_workspace_tools.py` |
-| Conversation | favorite 우선 cursor 목록, 좋아요 filter·보존, whitespace-tolerant 제목 검색, Message 본문 검색과 snippet, Turn Set 역방향 pagination·이전 묶음 선행 로딩, revision CAS와 no-op PATCH 차단, first Run 임시·모델 제목, Project 이동과 Session-owned asset 이동, 특정 Message 기준 분기, JSON·Markdown 내보내기, builtin Agent Frontend contract 저장·fallback | `routes/conversations.py`, `conversations/service.py`, `agent_frontends/`, `test_conversation_listing.py`, `test_conversation_branch_export.py`, `test_agent_frontend_contract.py` |
+| Project File·Workspace | Project 파일 upload·목록·상세·rename·새 version·download·삭제, 안전한 상대 경로, content hash와 immutable version, DB commit 실패 시 storage cleanup, Composer와 Run의 exact file version 고정, 대용량 `@file`·`@folder` source-document index와 필요 구간 지연 조회, `read_file`·`write_file`·`glob` Project scope 강제 | `project_files/`, `tools/workspace.py`, `agent/executor.py`, `test_project_workspace.py`, `test_workspace_tools.py`, `test_composer_run_references.py` |
+| Conversation | favorite 우선 cursor 목록과 Sidebar 점진 로딩, 좋아요 filter·보존, whitespace-tolerant 제목 검색, SQLite FTS·portable fallback 기반 Message 본문 검색과 snippet, Turn Set 역방향 pagination·이전 묶음 선행 로딩, revision CAS와 no-op PATCH 차단, first Run 임시·모델 제목, Project 이동과 Session-owned asset 이동, 특정 Message 기준 분기, JSON·Markdown 내보내기, builtin Agent Frontend contract 저장·fallback | `routes/conversations.py`, `conversations/service.py`, `agent_frontends/`, migration `0056`, `test_conversation_listing.py`, `conversation-list-pagination.test.mjs`, `test_conversation_branch_export.py`, `test_agent_frontend_contract.py` |
 | 공유·Message 상호작용 | 특정 Message까지의 immutable snapshot 공유, attachment·Artifact version 고정, token hash 저장, owner·admin revoke와 공유 download 권한, Message reference 조회, like/dislike upsert·취소, 문제 신고, 선택 문장 Comment CRUD와 stale anchor | `routes/sharing.py`, `routes/messages.py`, `test_conversation_sharing_api.py`, `test_message_memory_interactions.py` |
 | Agent Run·Plan | Conversation 단위 single active Run과 다른 Conversation 병렬 실행, durable Queue와 `queue_next` 승격, SSE snapshot·Last-Event-ID replay, worker restart 복구, pause·resume·cancel·retry, 계정별 확인 질문 mode와 `awaiting_input` checkpoint·재개, model Turn·총 Token·경과 시간·예상 비용 한도, 모델 `update_plan`, stable Step ID, Tool Subtask, 독립 Tool 병렬 실행, approval 대기·승인·거부 | `runs/`, `agent/executor.py`, `test_run_concurrency_replay.py`, `test_worker_recovery.py`, `test_plan_lifecycle.py`, `test_tool_approvals.py`, Frontend clarification tests |
 | Context·Memory | recoverable compaction, Tool Call/Result pair·side effect 보존, 실패 시 원 Context 유지, 모델별 Context budget, 사용자 Memory 후보·자동/확인/끔 mode, 민감정보 차단, relevant subset recall, LLM 최적화와 provenance 병합, Project learning proposal approve·reject·apply·rollback | `context/`, `memories/`, `project_memories/`, `test_context_compaction_memory_learning.py`, `test_project_memory_learning.py` |
 | Provider | Mock·P-GPT·OpenAI Responses·Anthropic·Gemini·OpenAI Compatible adapter, multimodal image 입력, Tool roundtrip, typed·redacted 오류, 공통 base URL·Retry-After 검증, 관리자 Model discovery·명시 활성화·공식 Context와 실측 입력 상한 분리, revision 기반 사용자·Project 실행 선택 저장, Codex ChatGPT OAuth App Server·warm client·transport retry·API key 제거, 사용자 hash prompt-cache routing | `providers/`, `routes/providers.py`, `routes/admin_providers.py`, `test_provider_http.py`, `test_model_output_limits.py`, `test_settings_revision_cas.py` |
 | Web Search·인용 | DuckDuckGo 기본 search와 교체 가능한 Backend 경계, readable HTML fetch, 최신·고위험 질의의 필수 조사 정책, query 목적·상위 검색 이력, search snippet→fetched evidence 승격, source hash·번호 안정화, cited·reviewed·search-only·미검증 UI 상태 | `tools/web.py`, `citations.py`, `test_web_tools.py`, `test_citations.py`, `source-evidence-status.test.mjs` |
+| 지식 문서·그래프 | 사용자 동작으로 assistant 답변을 지식 문서로 저장·복구·soft delete, Project 범위 지식 공간, 미태깅 문서의 선택 Model 일괄 태깅, canonical tag 공유 기반 문서 graph, 문서별 인용·연결 문서 수, 태그 사전의 namespace·정의·범위 메모·별칭·부모 계층과 revision CAS | `knowledge/`, `routes/knowledge.py`, migrations `0035`, `0045`~`0048`, `0052`, `0054`, `0058`, `test_knowledge_api.py`, `test_knowledge_tagger.py`, `knowledge-workspace.test.mjs`, `knowledge-graph.test.mjs` |
 | Attachment·Artifact | TXT·Markdown·HTML·CSV·TSV·PDF·DOCX·PPTX·XLSX extraction과 자연 locator, fake Office 거부와 OpenXML 관계 XML 안전 파싱, Artifact immutable version·restore, 사용자별 Draft·current version ETag/CAS, stale·provenance 보호, DB 실패·경합 시 새 storage blob 보상 정리, 손상되거나 누락된 원본의 명시 오류, Preview·download, HTML 원문 보존, DOCX·XLSX·PPTX·PDF·HTML·Markdown 생성, Codex image와 복합 asset embedding | `attachments/`, `artifacts/`, `test_attachment_extraction.py`, `test_artifact_draft_cas.py`, `test_artifact_storage_cleanup.py`, `test_artifact_render_validation.py` |
 | Artifact 검증 | binary signature·재개봉, OpenXML macro·외부 hyperlink 차단, PDF link·page geometry 검사, LibreOffice 격리 profile과 Poppler page render, blank·비정상 크기·page count mismatch·timeout 실패 판정, renderer 미설치 시 `structural_passed`와 pending 구분 | `artifacts/render_validation.py`, `test_artifact_validation.py`, `test_artifact_render_validation.py` |
 | Skill Marketplace | Private Skill 생성, 사용자별 WorkingDraft checkout·revision·activate와 atomic revision CAS, stale base version save 차단, immutable version save·publish, account별 installation, catalog tag, Folder CRUD·move, creator와 복수 Owner·Maintainer 분리, primary Owner 제거 방지, exact draft/version digest를 Run·예약 Run에 고정, 설치 Skill Markdown 기본 보기·상세 history navigation | `extensions/`, migration `0019`, `test_extensions_schedules.py`, `test_composer_run_references.py`, Marketplace Frontend tests |
 | MCP | 관리자 definition·revision·approval·status, 사용자·Project installation, Secret reference bind/unbind, repository-relative manifest와 literal Secret 금지, stdio lifecycle·Tool allowlist·schema drift 차단, streamable HTTP session/SSE/timeout, exact host·DNS pinning·rebind 검사와 명시 private range | `mcp/`, `routes/mcp.py`, `test_mcp_catalog.py`, `test_mcp_runtime.py`, `test_mcp_manifests.py` |
 | Scheduler·알림 | hourly·daily·weekly·weekdays·manual과 timezone, enable·disable·run-now·archive, `(task, scheduled_for)` claim과 중복 dispatch 경합 복구, frozen/latest Skill snapshot, timeout retry와 restart 후 interrupted retry, terminal Artifact 동기화, 사용자별 persistent·idempotent in-app 알림, unread count·read one/all·delete·deep link | `schedules/`, `notifications/`, `test_extensions_schedules.py`, `test_notifications.py` |
-| Frontend 내구성·상세 UI | `crypto.randomUUID` fallback, Backend readiness 연속 확인 뒤 reload, top-level React Error Boundary, Session 복원 loading, 부가 화면 lazy loading, Composer stop, Turn renderer 분리, 확인 질문 card, Plan 자동 open/terminal close, Tool group·duration·model exchange·write progress, source evidence, 공용 body Portal tooltip, Artifact panel·공유 viewer·clipboard fallback, 사용자별 채팅 폭·글꼴 설정 | `AppErrorBoundary.tsx`, `BackendConnectionGuard.tsx`, `ConversationTurn.tsx`, `GlobalTooltip.tsx`, `client-id.ts`와 `apps/web/tests/` |
+| Frontend 내구성·상세 UI | `crypto.randomUUID` fallback, Backend readiness 연속 확인 뒤 reload, top-level React Error Boundary, Session 복원 loading, 명시한 새 채팅을 늦은 hydration이 덮어쓰지 않는 pending guard, 부가 화면 lazy loading, Composer 제어의 독립 component 경계와 stop, 대화 중 Model 변경의 prompt-cache 경고, Turn renderer 분리, 확인 질문 card, Plan 자동 open/terminal close, Tool group·duration·model exchange·write progress, source evidence, 공용 body Portal tooltip, Artifact panel·공유 viewer·clipboard fallback, 사용자별 채팅 폭·글꼴 설정 | `AppErrorBoundary.tsx`, `BackendConnectionGuard.tsx`, `ComposerControls.tsx`, `ConversationTurn.tsx`, `GlobalTooltip.tsx`, `use-lumina-workspace.ts`, `client-id.ts`와 `apps/web/tests/` |
 | 설치·운영 | installer validate-only/offline, Node version 검사, Windows `npm.cmd`, optional·required company CA 분리, 성공·실패 창과 exit code 보존, staged diagnostics와 Secret redaction, health live/ready, SQLite→PostgreSQL offline migration compile, SQLite worker lock의 platform 경계, 격리 QA port, supervisor identity 기반 종료와 실행기 hard reset | `devtools/install_lumina.ps1`, `devtools/run_lumina.ps1`, `devtools/stop_lumina.ps1`, `diagnostics/`, `test_operational_diagnostics.py`, `test_database_worker_lock.py` |
 
 현재 명시적으로 구현하지 않은 경계도 함께 고정합니다.
@@ -105,7 +106,7 @@
 - multi-worker lease·heartbeat, Redis queue, Object Storage, hosted document RAG, Local Workspace Bridge와 Skill Change Request·자동 Eval은 Target입니다.
 - 조건부 LibreOffice·Poppler·PostgreSQL test가 skip되면 해당 외부 실행 환경까지 검증되었다고 주장하지 않습니다.
 
-### 1.5 2026-07-16~17 source 정합화 결과
+### 1.5 2026-07-16~20 source 정합화 결과
 
 최근 source 변경을 설계에 반영할 때 단일 commit의 화면 모양을 장기 계약으로 과장하지 않고, 같은 동작을 보호하는 service·migration·회귀 test가 함께 있는지를 기준으로 삼았습니다. 현재 source에서 확정된 추가 계약은 다음과 같습니다.
 
@@ -124,6 +125,11 @@
 | 조용한 정상 흐름 | 일상적인 저장·복사·읽음·실행 성공은 toast를 남발하지 않고 화면의 상태 변화로 확인합니다. 오류·부분 실패·복구·guard 상태는 명시적으로 알립니다. |
 | Runtime 호환성 | Run 복구는 누락된 과거 Context·Plan field를 안전한 기본값으로 정규화하고, version 고정 source 문서는 원본 reference로 복구 가능해야 합니다. Provider `Retry-After`, Tool schema와 관리자 집계값은 외부·DB 경계에서 타입을 검증합니다. |
 | Agent Frontend 경계 | Conversation과 Run은 builtin Agent Frontend ID·version·contract snapshot을 보존합니다. 등록되지 않았거나 호환되지 않는 Frontend는 `general-chat`으로 열되 원래 ID와 Artifact·Run 기록은 버리지 않습니다. |
+| 심층분석 계약 | `deep-analysis`는 별도 Workspace Frontend와 Backend domain으로 실제 구현되었습니다. Mission 생성 시 일반 Composer와 같은 분석·답변·출력 설정, 선택 자료의 exact revision·digest와 빈 source manifest 의미를 고정합니다. 비보고서 Node는 압축 인계물을, 보고서 Node는 사용자 출력 설정을 사용하며 start·pause·resume·cancel·retry·event replay·비용·Project 파일 export를 지원합니다. |
+| 지식 모델 단순화 | 지식의 사용자 단위는 entity·statement·wiki가 아니라 원문을 보존한 `KnowledgeDocument`입니다. 그래프는 active canonical tag를 공유하는 문서 관계이며 자동 수집하지 않고 사용자가 답변을 명시적으로 저장한 뒤 별도 일괄 태깅합니다. |
+| 태그 사전 경계 | migration `0058`은 기존 `knowledge_tags`에 정의·부모·revision을 추가하고 alias table과 함께 사람이 편집 가능한 사전 기반을 제공합니다. 현재 구현은 active 태그의 조회·생성·수정까지이며 proposal 승인·병합·거절과 deprecated 대체는 구현 완료로 주장하지 않습니다. |
+| 저장·검색 최적화 | Backend 저장 경로는 bulk 조회와 쓰기 횟수를 줄이고, migration `0056`은 중복 Plan JSON을 정리한 뒤 SQLite `message_search_fts`와 동기화 trigger를 추가합니다. 다른 DB와 FTS를 사용할 수 없는 검색은 동일 권한·정렬 계약을 지키는 fallback을 유지하며, compaction은 Message·Tool pair와 source lineage를 손상시키지 않습니다. |
+| 운영 cache 관측 | 관리자 사용량 통계는 첫 Model 호출과 후속 호출을 분리하고 `prompt_cache_static_digest`별 input·cached·uncached token과 hit ratio를 집계합니다. 원문 prompt, 사용자 식별자와 cache key는 운영 payload에 노출하지 않습니다. |
 
 ## 2. 제품 정의
 
@@ -1825,7 +1831,7 @@ Agent Package
 └─ MCP bindings
 ```
 
-현재는 범용 Agent와 `GeneralChatFrontend`만 code registry에 builtin 상수로 등록합니다. `agent_id`, `agent_version`과 frontend contract version은 Conversation·Run snapshot에 저장하되, Agent catalog용 DB·installer·remote loader는 만들지 않습니다. 두 번째 builtin Frontend PoC는 [`DEEP_ANALYSIS_WORKFLOW.md`](project-context/DEEP_ANALYSIS_WORKFLOW.md)의 `deep-analysis` Workspace Frontend로 확정합니다. 이 PoC에서 실제로 확인된 최소 Shell slot과 typed contract만 추가하며 registry persistence, runtime loader와 범용 Plugin Framework를 먼저 만들지 않습니다.
+Agent Frontend code registry에는 범용 Agent와 `GeneralChatFrontend`를 builtin 상수로 등록합니다. `agent_id`, `agent_version`과 frontend contract version은 Conversation·Run snapshot에 저장하되, Agent catalog용 DB·installer·remote loader는 만들지 않습니다. 공통 Shell에는 별도의 builtin Workspace slot이 있으며 `deep-analysis`와 `knowledge`가 이 경계로 로드됩니다. 이 구현에서 실제로 확인된 최소 Shell slot과 typed contract만 유지하고 registry persistence, runtime loader와 범용 Plugin Framework를 먼저 만들지 않습니다.
 
 현재 Agent Frontend 모듈화의 목적은 사용자가 임의 코드를 설치하는 Marketplace가 아니라 내부 유지보수입니다. 신뢰된 builtin 모듈만 독립 폴더와 명시적 code registry로 등록하며 runtime 자동 탐색·동적 import·설치 UI는 제공하지 않습니다. 선택 모듈은 Core의 공개 API와 event 계약만 사용하고, registry 등록을 제거한 뒤 해당 폴더를 삭제해도 Core와 기존 Run이 계속 동작해야 합니다. 삭제된 module 또는 호환되지 않는 contract를 참조하는 Conversation은 `general-chat`으로 fallback하되 기존 Agent ID·version과 Artifact는 보존합니다.
 
@@ -1835,15 +1841,15 @@ Agent Frontend 모듈화는 외부 생태계나 무제한 확장을 위한 Plugi
 
 `deep-analysis`는 일반 채팅과 다른 Mission 목록, Workflow Canvas, Node Inspector, 실행 기록과 비용 화면을 가지므로 이 경계를 사용하는 첫 특수목적 builtin Workspace Frontend입니다. Workflow Revision·Node·Edge와 Node별 채팅 세션 연결은 같은 선택 module의 Backend domain이 소유하고, 인증·Project 권한·Run·Queue·Provider·Tool 승인·Storage·usage 원시 계측·감사·replay는 Core를 재사용합니다. 심층분석을 위해 일반 채팅, `App.tsx`, Project 파일과 Run 내부에 module ID 조건문을 흩뿌리지 않습니다.
 
-새 Mission은 한 번의 LLM 호출로 목표에 맞는 초기 Node·Edge·프롬프트를 설계하고, 실패하면 규칙 기반 Workflow로 대체합니다. 사용자는 생성된 Workflow를 직접 편집하며 실행기는 DAG 순서와 결과 전달만 담당합니다. 실행 중 재계획과 검증 장부 생성을 위해 별도 모델을 호출하지 않습니다.
+새 Mission은 한 번의 LLM 호출로 목표에 맞는 초기 Node·Edge·프롬프트를 설계하고, 실패하면 규칙 기반 Workflow로 대체합니다. 사용자는 생성된 Workflow를 직접 편집하며 실행기는 DAG 순서와 결과 전달만 담당합니다. 의존성이 모두 충족된 Node는 사용자·서버 동시 실행 한도 안에서 함께 시작하고, 합류 Node는 모든 선행 Node가 완료된 뒤 실행합니다. 활성 Mission 화면은 sequence replay가 가능한 SSE를 사용하고, 연속 event의 상세 snapshot 갱신을 짧게 합쳐 처리하며 최근 event 1,000개만 메모리에 유지합니다. 실행 중 재계획과 검증 장부 생성을 위해 별도 모델을 호출하지 않습니다.
 
-새 Mission의 초기 설정은 일반 Composer와 같은 `분석 범위`, `답변 분량`, `출력 방식`, `출력 토큰` 계약을 사용합니다. 사용자는 새 문서를 Project 파일로 첨부하거나 `@`로 기존 파일·폴더·Artifact를, `$`로 Project에서 허용된 Skill·MCP를 명시할 수 있습니다. Backend는 선택한 참조의 version·revision·digest와 실행 설정을 Mission에 고정하고 각 Node Run snapshot에 전달하며, 명시적으로 선택한 Project 파일이 있으면 그 파일 revision만 Mission source manifest로 사용합니다.
+새 Mission의 초기 설정은 일반 Composer와 같은 `분석 범위`, `답변 분량`, `출력 방식`, `출력 토큰` 계약을 사용합니다. MISSION 상세 패널의 최종 산출물 형태는 Markdown을 기본값으로 사용하고 HTML을 추천값으로 제공하며 사용자가 같은 입력란에 원하는 형태를 직접 적을 수 있습니다. 이 값은 마지막 Node가 아니라 Mission 실행 설정에 저장됩니다. HTML을 포함한 입력은 독립 실행 가능한 `.html` 원문으로 저장하고, 그 밖의 직접 입력값은 최종 보고서 작성 지시에 반영하면서 원문을 `.md`로 보존합니다. `분석 범위`는 모든 Node에 적용하지만 사용자가 선택한 `답변 분량`, `출력 토큰`과 최종 산출물 형태는 보고서 Node의 최종 산출물에 적용합니다. 보고서가 아닌 Node는 유형별 내부 상한 안에서 사실·근거·계산·불확실성과 다음 Node가 알아야 할 내용만 담은 Markdown 압축 인계물을 작성하고, 최종 보고서용 서론·요약·맺음말을 반복 생성하지 않습니다. 사용자는 실행 전 Workflow 편집 상태에서 각 Node의 작업 프롬프트를 확인하고 수정할 수 있습니다. 사용자는 새 문서를 Project 파일로 첨부하거나 `@`로 기존 파일·폴더·Artifact를, `$`로 Project에서 허용된 Skill·MCP를 명시할 수 있습니다. Backend는 선택한 참조의 version·revision·digest와 실행 설정을 Mission에 고정하고 각 Node Run snapshot에 전달하며, 명시적으로 선택한 Project 파일 revision만 Mission source manifest로 사용합니다. 선택한 자료가 없으면 source manifest는 비워 두고 Project의 다른 파일을 자동 포함하지 않습니다.
 
 심층분석 model 요청은 공통 prompt-cache 계약을 사용하되 `Core → Mission 설명과 Project 자료 → 선행 Node 출력 → 현재 Node 프롬프트` 순서로 조립합니다. 비용은 실제 Node Run 사용량을 기준으로 집계합니다.
 
 추가 최적화는 실제 Node Run의 Context 크기와 cache 효과를 측정한 뒤 도입합니다. 실행 중 Workflow 탐색이나 별도 LLM 판정은 기본 경로에 추가하지 않습니다.
 
-현재 Frontend Host가 Conversation 중심 slot만 제공하므로 `deep-analysis` 도입 시 공통 Shell에 최소 builtin `Workspace Frontend Slot`을 추가합니다. Conversation Frontend와 Workspace Frontend의 실제 공통점만 contract로 추출하고, `moduleKind`, package loader와 추상 base class는 세 번째 사용 사례 없이 일반화하지 않습니다.
+Frontend Host는 Conversation 중심 slot과 builtin `Workspace Frontend Slot`을 분리합니다. `deep-analysis`와 `knowledge`는 독립 폴더에서 lazy load하고, Project 선택·primary navigation·sidebar 목록·본문 workspace의 공통 Shell 상태만 공유합니다. Conversation Frontend와 Workspace Frontend의 실제 공통점만 contract로 추출하며 `moduleKind`, package loader와 추상 base class를 일반화하지 않습니다.
 
 1. Lumina가 검토하고 함께 build한 builtin 모듈만 실행합니다. 사용자 설치, runtime module 탐색, 임의 JavaScript·Python import를 지원하지 않습니다.
 2. 각 선택 모듈은 Frontend, 전용 Backend adapter·업무 로직, Tool·MCP binding과 test를 자기 폴더가 소유합니다. Core 파일 여러 곳에 module ID 조건문을 흩뿌리지 않습니다.
@@ -2018,7 +2024,7 @@ audit_events
 
 초기 `ArtifactAssetRef`는 `artifact_versions.asset_manifest` JSON에 저장합니다. asset 단위 검색·재사용·license 추적 요구가 실제로 생길 때 별도 table로 승격합니다.
 
-### 21.2 현재 구현된 확장 table과 schema (`0002`~`0030`)
+### 21.2 현재 구현된 확장 table과 schema (`0002`~`0058`)
 
 ```text
 skill_folders / skill_folder_placements            논리 Folder tree와 안정된 Skill 배치
@@ -2047,9 +2053,22 @@ announcements                                      조직 공지와 작성자·�
 organizations.initial_execution_settings_json      조직별 최초 실행 설정
 users.settings_revision / projects.settings_revision 사용자·공유 설정의 atomic revision
 provider_models.capabilities_json.max_input_tokens Model별 실측 입력 상한
+extensions.tags_json / installations.project_ids_json Skill 분류와 Project 설치 범위
+announcement_receipts                              사용자별 공지 확인 상태
+deep_analysis_missions / events / commands          Mission 상태, replay event와 idempotent 명령
+deep_analysis_context_manifests / mission_file_links 선택 자료 snapshot과 파일 lineage
+deep_analysis_workflow_revisions / nodes / edges    불변 Workflow revision과 DAG 실행 결과
+deep_analysis_decisions / quality_gate_results      개발 중 생성된 결정·검증 record
+deep_analysis_claims / evidence_references          개발 중 생성된 Claim·Evidence record
+deep_analysis_mission_exports / workflow_patterns   Project export와 선택적 Pattern version
+knowledge_spaces / documents / tags                 Project 범위 지식 문서와 canonical 태그
+knowledge_tag_aliases / knowledge_document_tags     태그 별칭과 문서 다대다 연결
+message_search_fts                                 SQLite 전용 Message 본문 검색 가속
+deep_analysis_missions.execution_settings_json     Mission 실행·출력 설정 snapshot
+knowledge_tags.definition / parent / revision      편집 가능한 태그 사전과 계층 CAS
 ```
 
-현재 migration head는 `0030_pgpt_input_token_limits`입니다. `0009`, `0013`~`0018`, `0020`~`0030`은 기존 table과 seed data에 MCP runtime header, instruction hierarchy·revision, 공개 share link, 사용자 소속, 알림 compact metadata, Skill 개인 Draft·소유권, 대화 좋아요, Codex OAuth catalog·표시 순서, 조직별 Run 안전 설정·내부 prompt override·최초 실행 설정, Project Folder, Help Center, 공지, 설정 revision과 P-GPT 실측 입력 상한을 증분 추가합니다. `0026`, `0030`처럼 catalog row를 갱신하는 data migration도 schema migration과 같은 Alembic chain에서 재현합니다.
+현재 migration head는 `0059_run_event_cache_metrics_index`입니다. `0009`, `0013`~`0018`, `0020`~`0030`은 기존 table과 seed data에 MCP runtime header, instruction hierarchy·revision, 공개 share link, 사용자 소속, 알림 compact metadata, Skill 개인 Draft·소유권, 대화 좋아요, Codex OAuth catalog·표시 순서, 조직별 Run 안전 설정·내부 prompt override·최초 실행 설정, Project Folder, Help Center, 공지, 설정 revision과 P-GPT 실측 입력 상한을 증분 추가합니다. `0031`~`0059`는 Skill tag·Project 설치 scope·공지 receipt, 심층분석 Mission·실행·event·export·Node 대화·실행 설정, 지식 문서·태그·Project scope, SQLite Message FTS와 Run event cache 통계 조회 index를 순차 추가하거나 단순화합니다. `0026`, `0030`처럼 catalog row를 갱신하거나 `0052`, `0055`처럼 개발 중 계약을 교체하는 data migration도 같은 Alembic chain에서 재현합니다.
 
 ### 21.3 후속 기능에서 추가할 table
 
@@ -2061,6 +2080,8 @@ permission_leases                                    reusable approval
 execution_environments                               persistent or user-managed runtime
 batch_items                                          Batch Fan-out
 agent_registry                                       second replaceable Frontend 이후
+knowledge_tag_proposals                              신규 태그 승인·병합·거절 workflow
+knowledge_tag_recommendation_rules                   taxonomy와 분리된 추천 규칙이 필요할 때
 ```
 
 위 후속 기능을 구현하기 전에는 빈 table, generic JSON entity와 사용되지 않는 service를 미리 만들지 않습니다. 반대로 Run snapshot에 필요한 Provider, Agent, extension과 environment metadata는 해당 table이 없더라도 versioned JSON snapshot으로 보존합니다.
@@ -2319,6 +2340,40 @@ PATCH  /api/mcp/installations/{id}
 DELETE /api/mcp/installations/{id}
 PUT    /api/mcp/installations/{id}/secrets/{secret_name}
 DELETE /api/mcp/installations/{id}/secrets/{secret_name}
+
+# 심층분석 Mission
+GET    /api/projects/{project_id}/deep-analysis/missions
+POST   /api/projects/{project_id}/deep-analysis/missions
+GET    /api/deep-analysis/missions/{id}
+PATCH  /api/deep-analysis/missions/{id}
+DELETE /api/deep-analysis/missions/{id}?expected_revision={revision}
+POST   /api/deep-analysis/missions/{id}/workflow/regenerate
+POST   /api/deep-analysis/missions/{id}/revisions
+PATCH  /api/deep-analysis/missions/{id}/draft
+POST   /api/deep-analysis/missions/{id}/draft/activate
+POST   /api/deep-analysis/missions/{id}/start
+POST   /api/deep-analysis/missions/{id}/pause
+POST   /api/deep-analysis/missions/{id}/resume
+POST   /api/deep-analysis/missions/{id}/cancel
+POST   /api/deep-analysis/missions/{id}/retry
+GET    /api/deep-analysis/missions/{id}/events
+GET    /api/deep-analysis/missions/{id}/costs
+GET    /api/deep-analysis/missions/{id}/files
+POST   /api/deep-analysis/missions/{id}/exports
+
+# 지식 문서·태그
+GET    /api/knowledge/spaces
+POST   /api/knowledge/spaces
+PATCH  /api/knowledge/spaces/{id}
+GET    /api/knowledge/documents
+GET    /api/knowledge/documents/{id}
+DELETE /api/knowledge/documents/{id}
+POST   /api/knowledge/documents/from-message/{message_id}
+POST   /api/knowledge/documents/tag-batch
+GET    /api/knowledge/tags?spaceId={space_id}
+POST   /api/knowledge/tags
+PATCH  /api/knowledge/tags/{id}
+GET    /api/knowledge/graph?spaceId={space_id}
 
 # 알림·환율
 GET    /api/notifications
@@ -2598,7 +2653,9 @@ PDF 실제 렌더는 `pdftoppm`, DOCX·XLSX·PPTX 실제 렌더는 LibreOffice�
 
 단계는 infrastructure layer를 수평으로 모두 만든 뒤 UI를 붙이는 방식이 아니라, 사용자가 로그인해 질문하고 응답·복구·Artifact를 확인하는 수직 흐름을 매 단계 완성하는 방식으로 진행합니다. 각 phase에서 사용하지 않는 table, service, adapter와 설정은 만들지 않습니다.
 
-### Phase 0. 최소 수직 흐름
+아래 Phase는 선형 일정이 아니라 구현 의존성과 운영 성숙도를 나타냅니다. 2026-07-20 기준 Phase 0~2의 제품 수직 흐름은 source와 회귀 test에 구현되어 있고, Phase 3은 항목별로 구현과 Target이 섞여 있으며, Phase 4는 `deep-analysis` builtin Workspace Frontend PoC만 구현된 상태입니다.
+
+### Phase 0. 최소 수직 흐름 — Implemented
 
 1. seeded Organization, User, server session, role과 Bootstrap admin
 2. 사용자별 Default Project, Conversation, Message와 소유권 filter
@@ -2607,7 +2664,7 @@ PDF 실제 렌더는 `pdftoppm`, DOCX·XLSX·PPTX 실제 렌더는 LibreOffice�
 5. 질문 → DB 저장 → model stream → final Message 저장의 실제 browser 흐름
 6. structured log, 최소 audit와 Secret redaction
 
-### Phase 1. 핵심 채팅과 Run
+### Phase 1. 핵심 채팅과 Run — Implemented
 
 1. DB-backed Run claim과 local executor
 2. SSE, coalesced text event와 canonical snapshot
@@ -2624,7 +2681,7 @@ PDF 실제 렌더는 `pdftoppm`, DOCX·XLSX·PPTX 실제 렌더는 LibreOffice�
 13. 개인 Project Folder 생성·선택과 Session 이동
 14. 기본 Artifact 저장
 
-### Phase 2. Plan, Project와 Artifact
+### Phase 2. Plan, Project와 Artifact — Implemented
 
 1. 구조화 Plan, Step, Subtask와 retry
 2. steer, queue_next, pause, resume와 cancel
@@ -2636,30 +2693,31 @@ PDF 실제 렌더는 `pdftoppm`, DOCX·XLSX·PPTX 실제 렌더는 LibreOffice�
 8. 수동·AI edit와 immutable version
 9. 링크 기반 read-only share viewer
 
-### Phase 3. 전문 업무와 확장
+### Phase 3. 전문 업무와 확장 — Partial
 
-1. 실제 다중 사용자 운영 전 PostgreSQL cutover 검증
-2. DOCX·XLSX·PPTX·PDF·HTML 생성 및 형식별 검증
-3. 대화 기반 실행 가능 Skill WorkingDraft, 명시 저장형 immutable version과 Skill 중심 Marketplace
-4. Skill Merge·Diff·Change Request·Publish·Rollback과 위험 기반 검토
-5. user·Project·Organization Skill Folder tree와 Skill·Folder 이동
-6. 승인된 MCP definition·Secret binding과 일반 로컬 문서 RAG 전환
-7. Extension review와 Organization policy
-8. Plugin authoring·sandbox는 Skill·MCP 운영 후 별도 검증
-9. Project Memory와 승인형 learning proposal
-10. Browser automation과 회사 승인 Connector
-11. Scheduler와 Background notification
+1. [Partial] PostgreSQL 호환·migration test는 구현, 실제 다중 사용자 운영 전 cutover 검증은 Target
+2. [Implemented] DOCX·XLSX·PPTX·PDF·HTML 생성 및 형식별 검증. 단 외부 renderer가 없는 환경의 test skip은 실제 render 통과로 간주하지 않음
+3. [Implemented] 대화 기반 실행 가능 Skill WorkingDraft, 명시 저장형 immutable version과 Skill 중심 Marketplace
+4. [Target] Skill Merge·Diff·Change Request·Publish·Rollback과 위험 기반 검토
+5. [Implemented] user·Project·Organization Skill Folder tree와 Skill·Folder 이동
+6. [Partial] 승인된 MCP definition·Secret binding은 구현, 일반 로컬 문서 RAG 전환은 Target
+7. [Partial] Extension 기본 승인·상태 정책은 구현, 조직 단위 review 확장은 Target
+8. [Target] Plugin authoring·sandbox는 Skill·MCP 운영 후 별도 검증
+9. [Implemented] Project Memory와 승인형 learning proposal
+10. [Target] Browser automation과 회사 승인 Connector
+11. [Implemented] Scheduler와 Background notification
+12. [Partial] 지식 문서 저장·일괄 태깅·문서 그래프·편집형 태그 사전은 구현, proposal 승인·병합·폐기는 Target
 
-### Phase 4. 확장 플랫폼
+### Phase 4. 확장 플랫폼 — Target, 단 `deep-analysis` PoC는 Implemented
 
-1. persistent·user-managed Execution Environment
-2. Local Workspace Bridge
-3. Batch Fan-out
-4. `deep-analysis` 두 번째 builtin Workspace Frontend PoC, 전용 Backend domain module, Node별 채팅 세션과 수동 Node·Edge Workflow
-5. declarative UI와 MCP Apps sandbox
-6. Computer Use
-7. Redis·Object Storage·Kubernetes 기반 multi-node scale-out
-8. 사용량이 입증된 Skill package Blob/Tree CAS, GC와 자동 Skill Eval
+1. [Target] persistent·user-managed Execution Environment
+2. [Target] Local Workspace Bridge
+3. [Target] Batch Fan-out
+4. [Implemented] `deep-analysis` builtin Workspace Frontend PoC, 전용 Backend domain module, Node별 채팅 세션과 수동 Node·Edge Workflow
+5. [Target] declarative UI와 MCP Apps sandbox
+6. [Target] Computer Use
+7. [Target] Redis·Object Storage·Kubernetes 기반 multi-node scale-out
+8. [Target] 사용량이 입증된 Skill package Blob/Tree CAS, GC와 자동 Skill Eval
 
 각 phase의 완료 조건은 해당 기능의 table과 API가 존재하는 것이 아니라 실제 사용자 흐름, 재접속 복구, 권한 거부와 실패 복구가 함께 검증되는 것입니다.
 

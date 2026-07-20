@@ -28,10 +28,16 @@ test("completed chat turns keep stable props and skip offscreen rendering work",
 });
 
 test("the live work clock does not rerender the full assistant turn", async () => {
-  const turn = await read("../src/components/ConversationTurn.tsx");
+  const [turn, sharedClock] = await Promise.all([
+    read("../src/components/ConversationTurn.tsx"),
+    read("../src/shared-clock.ts"),
+  ]);
 
-  assert.match(turn, /function WorkDurationLabel\([\s\S]*?setInterval\(\(\) => setClockNow\(Date\.now\(\)\), 1000\)/);
-  assert.match(turn, /function RunActivityTimeline\([\s\S]*?setInterval\(\(\) => setTimelineClock\(Date\.now\(\)\), 1000\)/);
+  assert.match(turn, /function WorkDurationLabel\([\s\S]*?useSharedNow\(running\)/);
+  assert.match(turn, /function RunActivityTimeline\([\s\S]*?useSharedNow\(timelineRunning\)/);
+  assert.match(sharedClock, /const clocks = new Map<number, ClockState>\(\)/);
+  assert.match(sharedClock, /state\.listeners\.size === 0/);
+  assert.match(sharedClock, /document\.visibilityState !== "visible"/);
   assert.doesNotMatch(turn, /const \[workClock, setWorkClock\]/);
   assert.match(turn, /<WorkDurationLabel[\s\S]*?running=\{!terminal && !awaitingInput\}/);
 });
@@ -61,4 +67,12 @@ test("programmatic follow scrolls do not restart persistence and scrollbar timer
   assert.match(streaming, /container\.dataset\.programmaticScroll = "true";/);
   assert.match(streaming, /performance\.now\(\) <= programmaticScrollUntilRef\.current/);
   assert.match(scrollbar, /if \(element\.dataset\.programmaticScroll === "true"\) \{\s*return;/);
+});
+
+test("in-memory conversation scroll history uses a bounded LRU cache", async () => {
+  const streaming = await read("../src/streaming-ui.ts");
+
+  assert.match(streaming, /const rememberedScrollPositionLimit = 100;/);
+  assert.match(streaming, /function rememberScrollPosition[\s\S]*?positions\.delete\(conversationId\);[\s\S]*?while \(positions\.size > rememberedScrollPositionLimit\)/);
+  assert.equal((streaming.match(/rememberScrollPosition\(savedPositionsRef\.current/g) ?? []).length, 3);
 });

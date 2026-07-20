@@ -68,6 +68,13 @@ import {
 } from "lucide-react";
 import { createClientId } from "./client-id";
 import { BranchFromHereIcon } from "./components/ActionIcons";
+import {
+  analysisDepthOptions,
+  answerLengthOptions,
+  ArtifactLengthSlider,
+  ComposerPicker,
+  defaultArtifactOutputTokens,
+} from "./components/ComposerControls";
 import { copyText } from "./clipboard";
 import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject, type UIEvent as ReactUIEvent } from "react";
 import { createPortal } from "react-dom";
@@ -75,7 +82,6 @@ import { api, ApiError, attachmentContentUrl } from "./api";
 import { isTerminalRunStatus } from "./run-status";
 import { SyntaxCode, SyntaxTextarea } from "./components/SyntaxCode";
 import { GlobalTooltipLayer } from "./components/GlobalTooltip";
-import { renderMermaidSvg } from "./components/InteractiveResponse";
 import type {
   AnalysisDepth,
   AnnouncementItem,
@@ -144,6 +150,7 @@ const artifactPaneMinWidth = 360;
 const artifactPaneDefaultWidth = 1200;
 const artifactSplitPaneMinViewport = 1024;
 const chatPaneMinWidth = 440;
+const modelChangeCacheWarning = "모델을 변경하면 다음 요청에서 새 모델이 기존 대화를 다시 처리하므로 추가 API 비용이 발생할 수 있습니다.";
 
 function clampArtifactPaneWidth(value: number, collapsed: boolean) {
   const sidebarWidth = collapsed ? 48 : 278;
@@ -210,6 +217,7 @@ async function renderArtifactMermaidHtml(source: string) {
 
   await Promise.all(tasks.map(async (task) => {
     try {
+      const { renderMermaidSvg } = await import("./components/InteractiveResponse");
       const { svg } = await renderMermaidSvg(task.source);
       task.target.innerHTML = svg;
       task.target.dataset.luminaRenderedMermaid = "true";
@@ -826,341 +834,6 @@ function formatNotificationTime(value: string) {
   }).format(timestamp);
 }
 
-interface ComposerPickerOption {
-  id: string;
-  label: string;
-  triggerLabel?: string;
-  description?: string;
-}
-
-const defaultArtifactOutputTokens = 10_000;
-
-const analysisDepthOptions: ComposerPickerOption[] = [
-  { id: "auto", label: "자동", description: "요청에 맞춰 분석 범위를 결정합니다." },
-  { id: "brief", label: "간단", description: "핵심 사실만 빠르게 확인합니다." },
-  { id: "standard", label: "충분", description: "필요한 근거와 예외를 함께 확인합니다." },
-  { id: "deep", label: "심층", description: "다양한 근거와 반례까지 폭넓게 검증합니다." },
-];
-
-const answerLengthOptions: ComposerPickerOption[] = [
-  { id: "auto", label: "자동", description: "요청에 맞춰 답변 분량을 결정합니다." },
-  { id: "brief", label: "짧게", description: "결론과 핵심만 간결하게 답합니다." },
-  { id: "standard", label: "보통", description: "이해에 필요한 설명을 함께 답합니다." },
-  { id: "detailed", label: "상세", description: "배경과 예외까지 상세하게 답합니다." },
-];
-
-const artifactLengthSteps = [
-  { value: 8_000, label: "8k", warning: null },
-  { value: 10_000, label: "10k", warning: null },
-  { value: 12_000, label: "12k", warning: null },
-  { value: 15_000, label: "15k", warning: null },
-  { value: 20_000, label: "20k", warning: "장문" },
-  { value: 30_000, label: "30k", warning: "장문" },
-  { value: 40_000, label: "40k", warning: "최대" },
-] as const;
-
-function ArtifactLengthSlider({
-  value,
-  onChange,
-  outputMode,
-  onOutputModeChange,
-  controlRef,
-  attention = false,
-}: {
-  value: number | null;
-  onChange: (value: number | null) => void;
-  outputMode: OutputMode;
-  onOutputModeChange: (value: OutputMode) => void;
-  controlRef?: RefObject<HTMLButtonElement | null>;
-  attention?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const [popoverStyle, setPopoverStyle] = useState<CSSProperties>({ left: 0, top: 0, visibility: "hidden" });
-  const rootRef = useRef<HTMLDivElement>(null);
-  const internalTriggerRef = useRef<HTMLButtonElement>(null);
-  const triggerRef = controlRef ?? internalTriggerRef;
-  const popoverRef = useRef<HTMLDivElement>(null);
-  const inputId = useId();
-  const popoverId = useId();
-  const selectedIndex = Math.max(
-    0,
-    artifactLengthSteps.findIndex((option) => option.value === (value ?? defaultArtifactOutputTokens)),
-  );
-  const selected = artifactLengthSteps[selectedIndex];
-  const outputModeLabel = outputMode === "auto" ? "자동" : outputMode === "chat" ? "채팅" : "파일";
-  const selectStep = (index: number) => {
-    const boundedIndex = Math.min(artifactLengthSteps.length - 1, Math.max(0, index));
-    const option = artifactLengthSteps[boundedIndex];
-    onChange(option ? option.value : defaultArtifactOutputTokens);
-  };
-  const tone = selected.warning === "최대"
-    ? "danger"
-    : selected.warning
-      ? "warning"
-      : selected.value <= 10_000
-        ? "muted"
-        : "normal";
-  const ariaValueText = `${selected.label}${selected.warning ? `, ${selected.warning}` : ""}, 채팅 답변이 아닌 생성 파일의 목표 분량`;
-
-  useEffect(() => {
-    if (!open) return;
-    const closeOnOutsidePointer = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (!rootRef.current?.contains(target) && !popoverRef.current?.contains(target)) setOpen(false);
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      setOpen(false);
-      triggerRef.current?.focus();
-    };
-    document.addEventListener("pointerdown", closeOnOutsidePointer);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("pointerdown", closeOnOutsidePointer);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [open]);
-
-  useLayoutEffect(() => {
-    if (!open) return undefined;
-    const updatePosition = () => {
-      const trigger = triggerRef.current;
-      const popover = popoverRef.current;
-      if (!trigger || !popover) return;
-      const triggerRect = trigger.getBoundingClientRect();
-      const popoverRect = popover.getBoundingClientRect();
-      const viewportPadding = 12;
-      const gap = 8;
-      const maximumLeft = Math.max(viewportPadding, window.innerWidth - viewportPadding - popoverRect.width);
-      const left = Math.min(
-        maximumLeft,
-        Math.max(viewportPadding, triggerRect.left + (triggerRect.width - popoverRect.width) / 2),
-      );
-      setPopoverStyle({
-        left,
-        top: Math.max(viewportPadding, triggerRect.top - gap - popoverRect.height),
-        visibility: "visible",
-      });
-    };
-    updatePosition();
-    window.addEventListener("resize", updatePosition);
-    window.addEventListener("scroll", updatePosition, true);
-    return () => {
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", updatePosition, true);
-    };
-  }, [open]);
-
-  return (
-    <div
-      ref={rootRef}
-      className={`artifact-length-control is-${tone}${open ? " is-open" : ""}`}
-    >
-      <button
-        ref={triggerRef}
-        className={`artifact-length-trigger${attention ? " is-file-mode-nudged" : ""}`}
-        type="button"
-        aria-label={`출력 방식 ${outputModeLabel}, 문서 출력 토큰 ${selected.label}${selected.warning ? `, ${selected.warning}` : ""}`}
-        aria-describedby={attention ? "file-mode-nudge" : undefined}
-        aria-expanded={open}
-        aria-controls={popoverId}
-        onClick={() => setOpen((current) => !current)}
-      >
-        <FileText size={12} aria-hidden="true" />
-        <span className={`artifact-output-mode-value is-${outputMode}`}>{outputModeLabel}</span>
-        <span className="artifact-control-separator" aria-hidden="true">·</span>
-        <span className="artifact-length-value">{selected.label}</span>
-        {selected.warning && <small>{selected.warning}</small>}
-      </button>
-      {open && createPortal(
-        <div
-          ref={popoverRef}
-          id={popoverId}
-          className={`artifact-length-popover is-${tone}${rootRef.current?.closest(".theme-dark") ? " theme-dark" : ""}`}
-          role="group"
-          aria-label="문서 출력 토큰 조절"
-          style={{
-            ...popoverStyle,
-            "--artifact-length-progress": `${(selectedIndex / (artifactLengthSteps.length - 1)) * 100}%`,
-          } as CSSProperties}
-        >
-          <div className="artifact-output-mode-picker">
-            <span>출력 방식</span>
-            <div role="group" aria-label="출력 방식">
-              {([['auto', '자동'], ['chat', '채팅'], ['file', '파일']] as const).map(([mode, label]) => (
-                <button
-                  key={mode}
-                  type="button"
-                  className={outputMode === mode ? "is-active" : ""}
-                  aria-pressed={outputMode === mode}
-                  onClick={() => onOutputModeChange(mode)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className={`artifact-length-popover-header${outputMode === "chat" ? " is-disabled" : ""}`}>
-            <label htmlFor={inputId}>문서 출력 토큰</label>
-            <output htmlFor={inputId}>
-              <span>{selected.label}</span>
-              {selected.warning && <small>{selected.warning}</small>}
-            </output>
-          </div>
-          <input
-            id={inputId}
-            data-testid="artifact-length-slider"
-            type="range"
-            min={0}
-            max={artifactLengthSteps.length - 1}
-            step={1}
-            value={selectedIndex}
-            aria-label="문서 출력 토큰"
-            aria-valuetext={ariaValueText}
-            disabled={outputMode === "chat"}
-            onChange={(event) => selectStep(Number(event.currentTarget.value))}
-            onKeyDown={(event) => {
-              const nextIndex = event.key === "Home"
-                ? 0
-                : event.key === "End"
-                  ? artifactLengthSteps.length - 1
-                  : ["ArrowRight", "ArrowUp"].includes(event.key)
-                    ? selectedIndex + 1
-                    : ["ArrowLeft", "ArrowDown"].includes(event.key)
-                      ? selectedIndex - 1
-                      : null;
-              if (nextIndex === null) return;
-              event.preventDefault();
-              selectStep(nextIndex);
-            }}
-          />
-        </div>,
-        document.body,
-      )}
-    </div>
-  );
-}
-
-function ComposerPicker({
-  options,
-  value,
-  onChange,
-  ariaLabel,
-  menuLabel,
-  menuDescription,
-  controlClassName,
-  placeholder,
-  tooltip,
-  triggerIcon,
-  hideChevron = false,
-  disabled = false,
-}: {
-  options: ComposerPickerOption[];
-  value: string;
-  onChange: (id: string) => void;
-  ariaLabel: string;
-  menuLabel: string;
-  menuDescription?: string;
-  controlClassName: string;
-  placeholder?: string;
-  tooltip?: string;
-  triggerIcon?: ReactNode;
-  hideChevron?: boolean;
-  disabled?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const [activeIndex, setActiveIndex] = useState(0);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const listId = useId();
-  const selectedIndex = options.findIndex((option) => option.id === value);
-  const selected = options[selectedIndex];
-
-  const openMenu = () => {
-    setActiveIndex(Math.max(selectedIndex, 0));
-    setOpen(true);
-  };
-
-  useEffect(() => {
-    if (!open) return;
-    const closeOnOutsidePointer = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener("pointerdown", closeOnOutsidePointer);
-    return () => document.removeEventListener("pointerdown", closeOnOutsidePointer);
-  }, [open]);
-
-  const choose = (option: ComposerPickerOption) => {
-    onChange(option.id);
-    setOpen(false);
-    triggerRef.current?.focus();
-  };
-
-  return (
-    <div className={`composer-picker ${open ? "is-open" : ""}`} ref={rootRef}>
-      <button
-        ref={triggerRef}
-        className={`composer-picker-trigger ${controlClassName}${hideChevron ? " has-no-chevron" : ""}${tooltip ? " tooltip-control" : ""}`}
-        type="button"
-        aria-label={ariaLabel}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-controls={open ? listId : undefined}
-        disabled={disabled || options.length === 0}
-        data-tooltip={tooltip}
-        onClick={() => open ? setOpen(false) : openMenu()}
-        onKeyDown={(event) => {
-          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-            event.preventDefault();
-            if (!open) {
-              openMenu();
-              return;
-            }
-            const direction = event.key === "ArrowDown" ? 1 : -1;
-            setActiveIndex((current) => (current + direction + options.length) % options.length);
-          } else if (event.key === "Enter" && open) {
-            event.preventDefault();
-            const active = options[activeIndex];
-            if (active) choose(active);
-          } else if (event.key === "Escape" && open) {
-            event.preventDefault();
-            setOpen(false);
-          }
-        }}
-      >
-        {triggerIcon}
-        <span>{selected?.triggerLabel ?? selected?.label ?? placeholder ?? ariaLabel}</span>
-        {!hideChevron && <ChevronDown size={13} aria-hidden="true" />}
-      </button>
-      {open && (
-        <div className={`composer-picker-menu${options.some((option) => option.description) ? " has-descriptions" : ""}`} id={listId} role="listbox" aria-label={ariaLabel}>
-          <div className={`composer-picker-menu-label${menuDescription ? " has-description" : ""}`}>
-            <span>{menuLabel}</span>
-            {menuDescription && <small>{menuDescription}</small>}
-          </div>
-          {options.map((option, index) => (
-            <button
-              key={option.id}
-              className={`${option.id === value ? "is-selected" : ""} ${index === activeIndex ? "is-active" : ""}`}
-              type="button"
-              role="option"
-              aria-selected={option.id === value}
-              onMouseEnter={() => setActiveIndex(index)}
-              onClick={() => choose(option)}
-            >
-              <span className="composer-picker-option-copy">
-                <strong>{option.label}</strong>
-                {option.description && <small>{option.description}</small>}
-              </span>
-              <Check size={14} aria-hidden="true" />
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function FeatureViewLoading() {
   return (
     <main className="feature-view feature-view-loading" aria-label="화면 로딩" aria-busy="true">
@@ -1225,6 +898,7 @@ function App() {
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   const [pendingCommandAction, setPendingCommandAction] = useState<{ id: string; action: PendingCommandAction } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const modelChangeOriginRef = useRef<{ conversationId: string | null; candidateId: string } | null>(null);
   const [adminSettingsProviderId, setAdminSettingsProviderId] = useState("");
   const [adminSettingsModels, setAdminSettingsModels] = useState<AdminProviderModel[]>([]);
   const [adminSettingsModelKey, setAdminSettingsModelKey] = useState("");
@@ -1433,7 +1107,11 @@ function App() {
   const artifactPaneVisible = artifactOpen && artifactPaneViews.has(mainView);
   const activeRuntime = workspace.activeRuntime;
   const activeRun = workspace.activeRun;
-  const activeSessionUsageRevision = sessionUsageRevision(activeRuntime.turnSets, activeRuntime.snapshots);
+  const activeSessionUsageRevision = sessionUsageRevision(
+    activeRuntime.usageBeforeLoadedTurnSets,
+    activeRuntime.turnSets,
+    activeRuntime.snapshots,
+  );
   const cumulativeUsageCacheRef = useRef<{
     revision: string;
     value: ReturnType<typeof cumulativeSessionUsageByTurnSet>;
@@ -1441,7 +1119,11 @@ function App() {
   if (cumulativeUsageCacheRef.current?.revision !== activeSessionUsageRevision) {
     cumulativeUsageCacheRef.current = {
       revision: activeSessionUsageRevision,
-      value: cumulativeSessionUsageByTurnSet(activeRuntime.turnSets, activeRuntime.snapshots),
+      value: cumulativeSessionUsageByTurnSet(
+        activeRuntime.usageBeforeLoadedTurnSets,
+        activeRuntime.turnSets,
+        activeRuntime.snapshots,
+      ),
     };
   }
   const cumulativeUsageByTurnSetId = cumulativeUsageCacheRef.current.value;
@@ -1936,6 +1618,31 @@ function App() {
     workspace.activeConversationId,
     workspace.loadOlderConversationTurnSets,
   ]);
+  const loadQuestionFromNavigator = useCallback(async (questionIndex: number) => {
+    const conversationId = workspace.activeConversationId;
+    const container = conversationFollow.containerRef.current;
+    if (!conversationId || !container || olderTurnSetsLoadingRef.current) return false;
+
+    olderTurnSetsLoadingRef.current = true;
+    prependScrollAnchorRef.current = {
+      conversationId,
+      scrollHeight: container.scrollHeight,
+      scrollTop: container.scrollTop,
+      turnSetCount: activeRuntime.turnSets.length,
+    };
+    try {
+      const loaded = await workspace.loadOlderConversationTurnSets(conversationId, questionIndex);
+      if (!loaded) prependScrollAnchorRef.current = null;
+      return loaded;
+    } finally {
+      olderTurnSetsLoadingRef.current = false;
+    }
+  }, [
+    activeRuntime.turnSets.length,
+    conversationFollow.containerRef,
+    workspace.activeConversationId,
+    workspace.loadOlderConversationTurnSets,
+  ]);
   useLayoutEffect(() => {
     const anchor = prependScrollAnchorRef.current;
     const container = conversationFollow.containerRef.current;
@@ -1986,6 +1693,10 @@ function App() {
     const timer = window.setTimeout(() => setToast(null), 2600);
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  useEffect(() => {
+    modelChangeOriginRef.current = null;
+  }, [activeRuntime.turnSets.length, workspace.activeConversationId]);
 
   useEffect(() => {
     const dock = dockAreaRef.current;
@@ -3335,10 +3046,12 @@ function App() {
         </header>
 
         <ConversationQuestionNavigator
+          key={workspace.activeConversationId ?? "empty-conversation"}
           turnSets={activeRuntime.turnSets}
           totalQuestionCount={activeRuntime.totalQuestionCount}
           theme={theme}
           scrollContainerRef={conversationFollow.containerRef}
+          onLoadQuestion={loadQuestionFromNavigator}
           onNavigateStart={conversationFollow.onUserIntent}
         />
 
@@ -3696,7 +3409,22 @@ function App() {
                     value={selectedCandidateId}
                     onChange={(candidateId) => {
                       const candidate = candidateModelOptions.find((option) => option.id === candidateId);
-                      if (candidate) void workspace.selectModelCandidate(candidate.providerId, candidate.modelKey);
+                      if (candidate && candidateId !== selectedCandidateId) {
+                        if (activeRuntime.turnSets.length > 0) {
+                          const origin = modelChangeOriginRef.current;
+                          if (origin?.conversationId === workspace.activeConversationId && candidateId === origin.candidateId) {
+                            modelChangeOriginRef.current = null;
+                            setToast((current) => current === modelChangeCacheWarning ? null : current);
+                          } else {
+                            modelChangeOriginRef.current ??= {
+                              conversationId: workspace.activeConversationId,
+                              candidateId: selectedCandidateId,
+                            };
+                            showToast(modelChangeCacheWarning);
+                          }
+                        }
+                        void workspace.selectModelCandidate(candidate.providerId, candidate.modelKey);
+                      }
                     }}
                     ariaLabel="모델 선택"
                     menuLabel="Model"
@@ -3709,7 +3437,7 @@ function App() {
                     onChange={(effortId) => void workspace.selectEffort(effortId || null)}
                     ariaLabel="추론 노력도 설정"
                     menuLabel="Effort"
-                    controlClassName="effort-control"
+                    controlClassName={`effort-control is-${workspace.settings?.execution.effortId ?? "auto"}`}
                   />
                   <button
                     className={`send-button tooltip-control ${composerShowsStop ? "is-stop" : ""}`}
@@ -3753,6 +3481,8 @@ function App() {
             onMissionsLoadingChange={setDeepAnalysisMissionsLoading}
             onSelectedMissionChange={setDeepAnalysisSelectedMissionId}
             onOpenNavigation={() => setSidebarOpen(true)}
+            execution={workspace.settings?.execution ?? null}
+            executionOptions={candidateModelOptions}
           />}
           {mainView === "knowledge" && <KnowledgeView />}
           {mainView === "help" && <HelpCenterView canManage={isAdmin} initialAnnouncementId={helpAnnouncementId} onOpenNavigation={() => setSidebarOpen(true)} />}

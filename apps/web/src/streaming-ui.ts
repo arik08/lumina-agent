@@ -12,11 +12,26 @@ const jumpButtonThresholdPx = 40;
 const instantJumpDistanceViewports = 4;
 const exactBottomPx = 2;
 const scrollPositionStoragePrefix = "lumina:conversation-scroll:";
+const rememberedScrollPositionLimit = 100;
 
 type ConversationScrollPosition = {
   top: number;
   atBottom: boolean;
 };
+
+function rememberScrollPosition(
+  positions: Map<string, ConversationScrollPosition>,
+  conversationId: string,
+  position: ConversationScrollPosition,
+) {
+  positions.delete(conversationId);
+  positions.set(conversationId, position);
+  while (positions.size > rememberedScrollPositionLimit) {
+    const oldestConversationId = positions.keys().next().value;
+    if (typeof oldestConversationId !== "string") break;
+    positions.delete(oldestConversationId);
+  }
+}
 
 function readConversationScrollPosition(conversationId: string) {
   try {
@@ -226,7 +241,7 @@ export function useConversationAutoFollow(
   }, []);
 
   const rememberPosition = useCallback((targetConversationId: string, top: number, distance: number) => {
-    savedPositionsRef.current.set(targetConversationId, {
+    rememberScrollPosition(savedPositionsRef.current, targetConversationId, {
       top: Math.max(0, top),
       atBottom: distance <= exactBottomPx,
     });
@@ -252,7 +267,7 @@ export function useConversationAutoFollow(
     container.scrollTop = top;
     const targetConversationId = conversationIdRef.current;
     if (targetConversationId) {
-      savedPositionsRef.current.set(targetConversationId, { top, atBottom });
+      rememberScrollPosition(savedPositionsRef.current, targetConversationId, { top, atBottom });
     }
     window.requestAnimationFrame(() => {
       if (programmaticScrollMarkerRef.current === marker) {
@@ -342,7 +357,7 @@ export function useConversationAutoFollow(
       top: targetTop,
       atBottom: maximumTop - targetTop <= exactBottomPx,
     };
-    savedPositionsRef.current.set(conversationId, restoredPosition);
+    rememberScrollPosition(savedPositionsRef.current, conversationId, restoredPosition);
     followingRef.current = restoredPosition.atBottom;
     setShowJumpToLatest(maximumTop - targetTop > jumpButtonThresholdPx);
 

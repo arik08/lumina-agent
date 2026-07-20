@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import event as sqlalchemy_event
 from sqlalchemy import func, select
 
 from lumina.api.errors import ApiProblem, install_error_handlers
@@ -32,11 +33,13 @@ from lumina.models import (
     ArtifactVersion,
     Attachment,
     Conversation,
+    Message,
     MessageReference,
     Organization,
     Project,
     ProjectMembership,
     QueuedMessage,
+    Run,
     RunCommand,
     User,
 )
@@ -48,6 +51,7 @@ from lumina.runs.service import (
     apply_run_action,
     create_run,
     run_snapshot,
+    run_snapshots,
 )
 
 
@@ -420,6 +424,106 @@ def test_model_selected_skill_keeps_its_event_sequence_in_run_snapshot(
         )
 
 
+def test_run_idempotency_reuses_the_turn_reservation_without_gaps(
+    tmp_path: Path,
+) -> None:
+    _app, ids = _setup(tmp_path)
+    with SessionLocal() as db:
+        admin = db.get(User, ids["admin_id"])
+        conversation = db.get(Conversation, ids["conversation_id"])
+        assert admin is not None and conversation is not None
+        payload = RunCreate(message=RunMessageInput(text="첫 번째 요청"))
+
+        first_run, first_message, first_created = create_run(
+            db,
+            user=admin,
+            conversation_id=conversation.id,
+            payload=payload,
+            idempotency_key="atomic-turn-0001",
+        )
+        db.commit()
+        db.refresh(conversation)
+        assert first_created is True
+        assert first_message.turn_index == 1
+        assert conversation.next_turn_index == 2
+
+        repeated_run, repeated_message, repeated_created = create_run(
+            db,
+            user=admin,
+            conversation_id=conversation.id,
+            payload=payload,
+            idempotency_key="atomic-turn-0001",
+        )
+        db.commit()
+        db.refresh(conversation)
+        assert repeated_created is False
+        assert repeated_run.id == first_run.id
+        assert repeated_message.id == first_message.id
+        assert conversation.next_turn_index == 2
+
+        _second_run, second_message, second_created = create_run(
+            db,
+            user=admin,
+            conversation_id=conversation.id,
+            payload=RunCreate(message=RunMessageInput(text="두 번째 요청")),
+            idempotency_key="atomic-turn-0002",
+        )
+        db.commit()
+        assert second_created is True
+        assert second_message.turn_index == 2
+        assert list(
+            db.scalars(
+                select(Message.turn_index)
+                .where(
+                    Message.conversation_id == conversation.id,
+                    Message.role == "user",
+                )
+                .order_by(Message.turn_index)
+            )
+        ) == [1, 2]
+
+
+def test_run_snapshot_batch_query_count_is_independent_of_page_size(
+    tmp_path: Path,
+) -> None:
+    _app, ids = _setup(tmp_path)
+    with SessionLocal() as db:
+        runs = [
+            Run(
+                organization_id=db.get(User, ids["admin_id"]).organization_id,
+                project_id=ids["project_id"],
+                conversation_id=ids["conversation_id"],
+                user_id=ids["admin_id"],
+                status="queued",
+                provider_id="mock",
+                model_key="mock-agent",
+                runtime_model_id="mock-agent",
+                model_display_name="Mock Agent",
+                snapshot_json={},
+                usage_json={},
+            )
+            for _index in range(20)
+        ]
+        db.add_all(runs)
+        db.commit()
+        bind = db.get_bind()
+
+        def query_count(selected: list[Run]) -> int:
+            count = 0
+
+            def increment(*_args: object) -> None:
+                nonlocal count
+                count += 1
+
+            sqlalchemy_event.listen(bind, "before_cursor_execute", increment)
+            try:
+                assert len(run_snapshots(db, selected)) == len(selected)
+            finally:
+                sqlalchemy_event.remove(bind, "before_cursor_execute", increment)
+            return count
+
+        assert query_count(runs[:1]) == query_count(runs)
+
 def _login(client: TestClient) -> None:
     response = client.post(
         "/api/auth/login",
@@ -767,7 +871,9 @@ def test_steer_and_queue_next_validate_and_persist_stable_references(
                 run_id=run.id,
                 payload=RunActionRequest(
                     type="queue_next",
-                    message=RunMessageInput(text="세 번째 요청도 순서대로 실행해 주세요."),
+                    message=RunMessageInput(
+                        text="세 번째 요청도 순서대로 실행해 주세요."
+                    ),
                 ),
                 idempotency_key="queue-2",
             )

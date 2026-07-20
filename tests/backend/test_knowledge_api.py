@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -8,9 +9,10 @@ from sqlalchemy import select
 
 from lumina.config import Settings
 from lumina.db import SessionLocal
+from lumina.knowledge.context import build_project_knowledge_context_snapshot
 from lumina.knowledge.tagger import DocumentTagSuggestion, NewTagSuggestion
 from lumina.main import create_app
-from lumina.models import KnowledgeDocument, Message, Run, User
+from lumina.models import KnowledgeDocument, KnowledgeDocumentTag, KnowledgeTag, Message, Project, Run, User
 
 
 def _login(client: TestClient) -> str:
@@ -20,6 +22,67 @@ def _login(client: TestClient) -> str:
     )
     assert response.status_code == 200, response.text
     return response.json()["csrfToken"]
+
+
+def test_project_knowledge_recall_searches_beyond_the_latest_200_documents(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'knowledge-recall.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        space = client.post(
+            "/api/knowledge/spaces",
+            headers={"X-CSRF-Token": csrf},
+            json={"name": "Recall"},
+        )
+        assert space.status_code == 201, space.text
+        with SessionLocal() as db:
+            user = db.scalar(select(User).where(User.login_name == "admin"))
+            project = db.get(Project, project_id)
+            assert user is not None
+            assert project is not None
+            now = datetime(2026, 7, 20, tzinfo=UTC)
+            documents = []
+            for index in range(205):
+                body = (
+                    "legacyneedle appears only in the oldest document"
+                    if index == 204
+                    else f"ordinary knowledge document {index}"
+                )
+                documents.append(
+                    KnowledgeDocument(
+                        space_id=space.json()["id"],
+                        project_id=project_id,
+                        owner_user_id=user.id,
+                        title=f"Document {index}",
+                        body=body,
+                        researched_at=now - timedelta(days=index),
+                        citations_json=[],
+                        content_digest=sha256(body.encode("utf-8")).hexdigest(),
+                        status="active",
+                    )
+                )
+            db.add_all(documents)
+            db.commit()
+
+            snapshot = build_project_knowledge_context_snapshot(
+                db,
+                project=project,
+                owner_user_id=user.id,
+                query="legacyneedle",
+            )
+            assert snapshot is not None
+            assert [item["title"] for item in snapshot["documents"]] == [
+                "Document 204"
+            ]
 
 
 def test_answer_is_saved_without_tags_then_batch_tagged_with_selected_model(
@@ -163,9 +226,45 @@ def test_answer_is_saved_without_tags_then_batch_tagged_with_selected_model(
             == "인공지능"
         )
 
+        linked_body = "같은 태그를 공유하는 두 번째 지식 문서"
+        with SessionLocal() as db:
+            user = db.scalar(select(User).where(User.login_name == "admin"))
+            tag = db.scalar(select(KnowledgeTag).where(KnowledgeTag.space_id == saved["spaceId"]))
+            assert user is not None
+            assert tag is not None
+            linked_document = KnowledgeDocument(
+                space_id=saved["spaceId"],
+                project_id=project_id,
+                owner_user_id=user.id,
+                source_message_id=None,
+                source_run_id=None,
+                source_conversation_id=conversation_id,
+                title="연결된 두 번째 문서",
+                body=linked_body,
+                researched_at=researched_at,
+                citations_json=[],
+                content_digest=sha256(linked_body.encode("utf-8")).hexdigest(),
+                status="active",
+            )
+            db.add(linked_document)
+            db.flush()
+            db.add(KnowledgeDocumentTag(document_id=linked_document.id, tag_id=tag.id))
+            db.commit()
+            linked_document_id = linked_document.id
+
         listing = client.get("/api/knowledge/documents")
         assert listing.status_code == 200
-        assert [item["id"] for item in listing.json()] == [saved["id"]]
+        assert {item["id"] for item in listing.json()} == {saved["id"], linked_document_id}
+        assert {item["linkedDocumentCount"] for item in listing.json()} == {1}
+
+        deleted = client.delete(
+            f"/api/knowledge/documents/{linked_document_id}", headers=headers
+        )
+        assert deleted.status_code == 204, deleted.text
+        assert client.get(f"/api/knowledge/documents/{linked_document_id}").status_code == 404
+        listing_after_delete = client.get("/api/knowledge/documents").json()
+        assert [item["id"] for item in listing_after_delete] == [saved["id"]]
+        assert listing_after_delete[0]["linkedDocumentCount"] == 0
 
         graph = client.get("/api/knowledge/graph")
         assert graph.status_code == 200
@@ -174,6 +273,9 @@ def test_answer_is_saved_without_tags_then_batch_tagged_with_selected_model(
 
         with SessionLocal() as db:
             assert db.scalar(select(KnowledgeDocument).where(KnowledgeDocument.id == saved["id"])) is not None
+            deleted_document = db.get(KnowledgeDocument, linked_document_id)
+            assert deleted_document is not None
+            assert deleted_document.status == "deleted"
 
 
 def test_legacy_entity_and_statement_routes_are_gone(tmp_path: Path) -> None:
@@ -240,3 +342,96 @@ def test_knowledge_space_project_links_are_revision_checked_and_persisted(
         assert client.get("/api/knowledge/spaces").json()[0]["projectIds"] == [
             project.json()["id"]
         ]
+
+
+def test_manual_tag_dictionary_supports_definitions_aliases_and_hierarchy(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'knowledge-tags.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        headers = {"X-CSRF-Token": csrf}
+        space = client.post(
+            "/api/knowledge/spaces",
+            headers=headers,
+            json={"name": "경쟁사 분석 지식"},
+        )
+        assert space.status_code == 201, space.text
+        space_id = space.json()["id"]
+
+        parent = client.post(
+            "/api/knowledge/tags",
+            headers=headers,
+            json={
+                "spaceId": space_id,
+                "namespace": "company",
+                "canonicalName": "철강사",
+                "definition": "철강 제품을 생산하는 기업",
+            },
+        )
+        assert parent.status_code == 201, parent.text
+        assert parent.json()["usageCount"] == 0
+
+        child = client.post(
+            "/api/knowledge/tags",
+            headers=headers,
+            json={
+                "spaceId": space_id,
+                "namespace": "company",
+                "canonicalName": "포스코",
+                "definition": "포스코홀딩스의 철강 사업회사",
+                "aliases": ["POSCO"],
+                "parentTagId": parent.json()["id"],
+            },
+        )
+        assert child.status_code == 201, child.text
+        assert child.json()["parentTagId"] == parent.json()["id"]
+        assert child.json()["aliases"] == ["POSCO"]
+        assert child.json()["revision"] == 1
+
+        updated = client.patch(
+            f"/api/knowledge/tags/{child.json()['id']}",
+            headers=headers,
+            json={
+                "expectedRevision": child.json()["revision"],
+                "canonicalName": "포스코홀딩스",
+                "definition": "포스코그룹의 지주회사",
+                "aliases": ["POSCO Holdings", "포스코홀딩스"],
+                "parentTagId": parent.json()["id"],
+            },
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["name"] == "포스코홀딩스"
+        assert updated.json()["definition"] == "포스코그룹의 지주회사"
+        assert updated.json()["aliases"] == ["POSCO Holdings"]
+        assert updated.json()["revision"] == 2
+
+        listing = client.get("/api/knowledge/tags", params={"spaceId": space_id})
+        assert listing.status_code == 200, listing.text
+        assert {item["name"] for item in listing.json()} == {"철강사", "포스코홀딩스"}
+
+        stale = client.patch(
+            f"/api/knowledge/tags/{child.json()['id']}",
+            headers=headers,
+            json={"expectedRevision": 1, "definition": "오래된 변경"},
+        )
+        assert stale.status_code == 409, stale.text
+
+        wrong_parent = client.post(
+            "/api/knowledge/tags",
+            headers=headers,
+            json={
+                "spaceId": space_id,
+                "namespace": "purpose",
+                "canonicalName": "경쟁사 분석",
+                "parentTagId": parent.json()["id"],
+            },
+        )
+        assert wrong_parent.status_code == 409, wrong_parent.text

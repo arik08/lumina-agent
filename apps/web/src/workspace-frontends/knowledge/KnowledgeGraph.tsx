@@ -68,7 +68,7 @@ interface PanState {
 }
 
 const defaultForceSettings: ForceSettings = {
-  centerStrength: 0.018,
+  centerStrength: 0.032,
   repulsion: 140,
   linkStrength: 0.18,
   linkDistance: 88,
@@ -82,6 +82,17 @@ const graphLabelFontSize = 14;
 const graphLabelGap = 7;
 const hoverTransitionDuration = 160;
 const graphLayouts = new Map<string, GraphLayout>();
+const graphLayoutCacheLimit = 24;
+
+function rememberGraphLayout(layoutKey: string, layout: GraphLayout) {
+  graphLayouts.delete(layoutKey);
+  graphLayouts.set(layoutKey, layout);
+  while (graphLayouts.size > graphLayoutCacheLimit) {
+    const oldestKey = graphLayouts.keys().next().value;
+    if (typeof oldestKey !== "string") break;
+    graphLayouts.delete(oldestKey);
+  }
+}
 
 function distanceToSegment(point: { x: number; y: number }, start: { x: number; y: number }, end: { x: number; y: number }) {
   const deltaX = end.x - start.x;
@@ -164,6 +175,7 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
       ...graph.edges.map((edge) => `edge:${edge.id}:${edge.sourceDocumentId}:${edge.targetDocumentId}`),
     ].sort().join("|");
     const savedLayout = graphLayouts.get(layoutKey);
+    if (savedLayout) rememberGraphLayout(layoutKey, savedLayout);
 
     const orderedNodes = [...graph.nodes].sort((left, right) => left.id.localeCompare(right.id));
     const degrees = new Map(orderedNodes.map((node) => [node.id, 0]));
@@ -471,7 +483,7 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
 
     function heatSimulation(alpha = 0.28) {
       canvas.dataset.forceState = "running";
-      simulation.alphaTarget(alpha);
+      simulation.alpha(Math.max(simulation.alpha(), alpha)).alphaTarget(alpha);
       if (reducedMotion) {
         simulation.stop().alpha(alpha).tick(8);
         requestDraw();
@@ -697,7 +709,7 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
 
     return () => {
       if (hasRenderedFrame) {
-        graphLayouts.set(layoutKey, {
+        rememberGraphLayout(layoutKey, {
           graphSignature,
           nodePositions: new Map(nodes.flatMap((node) => node.x !== undefined && node.y !== undefined ? [[node.id, { x: node.x, y: node.y }] as const] : [])),
           viewport: { ...viewport },
@@ -735,7 +747,7 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
     <button className="knowledge-graph-force-trigger" type="button" aria-label="그래프 장력 설정" aria-expanded={settingsOpen} onClick={() => setSettingsOpen((open) => !open)}><SlidersHorizontal size={15} /></button>
     {settingsOpen && <section className="knowledge-graph-force-panel" aria-label="그래프 장력 설정">
       <header><strong>장력</strong><span><button type="button" aria-label="장력 기본값 복원" onClick={() => setForceSettings(defaultForceSettings)}><RotateCcw size={13} /></button><button type="button" aria-label="장력 설정 닫기" onClick={() => setSettingsOpen(false)}><X size={14} /></button></span></header>
-      <ForceControl label="중심 장력" value={forceSettings.centerStrength} minimum={0.002} maximum={0.08} step={0.002} onChange={(value) => updateForce("centerStrength", value)} />
+      <ForceControl label="중력" value={forceSettings.centerStrength} minimum={0.002} maximum={0.08} step={0.002} onChange={(value) => updateForce("centerStrength", value)} />
       <ForceControl label="반발력" value={forceSettings.repulsion} minimum={20} maximum={500} step={5} onChange={(value) => updateForce("repulsion", value)} />
       <ForceControl label="링크 장력" value={forceSettings.linkStrength} minimum={0.02} maximum={1} step={0.02} onChange={(value) => updateForce("linkStrength", value)} />
       <ForceControl label="링크 거리" value={forceSettings.linkDistance} minimum={30} maximum={220} step={2} onChange={(value) => updateForce("linkDistance", value)} />

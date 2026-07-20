@@ -22,6 +22,7 @@ from lumina.models import (
     Project,
     QueuedMessage,
     Run,
+    RunEvent,
     User,
     utc_now,
 )
@@ -329,6 +330,77 @@ def test_admin_usage_statistics_are_organization_scoped_and_admin_only(
         finally:
             user_client.close()
 
+        with SessionLocal() as db:
+            analyst_user = db.scalar(
+                select(User).where(User.login_id == "analyst@posco.com")
+            )
+            project = db.scalar(select(Project))
+            assert analyst_user is not None and project is not None
+            conversation = Conversation(
+                organization_id=analyst_user.organization_id,
+                project_id=project.id,
+                owner_user_id=analyst_user.id,
+                title="Cache 모니터링 집계",
+            )
+            db.add(conversation)
+            db.flush()
+            first_run = Run(
+                organization_id=analyst_user.organization_id,
+                project_id=project.id,
+                conversation_id=conversation.id,
+                user_id=analyst_user.id,
+                status="completed",
+                provider_id="codex",
+                model_key="gpt-5.5",
+                runtime_model_id="gpt-5.5",
+                model_display_name="GPT-5.5",
+                snapshot_json={"prompt_cache_static_digest": "digest-a"},
+                usage_json={},
+                idempotency_key="admin-cache-first-run",
+            )
+            second_run = Run(
+                organization_id=analyst_user.organization_id,
+                project_id=project.id,
+                conversation_id=conversation.id,
+                user_id=analyst_user.id,
+                status="completed",
+                provider_id="codex",
+                model_key="gpt-5.5",
+                runtime_model_id="gpt-5.5",
+                model_display_name="GPT-5.5",
+                snapshot_json={"prompt_cache_static_digest": "digest-b"},
+                usage_json={},
+                idempotency_key="admin-cache-second-run",
+            )
+            db.add_all((first_run, second_run))
+            db.flush()
+            db.add_all(
+                (
+                    RunEvent(
+                        run_id=first_run.id,
+                        conversation_id=conversation.id,
+                        sequence=1,
+                        event_type="model_turn_completed",
+                        payload_json={"turnIndex": 0, "inputTokens": 100, "cachedInputTokens": 20, "cacheWriteTokens": 10, "uncachedInputTokens": 70},
+                    ),
+                    RunEvent(
+                        run_id=first_run.id,
+                        conversation_id=conversation.id,
+                        sequence=2,
+                        event_type="model_turn_completed",
+                        payload_json={"turnIndex": 1, "inputTokens": 200, "cachedInputTokens": 180, "cacheWriteTokens": 5, "uncachedInputTokens": 15},
+                    ),
+                    RunEvent(
+                        run_id=second_run.id,
+                        conversation_id=conversation.id,
+                        sequence=1,
+                        event_type="model_turn_completed",
+                        payload_json={"turnIndex": 0, "inputTokens": 300, "cachedInputTokens": 150, "cacheWriteTokens": 30, "uncachedInputTokens": 120},
+                    ),
+                )
+            )
+            db.commit()
+
         response = admin_client.get("/api/admin/usage-statistics?days=30")
         assert response.status_code == 200, response.text
         payload = response.json()
@@ -348,6 +420,23 @@ def test_admin_usage_statistics_are_organization_scoped_and_admin_only(
         assert analyst["cachedInputTokens"] == 0
         assert analyst["cacheHitRatioPercent"] == 0
         assert analyst["outputTokens"] == 0
+        assert payload["cache"]["firstCall"] == {
+            "modelCalls": 2,
+            "inputTokens": 400,
+            "cachedInputTokens": 170,
+            "cacheWriteTokens": 40,
+            "uncachedInputTokens": 190,
+            "cacheHitRatioPercent": 42.5,
+        }
+        assert payload["cache"]["subsequentCalls"]["cacheHitRatioPercent"] == 90.0
+        assert [item["digest"] for item in payload["cache"]["byStaticDigest"]] == [
+            "digest-a",
+            "digest-b",
+        ]
+        digest_a = payload["cache"]["byStaticDigest"][0]
+        assert digest_a["cacheWriteTokens"] == 15
+        assert digest_a["firstCall"]["cacheHitRatioPercent"] == 20.0
+        assert digest_a["subsequentCalls"]["cacheHitRatioPercent"] == 90.0
 
         audit = admin_client.get(
             "/api/admin/audit-events?action=admin_usage_statistics_viewed"

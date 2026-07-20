@@ -1,6 +1,14 @@
-import hljs from "highlight.js/lib/common";
-import { useMemo, useRef, type ChangeEvent, type CSSProperties, type UIEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type CSSProperties, type UIEvent } from "react";
 import { splitMarkdownFrontmatter } from "./markdownFrontmatter";
+
+type Highlighter = typeof import("highlight.js/lib/common")["default"];
+
+let highlighterPromise: Promise<Highlighter> | null = null;
+
+function loadHighlighter() {
+  highlighterPromise ??= import("highlight.js/lib/common").then((module) => module.default);
+  return highlighterPromise;
+}
 
 const aliases: Record<string, string> = {
   cjs: "javascript", htm: "xml", html: "xml", js: "javascript", jsx: "javascript", md: "markdown", mjs: "javascript",
@@ -20,7 +28,7 @@ export function codeLanguage(fileName?: string | null, mimeType?: string | null,
   return "plaintext";
 }
 
-function highlightedHtml(value: string, language: string) {
+function highlightedHtml(hljs: Highlighter, value: string, language: string) {
   if (language === "markdown") {
     const frontmatter = splitMarkdownFrontmatter(value);
     if (frontmatter) {
@@ -33,6 +41,28 @@ function highlightedHtml(value: string, language: string) {
     : hljs.highlight(value, { language: "plaintext" }).value;
 }
 
+function useHighlightedHtml(value: string, language: string) {
+  const [result, setResult] = useState<{
+    value: string;
+    language: string;
+    html: string;
+  } | null>(null);
+  useEffect(() => {
+    let active = true;
+    void loadHighlighter().then((hljs) => {
+      if (active) {
+        setResult({ value, language, html: highlightedHtml(hljs, value, language) });
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [language, value]);
+  return result?.value === value && result.language === language
+    ? result.html
+    : null;
+}
+
 export function SyntaxCode({ value, fileName, mimeType, language, className = "" }: {
   value: string;
   fileName?: string | null;
@@ -41,14 +71,22 @@ export function SyntaxCode({ value, fileName, mimeType, language, className = ""
   className?: string;
 }) {
   const resolvedLanguage = codeLanguage(fileName, mimeType, language);
-  const html = useMemo(() => highlightedHtml(value, resolvedLanguage), [resolvedLanguage, value]);
-  return <pre className={`syntax-code ${className}`.trim()}><code className={`hljs language-${resolvedLanguage}`} dangerouslySetInnerHTML={{ __html: html }} /></pre>;
+  const html = useHighlightedHtml(value, resolvedLanguage);
+  return (
+    <pre className={`syntax-code ${className}`.trim()}>
+      {html === null
+        ? <code className={`hljs language-${resolvedLanguage}`}>{value}</code>
+        : <code className={`hljs language-${resolvedLanguage}`} dangerouslySetInnerHTML={{ __html: html }} />}
+    </pre>
+  );
 }
 
 export function SyntaxCodeContent({ value, language, className = "" }: { value: string; language?: string | null; className?: string }) {
   const resolvedLanguage = codeLanguage(null, null, language);
-  const html = useMemo(() => highlightedHtml(value, resolvedLanguage), [resolvedLanguage, value]);
-  return <code className={`hljs language-${resolvedLanguage} ${className}`.trim()} dangerouslySetInnerHTML={{ __html: html }} />;
+  const html = useHighlightedHtml(value, resolvedLanguage);
+  return html === null
+    ? <code className={`hljs language-${resolvedLanguage} ${className}`.trim()}>{value}</code>
+    : <code className={`hljs language-${resolvedLanguage} ${className}`.trim()} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
 export function SyntaxTextarea({ value, onChange, fileName, mimeType, language, className = "", ariaLabel, disabled = false }: {
@@ -63,7 +101,8 @@ export function SyntaxTextarea({ value, onChange, fileName, mimeType, language, 
 }) {
   const highlightRef = useRef<HTMLPreElement>(null);
   const resolvedLanguage = codeLanguage(fileName, mimeType, language);
-  const html = useMemo(() => highlightedHtml(`${value}\n`, resolvedLanguage), [resolvedLanguage, value]);
+  const highlightValue = `${value}\n`;
+  const html = useHighlightedHtml(highlightValue, resolvedLanguage);
   const syncScroll = (event: UIEvent<HTMLTextAreaElement>) => {
     if (!highlightRef.current) return;
     highlightRef.current.scrollTop = event.currentTarget.scrollTop;
@@ -71,7 +110,11 @@ export function SyntaxTextarea({ value, onChange, fileName, mimeType, language, 
   };
   return (
     <div className={`syntax-editor ${className}`.trim()}>
-      <pre ref={highlightRef} aria-hidden="true"><code className={`hljs language-${resolvedLanguage}`} dangerouslySetInnerHTML={{ __html: html }} /></pre>
+      <pre ref={highlightRef} aria-hidden="true">
+        {html === null
+          ? <code className={`hljs language-${resolvedLanguage}`}>{highlightValue}</code>
+          : <code className={`hljs language-${resolvedLanguage}`} dangerouslySetInnerHTML={{ __html: html }} />}
+      </pre>
       <textarea aria-label={ariaLabel} disabled={disabled} spellCheck={false} value={value} onChange={onChange} onScroll={syncScroll} />
     </div>
   );

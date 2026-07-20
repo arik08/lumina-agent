@@ -421,6 +421,14 @@ def test_skill_draft_compare_and_swap_rejects_stale_session(tmp_path: Path) -> N
         draft_payload = created.json()["draft"]
         draft_id = draft_payload["id"]
         initial_digest = draft_payload["digest"]
+        listed = next(
+            item for item in client.get("/api/extensions").json()
+            if item["id"] == created.json()["id"]
+        )
+        assert "package" not in listed["draft"]
+        full_draft = client.get(f"/api/extensions/{created.json()['id']}/draft")
+        assert full_draft.status_code == 200, full_draft.text
+        assert full_draft.json()["package"]["files"] == {"SKILL.md": "# CAS base"}
 
         with SessionLocal() as first_db, SessionLocal() as stale_db:
             first_user = first_db.scalar(

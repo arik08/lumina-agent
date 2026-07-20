@@ -3,7 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass
+from threading import RLock
 from typing import Any
 
 from sqlalchemy import select
@@ -33,6 +36,10 @@ SOURCE_DOCUMENT_MAX_THRESHOLD_TOKENS = 80_000
 _SOURCE_DOCUMENT_CONTEXT_FRACTION = 0.20
 _DOCUMENT_ID_SEPARATOR = ":"
 _QUERY_TOKEN_RE = re.compile(r"\S+")
+_SOURCE_DOCUMENT_CACHE_MAX_CHARACTERS = 20_000_000
+_source_document_cache: OrderedDict[str, "SourceDocument"] = OrderedDict()
+_source_document_cache_characters = 0
+_source_document_cache_lock = RLock()
 
 
 SOURCE_DOCUMENT_TOOL_SCHEMAS: tuple[dict[str, Any], ...] = (
@@ -94,7 +101,49 @@ class SourceDocument:
     document_id: str
     name: str
     source_kind: str
-    content: str
+    lines: tuple[str, ...]
+    character_count: int
+
+
+def _cached_source_document(
+    document_id: str,
+    *,
+    name: str,
+    source_kind: str,
+    content_loader: Callable[[], str],
+) -> SourceDocument:
+    global _source_document_cache_characters
+    with _source_document_cache_lock:
+        cached = _source_document_cache.get(document_id)
+        if cached is not None:
+            _source_document_cache.move_to_end(document_id)
+            return cached
+    content = str(content_loader())
+    document = SourceDocument(
+        document_id=document_id,
+        name=name,
+        source_kind=source_kind,
+        lines=tuple(content.splitlines()),
+        character_count=len(content),
+    )
+    if document.character_count > _SOURCE_DOCUMENT_CACHE_MAX_CHARACTERS:
+        return document
+    with _source_document_cache_lock:
+        cached = _source_document_cache.get(document_id)
+        if cached is not None:
+            _source_document_cache.move_to_end(document_id)
+            return cached
+        _source_document_cache[document_id] = document
+        _source_document_cache.move_to_end(document_id)
+        _source_document_cache_characters += document.character_count
+        while (
+            _source_document_cache
+            and _source_document_cache_characters
+            > _SOURCE_DOCUMENT_CACHE_MAX_CHARACTERS
+        ):
+            _, removed = _source_document_cache.popitem(last=False)
+            _source_document_cache_characters -= removed.character_count
+    return document
 
 
 def source_document_threshold_tokens(context_window: int | None) -> int:
@@ -227,11 +276,11 @@ def _resolve_source_document(
             != digest
         ):
             raise ValueError("Source document is unavailable for this Run.")
-        return SourceDocument(
-            document_id=document_id,
+        return _cached_source_document(
+            document_id,
             name="Pasted user document",
             source_kind=source_kind,
-            content=message.canonical_text,
+            content_loader=lambda: message.canonical_text,
         )
     if source_kind == "attachment":
         attachment = db.get(Attachment, source_id)
@@ -247,14 +296,13 @@ def _resolve_source_document(
         key = attachment.metadata_json.get("extractedStorageKey")
         if not isinstance(key, str):
             raise ValueError("Source document extraction is unavailable.")
-        content = file_storage.read_bytes(key, expected_sha256=digest).decode(
-            "utf-8", errors="replace"
-        )
-        return SourceDocument(
-            document_id=document_id,
+        return _cached_source_document(
+            document_id,
             name=attachment.original_filename,
             source_kind=source_kind,
-            content=content,
+            content_loader=lambda: file_storage.read_bytes(
+                key, expected_sha256=digest
+            ).decode("utf-8", errors="replace"),
         )
     if source_kind == "project-file":
         project_file = db.get(ProjectFile, source_id)
@@ -271,12 +319,13 @@ def _resolve_source_document(
         )
         if project_file_version is None:
             raise ValueError("Source document version is unavailable for this Run.")
-        content = _project_file_version_content(file_storage, project_file_version)
-        return SourceDocument(
-            document_id=document_id,
+        return _cached_source_document(
+            document_id,
             name=project_file.logical_path,
             source_kind=source_kind,
-            content=content,
+            content_loader=lambda: _project_file_version_content(
+                file_storage, project_file_version
+            ),
         )
     if source_kind == "artifact":
         artifact = db.get(Artifact, source_id)
@@ -293,15 +342,14 @@ def _resolve_source_document(
         )
         if artifact_version is None:
             raise ValueError("Source document version is unavailable for this Run.")
-        content = artifact_storage.read_bytes(
-            artifact_version.storage_key,
-            expected_sha256=artifact_version.content_hash,
-        ).decode("utf-8", errors="replace")
-        return SourceDocument(
-            document_id=document_id,
+        return _cached_source_document(
+            document_id,
             name=artifact.display_name,
             source_kind=source_kind,
-            content=content,
+            content_loader=lambda: artifact_storage.read_bytes(
+                artifact_version.storage_key,
+                expected_sha256=artifact_version.content_hash,
+            ).decode("utf-8", errors="replace"),
         )
     raise ValueError("Source document type is unavailable for this Run.")
 
@@ -331,7 +379,7 @@ def _search_document(
     limit = _bounded_int(
         arguments.get("limit", 8), 1, SOURCE_DOCUMENT_MAX_SEARCH_MATCHES
     )
-    lines = document.content.splitlines()
+    lines = document.lines
     matches: list[dict[str, Any]] = []
     for index, (start, end) in enumerate(_line_chunks(len(lines)), start=1):
         chunk_lines = lines[start - 1 : end]
@@ -365,7 +413,7 @@ def _read_document(
 ) -> dict[str, Any]:
     start_line = max(1, int(arguments.get("start_line", 1)))
     limit = _bounded_int(arguments.get("limit", 200), 1, SOURCE_DOCUMENT_MAX_READ_LINES)
-    lines = document.content.splitlines()
+    lines = document.lines
     selected: list[str] = []
     next_line = start_line
     rendered_chars = 0

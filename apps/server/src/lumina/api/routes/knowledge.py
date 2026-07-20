@@ -15,19 +15,26 @@ from ...knowledge.schemas import (
     KnowledgeBatchTagRequest,
     KnowledgeSpaceCreate,
     KnowledgeSpaceUpdate,
+    KnowledgeTagCreate,
+    KnowledgeTagUpdate,
 )
 from ...knowledge.service import (
     create_knowledge_space,
+    create_knowledge_tag,
+    delete_knowledge_document,
     document_list_payload,
     document_payload,
     knowledge_graph_payload,
+    knowledge_tag_payloads,
     list_knowledge_documents,
     list_knowledge_spaces,
+    list_knowledge_tags,
     require_knowledge_document,
     save_message_as_knowledge_document,
     space_payload,
     tag_untagged_knowledge_documents,
     update_knowledge_space,
+    update_knowledge_tag,
 )
 from ...models import ProviderModel, User
 from ..errors import ApiProblem
@@ -89,18 +96,82 @@ def patch_knowledge_space(
     return space_payload(space)
 
 
+@router.get("/tags")
+def get_knowledge_tags(
+    space_id: str = Query(alias="spaceId"),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict[str, object]]:
+    return knowledge_tag_payloads(
+        db, list_knowledge_tags(db, user, space_id=space_id)
+    )
+
+
+@router.post("/tags", status_code=status.HTTP_201_CREATED)
+def post_knowledge_tag(
+    payload: KnowledgeTagCreate,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    tag = create_knowledge_tag(db, context.user, payload)
+    record_audit(
+        db,
+        action="knowledge_tag_created",
+        target_type="knowledge_tag",
+        target_id=tag.id,
+        result="success",
+        actor=context.user,
+        request_id=getattr(request.state, "request_id", None),
+        metadata={"space_id": tag.space_id, "namespace": tag.namespace},
+    )
+    db.commit()
+    db.refresh(tag)
+    return knowledge_tag_payloads(db, [tag])[0]
+
+
+@router.patch("/tags/{tag_id}")
+def patch_knowledge_tag(
+    tag_id: str,
+    payload: KnowledgeTagUpdate,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    tag = update_knowledge_tag(db, context.user, tag_id, payload)
+    record_audit(
+        db,
+        action="knowledge_tag_updated",
+        target_type="knowledge_tag",
+        target_id=tag.id,
+        result="success",
+        actor=context.user,
+        request_id=getattr(request.state, "request_id", None),
+        metadata={"space_id": tag.space_id, "namespace": tag.namespace},
+    )
+    db.commit()
+    db.refresh(tag)
+    return knowledge_tag_payloads(db, [tag])[0]
+
+
 @router.get("/documents")
 def get_knowledge_documents(
     space_id: str | None = Query(default=None, alias="spaceId"),
     project_id: str | None = Query(default=None, alias="projectId"),
     query: str = Query(default="", max_length=500),
+    limit: int = Query(default=200, ge=1, le=500),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[dict[str, object]]:
     if project_id:
         require_project(db, user, project_id)
     documents = list_knowledge_documents(
-        db, user, space_id=space_id, project_id=project_id, query=query
+        db,
+        user,
+        space_id=space_id,
+        project_id=project_id,
+        query=query,
+        limit=limit,
     )
     return document_list_payload(db, documents)
 
@@ -112,6 +183,28 @@ def get_knowledge_document(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     return document_payload(db, require_knowledge_document(db, user, document_id))
+
+
+@router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_knowledge_document(
+    document_id: str,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> Response:
+    document = delete_knowledge_document(db, context.user, document_id)
+    record_audit(
+        db,
+        action="knowledge_document_deleted",
+        target_type="knowledge_document",
+        target_id=document.id,
+        result="success",
+        actor=context.user,
+        request_id=getattr(request.state, "request_id", None),
+        metadata={"space_id": document.space_id, "project_id": document.project_id},
+    )
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/documents/from-message/{message_id}")

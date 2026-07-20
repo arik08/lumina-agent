@@ -33,6 +33,7 @@ export type PendingCommandAction = "steer_queued" | "cancel_command";
 export interface ConversationRuntime {
   turnSets: TurnSet[];
   totalQuestionCount: number;
+  usageBeforeLoadedTurnSets: Record<string, unknown>;
   snapshots: Record<string, RunSnapshot>;
   lastSequences: Record<string, number>;
   previousTurnSetCursor: string | null;
@@ -64,6 +65,7 @@ function emptyRuntime(): ConversationRuntime {
   return {
     turnSets: [],
     totalQuestionCount: 0,
+    usageBeforeLoadedTurnSets: {},
     snapshots: {},
     lastSequences: {},
     previousTurnSetCursor: null,
@@ -163,6 +165,7 @@ export function useLuminaWorkspace() {
   const runtimesRef = useRef<Record<string, ConversationRuntime>>({});
   const composerAttachmentsRef = useRef<AttachmentSummary[]>([]);
   const creatingConversationRef = useRef(false);
+  const newConversationPendingRef = useRef(false);
   const streamsRef = useRef(new Map<string, () => void>());
   const loadingOlderTurnSetsRef = useRef(new Set<string>());
   const hydratingRef = useRef(new Set<string>());
@@ -223,9 +226,10 @@ export function useLuminaWorkspace() {
     setConversations(page.items);
     conversationNextCursorRef.current = page.nextCursor;
     setConversationNextCursor(page.nextCursor);
-    setActiveConversationId((current) =>
-      current && page.items.some((item) => item.id === current) ? current : (page.items[0]?.id ?? null),
-    );
+    setActiveConversationId((current) => {
+      if (newConversationPendingRef.current) return null;
+      return current && page.items.some((item) => item.id === current) ? current : (page.items[0]?.id ?? null);
+    });
     return page.items;
   }, []);
 
@@ -271,6 +275,7 @@ export function useLuminaWorkspace() {
           ...(current[conversationId] ?? emptyRuntime()),
           turnSets: page.turnSets,
           totalQuestionCount: page.totalQuestionCount ?? 0,
+          usageBeforeLoadedTurnSets: page.usageBeforePage,
           previousTurnSetCursor: page.previousCursor,
           hasMoreTurnSetsBefore: page.hasMoreBefore,
           loaded: true,
@@ -280,8 +285,7 @@ export function useLuminaWorkspace() {
       }));
       const runIds = page.turnSets.flatMap((turnSet) => turnSet.runId ? [turnSet.runId] : []);
       if (runIds.length > 0) {
-        const snapshotResults = await Promise.allSettled(runIds.map((runId) => api.runs.getSnapshot(runId)));
-        const restoredSnapshots = snapshotResults.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+        const restoredSnapshots = await api.runs.getSnapshots(runIds).catch(() => []);
         setRuntimes((current) => {
           const runtime = current[conversationId] ?? emptyRuntime();
           const snapshots = { ...runtime.snapshots };
@@ -306,7 +310,10 @@ export function useLuminaWorkspace() {
     }
   }, []);
 
-  const loadOlderConversationTurnSets = useCallback(async (conversationId: string) => {
+  const loadOlderConversationTurnSets = useCallback(async (
+    conversationId: string,
+    throughQuestionIndex?: number,
+  ) => {
     const runtime = runtimesRef.current[conversationId];
     if (
       !runtime?.loaded
@@ -317,23 +324,57 @@ export function useLuminaWorkspace() {
 
     loadingOlderTurnSetsRef.current.add(conversationId);
     try {
-      const page = await api.conversations.getTurnSets(
-        conversationId,
-        runtime.previousTurnSetCursor,
-        3,
+      const requestedQuestionIndex = typeof throughQuestionIndex === "number"
+        ? Math.max(0, Math.floor(throughQuestionIndex))
+        : null;
+      const pageSize = requestedQuestionIndex === null ? 3 : 20;
+      const loadedQuestionCount = runtime.turnSets.reduce(
+        (count, turnSet) => count + turnSet.messages.filter(
+          (message) => message.role === "user" && Boolean(message.text.trim()),
+        ).length,
+        0,
       );
-      const snapshotResults = await Promise.allSettled(
-        page.turnSets.flatMap((turnSet) => turnSet.runId ? [api.runs.getSnapshot(turnSet.runId)] : []),
+      let unloadedQuestionCount = Math.max(0, runtime.totalQuestionCount - loadedQuestionCount);
+      let cursor: string | null = runtime.previousTurnSetCursor;
+      let hasMoreBefore: boolean = runtime.hasMoreTurnSetsBefore;
+      let previousCursor: string | null = runtime.previousTurnSetCursor;
+      let totalQuestionCount = runtime.totalQuestionCount;
+      let usageBeforeLoadedTurnSets = runtime.usageBeforeLoadedTurnSets;
+      let fetchedTurnSets: TurnSet[] = [];
+
+      do {
+        const page = await api.conversations.getTurnSets(conversationId, cursor, pageSize);
+        fetchedTurnSets = [...page.turnSets, ...fetchedTurnSets];
+        unloadedQuestionCount = Math.max(
+          0,
+          unloadedQuestionCount - page.turnSets.reduce(
+            (count, turnSet) => count + turnSet.messages.filter(
+              (message) => message.role === "user" && Boolean(message.text.trim()),
+            ).length,
+            0,
+          ),
+        );
+        previousCursor = page.previousCursor;
+        hasMoreBefore = page.hasMoreBefore;
+        totalQuestionCount = page.totalQuestionCount ?? totalQuestionCount;
+        usageBeforeLoadedTurnSets = page.usageBeforePage;
+        cursor = page.previousCursor;
+      } while (
+        requestedQuestionIndex !== null
+        && requestedQuestionIndex < unloadedQuestionCount
+        && hasMoreBefore
+        && cursor
       );
-      const restoredSnapshots = snapshotResults.flatMap((result) =>
-        result.status === "fulfilled" ? [result.value] : [],
-      );
+
+      const restoredSnapshots = await api.runs.getSnapshots(
+        fetchedTurnSets.flatMap((turnSet) => turnSet.runId ? [turnSet.runId] : []),
+      ).catch(() => []);
       const knownTurnSetIds = new Set(runtime.turnSets.map((turnSet) => turnSet.id));
-      const added = page.turnSets.some((turnSet) => !knownTurnSetIds.has(turnSet.id));
+      const added = fetchedTurnSets.some((turnSet) => !knownTurnSetIds.has(turnSet.id));
       setRuntimes((current) => {
         const currentRuntime = current[conversationId] ?? emptyRuntime();
         const currentTurnSetIds = new Set(currentRuntime.turnSets.map((turnSet) => turnSet.id));
-        const olderTurnSets = page.turnSets.filter((turnSet) => !currentTurnSetIds.has(turnSet.id));
+        const olderTurnSets = fetchedTurnSets.filter((turnSet) => !currentTurnSetIds.has(turnSet.id));
         const snapshots = { ...currentRuntime.snapshots };
         const lastSequences = { ...currentRuntime.lastSequences };
         restoredSnapshots.forEach((snapshot) => {
@@ -346,11 +387,12 @@ export function useLuminaWorkspace() {
           [conversationId]: {
             ...currentRuntime,
             turnSets: [...olderTurnSets, ...currentRuntime.turnSets],
-            totalQuestionCount: page.totalQuestionCount ?? currentRuntime.totalQuestionCount,
+            totalQuestionCount,
+            usageBeforeLoadedTurnSets,
             snapshots,
             lastSequences,
-            previousTurnSetCursor: page.previousCursor,
-            hasMoreTurnSetsBefore: page.hasMoreBefore,
+            previousTurnSetCursor: previousCursor,
+            hasMoreTurnSetsBefore: hasMoreBefore,
           },
         };
       });
@@ -846,20 +888,25 @@ export function useLuminaWorkspace() {
     setLoadingWorkspace(true);
     Promise.all([
       api.settings.getCurrent(activeProjectId, controller.signal),
-      api.providers.list(activeProjectId, controller.signal),
+      api.providers.getCatalog(activeProjectId, controller.signal),
       api.conversations.list({ projectId: activeProjectId, limit: CONVERSATION_LIST_PAGE_SIZE }, controller.signal),
     ])
-      .then(([currentSettings, providerItems, conversationPage]) => {
+      .then(([currentSettings, providerCatalog, conversationPage]) => {
         setSettings(currentSettings);
-        setProviders(providerItems);
+        setProviders(providerCatalog.providers);
+        setProviderModels(providerCatalog.modelsByProvider);
+        setModels(
+          providerCatalog.modelsByProvider[currentSettings.execution.providerId] ?? [],
+        );
         setConversations(conversationPage.items);
         conversationNextCursorRef.current = conversationPage.nextCursor;
         setConversationNextCursor(conversationPage.nextCursor);
-        setActiveConversationId((current) =>
-          current && conversationPage.items.some((item) => item.id === current)
+        setActiveConversationId((current) => {
+          if (newConversationPendingRef.current) return null;
+          return current && conversationPage.items.some((item) => item.id === current)
             ? current
-            : (conversationPage.items[0]?.id ?? null),
-        );
+            : (conversationPage.items[0]?.id ?? null);
+        });
       })
       .catch((error) => {
         if (!controller.signal.aborted) setNotice(apiMessage(error));
@@ -873,52 +920,18 @@ export function useLuminaWorkspace() {
   useEffect(() => {
     const providerId = settings?.execution.providerId;
     if (!providerId) return;
-    const controller = new AbortController();
-    api.providers.listModels(providerId, activeProjectId ?? undefined, controller.signal)
-      .then(setModels)
-      .catch((error) => {
-        if (!controller.signal.aborted) setNotice(apiMessage(error));
-      });
-    return () => controller.abort();
-  }, [activeProjectId, settings?.execution.providerId]);
-
-  useEffect(() => {
-    if (!activeProjectId || providers.length === 0) return;
-    const controller = new AbortController();
-    const providerIds = providers
-      .filter((provider) => provider.id !== "mock")
-      .map((provider) => provider.id);
-    Promise.all(
-      providerIds.map(async (providerId) => [
-        providerId,
-        await api.providers.listModels(providerId, activeProjectId, controller.signal),
-      ] as const),
-    )
-      .then((entries) => setProviderModels(Object.fromEntries(entries)))
-      .catch((error) => {
-        if (!controller.signal.aborted) setNotice(apiMessage(error));
-      });
-    return () => controller.abort();
-  }, [activeProjectId, providers]);
+    setModels(providerModels[providerId] ?? []);
+  }, [providerModels, settings?.execution.providerId]);
 
   const refreshProviderCatalog = useCallback(async () => {
     const projectId = activeProjectIdRef.current;
     if (!projectId) return;
     try {
-      const providerItems = await api.providers.list(projectId);
-      const entries = await Promise.all(
-        providerItems
-          .filter((provider) => provider.id !== "mock")
-          .map(async (provider) => [
-            provider.id,
-            await api.providers.listModels(provider.id, projectId),
-          ] as const),
-      );
-      const nextProviderModels = Object.fromEntries(entries);
-      setProviders(providerItems);
-      setProviderModels(nextProviderModels);
+      const catalog = await api.providers.getCatalog(projectId);
+      setProviders(catalog.providers);
+      setProviderModels(catalog.modelsByProvider);
       const selectedProviderId = settingsRef.current?.execution.providerId;
-      if (selectedProviderId) setModels(nextProviderModels[selectedProviderId] ?? []);
+      if (selectedProviderId) setModels(catalog.modelsByProvider[selectedProviderId] ?? []);
     } catch (error) {
       setNotice(apiMessage(error));
     }
@@ -1057,6 +1070,7 @@ export function useLuminaWorkspace() {
   }, [persistSettings]);
 
   const setActiveProjectId = useCallback((projectId: string) => {
+    newConversationPendingRef.current = false;
     setActiveProjectIdState(projectId);
     setActiveConversationId(null);
   }, []);
@@ -1118,6 +1132,7 @@ export function useLuminaWorkspace() {
     if (!projectId) return null;
     const mostRecent = conversationsRef.current.find((conversation) => conversation.projectId === projectId);
     if (mostRecent && isUntouchedConversation(mostRecent)) {
+      newConversationPendingRef.current = false;
       setActiveConversationId(mostRecent.id);
       return mostRecent;
     }
@@ -1128,6 +1143,7 @@ export function useLuminaWorkspace() {
       const nextConversations = [conversation, ...conversationsRef.current];
       conversationsRef.current = nextConversations;
       setConversations(nextConversations);
+      newConversationPendingRef.current = false;
       setActiveConversationId(conversation.id);
       setRuntimes((current) => ({ ...current, [conversation.id]: { ...emptyRuntime(), loaded: true } }));
       return conversation;
@@ -1140,10 +1156,12 @@ export function useLuminaWorkspace() {
   }, []);
 
   const startNewConversation = useCallback(() => {
+    newConversationPendingRef.current = true;
     setActiveConversationId(null);
   }, []);
 
   const openConversation = useCallback((conversation: ConversationListItem) => {
+    newConversationPendingRef.current = false;
     if (conversation.projectId !== activeProjectIdRef.current) {
       setActiveProjectIdState(conversation.projectId);
     }
@@ -1289,7 +1307,7 @@ export function useLuminaWorkspace() {
 
   const uploadFiles = useCallback(async (files: File[], source = "upload") => {
     if (!files.length) return [];
-    let conversationId = activeConversationId;
+    let conversationId = newConversationPendingRef.current ? null : activeConversationId;
     if (!conversationId) {
       const created = await createConversation();
       conversationId = created?.id ?? null;
@@ -1352,7 +1370,7 @@ export function useLuminaWorkspace() {
   ) => {
     const messageText = text.trim();
     if (!messageText || sending) return null;
-    let conversationId = activeConversationId;
+    let conversationId = newConversationPendingRef.current ? null : activeConversationId;
     let createdConversation: ConversationListItem | null = null;
     if (!conversationId) {
       const created = await createConversation();

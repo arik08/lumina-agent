@@ -4,7 +4,10 @@ import asyncio
 import json
 import re
 import time
+from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi.testclient import TestClient
@@ -17,8 +20,14 @@ from lumina.db import SessionLocal
 from lumina.deep_analysis.calculations import execute_python_calculation
 from lumina.deep_analysis.ai_planner import design_initial_workflow
 from lumina.deep_analysis.events import emit_event
+from lumina.deep_analysis.execution import (
+    _output_path,
+    _run_profile,
+    _run_prompt,
+    create_runnable_node_runs,
+)
+from lumina.deep_analysis.planning import runnable_nodes
 from lumina.deep_analysis.models import (
-    DeepAnalysisClaim,
     DeepAnalysisCommand,
     DeepAnalysisEvent,
     DeepAnalysisDecision,
@@ -40,7 +49,6 @@ from lumina.deep_analysis.planning import (
     initial_workflow_plan,
     next_runnable_node,
     plan_edges,
-    planned_positions,
 )
 from lumina.deep_analysis.quality import evaluate_quality_gate
 from lumina.main import create_app
@@ -79,6 +87,226 @@ def _login(client: TestClient) -> dict[str, str]:
     )
     assert response.status_code == 200, response.text
     return {"X-CSRF-Token": response.json()["csrfToken"]}
+
+
+def test_runnable_nodes_returns_all_dependency_ready_branches_in_sequence_order() -> None:
+    nodes = [
+        DeepAnalysisWorkflowNode(
+            workflow_revision_id="workflow",
+            node_key="root",
+            node_type="scope",
+            title="Root",
+            sequence=1,
+            position_x=0,
+            position_y=0,
+            status="completed",
+        ),
+        DeepAnalysisWorkflowNode(
+            workflow_revision_id="workflow",
+            node_key="branch-b",
+            node_type="research",
+            title="Branch B",
+            sequence=3,
+            position_x=0,
+            position_y=0,
+            status="planned",
+        ),
+        DeepAnalysisWorkflowNode(
+            workflow_revision_id="workflow",
+            node_key="branch-a",
+            node_type="research",
+            title="Branch A",
+            sequence=2,
+            position_x=0,
+            position_y=0,
+            status="ready",
+        ),
+        DeepAnalysisWorkflowNode(
+            workflow_revision_id="workflow",
+            node_key="join",
+            node_type="synthesis",
+            title="Join",
+            sequence=4,
+            position_x=0,
+            position_y=0,
+            status="planned",
+        ),
+    ]
+    edges = [
+        DeepAnalysisWorkflowEdge(
+            workflow_revision_id="workflow",
+            source_node_key="root",
+            target_node_key="branch-a",
+        ),
+        DeepAnalysisWorkflowEdge(
+            workflow_revision_id="workflow",
+            source_node_key="root",
+            target_node_key="branch-b",
+        ),
+        DeepAnalysisWorkflowEdge(
+            workflow_revision_id="workflow",
+            source_node_key="branch-a",
+            target_node_key="join",
+        ),
+        DeepAnalysisWorkflowEdge(
+            workflow_revision_id="workflow",
+            source_node_key="branch-b",
+            target_node_key="join",
+        ),
+    ]
+
+    assert [node.node_key for node in runnable_nodes(nodes, edges)] == [
+        "branch-a",
+        "branch-b",
+    ]
+
+
+def test_parallel_nodes_reserve_disjoint_shares_of_the_remaining_budget(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    mission = DeepAnalysisMission(
+        title="예산 예약 검증",
+        budget_microusd=1_000_000,
+        spent_microusd=100_000,
+    )
+    nodes = [
+        DeepAnalysisWorkflowNode(
+            workflow_revision_id="workflow",
+            node_key="branch-a",
+            node_type="research",
+            title="Branch A",
+            sequence=1,
+            position_x=0,
+            position_y=0,
+            status="ready",
+        ),
+        DeepAnalysisWorkflowNode(
+            workflow_revision_id="workflow",
+            node_key="branch-b",
+            node_type="research",
+            title="Branch B",
+            sequence=2,
+            position_x=0,
+            position_y=0,
+            status="ready",
+        ),
+    ]
+    reservations: list[int | None] = []
+
+    def fake_create_node_run(
+        _db: object,
+        *,
+        node: DeepAnalysisWorkflowNode,
+        budget_limit_microusd: int | None,
+        **_kwargs: object,
+    ) -> tuple[SimpleNamespace, bool]:
+        reservations.append(budget_limit_microusd)
+        return SimpleNamespace(id=node.node_key), True
+
+    monkeypatch.setattr(
+        "lumina.deep_analysis.execution.create_node_run",
+        fake_create_node_run,
+    )
+
+    runs = create_runnable_node_runs(
+        object(),  # type: ignore[arg-type]
+        user=User(id="budget-user"),
+        mission=mission,
+        nodes=nodes,
+        edges=[],
+        settings=_settings(tmp_path),
+    )
+
+    assert [run.id for run in runs] == ["branch-a", "branch-b"]
+    assert reservations == [450_000, 450_000]
+    assert sum(item or 0 for item in reservations) == (
+        mission.budget_microusd - mission.spent_microusd
+    )
+
+
+def test_node_output_contracts_keep_handoffs_compact_and_reports_detailed() -> None:
+    mission = DeepAnalysisMission(
+        title="출력 계약 검증",
+        objective="여러 근거를 분석해 최종 보고서를 작성합니다.",
+        created_at=datetime(2026, 7, 20, tzinfo=ZoneInfo("Asia/Seoul")),
+        execution_settings_json={
+            "analysisDepth": "deep",
+            "answerLength": "detailed",
+            "outputMode": "file",
+            "outputFormat": "html",
+            "targetOutputTokens": 10_000,
+        },
+    )
+    scope = DeepAnalysisWorkflowNode(
+        node_key="N001",
+        node_type="scope",
+        title="범위 설계",
+        purpose="검증 범위를 정의합니다.",
+    )
+    analysis = DeepAnalysisWorkflowNode(
+        node_key="N020",
+        node_type="analysis",
+        title="원인 분석",
+        purpose="핵심 원인을 분석합니다.",
+    )
+    report = DeepAnalysisWorkflowNode(
+        node_key="N040",
+        node_type="report",
+        title="최종 보고서",
+        purpose="최종 결론을 작성합니다.",
+    )
+
+    assert _run_profile(mission, scope) == ("deep", "brief", 1_200)
+    assert _run_profile(mission, analysis) == ("deep", "standard", 3_500)
+    assert _run_profile(mission, report) == ("deep", "detailed", 10_000)
+
+    scope_prompt = _run_prompt(mission, scope, [])
+    assert "분석 질문을 검증 가능한 형태로 구체화" in scope_prompt
+    assert "최종 보고서가 아니라 다음 Node를 위한 압축 인계물" in scope_prompt
+    assert "선행 산출물의 내용을 반복 요약하지" in scope_prompt
+
+    report_prompt = _run_prompt(mission, report, [])
+    assert "의사결정자가 바로 사용할 수 있는 최종 보고서" in report_prompt
+    assert "하나의 일관된 최종 보고서" in report_prompt
+    assert "독립 실행 가능한 HTML 문서" in report_prompt
+    assert "Markdown code fence로 감싸지 마십시오" in report_prompt
+    assert _output_path(mission, scope).endswith("/N001_범위 설계.md")
+    assert _output_path(mission, report).endswith("/N040_최종 보고서.html")
+
+    mission.execution_settings_json["outputFormat"] = "임원용 1페이지 의사결정 메모"
+    custom_prompt = _run_prompt(mission, report, [])
+    assert "사용자가 지정한 최종 산출물 형태는 '임원용 1페이지 의사결정 메모'" in custom_prompt
+    assert "직접 입력한 형태의 원문은 Markdown 파일로 저장" in custom_prompt
+    assert _output_path(mission, report).endswith("/N040_최종 보고서.md")
+
+
+def test_node_output_contract_respects_smaller_target_and_chat_mode() -> None:
+    analysis = DeepAnalysisWorkflowNode(
+        node_key="N020",
+        node_type="analysis",
+        title="원인 분석",
+        purpose="핵심 원인을 분석합니다.",
+    )
+    file_mission = DeepAnalysisMission(
+        title="작은 출력 목표",
+        objective="간결하게 분석합니다.",
+        execution_settings_json={
+            "outputMode": "file",
+            "targetOutputTokens": 1_000,
+        },
+    )
+    chat_mission = DeepAnalysisMission(
+        title="채팅 출력",
+        objective="간결하게 분석합니다.",
+        execution_settings_json={
+            "outputMode": "chat",
+            "targetOutputTokens": None,
+        },
+    )
+
+    assert _run_profile(file_mission, analysis) == ("auto", "standard", 1_000)
+    assert _run_profile(chat_mission, analysis) == ("auto", "standard", None)
 
 
 def _create_viewer() -> dict[str, str]:
@@ -150,6 +378,16 @@ def test_mission_workflow_persists_and_uses_revision_cas(tmp_path: Path) -> None
             restored.json()["workflow"]["graphDigest"]
             == mission["workflow"]["graphDigest"]
         )
+        projection = client.get(
+            f"/api/deep-analysis/missions/{mission['id']}/projection"
+        )
+        assert projection.status_code == 200
+        projected = projection.json()
+        assert projected["missionId"] == mission["id"]
+        assert projected["eventCursor"] == mission["eventCursor"]
+        assert len(projected["nodes"]) == len(mission["workflow"]["nodes"])
+        assert "workflow" not in projected
+        assert "sourceManifest" not in projected
 
         updated = client.patch(
             f"/api/deep-analysis/missions/{mission['id']}",
@@ -199,7 +437,13 @@ def test_mission_creation_freezes_sources_and_applies_run_output_settings(
                 "analysisDepth": "deep",
                 "answerLength": "detailed",
                 "outputMode": "file",
+                "outputFormat": "html",
                 "targetOutputTokens": 20_000,
+                "execution": {
+                    "providerId": "mock",
+                    "modelKey": "mock-agent",
+                    "effortId": "low",
+                },
                 "promptReferences": [{
                     "kind": "file",
                     "referenceId": source["id"],
@@ -214,7 +458,41 @@ def test_mission_creation_freezes_sources_and_applies_run_output_settings(
         assert mission["analysisDepth"] == "deep"
         assert mission["answerLength"] == "detailed"
         assert mission["outputMode"] == "file"
+        assert mission["outputFormat"] == "html"
         assert mission["targetOutputTokens"] == 20_000
+        assert mission["execution"] == {
+            "providerId": "mock",
+            "modelKey": "mock-agent",
+            "effortId": "low",
+        }
+        assert mission["promptReferences"][0]["versionOrDigest"] == source["contentHash"]
+        assert mission["sourceManifest"][0]["projectFileId"] == source["id"]
+
+        updated = client.patch(
+            f"/api/deep-analysis/missions/{mission['id']}",
+            headers=headers,
+            json={
+                "expectedRevision": mission["revision"],
+                "analysisDepth": "standard",
+                "answerLength": "brief",
+                "outputMode": "chat",
+                "outputFormat": "임원용 1페이지 의사결정 메모",
+                "targetOutputTokens": None,
+                "execution": {
+                    "providerId": "mock",
+                    "modelKey": "mock-agent",
+                    "effortId": "low",
+                },
+                "promptReferences": mission["promptReferences"],
+            },
+        )
+        assert updated.status_code == 200, updated.text
+        mission = updated.json()
+        assert mission["analysisDepth"] == "standard"
+        assert mission["answerLength"] == "brief"
+        assert mission["outputMode"] == "chat"
+        assert mission["outputFormat"] == "임원용 1페이지 의사결정 메모"
+        assert mission["targetOutputTokens"] is None
         assert mission["promptReferences"][0]["versionOrDigest"] == source["contentHash"]
         assert mission["sourceManifest"][0]["projectFileId"] == source["id"]
 
@@ -228,11 +506,71 @@ def test_mission_creation_freezes_sources_and_applies_run_output_settings(
         with SessionLocal() as db:
             run = db.get(Run, run_id)
             assert run is not None
-            assert run.snapshot_json["analysis_depth"] == "deep"
-            assert run.snapshot_json["answer_length"] == "detailed"
-            assert run.snapshot_json["output_mode"] == "file"
-            assert run.snapshot_json["target_output_tokens"] == 20_000
+            assert run.snapshot_json["analysis_depth"] == "standard"
+            assert run.snapshot_json["answer_length"] == "brief"
+            assert run.snapshot_json["output_mode"] == "chat"
+            assert run.snapshot_json["target_output_tokens"] is None
+            assert run.provider_id == "mock"
+            assert run.model_key == "mock-agent"
+            assert run.effort == "low"
             assert run.snapshot_json["prompt_references"][0]["reference_id"] == source["id"]
+
+
+def test_mission_without_references_does_not_include_project_files(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "lumina.api.routes.deep_analysis.local_run_executor.enqueue",
+        lambda _run_id: None,
+    )
+    with TestClient(create_app(_settings(tmp_path))) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        unrelated = client.post(
+            f"/api/projects/{project_id}/files",
+            headers=headers,
+            data={"logicalPath": "포스코_간단_소개.md", "changeReason": "무관 자료"},
+            files={
+                "file": (
+                    "포스코_간단_소개.md",
+                    "# 포스코 간단 소개\n".encode(),
+                    "text/markdown",
+                )
+            },
+        )
+        assert unrelated.status_code == 201, unrelated.text
+
+        created = client.post(
+            f"/api/projects/{project_id}/deep-analysis/missions",
+            headers=headers,
+            json={
+                "title": "오라클 주가 장기하락 원인 분석",
+                "objective": "오라클 주가 하락 원인을 검토합니다.",
+            },
+        )
+        assert created.status_code == 201, created.text
+        mission = created.json()
+        assert mission["promptReferences"] == []
+        assert mission["sourceManifest"] == []
+
+        started = client.post(
+            f"/api/deep-analysis/missions/{mission['id']}/start",
+            headers=headers,
+            json={"expectedRevision": mission["revision"]},
+        )
+        assert started.status_code == 200, started.text
+        payload = started.json()
+        assert payload["sourceManifest"] == []
+        node = payload["workflow"]["nodes"][0]
+        assert "포스코_간단_소개.md" not in node["executionPrompt"]
+        assert unrelated.json()["id"] not in node["executionPrompt"]
+        assert "다음 Node를 위한 압축 인계물" in node["executionPrompt"]
+        with SessionLocal() as db:
+            run = db.get(Run, node["runId"])
+            assert run is not None
+            assert run.snapshot_json["project_file_manifest"] == []
+            assert run.snapshot_json["answer_length"] == "brief"
+            assert run.snapshot_json["target_output_tokens"] == 1_200
 
 
 def test_mission_sidebar_preferences_rename_and_project_move_persist(tmp_path: Path) -> None:
@@ -1187,7 +1525,6 @@ def test_workflow_draft_is_separate_validated_and_activated_atomically(
         assert draft["state"] == "draft"
         assert draft["id"] != active_id
         nodes = draft["nodes"]
-        edges = draft["edges"]
         nodes[0]["positionX"] += 75
         payload_nodes = [
             {
@@ -1414,8 +1751,13 @@ def test_mission_executes_all_nodes_and_persists_markdown_outputs(
             and "Claim·Evidence" not in node["executionPrompt"]
             for node in restored["workflow"]["nodes"]
         )
+        output_timestamp = datetime.fromisoformat(created["createdAt"]).astimezone(
+            ZoneInfo("Asia/Seoul")
+        )
         assert all(
-            node["outputLogicalPath"].startswith("심층분석/실행 가능한 분석_")
+            node["outputLogicalPath"].startswith(
+                f"심층분석/실행 가능한 분석_{output_timestamp:%y%m%d_%H%M%S}/"
+            )
             for node in restored["workflow"]["nodes"]
         )
         assert all(node["contextManifest"] for node in restored["workflow"]["nodes"])
@@ -1484,8 +1826,12 @@ def test_mission_delete_checks_revision_and_cascades_workflow(tmp_path: Path) ->
         workflow_id = mission["workflow"]["id"]
         node_ids = [node["id"] for node in mission["workflow"]["nodes"]]
         edge_ids = [edge["id"] for edge in mission["workflow"]["edges"]]
+        created_at = datetime.fromisoformat(mission["createdAt"]).astimezone(
+            ZoneInfo("Asia/Seoul")
+        )
         output_path = (
-            f"심층분석/삭제할 분석_{mission['id'][:8]}/N001_목표·범위 확정.md"
+            f"심층분석/삭제할 분석_{created_at:%y%m%d_%H%M%S}/"
+            "N001_목표·범위 확정.md"
         )
         output = client.post(
             f"/api/projects/{project_id}/files",
@@ -1923,7 +2269,19 @@ def test_python_calculation_uses_frozen_csv_and_saves_script_and_result(
         mission = client.post(
             f"/api/projects/{project_id}/deep-analysis/missions",
             headers=headers,
-            json={"title": "원가 계산"},
+            json={
+                "title": "원가 계산",
+                "objective": "@inputs/cost.csv를 기준으로 원가를 계산합니다.",
+                "promptReferences": [
+                    {
+                        "kind": "file",
+                        "referenceId": uploaded.json()["id"],
+                        "versionOrDigest": uploaded.json()["contentHash"],
+                        "tokenStart": 0,
+                        "tokenEnd": len("@inputs/cost.csv"),
+                    }
+                ],
+            },
         ).json()
         started = client.post(
             f"/api/deep-analysis/missions/{mission['id']}/start",

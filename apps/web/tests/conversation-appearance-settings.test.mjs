@@ -22,6 +22,8 @@ test("personal settings expose bounded one-pixel font controls", () => {
 test("conversation font size controls every center-panel text surface", () => {
   assert.match(app, /style=\{\{ \.\.\.conversationLayoutStyle, "--artifact-pane-width"/);
   assert.doesNotMatch(app, /className=\{`chat-pane view-\$\{mainView\}`\} id="top" style=/);
+  assert.match(conversationTurn, /className="assistant-content conversation-response-typography"/);
+  assert.match(styles, /\.conversation-response-typography\s*\{[^}]*font-family:\s*inherit;[^}]*font-size:\s*var\(--conversation-font-size\);[^}]*line-height:\s*1\.68;/s);
   assert.match(styles, /\.chat-pane\.view-chat :is\(\.chat-header, \.conversation-scroll, \.dock-area\) \*/);
   assert.match(styles, /\.app-shell > \.tool-message\.is-global \*[\s\S]*?font-size: calc\(var\(--conversation-font-size\) - 2px\)/);
   assert.match(styles, /\.tool-message\.is-global pre \{[^}]*max-height: none;[^}]*overflow: visible;/);

@@ -5,12 +5,14 @@ import test from "node:test";
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
 test("composer keeps model controls intact and sends independent analysis and answer options", async () => {
-  const [app, styles, workspace, types] = await Promise.all([
+  const [rawApp, controls, styles, workspace, types] = await Promise.all([
     read("../src/App.tsx"),
+    read("../src/components/ComposerControls.tsx"),
     read("../src/styles.css"),
     read("../src/use-lumina-workspace.ts"),
     read("../src/api-types.ts"),
   ]);
+  const app = `${rawApp}\n${controls}`;
 
   assert.match(app, /menuLabel="분석 범위"/);
   assert.match(app, /menuLabel="답변 분량"/);
@@ -46,6 +48,9 @@ test("composer keeps model controls intact and sends independent analysis and an
   assert.match(styles, /\.theme-dark :is\(\.composer-reference, \.composer-attachment\) \{ background: #26334d; color: #c8d6f5; \}/);
   assert.match(styles, /\.model-control, \.composer-footer \.effort-control \{[^}]*color: var\(--muted\)/);
   assert.match(styles, /\.composer-footer \.effort-control \{ font-weight: 700; \}/);
+  assert.match(app, /controlClassName=\{`effort-control is-\$\{workspace\.settings\?\.execution\.effortId \?\? "auto"\}`\}/);
+  assert.match(styles, /\.composer-footer \.effort-control\.is-medium \{ color: var\(--ink\); \}/);
+  assert.match(styles, /\.composer-footer \.effort-control\.is-high \{ color: var\(--artifact-length-warning\); \}/);
   assert.match(app, /artifact-output-mode-value is-\$\{outputMode\}/);
   assert.match(styles, /\.artifact-output-mode-value\.is-chat \{ color: var\(--ink\); \}/);
   assert.match(styles, /\.artifact-output-mode-value\.is-file \{ color: var\(--artifact-length-warning\); \}/);
@@ -55,7 +60,7 @@ test("composer keeps model controls intact and sends independent analysis and an
   assert.match(styles, /\.artifact-output-mode-picker > span \{[^}]*font-size: 12\.5px/);
   assert.match(app, /triggerRect\.left \+ \(triggerRect\.width - popoverRect\.width\) \/ 2/);
   assert.match(styles, /\.composer-picker:has\(\.analysis-depth-control\) \.composer-picker-menu,[\s\S]*?left: 50%; transform: translateX\(-50%\)/);
-  assert.match(app, /<ComposerPicker[\s\S]*?controlClassName="model-control"[\s\S]*?<ComposerPicker[\s\S]*?controlClassName="effort-control"/);
+  assert.match(app, /<ComposerPicker[\s\S]*?controlClassName="model-control"[\s\S]*?<ComposerPicker[\s\S]*?controlClassName=\{`effort-control/);
   assert.match(workspace, /analysisDepth: AnalysisDepth = "auto"/);
   assert.match(workspace, /answerLength: AnswerLength = "auto"/);
   assert.match(workspace, /outputMode: currentSettings\.outputMode,[\s\S]*?analysisDepth,[\s\S]*?answerLength/);

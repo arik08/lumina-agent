@@ -30,7 +30,8 @@ test("marketplace detects repository changes and keeps manual full refresh as fa
 
   assert.match(api, /skillsChanged: number; mcpChanged: number; revision: string/);
   assert.match(api, /getRepositoryState: getRepositoryExtensionState/);
-  assert.match(view, /window\.setInterval\(pollRepositoryState, 3_000\)/);
+  assert.match(view, /window\.setInterval\(pollWhenVisible, 15_000\)/);
+  assert.match(view, /document\.addEventListener\("visibilitychange", pollWhenVisible\)/);
   assert.match(view, /previousRevision === state\.revision/);
   assert.match(view, /const state = await api\.extensions\.syncRepository\(\)/);
   assert.match(view, /onClick=\{\(\) => void refreshRepository\(\)\}/);

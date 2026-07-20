@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import Any
 
 from fastapi.encoders import jsonable_encoder
@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..api.errors import ApiProblem
-from ..models import Plan, PlanStep, Run, new_uuid, utc_now
+from ..models import Plan, PlanStep, PlanSubtask, Run, new_uuid, utc_now
 from .events import append_event
 from .state import COMPLETED, QUEUED, TERMINAL_STATUSES
 from .subtasks import list_step_subtasks
@@ -208,6 +208,71 @@ def plan_snapshot(db: Session, run: Run) -> dict[str, Any] | None:
     }
 
 
+def plan_snapshots(
+    db: Session, runs: Sequence[Run]
+) -> dict[str, dict[str, Any] | None]:
+    run_ids = [run.id for run in runs]
+    if not run_ids:
+        return {}
+    plans = list(db.scalars(select(Plan).where(Plan.run_id.in_(run_ids))))
+    plans_by_run = {plan.run_id: plan for plan in plans}
+    plan_ids = [plan.id for plan in plans]
+    steps = (
+        list(
+            db.scalars(
+                select(PlanStep)
+                .where(PlanStep.plan_id.in_(plan_ids))
+                .order_by(PlanStep.plan_id, PlanStep.position, PlanStep.id)
+            )
+        )
+        if plan_ids
+        else []
+    )
+    step_ids = [step.id for step in steps]
+    subtasks = (
+        list(
+            db.scalars(
+                select(PlanSubtask)
+                .where(PlanSubtask.plan_step_id.in_(step_ids))
+                .order_by(
+                    PlanSubtask.plan_step_id,
+                    PlanSubtask.position,
+                    PlanSubtask.id,
+                )
+            )
+        )
+        if step_ids
+        else []
+    )
+    from .subtasks import subtask_payload
+
+    subtasks_by_step: dict[str, list[dict[str, Any]]] = {}
+    for subtask in subtasks:
+        subtasks_by_step.setdefault(subtask.plan_step_id, []).append(
+            subtask_payload(subtask)
+        )
+    steps_by_plan: dict[str, list[dict[str, Any]]] = {}
+    for step in steps:
+        payload = _plan_step_payload(db, step, include_subtasks=False)
+        payload["subtasks"] = subtasks_by_step.get(step.id, [])
+        steps_by_plan.setdefault(step.plan_id, []).append(payload)
+    return {
+        run.id: (
+            {
+                "id": plan.id,
+                "goal": plan.goal,
+                "status": plan.status,
+                "steps": steps_by_plan.get(plan.id, []),
+                "createdAt": plan.created_at,
+                "updatedAt": plan.updated_at,
+            }
+            if (plan := plans_by_run.get(run.id)) is not None
+            else None
+        )
+        for run in runs
+    }
+
+
 def update_work_plan(
     db: Session,
     run: Run,
@@ -252,9 +317,7 @@ def update_work_plan(
             raise ValueError("업무 계획 상태가 올바르지 않습니다.")
         phase = item.get("phase")
         if phase is None:
-            phase = previous_phases_by_order.get(order) or _infer_work_plan_phase(
-                label
-            )
+            phase = previous_phases_by_order.get(order) or _infer_work_plan_phase(label)
         if phase not in WORK_PLAN_PHASES:
             raise ValueError("업무 계획 단계 성격이 올바르지 않습니다.")
         if status == "in_progress":
@@ -338,10 +401,14 @@ def align_work_plan_for_tool_start(
         ),
         None,
     )
-    if active_index is not None and (
-        steps[active_index].get("phase")
-        or _infer_work_plan_phase(str(steps[active_index].get("step", "")))
-    ) == target_phase:
+    if (
+        active_index is not None
+        and (
+            steps[active_index].get("phase")
+            or _infer_work_plan_phase(str(steps[active_index].get("step", "")))
+        )
+        == target_phase
+    ):
         return None
 
     target_index = next(
@@ -349,10 +416,7 @@ def align_work_plan_for_tool_start(
             index
             for index, item in enumerate(steps)
             if item.get("status") != "completed"
-            and (
-                item.get("phase")
-                or _infer_work_plan_phase(str(item.get("step", "")))
-            )
+            and (item.get("phase") or _infer_work_plan_phase(str(item.get("step", ""))))
             == target_phase
             and (active_index is None or index > active_index)
         ),

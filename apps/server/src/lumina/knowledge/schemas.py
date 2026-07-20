@@ -38,9 +38,39 @@ class KnowledgeBatchTagRequest(ApiModel):
     model_key: str = Field(min_length=1, max_length=240)
 
 
+class KnowledgeTagCreate(ApiModel):
+    space_id: str
+    namespace: str = Field(default="topic", pattern=r"^[a-z][a-z0-9_-]{0,79}$")
+    canonical_name: str = Field(min_length=1, max_length=160)
+    definition: str = Field(default="", max_length=1_000)
+    scope_note: str = Field(default="", max_length=40)
+    aliases: list[str] = Field(default_factory=list, max_length=8)
+    parent_tag_id: str | None = None
+
+
+class KnowledgeTagUpdate(ApiModel):
+    expected_revision: int = Field(ge=1)
+    namespace: str | None = Field(
+        default=None, pattern=r"^[a-z][a-z0-9_-]{0,79}$"
+    )
+    canonical_name: str | None = Field(default=None, min_length=1, max_length=160)
+    definition: str | None = Field(default=None, max_length=1_000)
+    scope_note: str | None = Field(default=None, max_length=40)
+    aliases: list[str] | None = Field(default=None, max_length=8)
+    parent_tag_id: str | None = None
+
+    @model_validator(mode="after")
+    def require_change(self) -> "KnowledgeTagUpdate":
+        if not (self.model_fields_set - {"expected_revision"}):
+            raise ValueError("at least one field is required")
+        return self
+
+
 __all__ = [
     "KnowledgeDocumentListQuery",
     "KnowledgeBatchTagRequest",
     "KnowledgeSpaceCreate",
     "KnowledgeSpaceUpdate",
+    "KnowledgeTagCreate",
+    "KnowledgeTagUpdate",
 ]

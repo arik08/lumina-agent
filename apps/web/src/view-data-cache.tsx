@@ -1,6 +1,17 @@
 import { createContext, type Dispatch, type ReactNode, type SetStateAction, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 const ViewDataCacheContext = createContext<Map<string, unknown> | null>(null);
+const viewDataCacheLimit = 128;
+
+function touchCacheValue<T>(cache: Map<string, unknown>, key: string, value: T) {
+  cache.delete(key);
+  cache.set(key, value);
+  while (cache.size > viewDataCacheLimit) {
+    const oldestKey = cache.keys().next().value;
+    if (typeof oldestKey !== "string") break;
+    cache.delete(oldestKey);
+  }
+}
 
 export function ViewDataCacheProvider({ scope, children }: { scope: string; children: ReactNode }) {
   const cacheRef = useRef<{ scope: string; values: Map<string, unknown> }>({ scope, values: new Map() });
@@ -13,10 +24,12 @@ export function useCachedViewState<T>(key: string, initialValue: T): [T, Dispatc
   if (!cache) throw new Error("useCachedViewState must be used inside ViewDataCacheProvider");
   const initialValueRef = useRef(initialValue);
 
-  const read = useCallback(() => ({
-    value: cache.has(key) ? cache.get(key) as T : initialValueRef.current,
-    hasValue: cache.has(key),
-  }), [cache, key]);
+  const read = useCallback(() => {
+    const hasValue = cache.has(key);
+    const value = hasValue ? cache.get(key) as T : initialValueRef.current;
+    if (hasValue) touchCacheValue(cache, key, value);
+    return { value, hasValue };
+  }, [cache, key]);
   const [entry, setEntry] = useState(read);
 
   useLayoutEffect(() => {
@@ -28,7 +41,7 @@ export function useCachedViewState<T>(key: string, initialValue: T): [T, Dispatc
       const value = typeof next === "function"
         ? (next as (previous: T) => T)(current.value)
         : next;
-      cache.set(key, value);
+      touchCacheValue(cache, key, value);
       return { value, hasValue: true };
     });
   }, [cache, key]);

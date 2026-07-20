@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+const app = [
+  readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8"),
+  readFileSync(new URL("../src/components/ComposerControls.tsx", import.meta.url), "utf8"),
+].join("\n");
 const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 
 test("file mode warning follows the LLM JSON decision through a body-level speech bubble", () => {

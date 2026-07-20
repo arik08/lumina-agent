@@ -96,6 +96,54 @@ def test_project_file_api_accepts_blank_text_files(
         assert downloaded.content == content.encode()
 
 
+def test_project_file_api_keyset_pages_without_duplicates(tmp_path: Path) -> None:
+    settings = _settings(tmp_path, "project-file-pages.db")
+    with TestClient(create_app(settings)) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        created_ids = {
+            _upload(
+                client,
+                headers,
+                project_id,
+                logical_path=f"pages/{index}.txt",
+                content=f"page {index}",
+            ).json()["id"]
+            for index in range(3)
+        }
+
+        first = client.get(
+            f"/api/projects/{project_id}/files",
+            params={"page": True, "limit": 2},
+        )
+        assert first.status_code == 200, first.text
+        assert len(first.json()["items"]) == 2
+        assert first.json()["nextCursor"]
+
+        second = client.get(
+            f"/api/projects/{project_id}/files",
+            params={
+                "page": True,
+                "limit": 2,
+                "cursor": first.json()["nextCursor"],
+            },
+        )
+        assert second.status_code == 200, second.text
+        assert len(second.json()["items"]) == 1
+        assert second.json()["nextCursor"] is None
+        listed_ids = {
+            item["id"] for item in first.json()["items"] + second.json()["items"]
+        }
+        assert listed_ids == created_ids
+
+        invalid = client.get(
+            f"/api/projects/{project_id}/files",
+            params={"page": True, "cursor": "not-a-cursor"},
+        )
+        assert invalid.status_code == 400
+        assert invalid.json()["code"] == "invalid_file_cursor"
+
+
 def test_project_file_api_versions_paths_search_and_isolation(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     with TestClient(create_app(settings)) as client:

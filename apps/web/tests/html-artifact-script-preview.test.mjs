@@ -30,7 +30,7 @@ test("legacy HTML report footnotes match chat citations and remain clickable", (
 });
 
 test("HTML Artifact Mermaid blocks use the bundled renderer and expandable viewer", () => {
-  assert.match(appSource, /import \{ renderMermaidSvg \} from "\.\/components\/InteractiveResponse"/);
+  assert.match(appSource, /await import\("\.\/components\/InteractiveResponse"\)/);
   assert.match(appSource, /const artifactMermaidCodeSelector = "pre > code\.language-mermaid/);
   assert.match(appSource, /await renderMermaidSvg\(task\.source\)/);
   assert.match(appSource, /task\.target\.dataset\.luminaRenderedMermaid = "true"/);

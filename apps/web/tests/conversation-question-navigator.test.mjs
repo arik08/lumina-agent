@@ -11,7 +11,7 @@ test("user questions expose compact preview markers and message anchors", async 
     read("../src/components/ConversationTurn.tsx"),
   ]);
 
-  assert.match(app, /<ConversationQuestionNavigator[\s\S]*?turnSets=\{activeRuntime\.turnSets\}[\s\S]*?totalQuestionCount=\{activeRuntime\.totalQuestionCount\}[\s\S]*?theme=\{theme\}[\s\S]*?scrollContainerRef=\{conversationFollow\.containerRef\}[\s\S]*?onNavigateStart=\{conversationFollow\.onUserIntent\}/s);
+  assert.match(app, /<ConversationQuestionNavigator[\s\S]*?turnSets=\{activeRuntime\.turnSets\}[\s\S]*?totalQuestionCount=\{activeRuntime\.totalQuestionCount\}[\s\S]*?theme=\{theme\}[\s\S]*?scrollContainerRef=\{conversationFollow\.containerRef\}[\s\S]*?onLoadQuestion=\{loadQuestionFromNavigator\}[\s\S]*?onNavigateStart=\{conversationFollow\.onUserIntent\}/s);
   assert.doesNotMatch(app, /<ConversationQuestionNavigator[\s\S]*?snapshots=/s);
   assert.match(navigator, /message\.role !== "user"/);
   assert.match(navigator, /anchorId: message\.id, questionPreview, answerPreview/);
@@ -21,8 +21,11 @@ test("user questions expose compact preview markers and message anchors", async 
   assert.match(navigator, /const authoritativeQuestionCount = typeof totalQuestionCount === "number" && Number\.isFinite\(totalQuestionCount\)[\s\S]*?\? totalQuestionCount[\s\S]*?: 0/);
   assert.match(navigator, /const questionCount = Math\.max\(authoritativeQuestionCount, items\.length\)/);
   assert.match(navigator, /const unloadedQuestionCount = questionCount - items\.length/);
-  assert.match(navigator, /Array\.from\(\{ length: unloadedQuestionCount \}/);
-  assert.match(navigator, /className="question-navigator-marker is-unloaded"/);
+  assert.match(navigator, /Array\.from\(\{ length: questionCount \}/);
+  assert.match(navigator, /const isUnloaded = !item/);
+  assert.match(navigator, /if \(isUnloaded\) void loadQuestion\(questionIndex, false\)/);
+  assert.match(navigator, /else void loadQuestion\(questionIndex, true\)/);
+  assert.match(navigator, /aria-busy=\{loadingQuestionIndex === questionIndex \|\| undefined\}/);
   assert.doesNotMatch(navigator, /\[\*_`~>\|\]/);
   assert.match(navigator, /aria-label=\{`사용자 질문 \$\{questionCount\}개 바로가기`\}/);
   assert.match(turn, /data-question-anchor=\{message\.id\}/);
@@ -37,10 +40,13 @@ test("hovered marker tapers its neighbors and click scrolling accelerates then d
   ]);
 
   assert.match(navigator, /if \(distance === 1\) return 0\.76/);
-  assert.match(navigator, /onMouseEnter=\{\(\) => setActiveIndex\(questionIndex\)\}/);
+  assert.match(navigator, /onMouseEnter=\{\(\) => \{\s*setActiveIndex\(questionIndex\);/s);
   assert.match(navigator, /const target = \[\.\.\.container\.querySelectorAll<HTMLElement>\("\[data-question-anchor\]"\)\]/);
   assert.match(navigator, /Math\.min\(340, Math\.max\(190,/);
   assert.match(navigator, /window\.requestAnimationFrame\(step\)/);
+  assert.match(navigator, /container\.scrollTop \+ renderedTargetRect\.top - renderedContainerRect\.top - 24/);
+  assert.match(navigator, /window\.requestAnimationFrame\(alignToRenderedTarget\)/);
+  assert.match(navigator, /alignToRenderedTarget\(remainingAttempts - 1\)/);
   assert.match(navigator, /prefers-reduced-motion: reduce/);
   assert.match(styles, /\.question-navigator-marker::before \{[^}]*transform: translateY\(-50%\) scaleX\(var\(--question-marker-scale\)\)[^}]*transition:/s);
   assert.match(navigator, /<GlobalTooltipLayer anchor=\{markerRefs\.current\[questionIndex\]\} className=\{`question-navigator-tooltip is-\$\{theme\}`\}/);

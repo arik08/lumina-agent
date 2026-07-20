@@ -1,4 +1,5 @@
 from .service import (
+    CURRENT_RUN_CONTEXT_METADATA_KEY,
     ConservativeContextSummarizer,
     ContextPreparation,
     ContextSummarizer,
@@ -9,6 +10,7 @@ from .service import (
 )
 
 __all__ = [
+    "CURRENT_RUN_CONTEXT_METADATA_KEY",
     "ConservativeContextSummarizer",
     "ContextPreparation",
     "ContextSummarizer",

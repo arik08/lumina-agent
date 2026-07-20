@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import threading
+import time
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
@@ -11,10 +14,74 @@ from openpyxl import Workbook
 from pptx import Presentation
 from sqlalchemy.orm import Session
 
-from lumina.api.routes.attachments import _sniff_mime
+from lumina.api.routes.attachments import _extract_attachment, _sniff_mime
 from lumina.attachments import extract_attachment_text
 from lumina.config import Settings
 from lumina.main import create_app
+
+
+def test_attachment_extraction_runs_off_the_event_loop_thread() -> None:
+    caller_thread = threading.get_ident()
+    worker_threads: list[int] = []
+
+    def recording_extractor(**kwargs):
+        worker_threads.append(threading.get_ident())
+        return extract_attachment_text(**kwargs)
+
+    async def extract():
+        with patch(
+            "lumina.api.routes.attachments.extract_attachment_text",
+            side_effect=recording_extractor,
+        ):
+            return await _extract_attachment(
+                filename="inspection.txt",
+                mime_type="text/plain",
+                content=b"inspection",
+            )
+
+    result = asyncio.run(extract())
+
+    assert result.status == "completed"
+    assert worker_threads and worker_threads[0] != caller_thread
+
+
+def test_attachment_extraction_worker_concurrency_is_bounded() -> None:
+    active = 0
+    peak = 0
+    lock = threading.Lock()
+
+    def recording_extractor(**kwargs):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        try:
+            time.sleep(0.03)
+            return extract_attachment_text(**kwargs)
+        finally:
+            with lock:
+                active -= 1
+
+    async def extract_all():
+        with patch(
+            "lumina.api.routes.attachments.extract_attachment_text",
+            side_effect=recording_extractor,
+        ):
+            return await asyncio.gather(
+                *(
+                    _extract_attachment(
+                        filename=f"inspection-{index}.txt",
+                        mime_type="text/plain",
+                        content=b"inspection",
+                    )
+                    for index in range(6)
+                )
+            )
+
+    results = asyncio.run(extract_all())
+
+    assert all(result.status == "completed" for result in results)
+    assert peak == 2
 
 
 def test_text_extraction_tracks_lines() -> None:

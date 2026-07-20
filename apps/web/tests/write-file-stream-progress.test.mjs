@@ -21,7 +21,7 @@ test("write file shows a filename and token-proportional cumulative meter", asyn
   assert.match(app, /TOKEN_PROGRESS_STAGES = \["blue", "green", "orange", "red"\]/);
   assert.match(app, /\(\(totalTokens - 1\) % TOKEN_PROGRESS_BUCKET_SIZE\) \+ 1/);
   assert.match(app, /style=\{\{ width: `\$\{writeProgress\.percent\}%` \}\}/);
-  assert.match(app, /setInterval\(\(\) => setLiveNow\(Date\.now\(\)\), 100\)/);
+  assert.match(app, /useSharedNow\(running && Boolean\(execution\.startedAt\), 100\)/);
   assert.match(stylesheet, /\.write-file-stream-meter \{/);
   assert.match(stylesheet, /repeating-linear-gradient/);
   assert.match(stylesheet, /\.write-file-stream-progress \{[^}]*width: 100%/s);

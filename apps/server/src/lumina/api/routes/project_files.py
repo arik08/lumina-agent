@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from base64 import urlsafe_b64decode, urlsafe_b64encode
+from binascii import Error as Base64Error
 from contextlib import suppress
+from datetime import datetime
+import json
 from pathlib import PurePosixPath
 from urllib.parse import quote
 
@@ -42,6 +46,39 @@ from ..schemas import (
 
 
 router = APIRouter(prefix="/projects/{project_id}/files", tags=["project-files"])
+
+
+def _encode_file_cursor(project_file: ProjectFile) -> str:
+    raw = json.dumps(
+        [
+            project_file.updated_at.isoformat(),
+            project_file.logical_path,
+            project_file.id,
+        ],
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_file_cursor(value: str | None) -> tuple[datetime, str, str] | None:
+    if not value:
+        return None
+    try:
+        padded = value + "=" * (-len(value) % 4)
+        decoded = json.loads(urlsafe_b64decode(padded).decode("utf-8"))
+        if not isinstance(decoded, list) or len(decoded) != 3:
+            raise ValueError
+        return (
+            datetime.fromisoformat(str(decoded[0])),
+            str(decoded[1]),
+            str(decoded[2]),
+        )
+    except (ValueError, TypeError, json.JSONDecodeError, Base64Error) as exc:
+        raise ApiProblem(
+            400,
+            "invalid_file_cursor",
+            "파일 목록 cursor가 올바르지 않습니다.",
+        ) from exc
 
 
 def _storage(settings: Settings) -> ManagedLocalStorage:
@@ -117,25 +154,43 @@ def _latest_version_map(
     return {version.project_file_id: version for version in versions}
 
 
-@router.get("", response_model=list[ProjectFileResponse])
+@router.get("")
 def get_project_files(
     project_id: str,
     q: str = Query(default="", max_length=500),
     include_deleted: bool = Query(default=False, alias="includeDeleted"),
     limit: int = Query(default=200, ge=1, le=500),
+    cursor: str | None = Query(default=None, max_length=2000),
+    page: bool = Query(default=False),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> list[dict[str, object]]:
+) -> dict[str, object] | list[dict[str, object]]:
     rows = list_project_files(
         db,
         user,
         project_id,
         query=q,
         include_deleted=include_deleted,
-        limit=limit,
+        limit=limit + 1,
+        cursor=_decode_file_cursor(cursor),
     )
-    versions = _latest_version_map(db, rows)
-    return [_file_payload(row, versions[row.id]) for row in rows if row.id in versions]
+    page_rows = rows[:limit]
+    versions = _latest_version_map(db, page_rows)
+    items = [
+        _file_payload(row, versions[row.id])
+        for row in page_rows
+        if row.id in versions
+    ]
+    if not page:
+        return items
+    return {
+        "items": items,
+        "nextCursor": (
+            _encode_file_cursor(page_rows[-1])
+            if len(rows) > limit and page_rows
+            else None
+        ),
+    }
 
 
 @router.post("", status_code=201, response_model=ProjectFileResponse)

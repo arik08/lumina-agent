@@ -18,11 +18,13 @@ test("Knowledge graph uses a coupled D3 force simulation", async () => {
   assert.match(graph, /\.distance\(forceSettings\.linkDistance\)/);
   assert.match(graph, /\.velocityDecay\(0\.36\)/);
   assert.match(graph, /data-force-engine="d3"/);
+  assert.match(graph, /centerStrength: 0\.032/);
+  assert.match(graph, /<ForceControl label="중력" value=\{forceSettings\.centerStrength\}/);
 });
 
 test("Knowledge graph reheats every force while dragging and releases the node", async () => {
   const graph = await readFile(graphPath, "utf8");
-  assert.match(graph, /simulation\.alphaTarget\(alpha\)/);
+  assert.match(graph, /simulation\.alpha\(Math\.max\(simulation\.alpha\(\), alpha\)\)\.alphaTarget\(alpha\)/);
   assert.match(graph, /simulation\.restart\(\)/);
   assert.match(graph, /node\.fx = node\.x/);
   assert.match(graph, /node\.fy = node\.y/);
@@ -63,7 +65,7 @@ test("Knowledge graph labels use an Obsidian-like readable size", async () => {
 
 test("Knowledge graph exposes the four Obsidian-style force controls", async () => {
   const graph = await readFile(graphPath, "utf8");
-  assert.match(graph, /label="중심 장력"/);
+  assert.match(graph, /label="중력"/);
   assert.match(graph, /label="반발력"/);
   assert.match(graph, /label="링크 장력"/);
   assert.match(graph, /label="링크 거리"/);
@@ -136,13 +138,18 @@ test("Knowledge graph restores the last layout when its tab remounts", async () 
   assert.match(graph, /const restoresCompleteLayout = savedLayout\?\.graphSignature === graphSignature/);
   assert.match(graph, /canvas\.dataset\.layoutRestored = restoresCompleteLayout \? "true" : "false"/);
   assert.match(graph, /if \(restoresCompleteLayout\) \{\s*simulation\.alpha\(0\)\.stop\(\)/);
-  assert.match(graph, /graphLayouts\.set\(layoutKey, \{/);
+  assert.match(graph, /rememberGraphLayout\(layoutKey, \{/);
   assert.match(graph, /viewport: \{ \.\.\.viewport \}/);
 });
 
 test("Graph document list selection stays on the graph and highlights the matching node and label in green", async () => {
   const [graph, view] = await Promise.all([readFile(graphPath, "utf8"), readFile(viewPath, "utf8")]);
   assert.match(view, /tab === "graph" \? setSelectedGraphNodeId\(id\) : openDocument\(id, tab\)/);
+  assert.match(view, /onRead=\{tab === "graph" \? \(id\) => openDocument\(id, "wiki", "graph"\) : undefined\}/);
+  assert.match(view, /onDoubleClick=\{\(\) => onRead\?\.\(document\.id\)\}/);
+  assert.match(view, /tab === "graph" && view !== "graph" && selectedGraphNodeId/);
+  assert.match(view, /openDocument\(selectedGraphNodeId, view, "graph"\)/);
+  assert.match(view, /loadDocument\(documentId\)\.then\(\(\) => setTab\(nextTab\)\)/);
   assert.match(view, /selectedNodeId=\{selectedGraphNodeId\}/);
   assert.match(graph, /success: token\("--success", "#2f9765"\)/);
   assert.match(graph, /context\.fillStyle = selected \? colors\.success : colors\.cobalt/);
@@ -160,4 +167,11 @@ test("Graph documents provide visible and browser-history return paths", async (
   assert.match(view, /openDocument\(id, "wiki", "graph"\)/);
   assert.match(view, /window\.history\.back\(\)/);
   assert.match(view, /그래프로 돌아가기/);
+});
+
+test("Knowledge graph layout memory is bounded and refreshed as an LRU cache", async () => {
+  const graph = await readFile(graphPath, "utf8");
+  assert.match(graph, /const graphLayoutCacheLimit = 24;/);
+  assert.match(graph, /function rememberGraphLayout[\s\S]*?graphLayouts\.delete\(layoutKey\);[\s\S]*?while \(graphLayouts\.size > graphLayoutCacheLimit\)/);
+  assert.match(graph, /if \(savedLayout\) rememberGraphLayout\(layoutKey, savedLayout\);/);
 });

@@ -45,13 +45,15 @@ test("Mission switching keeps the last stable workspace until the next snapshot 
   assert.match(view, /mission\.id !== selectedMissionId/);
 });
 
-test("Mission polling pauses offscreen and resumes immediately when visible", async () => {
+test("Mission event streaming coalesces refreshes and resumes immediately when visible", async () => {
   const view = await readFile(viewPath, "utf8");
 
-  assert.match(view, /let refreshing = false;[\s\S]*?if \(refreshing\) return;[\s\S]*?finally \{\s*refreshing = false;/);
-  assert.match(view, /const refreshWhenVisible = \(\) => \{\s*if \(document\.visibilityState === "visible"\) void refresh\(\);/);
-  assert.match(view, /window\.setInterval\(refreshWhenVisible, 500\)/);
+  assert.match(view, /api\.deepAnalysis\.openEventStream\([\s\S]*?setMissionEvents\([\s\S]*?\.slice\(-1000\)/);
+  assert.match(view, /const scheduleDetailRefresh = \(\) => \{[\s\S]*?window\.setTimeout\([\s\S]*?100\);/);
+  assert.match(view, /if \(refreshing \|\| document\.visibilityState !== "visible"\) return;/);
+  assert.match(view, /const refreshWhenVisible = \(\) => \{\s*if \(document\.visibilityState === "visible"\) void refreshDetail\(\);/);
   assert.match(view, /document\.addEventListener\("visibilitychange", refreshWhenVisible\)/);
+  assert.match(view, /closeStream\(\)/);
   assert.match(view, /document\.removeEventListener\("visibilitychange", refreshWhenVisible\)/);
 });
 
@@ -61,14 +63,27 @@ test("cached tabs use the simplified two-tab contract", async () => {
   assert.match(view, /useCachedViewState<"workflow" \| "log">/);
   assert.match(view, /`deep-analysis:\$\{cacheScope\}:active-tab:v2`/);
   assert.match(view, /<header className="feature-header deep-analysis-header">[\s\S]*?<div className="feature-kind-tabs deep-analysis-view-tabs" role="tablist" aria-label="심층분석 화면">/);
-  assert.match(view, /<GitBranch size=\{14\} \/> Workflow/);
-  assert.match(view, /<History size=\{14\} \/> 실행 기록/);
+  assert.match(view, /<GitBranch size=\{16\} \/> Workflow/);
+  assert.match(view, /<History size=\{16\} \/> 실행 기록/);
   assert.doesNotMatch(view, /className="deep-analysis-tabs"/);
   assert.match(css, /\.deep-analysis-view-tabs \{ display: inline-flex; flex: none; \}/);
   assert.match(css, /\.deep-analysis-view-tabs > button \{ white-space: nowrap; \}/);
+  assert.match(css, /\.deep-analysis-view-tabs > button > svg \{ flex: none; \}/);
   assert.match(css, /\.deep-analysis-view-tabs > button:first-child \{ width: 100px; min-width: 100px; \}/);
   assert.match(css, /\.deep-analysis-view-tabs > button:last-child \{ width: 92px; min-width: 92px; \}/);
   assert.doesNotMatch(view, /결론·근거|Claim Ledger|Quality Gate|Open Issue/);
+});
+
+test("execution log keeps only the latest output progress row for each Node", async () => {
+  const view = await readFile(viewPath, "utf8");
+
+  assert.match(view, /function compactExecutionLogEvents\(events: DeepAnalysisMissionEvent\[\]\)/);
+  assert.match(view, /for \(let index = events\.length - 1; index >= 0; index -= 1\)/);
+  assert.match(view, /event\.type === "node_output_delta"/);
+  assert.match(view, /event\.payload\.nodeKey \?\? event\.payload\.nodeId \?\? event\.payload\.runId/);
+  assert.match(view, /if \(seenOutputProgress\.has\(progressKey\)\) continue/);
+  assert.match(view, /const visibleEvents = compactExecutionLogEvents\(events\)/);
+  assert.match(view, /visibleEvents\.slice\(\)\.reverse\(\)\.map/);
 });
 
 test("new Missions automatically create a workflow without preset controls", async () => {
@@ -76,6 +91,10 @@ test("new Missions automatically create a workflow without preset controls", asy
 
   assert.match(view, /목표를 바탕으로 Node와 Edge를 한 번 자동 설계/);
   assert.match(view, /Workflow 자동 만들기/);
+  assert.match(view, /const \[createElapsedSeconds, setCreateElapsedSeconds\] = useState\(0\)/);
+  assert.match(view, /Math\.floor\(\(Date\.now\(\) - startedAt\) \/ 1_000\)/);
+  assert.match(view, /window\.setInterval\(updateElapsed, 1_000\)/);
+  assert.match(view, /`Workflow 설계 중\.\.\. \(\$\{createElapsedSeconds\}s\)`/);
   assert.match(view, /autonomyMode: "balanced"/);
   assert.doesNotMatch(view, /preset_|listPatterns|savePattern|Pattern 저장/);
 });
@@ -90,13 +109,17 @@ test("new Mission setup exposes source references and execution controls", async
   assert.match(view, /aria-label="분석 자료 첨부"/);
   assert.match(view, /aria-label="기존 문서 연결"/);
   assert.match(view, /aria-label="Skill 및 MCP 연결"/);
-  assert.match(view, /label="분석 범위"/);
-  assert.match(view, /label="답변 분량"/);
-  assert.match(view, /label="출력 방식"/);
-  assert.match(view, /label="출력 토큰"/);
+  assert.match(view, /from "\.\.\/\.\.\/components\/ComposerControls"/);
+  assert.match(view, /<ComposerPicker[\s\S]*?ariaLabel="분석 범위 설정"/);
+  assert.match(view, /<ComposerPicker[\s\S]*?ariaLabel="답변 분량 설정"/);
+  assert.match(view, /<ArtifactLengthSlider[\s\S]*?outputMode=\{outputMode\}/);
+  assert.match(view, /<ComposerPicker[\s\S]*?ariaLabel="모델 선택"[\s\S]*?controlClassName="model-control"/);
+  assert.match(view, /<ComposerPicker[\s\S]*?ariaLabel="추론 노력도 설정"[\s\S]*?controlClassName="effort-control"/);
+  assert.match(view, /execution: createExecution \?\? undefined/);
+  assert.match(view, /className="composer-footer deep-analysis-create-toolbar"/);
   assert.match(view, /api\.composer\.listSuggestions/);
   assert.match(view, /api\.projectFiles\.upload/);
-  assert.match(view, /analysisDepth,[\s\S]*answerLength,[\s\S]*outputMode,[\s\S]*targetOutputTokens:[\s\S]*promptReferences:/);
+  assert.match(view, /analysisDepth,[\s\S]*answerLength,[\s\S]*outputMode,[\s\S]*targetOutputTokens:[\s\S]*execution:[\s\S]*promptReferences:/);
   assert.match(types, /analysisDepth: "auto" \| "brief" \| "standard" \| "deep"/);
   assert.match(types, /promptReferences: PromptReference\[\]/);
   assert.match(css, /\.deep-analysis-create-toolbar/);
@@ -127,6 +150,15 @@ test("Canvas blank space supports pointer dragging and refits without closing th
   assert.doesNotMatch(view, /function closeInspectorAndFit\(/);
 });
 
+test("Workflow fitting keeps Nodes below the fixed canvas controls", async () => {
+  const view = await readFile(viewPath, "utf8");
+
+  assert.match(view, /ref=\{canvasControlsRef\} className="deep-analysis-canvas-controls"/);
+  assert.match(view, /const controlsBottom = canvasControlsRef\.current[\s\S]*?getBoundingClientRect\(\)\.bottom - viewport\.getBoundingClientRect\(\)\.top/);
+  assert.match(view, /const contentTop = Math\.max\(padding, controlsBottom \+ 12\)/);
+  assert.match(view, /y: contentTop \+ Math\.max\(0, \(availableHeight - contentHeight \* fittedScale\) \/ 2\) - minY \* fittedScale/);
+});
+
 test("Workflow Canvas keeps the Mission root before every start Node", async () => {
   const view = await readFile(viewPath, "utf8");
 
@@ -146,7 +178,9 @@ test("Mission root opens the existing analysis information and persists edits", 
   assert.match(view, /setMissionTitleDraft\(mission\.title\)[\s\S]*?setMissionObjectiveDraft\(mission\.objective\)[\s\S]*?setMissionRootSelected\(true\)/);
   assert.match(view, /className="deep-analysis-inspector deep-analysis-create-inspector" aria-label="Mission 정보"/);
   assert.match(view, /분석 이름[\s\S]*?value=\{missionTitleDraft\}[\s\S]*?분석 목적[\s\S]*?value=\{missionObjectiveDraft\}/);
-  assert.match(view, /api\.deepAnalysis\.updateMission\(mission\.id,[\s\S]*?title: nextTitle,[\s\S]*?objective: nextObjective/);
+  assert.match(view, /aria-label="Mission 실행 설정"/);
+  assert.match(view, /setAnalysisDepth\(mission\.analysisDepth\)[\s\S]*?setAnswerLength\(mission\.answerLength\)[\s\S]*?setOutputMode\(mission\.outputMode\)/);
+  assert.match(view, /api\.deepAnalysis\.updateMission\(mission\.id,[\s\S]*?title: nextTitle,[\s\S]*?objective: nextObjective[\s\S]*?analysisDepth,[\s\S]*?answerLength,[\s\S]*?outputMode,[\s\S]*?targetOutputTokens:[\s\S]*?execution:[\s\S]*?promptReferences:/);
   assert.match(view, /Mission 정보 저장/);
 });
 
@@ -195,9 +229,10 @@ test("Workflow regeneration is a separate icon control with a prompt", async () 
 });
 
 test("Node details expose the configured and actual execution prompts", async () => {
-  const [view, types] = await Promise.all([
+  const [view, types, css] = await Promise.all([
     readFile(viewPath, "utf8"),
     readFile(typesPath, "utf8"),
+    readFile(cssPath, "utf8"),
   ]);
 
   assert.match(view, /<h3>작업 프롬프트<\/h3>/);
@@ -210,6 +245,22 @@ test("Node details expose the configured and actual execution prompts", async ()
   assert.doesNotMatch(view, /selectedNode\.config\.reason/);
   assert.match(types, /conversationId: UUID \| null/);
   assert.match(types, /executionPrompt: string \| null/);
+  assert.match(css, /\.deep-analysis-node-edit-field textarea \{[^}]*font-weight: 400/);
+});
+
+test("Mission settings own the final output format", async () => {
+  const view = await readFile(viewPath, "utf8");
+  const types = await readFile(typesPath, "utf8");
+
+  assert.match(types, /export type DeepAnalysisOutputFormat = string/);
+  assert.match(types, /outputFormat: DeepAnalysisOutputFormat/);
+  assert.match(view, /<span>최종 산출물 형태<\/span>[\s\S]*?<OutputFormatInput[\s\S]*?value=\{outputFormat\}/);
+  assert.match(view, /const outputFormatOptions = \[[\s\S]*?Markdown \(\.md\)[\s\S]*?HTML \(\.html\)/);
+  assert.match(view, /role="combobox"[\s\S]*?placeholder="최종 산출물 형태"/);
+  assert.match(view, /onChange\(event\.target\.value\)/);
+  assert.match(view, /outputFormat !== mission\.outputFormat/);
+  assert.match(view, /api\.deepAnalysis\.updateMission\(mission\.id,[\s\S]*?outputFormat: nextOutputFormat/);
+  assert.match(view, /api\.deepAnalysis\.createMission\(projectId,[\s\S]*?outputFormat: normalizeOutputFormat\(outputFormat\)/);
 });
 
 test("Node output is one rendered Markdown document with its filename", async () => {
@@ -225,8 +276,10 @@ test("Node output is one rendered Markdown document with its filename", async ()
   assert.match(view, /ref=\{liveOutputRef\} className="deep-analysis-live-output">\{displayLiveOutput\(selectedNode\.liveOutput\)\}/);
   assert.match(view, /return value\.replace\(\/\\\\r\\\\n\|\\\\n\|\\\\r\/g, "\\n"\)/);
   assert.match(view, /output\.scrollTop = output\.scrollHeight/);
-  assert.match(view, /setInterval\(refreshWhenVisible, 500\)/);
-  assert.match(view, /className="deep-analysis-output-document"/);
+  assert.match(view, /api\.deepAnalysis\.openEventStream/);
+  assert.doesNotMatch(view, /setInterval\(refreshWhenVisible, 500\)/);
+  assert.match(view, /className="deep-analysis-output-document conversation-response-typography"/);
+  assert.doesNotMatch(css, /\.deep-analysis-output-document\s*\{[^}]*font-size:/s);
   assert.match(view, /<MarkdownResponse text=\{selectedNode\.outputMarkdown\} \/>/);
   assert.match(css, /\.deep-analysis-inspector > \.deep-analysis-output-section \{[^}]*display: flex;[^}]*flex-direction: column;[^}]*\}/);
   assert.match(css, /\.deep-analysis-inspector > \.deep-analysis-output-section\.is-streaming \{[^}]*flex: 1 1 0;[^}]*overflow: auto/);
@@ -323,4 +376,14 @@ test("Mission execution, retry, export, and deletion stay explicit", async () =>
   assert.match(view, /api\.deepAnalysis\.createExport/);
   assert.match(view, /api\.deepAnalysis\.deleteMission\(mission\.id, mission\.revision\)/);
   assert.match(view, /deleteArmed \? "한 번 더 눌러 삭제"/);
+});
+
+test("Mission event streaming uses a lightweight projection for live progress", async () => {
+  const view = await readFile(viewPath, "utf8");
+
+  assert.match(view, /api\.deepAnalysis\.getProjection\(selectedMissionId\)/);
+  assert.match(view, /projectedNodes = new Map/);
+  assert.match(view, /DETAIL_REFRESH_EVENT_TYPES\.has\(event\.type\)/);
+  assert.match(view, /else scheduleProjectionRefresh\(\)/);
+  assert.match(view, /liveOutput/);
 });

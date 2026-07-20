@@ -22,6 +22,7 @@ import type {
   AnswerDeepAnalysisDecisionRequest,
   AuthSession,
   CancelDeepAnalysisMissionRequest,
+  CreateKnowledgeTagRequest,
   CreateKnowledgeSpaceRequest,
   CreateAdminUserRequest,
   CreateConversationRequest,
@@ -33,6 +34,7 @@ import type {
   DeepAnalysisEvidence,
   DeepAnalysisMissionDetail,
   DeepAnalysisMissionEvent,
+  DeepAnalysisMissionProjection,
   DeepAnalysisMissionCosts,
   DeepAnalysisMissionExport,
   DeepAnalysisMissionSummary,
@@ -44,6 +46,8 @@ import type {
   KnowledgeDocumentSummary,
   KnowledgeGraphResponse,
   KnowledgeSpace,
+  KnowledgeTag,
+  UpdateKnowledgeTagRequest,
   UpdateKnowledgeSpaceRequest,
   CursorPage,
   ListConversationsQuery,
@@ -106,6 +110,7 @@ import type {
   SkillExtension,
   SkillVersion,
   ProjectFileDetail,
+  ProjectFilePage,
   ProjectFolderSummary,
   ProjectFileSummary,
   ProjectLearningMutationResult,
@@ -560,12 +565,16 @@ export async function listProjectFiles(
   projectId: string,
   query = "",
   includeDeleted = false,
+  cursor?: string,
   signal?: AbortSignal,
 ) {
-  return request<ProjectFileSummary[]>(`/projects/${encodeURIComponent(projectId)}/files`, {
-    query: { q: query, includeDeleted, limit: 300 },
+  const response = await request<ProjectFilePage | ProjectFileSummary[]>(`/projects/${encodeURIComponent(projectId)}/files`, {
+    query: { q: query, includeDeleted, limit: 200, cursor, page: true },
     signal,
   });
+  if (Array.isArray(response)) return { items: response, nextCursor: null };
+  if (!Array.isArray(response.items)) throw new Error("파일 목록 응답 형식이 올바르지 않습니다.");
+  return response;
 }
 
 export async function getProjectFile(projectId: string, fileId: string, signal?: AbortSignal) {
@@ -865,6 +874,28 @@ export async function sendRunAction(runId: string, payload: RunActionRequest, si
 
 export async function getRunSnapshot(runId: string, signal?: AbortSignal) {
   return request<RunSnapshot>(`/runs/${encodeURIComponent(runId)}/snapshot`, { signal });
+}
+
+export async function getProviderCatalog(projectId?: string, signal?: AbortSignal) {
+  return request<{
+    providers: ProviderSummary[];
+    modelsByProvider: Record<string, ModelSummary[]>;
+  }>("/provider-catalog", { query: { project_id: projectId }, signal });
+}
+
+export async function getRunSnapshots(runIds: string[], signal?: AbortSignal) {
+  const uniqueRunIds = [...new Set(runIds)];
+  if (uniqueRunIds.length === 0) return [];
+  const chunks: string[][] = [];
+  for (let index = 0; index < uniqueRunIds.length; index += 20) {
+    chunks.push(uniqueRunIds.slice(index, index + 20));
+  }
+  const pages = await Promise.all(chunks.map((chunk) => request<RunSnapshot[]>("/runs/snapshots", {
+    method: "POST",
+    body: { runIds: chunk },
+    signal,
+  })));
+  return pages.flat();
 }
 
 function isRunEvent(value: unknown): value is RunEvent {
@@ -1316,6 +1347,56 @@ export async function listDeepAnalysisMissionEvents(
   );
 }
 
+export async function getDeepAnalysisMissionProjection(
+  missionId: string,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisMissionProjection>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/projection`,
+    { signal },
+  );
+}
+
+export function openDeepAnalysisMissionEventStream(
+  missionId: string,
+  afterSequence: number,
+  handlers: {
+    onEvent: (event: DeepAnalysisMissionEvent) => void;
+    onOpen?: () => void;
+    onError?: (error: unknown) => void;
+  },
+) {
+  const source = new EventSource(
+    buildUrl(streamBase, `/deep-analysis/missions/${encodeURIComponent(missionId)}`, {
+      after_sequence: Math.max(0, afterSequence),
+    }),
+    { withCredentials: true },
+  );
+  let lastDeliveredSequence = afterSequence;
+  const handleMessage = (message: MessageEvent<string>) => {
+    try {
+      const parsed: unknown = JSON.parse(message.data);
+      if (
+        !isRecord(parsed)
+        || parsed.missionId !== missionId
+        || typeof parsed.sequence !== "number"
+        || typeof parsed.type !== "string"
+        || typeof parsed.createdAt !== "string"
+        || !isRecord(parsed.payload)
+      ) throw new Error("Mission event 형식이 올바르지 않습니다.");
+      if (parsed.sequence <= lastDeliveredSequence) return;
+      lastDeliveredSequence = parsed.sequence;
+      handlers.onEvent(parsed as unknown as DeepAnalysisMissionEvent);
+    } catch (error) {
+      handlers.onError?.(error);
+    }
+  };
+  source.onopen = () => handlers.onOpen?.();
+  source.onerror = (event) => handlers.onError?.(event);
+  source.addEventListener("mission_event", handleMessage as EventListener);
+  return () => source.close();
+}
+
 export async function getDeepAnalysisMissionCosts(
   missionId: string,
   signal?: AbortSignal,
@@ -1516,11 +1597,23 @@ export async function createKnowledgeSpace(payload: CreateKnowledgeSpaceRequest,
 export async function updateKnowledgeSpace(spaceId: string, payload: UpdateKnowledgeSpaceRequest, signal?: AbortSignal) {
   return request<KnowledgeSpace>(`/knowledge/spaces/${encodeURIComponent(spaceId)}`, { method: "PATCH", body: payload, signal });
 }
-export async function listKnowledgeDocuments(filters: { spaceId?: string; projectId?: string; query?: string } = {}, signal?: AbortSignal) {
+export async function listKnowledgeTags(spaceId: string, signal?: AbortSignal) {
+  return request<KnowledgeTag[]>("/knowledge/tags", { query: { spaceId }, signal });
+}
+export async function createKnowledgeTag(payload: CreateKnowledgeTagRequest, signal?: AbortSignal) {
+  return request<KnowledgeTag>("/knowledge/tags", { method: "POST", body: payload, signal });
+}
+export async function updateKnowledgeTag(tagId: string, payload: UpdateKnowledgeTagRequest, signal?: AbortSignal) {
+  return request<KnowledgeTag>(`/knowledge/tags/${encodeURIComponent(tagId)}`, { method: "PATCH", body: payload, signal });
+}
+export async function listKnowledgeDocuments(filters: { spaceId?: string; projectId?: string; query?: string; limit?: number } = {}, signal?: AbortSignal) {
   return request<KnowledgeDocumentSummary[]>("/knowledge/documents", { query: filters, signal });
 }
 export async function getKnowledgeDocument(documentId: string, signal?: AbortSignal) {
   return request<KnowledgeDocument>(`/knowledge/documents/${encodeURIComponent(documentId)}`, { signal });
+}
+export async function deleteKnowledgeDocument(documentId: string, signal?: AbortSignal) {
+  return request<void>(`/knowledge/documents/${encodeURIComponent(documentId)}`, { method: "DELETE", signal });
 }
 export async function saveKnowledgeDocumentFromMessage(messageId: string, signal?: AbortSignal) {
   return request<KnowledgeDocument>(`/knowledge/documents/from-message/${encodeURIComponent(messageId)}`, { method: "POST", signal });
@@ -1606,6 +1699,12 @@ export async function getExtensionVersion(versionId: string, signal?: AbortSigna
 export async function checkoutSkillDraft(extensionId: string, signal?: AbortSignal) {
   return request<SkillDraft>(`/extensions/${encodeURIComponent(extensionId)}/draft`, {
     method: "POST",
+    signal,
+  });
+}
+
+export async function getSkillDraft(extensionId: string, signal?: AbortSignal) {
+  return request<SkillDraft>(`/extensions/${encodeURIComponent(extensionId)}/draft`, {
     signal,
   });
 }
@@ -2329,6 +2428,8 @@ export const api = {
     deletePattern: deleteDeepAnalysisPattern,
     getMission: getDeepAnalysisMission,
     listEvents: listDeepAnalysisMissionEvents,
+    getProjection: getDeepAnalysisMissionProjection,
+    openEventStream: openDeepAnalysisMissionEventStream,
     getCosts: getDeepAnalysisMissionCosts,
     getClaims: getDeepAnalysisClaims,
     getEvidence: getDeepAnalysisEvidence,
@@ -2353,8 +2454,12 @@ export const api = {
     listSpaces: listKnowledgeSpaces,
     createSpace: createKnowledgeSpace,
     updateSpace: updateKnowledgeSpace,
+    listTags: listKnowledgeTags,
+    createTag: createKnowledgeTag,
+    updateTag: updateKnowledgeTag,
     listDocuments: listKnowledgeDocuments,
     getDocument: getKnowledgeDocument,
+    deleteDocument: deleteKnowledgeDocument,
     saveMessage: saveKnowledgeDocumentFromMessage,
     batchTagDocuments: batchTagKnowledgeDocuments,
     getGraph: getKnowledgeGraph,
@@ -2398,7 +2503,7 @@ export const api = {
     delete: deleteHelpItem,
   },
   settings: { getCurrent: getCurrentSettings, updateCurrent: updateCurrentSettings },
-  providers: { list: listProviders, listModels: listProviderModels },
+  providers: { list: listProviders, listModels: listProviderModels, getCatalog: getProviderCatalog },
   adminProviders: {
     list: listAdminProviders,
     listModels: listAdminProviderModels,
@@ -2419,7 +2524,7 @@ export const api = {
     getTurnSets: getConversationTurnSets,
     getSourceContent: getWebSourceContent,
   },
-  runs: { start: startRun, action: sendRunAction, getSnapshot: getRunSnapshot, openStream: openRunEventStream },
+  runs: { start: startRun, action: sendRunAction, getSnapshot: getRunSnapshot, getSnapshots: getRunSnapshots, openStream: openRunEventStream },
   artifacts: {
     list: listArtifacts,
     get: getArtifact,
@@ -2451,6 +2556,7 @@ export const api = {
     getRepositoryState: getRepositoryExtensionState,
     listTrash: listTrashedExtensions,
     getVersion: getExtensionVersion,
+    getDraft: getSkillDraft,
     checkoutDraft: checkoutSkillDraft,
     updateMetadata: updateExtensionMetadata,
     delete: deleteExtension,

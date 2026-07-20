@@ -302,6 +302,7 @@ class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     agent_id: Mapped[str] = mapped_column(String(80), default="general", nullable=False)
     agent_version: Mapped[str] = mapped_column(String(40), default="1", nullable=False)
     revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    next_turn_index: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     parent_conversation_id: Mapped[str | None] = mapped_column(
         ForeignKey("conversations.id", ondelete="SET NULL"), index=True
     )
@@ -315,8 +316,21 @@ class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 class Run(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "runs"
     __table_args__ = (
+        UniqueConstraint(
+            "conversation_id",
+            "user_id",
+            "idempotency_key",
+            name="uq_runs_conversation_user_idempotency",
+        ),
         Index("ix_runs_conversation_status", "conversation_id", "status"),
         Index("ix_runs_user_status", "user_id", "status"),
+        Index(
+            "ix_runs_queue_claim",
+            "status",
+            "queued_at",
+            "conversation_id",
+        ),
+        Index("ix_runs_worker_lease", "worker_id", "lease_expires_at"),
     )
 
     organization_id: Mapped[str] = mapped_column(
@@ -361,6 +375,9 @@ class Run(UUIDPrimaryKeyMixin, Base):
     # deadline, token and cost policies plus context compaction.
     max_turns: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     idempotency_key: Mapped[str | None] = mapped_column(String(128))
+    worker_id: Mapped[str | None] = mapped_column(String(36))
+    heartbeat_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    lease_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     error_code: Mapped[str | None] = mapped_column(String(120))
     error_message: Mapped[str | None] = mapped_column(Text)
     queued_at: Mapped[datetime] = mapped_column(
@@ -665,6 +682,7 @@ class RunEvent(UUIDPrimaryKeyMixin, Base):
     __table_args__ = (
         UniqueConstraint("run_id", "sequence"),
         Index("ix_run_events_replay", "run_id", "sequence"),
+        Index("ix_run_events_run_type", "run_id", "event_type"),
     )
 
     run_id: Mapped[str] = mapped_column(
@@ -1977,11 +1995,15 @@ class KnowledgeDocument(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "source_message_id", name="uq_knowledge_documents_source_message"
         ),
         Index("ix_knowledge_documents_space_researched", "space_id", "researched_at"),
-        Index("ix_knowledge_documents_project_researched", "project_id", "researched_at"),
+        Index(
+            "ix_knowledge_documents_project_researched", "project_id", "researched_at"
+        ),
     )
 
     space_id: Mapped[str] = mapped_column(
-        ForeignKey("knowledge_spaces.id", ondelete="CASCADE"), index=True, nullable=False
+        ForeignKey("knowledge_spaces.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
     )
     project_id: Mapped[str] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=False
@@ -2020,12 +2042,19 @@ class KnowledgeTag(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     space_id: Mapped[str] = mapped_column(
-        ForeignKey("knowledge_spaces.id", ondelete="CASCADE"), index=True, nullable=False
+        ForeignKey("knowledge_spaces.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
     )
     namespace: Mapped[str] = mapped_column(String(80), default="topic", nullable=False)
     canonical_name: Mapped[str] = mapped_column(String(160), nullable=False)
     normalized_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    definition: Mapped[str] = mapped_column(Text, default="", nullable=False)
     scope_note: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    parent_tag_id: Mapped[str | None] = mapped_column(
+        ForeignKey("knowledge_tags.id", ondelete="SET NULL"), index=True
+    )
+    revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     status: Mapped[str] = mapped_column(
         String(24), default="active", index=True, nullable=False
     )

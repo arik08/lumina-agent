@@ -131,3 +131,13 @@ test("weekly schedule controls keep weekday before hour with balanced widths", a
   assert.ok(timingControls.indexOf("예약 요일") < timingControls.indexOf('<span>시</span>'));
   assert.match(styles, /\.schedule-form-row\s*\{[^}]*repeat\(auto-fit, minmax\(92px, 1fr\)\)/);
 });
+
+test("active schedule history polling pauses while hidden and never overlaps", async () => {
+  const view = await read("../src/components/SchedulesView.tsx");
+
+  assert.match(view, /let refreshing = false;/);
+  assert.match(view, /document\.visibilityState !== "visible" \|\| refreshing/);
+  assert.match(view, /refreshing = true;[\s\S]*?listRuns/);
+  assert.match(view, /\.then\(\(nextRuns\) => \{[\s\S]*?refreshing = false;/);
+  assert.match(view, /\.catch\(\(caught\) => \{[\s\S]*?refreshing = false;/);
+});

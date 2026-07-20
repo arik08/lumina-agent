@@ -9,7 +9,7 @@ from typing import Any
 
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 from yaml import YAMLError, safe_load
 
 from ..api.errors import ApiProblem
@@ -1573,110 +1573,225 @@ def delete_folder(
     return folder
 
 
-def extension_payload(
-    db: Session, extension: Extension, *, user: User
-) -> dict[str, Any]:
-    role = skill_role(db, user, extension)
-    can_manage = role in {"owner", "maintainer"}
-    draft = db.scalar(
-        select(ExtensionDraft).where(
-            ExtensionDraft.extension_id == extension.id,
-            ExtensionDraft.owner_user_id == user.id,
-        )
-    )
-    version_query = select(ExtensionVersion).where(
-        ExtensionVersion.extension_id == extension.id
-    )
-    if not can_manage:
-        version_query = version_query.where(
-            or_(
-                ExtensionVersion.status == "published",
-                ExtensionVersion.created_by_user_id == user.id,
+def extension_payloads(
+    db: Session,
+    extensions: list[Extension],
+    *,
+    user: User,
+    include_draft_package: bool = True,
+) -> list[dict[str, Any]]:
+    if not extensions:
+        return []
+    extension_ids = [extension.id for extension in extensions]
+    role_by_extension_id = {
+        skill_id: role
+        for skill_id, role in db.execute(
+            select(SkillOwnership.skill_id, SkillOwnership.role).where(
+                SkillOwnership.skill_id.in_(extension_ids),
+                SkillOwnership.principal_type == "user",
+                SkillOwnership.principal_id == user.id,
             )
         )
-    versions = list(db.scalars(version_query.order_by(ExtensionVersion.version_number)))
-    ownerships = list(
+    }
+    draft_options = [
+        ExtensionDraft.id,
+        ExtensionDraft.extension_id,
+        ExtensionDraft.owner_user_id,
+        ExtensionDraft.base_version_id,
+        ExtensionDraft.current_revision,
+        ExtensionDraft.current_digest,
+        ExtensionDraft.status,
+        ExtensionDraft.updated_at,
+    ]
+    if include_draft_package:
+        draft_options.append(ExtensionDraft.package_json)
+    drafts = list(
         db.scalars(
-            select(SkillOwnership)
-            .where(SkillOwnership.skill_id == extension.id)
-            .order_by(SkillOwnership.created_at, SkillOwnership.id)
+            select(ExtensionDraft)
+            .where(
+                ExtensionDraft.extension_id.in_(extension_ids),
+                ExtensionDraft.owner_user_id == user.id,
+            )
+            .options(load_only(*draft_options))
         )
     )
+    draft_by_extension_id = {draft.extension_id: draft for draft in drafts}
+    all_versions = list(
+        db.scalars(
+            select(ExtensionVersion)
+            .where(ExtensionVersion.extension_id.in_(extension_ids))
+            .options(
+                load_only(
+                    ExtensionVersion.id,
+                    ExtensionVersion.extension_id,
+                    ExtensionVersion.version_number,
+                    ExtensionVersion.parent_version_id,
+                    ExtensionVersion.package_digest,
+                    ExtensionVersion.status,
+                    ExtensionVersion.manifest_json,
+                    ExtensionVersion.created_by_user_id,
+                    ExtensionVersion.created_at,
+                    ExtensionVersion.published_at,
+                )
+            )
+            .order_by(ExtensionVersion.extension_id, ExtensionVersion.version_number)
+        )
+    )
+    versions_by_extension_id: dict[str, list[ExtensionVersion]] = {}
+    version_by_id: dict[str, ExtensionVersion] = {}
+    for version in all_versions:
+        versions_by_extension_id.setdefault(version.extension_id, []).append(version)
+        version_by_id[version.id] = version
+    all_ownerships = list(
+        db.scalars(
+            select(SkillOwnership)
+            .where(SkillOwnership.skill_id.in_(extension_ids))
+            .order_by(
+                SkillOwnership.skill_id,
+                SkillOwnership.created_at,
+                SkillOwnership.id,
+            )
+        )
+    )
+    ownerships_by_extension_id: dict[str, list[SkillOwnership]] = {}
+    for ownership in all_ownerships:
+        ownerships_by_extension_id.setdefault(ownership.skill_id, []).append(ownership)
+    principal_ids = {
+        ownership.principal_id
+        for ownership in all_ownerships
+        if ownership.principal_type == "user"
+    }
     principal_users = {
         principal.id: principal
         for principal in db.scalars(
-            select(User).where(
-                User.id.in_(
-                    [
-                        item.principal_id
-                        for item in ownerships
-                        if item.principal_type == "user"
-                    ]
-                )
+            select(User).where(User.id.in_(principal_ids))
+        )
+    } if principal_ids else {}
+    project_ids = list(
+        db.scalars(
+            select(ProjectMembership.project_id).where(
+                ProjectMembership.user_id == user.id,
+                ProjectMembership.status == "active",
             )
         )
-    }
-    latest_manifest_tags: list[str] = []
-    if versions:
-        raw_tags = versions[-1].manifest_json.get("tags")
-        if isinstance(raw_tags, list):
-            latest_manifest_tags = _normalize_skill_tags(
-                [item for item in raw_tags if isinstance(item, str)]
-            )
-    payload: dict[str, Any] = {
-        "id": extension.id,
-        "kind": extension.kind,
-        "slug": extension.slug,
-        "name": extension.name,
-        "description": extension.description,
-        "tags": extension.tags_json
-        if extension.tags_json is not None
-        else latest_manifest_tags,
-        "visibility": extension.visibility,
-        "ownerUserId": extension.owner_user_id,
-        "creatorUserId": extension.creator_user_id,
-        "currentUserRole": role,
-        "ownerships": [
-            {
-                "id": item.id,
-                "principalType": item.principal_type,
-                "principalId": item.principal_id,
-                "role": item.role,
-                "displayName": (
-                    principal_users[item.principal_id].display_name
-                    or principal_users[item.principal_id].login_id
-                    if item.principal_id in principal_users
-                    else item.principal_id
+    )
+    installed_extension_ids = set(
+        db.scalars(
+            select(ExtensionInstallation.extension_id).where(
+                ExtensionInstallation.extension_id.in_(extension_ids),
+                ExtensionInstallation.removed_at.is_(None),
+                or_(
+                    (
+                        (ExtensionInstallation.scope_type == "user")
+                        & (ExtensionInstallation.scope_id == user.id)
+                    ),
+                    (
+                        (ExtensionInstallation.scope_type == "organization")
+                        & (ExtensionInstallation.scope_id == user.organization_id)
+                    ),
+                    (
+                        (ExtensionInstallation.scope_type == "project")
+                        & (ExtensionInstallation.scope_id.in_(project_ids))
+                    ),
                 ),
-                "createdAt": item.created_at,
-            }
-            for item in ownerships
-        ],
-        "latestPublishedVersionId": extension.latest_published_version_id,
-        "versions": [
-            version_payload(version, include_package=False) for version in versions
-        ],
-        "createdAt": extension.created_at,
-        "updatedAt": extension.updated_at,
-        "archivedAt": extension.archived_at,
-        "purgesAt": (
-            extension.archived_at + _SKILL_TRASH_RETENTION
-            if extension.archived_at is not None
-            else None
-        ),
-        "canEdit": can_manage,
-        "canEditTags": role == "owner",
-        "canCreateDraft": can_manage or can_view_skill_package(db, user, extension),
-        "canDelete": role == "owner",
-    }
-    if draft is not None:
-        base = (
-            db.get(ExtensionVersion, draft.base_version_id)
-            if draft.base_version_id
-            else None
+            )
         )
-        payload["draft"] = draft_payload(draft, base_version=base, include_package=True)
-    return payload
+    )
+    payloads: list[dict[str, Any]] = []
+    for extension in extensions:
+        role = (
+            "owner"
+            if user.role == "admin" or extension.owner_user_id == user.id
+            else role_by_extension_id.get(extension.id)
+        )
+        can_manage = role in {"owner", "maintainer"}
+        versions = versions_by_extension_id.get(extension.id, [])
+        if not can_manage:
+            versions = [
+                version
+                for version in versions
+                if version.status == "published"
+                or version.created_by_user_id == user.id
+            ]
+        ownerships = ownerships_by_extension_id.get(extension.id, [])
+        latest_manifest_tags: list[str] = []
+        if versions:
+            raw_tags = versions[-1].manifest_json.get("tags")
+            if isinstance(raw_tags, list):
+                latest_manifest_tags = _normalize_skill_tags(
+                    [item for item in raw_tags if isinstance(item, str)]
+                )
+        payload: dict[str, Any] = {
+            "id": extension.id,
+            "kind": extension.kind,
+            "slug": extension.slug,
+            "name": extension.name,
+            "description": extension.description,
+            "tags": extension.tags_json
+            if extension.tags_json is not None
+            else latest_manifest_tags,
+            "visibility": extension.visibility,
+            "ownerUserId": extension.owner_user_id,
+            "creatorUserId": extension.creator_user_id,
+            "currentUserRole": role,
+            "ownerships": [
+                {
+                    "id": item.id,
+                    "principalType": item.principal_type,
+                    "principalId": item.principal_id,
+                    "role": item.role,
+                    "displayName": (
+                        principal_users[item.principal_id].display_name
+                        or principal_users[item.principal_id].login_id
+                        if item.principal_id in principal_users
+                        else item.principal_id
+                    ),
+                    "createdAt": item.created_at,
+                }
+                for item in ownerships
+            ],
+            "latestPublishedVersionId": extension.latest_published_version_id,
+            "versions": [
+                version_payload(version, include_package=False)
+                for version in versions
+            ],
+            "createdAt": extension.created_at,
+            "updatedAt": extension.updated_at,
+            "archivedAt": extension.archived_at,
+            "purgesAt": (
+                extension.archived_at + _SKILL_TRASH_RETENTION
+                if extension.archived_at is not None
+                else None
+            ),
+            "canEdit": can_manage,
+            "canEditTags": role == "owner",
+            "canCreateDraft": can_manage or extension.id in installed_extension_ids,
+            "canDelete": role == "owner",
+        }
+        draft = draft_by_extension_id.get(extension.id)
+        if draft is not None:
+            payload["draft"] = draft_payload(
+                draft,
+                base_version=version_by_id.get(draft.base_version_id or ""),
+                include_package=include_draft_package,
+            )
+        payloads.append(payload)
+    return payloads
+
+
+def extension_payload(
+    db: Session,
+    extension: Extension,
+    *,
+    user: User,
+    include_draft_package: bool = True,
+) -> dict[str, Any]:
+    return extension_payloads(
+        db,
+        [extension],
+        user=user,
+        include_draft_package=include_draft_package,
+    )[0]
 
 
 def draft_payload(

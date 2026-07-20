@@ -14,7 +14,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.types import Scope
+from starlette.middleware.gzip import GZipMiddleware
+from starlette.types import Receive, Scope, Send
 from sqlalchemy import text
 
 from .agent.executor import local_run_executor
@@ -143,6 +144,18 @@ class SPAStaticFiles(StaticFiles):
         return response
 
 
+class ApiGZipMiddleware(GZipMiddleware):
+    """Compress regular responses without buffering event-stream delivery."""
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and str(scope.get("path", "")).startswith(
+            "/stream/"
+        ):
+            await self.app(scope, receive, send)
+            return
+        await super().__call__(scope, receive, send)
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     config = settings or get_settings()
     startup_tracker = StartupTracker()
@@ -223,6 +236,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ],
         expose_headers=["X-CSRF-Token", "ETag", "X-Request-ID", "Content-Disposition"],
     )
+    application.add_middleware(
+        ApiGZipMiddleware,
+        minimum_size=1_000,
+        compresslevel=5,
+    )
 
     @application.middleware("http")
     async def request_context(request: Request, call_next):
@@ -286,6 +304,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ):
         application.include_router(route_module.router, prefix="/api")
     application.include_router(runs.stream_router)
+    application.include_router(deep_analysis.stream_router)
 
     @application.get("/api/health/live", tags=["health"])
     def liveness() -> dict[str, str]:

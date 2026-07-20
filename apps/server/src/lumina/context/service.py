@@ -36,6 +36,7 @@ PGPT_TOKEN_ESTIMATION_PADDING = 4 / 3
 RECENT_MESSAGES_TO_PRESERVE = 4
 RUNTIME_RECENT_UNITS_TO_PRESERVE = 3
 RUNTIME_SUMMARY_MARKER = "[Compacted runtime context]"
+CURRENT_RUN_CONTEXT_METADATA_KEY = "lumina_current_run_required"
 RUNTIME_TOOL_ARGUMENT_STRING_LIMIT = 240
 RUNTIME_TOOL_RESULT_HEAD_CHARS = 1_200
 RUNTIME_TOOL_RESULT_TAIL_CHARS = 600
@@ -223,6 +224,29 @@ def compact_runtime_messages(
         body_start = index + 1
 
     units = _provider_message_units(messages[body_start:])
+    required_unit_indexes = [
+        index
+        for index, unit in enumerate(units)
+        if any(
+            message.provider_metadata.get(CURRENT_RUN_CONTEXT_METADATA_KEY) is True
+            for message in unit
+        )
+    ]
+    if required_unit_indexes:
+        return _compact_runtime_messages_with_required_context(
+            run=run,
+            original_messages=messages,
+            head=head,
+            previous_summaries=previous_summaries,
+            units=units,
+            required_start=min(required_unit_indexes),
+            required_end=max(required_unit_indexes),
+            tool_schemas=tool_schemas,
+            threshold=threshold,
+            estimated_before=estimated_before,
+            effective_budget=effective_budget,
+            force=force,
+        )
     preserve_target = 1 if force else RUNTIME_RECENT_UNITS_TO_PRESERVE
     preserve_count = min(preserve_target, len(units))
     compacted_units = units[:-preserve_count] if preserve_count else units
@@ -315,6 +339,116 @@ def compact_runtime_messages(
         effective_input_budget=effective_budget,
         compacted_message_count=len(compacted_messages),
         preserved_message_count=len(retained),
+        compacted_payload_count=compacted_payload_count,
+    )
+
+
+def _compact_runtime_messages_with_required_context(
+    *,
+    run: Run,
+    original_messages: Sequence[ProviderMessage],
+    head: Sequence[ProviderMessage],
+    previous_summaries: Sequence[str],
+    units: Sequence[Sequence[ProviderMessage]],
+    required_start: int,
+    required_end: int,
+    tool_schemas: Sequence[Mapping[str, Any]],
+    threshold: int,
+    estimated_before: int,
+    effective_budget: int,
+    force: bool,
+) -> RuntimeContextPreparation:
+    """Compact around, never through, the current Run's required context block."""
+
+    prefix_units = units[:required_start]
+    required_units = units[required_start : required_end + 1]
+    suffix_units = units[required_end + 1 :]
+    preserve_target = 1 if force else RUNTIME_RECENT_UNITS_TO_PRESERVE
+    preserve_count = min(preserve_target, len(suffix_units))
+    compacted_suffix_units = (
+        suffix_units[:-preserve_count] if preserve_count else suffix_units
+    )
+    retained_suffix_units = suffix_units[-preserve_count:] if preserve_count else []
+
+    def summary_message(
+        source_units: Sequence[Sequence[ProviderMessage]],
+        *,
+        heading: str,
+        include_previous: bool = False,
+    ) -> tuple[ProviderMessage, ...]:
+        if not source_units and not (include_previous and previous_summaries):
+            return ()
+        parts = [RUNTIME_SUMMARY_MARKER, heading]
+        if include_previous and previous_summaries:
+            parts.append(_bounded("\n".join(previous_summaries), 3_000))
+        for unit in source_units:
+            parts.extend(_runtime_message_summary(message) for message in unit)
+        return (
+            ProviderMessage(
+                role="system",
+                content=_bounded(
+                    "\n".join(parts),
+                    max(1_500, min(8_000, effective_budget * 3)),
+                ),
+            ),
+        )
+
+    prefix_summary = summary_message(
+        prefix_units,
+        heading=(
+            "Earlier conversation and in-flight work were compacted. Treat this "
+            "as prior context, not a new user request."
+        ),
+        include_previous=True,
+    )
+    suffix_summary = summary_message(
+        compacted_suffix_units,
+        heading=(
+            "Earlier work performed for the current user request was compacted. "
+            "Treat this as completed in-flight work, not a new instruction."
+        ),
+    )
+    required = tuple(message for unit in required_units for message in unit)
+    retained = tuple(message for unit in retained_suffix_units for message in unit)
+    prepared_messages: tuple[ProviderMessage, ...] = (
+        *head,
+        *prefix_summary,
+        *required,
+        *suffix_summary,
+        *retained,
+    )
+    estimated_after = _padded_estimate(
+        run,
+        _estimate_provider_messages(prepared_messages, tool_schemas),
+    )
+    compacted_payload_count = 0
+    if estimated_after > threshold:
+        prepared_messages, compacted_payload_count = _compact_runtime_payloads(
+            prepared_messages
+        )
+        estimated_after = _padded_estimate(
+            run,
+            _estimate_provider_messages(prepared_messages, tool_schemas),
+        )
+    compacted_units = len(prefix_units) + len(compacted_suffix_units)
+    if compacted_units == 0 and compacted_payload_count == 0:
+        return RuntimeContextPreparation(
+            messages=tuple(original_messages),
+            compacted=False,
+            estimated_tokens_before=estimated_before,
+            estimated_tokens_after=estimated_before,
+            effective_input_budget=effective_budget,
+        )
+    return RuntimeContextPreparation(
+        messages=prepared_messages,
+        compacted=True,
+        estimated_tokens_before=estimated_before,
+        estimated_tokens_after=estimated_after,
+        effective_input_budget=effective_budget,
+        compacted_message_count=sum(
+            len(unit) for unit in (*prefix_units, *compacted_suffix_units)
+        ),
+        preserved_message_count=len(required) + len(retained),
         compacted_payload_count=compacted_payload_count,
     )
 

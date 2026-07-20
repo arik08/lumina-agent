@@ -18,7 +18,7 @@ from lumina.conversations.service import (
 )
 from lumina.db import SessionLocal
 from lumina.main import create_app
-from lumina.models import Conversation, Message, ToolExecution, User, utc_now
+from lumina.models import Conversation, Message, Run, ToolExecution, User, utc_now
 
 
 def test_cursor_preserves_favorite_order_and_search_is_whitespace_tolerant(
@@ -420,6 +420,33 @@ def test_turn_set_cursor_pages_backwards_without_overlap(tmp_path: Path) -> None
             assert started.status_code == 202
             _wait_for_terminal(client, started.json()["run"]["runId"])
 
+        with SessionLocal() as db:
+            runs = list(
+                db.scalars(
+                    select(Run)
+                    .where(Run.conversation_id == conversation_id)
+                    .order_by(Run.created_at, Run.id)
+                )
+            )
+            assert len(runs) == 5
+            for index, run in enumerate(runs, start=1):
+                run.usage_json = {
+                    "input_tokens": index * 100,
+                    "cached_input_tokens": index * 80,
+                    "uncached_input_tokens": index * 20,
+                    "output_tokens": index * 10,
+                    "cost_usd": index / 100,
+                    "estimated_cost_breakdown_usd": {
+                        "cached_input": index / 1000,
+                        "uncached_input": index / 500,
+                        "input": index * 3 / 1000,
+                        "output": index / 200,
+                        "total": index * 8 / 1000,
+                    },
+                    "cost_basis": "catalog_estimate",
+                }
+            db.commit()
+
         latest = client.get(
             f"/api/conversations/{conversation_id}/turn-sets",
             params={"limit_turn_sets": 2},
@@ -427,6 +454,10 @@ def test_turn_set_cursor_pages_backwards_without_overlap(tmp_path: Path) -> None
         assert len(latest["turnSets"]) == 2
         assert latest["hasMoreBefore"] is True
         assert latest["totalQuestionCount"] == 5
+        assert latest["usageBeforePage"]["input_tokens"] == 600
+        assert latest["usageBeforePage"]["cached_input_tokens"] == 480
+        assert latest["usageBeforePage"]["output_tokens"] == 60
+        assert latest["usageBeforePage"]["cost_usd"] == pytest.approx(0.06)
 
         older = client.get(
             f"/api/conversations/{conversation_id}/turn-sets",
@@ -437,6 +468,7 @@ def test_turn_set_cursor_pages_backwards_without_overlap(tmp_path: Path) -> None
         ).json()
         assert len(older["turnSets"]) == 2
         assert older["totalQuestionCount"] == 5
+        assert older["usageBeforePage"]["input_tokens"] == 100
         assert {item["id"] for item in latest["turnSets"]}.isdisjoint(
             {item["id"] for item in older["turnSets"]}
         )

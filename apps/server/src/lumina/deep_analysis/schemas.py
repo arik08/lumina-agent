@@ -3,9 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
-from ..api.schemas import ApiModel, MessageReferenceInput
+from ..api.schemas import ApiModel, ExecutionSelection, MessageReferenceInput
 
 
 class MissionCreate(ApiModel):
@@ -16,8 +16,18 @@ class MissionCreate(ApiModel):
     analysis_depth: Literal["auto", "brief", "standard", "deep"] = "auto"
     answer_length: Literal["auto", "brief", "standard", "detailed"] = "auto"
     output_mode: Literal["auto", "chat", "file"] = "auto"
+    output_format: str = Field(default="markdown", min_length=1, max_length=120)
     target_output_tokens: int | None = Field(default=10_000, ge=1, le=40_000)
+    execution: ExecutionSelection | None = None
     prompt_references: list[MessageReferenceInput] = Field(default_factory=list, max_length=100)
+
+    @field_validator("output_format")
+    @classmethod
+    def normalize_output_format(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("output format must not be blank")
+        return normalized
 
 
 class MissionPatch(ApiModel):
@@ -26,22 +36,29 @@ class MissionPatch(ApiModel):
     objective: str | None = Field(default=None, max_length=20_000)
     autonomy_mode: Literal["guided", "balanced", "autonomous"] | None = None
     budget_microusd: int | None = Field(default=None, ge=0)
+    analysis_depth: Literal["auto", "brief", "standard", "deep"] | None = None
+    answer_length: Literal["auto", "brief", "standard", "detailed"] | None = None
+    output_mode: Literal["auto", "chat", "file"] | None = None
+    output_format: str | None = Field(default=None, min_length=1, max_length=120)
+    target_output_tokens: int | None = Field(default=None, ge=1, le=40_000)
+    execution: ExecutionSelection | None = None
+    prompt_references: list[MessageReferenceInput] | None = Field(default=None, max_length=100)
     is_favorite: bool | None = None
     is_liked: bool | None = None
 
+    @field_validator("output_format")
+    @classmethod
+    def normalize_output_format(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("output format must not be blank")
+        return normalized
+
     @model_validator(mode="after")
     def require_change(self) -> "MissionPatch":
-        if all(
-            value is None
-            for value in (
-                self.title,
-                self.objective,
-                self.autonomy_mode,
-                self.budget_microusd,
-                self.is_favorite,
-                self.is_liked,
-            )
-        ):
+        if not (self.model_fields_set - {"expected_revision"}):
             raise ValueError("at least one mission field is required")
         return self
 
@@ -374,7 +391,9 @@ class MissionSummaryResponse(ApiModel):
     analysis_depth: str
     answer_length: str
     output_mode: str
+    output_format: str
     target_output_tokens: int | None
+    execution: ExecutionSelection | None
     prompt_references: list[dict[str, Any]]
     budget_microusd: int | None
     spent_microusd: int

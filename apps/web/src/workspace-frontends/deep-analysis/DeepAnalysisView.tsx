@@ -3,6 +3,7 @@ import {
   AlignLeft,
   AtSign,
   Check,
+  ChevronDown,
   CircleAlert,
   CircleDollarSign,
   FolderDown,
@@ -33,7 +34,6 @@ import {
   type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
-  type ReactNode,
   type WheelEvent as ReactWheelEvent,
   useEffect,
   useMemo,
@@ -43,16 +43,27 @@ import {
 import { createPortal } from "react-dom";
 
 import { api, ApiError } from "../../api";
+import {
+  analysisDepthOptions,
+  answerLengthOptions,
+  ArtifactLengthSlider,
+  ComposerPicker,
+  type ComposerPickerOption,
+} from "../../components/ComposerControls";
 import { MarkdownResponse } from "../../components/ConversationTurn";
 import { useCachedViewState } from "../../view-data-cache";
+import { useSharedNow } from "../../shared-clock";
 import type {
   DeepAnalysisMissionDetail,
   DeepAnalysisMissionEvent,
   DeepAnalysisMissionCosts,
   DeepAnalysisMissionSummary,
+  DeepAnalysisOutputFormat,
   DeepAnalysisWorkflowNode,
   DeepAnalysisWorkflowRevision,
   ComposerSuggestion,
+  EffortOption,
+  ExecutionSelection,
   OutputMode,
   PromptReference,
 } from "../../api-types";
@@ -69,15 +80,108 @@ interface DeepAnalysisViewProps {
   onMissionsLoadingChange: (loading: boolean) => void;
   onSelectedMissionChange: (missionId: string | null) => void;
   onOpenNavigation: () => void;
+  execution: ExecutionSelection | null;
+  executionOptions: DeepAnalysisExecutionOption[];
 }
 
 type MissionAnalysisDepth = "auto" | "brief" | "standard" | "deep";
 type MissionAnswerLength = "auto" | "brief" | "standard" | "detailed";
 
-interface MissionOption {
-  id: string;
-  label: string;
-  description: string;
+const outputFormatOptions = [
+  { value: "markdown", label: "Markdown (.md)" },
+  { value: "html", label: "HTML (.html)" },
+] as const;
+
+function normalizeOutputFormat(value: string) {
+  const trimmed = value.trim();
+  const normalized = trimmed.toLowerCase();
+  if (["markdown", "markdown (.md)", "md", ".md"].includes(normalized)) return "markdown";
+  if (["html", "html (.html)", ".html"].includes(normalized)) return "html";
+  return trimmed || "markdown";
+}
+
+function outputFormatDisplay(value: string) {
+  return outputFormatOptions.find((option) => option.value === value)?.label ?? value;
+}
+
+function OutputFormatInput({
+  value,
+  disabled = false,
+  onChange,
+}: {
+  value: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) {
+        onChange(normalizeOutputFormat(value));
+        setOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    return () => document.removeEventListener("pointerdown", closeOutside);
+  }, [onChange, open, value]);
+
+  return (
+    <div ref={rootRef} className="deep-analysis-output-format-input">
+      <input
+        role="combobox"
+        aria-label="최종 산출물 형태"
+        aria-expanded={open}
+        aria-controls="deep-analysis-output-format-options"
+        autoComplete="off"
+        maxLength={120}
+        placeholder="최종 산출물 형태"
+        disabled={disabled}
+        value={outputFormatDisplay(value)}
+        onFocus={() => setOpen(true)}
+        onChange={(event) => {
+          onChange(event.target.value);
+          setOpen(true);
+        }}
+        onBlur={(event) => {
+          if (event.relatedTarget instanceof Node && rootRef.current?.contains(event.relatedTarget)) return;
+          onChange(normalizeOutputFormat(value));
+          setOpen(false);
+        }}
+      />
+      <button
+        type="button"
+        aria-label="최종 산출물 형태 추천 열기"
+        aria-expanded={open}
+        disabled={disabled}
+        onClick={() => setOpen((current) => !current)}
+      ><ChevronDown size={14} /></button>
+      {open && (
+        <div id="deep-analysis-output-format-options" role="listbox" aria-label="최종 산출물 형태 추천">
+          {outputFormatOptions.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              role="option"
+              aria-selected={normalizeOutputFormat(value) === option.value}
+              onClick={() => {
+                onChange(option.value);
+                setOpen(false);
+              }}
+            >{option.label}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface DeepAnalysisExecutionOption extends ComposerPickerOption {
+  providerId: string;
+  modelKey: string;
+  effortOptions: EffortOption[];
 }
 
 interface SelectedMissionReference {
@@ -88,104 +192,38 @@ interface SelectedMissionReference {
   reference: PromptReference;
 }
 
-const missionAnalysisDepthOptions: MissionOption[] = [
-  { id: "auto", label: "자동", description: "목표에 맞춰 분석 범위를 결정합니다." },
-  { id: "brief", label: "간단", description: "핵심 사실만 빠르게 확인합니다." },
-  { id: "standard", label: "충분", description: "필요한 근거와 예외를 함께 확인합니다." },
-  { id: "deep", label: "심층", description: "다양한 근거와 반례까지 폭넓게 검증합니다." },
-];
-
-const missionAnswerLengthOptions: MissionOption[] = [
-  { id: "auto", label: "자동", description: "목표에 맞춰 답변 분량을 결정합니다." },
-  { id: "brief", label: "짧게", description: "결론과 핵심만 간결하게 답합니다." },
-  { id: "standard", label: "보통", description: "이해에 필요한 설명을 함께 답합니다." },
-  { id: "detailed", label: "상세", description: "배경과 예외까지 상세하게 답합니다." },
-];
-
-const missionOutputModeOptions: MissionOption[] = [
-  { id: "auto", label: "자동", description: "목표와 요청 형식에 맞춰 출력합니다." },
-  { id: "chat", label: "채팅", description: "각 Node 결과를 채팅 답변 중심으로 생성합니다." },
-  { id: "file", label: "파일", description: "파일 산출물 생성을 우선합니다." },
-];
-
-const missionOutputTokenOptions: MissionOption[] = [8_000, 10_000, 20_000, 30_000, 40_000]
-  .map((value) => ({
-    id: String(value),
-    label: `${value / 1_000}k`,
-    description: `파일 출력 목표를 최대 ${value.toLocaleString()} 토큰으로 설정합니다.`,
-  }));
-
-function MissionOptionPicker({
-  icon,
-  label,
-  options,
-  value,
-  onChange,
-  onOpen,
-  closeSignal,
-  disabled = false,
-}: {
-  icon: ReactNode;
-  label: string;
-  options: MissionOption[];
-  value: string;
-  onChange: (value: string) => void;
-  onOpen?: () => void;
-  closeSignal?: string | null;
-  disabled?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const selected = options.find((option) => option.id === value) ?? options[0];
-
-  useEffect(() => {
-    if (!open) return;
-    const close = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+function selectedReferencesFromMission(mission: DeepAnalysisMissionDetail): SelectedMissionReference[] {
+  return mission.promptReferences.map((reference) => {
+    const snapshotName = reference.displaySnapshot?.name;
+    const name = typeof snapshotName === "string" && snapshotName
+      ? snapshotName
+      : reference.referenceId;
+    const tokenStart = reference.tokenStart ?? -1;
+    const tokenEnd = reference.tokenEnd ?? -1;
+    const storedToken = tokenStart >= 0 && tokenEnd > tokenStart
+      ? mission.objective.slice(tokenStart, tokenEnd)
+      : "";
+    const token = storedToken || `${reference.kind === "skill" || reference.kind === "mcp" ? "$" : "@"}${name}`;
+    return {
+      key: `${reference.kind}:${reference.referenceId}:${reference.versionOrDigest ?? ""}`,
+      token,
+      name,
+      kind: reference.kind,
+      reference,
     };
-    document.addEventListener("pointerdown", close);
-    return () => document.removeEventListener("pointerdown", close);
-  }, [open]);
+  });
+}
 
-  useEffect(() => {
-    if (closeSignal) setOpen(false);
-  }, [closeSignal]);
-
-  return (
-    <div className={`deep-analysis-create-picker ${open ? "is-open" : ""}`} ref={rootRef}>
-      <button
-        type="button"
-        aria-label={label}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        disabled={disabled}
-        onClick={() => {
-          if (!open) onOpen?.();
-          setOpen((current) => !current);
-        }}
-      >
-        {icon}<span>{selected?.label}</span>
-      </button>
-      {open && (
-        <div className="deep-analysis-create-picker-menu" role="listbox" aria-label={label}>
-          <strong>{label}</strong>
-          {options.map((option) => (
-            <button
-              type="button"
-              role="option"
-              aria-selected={option.id === value}
-              className={option.id === value ? "is-selected" : ""}
-              key={option.id}
-              onClick={() => { onChange(option.id); setOpen(false); }}
-            >
-              <span>{option.label}</span><small>{option.description}</small>
-              {option.id === value && <Check size={13} />}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+function promptReferencesForObjective(
+  references: SelectedMissionReference[],
+  objective: string,
+): PromptReference[] {
+  return references.flatMap(({ reference, token }) => {
+    const tokenStart = objective.indexOf(token);
+    return tokenStart < 0
+      ? []
+      : [{ ...reference, tokenStart, tokenEnd: tokenStart + token.length }];
+  });
 }
 
 const statusLabels: Record<string, string> = {
@@ -417,6 +455,37 @@ function eventDescription(event: DeepAnalysisMissionEvent) {
   return { nodeKey, label: labels[event.type] ?? event.type.replaceAll("_", " ") };
 }
 
+const DETAIL_REFRESH_EVENT_TYPES = new Set([
+  "decision_requested",
+  "decision_resolved",
+  "mission_completed",
+  "mission_file_created",
+  "mission_updated",
+  "node_completed",
+  "node_retried",
+  "quality_gate_completed",
+  "workflow_draft_created",
+  "workflow_draft_updated",
+  "workflow_regenerated",
+  "workflow_revision_activated",
+]);
+
+function compactExecutionLogEvents(events: DeepAnalysisMissionEvent[]) {
+  const seenOutputProgress = new Set<string>();
+  const compacted: DeepAnalysisMissionEvent[] = [];
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event.type === "node_output_delta") {
+      const nodeIdentity = event.payload.nodeKey ?? event.payload.nodeId ?? event.payload.runId ?? "mission";
+      const progressKey = `${event.type}:${String(nodeIdentity)}`;
+      if (seenOutputProgress.has(progressKey)) continue;
+      seenOutputProgress.add(progressKey);
+    }
+    compacted.push(event);
+  }
+  return compacted.reverse();
+}
+
 export function DeepAnalysisView({
   projectId,
   canEdit,
@@ -428,6 +497,8 @@ export function DeepAnalysisView({
   onMissionsLoadingChange,
   onSelectedMissionChange,
   onOpenNavigation,
+  execution,
+  executionOptions,
 }: DeepAnalysisViewProps) {
   const cacheScope = projectId ?? "none";
   const [missions, setMissions] = useCachedViewState<DeepAnalysisMissionSummary[]>(
@@ -457,13 +528,16 @@ export function DeepAnalysisView({
   const [loadingList, setLoadingList] = useState(false);
   const [loadingMission, setLoadingMission] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [createElapsedSeconds, setCreateElapsedSeconds] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [objective, setObjective] = useState("");
   const [analysisDepth, setAnalysisDepth] = useState<MissionAnalysisDepth>("auto");
   const [answerLength, setAnswerLength] = useState<MissionAnswerLength>("auto");
   const [outputMode, setOutputMode] = useState<OutputMode>("auto");
+  const [outputFormat, setOutputFormat] = useState<DeepAnalysisOutputFormat>("markdown");
   const [targetOutputTokens, setTargetOutputTokens] = useState(10_000);
+  const [createExecution, setCreateExecution] = useState<ExecutionSelection | null>(execution);
   const [selectedReferences, setSelectedReferences] = useState<SelectedMissionReference[]>([]);
   const [referenceTrigger, setReferenceTrigger] = useState<"@" | "$" | null>(null);
   const [referenceQuery, setReferenceQuery] = useState("");
@@ -511,6 +585,13 @@ export function DeepAnalysisView({
   const missionSettingsDirty = mission !== null && (
     missionTitleDraft.trim() !== mission.title
     || missionObjectiveDraft.trim() !== mission.objective
+    || analysisDepth !== mission.analysisDepth
+    || answerLength !== mission.answerLength
+    || outputMode !== mission.outputMode
+    || outputFormat !== mission.outputFormat
+    || (outputMode === "chat" ? null : targetOutputTokens) !== mission.targetOutputTokens
+    || JSON.stringify(createExecution) !== JSON.stringify(mission.execution)
+    || JSON.stringify(promptReferencesForObjective(selectedReferences, missionObjectiveDraft)) !== JSON.stringify(mission.promptReferences)
   );
   const [connectionDraft, setConnectionDraft] = useState<{
     sourceNodeKey: string;
@@ -520,8 +601,10 @@ export function DeepAnalysisView({
   } | null>(null);
   const [suppressedConnectionPortNodeKey, setSuppressedConnectionPortNodeKey] = useState<string | null>(null);
   const canvasViewportRef = useRef<HTMLDivElement>(null);
+  const canvasControlsRef = useRef<HTMLDivElement>(null);
   const workflowLayoutRef = useRef<HTMLDivElement>(null);
   const createTitleRef = useRef<HTMLInputElement>(null);
+  const createToolbarRef = useRef<HTMLDivElement>(null);
   const costDetailsRef = useRef<HTMLDivElement>(null);
   const createFileInputRef = useRef<HTMLInputElement>(null);
   const workflowRegenerateTriggerRef = useRef<HTMLButtonElement>(null);
@@ -529,6 +612,11 @@ export function DeepAnalysisView({
   const workflowRegenerateFontSize = workflowRegenerateTriggerRef.current
     ?.closest<HTMLElement>(".app-shell")
     ?.style.getPropertyValue("--conversation-font-size");
+  const selectedExecutionId = createExecution
+    ? `${createExecution.providerId}:${createExecution.modelKey}`
+    : "";
+  const selectedExecutionOption = executionOptions.find((option) => option.id === selectedExecutionId);
+  const createEffortOptions = selectedExecutionOption?.effortOptions ?? [];
   const eventCursorRef = useRef(0);
   const workflowUndoStackRef = useRef<Array<{
     draft: DeepAnalysisWorkflowRevision;
@@ -559,6 +647,19 @@ export function DeepAnalysisView({
     clientY: number;
     moved: boolean;
   } | null>(null);
+
+  useEffect(() => {
+    if (!creating) {
+      setCreateElapsedSeconds(0);
+      return;
+    }
+    const startedAt = Date.now();
+    const updateElapsed = () => setCreateElapsedSeconds(Math.floor((Date.now() - startedAt) / 1_000));
+    updateElapsed();
+    const intervalId = window.setInterval(updateElapsed, 1_000);
+    return () => window.clearInterval(intervalId);
+  }, [creating]);
+
   useEffect(() => {
     setExportedFolderPath(null);
     setWorkflowRegenerateOpen(false);
@@ -566,11 +667,29 @@ export function DeepAnalysisView({
     setMissionRootSelected(false);
     setMissionTitleDraft(mission?.title ?? "");
     setMissionObjectiveDraft(mission?.objective ?? "");
+    setAnalysisDepth(mission?.analysisDepth ?? "auto");
+    setAnswerLength(mission?.answerLength ?? "auto");
+    setOutputMode(mission?.outputMode ?? "auto");
+    setOutputFormat(mission?.outputFormat ?? "markdown");
+    setTargetOutputTokens(mission?.targetOutputTokens ?? 10_000);
+    setCreateExecution(mission?.execution ?? execution);
+    setSelectedReferences(mission ? selectedReferencesFromMission(mission) : []);
   }, [mission?.id]);
 
   useEffect(() => {
     if (selectedNodeKey) setMissionRootSelected(false);
   }, [selectedNodeKey]);
+
+  useEffect(() => {
+    if (!referenceTrigger) return;
+    const closeReferenceMenuOutside = (event: PointerEvent) => {
+      if (!createToolbarRef.current?.contains(event.target as Node)) {
+        setReferenceTrigger(null);
+      }
+    };
+    document.addEventListener("pointerdown", closeReferenceMenuOutside);
+    return () => document.removeEventListener("pointerdown", closeReferenceMenuOutside);
+  }, [referenceTrigger]);
 
   useEffect(() => {
     if (!workflowRegenerateOpen) return;
@@ -615,9 +734,24 @@ export function DeepAnalysisView({
 
   useEffect(() => {
     if (createRequest <= 0) return;
+    setTitle("");
+    setObjective("");
+    setAnalysisDepth("auto");
+    setAnswerLength("auto");
+    setOutputMode("auto");
+    setOutputFormat("markdown");
+    setTargetOutputTokens(10_000);
+    setCreateExecution(execution);
+    setSelectedReferences([]);
+    setReferenceTrigger(null);
+    setReferenceQuery("");
     setCreateOpen(true);
     onCreateRequestHandled();
   }, [createRequest, onCreateRequestHandled]);
+
+  useEffect(() => {
+    if (createOpen) setCreateExecution(execution);
+  }, [createOpen, execution]);
 
   useEffect(() => {
     if (!projectId || !referenceTrigger) {
@@ -715,7 +849,7 @@ export function DeepAnalysisView({
         setEditingWorkflow(false);
         setMission(detail);
         void api.deepAnalysis.listEvents(detail.id, 0, controller.signal)
-          .then(setMissionEvents)
+          .then((events) => setMissionEvents(events.slice(-1000)))
           .catch(() => {
             // Snapshot remains usable even if the audit log cannot be loaded.
           });
@@ -781,44 +915,110 @@ export function DeepAnalysisView({
       || !["running", "paused", "awaiting_input"].includes(mission.status)
     ) return;
     let active = true;
+    let detailTimer: number | null = null;
+    let projectionTimer: number | null = null;
     let refreshing = false;
-    let snapshotTick = 0;
-    const refresh = async () => {
-      if (refreshing) return;
+    let refreshingProjection = false;
+    const refreshDetail = async () => {
+      if (refreshing || document.visibilityState !== "visible") return;
       refreshing = true;
       try {
-        const events = await api.deepAnalysis.listEvents(
-          selectedMissionId,
-          eventCursorRef.current,
-        );
-        if (!active) return;
-        if (events.length) {
-          eventCursorRef.current = events.at(-1)?.sequence ?? eventCursorRef.current;
-          setMissionEvents((current) => [...current, ...events]);
-        }
-        snapshotTick += 1;
-        if (!events.length && mission.status !== "running" && snapshotTick % 4 !== 0) return;
         const detail = await api.deepAnalysis.getMission(selectedMissionId);
         if (!active) return;
-        eventCursorRef.current = detail.eventCursor;
+        eventCursorRef.current = Math.max(
+          eventCursorRef.current,
+          detail.eventCursor,
+        );
         setMission(detail);
         setMissions((current) =>
           current.map((item) => (item.id === detail.id ? detail : item)),
         );
       } catch {
-        // A transient polling failure must not hide the last durable snapshot.
+        // Keep the last durable snapshot while EventSource reconnects.
       } finally {
         refreshing = false;
       }
     };
-    const refreshWhenVisible = () => {
-      if (document.visibilityState === "visible") void refresh();
+    const scheduleDetailRefresh = () => {
+      if (detailTimer !== null) return;
+      detailTimer = window.setTimeout(() => {
+        detailTimer = null;
+        void refreshDetail();
+      }, 100);
     };
-    const timer = window.setInterval(refreshWhenVisible, 500);
+    const refreshProjection = async () => {
+      if (refreshingProjection || document.visibilityState !== "visible") return;
+      refreshingProjection = true;
+      try {
+        const projection = await api.deepAnalysis.getProjection(selectedMissionId);
+        if (!active) return;
+        eventCursorRef.current = Math.max(eventCursorRef.current, projection.eventCursor);
+        setMission((current) => {
+          if (!current || current.id !== projection.missionId) return current;
+          const projectedNodes = new Map(projection.nodes.map((node) => [node.id, node]));
+          return {
+            ...current,
+            eventCursor: Math.max(current.eventCursor, projection.eventCursor),
+            status: projection.status,
+            spentMicrousd: projection.spentMicrousd,
+            revision: Math.max(current.revision, projection.revision),
+            workflow: {
+              ...current.workflow,
+              nodes: current.workflow.nodes.map((node) => ({
+                ...node,
+                ...projectedNodes.get(node.id),
+              })),
+            },
+          };
+        });
+        setMissions((current) => current.map((item) => (
+          item.id === projection.missionId
+            ? {
+                ...item,
+                status: projection.status,
+                spentMicrousd: projection.spentMicrousd,
+                revision: Math.max(item.revision, projection.revision),
+              }
+            : item
+        )));
+      } catch {
+        // Event replay remains authoritative; visibility reconciliation retries later.
+      } finally {
+        refreshingProjection = false;
+      }
+    };
+    const scheduleProjectionRefresh = () => {
+      if (projectionTimer !== null) return;
+      projectionTimer = window.setTimeout(() => {
+        projectionTimer = null;
+        void refreshProjection();
+      }, 100);
+    };
+    const closeStream = api.deepAnalysis.openEventStream(
+      selectedMissionId,
+      eventCursorRef.current,
+      {
+        onEvent: (event) => {
+          if (!active || event.sequence <= eventCursorRef.current) return;
+          eventCursorRef.current = event.sequence;
+          setMissionEvents((current) => {
+            if (current.some((item) => item.sequence === event.sequence)) return current;
+            return [...current, event].slice(-1000);
+          });
+          if (DETAIL_REFRESH_EVENT_TYPES.has(event.type)) scheduleDetailRefresh();
+          else scheduleProjectionRefresh();
+        },
+      },
+    );
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void refreshDetail();
+    };
     document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
       active = false;
-      window.clearInterval(timer);
+      closeStream();
+      if (detailTimer !== null) window.clearTimeout(detailTimer);
+      if (projectionTimer !== null) window.clearTimeout(projectionTimer);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [mission?.id, mission?.status, selectedMissionId]);
@@ -968,13 +1168,19 @@ export function DeepAnalysisView({
       mergeNodeKeys,
     };
   }, [shownWorkflow?.edges]);
+  const visibleMissionEventCount = useMemo(
+    () => compactExecutionLogEvents(missionEvents).length,
+    [missionEvents],
+  );
   const activeTabSummary = createOpen
     ? "0/1 완료 · 작성 중"
     : !mission
       ? null
       : activeTab === "workflow"
         ? `${completedNodeCount}/${shownWorkflow?.nodes.length ?? 0} 완료 · 분기 ${workflowTopology.branchCount} · 합류 ${workflowTopology.mergeCount} · 입력 자료 ${mission.sourceManifest.length}개 · Revision ${shownWorkflow?.revisionNumber}`
-        : missionEvents.length ? `기록 ${missionEvents.length}개` : "기록 대기";
+        : visibleMissionEventCount
+          ? `기록 ${visibleMissionEventCount}개`
+          : "기록 대기";
 
   function updateCanvasScale(nextScale: number, originX?: number, originY?: number) {
     const viewport = canvasViewportRef.current;
@@ -1008,9 +1214,13 @@ export function DeepAnalysisView({
   function fitNodesToViewport(nodes: WorkflowNodePosition[]) {
     const viewport = canvasViewportRef.current;
     if (!viewport || !nodes.length) return;
-    const availableHeight = viewport.clientHeight;
 
     const padding = 36;
+    const controlsBottom = canvasControlsRef.current
+      ? canvasControlsRef.current.getBoundingClientRect().bottom - viewport.getBoundingClientRect().top
+      : 0;
+    const contentTop = Math.max(padding, controlsBottom + 12);
+    const availableHeight = Math.max(1, viewport.clientHeight - contentTop - padding);
     const minX = Math.min(...nodes.map((node) => node.positionX));
     const minY = Math.min(...nodes.map((node) => node.positionY));
     const maxX = Math.max(...nodes.map((node) => node.positionX + workflowNodeWidth));
@@ -1023,14 +1233,14 @@ export function DeepAnalysisView({
         minimumCanvasScale,
         Math.min(
           (viewport.clientWidth - padding * 2) / contentWidth,
-          (availableHeight - padding * 2) / contentHeight,
+          availableHeight / contentHeight,
         ),
       ),
     );
     setCanvasScale(fittedScale);
     setCanvasOffset({
       x: (viewport.clientWidth - contentWidth * fittedScale) / 2 - minX * fittedScale,
-      y: (availableHeight - contentHeight * fittedScale) / 2 - minY * fittedScale,
+      y: contentTop + Math.max(0, (availableHeight - contentHeight * fittedScale) / 2) - minY * fittedScale,
     });
   }
 
@@ -1612,7 +1822,8 @@ export function DeepAnalysisView({
     event.preventDefault();
     const nextTitle = missionTitleDraft.trim();
     const nextObjective = missionObjectiveDraft.trim();
-    if (!mission || !missionSettingsEditable || !missionSettingsDirty || !nextTitle || savingMissionSettings) return;
+    const nextOutputFormat = normalizeOutputFormat(outputFormat);
+    if (!mission || !missionSettingsEditable || !missionSettingsDirty || !nextTitle || !outputFormat.trim() || savingMissionSettings) return;
     setSavingMissionSettings(true);
     setError(null);
     try {
@@ -1620,11 +1831,25 @@ export function DeepAnalysisView({
         expectedRevision: mission.revision,
         title: nextTitle,
         objective: nextObjective,
+        analysisDepth,
+        answerLength,
+        outputMode,
+        outputFormat: nextOutputFormat,
+        targetOutputTokens: outputMode === "chat" ? null : targetOutputTokens,
+        execution: createExecution ?? undefined,
+        promptReferences: promptReferencesForObjective(selectedReferences, nextObjective),
       });
       setMission(updated);
       setMissions((current) => current.map((item) => item.id === updated.id ? updated : item));
       setMissionTitleDraft(updated.title);
       setMissionObjectiveDraft(updated.objective);
+      setAnalysisDepth(updated.analysisDepth);
+      setAnswerLength(updated.answerLength);
+      setOutputMode(updated.outputMode);
+      setOutputFormat(updated.outputFormat);
+      setTargetOutputTokens(updated.targetOutputTokens ?? 10_000);
+      setCreateExecution(updated.execution);
+      setSelectedReferences(selectedReferencesFromMission(updated));
     } catch (saveError) {
       setError(errorMessage(saveError));
     } finally {
@@ -1668,7 +1893,9 @@ export function DeepAnalysisView({
       return;
     }
     const token = suggestion.insertText ?? `${suggestion.kind === "skill" || suggestion.kind === "mcp" ? "$" : "@"}${suggestion.name}`;
-    setObjective((current) => `${current.trimEnd()}${current.trim() ? " " : ""}${token} `);
+    const appendToken = (current: string) => `${current.trimEnd()}${current.trim() ? " " : ""}${token} `;
+    if (createOpen) setObjective(appendToken);
+    else setMissionObjectiveDraft(appendToken);
     setSelectedReferences((current) => [
       ...current,
       {
@@ -1692,7 +1919,9 @@ export function DeepAnalysisView({
     const selected = selectedReferences.find((item) => item.key === key);
     if (!selected) return;
     setSelectedReferences((current) => current.filter((item) => item.key !== key));
-    setObjective((current) => current.replace(selected.token, "").replace(/ {2,}/g, " "));
+    const removeToken = (current: string) => current.replace(selected.token, "").replace(/ {2,}/g, " ");
+    if (createOpen) setObjective(removeToken);
+    else setMissionObjectiveDraft(removeToken);
   }
 
   async function uploadMissionSources(files: File[]) {
@@ -1732,7 +1961,7 @@ export function DeepAnalysisView({
 
   async function createMission(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!projectId || !title.trim()) return;
+    if (!projectId || !title.trim() || !outputFormat.trim()) return;
     setCreating(true);
     setError(null);
     try {
@@ -1743,13 +1972,10 @@ export function DeepAnalysisView({
         analysisDepth,
         answerLength,
         outputMode,
+        outputFormat: normalizeOutputFormat(outputFormat),
         targetOutputTokens: outputMode === "chat" ? null : targetOutputTokens,
-        promptReferences: selectedReferences.flatMap(({ reference, token }) => {
-          const tokenStart = objective.indexOf(token);
-          return tokenStart < 0
-            ? []
-            : [{ ...reference, tokenStart, tokenEnd: tokenStart + token.length }];
-        }),
+        execution: createExecution ?? undefined,
+        promptReferences: promptReferencesForObjective(selectedReferences, objective),
       });
       setMissions((current) => [created, ...current]);
       setSelectedMissionId(created.id);
@@ -1760,7 +1986,9 @@ export function DeepAnalysisView({
       setAnalysisDepth("auto");
       setAnswerLength("auto");
       setOutputMode("auto");
+      setOutputFormat("markdown");
       setTargetOutputTokens(10_000);
+      setCreateExecution(execution);
       setSelectedReferences([]);
       setReferenceTrigger(null);
       setCreateOpen(false);
@@ -1809,7 +2037,7 @@ export function DeepAnalysisView({
               disabled={!projectId}
               onClick={() => setActiveTab("workflow")}
             >
-              <GitBranch size={14} /> Workflow
+              <GitBranch size={16} /> Workflow
             </button>
             <button
               type="button"
@@ -1818,7 +2046,7 @@ export function DeepAnalysisView({
               disabled={!projectId || createOpen || !mission}
               onClick={() => setActiveTab("log")}
             >
-              <History size={14} /> 실행 기록
+              <History size={16} /> 실행 기록
             </button>
           </div>
           <span>여러 단계의 분석을 Workflow 단위로 기록하고 이어갑니다.</span>
@@ -1918,6 +2146,14 @@ export function DeepAnalysisView({
                           onChange={(event) => setObjective(event.target.value)}
                         />
                       </label>
+                      <div className="deep-analysis-select-field">
+                        <span>최종 산출물 형태</span>
+                        <OutputFormatInput
+                          value={outputFormat}
+                          onChange={setOutputFormat}
+                        />
+                        <small>Markdown이 기본입니다. HTML을 고르거나 원하는 형태를 직접 입력할 수 있습니다.</small>
+                      </div>
                       {selectedReferences.length > 0 && (
                         <div className="deep-analysis-create-references" aria-label="선택한 분석 자료와 도구">
                           {selectedReferences.map((item) => (
@@ -1931,7 +2167,16 @@ export function DeepAnalysisView({
                           ))}
                         </div>
                       )}
-                      <div className="deep-analysis-create-toolbar" aria-label="심층분석 초기 설정">
+                      <div
+                        ref={createToolbarRef}
+                        className="composer-footer deep-analysis-create-toolbar"
+                        aria-label="심층분석 초기 설정"
+                        onPointerDownCapture={(event) => {
+                          if ((event.target as Element).closest(".composer-picker-trigger, .artifact-length-trigger")) {
+                            setReferenceTrigger(null);
+                          }
+                        }}
+                      >
                         <input
                           ref={createFileInputRef}
                           className="visually-hidden"
@@ -1944,69 +2189,92 @@ export function DeepAnalysisView({
                             void uploadMissionSources(files);
                           }}
                         />
-                        <button
-                          className="deep-analysis-create-utility tooltip-control"
-                          type="button"
-                          aria-label="분석 자료 첨부"
-                          data-tooltip="첨부"
-                          disabled={uploadingSources}
-                          onClick={() => createFileInputRef.current?.click()}
-                        >
-                          {uploadingSources ? <LoaderCircle className="is-running" size={16} /> : <Paperclip size={16} />}
-                        </button>
-                        <button
-                          className={`deep-analysis-create-utility tooltip-control ${referenceTrigger === "@" ? "is-active" : ""}`}
-                          type="button"
-                          aria-label="기존 문서 연결"
-                          data-tooltip="참고문서"
-                          aria-pressed={referenceTrigger === "@"}
-                          onClick={() => setReferenceTrigger((current) => current === "@" ? null : "@")}
-                        ><AtSign size={16} /></button>
-                        <button
-                          className={`deep-analysis-create-utility tooltip-control ${referenceTrigger === "$" ? "is-active" : ""}`}
-                          type="button"
-                          aria-label="Skill 및 MCP 연결"
-                          data-tooltip="Skill / MCP"
-                          aria-pressed={referenceTrigger === "$"}
-                          onClick={() => setReferenceTrigger((current) => current === "$" ? null : "$")}
-                        ><CircleDollarSign size={16} /></button>
-                        <MissionOptionPicker
-                          icon={<Search size={14} />}
-                          label="분석 범위"
-                          options={missionAnalysisDepthOptions}
-                          value={analysisDepth}
-                          closeSignal={referenceTrigger}
-                          onOpen={() => setReferenceTrigger(null)}
-                          onChange={(value) => setAnalysisDepth(value as MissionAnalysisDepth)}
-                        />
-                        <MissionOptionPicker
-                          icon={<AlignLeft size={14} />}
-                          label="답변 분량"
-                          options={missionAnswerLengthOptions}
-                          value={answerLength}
-                          closeSignal={referenceTrigger}
-                          onOpen={() => setReferenceTrigger(null)}
-                          onChange={(value) => setAnswerLength(value as MissionAnswerLength)}
-                        />
-                        <MissionOptionPicker
-                          icon={<FileText size={14} />}
-                          label="출력 방식"
-                          options={missionOutputModeOptions}
-                          value={outputMode}
-                          closeSignal={referenceTrigger}
-                          onOpen={() => setReferenceTrigger(null)}
-                          onChange={(value) => setOutputMode(value as OutputMode)}
-                        />
-                        <MissionOptionPicker
-                          icon={<span className="deep-analysis-token-mark">T</span>}
-                          label="출력 토큰"
-                          options={missionOutputTokenOptions}
-                          value={String(targetOutputTokens)}
-                          closeSignal={referenceTrigger}
-                          onOpen={() => setReferenceTrigger(null)}
-                          disabled={outputMode === "chat"}
-                          onChange={(value) => setTargetOutputTokens(Number(value))}
-                        />
+                        <div>
+                          <button
+                            className="composer-utility-button tooltip-control"
+                            type="button"
+                            aria-label="분석 자료 첨부"
+                            data-tooltip="첨부"
+                            disabled={uploadingSources}
+                            onClick={() => createFileInputRef.current?.click()}
+                          >
+                            {uploadingSources ? <LoaderCircle className="is-running" size={17} /> : <Paperclip size={17} />}
+                          </button>
+                          <button
+                            className={`composer-utility-button tooltip-control ${referenceTrigger === "@" ? "is-active" : ""}`}
+                            type="button"
+                            aria-label="기존 문서 연결"
+                            data-tooltip="참고문서"
+                            aria-pressed={referenceTrigger === "@"}
+                            onClick={() => setReferenceTrigger((current) => current === "@" ? null : "@")}
+                          ><AtSign size={17} /></button>
+                          <button
+                            className={`composer-utility-button tooltip-control ${referenceTrigger === "$" ? "is-active" : ""}`}
+                            type="button"
+                            aria-label="Skill 및 MCP 연결"
+                            data-tooltip="Skill / MCP"
+                            aria-pressed={referenceTrigger === "$"}
+                            onClick={() => setReferenceTrigger((current) => current === "$" ? null : "$")}
+                          ><CircleDollarSign size={17} /></button>
+                          <ComposerPicker
+                            options={analysisDepthOptions}
+                            value={analysisDepth}
+                            onChange={(value) => setAnalysisDepth(value as MissionAnalysisDepth)}
+                            ariaLabel="분석 범위 설정"
+                            menuLabel="분석 범위"
+                            menuDescription="웹 검색과 자료 확인을 포함해 어디까지 분석할지 정합니다."
+                            controlClassName={`analysis-depth-control is-${analysisDepth}`}
+                            triggerIcon={<Search size={15} aria-hidden="true" />}
+                            hideChevron
+                          />
+                          <ComposerPicker
+                            options={answerLengthOptions}
+                            value={answerLength}
+                            onChange={(value) => setAnswerLength(value as MissionAnswerLength)}
+                            ariaLabel="답변 분량 설정"
+                            menuLabel="답변 분량"
+                            menuDescription="각 Node가 작성할 결과의 기본 분량을 정합니다."
+                            controlClassName={`answer-length-control is-${answerLength}`}
+                            triggerIcon={<AlignLeft size={15} aria-hidden="true" />}
+                            hideChevron
+                          />
+                          <ArtifactLengthSlider
+                            value={targetOutputTokens}
+                            onChange={(value) => setTargetOutputTokens(value ?? 10_000)}
+                            outputMode={outputMode}
+                            onOutputModeChange={setOutputMode}
+                          />
+                        </div>
+                        <div>
+                          <ComposerPicker
+                            options={executionOptions}
+                            value={selectedExecutionId}
+                            onChange={(candidateId) => {
+                              const candidate = executionOptions.find((option) => option.id === candidateId);
+                              if (!candidate) return;
+                              const effortId = candidate.effortOptions.find((option) => option.id === "auto")?.id
+                                ?? candidate.effortOptions[0]?.id
+                                ?? null;
+                              setCreateExecution({
+                                providerId: candidate.providerId,
+                                modelKey: candidate.modelKey,
+                                effortId,
+                              });
+                            }}
+                            ariaLabel="모델 선택"
+                            menuLabel="Model"
+                            controlClassName="model-control"
+                            placeholder="재설정 필요"
+                          />
+                          <ComposerPicker
+                            options={createEffortOptions}
+                            value={createExecution?.effortId ?? ""}
+                            onChange={(effortId) => setCreateExecution((current) => current ? { ...current, effortId: effortId || null } : current)}
+                            ariaLabel="추론 노력도 설정"
+                            menuLabel="Effort"
+                            controlClassName="effort-control"
+                          />
+                        </div>
                         {referenceTrigger && (
                           <div className="deep-analysis-create-reference-menu">
                             <header>
@@ -2050,10 +2318,10 @@ export function DeepAnalysisView({
                         className="deep-analysis-create-submit"
                         type="submit"
                         aria-busy={creating}
-                        disabled={creating || !title.trim()}
+                        disabled={creating || !title.trim() || !outputFormat.trim()}
                       >
                         {creating && <LoaderCircle className="is-running" size={14} />}
-                        {creating ? "Workflow 설계 중..." : "Workflow 자동 만들기"}
+                        {creating ? `Workflow 설계 중... (${createElapsedSeconds}s)` : "Workflow 자동 만들기"}
                       </button>
                     </form>
                   </aside>
@@ -2339,6 +2607,13 @@ export function DeepAnalysisView({
                           onClick={() => {
                             setMissionTitleDraft(mission.title);
                             setMissionObjectiveDraft(mission.objective);
+                            setAnalysisDepth(mission.analysisDepth);
+                            setAnswerLength(mission.answerLength);
+                            setOutputMode(mission.outputMode);
+                            setOutputFormat(mission.outputFormat);
+                            setTargetOutputTokens(mission.targetOutputTokens ?? 10_000);
+                            setCreateExecution(mission.execution);
+                            setSelectedReferences(selectedReferencesFromMission(mission));
                             setMissionRootSelected(true);
                             setSelectedNodeKey(null);
                             setSelectedEdgeId(null);
@@ -2388,7 +2663,7 @@ export function DeepAnalysisView({
                     </div>
                     </div>
                     </div>
-                    <div className="deep-analysis-canvas-controls" aria-label="Workflow 조작">
+                    <div ref={canvasControlsRef} className="deep-analysis-canvas-controls" aria-label="Workflow 조작">
                       <div className="deep-analysis-workflow-regenerate-control">
                       <button
                         ref={workflowRegenerateTriggerRef}
@@ -2507,11 +2782,195 @@ export function DeepAnalysisView({
                             onChange={(event) => setMissionObjectiveDraft(event.target.value)}
                           />
                         </label>
+                        <div className="deep-analysis-select-field">
+                          <span>최종 산출물 형태</span>
+                          <OutputFormatInput
+                            value={outputFormat}
+                            disabled={!missionSettingsEditable || savingMissionSettings}
+                            onChange={setOutputFormat}
+                          />
+                          <small>Markdown이 기본입니다. HTML을 고르거나 원하는 형태를 직접 입력할 수 있습니다.</small>
+                        </div>
+                        {selectedReferences.length > 0 && (
+                          <div className="deep-analysis-create-references" aria-label="선택한 분석 자료와 도구">
+                            {selectedReferences.map((item) => (
+                              <span key={item.key}>
+                                {item.kind === "skill" || item.kind === "mcp"
+                                  ? <CircleDollarSign size={13} />
+                                  : <FileText size={13} />}
+                                <strong>{item.name}</strong>
+                                <button
+                                  type="button"
+                                  aria-label={`${item.name} 연결 해제`}
+                                  disabled={!missionSettingsEditable || savingMissionSettings}
+                                  onClick={() => removeMissionReference(item.key)}
+                                ><X size={11} /></button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        <div
+                          ref={createToolbarRef}
+                          className="composer-footer deep-analysis-create-toolbar"
+                          aria-label="Mission 실행 설정"
+                          onPointerDownCapture={(event) => {
+                            if ((event.target as Element).closest(".composer-picker-trigger, .artifact-length-trigger")) {
+                              setReferenceTrigger(null);
+                            }
+                          }}
+                        >
+                          <input
+                            ref={createFileInputRef}
+                            className="visually-hidden"
+                            type="file"
+                            multiple
+                            accept=".pdf,.docx,.xlsx,.pptx,.txt,.md,.csv,.tsv,.png,.jpg,.jpeg,.webp,.gif"
+                            onChange={(event) => {
+                              const files = Array.from(event.currentTarget.files ?? []);
+                              event.currentTarget.value = "";
+                              void uploadMissionSources(files);
+                            }}
+                          />
+                          <div>
+                            <button
+                              className="composer-utility-button tooltip-control"
+                              type="button"
+                              aria-label="분석 자료 첨부"
+                              data-tooltip="첨부"
+                              disabled={!missionSettingsEditable || savingMissionSettings || uploadingSources}
+                              onClick={() => createFileInputRef.current?.click()}
+                            >
+                              {uploadingSources ? <LoaderCircle className="is-running" size={17} /> : <Paperclip size={17} />}
+                            </button>
+                            <button
+                              className={`composer-utility-button tooltip-control ${referenceTrigger === "@" ? "is-active" : ""}`}
+                              type="button"
+                              aria-label="기존 문서 연결"
+                              data-tooltip="참고문서"
+                              aria-pressed={referenceTrigger === "@"}
+                              disabled={!missionSettingsEditable || savingMissionSettings}
+                              onClick={() => setReferenceTrigger((current) => current === "@" ? null : "@")}
+                            ><AtSign size={17} /></button>
+                            <button
+                              className={`composer-utility-button tooltip-control ${referenceTrigger === "$" ? "is-active" : ""}`}
+                              type="button"
+                              aria-label="Skill 및 MCP 연결"
+                              data-tooltip="Skill / MCP"
+                              aria-pressed={referenceTrigger === "$"}
+                              disabled={!missionSettingsEditable || savingMissionSettings}
+                              onClick={() => setReferenceTrigger((current) => current === "$" ? null : "$")}
+                            ><CircleDollarSign size={17} /></button>
+                            <ComposerPicker
+                              options={analysisDepthOptions}
+                              value={analysisDepth}
+                              onChange={(value) => setAnalysisDepth(value as MissionAnalysisDepth)}
+                              ariaLabel="분석 범위 설정"
+                              menuLabel="분석 범위"
+                              menuDescription="웹 검색과 자료 확인을 포함해 어디까지 분석할지 정합니다."
+                              controlClassName={`analysis-depth-control is-${analysisDepth}`}
+                              triggerIcon={<Search size={15} aria-hidden="true" />}
+                              hideChevron
+                              disabled={!missionSettingsEditable || savingMissionSettings}
+                            />
+                            <ComposerPicker
+                              options={answerLengthOptions}
+                              value={answerLength}
+                              onChange={(value) => setAnswerLength(value as MissionAnswerLength)}
+                              ariaLabel="답변 분량 설정"
+                              menuLabel="답변 분량"
+                              menuDescription="각 Node가 작성할 결과의 기본 분량을 정합니다."
+                              controlClassName={`answer-length-control is-${answerLength}`}
+                              triggerIcon={<AlignLeft size={15} aria-hidden="true" />}
+                              hideChevron
+                              disabled={!missionSettingsEditable || savingMissionSettings}
+                            />
+                            <ArtifactLengthSlider
+                              value={targetOutputTokens}
+                              onChange={(value) => {
+                                if (missionSettingsEditable && !savingMissionSettings) setTargetOutputTokens(value ?? 10_000);
+                              }}
+                              outputMode={outputMode}
+                              onOutputModeChange={(value) => {
+                                if (missionSettingsEditable && !savingMissionSettings) setOutputMode(value);
+                              }}
+                            />
+                          </div>
+                          <div>
+                            <ComposerPicker
+                              options={executionOptions}
+                              value={selectedExecutionId}
+                              onChange={(candidateId) => {
+                                const candidate = executionOptions.find((option) => option.id === candidateId);
+                                if (!candidate) return;
+                                const effortId = candidate.effortOptions.find((option) => option.id === "auto")?.id
+                                  ?? candidate.effortOptions[0]?.id
+                                  ?? null;
+                                setCreateExecution({
+                                  providerId: candidate.providerId,
+                                  modelKey: candidate.modelKey,
+                                  effortId,
+                                });
+                              }}
+                              ariaLabel="모델 선택"
+                              menuLabel="Model"
+                              controlClassName="model-control"
+                              placeholder="재설정 필요"
+                              disabled={!missionSettingsEditable || savingMissionSettings}
+                            />
+                            <ComposerPicker
+                              options={createEffortOptions}
+                              value={createExecution?.effortId ?? ""}
+                              onChange={(effortId) => setCreateExecution((current) => current ? { ...current, effortId: effortId || null } : current)}
+                              ariaLabel="추론 노력도 설정"
+                              menuLabel="Effort"
+                              controlClassName="effort-control"
+                              disabled={!missionSettingsEditable || savingMissionSettings}
+                            />
+                          </div>
+                          {referenceTrigger && missionSettingsEditable && (
+                            <div className="deep-analysis-create-reference-menu">
+                              <header>
+                                <strong>{referenceTrigger === "@" ? "기존 문서 연결" : "Skill / MCP 연결"}</strong>
+                                <button type="button" aria-label="연결 메뉴 닫기" onClick={() => setReferenceTrigger(null)}><X size={13} /></button>
+                              </header>
+                              <input
+                                autoFocus
+                                value={referenceQuery}
+                                placeholder={referenceTrigger === "@" ? "파일, 폴더, Artifact 검색" : "Skill 또는 MCP 검색"}
+                                aria-label={referenceTrigger === "@" ? "기존 문서 검색" : "Skill 및 MCP 검색"}
+                                onChange={(event) => setReferenceQuery(event.target.value)}
+                              />
+                              <div role="listbox">
+                                {loadingReferences && <span className="deep-analysis-reference-state"><LoaderCircle className="is-running" size={13} /> 불러오는 중</span>}
+                                {!loadingReferences && referenceSuggestions.length === 0 && <span className="deep-analysis-reference-state">사용 가능한 항목이 없습니다.</span>}
+                                {!loadingReferences && referenceSuggestions.map((suggestion) => {
+                                  const referenceId = suggestion.referenceId ?? suggestion.id;
+                                  const selected = selectedReferences.some((item) => item.key === `${suggestion.kind}:${referenceId}:${suggestion.versionOrDigest ?? ""}`);
+                                  const disabled = selected || suggestion.status !== undefined && suggestion.status !== "available";
+                                  return (
+                                    <button
+                                      type="button"
+                                      role="option"
+                                      aria-selected={selected}
+                                      disabled={disabled}
+                                      key={`${suggestion.kind}:${suggestion.id}`}
+                                      onClick={() => addMissionReference(suggestion)}
+                                    >
+                                      <span>{suggestion.kind === "skill" || suggestion.kind === "mcp" ? <CircleDollarSign size={14} /> : <FileText size={14} />}</span>
+                                      <span><strong>{suggestion.displayName ?? suggestion.name}</strong><small>{suggestion.subtitle}</small></span>
+                                      {selected && <Check size={13} />}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
                         <button
                           className="deep-analysis-create-submit"
                           type="submit"
                           aria-busy={savingMissionSettings}
-                          disabled={!missionSettingsEditable || !missionSettingsDirty || !missionTitleDraft.trim() || savingMissionSettings}
+                          disabled={!missionSettingsEditable || !missionSettingsDirty || !missionTitleDraft.trim() || !outputFormat.trim() || savingMissionSettings}
                         >
                           {savingMissionSettings && <LoaderCircle className="is-running" size={14} />}
                           {savingMissionSettings ? "저장 중..." : "Mission 정보 저장"}
@@ -2567,7 +3026,7 @@ export function DeepAnalysisView({
                         ) : selectedNode.errorMessage ? (
                           <p className="deep-analysis-node-error">{selectedNode.errorMessage}</p>
                         ) : selectedNode.outputMarkdown ? (
-                          <article className="deep-analysis-output-document">
+                          <article className="deep-analysis-output-document conversation-response-typography">
                             <MarkdownResponse text={selectedNode.outputMarkdown} />
                           </article>
                         ) : (
@@ -2632,13 +3091,14 @@ export function DeepAnalysisView({
 }
 
 function ExecutionLog({ events }: { events: DeepAnalysisMissionEvent[] }) {
+  const visibleEvents = compactExecutionLogEvents(events);
   return (
     <section className="deep-analysis-log-view" aria-label="실행 기록">
       <header>
         <div><strong>실행 기록</strong><span>Mission과 Node의 실행 기록을 최신순으로 확인합니다.</span></div>
       </header>
       <div className="deep-analysis-log-rows" role="log" aria-live="polite">
-        {events.length ? events.slice().reverse().map((event) => {
+        {visibleEvents.length ? visibleEvents.slice().reverse().map((event) => {
           const description = eventDescription(event);
           const isError = event.type.includes("failed") || event.type.includes("error");
           return (
@@ -2697,13 +3157,7 @@ function WorkflowNodeButton({
   onConnectionKeyStart: (side: WorkflowPortSide) => void;
   onConnectionComplete: () => void;
 }) {
-  const [clockNow, setClockNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (node.status !== "running" || !node.startedAt) return undefined;
-    setClockNow(Date.now());
-    const timer = window.setInterval(() => setClockNow(Date.now()), 1_000);
-    return () => window.clearInterval(timer);
-  }, [node.startedAt, node.status]);
+  const clockNow = useSharedNow(node.status === "running" && Boolean(node.startedAt));
   const normalizedStartedAt = node.startedAt ? normalizeUtcDateTime(node.startedAt) : null;
   const completedAt = node.status === "completed" && node.finishedAt
     ? Date.parse(normalizeUtcDateTime(node.finishedAt))

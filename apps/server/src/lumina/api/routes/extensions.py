@@ -42,6 +42,7 @@ from ...extensions.service import (
     draft_etag,
     draft_payload,
     extension_payload,
+    extension_payloads,
     folder_payload,
     install_version,
     installation_payload,
@@ -84,14 +85,32 @@ def get_extensions(
 ) -> list[dict[str, Any]]:
     if purge_expired_trashed_skills(db):
         db.commit()
-    return [
-        extension_payload(
-            db,
-            extension,
-            user=user,
+    return extension_payloads(
+        db,
+        list_extensions(db, user=user, query=query),
+        user=user,
+        include_draft_package=False,
+    )
+
+
+@router.get("/extensions/{extension_id}/draft")
+def get_extension_draft(
+    extension_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    extension = require_extension(db, user, extension_id)
+    draft = db.scalar(
+        select(ExtensionDraft).where(
+            ExtensionDraft.extension_id == extension.id,
+            ExtensionDraft.owner_user_id == user.id,
+            ExtensionDraft.status == "active",
         )
-        for extension in list_extensions(db, user=user, query=query)
-    ]
+    )
+    if draft is None:
+        raise ApiProblem(404, "draft_not_found", "Skill Draft를 찾을 수 없습니다.")
+    base = db.get(ExtensionVersion, draft.base_version_id) if draft.base_version_id else None
+    return draft_payload(draft, base_version=base, include_package=True)
 
 
 @router.get("/extensions/catalog")

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from ..models import Plan, PlanStep, PlanSubtask, Run, ToolExecution, utc_now
@@ -37,10 +37,22 @@ def prepare_worker_recovery(db: Session) -> WorkerRecoveryBatch:
 
     resumable: list[str] = []
     waiting: list[str] = []
+    now = utc_now()
     recovery_candidates = list(
         db.scalars(
             select(Run)
-            .where(Run.status.in_((*ACTIVE_STATUSES, INTERRUPTED)))
+            .where(
+                or_(
+                    Run.status == INTERRUPTED,
+                    (
+                        Run.status.in_(ACTIVE_STATUSES)
+                        & or_(
+                            Run.lease_expires_at.is_(None),
+                            Run.lease_expires_at <= now,
+                        )
+                    ),
+                )
+            )
             .order_by(Run.queued_at, Run.id)
         )
     )
@@ -48,6 +60,9 @@ def prepare_worker_recovery(db: Session) -> WorkerRecoveryBatch:
         if run.status == INTERRUPTED and not _is_worker_recoverable(run):
             continue
         if run.status in {AWAITING_APPROVAL, AWAITING_INPUT, PAUSED}:
+            run.worker_id = None
+            run.heartbeat_at = None
+            run.lease_expires_at = None
             waiting.append(run.id)
             continue
         _recover_run(db, run)
@@ -55,9 +70,7 @@ def prepare_worker_recovery(db: Session) -> WorkerRecoveryBatch:
     return WorkerRecoveryBatch(tuple(resumable), tuple(waiting))
 
 
-def mark_worker_shutdown_interrupted(
-    db: Session, *, worker_id: str
-) -> tuple[str, ...]:
+def mark_worker_shutdown_interrupted(db: Session, *, worker_id: str) -> tuple[str, ...]:
     """Record a graceful worker shutdown without discarding resumable state."""
 
     interrupted: list[str] = []
@@ -75,7 +88,7 @@ def mark_worker_shutdown_interrupted(
     for run in active_runs:
         previous_status = run.status
         snapshot = dict(run.snapshot_json)
-        if snapshot.get("workerId") != worker_id:
+        if run.worker_id != worker_id and snapshot.get("workerId") != worker_id:
             continue
         snapshot["workerRecoverable"] = True
         snapshot["workerInterruptedFrom"] = previous_status
@@ -197,6 +210,9 @@ def _recover_run(db: Session, run: Run) -> None:
         "draftReset": draft_was_reset,
     }
     run.snapshot_json = snapshot
+    run.worker_id = None
+    run.heartbeat_at = None
+    run.lease_expires_at = None
     run.status = QUEUED
     run.finished_at = None
     run.error_code = None

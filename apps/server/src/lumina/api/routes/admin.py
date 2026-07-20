@@ -36,12 +36,18 @@ from ...models import (
     MessageFeedback,
     Organization,
     Run,
+    RunEvent,
     User,
     utc_now,
 )
 from ...runs.broker import event_broker
 from ...runs.safety import normalize_run_safety_settings, run_safety_payload
-from ...runs.service import cancel_organization_work, message_response, run_snapshot
+from ...runs.service import (
+    cancel_organization_work,
+    message_response,
+    preload_message_attachments,
+    run_snapshots,
+)
 from ..dependencies import AuthContext, get_current_user, require_csrf
 from ..errors import ApiProblem
 from ..schemas import AnnouncementListResponse, AnnouncementResponse, ApiModel
@@ -122,7 +128,11 @@ def _request_id(request: Request) -> str | None:
 
 
 def _announcement_payload(db: Session, announcement: Announcement) -> dict[str, object]:
-    author = db.get(User, announcement.creator_user_id) if announcement.creator_user_id else None
+    author = (
+        db.get(User, announcement.creator_user_id)
+        if announcement.creator_user_id
+        else None
+    )
     return {
         "id": announcement.id,
         "title": announcement.title,
@@ -139,7 +149,9 @@ def _announcement_payload(db: Session, announcement: Announcement) -> dict[str, 
     }
 
 
-def _require_announcement(db: Session, actor: User, announcement_id: str) -> Announcement:
+def _require_announcement(
+    db: Session, actor: User, announcement_id: str
+) -> Announcement:
     require_admin(actor)
     announcement = db.scalar(
         select(Announcement).where(
@@ -406,11 +418,19 @@ def get_usage_statistics(
         )
     )
     session_query = (
-        select(AuthSession)
+        select(AuthSession.user_id, AuthSession.created_at)
         .join(User, User.id == AuthSession.user_id)
         .where(User.organization_id == actor.organization_id)
     )
-    run_query = select(Run).where(Run.organization_id == actor.organization_id)
+    run_query = select(
+        Run.id,
+        Run.user_id,
+        Run.created_at,
+        Run.usage_json,
+        Run.snapshot_json,
+        Run.provider_id,
+        Run.model_key,
+    ).where(Run.organization_id == actor.organization_id)
     if days:
         requested_first_day = today - timedelta(days=days - 1)
         range_start = datetime.combine(
@@ -418,8 +438,127 @@ def get_usage_statistics(
         ).astimezone(UTC)
         session_query = session_query.where(AuthSession.created_at >= range_start)
         run_query = run_query.where(Run.created_at >= range_start)
-    sessions = list(db.scalars(session_query))
-    runs = list(db.scalars(run_query))
+    sessions = list(db.execute(session_query))
+    runs = list(db.execute(run_query))
+
+    def empty_cache_bucket() -> dict[str, int]:
+        return {
+            "modelCalls": 0,
+            "inputTokens": 0,
+            "cachedInputTokens": 0,
+            "cacheWriteTokens": 0,
+            "uncachedInputTokens": 0,
+        }
+
+    def add_cache_metric(
+        bucket: dict[str, object],
+        *,
+        input_tokens: int,
+        cached_tokens: int,
+        cache_write_tokens: int,
+        uncached_tokens: int,
+    ) -> None:
+        for key, value in (
+            ("modelCalls", 1),
+            ("inputTokens", input_tokens),
+            ("cachedInputTokens", cached_tokens),
+            ("cacheWriteTokens", cache_write_tokens),
+            ("uncachedInputTokens", uncached_tokens),
+        ):
+            bucket[key] = int(bucket[key]) + value
+
+    cache_buckets: dict[str, dict[str, int]] = {
+        "firstCall": empty_cache_bucket(),
+        "subsequentCalls": empty_cache_bucket(),
+    }
+    digest_buckets: dict[tuple[str, str, str], dict[str, object]] = {}
+    runs_by_id = {run.id: run for run in runs}
+    if runs_by_id:
+        model_turns = db.execute(
+            select(RunEvent.run_id, RunEvent.payload_json).where(
+                RunEvent.run_id.in_(runs_by_id),
+                RunEvent.event_type == "model_turn_completed",
+            )
+        )
+        for run_id, payload in model_turns:
+            input_tokens = int(_usage_number(payload, "inputTokens"))
+            if input_tokens <= 0:
+                continue
+            cached_tokens = int(_usage_number(payload, "cachedInputTokens"))
+            cache_write_tokens = int(_usage_number(payload, "cacheWriteTokens"))
+            uncached_tokens = int(_usage_number(payload, "uncachedInputTokens"))
+            if "uncachedInputTokens" not in payload:
+                uncached_tokens = max(
+                    0, input_tokens - cached_tokens - cache_write_tokens
+                )
+            try:
+                turn_index = int(payload.get("turnIndex", 0))
+            except (TypeError, ValueError):
+                turn_index = 0
+            bucket = cache_buckets[
+                "firstCall" if turn_index == 0 else "subsequentCalls"
+            ]
+            add_cache_metric(
+                bucket,
+                input_tokens=input_tokens,
+                cached_tokens=cached_tokens,
+                cache_write_tokens=cache_write_tokens,
+                uncached_tokens=uncached_tokens,
+            )
+
+            run = runs_by_id[run_id]
+            digest = str(
+                run.snapshot_json.get("prompt_cache_static_digest") or "unknown"
+            )
+            digest_key = (digest, run.provider_id, run.model_key)
+            digest_bucket = digest_buckets.setdefault(
+                digest_key,
+                {
+                    "digest": digest,
+                    "providerId": run.provider_id,
+                    "modelKey": run.model_key,
+                    "modelCalls": 0,
+                    "inputTokens": 0,
+                    "cachedInputTokens": 0,
+                    "cacheWriteTokens": 0,
+                    "uncachedInputTokens": 0,
+                    "firstCall": empty_cache_bucket(),
+                    "subsequentCalls": empty_cache_bucket(),
+                },
+            )
+            add_cache_metric(
+                digest_bucket,
+                input_tokens=input_tokens,
+                cached_tokens=cached_tokens,
+                cache_write_tokens=cache_write_tokens,
+                uncached_tokens=uncached_tokens,
+            )
+            digest_call_bucket = digest_bucket[
+                "firstCall" if turn_index == 0 else "subsequentCalls"
+            ]
+            assert isinstance(digest_call_bucket, dict)
+            add_cache_metric(
+                digest_call_bucket,
+                input_tokens=input_tokens,
+                cached_tokens=cached_tokens,
+                cache_write_tokens=cache_write_tokens,
+                uncached_tokens=uncached_tokens,
+            )
+
+    def cache_metric_payload(values: dict[str, object]) -> dict[str, object]:
+        cached_tokens = int(values["cachedInputTokens"])
+        input_tokens = int(values["inputTokens"])
+        payload = dict(values)
+        for key in ("firstCall", "subsequentCalls"):
+            nested = payload.get(key)
+            if isinstance(nested, dict):
+                payload[key] = cache_metric_payload(nested)
+        return {
+            **payload,
+            "cacheHitRatioPercent": round(cached_tokens / input_tokens * 100, 1)
+            if input_tokens
+            else 0,
+        }
 
     if days:
         first_day = today - timedelta(days=days - 1)
@@ -427,9 +566,7 @@ def get_usage_statistics(
         activity_dates = [
             session.created_at.astimezone(_ANALYTICS_TIMEZONE).date()
             for session in sessions
-        ] + [
-            run.created_at.astimezone(_ANALYTICS_TIMEZONE).date() for run in runs
-        ]
+        ] + [run.created_at.astimezone(_ANALYTICS_TIMEZONE).date() for run in runs]
         first_day = min(activity_dates, default=today)
     period_days = (today - first_day).days + 1
 
@@ -518,16 +655,10 @@ def get_usage_statistics(
             else 0,
             "outputTokens": user_output_tokens.get(user.id, 0),
             "estimatedCostUsd": round(user_cost.get(user.id, 0.0), 6),
-            "lastActiveDate": last_active_day.isoformat()
-            if last_active_day
-            else None,
-            "inactiveDays": (today - last_active_day).days
-            if last_active_day
-            else None,
+            "lastActiveDate": last_active_day.isoformat() if last_active_day else None,
+            "inactiveDays": (today - last_active_day).days if last_active_day else None,
         }
-        per_user_rows.append(
-            ((len(active_days), run_count, user.login_id), row)
-        )
+        per_user_rows.append(((len(active_days), run_count, user.login_id), row))
     per_user_rows.sort(key=lambda item: item[0], reverse=True)
     per_user = [row for _sort_key, row in per_user_rows]
 
@@ -564,6 +695,17 @@ def get_usage_statistics(
             }
             for day in dates
         ],
+        "cache": {
+            "firstCall": cache_metric_payload(cache_buckets["firstCall"]),
+            "subsequentCalls": cache_metric_payload(cache_buckets["subsequentCalls"]),
+            "byStaticDigest": [
+                cache_metric_payload(bucket)
+                for bucket in sorted(
+                    digest_buckets.values(),
+                    key=lambda item: (-int(item["inputTokens"]), str(item["digest"])),
+                )
+            ],
+        },
         "users": per_user,
     }
 
@@ -921,51 +1063,59 @@ def list_admin_conversations(
             .limit(limit)
         ).all()
     )
+    conversation_ids = [conversation.id for conversation, _owner in rows]
+
+    def grouped_counts(statement: object) -> dict[str, int]:
+        if not conversation_ids:
+            return {}
+        return {
+            conversation_id: int(count)
+            for conversation_id, count in db.execute(statement).all()
+        }
+
+    run_counts = grouped_counts(
+        select(Run.conversation_id, func.count(Run.id))
+        .where(Run.conversation_id.in_(conversation_ids))
+        .group_by(Run.conversation_id)
+    )
+    artifact_counts = grouped_counts(
+        select(Artifact.conversation_id, func.count(Artifact.id))
+        .where(
+            Artifact.conversation_id.in_(conversation_ids),
+            Artifact.deleted_at.is_(None),
+        )
+        .group_by(Artifact.conversation_id)
+    )
+    share_counts = grouped_counts(
+        select(
+            ConversationShareGrant.conversation_id,
+            func.count(ConversationShareGrant.id),
+        )
+        .where(
+            ConversationShareGrant.conversation_id.in_(conversation_ids),
+            ConversationShareGrant.revoked_at.is_(None),
+        )
+        .group_by(ConversationShareGrant.conversation_id)
+    )
+    feedback_counts = grouped_counts(
+        select(Message.conversation_id, func.count(MessageFeedback.id))
+        .join(MessageFeedback, MessageFeedback.message_id == Message.id)
+        .where(
+            Message.conversation_id.in_(conversation_ids),
+            MessageFeedback.deleted_at.is_(None),
+        )
+        .group_by(Message.conversation_id)
+    )
     items: list[dict[str, object]] = []
     for conversation, owner in rows:
-        run_count = int(
-            db.scalar(
-                select(func.count(Run.id)).where(Run.conversation_id == conversation.id)
-            )
-            or 0
-        )
-        artifact_count = int(
-            db.scalar(
-                select(func.count(Artifact.id)).where(
-                    Artifact.conversation_id == conversation.id,
-                    Artifact.deleted_at.is_(None),
-                )
-            )
-            or 0
-        )
-        share_count = int(
-            db.scalar(
-                select(func.count(ConversationShareGrant.id)).where(
-                    ConversationShareGrant.conversation_id == conversation.id,
-                    ConversationShareGrant.revoked_at.is_(None),
-                )
-            )
-            or 0
-        )
-        feedback_count = int(
-            db.scalar(
-                select(func.count(MessageFeedback.id))
-                .join(Message, Message.id == MessageFeedback.message_id)
-                .where(
-                    Message.conversation_id == conversation.id,
-                    MessageFeedback.deleted_at.is_(None),
-                )
-            )
-            or 0
-        )
         items.append(
             _conversation_list_payload(
                 conversation,
                 owner,
-                run_count=run_count,
-                artifact_count=artifact_count,
-                share_count=share_count,
-                feedback_count=feedback_count,
+                run_count=run_counts.get(conversation.id, 0),
+                artifact_count=artifact_counts.get(conversation.id, 0),
+                share_count=share_counts.get(conversation.id, 0),
+                feedback_count=feedback_counts.get(conversation.id, 0),
             )
         )
 
@@ -1018,7 +1168,9 @@ def _write_xlsx_sheet(
 ) -> None:
     sheet.sheet_view.showGridLines = False
     sheet.freeze_panes = "A2"
-    for column, (header, width) in enumerate(zip(headers, widths, strict=True), start=1):
+    for column, (header, width) in enumerate(
+        zip(headers, widths, strict=True), start=1
+    ):
         cell = sheet.cell(1, column)
         _set_xlsx_value(cell, header)
         cell.font = _XLSX_HEADER_FONT
@@ -1138,17 +1290,71 @@ def _admin_conversation_workbook(
     _write_xlsx_sheet(
         analysis_sheet,
         [
-            "대화 ID", "대화 제목", "소유자 ID", "소유자 이름", "프로젝트 ID",
-            "대화 상태", "공개 범위", "대화 Run 수", "대화 Artifact 수", "대화 공유 수",
-            "대화 생성 일시", "최근 활동 일시", "메시지 ID", "Run ID", "Turn",
-            "메시지 역할", "메시지 상태", "메시지 내용", "내용 잘림", "메시지 생성 일시",
-            "의견 종류", "평가", "좋아요 수", "싫어요 수", "Category", "Comment 수",
-            "Comment", "의견 작성자", "의견 작성 일시", "의견 수정 일시", "의견 ID",
+            "대화 ID",
+            "대화 제목",
+            "소유자 ID",
+            "소유자 이름",
+            "프로젝트 ID",
+            "대화 상태",
+            "공개 범위",
+            "대화 Run 수",
+            "대화 Artifact 수",
+            "대화 공유 수",
+            "대화 생성 일시",
+            "최근 활동 일시",
+            "메시지 ID",
+            "Run ID",
+            "Turn",
+            "메시지 역할",
+            "메시지 상태",
+            "메시지 내용",
+            "내용 잘림",
+            "메시지 생성 일시",
+            "의견 종류",
+            "평가",
+            "좋아요 수",
+            "싫어요 수",
+            "Category",
+            "Comment 수",
+            "Comment",
+            "의견 작성자",
+            "의견 작성 일시",
+            "의견 수정 일시",
+            "의견 ID",
         ],
         analysis_data,
         [
-            38, 36, 28, 18, 38, 14, 14, 11, 14, 11, 20, 20, 38, 38, 9, 12,
-            14, 80, 11, 20, 14, 12, 10, 10, 16, 11, 55, 28, 20, 20, 38,
+            38,
+            36,
+            28,
+            18,
+            38,
+            14,
+            14,
+            11,
+            14,
+            11,
+            20,
+            20,
+            38,
+            38,
+            9,
+            12,
+            14,
+            80,
+            11,
+            20,
+            14,
+            12,
+            10,
+            10,
+            16,
+            11,
+            55,
+            28,
+            20,
+            20,
+            38,
         ],
     )
 
@@ -1203,7 +1409,11 @@ def export_admin_conversations(
                     Message.conversation_id.in_(conversation_ids),
                     MessageFeedback.deleted_at.is_(None),
                 )
-                .order_by(Message.conversation_id, Message.created_at, MessageFeedback.created_at)
+                .order_by(
+                    Message.conversation_id,
+                    Message.created_at,
+                    MessageFeedback.created_at,
+                )
             ).all()
         )
         if conversation_ids
@@ -1213,7 +1423,10 @@ def export_admin_conversations(
     def grouped_counts(statement: object) -> dict[str, int]:
         if not conversation_ids:
             return {}
-        return {conversation_id: int(count) for conversation_id, count in db.execute(statement).all()}
+        return {
+            conversation_id: int(count)
+            for conversation_id, count in db.execute(statement).all()
+        }
 
     run_counts = grouped_counts(
         select(Run.conversation_id, func.count(Run.id))
@@ -1229,7 +1442,10 @@ def export_admin_conversations(
         .group_by(Artifact.conversation_id)
     )
     share_counts = grouped_counts(
-        select(ConversationShareGrant.conversation_id, func.count(ConversationShareGrant.id))
+        select(
+            ConversationShareGrant.conversation_id,
+            func.count(ConversationShareGrant.id),
+        )
         .where(
             ConversationShareGrant.conversation_id.in_(conversation_ids),
             ConversationShareGrant.revoked_at.is_(None),
@@ -1262,7 +1478,9 @@ def export_admin_conversations(
     )
     db.commit()
     generated_at = datetime.now(_ANALYTICS_TIMEZONE)
-    filename = quote(generated_at.strftime("lumina_conversations_%Y%m%d_%H%M.xlsx"), safe="")
+    filename = quote(
+        generated_at.strftime("lumina_conversations_%Y%m%d_%H%M.xlsx"), safe=""
+    )
     return Response(
         content=content,
         media_type=_XLSX_MEDIA_TYPE,
@@ -1342,6 +1560,7 @@ def get_admin_conversation(
         metadata={"owner_user_id": conversation.owner_user_id},
     )
     db.commit()
+    attachments_by_message = preload_message_attachments(db, messages)
     return {
         "conversation": {
             "id": conversation.id,
@@ -1356,8 +1575,15 @@ def get_admin_conversation(
             "createdAt": conversation.created_at,
             "updatedAt": conversation.updated_at,
         },
-        "messages": [message_response(message, db) for message in messages],
-        "runs": [run_snapshot(db, run) for run in runs],
+        "messages": [
+            message_response(
+                message,
+                db,
+                preloaded_attachments=attachments_by_message.get(message.id, []),
+            )
+            for message in messages
+        ],
+        "runs": run_snapshots(db, runs),
         "artifacts": [
             {
                 "id": artifact.id,
@@ -1438,15 +1664,26 @@ def get_admin_conversation_turn_sets(
         metadata={"view": "turn_sets"},
     )
     db.commit()
+    attachments_by_message = preload_message_attachments(db, messages)
+    snapshots_by_run = {
+        snapshot["runId"]: snapshot for snapshot in run_snapshots(db, runs)
+    }
     return {
         "turnSets": [
             {
                 "id": run.id,
                 "runId": run.id,
                 "messages": [
-                    message_response(message, db) for message in grouped.get(run.id, [])
+                    message_response(
+                        message,
+                        db,
+                        preloaded_attachments=attachments_by_message.get(
+                            message.id, []
+                        ),
+                    )
+                    for message in grouped.get(run.id, [])
                 ],
-                "run": run_snapshot(db, run),
+                "run": snapshots_by_run[run.id],
             }
             for run in reversed(runs)
         ],

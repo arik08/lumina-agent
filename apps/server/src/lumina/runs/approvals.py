@@ -215,6 +215,21 @@ def pending_approval_payloads(db: Session, run_id: str) -> list[dict[str, Any]]:
     ]
 
 
+def pending_approval_payloads_batch(
+    db: Session, run_ids: list[str]
+) -> dict[str, list[dict[str, Any]]]:
+    grouped = {run_id: [] for run_id in run_ids}
+    if not run_ids:
+        return grouped
+    for item in db.scalars(
+        select(ToolApproval)
+        .where(ToolApproval.run_id.in_(run_ids), ToolApproval.status == "pending")
+        .order_by(ToolApproval.run_id, ToolApproval.requested_at, ToolApproval.id)
+    ):
+        grouped.setdefault(item.run_id, []).append(approval_payload(item))
+    return grouped
+
+
 __all__ = [
     "ToolRisk",
     "approval_payload",
@@ -222,5 +237,6 @@ __all__ = [
     "has_sensitive_tool_arguments",
     "normalized_tool_arguments",
     "pending_approval_payloads",
+    "pending_approval_payloads_batch",
     "safe_argument_summary",
 ]

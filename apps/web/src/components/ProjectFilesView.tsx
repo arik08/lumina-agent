@@ -270,7 +270,7 @@ function renderFilePreview(preview: PreviewState, detail: ProjectFileDetail, mar
   }
   if (preview.kind === "text") {
     return <>{isMarkdownFile(detail) && !markdownSource
-      ? <div className="file-preview-markdown"><MarkdownResponse text={preview.text} /></div>
+      ? <div className="file-preview-markdown conversation-response-typography"><MarkdownResponse text={preview.text} /></div>
       : <pre>{preview.text}</pre>}
     {preview.truncated && <div className="file-preview-truncated">Preview는 앞부분만 표시합니다.</div>}</>;
   }
@@ -285,6 +285,8 @@ export function ProjectFilesView({ projectId, onOpenNavigation }: ProjectFilesVi
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const draggedNodeRef = useRef<FileTreeNode | null>(null);
+  const loadingMoreRef = useRef(false);
+  const loadMoreControllerRef = useRef<AbortController | null>(null);
   const [query, setQuery] = useState("");
   const cacheKey = `files:${projectId ?? "none"}:${query.trim().toLocaleLowerCase("ko-KR")}`;
   const [files, setFiles, hasCachedFiles] = useCachedViewState<ProjectFileSummary[]>(`${cacheKey}:items`, []);
@@ -293,6 +295,8 @@ export function ProjectFilesView({ projectId, onOpenNavigation }: ProjectFilesVi
   const [selectedFolderPath, setSelectedFolderPath] = useState<string | null>(null);
   const [detail, setDetail] = useState<ProjectFileDetail | null>(null);
   const [loading, setLoading] = useState(!hasCachedFiles || !hasCachedFolders);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [dropActive, setDropActive] = useState(false);
@@ -334,6 +338,10 @@ export function ProjectFilesView({ projectId, onOpenNavigation }: ProjectFilesVi
   }, [selectedId]);
 
   useEffect(() => {
+    loadMoreControllerRef.current?.abort();
+    loadMoreControllerRef.current = null;
+    loadingMoreRef.current = false;
+    setLoadingMore(false);
     if (!projectId) {
       setFiles([]);
       setFolders([]);
@@ -343,6 +351,7 @@ export function ProjectFilesView({ projectId, onOpenNavigation }: ProjectFilesVi
       setBulkSelectionMode(false);
       setSelectedTreeKeys(new Set());
       setBulkDeleteArmed(false);
+      setNextCursor(null);
       return;
     }
     const controller = new AbortController();
@@ -350,11 +359,12 @@ export function ProjectFilesView({ projectId, onOpenNavigation }: ProjectFilesVi
       setLoading(true);
       setError(null);
       Promise.all([
-        api.projectFiles.list(projectId, query, false, controller.signal),
+        api.projectFiles.list(projectId, query, false, undefined, controller.signal),
         api.projectFiles.listFolders(projectId, controller.signal),
       ])
-        .then(([nextFiles, nextFolders]) => {
-          setFiles(nextFiles);
+        .then(([filePage, nextFolders]) => {
+          setFiles(filePage.items);
+          setNextCursor(filePage.nextCursor);
           const normalizedQuery = query.trim().toLocaleLowerCase("ko-KR");
           setFolders(normalizedQuery ? nextFolders.filter((folder) => folder.logicalPath.toLocaleLowerCase("ko-KR").includes(normalizedQuery)) : nextFolders);
         })
@@ -370,6 +380,39 @@ export function ProjectFilesView({ projectId, onOpenNavigation }: ProjectFilesVi
       controller.abort();
     };
   }, [projectId, query, refreshKey]);
+
+  async function loadMoreFiles() {
+    if (!projectId || !nextCursor || loadingMoreRef.current) return;
+    const controller = new AbortController();
+    loadMoreControllerRef.current = controller;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    try {
+      const page = await api.projectFiles.list(
+        projectId,
+        query,
+        false,
+        nextCursor,
+        controller.signal,
+      );
+      if (controller.signal.aborted) return;
+      setFiles((current) => {
+        const known = new Set(current.map((file) => file.id));
+        return [...current, ...page.items.filter((file) => !known.has(file.id))];
+      });
+      setNextCursor(page.nextCursor);
+    } catch (caught) {
+      if (!controller.signal.aborted) setError(errorMessage(caught));
+    } finally {
+      if (loadMoreControllerRef.current === controller) {
+        loadMoreControllerRef.current = null;
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
+      }
+    }
+  }
+
+  useEffect(() => () => loadMoreControllerRef.current?.abort(), []);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -863,9 +906,15 @@ export function ProjectFilesView({ projectId, onOpenNavigation }: ProjectFilesVi
                 ><CheckCheck size={14} /></button>
               </div>
             </div>
-            <div className="file-tree thin-scrollbar">
+            <div className="file-tree thin-scrollbar" onScroll={(event) => {
+              const target = event.currentTarget;
+              if (target.scrollHeight - target.scrollTop - target.clientHeight < 80) {
+                void loadMoreFiles();
+              }
+            }}>
               {treeEditor?.mode === "create" && treeEditor.parentPath === "" ? renderTreeEditor(0) : null}
               {(!hasCachedFiles || !hasCachedFolders) && (loading || !error) ? <div className="feature-state"><LoaderCircle className="is-running" size={15} /> 불러오는 중</div> : tree.length === 0 ? <div className="file-tree-empty"><Folder size={22} /><strong>아직 파일이 없습니다.</strong><span>우클릭해 폴더를 만들거나 파일을 놓아 주세요.</span></div> : renderTree(tree)}
+              {loadingMore ? <div className="file-tree-loading-more"><LoaderCircle className="is-running" size={14} /> 파일을 더 불러오는 중</div> : null}
             </div>
           </aside>
           <section className="feature-detail file-workspace-viewer" aria-live="polite">

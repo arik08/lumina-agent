@@ -5,7 +5,7 @@ import json
 import re
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import case, literal, or_, select
 from sqlalchemy.orm import Session
 
 from ..models import KnowledgeDocument, KnowledgeDocumentTag, KnowledgeTag, Project
@@ -27,25 +27,50 @@ def build_project_knowledge_context_snapshot(
     character_budget: int = DEFAULT_CHARACTER_BUDGET,
 ) -> dict[str, Any] | None:
     """Build a bounded document-level knowledge snapshot for a run."""
-    documents = list(
-        db.scalars(
-            select(KnowledgeDocument)
-            .where(
-                KnowledgeDocument.project_id == project.id,
-                KnowledgeDocument.owner_user_id == owner_user_id,
-                KnowledgeDocument.status == "active",
+    query_tokens = set(_tokens(query))
+    statement = select(KnowledgeDocument).where(
+        KnowledgeDocument.project_id == project.id,
+        KnowledgeDocument.owner_user_id == owner_user_id,
+        KnowledgeDocument.status == "active",
+    )
+    if query_tokens:
+        score = literal(0)
+        matches = []
+        tag_matches = []
+        for token in sorted(query_tokens)[:12]:
+            title_match = KnowledgeDocument.title.contains(token, autoescape=True)
+            body_match = KnowledgeDocument.body.contains(token, autoescape=True)
+            matches.extend((title_match, body_match))
+            tag_matches.append(KnowledgeTag.canonical_name.contains(token, autoescape=True))
+            score += case((title_match, 6), else_=0) + case((body_match, 1), else_=0)
+        tagged_document_ids = (
+            select(KnowledgeDocumentTag.document_id)
+            .join(KnowledgeTag, KnowledgeTag.id == KnowledgeDocumentTag.tag_id)
+            .where(or_(*tag_matches))
+        )
+        statement = (
+            statement.where(
+                or_(
+                    *matches,
+                    KnowledgeDocument.id.in_(tagged_document_ids),
+                )
             )
             .order_by(
-                KnowledgeDocument.researched_at.desc(), KnowledgeDocument.id
+                score.desc(),
+                KnowledgeDocument.researched_at.desc(),
+                KnowledgeDocument.id,
             )
-            .limit(200)
+            .limit(96)
         )
-    )
+    else:
+        statement = statement.order_by(
+            KnowledgeDocument.researched_at.desc(), KnowledgeDocument.id
+        ).limit(max(1, min(max_documents, 24)))
+    documents = list(db.scalars(statement))
     if not documents:
         return None
 
     tags_by_document = _tags_by_document(db, [item.id for item in documents])
-    query_tokens = set(_tokens(query))
     ranked = sorted(
         documents,
         key=lambda item: (

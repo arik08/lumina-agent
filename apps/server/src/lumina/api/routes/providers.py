@@ -202,6 +202,76 @@ def get_provider_models(
     ]
 
 
+@router.get("/provider-catalog")
+def get_provider_catalog(
+    project_id: str | None = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    if project_id:
+        require_project(db, user, project_id)
+    enabled_models = list(
+        db.scalars(
+            select(ProviderModel)
+            .where(ProviderModel.enabled.is_(True))
+            .order_by(
+                ProviderModel.provider_id,
+                ProviderModel.sort_order,
+                ProviderModel.model_key,
+            )
+        )
+    )
+    models_by_provider: dict[str, list[dict[str, object]]] = {}
+    for model in enabled_models:
+        models_by_provider.setdefault(model.provider_id, []).append(
+            {
+                "modelKey": model.model_key,
+                "displayName": model.display_name,
+                "enabled": model.enabled,
+                "isDefault": model.is_default,
+                "catalogRevision": model.catalog_revision,
+                "capabilities": _capabilities(model.capabilities_json),
+            }
+        )
+    if settings.environment != "production":
+        models_by_provider = {
+            "mock": [
+                {
+                    "modelKey": "mock-agent",
+                    "displayName": "Lumina Mock Agent",
+                    "enabled": True,
+                    "isDefault": True,
+                    "catalogRevision": "development",
+                    "capabilities": _capabilities(
+                        {"tools": True, "structured_output": True}
+                    ),
+                }
+            ],
+            **models_by_provider,
+        }
+    providers = []
+    for provider_id, models in models_by_provider.items():
+        status = _provider_status(provider_id, settings)
+        providers.append(
+            {
+                "id": provider_id,
+                "displayName": PROVIDER_NAMES.get(provider_id, provider_id),
+                "enabled": status == "ready",
+                "connectionStatus": status,
+                "defaultModelKey": next(
+                    (
+                        str(model["modelKey"])
+                        for model in models
+                        if model["isDefault"]
+                    ),
+                    None,
+                ),
+            }
+        )
+    return {"providers": providers, "modelsByProvider": models_by_provider}
+
+
 def _capabilities(raw: dict[str, Any]) -> dict[str, object]:
     provider_efforts = raw.get("effort_options") or ("low", "medium", "high")
     efforts = ("auto", *(value for value in provider_efforts if value != "auto"))

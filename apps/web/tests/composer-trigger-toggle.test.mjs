@@ -34,6 +34,16 @@ test("a new chat stays local until the first message is sent", async () => {
   assert.match(workspace, /openConversation,[\s\S]*?startNewConversation,[\s\S]*?createConversation,/);
 });
 
+test("late workspace hydration cannot replace an explicitly requested new chat", async () => {
+  const workspace = await readFile(new URL("../src/use-lumina-workspace.ts", import.meta.url), "utf8");
+
+  assert.match(workspace, /const newConversationPendingRef = useRef\(false\);/);
+  assert.match(workspace, /const startNewConversation = useCallback\(\(\) => \{[\s\S]*?newConversationPendingRef\.current = true;[\s\S]*?setActiveConversationId\(null\);/);
+  assert.equal((workspace.match(/if \(newConversationPendingRef\.current\) return null;/g) ?? []).length, 2);
+  assert.equal((workspace.match(/let conversationId = newConversationPendingRef\.current \? null : activeConversationId;/g) ?? []).length, 2);
+  assert.match(workspace, /const openConversation = useCallback\([\s\S]*?newConversationPendingRef\.current = false;/);
+});
+
 test("send button tooltip uses the shared global layer", async () => {
   const [app, styles] = await Promise.all([readFile(appUrl, "utf8"), readFile(stylesUrl, "utf8")]);
 

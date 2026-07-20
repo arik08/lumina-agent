@@ -163,7 +163,7 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
   }, [conversations]);
 
   useEffect(() => {
-    if (tab === "policy") {
+    if (tab === "policy" || tab === "usage") {
       setLoading(false);
       setError(null);
       return;
@@ -177,17 +177,15 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
             setUsers(page.items);
             setUserTotal(page.total);
           })
-        : tab === "usage"
-          ? api.admin.getUsageStatistics(usagePeriod, controller.signal).then(setUsageStatistics)
         : tab === "conversations"
           ? api.admin.listConversations({ query, feedbackOnly, limit: conversationLimit }, controller.signal).then((page) => {
               setConversations(page.items);
               setConversationTotal(page.total);
             })
           : api.admin.listAuditEvents({ action: query, limit: auditLimit }, controller.signal).then((page) => {
-                setAuditEvents(page.items);
-                setAuditTotal(page.total);
-              });
+              setAuditEvents(page.items);
+              setAuditTotal(page.total);
+            });
       request.catch((requestError) => {
         if (!controller.signal.aborted) setError(errorMessage(requestError));
       }).finally(() => {
@@ -198,7 +196,23 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [auditLimit, conversationLimit, feedbackOnly, query, refreshKey, tab, usagePeriod]);
+  }, [auditLimit, conversationLimit, feedbackOnly, query, refreshKey, tab]);
+
+  useEffect(() => {
+    if (tab !== "usage" && tab !== "audit") return;
+    const controller = new AbortController();
+    if (tab === "usage") setLoading(true);
+    setError(null);
+    void api.admin.getUsageStatistics(usagePeriod, controller.signal)
+      .then(setUsageStatistics)
+      .catch((requestError) => {
+        if (!controller.signal.aborted) setError(errorMessage(requestError));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted && tab === "usage") setLoading(false);
+      });
+    return () => controller.abort();
+  }, [refreshKey, tab, usagePeriod]);
 
   const chooseUser = (user: AdminUser) => {
     const next = selectedUser?.id === user.id ? null : user;
@@ -506,6 +520,23 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
 
       {tab === "audit" && (
         <section className="admin-section" aria-label="모니터링 로그">
+          {usageStatistics && (
+            <section className="admin-cache-monitoring" aria-label="Prefix cache 모니터링">
+              <div className="admin-cache-monitoring-heading">
+                <div><strong>Prefix cache</strong><small>Provider 모델 호출 기준 · 같은 Run의 첫 호출과 후속 호출을 분리합니다.</small></div>
+                <div className="admin-usage-period"><span>조회 기간</span><SelectMenu className="admin-usage-period-select" size="small" width="auto" align="end" value={String(usagePeriod)} options={usagePeriodOptions} ariaLabel="Cache 조회 기간" onChange={(value) => setUsagePeriod(Number(value) as 0 | 30 | 90)} /></div>
+              </div>
+              <div className="admin-cache-summary">
+                <div><span>Run 첫 호출</span><strong>{usageStatistics.cache.firstCall.cacheHitRatioPercent.toFixed(1)}%</strong><small>{usageStatistics.cache.firstCall.modelCalls.toLocaleString()}회 · Cached {usageStatistics.cache.firstCall.cachedInputTokens.toLocaleString()}</small></div>
+                <div><span>Run 내부 후속</span><strong>{usageStatistics.cache.subsequentCalls.cacheHitRatioPercent.toFixed(1)}%</strong><small>{usageStatistics.cache.subsequentCalls.modelCalls.toLocaleString()}회 · Cached {usageStatistics.cache.subsequentCalls.cachedInputTokens.toLocaleString()}</small></div>
+              </div>
+              <div className="admin-cache-digest-table" role="table" aria-label="Prompt cache static digest별 집계">
+                <div className="admin-cache-digest-row is-header" role="row"><span>Static digest</span><span>Provider / Model</span><span>호출</span><span>Cache write</span><span>첫 호출</span><span>후속 호출</span></div>
+                {usageStatistics.cache.byStaticDigest.map((item) => <div className="admin-cache-digest-row" role="row" key={`${item.providerId}:${item.modelKey}:${item.digest}`}><code className="tooltip-control" data-tooltip={item.digest}>{item.digest === "unknown" ? "unknown" : item.digest.slice(0, 12)}</code><span>{item.providerId} · {item.modelKey}</span><span>{item.modelCalls.toLocaleString()}</span><span>{item.cacheWriteTokens.toLocaleString()}</span><strong>{item.firstCall.cacheHitRatioPercent.toFixed(1)}%</strong><strong>{item.subsequentCalls.cacheHitRatioPercent.toFixed(1)}%</strong></div>)}
+                {usageStatistics.cache.byStaticDigest.length === 0 && <p>집계할 모델 호출이 없습니다.</p>}
+              </div>
+            </section>
+          )}
           <AdminTrafficChart refreshKey={refreshKey} />
           <div className="admin-audit-heading">
             <div className="admin-count">최근 모니터링 이벤트 {auditEvents.length} / {auditTotal}건</div>

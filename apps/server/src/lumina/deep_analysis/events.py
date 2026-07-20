@@ -147,15 +147,26 @@ def list_events(
     mission_id: str,
     *,
     after_sequence: int = 0,
+    limit: int = 200,
 ) -> list[DeepAnalysisEvent]:
+    bounded_limit = max(1, min(limit, 1000))
+    statement = select(DeepAnalysisEvent).where(
+        DeepAnalysisEvent.mission_id == mission_id,
+        DeepAnalysisEvent.sequence > max(0, after_sequence),
+    )
+    if after_sequence <= 0:
+        rows = list(
+            db.scalars(
+                statement.order_by(DeepAnalysisEvent.sequence.desc()).limit(
+                    bounded_limit
+                )
+            )
+        )
+        rows.reverse()
+        return rows
     return list(
         db.scalars(
-            select(DeepAnalysisEvent)
-            .where(
-                DeepAnalysisEvent.mission_id == mission_id,
-                DeepAnalysisEvent.sequence > max(0, after_sequence),
-            )
-            .order_by(DeepAnalysisEvent.sequence)
+            statement.order_by(DeepAnalysisEvent.sequence).limit(bounded_limit)
         )
     )
 

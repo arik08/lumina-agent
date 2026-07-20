@@ -12,7 +12,7 @@
 
 .lumina-select-field > span {
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: 14px;
 }
 
 .lumina-select.width-fill { width: 100%; }
@@ -33,7 +33,7 @@
   background: var(--surface);
   color: var(--ink);
   font: inherit;
-  font-size: 12px;
+  font-size: 14px;
   text-align: left;
   cursor: pointer;
 }
@@ -103,7 +103,7 @@
   display: flex;
   width: 100%;
   min-width: max-content;
-  height: 30px;
+  height: 32px;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -114,7 +114,7 @@
   background: transparent;
   color: var(--ink);
   font: inherit;
-  font-size: 11.5px;
+  font-size: 14px;
   text-align: left;
   white-space: nowrap;
   cursor: pointer;
@@ -133,8 +133,8 @@
 .lumina-select-menu .lumina-select-option.is-selected > svg { opacity: 1; }
 .lumina-select-menu .lumina-select-option:disabled { cursor: default; opacity: .45; }
 
-.lumina-select.size-small .lumina-select-trigger { height: var(--control-height-sm); padding: 0 7px; font-size: 10.5px; }
-.lumina-select-menu-global.size-small .lumina-select-option { height: 28px; font-size: 11px; }
+.lumina-select.size-small .lumina-select-trigger { height: var(--control-height-sm); padding: 0 7px; font-size: 14px; }
+.lumina-select-menu-global.size-small .lumina-select-option { height: 30px; font-size: 14px; }
 
 @media (prefers-reduced-motion: reduce) {
   .lumina-select-trigger > svg { transition: none; }

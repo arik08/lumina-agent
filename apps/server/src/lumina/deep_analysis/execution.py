@@ -3,13 +3,15 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, Literal, cast
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..agent_frontends import DEFAULT_AGENT_FRONTEND
-from ..api.schemas import MessageReferenceInput, RunCreate, RunMessageInput
+from ..api.errors import ApiProblem
+from ..api.schemas import ExecutionSelection, MessageReferenceInput, RunCreate, RunMessageInput
 from ..config import Settings
 from ..models import (
     Conversation,
@@ -39,12 +41,12 @@ from .context_manifest import (
     link_file,
     persist_context_manifest,
 )
-from .planning import next_runnable_node
+from .planning import runnable_nodes
 
 
 @dataclass(frozen=True, slots=True)
 class TerminalSyncResult:
-    next_run_id: str | None = None
+    next_run_ids: tuple[str, ...] = ()
     changed: bool = False
 
 
@@ -148,18 +150,18 @@ def record_node_started(db: Session, run: Run) -> None:
     }
 
 
-def record_output_progress(db: Session, run: Run) -> None:
+def record_output_progress(db: Session, run: Run) -> bool:
     """Persist bounded progress markers without copying model text into Mission events."""
     deep_analysis = run.snapshot_json.get("deep_analysis")
     if not isinstance(deep_analysis, dict) or not run.assistant_draft:
-        return
+        return False
     output_characters = len(run.assistant_draft)
     bucket = ((output_characters - 1) // 2000) + 1
     if int(deep_analysis.get("outputEventBucket") or 0) >= bucket:
-        return
+        return False
     context = _run_context(db, run.id)
     if context is None:
-        return
+        return False
     node, _revision, mission = context
     emit_event(
         db,
@@ -177,10 +179,12 @@ def record_output_progress(db: Session, run: Run) -> None:
         **run.snapshot_json,
         "deep_analysis": {**deep_analysis, "outputEventBucket": bucket},
     }
+    return True
 
 
 _UNSAFE_PATH = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _MARKDOWN_MARKERS = re.compile(r"(?m)^#{1,6}\s+|\*\*|__|`+|^[-*+]\s+")
+_OUTPUT_TIMEZONE = ZoneInfo("Asia/Seoul")
 
 
 def _path_segment(value: str, *, fallback: str, limit: int = 90) -> str:
@@ -189,56 +193,42 @@ def _path_segment(value: str, *, fallback: str, limit: int = 90) -> str:
     return (clean or fallback)[:limit].rstrip()
 
 
+def _mission_output_timestamp(mission: DeepAnalysisMission) -> str:
+    return mission.created_at.astimezone(_OUTPUT_TIMEZONE).strftime("%y%m%d_%H%M%S")
+
+
+def _configured_output_format(mission: DeepAnalysisMission) -> str:
+    value = str((mission.execution_settings_json or {}).get("outputFormat") or "markdown").strip()
+    return value or "markdown"
+
+
+def _is_html_output_format(value: str) -> bool:
+    return "html" in value.casefold()
+
+
 def _output_path(mission: DeepAnalysisMission, node: DeepAnalysisWorkflowNode) -> str:
     mission_name = _path_segment(mission.title, fallback="심층분석")
     node_name = _path_segment(node.title, fallback=node.node_key)
-    return f"심층분석/{mission_name}_{mission.id[:8]}/{node.node_key}_{node_name}.md"
+    created_at = _mission_output_timestamp(mission)
+    suffix = ".html" if (
+        node.node_type == "report"
+        and _is_html_output_format(_configured_output_format(mission))
+    ) else ".md"
+    return f"심층분석/{mission_name}_{created_at}/{node.node_key}_{node_name}{suffix}"
 
 
 def _partial_output_path(
     mission: DeepAnalysisMission, node: DeepAnalysisWorkflowNode
 ) -> str:
-    return _output_path(mission, node).removesuffix(".md") + "_partial.md"
+    path = _output_path(mission, node)
+    suffix = PurePosixPath(path).suffix
+    return path.removesuffix(suffix) + f"_partial{suffix}"
 
 
 def output_directory(mission: DeepAnalysisMission) -> str:
     mission_name = _path_segment(mission.title, fallback="심층분석")
-    return f"심층분석/{mission_name}_{mission.id[:8]}"
-
-
-def capture_source_manifest(
-    db: Session, mission: DeepAnalysisMission
-) -> list[dict[str, Any]]:
-    """Freeze the exact Project-file revisions visible when a Mission starts."""
-    rows = db.execute(
-        select(ProjectFile, ProjectFileVersion)
-        .join(
-            ProjectFileVersion,
-            (ProjectFileVersion.project_file_id == ProjectFile.id)
-            & (ProjectFileVersion.version_number == ProjectFile.current_version_number),
-        )
-        .where(
-            ProjectFile.project_id == mission.project_id,
-            ProjectFile.deleted_at.is_(None),
-            ProjectFile.status == "active",
-            # Mission 산출물은 다음 Mission의 원본 입력으로 자동 승계하지 않습니다.
-            # 필요한 경우 사용자가 Project 파일 영역으로 복사해 명시적으로 포함합니다.
-            ~ProjectFile.logical_path.startswith("심층분석/"),
-        )
-        .order_by(ProjectFile.logical_path, ProjectFile.id)
-    ).tuples()
-    return [
-        {
-            "projectFileId": project_file.id,
-            "logicalPath": project_file.logical_path,
-            "version": version.version_number,
-            "versionId": version.id,
-            "contentHash": version.content_hash,
-            "mimeType": version.mime_type,
-            "sizeBytes": version.size_bytes,
-        }
-        for project_file, version in rows
-    ]
+    created_at = _mission_output_timestamp(mission)
+    return f"심층분석/{mission_name}_{created_at}"
 
 
 def _run_manifest(
@@ -385,11 +375,85 @@ def _stage_instruction(node: DeepAnalysisWorkflowNode) -> str:
     return instructions.get(node.node_type, node.purpose)
 
 
-def _run_profile(mission: DeepAnalysisMission) -> tuple[str, str]:
+_HANDOFF_TARGET_TOKENS = {
+    "scope": 1_200,
+    "data_check": 1_800,
+    "research": 3_000,
+    "analysis": 3_500,
+    "validation": 3_000,
+    "synthesis": 3_500,
+}
+_AnalysisDepth = Literal["auto", "brief", "standard", "deep"]
+_AnswerLength = Literal["auto", "brief", "standard", "detailed"]
+_OutputMode = Literal["auto", "chat", "file"]
+
+
+def _run_profile(
+    mission: DeepAnalysisMission,
+    node: DeepAnalysisWorkflowNode,
+) -> tuple[_AnalysisDepth, _AnswerLength, int | None]:
     settings = mission.execution_settings_json or {}
+    analysis_depth = cast(_AnalysisDepth, str(settings.get("analysisDepth") or "auto"))
+    answer_length = cast(_AnswerLength, str(settings.get("answerLength") or "auto"))
+    output_mode = cast(_OutputMode, str(settings.get("outputMode") or "auto"))
+    configured_target = settings.get("targetOutputTokens")
+    target_output_tokens = (
+        int(configured_target)
+        if isinstance(configured_target, int)
+        and not isinstance(configured_target, bool)
+        and configured_target > 0
+        else None
+    )
+    if node.node_type == "report":
+        return (
+            analysis_depth,
+            answer_length,
+            target_output_tokens if output_mode != "chat" else None,
+        )
+    handoff_target = _HANDOFF_TARGET_TOKENS.get(node.node_type, 3_000)
+    if target_output_tokens is not None:
+        handoff_target = min(handoff_target, target_output_tokens)
+    handoff_length: _AnswerLength = (
+        "brief" if node.node_type in {"scope", "data_check"} else "standard"
+    )
     return (
-        str(settings.get("analysisDepth") or "auto"),
-        str(settings.get("answerLength") or "auto"),
+        analysis_depth,
+        handoff_length,
+        handoff_target if output_mode != "chat" else None,
+    )
+
+
+def _output_instruction(
+    mission: DeepAnalysisMission,
+    node: DeepAnalysisWorkflowNode,
+) -> str:
+    if node.node_type == "report":
+        output_format = _configured_output_format(mission)
+        normalized = output_format.casefold()
+        if _is_html_output_format(output_format):
+            format_instruction = (
+                "최종 산출물은 독립 실행 가능한 HTML 문서로 작성하십시오. <!doctype html>로 시작하고 "
+                "html, head, body를 포함하며 Markdown code fence로 감싸지 마십시오."
+            )
+            if normalized not in {"html", "html (.html)", ".html"}:
+                format_instruction += f" 사용자가 입력한 구체적 형태는 '{output_format}'입니다."
+        elif normalized in {"markdown", "markdown (.md)", "md", ".md"}:
+            format_instruction = "최종 산출물은 Markdown 문서로 작성하십시오."
+        else:
+            format_instruction = (
+                f"사용자가 지정한 최종 산출물 형태는 '{output_format}'입니다. 이 형태의 구성과 표현을 "
+                "최종 보고서에 반영하십시오. 직접 입력한 형태의 원문은 Markdown 파일로 저장됩니다."
+            )
+        return (
+            "이 Node는 최종 산출물입니다. 선행 결과를 단순히 이어 붙이지 말고 중복을 제거해 "
+            "하나의 일관된 최종 보고서로 작성하십시오. 의사결정에 필요한 결론, 근거, 반대 근거, "
+            f"한계와 후속 조치를 충분히 설명하십시오. {format_instruction}"
+        )
+    return (
+        "이 Node는 최종 보고서가 아니라 다음 Node를 위한 압축 인계물입니다. 서론, Executive Summary, "
+        "맺음말과 일반 배경 설명으로 분량을 늘리지 마십시오. 이 단계에서 새로 확인하거나 판단한 사실, "
+        "근거·출처, 계산 결과, 반대 근거·불확실성, 다음 Node가 반드시 알아야 할 내용만 남기십시오. "
+        "선행 산출물의 내용을 반복 요약하지 말고 필요한 경우 해당 파일이나 섹션을 가리키십시오."
     )
 
 
@@ -410,10 +474,16 @@ Mission 설명: {mission.objective or mission.title}
 작업 프롬프트:
 {node.purpose or node.title}
 
+단계별 지시:
+{_stage_instruction(node)}
+
+출력 계약:
+{_output_instruction(mission, node)}
+
 실행 규칙:
 - 필요한 경우 위 Project 파일과 선행 세션 출력을 실제로 확인·사용하십시오.
 - 확인하지 않은 사실이나 수치를 만들어내지 마십시오.
-- 다음 Node가 그대로 인계받을 수 있는 독립적인 Markdown 문서만 한국어로 작성하십시오.
+- 보고서가 아닌 Node는 다음 Node가 그대로 인계받을 수 있는 Markdown 문서만 한국어로 작성하십시오.
 - 채팅 인사말이나 작업 예고 없이 완성된 본문부터 출력하십시오.
 """
 
@@ -445,6 +515,46 @@ def _ensure_node_conversation(
     return conversation
 
 
+def _reserved_budget_microusd(
+    db: Session,
+    nodes: list[DeepAnalysisWorkflowNode],
+) -> int:
+    run_ids = [node.run_id for node in nodes if node.status == "running" and node.run_id]
+    if not run_ids:
+        return 0
+    total = 0
+    for run in db.scalars(select(Run).where(Run.id.in_(run_ids))):
+        deep_analysis = run.snapshot_json.get("deep_analysis")
+        reservation = (
+            deep_analysis.get("budget_reservation_microusd")
+            if isinstance(deep_analysis, dict)
+            else None
+        )
+        if isinstance(reservation, int) and not isinstance(reservation, bool):
+            total += max(0, reservation)
+            continue
+        limits = run.snapshot_json.get("limits")
+        max_cost_usd = limits.get("maxCostUsd") if isinstance(limits, dict) else None
+        if isinstance(max_cost_usd, (int, float)) and not isinstance(max_cost_usd, bool):
+            total += max(0, round(float(max_cost_usd) * 1_000_000))
+    return total
+
+
+def _available_budget_microusd(
+    db: Session,
+    mission: DeepAnalysisMission,
+    nodes: list[DeepAnalysisWorkflowNode],
+) -> int | None:
+    if mission.budget_microusd is None:
+        return None
+    return max(
+        0,
+        mission.budget_microusd
+        - mission.spent_microusd
+        - _reserved_budget_microusd(db, nodes),
+    )
+
+
 def create_node_run(
     db: Session,
     *,
@@ -452,11 +562,27 @@ def create_node_run(
     mission: DeepAnalysisMission,
     node: DeepAnalysisWorkflowNode,
     settings: Settings,
+    budget_limit_microusd: int | None = None,
 ) -> tuple[Run, bool]:
     if node.run_id:
         existing = db.get(Run, node.run_id)
         if existing is not None:
             return existing, False
+    if mission.budget_microusd is not None and budget_limit_microusd is None:
+        workflow_nodes = list(
+            db.scalars(
+                select(DeepAnalysisWorkflowNode).where(
+                    DeepAnalysisWorkflowNode.workflow_revision_id
+                    == node.workflow_revision_id
+                )
+            )
+        )
+        budget_limit_microusd = _available_budget_microusd(
+            db, mission, workflow_nodes
+        )
+    if budget_limit_microusd is not None and budget_limit_microusd <= 0:
+        raise ApiProblem(409, "mission_budget_exhausted", "Mission 예산이 소진되었습니다.")
+
     conversation = _ensure_node_conversation(
         db,
         user=user,
@@ -464,7 +590,7 @@ def create_node_run(
         node=node,
     )
     manifest = _run_manifest(db, mission, node)
-    analysis_depth, answer_length = _run_profile(mission)
+    analysis_depth, answer_length, target_output_tokens = _run_profile(mission, node)
     attempt = len(node.run_history_json) + 1
     prompt = _run_prompt(
         mission,
@@ -488,7 +614,13 @@ def create_node_run(
             reference["token_start"] = int(reference["token_start"]) + objective_offset
             reference["token_end"] = int(reference["token_end"]) + objective_offset
         prompt_references.append(MessageReferenceInput.model_validate(reference))
-    output_mode = str(execution_settings.get("outputMode") or "auto")
+    output_mode = cast(_OutputMode, str(execution_settings.get("outputMode") or "auto"))
+    frozen_execution = execution_settings.get("execution")
+    selected_execution = (
+        ExecutionSelection.model_validate(frozen_execution)
+        if isinstance(frozen_execution, dict)
+        else None
+    )
     run, _message, created = create_run(
         db,
         user=user,
@@ -500,10 +632,9 @@ def create_node_run(
                 output_mode=output_mode,
                 analysis_depth=analysis_depth,
                 answer_length=answer_length,
-                target_output_tokens=(
-                    execution_settings.get("targetOutputTokens") if output_mode != "chat" else None
-                ),
-            )
+                target_output_tokens=target_output_tokens,
+            ),
+            execution=selected_execution,
         ),
         idempotency_key=(
             f"deep-analysis:{mission.id}:{node.node_key}:attempt:{attempt}"
@@ -524,18 +655,25 @@ def create_node_run(
         },
         "project_file_manifest": manifest,
     }
-    if mission.budget_microusd is not None:
-        remaining_usd = max(
-            0.0,
-            (mission.budget_microusd - mission.spent_microusd) / 1_000_000,
-        )
+    if budget_limit_microusd is not None:
+        budget_limit_usd = budget_limit_microusd / 1_000_000
         limits = dict(run.snapshot_json.get("limits", {}))
         configured_limit = float(limits.get("maxCostUsd") or 0)
-        if remaining_usd > 0 and (
-            configured_limit <= 0 or remaining_usd < configured_limit
-        ):
-            limits["maxCostUsd"] = remaining_usd
-            run.snapshot_json = {**run.snapshot_json, "limits": limits}
+        effective_limit_usd = (
+            min(configured_limit, budget_limit_usd)
+            if configured_limit > 0
+            else budget_limit_usd
+        )
+        limits["maxCostUsd"] = effective_limit_usd
+        deep_analysis = dict(run.snapshot_json.get("deep_analysis", {}))
+        deep_analysis["budget_reservation_microusd"] = round(
+            effective_limit_usd * 1_000_000
+        )
+        run.snapshot_json = {
+            **run.snapshot_json,
+            "limits": limits,
+            "deep_analysis": deep_analysis,
+        }
     node.run_id = run.id
     node.status = "running"
     node.started_at = node.started_at or utc_now()
@@ -567,6 +705,57 @@ def create_node_run(
             },
         )
     return run, created
+
+
+def create_runnable_node_runs(
+    db: Session,
+    *,
+    user: User,
+    mission: DeepAnalysisMission,
+    nodes: list[DeepAnalysisWorkflowNode],
+    edges: list[DeepAnalysisWorkflowEdge],
+    settings: Settings,
+) -> tuple[Run, ...]:
+    fanout_limit = max(
+        1,
+        min(settings.user_concurrency_limit, settings.server_concurrency_limit),
+    )
+    active_count = sum(
+        node.status == "running" and node.run_id is not None for node in nodes
+    )
+    slots = max(0, fanout_limit - active_count)
+    if slots == 0:
+        return ()
+    candidates = [
+        node for node in nodes if node.status == "running" and node.run_id is None
+    ]
+    candidates.extend(runnable_nodes(nodes, edges))
+    selected = candidates[:slots]
+    if not selected:
+        return ()
+    budget_limits: list[int | None] = [None] * len(selected)
+    available_budget = _available_budget_microusd(db, mission, nodes)
+    if available_budget is not None:
+        if available_budget <= 0:
+            return ()
+        share, remainder = divmod(available_budget, len(selected))
+        budget_limits = [
+            share + (1 if index < remainder else 0)
+            for index in range(len(selected))
+        ]
+    created_runs: list[Run] = []
+    for node, budget_limit in zip(selected, budget_limits, strict=True):
+        run, created = create_node_run(
+            db,
+            user=user,
+            mission=mission,
+            node=node,
+            settings=settings,
+            budget_limit_microusd=budget_limit,
+        )
+        if created:
+            created_runs.append(run)
+    return tuple(created_runs)
 
 
 def archive_current_attempt(
@@ -935,42 +1124,6 @@ def sync_terminal_run(
                 )
             )
         )
-        next_node = next_runnable_node(nodes, edges)
-        if next_node is None:
-            unresolved = [
-                item
-                for item in nodes
-                if item.status in {"planned", "ready", "running"}
-            ]
-            if unresolved:
-                mission.status = "blocked"
-                mission.revision += 1
-                emit_event(
-                    db,
-                    mission,
-                    "mission_status_changed",
-                    {
-                        "status": mission.status,
-                        "missionRevision": mission.revision,
-                        "blockedNodeKeys": [item.node_key for item in unresolved],
-                    },
-                )
-                return TerminalSyncResult(changed=True)
-            mission.status = "completed"
-            mission.completion_outcome = "satisfied"
-            mission.revision += 1
-            emit_event(
-                db,
-                mission,
-                "mission_completed",
-                {
-                    "status": mission.status,
-                    "missionRevision": mission.revision,
-                    "finalOutputFileId": node.output_project_file_id,
-                },
-            )
-            return TerminalSyncResult(changed=True)
-
         if (
             mission.budget_microusd is not None
             and mission.spent_microusd >= mission.budget_microusd
@@ -990,18 +1143,58 @@ def sync_terminal_run(
             )
             return TerminalSyncResult(changed=True)
 
-        next_run, created = create_node_run(
+        next_runs = create_runnable_node_runs(
             db,
             user=user,
             mission=mission,
-            node=next_node,
+            nodes=nodes,
+            edges=edges,
             settings=settings,
         )
+        if next_runs:
+            mission.revision += 1
+            return TerminalSyncResult(
+                next_run_ids=tuple(item.id for item in next_runs),
+                changed=True,
+            )
+
+        running = [item for item in nodes if item.status == "running"]
+        if running:
+            mission.revision += 1
+            return TerminalSyncResult(changed=True)
+
+        unresolved = [
+            item for item in nodes if item.status in {"planned", "ready"}
+        ]
+        if unresolved:
+            mission.status = "blocked"
+            mission.revision += 1
+            emit_event(
+                db,
+                mission,
+                "mission_status_changed",
+                {
+                    "status": mission.status,
+                    "missionRevision": mission.revision,
+                    "blockedNodeKeys": [item.node_key for item in unresolved],
+                },
+            )
+            return TerminalSyncResult(changed=True)
+
+        mission.status = "completed"
+        mission.completion_outcome = "satisfied"
         mission.revision += 1
-        return TerminalSyncResult(
-            next_run_id=next_run.id if created else None,
-            changed=True,
+        emit_event(
+            db,
+            mission,
+            "mission_completed",
+            {
+                "status": mission.status,
+                "missionRevision": mission.revision,
+                "finalOutputFileId": node.output_project_file_id,
+            },
         )
+        return TerminalSyncResult(changed=True)
 
     preserve_partial_output(
         db,

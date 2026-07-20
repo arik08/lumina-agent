@@ -34,6 +34,15 @@ def get_auth_context(
     return AuthContext(resolved.user, resolved.auth_session, token)
 
 
+def get_stream_auth_context(
+    request: Request,
+    db: Session = Depends(get_db, scope="function"),
+    settings: Settings = Depends(get_settings),
+) -> AuthContext:
+    """Authenticate SSE setup without retaining a DB session for the stream lifetime."""
+    return get_auth_context(request, db, settings)
+
+
 def get_current_user(context: AuthContext = Depends(get_auth_context)) -> User:
     return context.user
 

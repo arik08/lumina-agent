@@ -176,6 +176,11 @@ export interface ProjectFileSummary {
   updatedAt: IsoDateTime;
 }
 
+export interface ProjectFilePage {
+  items: ProjectFileSummary[];
+  nextCursor: string | null;
+}
+
 export interface ProjectFileDetail extends ProjectFileSummary {
   versions: ProjectFileVersion[];
 }
@@ -212,7 +217,9 @@ export interface DeepAnalysisMissionSummary {
   analysisDepth: "auto" | "brief" | "standard" | "deep";
   answerLength: "auto" | "brief" | "standard" | "detailed";
   outputMode: OutputMode;
+  outputFormat: DeepAnalysisOutputFormat;
   targetOutputTokens: number | null;
+  execution: ExecutionSelection | null;
   promptReferences: PromptReference[];
   budgetMicrousd: number | null;
   spentMicrousd: number;
@@ -506,6 +513,26 @@ export interface DeepAnalysisMissionEvent {
   createdAt: IsoDateTime;
 }
 
+export interface DeepAnalysisMissionProjection {
+  missionId: UUID;
+  eventCursor: number;
+  status: string;
+  spentMicrousd: number;
+  revision: number;
+  nodes: Array<Pick<
+    DeepAnalysisWorkflowNode,
+    | "id"
+    | "status"
+    | "runId"
+    | "runStatus"
+    | "liveOutput"
+    | "errorMessage"
+    | "actualCostMicrousd"
+    | "startedAt"
+    | "finishedAt"
+  >>;
+}
+
 export interface DeepAnalysisMissionCosts {
   missionId: UUID;
   spentMicrousd: number;
@@ -555,7 +582,9 @@ export interface CreateDeepAnalysisMissionRequest {
   analysisDepth?: "auto" | "brief" | "standard" | "deep";
   answerLength?: "auto" | "brief" | "standard" | "detailed";
   outputMode?: OutputMode;
+  outputFormat?: DeepAnalysisOutputFormat;
   targetOutputTokens?: number | null;
+  execution?: ExecutionSelection;
   promptReferences?: PromptReference[];
   workflowStartMode?: DeepAnalysisWorkflowStartMode;
   patternVersionId?: UUID | null;
@@ -615,6 +644,13 @@ export interface UpdateDeepAnalysisMissionRequest {
   objective?: string;
   autonomyMode?: DeepAnalysisAutonomyMode;
   budgetMicrousd?: number;
+  analysisDepth?: "auto" | "brief" | "standard" | "deep";
+  answerLength?: "auto" | "brief" | "standard" | "detailed";
+  outputMode?: OutputMode;
+  outputFormat?: DeepAnalysisOutputFormat;
+  targetOutputTokens?: number | null;
+  execution?: ExecutionSelection;
+  promptReferences?: PromptReference[];
   isFavorite?: boolean;
   isLiked?: boolean;
   charter?: Omit<DeepAnalysisMissionCharter, "confirmed" | "confirmedMissionRevision" | "confirmedAt">;
@@ -653,10 +689,41 @@ export interface KnowledgeSpace {
 
 export interface CreateKnowledgeSpaceRequest { name: string; purpose?: string; visibility?: "private" | "organization"; }
 export interface UpdateKnowledgeSpaceRequest { expectedRevision: number; name?: string; purpose?: string; projectIds?: UUID[]; }
-export interface KnowledgeTag { id: UUID; name: string; namespace: string; scopeNote: string; }
+export interface KnowledgeDocumentTag {
+  id: UUID;
+  name: string;
+  namespace: string;
+  definition: string;
+  scopeNote: string;
+  parentTagId: UUID | null;
+}
+export interface KnowledgeTag extends KnowledgeDocumentTag {
+  aliases: string[];
+  status: "active" | "deprecated";
+  revision: number;
+  usageCount: number;
+}
+export interface CreateKnowledgeTagRequest {
+  spaceId: UUID;
+  namespace: string;
+  canonicalName: string;
+  definition?: string;
+  scopeNote?: string;
+  aliases?: string[];
+  parentTagId?: UUID | null;
+}
+export interface UpdateKnowledgeTagRequest {
+  expectedRevision: number;
+  namespace?: string;
+  canonicalName?: string;
+  definition?: string;
+  scopeNote?: string;
+  aliases?: string[];
+  parentTagId?: UUID | null;
+}
 export interface KnowledgeDocumentSummary {
   id: UUID; spaceId: UUID; projectId: UUID; title: string; researchedAt: IsoDateTime;
-  tags: KnowledgeTag[]; citationCount: number; bodyPreview: string; createdAt: IsoDateTime; updatedAt: IsoDateTime;
+  tags: KnowledgeDocumentTag[]; citationCount: number; linkedDocumentCount: number; bodyPreview: string; createdAt: IsoDateTime; updatedAt: IsoDateTime;
 }
 export interface KnowledgeCitation {
   sourceId: string; title: string; url: string; domain: string; excerpt: string;
@@ -669,7 +736,7 @@ export interface KnowledgeDocument extends KnowledgeDocumentSummary {
   contentDigest: string;
   created?: boolean;
 }
-export interface KnowledgeGraphNode { id: UUID; title: string; researchedAt: IsoDateTime; tags: KnowledgeTag[]; }
+export interface KnowledgeGraphNode { id: UUID; title: string; researchedAt: IsoDateTime; tags: KnowledgeDocumentTag[]; }
 export interface KnowledgeGraphEdge {
   id: string; sourceDocumentId: UUID; targetDocumentId: UUID; sharedTagIds: UUID[]; weight: number;
 }
@@ -711,6 +778,7 @@ export interface HelpItemList {
 
 export type Theme = "light" | "dark";
 export type OutputMode = "auto" | "chat" | "file";
+export type DeepAnalysisOutputFormat = string;
 export type ClarificationMode = "autonomous" | "balanced" | "confirming";
 export type AnalysisDepth = "auto" | "brief" | "standard" | "deep";
 export type AnswerLength = "auto" | "brief" | "standard" | "detailed";
@@ -1074,6 +1142,15 @@ export interface AdminUserList {
   hasMore: boolean;
 }
 
+export interface AdminCacheMetric {
+  modelCalls: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  cacheWriteTokens: number;
+  uncachedInputTokens: number;
+  cacheHitRatioPercent: number;
+}
+
 export interface AdminUsageStatistics {
   generatedAt: IsoDateTime;
   timezone: string;
@@ -1087,6 +1164,17 @@ export interface AdminUsageStatistics {
     runs: number;
   };
   trend: Array<{ date: string; activeUsers: number; loginCount: number; runCount: number }>;
+  cache: {
+    firstCall: AdminCacheMetric;
+    subsequentCalls: AdminCacheMetric;
+    byStaticDigest: Array<AdminCacheMetric & {
+      digest: string;
+      providerId: string;
+      modelKey: string;
+      firstCall: AdminCacheMetric;
+      subsequentCalls: AdminCacheMetric;
+    }>;
+  };
   users: Array<{
     userId: UUID;
     loginId: string;
@@ -1524,7 +1612,7 @@ export interface SkillDraft {
   dirty: boolean;
   status: string;
   etag: string;
-  package: SkillPackage;
+  package?: SkillPackage;
   updatedAt: IsoDateTime;
 }
 
@@ -1910,6 +1998,7 @@ export interface TurnSetPage {
   previousCursor: string | null;
   hasMoreBefore: boolean;
   totalQuestionCount?: number;
+  usageBeforePage: Record<string, unknown>;
 }
 
 export interface RunSnapshot {
@@ -1981,6 +2070,7 @@ export interface ModelTurnMetric {
   stopReason: string | null;
   inputTokens: number;
   cachedInputTokens: number;
+  cacheWriteTokens: number;
   uncachedInputTokens: number;
   outputTokens: number;
   reasoningTokens?: number | null;

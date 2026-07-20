@@ -3,10 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import func, or_, select, tuple_, update
 from sqlalchemy.orm import Session
 
 from ..agent_frontends import agent_frontend_payload, normalize_agent_frontend_payload
@@ -17,7 +18,7 @@ from ..api.schemas import (
     RunActionRequest,
     RunCreate,
 )
-from ..artifacts.service import artifact_summary, current_artifact_version
+from ..artifacts.service import artifact_summary
 from ..config import Settings, get_settings
 from ..audit import record_audit
 from ..authorization import require_conversation, require_project
@@ -63,7 +64,10 @@ from ..providers.catalog import (
     estimate_model_cost_parts,
 )
 from ..providers.execution_defaults import initial_execution_selection
-from .approvals import approval_payload, pending_approval_payloads
+from .approvals import (
+    approval_payload,
+    pending_approval_payloads_batch,
+)
 from .events import append_event
 from .plans import (
     PLAN_STEP_QUEUED,
@@ -76,6 +80,7 @@ from .plans import (
     fail_plan,
     pause_plan,
     plan_snapshot,
+    plan_snapshots,
     resume_plan,
     retry_plan_step,
     start_plan_step,
@@ -107,6 +112,7 @@ __all__ = (
     "fail_plan",
     "pause_plan",
     "plan_snapshot",
+    "run_snapshots",
     "resume_plan",
     "retry_plan_step",
     "start_plan_step",
@@ -296,6 +302,44 @@ def _default_execution_selection(
     return fallback, [warning] if warning else []
 
 
+def _idempotent_run(
+    db: Session,
+    *,
+    conversation_id: str,
+    user_id: str,
+    idempotency_key: str,
+) -> tuple[Run, Message] | None:
+    run = db.scalar(
+        select(Run).where(
+            Run.conversation_id == conversation_id,
+            Run.user_id == user_id,
+            Run.idempotency_key == idempotency_key,
+        )
+    )
+    if run is None:
+        return None
+    message = db.scalar(
+        select(Message).where(Message.run_id == run.id, Message.role == "user")
+    )
+    if message is None:
+        raise ApiProblem(
+            409, "run_incomplete", "기존 Run의 사용자 메시지를 찾을 수 없습니다."
+        )
+    return run, message
+
+
+def _reserve_conversation_turn(db: Session, conversation_id: str) -> int:
+    next_turn_index = db.scalar(
+        update(Conversation)
+        .where(Conversation.id == conversation_id)
+        .values(next_turn_index=Conversation.next_turn_index + 1)
+        .returning(Conversation.next_turn_index)
+    )
+    if next_turn_index is None:
+        raise ApiProblem(404, "conversation_not_found", "대화를 찾을 수 없습니다.")
+    return int(next_turn_index) - 1
+
+
 def create_run(
     db: Session,
     *,
@@ -310,22 +354,14 @@ def create_run(
 ) -> tuple[Run, Message, bool]:
     config = settings or get_settings()
     conversation = require_conversation(db, user, conversation_id, write=True)
-    existing = db.scalar(
-        select(Run).where(
-            Run.conversation_id == conversation.id,
-            Run.user_id == user.id,
-            Run.idempotency_key == idempotency_key,
-        )
+    existing = _idempotent_run(
+        db,
+        conversation_id=conversation.id,
+        user_id=user.id,
+        idempotency_key=idempotency_key,
     )
     if existing:
-        message = db.scalar(
-            select(Message).where(Message.run_id == existing.id, Message.role == "user")
-        )
-        if message is None:
-            raise ApiProblem(
-                409, "run_incomplete", "기존 Run의 사용자 메시지를 찾을 수 없습니다."
-            )
-        return existing, message, False
+        return existing[0], existing[1], False
 
     attachment_ids = _validate_attachments(
         db, user, conversation.project_id, payload.message.attachment_ids
@@ -500,6 +536,22 @@ def create_run(
             default=str,
         ).encode("utf-8")
     ).hexdigest()
+    turn_index = _reserve_conversation_turn(db, conversation.id)
+    db.refresh(conversation)
+    existing = _idempotent_run(
+        db,
+        conversation_id=conversation.id,
+        user_id=user.id,
+        idempotency_key=idempotency_key,
+    )
+    if existing:
+        db.execute(
+            update(Conversation)
+            .where(Conversation.id == conversation.id)
+            .values(next_turn_index=Conversation.next_turn_index - 1)
+        )
+        return existing[0], existing[1], False
+
     assistant_message_id = new_uuid()
     run = Run(
         organization_id=user.organization_id,
@@ -552,14 +604,6 @@ def create_run(
     db.add(run)
     db.flush()
     create_run_plan(db, run, goal=payload.message.text)
-    turn_index = (
-        db.scalar(
-            select(func.max(Message.turn_index)).where(
-                Message.conversation_id == conversation.id
-            )
-        )
-        or 0
-    ) + 1
     message = Message(
         conversation_id=conversation.id,
         run_id=run.id,
@@ -1189,30 +1233,78 @@ def _write_file_progress(
     }
 
 
-def message_response(message: Message, db: Session | None = None) -> dict[str, Any]:
+def _attachment_response(attachment: Attachment) -> dict[str, Any]:
+    return {
+        "id": attachment.id,
+        "conversationId": attachment.conversation_id,
+        "projectId": attachment.project_id,
+        "kind": attachment.kind,
+        "fileName": attachment.original_filename,
+        "mimeType": attachment.sniffed_mime_type,
+        "size": attachment.size_bytes,
+        "status": attachment.status,
+        "extractionStatus": attachment.extraction_status,
+        "metadata": attachment.metadata_json,
+        "createdAt": attachment.created_at,
+    }
+
+
+def preload_message_attachments(
+    db: Session, messages: Sequence[Message]
+) -> dict[str, list[dict[str, Any]]]:
+    attachment_ids_by_message: dict[str, list[str]] = {}
+    all_attachment_ids: set[str] = set()
+    for message in messages:
+        raw_ids = message.metadata_json.get("attachment_ids", [])
+        ids = (
+            list(dict.fromkeys(str(item) for item in raw_ids if item))
+            if isinstance(raw_ids, list)
+            else []
+        )
+        attachment_ids_by_message[message.id] = ids
+        all_attachment_ids.update(ids)
+    attachments_by_id = (
+        {
+            attachment.id: attachment
+            for attachment in db.scalars(
+                select(Attachment).where(
+                    Attachment.id.in_(all_attachment_ids),
+                    Attachment.deleted_at.is_(None),
+                )
+            )
+        }
+        if all_attachment_ids
+        else {}
+    )
+    return {
+        message.id: [
+            _attachment_response(attachments_by_id[attachment_id])
+            for attachment_id in attachment_ids_by_message.get(message.id, [])
+            if attachment_id in attachments_by_id
+        ]
+        for message in messages
+    }
+
+
+def message_response(
+    message: Message,
+    db: Session | None = None,
+    *,
+    preloaded_attachments: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     references = message.metadata_json.get("prompt_references", [])
     attachment_ids = message.metadata_json.get("attachment_ids", [])
-    attachments = []
-    if db is not None and isinstance(attachment_ids, list):
+    attachments = preloaded_attachments if preloaded_attachments is not None else []
+    if (
+        preloaded_attachments is None
+        and db is not None
+        and isinstance(attachment_ids, list)
+    ):
         for attachment_id in dict.fromkeys(attachment_ids):
             attachment = db.get(Attachment, attachment_id)
             if attachment is None or attachment.deleted_at is not None:
                 continue
-            attachments.append(
-                {
-                    "id": attachment.id,
-                    "conversationId": attachment.conversation_id,
-                    "projectId": attachment.project_id,
-                    "kind": attachment.kind,
-                    "fileName": attachment.original_filename,
-                    "mimeType": attachment.sniffed_mime_type,
-                    "size": attachment.size_bytes,
-                    "status": attachment.status,
-                    "extractionStatus": attachment.extraction_status,
-                    "metadata": attachment.metadata_json,
-                    "createdAt": attachment.created_at,
-                }
-            )
+            attachments.append(_attachment_response(attachment))
     return {
         "id": message.id,
         "conversationId": message.conversation_id,
@@ -1228,9 +1320,186 @@ def message_response(message: Message, db: Session | None = None) -> dict[str, A
     }
 
 
-def _artifact_usage_snapshot(db: Session, run: Run) -> dict[str, Any] | None:
+@dataclass(slots=True)
+class _RunSnapshotBatch:
+    conversations: dict[str, Conversation]
+    artifact_progress: dict[str, RunEvent]
+    tools: dict[str, list[ToolExecution]]
+    activity_events: dict[str, list[RunEvent]]
+    artifacts: dict[str, list[Artifact]]
+    commands: dict[str, list[RunCommand]]
+    compactions: dict[str, list[CompactedContextEntry]]
+    artifact_versions: dict[str, ArtifactVersion]
+    plans: dict[str, dict[str, Any] | None]
+    approvals: dict[str, list[dict[str, Any]]]
+
+
+def _load_run_snapshot_batch(db: Session, runs: Sequence[Run]) -> _RunSnapshotBatch:
+    unique_runs = list({run.id: run for run in runs}.values())
+    run_ids = [run.id for run in unique_runs]
+    conversation_ids = list({run.conversation_id for run in unique_runs})
+    conversations = (
+        {
+            item.id: item
+            for item in db.scalars(
+                select(Conversation).where(Conversation.id.in_(conversation_ids))
+            )
+        }
+        if conversation_ids
+        else {}
+    )
+    tools = {run_id: [] for run_id in run_ids}
+    tool_rows = (
+        list(
+            db.scalars(
+                select(ToolExecution)
+                .where(ToolExecution.run_id.in_(run_ids))
+                .order_by(
+                    ToolExecution.run_id,
+                    ToolExecution.created_at,
+                    ToolExecution.id,
+                )
+            )
+        )
+        if run_ids
+        else []
+    )
+    artifact_run_ids: dict[str, set[str]] = {}
+    for tool in tool_rows:
+        tools.setdefault(tool.run_id, []).append(tool)
+        if tool.artifact_id:
+            artifact_run_ids.setdefault(tool.artifact_id, set()).add(tool.run_id)
+
+    activity_events = {run_id: [] for run_id in run_ids}
+    artifact_progress: dict[str, RunEvent] = {}
+    event_rows = (
+        list(
+            db.scalars(
+                select(RunEvent)
+                .where(
+                    RunEvent.run_id.in_(run_ids),
+                    RunEvent.event_type.in_(
+                        (
+                            "artifact_progress",
+                            "progress_summary",
+                            "skill_selected",
+                            "tool_started",
+                            "input_requested",
+                        )
+                    ),
+                )
+                .order_by(RunEvent.run_id, RunEvent.sequence)
+            )
+        )
+        if run_ids
+        else []
+    )
+    for event in event_rows:
+        if event.event_type == "artifact_progress":
+            artifact_progress[event.run_id] = event
+        else:
+            activity_events.setdefault(event.run_id, []).append(event)
+
+    artifact_scope = Artifact.source_run_id.in_(run_ids) if run_ids else None
+    if artifact_run_ids:
+        linked_scope = Artifact.id.in_(artifact_run_ids)
+        artifact_scope = (
+            or_(artifact_scope, linked_scope)
+            if artifact_scope is not None
+            else linked_scope
+        )
+    artifact_rows = (
+        list(
+            db.scalars(
+                select(Artifact)
+                .where(artifact_scope, Artifact.deleted_at.is_(None))
+                .order_by(Artifact.created_at, Artifact.id)
+            )
+        )
+        if artifact_scope is not None
+        else []
+    )
+    artifacts = {run_id: [] for run_id in run_ids}
+    for artifact in artifact_rows:
+        owners = set(artifact_run_ids.get(artifact.id, ()))
+        if artifact.source_run_id in artifacts:
+            owners.add(str(artifact.source_run_id))
+        for run_id in owners:
+            artifacts.setdefault(run_id, []).append(artifact)
+
+    commands = {run_id: [] for run_id in run_ids}
+    for command in (
+        db.scalars(
+            select(RunCommand)
+            .where(RunCommand.run_id.in_(run_ids))
+            .order_by(RunCommand.run_id, RunCommand.created_at, RunCommand.id)
+        )
+        if run_ids
+        else ()
+    ):
+        commands.setdefault(command.run_id, []).append(command)
+
+    compactions = {run_id: [] for run_id in run_ids}
+    for entry in (
+        db.scalars(
+            select(CompactedContextEntry)
+            .where(CompactedContextEntry.run_id.in_(run_ids))
+            .order_by(
+                CompactedContextEntry.run_id,
+                CompactedContextEntry.version,
+                CompactedContextEntry.compacted_at,
+                CompactedContextEntry.id,
+            )
+        )
+        if run_ids
+        else ()
+    ):
+        if entry.run_id is not None:
+            compactions.setdefault(entry.run_id, []).append(entry)
+
+    artifact_version_keys = [
+        (artifact.id, artifact.current_version_number)
+        for artifact in artifact_rows
+        if artifact.current_version_number is not None
+    ]
+    artifact_versions = (
+        {
+            version.artifact_id: version
+            for version in db.scalars(
+                select(ArtifactVersion).where(
+                    tuple_(
+                        ArtifactVersion.artifact_id,
+                        ArtifactVersion.version_number,
+                    ).in_(artifact_version_keys)
+                )
+            )
+        }
+        if artifact_version_keys
+        else {}
+    )
+    return _RunSnapshotBatch(
+        conversations=conversations,
+        artifact_progress=artifact_progress,
+        tools=tools,
+        activity_events=activity_events,
+        artifacts=artifacts,
+        commands=commands,
+        compactions=compactions,
+        artifact_versions=artifact_versions,
+        plans=plan_snapshots(db, unique_runs),
+        approvals=pending_approval_payloads_batch(db, run_ids),
+    )
+
+
+def _artifact_usage_snapshot(
+    db: Session,
+    run: Run,
+    *,
+    latest_progress: RunEvent | None = None,
+    progress_preloaded: bool = False,
+) -> dict[str, Any] | None:
     usage: object = run.snapshot_json.get("artifact_usage")
-    if not isinstance(usage, Mapping):
+    if not isinstance(usage, Mapping) and not progress_preloaded:
         latest_progress = db.scalar(
             select(RunEvent)
             .where(
@@ -1240,6 +1509,7 @@ def _artifact_usage_snapshot(db: Session, run: Run) -> dict[str, Any] | None:
             .order_by(RunEvent.sequence.desc())
             .limit(1)
         )
+    if not isinstance(usage, Mapping):
         usage = latest_progress.payload_json if latest_progress is not None else None
     if not isinstance(usage, Mapping):
         return None
@@ -1267,35 +1537,21 @@ def _artifact_usage_snapshot(db: Session, run: Run) -> dict[str, Any] | None:
     return normalized
 
 
-def run_snapshot(db: Session, run: Run) -> dict[str, Any]:
-    conversation = db.get(Conversation, run.conversation_id)
+def run_snapshot(
+    db: Session, run: Run, *, batch: _RunSnapshotBatch | None = None
+) -> dict[str, Any]:
+    loaded = batch or _load_run_snapshot_batch(db, [run])
+    conversation = loaded.conversations.get(run.conversation_id)
     usage = _usage_snapshot(run)
-    artifact_usage = _artifact_usage_snapshot(db, run)
-    tools = list(
-        db.scalars(
-            select(ToolExecution)
-            .where(ToolExecution.run_id == run.id)
-            .order_by(ToolExecution.created_at, ToolExecution.id)
-        )
+    artifact_usage = _artifact_usage_snapshot(
+        db,
+        run,
+        latest_progress=loaded.artifact_progress.get(run.id),
+        progress_preloaded=True,
     )
+    tools = loaded.tools.get(run.id, [])
     tools_by_id = {tool.id: tool for tool in tools}
-    activity_events = list(
-        db.scalars(
-            select(RunEvent)
-            .where(
-                RunEvent.run_id == run.id,
-                RunEvent.event_type.in_(
-                    (
-                        "progress_summary",
-                        "skill_selected",
-                        "tool_started",
-                        "input_requested",
-                    )
-                ),
-            )
-            .order_by(RunEvent.sequence)
-        )
-    )
+    activity_events = loaded.activity_events.get(run.id, [])
     activities = _skill_activities(run)
     for event in activity_events:
         if event.event_type == "skill_selected":
@@ -1357,37 +1613,10 @@ def run_snapshot(db: Session, run: Run) -> dict[str, Any]:
             str(activity.get("id", "")),
         )
     )
-    tool_artifact_ids = {
-        tool.artifact_id for tool in tools if tool.artifact_id is not None
-    }
-    artifact_scope = Artifact.source_run_id == run.id
-    if tool_artifact_ids:
-        artifact_scope = or_(artifact_scope, Artifact.id.in_(tool_artifact_ids))
-    artifacts = list(
-        db.scalars(
-            select(Artifact)
-            .where(artifact_scope, Artifact.deleted_at.is_(None))
-            .order_by(Artifact.created_at, Artifact.id)
-        )
-    )
-    commands = list(
-        db.scalars(
-            select(RunCommand)
-            .where(RunCommand.run_id == run.id)
-            .order_by(RunCommand.created_at, RunCommand.id)
-        )
-    )
-    context_compactions = list(
-        db.scalars(
-            select(CompactedContextEntry)
-            .where(CompactedContextEntry.conversation_id == run.conversation_id)
-            .order_by(
-                CompactedContextEntry.version,
-                CompactedContextEntry.compacted_at,
-                CompactedContextEntry.id,
-            )
-        )
-    )
+    artifacts = loaded.artifacts.get(run.id, [])
+    commands = loaded.commands.get(run.id, [])
+    context_compactions = loaded.compactions.get(run.id, [])
+    artifact_versions = loaded.artifact_versions
     assistant_message_id = run.snapshot_json.get("assistant_message_id")
     execution = run.snapshot_json.get("execution", {})
     agent_snapshot = normalize_agent_frontend_payload(
@@ -1418,11 +1647,11 @@ def run_snapshot(db: Session, run: Run) -> dict[str, Any]:
         "artifactUsage": artifact_usage,
         "outputIntent": run.snapshot_json.get("output_intent"),
         "workPlan": run.snapshot_json.get("work_plan", []),
-        "plan": plan_snapshot(db, run),
+        "plan": loaded.plans.get(run.id),
         "activities": activities,
         "toolExecutions": [tool_response(tool) for tool in tools],
         "artifacts": [
-            artifact_summary(artifact, current_artifact_version(db, artifact))
+            artifact_summary(artifact, artifact_versions.get(artifact.id))
             for artifact in artifacts
         ],
         "pendingCommands": [
@@ -1430,7 +1659,7 @@ def run_snapshot(db: Session, run: Run) -> dict[str, Any]:
             for command in commands
             if command.status not in {"applied", "cancelled", "failed", "promoted"}
         ],
-        "pendingApprovals": pending_approval_payloads(db, run.id),
+        "pendingApprovals": loaded.approvals.get(run.id, []),
         "inputRequests": run.snapshot_json.get("input_requests", []),
         "contextCompactions": [
             {
@@ -1471,6 +1700,12 @@ def run_snapshot(db: Session, run: Run) -> dict[str, Any]:
         "usage": usage,
         "mcpServers": run.snapshot_json.get("mcp_servers", []),
     }
+
+
+def run_snapshots(db: Session, runs: Sequence[Run]) -> list[dict[str, Any]]:
+    ordered = list(runs)
+    batch = _load_run_snapshot_batch(db, ordered)
+    return [run_snapshot(db, run, batch=batch) for run in ordered]
 
 
 def _usage_snapshot(run: Run) -> dict[str, Any]:
@@ -1729,8 +1964,12 @@ def _cancel_run_state(
     snapshot["input_requests"] = [
         {
             **item,
-            "status": "cancelled" if item.get("status") == "pending" else item.get("status"),
-            "cancelledAt": utc_now().isoformat() if item.get("status") == "pending" else item.get("cancelledAt"),
+            "status": "cancelled"
+            if item.get("status") == "pending"
+            else item.get("status"),
+            "cancelledAt": utc_now().isoformat()
+            if item.get("status") == "pending"
+            else item.get("cancelledAt"),
         }
         for item in snapshot.get("input_requests", [])
         if isinstance(item, dict)
@@ -1744,7 +1983,9 @@ def _cancel_run_state(
 
 def _input_request(run: Run, request_id: str | None) -> dict[str, Any]:
     if not request_id:
-        raise ApiProblem(422, "input_request_id_required", "답변할 확인 질문을 선택해 주세요.")
+        raise ApiProblem(
+            422, "input_request_id_required", "답변할 확인 질문을 선택해 주세요."
+        )
     request = next(
         (
             item
@@ -1754,9 +1995,13 @@ def _input_request(run: Run, request_id: str | None) -> dict[str, Any]:
         None,
     )
     if request is None:
-        raise ApiProblem(404, "input_request_not_found", "확인 질문을 찾을 수 없습니다.")
+        raise ApiProblem(
+            404, "input_request_not_found", "확인 질문을 찾을 수 없습니다."
+        )
     if request.get("status") != "pending" or run.status != AWAITING_INPUT:
-        raise ApiProblem(409, "input_request_not_pending", "이미 답변했거나 종료된 확인 질문입니다.")
+        raise ApiProblem(
+            409, "input_request_not_pending", "이미 답변했거나 종료된 확인 질문입니다."
+        )
     return request
 
 
@@ -1771,9 +2016,13 @@ def _normalized_user_input_answers(
     answer_items = list(answers)
     supplied = {answer.question_id: answer for answer in answer_items}
     if len(supplied) != len(answer_items):
-        raise ApiProblem(422, "input_answer_duplicate", "같은 질문에는 한 번만 답변해 주세요.")
+        raise ApiProblem(
+            422, "input_answer_duplicate", "같은 질문에는 한 번만 답변해 주세요."
+        )
     if set(supplied) != set(questions):
-        raise ApiProblem(422, "input_answers_incomplete", "모든 확인 질문에 답변해 주세요.")
+        raise ApiProblem(
+            422, "input_answers_incomplete", "모든 확인 질문에 답변해 주세요."
+        )
     normalized: list[dict[str, Any]] = []
     for question_id, question in questions.items():
         answer = supplied[question_id]
@@ -1785,7 +2034,9 @@ def _normalized_user_input_answers(
             )
         )
         if selected_count != 1:
-            raise ApiProblem(422, "input_answer_invalid", "각 질문에는 하나의 답변만 선택해 주세요.")
+            raise ApiProblem(
+                422, "input_answer_invalid", "각 질문에는 하나의 답변만 선택해 주세요."
+            )
         if answer.use_ai_judgment:
             normalized.append(
                 {"questionId": question_id, "kind": "ai", "text": "AI가 판단"}
@@ -1809,7 +2060,9 @@ def _normalized_user_input_answers(
             None,
         )
         if option is None:
-            raise ApiProblem(422, "input_option_invalid", "선택한 답변 항목을 사용할 수 없습니다.")
+            raise ApiProblem(
+                422, "input_option_invalid", "선택한 답변 항목을 사용할 수 없습니다."
+            )
         normalized.append(
             {
                 "questionId": question_id,
@@ -1876,7 +2129,9 @@ def apply_run_action(
         target_message = db.get(Message, message_id) if message_id else None
         if target_message is None:
             raise ApiProblem(
-                409, "run_command_message_missing", "대기 요청의 메시지를 찾을 수 없습니다."
+                409,
+                "run_command_message_missing",
+                "대기 요청의 메시지를 찾을 수 없습니다.",
             )
         queued_message_id = target_command.payload_json.get("queued_message_id")
         if queued_message_id:
@@ -1885,7 +2140,9 @@ def apply_run_action(
             target_queued_message is None or target_queued_message.status != "queued"
         ):
             raise ApiProblem(
-                409, "queued_message_not_pending", "Queue 요청이 더 이상 대기 중이 아닙니다."
+                409,
+                "queued_message_not_pending",
+                "Queue 요청이 더 이상 대기 중이 아닙니다.",
             )
         if payload.type == "steer_queued":
             attachment_ids = _validate_attachments(
@@ -1903,7 +2160,9 @@ def apply_run_action(
                 run.conversation_id,
                 [
                     MessageReferenceInput.model_validate(item)
-                    for item in target_message.metadata_json.get("prompt_references", [])
+                    for item in target_message.metadata_json.get(
+                        "prompt_references", []
+                    )
                     if isinstance(item, dict)
                 ],
                 message_text=target_message.canonical_text,
@@ -2196,7 +2455,9 @@ def apply_run_action(
         }
     elif payload.type == "submit_user_input":
         assert input_request is not None
-        normalized_answers = _normalized_user_input_answers(input_request, payload.answers)
+        normalized_answers = _normalized_user_input_answers(
+            input_request, payload.answers
+        )
         resolved_at = utc_now()
         resolved_request = {
             **input_request,

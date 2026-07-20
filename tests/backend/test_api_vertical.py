@@ -36,6 +36,16 @@ def test_login_run_replay_and_artifact_version(tmp_path: Path, capsys) -> None:
         assert projects.status_code == 200
         project_id = projects.json()[0]["id"]
 
+        provider_catalog = client.get(
+            "/api/provider-catalog", params={"project_id": project_id}
+        )
+        assert provider_catalog.status_code == 200, provider_catalog.text
+        assert (
+            provider_catalog.json()["modelsByProvider"]["mock"][0]["modelKey"]
+            == "mock-agent"
+        )
+        assert provider_catalog.json()["providers"][0]["id"] == "mock"
+
         conversation = client.post(
             "/api/conversations",
             headers=headers,
@@ -65,6 +75,14 @@ def test_login_run_replay_and_artifact_version(tmp_path: Path, capsys) -> None:
 
         snapshot = _wait_for_terminal(client, run_id)
         assert snapshot["status"] == "completed"
+        snapshots = client.post(
+            "/api/runs/snapshots",
+            headers={**headers, "Accept-Encoding": "gzip"},
+            json={"runIds": [run_id]},
+        )
+        assert snapshots.status_code == 200, snapshots.text
+        assert snapshots.headers["content-encoding"] == "gzip"
+        assert [item["runId"] for item in snapshots.json()] == [run_id]
         activity_lines = [
             line
             for line in capsys.readouterr().out.splitlines()
@@ -85,8 +103,12 @@ def test_login_run_replay_and_artifact_version(tmp_path: Path, capsys) -> None:
         ]
         assert len(snapshot["artifacts"]) == 1
 
-        replay = client.get(f"/stream/runs/{run_id}?after_sequence=0")
+        replay = client.get(
+            f"/stream/runs/{run_id}?after_sequence=0",
+            headers={"Accept-Encoding": "gzip"},
+        )
         assert replay.status_code == 200
+        assert "content-encoding" not in replay.headers
         events = [
             json.loads(line.removeprefix("data: "))
             for line in replay.text.splitlines()
