@@ -11,6 +11,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from lumina.agent import executor as executor_module
 from lumina.agent.executor import (
     LocalRunExecutor,
     _report_tool_schema,
@@ -905,6 +906,64 @@ def test_provider_settings_ready_status_executor_and_codex_boundary(
         update={"openai_compatible_base_url": "https://user:pass@example.test/v1"}
     )
     assert _provider_status("openai_compatible", invalid) == "needs_setup"
+
+
+def test_executor_reuses_external_provider_client_until_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class RecordingClient:
+        def __init__(self) -> None:
+            self.close_count = 0
+
+        async def aclose(self) -> None:
+            self.close_count += 1
+
+    clients: list[RecordingClient] = []
+
+    def create_client(_trust_profile: TrustProfile) -> RecordingClient:
+        client = RecordingClient()
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr(executor_module, "create_http_client", create_client)
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'provider-pool.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+        openai_api_key="openai-secret",
+        openai_base_url="https://openai.test/v1",
+        anthropic_api_key="anthropic-secret",
+        anthropic_base_url="https://anthropic.test/v1",
+        google_api_key="google-secret",
+        google_base_url="https://google.test/v1beta",
+        openai_compatible_api_key="compatible-secret",
+        openai_compatible_base_url="https://compatible.test/v1",
+    )
+
+    with TestClient(create_app(settings)):
+        assert len(clients) == 1
+        shared_client = clients[0]
+        for provider_id in (
+            "openai",
+            "anthropic",
+            "google",
+            "openai_compatible",
+        ):
+            first = local_run_executor._provider(
+                provider_id, wants_artifact=False, first_turn=True
+            )
+            second = local_run_executor._provider(
+                provider_id, wants_artifact=False, first_turn=False
+            )
+            assert first is second
+            assert first._client is shared_client  # type: ignore[attr-defined]
+        assert shared_client.close_count == 0
+
+    assert shared_client.close_count == 1
 
 
 def test_pgpt_settings_load_from_dotenv_for_status_and_execution(

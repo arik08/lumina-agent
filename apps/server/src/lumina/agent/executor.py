@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+import httpx
 from sqlalchemy import exists, func, or_, select, update
 from sqlalchemy.orm import Session, aliased
 
@@ -79,7 +80,7 @@ from .tool_runtime_policy import (
 from ..config import Settings, get_settings
 from ..citations import resolve_inline_citations
 from ..db import SessionLocal, session_scope
-from ..http_client import TrustProfile
+from ..http_client import TrustManager, TrustProfile, create_http_client
 from ..memories.service import (
     PreparedMemoryExtractor,
     learn_memories_for_run,
@@ -507,6 +508,8 @@ class LocalRunExecutor:
         self.pgpt_provider = PgptAdapter(
             env=_pgpt_environment(self.settings), trust_profile=self.trust_profile
         )
+        self._external_provider_client: httpx.AsyncClient | None = None
+        self._external_provider_adapters: dict[str, ProviderAdapter] = {}
         self._worker_lock = _DatabaseWorkerLock(self.settings.database_url)
         self._worker_id = new_uuid()
         self._started = False
@@ -539,6 +542,7 @@ class LocalRunExecutor:
         self.pgpt_provider = PgptAdapter(
             env=_pgpt_environment(settings), trust_profile=trust_profile
         )
+        self._external_provider_adapters.clear()
         self._worker_lock = _DatabaseWorkerLock(settings.database_url)
 
     @property
@@ -565,10 +569,16 @@ class LocalRunExecutor:
         self._run_control_cache.clear()
         self._started = True
         try:
+            profile = self.trust_profile or TrustManager().initialize()
+            self._external_provider_client = create_http_client(profile)
+            self._external_provider_adapters.clear()
             await self._start_owned()
         except BaseException:
             self._started = False
-            self._worker_lock.release()
+            try:
+                await self._close_external_provider_client()
+            finally:
+                self._worker_lock.release()
             raise
 
     async def _start_owned(self) -> None:
@@ -693,7 +703,17 @@ class LocalRunExecutor:
             await self.codex_provider.close()
             await self.pgpt_provider.close()
         finally:
-            self._worker_lock.release()
+            try:
+                await self._close_external_provider_client()
+            finally:
+                self._worker_lock.release()
+
+    async def _close_external_provider_client(self) -> None:
+        client = self._external_provider_client
+        self._external_provider_client = None
+        self._external_provider_adapters.clear()
+        if client is not None:
+            await client.aclose()
 
     def enqueue(self, run_id: str) -> None:
         if not self._started:
@@ -3695,17 +3715,23 @@ class LocalRunExecutor:
             )
         if provider_id == "pgpt":
             return self.pgpt_provider
+        cached_provider = self._external_provider_adapters.get(provider_id)
+        if cached_provider is not None:
+            return cached_provider
         if provider_id == "openai":
             api_key = self.settings.openai_api_key
             if api_key is None or not api_key.get_secret_value().strip():
                 raise ProviderConfigurationError(
                     "OpenAI Provider를 사용하려면 OPENAI_API_KEY가 필요합니다."
                 )
-            return OpenAIResponsesAdapter(
+            provider: ProviderAdapter = OpenAIResponsesAdapter(
                 api_key=api_key.get_secret_value(),
                 base_url=self.settings.openai_base_url,
+                client=self._external_provider_client,
                 trust_profile=self.trust_profile,
             )
+            self._external_provider_adapters[provider_id] = provider
+            return provider
         if provider_id == "codex":
             return self.codex_provider
         if provider_id == "anthropic":
@@ -3714,22 +3740,28 @@ class LocalRunExecutor:
                 raise ProviderConfigurationError(
                     "Anthropic Provider를 사용하려면 ANTHROPIC_API_KEY가 필요합니다."
                 )
-            return AnthropicMessagesAdapter(
+            provider = AnthropicMessagesAdapter(
                 api_key=api_key.get_secret_value(),
                 base_url=self.settings.anthropic_base_url,
+                client=self._external_provider_client,
                 trust_profile=self.trust_profile,
             )
+            self._external_provider_adapters[provider_id] = provider
+            return provider
         if provider_id == "google":
             api_key = self.settings.google_api_key
             if api_key is None or not api_key.get_secret_value().strip():
                 raise ProviderConfigurationError(
                     "Google Provider를 사용하려면 GOOGLE_API_KEY가 필요합니다."
                 )
-            return GoogleGeminiAdapter(
+            provider = GoogleGeminiAdapter(
                 api_key=api_key.get_secret_value(),
                 base_url=self.settings.google_base_url,
+                client=self._external_provider_client,
                 trust_profile=self.trust_profile,
             )
+            self._external_provider_adapters[provider_id] = provider
+            return provider
         if provider_id == "openai_compatible":
             api_key = self.settings.openai_compatible_api_key
             base_url = self.settings.openai_compatible_base_url
@@ -3744,12 +3776,15 @@ class LocalRunExecutor:
                     "LUMINA_OPENAI_COMPATIBLE_BASE_URL과 "
                     "LUMINA_OPENAI_COMPATIBLE_API_KEY가 필요합니다."
                 )
-            return OpenAICompatibleAdapter(
+            provider = OpenAICompatibleAdapter(
                 provider_id="openai_compatible",
                 base_url=base_url,
                 headers={"Authorization": f"Bearer {api_key.get_secret_value()}"},
+                client=self._external_provider_client,
                 trust_profile=self.trust_profile,
             )
+            self._external_provider_adapters[provider_id] = provider
+            return provider
         raise ProviderConfigurationError(
             f"{provider_id} Provider는 catalog 계약만 활성화되어 있고 credential adapter가 설정되지 않았습니다."
         )
