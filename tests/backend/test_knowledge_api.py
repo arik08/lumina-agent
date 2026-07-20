@@ -24,7 +24,7 @@ def _login(client: TestClient) -> str:
     return response.json()["csrfToken"]
 
 
-def test_project_knowledge_recall_searches_beyond_the_latest_200_documents(
+def test_knowledge_documents_remain_available_beyond_the_latest_200(
     tmp_path: Path,
 ) -> None:
     settings = Settings(
@@ -83,6 +83,20 @@ def test_project_knowledge_recall_searches_beyond_the_latest_200_documents(
             assert [item["title"] for item in snapshot["documents"]] == [
                 "Document 204"
             ]
+
+        listing = client.get(
+            "/api/knowledge/documents", params={"spaceId": space.json()["id"]}
+        )
+        assert listing.status_code == 200, listing.text
+        assert len(listing.json()) == 205
+        assert listing.json()[-1]["title"] == "Document 204"
+
+        graph = client.get(
+            "/api/knowledge/graph", params={"spaceId": space.json()["id"]}
+        )
+        assert graph.status_code == 200, graph.text
+        assert len(graph.json()["nodes"]) == 205
+        assert graph.json()["truncated"] is False
 
 
 def test_answer_is_saved_without_tags_then_batch_tagged_with_selected_model(

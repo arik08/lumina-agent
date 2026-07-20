@@ -147,7 +147,7 @@ def list_knowledge_documents(
     space_id: str | None = None,
     project_id: str | None = None,
     query: str = "",
-    limit: int = 200,
+    limit: int | None = None,
 ) -> list[KnowledgeDocument]:
     statement = select(KnowledgeDocument).where(
         KnowledgeDocument.owner_user_id == user.id,
@@ -178,13 +178,12 @@ def list_knowledge_documents(
                 )
             )
         statement = statement.where(and_(*token_conditions))
-    return list(
-        db.scalars(
-            statement.order_by(
-                KnowledgeDocument.researched_at.desc(), KnowledgeDocument.id
-            ).limit(limit)
-        )
+    statement = statement.order_by(
+        KnowledgeDocument.researched_at.desc(), KnowledgeDocument.id
     )
+    if limit is not None:
+        statement = statement.limit(limit)
+    return list(db.scalars(statement))
 
 
 def require_knowledge_document(
@@ -437,9 +436,7 @@ def _linked_document_counts(
 def knowledge_graph_payload(
     db: Session, user: User, *, space_id: str | None = None
 ) -> dict[str, object]:
-    documents = list_knowledge_documents(
-        db, user, space_id=space_id, limit=200
-    )
+    documents = list_knowledge_documents(db, user, space_id=space_id)
     tags_by_document = _document_tags(db, tuple(item.id for item in documents))
     tag_ids_by_document = {
         document_id: {str(tag["id"]) for tag in tags}
@@ -486,7 +483,7 @@ def knowledge_graph_payload(
             for item in documents
         ],
         "edges": edges,
-        "truncated": len(documents) >= 200,
+        "truncated": False,
     }
 
 

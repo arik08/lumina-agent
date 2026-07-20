@@ -159,7 +159,7 @@ def get_knowledge_documents(
     space_id: str | None = Query(default=None, alias="spaceId"),
     project_id: str | None = Query(default=None, alias="projectId"),
     query: str = Query(default="", max_length=500),
-    limit: int = Query(default=200, ge=1, le=500),
+    limit: int | None = Query(default=None, ge=1, le=500),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[dict[str, object]]:

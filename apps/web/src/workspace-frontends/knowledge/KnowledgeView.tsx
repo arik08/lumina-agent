@@ -162,7 +162,7 @@ export function KnowledgeView() {
       .then((loadedTags) => ({ loadedTags, tagError: null }))
       .catch(() => ({ loadedTags: [] as KnowledgeTag[], tagError: "태그 관리 데이터를 불러오지 못했습니다. Lumina를 다시 시작해 주세요." }));
     Promise.all([
-      api.knowledge.listDocuments({ spaceId: selectedSpaceId, limit: 200 }, controller.signal),
+      api.knowledge.listDocuments({ spaceId: selectedSpaceId }, controller.signal),
       api.knowledge.getGraph(selectedSpaceId, controller.signal),
       tagsRequest,
     ]).then(([loadedDocuments, loadedGraph, tagResult]) => {
@@ -192,7 +192,7 @@ export function KnowledgeView() {
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       void api.knowledge.listDocuments(
-        { spaceId: selectedSpaceId, query: query.trim(), limit: 500 },
+        { spaceId: selectedSpaceId, query: query.trim() },
         controller.signal,
       ).then(setSearchedDocuments).catch((loadError) => {
         if (!(loadError instanceof DOMException && loadError.name === "AbortError")) {
@@ -434,7 +434,7 @@ function KnowledgeContent(props: KnowledgeContentProps) {
 
   if (isDocumentView(tab)) return <div className="knowledge-master-detail">
     <DocumentList documents={documents} selectedId={tab === "graph" ? selectedGraphNodeId : selectedDocument?.id ?? null} onOpen={(id) => tab === "graph" ? setSelectedGraphNodeId(id) : openDocument(id, tab)} onRead={tab === "graph" ? (id) => openDocument(id, "wiki", "graph") : undefined} onDelete={deleteDocument} label={`${documents.length}개 지식 문서`} activeView={tab} onViewChange={switchDocumentView} />
-    {tab === "graph" && <section className="knowledge-graph-detail">{graph.truncated && <p className="knowledge-graph-limit-note">그래프는 최근 문서 200개를 표시합니다. 오래된 문서는 탐색 검색에서 찾을 수 있습니다.</p>}<KnowledgeGraph graph={graph} layoutKey={space.id} selectedNodeId={selectedGraphNodeId} onSelectDocument={(id) => openDocument(id, "wiki", "graph")} /></section>}
+    {tab === "graph" && <section className="knowledge-graph-detail"><KnowledgeGraph graph={graph} layoutKey={space.id} selectedNodeId={selectedGraphNodeId} onSelectDocument={(id) => openDocument(id, "wiki", "graph")} /></section>}
     {tab === "wiki" && <WikiDocument document={selectedDocument} onBackToGraph={returnToGraph} />}
     {tab === "sources" && <section className="knowledge-source-detail">{selectedDocument ? <><header><small>보존된 citation</small><h3>{selectedDocument.title}</h3><p>{selectedDocument.citations.length}개의 참조가 답변과 함께 저장되어 있습니다.</p></header><div className="knowledge-source-cards">{selectedDocument.citations.map((citation, index) => <a key={`${citation.sourceId}-${index}`} href={citation.url || undefined} target="_blank" rel="noreferrer"><span>[{citation.markerNumber ?? index + 1}]</span><strong>{citation.title}</strong><small>{citation.domain || citation.url || "참조 정보"}</small>{citation.excerpt && <p>{citation.excerpt}</p>}</a>)}{!selectedDocument.citations.length && <EmptyState text="이 문서에는 참조가 없습니다." />}</div></> : <EmptyState text="문서를 선택해 주세요." />}</section>}
   </div>;

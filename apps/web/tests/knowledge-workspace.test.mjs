@@ -162,6 +162,15 @@ test("Knowledge keeps documents available when the optional tag-management API i
   assert.match(view, /className="knowledge-inline-error" role="alert"/);
 });
 
+test("Knowledge document and graph views do not silently stop at 200 documents", async () => {
+  const [view, styles] = await Promise.all([readFile(viewPath, "utf8"), readFile(stylesPath, "utf8")]);
+  assert.match(view, /listDocuments\(\{ spaceId: selectedSpaceId \}/);
+  assert.match(view, /\{ spaceId: selectedSpaceId, query: query\.trim\(\) \}/);
+  assert.doesNotMatch(view, /listDocuments\([^\n]*limit:\s*(?:200|500)/);
+  assert.doesNotMatch(view, /graph\.truncated|최근 문서 200개/);
+  assert.doesNotMatch(styles, /knowledge-graph-limit-note/);
+});
+
 test("Knowledge document tags keep their chip layout separate from tag-management rows", async () => {
   const [view, styles] = await Promise.all([readFile(viewPath, "utf8"), readFile(stylesPath, "utf8")]);
   assert.match(view, /className="knowledge-tag-management-row"/);
