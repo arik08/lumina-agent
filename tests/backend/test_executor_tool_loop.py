@@ -1950,6 +1950,61 @@ def test_update_plan_tool_publishes_meaningful_plan_without_tool_activity(
         assert snapshot["toolExecutions"] == []
 
 
+def test_fast_tiny_text_chunks_use_bounded_durable_checkpoints(
+    monkeypatch, tmp_path: Path
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'assistant-checkpoints.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    expected = "가" * 2_000
+
+    def provider(
+        _provider_id: str, *, wants_artifact: bool, first_turn: bool
+    ) -> MockProvider:
+        assert wants_artifact is False
+        assert first_turn is True
+        return MockProvider(text_chunks=tuple(expected))
+
+    monkeypatch.setattr(local_run_executor, "_provider", provider)
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "Assistant checkpoints"},
+        ).json()
+        started = client.post(
+            f"/api/conversations/{conversation['id']}/runs",
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": "assistant-checkpoints-0001",
+            },
+            json={"message": {"text": "긴 답변을 작성해 주세요."}},
+        )
+        assert started.status_code == 202, started.text
+        run_id = started.json()["run"]["runId"]
+        snapshot = _wait_for_terminal(client, run_id)
+
+    assert snapshot["status"] == "completed"
+    assert snapshot["assistantDraft"]["text"] == expected
+    with SessionLocal() as db:
+        durable_deltas = list(
+            db.query(RunEvent).filter(
+                RunEvent.run_id == run_id,
+                RunEvent.event_type == "assistant_text_delta",
+            )
+        )
+    assert len(durable_deltas) <= 3
+    assert "".join(event.payload_json["delta"] for event in durable_deltas) == expected
+    assert all("text" not in event.payload_json for event in durable_deltas)
+
+
 def _login(client: TestClient) -> str:
     response = client.post(
         "/api/auth/login",

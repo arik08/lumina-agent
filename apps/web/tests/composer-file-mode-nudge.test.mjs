@@ -10,7 +10,7 @@ const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8
 
 test("file mode warning follows the LLM JSON decision through a body-level speech bubble", () => {
   assert.match(app, /workspace\.settings\?\.outputMode === "file"/);
-  assert.match(app, /draft\.trim\(\)\.length === 0/);
+  assert.match(app, /&& !composerHasText/);
   assert.match(app, /activeRun\?\.outputIntent\?\.fileCreationRequested === false/);
   assert.doesNotMatch(app, /explicitArtifactRequestPattern|setTimeout\(syncVisibility,\s*420\)/);
   assert.match(app, /<GlobalTooltipLayer[\s\S]*className="file-mode-nudge-layer"/);

@@ -19,15 +19,18 @@ import {
 import { createPortal } from "react-dom";
 import { ensureMermaidNodeTextContrast } from "../mermaid-contrast";
 import { repairMermaidClassNames, repairMermaidSource } from "../mermaid-source";
+import { useNearViewport } from "../use-near-viewport";
 import { SyntaxCode } from "./SyntaxCode";
 import "./InteractiveResponse.css";
 
 let mermaidRenderSequence = 0;
 let mermaidModulePromise: Promise<typeof import("mermaid")> | null = null;
-const mermaidRenderJobs = new Map<string, ReturnType<(typeof import("mermaid"))["default"]["render"]>>();
 type MermaidRenderResult = Awaited<ReturnType<(typeof import("mermaid"))["default"]["render"]>>;
+const mermaidRenderJobs = new Map<string, Promise<MermaidRenderResult>>();
 const mermaidRenderCache = new Map<string, MermaidRenderResult>();
 const mermaidRenderCacheLimit = 24;
+const mermaidRenderCacheCharacterBudget = 1_000_000;
+let mermaidRenderQueue: Promise<void> = Promise.resolve();
 const artifactVisualPalette = {
   blue: "#3288bd",
   teal: "#66c2a5",
@@ -181,6 +184,7 @@ function MermaidSurface({ source, expanded = false, zoom = 1, onInitialFit }: {
   const zoomRef = useRef(zoom);
   const dragRef = useRef<{ pointerId: number; x: number; y: number; scrollLeft: number; scrollTop: number } | null>(null);
   const [error, setError] = useState(false);
+  const nearViewport = useNearViewport(containerRef, { eager: expanded });
 
   const positionAtFlowStart = (surface: HTMLDivElement, renderedSvg: SVGSVGElement) => {
     const direction = source.match(/^\s*(?:flowchart|graph)\s+(TB|TD|BT|LR|RL)\b/im)?.[1];
@@ -217,6 +221,7 @@ function MermaidSurface({ source, expanded = false, zoom = 1, onInitialFit }: {
   };
 
   useEffect(() => {
+    if (!nearViewport) return undefined;
     let cancelled = false;
     setError(false);
     void renderMermaidSvg(source).then(({ svg, bindFunctions }) => {
@@ -249,7 +254,7 @@ function MermaidSurface({ source, expanded = false, zoom = 1, onInitialFit }: {
       if (!cancelled) setError(true);
     });
     return () => { cancelled = true; };
-  }, [expanded, onInitialFit, source]);
+  }, [expanded, nearViewport, onInitialFit, source]);
 
   useEffect(() => {
     zoomRef.current = zoom;
@@ -414,23 +419,41 @@ export async function renderMermaidSvg(source: string) {
   const activeJob = mermaidRenderJobs.get(cacheKey);
   if (activeJob) return activeJob;
 
-  const renderJob = loadMermaid().then(async ({ default: mermaid }) => {
-    mermaid.initialize(appearance.config);
-    let result;
-    try {
-      result = await mermaid.render(`lumina-mermaid-${++mermaidRenderSequence}`, normalizedSource);
-    } catch (error) {
-      const repairedSource = repairMermaidSource(normalizedSource);
-      if (repairedSource === normalizedSource) throw error;
-      result = await mermaid.render(`lumina-mermaid-${++mermaidRenderSequence}`, repairedSource);
-    }
-    const themedResult = { ...result, svg: bindMermaidThemeTokens(result.svg, appearance.tokenBindings) };
-    mermaidRenderCache.set(cacheKey, themedResult);
-    if (mermaidRenderCache.size > mermaidRenderCacheLimit) {
-      const oldestKey = mermaidRenderCache.keys().next().value;
-      if (typeof oldestKey === "string") mermaidRenderCache.delete(oldestKey);
-    }
-    return themedResult;
+  const renderJob = new Promise<MermaidRenderResult>((resolve, reject) => {
+    mermaidRenderQueue = mermaidRenderQueue
+      .then(async () => {
+        try {
+          const { default: mermaid } = await loadMermaid();
+          mermaid.initialize(appearance.config);
+          let result;
+          try {
+            result = await mermaid.render(`lumina-mermaid-${++mermaidRenderSequence}`, normalizedSource);
+          } catch (error) {
+            const repairedSource = repairMermaidSource(normalizedSource);
+            if (repairedSource === normalizedSource) throw error;
+            result = await mermaid.render(`lumina-mermaid-${++mermaidRenderSequence}`, repairedSource);
+          }
+          const themedResult = { ...result, svg: bindMermaidThemeTokens(result.svg, appearance.tokenBindings) };
+          mermaidRenderCache.set(cacheKey, themedResult);
+          let cachedCharacters = [...mermaidRenderCache.values()].reduce(
+            (count, cached) => count + cached.svg.length,
+            0,
+          );
+          while (
+            mermaidRenderCache.size > mermaidRenderCacheLimit
+            || cachedCharacters > mermaidRenderCacheCharacterBudget
+          ) {
+            const oldestKey = mermaidRenderCache.keys().next().value;
+            if (typeof oldestKey !== "string") break;
+            cachedCharacters -= mermaidRenderCache.get(oldestKey)?.svg.length ?? 0;
+            mermaidRenderCache.delete(oldestKey);
+          }
+          resolve(themedResult);
+        } catch (error) {
+          reject(error);
+        }
+      })
+      .catch(() => undefined);
   });
   mermaidRenderJobs.set(cacheKey, renderJob);
   void renderJob.finally(() => {
@@ -642,8 +665,10 @@ export function parseInteractiveChart(source: string): InteractiveChartSpec | nu
 function InteractiveChartContent({ spec, expanded = false }: { spec: InteractiveChartSpec; expanded?: boolean }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [error, setError] = useState(false);
+  const nearViewport = useNearViewport(containerRef, { eager: expanded });
 
   useEffect(() => {
+    if (!nearViewport) return undefined;
     const container = containerRef.current;
     if (!container) return undefined;
     let cancelled = false;
@@ -682,7 +707,7 @@ function InteractiveChartContent({ spec, expanded = false }: { spec: Interactive
       cancelled = true;
       dispose();
     };
-  }, [spec.option]);
+  }, [nearViewport, spec.option]);
 
   if (error) return <SyntaxCode className="interactive-chart-error" value={JSON.stringify(spec.option, null, 2)} language="json" />;
   return (
@@ -722,7 +747,7 @@ export function InlineMarkdownImage({ src, alt }: { src: string; alt: string }) 
     <>
       <span className="inline-markdown-image">
         <button type="button" aria-label={`${alt || "이미지"} 크게 보기`} onClick={() => setExpanded(true)}>
-          <img src={src} alt={alt} loading="lazy" />
+          <img src={src} alt={alt} loading="lazy" decoding="async" />
           <span><ImageIcon size={14} /> 크게 보기</span>
         </button>
         {alt && <span className="inline-markdown-image-caption">{alt}</span>}

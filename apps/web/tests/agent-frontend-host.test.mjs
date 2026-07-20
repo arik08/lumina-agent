@@ -20,6 +20,7 @@ test("the app enters through the explicit builtin frontend host", async () => {
     registry,
     /return builtinFrontendModules\[DEFAULT_AGENT_FRONTEND\.frontendModule\]/,
   );
-  assert.doesNotMatch(registry, /import\s*\(/);
+  assert.match(registry, /component: lazy\(\(\) => import\("\.\.\/agent-frontends\/general-chat"\)\)/);
   assert.match(host, /resolveBuiltinFrontendModule\(reference\)/);
+  assert.match(host, /<Suspense fallback=/);
 });

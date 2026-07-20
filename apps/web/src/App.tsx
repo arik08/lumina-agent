@@ -81,7 +81,7 @@ import { createPortal } from "react-dom";
 import { api, ApiError, attachmentContentUrl } from "./api";
 import { deepAnalysisSidebarApi } from "./feature-api";
 import { isTerminalRunStatus } from "./run-status";
-import { SyntaxCode, SyntaxTextarea } from "./components/SyntaxCode";
+import { IsolatedSyntaxTextarea, SyntaxCode } from "./components/SyntaxCode";
 import { GlobalTooltipLayer } from "./components/GlobalTooltip";
 import type {
   AnalysisDepth,
@@ -829,6 +829,56 @@ function FeatureViewLoading() {
   );
 }
 
+function WindowedTurn({
+  root,
+  retain,
+  children,
+}: {
+  root: { current: HTMLDivElement | null };
+  retain: boolean;
+  children: ReactNode;
+}) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const [nearViewport, setNearViewport] = useState(true);
+  const [retainedHeight, setRetainedHeight] = useState(0);
+  const renderContent = retain || nearViewport;
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host || typeof IntersectionObserver !== "function") return undefined;
+    const observer = new IntersectionObserver(
+      ([entry]) => setNearViewport(entry.isIntersecting),
+      { root: root.current, rootMargin: "1600px 0px" },
+    );
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, [root]);
+
+  useLayoutEffect(() => {
+    const host = hostRef.current;
+    if (!host || !renderContent) return undefined;
+    const rememberHeight = () => {
+      const next = Math.ceil(host.getBoundingClientRect().height);
+      if (next > 0) setRetainedHeight((current) => current === next ? current : next);
+    };
+    rememberHeight();
+    if (typeof ResizeObserver !== "function") return undefined;
+    const observer = new ResizeObserver(rememberHeight);
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, [renderContent]);
+
+  return (
+    <div
+      className="turn-window"
+      ref={hostRef}
+      style={!renderContent && retainedHeight > 0 ? { height: retainedHeight } : undefined}
+    >
+      {renderContent ? children : null}
+    </div>
+  );
+}
+
 function App() {
   const workspace = useLuminaWorkspace();
   const backendConnectionState = useBackendConnectionState();
@@ -870,7 +920,7 @@ function App() {
   const [notificationDeleteArmedId, setNotificationDeleteArmedId] = useState<string | null>(null);
   const [sessionTitleEditing, setSessionTitleEditing] = useState(false);
   const [sessionTitleDraft, setSessionTitleDraft] = useState("");
-  const [draft, setDraft] = useState("");
+  const [composerHasText, setComposerHasText] = useState(false);
   const [targetOutputTokens, setTargetOutputTokens] = useState<number | null>(defaultArtifactOutputTokens);
   const [analysisDepth, setAnalysisDepth] = useState<AnalysisDepth>("auto");
   const [answerLength, setAnswerLength] = useState<AnswerLength>("auto");
@@ -923,6 +973,7 @@ function App() {
   const titleCommitRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const composerInputRef = useRef<HTMLTextAreaElement>(null);
+  const composerDraftRef = useRef("");
   const fileModeButtonRef = useRef<HTMLButtonElement>(null);
   const previousConversationRef = useRef<string | null>(null);
   const artifactOpenRequestRef = useRef(0);
@@ -930,14 +981,27 @@ function App() {
   const artifactPreviewFrameRef = useRef<HTMLIFrameElement>(null);
   const artifactEditSnapshotResolversRef = useRef(new Map<string, (html: string) => void>());
   const artifactEditSnapshotCounterRef = useRef(0);
+  const artifactDraftRef = useRef("");
   const dockAreaRef = useRef<HTMLDivElement>(null);
   const notificationMenuRef = useRef<HTMLDivElement>(null);
   const modelNameTooltipTimerRef = useRef<number | null>(null);
   const sessionScrollbarIdleTimerRef = useRef<number | null>(null);
 
+  const writeComposerDraft = useCallback((value: string) => {
+    composerDraftRef.current = value;
+    const input = composerInputRef.current;
+    if (input && input.value !== value) input.value = value;
+    const nextHasText = Boolean(value.trim());
+    setComposerHasText((current) => current === nextHasText ? current : nextHasText);
+  }, []);
+
   useEffect(() => {
     localStorage.setItem("lumina:artifactPaneWidth", String(artifactPaneWidth));
   }, [artifactPaneWidth]);
+
+  useEffect(() => {
+    artifactDraftRef.current = artifactDraft;
+  }, [artifactDraft]);
 
   useEffect(() => {
     if (!workspace.settings) return;
@@ -1051,15 +1115,15 @@ function App() {
 
   const requestArtifactEditSnapshot = useCallback(() => {
     if (!artifactEditing || artifactVersion?.mimeType !== "text/html") {
-      return Promise.resolve(artifactDraft);
+      return Promise.resolve(artifactDraftRef.current);
     }
     const target = artifactPreviewFrameRef.current?.contentWindow;
-    if (!target) return Promise.resolve(artifactDraft);
+    if (!target) return Promise.resolve(artifactDraftRef.current);
     const requestId = `artifact-edit-${++artifactEditSnapshotCounterRef.current}`;
     return new Promise<string>((resolve) => {
       const timeout = window.setTimeout(() => {
         artifactEditSnapshotResolversRef.current.delete(requestId);
-        resolve(artifactDraft);
+        resolve(artifactDraftRef.current);
       }, 3_000);
       artifactEditSnapshotResolversRef.current.set(requestId, (html) => {
         window.clearTimeout(timeout);
@@ -1067,19 +1131,53 @@ function App() {
       });
       target.postMessage({ type: artifactPreviewEditSnapshotRequest, requestId }, "*");
     });
-  }, [artifactDraft, artifactEditing, artifactVersion?.mimeType]);
+  }, [artifactEditing, artifactVersion?.mimeType]);
 
   const toggleArtifactTab = useCallback(async () => {
     const nextTab: ArtifactTab = artifactTab === "preview" ? "source" : "preview";
     if (
       nextTab === "source"
+      && artifactSummary
+      && artifactVersion?.sourceAvailable
+      && artifactVersion.sourceText === null
+    ) {
+      const requestId = artifactOpenRequestRef.current;
+      setArtifactLoading(true);
+      try {
+        const hydrated = await api.artifacts.getVersion(
+          artifactSummary.id,
+          artifactVersion.version,
+          true,
+        );
+        if (artifactOpenRequestRef.current !== requestId) return;
+        setArtifactVersion(hydrated);
+        if (!artifactDraftSaved) setArtifactDraft(hydrated.sourceText ?? "");
+      } catch (error) {
+        setToast(error instanceof Error ? error.message : "Artifact 소스를 불러오지 못했습니다.");
+        return;
+      } finally {
+        if (artifactOpenRequestRef.current === requestId) setArtifactLoading(false);
+      }
+    }
+    if (
+      nextTab === "source"
       && artifactEditing
       && artifactVersion?.mimeType === "text/html"
     ) {
-      setArtifactDraft(await requestArtifactEditSnapshot());
+      const source = await requestArtifactEditSnapshot();
+      artifactDraftRef.current = source;
+      setArtifactDraft(source);
+      setArtifactEditablePreview(editableArtifactHtml(source));
     }
     setArtifactTab(nextTab);
-  }, [artifactEditing, artifactTab, artifactVersion?.mimeType, requestArtifactEditSnapshot]);
+  }, [
+    artifactDraftSaved,
+    artifactEditing,
+    artifactSummary,
+    artifactTab,
+    artifactVersion,
+    requestArtifactEditSnapshot,
+  ]);
 
   useEffect(() => {
     if (!artifactEditing || artifactVersion?.mimeType !== "text/html") return;
@@ -1581,7 +1679,7 @@ function App() {
     activeRun && !isTerminalRunStatus(activeRun.status),
   );
   const runIsPaused = activeRun?.status === "paused";
-  const composerHasPayload = Boolean(draft.trim() || workspace.composerAttachments.length > 0);
+  const composerHasPayload = composerHasText || workspace.composerAttachments.length > 0;
   const composerShowsStop = Boolean(runIsActive && !composerHasPayload);
   const queuedComposerCommands = useMemo(
     () => (activeRun?.pendingCommands ?? [])
@@ -1597,7 +1695,7 @@ function App() {
   );
   const shouldNudgeFileMode = mainView === "chat"
     && workspace.settings?.outputMode === "file"
-    && draft.trim().length === 0
+    && !composerHasText
     && activeRun?.outputIntent?.fileCreationRequested === false;
   const conversationFollow = useConversationAutoFollow(
     runIsActive,
@@ -1699,7 +1797,7 @@ function App() {
     loadOlderTurnSetsNearTop,
   ]);
   const effortOptions = workspace.selectedModel?.capabilities.effortOptions ?? [];
-  const artifactHasTextSource = artifactVersion?.sourceText !== null && artifactVersion?.sourceText !== undefined;
+  const artifactHasTextSource = Boolean(artifactVersion?.sourceAvailable);
   const artifactIsCurrentVersion = Boolean(artifactSummary && artifactVersion && artifactVersion.version === artifactSummary.currentVersion);
   const artifactVersionOptions = artifactSummary
     ? [...new Set(artifactSummary.versions?.length ? artifactSummary.versions : [artifactSummary.currentVersion])].sort((left, right) => right - left)
@@ -1866,12 +1964,12 @@ function App() {
     setSessionTitleEditing(false);
     setSessionMenuId(null);
     if (!preservePendingComposer) {
-      setDraft("");
+      writeComposerDraft("");
       setSelectedReferences([]);
       setComposerTrigger(null);
       setComposerSuggestions([]);
     }
-  }, [workspace.activeConversationId]);
+  }, [workspace.activeConversationId, writeComposerDraft]);
 
   useEffect(() => {
     if (!accountMenuOpen) {
@@ -2061,8 +2159,11 @@ function App() {
     return suggestion.status !== undefined && suggestion.status !== "available" || attached || selectedReferences.some((item) => item.key === key);
   };
   const updateDraft = (value: string, caret: number) => {
-    setDraft(value);
-    setSelectedReferences((current) => current.filter((item) => value.includes(item.token)));
+    writeComposerDraft(value);
+    setSelectedReferences((current) => {
+      const next = current.filter((item) => value.includes(item.token));
+      return next.length === current.length ? current : next;
+    });
     setComposerTrigger(findComposerTrigger(value, caret));
   };
 
@@ -2083,11 +2184,12 @@ function App() {
     const referenceId = suggestion.referenceId ?? suggestion.id;
     const key = `${suggestion.kind}:${referenceId}:${suggestion.versionOrDigest ?? ""}`;
     const token = suggestion.insertText ?? `${composerTrigger.trigger}${suggestion.name}`;
-    const before = draft.slice(0, composerTrigger.start);
-    const after = draft.slice(composerTrigger.end);
+    const currentDraft = composerDraftRef.current;
+    const before = currentDraft.slice(0, composerTrigger.start);
+    const after = currentDraft.slice(composerTrigger.end);
     const separator = after.startsWith(" ") ? "" : " ";
     const nextDraft = `${before}${token}${separator}${after}`;
-    setDraft(nextDraft);
+    writeComposerDraft(nextDraft);
     setSelectedReferences((current) => [
       ...current,
       {
@@ -2118,13 +2220,14 @@ function App() {
     const target = selectedReferences.find((item) => item.key === key);
     if (!target) return;
     setSelectedReferences((current) => current.filter((item) => item.key !== key));
-    setDraft((current) => current.replace(target.token, "").replace(/ {2,}/g, " "));
+    writeComposerDraft(composerDraftRef.current.replace(target.token, "").replace(/ {2,}/g, " "));
     composerInputRef.current?.focus();
   };
 
   const insertComposerTrigger = (trigger: "@" | "$") => {
     const input = composerInputRef.current;
-    const caret = input?.selectionStart ?? draft.length;
+    const currentDraft = composerDraftRef.current;
+    const caret = input?.selectionStart ?? currentDraft.length;
     if (composerTrigger?.trigger === trigger) {
       setComposerTrigger(null);
       setComposerSuggestions([]);
@@ -2133,16 +2236,16 @@ function App() {
       window.requestAnimationFrame(() => input?.focus());
       return;
     }
-    const existingTrigger = findComposerTrigger(draft, caret);
+    const existingTrigger = findComposerTrigger(currentDraft, caret);
     if (existingTrigger?.trigger === trigger) {
       setComposerTrigger(existingTrigger);
       window.requestAnimationFrame(() => input?.focus());
       return;
     }
-    const prefix = caret > 0 && !/\s/.test(draft.charAt(caret - 1)) ? ` ${trigger}` : trigger;
-    const nextDraft = `${draft.slice(0, caret)}${prefix}${draft.slice(caret)}`;
+    const prefix = caret > 0 && !/\s/.test(currentDraft.charAt(caret - 1)) ? ` ${trigger}` : trigger;
+    const nextDraft = `${currentDraft.slice(0, caret)}${prefix}${currentDraft.slice(caret)}`;
     const nextCaret = caret + prefix.length;
-    setDraft(nextDraft);
+    writeComposerDraft(nextDraft);
     setComposerTrigger({ trigger, query: "", start: nextCaret - 1, end: nextCaret });
     window.requestAnimationFrame(() => {
       input?.focus();
@@ -2185,7 +2288,7 @@ function App() {
   };
 
   const sendMessage = async (queueNext = false) => {
-    const value = draft.trim() || (workspace.composerAttachments.length > 0 ? "첨부한 내용을 확인해 주세요." : "");
+    const value = composerDraftRef.current.trim() || (workspace.composerAttachments.length > 0 ? "첨부한 내용을 확인해 주세요." : "");
     if (!value) {
       showToast("요청 내용을 입력해 주세요.");
       return;
@@ -2206,7 +2309,7 @@ function App() {
     );
     if (!mode) return;
     if (resetFileModeAfterSend) void workspace.selectOutputMode("auto");
-    setDraft("");
+    writeComposerDraft("");
     setSelectedReferences([]);
     setTargetOutputTokens((current) => (
       current !== null && current >= 20_000 ? defaultArtifactOutputTokens : current
@@ -2276,12 +2379,20 @@ function App() {
     try {
       const [summary, initialVersion, savedDraft] = await Promise.all([
         api.artifacts.get(artifact.id),
-        api.artifacts.getVersion(artifact.id, artifact.currentVersion),
+        api.artifacts.getVersion(
+          artifact.id,
+          artifact.currentVersion,
+          artifact.mimeType !== "text/html",
+        ),
         api.artifacts.getDraft(artifact.id),
       ]);
       const version = summary.currentVersion === initialVersion.version
         ? initialVersion
-        : await api.artifacts.getVersion(artifact.id, summary.currentVersion);
+        : await api.artifacts.getVersion(
+            artifact.id,
+            summary.currentVersion,
+            summary.mimeType !== "text/html",
+          );
       if (artifactOpenRequestRef.current !== requestId) return;
       setArtifactSummary(summary);
       setArtifactVersion(version);
@@ -2448,7 +2559,11 @@ function App() {
     setArtifactDraftNotice(null);
     try {
       const [version, savedDraft] = await Promise.all([
-        api.artifacts.getVersion(artifactSummary.id, versionNumber),
+        api.artifacts.getVersion(
+          artifactSummary.id,
+          versionNumber,
+          artifactSummary.mimeType !== "text/html",
+        ),
         versionNumber === artifactSummary.currentVersion
           ? api.artifacts.getDraft(artifactSummary.id)
           : Promise.resolve(null),
@@ -2474,6 +2589,34 @@ function App() {
     } finally {
       if (artifactOpenRequestRef.current === requestId) setArtifactLoading(false);
     }
+  };
+
+  const beginArtifactEditing = async () => {
+    if (!artifactSummary || !artifactVersion?.sourceAvailable || !artifactIsCurrentVersion) return;
+    let version = artifactVersion;
+    if (version.sourceText === null) {
+      const requestId = artifactOpenRequestRef.current;
+      setArtifactLoading(true);
+      try {
+        version = await api.artifacts.getVersion(
+          artifactSummary.id,
+          artifactVersion.version,
+          true,
+        );
+        if (artifactOpenRequestRef.current !== requestId) return;
+        setArtifactVersion(version);
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : "Artifact 소스를 불러오지 못했습니다.");
+        return;
+      } finally {
+        if (artifactOpenRequestRef.current === requestId) setArtifactLoading(false);
+      }
+    }
+    const editSource = artifactDraftSaved ? artifactDraft : version.sourceText ?? "";
+    setArtifactEditing(true);
+    setArtifactTab(version.mimeType === "text/html" ? "preview" : "source");
+    setArtifactDraft(editSource);
+    setArtifactEditablePreview(version.mimeType === "text/html" ? editableArtifactHtml(editSource) : "");
   };
 
   const downloadArtifact = async () => {
@@ -3130,22 +3273,30 @@ function App() {
               <div className="conversation-empty"><Sparkles size={24} /><h2>무엇을 함께 진행할까요?</h2><p>요청을 보내면 진행 과정, Tool 사용과 Artifact가 이곳에 이어집니다.</p><StarterPrompts onSelect={applyStarterPrompt} /></div>
             )}
             {activeRuntime.turnSets.map((turnSet, turnIndex) => (
-              <AssistantTurn
+              <WindowedTurn
                 key={turnSet.id}
-                turnSet={turnSet}
-                snapshot={turnSet.runId ? activeRuntime.snapshots[turnSet.runId] ?? null : null}
-                sessionUsage={cumulativeUsageByTurnSetId[turnSet.id]}
-                showSessionUsage={turnIndex > 0 || activeRuntime.hasMoreTurnSetsBefore}
-                onCopyTool={copyTool}
-                onOpenArtifact={openArtifact}
-                onBranch={branchFromMessage}
-                onShare={shareFromMessage}
-                onToast={showToast}
-                clarificationMode={workspace.settings?.clarificationMode ?? "balanced"}
-                inputBusy={workspace.runActionBusy}
-                onSubmitUserInput={workspace.submitUserInput}
-                onClarificationModeChange={workspace.selectClarificationMode}
-              />
+                root={conversationFollow.containerRef}
+                retain={Boolean(
+                  turnSet.runId
+                  && !isTerminalRunStatus(activeRuntime.snapshots[turnSet.runId]?.status ?? "completed"),
+                )}
+              >
+                <AssistantTurn
+                  turnSet={turnSet}
+                  snapshot={turnSet.runId ? activeRuntime.snapshots[turnSet.runId] ?? null : null}
+                  sessionUsage={cumulativeUsageByTurnSetId[turnSet.id]}
+                  showSessionUsage={turnIndex > 0 || activeRuntime.hasMoreTurnSetsBefore}
+                  onCopyTool={copyTool}
+                  onOpenArtifact={openArtifact}
+                  onBranch={branchFromMessage}
+                  onShare={shareFromMessage}
+                  onToast={showToast}
+                  clarificationMode={workspace.settings?.clarificationMode ?? "balanced"}
+                  inputBusy={workspace.runActionBusy}
+                  onSubmitUserInput={workspace.submitUserInput}
+                  onClarificationModeChange={workspace.selectClarificationMode}
+                />
+              </WindowedTurn>
             ))}
           </main>
         </div>
@@ -3326,7 +3477,7 @@ function App() {
                 aria-controls={composerTrigger ? "composer-suggestions" : undefined}
                 aria-expanded={Boolean(composerTrigger)}
                 aria-activedescendant={composerTrigger && composerSuggestions[suggestionIndex] ? `composer-suggestion-${suggestionIndex}` : undefined}
-                value={draft}
+                defaultValue=""
                 placeholder="메시지 보내기"
                 rows={1}
                 onChange={(event) => updateDraft(event.currentTarget.value, event.currentTarget.selectionStart)}
@@ -3723,11 +3874,7 @@ function App() {
                   setArtifactDraftSaved(false);
                   return;
                 }
-                setArtifactEditing(true);
-                setArtifactTab(artifactVersion?.mimeType === "text/html" ? "preview" : "source");
-                const editSource = artifactDraftSaved ? artifactDraft : artifactVersion?.sourceText ?? "";
-                setArtifactDraft(editSource);
-                setArtifactEditablePreview(artifactVersion?.mimeType === "text/html" ? editableArtifactHtml(editSource) : "");
+                void beginArtifactEditing();
               }}><Pencil size={16} /></button>
               {artifactEditing && (
                 <>
@@ -3791,7 +3938,7 @@ function App() {
             {!artifactLoading && artifactVersion && !artifactHasTextSource && artifactVersion.mimeType !== "application/pdf" && (
               <div className={`artifact-binary-summary ${artifactVersion.mimeType.startsWith("image/") ? "is-image" : ""}`}>
                 {artifactVersion.mimeType.startsWith("image/") && artifactVersion.previewUrl
-                  ? <img className="artifact-image-preview" src={artifactVersion.previewUrl} alt={artifactSummary?.displayName ?? "생성 이미지"} />
+                  ? <img className="artifact-image-preview" src={artifactVersion.previewUrl} alt={artifactSummary?.displayName ?? "생성 이미지"} decoding="async" />
                   : <FileCheck2 size={24} />}
                 <h2>{artifactSummary?.displayName}</h2>
                 <p>{artifactVersion.mimeType.startsWith("image/") ? "원본 비율로 미리보기 중입니다." : "이 형식은 본문 편집과 소스 미리보기를 지원하지 않습니다."}</p>
@@ -3826,8 +3973,8 @@ function App() {
               <div className="source-view">
                 <div className="source-toolbar"><Code2 size={15} /> {artifactSummary?.displayName}<span>{artifactVersion.mimeType}</span></div>
                 {artifactEditing ? (
-                  <SyntaxTextarea className="artifact-source-editor" ariaLabel="Artifact 소스 편집" disabled={artifactSaveBusy !== null} value={artifactDraft} fileName={artifactSummary?.displayName} mimeType={artifactVersion.mimeType} onChange={(event) => {
-                    setArtifactDraft(event.currentTarget.value);
+                  <IsolatedSyntaxTextarea className="artifact-source-editor" ariaLabel="Artifact 소스 편집" disabled={artifactSaveBusy !== null} value={artifactDraft} fileName={artifactSummary?.displayName} mimeType={artifactVersion.mimeType} onValueChange={(value) => {
+                    artifactDraftRef.current = value;
                     setArtifactDraftSaved(false);
                     setArtifactDraftNotice(null);
                   }} />

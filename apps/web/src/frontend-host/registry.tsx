@@ -1,6 +1,4 @@
-import type { ComponentType } from "react";
-
-import GeneralChatFrontend from "../agent-frontends/general-chat";
+import { lazy, type ComponentType } from "react";
 import type { AgentFrontendReference } from "../api-types";
 
 export const DEFAULT_AGENT_FRONTEND: AgentFrontendReference = {
@@ -19,7 +17,7 @@ interface BuiltinFrontendModule {
 const builtinFrontendModules: Readonly<Record<string, BuiltinFrontendModule>> = {
   "general-chat": {
     contract: "lumina-frontend-v1",
-    component: GeneralChatFrontend,
+    component: lazy(() => import("../agent-frontends/general-chat")),
   },
 };
 

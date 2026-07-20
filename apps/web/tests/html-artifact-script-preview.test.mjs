@@ -55,7 +55,8 @@ test("HTML direct editing sends cheap dirty signals and serializes only when sou
   assert.match(appSource, /document\.addEventListener\('input', publishArtifactEditDirty\)/);
   assert.match(appSource, /parent\.postMessage\(\{ type: '\$\{artifactPreviewEditDirtyMessage\}' \}, '\*'\)/);
   assert.match(appSource, /event\.data\?\.type === '\$\{artifactPreviewEditSnapshotRequest\}'/);
-  assert.match(appSource, /nextTab === "source"[\s\S]*?setArtifactDraft\(await requestArtifactEditSnapshot\(\)\)/);
+  assert.match(appSource, /nextTab === "source"[\s\S]*?const source = await requestArtifactEditSnapshot\(\);[\s\S]*?setArtifactDraft\(source\)/);
+  assert.match(appSource, /artifactVersion\?\.sourceAvailable[\s\S]*?api\.artifacts\.getVersion\([\s\S]*?true/);
   assert.match(appSource, /const sourceText = await requestArtifactEditSnapshot\(\);[\s\S]*?api\.artifacts\.saveDraft/);
   assert.match(appSource, /const sourceText = await requestArtifactEditSnapshot\(\);[\s\S]*?api\.artifacts\.saveVersion/);
   assert.doesNotMatch(appSource, /document\.addEventListener\('input', publishArtifactEdit\)/);

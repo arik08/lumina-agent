@@ -1979,7 +1979,7 @@ export const AssistantTurn = memo(function AssistantTurn({
                   onClick={() => setPreviewAttachment(attachment)}
                   key={attachment.id}
                 >
-                  <img src={attachmentContentUrl(attachment.id)} alt={attachment.fileName} />
+                  <img src={attachmentContentUrl(attachment.id)} alt={attachment.fileName} loading="lazy" decoding="async" />
                 </button>
               ) : attachment.kind === "pasted_text" ? (
                 <div className="user-pasted-attachment-wrap" key={attachment.id}>

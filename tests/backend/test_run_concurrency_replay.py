@@ -11,6 +11,7 @@ from typing import Any
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import event as sqlalchemy_event
 from sqlalchemy import select
 
 from lumina.agent import executor as executor_module
@@ -1664,8 +1665,14 @@ def test_sse_stops_before_delivering_events_after_session_revocation(
     provider = _GateProvider(("stream-session-revocation",))
     monkeypatch.setattr(local_run_executor, "_provider", _gate_factory(provider))
 
-    async def no_wait(_run_id: str, timeout: float = 15.0) -> None:
+    async def no_wait(
+        _run_id: str,
+        timeout: float = 15.0,
+        *,
+        after_revision: int | None = None,
+    ) -> tuple[int, bool]:
         del timeout
+        return after_revision or 0, True
 
     monkeypatch.setattr(event_broker, "wait", no_wait)
 
@@ -1731,6 +1738,103 @@ def test_sse_stops_before_delivering_events_after_session_revocation(
             assert all(event["type"] != "assistant_text_delta" for event in delivered)
         finally:
             provider.release_all()
+
+
+def test_sse_transient_draft_wake_does_not_poll_the_database(tmp_path: Path) -> None:
+    with TestClient(create_app(_settings(tmp_path, "sse-transient-draft.db"))) as client:
+        csrf = _login(client)
+        conversation_id = _conversation(client, csrf, "SSE transient draft")
+        session_token = client.cookies.get("lumina_session")
+        assert session_token
+
+        with SessionLocal() as db:
+            conversation = db.get(Conversation, conversation_id)
+            auth_session = db.scalar(
+                select(AuthSession).where(AuthSession.revoked_at.is_(None))
+            )
+            assert conversation is not None and auth_session is not None
+            user = db.get(User, auth_session.user_id)
+            assert user is not None
+            run = Run(
+                organization_id=conversation.organization_id,
+                project_id=conversation.project_id,
+                conversation_id=conversation.id,
+                user_id=user.id,
+                status="model_streaming",
+                provider_id="mock",
+                model_key="mock-agent",
+                runtime_model_id="mock-agent",
+                model_display_name="Mock Agent",
+                snapshot_json={},
+                usage_json={},
+            )
+            db.add(run)
+            db.commit()
+            run_id = run.id
+            response = asyncio.run(
+                stream_run(
+                    run_id,
+                    _ConnectedRequest(),  # type: ignore[arg-type]
+                    0,
+                    None,
+                    AuthContext(user, auth_session, session_token),
+                    db,
+                )
+            )
+            bind = db.get_bind()
+
+        statement_count = 0
+
+        def count_statement(*_args: object) -> None:
+            nonlocal statement_count
+            statement_count += 1
+
+        async def exercise() -> None:
+            iterator = response.body_iterator
+            first = await anext(iterator)
+            assert first == ": keep-alive\n\n"
+            initial_statement_count = statement_count
+
+            next_chunk = asyncio.create_task(anext(iterator))
+            await asyncio.sleep(0)
+            await event_broker.publish_assistant_draft(
+                run_id,
+                "message-1",
+                "실시간 초안",
+            )
+            chunk = await asyncio.wait_for(next_chunk, timeout=1)
+            assert isinstance(chunk, str)
+            assert chunk.startswith("event: assistant_draft")
+            payload = json.loads(chunk.split("data: ", maxsplit=1)[1])
+            assert payload["draft"] == {
+                "messageId": "message-1",
+                "text": "실시간 초안",
+                "append": False,
+            }
+            next_chunk = asyncio.create_task(anext(iterator))
+            await asyncio.sleep(0)
+            await event_broker.publish_assistant_draft(
+                run_id,
+                "message-1",
+                " 추가",
+            )
+            chunk = await asyncio.wait_for(next_chunk, timeout=1)
+            assert isinstance(chunk, str)
+            payload = json.loads(chunk.split("data: ", maxsplit=1)[1])
+            assert payload["draft"] == {
+                "messageId": "message-1",
+                "text": " 추가",
+                "append": True,
+            }
+            assert statement_count == initial_statement_count
+            await iterator.aclose()
+
+        sqlalchemy_event.listen(bind, "before_cursor_execute", count_statement)
+        try:
+            asyncio.run(exercise())
+        finally:
+            sqlalchemy_event.remove(bind, "before_cursor_execute", count_statement)
+            event_broker.discard(run_id)
 
 
 def test_sse_disconnect_snapshot_and_last_event_id_replay_are_lossless(

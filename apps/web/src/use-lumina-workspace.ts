@@ -25,7 +25,11 @@ import type {
   UserInputAnswer,
 } from "./api-types";
 import { isTerminalRunEvent, isTerminalRunStatus } from "./run-status";
-import { appendRunAssistantDraft, setRunAssistantDraft } from "./run-assistant-draft-store";
+import {
+  advanceRunAssistantDraft,
+  appendRunAssistantDraft,
+  setRunAssistantDraft,
+} from "./run-assistant-draft-store";
 import { setRunArtifactProgress } from "./run-artifact-progress-store";
 
 export type StreamState = "idle" | "connecting" | "connected" | "reconnecting";
@@ -136,6 +140,7 @@ function apiMessage(error: unknown) {
 }
 
 const CONVERSATION_LIST_PAGE_SIZE = 20;
+const CACHED_CONVERSATION_RUNTIME_LIMIT = 8;
 
 export function useLuminaWorkspace() {
   const [authSession, setAuthSession] = useState<AuthSession | null | undefined>(undefined);
@@ -174,6 +179,7 @@ export function useLuminaWorkspace() {
   const reconcilingRunIdsRef = useRef(new Set<string>());
   const reconciliationTimersRef = useRef(new Set<number>());
   const eventSequencesRef = useRef(new Map<string, number>());
+  const runtimeAccessRef = useRef(new Map<string, number>());
 
   useEffect(() => {
     activeProjectIdRef.current = activeProjectId;
@@ -190,6 +196,43 @@ export function useLuminaWorkspace() {
   useEffect(() => {
     runtimesRef.current = runtimes;
   }, [runtimes]);
+  useEffect(() => {
+    if (!activeConversationId) return;
+    runtimeAccessRef.current.delete(activeConversationId);
+    runtimeAccessRef.current.set(activeConversationId, Date.now());
+    const current = runtimesRef.current;
+    const runtimeIds = Object.keys(current);
+    if (runtimeIds.length <= CACHED_CONVERSATION_RUNTIME_LIMIT) return;
+    const removable = runtimeIds
+      .filter((conversationId) => {
+        if (conversationId === activeConversationId) return false;
+        const runtime = current[conversationId];
+        return runtime.streamState === "idle"
+          && Object.values(runtime.snapshots).every((snapshot) => isTerminalRunStatus(snapshot.status));
+      })
+      .sort((left, right) => (
+        runtimeAccessRef.current.get(left) ?? 0
+      ) - (
+        runtimeAccessRef.current.get(right) ?? 0
+      ));
+    const evicted = removable.slice(
+      0,
+      Math.max(0, runtimeIds.length - CACHED_CONVERSATION_RUNTIME_LIMIT),
+    );
+    if (evicted.length === 0) return;
+    const evictedSet = new Set(evicted);
+    evicted.forEach((conversationId) => {
+      Object.keys(current[conversationId].snapshots).forEach((runId) => {
+        eventSequencesRef.current.delete(runId);
+        setRunAssistantDraft(runId, null);
+        setRunArtifactProgress(runId, null);
+      });
+      runtimeAccessRef.current.delete(conversationId);
+    });
+    setRuntimes((latest) => Object.fromEntries(
+      Object.entries(latest).filter(([conversationId]) => !evictedSet.has(conversationId)),
+    ));
+  }, [activeConversationId, runtimes]);
   useEffect(() => {
     composerAttachmentsRef.current = composerAttachments;
   }, [composerAttachments]);
@@ -484,7 +527,8 @@ export function useLuminaWorkspace() {
     if (event.sequence <= knownSequence) return;
     eventSequencesRef.current.set(event.runId, event.sequence);
     if (event.type === "assistant_text_delta") {
-      appendRunAssistantDraft(event.runId, event.payload.messageId, event.payload.delta);
+      // The broker's transient full draft drives live text. Durable deltas are
+      // retained only for replay; snapshots restore the authoritative draft.
       return;
     }
     if (event.type === "artifact_progress") {
@@ -681,8 +725,11 @@ export function useLuminaWorkspace() {
 
     const terminal = isTerminalRunEvent(event);
     if (terminal) {
+      const expectedQueuedPromotion = (
+        runtimesRef.current[event.conversationId]?.snapshots[event.runId]?.pendingCommands ?? []
+      ).some((command) => command.type === "queue_next" && command.status === "queued");
       void loadConversation(event.conversationId, true);
-      const retryDelays = [40, 220, 650];
+      const retryDelays = expectedQueuedPromotion ? [60, 260, 760] : [100];
       const reconcile = (attempt: number) => {
         const timer = window.setTimeout(() => {
           reconciliationTimersRef.current.delete(timer);
@@ -734,7 +781,11 @@ export function useLuminaWorkspace() {
     const terminal = isTerminalRunStatus(snapshot.status);
     const knownEventSequence = eventSequencesRef.current.get(snapshot.runId) ?? 0;
     if (snapshot.lastSequence >= knownEventSequence) {
-      setRunAssistantDraft(snapshot.runId, snapshot.assistantDraft);
+      if (terminal || !snapshot.assistantDraft) {
+        setRunAssistantDraft(snapshot.runId, snapshot.assistantDraft);
+      } else {
+        advanceRunAssistantDraft(snapshot.runId, snapshot.assistantDraft);
+      }
       setRunArtifactProgress(snapshot.runId, snapshot.artifactProgress ?? null);
     }
     eventSequencesRef.current.set(
@@ -825,6 +876,10 @@ export function useLuminaWorkspace() {
         },
       })),
       onEvent: applyRunEvent,
+      onAssistantDraft: (runId, draft, append) => {
+        if (append) appendRunAssistantDraft(runId, draft.messageId, draft.text);
+        else advanceRunAssistantDraft(runId, draft);
+      },
       onArtifactProgress: setRunArtifactProgress,
       onError: () => {
         setRuntimes((current) => ({

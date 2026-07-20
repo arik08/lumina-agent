@@ -277,7 +277,7 @@ function renderFilePreview(preview: PreviewState, detail: ProjectFileDetail, mar
       : <pre>{preview.text}</pre>}
     {preview.truncated && <div className="file-preview-truncated">Preview는 앞부분만 표시합니다.</div>}</>;
   }
-  if (preview.kind === "image") return <img src={preview.url} alt={`${detail.displayName} Preview`} />;
+  if (preview.kind === "image") return <img src={preview.url} alt={`${detail.displayName} Preview`} loading="lazy" decoding="async" />;
   if (preview.kind === "pdf") return <iframe src={preview.url} title={`${detail.displayName} PDF Preview`} />;
   if (preview.kind === "html") return <iframe src={preview.url} title={`${detail.displayName} HTML Preview`} sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock allow-downloads" />;
   if (preview.kind === "video") return <video src={preview.url} controls />;

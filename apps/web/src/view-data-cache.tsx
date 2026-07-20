@@ -1,7 +1,7 @@
 import { createContext, type Dispatch, type ReactNode, type SetStateAction, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 const ViewDataCacheContext = createContext<Map<string, unknown> | null>(null);
-const viewDataCacheLimit = 128;
+const viewDataCacheLimit = 48;
 
 function touchCacheValue<T>(cache: Map<string, unknown>, key: string, value: T) {
   cache.delete(key);

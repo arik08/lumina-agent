@@ -494,9 +494,17 @@ def test_write_file_allows_executable_html_and_exposes_html_artifact(
         assert version.json()["previewUrl"].endswith(
             f"version={artifact['currentVersion']}"
         )
+        metadata_only = client.get(
+            f"/api/artifacts/{artifact['id']}/versions/{artifact['currentVersion']}",
+            params={"include_source": False},
+        )
+        assert metadata_only.status_code == 200
+        assert metadata_only.json()["sourceAvailable"] is True
+        assert metadata_only.json()["sourceText"] is None
         preview = client.get(version.json()["previewUrl"])
         assert preview.status_code == 200, preview.text
         assert preview.headers["content-type"].startswith("text/html")
+        assert preview.headers.get("content-encoding") is None
         assert '<script src="/artifact-preview-bridge.js"></script>' in preview.text
         assert preview.text.index("artifact-preview-bridge.js") < preview.text.index(
             "</body>"

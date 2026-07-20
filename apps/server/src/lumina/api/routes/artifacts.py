@@ -54,6 +54,8 @@ _REPORT_OPEN_LINE = re.compile(r"^[ \t]*보고서 열기[ \t]*\r?\n?", re.MULTIL
 _UNSAFE_FILE_NAME_CHARACTER = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _HTML_PREVIEW_BRIDGE = b'<script src="/artifact-preview-bridge.js"></script>'
 _HTML_PREVIEW_CHUNK_SIZE = 16 * 1024
+_HTML_CLOSING_BODY = re.compile(br"</body\b", flags=re.IGNORECASE)
+_TEXT_ARTIFACT_SUFFIXES = (".html", ".md", ".txt", ".json", ".csv")
 
 
 def _storage(settings: Settings) -> ManagedLocalStorage:
@@ -77,16 +79,20 @@ def _message_markdown_name(conversation: Conversation, created_at: datetime) -> 
     return f"{title[:80].rstrip()}_{created_at:%Y%m%d_%H%M%S}.md"
 
 
-def _version_payload(version: ArtifactVersion, content: bytes) -> dict[str, object]:
+def _version_payload(
+    version: ArtifactVersion, content: bytes | None
+) -> dict[str, object]:
     mime_type = _mime_from_key(version.storage_key)
+    source_available = version.storage_key.endswith(_TEXT_ARTIFACT_SUFFIXES)
     source_text = None
-    if version.storage_key.endswith((".html", ".md", ".txt", ".json", ".csv")):
+    if source_available and content is not None:
         source_text = content.decode("utf-8", errors="replace")
     return {
         "artifactId": version.artifact_id,
         "version": version.version_number,
         "mimeType": mime_type,
         "sourceText": source_text,
+        "sourceAvailable": source_available,
         "previewUrl": (
             f"/api/artifacts/{version.artifact_id}/preview?version={version.version_number}"
             if mime_type.startswith("image/")
@@ -225,17 +231,25 @@ def get_artifact(
 def get_version(
     artifact_id: str,
     version_number: int,
+    include_source: bool = Query(default=True),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
-    _artifact, version, content = read_artifact_version(
-        db,
-        _storage(settings),
-        user=user,
-        artifact_id=artifact_id,
-        version_number=version_number,
+    artifact = require_artifact(db, user, artifact_id)
+    version = db.scalar(
+        select(ArtifactVersion).where(
+            ArtifactVersion.artifact_id == artifact.id,
+            ArtifactVersion.version_number == version_number,
+        )
     )
+    if version is None:
+        raise ApiProblem(404, "version_not_found", "Artifact 버전을 찾을 수 없습니다.")
+    content = None
+    if include_source and version.storage_key.endswith(_TEXT_ARTIFACT_SUFFIXES):
+        content = _storage(settings).read_bytes(
+            version.storage_key, expected_sha256=version.content_hash
+        )
     return _version_payload(version, content)
 
 
@@ -562,7 +576,9 @@ def preview_artifact(
 
 
 def _stream_html_preview(content: bytes) -> Iterator[bytes]:
-    closing_body = content.lower().rfind(b"</body")
+    closing_body = -1
+    for match in _HTML_CLOSING_BODY.finditer(content):
+        closing_body = match.start()
     insertion = closing_body if closing_body >= 0 else len(content)
     for offset in range(0, insertion, _HTML_PREVIEW_CHUNK_SIZE):
         yield content[offset : min(insertion, offset + _HTML_PREVIEW_CHUNK_SIZE)]

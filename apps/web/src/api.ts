@@ -921,6 +921,16 @@ function isRunArtifactProgressMessage(value: unknown): value is {
     && typeof value.progress.lines === "number";
 }
 
+function isRunAssistantDraftMessage(value: unknown): value is {
+  runId: string;
+  draft: NonNullable<RunSnapshot["assistantDraft"]> & { append: boolean };
+} {
+  if (!isRecord(value) || typeof value.runId !== "string" || !isRecord(value.draft)) return false;
+  return typeof value.draft.messageId === "string"
+    && typeof value.draft.text === "string"
+    && typeof value.draft.append === "boolean";
+}
+
 export function openRunEventStream(
   runId: string,
   afterSequence: number,
@@ -962,11 +972,26 @@ export function openRunEventStream(
     }
   };
 
+  const handleAssistantDraft = (message: MessageEvent<string>) => {
+    try {
+      const parsed: unknown = JSON.parse(message.data);
+      if (!isRunAssistantDraftMessage(parsed) || parsed.runId !== runId) {
+        throw new Error("Assistant draft event 형식이 올바르지 않습니다.");
+      }
+      handlers.onAssistantDraft?.(parsed.runId, parsed.draft, parsed.draft.append);
+    } catch (error) {
+      handlers.onError?.(
+        error instanceof Error ? error : new Error("Assistant draft event를 읽지 못했습니다."),
+      );
+    }
+  };
+
   source.onopen = () => handlers.onOpen?.();
   source.onerror = (event) => handlers.onError?.(event);
   source.onmessage = handleMessage;
   source.addEventListener("run_event", handleMessage as EventListener);
   source.addEventListener("artifact_progress", handleArtifactProgress as EventListener);
+  source.addEventListener("assistant_draft", handleAssistantDraft as EventListener);
 
   return () => source.close();
 }
@@ -1081,10 +1106,15 @@ export async function createMessageMarkdownArtifact(messageId: string, signal?: 
   });
 }
 
-export async function getArtifactVersion(artifactId: string, version: number, signal?: AbortSignal) {
+export async function getArtifactVersion(
+  artifactId: string,
+  version: number,
+  includeSource = true,
+  signal?: AbortSignal,
+) {
   return request<ArtifactVersion>(
     `/artifacts/${encodeURIComponent(artifactId)}/versions/${encodeURIComponent(String(version))}`,
-    { signal },
+    { query: { include_source: includeSource }, signal },
   );
 }
 

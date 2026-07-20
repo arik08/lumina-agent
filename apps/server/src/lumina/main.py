@@ -141,6 +141,10 @@ class SPAStaticFiles(StaticFiles):
             return await super().get_response("index.html", scope)
         if response.status_code == 404 and "." not in filename:
             return await super().get_response("index.html", scope)
+        if path.startswith("assets/") and response.status_code == 200:
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        elif filename == "index.html" or "." not in filename:
+            response.headers["Cache-Control"] = "no-cache"
         return response
 
 
@@ -148,9 +152,11 @@ class ApiGZipMiddleware(GZipMiddleware):
     """Compress regular responses without buffering event-stream delivery."""
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http" and str(scope.get("path", "")).startswith(
-            "/stream/"
-        ):
+        path = str(scope.get("path", ""))
+        bypass_streaming = path.startswith("/stream/") or (
+            path.startswith("/api/artifacts/") and path.endswith("/preview")
+        )
+        if scope["type"] == "http" and bypass_streaming:
             await self.app(scope, receive, send)
             return
         await super().__call__(scope, receive, send)

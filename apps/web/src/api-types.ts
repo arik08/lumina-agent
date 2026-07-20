@@ -1581,6 +1581,7 @@ export interface ArtifactVersion {
   version: number;
   mimeType: string;
   sourceText: string | null;
+  sourceAvailable: boolean;
   previewUrl: string | null;
   contentHash: string;
   size: number;
@@ -2448,6 +2449,11 @@ export interface RunStreamHandlers {
   onArtifactProgress?: (
     runId: UUID,
     progress: NonNullable<RunSnapshot["artifactProgress"]>,
+  ) => void;
+  onAssistantDraft?: (
+    runId: UUID,
+    draft: NonNullable<RunSnapshot["assistantDraft"]>,
+    append: boolean,
   ) => void;
   onError?: (error: Event | Error) => void;
 }

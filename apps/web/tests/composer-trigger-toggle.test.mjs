@@ -9,7 +9,7 @@ test("composer trigger buttons toggle their picker without inserting duplicate t
   const app = await readFile(appUrl, "utf8");
 
   assert.match(app, /if \(composerTrigger\?\.trigger === trigger\) \{[\s\S]*?setComposerTrigger\(null\);[\s\S]*?return;[\s\S]*?\}/);
-  assert.match(app, /const existingTrigger = findComposerTrigger\(draft, caret\);/);
+  assert.match(app, /const currentDraft = composerDraftRef\.current;[\s\S]*?const existingTrigger = findComposerTrigger\(currentDraft, caret\);/);
 });
 
 test("starting a new conversation closes and resets the composer picker", async () => {

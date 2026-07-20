@@ -73,14 +73,19 @@ const graphLabelFontSize = 14;
 const graphLabelGap = 7;
 const hoverTransitionDuration = 160;
 const graphLayouts = new Map<string, GraphLayout>();
-const graphLayoutCacheLimit = 24;
+const graphLayoutNodeBudget = 1_600;
 
 function rememberGraphLayout(layoutKey: string, layout: GraphLayout) {
   graphLayouts.delete(layoutKey);
   graphLayouts.set(layoutKey, layout);
-  while (graphLayouts.size > graphLayoutCacheLimit) {
+  let cachedNodeCount = [...graphLayouts.values()].reduce(
+    (count, cached) => count + cached.nodePositions.size,
+    0,
+  );
+  while (cachedNodeCount > graphLayoutNodeBudget) {
     const oldestKey = graphLayouts.keys().next().value;
     if (typeof oldestKey !== "string") break;
+    cachedNodeCount -= graphLayouts.get(oldestKey)?.nodePositions.size ?? 0;
     graphLayouts.delete(oldestKey);
   }
 }

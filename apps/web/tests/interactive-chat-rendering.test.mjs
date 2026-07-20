@@ -81,7 +81,7 @@ test("Mermaid preserves authored semantic fills and repairs only unreadable node
   assert.match(rendererSource, /cScale9: artifactVisualPalette\.purple/);
   assert.match(rendererSource, /plotColorPalette: artifactVisualPaletteSequence\.join\(","\)/);
   assert.match(rendererSource, /const themedResult = \{ \.\.\.result, svg: bindMermaidThemeTokens/);
-  assert.match(rendererSource, /return themedResult/);
+  assert.match(rendererSource, /resolve\(themedResult\)/);
   assert.match(rendererSource, /ensureMermaidNodeTextContrast\(renderedSvg\)/);
   assert.doesNotMatch(rendererSource, /inferMermaidNodeTone|decorateMermaidSvg|luminaTone/);
   assert.doesNotMatch(rendererStyles, /data-lumina-tone|--mermaid-node-fill|--mermaid-node-stroke/);

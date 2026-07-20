@@ -177,7 +177,7 @@ test("Graph documents provide visible and browser-history return paths", async (
 
 test("Knowledge graph layout memory is bounded and refreshed as an LRU cache", async () => {
   const graph = await readFile(graphPath, "utf8");
-  assert.match(graph, /const graphLayoutCacheLimit = 24;/);
-  assert.match(graph, /function rememberGraphLayout[\s\S]*?graphLayouts\.delete\(layoutKey\);[\s\S]*?while \(graphLayouts\.size > graphLayoutCacheLimit\)/);
+  assert.match(graph, /const graphLayoutNodeBudget = 1_600;/);
+  assert.match(graph, /function rememberGraphLayout[\s\S]*?graphLayouts\.delete\(layoutKey\);[\s\S]*?cachedNodeCount > graphLayoutNodeBudget/);
   assert.match(graph, /if \(savedLayout\) rememberGraphLayout\(layoutKey, savedLayout\);/);
 });

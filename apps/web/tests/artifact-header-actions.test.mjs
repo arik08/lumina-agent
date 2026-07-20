@@ -24,7 +24,8 @@ test("artifact header keeps its actions visible above the preview", async () => 
   assert.match(stylesheet, /\.artifact-version-select\.size-small \.lumina-select-trigger\s*\{[^}]*font-size:\s*14px/s);
   assert.match(app, /<SelectMenu className="artifact-version-select"/);
   assert.match(app, /const artifactDownloadVersion = artifactVersion\?\.version \?\? artifactSummary\?\.currentVersion \?\? null/);
-  assert.match(app, /const \[summary, initialVersion, savedDraft\] = await Promise\.all\(\[\s*api\.artifacts\.get\(artifact\.id\),\s*api\.artifacts\.getVersion\(artifact\.id, artifact\.currentVersion\),\s*api\.artifacts\.getDraft\(artifact\.id\),\s*\]\)/s);
+  assert.match(app, /const \[summary, initialVersion, savedDraft\] = await Promise\.all\(\[[\s\S]*?api\.artifacts\.getVersion\([\s\S]*?artifact\.mimeType !== "text\/html"[\s\S]*?api\.artifacts\.getDraft\(artifact\.id\)/);
+  assert.match(app, /artifactVersion\?\.sourceAvailable/);
   assert.match(app, /aria-label="Artifact 공유 링크 복사"[^>]*disabled=\{!artifactSummary\?\.conversationId\}/);
   assert.match(app, /url\.searchParams\.set\("artifact", artifactSummary\.id\)/);
   assert.match(app, /url\.searchParams\.set\("version", String\(artifactDownloadVersion \?\? artifactSummary\.currentVersion\)\)/);

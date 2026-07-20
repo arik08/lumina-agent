@@ -5,13 +5,16 @@ import test from "node:test";
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
 test("assistant text deltas bypass the root workspace state tree", async () => {
-  const [workspace, draftStore, turn] = await Promise.all([
+  const [workspace, api, draftStore, turn] = await Promise.all([
     read("../src/use-lumina-workspace.ts"),
+    read("../src/api.ts"),
     read("../src/run-assistant-draft-store.ts"),
     read("../src/components/ConversationTurn.tsx"),
   ]);
 
-  assert.match(workspace, /if \(event\.type === "assistant_text_delta"\) \{[\s\S]*appendRunAssistantDraft/);
+  assert.match(workspace, /if \(event\.type === "assistant_text_delta"\) \{[\s\S]*?return;\s*\}/);
+  assert.match(api, /addEventListener\("assistant_draft"/);
+  assert.match(workspace, /if \(append\) appendRunAssistantDraft/);
   assert.match(workspace, /snapshot\.lastSequence >= knownEventSequence[\s\S]*setRunAssistantDraft/);
   assert.match(draftStore, /useSyncExternalStore/);
   assert.match(turn, /useRunAssistantDraft\(turnSet\.runId/);

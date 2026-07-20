@@ -177,41 +177,61 @@ async def stream_run(
     async def events() -> AsyncIterator[str]:
         nonlocal cursor
         progress_revision = 0
+        assistant_draft_revision = 0
+        wake_revision, durable_revision = event_broker.revisions(run_id)
+        query_required = True
         while True:
             if await request.is_disconnected():
                 return
-            with SessionLocal() as event_db:
-                resolved = resolve_server_session(event_db, context.session_token)
-                if resolved is None:
-                    return
-                try:
-                    run = run_for_user(event_db, resolved.user, run_id)
-                except ApiProblem:
-                    return
-                rows = list(
-                    event_db.scalars(
-                        select(RunEvent)
-                        .where(RunEvent.run_id == run_id, RunEvent.sequence > cursor)
-                        .order_by(RunEvent.sequence)
-                        .limit(200)
+            if query_required:
+                observed_durable_revision = event_broker.revisions(run_id)[1]
+                with SessionLocal() as event_db:
+                    resolved = resolve_server_session(event_db, context.session_token)
+                    if resolved is None:
+                        return
+                    try:
+                        run = run_for_user(event_db, resolved.user, run_id)
+                    except ApiProblem:
+                        return
+                    rows = list(
+                        event_db.scalars(
+                            select(RunEvent)
+                            .where(RunEvent.run_id == run_id, RunEvent.sequence > cursor)
+                            .order_by(RunEvent.sequence)
+                            .limit(200)
+                        )
                     )
+                    terminal = run.status in TERMINAL_STATUSES
+                    last_sequence = run.last_sequence
+                    encoded = [event_response(event) for event in rows]
+                durable_revision = max(durable_revision, observed_durable_revision)
+                if encoded:
+                    for event in encoded:
+                        cursor = int(event["sequence"])
+                        data = json.dumps(
+                            jsonable_encoder(event),
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        )
+                        yield f"id: {cursor}\nevent: run_event\ndata: {data}\n\n"
+                    continue
+                if terminal and cursor >= last_sequence:
+                    event_broker.clear_artifact_progress(run_id)
+                    event_broker.clear_assistant_draft(run_id)
+                    return
+            delivered_transient = False
+            transient_draft = event_broker.latest_assistant_draft(
+                run_id, after_revision=assistant_draft_revision
+            )
+            if transient_draft is not None:
+                assistant_draft_revision, draft = transient_draft
+                data = json.dumps(
+                    {"runId": run_id, "draft": draft},
+                    ensure_ascii=False,
+                    separators=(",", ":"),
                 )
-                terminal = run.status in TERMINAL_STATUSES
-                last_sequence = run.last_sequence
-                encoded = [event_response(event) for event in rows]
-            if encoded:
-                for event in encoded:
-                    cursor = int(event["sequence"])
-                    data = json.dumps(
-                        jsonable_encoder(event),
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                    )
-                    yield f"id: {cursor}\nevent: run_event\ndata: {data}\n\n"
-                continue
-            if terminal and cursor >= last_sequence:
-                event_broker.clear_artifact_progress(run_id)
-                return
+                yield f"event: assistant_draft\ndata: {data}\n\n"
+                delivered_transient = True
             transient_progress = event_broker.latest_artifact_progress(
                 run_id, after_revision=progress_revision
             )
@@ -223,9 +243,16 @@ async def stream_run(
                     separators=(",", ":"),
                 )
                 yield f"event: artifact_progress\ndata: {data}\n\n"
-                continue
-            yield ": keep-alive\n\n"
-            await event_broker.wait(run_id, timeout=10.0)
+                delivered_transient = True
+            if not delivered_transient:
+                yield ": keep-alive\n\n"
+            wake_revision, timed_out = await event_broker.wait(
+                run_id,
+                timeout=10.0,
+                after_revision=wake_revision,
+            )
+            current_durable_revision = event_broker.revisions(run_id)[1]
+            query_required = timed_out or current_durable_revision > durable_revision
 
     return StreamingResponse(
         events(),

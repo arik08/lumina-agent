@@ -59,7 +59,10 @@ test("Mermaid rendering reuses a bounded theme-and-source cache", async () => {
   assert.match(renderer, /const mermaidRenderCache = new Map<string, MermaidRenderResult>\(\);/);
   assert.match(renderer, /const mermaidRenderCacheLimit = 24;/);
   assert.match(renderer, /const cachedResult = mermaidRenderCache\.get\(cacheKey\);/);
-  assert.match(renderer, /if \(mermaidRenderCache\.size > mermaidRenderCacheLimit\)/);
+  assert.match(renderer, /const mermaidRenderCacheCharacterBudget = 1_000_000;/);
+  assert.match(renderer, /mermaidRenderCache\.size > mermaidRenderCacheLimit[\s\S]*?cachedCharacters > mermaidRenderCacheCharacterBudget/);
+  assert.match(renderer, /mermaidRenderQueue = mermaidRenderQueue/);
+  assert.match(renderer, /useNearViewport\(containerRef, \{ eager: expanded \}\)/);
 });
 
 test("programmatic follow scrolls do not restart persistence and scrollbar timers", async () => {

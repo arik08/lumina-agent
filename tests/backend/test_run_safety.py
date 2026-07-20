@@ -148,7 +148,17 @@ def test_event_broker_keeps_only_latest_transient_artifact_progress() -> None:
     broker = RunEventBroker()
 
     async def exercise() -> None:
+        wake_revision, durable_revision = broker.revisions("run-1")
+        assert (wake_revision, durable_revision) == (0, 0)
         await broker.publish_artifact_progress("run-1", {"tokens": 10, "lines": 2})
+        transient_wake_revision, transient_durable_revision = broker.revisions("run-1")
+        assert transient_wake_revision > wake_revision
+        assert transient_durable_revision == durable_revision
+        observed_revision, timed_out = await broker.wait(
+            "run-1", timeout=1, after_revision=wake_revision
+        )
+        assert observed_revision == transient_wake_revision
+        assert timed_out is False
         first = broker.latest_artifact_progress("run-1")
         assert first == (1, {"tokens": 10, "lines": 2})
 
@@ -158,8 +168,40 @@ def test_event_broker_keeps_only_latest_transient_artifact_progress() -> None:
             {"tokens": 20, "lines": 3},
         )
         assert broker.latest_artifact_progress("run-1", after_revision=2) is None
+        await broker.notify("run-1")
+        durable_wake_revision, next_durable_revision = broker.revisions("run-1")
+        assert durable_wake_revision == next_durable_revision
+        assert next_durable_revision > transient_durable_revision
         broker.clear_artifact_progress("run-1")
         assert broker.latest_artifact_progress("run-1") is None
+
+    asyncio.run(exercise())
+
+
+def test_event_broker_keeps_latest_complete_assistant_draft() -> None:
+    broker = RunEventBroker()
+
+    async def exercise() -> None:
+        broker.seed_assistant_draft("run-1", "message-1", "recovered ")
+        await broker.publish_assistant_draft("run-1", "message-1", "first")
+        first = broker.latest_assistant_draft("run-1")
+        assert first == (
+            1,
+            {
+                "messageId": "message-1",
+                "text": "recovered first",
+                "append": False,
+            },
+        )
+
+        await broker.publish_assistant_draft("run-1", "message-1", " second")
+        assert broker.latest_assistant_draft("run-1", after_revision=1) == (
+            2,
+            {"messageId": "message-1", "text": " second", "append": True},
+        )
+        assert broker.latest_assistant_draft("run-1", after_revision=2) is None
+        broker.clear_assistant_draft("run-1")
+        assert broker.latest_assistant_draft("run-1") is None
 
     asyncio.run(exercise())
 

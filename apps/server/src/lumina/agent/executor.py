@@ -1060,6 +1060,7 @@ class LocalRunExecutor:
             runtime_model_id = run.runtime_model_id
             requested_effort = run.effort
             assistant_message_id = str(run.snapshot_json["assistant_message_id"])
+            assistant_draft_checkpoint = run.assistant_draft
             attachment_ids = list(run.snapshot_json.get("attachments", []))
             prompt_references = list(run.snapshot_json.get("prompt_references", []))
             attachment_ids.extend(
@@ -1104,6 +1105,10 @@ class LocalRunExecutor:
                 run.snapshot_json.get("prompt_cache_scope")
                 or run.snapshot_json.get("prompt_cache_key", "")
             ).strip()
+
+        event_broker.seed_assistant_draft(
+            run_id, assistant_message_id, assistant_draft_checkpoint
+        )
 
         with session_scope() as db:
             run = db.get(Run, run_id)
@@ -1361,7 +1366,9 @@ class LocalRunExecutor:
                 text = "".join(pending_text)
                 pending_text.clear()
                 pending_text_chars = 0
-                await self._append_text(run_id, assistant_message_id, text)
+                await self._append_text(
+                    run_id, assistant_message_id, text, publish_live=False
+                )
                 last_text_flush = time.monotonic()
                 first_text_persisted = True
 
@@ -1380,12 +1387,15 @@ class LocalRunExecutor:
                 if not visible_text:
                     return
                 round_text.append(visible_text)
+                await event_broker.publish_assistant_draft(
+                    run_id, assistant_message_id, visible_text
+                )
                 pending_text.append(visible_text)
                 pending_text_chars += len(visible_text)
                 if (
                     not first_text_persisted
-                    or pending_text_chars >= 512
-                    or time.monotonic() - last_text_flush >= 0.05
+                    or pending_text_chars >= 4096
+                    or time.monotonic() - last_text_flush >= 0.25
                 ):
                     await flush_pending_text()
 
@@ -4910,7 +4920,16 @@ class LocalRunExecutor:
             transition_run(db, run, status)
         await event_broker.notify(run_id)
 
-    async def _append_text(self, run_id: str, message_id: str, text: str) -> None:
+    async def _append_text(
+        self,
+        run_id: str,
+        message_id: str,
+        text: str,
+        *,
+        publish_live: bool = True,
+    ) -> None:
+        if publish_live:
+            await event_broker.publish_assistant_draft(run_id, message_id, text)
         mission_id: str | None = None
         mission_event_created = False
         with session_scope() as db:
@@ -5853,6 +5872,7 @@ class LocalRunExecutor:
         if completed:
             self._emit_run_activity(run_id, "completed")
         event_broker.clear_artifact_progress(run_id)
+        event_broker.clear_assistant_draft(run_id)
         await event_broker.notify(run_id)
 
     def _emit_run_activity(self, run_id: str, state: str) -> None:
@@ -5892,6 +5912,7 @@ class LocalRunExecutor:
                 )
             transition_run(db, run, FAILED, event_type="run_failed")
         event_broker.clear_artifact_progress(run_id)
+        event_broker.clear_assistant_draft(run_id)
         await event_broker.notify(run_id)
 
     async def _limit_run(self, run_id: str, violation: RunLimitViolation) -> None:
@@ -5934,6 +5955,7 @@ class LocalRunExecutor:
             )
             transition_run(db, run, LIMIT_REACHED, event_type="run_failed")
         event_broker.clear_artifact_progress(run_id)
+        event_broker.clear_assistant_draft(run_id)
         await event_broker.notify(run_id)
 
     async def _promote_next_message(self, completed_run_id: str) -> None:

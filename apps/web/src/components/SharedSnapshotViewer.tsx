@@ -224,7 +224,7 @@ export function SharedSnapshotViewer({
               : sharedArtifact.mimeType === "application/pdf"
                 ? <object className="shared-artifact-frame" data={sharedArtifactUrl} type="application/pdf" aria-label={`${sharedArtifact.displayName} PDF 미리보기`} />
                 : sharedArtifact.mimeType.startsWith("image/")
-                  ? <div className="shared-artifact-image"><img src={sharedArtifactUrl} alt={sharedArtifact.displayName} /></div>
+                  ? <div className="shared-artifact-image"><img src={sharedArtifactUrl} alt={sharedArtifact.displayName} loading="lazy" decoding="async" /></div>
                   : sharedArtifactSource !== null
                     ? <pre className="shared-artifact-source"><code>{sharedArtifactSource}</code></pre>
                     : <div className="shared-artifact-status"><FileCode2 size={22} /><strong>{sharedArtifact.displayName}</strong><span>이 형식은 브라우저 미리보기를 지원하지 않습니다. 다운로드하여 확인해 주세요.</span></div>

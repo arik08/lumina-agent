@@ -700,6 +700,15 @@ button:focus-visible, textarea:focus-visible, a:focus-visible {
   font-size: 13px;
 }
 
+.frontend-boot-loading {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  color: var(--muted);
+  background: var(--app-bg);
+  font-size: 13px;
+}
+
 .feature-header {
   display: flex;
   height: 46px;
@@ -2079,7 +2088,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .starter-prompt-copy small { overflow: hidden; color: color-mix(in srgb, var(--muted) 65%, var(--faint)); font-size: 11px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .starter-prompt-copy strong { display: -webkit-box; overflow: hidden; color: color-mix(in srgb, var(--ink) 55%, var(--muted)); font-size: 13.5px; font-weight: 500; line-height: 1.3; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .turn-set.is-terminal { content-visibility: auto; contain-intrinsic-size: auto 520px; }
-.turn-set + .turn-set { margin-top: 36px; }
+.turn-window + .turn-window { margin-top: 36px; }
 
 .attachment-line {
   display: flex;
