@@ -687,6 +687,10 @@ export interface KnowledgeSpace {
   updatedAt: IsoDateTime;
 }
 
+export interface RestartDeepAnalysisMissionRequest {
+  expectedRevision: number;
+}
+
 export interface CreateKnowledgeSpaceRequest { name: string; purpose?: string; visibility?: "private" | "organization"; }
 export interface UpdateKnowledgeSpaceRequest { expectedRevision: number; name?: string; purpose?: string; projectIds?: UUID[]; }
 export interface KnowledgeDocumentTag {

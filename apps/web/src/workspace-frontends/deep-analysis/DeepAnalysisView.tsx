@@ -451,6 +451,7 @@ function eventDescription(event: DeepAnalysisMissionEvent) {
     mission_cost_updated: "누적 비용을 갱신했습니다.",
     mission_file_created: "Mission 파일을 보존했습니다.",
     mission_completed: "Mission을 완료했습니다.",
+    mission_restarted: "Mission을 처음부터 다시 시작했습니다.",
   };
   return { nodeKey, label: labels[event.type] ?? event.type.replaceAll("_", " ") };
 }
@@ -460,6 +461,7 @@ const DETAIL_REFRESH_EVENT_TYPES = new Set([
   "decision_resolved",
   "mission_completed",
   "mission_file_created",
+  "mission_restarted",
   "mission_updated",
   "node_completed",
   "node_retried",
@@ -554,6 +556,8 @@ export function DeepAnalysisView({
   const [cancellingMission, setCancellingMission] = useState(false);
   const [pausingMission, setPausingMission] = useState(false);
   const [retryingNodeKey, setRetryingNodeKey] = useState<string | null>(null);
+  const [restartArmed, setRestartArmed] = useState(false);
+  const [restartingMission, setRestartingMission] = useState(false);
   const [deleteArmed, setDeleteArmed] = useState(false);
   const [deletingMission, setDeletingMission] = useState(false);
   const [exportingMission, setExportingMission] = useState(false);
@@ -843,6 +847,7 @@ export function DeepAnalysisView({
         setSelectedNodeKey(detail.workflow.nodes[0]?.nodeKey ?? null);
         setCostModeActive(false);
         setCostDetailsOpen(false);
+        setRestartArmed(false);
         setDeleteArmed(false);
         setWorkflowDraft(null);
         setWorkflowDraftDirty(false);
@@ -1815,6 +1820,31 @@ export function DeepAnalysisView({
       setError(errorMessage(retryError));
     } finally {
       setRetryingNodeKey(null);
+    }
+  }
+
+  async function restartMission() {
+    if (!mission || restartingMission) return;
+    if (!restartArmed) {
+      setRestartArmed(true);
+      return;
+    }
+    setRestartingMission(true);
+    setError(null);
+    try {
+      const restarted = await api.deepAnalysis.restartMission(mission.id, {
+        expectedRevision: mission.revision,
+      });
+      setMission(restarted);
+      setMissions((current) => current.map((item) => item.id === restarted.id ? restarted : item));
+      setMissionRootSelected(false);
+      setSelectedNodeKey(restarted.workflow.nodes.find((node) => node.status === "running")?.nodeKey ?? null);
+      setRestartArmed(false);
+    } catch (restartError) {
+      setError(errorMessage(restartError));
+      setRestartArmed(false);
+    } finally {
+      setRestartingMission(false);
     }
   }
 
@@ -2976,6 +3006,20 @@ export function DeepAnalysisView({
                           {savingMissionSettings ? "저장 중..." : "Mission 정보 저장"}
                         </button>
                       </form>
+                      {canEdit && ["completed", "failed", "cancelled", "blocked"].includes(mission.status) && (
+                        <button
+                          className={`deep-analysis-retry-node ${restartArmed ? "is-armed" : ""}`}
+                          type="button"
+                          aria-label={restartArmed ? "MISSION 처음부터 재시작 확인, 한 번 더 누르면 실행" : "MISSION 처음부터 재시작"}
+                          disabled={restartingMission || !mission.executionAvailable}
+                          onClick={() => void restartMission()}
+                        >
+                          {restartingMission
+                            ? <LoaderCircle className="is-running" size={14} />
+                            : restartArmed ? <AlertTriangle size={14} /> : <RefreshCw size={14} />}
+                          {restartingMission ? "재시작 중..." : restartArmed ? "한 번 더 눌러 처음부터 재시작" : "MISSION부터 처음부터 재시작"}
+                        </button>
+                      )}
                     </aside>
                   )}
                   {selectedNode && (

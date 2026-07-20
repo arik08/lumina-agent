@@ -84,6 +84,10 @@ class MissionRetry(ApiModel):
     node_key: str = Field(min_length=1, max_length=32)
 
 
+class MissionRestart(ApiModel):
+    expected_revision: int = Field(ge=1)
+
+
 class MissionQualityGate(ApiModel):
     expected_revision: int = Field(ge=1)
 

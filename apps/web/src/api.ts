@@ -55,6 +55,7 @@ import type {
   RegistrationRequest,
   RegistrationResponse,
   RetryDeepAnalysisMissionRequest,
+  RestartDeepAnalysisMissionRequest,
   RegenerateDeepAnalysisWorkflowRequest,
   InstructionDocument,
   RuntimePromptDocument,
@@ -1544,6 +1545,17 @@ export async function updateDeepAnalysisMission(
   );
 }
 
+export async function restartDeepAnalysisMission(
+  missionId: string,
+  payload: RestartDeepAnalysisMissionRequest,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisMissionDetail>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/restart`,
+    { method: "POST", body: payload, signal, idempotencyKey: createClientId() },
+  );
+}
+
 export async function regenerateDeepAnalysisWorkflow(
   missionId: string,
   payload: RegenerateDeepAnalysisWorkflowRequest,
@@ -2444,6 +2456,7 @@ export const api = {
     pauseMission: pauseDeepAnalysisMission,
     resumeMission: resumeDeepAnalysisMission,
     retryMission: retryDeepAnalysisMission,
+    restartMission: restartDeepAnalysisMission,
     deleteMission: deleteDeepAnalysisMission,
     updateMission: updateDeepAnalysisMission,
     moveMission: moveDeepAnalysisMission,

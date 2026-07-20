@@ -38,7 +38,7 @@ Workflow는 순환하지 않는 DAG여야 합니다. 같은 Node를 자기 자�
 7. 뒤 Node는 연결된 선행 Node 출력 전체를 입력 문맥으로 받습니다.
 8. 실행 가능한 Node와 실행 중인 Node가 모두 남지 않으면 Mission을 완료합니다.
 
-Node 재실행은 같은 Node 채팅 세션을 계속 사용하되 새 Run을 만듭니다. Mission을 다른 Project로 이동하거나 삭제할 때는 Node별 채팅 세션도 함께 이동하거나 삭제합니다.
+Node 재실행은 같은 Node 채팅 세션을 계속 사용하되 새 Run을 만듭니다. 사용자는 종료된 Mission의 MISSION Node에서 전체 Workflow를 처음부터 다시 실행할 수 있으며, 이때 모든 Node의 현재 실행을 이력으로 보존하고 기존 산출물은 검토 필요 상태로 전환한 뒤 시작 Node부터 새 Run을 만듭니다. Mission을 다른 Project로 이동하거나 삭제할 때는 Node별 채팅 세션도 함께 이동하거나 삭제합니다.
 
 ## 4. 출력과 인용
 

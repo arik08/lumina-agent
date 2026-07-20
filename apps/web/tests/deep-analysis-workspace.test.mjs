@@ -373,6 +373,9 @@ test("Mission execution, retry, export, and deletion stay explicit", async () =>
 
   assert.match(view, /api\.deepAnalysis\.startMission/);
   assert.match(view, /api\.deepAnalysis\.retryMission/);
+  assert.match(view, /api\.deepAnalysis\.restartMission/);
+  assert.match(view, /MISSION부터 처음부터 재시작/);
+  assert.match(view, /restartArmed \? "한 번 더 눌러 처음부터 재시작"/);
   assert.match(view, /api\.deepAnalysis\.createExport/);
   assert.match(view, /api\.deepAnalysis\.deleteMission\(mission\.id, mission\.revision\)/);
   assert.match(view, /deleteArmed \? "한 번 더 눌러 삭제"/);

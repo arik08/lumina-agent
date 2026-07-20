@@ -2226,6 +2226,68 @@ def test_cancelled_node_can_be_retried_with_attempt_history(
         assert cancelled["revision"] == 3
 
 
+def test_completed_mission_can_restart_from_the_workflow_start(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "lumina.api.routes.deep_analysis.local_run_executor.enqueue",
+        lambda _run_id: None,
+    )
+    with TestClient(create_app(_settings(tmp_path))) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        created = client.post(
+            f"/api/projects/{project_id}/deep-analysis/missions",
+            headers=headers,
+            json={"title": "처음부터 재시작 검증"},
+        ).json()
+        started = client.post(
+            f"/api/deep-analysis/missions/{created['id']}/start",
+            headers=headers,
+            json={"expectedRevision": 1},
+        ).json()
+        first_run_id = started["workflow"]["nodes"][0]["runId"]
+
+        with SessionLocal() as db:
+            mission = db.get(DeepAnalysisMission, created["id"])
+            assert mission is not None
+            revision = db.get(DeepAnalysisWorkflowRevision, started["workflow"]["id"])
+            assert revision is not None
+            nodes = list(
+                db.scalars(
+                    select(DeepAnalysisWorkflowNode)
+                    .where(DeepAnalysisWorkflowNode.workflow_revision_id == revision.id)
+                    .order_by(DeepAnalysisWorkflowNode.sequence)
+                )
+            )
+            run = db.get(Run, first_run_id)
+            assert run is not None
+            run.status = "completed"
+            for node in nodes:
+                node.status = "completed"
+                node.output_markdown = f"# 이전 결과 {node.node_key}"
+            mission.status = "completed"
+            db.commit()
+
+        restarted = client.post(
+            f"/api/deep-analysis/missions/{created['id']}/restart",
+            headers=headers,
+            json={"expectedRevision": 2},
+        )
+        assert restarted.status_code == 200, restarted.text
+        payload = restarted.json()
+        nodes = payload["workflow"]["nodes"]
+        running = [node for node in nodes if node["status"] == "running"]
+        assert payload["status"] == "running"
+        assert payload["revision"] == 3
+        assert len(running) == 1
+        assert running[0]["nodeKey"] == "N001"
+        assert running[0]["runId"] != first_run_id
+        assert running[0]["runHistory"][0]["runId"] == first_run_id
+        assert all(node["outputMarkdown"] == "" for node in nodes)
+        assert all(node["status"] in {"running", "planned"} for node in nodes)
+
+
 def test_python_calculation_uses_frozen_csv_and_saves_script_and_result(
     tmp_path: Path, monkeypatch
 ) -> None:

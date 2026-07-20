@@ -808,6 +808,86 @@ def retry_mission_node(
     return target
 
 
+def restart_mission(
+    db: Session,
+    mission: DeepAnalysisMission,
+    *,
+    expected_revision: int,
+) -> DeepAnalysisWorkflowNode:
+    if mission.status not in {"completed", "failed", "cancelled", "blocked"}:
+        raise ApiProblem(
+            409,
+            "mission_not_restartable",
+            "완료, 실패, 중단 또는 확인 필요 상태의 심층분석만 처음부터 다시 실행할 수 있습니다.",
+            details={"status": mission.status},
+        )
+    if (
+        mission.budget_microusd is not None
+        and mission.spent_microusd >= mission.budget_microusd
+    ):
+        raise ApiProblem(
+            409,
+            "budget_exhausted",
+            "설정한 비용 한도가 남아 있지 않습니다. 예산을 늘린 뒤 다시 실행해 주세요.",
+        )
+
+    _revision, nodes, edges = active_workflow(db, mission.id)
+    result = db.execute(
+        update(DeepAnalysisMission)
+        .where(
+            DeepAnalysisMission.id == mission.id,
+            DeepAnalysisMission.revision == expected_revision,
+        )
+        .values(
+            status="running",
+            completion_outcome=None,
+            revision=expected_revision + 1,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        db.refresh(mission)
+        raise ApiProblem(
+            409,
+            "revision_conflict",
+            "다른 변경사항이 먼저 저장되었습니다. 최신 상태를 불러와 다시 시도해 주세요.",
+            details={"currentRevision": mission.revision},
+        )
+
+    from .execution import archive_current_attempt
+
+    node_ids = {node.id for node in nodes}
+    if node_ids:
+        db.execute(
+            update(DeepAnalysisMissionFileLink)
+            .where(DeepAnalysisMissionFileLink.producing_node_id.in_(node_ids))
+            .values(stale_status="review_required")
+            .execution_options(synchronize_session=False)
+        )
+    for node in nodes:
+        archive_current_attempt(db, node)
+        node.status = "planned"
+        node.run_id = None
+        node.output_project_file_id = None
+        node.output_logical_path = None
+        node.output_summary = ""
+        node.output_markdown = ""
+        node.generated_files_json = []
+        node.error_message = None
+        node.actual_cost_microusd = 0
+        node.started_at = None
+        node.finished_at = None
+
+    first_node = next_runnable_node(nodes, edges)
+    if first_node is None:
+        raise ApiProblem(409, "workflow_has_no_start_node", "처음부터 실행할 Workflow 시작 Node가 없습니다.")
+    first_node.status = "running"
+    first_node.started_at = utc_now()
+    db.flush()
+    db.refresh(mission)
+    return first_node
+
+
 def run_quality_gate(
     db: Session,
     mission: DeepAnalysisMission,

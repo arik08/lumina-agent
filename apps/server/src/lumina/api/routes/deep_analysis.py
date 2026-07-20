@@ -76,6 +76,7 @@ from ...deep_analysis.schemas import (
     MissionPause,
     MissionQualityGate,
     MissionRetry,
+    MissionRestart,
     MissionStart,
     MissionSummaryResponse,
     OpenIssueResponse,
@@ -104,6 +105,7 @@ from ...deep_analysis.service import (
     regenerate_workflow,
     require_mission,
     retry_mission_node,
+    restart_mission,
     resume_mission,
     run_quality_gate,
     start_mission,
@@ -2051,6 +2053,71 @@ async def post_mission_retry(
             "node_key": node.node_key,
             "run_id": run.id,
         },
+    )
+    complete_command(db, command, result={"runId": run.id, "nodeKey": node.node_key})
+    db.commit()
+    if created:
+        local_run_executor.enqueue(run.id)
+        await event_broker.notify(run.id)
+    return _detail_payload(db, mission)
+
+
+@router.post(
+    "/deep-analysis/missions/{mission_id}/restart",
+    response_model=MissionDetailResponse,
+)
+async def post_mission_restart(
+    mission_id: str,
+    payload: MissionRestart,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    mission = require_mission(db, context.user, mission_id, write=True)
+    command, should_apply = claim_command(
+        db,
+        mission=mission,
+        user=context.user,
+        command_type="restart",
+        idempotency_key=request.headers.get("Idempotency-Key"),
+        payload=payload,
+    )
+    if not should_apply:
+        return _detail_payload(db, mission)
+    node = restart_mission(
+        db,
+        mission,
+        expected_revision=payload.expected_revision,
+    )
+    run, created = create_node_run(
+        db,
+        user=context.user,
+        mission=mission,
+        node=node,
+        settings=settings,
+    )
+    emit_event(
+        db,
+        mission,
+        "mission_restarted",
+        {
+            "nodeId": node.id,
+            "nodeKey": node.node_key,
+            "runId": run.id,
+            "missionRevision": mission.revision,
+        },
+        actor_user_id=context.user.id,
+    )
+    record_audit(
+        db,
+        action="deep_analysis_mission_restarted",
+        target_type="deep_analysis_mission",
+        target_id=mission.id,
+        result="success",
+        actor=context.user,
+        request_id=getattr(request.state, "request_id", None),
+        metadata={"node_key": node.node_key, "run_id": run.id},
     )
     complete_command(db, command, result={"runId": run.id, "nodeKey": node.node_key})
     db.commit()
