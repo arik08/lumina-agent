@@ -60,6 +60,7 @@ if ($FrontendPort -eq $BackendPort) {
 $HealthCheckIntervalSeconds = 5
 $HealthFailureThreshold = 3
 $StartupTimeoutSeconds = 90
+$StartupPollIntervalMilliseconds = 200
 $RestartBudgetResetSeconds = 600
 function Get-LuminaRuntimeFileSuffix {
     param(
@@ -752,11 +753,30 @@ function Get-LuminaProcessRootId {
     return $rootId
 }
 
+function Get-LuminaListeningPorts {
+    param([Parameter(Mandatory = $true)][int[]]$Ports)
+
+    $requestedPorts = [System.Collections.Generic.HashSet[int]]::new()
+    foreach ($port in $Ports) {
+        [void]$requestedPorts.Add($port)
+    }
+    return @(
+        [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners() |
+            Where-Object { $requestedPorts.Contains($_.Port) } |
+            ForEach-Object { $_.Port } |
+            Sort-Object -Unique
+    )
+}
+
 function Stop-ExistingLuminaListeners {
     param([Parameter(Mandatory = $true)][int[]]$Ports)
 
+    $listeningPorts = @(Get-LuminaListeningPorts -Ports $Ports)
+    if ($listeningPorts.Count -eq 0) {
+        return
+    }
     $connections = @(
-        Get-NetTCPConnection -State Listen -LocalPort $Ports -ErrorAction SilentlyContinue
+        Get-NetTCPConnection -State Listen -LocalPort $listeningPorts -ErrorAction SilentlyContinue
     )
     $processesById = @{}
     if ($connections.Count -gt 0) {
@@ -776,11 +796,9 @@ function Stop-ExistingLuminaListeners {
         [void]$rootIds.Add($rootId)
     }
     Stop-ProcessTrees -ProcessIds @($rootIds)
-    $remaining = @(
-        Get-NetTCPConnection -State Listen -LocalPort $Ports -ErrorAction SilentlyContinue
-    )
+    $remaining = @(Get-LuminaListeningPorts -Ports $Ports)
     if ($remaining.Count -gt 0) {
-        throw "Lumina ports are still occupied after reset: $($remaining.LocalPort -join ', ')"
+        throw "Lumina ports are still occupied after reset: $($remaining -join ', ')"
     }
 }
 
@@ -986,13 +1004,39 @@ function Write-NewBackendActivity {
 }
 
 function Get-LanIPv4Addresses {
-    return @(
-        Get-NetIPConfiguration -ErrorAction SilentlyContinue |
-            Where-Object { $null -ne $_.IPv4DefaultGateway } |
-            ForEach-Object { $_.IPv4Address.IPAddress } |
-            Where-Object { $_ -and $_ -notmatch '^127\.' -and $_ -notmatch '^169\.254\.' } |
-            Sort-Object -Unique
-    )
+    $addresses = foreach (
+        $networkInterface in [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()
+    ) {
+        if ($networkInterface.OperationalStatus -ne [System.Net.NetworkInformation.OperationalStatus]::Up) {
+            continue
+        }
+        try {
+            $properties = $networkInterface.GetIPProperties()
+            $hasIPv4Gateway = @(
+                $properties.GatewayAddresses |
+                    Where-Object {
+                        $_.Address.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork
+                    }
+            ).Count -gt 0
+            if (-not $hasIPv4Gateway) {
+                continue
+            }
+            foreach ($unicastAddress in $properties.UnicastAddresses) {
+                $address = $unicastAddress.Address
+                if (
+                    $address.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork -and
+                    -not [System.Net.IPAddress]::IsLoopback($address) -and
+                    -not $address.ToString().StartsWith("169.254.")
+                ) {
+                    $address.ToString()
+                }
+            }
+        }
+        catch {
+            # An adapter can disappear while Windows refreshes network state.
+        }
+    }
+    return @($addresses | Sort-Object -Unique)
 }
 
 function Test-LuminaHealthy {
@@ -1137,7 +1181,7 @@ function Wait-LuminaReady {
         if (Test-LuminaHealthy) {
             return "ready"
         }
-        Start-Sleep -Milliseconds 500
+        Start-Sleep -Milliseconds $StartupPollIntervalMilliseconds
     }
     throw "Lumina did not become healthy within $StartupTimeoutSeconds seconds."
 }

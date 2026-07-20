@@ -249,6 +249,28 @@ if ($null -eq $qaIsolationFunction -or $null -eq $databaseOwnershipFunction) {
 . ([scriptblock]::Create($qaIsolationFunction.Extent.Text))
 . ([scriptblock]::Create($databaseOwnershipFunction.Extent.Text))
 
+$listeningPortsFunction = $ast.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq "Get-LuminaListeningPorts"
+    },
+    $true
+)
+$lanAddressesFunction = $ast.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq "Get-LanIPv4Addresses"
+    },
+    $true
+)
+if ($null -eq $listeningPortsFunction -or $null -eq $lanAddressesFunction) {
+    throw "Fast launcher network inspection functions were not found."
+}
+. ([scriptblock]::Create($listeningPortsFunction.Extent.Text))
+. ([scriptblock]::Create($lanAddressesFunction.Extent.Text))
+
 $cases = @(
     @{ Name = "lowercase r"; Character = [char]'r'; VirtualKeyCode = 0; Expected = $true },
     @{ Name = "uppercase R"; Character = [char]'R'; VirtualKeyCode = 0; Expected = $true },
@@ -416,6 +438,31 @@ finally {
         )
     }
     Remove-Item -LiteralPath $qaIsolationRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+$listener = [System.Net.Sockets.TcpListener]::new(
+    [System.Net.IPAddress]::Loopback,
+    0
+)
+try {
+    $listener.Start()
+    $listenerPort = ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
+    if ($listenerPort -notin @(Get-LuminaListeningPorts -Ports @($listenerPort))) {
+        throw "Fast port inspection did not find an active TCP listener."
+    }
+}
+finally {
+    $listener.Stop()
+}
+if ($listenerPort -in @(Get-LuminaListeningPorts -Ports @($listenerPort))) {
+    throw "Fast port inspection retained a stopped TCP listener."
+}
+$lanAddresses = @(Get-LanIPv4Addresses)
+if (
+    $lanAddresses.Count -ne @($lanAddresses | Sort-Object -Unique).Count -or
+    @($lanAddresses | Where-Object { $_ -match '^127\.' -or $_ -match '^169\.254\.' }).Count -gt 0
+) {
+    throw "Fast LAN address inspection returned duplicate or local-only addresses."
 }
 
 $lockTestRoot = Join-Path $env:TEMP "lumina-port-lock-test-$([guid]::NewGuid())"
@@ -1013,6 +1060,13 @@ if (
 }
 if ($source -notmatch '\$StartupTimeoutSeconds\s*=\s*90') {
     throw "The startup deadline must allow a 90-second Windows cold start."
+}
+if (
+    $source -notmatch '\$StartupPollIntervalMilliseconds\s*=\s*200' -or
+    $waitReadyFunction.Extent.Text -notmatch
+        'Start-Sleep\s+-Milliseconds\s+\$StartupPollIntervalMilliseconds'
+) {
+    throw "Startup readiness must use the bounded fast polling interval."
 }
 if ($source -match 'Restarting in 1 second') {
     throw "The launcher must not retain the unbounded fixed one-second restart loop."
