@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from difflib import SequenceMatcher
 from datetime import datetime, timedelta
 from pathlib import PurePosixPath
 from typing import Any
@@ -758,6 +759,12 @@ def save_draft_version(
             "Skill Draft의 base version이 변경되었습니다.",
         )
     _ensure_no_secrets(manifest, path="manifest")
+    revision = db.scalar(
+        select(ExtensionDraftRevision).where(
+            ExtensionDraftRevision.draft_id == draft.id,
+            ExtensionDraftRevision.revision_number == draft.current_revision,
+        )
+    )
     latest_number = (
         db.scalar(
             select(func.max(ExtensionVersion.version_number)).where(
@@ -773,6 +780,8 @@ def save_draft_version(
         package_json=dict(draft.package_json),
         package_digest=draft.current_digest,
         manifest_json=manifest,
+        change_summary=(revision.change_summary if revision else ""),
+        change_type="save",
         status="private",
         created_by_user_id=user.id,
     )
@@ -847,6 +856,242 @@ def publish_version(
     extension.latest_published_version_id = version.id
     db.flush()
     return extension, version
+
+
+def _version_is_visible_to_user(
+    db: Session,
+    *,
+    user: User,
+    extension: Extension,
+    version: ExtensionVersion,
+) -> bool:
+    return (
+        can_manage_skill(db, user, extension)
+        or version.status == "published"
+        or version.created_by_user_id == user.id
+    )
+
+
+def _diff_file(
+    *,
+    path: str,
+    before: str | None,
+    after: str | None,
+) -> dict[str, Any]:
+    before_lines = [] if before is None else before.splitlines()
+    after_lines = [] if after is None else after.splitlines()
+    matcher = SequenceMatcher(None, before_lines, after_lines, autojunk=False)
+    hunks: list[dict[str, Any]] = []
+    additions = 0
+    deletions = 0
+    for group in matcher.get_grouped_opcodes(n=3):
+        old_start = group[0][1] + 1
+        new_start = group[0][3] + 1
+        lines: list[dict[str, Any]] = []
+        for tag, i1, i2, j1, j2 in group:
+            if tag == "equal":
+                for offset, content in enumerate(before_lines[i1:i2]):
+                    lines.append(
+                        {
+                            "kind": "context",
+                            "oldLine": i1 + offset + 1,
+                            "newLine": j1 + offset + 1,
+                            "content": content,
+                        }
+                    )
+                continue
+            if tag in {"replace", "delete"}:
+                for offset, content in enumerate(before_lines[i1:i2]):
+                    deletions += 1
+                    lines.append(
+                        {
+                            "kind": "delete",
+                            "oldLine": i1 + offset + 1,
+                            "newLine": None,
+                            "content": content,
+                        }
+                    )
+            if tag in {"replace", "insert"}:
+                for offset, content in enumerate(after_lines[j1:j2]):
+                    additions += 1
+                    lines.append(
+                        {
+                            "kind": "add",
+                            "oldLine": None,
+                            "newLine": j1 + offset + 1,
+                            "content": content,
+                        }
+                    )
+        hunks.append(
+            {
+                "oldStart": old_start,
+                "oldLines": group[-1][2] - group[0][1],
+                "newStart": new_start,
+                "newLines": group[-1][4] - group[0][3],
+                "lines": lines,
+            }
+        )
+    return {
+        "path": path,
+        "status": "added"
+        if before is None
+        else "deleted"
+        if after is None
+        else "modified",
+        "additions": additions,
+        "deletions": deletions,
+        "hunks": hunks,
+    }
+
+
+def compare_skill_versions(
+    db: Session,
+    *,
+    user: User,
+    extension_id: str,
+    from_version_id: str,
+    to_version_id: str,
+) -> dict[str, Any]:
+    extension = require_extension(db, user, extension_id)
+    if not can_view_skill_package(db, user, extension):
+        raise ApiProblem(
+            404, "version_not_found", "설치된 Skill version만 비교할 수 있습니다."
+        )
+    versions = [
+        db.get(ExtensionVersion, version_id)
+        for version_id in (from_version_id, to_version_id)
+    ]
+    if any(
+        version is None
+        or version.extension_id != extension.id
+        or not _version_is_visible_to_user(
+            db, user=user, extension=extension, version=version
+        )
+        for version in versions
+    ):
+        raise ApiProblem(404, "version_not_found", "Skill version을 찾을 수 없습니다.")
+    before, after = versions
+    assert before is not None and after is not None
+    paths = sorted(set(before.package_json) | set(after.package_json))
+    files = [
+        _diff_file(
+            path=path,
+            before=before.package_json.get(path),
+            after=after.package_json.get(path),
+        )
+        for path in paths
+        if before.package_json.get(path) != after.package_json.get(path)
+    ]
+    return {
+        "fromVersion": version_payload(before, include_package=False),
+        "toVersion": version_payload(after, include_package=False),
+        "files": files,
+        "summary": {
+            "filesChanged": len(files),
+            "additions": sum(item["additions"] for item in files),
+            "deletions": sum(item["deletions"] for item in files),
+        },
+    }
+
+
+def rollback_skill_version(
+    db: Session,
+    *,
+    user: User,
+    extension_id: str,
+    target_version_id: str,
+    expected_current_version_id: str,
+    change_summary: str,
+) -> tuple[Extension, ExtensionVersion]:
+    extension = require_extension(db, user, extension_id)
+    if skill_role(db, user, extension) != "owner":
+        raise ApiProblem(
+            403,
+            "skill_rollback_forbidden",
+            "Skill Owner만 공식 버전을 복원할 수 있습니다.",
+        )
+    if extension.latest_published_version_id != expected_current_version_id:
+        raise ApiProblem(
+            409,
+            "published_version_conflict",
+            "현재 공식 Skill version이 변경되었습니다.",
+        )
+    current = db.get(ExtensionVersion, expected_current_version_id)
+    target = db.get(ExtensionVersion, target_version_id)
+    if (
+        current is None
+        or current.extension_id != extension.id
+        or current.status != "published"
+    ):
+        raise ApiProblem(
+            409,
+            "published_version_conflict",
+            "현재 공식 Skill version을 확인할 수 없습니다.",
+        )
+    if target is None or target.extension_id != extension.id:
+        raise ApiProblem(
+            404, "version_not_found", "복원할 Skill version을 찾을 수 없습니다."
+        )
+    if target.revoked_at is not None or target.status == "revoked":
+        raise ApiProblem(
+            409, "version_revoked", "폐기된 Skill version은 복원할 수 없습니다."
+        )
+    if target.id == current.id:
+        raise ApiProblem(
+            409, "version_already_current", "이미 현재 공식 Skill version입니다."
+        )
+    latest_number = (
+        db.scalar(
+            select(func.max(ExtensionVersion.version_number)).where(
+                ExtensionVersion.extension_id == extension.id
+            )
+        )
+        or 0
+    )
+    restored = ExtensionVersion(
+        extension_id=extension.id,
+        version_number=latest_number + 1,
+        parent_version_id=current.id,
+        package_json=dict(target.package_json),
+        package_digest=target.package_digest,
+        manifest_json=dict(target.manifest_json),
+        change_summary=change_summary.strip() or f"v{target.version_number} 기반 복원",
+        change_type="rollback",
+        restored_from_version_id=target.id,
+        status="published",
+        created_by_user_id=user.id,
+        published_at=utc_now(),
+    )
+    db.add(restored)
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        raise ApiProblem(
+            409, "version_conflict", "다른 작업에서 Skill version을 먼저 만들었습니다."
+        ) from exc
+    result = db.execute(
+        update(Extension)
+        .where(
+            Extension.id == extension.id,
+            Extension.latest_published_version_id == expected_current_version_id,
+        )
+        .values(
+            latest_published_version_id=restored.id,
+            publisher_user_id=user.id,
+            visibility="organization",
+            updated_at=utc_now(),
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if getattr(result, "rowcount", 0) != 1:
+        raise ApiProblem(
+            409,
+            "published_version_conflict",
+            "현재 공식 Skill version이 변경되었습니다.",
+        )
+    db.expire(extension)
+    db.refresh(extension)
+    return extension, restored
 
 
 def add_skill_ownership(
@@ -1629,6 +1874,9 @@ def extension_payloads(
                     ExtensionVersion.package_digest,
                     ExtensionVersion.status,
                     ExtensionVersion.manifest_json,
+                    ExtensionVersion.change_summary,
+                    ExtensionVersion.change_type,
+                    ExtensionVersion.restored_from_version_id,
                     ExtensionVersion.created_by_user_id,
                     ExtensionVersion.created_at,
                     ExtensionVersion.published_at,
@@ -1660,7 +1908,7 @@ def extension_payloads(
         ownership.principal_id
         for ownership in all_ownerships
         if ownership.principal_type == "user"
-    }
+    } | {version.created_by_user_id for version in all_versions}
     principal_users = {
         principal.id: principal
         for principal in db.scalars(
@@ -1752,7 +2000,16 @@ def extension_payloads(
             ],
             "latestPublishedVersionId": extension.latest_published_version_id,
             "versions": [
-                version_payload(version, include_package=False)
+                version_payload(
+                    version,
+                    include_package=False,
+                    created_by_display_name=(
+                        principal_users[version.created_by_user_id].display_name
+                        or principal_users[version.created_by_user_id].login_id
+                        if version.created_by_user_id in principal_users
+                        else None
+                    ),
+                )
                 for version in versions
             ],
             "createdAt": extension.created_at,
@@ -1819,15 +2076,23 @@ def draft_payload(
 
 
 def version_payload(
-    version: ExtensionVersion, *, include_package: bool
+    version: ExtensionVersion,
+    *,
+    include_package: bool,
+    created_by_display_name: str | None = None,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
         "id": version.id,
         "extensionId": version.extension_id,
         "version": version.version_number,
         "parentVersionId": version.parent_version_id,
+        "restoredFromVersionId": version.restored_from_version_id,
         "digest": version.package_digest,
         "status": version.status,
+        "changeType": version.change_type,
+        "changeSummary": version.change_summary,
+        "createdByUserId": version.created_by_user_id,
+        "createdByDisplayName": created_by_display_name,
         "manifest": version.manifest_json,
         "createdAt": version.created_at,
         "publishedAt": version.published_at,

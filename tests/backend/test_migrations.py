@@ -38,6 +38,9 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
         extension_columns = {
             column["name"] for column in inspector.get_columns("extensions")
         }
+        extension_version_columns = {
+            column["name"] for column in inspector.get_columns("extension_versions")
+        }
         conversation_columns = {
             column["name"] for column in inspector.get_columns("conversations")
         }
@@ -145,6 +148,11 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
         "affiliation",
     } <= user_columns
     assert "creator_user_id" in extension_columns
+    assert {
+        "change_summary",
+        "change_type",
+        "restored_from_version_id",
+    } <= extension_version_columns
     assert "is_liked" in conversation_columns
     assert "surface" in conversation_columns
     assert "next_turn_index" in conversation_columns
@@ -161,7 +169,7 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
     }
     assert "conversation_id" in workflow_node_columns
     assert {"definition", "parent_tag_id", "revision"} <= knowledge_tag_columns
-    assert revision == "0061"
+    assert revision == "0062"
     assert "ix_run_events_run_type" in {
         index["name"] for index in inspector.get_indexes("run_events")
     }
@@ -427,7 +435,7 @@ def test_context_migration_adopts_legacy_create_all_table(tmp_path: Path) -> Non
         }
         with engine.connect() as connection:
             assert (
-                MigrationContext.configure(connection).get_current_revision() == "0061"
+                MigrationContext.configure(connection).get_current_revision() == "0062"
             )
     finally:
         engine.dispose()
@@ -457,7 +465,7 @@ def test_recent_migrations_adopt_tables_precreated_by_runtime_schema(
     try:
         with engine.connect() as connection:
             revision = MigrationContext.configure(connection).get_current_revision()
-        assert revision == "0061"
+        assert revision == "0062"
     finally:
         engine.dispose()
 

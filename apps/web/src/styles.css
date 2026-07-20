@@ -1279,10 +1279,12 @@ button:disabled { cursor: default; opacity: 0.5; }
 .marketplace-package-detail { display: grid; min-height: 0; grid-template-rows: auto minmax(0, 1fr); gap: 14px; padding-top: 16px; }
 .marketplace-package-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .marketplace-package-summary > div { display: grid; gap: 3px; }
-.marketplace-package-summary > .marketplace-package-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.marketplace-package-summary > .marketplace-package-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; }
 .marketplace-package-summary strong { font-size: 13px; }
 .marketplace-package-summary span { color: var(--muted); font-size: 11px; }
-.feature-view.feature-view .marketplace-package-summary button { display: inline-flex; min-height: 30px; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 5px; padding: 0 10px; background: var(--surface); color: var(--ink); font-size: 14px; cursor: pointer; }
+.marketplace-change-summary { width: min(360px, 44vw); height: 30px; box-sizing: border-box; border: 1px solid var(--line); border-radius: var(--radius-control); padding: 0 8px; background: var(--surface); color: var(--ink); font-size: 13px; }
+.marketplace-change-summary:focus { border-color: var(--cobalt); outline: 0; }
+.feature-view.feature-view .marketplace-package-summary button { display: inline-flex; min-height: 30px; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 5px; padding: 0 10px; background: var(--surface); color: var(--ink); font-size: 14px; white-space: nowrap; cursor: pointer; }
 .marketplace-package-summary button.marketplace-detail-install-toggle { width: 92px; min-width: 92px; max-width: 92px; justify-content: center; white-space: nowrap; }
 .marketplace-package-summary button.is-primary { border-color: transparent; background: var(--cobalt); color: white; }
 .marketplace-package-summary button.is-disable { border-color: color-mix(in srgb, var(--warning) 28%, var(--line)); background: color-mix(in srgb, var(--warning) 7%, var(--surface)); color: var(--warning); }

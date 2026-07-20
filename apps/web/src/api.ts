@@ -112,6 +112,7 @@ import type {
   SkillCatalogLikeResult,
   SkillCatalogResponse,
   SkillExtension,
+  SkillVersionComparison,
   SkillVersion,
   ProjectFileDetail,
   ProjectFilePage,
@@ -1778,6 +1779,32 @@ export async function listTrashedExtensions(query?: string, signal?: AbortSignal
 
 export async function getExtensionVersion(versionId: string, signal?: AbortSignal) {
   return request<SkillVersion>(`/extension-versions/${encodeURIComponent(versionId)}`, { signal });
+}
+
+export async function compareSkillVersions(
+  skillId: string,
+  fromVersionId: string,
+  toVersionId: string,
+  signal?: AbortSignal,
+) {
+  return request<SkillVersionComparison>(`/skills/${encodeURIComponent(skillId)}/compare`, {
+    query: { from_version_id: fromVersionId, to_version_id: toVersionId },
+    signal,
+  });
+}
+
+export async function rollbackSkillVersion(
+  skillId: string,
+  targetVersionId: string,
+  expectedCurrentVersionId: string,
+  changeSummary: string,
+  signal?: AbortSignal,
+) {
+  return request<SkillVersion>(`/skills/${encodeURIComponent(skillId)}/rollbacks`, {
+    method: "POST",
+    body: { targetVersionId, expectedCurrentVersionId, changeSummary },
+    signal,
+  });
 }
 
 export async function checkoutSkillDraft(extensionId: string, signal?: AbortSignal) {
