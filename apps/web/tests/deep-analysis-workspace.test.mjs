@@ -412,6 +412,11 @@ test("Mission research controls, steering, citations, and source refresh are exp
   assert.match(types, /interface DeepAnalysisRefreshPreview/);
   assert.match(css, /\.deep-analysis-steer-panel/);
   assert.match(css, /\.deep-analysis-research-inspector/);
+  assert.match(view, /deep-analysis-mission-maintenance-actions/);
+  assert.match(view, /deep-analysis-refresh-run lumina-primary-action/);
+  assert.match(css, /\.deep-analysis-mission-maintenance-actions > button \{ min-width: 0; flex: 1 1 220px; \}/);
+  assert.match(css, /\.deep-analysis-research-inspector > button \{[^}]*font-size: var\(--conversation-font-size\)/);
+  assert.doesNotMatch(css, /\.deep-analysis-refresh-section/);
 });
 
 test("Mission event streaming uses a lightweight projection for live progress", async () => {

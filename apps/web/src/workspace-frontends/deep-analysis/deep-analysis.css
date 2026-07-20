@@ -327,11 +327,9 @@
 .deep-analysis-steer-panel label { display: grid; gap: 5px; color: var(--muted); font-size: 11px; }
 .deep-analysis-steer-panel textarea { width: 100%; border: 1px solid var(--line-strong); border-radius: var(--radius-field); padding: 7px 8px; background: var(--surface); color: var(--ink); font: inherit; resize: vertical; }
 .deep-analysis-steer-panel form > div:last-child { display: flex; justify-content: flex-end; gap: 6px; }
-.deep-analysis-steer-panel form > div:last-child > button,
-.deep-analysis-refresh-section button { display: inline-flex; min-height: 29px; align-items: center; justify-content: center; gap: 5px; border: 1px solid var(--line); border-radius: var(--radius-control); padding: 0 9px; background: var(--surface); color: var(--ink); font-size: 10.5px; cursor: pointer; }
+.deep-analysis-steer-panel form > div:last-child > button { display: inline-flex; min-height: 29px; align-items: center; justify-content: center; gap: 5px; border: 1px solid var(--line); border-radius: var(--radius-control); padding: 0 9px; background: var(--surface); color: var(--ink); font-size: 10.5px; cursor: pointer; }
 .deep-analysis-steer-panel form > div:last-child > button:last-child { border-color: var(--cobalt); background: var(--cobalt); color: white; }
-.deep-analysis-steer-panel button:disabled,
-.deep-analysis-refresh-section button:disabled { opacity: .5; cursor: default; }
+.deep-analysis-steer-panel button:disabled { opacity: .5; cursor: default; }
 
 .deep-analysis-node-origin { display: flex; align-items: flex-start; gap: 5px; margin-top: 2px; color: var(--muted); font-size: 10.5px; line-height: 1.45; }
 .deep-analysis-node-origin svg { flex: none; margin-top: 1px; color: var(--cobalt); }
@@ -527,21 +525,30 @@
 .deep-analysis-retry-node { display: flex; width: 100%; height: 30px; align-items: center; justify-content: center; gap: 6px; margin-top: 11px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); color: var(--ink); font-size: 10.5px; font-weight: 600; cursor: pointer; }
 .deep-analysis-retry-node:hover { border-color: var(--cobalt); color: var(--cobalt); }
 .deep-analysis-retry-node:disabled { opacity: .5; cursor: default; }
-.deep-analysis-research-inspector,
-.deep-analysis-refresh-section { display: grid; gap: 9px; padding: 12px 15px; border-top: 1px solid var(--line); }
-.deep-analysis-research-inspector > button,
-.deep-analysis-refresh-section > button { display: flex; min-height: 30px; align-items: center; gap: 6px; border: 0; padding: 0; background: transparent; color: var(--ink); font-size: 11px; font-weight: 600; text-align: left; cursor: pointer; }
+.deep-analysis-research-inspector { display: grid; gap: 9px; padding: 12px 15px; border-top: 1px solid var(--line); }
+.deep-analysis-research-inspector > button { display: flex; min-height: var(--control-height-md); align-items: center; gap: 6px; border: 0; padding: 0; background: transparent; color: var(--ink); font-size: var(--conversation-font-size); font-weight: 600; text-align: left; cursor: pointer; }
 .deep-analysis-research-inspector > button > span { flex: 1; }
 .deep-analysis-research-inspector > button[aria-expanded="true"] > svg:last-child { transform: rotate(180deg); }
-.deep-analysis-research-inspector > div,
-.deep-analysis-refresh-section > div { display: grid; gap: 9px; }
+.deep-analysis-research-inspector > div { display: grid; gap: 9px; }
+.deep-analysis-mission-maintenance { display: grid; gap: 10px; }
+.deep-analysis-mission-maintenance-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; }
+.deep-analysis-mission-maintenance-actions > button,
+.deep-analysis-refresh-run { display: inline-flex; min-height: var(--control-height-md); align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--line); border-radius: var(--radius-control); padding: 0 10px; background: var(--surface); color: var(--ink); font-size: var(--conversation-font-size); font-weight: 500; white-space: nowrap; cursor: pointer; }
+.deep-analysis-mission-maintenance-actions > button { min-width: 0; flex: 1 1 220px; }
+.deep-analysis-mission-maintenance-actions > button:not(:disabled):hover { border-color: var(--line-strong); background: var(--surface-soft); }
+.deep-analysis-mission-maintenance-actions > button:disabled,
+.deep-analysis-refresh-run:disabled { opacity: .5; cursor: default; }
+.deep-analysis-refresh-results { display: grid; gap: 9px; padding-top: 2px; }
+.deep-analysis-refresh-run { justify-self: start; }
+.deep-analysis-mission-maintenance .is-confirming { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); background: color-mix(in srgb, var(--danger) 9%, var(--surface)); color: var(--danger); }
+.deep-analysis-mission-maintenance .is-confirming:not(:disabled):hover { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, var(--surface)); }
 .deep-analysis-research-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
 .deep-analysis-research-metrics > span { display: grid; gap: 2px; border: 1px solid var(--line); border-radius: var(--radius-control); padding: 6px; color: var(--muted); font-size: 9.5px; text-align: center; }
 .deep-analysis-research-metrics strong { color: var(--ink); font-size: 13px; }
 .deep-analysis-research-metrics .is-warning strong { color: var(--danger); }
 .deep-analysis-source-list,
 .deep-analysis-citation-review ul,
-.deep-analysis-refresh-section ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.deep-analysis-refresh-results ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .deep-analysis-source-list > li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 7px; align-items: start; }
 .deep-analysis-source-list > li > span { border-radius: 999px; padding: 2px 5px; background: var(--surface-soft); color: var(--muted); font-size: 9px; }
 .deep-analysis-source-list > li > span.is-cited { background: color-mix(in srgb, var(--success) 12%, var(--surface)); color: var(--success); }
@@ -552,9 +559,8 @@
 .deep-analysis-citation-review summary,
 .deep-analysis-report-diff summary { color: var(--muted); font-size: 10.5px; cursor: pointer; }
 .deep-analysis-citation-review li { display: grid; gap: 2px; border-left: 2px solid color-mix(in srgb, var(--danger) 40%, var(--line)); padding-left: 7px; color: var(--ink); font-size: 10.5px; line-height: 1.45; }
-.deep-analysis-refresh-section li { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 10.5px; }
-.deep-analysis-refresh-section li strong { overflow: hidden; color: var(--ink); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
-.deep-analysis-refresh-section .is-armed { border-color: var(--danger); color: var(--danger); }
+.deep-analysis-refresh-results li { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 10.5px; }
+.deep-analysis-refresh-results li strong { overflow: hidden; color: var(--ink); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .deep-analysis-report-diff pre { max-height: 220px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-field); padding: 8px; background: var(--canvas); color: var(--ink); font-size: 9.5px; white-space: pre; }
 .deep-analysis-run-history { display: grid; gap: 7px; }
 .deep-analysis-run-history > span { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 10px; }

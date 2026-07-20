@@ -3411,12 +3411,26 @@ export function DeepAnalysisView({
                         )}
                       </section>
                       {canEdit && ["completed", "failed", "cancelled", "blocked"].includes(mission.status) && (
-                        <section className="deep-analysis-refresh-section">
-                          <button type="button" disabled={loadingRefreshPreview || refreshingMission} onClick={() => void inspectSourceChanges()}>
-                            {loadingRefreshPreview ? <LoaderCircle className="is-running" size={14} /> : <RefreshCw size={14} />}
-                            자료 변경 확인
-                          </button>
-                          {refreshPreview && <div>
+                        <section className="deep-analysis-mission-maintenance">
+                          <div className="deep-analysis-mission-maintenance-actions">
+                            <button type="button" disabled={loadingRefreshPreview || refreshingMission} onClick={() => void inspectSourceChanges()}>
+                              {loadingRefreshPreview ? <LoaderCircle className="is-running" size={14} /> : <RefreshCw size={14} />}
+                              자료 변경 확인
+                            </button>
+                            <button
+                              className={`deep-analysis-mission-restart ${restartArmed ? "is-confirming" : ""}`}
+                              type="button"
+                              aria-label={restartArmed ? "MISSION 처음부터 재시작 확인, 한 번 더 누르면 실행" : "MISSION 처음부터 재시작"}
+                              disabled={restartingMission || !mission.executionAvailable}
+                              onClick={() => void restartMission()}
+                            >
+                              {restartingMission
+                                ? <LoaderCircle className="is-running" size={14} />
+                                : restartArmed ? <AlertTriangle size={14} /> : <RefreshCw size={14} />}
+                              {restartingMission ? "재시작 중..." : restartArmed ? "한 번 더 눌러 처음부터 재시작" : "MISSION부터 처음부터 재시작"}
+                            </button>
+                          </div>
+                          {refreshPreview && <div className="deep-analysis-refresh-results">
                             <p>
                               {refreshPreview.hasChanges
                                 ? `${refreshPreview.changedSources.length}개 자료 변경 · ${refreshPreview.affectedNodeKeys.length}개 Node 영향`
@@ -3441,7 +3455,7 @@ export function DeepAnalysisView({
                             {refreshPreview.canRefresh && (
                               <button
                                 type="button"
-                                className={refreshArmed ? "is-armed" : undefined}
+                                className={refreshArmed ? "deep-analysis-refresh-run is-confirming" : "deep-analysis-refresh-run lumina-primary-action"}
                                 disabled={refreshingMission || !mission.executionAvailable}
                                 onClick={() => void refreshMissionSources()}
                               >
@@ -3453,20 +3467,6 @@ export function DeepAnalysisView({
                             )}
                           </div>}
                         </section>
-                      )}
-                      {canEdit && ["completed", "failed", "cancelled", "blocked"].includes(mission.status) && (
-                        <button
-                          className={`deep-analysis-retry-node ${restartArmed ? "is-armed" : ""}`}
-                          type="button"
-                          aria-label={restartArmed ? "MISSION 처음부터 재시작 확인, 한 번 더 누르면 실행" : "MISSION 처음부터 재시작"}
-                          disabled={restartingMission || !mission.executionAvailable}
-                          onClick={() => void restartMission()}
-                        >
-                          {restartingMission
-                            ? <LoaderCircle className="is-running" size={14} />
-                            : restartArmed ? <AlertTriangle size={14} /> : <RefreshCw size={14} />}
-                          {restartingMission ? "재시작 중..." : restartArmed ? "한 번 더 눌러 처음부터 재시작" : "MISSION부터 처음부터 재시작"}
-                        </button>
                       )}
                     </aside>
                   )}
