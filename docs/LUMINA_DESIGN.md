@@ -71,7 +71,7 @@
 | 대화 좋아요·Composer 중단·예약 작업 삭제·복원 loading | Implemented | 현재 Backend·Frontend와 UI 계약 test에 반영되어 있으며 삭제는 물리 삭제가 아닌 보관 처리 |
 | 일반 문서 RAG MCP | Target | 새 설계는 일반 문서·자연 위치 계약이지만 현재 `vector_db` source와 Skill은 아직 Markdown 조직 문서·`explore_org` 계약 |
 | 심층분석 Mission Workflow | 구현 | 독립 메뉴와 Workspace Frontend, Project 귀속 Mission·Workflow revision·Node·Edge, 초기 AI 자동 설계 1회, Node별 채팅 세션과 Run, Canvas·Inspector·실제 프롬프트·Markdown 출력·누적 비용·event replay·export를 제공합니다. Pattern·실행 중 재계획·Claim·Evidence·Quality Gate는 계약에서 제외합니다. |
-| 지식 문서 그래프·태그 사전 | 부분 구현 | 대화 답변의 명시 저장, 전용 `AI 태깅` 탭의 선택 Model·미태깅/전체 대상·Pool 전용/제안/자동 승인 정책, 신규 태그 proposal의 개별·일괄 승인·기존 태그 병합·거절, active canonical 태그 공유 기반 문서 그래프, Project scope, `off`·`auto`·`explicit`·`deep` 선택 검색, 점수 기반 passage 읽기, 태그 이름·유형·정의·범위 메모·별칭·부모 계층의 조회·생성·수정이 구현되었습니다. embedding vector 검색, 문서별 수동 태그 편집과 deprecated 대체 운영은 Target입니다. |
+| 지식 문서 그래프·태그 사전 | 부분 구현 | 대화 답변의 명시 저장, 전용 `AI 태깅` 탭의 선택 Model·미태깅/전체 대상·Pool 전용/제안/자동 승인 정책, 신규 태그 proposal의 개별·일괄 승인·기존 태그 병합·거절, active canonical 태그 공유 기반 문서 그래프, Project scope, `off`·`auto`·`explicit`·`deep` 선택 검색, BM25·canonical 태그·결정론적 local vector의 hybrid 검색, 점수 기반 passage 읽기, 태그 이름·유형·정의·범위 메모·별칭·부모 계층의 조회·생성·수정이 구현되었습니다. 문서별 수동 태그 편집과 deprecated 대체 운영은 Target입니다. |
 | Skill Change Request·Blob/Tree CAS·자동 Eval | Target | 개인 Draft·복수 Owner 기반은 구현되었으나 진화 pipeline과 저장 최적화는 후속 단계 |
 
 `lumina_agent_assessment_report_2026-07-12.html`은 해당 날짜의 정적 평가 snapshot입니다. 이후 source·test로 해소된 항목의 현재 상태를 이 보고서의 수치로 다시 판정하지 않습니다.

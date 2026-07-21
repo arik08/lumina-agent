@@ -49,7 +49,7 @@ Lumina의 지식 그래프는 Obsidian식 LLM Wiki처럼 **문서 하나를 노�
 
 저장된 문서 본문을 Run snapshot이나 system prompt에 자동 삽입하지 않습니다. Run에는 접근 가능한 지식 공간 ID, 설정 revision과 사용 모드만 고정하고 다음 읽기 전용 도구로 필요한 구간만 조회합니다.
 
-- `search_knowledge(query)`: Project·사용자 범위 안에서 BM25 방식 본문 검색과 canonical 태그·별칭 일치를 합산합니다. 최소 관련성 점수 미달이면 빈 결과를 반환하며, 실제 embedding index가 없는 현재 구현은 `vectorAvailable: false`를 명시합니다.
+- `search_knowledge(query)`: Project·사용자 범위 안에서 BM25 방식 본문 검색, canonical 태그·별칭 일치와 결정론적 local feature-hash vector 유사도를 합산합니다. Vector는 최근 64개 문서의 제목·태그와 문서별 최대 12,000자 본문 chunk를 서버 안에서 계산·cache하므로 원문이나 질의를 외부 embedding 서비스로 보내지 않습니다. 정확 키워드·태그 검색은 이 Vector 후보 제한과 별개로 동작합니다. 최소 관련성 점수 미달이면 빈 결과를 반환하며 결과에는 `vectorAvailable: true`, vector model·후보 제한 여부와 점수 breakdown을 남깁니다.
 - `read_knowledge_document(document_id, passage)`: 검색 결과가 가리키는 제한된 구간과 원문 인용, 선택 점수를 읽습니다.
 - `follow_knowledge_links(document_id)`: `deep` 모드의 복합 질문에서만 공유 canonical 태그 연결을 탐색합니다.
 
@@ -59,6 +59,8 @@ Lumina의 지식 그래프는 Obsidian식 LLM Wiki처럼 **문서 하나를 노�
 - `auto`: Project 고유 지식이 필요할 가능성이 있을 때 도구를 제공하되, 모델은 일반 상식 질문에 검색하지 않고 서버 최소 점수를 통과한 결과만 사용합니다.
 - `explicit`: 사용자가 Wiki·지식 그래프·지식 문서를 명시한 요청에서만 검색·읽기 도구를 제공합니다.
 - `deep`: `auto` 규칙에 더해 다문서 연결 탐색 도구를 제공합니다.
+
+따라서 기본 검색은 BM25·태그·local vector를 결합한 Hybrid RAG이고, `deep`은 Hybrid 검색으로 찾은 기준 문서에서 canonical 태그 Edge를 따라 확장하는 경량 Knowledge Graph RAG입니다.
 
 실제로 읽은 문서는 답변 Message metadata에 문서 ID, 읽은 passage 목록, 원문 인용, 선택 점수와 안정적인 `knowledge:<document_id>` source ID를 남깁니다. 저장 문서는 신뢰하지 않는 참고 자료로 취급하며 내부 지시문은 실행하지 않습니다. 새 분석은 자동 축적하지 않고 사용자가 답변 하단의 `지식 그래프 등록`을 직접 누른 경우에만 저장합니다.
 
