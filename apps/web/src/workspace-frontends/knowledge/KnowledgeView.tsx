@@ -1,6 +1,7 @@
 import {
   AlertTriangle,
   ArrowLeft,
+  ArrowUpDown,
   BookOpenText,
   Check,
   ChevronDown,
@@ -47,6 +48,12 @@ const documentViews = [
   { id: "sources", label: "참조" },
 ] as const;
 type KnowledgeDocumentView = typeof documentViews[number]["id"];
+const documentSortOptions = [
+  { id: "researchedAt", label: "조사일 (최근순)" },
+  { id: "tagCount", label: "태그 개수 (적은순)" },
+  { id: "linkedDocumentCount", label: "엣지 연결 (많은순)" },
+] as const;
+type KnowledgeDocumentSort = typeof documentSortOptions[number]["id"];
 const isDocumentView = (tab: KnowledgeTab): tab is KnowledgeDocumentView => documentViews.some(({ id }) => id === tab);
 const tagNamespaces = [
   { value: "purpose", label: "연구 목적" },
@@ -65,6 +72,15 @@ function errorMessage(error: unknown) {
 
 function researchedDate(value: string) {
   return new Intl.DateTimeFormat("ko-KR", { year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(value));
+}
+
+function sortKnowledgeDocuments(documents: KnowledgeDocumentSummary[], sort: KnowledgeDocumentSort) {
+  return [...documents].sort((left, right) => {
+    const researchedDifference = new Date(right.researchedAt).getTime() - new Date(left.researchedAt).getTime();
+    if (sort === "tagCount") return left.tags.length - right.tags.length || researchedDifference;
+    if (sort === "linkedDocumentCount") return right.linkedDocumentCount - left.linkedDocumentCount || researchedDifference;
+    return researchedDifference;
+  });
 }
 
 export function KnowledgeView() {
@@ -433,7 +449,7 @@ function KnowledgeContent(props: KnowledgeContentProps) {
   if (tab === "explore") return <div className="knowledge-page knowledge-explore"><label className="knowledge-search-box"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="문서 제목, 본문 또는 태그 검색" /></label><p className="knowledge-search-caption">{filteredDocuments.length}개의 문서를 찾았습니다.</p><section className="knowledge-card"><DocumentRows documents={filteredDocuments} onOpen={openDocument} /></section></div>;
 
   if (isDocumentView(tab)) return <div className="knowledge-master-detail">
-    <DocumentList documents={documents} selectedId={tab === "graph" ? selectedGraphNodeId : selectedDocument?.id ?? null} onOpen={(id) => tab === "graph" ? setSelectedGraphNodeId(id) : openDocument(id, tab)} onRead={tab === "graph" ? (id) => openDocument(id, "wiki", "graph") : undefined} onDelete={deleteDocument} label={`${documents.length}개 지식 문서`} activeView={tab} onViewChange={switchDocumentView} />
+    <DocumentList documents={documents} selectedId={tab === "graph" ? selectedGraphNodeId : selectedDocument?.id ?? null} onOpen={(id) => tab === "graph" ? setSelectedGraphNodeId(id) : openDocument(id, tab)} onRead={tab === "graph" ? (id) => openDocument(id, "wiki", "graph") : undefined} onDelete={deleteDocument} label={`${documents.length}개 문서`} activeView={tab} onViewChange={switchDocumentView} />
     {tab === "graph" && <section className="knowledge-graph-detail"><KnowledgeGraph graph={graph} layoutKey={space.id} selectedNodeId={selectedGraphNodeId} onSelectDocument={(id) => openDocument(id, "wiki", "graph")} /></section>}
     {tab === "wiki" && <WikiDocument document={selectedDocument} onBackToGraph={returnToGraph} />}
     {tab === "sources" && <section className="knowledge-source-detail">{selectedDocument ? <><header><small>보존된 citation</small><h3>{selectedDocument.title}</h3><p>{selectedDocument.citations.length}개의 참조가 답변과 함께 저장되어 있습니다.</p></header><div className="knowledge-source-cards">{selectedDocument.citations.map((citation, index) => <a key={`${citation.sourceId}-${index}`} href={citation.url || undefined} target="_blank" rel="noreferrer"><span>[{citation.markerNumber ?? index + 1}]</span><strong>{citation.title}</strong><small>{citation.domain || citation.url || "참조 정보"}</small>{citation.excerpt && <p>{citation.excerpt}</p>}</a>)}{!selectedDocument.citations.length && <EmptyState text="이 문서에는 참조가 없습니다." />}</div></> : <EmptyState text="문서를 선택해 주세요." />}</section>}
@@ -606,11 +622,33 @@ function DocumentList({ documents, selectedId, onOpen, onRead, onDelete, label, 
   const [deleteArmedId, setDeleteArmedId] = useState<string | null>(null);
   const [deleteBusyId, setDeleteBusyId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<{ id: string; message: string } | null>(null);
+  const [sort, setSort] = useState<KnowledgeDocumentSort>("researchedAt");
+  const [sortMenuOpen, setSortMenuOpen] = useState(false);
+  const sortControlRef = useRef<HTMLDivElement>(null);
+  const sortButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     setDeleteArmedId(null);
     setDeleteError(null);
   }, [activeView, selectedId]);
+
+  useEffect(() => {
+    if (!sortMenuOpen) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (event.target instanceof Node && !sortControlRef.current?.contains(event.target)) setSortMenuOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setSortMenuOpen(false);
+      sortButtonRef.current?.focus();
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [sortMenuOpen]);
 
   async function remove(document: KnowledgeDocumentSummary) {
     if (deleteArmedId !== document.id) {
@@ -629,19 +667,34 @@ function DocumentList({ documents, selectedId, onOpen, onRead, onDelete, label, 
       setDeleteBusyId(null);
     }
   }
-  const virtualList = useFixedVirtualList(documents.length, 62, {
+  const sortedDocuments = useMemo(() => sortKnowledgeDocuments(documents, sort), [documents, sort]);
+  const virtualList = useFixedVirtualList(sortedDocuments.length, 62, {
     threshold: 80,
     overscan: 8,
     disabled: deleteError !== null,
   });
-  const renderedDocuments = documents.slice(virtualList.start, virtualList.end);
+  const renderedDocuments = sortedDocuments.slice(virtualList.start, virtualList.end);
+
+  const selectSort = (nextSort: KnowledgeDocumentSort) => {
+    setSort(nextSort);
+    setSortMenuOpen(false);
+    virtualList.containerRef.current?.scrollTo({ top: 0 });
+  };
 
   return (
     <aside className="knowledge-master-list">
       <header>
         <strong>{label}</strong>
-        <div className="knowledge-document-view-toggle" role="tablist" aria-label="지식 문서 보기">
-          {documentViews.map(({ id, label: viewLabel }) => <button key={id} className={activeView === id ? "is-active" : ""} type="button" role="tab" aria-selected={activeView === id} onClick={() => onViewChange(id)}>{viewLabel}</button>)}
+        <div className="knowledge-document-header-controls">
+          <div className="knowledge-document-view-toggle" role="tablist" aria-label="지식 문서 보기">
+            {documentViews.map(({ id, label: viewLabel }) => <button key={id} className={activeView === id ? "is-active" : ""} type="button" role="tab" aria-selected={activeView === id} onClick={() => onViewChange(id)}>{viewLabel}</button>)}
+          </div>
+          <div className="knowledge-document-sort" ref={sortControlRef}>
+            <button ref={sortButtonRef} className={`knowledge-document-sort-trigger tooltip-control ${sortMenuOpen ? "is-open" : ""}`} type="button" aria-label="정렬기준" aria-haspopup="menu" aria-expanded={sortMenuOpen} data-tooltip="정렬기준" onClick={() => setSortMenuOpen((open) => !open)}><ArrowUpDown size={14} /></button>
+            {sortMenuOpen && <div className="knowledge-document-sort-menu" role="menu" aria-label="정렬기준">
+              {documentSortOptions.map((option) => <button key={option.id} type="button" role="menuitemradio" aria-checked={sort === option.id} onClick={() => selectSort(option.id)}><span>{option.label}</span><Check size={13} /></button>)}
+            </div>}
+          </div>
         </div>
       </header>
       <div className="knowledge-document-list-body" ref={virtualList.containerRef} onScroll={(event) => virtualList.onScroll(event.currentTarget)}>

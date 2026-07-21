@@ -91,7 +91,7 @@ test("Knowledge keeps the full workspace navigation around the document model", 
   assert.doesNotMatch(styles, /\.knowledge-space-header \{[^}]*min-height: 54px;/);
   assert.match(view, /const documentViews = \[[\s\S]*?label: "그래프"[\s\S]*?label: "문서"[\s\S]*?label: "참조"/);
   assert.match(view, /onClick=\{\(\) => setTab\(id === "wiki" \? "graph" : id\)\}/);
-  assert.match(view, /<DocumentList[\s\S]*?label=\{`\$\{documents\.length\}개 지식 문서`\}[\s\S]*?activeView=\{tab\}/);
+  assert.match(view, /<DocumentList[\s\S]*?label=\{`\$\{documents\.length\}개 문서`\}[\s\S]*?activeView=\{tab\}/);
   assert.match(view, /className="knowledge-document-view-toggle" role="tablist" aria-label="지식 문서 보기"/);
   assert.match(styles, /\.knowledge-master-list > header \{[^}]*justify-content: space-between;/);
   assert.match(styles, /\.knowledge-document-view-toggle \{[^}]*border: 1px solid var\(--line\);[^}]*border-radius: var\(--radius-control\);/);
@@ -105,6 +105,19 @@ test("Knowledge keeps the full workspace navigation around the document model", 
   assert.match(view, /className="knowledge-hero-metrics"/);
   assert.doesNotMatch(view, /className="knowledge-stat-grid"/);
   assert.doesNotMatch(view, /Wiki 열기/);
+});
+
+test("Knowledge document list sorts by research date, missing tags, or connected edges", async () => {
+  const [view, styles] = await Promise.all([readFile(viewPath, "utf8"), readFile(stylesPath, "utf8")]);
+  assert.match(view, /\{ id: "researchedAt", label: "조사일 \(최근순\)" \}/);
+  assert.match(view, /\{ id: "tagCount", label: "태그 개수 \(적은순\)" \}/);
+  assert.match(view, /\{ id: "linkedDocumentCount", label: "엣지 연결 \(많은순\)" \}/);
+  assert.match(view, /left\.tags\.length - right\.tags\.length \|\| researchedDifference/);
+  assert.match(view, /right\.linkedDocumentCount - left\.linkedDocumentCount \|\| researchedDifference/);
+  assert.match(view, /aria-label="정렬기준" aria-haspopup="menu" aria-expanded=\{sortMenuOpen\} data-tooltip="정렬기준"/);
+  assert.match(view, /className="knowledge-document-view-toggle"[\s\S]*?<div className="knowledge-document-sort"/);
+  assert.match(styles, /\.knowledge-document-sort-trigger \{[^}]*width: 28px;[^}]*height: 28px;/);
+  assert.match(styles, /\.knowledge-document-sort-menu \{[^}]*position: absolute;[^}]*right: 0;/);
 });
 
 test("answer action places Knowledge save immediately before branch", async () => {
