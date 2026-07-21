@@ -22,7 +22,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
 import { api as coreApi, ApiError } from "../../api";
 import { knowledgeApi } from "../../feature-api";
-import type { KnowledgeDocument, KnowledgeDocumentSummary, KnowledgeGraphResponse, KnowledgeSpace, KnowledgeTag, ProjectSummary } from "../../api-types";
+import type { KnowledgeDocument, KnowledgeDocumentSummary, KnowledgeGraphResponse, KnowledgeSpace, KnowledgeTag, KnowledgeUseMode, ProjectSummary } from "../../api-types";
 import { createClientId } from "../../client-id";
 import { MarkdownResponse } from "../../components/ConversationTurn";
 import { SelectMenu } from "../../components/SelectMenu";
@@ -65,6 +65,18 @@ const tagNamespaces = [
   { value: "metric", label: "지표" },
   { value: "product", label: "제품" },
 ] as const;
+const knowledgeUseModeOptions = [
+  { value: "off", label: "off · Wiki 미사용" },
+  { value: "auto", label: "auto · 높은 관련성에서 자동 사용" },
+  { value: "explicit", label: "explicit · 명시 요청에서만 사용" },
+  { value: "deep", label: "deep · 다문서 연결 탐색 허용" },
+] as const;
+const knowledgeUseModeDescriptions: Record<KnowledgeUseMode, string> = {
+  off: "지식 검색 도구를 Run에 제공하지 않습니다.",
+  auto: "Project 고유 지식이 필요할 때 검색하고, 관련성 기준을 넘은 문서만 사용합니다.",
+  explicit: "Wiki·지식 그래프를 명시한 요청에서만 검색합니다.",
+  deep: "관련 문서를 검색한 뒤 복합 질문에서 문서 연결 탐색도 허용합니다.",
+};
 
 function errorMessage(error: unknown) {
   return error instanceof ApiError ? error.message : "지식 그래프를 불러오지 못했습니다.";
@@ -109,6 +121,8 @@ export function KnowledgeView() {
   const [spaceEditValue, setSpaceEditValue] = useState("");
   const [savingSpaceDetails, setSavingSpaceDetails] = useState(false);
   const [spaceEditError, setSpaceEditError] = useState<string | null>(null);
+  const [savingUseMode, setSavingUseMode] = useState(false);
+  const [useModeError, setUseModeError] = useState<string | null>(null);
   const productActionsRef = useRef<HTMLDivElement>(null);
   const documentHistoryEntryRef = useRef<string | null>(null);
   const documentReturnTabRef = useRef<KnowledgeTab | null>(null);
@@ -157,6 +171,7 @@ export function KnowledgeView() {
   useEffect(() => {
     setEditingSpaceField(null);
     setSpaceEditError(null);
+    setUseModeError(null);
     setSearchedDocuments(null);
     setQuery("");
   }, [selectedSpaceId]);
@@ -303,6 +318,23 @@ export function KnowledgeView() {
     finally { setSavingSpaceDetails(false); }
   }
 
+  async function saveUseMode(useMode: KnowledgeUseMode) {
+    if (!selectedSpace || selectedSpace.useMode === useMode || savingUseMode) return;
+    setSavingUseMode(true);
+    setUseModeError(null);
+    try {
+      const updated = await api.knowledge.updateSpace(selectedSpace.id, {
+        expectedRevision: selectedSpace.settingsRevision,
+        useMode,
+      });
+      setSpaces((current) => current.map((space) => space.id === updated.id ? updated : space));
+    } catch (saveError) {
+      setUseModeError(saveError instanceof ApiError ? saveError.message : "사용 모드를 저장하지 못했습니다.");
+    } finally {
+      setSavingUseMode(false);
+    }
+  }
+
   async function deleteDocument(document: KnowledgeDocumentSummary) {
     await api.knowledge.deleteDocument(document.id);
     const deletedTagIds = new Set(document.tags.map((tag) => tag.id));
@@ -396,7 +428,7 @@ export function KnowledgeView() {
               return <button key={id} className={active ? "is-active" : ""} type="button" role="tab" aria-selected={active} onClick={() => setTab(id === "wiki" ? "graph" : id)}><Icon size={14} /> {label}</button>;
             })}</div></nav>
           </header>
-          {loadingContent ? <div className="knowledge-loading knowledge-loading-content"><LoaderCircle className="is-running" size={18} /> 지식을 불러오는 중</div> : <KnowledgeContent tab={tab} documents={documents} filteredDocuments={filteredDocuments} selectedDocument={selectedDocument} selectedGraphNodeId={selectedGraphNodeId} graph={graph} tags={tags} tagLoadError={tagLoadError} query={query} citationCount={citationCount} space={selectedSpace} editingSpaceField={editingSpaceField} spaceEditValue={spaceEditValue} savingSpaceDetails={savingSpaceDetails} spaceEditError={spaceEditError} setTab={setTab} setQuery={setQuery} setSpaceEditValue={setSpaceEditValue} setTags={setTags} setSelectedGraphNodeId={setSelectedGraphNodeId} beginSpaceDetailsEdit={beginSpaceDetailsEdit} cancelSpaceDetailsEdit={cancelSpaceDetailsEdit} saveSpaceDetails={saveSpaceDetails} deleteDocument={deleteDocument} openDocument={openDocument} returnToGraph={returnToGraph} />}
+          {loadingContent ? <div className="knowledge-loading knowledge-loading-content"><LoaderCircle className="is-running" size={18} /> 지식을 불러오는 중</div> : <KnowledgeContent tab={tab} documents={documents} filteredDocuments={filteredDocuments} selectedDocument={selectedDocument} selectedGraphNodeId={selectedGraphNodeId} graph={graph} tags={tags} tagLoadError={tagLoadError} query={query} citationCount={citationCount} space={selectedSpace} editingSpaceField={editingSpaceField} spaceEditValue={spaceEditValue} savingSpaceDetails={savingSpaceDetails} spaceEditError={spaceEditError} savingUseMode={savingUseMode} useModeError={useModeError} setTab={setTab} setQuery={setQuery} setSpaceEditValue={setSpaceEditValue} setTags={setTags} setSelectedGraphNodeId={setSelectedGraphNodeId} beginSpaceDetailsEdit={beginSpaceDetailsEdit} cancelSpaceDetailsEdit={cancelSpaceDetailsEdit} saveSpaceDetails={saveSpaceDetails} saveUseMode={saveUseMode} deleteDocument={deleteDocument} openDocument={openDocument} returnToGraph={returnToGraph} />}
         </> : <div className="knowledge-empty"><BookOpenText size={25} /><h3>새 지식 그래프를 만들어 주세요.</h3><p>저장한 AI 답변이 문서 단위로 이 그래프에 쌓입니다.</p></div>}
       </section>
     </div>
@@ -419,6 +451,8 @@ interface KnowledgeContentProps {
   spaceEditValue: string;
   savingSpaceDetails: boolean;
   spaceEditError: string | null;
+  savingUseMode: boolean;
+  useModeError: string | null;
   setTab: (tab: KnowledgeTab) => void;
   setQuery: (value: string) => void;
   setSpaceEditValue: (value: string) => void;
@@ -427,13 +461,14 @@ interface KnowledgeContentProps {
   beginSpaceDetailsEdit: (field: "name" | "purpose") => void;
   cancelSpaceDetailsEdit: () => void;
   saveSpaceDetails: (event: FormEvent<HTMLFormElement>) => void;
+  saveUseMode: (useMode: KnowledgeUseMode) => Promise<void>;
   deleteDocument: (document: KnowledgeDocumentSummary) => Promise<void>;
   openDocument: (documentId: string, tab?: KnowledgeTab, returnTab?: KnowledgeTab) => void;
   returnToGraph: () => void;
 }
 
 function KnowledgeContent(props: KnowledgeContentProps) {
-  const { tab, documents, filteredDocuments, selectedDocument, selectedGraphNodeId, graph, tags, tagLoadError, query, citationCount, space, editingSpaceField, spaceEditValue, savingSpaceDetails, spaceEditError, setTab, setQuery, setSpaceEditValue, setTags, setSelectedGraphNodeId, beginSpaceDetailsEdit, cancelSpaceDetailsEdit, saveSpaceDetails, deleteDocument, openDocument, returnToGraph } = props;
+  const { tab, documents, filteredDocuments, selectedDocument, selectedGraphNodeId, graph, tags, tagLoadError, query, citationCount, space, editingSpaceField, spaceEditValue, savingSpaceDetails, spaceEditError, savingUseMode, useModeError, setTab, setQuery, setSpaceEditValue, setTags, setSelectedGraphNodeId, beginSpaceDetailsEdit, cancelSpaceDetailsEdit, saveSpaceDetails, saveUseMode, deleteDocument, openDocument, returnToGraph } = props;
   const switchDocumentView = (view: KnowledgeDocumentView) => {
     if (tab === "graph" && view !== "graph" && selectedGraphNodeId) {
       openDocument(selectedGraphNodeId, view, "graph");
@@ -457,7 +492,7 @@ function KnowledgeContent(props: KnowledgeContentProps) {
 
   if (tab === "review") return <TagManagement space={space} tags={tags} loadError={tagLoadError} setTags={setTags} />;
 
-  return <div className="knowledge-page knowledge-settings"><section className="knowledge-card"><header><div><strong>지식 그래프</strong><small>현재 지식 그래프의 저장 정책과 범위입니다.</small></div></header><dl><div><dt>이름</dt><dd>{editingSpaceField === "name" ? <form className="knowledge-settings-inline-form" onSubmit={saveSpaceDetails}><input autoFocus aria-label="지식 그래프 이름" maxLength={240} value={spaceEditValue} onChange={(event) => setSpaceEditValue(event.target.value)} /><button type="submit" aria-label="이름 저장" disabled={!spaceEditValue.trim() || savingSpaceDetails}>{savingSpaceDetails ? <LoaderCircle className="is-running" size={13} /> : <Check size={13} />}</button><button type="button" aria-label="이름 편집 취소" disabled={savingSpaceDetails} onClick={cancelSpaceDetailsEdit}><X size={13} /></button>{spaceEditError && <span role="alert">{spaceEditError}</span>}</form> : <button className="knowledge-settings-inline-value" type="button" aria-label={`${space.name} 이름 편집`} onClick={() => beginSpaceDetailsEdit("name")}><span>{space.name}</span><Pencil size={12} /></button>}</dd></div><div><dt>목적</dt><dd>{editingSpaceField === "purpose" ? <form className="knowledge-settings-inline-form" onSubmit={saveSpaceDetails}><input autoFocus aria-label="지식 그래프 설명" maxLength={10_000} value={spaceEditValue} placeholder="설정되지 않음" onChange={(event) => setSpaceEditValue(event.target.value)} /><button type="submit" aria-label="설명 저장" disabled={savingSpaceDetails}>{savingSpaceDetails ? <LoaderCircle className="is-running" size={13} /> : <Check size={13} />}</button><button type="button" aria-label="설명 편집 취소" disabled={savingSpaceDetails} onClick={cancelSpaceDetailsEdit}><X size={13} /></button>{spaceEditError && <span role="alert">{spaceEditError}</span>}</form> : <button className="knowledge-settings-inline-value" type="button" aria-label="지식 그래프 설명 편집" onClick={() => beginSpaceDetailsEdit("purpose")}><span>{space.purpose || "설정되지 않음"}</span><Pencil size={12} /></button>}</dd></div><div><dt>공개 범위</dt><dd>{space.visibility === "private" ? "개인 · 비공개" : "조직 공유"}</dd></div><div><dt>저장 단위</dt><dd>AI 답변 1개 = 지식 문서 1개</dd></div><div><dt>연결 규칙</dt><dd>Canonical 태그를 공유하는 문서끼리 연결</dd></div><div><dt>태그 정책</dt><dd>태그 사전에서 이름·정의·별칭과 계층을 직접 관리</dd></div></dl></section></div>;
+  return <div className="knowledge-page knowledge-settings"><section className="knowledge-card"><header><div><strong>지식 그래프</strong><small>현재 지식 그래프의 저장 정책과 범위입니다.</small></div></header><dl><div><dt>이름</dt><dd>{editingSpaceField === "name" ? <form className="knowledge-settings-inline-form" onSubmit={saveSpaceDetails}><input autoFocus aria-label="지식 그래프 이름" maxLength={240} value={spaceEditValue} onChange={(event) => setSpaceEditValue(event.target.value)} /><button type="submit" aria-label="이름 저장" disabled={!spaceEditValue.trim() || savingSpaceDetails}>{savingSpaceDetails ? <LoaderCircle className="is-running" size={13} /> : <Check size={13} />}</button><button type="button" aria-label="이름 편집 취소" disabled={savingSpaceDetails} onClick={cancelSpaceDetailsEdit}><X size={13} /></button>{spaceEditError && <span role="alert">{spaceEditError}</span>}</form> : <button className="knowledge-settings-inline-value" type="button" aria-label={`${space.name} 이름 편집`} onClick={() => beginSpaceDetailsEdit("name")}><span>{space.name}</span><Pencil size={12} /></button>}</dd></div><div><dt>목적</dt><dd>{editingSpaceField === "purpose" ? <form className="knowledge-settings-inline-form" onSubmit={saveSpaceDetails}><input autoFocus aria-label="지식 그래프 설명" maxLength={10_000} value={spaceEditValue} placeholder="설정되지 않음" onChange={(event) => setSpaceEditValue(event.target.value)} /><button type="submit" aria-label="설명 저장" disabled={savingSpaceDetails}>{savingSpaceDetails ? <LoaderCircle className="is-running" size={13} /> : <Check size={13} />}</button><button type="button" aria-label="설명 편집 취소" disabled={savingSpaceDetails} onClick={cancelSpaceDetailsEdit}><X size={13} /></button>{spaceEditError && <span role="alert">{spaceEditError}</span>}</form> : <button className="knowledge-settings-inline-value" type="button" aria-label="지식 그래프 설명 편집" onClick={() => beginSpaceDetailsEdit("purpose")}><span>{space.purpose || "설정되지 않음"}</span><Pencil size={12} /></button>}</dd></div><div><dt>사용 모드</dt><dd><div className="knowledge-use-mode-setting"><SelectMenu className="knowledge-use-mode-select" menuClassName="knowledge-use-mode-menu" size="small" width="auto" value={space.useMode} options={knowledgeUseModeOptions} ariaLabel="지식 그래프 사용 모드" disabled={savingUseMode} onChange={(value) => void saveUseMode(value as KnowledgeUseMode)} /><small>{savingUseMode ? "저장 중…" : knowledgeUseModeDescriptions[space.useMode]}</small>{useModeError && <span role="alert">{useModeError}</span>}</div></dd></div><div><dt>공개 범위</dt><dd>{space.visibility === "private" ? "개인 · 비공개" : "조직 공유"}</dd></div><div><dt>저장 단위</dt><dd>AI 답변 1개 = 지식 문서 1개</dd></div><div><dt>연결 규칙</dt><dd>Canonical 태그를 공유하는 문서끼리 연결</dd></div><div><dt>태그 정책</dt><dd>태그 사전에서 이름·정의·별칭과 계층을 직접 관리</dd></div></dl></section></div>;
 }
 
 type TagDraft = {

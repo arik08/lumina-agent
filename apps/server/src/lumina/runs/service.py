@@ -27,7 +27,7 @@ from ..instructions import (
     resolve_instruction_stack_from_models,
     runtime_prompt_snapshot,
 )
-from ..knowledge.context import build_project_knowledge_context_snapshot
+from ..tools.knowledge import build_project_knowledge_retrieval_snapshot
 from ..mcp.service import resolve_mcp_snapshot
 from ..models import (
     Artifact,
@@ -472,11 +472,10 @@ def create_run(
         ],
         "excluded_scopes": list(instruction_stack.excluded_scopes),
     }
-    knowledge_context = build_project_knowledge_context_snapshot(
+    knowledge_retrieval = build_project_knowledge_retrieval_snapshot(
         db,
-        project=project,
+        project_id=project.id,
         owner_user_id=user.id,
-        query=payload.message.text,
     )
     normalized_login_id = user.login_id.strip().casefold()
     prompt_cache_scope = (
@@ -517,7 +516,11 @@ def create_run(
         "analysis_depth": payload.message.analysis_depth,
         "answer_length": payload.message.answer_length,
         "instructions": instruction_snapshot,
-        **({"knowledge_context": knowledge_context} if knowledge_context else {}),
+        **(
+            {"knowledge_retrieval": knowledge_retrieval}
+            if knowledge_retrieval
+            else {}
+        ),
         "runtime_prompts": runtime_prompts,
         "extensions": extensions,
         "extension_application": extension_application,
@@ -586,7 +589,11 @@ def create_run(
             "agent": agent_snapshot,
             "project": stable_prefix["project"],
             "instructions": instruction_snapshot,
-            **({"knowledge_context": knowledge_context} if knowledge_context else {}),
+            **(
+                {"knowledge_retrieval": knowledge_retrieval}
+                if knowledge_retrieval
+                else {}
+            ),
             "runtime_prompts": runtime_prompts,
             "extensions": extensions,
             "extension_application": extension_application,

@@ -16,6 +16,9 @@ test("source evidence distinguishes cited, reviewed, and search-only material", 
   assert.match(apiTypes, /researchVerification\?: "verified" \| "unverified" \| "not_required" \| "disabled"/);
   assert.match(app, /citation\.status === "cited" \|\| citation\.status === "resolved"/);
   assert.match(app, /reviewed: source\.evidenceKind === "fetched_content"/);
+  assert.match(app, /source\.evidenceKind === "knowledge_document"/);
+  assert.match(app, /byToken\.set\(`source:\$\{target\.source\.sourceId\}`/);
+  assert.match(app, /선택 점수 \$\{source\.selectionScore\.toFixed\(2\)\}/);
   assert.match(app, /const leftRank = left\.cited \? 0 : left\.reviewed \? 1 : 2/);
   assert.match(app, /if \(left\.cited && left\.citationOrder !== right\.citationOrder\)/);
   assert.match(app, /return left\.citationOrder - right\.citationOrder/);
@@ -30,6 +33,7 @@ test("source evidence distinguishes cited, reviewed, and search-only material", 
   assert.match(app, /sourceCountLabels = \[/);
   assert.match(app, /sourceCountLabels\.length > 0/);
   assert.match(app, /citedSourceCount > 0 && <span className="answer-source-count is-cited"> · 인용 \{citedSourceCount\}<\/span>/);
+  assert.match(app, /knowledgeSourceCount > 0 && <span className="answer-source-count is-knowledge"> · 지식 문서 \{knowledgeSourceCount\}<\/span>/);
   assert.match(app, /reviewedSourceCount > 0 && <span className="answer-source-count is-reviewed"> · 본문 확인 \{reviewedSourceCount\}<\/span>/);
   assert.match(app, /referenceSourceCount > 0 && <span className="answer-source-count is-reference-only"> · 검색 참고 \{referenceSourceCount\}<\/span>/);
   assert.match(app, /aria-label=\{`검색 및 참고 출처, \$\{sourceCountLabels\.join\(", "\)\}`\}/);
@@ -43,7 +47,7 @@ test("source evidence distinguishes cited, reviewed, and search-only material", 
   assert.match(stylesheet, /\.research-verification-warning \{[^}]*var\(--danger-border\)/s);
   assert.match(stylesheet, /@container \(max-width: 820px\)[^{]*\{[^}]*\.answer-completed-time \{ display: none; \}/s);
   assert.match(stylesheet, /@container \(max-width: 690px\)[^{]*\{[^}]*\.answer-source-count\.is-reference-only \{ display: none; \}/s);
-  assert.match(stylesheet, /@container \(max-width: 610px\)[^{]*\{[^}]*\.answer-source-count\.is-reviewed \{ display: none; \}/s);
+  assert.match(stylesheet, /@container \(max-width: 610px\)[^{]*\{[^}]*\.answer-source-count\.is-reviewed, \.answer-source-count\.is-knowledge \{ display: none; \}/s);
   assert.match(stylesheet, /@container \(max-width: 530px\)[^{]*\{[^}]*\.answer-source-count\.is-cited \{ display: none; \}/s);
   assert.match(stylesheet, /@container \(max-width: 460px\)[^{]*\{[^}]*\.answer-sources \{ display: none; \}/s);
   assert.match(stylesheet, /\.answer-sources-popover \{[^}]*overflow-x: hidden;[^}]*white-space: normal;/s);

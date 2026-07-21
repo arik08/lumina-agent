@@ -39,6 +39,20 @@ def test_resolves_source_id_marker_without_fabricating_unknown_source() -> None:
     assert payload["sources"][2]["citationStatus"] == "cited"
 
 
+def test_resolves_knowledge_source_id_with_namespace() -> None:
+    source = {
+        "sourceId": "knowledge:document-id",
+        "title": "지식 문서",
+        "normalizedUrl": "",
+    }
+    payload = resolve_inline_citations(
+        "저장된 근거입니다[source:knowledge:document-id].", [source]
+    )
+
+    assert payload["citations"][0]["sourceId"] == "knowledge:document-id"
+    assert payload["sources"][0]["citationStatus"] == "cited"
+
+
 def test_resolves_artifact_links_in_first_appearance_order() -> None:
     sources = _sources()
     sources[2]["normalizedUrl"] = "https://c.test/%EC%9E%90%EB%A3%8C"

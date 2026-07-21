@@ -1989,6 +1989,7 @@ class KnowledgeSpace(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         String(24), default="active", index=True, nullable=False
     )
     settings_revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    use_mode: Mapped[str] = mapped_column(String(16), default="auto", nullable=False)
     project_ids_json: Mapped[list[str] | None] = mapped_column(JSON)
     archived_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
 

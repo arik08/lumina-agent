@@ -9,10 +9,22 @@ from sqlalchemy import select
 
 from lumina.config import Settings
 from lumina.db import SessionLocal
-from lumina.knowledge.context import build_project_knowledge_context_snapshot
 from lumina.knowledge.tagger import DocumentTagSuggestion, NewTagSuggestion
 from lumina.main import create_app
-from lumina.models import KnowledgeDocument, KnowledgeDocumentTag, KnowledgeTag, Message, Project, Run, User
+from lumina.models import (
+    Conversation,
+    KnowledgeDocument,
+    KnowledgeDocumentTag,
+    KnowledgeTag,
+    Message,
+    Project,
+    Run,
+    User,
+)
+from lumina.tools.knowledge import (
+    build_project_knowledge_retrieval_snapshot,
+    execute_knowledge_tool,
+)
 
 
 def _login(client: TestClient) -> str:
@@ -73,14 +85,46 @@ def test_knowledge_documents_remain_available_beyond_the_latest_200(
             db.add_all(documents)
             db.commit()
 
-            snapshot = build_project_knowledge_context_snapshot(
-                db,
-                project=project,
+            conversation = Conversation(
+                organization_id=user.organization_id,
+                project_id=project.id,
                 owner_user_id=user.id,
-                query="legacyneedle",
+                title="Knowledge recall",
+            )
+            db.add(conversation)
+            db.flush()
+            snapshot = build_project_knowledge_retrieval_snapshot(
+                db,
+                project_id=project.id,
+                owner_user_id=user.id,
             )
             assert snapshot is not None
-            assert [item["title"] for item in snapshot["documents"]] == [
+            assert "legacyneedle" not in str(snapshot)
+            run = Run(
+                organization_id=user.organization_id,
+                project_id=project.id,
+                conversation_id=conversation.id,
+                user_id=user.id,
+                status="completed",
+                provider_id="mock",
+                model_key="mock-agent",
+                runtime_model_id="mock-agent",
+                model_display_name="Mock Agent",
+                snapshot_json={
+                    "knowledge_retrieval": snapshot,
+                    "user_message_text": "legacyneedle",
+                },
+            )
+            db.add(run)
+            db.flush()
+            result = execute_knowledge_tool(
+                db,
+                run=run,
+                user=user,
+                name="search_knowledge",
+                arguments={"query": "legacyneedle"},
+            )
+            assert [item["title"] for item in result["results"]] == [
                 "Document 204"
             ]
 
@@ -363,6 +407,7 @@ def test_knowledge_space_project_links_are_revision_checked_and_persisted(
         )
         assert space.status_code == 201, space.text
         assert space.json()["projectIds"] == []
+        assert space.json()["useMode"] == "auto"
 
         updated = client.patch(
             f"/api/knowledge/spaces/{space.json()['id']}",
@@ -370,10 +415,12 @@ def test_knowledge_space_project_links_are_revision_checked_and_persisted(
             json={
                 "expectedRevision": space.json()["settingsRevision"],
                 "projectIds": [project.json()["id"]],
+                "useMode": "deep",
             },
         )
         assert updated.status_code == 200, updated.text
         assert updated.json()["projectIds"] == [project.json()["id"]]
+        assert updated.json()["useMode"] == "deep"
         assert updated.json()["settingsRevision"] == 2
 
         stale = client.patch(
@@ -385,6 +432,7 @@ def test_knowledge_space_project_links_are_revision_checked_and_persisted(
         assert client.get("/api/knowledge/spaces").json()[0]["projectIds"] == [
             project.json()["id"]
         ]
+        assert client.get("/api/knowledge/spaces").json()[0]["useMode"] == "deep"
 
 
 def test_manual_tag_dictionary_supports_definitions_aliases_and_hierarchy(

@@ -1245,13 +1245,13 @@ function citationTargets(text: string, sources: SourceEvidence[], citations: Mes
     const citation = citationOrder >= 0 ? citations[citationOrder] : undefined;
     const explicitMarker = citation?.markerNumber ?? citation?.marker_number;
     const markerNumber = explicitMarker && explicitMarker > 0 ? explicitMarker : index + 1;
-    const hasSourceToken = text.includes(`[${source.sourceId}]`) || text.includes(`[[${source.sourceId}]]`);
+    const hasSourceToken = text.includes(`[source:${source.sourceId}]`) || text.includes(`[${source.sourceId}]`) || text.includes(`[[${source.sourceId}]]`);
     const hasMarkerToken = text.includes(citationMarkerLabel(markerNumber)) || text.includes(`[${markerNumber}]`);
     return {
       source,
       markerNumber,
       cited: citation ? citation.status === "cited" || citation.status === "resolved" : hasSourceToken || hasMarkerToken,
-      reviewed: source.evidenceKind === "fetched_content",
+      reviewed: source.evidenceKind === "fetched_content" || source.evidenceKind === "knowledge_document",
       citationOrder: citationOrder >= 0 ? citationOrder : Number.MAX_SAFE_INTEGER,
       sourceOrder: index,
     };
@@ -1281,6 +1281,7 @@ function splitCitationText(value: string, targets: CitationTarget[]): PhrasingCo
   const byToken = new Map<string, CitationTarget>();
   citedTargets.forEach((target) => {
     byToken.set(target.source.sourceId, target);
+    byToken.set(`source:${target.source.sourceId}`, target);
     byToken.set(String(target.markerNumber), target);
     byToken.set(citationMarkerLabel(target.markerNumber), target);
   });
@@ -1672,12 +1673,14 @@ export const AssistantTurn = memo(function AssistantTurn({
   const sanitizedAssistantText = sanitizeAssistantResponse(assistantText, artifacts.length > 0);
   const sourceTargets = citationTargets(sanitizedAssistantText, sources, citations);
   const citedSourceCount = sourceTargets.filter((target) => target.cited).length;
-  const reviewedSourceCount = sourceTargets.filter((target) => !target.cited && target.reviewed).length;
-  const referenceSourceCount = sources.length - citedSourceCount - reviewedSourceCount;
+  const reviewedSourceCount = sourceTargets.filter((target) => !target.cited && target.source.evidenceKind === "fetched_content").length;
+  const referenceSourceCount = sourceTargets.filter((target) => !target.cited && target.source.evidenceKind === "search_snippet").length;
+  const knowledgeSourceCount = sources.filter((source) => source.evidenceKind === "knowledge_document").length;
   const sourceCountLabels = [
     citedSourceCount > 0 ? `인용 ${citedSourceCount}` : null,
     reviewedSourceCount > 0 ? `본문 확인 ${reviewedSourceCount}` : null,
     referenceSourceCount > 0 ? `검색 참고 ${referenceSourceCount}` : null,
+    knowledgeSourceCount > 0 ? `지식 문서 ${knowledgeSourceCount}` : null,
   ].filter((label): label is string => label !== null);
   const tools = snapshot?.toolExecutions ?? turnSet.toolExecutions;
   const hasArtifactWritingExecution = tools.some((execution) => (
@@ -2132,6 +2135,7 @@ export const AssistantTurn = memo(function AssistantTurn({
                       >
                         <span>검색 및 참고 출처</span>
                         {citedSourceCount > 0 && <span className="answer-source-count is-cited"> · 인용 {citedSourceCount}</span>}
+                        {knowledgeSourceCount > 0 && <span className="answer-source-count is-knowledge"> · 지식 문서 {knowledgeSourceCount}</span>}
                         {reviewedSourceCount > 0 && <span className="answer-source-count is-reviewed"> · 본문 확인 {reviewedSourceCount}</span>}
                         {referenceSourceCount > 0 && <span className="answer-source-count is-reference-only"> · 검색 참고 {referenceSourceCount}</span>}
                       </button>
@@ -2146,11 +2150,11 @@ export const AssistantTurn = memo(function AssistantTurn({
                                   <button className="source-detail-back is-icon" type="button" aria-label="출처 목록으로 돌아가기" onClick={returnToSourceList}><ArrowLeft size={15} /></button>
                                 </div>
                                 <div className="source-header">
-                                  <span className={`source-kind${expandedSourceTarget.cited ? "" : expandedSourceTarget.reviewed ? " is-reviewed" : " is-reference-only"}`}>{expandedSourceTarget.cited ? `${citationMarkerLabel(expandedSourceTarget.markerNumber)} 본문 인용` : expandedSourceTarget.reviewed ? "본문 확인" : "검색 참고"}</span>
+                                  <span className={`source-kind${expandedSourceTarget.cited ? "" : expandedSourceTarget.reviewed ? " is-reviewed" : " is-reference-only"}`}>{expandedSourceTarget.source.evidenceKind === "knowledge_document" ? `${expandedSourceTarget.cited ? `${citationMarkerLabel(expandedSourceTarget.markerNumber)} ` : ""}지식 문서` : expandedSourceTarget.cited ? `${citationMarkerLabel(expandedSourceTarget.markerNumber)} 본문 인용` : expandedSourceTarget.reviewed ? "본문 확인" : "검색 참고"}</span>
                                   {defaultUrlTransform(expandedSourceTarget.source.normalizedUrl || expandedSourceTarget.source.originalUrl)
                                     ? <a href={defaultUrlTransform(expandedSourceTarget.source.normalizedUrl || expandedSourceTarget.source.originalUrl)} target="_blank" rel="noreferrer noopener">{expandedSourceTarget.source.title || expandedSourceTarget.source.domain}</a>
                                     : <strong>{expandedSourceTarget.source.title || expandedSourceTarget.source.domain}</strong>}
-                                  <small>{expandedSourceTarget.source.domain}</small>
+                                  <small>{expandedSourceTarget.source.domain}{expandedSourceTarget.source.selectionScore !== undefined ? ` · 선택 점수 ${expandedSourceTarget.source.selectionScore.toFixed(2)}` : ""}</small>
                                 </div>
                                 {sourceContent?.sourceId === expandedSourceTarget.source.sourceId ? (
                                   <>
@@ -2180,11 +2184,11 @@ export const AssistantTurn = memo(function AssistantTurn({
                                   {sourceTargets.map(({ source, markerNumber, cited, reviewed }) => (
                                     <li className={cited ? "is-cited" : reviewed ? "is-reviewed" : "is-reference-only"} key={source.sourceId}>
                                       <div className="source-header">
-                                        <span className="source-kind">{cited ? `${citationMarkerLabel(markerNumber)} 본문 인용` : reviewed ? "본문 확인" : "검색 참고"}</span>
+                                        <span className="source-kind">{source.evidenceKind === "knowledge_document" ? `${cited ? `${citationMarkerLabel(markerNumber)} ` : ""}지식 문서` : cited ? `${citationMarkerLabel(markerNumber)} 본문 인용` : reviewed ? "본문 확인" : "검색 참고"}</span>
                                         {defaultUrlTransform(source.normalizedUrl || source.originalUrl)
                                           ? <a href={defaultUrlTransform(source.normalizedUrl || source.originalUrl)} target="_blank" rel="noreferrer noopener">{source.title || source.domain}</a>
                                           : <strong>{source.title || source.domain}</strong>}
-                                        <small>{source.domain}</small>
+                                        <small>{source.domain}{source.selectionScore !== undefined ? ` · 선택 점수 ${source.selectionScore.toFixed(2)}` : ""}</small>
                                         </div>
                                       {source.verbatimExcerpt && (
                                         <div className="source-excerpt-row">

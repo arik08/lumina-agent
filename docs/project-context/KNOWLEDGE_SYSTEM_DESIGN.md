@@ -39,13 +39,26 @@ Lumina의 지식 그래프는 Obsidian식 LLM Wiki처럼 **문서 하나를 노�
 - Node: `KnowledgeDocument`
 - Edge: 두 문서가 공유하는 canonical tag가 있을 때 계산되는 문서 간 연결
 - Edge weight: 공유 태그 수
-- 화면과 API는 최대 200개 문서를 다루며 문서별 가까운 연결을 제한해 과밀화를 방지합니다.
+- 화면과 API는 200개를 넘는 문서도 누락하지 않으며, 문서별 가까운 연결 수를 제한해 과밀화를 방지합니다.
 
 그래프는 개념 사실 그래프가 아니라 Wiki 문서 탐색 그래프입니다. 관계를 승인하거나 수정하는 별도 작업은 없습니다.
 
 ## Run 컨텍스트
 
-같은 Project에서 저장된 문서는 제목·태그·본문 키워드로 순위를 정해 제한된 수와 문자 예산 안에서 Run snapshot에 고정합니다. 저장 문서는 참고 자료이며 내부의 지시문은 실행하지 않습니다.
+저장된 문서 본문을 Run snapshot이나 system prompt에 자동 삽입하지 않습니다. Run에는 접근 가능한 지식 공간 ID, 설정 revision과 사용 모드만 고정하고 다음 읽기 전용 도구로 필요한 구간만 조회합니다.
+
+- `search_knowledge(query)`: Project·사용자 범위 안에서 BM25 방식 본문 검색과 canonical 태그·별칭 일치를 합산합니다. 최소 관련성 점수 미달이면 빈 결과를 반환하며, 실제 embedding index가 없는 현재 구현은 `vectorAvailable: false`를 명시합니다.
+- `read_knowledge_document(document_id, passage)`: 검색 결과가 가리키는 제한된 구간과 원문 인용, 선택 점수를 읽습니다.
+- `follow_knowledge_links(document_id)`: `deep` 모드의 복합 질문에서만 공유 canonical 태그 연결을 탐색합니다.
+
+지식 공간별 사용 모드는 설정 탭에서 revision CAS로 저장합니다.
+
+- `off`: 도구를 Run에 제공하지 않습니다.
+- `auto`: Project 고유 지식이 필요할 가능성이 있을 때 도구를 제공하되, 모델은 일반 상식 질문에 검색하지 않고 서버 최소 점수를 통과한 결과만 사용합니다.
+- `explicit`: 사용자가 Wiki·지식 그래프·지식 문서를 명시한 요청에서만 검색·읽기 도구를 제공합니다.
+- `deep`: `auto` 규칙에 더해 다문서 연결 탐색 도구를 제공합니다.
+
+실제로 읽은 문서는 답변 Message metadata에 문서 ID, 읽은 passage 목록, 원문 인용, 선택 점수와 안정적인 `knowledge:<document_id>` source ID를 남깁니다. 저장 문서는 신뢰하지 않는 참고 자료로 취급하며 내부 지시문은 실행하지 않습니다. 새 분석은 자동 축적하지 않고 사용자가 답변 하단의 `지식 그래프 등록`을 직접 누른 경우에만 저장합니다.
 
 ## 삭제된 이전 계약
 

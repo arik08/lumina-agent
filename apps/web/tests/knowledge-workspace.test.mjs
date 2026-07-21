@@ -125,6 +125,26 @@ test("Knowledge document list sorts by research date, missing tags, or connected
   assert.match(styles, /\.knowledge-document-sort-menu \{[^}]*position: absolute;[^}]*right: 0;/);
 });
 
+test("Knowledge settings persist the selective retrieval mode", async () => {
+  const [view, types, styles] = await Promise.all([
+    readFile(viewPath, "utf8"),
+    readFile(typesPath, "utf8"),
+    readFile(stylesPath, "utf8"),
+  ]);
+  assert.match(types, /type KnowledgeUseMode = "off" \| "auto" \| "explicit" \| "deep"/);
+  assert.match(types, /useMode: KnowledgeUseMode/);
+  for (const mode of ["off", "auto", "explicit", "deep"]) {
+    assert.match(view, new RegExp(`value: "${mode}"`));
+  }
+  assert.match(view, /ariaLabel="지식 그래프 사용 모드"/);
+  assert.match(view, /expectedRevision: selectedSpace\.settingsRevision,[\s\S]*?useMode/);
+  assert.match(view, /knowledgeUseModeDescriptions\[space\.useMode\]/);
+  assert.match(styles, /\.knowledge-use-mode-setting \{[^}]*grid-template-columns: minmax\(220px, 278px\) minmax\(0, 1fr\);/);
+  assert.match(styles, /\.knowledge-use-mode-menu\.lumina-select-menu \.lumina-select-option:hover:not\(:disabled\),[\s\S]*?background: color-mix\(in srgb, var\(--ink\) 7%, var\(--menu-surface\)\);/);
+  assert.match(styles, /\.knowledge-use-mode-menu\.lumina-select-menu \.lumina-select-option\.is-selected:hover:not\(:disabled\),[\s\S]*?background: color-mix\(in srgb, var\(--cobalt\) 18%, var\(--menu-surface\)\);/);
+  assert.match(styles, /@media \(max-width: 520px\) \{[\s\S]*?\.knowledge-use-mode-setting \{ grid-template-columns: 1fr; \}/);
+});
+
 test("answer action places Knowledge save immediately before branch", async () => {
   const turn = await readFile(turnPath, "utf8");
   const savePosition = turn.indexOf('aria-label="지식 그래프 등록"');

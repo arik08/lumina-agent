@@ -194,7 +194,13 @@ from ..instructions import (
     RICH_CHAT_RENDERING_CONTRACT,
     WEB_RESEARCH_EFFICIENCY_CONTRACT,
 )
-from ..knowledge.context import render_project_knowledge_context
+from ..tools.knowledge import (
+    KNOWLEDGE_TOOL_NAMES,
+    execute_knowledge_tool,
+    knowledge_retrieval_contract,
+    knowledge_source_metadata,
+    knowledge_tool_schemas,
+)
 from ..runs.state import (
     ACTIVE_STATUSES,
     AWAITING_APPROVAL,
@@ -1215,6 +1221,11 @@ class LocalRunExecutor:
                 str(run.snapshot_json.get("analysis_depth", "auto")),
             )
         )
+        knowledge_snapshot = run.snapshot_json.get("knowledge_retrieval")
+        knowledge_schemas = knowledge_tool_schemas(
+            knowledge_snapshot if isinstance(knowledge_snapshot, Mapping) else None,
+            user_message,
+        )
         core_tool_schemas = (
             _UPDATE_PLAN_TOOL_SCHEMA,
             _REQUEST_USER_INPUT_TOOL_SCHEMA,
@@ -1241,6 +1252,7 @@ class LocalRunExecutor:
             ),
             *((_WEB_SEARCH_TOOL_SCHEMA,) if web_research_budget[0] > 0 else ()),
             *((_WEB_FETCH_TOOL_SCHEMA,) if web_research_budget[1] > 0 else ()),
+            *knowledge_schemas,
             *SOURCE_DOCUMENT_TOOL_SCHEMAS,
             *WORKSPACE_TOOL_SCHEMAS,
         )
@@ -2012,7 +2024,9 @@ class LocalRunExecutor:
             provider_tool_contents = _provider_tool_result_contents(
                 resolved_calls,
                 capabilities=capabilities,
-                untrusted_tool_names=frozenset(mcp_tools_by_name),
+                untrusted_tool_names=frozenset(
+                    (*mcp_tools_by_name, *KNOWLEDGE_TOOL_NAMES)
+                ),
                 delivered_web_text_chars=delivered_web_text_chars,
             )
             _record_web_fetch_provider_context(run_id, delivered_web_text_chars)
@@ -2456,7 +2470,7 @@ class LocalRunExecutor:
         provider_tool_contents = _provider_tool_result_contents(
             resolved_calls,
             capabilities=capabilities,
-            untrusted_tool_names=frozenset(mcp_tools),
+            untrusted_tool_names=frozenset((*mcp_tools, *KNOWLEDGE_TOOL_NAMES)),
             delivered_web_text_chars=delivered_web_text_chars,
         )
         _record_web_fetch_provider_context(run_id, delivered_web_text_chars)
@@ -3193,12 +3207,13 @@ class LocalRunExecutor:
             system += f"\n\n{WEB_RESEARCH_EFFICIENCY_CONTRACT}"
         stable_system_parts: list[str] = []
         turn_system_parts: list[str] = []
-        knowledge_snapshot = run.snapshot_json.get("knowledge_context")
-        knowledge_context = render_project_knowledge_context(
-            knowledge_snapshot if isinstance(knowledge_snapshot, dict) else None
+        knowledge_snapshot = run.snapshot_json.get("knowledge_retrieval")
+        knowledge_contract = knowledge_retrieval_contract(
+            knowledge_snapshot if isinstance(knowledge_snapshot, Mapping) else None,
+            str(run.snapshot_json.get("user_message_text", "")),
         )
-        if knowledge_context:
-            turn_system_parts.append(_bounded_text(knowledge_context, 60_000))
+        if knowledge_contract:
+            turn_system_parts.append(knowledge_contract)
         user_message = str(run.snapshot_json.get("user_message_text", ""))
         clarification_mode = str(
             run.snapshot_json.get("clarification_mode", "balanced")
@@ -4110,6 +4125,7 @@ class LocalRunExecutor:
                         "untrustedExternalContent": (
                             source_execution.tool_name in (mcp_tools or {})
                             or source_execution.tool_name in {"web_search", "web_fetch"}
+                            or source_execution.tool_name in KNOWLEDGE_TOOL_NAMES
                         ),
                     }
             await self._complete_tool_execution(
@@ -4230,6 +4246,36 @@ class LocalRunExecutor:
                 tool_id,
                 payload,
                 f"{fetch_result.evidence.domain} 본문을 확인했습니다.",
+            )
+            return payload
+
+        if tool_call["name"] in KNOWLEDGE_TOOL_NAMES:
+            try:
+                with session_scope() as db:
+                    knowledge_run = db.get(Run, run_id)
+                    knowledge_user = (
+                        db.get(User, knowledge_run.user_id)
+                        if knowledge_run is not None
+                        else None
+                    )
+                    if knowledge_run is None or knowledge_user is None:
+                        raise RuntimeError(
+                            "Run context disappeared during Knowledge retrieval"
+                        )
+                    payload = execute_knowledge_tool(
+                        db,
+                        run=knowledge_run,
+                        user=knowledge_user,
+                        name=str(tool_call["name"]),
+                        arguments=arguments,
+                    )
+            except (TypeError, ValueError) as exc:
+                return await self._fail_tool_execution(run_id, tool_id, exc)
+            await self._complete_tool_execution(
+                run_id,
+                tool_id,
+                payload,
+                f"Knowledge {tool_call['name']} 작업을 완료했습니다.",
             )
             return payload
 
@@ -5819,6 +5865,11 @@ class LocalRunExecutor:
             if run is None or run.status in TERMINAL_STATUSES:
                 return
             web_metadata = _web_source_metadata(db, run.id)
+            knowledge_metadata = knowledge_source_metadata(db, run.id)
+            web_metadata["sources"].extend(knowledge_metadata["sources"])
+            web_metadata["knowledgeSelections"] = knowledge_metadata[
+                "knowledgeSelections"
+            ]
             web_metadata.update(
                 resolve_inline_citations(
                     run.assistant_draft,

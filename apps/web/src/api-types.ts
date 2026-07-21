@@ -758,11 +758,14 @@ export interface AnswerDeepAnalysisDecisionRequest {
   answerText?: string;
 }
 
+export type KnowledgeUseMode = "off" | "auto" | "explicit" | "deep";
+
 export interface KnowledgeSpace {
   id: UUID;
   name: string;
   purpose: string;
   visibility: "private" | "organization";
+  useMode: KnowledgeUseMode;
   settingsRevision: number;
   projectIds: UUID[];
   createdAt: IsoDateTime;
@@ -780,7 +783,7 @@ export interface SteerDeepAnalysisMissionRequest {
 }
 
 export interface CreateKnowledgeSpaceRequest { name: string; purpose?: string; visibility?: "private" | "organization"; }
-export interface UpdateKnowledgeSpaceRequest { expectedRevision: number; name?: string; purpose?: string; projectIds?: UUID[]; }
+export interface UpdateKnowledgeSpaceRequest { expectedRevision: number; name?: string; purpose?: string; projectIds?: UUID[]; useMode?: KnowledgeUseMode; }
 export interface KnowledgeDocumentTag {
   id: UUID;
   name: string;
@@ -1143,12 +1146,30 @@ export interface SourceEvidence {
   title: string;
   domain: string;
   verbatimExcerpt: string;
-  evidenceKind: "search_snippet" | "fetched_content";
+  evidenceKind: "search_snippet" | "fetched_content" | "knowledge_document";
   contentType?: string | null;
   extractionStatus?: "snippet_only" | "complete" | "empty";
   searchBackends?: string[];
   textChars?: number | null;
   llmTextChars?: number | null;
+  knowledgeDocumentId?: UUID;
+  selectionScore?: number;
+}
+
+export interface KnowledgeSelection {
+  documentId: UUID;
+  title: string;
+  selectionScore: number;
+  sourceId: string;
+  passages: Array<{
+    offset: number;
+    limit: number;
+    nextOffset: number;
+    hasMore: boolean;
+    totalCharacters: number;
+    text: string;
+  }>;
+  originalCitations: Array<Record<string, unknown>>;
 }
 
 export interface WebSourceContentPage {
@@ -1182,6 +1203,7 @@ export interface MessageMetadata {
   };
   sources?: SourceEvidence[];
   citations?: MessageCitation[];
+  knowledgeSelections?: KnowledgeSelection[];
   searchInvocations?: Array<{
     invocationId: string;
     query: string;

@@ -195,6 +195,15 @@
 .knowledge-settings-inline-form button { width: 28px; min-width: 28px; height: 28px; flex: none; border: 1px solid var(--line); border-radius: var(--radius-control); padding: 0; background: var(--surface); color: var(--muted); }
 .knowledge-settings-inline-form button[type="submit"] { border-color: var(--cobalt); background: var(--cobalt); color: white; }
 .knowledge-settings-inline-form > span { max-width: 180px; overflow: hidden; color: var(--danger); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.knowledge-use-mode-setting { display: grid; min-width: 0; grid-template-columns: minmax(220px, 278px) minmax(0, 1fr); align-items: center; gap: 6px 10px; }
+.knowledge-use-mode-select { width: 100%; }
+.knowledge-use-mode-menu { min-width: 278px; }
+.knowledge-use-mode-menu.lumina-select-menu .lumina-select-option:hover:not(:disabled),
+.knowledge-use-mode-menu.lumina-select-menu .lumina-select-option:focus-visible { background: color-mix(in srgb, var(--ink) 7%, var(--menu-surface)); }
+.knowledge-use-mode-menu.lumina-select-menu .lumina-select-option.is-selected:hover:not(:disabled),
+.knowledge-use-mode-menu.lumina-select-menu .lumina-select-option.is-selected:focus-visible { background: color-mix(in srgb, var(--cobalt) 18%, var(--menu-surface)); }
+.knowledge-use-mode-setting > small { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.knowledge-use-mode-setting > span[role="alert"] { grid-column: 1 / -1; color: var(--danger); font-size: 11px; }
 .knowledge-graph-canvas { position: relative; min-height: 0; flex: 1; overflow: hidden; background: var(--surface); }
 .knowledge-graph-canvas > canvas { display: block; width: 100%; height: 100%; outline: 0; cursor: move; touch-action: none; }
 .knowledge-graph-node-layer { position: absolute; z-index: 1; inset: 0; overflow: hidden; pointer-events: none; }
@@ -243,4 +252,7 @@
   .knowledge-tag-editor label.is-wide { grid-column: auto; }
   .knowledge-tag-management-row { grid-template-columns: 18px minmax(0, 1fr) 14px; }
   .knowledge-tag-usage { display: none; }
+  .knowledge-settings dl > div { grid-template-columns: 1fr; align-items: start; gap: 6px; }
+  .knowledge-use-mode-setting { grid-template-columns: 1fr; }
+  .knowledge-use-mode-menu { min-width: min(278px, calc(100vw - 56px)); }
 }

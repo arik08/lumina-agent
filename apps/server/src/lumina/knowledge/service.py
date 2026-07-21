@@ -74,6 +74,7 @@ def create_knowledge_space(
         visibility=payload.visibility,
         status="active",
         settings_revision=1,
+        use_mode="auto",
     )
     db.add(space)
     db.flush()
@@ -139,6 +140,8 @@ def update_knowledge_space(
         for project_id in payload.project_ids:
             require_project(db, user, project_id)
         space.project_ids_json = payload.project_ids
+    if payload.use_mode is not None:
+        space.use_mode = payload.use_mode
     space.settings_revision += 1
     db.flush()
     return space
@@ -522,6 +525,7 @@ def space_payload(space: KnowledgeSpace) -> dict[str, object]:
         "name": space.name,
         "purpose": space.purpose,
         "visibility": space.visibility,
+        "useMode": space.use_mode,
         "settingsRevision": space.settings_revision,
         "projectIds": list(space.project_ids_json or []),
         "createdAt": space.created_at,
