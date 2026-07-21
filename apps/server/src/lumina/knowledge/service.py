@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-import asyncio
 from hashlib import sha256
 import logging
 import re
@@ -31,10 +30,15 @@ from .schemas import (
     KnowledgeTagUpdate,
 )
 from .tagger import (
+    DocumentTagInput,
+    DocumentTagSuggestion,
     ExistingTagCandidate,
     MAX_DOCUMENT_TAGS,
+    MAX_TAG_BATCH_DOCUMENTS,
+    MAX_TAG_BATCH_INPUT_CHARACTERS,
+    MAX_TAG_INPUT_CHARACTERS,
     NewTagSuggestion,
-    suggest_document_tags,
+    suggest_document_tag_batch,
 )
 
 
@@ -285,27 +289,28 @@ async def tag_untagged_knowledge_documents(
         )
     )
     candidates = _tag_candidates(db, space_id)
-    semaphore = asyncio.Semaphore(4)
-
-    async def suggest(document: KnowledgeDocument):
-        async with semaphore:
-            try:
-                return await suggest_document_tags(
-                    provider=provider,
-                    model=model,
-                    title=document.title,
-                    body=document.body,
-                    candidates=candidates,
-                )
-            except Exception:
-                logger.warning(
-                    "Knowledge document batch tagging failed",
-                    exc_info=True,
-                    extra={"document_id": document.id, "space_id": space_id},
-                )
-                return None
-
-    suggestions = await asyncio.gather(*(suggest(document) for document in documents))
+    suggestions: list[DocumentTagSuggestion | None] = []
+    for batch in _knowledge_document_tag_batches(documents):
+        try:
+            batch_suggestions = await suggest_document_tag_batch(
+                provider=provider,
+                model=model,
+                documents=tuple(
+                    DocumentTagInput(title=document.title, body=document.body)
+                    for document in batch
+                ),
+                candidates=candidates,
+            )
+            if len(batch_suggestions) != len(batch):
+                raise ValueError("Knowledge tag batch response length mismatch")
+            suggestions.extend(batch_suggestions)
+        except Exception:
+            logger.warning(
+                "Knowledge document batch tagging failed",
+                exc_info=True,
+                extra={"document_count": len(batch), "space_id": space_id},
+            )
+            suggestions.extend([None] * len(batch))
     tagged_count = 0
     failed_count = 0
     for document, suggestion in zip(documents, suggestions, strict=True):
@@ -350,6 +355,30 @@ async def tag_untagged_knowledge_documents(
         "failedCount": failed_count,
         "remainingCount": remaining_count,
     }
+
+
+def _knowledge_document_tag_batches(
+    documents: list[KnowledgeDocument],
+) -> list[list[KnowledgeDocument]]:
+    batches: list[list[KnowledgeDocument]] = []
+    batch: list[KnowledgeDocument] = []
+    batch_characters = 0
+    for document in documents:
+        document_characters = len(document.title) + min(
+            len(document.body), MAX_TAG_INPUT_CHARACTERS
+        )
+        if batch and (
+            len(batch) >= MAX_TAG_BATCH_DOCUMENTS
+            or batch_characters + document_characters > MAX_TAG_BATCH_INPUT_CHARACTERS
+        ):
+            batches.append(batch)
+            batch = []
+            batch_characters = 0
+        batch.append(document)
+        batch_characters += document_characters
+    if batch:
+        batches.append(batch)
+    return batches
 
 
 def document_payload(db: Session, document: KnowledgeDocument) -> dict[str, object]:

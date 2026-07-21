@@ -111,11 +111,11 @@ def test_answer_is_saved_without_tags_then_batch_tagged_with_selected_model(
         cookie_secure=False,
     )
 
-    tag_models: list[str] = []
+    tag_batches: list[tuple[str, int]] = []
 
-    async def fake_tags(**kwargs) -> DocumentTagSuggestion:
-        tag_models.append(kwargs["model"])
-        return DocumentTagSuggestion(
+    async def fake_tag_batch(**kwargs) -> tuple[DocumentTagSuggestion, ...]:
+        tag_batches.append((kwargs["model"], len(kwargs["documents"])))
+        suggestion = DocumentTagSuggestion(
             tag_ids=(),
             new_tags=(
                 NewTagSuggestion.model_validate(
@@ -127,8 +127,11 @@ def test_answer_is_saved_without_tags_then_batch_tagged_with_selected_model(
                 ),
             ),
         )
+        return tuple(suggestion for _ in kwargs["documents"])
 
-    monkeypatch.setattr("lumina.knowledge.service.suggest_document_tags", fake_tags)
+    monkeypatch.setattr(
+        "lumina.knowledge.service.suggest_document_tag_batch", fake_tag_batch
+    )
 
     with TestClient(create_app(settings)) as client:
         csrf = _login(client)
@@ -203,7 +206,7 @@ def test_answer_is_saved_without_tags_then_batch_tagged_with_selected_model(
         assert saved["body"] == body
         assert saved["researchedAt"] == researched_at.isoformat().replace("+00:00", "Z")
         assert saved["tags"] == []
-        assert tag_models == []
+        assert tag_batches == []
         assert saved["citations"][0]["title"] == "Obsidian Help"
         assert "description" not in saved
         assert "author" not in saved
@@ -216,6 +219,28 @@ def test_answer_is_saved_without_tags_then_batch_tagged_with_selected_model(
         assert duplicate.json()["id"] == saved["id"]
         assert duplicate.json()["created"] is False
 
+        second_body = "두 번째 미태깅 문서도 같은 요청에서 처리합니다."
+        with SessionLocal() as db:
+            user = db.scalar(select(User).where(User.login_name == "admin"))
+            assert user is not None
+            second_document = KnowledgeDocument(
+                space_id=saved["spaceId"],
+                project_id=project_id,
+                owner_user_id=user.id,
+                source_message_id=None,
+                source_run_id=None,
+                source_conversation_id=conversation_id,
+                title="두 번째 문서",
+                body=second_body,
+                researched_at=researched_at + timedelta(seconds=1),
+                citations_json=[],
+                content_digest=sha256(second_body.encode("utf-8")).hexdigest(),
+                status="active",
+            )
+            db.add(second_document)
+            db.commit()
+            second_document_id = second_document.id
+
         tagged = client.post(
             "/api/knowledge/documents/tag-batch",
             headers=headers,
@@ -227,18 +252,22 @@ def test_answer_is_saved_without_tags_then_batch_tagged_with_selected_model(
         )
         assert tagged.status_code == 200, tagged.text
         assert tagged.json() == {
-            "requestedCount": 1,
-            "taggedCount": 1,
+            "requestedCount": 2,
+            "taggedCount": 2,
             "failedCount": 0,
             "remainingCount": 0,
         }
-        assert tag_models == ["mock-agent"]
+        assert tag_batches == [("mock-agent", 2)]
         assert (
             client.get(f"/api/knowledge/documents/{saved['id']}").json()["tags"][0][
                 "name"
             ]
             == "인공지능"
         )
+        second_deleted = client.delete(
+            f"/api/knowledge/documents/{second_document_id}", headers=headers
+        )
+        assert second_deleted.status_code == 204, second_deleted.text
 
         linked_body = "같은 태그를 공유하는 두 번째 지식 문서"
         with SessionLocal() as db:

@@ -9,7 +9,7 @@ Lumina의 지식 그래프는 Obsidian식 LLM Wiki처럼 **문서 하나를 노�
 1. 완료된 AI 답변 하단에서 사용자가 `지식 그래프 저장`을 누릅니다.
 2. 답변의 최종 본문을 가공하거나 요약하지 않고 `KnowledgeDocument.body`에 그대로 저장합니다.
 3. 같은 메시지는 `source_message_id` 유일 제약으로 한 번만 저장합니다.
-4. 저장과 함께 소량의 태그만 별도 구조화 출력으로 생성합니다. 태그 생성 실패가 문서 저장을 막지는 않습니다.
+4. 저장 시 원문을 먼저 확정하고, 미태깅 문서는 개수·문자 예산으로 묶은 별도 Provider micro-batch 구조화 출력으로 태깅합니다. 여러 문서의 후보 태그와 공통 지침은 한 요청에서 한 번만 전달하며, 태그 생성 실패가 문서 저장을 막지는 않습니다.
 5. 자동 수집, Entity/Statement 추출, 검토 대기열과 개별 승인은 없습니다.
 
 ## 문서 메타데이터
@@ -29,7 +29,7 @@ Lumina의 지식 그래프는 Obsidian식 LLM Wiki처럼 **문서 하나를 노�
 - 표기 차이, 번역어, 약어는 alias로 같은 canonical tag에 연결합니다. 예: `인공지능`, `AI`, `Artificial Intelligence`.
 - 동음이의어는 `scope_note`가 다르면 합치지 않습니다.
 - 상위·하위 개념도 자동으로 합치지 않습니다.
-- LLM에는 기존 태그 ID, canonical name, scope와 alias 후보를 함께 주고 ID 재사용을 우선시킵니다.
+- LLM에는 내부 태그 ID 대신 요청 안의 후보 인덱스와 canonical name, scope, alias를 주고 기존 태그 재사용을 우선시킵니다. Backend가 응답 인덱스를 실제 ID로 변환합니다.
 - 새 태그는 기존 후보가 맞지 않을 때만 생성합니다.
 
 초기 데이터 규모에서는 이 canonical dictionary 방식이 우선입니다. 임베딩 clustering은 태그 수가 커진 뒤 중복 후보를 관리자에게 제안하는 오프라인 보조 수단으로만 추가하며, 자동 병합에는 사용하지 않습니다.
