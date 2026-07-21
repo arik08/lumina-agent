@@ -50,10 +50,13 @@ test("Knowledge Wiki reuses the default chat Markdown renderer", async () => {
   ]);
   assert.match(view, /import \{ MarkdownResponse \} from "\.\.\/\.\.\/components\/ConversationTurn"/);
   assert.match(view, /<MarkdownResponse text=\{document\.body\} \/>/);
+  const wikiDocument = view.match(/function WikiDocument[\s\S]*?function EmptyState/)?.[0] ?? "";
+  assert.doesNotMatch(wikiDocument, /document\.bodyPreview/);
   assert.match(view, /className="knowledge-markdown conversation-response-typography"/);
   assert.doesNotMatch(view, /ReactMarkdown|remarkGfm/);
   assert.match(turn, /table: \(\{ children \}\) => <div className="markdown-table-scroll"><table>\{children\}<\/table><\/div>/);
   assert.doesNotMatch(styles, /\.knowledge-markdown (?:img|pre)/);
+  assert.doesNotMatch(styles, /\.knowledge-wiki-article > header > p/);
   assert.match(globalStyles, /\.conversation-response-typography \{ min-width: 0; font-family: inherit; font-size: var\(--conversation-font-size\); line-height: 1\.68; \}/);
   assert.match(globalStyles, /\.conversation-response-typography,\s*\.conversation-response-typography \*,\s*\.feature-view\.feature-view \.conversation-response-typography,\s*\.feature-view\.feature-view \.conversation-response-typography \* \{\s*font-size: var\(--conversation-font-size\);/);
   assert.match(styles, /\.knowledge-wiki-navigation button \{[^}]*border: 0;[^}]*background: transparent;[^}]*color: var\(--cobalt\);/);
