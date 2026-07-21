@@ -15,6 +15,7 @@ import {
   Plus,
   Search,
   Settings,
+  Sparkles,
   Tags,
   Trash2,
   X,
@@ -22,7 +23,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
 import { api as coreApi, ApiError } from "../../api";
 import { knowledgeApi } from "../../feature-api";
-import type { KnowledgeDocument, KnowledgeDocumentSummary, KnowledgeGraphResponse, KnowledgeSpace, KnowledgeTag, KnowledgeUseMode, ProjectSummary } from "../../api-types";
+import type { KnowledgeBatchTagResult, KnowledgeDocument, KnowledgeDocumentSummary, KnowledgeGraphResponse, KnowledgeNewTagPolicy, KnowledgeSpace, KnowledgeTag, KnowledgeTaggingTarget, KnowledgeTagProposal, KnowledgeUseMode, ModelSummary, ProjectSummary, ProviderSummary } from "../../api-types";
 import { createClientId } from "../../client-id";
 import { MarkdownResponse } from "../../components/ConversationTurn";
 import { SelectMenu } from "../../components/SelectMenu";
@@ -32,13 +33,14 @@ import "./knowledge.css";
 
 const api = { ...coreApi, knowledge: knowledgeApi };
 
-type KnowledgeTab = "home" | "explore" | "sources" | "wiki" | "graph" | "review" | "settings";
+type KnowledgeTab = "home" | "explore" | "sources" | "wiki" | "graph" | "tagging" | "review" | "settings";
 const emptyGraph: KnowledgeGraphResponse = { nodes: [], edges: [], truncated: false };
 const knowledgeDocumentHistoryKey = "luminaKnowledgeDocument";
 const tabs = [
   { id: "home", label: "홈", icon: Home },
   { id: "explore", label: "탐색", icon: FileSearch },
   { id: "wiki", label: "문서", icon: BookOpenText },
+  { id: "tagging", label: "AI 태깅", icon: Sparkles },
   { id: "review", label: "태그 관리", icon: Tags },
   { id: "settings", label: "설정", icon: Settings },
 ] as const;
@@ -360,6 +362,21 @@ export function KnowledgeView() {
     }
   }
 
+  async function refreshKnowledgeContent() {
+    if (!selectedSpaceId) return;
+    const [loadedDocuments, loadedGraph, loadedTags] = await Promise.all([
+      api.knowledge.listDocuments({ spaceId: selectedSpaceId }),
+      api.knowledge.getGraph(selectedSpaceId),
+      api.knowledge.listTags(selectedSpaceId),
+    ]);
+    setDocuments(loadedDocuments);
+    setGraph(loadedGraph);
+    setTags(loadedTags);
+    if (selectedDocument && loadedDocuments.some((item) => item.id === selectedDocument.id)) {
+      await loadDocument(selectedDocument.id);
+    }
+  }
+
   function openDocument(documentId: string, nextTab: KnowledgeTab = "wiki", returnTab?: KnowledgeTab) {
     if (returnTab) {
       try {
@@ -428,7 +445,7 @@ export function KnowledgeView() {
               return <button key={id} className={active ? "is-active" : ""} type="button" role="tab" aria-selected={active} onClick={() => setTab(id === "wiki" ? "graph" : id)}><Icon size={14} /> {label}</button>;
             })}</div></nav>
           </header>
-          {loadingContent ? <div className="knowledge-loading knowledge-loading-content"><LoaderCircle className="is-running" size={18} /> 지식을 불러오는 중</div> : <KnowledgeContent tab={tab} documents={documents} filteredDocuments={filteredDocuments} selectedDocument={selectedDocument} selectedGraphNodeId={selectedGraphNodeId} graph={graph} tags={tags} tagLoadError={tagLoadError} query={query} citationCount={citationCount} space={selectedSpace} editingSpaceField={editingSpaceField} spaceEditValue={spaceEditValue} savingSpaceDetails={savingSpaceDetails} spaceEditError={spaceEditError} savingUseMode={savingUseMode} useModeError={useModeError} setTab={setTab} setQuery={setQuery} setSpaceEditValue={setSpaceEditValue} setTags={setTags} setSelectedGraphNodeId={setSelectedGraphNodeId} beginSpaceDetailsEdit={beginSpaceDetailsEdit} cancelSpaceDetailsEdit={cancelSpaceDetailsEdit} saveSpaceDetails={saveSpaceDetails} saveUseMode={saveUseMode} deleteDocument={deleteDocument} openDocument={openDocument} returnToGraph={returnToGraph} />}
+          {loadingContent ? <div className="knowledge-loading knowledge-loading-content"><LoaderCircle className="is-running" size={18} /> 지식을 불러오는 중</div> : <KnowledgeContent tab={tab} documents={documents} filteredDocuments={filteredDocuments} selectedDocument={selectedDocument} selectedGraphNodeId={selectedGraphNodeId} graph={graph} tags={tags} tagLoadError={tagLoadError} query={query} citationCount={citationCount} space={selectedSpace} editingSpaceField={editingSpaceField} spaceEditValue={spaceEditValue} savingSpaceDetails={savingSpaceDetails} spaceEditError={spaceEditError} savingUseMode={savingUseMode} useModeError={useModeError} setTab={setTab} setQuery={setQuery} setSpaceEditValue={setSpaceEditValue} setTags={setTags} setSelectedGraphNodeId={setSelectedGraphNodeId} beginSpaceDetailsEdit={beginSpaceDetailsEdit} cancelSpaceDetailsEdit={cancelSpaceDetailsEdit} saveSpaceDetails={saveSpaceDetails} saveUseMode={saveUseMode} deleteDocument={deleteDocument} openDocument={openDocument} returnToGraph={returnToGraph} refreshKnowledgeContent={refreshKnowledgeContent} />}
         </> : <div className="knowledge-empty"><BookOpenText size={25} /><h3>새 지식 그래프를 만들어 주세요.</h3><p>저장한 AI 답변이 문서 단위로 이 그래프에 쌓입니다.</p></div>}
       </section>
     </div>
@@ -465,10 +482,11 @@ interface KnowledgeContentProps {
   deleteDocument: (document: KnowledgeDocumentSummary) => Promise<void>;
   openDocument: (documentId: string, tab?: KnowledgeTab, returnTab?: KnowledgeTab) => void;
   returnToGraph: () => void;
+  refreshKnowledgeContent: () => Promise<void>;
 }
 
 function KnowledgeContent(props: KnowledgeContentProps) {
-  const { tab, documents, filteredDocuments, selectedDocument, selectedGraphNodeId, graph, tags, tagLoadError, query, citationCount, space, editingSpaceField, spaceEditValue, savingSpaceDetails, spaceEditError, savingUseMode, useModeError, setTab, setQuery, setSpaceEditValue, setTags, setSelectedGraphNodeId, beginSpaceDetailsEdit, cancelSpaceDetailsEdit, saveSpaceDetails, saveUseMode, deleteDocument, openDocument, returnToGraph } = props;
+  const { tab, documents, filteredDocuments, selectedDocument, selectedGraphNodeId, graph, tags, tagLoadError, query, citationCount, space, editingSpaceField, spaceEditValue, savingSpaceDetails, spaceEditError, savingUseMode, useModeError, setTab, setQuery, setSpaceEditValue, setTags, setSelectedGraphNodeId, beginSpaceDetailsEdit, cancelSpaceDetailsEdit, saveSpaceDetails, saveUseMode, deleteDocument, openDocument, returnToGraph, refreshKnowledgeContent } = props;
   const switchDocumentView = (view: KnowledgeDocumentView) => {
     if (tab === "graph" && view !== "graph" && selectedGraphNodeId) {
       openDocument(selectedGraphNodeId, view, "graph");
@@ -490,9 +508,110 @@ function KnowledgeContent(props: KnowledgeContentProps) {
     {tab === "sources" && <section className="knowledge-source-detail">{selectedDocument ? <><header><small>보존된 citation</small><h3>{selectedDocument.title}</h3><p>{selectedDocument.citations.length}개의 참조가 답변과 함께 저장되어 있습니다.</p></header><div className="knowledge-source-cards">{selectedDocument.citations.map((citation, index) => <a key={`${citation.sourceId}-${index}`} href={citation.url || undefined} target="_blank" rel="noreferrer"><span>[{citation.markerNumber ?? index + 1}]</span><strong>{citation.title}</strong><small>{citation.domain || citation.url || "참조 정보"}</small>{citation.excerpt && <p>{citation.excerpt}</p>}</a>)}{!selectedDocument.citations.length && <EmptyState text="이 문서에는 참조가 없습니다." />}</div></> : <EmptyState text="문서를 선택해 주세요." />}</section>}
   </div>;
 
-  if (tab === "review") return <TagManagement space={space} tags={tags} loadError={tagLoadError} setTags={setTags} />;
+  if (tab === "tagging") return <KnowledgeTagging space={space} documents={documents} onChanged={refreshKnowledgeContent} />;
+
+  if (tab === "review") return <TagManagement space={space} tags={tags} loadError={tagLoadError} setTags={setTags} onChanged={refreshKnowledgeContent} />;
 
   return <div className="knowledge-page knowledge-settings"><section className="knowledge-card"><header><div><strong>지식 그래프</strong><small>현재 지식 그래프의 저장 정책과 범위입니다.</small></div></header><dl><div><dt>이름</dt><dd>{editingSpaceField === "name" ? <form className="knowledge-settings-inline-form" onSubmit={saveSpaceDetails}><input autoFocus aria-label="지식 그래프 이름" maxLength={240} value={spaceEditValue} onChange={(event) => setSpaceEditValue(event.target.value)} /><button type="submit" aria-label="이름 저장" disabled={!spaceEditValue.trim() || savingSpaceDetails}>{savingSpaceDetails ? <LoaderCircle className="is-running" size={13} /> : <Check size={13} />}</button><button type="button" aria-label="이름 편집 취소" disabled={savingSpaceDetails} onClick={cancelSpaceDetailsEdit}><X size={13} /></button>{spaceEditError && <span role="alert">{spaceEditError}</span>}</form> : <button className="knowledge-settings-inline-value" type="button" aria-label={`${space.name} 이름 편집`} onClick={() => beginSpaceDetailsEdit("name")}><span>{space.name}</span><Pencil size={12} /></button>}</dd></div><div><dt>목적</dt><dd>{editingSpaceField === "purpose" ? <form className="knowledge-settings-inline-form" onSubmit={saveSpaceDetails}><input autoFocus aria-label="지식 그래프 설명" maxLength={10_000} value={spaceEditValue} placeholder="설정되지 않음" onChange={(event) => setSpaceEditValue(event.target.value)} /><button type="submit" aria-label="설명 저장" disabled={savingSpaceDetails}>{savingSpaceDetails ? <LoaderCircle className="is-running" size={13} /> : <Check size={13} />}</button><button type="button" aria-label="설명 편집 취소" disabled={savingSpaceDetails} onClick={cancelSpaceDetailsEdit}><X size={13} /></button>{spaceEditError && <span role="alert">{spaceEditError}</span>}</form> : <button className="knowledge-settings-inline-value" type="button" aria-label="지식 그래프 설명 편집" onClick={() => beginSpaceDetailsEdit("purpose")}><span>{space.purpose || "설정되지 않음"}</span><Pencil size={12} /></button>}</dd></div><div><dt>사용 모드</dt><dd><div className="knowledge-use-mode-setting"><SelectMenu className="knowledge-use-mode-select" menuClassName="knowledge-use-mode-menu" size="small" width="auto" value={space.useMode} options={knowledgeUseModeOptions} ariaLabel="지식 그래프 사용 모드" disabled={savingUseMode} onChange={(value) => void saveUseMode(value as KnowledgeUseMode)} /><small>{savingUseMode ? "저장 중…" : knowledgeUseModeDescriptions[space.useMode]}</small>{useModeError && <span role="alert">{useModeError}</span>}</div></dd></div><div><dt>공개 범위</dt><dd>{space.visibility === "private" ? "개인 · 비공개" : "조직 공유"}</dd></div><div><dt>저장 단위</dt><dd>AI 답변 1개 = 지식 문서 1개</dd></div><div><dt>연결 규칙</dt><dd>Canonical 태그를 공유하는 문서끼리 연결</dd></div><div><dt>태그 정책</dt><dd>태그 사전에서 이름·정의·별칭과 계층을 직접 관리</dd></div></dl></section></div>;
+}
+
+const knowledgeTaggingModelKey = "luminaKnowledgeTaggingModel";
+const taggingTargetOptions = [
+  { value: "untagged", label: "태그 없는 문서만" },
+  { value: "all", label: "전체 문서 재태깅" },
+] as const;
+const newTagPolicyOptions = [
+  { value: "propose", label: "새 태그 제안 (권장)" },
+  { value: "pool_only", label: "현재 태그 Pool만 사용" },
+  { value: "auto_approve", label: "새 태그 자동 승인" },
+] as const;
+
+function KnowledgeTagging({ space, documents, onChanged }: { space: KnowledgeSpace; documents: KnowledgeDocumentSummary[]; onChanged: () => Promise<void> }) {
+  const [catalog, setCatalog] = useState<{ providers: ProviderSummary[]; modelsByProvider: Record<string, ModelSummary[]> } | null>(null);
+  const [modelValue, setModelValue] = useState("");
+  const [target, setTarget] = useState<KnowledgeTaggingTarget>("untagged");
+  const [policy, setPolicy] = useState<KnowledgeNewTagPolicy>("propose");
+  const [allArmed, setAllArmed] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<KnowledgeBatchTagResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const untaggedCount = documents.filter((document) => document.tags.length === 0).length;
+  const targetCount = target === "all" ? documents.length : untaggedCount;
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void coreApi.providers.getCatalog(undefined, controller.signal).then((nextCatalog) => {
+      if (controller.signal.aborted) return;
+      setCatalog(nextCatalog);
+      const options = nextCatalog.providers.flatMap((provider) =>
+        (nextCatalog.modelsByProvider[provider.id] ?? [])
+          .filter((model) => provider.enabled && provider.connectionStatus === "ready" && model.enabled)
+          .map((model) => ({ value: JSON.stringify([provider.id, model.modelKey]), preferred: model.modelKey === provider.defaultModelKey || model.isDefault })),
+      );
+      const saved = window.localStorage.getItem(knowledgeTaggingModelKey);
+      setModelValue(options.some((option) => option.value === saved) ? saved! : (options.find((option) => option.preferred)?.value ?? options[0]?.value ?? ""));
+    }).catch((loadError) => {
+      if (!controller.signal.aborted) setError(errorMessage(loadError));
+    });
+    return () => controller.abort();
+  }, []);
+
+  const modelOptions = catalog?.providers.flatMap((provider) =>
+    (catalog.modelsByProvider[provider.id] ?? [])
+      .filter((model) => provider.enabled && provider.connectionStatus === "ready" && model.enabled)
+      .map((model) => ({ value: JSON.stringify([provider.id, model.modelKey]), label: `${provider.displayName} · ${model.displayName}` })),
+  ) ?? [];
+
+  const changeModel = (value: string) => {
+    setModelValue(value);
+    setAllArmed(false);
+    setResult(null);
+    window.localStorage.setItem(knowledgeTaggingModelKey, value);
+  };
+
+  const runTagging = async () => {
+    if (!modelValue || !targetCount || running) return;
+    if (target === "all" && !allArmed) {
+      setAllArmed(true);
+      setError(null);
+      return;
+    }
+    const [providerId, modelKey] = JSON.parse(modelValue) as [string, string];
+    setRunning(true);
+    setError(null);
+    setResult(null);
+    try {
+      const nextResult = await api.knowledge.batchTagDocuments({
+        spaceId: space.id,
+        providerId,
+        modelKey,
+        target,
+        newTagPolicy: policy,
+      });
+      setResult(nextResult);
+      setAllArmed(false);
+      await onChanged();
+    } catch (runError) {
+      setError(errorMessage(runError));
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return <div className="knowledge-page knowledge-tagging-page">
+    <section className="knowledge-card knowledge-tagging-card">
+      <header><div><strong>AI 문서 태깅</strong><small>저가 모델을 선택해 문서를 묶어 처리하고, 새 태그는 승인 전까지 그래프에 반영하지 않습니다.</small></div><Sparkles size={18} /></header>
+      <div className="knowledge-tagging-grid">
+        <div><span>모델</span><SelectMenu className="knowledge-tagging-select" menuClassName="knowledge-tag-select-menu" size="small" width="fill" value={modelValue} options={modelOptions} ariaLabel="AI 태깅 모델" disabled={running || !catalog} placeholder={catalog ? "사용할 수 있는 모델 없음" : "모델 불러오는 중"} onChange={changeModel} /><small>태깅 전용 선택이며 마지막 선택을 이 브라우저에 기억합니다.</small></div>
+        <div><span>태깅 대상</span><SelectMenu className="knowledge-tagging-select" menuClassName="knowledge-tag-select-menu" size="small" width="fill" value={target} options={[...taggingTargetOptions]} ariaLabel="AI 태깅 대상" disabled={running} onChange={(value) => { setTarget(value as KnowledgeTaggingTarget); setAllArmed(false); setResult(null); }} /><small>{target === "all" ? "기존 연결은 각 문서의 AI 응답이 성공한 뒤 교체합니다." : `${untaggedCount}개 문서에 태그가 없습니다.`}</small></div>
+        <div><span>태그 생성 정책</span><SelectMenu className="knowledge-tagging-select" menuClassName="knowledge-tag-select-menu" size="small" width="fill" value={policy} options={[...newTagPolicyOptions]} ariaLabel="새 태그 생성 정책" disabled={running} onChange={(value) => { setPolicy(value as KnowledgeNewTagPolicy); setAllArmed(false); setResult(null); }} /><small>{policy === "propose" ? "맞는 태그가 없으면 태그 관리에 승인 제안을 남깁니다." : policy === "pool_only" ? "Pool에 없는 개념은 새 태그로 만들지 않습니다." : "맞는 태그가 없으면 즉시 생성해 문서에 연결합니다."}</small></div>
+      </div>
+      <footer>
+        <div>{error && <span className="knowledge-inline-error" role="alert">{error}</span>}{result && <span className="knowledge-tagging-result">{result.requestedCount}개 처리 · {result.taggedCount}개 태깅 · {result.proposedCount}개 제안{result.failedCount > 0 ? ` · ${result.failedCount}개 실패` : ""}</span>}</div>
+        <button className={`lumina-primary-action ${allArmed ? "is-delete-armed" : ""}`} type="button" disabled={!modelValue || !targetCount || running} onClick={() => void runTagging()}>{running ? <><LoaderCircle className="is-running" size={14} /> 태깅 중</> : allArmed ? <><AlertTriangle size={14} /> 한 번 더 눌러 전체 재태깅</> : `${targetCount}개 문서 태깅`}</button>
+      </footer>
+    </section>
+  </div>;
 }
 
 type TagDraft = {
@@ -548,11 +667,34 @@ function orderedTagRows(tags: KnowledgeTag[]) {
   return result;
 }
 
-function TagManagement({ space, tags, loadError, setTags }: { space: KnowledgeSpace; tags: KnowledgeTag[]; loadError: string | null; setTags: Dispatch<SetStateAction<KnowledgeTag[]>> }) {
+function TagManagement({ space, tags, loadError, setTags, onChanged }: { space: KnowledgeSpace; tags: KnowledgeTag[]; loadError: string | null; setTags: Dispatch<SetStateAction<KnowledgeTag[]>>; onChanged: () => Promise<void> }) {
   const [search, setSearch] = useState("");
   const [namespace, setNamespace] = useState("all");
   const [creating, setCreating] = useState(false);
   const [editingTagId, setEditingTagId] = useState<string | null>(null);
+  const [view, setView] = useState<"dictionary" | "proposals">("dictionary");
+  const [proposals, setProposals] = useState<KnowledgeTagProposal[]>([]);
+  const [selectedProposalIds, setSelectedProposalIds] = useState<Set<string>>(new Set());
+  const [proposalBusy, setProposalBusy] = useState(false);
+  const [proposalError, setProposalError] = useState<string | null>(null);
+  const [mergingProposalId, setMergingProposalId] = useState<string | null>(null);
+  const [mergeTargetTagId, setMergeTargetTagId] = useState("");
+
+  const loadProposals = useCallback(async () => {
+    try {
+      setProposals(await api.knowledge.listTagProposals(space.id));
+      setProposalError(null);
+    } catch (loadFailure) {
+      setProposalError(errorMessage(loadFailure));
+    }
+  }, [space.id]);
+
+  useEffect(() => {
+    setSelectedProposalIds(new Set());
+    setMergingProposalId(null);
+    setMergeTargetTagId("");
+    void loadProposals();
+  }, [loadProposals]);
   const needle = search.trim().toLocaleLowerCase("ko-KR");
   const filteredTags = tags.filter((tag) => {
     if (namespace !== "all" && tag.namespace !== namespace) return false;
@@ -570,9 +712,49 @@ function TagManagement({ space, tags, loadError, setTags }: { space: KnowledgeSp
     return exists ? current.map((tag) => tag.id === nextTag.id ? nextTag : tag) : [...current, nextTag];
   });
 
+  const resolveProposal = async (proposal: KnowledgeTagProposal, action: "approve" | "merge" | "reject") => {
+    if (proposalBusy) return;
+    setProposalBusy(true);
+    setProposalError(null);
+    try {
+      await api.knowledge.resolveTagProposal(proposal.id, {
+        action,
+        expectedRevision: proposal.revision,
+        ...(action === "merge" ? { targetTagId: mergeTargetTagId } : {}),
+      });
+      setSelectedProposalIds((current) => { const next = new Set(current); next.delete(proposal.id); return next; });
+      setMergingProposalId(null);
+      setMergeTargetTagId("");
+      await Promise.all([loadProposals(), onChanged()]);
+    } catch (resolveError) {
+      setProposalError(errorMessage(resolveError));
+    } finally {
+      setProposalBusy(false);
+    }
+  };
+
+  const resolveSelected = async (action: "approve" | "reject") => {
+    if (!selectedProposalIds.size || proposalBusy) return;
+    setProposalBusy(true);
+    setProposalError(null);
+    try {
+      await api.knowledge.resolveTagProposals({ action, proposalIds: [...selectedProposalIds] });
+      setSelectedProposalIds(new Set());
+      await Promise.all([loadProposals(), onChanged()]);
+    } catch (resolveError) {
+      setProposalError(errorMessage(resolveError));
+    } finally {
+      setProposalBusy(false);
+    }
+  };
+
   return <div className="knowledge-page knowledge-review">
     {loadError && <p className="knowledge-inline-error" role="alert">{loadError}</p>}
-    <section className="knowledge-card knowledge-tag-card">
+    <div className="knowledge-tag-management-tabs" role="tablist" aria-label="태그 관리 보기">
+      <button type="button" role="tab" aria-selected={view === "dictionary"} className={view === "dictionary" ? "is-active" : ""} onClick={() => setView("dictionary")}>태그 사전 <span>{tags.length}</span></button>
+      <button type="button" role="tab" aria-selected={view === "proposals"} className={view === "proposals" ? "is-active" : ""} onClick={() => setView("proposals")}>새 태그 제안 <span>{proposals.length}</span></button>
+    </div>
+    {view === "dictionary" ? <section className="knowledge-card knowledge-tag-card">
       <header className="knowledge-tag-card-header"><div><strong>태그 사전</strong><small>유형별로 이름, 정의, 별칭과 상위 개념을 관리합니다.</small></div><div><span>{tags.length}개 태그</span><button type="button" onClick={() => { setCreating(true); setEditingTagId(null); }}><Plus size={14} /> 새 태그</button></div></header>
       <div className="knowledge-tag-toolbar">
         <label><Search size={14} /><input value={search} placeholder="태그 이름, 정의 또는 별칭 검색" aria-label="태그 검색" onChange={(event) => setSearch(event.target.value)} /></label>
@@ -610,7 +792,23 @@ function TagManagement({ space, tags, loadError, setTags }: { space: KnowledgeSp
         </div>)}
         {!rows.length && <EmptyState text={tags.length ? "조건에 맞는 태그가 없습니다." : "새 태그를 추가해 태그 사전을 시작하세요."} />}
       </div>
-    </section>
+    </section> : <section className="knowledge-card knowledge-tag-proposal-card">
+      <header><div><strong>새 태그 제안</strong><small>승인하면 해당 문서에 연결되고, 병합하면 기존 태그를 사용합니다.</small></div><div><button type="button" disabled={!selectedProposalIds.size || proposalBusy} onClick={() => void resolveSelected("reject")}>선택 거절</button><button className="lumina-primary-action" type="button" disabled={!selectedProposalIds.size || proposalBusy} onClick={() => void resolveSelected("approve")}>{proposalBusy && <LoaderCircle className="is-running" size={13} />} 선택 승인</button></div></header>
+      {proposalError && <p className="knowledge-inline-error" role="alert">{proposalError}</p>}
+      <div className="knowledge-tag-proposal-list">
+        {proposals.map((proposal) => <div className="knowledge-tag-proposal-row" key={proposal.id}>
+          <input type="checkbox" aria-label={`${proposal.canonicalName} 제안 선택`} checked={selectedProposalIds.has(proposal.id)} disabled={proposalBusy} onChange={() => setSelectedProposalIds((current) => { const next = new Set(current); if (next.has(proposal.id)) next.delete(proposal.id); else next.add(proposal.id); return next; })} />
+          <div><span><strong>#{proposal.canonicalName}</strong><small>{namespaceLabel(proposal.namespace)}</small><em>{proposal.documentCount}개 문서</em></span><p>{proposal.scopeNote}</p>{proposal.aliases.length > 0 && <small>별칭 {proposal.aliases.join(" · ")}</small>}</div>
+          <div className="knowledge-tag-proposal-actions">
+            <button type="button" disabled={proposalBusy} onClick={() => void resolveProposal(proposal, "approve")}>승인</button>
+            <button type="button" disabled={proposalBusy} onClick={() => { setMergingProposalId((current) => current === proposal.id ? null : proposal.id); setMergeTargetTagId(""); }}>병합</button>
+            <button type="button" disabled={proposalBusy} onClick={() => void resolveProposal(proposal, "reject")}>거절</button>
+          </div>
+          {mergingProposalId === proposal.id && <div className="knowledge-tag-proposal-merge"><SelectMenu className="knowledge-tagging-select" menuClassName="knowledge-tag-select-menu" size="small" width="fill" value={mergeTargetTagId} options={tags.filter((tag) => tag.namespace === proposal.namespace).map((tag) => ({ value: tag.id, label: `#${tag.name}` }))} ariaLabel={`${proposal.canonicalName} 병합 대상`} placeholder="기존 태그 선택" disabled={proposalBusy} onChange={setMergeTargetTagId} /><button className="lumina-primary-action" type="button" disabled={!mergeTargetTagId || proposalBusy} onClick={() => void resolveProposal(proposal, "merge")}>병합 적용</button></div>}
+        </div>)}
+        {!proposals.length && <EmptyState text="검토할 새 태그 제안이 없습니다." />}
+      </div>
+    </section>}
   </div>;
 }
 

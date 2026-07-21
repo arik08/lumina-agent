@@ -71,7 +71,7 @@
 | 대화 좋아요·Composer 중단·예약 작업 삭제·복원 loading | Implemented | 현재 Backend·Frontend와 UI 계약 test에 반영되어 있으며 삭제는 물리 삭제가 아닌 보관 처리 |
 | 일반 문서 RAG MCP | Target | 새 설계는 일반 문서·자연 위치 계약이지만 현재 `vector_db` source와 Skill은 아직 Markdown 조직 문서·`explore_org` 계약 |
 | 심층분석 Mission Workflow | 구현 | 독립 메뉴와 Workspace Frontend, Project 귀속 Mission·Workflow revision·Node·Edge, 초기 AI 자동 설계 1회, Node별 채팅 세션과 Run, Canvas·Inspector·실제 프롬프트·Markdown 출력·누적 비용·event replay·export를 제공합니다. Pattern·실행 중 재계획·Claim·Evidence·Quality Gate는 계약에서 제외합니다. |
-| 지식 문서 그래프·태그 사전 | 부분 구현 | 대화 답변의 명시 저장, 일괄 자동 태깅, active canonical 태그 공유 기반 문서 그래프, Project scope, `off`·`auto`·`explicit`·`deep` 선택 검색, 점수 기반 passage 읽기, 태그 이름·유형·정의·범위 메모·별칭·부모 계층의 조회·생성·수정이 구현되었습니다. embedding vector 검색, 문서별 수동 태그 편집과 신규 태그 proposal·승인·병합·거절·deprecated 운영은 Target입니다. |
+| 지식 문서 그래프·태그 사전 | 부분 구현 | 대화 답변의 명시 저장, 전용 `AI 태깅` 탭의 선택 Model·미태깅/전체 대상·Pool 전용/제안/자동 승인 정책, 신규 태그 proposal의 개별·일괄 승인·기존 태그 병합·거절, active canonical 태그 공유 기반 문서 그래프, Project scope, `off`·`auto`·`explicit`·`deep` 선택 검색, 점수 기반 passage 읽기, 태그 이름·유형·정의·범위 메모·별칭·부모 계층의 조회·생성·수정이 구현되었습니다. embedding vector 검색, 문서별 수동 태그 편집과 deprecated 대체 운영은 Target입니다. |
 | Skill Change Request·Blob/Tree CAS·자동 Eval | Target | 개인 Draft·복수 Owner 기반은 구현되었으나 진화 pipeline과 저장 최적화는 후속 단계 |
 
 `lumina_agent_assessment_report_2026-07-12.html`은 해당 날짜의 정적 평가 snapshot입니다. 이후 source·test로 해소된 항목의 현재 상태를 이 보고서의 수치로 다시 판정하지 않습니다.
@@ -92,7 +92,7 @@
 | Context·Memory | recoverable compaction, Tool Call/Result pair·side effect 보존, 실패 시 원 Context 유지, 모델별 Context budget, 사용자 Memory 후보·자동/확인/끔 mode, 민감정보 차단, relevant subset recall, LLM 최적화와 provenance 병합, Project learning proposal approve·reject·apply·rollback | `context/`, `memories/`, `project_memories/`, `test_context_compaction_memory_learning.py`, `test_project_memory_learning.py` |
 | Provider | Mock·P-GPT·OpenAI Responses·Anthropic·Gemini·OpenAI Compatible adapter, multimodal image 입력, Tool roundtrip, typed·redacted 오류, 공통 base URL·Retry-After 검증, 관리자 Model discovery·명시 활성화·공식 Context와 실측 입력 상한 분리, revision 기반 사용자·Project 실행 선택 저장, Codex ChatGPT OAuth App Server·warm client·transport retry·API key 제거, 사용자 hash prompt-cache routing | `providers/`, `routes/providers.py`, `routes/admin_providers.py`, `test_provider_http.py`, `test_model_output_limits.py`, `test_settings_revision_cas.py` |
 | Web Search·인용 | DuckDuckGo 기본 search와 교체 가능한 Backend 경계, readable HTML fetch, 최신·고위험 질의의 필수 조사 정책, query 목적·상위 검색 이력, search snippet→fetched evidence 승격, source hash·번호 안정화, cited·reviewed·search-only·미검증 UI 상태 | `tools/web.py`, `citations.py`, `test_web_tools.py`, `test_citations.py`, `source-evidence-status.test.mjs` |
-| 지식 문서·그래프 | 사용자 동작으로 assistant 답변을 지식 문서로 저장·복구·soft delete, Project 범위 지식 공간, 미태깅 문서의 선택 Model micro-batch 태깅, canonical tag 공유 기반 문서 graph, 문서별 인용·연결 문서 수, 태그 사전의 namespace·정의·범위 메모·별칭·부모 계층과 revision CAS, system prompt 자동 본문 주입을 대체한 모드별 `search_knowledge`·passage 읽기·deep 링크 탐색, 최소 선택 점수와 사용 문서 evidence | `knowledge/`, `tools/knowledge.py`, `routes/knowledge.py`, migrations `0035`, `0045`~`0048`, `0052`, `0054`, `0058`, `0063`, `test_knowledge_api.py`, `test_knowledge_retrieval.py`, `test_knowledge_tagger.py`, `knowledge-workspace.test.mjs`, `knowledge-graph.test.mjs` |
+| 지식 문서·그래프 | 사용자 동작으로 assistant 답변을 지식 문서로 저장·복구·soft delete, Project 범위 지식 공간, 선택 Model micro-batch 태깅과 미태깅/전체 재태깅, 새 태그 제안·개별/일괄 승인·병합·거절, canonical tag 공유 기반 문서 graph, 문서별 인용·연결 문서 수, 태그 사전의 namespace·정의·범위 메모·별칭·부모 계층과 revision CAS, system prompt 자동 본문 주입을 대체한 모드별 `search_knowledge`·passage 읽기·deep 링크 탐색, 최소 선택 점수와 사용 문서 evidence | `knowledge/`, `tools/knowledge.py`, `routes/knowledge.py`, migrations `0035`, `0045`~`0048`, `0052`, `0054`, `0058`, `0063`, `0064`, `test_knowledge_api.py`, `test_knowledge_retrieval.py`, `test_knowledge_tagger.py`, `knowledge-workspace.test.mjs`, `knowledge-graph.test.mjs` |
 | Attachment·Artifact | TXT·Markdown·HTML·CSV·TSV·PDF·DOCX·PPTX·XLSX extraction과 자연 locator, fake Office 거부와 OpenXML 관계 XML 안전 파싱, Artifact immutable version·restore, 사용자별 Draft·current version ETag/CAS, stale·provenance 보호, DB 실패·경합 시 새 storage blob 보상 정리, 손상되거나 누락된 원본의 명시 오류, Preview·download, HTML 원문 보존, DOCX·XLSX·PPTX·PDF·HTML·Markdown 생성, Codex image와 복합 asset embedding | `attachments/`, `artifacts/`, `test_attachment_extraction.py`, `test_artifact_draft_cas.py`, `test_artifact_storage_cleanup.py`, `test_artifact_render_validation.py` |
 | Artifact 검증 | binary signature·재개봉, OpenXML macro·외부 hyperlink 차단, PDF link·page geometry 검사, LibreOffice 격리 profile과 Poppler page render, blank·비정상 크기·page count mismatch·timeout 실패 판정, renderer 미설치 시 `structural_passed`와 pending 구분 | `artifacts/render_validation.py`, `test_artifact_validation.py`, `test_artifact_render_validation.py` |
 | Skill Marketplace | Private Skill 생성, 사용자별 WorkingDraft checkout·revision·activate와 atomic revision CAS, stale base version save 차단, immutable version save·publish, account별 installation, catalog tag, Folder CRUD·move, creator와 복수 Owner·Maintainer 분리, primary Owner 제거 방지, exact draft/version digest를 Run·예약 Run에 고정, 설치 Skill Markdown 기본 보기·상세 history navigation | `extensions/`, migration `0019`, `test_extensions_schedules.py`, `test_composer_run_references.py`, Marketplace Frontend tests |
@@ -129,7 +129,7 @@
 | 심층분석 계약 | `deep-analysis`는 별도 Workspace Frontend와 Backend domain으로 실제 구현되었습니다. Mission 생성 시 일반 Composer와 같은 분석·답변·출력 설정, 선택 자료의 exact revision·digest와 빈 source manifest 의미를 고정합니다. 비보고서 Node는 압축 인계물을, 보고서 Node는 사용자 출력 설정을 사용하며 start·pause·resume·cancel·retry·event replay·비용·Project 파일 export를 지원합니다. |
 | 지식 모델 단순화 | 지식의 사용자 단위는 entity·statement·wiki가 아니라 원문을 보존한 `KnowledgeDocument`입니다. 그래프는 active canonical tag를 공유하는 문서 관계이며 자동 수집하지 않고 사용자가 답변을 명시적으로 저장한 뒤 별도 일괄 태깅합니다. |
 | 지식 사용 경계 | Run snapshot과 system prompt에는 지식 문서 본문을 미리 넣지 않습니다. 지식 공간의 `off`·`auto`·`explicit`·`deep` 설정에 따라 Project·사용자 범위의 읽기 전용 도구를 노출하고, 최소 관련성 점수를 넘은 후보에서 필요한 passage만 읽습니다. 실제로 읽은 문서의 원문 인용·선택 점수·source ID를 답변 metadata에 보존하며 새 분석은 사용자 저장 동작 없이 자동 축적하지 않습니다. |
-| 태그 사전 경계 | migration `0058`은 기존 `knowledge_tags`에 정의·부모·revision을 추가하고 alias table과 함께 사람이 편집 가능한 사전 기반을 제공합니다. 현재 구현은 active 태그의 조회·생성·수정까지이며 proposal 승인·병합·거절과 deprecated 대체는 구현 완료로 주장하지 않습니다. |
+| 태그 사전 경계 | migration `0058`은 기존 `knowledge_tags`에 정의·부모·revision을 추가하고 alias table과 함께 사람이 편집 가능한 사전 기반을 제공합니다. migration `0064`는 신규 태그 proposal의 승인·병합·거절과 문서 연결을 추가합니다. deprecated 대체 운영은 아직 구현 완료로 주장하지 않습니다. |
 | 저장·검색 최적화 | Backend 저장 경로는 bulk 조회와 쓰기 횟수를 줄이고, migration `0056`은 중복 Plan JSON을 정리한 뒤 SQLite `message_search_fts`와 동기화 trigger를 추가합니다. 다른 DB와 FTS를 사용할 수 없는 검색은 동일 권한·정렬 계약을 지키는 fallback을 유지하며, compaction은 Message·Tool pair와 source lineage를 손상시키지 않습니다. |
 | 운영 cache 관측 | 관리자 사용량 통계는 첫 Model 호출과 후속 호출을 분리하고 `prompt_cache_static_digest`별 input·cached·uncached token과 hit ratio를 집계합니다. 원문 prompt, 사용자 식별자와 cache key는 운영 payload에 노출하지 않습니다. |
 
@@ -2065,13 +2065,14 @@ deep_analysis_claims / evidence_references          개발 중 생성된 Claim·
 deep_analysis_mission_exports / workflow_patterns   Project export와 선택적 Pattern version
 knowledge_spaces / documents / tags                 Project 범위 지식 문서와 canonical 태그
 knowledge_tag_aliases / knowledge_document_tags     태그 별칭과 문서 다대다 연결
+knowledge_tag_proposals                             신규 태그 제안과 승인·병합·거절 상태
 knowledge_spaces.use_mode                          지식 검색 off·auto·explicit·deep 설정
 message_search_fts                                 SQLite 전용 Message 본문 검색 가속
 deep_analysis_missions.execution_settings_json     Mission 실행·출력 설정 snapshot
 knowledge_tags.definition / parent / revision      편집 가능한 태그 사전과 계층 CAS
 ```
 
-현재 migration head는 `0063_knowledge_use_mode`입니다. `0009`, `0013`~`0018`, `0020`~`0030`은 기존 table과 seed data에 MCP runtime header, instruction hierarchy·revision, 공개 share link, 사용자 소속, 알림 compact metadata, Skill 개인 Draft·소유권, 대화 좋아요, Codex OAuth catalog·표시 순서, 조직별 Run 안전 설정·내부 prompt override·최초 실행 설정, Project Folder, Help Center, 공지, 설정 revision과 P-GPT 실측 입력 상한을 증분 추가합니다. `0031`~`0063`은 Skill tag·Project 설치 scope·공지 receipt, 심층분석 Mission·실행·event·export·Node 대화·실행 설정, 지식 문서·태그·Project scope·검색 사용 모드, SQLite Message FTS, Run event cache 통계 index, Skill version history를 순차 추가하거나 단순화합니다. `0026`, `0030`처럼 catalog row를 갱신하거나 `0052`, `0055`처럼 개발 중 계약을 교체하는 data migration도 같은 Alembic chain에서 재현합니다.
+현재 migration head는 `0064_knowledge_tag_proposals`입니다. `0009`, `0013`~`0018`, `0020`~`0030`은 기존 table과 seed data에 MCP runtime header, instruction hierarchy·revision, 공개 share link, 사용자 소속, 알림 compact metadata, Skill 개인 Draft·소유권, 대화 좋아요, Codex OAuth catalog·표시 순서, 조직별 Run 안전 설정·내부 prompt override·최초 실행 설정, Project Folder, Help Center, 공지, 설정 revision과 P-GPT 실측 입력 상한을 증분 추가합니다. `0031`~`0064`는 Skill tag·Project 설치 scope·공지 receipt, 심층분석 Mission·실행·event·export·Node 대화·실행 설정, 지식 문서·태그·Project scope·검색 사용 모드·신규 태그 제안, SQLite Message FTS, Run event cache 통계 index, Skill version history를 순차 추가하거나 단순화합니다. `0026`, `0030`처럼 catalog row를 갱신하거나 `0052`, `0055`처럼 개발 중 계약을 교체하는 data migration도 같은 Alembic chain에서 재현합니다.
 
 ### 21.3 후속 기능에서 추가할 table
 
@@ -2083,7 +2084,6 @@ permission_leases                                    reusable approval
 execution_environments                               persistent or user-managed runtime
 batch_items                                          Batch Fan-out
 agent_registry                                       second replaceable Frontend 이후
-knowledge_tag_proposals                              신규 태그 승인·병합·거절 workflow
 knowledge_tag_recommendation_rules                   taxonomy와 분리된 추천 규칙이 필요할 때
 ```
 
@@ -2373,6 +2373,9 @@ GET    /api/knowledge/documents/{id}
 DELETE /api/knowledge/documents/{id}
 POST   /api/knowledge/documents/from-message/{message_id}
 POST   /api/knowledge/documents/tag-batch
+GET    /api/knowledge/tag-proposals?spaceId={space_id}
+POST   /api/knowledge/tag-proposals/{id}/resolve
+POST   /api/knowledge/tag-proposals/resolve-batch
 GET    /api/knowledge/tags?spaceId={space_id}
 POST   /api/knowledge/tags
 PATCH  /api/knowledge/tags/{id}
@@ -2709,7 +2712,7 @@ PDF 실제 렌더는 `pdftoppm`, DOCX·XLSX·PPTX 실제 렌더는 LibreOffice�
 9. [Implemented] Project Memory와 승인형 learning proposal
 10. [Target] Browser automation과 회사 승인 Connector
 11. [Implemented] Scheduler와 Background notification
-12. [Partial] 지식 문서 저장·일괄 태깅·문서 그래프·편집형 태그 사전은 구현, proposal 승인·병합·폐기는 Target
+12. [Partial] 지식 문서 저장·선택 Model 일괄/전체 재태깅·문서 그래프·편집형 태그 사전과 proposal 승인·병합·거절은 구현, deprecated 대체 운영은 Target
 
 ### Phase 4. 확장 플랫폼 — Target, 단 `deep-analysis` PoC는 Implemented
 

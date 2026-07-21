@@ -159,19 +159,28 @@ def test_answer_is_saved_without_tags_then_batch_tagged_with_selected_model(
 
     async def fake_tag_batch(**kwargs) -> tuple[DocumentTagSuggestion, ...]:
         tag_batches.append((kwargs["model"], len(kwargs["documents"])))
-        suggestion = DocumentTagSuggestion(
-            tag_ids=(),
-            new_tags=(
-                NewTagSuggestion.model_validate(
-                    {
-                        "canonicalName": "인공지능",
-                        "scopeNote": "컴퓨터 과학의 AI 기술",
-                        "aliases": ["AI", "Artificial Intelligence"],
-                    }
-                ),
-            ),
-        )
-        return tuple(suggestion for _ in kwargs["documents"])
+        suggestions = []
+        for document in kwargs["documents"]:
+            canonical_name = {
+                "병합 후보 문서": "AI 기술",
+                "일괄 승인 문서": "자동화 승인",
+                "일괄 거절 문서": "자동화 거절",
+            }.get(document.title, "인공지능")
+            suggestions.append(
+                DocumentTagSuggestion(
+                    tag_ids=(),
+                    new_tags=(
+                        NewTagSuggestion.model_validate(
+                            {
+                                "canonicalName": canonical_name,
+                                "scopeNote": f"{canonical_name} 범위",
+                                "aliases": [],
+                            }
+                        ),
+                    ),
+                )
+            )
+        return tuple(suggestions)
 
     monkeypatch.setattr(
         "lumina.knowledge.service.suggest_document_tag_batch", fake_tag_batch
@@ -292,14 +301,19 @@ def test_answer_is_saved_without_tags_then_batch_tagged_with_selected_model(
                 "spaceId": saved["spaceId"],
                 "providerId": "mock",
                 "modelKey": "mock-agent",
+                "newTagPolicy": "auto_approve",
             },
         )
         assert tagged.status_code == 200, tagged.text
         assert tagged.json() == {
             "requestedCount": 2,
             "taggedCount": 2,
+            "proposedCount": 0,
+            "proposalDocumentCount": 0,
             "failedCount": 0,
             "remainingCount": 0,
+            "target": "untagged",
+            "newTagPolicy": "auto_approve",
         }
         assert tag_batches == [("mock-agent", 2)]
         assert (
@@ -308,6 +322,170 @@ def test_answer_is_saved_without_tags_then_batch_tagged_with_selected_model(
             ]
             == "인공지능"
         )
+
+        proposal_body = "승인 전에는 그래프에 연결하지 않는 새 태그 제안 문서"
+        with SessionLocal() as db:
+            user = db.scalar(select(User).where(User.login_name == "admin"))
+            assert user is not None
+            proposal_document = KnowledgeDocument(
+                space_id=saved["spaceId"],
+                project_id=project_id,
+                owner_user_id=user.id,
+                source_message_id=None,
+                source_run_id=None,
+                source_conversation_id=conversation_id,
+                title="태그 제안 문서",
+                body=proposal_body,
+                researched_at=researched_at + timedelta(seconds=2),
+                citations_json=[],
+                content_digest=sha256(proposal_body.encode("utf-8")).hexdigest(),
+                status="active",
+            )
+            db.add(proposal_document)
+            db.commit()
+            proposal_document_id = proposal_document.id
+
+        proposed = client.post(
+            "/api/knowledge/documents/tag-batch",
+            headers=headers,
+            json={
+                "spaceId": saved["spaceId"],
+                "providerId": "mock",
+                "modelKey": "mock-agent",
+                "newTagPolicy": "propose",
+            },
+        )
+        assert proposed.status_code == 200, proposed.text
+        assert proposed.json()["proposedCount"] == 1
+        assert proposed.json()["taggedCount"] == 0
+        assert client.get(f"/api/knowledge/documents/{proposal_document_id}").json()["tags"] == []
+
+        proposal_items = client.get(
+            "/api/knowledge/tag-proposals",
+            params={"spaceId": saved["spaceId"]},
+        )
+        assert proposal_items.status_code == 200, proposal_items.text
+        proposal = proposal_items.json()[0]
+        assert proposal["canonicalName"] == "인공지능"
+        assert proposal["documentCount"] == 1
+        approved = client.post(
+            f"/api/knowledge/tag-proposals/{proposal['id']}/resolve",
+            headers=headers,
+            json={"action": "approve", "expectedRevision": proposal["revision"]},
+        )
+        assert approved.status_code == 200, approved.text
+        assert approved.json()["status"] == "approved"
+        assert client.get(f"/api/knowledge/documents/{proposal_document_id}").json()["tags"][0]["name"] == "인공지능"
+        assert client.get(
+            "/api/knowledge/tag-proposals", params={"spaceId": saved["spaceId"]}
+        ).json() == []
+        assert client.delete(
+            f"/api/knowledge/documents/{proposal_document_id}", headers=headers
+        ).status_code == 204
+
+        workflow_document_ids: dict[str, str] = {}
+        with SessionLocal() as db:
+            user = db.scalar(select(User).where(User.login_name == "admin"))
+            assert user is not None
+            for offset, title in enumerate(
+                ("병합 후보 문서", "일괄 승인 문서", "일괄 거절 문서"), start=3
+            ):
+                body_value = f"{title} 본문"
+                document = KnowledgeDocument(
+                    space_id=saved["spaceId"],
+                    project_id=project_id,
+                    owner_user_id=user.id,
+                    source_message_id=None,
+                    source_run_id=None,
+                    source_conversation_id=conversation_id,
+                    title=title,
+                    body=body_value,
+                    researched_at=researched_at + timedelta(seconds=offset),
+                    citations_json=[],
+                    content_digest=sha256(body_value.encode("utf-8")).hexdigest(),
+                    status="active",
+                )
+                db.add(document)
+                db.flush()
+                workflow_document_ids[title] = document.id
+            db.commit()
+
+        workflow_tagging = client.post(
+            "/api/knowledge/documents/tag-batch",
+            headers=headers,
+            json={
+                "spaceId": saved["spaceId"],
+                "providerId": "mock",
+                "modelKey": "mock-agent",
+                "newTagPolicy": "propose",
+            },
+        )
+        assert workflow_tagging.status_code == 200, workflow_tagging.text
+        assert workflow_tagging.json()["proposedCount"] == 3
+        workflow_proposals = client.get(
+            "/api/knowledge/tag-proposals", params={"spaceId": saved["spaceId"]}
+        ).json()
+        proposals_by_name = {item["canonicalName"]: item for item in workflow_proposals}
+        existing_tag_id = client.get(
+            f"/api/knowledge/documents/{saved['id']}"
+        ).json()["tags"][0]["id"]
+        merged = client.post(
+            f"/api/knowledge/tag-proposals/{proposals_by_name['AI 기술']['id']}/resolve",
+            headers=headers,
+            json={
+                "action": "merge",
+                "expectedRevision": proposals_by_name["AI 기술"]["revision"],
+                "targetTagId": existing_tag_id,
+            },
+        )
+        assert merged.status_code == 200, merged.text
+        assert merged.json()["status"] == "merged"
+        bulk_approved = client.post(
+            "/api/knowledge/tag-proposals/resolve-batch",
+            headers=headers,
+            json={
+                "action": "approve",
+                "proposalIds": [proposals_by_name["자동화 승인"]["id"]],
+            },
+        )
+        assert bulk_approved.json() == {"resolvedCount": 1}
+        bulk_rejected = client.post(
+            "/api/knowledge/tag-proposals/resolve-batch",
+            headers=headers,
+            json={
+                "action": "reject",
+                "proposalIds": [proposals_by_name["자동화 거절"]["id"]],
+            },
+        )
+        assert bulk_rejected.json() == {"resolvedCount": 1}
+        assert client.get(
+            f"/api/knowledge/documents/{workflow_document_ids['병합 후보 문서']}"
+        ).json()["tags"][0]["id"] == existing_tag_id
+        assert client.get(
+            f"/api/knowledge/documents/{workflow_document_ids['일괄 승인 문서']}"
+        ).json()["tags"][0]["name"] == "자동화 승인"
+        assert client.get(
+            f"/api/knowledge/documents/{workflow_document_ids['일괄 거절 문서']}"
+        ).json()["tags"] == []
+        for document_id in workflow_document_ids.values():
+            assert client.delete(
+                f"/api/knowledge/documents/{document_id}", headers=headers
+            ).status_code == 204
+
+        failed_retag = client.post(
+            "/api/knowledge/documents/tag-batch",
+            headers=headers,
+            json={
+                "spaceId": saved["spaceId"],
+                "providerId": "mock",
+                "modelKey": "mock-agent",
+                "target": "all",
+                "newTagPolicy": "pool_only",
+            },
+        )
+        assert failed_retag.status_code == 200, failed_retag.text
+        assert failed_retag.json()["failedCount"] == 2
+        assert client.get(f"/api/knowledge/documents/{saved['id']}").json()["tags"][0]["name"] == "인공지능"
         second_deleted = client.delete(
             f"/api/knowledge/documents/{second_document_id}", headers=headers
         )

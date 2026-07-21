@@ -44,6 +44,33 @@ class KnowledgeBatchTagRequest(ApiModel):
     space_id: str
     provider_id: str = Field(min_length=1, max_length=120)
     model_key: str = Field(min_length=1, max_length=240)
+    target: Literal["untagged", "all"] = "untagged"
+    new_tag_policy: Literal["pool_only", "propose", "auto_approve"] = "propose"
+
+
+class KnowledgeTagProposalResolve(ApiModel):
+    action: Literal["approve", "merge", "reject"]
+    expected_revision: int = Field(ge=1)
+    target_tag_id: str | None = None
+
+    @model_validator(mode="after")
+    def require_merge_target(self) -> "KnowledgeTagProposalResolve":
+        if self.action == "merge" and not self.target_tag_id:
+            raise ValueError("targetTagId is required for merge")
+        if self.action != "merge" and self.target_tag_id is not None:
+            raise ValueError("targetTagId is only valid for merge")
+        return self
+
+
+class KnowledgeTagProposalBatchResolve(ApiModel):
+    action: Literal["approve", "reject"]
+    proposal_ids: list[str] = Field(min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def require_unique_ids(self) -> "KnowledgeTagProposalBatchResolve":
+        if len(set(self.proposal_ids)) != len(self.proposal_ids):
+            raise ValueError("proposalIds must not contain duplicates")
+        return self
 
 
 class KnowledgeTagCreate(ApiModel):
@@ -77,6 +104,8 @@ class KnowledgeTagUpdate(ApiModel):
 __all__ = [
     "KnowledgeDocumentListQuery",
     "KnowledgeBatchTagRequest",
+    "KnowledgeTagProposalBatchResolve",
+    "KnowledgeTagProposalResolve",
     "KnowledgeSpaceCreate",
     "KnowledgeSpaceUpdate",
     "KnowledgeTagCreate",

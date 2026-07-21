@@ -16,6 +16,8 @@ from ...knowledge.schemas import (
     KnowledgeSpaceCreate,
     KnowledgeSpaceUpdate,
     KnowledgeTagCreate,
+    KnowledgeTagProposalBatchResolve,
+    KnowledgeTagProposalResolve,
     KnowledgeTagUpdate,
 )
 from ...knowledge.service import (
@@ -25,11 +27,15 @@ from ...knowledge.service import (
     document_list_payload,
     document_payload,
     knowledge_graph_payload,
+    knowledge_tag_proposal_payload,
     knowledge_tag_payloads,
     list_knowledge_documents,
     list_knowledge_spaces,
     list_knowledge_tags,
+    list_knowledge_tag_proposals,
     require_knowledge_document,
+    resolve_knowledge_tag_proposal,
+    resolve_knowledge_tag_proposals,
     save_message_as_knowledge_document,
     space_payload,
     tag_untagged_knowledge_documents,
@@ -105,6 +111,75 @@ def get_knowledge_tags(
     return knowledge_tag_payloads(
         db, list_knowledge_tags(db, user, space_id=space_id)
     )
+
+
+@router.get("/tag-proposals")
+def get_knowledge_tag_proposals(
+    space_id: str = Query(alias="spaceId"),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict[str, object]]:
+    return [
+        knowledge_tag_proposal_payload(item)
+        for item in list_knowledge_tag_proposals(db, user, space_id=space_id)
+    ]
+
+
+@router.post("/tag-proposals/resolve-batch")
+def post_knowledge_tag_proposal_batch_resolution(
+    payload: KnowledgeTagProposalBatchResolve,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, int]:
+    proposals = resolve_knowledge_tag_proposals(
+        db,
+        context.user,
+        payload.proposal_ids,
+        action=payload.action,
+    )
+    record_audit(
+        db,
+        action=f"knowledge_tag_proposals_{payload.action}",
+        target_type="knowledge_tag_proposal",
+        target_id=proposals[0].id,
+        result="success",
+        actor=context.user,
+        request_id=getattr(request.state, "request_id", None),
+        metadata={"count": len(proposals), "proposal_ids": payload.proposal_ids},
+    )
+    db.commit()
+    return {"resolvedCount": len(proposals)}
+
+
+@router.post("/tag-proposals/{proposal_id}/resolve")
+def post_knowledge_tag_proposal_resolution(
+    proposal_id: str,
+    payload: KnowledgeTagProposalResolve,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    proposal = resolve_knowledge_tag_proposal(
+        db,
+        context.user,
+        proposal_id,
+        action=payload.action,
+        expected_revision=payload.expected_revision,
+        target_tag_id=payload.target_tag_id,
+    )
+    record_audit(
+        db,
+        action=f"knowledge_tag_proposal_{payload.action}",
+        target_type="knowledge_tag_proposal",
+        target_id=proposal.id,
+        result="success",
+        actor=context.user,
+        request_id=getattr(request.state, "request_id", None),
+        metadata={"resolved_tag_id": proposal.resolved_tag_id},
+    )
+    db.commit()
+    return knowledge_tag_proposal_payload(proposal)
 
 
 @router.post("/tags", status_code=status.HTTP_201_CREATED)
@@ -239,7 +314,7 @@ async def post_knowledge_document_batch_tags(
     context: AuthContext = Depends(require_csrf),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
-) -> dict[str, int]:
+) -> dict[str, object]:
     if payload.provider_id == "mock":
         if settings.environment == "production" or payload.model_key != "mock-agent":
             raise ApiProblem(
@@ -265,6 +340,10 @@ async def post_knowledge_document_batch_tags(
         space_id=payload.space_id,
         provider=local_run_executor.provider_for_probe(payload.provider_id),
         model=runtime_model_id,
+        provider_id=payload.provider_id,
+        model_key=payload.model_key,
+        target=payload.target,
+        new_tag_policy=payload.new_tag_policy,
     )
     record_audit(
         db,

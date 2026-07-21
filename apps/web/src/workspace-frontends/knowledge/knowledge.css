@@ -140,6 +140,38 @@
 .knowledge-review, .knowledge-settings { display: grid; align-content: start; gap: 13px; }
 .knowledge-review { display: flex; flex-direction: column; overflow: hidden; }
 .knowledge-inline-error { margin: 0; border: 1px solid var(--danger-border); border-radius: var(--radius-control); padding: 9px 11px; background: var(--danger-surface); color: var(--danger); font-size: var(--conversation-font-size); }
+.knowledge-tagging-page { display: grid; align-content: start; }
+.knowledge-tagging-card { width: min(760px, 100%); }
+.knowledge-tagging-card > header > svg { color: var(--cobalt); }
+.knowledge-tagging-grid { display: grid; gap: 0; }
+.knowledge-tagging-grid > div { display: grid; grid-template-columns: 150px minmax(220px, 1fr); align-items: center; gap: 5px 14px; border-bottom: 1px solid var(--line); padding: 13px 14px; }
+.knowledge-tagging-grid > div > span { grid-row: span 2; color: var(--ink); font-size: var(--conversation-font-size); font-weight: 650; }
+.knowledge-tagging-grid > div > small { color: var(--muted); font-size: calc(var(--conversation-font-size) - 1px); line-height: 1.45; }
+.knowledge-tagging-select { width: 100%; }
+.knowledge-tagging-card > footer { display: flex; min-height: 58px; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; }
+.knowledge-tagging-card > footer > div { min-width: 0; }
+.knowledge-tagging-result { color: var(--muted); font-size: var(--conversation-font-size); }
+.knowledge-tagging-card > footer button, .knowledge-tag-proposal-card header button, .knowledge-tag-proposal-actions button, .knowledge-tag-proposal-merge button { display: inline-flex; min-height: var(--control-height-md); align-items: center; justify-content: center; gap: 5px; border: 1px solid var(--line); border-radius: var(--radius-control); padding: 0 11px; background: var(--surface); color: var(--ink); font-size: var(--conversation-font-size); font-weight: 650; cursor: pointer; }
+.knowledge-tagging-card > footer button.lumina-primary-action, .knowledge-tag-proposal-card header button.lumina-primary-action, .knowledge-tag-proposal-merge button.lumina-primary-action { border-color: var(--cobalt); background: var(--cobalt); color: white; }
+.knowledge-tagging-card > footer button.is-delete-armed { border-color: var(--danger-border); background: var(--danger-surface); color: var(--danger); }
+.knowledge-tagging-card button:disabled, .knowledge-tag-proposal-card button:disabled { opacity: .55; cursor: default; }
+.knowledge-tag-management-tabs { display: flex; flex: none; gap: 3px; }
+.knowledge-tag-management-tabs button { display: inline-flex; min-height: var(--control-height-md); align-items: center; gap: 6px; border: 1px solid transparent; border-radius: var(--radius-control); padding: 0 10px; background: transparent; color: var(--muted); font-size: var(--conversation-font-size); font-weight: 650; }
+.knowledge-tag-management-tabs button span { min-width: 18px; border-radius: var(--radius-pill); padding: 1px 5px; background: var(--surface-soft); color: var(--faint); font-size: calc(var(--conversation-font-size) - 1px); font-variant-numeric: tabular-nums; }
+.knowledge-tag-management-tabs button.is-active { border-color: var(--line); background: var(--surface); color: var(--ink); }
+.knowledge-tag-proposal-card { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: hidden; }
+.knowledge-tag-proposal-card > header > div:last-child { display: flex; gap: 7px; }
+.knowledge-tag-proposal-list { min-height: 0; overflow-y: auto; }
+.knowledge-tag-proposal-row { display: grid; min-height: 82px; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 11px; border-bottom: 1px solid var(--line); padding: 12px 14px; }
+.knowledge-tag-proposal-row > input { width: 15px; height: 15px; margin: 0; accent-color: var(--cobalt); }
+.knowledge-tag-proposal-row > div:nth-child(2) { display: grid; min-width: 0; gap: 4px; }
+.knowledge-tag-proposal-row > div:nth-child(2) > span { display: flex; align-items: baseline; gap: 8px; }
+.knowledge-tag-proposal-row strong { font-size: var(--conversation-font-size); }
+.knowledge-tag-proposal-row span small { color: var(--cobalt); font-size: calc(var(--conversation-font-size) - 1px); font-weight: 650; }
+.knowledge-tag-proposal-row span em { color: var(--faint); font-size: calc(var(--conversation-font-size) - 1px); font-style: normal; }
+.knowledge-tag-proposal-row p, .knowledge-tag-proposal-row > div:nth-child(2) > small { margin: 0; color: var(--muted); font-size: calc(var(--conversation-font-size) - 1px); line-height: 1.45; }
+.knowledge-tag-proposal-actions { display: flex; gap: 5px; }
+.knowledge-tag-proposal-merge { grid-column: 2 / -1; display: grid; grid-template-columns: minmax(200px, 1fr) auto; gap: 7px; padding-top: 2px; }
 .knowledge-tag-card { display: flex; min-width: 0; min-height: 0; flex: 1; flex-direction: column; overflow: hidden; }
 .knowledge-card > .knowledge-tag-card-header { min-height: 64px; padding: 11px 14px; }
 .knowledge-card > .knowledge-tag-card-header strong { font-size: var(--conversation-font-size); }
@@ -243,6 +275,10 @@
   .knowledge-space-form { grid-template-columns: 1fr; }
   .knowledge-tag-editor-grid { grid-template-columns: 1fr 1fr; }
   .knowledge-tag-editor label.is-wide { grid-column: 1 / -1; }
+  .knowledge-tagging-grid > div { grid-template-columns: 120px minmax(0, 1fr); }
+  .knowledge-tag-proposal-row { grid-template-columns: auto minmax(0, 1fr); }
+  .knowledge-tag-proposal-actions { grid-column: 2; }
+  .knowledge-tag-proposal-merge { grid-column: 2; }
 }
 @media (max-width: 520px) {
   .knowledge-toolbar button { width: 32px; justify-content: center; gap: 0; padding: 0; font-size: 0; }
@@ -251,6 +287,14 @@
   .knowledge-tag-editor-grid { grid-template-columns: 1fr; }
   .knowledge-tag-editor label.is-wide { grid-column: auto; }
   .knowledge-tag-management-row { grid-template-columns: 18px minmax(0, 1fr) 14px; }
+  .knowledge-tagging-grid > div { grid-template-columns: 1fr; }
+  .knowledge-tagging-grid > div > span { grid-row: auto; }
+  .knowledge-tagging-card > footer { align-items: stretch; flex-direction: column; }
+  .knowledge-tagging-card > footer button { width: 100%; }
+  .knowledge-tag-proposal-card > header { align-items: flex-start; flex-direction: column; }
+  .knowledge-tag-proposal-row { grid-template-columns: auto minmax(0, 1fr); align-items: start; }
+  .knowledge-tag-proposal-actions { flex-wrap: wrap; }
+  .knowledge-tag-proposal-merge { grid-template-columns: 1fr; }
   .knowledge-tag-usage { display: none; }
   .knowledge-settings dl > div { grid-template-columns: 1fr; align-items: start; gap: 6px; }
   .knowledge-use-mode-setting { grid-template-columns: 1fr; }

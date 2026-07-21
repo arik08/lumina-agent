@@ -19,8 +19,10 @@ from ..models import (
     KnowledgeSpace,
     KnowledgeTag,
     KnowledgeTagAlias,
+    KnowledgeTagProposal,
     Run,
     User,
+    utc_now,
 )
 from ..providers.types import ProviderAdapter
 from .schemas import (
@@ -275,21 +277,23 @@ async def tag_untagged_knowledge_documents(
     space_id: str,
     provider: ProviderAdapter,
     model: str,
-) -> dict[str, int]:
+    provider_id: str,
+    model_key: str,
+    target: str = "untagged",
+    new_tag_policy: str = "propose",
+) -> dict[str, int | str]:
     require_knowledge_space(db, user, space_id, write=True)
-    tagged_document_ids = select(KnowledgeDocumentTag.document_id)
-    documents = list(
-        db.scalars(
-            select(KnowledgeDocument)
-            .where(
-                KnowledgeDocument.owner_user_id == user.id,
-                KnowledgeDocument.space_id == space_id,
-                KnowledgeDocument.status == "active",
-                KnowledgeDocument.id.not_in(tagged_document_ids),
-            )
-            .order_by(KnowledgeDocument.researched_at, KnowledgeDocument.id)
-            .limit(200)
+    statement = select(KnowledgeDocument).where(
+        KnowledgeDocument.owner_user_id == user.id,
+        KnowledgeDocument.space_id == space_id,
+        KnowledgeDocument.status == "active",
+    )
+    if target == "untagged":
+        statement = statement.where(
+            KnowledgeDocument.id.not_in(select(KnowledgeDocumentTag.document_id))
         )
+    documents = list(
+        db.scalars(statement.order_by(KnowledgeDocument.researched_at, KnowledgeDocument.id))
     )
     candidates = _tag_candidates(db, space_id)
     suggestions: list[DocumentTagSuggestion | None] = []
@@ -315,25 +319,76 @@ async def tag_untagged_knowledge_documents(
             )
             suggestions.extend([None] * len(batch))
     tagged_count = 0
+    proposal_document_count = 0
     failed_count = 0
+    touched_proposal_ids: set[str] = set()
     for document, suggestion in zip(documents, suggestions, strict=True):
         if suggestion is None:
             failed_count += 1
             continue
         try:
-            tag_ids = _resolve_document_tags(
-                db,
-                space_id=space_id,
-                suggested_ids=suggestion.tag_ids,
-                new_tags=suggestion.new_tags,
-            )
-            if not tag_ids:
+            if new_tag_policy == "auto_approve":
+                tag_ids = _resolve_document_tags(
+                    db,
+                    space_id=space_id,
+                    suggested_ids=suggestion.tag_ids,
+                    new_tags=suggestion.new_tags,
+                )
+                proposed = False
+                if target == "all" and tag_ids:
+                    _remove_document_from_pending_proposals(
+                        db, space_id=space_id, document_id=document.id
+                    )
+            else:
+                tag_ids = _valid_suggested_tag_ids(
+                    db, space_id=space_id, suggested_ids=suggestion.tag_ids
+                )
+                proposed = False
+                if new_tag_policy == "propose":
+                    usable_new_tags = tuple(
+                        item
+                        for item in suggestion.new_tags
+                        if _normalize_tag(item.canonical_name)
+                    )
+                    if target == "all" and (tag_ids or usable_new_tags):
+                        _remove_document_from_pending_proposals(
+                            db, space_id=space_id, document_id=document.id
+                        )
+                    for new_tag in usable_new_tags:
+                        proposal, resolved_tag_id = _upsert_tag_proposal(
+                            db,
+                            space_id=space_id,
+                            document_id=document.id,
+                            suggestion=new_tag,
+                            provider_id=provider_id,
+                            model_key=model_key,
+                        )
+                        if proposal is not None:
+                            touched_proposal_ids.add(proposal.id)
+                            proposed = True
+                        if resolved_tag_id and resolved_tag_id not in tag_ids:
+                            tag_ids.append(resolved_tag_id)
+                elif target == "all" and tag_ids:
+                    _remove_document_from_pending_proposals(
+                        db, space_id=space_id, document_id=document.id
+                    )
+            if not tag_ids and not proposed:
                 failed_count += 1
                 continue
+            if target == "all":
+                db.execute(
+                    delete(KnowledgeDocumentTag).where(
+                        KnowledgeDocumentTag.document_id == document.id
+                    )
+                )
             for tag_id in tag_ids[:MAX_DOCUMENT_TAGS]:
-                db.add(KnowledgeDocumentTag(document_id=document.id, tag_id=tag_id))
+                if db.get(KnowledgeDocumentTag, (document.id, tag_id)) is None:
+                    db.add(KnowledgeDocumentTag(document_id=document.id, tag_id=tag_id))
             db.flush()
-            tagged_count += 1
+            if tag_ids:
+                tagged_count += 1
+            if proposed:
+                proposal_document_count += 1
         except Exception:
             failed_count += 1
             logger.warning(
@@ -355,8 +410,12 @@ async def tag_untagged_knowledge_documents(
     return {
         "requestedCount": len(documents),
         "taggedCount": tagged_count,
+        "proposedCount": len(touched_proposal_ids),
+        "proposalDocumentCount": proposal_document_count,
         "failedCount": failed_count,
         "remainingCount": remaining_count,
+        "target": target,
+        "newTagPolicy": new_tag_policy,
     }
 
 
@@ -859,13 +918,135 @@ def _tag_candidates(db: Session, space_id: str) -> list[ExistingTagCandidate]:
     ]
 
 
-def _resolve_document_tags(
+def list_knowledge_tag_proposals(
+    db: Session, user: User, *, space_id: str
+) -> list[KnowledgeTagProposal]:
+    require_knowledge_space(db, user, space_id)
+    return list(
+        db.scalars(
+            select(KnowledgeTagProposal)
+            .where(
+                KnowledgeTagProposal.space_id == space_id,
+                KnowledgeTagProposal.status == "pending",
+            )
+            .order_by(
+                KnowledgeTagProposal.updated_at.desc(), KnowledgeTagProposal.id
+            )
+        )
+    )
+
+
+def knowledge_tag_proposal_payload(
+    proposal: KnowledgeTagProposal,
+) -> dict[str, object]:
+    return {
+        "id": proposal.id,
+        "spaceId": proposal.space_id,
+        "namespace": proposal.namespace,
+        "canonicalName": proposal.canonical_name,
+        "scopeNote": proposal.scope_note,
+        "aliases": proposal.aliases_json,
+        "documentCount": len(proposal.document_ids_json),
+        "status": proposal.status,
+        "revision": proposal.revision,
+        "providerId": proposal.provider_id,
+        "modelKey": proposal.model_key,
+        "resolvedTagId": proposal.resolved_tag_id,
+        "createdAt": proposal.created_at,
+        "updatedAt": proposal.updated_at,
+    }
+
+
+def resolve_knowledge_tag_proposal(
     db: Session,
+    user: User,
+    proposal_id: str,
     *,
-    space_id: str,
-    suggested_ids: tuple[str, ...],
-    new_tags: tuple[NewTagSuggestion, ...],
+    action: str,
+    expected_revision: int | None = None,
+    target_tag_id: str | None = None,
+) -> KnowledgeTagProposal:
+    proposal = db.get(KnowledgeTagProposal, proposal_id)
+    if proposal is None:
+        raise ApiProblem(404, "knowledge_tag_proposal_not_found", "태그 제안을 찾을 수 없습니다.")
+    require_knowledge_space(db, user, proposal.space_id, write=True)
+    if proposal.status != "pending":
+        raise ApiProblem(409, "knowledge_tag_proposal_resolved", "이미 처리된 태그 제안입니다.")
+    if expected_revision is not None and proposal.revision != expected_revision:
+        raise ApiProblem(409, "knowledge_tag_proposal_revision_conflict", "태그 제안이 먼저 변경되었습니다. 목록을 새로 불러와 주세요.")
+
+    resolved_tag_id: str | None = None
+    if action == "approve":
+        suggestion = NewTagSuggestion(
+            canonicalName=proposal.canonical_name,
+            scopeNote=proposal.scope_note or proposal.canonical_name,
+            aliases=proposal.aliases_json,
+        )
+        resolved = _resolve_document_tags(
+            db,
+            space_id=proposal.space_id,
+            suggested_ids=(),
+            new_tags=(suggestion,),
+        )
+        resolved_tag_id = resolved[0] if resolved else None
+        if resolved_tag_id is None:
+            raise ApiProblem(409, "knowledge_tag_proposal_invalid", "태그 제안을 승인할 수 없습니다.")
+        proposal.status = "approved"
+    elif action == "merge":
+        tag = db.get(KnowledgeTag, target_tag_id) if target_tag_id else None
+        if tag is None or tag.space_id != proposal.space_id or tag.status != "active":
+            raise ApiProblem(404, "knowledge_tag_not_found", "병합할 태그를 찾을 수 없습니다.")
+        resolved_tag_id = tag.id
+        proposal.status = "merged"
+    elif action == "reject":
+        proposal.status = "rejected"
+    else:
+        raise ApiProblem(422, "knowledge_tag_proposal_action_invalid", "지원하지 않는 처리 방식입니다.")
+
+    if resolved_tag_id:
+        documents = list(
+            db.scalars(
+                select(KnowledgeDocument).where(
+                    KnowledgeDocument.id.in_(proposal.document_ids_json),
+                    KnowledgeDocument.space_id == proposal.space_id,
+                    KnowledgeDocument.owner_user_id == user.id,
+                    KnowledgeDocument.status == "active",
+                )
+            )
+        ) if proposal.document_ids_json else []
+        for document in documents:
+            if db.get(KnowledgeDocumentTag, (document.id, resolved_tag_id)) is None:
+                db.add(
+                    KnowledgeDocumentTag(
+                        document_id=document.id, tag_id=resolved_tag_id
+                    )
+                )
+    proposal.resolved_tag_id = resolved_tag_id
+    proposal.resolved_by_user_id = user.id
+    proposal.resolved_at = utc_now()
+    proposal.revision += 1
+    db.flush()
+    return proposal
+
+
+def resolve_knowledge_tag_proposals(
+    db: Session,
+    user: User,
+    proposal_ids: list[str],
+    *,
+    action: str,
+) -> list[KnowledgeTagProposal]:
+    return [
+        resolve_knowledge_tag_proposal(db, user, proposal_id, action=action)
+        for proposal_id in proposal_ids
+    ]
+
+
+def _valid_suggested_tag_ids(
+    db: Session, *, space_id: str, suggested_ids: tuple[str, ...]
 ) -> list[str]:
+    if not suggested_ids:
+        return []
     valid_ids = set(
         db.scalars(
             select(KnowledgeTag.id).where(
@@ -874,8 +1055,97 @@ def _resolve_document_tags(
                 KnowledgeTag.status == "active",
             )
         )
-    ) if suggested_ids else set()
-    resolved = [tag_id for tag_id in suggested_ids if tag_id in valid_ids]
+    )
+    return [tag_id for tag_id in suggested_ids if tag_id in valid_ids]
+
+
+def _upsert_tag_proposal(
+    db: Session,
+    *,
+    space_id: str,
+    document_id: str,
+    suggestion: NewTagSuggestion,
+    provider_id: str,
+    model_key: str,
+) -> tuple[KnowledgeTagProposal | None, str | None]:
+    normalized_name = _normalize_tag(suggestion.canonical_name)[:160]
+    if not normalized_name:
+        return None, None
+    proposal = db.scalar(
+        select(KnowledgeTagProposal).where(
+            KnowledgeTagProposal.space_id == space_id,
+            KnowledgeTagProposal.namespace == "topic",
+            KnowledgeTagProposal.normalized_name == normalized_name,
+        )
+    )
+    if proposal is not None:
+        if proposal.status in {"approved", "merged"} and proposal.resolved_tag_id:
+            tag = db.get(KnowledgeTag, proposal.resolved_tag_id)
+            if tag is not None and tag.status == "active":
+                return None, tag.id
+        if proposal.status != "pending":
+            return None, None
+        document_ids = list(proposal.document_ids_json)
+        if document_id not in document_ids:
+            proposal.document_ids_json = [*document_ids, document_id]
+        proposal.provider_id = provider_id
+        proposal.model_key = model_key
+        proposal.revision += 1
+        db.flush()
+        return proposal, None
+    proposal = KnowledgeTagProposal(
+        space_id=space_id,
+        namespace="topic",
+        canonical_name=" ".join(suggestion.canonical_name.split())[:160],
+        normalized_name=normalized_name,
+        scope_note=" ".join(suggestion.scope_note.split())[:40],
+        aliases_json=[" ".join(value.split())[:160] for value in suggestion.aliases],
+        document_ids_json=[document_id],
+        provider_id=provider_id,
+        model_key=model_key,
+        status="pending",
+        revision=1,
+    )
+    db.add(proposal)
+    db.flush()
+    return proposal, None
+
+
+def _remove_document_from_pending_proposals(
+    db: Session, *, space_id: str, document_id: str
+) -> None:
+    proposals = list(
+        db.scalars(
+            select(KnowledgeTagProposal).where(
+                KnowledgeTagProposal.space_id == space_id,
+                KnowledgeTagProposal.status == "pending",
+            )
+        )
+    )
+    for proposal in proposals:
+        if document_id not in proposal.document_ids_json:
+            continue
+        remaining_ids = [
+            item for item in proposal.document_ids_json if item != document_id
+        ]
+        if remaining_ids:
+            proposal.document_ids_json = remaining_ids
+            proposal.revision += 1
+        else:
+            db.delete(proposal)
+    db.flush()
+
+
+def _resolve_document_tags(
+    db: Session,
+    *,
+    space_id: str,
+    suggested_ids: tuple[str, ...],
+    new_tags: tuple[NewTagSuggestion, ...],
+) -> list[str]:
+    resolved = _valid_suggested_tag_ids(
+        db, space_id=space_id, suggested_ids=suggested_ids
+    )
     for suggestion in new_tags:
         if len(resolved) >= MAX_DOCUMENT_TAGS:
             break
@@ -965,12 +1235,16 @@ __all__ = [
     "document_payload",
     "ensure_default_space",
     "knowledge_graph_payload",
+    "knowledge_tag_proposal_payload",
     "knowledge_tag_payloads",
+    "list_knowledge_tag_proposals",
     "list_knowledge_tags",
     "list_knowledge_documents",
     "list_knowledge_spaces",
     "require_knowledge_document",
     "require_knowledge_space",
+    "resolve_knowledge_tag_proposal",
+    "resolve_knowledge_tag_proposals",
     "save_message_as_knowledge_document",
     "space_payload",
     "tag_untagged_knowledge_documents",

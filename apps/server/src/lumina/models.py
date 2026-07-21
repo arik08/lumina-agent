@@ -2090,6 +2090,49 @@ class KnowledgeDocumentTag(Base):
     )
 
 
+class KnowledgeTagProposal(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "knowledge_tag_proposals"
+    __table_args__ = (
+        UniqueConstraint(
+            "space_id",
+            "namespace",
+            "normalized_name",
+            name="uq_knowledge_tag_proposals_name",
+        ),
+        Index(
+            "ix_knowledge_tag_proposals_space_status",
+            "space_id",
+            "status",
+            "updated_at",
+        ),
+    )
+
+    space_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_spaces.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    namespace: Mapped[str] = mapped_column(String(80), default="topic", nullable=False)
+    canonical_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    normalized_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    scope_note: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    aliases_json: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    document_ids_json: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    provider_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    model_key: Mapped[str] = mapped_column(String(240), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(24), default="pending", index=True, nullable=False
+    )
+    revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    resolved_tag_id: Mapped[str | None] = mapped_column(
+        ForeignKey("knowledge_tags.id", ondelete="SET NULL"), index=True
+    )
+    resolved_by_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+
+
 __all__ = [
     "Announcement",
     "AnnouncementReceipt",
@@ -2114,6 +2157,7 @@ __all__ = [
     "KnowledgeSpace",
     "KnowledgeTag",
     "KnowledgeTagAlias",
+    "KnowledgeTagProposal",
     "Message",
     "MessageFeedback",
     "MessageReference",

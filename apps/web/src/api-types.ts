@@ -798,6 +798,41 @@ export interface KnowledgeTag extends KnowledgeDocumentTag {
   revision: number;
   usageCount: number;
 }
+export type KnowledgeTaggingTarget = "untagged" | "all";
+export type KnowledgeNewTagPolicy = "pool_only" | "propose" | "auto_approve";
+export interface KnowledgeBatchTagRequest {
+  spaceId: UUID;
+  providerId: string;
+  modelKey: string;
+  target: KnowledgeTaggingTarget;
+  newTagPolicy: KnowledgeNewTagPolicy;
+}
+export interface KnowledgeBatchTagResult {
+  requestedCount: number;
+  taggedCount: number;
+  proposedCount: number;
+  proposalDocumentCount: number;
+  failedCount: number;
+  remainingCount: number;
+  target: KnowledgeTaggingTarget;
+  newTagPolicy: KnowledgeNewTagPolicy;
+}
+export interface KnowledgeTagProposal {
+  id: UUID;
+  spaceId: UUID;
+  namespace: string;
+  canonicalName: string;
+  scopeNote: string;
+  aliases: string[];
+  documentCount: number;
+  status: "pending" | "approved" | "merged" | "rejected";
+  revision: number;
+  providerId: string;
+  modelKey: string;
+  resolvedTagId: UUID | null;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
 export interface CreateKnowledgeTagRequest {
   spaceId: UUID;
   namespace: string;

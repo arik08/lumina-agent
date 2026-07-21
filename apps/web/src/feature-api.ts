@@ -76,6 +76,7 @@ import {
   listKnowledgeDocuments,
   listKnowledgeSpaces,
   listKnowledgeTags,
+  listKnowledgeTagProposals,
   listMcpCatalog,
   listMemories,
   listProjectFiles,
@@ -107,6 +108,8 @@ import {
   runDeepAnalysisQualityGate,
   runScheduledTaskNow,
   saveKnowledgeDocumentFromMessage,
+  resolveKnowledgeTagProposal,
+  resolveKnowledgeTagProposals,
   saveSkillVersion,
   setAdminMcpDefinitionStatus,
   setExtensionInstallationEnabled,
@@ -193,6 +196,7 @@ export const knowledgeApi = {
   createSpace: createKnowledgeSpace,
   updateSpace: updateKnowledgeSpace,
   listTags: listKnowledgeTags,
+  listTagProposals: listKnowledgeTagProposals,
   createTag: createKnowledgeTag,
   updateTag: updateKnowledgeTag,
   listDocuments: listKnowledgeDocuments,
@@ -200,6 +204,8 @@ export const knowledgeApi = {
   deleteDocument: deleteKnowledgeDocument,
   saveMessage: saveKnowledgeDocumentFromMessage,
   batchTagDocuments: batchTagKnowledgeDocuments,
+  resolveTagProposal: resolveKnowledgeTagProposal,
+  resolveTagProposals: resolveKnowledgeTagProposals,
   getGraph: getKnowledgeGraph,
 };
 

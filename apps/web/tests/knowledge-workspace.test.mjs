@@ -65,7 +65,7 @@ test("Knowledge Wiki reuses the default chat Markdown renderer", async () => {
 test("Knowledge keeps the full workspace navigation around the document model", async () => {
   const [view, styles] = await Promise.all([readFile(viewPath, "utf8"), readFile(stylesPath, "utf8")]);
   assert.doesNotMatch(view, /knowledge-mobile-menu|onOpenNavigation|knowledge-spaces|knowledge-pane-title|knowledge-space-list/);
-  for (const label of ["홈", "탐색", "문서", "태그 관리", "설정"]) {
+  for (const label of ["홈", "탐색", "문서", "AI 태깅", "태그 관리", "설정"]) {
     assert.match(view, new RegExp(`label: "${label}"`));
   }
   assert.doesNotMatch(view.match(/const tabs = \[[\s\S]*?\] as const;/)?.[0] ?? "", /label: "(?:원문|Wiki|그래프)"/);
@@ -153,11 +153,21 @@ test("answer action places Knowledge save immediately before branch", async () =
   assert.match(turn, /saveKnowledgeDocumentFromMessage\(finalMessage\.id\)/);
 });
 
-test("Knowledge keeps batch tagging out of the graph workspace", async () => {
+test("Knowledge runs configurable batch tagging in a dedicated workspace", async () => {
   const [view, api, styles] = await Promise.all([readFile(viewPath, "utf8"), readFile(apiPath, "utf8"), readFile(stylesPath, "utf8")]);
   assert.match(api, /\/knowledge\/documents\/tag-batch/);
-  assert.doesNotMatch(view, /일괄 태깅 모델|미태깅 .*일괄 태깅|batchTagDocuments|taggingModels/);
-  assert.doesNotMatch(styles, /knowledge-graph-tag-actions|knowledge-tagging-model/);
+  assert.match(view, /label: "문서"[\s\S]*?label: "AI 태깅"[\s\S]*?label: "태그 관리"/);
+  assert.match(view, /ariaLabel="AI 태깅 모델"/);
+  assert.match(view, /value: "untagged", label: "태그 없는 문서만"/);
+  assert.match(view, /value: "all", label: "전체 문서 재태깅"/);
+  assert.match(view, /value: "pool_only", label: "현재 태그 Pool만 사용"/);
+  assert.match(view, /value: "propose", label: "새 태그 제안 \(권장\)"/);
+  assert.match(view, /value: "auto_approve", label: "새 태그 자동 승인"/);
+  assert.match(view, /allArmed \? <><AlertTriangle/);
+  assert.match(view, /batchTagDocuments\(\{[\s\S]*?target,[\s\S]*?newTagPolicy: policy/);
+  assert.doesNotMatch(view.match(/if \(isDocumentView\(tab\)\)[\s\S]*?if \(tab === "tagging"\)/)?.[0] ?? "", /batchTagDocuments/);
+  assert.match(styles, /\.knowledge-tagging-card/);
+  assert.doesNotMatch(styles, /knowledge-graph-tag-actions/);
 });
 
 test("Knowledge tag management creates and edits typed hierarchical tags", async () => {
@@ -172,14 +182,20 @@ test("Knowledge tag management creates and edits typed hierarchical tags", async
   assert.match(view, /<strong>태그 사전<\/strong>/);
   assert.match(view, /> 새 태그<\/button>/);
   assert.match(view, /태그 이름, 정의 또는 별칭 검색/);
-  assert.doesNotMatch(view, /승인 대기 태그가 없습니다/);
+  assert.match(view, /새 태그 제안/);
+  assert.match(view, /선택 승인/);
+  assert.match(view, /병합 적용/);
+  assert.match(view, /선택 거절/);
   assert.match(view, /initialNamespace=\{createNamespace\}/);
   assert.match(view, /company: "포스코"/);
   assert.match(view, /parentTagId: draft\.parentTagId \|\| null/);
   assert.match(view, /expectedRevision: tag\.revision/);
   assert.match(api, /\/knowledge\/tags/);
+  assert.match(api, /\/knowledge\/tag-proposals/);
   assert.match(featureApi, /createTag: createKnowledgeTag/);
   assert.match(featureApi, /updateTag: updateKnowledgeTag/);
+  assert.match(featureApi, /resolveTagProposal: resolveKnowledgeTagProposal/);
+  assert.match(featureApi, /resolveTagProposals: resolveKnowledgeTagProposals/);
   assert.match(types, /interface KnowledgeTag extends KnowledgeDocumentTag/);
   assert.match(types, /definition: string/);
   assert.match(types, /parentTagId: UUID \| null/);
@@ -190,6 +206,7 @@ test("Knowledge tag management creates and edits typed hierarchical tags", async
   assert.match(styles, /\.knowledge-tag-management-row \{[^}]*border: 0;[^}]*background: transparent;/);
   assert.match(styles, /\.knowledge-tag-editor input \{[^}]*height: var\(--control-height-md\);[^}]*font-size: var\(--conversation-font-size\);/);
   assert.match(styles, /\.knowledge-tag-management-row strong \{[^}]*font-size: var\(--conversation-font-size\);/);
+  assert.match(styles, /\.knowledge-tag-proposal-list \{[^}]*overflow-y: auto;/);
 });
 
 test("Knowledge keeps documents available when the optional tag-management API is stale", async () => {
