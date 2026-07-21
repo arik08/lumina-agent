@@ -23,7 +23,7 @@ test("Knowledge stores and displays one node per AI answer document", async () =
   assert.doesNotMatch(types, /KnowledgeEntity|KnowledgeStatement|KnowledgeReviewDecision/);
 });
 
-test("Knowledge document rows show linked document counts and support inline deletion", async () => {
+test("Knowledge document rows show the selected sort metric and support inline deletion", async () => {
   const [view, api, types, styles] = await Promise.all([
     readFile(viewPath, "utf8"),
     readFile(apiPath, "utf8"),
@@ -31,7 +31,9 @@ test("Knowledge document rows show linked document counts and support inline del
     readFile(stylesPath, "utf8"),
   ]);
   assert.match(types, /linkedDocumentCount: number/);
-  assert.match(view, />\{document\.linkedDocumentCount\}<\/em>/);
+  assert.match(view, /sort === "tagCount" && <em[^>]*>\{document\.tags\.length\}<\/em>/);
+  assert.match(view, /sort === "linkedDocumentCount" && <em[^>]*>\{document\.linkedDocumentCount\}<\/em>/);
+  assert.doesNotMatch(view, /sort === "researchedAt" && <em/);
   assert.doesNotMatch(view, />\{document\.citationCount\}<\/em>/);
   assert.match(api, /method: "DELETE"/);
   assert.match(view, /deleteArmedId !== document\.id/);

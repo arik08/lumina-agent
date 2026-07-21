@@ -713,7 +713,8 @@ function DocumentList({ documents, selectedId, onOpen, onRead, onDelete, label, 
                 <span><strong>{document.title}</strong><small>조사일 {researchedDate(document.researchedAt)}</small></span>
               </button>
               <div className="knowledge-document-row-actions">
-                <em aria-label={`${document.linkedDocumentCount}개 문서와 연결`}>{document.linkedDocumentCount}</em>
+                {sort === "tagCount" && <em aria-label={`${document.tags.length}개 태그`}>{document.tags.length}</em>}
+                {sort === "linkedDocumentCount" && <em aria-label={`${document.linkedDocumentCount}개 문서와 연결`}>{document.linkedDocumentCount}</em>}
                 <button className={`knowledge-document-delete tooltip-control ${deleteArmedId === document.id ? "is-delete-armed" : ""}`} type="button" aria-label={deleteArmedId === document.id ? `${document.title} 삭제 확인, 한 번 더 누르면 삭제` : `${document.title} 삭제`} data-tooltip={deleteArmedId === document.id ? "한 번 더 눌러 삭제" : "삭제"} disabled={deleteBusyId !== null} onClick={() => void remove(document)}>{deleteBusyId === document.id ? <LoaderCircle className="is-running" size={13} /> : deleteArmedId === document.id ? <AlertTriangle size={13} /> : <Trash2 size={13} />}</button>
               </div>
               {deleteError?.id === document.id && <small className="knowledge-document-delete-error" role="alert">{deleteError.message}</small>}
