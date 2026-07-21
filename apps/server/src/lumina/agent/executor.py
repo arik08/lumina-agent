@@ -206,6 +206,7 @@ from ..runs.state import (
     AWAITING_APPROVAL,
     AWAITING_INPUT,
     COMPLETED,
+    EXECUTION_SLOT_STATUSES,
     FAILED,
     LIMIT_REACHED,
     MODEL_STREAMING,
@@ -985,7 +986,7 @@ class LocalRunExecutor:
                 server_active = (
                     db.scalar(
                         select(func.count(Run.id)).where(
-                            Run.status.in_(ACTIVE_STATUSES)
+                            Run.status.in_(EXECUTION_SLOT_STATUSES)
                         )
                     )
                     or 0
@@ -1011,7 +1012,7 @@ class LocalRunExecutor:
                     select(func.count(user_active.id))
                     .where(
                         user_active.user_id == candidate.user_id,
-                        user_active.status.in_(ACTIVE_STATUSES),
+                        user_active.status.in_(EXECUTION_SLOT_STATUSES),
                     )
                     .correlate(candidate)
                     .scalar_subquery()
