@@ -2094,6 +2094,12 @@ async def post_mission_resume(
     complete_command(db, command, result={"runId": run.id})
     db.commit()
     local_run_executor.enqueue(run.id)
+    if run.status == "queued":
+        await event_broker.replace_assistant_draft(
+            run.id,
+            str(run.snapshot_json.get("assistant_message_id", "")),
+            run.assistant_draft,
+        )
     await event_broker.notify(run.id)
     return _detail_payload(db, mission)
 

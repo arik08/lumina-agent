@@ -672,7 +672,7 @@ def pause_plan(db: Session, run: Run) -> None:
     )
 
 
-def resume_plan(db: Session, run: Run) -> None:
+def resume_plan(db: Session, run: Run, *, requeue: bool = False) -> None:
     if db.scalar(select(Plan.id).where(Plan.run_id == run.id)) is None:
         return
     marker = run.snapshot_json.get("plan_pause", {})
@@ -690,7 +690,7 @@ def resume_plan(db: Session, run: Run) -> None:
         return
     target = (
         PLAN_STEP_QUEUED
-        if marker.get("previous_status") == PLAN_STEP_QUEUED
+        if requeue or marker.get("previous_status") == PLAN_STEP_QUEUED
         else PLAN_STEP_RUNNING
     )
     change_plan_step(db, run, step.step_key, status=target, reason="run_resumed")

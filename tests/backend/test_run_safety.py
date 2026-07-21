@@ -199,7 +199,25 @@ def test_event_broker_keeps_latest_complete_assistant_draft() -> None:
             2,
             {"messageId": "message-1", "text": " second", "append": True},
         )
-        assert broker.latest_assistant_draft("run-1", after_revision=2) is None
+        await broker.replace_assistant_draft("run-1", "message-1", "recovered ")
+        assert broker.latest_assistant_draft("run-1", after_revision=2) == (
+            3,
+            {"messageId": "message-1", "text": "recovered ", "append": False},
+        )
+        await broker.publish_assistant_draft("run-1", "message-1", "resumed")
+        assert broker.latest_assistant_draft("run-1", after_revision=2) == (
+            4,
+            {
+                "messageId": "message-1",
+                "text": "recovered resumed",
+                "append": False,
+            },
+        )
+        assert broker.latest_assistant_draft("run-1", after_revision=3) == (
+            4,
+            {"messageId": "message-1", "text": "resumed", "append": True},
+        )
+        assert broker.latest_assistant_draft("run-1", after_revision=4) is None
         broker.clear_assistant_draft("run-1")
         assert broker.latest_assistant_draft("run-1") is None
 

@@ -5,17 +5,23 @@ import test from "node:test";
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
 test("assistant text deltas bypass the root workspace state tree", async () => {
-  const [workspace, api, draftStore, turn] = await Promise.all([
+  const [workspace, api, apiTypes, draftStore, turn] = await Promise.all([
     read("../src/use-lumina-workspace.ts"),
     read("../src/api.ts"),
+    read("../src/api-types.ts"),
     read("../src/run-assistant-draft-store.ts"),
     read("../src/components/ConversationTurn.tsx"),
   ]);
 
   assert.match(workspace, /if \(event\.type === "assistant_text_delta"\) \{[\s\S]*?return;\s*\}/);
   assert.match(api, /addEventListener\("assistant_draft"/);
-  assert.match(workspace, /if \(append\) appendRunAssistantDraft/);
-  assert.match(workspace, /snapshot\.lastSequence >= knownEventSequence[\s\S]*setRunAssistantDraft/);
+  assert.match(workspace, /if \(append\) appendRunAssistantDraft[\s\S]*else setRunAssistantDraft/);
+  assert.match(workspace, /event\.type === "assistant_draft_rewound"[\s\S]*setRunAssistantDraft/);
+  assert.match(apiTypes, /assistantDraftRevision\?: number/);
+  assert.match(apiTypes, /"assistant_draft_rewound",[\s\S]*revision: number/);
+  assert.match(workspace, /nextSnapshot\.assistantDraftRevision = Math\.max\(/);
+  assert.match(workspace, /hasNewerDraftRevision = \(snapshot\.assistantDraftRevision \?\? 0\)[\s\S]*existingSnapshot\?\.assistantDraftRevision/);
+  assert.match(workspace, /snapshot\.lastSequence >= knownEventSequence[\s\S]*hasNewerDraftRevision \|\| terminal[\s\S]*setRunAssistantDraft/);
   assert.match(draftStore, /useSyncExternalStore/);
   assert.match(turn, /useRunAssistantDraft\(turnSet\.runId/);
   assert.match(turn, /const \[openCalls, setOpenCalls\] = useState<Set<string>>/);

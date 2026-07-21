@@ -997,6 +997,18 @@ def test_read_tool_result_pages_full_result_from_same_run(tmp_path: Path) -> Non
             cookie_secure=False,
         )
     )
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        assert run is not None
+        now = utc_now()
+        run.worker_id = executor._worker_id
+        run.heartbeat_at = now
+        run.lease_expires_at = now + timedelta(minutes=1)
+        run.snapshot_json = {
+            **run.snapshot_json,
+            "workerId": executor._worker_id,
+        }
+        db.commit()
     result = asyncio.run(
         executor._execute_tool(
             run_id,

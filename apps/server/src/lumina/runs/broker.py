@@ -17,14 +17,16 @@ class RunEventBroker:
         self._artifact_progress_revisions: dict[str, int] = {}
         self._artifact_progress: dict[str, tuple[int, dict[str, Any]]] = {}
         self._assistant_draft_revisions: dict[str, int] = {}
-        self._assistant_drafts: dict[str, tuple[int, str, str, list[str]]] = {}
+        self._assistant_drafts: dict[
+            str, tuple[int, str, str, list[str], int]
+        ] = {}
 
     def seed_assistant_draft(self, run_id: str, message_id: str, text: str) -> None:
         """Seed recovered durable text before newly streamed deltas arrive."""
         if not text or run_id in self._assistant_drafts:
             return
         self._assistant_draft_revisions[run_id] = 0
-        self._assistant_drafts[run_id] = (0, message_id, text, [])
+        self._assistant_drafts[run_id] = (0, message_id, text, [], 0)
 
     async def publish_assistant_draft(
         self, run_id: str, message_id: str, delta: str
@@ -38,15 +40,34 @@ class RunEventBroker:
         if current is None or current[1] != message_id:
             base_text = ""
             chunks = [delta]
+            base_revision = revision - 1
         else:
             base_text = current[2]
             chunks = current[3]
             chunks.append(delta)
+            base_revision = current[4]
         self._assistant_drafts[run_id] = (
             revision,
             message_id,
             base_text,
             chunks,
+            base_revision,
+        )
+        await self._notify(run_id, durable=False)
+
+    async def replace_assistant_draft(
+        self, run_id: str, message_id: str, text: str
+    ) -> None:
+        """Publish an authoritative draft replacement without resetting SSE cursors."""
+
+        revision = self._assistant_draft_revisions.get(run_id, 0) + 1
+        self._assistant_draft_revisions[run_id] = revision
+        self._assistant_drafts[run_id] = (
+            revision,
+            message_id,
+            text,
+            [],
+            revision,
         )
         await self._notify(run_id, durable=False)
 
@@ -56,9 +77,13 @@ class RunEventBroker:
         current = self._assistant_drafts.get(run_id)
         if current is None or current[0] <= after_revision:
             return None
-        revision, message_id, base_text, chunks = current
-        append = after_revision > 0
-        text = "".join(chunks[after_revision:]) if append else base_text + "".join(chunks)
+        revision, message_id, base_text, chunks, base_revision = current
+        append = after_revision > 0 and after_revision >= base_revision
+        text = (
+            "".join(chunks[after_revision - base_revision :])
+            if append
+            else base_text + "".join(chunks)
+        )
         return revision, {"messageId": message_id, "text": text, "append": append}
 
     def clear_assistant_draft(self, run_id: str) -> None:

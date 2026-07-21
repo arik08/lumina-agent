@@ -548,6 +548,14 @@ export function useLuminaWorkspace() {
       // retained only for replay; snapshots restore the authoritative draft.
       return;
     }
+    if (event.type === "assistant_draft_rewound") {
+      setRunAssistantDraft(
+        event.runId,
+        event.payload.text
+          ? { messageId: event.payload.messageId, text: event.payload.text }
+          : null,
+      );
+    }
     if (event.type === "artifact_progress") {
       setRunArtifactProgress(event.runId, event.payload);
     } else if (
@@ -680,6 +688,14 @@ export function useLuminaWorkspace() {
         nextSnapshot.finishedAt = event.payload.finishedAt;
         nextSnapshot.assistantDraft = null;
         nextSnapshot.artifactProgress = null;
+      } else if (event.type === "assistant_draft_rewound") {
+        nextSnapshot.assistantDraft = event.payload.text
+          ? { messageId: event.payload.messageId, text: event.payload.text }
+          : null;
+        nextSnapshot.assistantDraftRevision = Math.max(
+          nextSnapshot.assistantDraftRevision ?? 0,
+          event.payload.revision,
+        );
       } else if (
         event.type === "steer_received"
         || event.type === "steer_waiting_safe_boundary"
@@ -797,8 +813,11 @@ export function useLuminaWorkspace() {
   const mergeAuthoritativeRunSnapshot = useCallback((snapshot: RunSnapshot) => {
     const terminal = isTerminalRunStatus(snapshot.status);
     const knownEventSequence = eventSequencesRef.current.get(snapshot.runId) ?? 0;
+    const existingSnapshot = runtimesRef.current[snapshot.conversationId]?.snapshots[snapshot.runId];
+    const hasNewerDraftRevision = (snapshot.assistantDraftRevision ?? 0)
+      > (existingSnapshot?.assistantDraftRevision ?? 0);
     if (snapshot.lastSequence >= knownEventSequence) {
-      if (terminal || !snapshot.assistantDraft) {
+      if (hasNewerDraftRevision || terminal || !snapshot.assistantDraft) {
         setRunAssistantDraft(snapshot.runId, snapshot.assistantDraft);
       } else {
         advanceRunAssistantDraft(snapshot.runId, snapshot.assistantDraft);
@@ -903,7 +922,7 @@ export function useLuminaWorkspace() {
       onEvent: applyRunEvent,
       onAssistantDraft: (runId, draft, append) => {
         if (append) appendRunAssistantDraft(runId, draft.messageId, draft.text);
-        else advanceRunAssistantDraft(runId, draft);
+        else setRunAssistantDraft(runId, draft);
       },
       onArtifactProgress: setRunArtifactProgress,
       onError: () => {

@@ -94,7 +94,6 @@ from .state import (
     CANCELLED,
     COMPLETED,
     INTERRUPTED,
-    MODEL_STREAMING,
     PAUSED,
     QUEUED,
     TERMINAL_STATUSES,
@@ -1174,14 +1173,13 @@ def runs_for_user(
         user,
         write=write,
     ).with_only_columns(Conversation.id)
-    rows = list(
-        db.scalars(
-            select(Run).where(
-                Run.id.in_(ordered_ids),
-                Run.conversation_id.in_(accessible_conversation_ids),
-            )
-        )
+    statement = select(Run).where(
+        Run.id.in_(ordered_ids),
+        Run.conversation_id.in_(accessible_conversation_ids),
     )
+    if write:
+        statement = statement.with_for_update()
+    rows = list(db.scalars(statement))
     by_id = {run.id: run for run in rows}
     if any(run_id not in by_id for run_id in ordered_ids):
         raise ApiProblem(404, "not_found", "Run을 찾을 수 없습니다.")
@@ -1675,6 +1673,13 @@ def run_snapshot(
     context_compactions = loaded.compactions.get(run.id, [])
     artifact_versions = loaded.artifact_versions
     assistant_message_id = run.snapshot_json.get("assistant_message_id")
+    assistant_draft_revision = run.snapshot_json.get("assistant_draft_revision", 0)
+    if (
+        not isinstance(assistant_draft_revision, int)
+        or isinstance(assistant_draft_revision, bool)
+        or assistant_draft_revision < 0
+    ):
+        assistant_draft_revision = 0
     execution = run.snapshot_json.get("execution", {})
     agent_snapshot = normalize_agent_frontend_payload(
         run.snapshot_json.get("agent"),
@@ -1700,6 +1705,7 @@ def run_snapshot(
             if assistant_message_id and run.assistant_draft
             else None
         ),
+        "assistantDraftRevision": assistant_draft_revision,
         "artifactProgress": run.snapshot_json.get("artifact_progress"),
         "artifactUsage": artifact_usage,
         "outputIntent": run.snapshot_json.get("output_intent"),
@@ -2558,6 +2564,10 @@ def apply_run_action(
         run.snapshot_json = {**run.snapshot_json, "resume_status": run.status}
         transition_run(db, run, PAUSED)
         pause_plan(db, run)
+        if run.worker_id is None:
+            from .recovery import detach_paused_run
+
+            detach_paused_run(db, run, reason="queued_pause")
         command.status = "applied"
         command.applied_at = utc_now()
     elif payload.type == "resume":
@@ -2565,11 +2575,26 @@ def apply_run_action(
             raise ApiProblem(
                 409, "run_not_paused", "현재 Run은 일시 정지 상태가 아닙니다."
             )
-        target = run.snapshot_json.get("resume_status", MODEL_STREAMING)
-        transition_run(db, run, target)
-        resume_plan(db, run)
+        resumed_at = utc_now()
+        lease_is_live = run.lease_expires_at is None or run.lease_expires_at > resumed_at
+        if run.worker_id is not None and lease_is_live:
+            run.snapshot_json = {
+                **run.snapshot_json,
+                "resume_requested": True,
+                "resume_requested_at": resumed_at.isoformat(),
+            }
+            append_event(
+                db,
+                run,
+                "run_resume_requested",
+                {"status": PAUSED, "queuedAfterSafeBoundary": True},
+            )
+        else:
+            from .recovery import queue_paused_run_for_resume
+
+            queue_paused_run_for_resume(db, run)
         command.status = "applied"
-        command.applied_at = utc_now()
+        command.applied_at = resumed_at
     elif payload.type == "cancel":
         if run.status in TERMINAL_STATUSES:
             command.status = "applied"

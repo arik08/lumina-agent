@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 import hashlib
 import json
 from pathlib import Path
@@ -22,6 +23,7 @@ from lumina.models import (
     ProjectFileVersion,
     Run,
     User,
+    utc_now,
 )
 from lumina.runs.approvals import classify_tool_risk
 from lumina.runs.service import create_run
@@ -137,6 +139,14 @@ def test_large_attachment_uses_recoverable_manifest_and_line_tools(
                 ),
                 idempotency_key="large-source-document-run",
             )
+            now = utc_now()
+            run.worker_id = executor._worker_id
+            run.heartbeat_at = now
+            run.lease_expires_at = now + timedelta(minutes=1)
+            run.snapshot_json = {
+                **run.snapshot_json,
+                "workerId": executor._worker_id,
+            }
             db.commit()
             assert created is True
             run_id = run.id

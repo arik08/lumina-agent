@@ -22,13 +22,17 @@ TERMINAL_STATUSES = frozenset(
 ACTIVE_STATUSES = frozenset(
     {PREPARING, MODEL_STREAMING, AWAITING_APPROVAL, AWAITING_INPUT, TOOLS_RUNNING, PAUSED}
 )
-# Approval and input waits release their executor task; paused Runs retain it until resume.
-EXECUTION_SLOT_STATUSES = ACTIVE_STATUSES - {AWAITING_APPROVAL, AWAITING_INPUT}
+# User-controlled waits release their executor task after reaching a safe boundary.
+EXECUTION_SLOT_STATUSES = ACTIVE_STATUSES - {
+    AWAITING_APPROVAL,
+    AWAITING_INPUT,
+    PAUSED,
+}
 
 ALLOWED_TRANSITIONS: Mapping[str, frozenset[str]] = {
     QUEUED: frozenset({PREPARING, TOOLS_RUNNING, PAUSED, FAILED, CANCELLED}),
     PREPARING: frozenset(
-        {MODEL_STREAMING, FAILED, CANCELLED, LIMIT_REACHED, INTERRUPTED}
+        {MODEL_STREAMING, PAUSED, FAILED, CANCELLED, LIMIT_REACHED, INTERRUPTED}
     ),
     MODEL_STREAMING: frozenset(
         {
@@ -60,7 +64,7 @@ ALLOWED_TRANSITIONS: Mapping[str, frozenset[str]] = {
         }
     ),
     PAUSED: frozenset(
-        {QUEUED, PREPARING, MODEL_STREAMING, TOOLS_RUNNING, CANCELLED, LIMIT_REACHED}
+        {QUEUED, CANCELLED, LIMIT_REACHED}
     ),
     COMPLETED: frozenset(),
     FAILED: frozenset(),

@@ -149,10 +149,11 @@ from ..deep_analysis.calculations import (
 from .worker_lock import _DatabaseWorkerLock
 from ..runs.broker import event_broker
 from ..runs.recovery import (
-    clear_model_turn_inflight,
+    detach_paused_run,
     mark_model_turn_inflight,
     mark_worker_shutdown_interrupted,
     prepare_worker_recovery,
+    queue_paused_run_for_resume,
 )
 from ..runs.approvals import (
     approval_payload,
@@ -224,6 +225,16 @@ from ..api.schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _RunParked(Exception):
+    """Stop the in-memory task after a Run enters a durable parked state."""
+
+
+class _RunSteered(Exception):
+    """Stop a silent Provider turn after a pending steer reaches its boundary."""
+
+
 _PROVIDER_RETRY_DELAYS_SECONDS = (1.0, 2.0, 4.0)
 _MAX_PROVIDER_RETRY_AFTER_SECONDS = 600.0
 _MAX_AUTO_CONTINUATIONS = 4
@@ -528,8 +539,9 @@ class LocalRunExecutor:
         self._reenqueue_after_task: set[str] = set()
         self._dispatcher_task: asyncio.Task[None] | None = None
         self._heartbeat_task: asyncio.Task[None] | None = None
+        self._next_recovery_sweep_at = 0.0
         self._run_control_cache: dict[
-            str, tuple[float, str | None, RunLimitViolation | None, bool]
+            str, tuple[float, str | None, RunLimitViolation | None, bool, str | None]
         ] = {}
         self._codex_warmup_task: asyncio.Task[None] | None = None
 
@@ -574,6 +586,7 @@ class LocalRunExecutor:
         self._tasks.clear()
         self._reenqueue_after_task.clear()
         self._run_control_cache.clear()
+        self._next_recovery_sweep_at = time.monotonic() + _CROSS_PROCESS_CLAIM_POLL_SECONDS
         self._started = True
         try:
             profile = self.trust_profile or TrustManager().initialize()
@@ -590,6 +603,7 @@ class LocalRunExecutor:
 
     async def _start_owned(self) -> None:
         recovery_notify_ids: list[str] = []
+        recovery_draft_replacements: list[tuple[str, str, str]] = []
         queue_recovery_run_ids: list[str] = []
         deep_analysis_terminal_ids: tuple[str, ...] = ()
         with session_scope() as db:
@@ -604,6 +618,20 @@ class LocalRunExecutor:
                 *recovery.resumable_run_ids,
                 *recovery.waiting_run_ids,
             ]
+            for run_id in recovery.resumable_run_ids:
+                recovered_run = db.get(Run, run_id)
+                if recovered_run is not None:
+                    recovery_draft_replacements.append(
+                        (
+                            run_id,
+                            str(
+                                recovered_run.snapshot_json.get(
+                                    "assistant_message_id", ""
+                                )
+                            ),
+                            recovered_run.assistant_draft,
+                        )
+                    )
             queued_conversations = (
                 select(QueuedMessage.conversation_id)
                 .where(QueuedMessage.status == "queued")
@@ -638,6 +666,8 @@ class LocalRunExecutor:
                 )
             )
             deep_analysis_terminal_ids = pending_terminal_run_ids(db)
+        for run_id, message_id, text in recovery_draft_replacements:
+            await event_broker.replace_assistant_draft(run_id, message_id, text)
         for run_id in recovery_notify_ids:
             await event_broker.notify(run_id)
         for run_id in queue_recovery_run_ids:
@@ -745,6 +775,20 @@ class LocalRunExecutor:
     def invalidate_control(self, run_id: str) -> None:
         self._run_control_cache.pop(run_id, None)
 
+    def _require_execution_owner(self, run: Run) -> None:
+        if run.worker_id != self._worker_id:
+            self.invalidate_control(run.id)
+            raise _RunParked
+
+    def _assert_execution_owner(self, run_id: str) -> None:
+        with SessionLocal() as db:
+            run = db.get(Run, run_id)
+            if run is None:
+                raise RuntimeError("Run disappeared during execution")
+            self._require_execution_owner(run)
+            if run.status in TERMINAL_STATUSES or run.status == PAUSED:
+                raise _RunParked
+
     def _signal_claim_change(self) -> None:
         self._claim_revision += 1
         self._claim_event.set()
@@ -756,14 +800,81 @@ class LocalRunExecutor:
         if self._claim_revision != observed_revision:
             return
         try:
-            if self.settings.environment == "test":
-                await self._claim_event.wait()
-            else:
-                await asyncio.wait_for(
-                    self._claim_event.wait(), timeout=_CROSS_PROCESS_CLAIM_POLL_SECONDS
-                )
+            await asyncio.wait_for(
+                self._claim_event.wait(), timeout=_CROSS_PROCESS_CLAIM_POLL_SECONDS
+            )
         except TimeoutError:
             return
+
+    async def _recover_expired_runs(self) -> None:
+        now = time.monotonic()
+        if now < self._next_recovery_sweep_at:
+            return
+        self._next_recovery_sweep_at = now + _CROSS_PROCESS_CLAIM_POLL_SECONDS
+        notify_ids: tuple[str, ...] = ()
+        replacements: list[tuple[str, str, str]] = []
+        live_tasks = {
+            run_id: task for run_id, task in self._tasks.items() if not task.done()
+        }
+        owned_live_run_ids: tuple[str, ...] = ()
+        if live_tasks:
+            with SessionLocal() as owner_db:
+                owner_by_run_id = {
+                    run_id: worker_id
+                    for run_id, worker_id in owner_db.execute(
+                        select(Run.id, Run.worker_id).where(
+                            Run.id.in_(tuple(live_tasks))
+                        )
+                    )
+                }
+            stale_tasks = [
+                task
+                for run_id, task in live_tasks.items()
+                if owner_by_run_id.get(run_id) != self._worker_id
+            ]
+            for task in stale_tasks:
+                task.cancel()
+            if stale_tasks:
+                await asyncio.gather(*stale_tasks, return_exceptions=True)
+            owned_live_run_ids = tuple(
+                run_id
+                for run_id, task in live_tasks.items()
+                if not task.done() and owner_by_run_id.get(run_id) == self._worker_id
+            )
+        with session_scope() as db:
+            from ..deep_analysis.execution import record_recovered_run_ids
+
+            recovery = prepare_worker_recovery(
+                db,
+                protected_run_ids=owned_live_run_ids,
+                protected_worker_id=self._worker_id,
+            )
+            record_recovered_run_ids(db, recovery.resumable_run_ids)
+            notify_ids = (
+                *recovery.resumable_run_ids,
+                *recovery.waiting_run_ids,
+            )
+            for run_id in recovery.resumable_run_ids:
+                recovered_run = db.get(Run, run_id)
+                if recovered_run is not None:
+                    replacements.append(
+                        (
+                            run_id,
+                            str(
+                                recovered_run.snapshot_json.get(
+                                    "assistant_message_id", ""
+                                )
+                            ),
+                            recovered_run.assistant_draft,
+                        )
+                    )
+        for run_id, message_id, text in replacements:
+            await event_broker.replace_assistant_draft(run_id, message_id, text)
+        for run_id in notify_ids:
+            self.invalidate_control(run_id)
+            await event_broker.notify(run_id)
+        if recovery.resumable_run_ids:
+            self._signal_claim_change()
 
     def _run_is_terminal(self, run_id: str) -> bool:
         with SessionLocal() as db:
@@ -776,7 +887,7 @@ class LocalRunExecutor:
         provider: ProviderAdapter,
         request: ProviderRequest,
     ) -> AsyncIterator[ProviderEvent]:
-        """Stop a silent Provider stream when another process cancels the Run."""
+        """Stop a silent Provider stream when another process cancels or pauses the Run."""
         stream = provider.stream(request)
         pending: asyncio.Future[ProviderEvent] = asyncio.ensure_future(anext(stream))
         try:
@@ -794,6 +905,15 @@ class LocalRunExecutor:
                     continue
                 if self._run_is_terminal(run_id):
                     raise asyncio.CancelledError
+                status, _violation, has_pending_steers, worker_id = (
+                    self._run_control_state(run_id)
+                )
+                if worker_id != self._worker_id:
+                    raise _RunParked
+                if status == PAUSED:
+                    raise _RunParked
+                if has_pending_steers:
+                    raise _RunSteered
         finally:
             if not pending.done():
                 pending.cancel()
@@ -814,6 +934,7 @@ class LocalRunExecutor:
     async def _dispatch_runs(self) -> None:
         try:
             while self._started:
+                await self._recover_expired_runs()
                 claimed_any = False
                 while (
                     self._started
@@ -878,6 +999,8 @@ class LocalRunExecutor:
             await self._execute(run_id)
             await self._sync_deep_analysis(run_id)
             await self._promote_next_message(run_id)
+        except _RunParked:
+            pass
         except asyncio.CancelledError:
             raise
         except McpRuntimeError as exc:
@@ -936,6 +1059,39 @@ class LocalRunExecutor:
             )
             await self._sync_deep_analysis(run_id)
             await self._promote_next_message(run_id)
+        finally:
+            await self._release_parked_ownership(run_id)
+
+    async def _release_parked_ownership(self, run_id: str) -> None:
+        notify = False
+        replace_draft: tuple[str, str] | None = None
+        with session_scope() as db:
+            run = db.scalar(
+                select(Run).where(Run.id == run_id).with_for_update()
+            )
+            if run is None or run.worker_id != self._worker_id:
+                return
+            if run.status in {QUEUED, AWAITING_APPROVAL, AWAITING_INPUT}:
+                run.worker_id = None
+                run.heartbeat_at = None
+                run.lease_expires_at = None
+                notify = True
+            elif run.status == PAUSED:
+                if run.snapshot_json.get("resume_requested") is True:
+                    queue_paused_run_for_resume(db, run)
+                    replace_draft = (
+                        str(run.snapshot_json.get("assistant_message_id", "")),
+                        run.assistant_draft,
+                    )
+                else:
+                    detach_paused_run(db, run, reason="safe_boundary")
+                notify = True
+        if replace_draft is not None:
+            await event_broker.replace_assistant_draft(
+                run_id, replace_draft[0], replace_draft[1]
+            )
+        if notify:
+            await event_broker.notify(run_id)
 
     async def _sync_deep_analysis(self, run_id: str) -> None:
         from ..deep_analysis.execution import fail_terminal_sync, sync_terminal_run
@@ -983,10 +1139,21 @@ class LocalRunExecutor:
                     db.execute(
                         select(func.pg_advisory_xact_lock(_POSTGRES_CLAIM_LOCK_ID))
                     )
+                claim_now = utc_now()
                 server_active = (
                     db.scalar(
                         select(func.count(Run.id)).where(
-                            Run.status.in_(EXECUTION_SLOT_STATUSES)
+                            or_(
+                                Run.status.in_(EXECUTION_SLOT_STATUSES),
+                                (
+                                    (Run.status == PAUSED)
+                                    & Run.worker_id.is_not(None)
+                                    & or_(
+                                        Run.lease_expires_at.is_(None),
+                                        Run.lease_expires_at > claim_now,
+                                    )
+                                ),
+                            )
                         )
                     )
                     or 0
@@ -1012,7 +1179,17 @@ class LocalRunExecutor:
                     select(func.count(user_active.id))
                     .where(
                         user_active.user_id == candidate.user_id,
-                        user_active.status.in_(EXECUTION_SLOT_STATUSES),
+                        or_(
+                            user_active.status.in_(EXECUTION_SLOT_STATUSES),
+                            (
+                                (user_active.status == PAUSED)
+                                & user_active.worker_id.is_not(None)
+                                & or_(
+                                    user_active.lease_expires_at.is_(None),
+                                    user_active.lease_expires_at > claim_now,
+                                )
+                            ),
+                        ),
                     )
                     .correlate(candidate)
                     .scalar_subquery()
@@ -1034,6 +1211,11 @@ class LocalRunExecutor:
                     select(candidate)
                     .where(
                         candidate.status == QUEUED,
+                        or_(
+                            candidate.worker_id.is_(None),
+                            candidate.lease_expires_at.is_(None),
+                            candidate.lease_expires_at <= claim_now,
+                        ),
                         conversation_active_count
                         < self.settings.session_concurrency_limit,
                         user_active_count < self.settings.user_concurrency_limit,
@@ -1042,6 +1224,13 @@ class LocalRunExecutor:
                     .order_by(candidate.queued_at, candidate.id)
                     .limit(1)
                 )
+                live_local_run_ids = tuple(
+                    run_id for run_id, task in self._tasks.items() if not task.done()
+                )
+                if live_local_run_ids:
+                    statement = statement.where(
+                        candidate.id.not_in(live_local_run_ids)
+                    )
                 if dialect_name == "postgresql":
                     statement = statement.with_for_update(
                         of=candidate, skip_locked=True
@@ -1081,6 +1270,7 @@ class LocalRunExecutor:
             run = db.get(Run, run_id)
             if run is None:
                 return
+            self._require_execution_owner(run)
             user_message = str(run.snapshot_json.get("user_message_text", ""))
             user_message_id = str(run.snapshot_json.get("user_message_id", ""))
             provider_id = run.provider_id
@@ -1123,6 +1313,11 @@ class LocalRunExecutor:
             )
             checkpoint = run.snapshot_json.get("tool_checkpoint")
             resuming_checkpoint = isinstance(checkpoint, dict)
+            checkpoint_loop_state = (
+                checkpoint.get("loop_state", {})
+                if isinstance(checkpoint, dict)
+                else {}
+            )
             resuming_approval = (
                 checkpoint.get("kind") != "user_input"
                 if isinstance(checkpoint, dict)
@@ -1137,11 +1332,22 @@ class LocalRunExecutor:
             run_id, assistant_message_id, assistant_draft_checkpoint
         )
 
+        if not await self._wait_until_runnable(run_id):
+            return
+
         with session_scope() as db:
             run = db.get(Run, run_id)
-            if run is None or run.status in TERMINAL_STATUSES:
+            if run is None or run.status in TERMINAL_STATUSES or run.status == PAUSED:
                 return
+            self._require_execution_owner(run)
             if resuming_checkpoint:
+                complete_plan_step(
+                    db,
+                    run,
+                    "model",
+                    result={"tool_execution_required": True},
+                    reason="checkpointed_model_requested_tools",
+                )
                 start_plan_step(
                     db,
                     run,
@@ -1269,6 +1475,7 @@ class LocalRunExecutor:
             model_user_message,
             images=self._provider_images(attachment_ids),
             tool_schemas=tool_schemas,
+            enforce_owner=True,
         )
         prompt_cache_key, prompt_cache_static_digest = _provider_prompt_cache_key(
             user_scope=prompt_cache_scope,
@@ -1279,8 +1486,11 @@ class LocalRunExecutor:
         )
         if prompt_cache_key:
             with session_scope() as db:
-                active_run = db.get(Run, run_id)
+                active_run = db.scalar(
+                    select(Run).where(Run.id == run_id).with_for_update()
+                )
                 if active_run is not None:
+                    self._require_execution_owner(active_run)
                     active_run.snapshot_json = {
                         **active_run.snapshot_json,
                         "prompt_cache_key": prompt_cache_key,
@@ -1308,6 +1518,14 @@ class LocalRunExecutor:
         empty_response_retry_attempt = 0
         output_continuation_count = 0
         pending_continuation_reference: str | None = None
+        if isinstance(checkpoint_loop_state, Mapping):
+            artifact_required = bool(
+                checkpoint_loop_state.get("artifactRequired", artifact_required)
+            )
+            artifact_created = bool(checkpoint_loop_state.get("artifactCreated", False))
+            artifact_drafting_turn = bool(
+                checkpoint_loop_state.get("artifactDraftingTurn", False)
+            )
         retired_web_tools = {
             tool_name
             for tool_name, limit in zip(
@@ -1315,7 +1533,15 @@ class LocalRunExecutor:
             )
             if limit <= 0
         }
+        if isinstance(checkpoint_loop_state, Mapping):
+            retired_web_tools.update(
+                str(item)
+                for item in checkpoint_loop_state.get("retiredWebTools", [])
+                if isinstance(item, str)
+            )
         while True:
+            if not await self._wait_until_runnable(run_id):
+                return
             messages = await self._compact_runtime_context(
                 run_id, messages, tool_schemas
             )
@@ -1460,6 +1686,10 @@ class LocalRunExecutor:
                         }:
                             provider_tool_output_started = True
                         if not await self._wait_until_runnable(run_id):
+                            if provider_tool_output_started or tool_calls:
+                                await self._discard_partial_tool_calls(
+                                    run_id, tool_calls
+                                )
                             return
                         if await self._has_pending_steers(run_id):
                             await flush_pending_text()
@@ -1629,6 +1859,12 @@ class LocalRunExecutor:
                                 break
                         elif event.type == "completed":
                             provider_stop_reason = event.stop_reason
+            except _RunSteered:
+                interrupted_by_steer = True
+            except _RunParked:
+                if provider_tool_output_started or tool_calls:
+                    await self._discard_partial_tool_calls(run_id, tool_calls)
+                raise
             except ProviderRequestError as exc:
                 provider_request_error = exc
             except TimeoutError:
@@ -1640,10 +1876,6 @@ class LocalRunExecutor:
                     )
                 await accept_visible_text(continuation_deduper.finish())
                 await flush_pending_text()
-            with session_scope() as db:
-                active_run = db.get(Run, run_id)
-                if active_run is not None:
-                    clear_model_turn_inflight(db, active_run)
             await self._record_model_turn_metrics(
                 run_id,
                 turn_index=round_index,
@@ -1721,6 +1953,11 @@ class LocalRunExecutor:
                 ):
                     if has_partial_tool_calls:
                         await self._discard_partial_tool_calls(run_id, tool_calls)
+                    partial_recovery_prompt = (
+                        _PARTIAL_TOOL_CALL_RETRY_PROMPT
+                        if has_partial_tool_calls
+                        else _PARTIAL_RESPONSE_CONTINUATION_PROMPT
+                    )
                     if partial_text:
                         messages.append(
                             ProviderMessage(role="assistant", content=partial_text)
@@ -1728,12 +1965,19 @@ class LocalRunExecutor:
                     messages.append(
                         ProviderMessage(
                             role="user",
-                            content=(
-                                _PARTIAL_TOOL_CALL_RETRY_PROMPT
-                                if has_partial_tool_calls
-                                else _PARTIAL_RESPONSE_CONTINUATION_PROMPT
-                            ),
+                            content=partial_recovery_prompt,
                         )
+                    )
+                    self._store_safe_transcript(
+                        run_id,
+                        (
+                            *(
+                                ({"role": "assistant", "content": partial_text},)
+                                if partial_text
+                                else ()
+                            ),
+                            {"role": "user", "content": partial_recovery_prompt},
+                        ),
                     )
                     pending_continuation_reference = continuation_reference or None
                     partial_response_recovery_attempt += 1
@@ -1766,6 +2010,8 @@ class LocalRunExecutor:
                 return
 
             if interrupted_by_steer:
+                if provider_tool_output_started or tool_calls:
+                    await self._discard_partial_tool_calls(run_id, tool_calls)
                 if round_text:
                     messages.append(
                         ProviderMessage(role="assistant", content="".join(round_text))
@@ -1784,7 +2030,10 @@ class LocalRunExecutor:
             for call in calls:
                 _materialize_tool_call_arguments(call)
             if not calls:
-                steer_messages = await self._apply_pending_steers(run_id)
+                steer_messages = await self._apply_pending_steers(
+                    run_id,
+                    preceding_assistant_content="".join(round_text) or None,
+                )
                 if steer_messages:
                     if round_text:
                         messages.append(
@@ -1811,6 +2060,16 @@ class LocalRunExecutor:
                         messages.append(
                             ProviderMessage(role="user", content=_CONTINUATION_PROMPT)
                         )
+                        self._store_safe_transcript(
+                            run_id,
+                            (
+                                {
+                                    "role": "assistant",
+                                    "content": "".join(round_text),
+                                },
+                                {"role": "user", "content": _CONTINUATION_PROMPT},
+                            ),
+                        )
                         pending_continuation_reference = "".join(round_text)
                         output_continuation_count += 1
                         await self._publish_progress_summary(
@@ -1833,8 +2092,11 @@ class LocalRunExecutor:
                                 continuation_deduper.reference
                             )
                         with session_scope() as db:
-                            active_run = db.get(Run, run_id)
+                            active_run = db.scalar(
+                                select(Run).where(Run.id == run_id).with_for_update()
+                            )
                             if active_run is not None:
+                                self._require_execution_owner(active_run)
                                 append_event(
                                     db,
                                     active_run,
@@ -1860,8 +2122,11 @@ class LocalRunExecutor:
                         )
                         round_text.append(_ARTIFACT_EMPTY_RESPONSE_FALLBACK)
                         with session_scope() as db:
-                            active_run = db.get(Run, run_id)
+                            active_run = db.scalar(
+                                select(Run).where(Run.id == run_id).with_for_update()
+                            )
                             if active_run is not None:
+                                self._require_execution_owner(active_run)
                                 append_event(
                                     db,
                                     active_run,
@@ -1908,6 +2173,23 @@ class LocalRunExecutor:
                             ),
                         )
                     )
+                    artifact_reminder = str(messages[-1].content or "")
+                    self._store_safe_transcript(
+                        run_id,
+                        (
+                            *(
+                                (
+                                    {
+                                        "role": "assistant",
+                                        "content": "".join(round_text),
+                                    },
+                                )
+                                if round_text
+                                else ()
+                            ),
+                            {"role": "user", "content": artifact_reminder},
+                        ),
+                    )
                     artifact_completion_reminded = True
                     artifact_drafting_turn = True
                     continue
@@ -1942,46 +2224,27 @@ class LocalRunExecutor:
                 search_limit=web_research_budget[0],
                 fetch_limit=web_research_budget[1],
             )
-            execution_calls = [
-                call
-                for call in calls
-                if call["name"]
-                not in {
-                    "update_plan",
-                    "activate_skill",
-                    "classify_file_output_intent",
-                    "request_user_input",
-                }
-                and not call.get("blocked_error")
-            ]
-            created_subtasks: list[dict[str, Any]] = []
-            if execution_calls:
-                await self._enter_tool_plan(run_id)
-                with session_scope() as db:
-                    active_run = db.get(Run, run_id)
-                    if active_run is None:
-                        raise RuntimeError(
-                            "Run disappeared before Plan Subtask creation"
-                        )
-                    created_subtasks = ensure_tool_subtasks(
-                        db, active_run, execution_calls
-                    )
-                    if created_subtasks:
-                        change_plan_step(
-                            db,
-                            active_run,
-                            "tools",
-                            result={"subtask_count": len(created_subtasks)},
-                            changed_subtasks=created_subtasks,
-                            reason="tool_subtasks_created",
-                        )
-            if created_subtasks:
-                await event_broker.notify(run_id)
+            tool_loop_state = {
+                "artifactRequired": artifact_required,
+                "artifactCreated": artifact_created,
+                "artifactDraftingTurn": artifact_drafting_turn,
+                "retiredWebTools": sorted(retired_web_tools),
+            }
+            if not await self._store_tool_checkpoint(
+                run_id,
+                calls,
+                kind="pending_tools",
+                assistant_content="".join(round_text) or None,
+                loop_state=tool_loop_state,
+            ):
+                return
+            execution_calls = await self._prepare_tool_execution_plan(run_id, calls)
 
             if await self._request_user_input(
                 run_id,
                 calls,
                 assistant_content="".join(round_text) or None,
+                loop_state=tool_loop_state,
             ):
                 return
             if await self._request_tool_approvals(
@@ -1989,6 +2252,7 @@ class LocalRunExecutor:
                 calls,
                 assistant_content="".join(round_text) or None,
                 mcp_tools=mcp_tools_by_name,
+                loop_state=tool_loop_state,
             ):
                 return
             await self._set_status(run_id, TOOLS_RUNNING)
@@ -2030,7 +2294,9 @@ class LocalRunExecutor:
                 ),
                 delivered_web_text_chars=delivered_web_text_chars,
             )
-            _record_web_fetch_provider_context(run_id, delivered_web_text_chars)
+            _record_web_fetch_provider_context(
+                run_id, delivered_web_text_chars, worker_id=self._worker_id
+            )
             for resolved_index, (call, result) in enumerate(resolved_calls):
                 if call["name"] == "classify_file_output_intent":
                     artifact_required = result.get("fileCreationRequested") is True
@@ -2078,12 +2344,181 @@ class LocalRunExecutor:
                         ),
                     )
                 )
-            if not await self._wait_until_runnable(run_id):
+            if not await self._store_tool_checkpoint(
+                run_id,
+                calls,
+                kind="completed_tools",
+                assistant_content="".join(round_text) or None,
+                provider_tool_contents=provider_tool_contents,
+                loop_state={
+                    "artifactRequired": artifact_required,
+                    "artifactCreated": artifact_created,
+                    "artifactDraftingTurn": artifact_drafting_turn,
+                    "retiredWebTools": sorted(retired_web_tools),
+                },
+            ):
                 return
             steer_messages = await self._apply_pending_steers(run_id)
             messages.extend(
                 ProviderMessage(role="user", content=text) for text in steer_messages
             )
+
+    async def _store_tool_checkpoint(
+        self,
+        run_id: str,
+        calls: list[dict[str, Any]],
+        *,
+        kind: Literal["pending_tools", "completed_tools"],
+        assistant_content: str | None,
+        provider_tool_contents: Sequence[str] = (),
+        loop_state: Mapping[str, Any],
+    ) -> bool:
+        if kind == "completed_tools" and len(provider_tool_contents) != len(calls):
+            raise ValueError("Completed Tool checkpoint result count does not match calls")
+        checkpoint_calls: list[dict[str, Any]] = []
+        for call in calls:
+            arguments, canonical_arguments, _digest = normalized_tool_arguments(
+                call.get("arguments")
+            )
+            checkpoint_call = {
+                "id": str(call["id"]),
+                "name": str(call["name"]),
+                "arguments": (
+                    "{}"
+                    if has_sensitive_tool_arguments(arguments)
+                    else canonical_arguments
+                ),
+                "provider_metadata": _safe_provider_metadata(
+                    call.get("provider_metadata")
+                ),
+            }
+            if call.get("blocked_error"):
+                checkpoint_call["blocked_error"] = str(call["blocked_error"])
+            elif has_sensitive_tool_arguments(arguments):
+                checkpoint_call["blocked_error"] = (
+                    "sensitive_tool_argument_forbidden"
+                )
+            if call.get("provider_name"):
+                checkpoint_call["provider_name"] = str(call["provider_name"])
+                provider_arguments, canonical_provider_arguments, _provider_digest = (
+                    normalized_tool_arguments(call.get("provider_arguments"))
+                )
+                checkpoint_call["provider_arguments"] = (
+                    "{}"
+                    if has_sensitive_tool_arguments(provider_arguments)
+                    else canonical_provider_arguments
+                )
+            for field in (
+                "approval_id",
+                "approval_status",
+                "input_request_id",
+                "input_request_error",
+            ):
+                if call.get(field):
+                    checkpoint_call[field] = str(call[field])
+            checkpoint_calls.append(checkpoint_call)
+        parked = False
+        notify = False
+        with session_scope() as db:
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
+            if run is None or run.status in TERMINAL_STATUSES:
+                return False
+            self._require_execution_owner(run)
+            snapshot = dict(run.snapshot_json)
+            previous_checkpoint = snapshot.get("tool_checkpoint")
+            completed_batches: list[dict[str, Any]] = []
+            prefix_user_message_ids = _checkpoint_prefix_user_message_ids(snapshot)
+            prefix_transcript = _checkpoint_prefix_transcript(snapshot)
+            post_batch_user_message_ids: list[str] = []
+            post_batch_transcript: list[dict[str, str]] = []
+            if isinstance(previous_checkpoint, Mapping):
+                previous_batches = previous_checkpoint.get("completed_batches")
+                if isinstance(previous_batches, list):
+                    completed_batches = [
+                        dict(batch)
+                        for batch in previous_batches
+                        if isinstance(batch, Mapping)
+                    ]
+                if (
+                    kind == "pending_tools"
+                    and previous_checkpoint.get("kind")
+                    in {"completed_tools", "paused_tools"}
+                ):
+                    previous_calls = previous_checkpoint.get("calls")
+                    previous_contents = previous_checkpoint.get(
+                        "provider_tool_contents"
+                    )
+                    if isinstance(previous_calls, list) and isinstance(
+                        previous_contents, list
+                    ):
+                        completed_batches.append(
+                            {
+                                "assistant_content": previous_checkpoint.get(
+                                    "assistant_content"
+                                ),
+                                "calls": previous_calls,
+                                "provider_tool_contents": previous_contents,
+                                "post_batch_user_message_ids": (
+                                    _checkpoint_post_batch_user_message_ids(
+                                        previous_checkpoint
+                                    )
+                                ),
+                                "post_batch_transcript": (
+                                    _checkpoint_post_batch_transcript(
+                                        previous_checkpoint
+                                    )
+                                ),
+                            }
+                        )
+                elif (
+                    kind == "completed_tools"
+                    and previous_checkpoint.get("kind")
+                    not in {"completed_tools", "paused_tools"}
+                ):
+                    post_batch_user_message_ids = (
+                        _checkpoint_post_batch_user_message_ids(previous_checkpoint)
+                    )
+                    post_batch_transcript = _checkpoint_post_batch_transcript(
+                        previous_checkpoint
+                    )
+            if kind == "pending_tools":
+                snapshot.pop("model_turn_inflight", None)
+            snapshot.pop("tool_checkpoint_prefix_user_message_ids", None)
+            snapshot.pop("tool_checkpoint_prefix_transcript", None)
+            checkpoint: dict[str, Any] = {
+                "version": 2,
+                "kind": kind,
+                "assistant_content": assistant_content,
+                "calls": checkpoint_calls,
+                "loop_state": dict(loop_state),
+                "completed_batches": completed_batches[-64:],
+                "captures_applied_steers": True,
+                "prefix_user_message_ids": prefix_user_message_ids,
+                "prefix_transcript": prefix_transcript,
+                "post_batch_user_message_ids": post_batch_user_message_ids,
+                "post_batch_transcript": post_batch_transcript,
+                "created_at": utc_now().isoformat(),
+            }
+            if kind == "completed_tools":
+                checkpoint["provider_tool_contents"] = list(provider_tool_contents)
+            snapshot["tool_checkpoint"] = checkpoint
+            run.snapshot_json = snapshot
+            parked = run.status == PAUSED
+            if parked:
+                append_event(
+                    db,
+                    run,
+                    "pause_tool_checkpoint_created",
+                    {
+                        "kind": kind,
+                        "toolCallIds": [str(call["id"]) for call in calls],
+                    },
+                )
+                notify = True
+            db.flush()
+        if notify:
+            await event_broker.notify(run_id)
+        return not parked
 
     async def _request_user_input(
         self,
@@ -2091,6 +2526,7 @@ class LocalRunExecutor:
         calls: list[dict[str, Any]],
         *,
         assistant_content: str | None,
+        loop_state: Mapping[str, Any] | None = None,
     ) -> bool:
         request_calls = [
             call for call in calls if call.get("name") == "request_user_input"
@@ -2175,9 +2611,12 @@ class LocalRunExecutor:
         }
         call["input_request_id"] = request["id"]
         with session_scope() as db:
-            run = db.get(Run, run_id)
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             if run is None or run.status in TERMINAL_STATUSES:
                 return False
+            self._require_execution_owner(run)
+            if run.status == PAUSED:
+                raise _RunParked
             previous_requests = [
                 item
                 for item in run.snapshot_json.get("input_requests", [])
@@ -2203,6 +2642,18 @@ class LocalRunExecutor:
             if len(previous_questions) + len(questions) > _MAX_USER_INPUT_QUESTIONS:
                 call["input_request_error"] = "user_input_question_limit_reached"
                 return False
+            completed_batches = _checkpoint_completed_batches(run.snapshot_json)
+            previous_checkpoint = run.snapshot_json.get("tool_checkpoint")
+            post_batch_user_message_ids = (
+                _checkpoint_post_batch_user_message_ids(previous_checkpoint)
+                if isinstance(previous_checkpoint, Mapping)
+                else []
+            )
+            post_batch_transcript = (
+                _checkpoint_post_batch_transcript(previous_checkpoint)
+                if isinstance(previous_checkpoint, Mapping)
+                else []
+            )
             run.snapshot_json = {
                 **run.snapshot_json,
                 "input_requests": [
@@ -2210,7 +2661,7 @@ class LocalRunExecutor:
                     request,
                 ],
                 "tool_checkpoint": {
-                    "version": 1,
+                    "version": 2,
                     "kind": "user_input",
                     "assistant_content": assistant_content,
                     "calls": [
@@ -2224,6 +2675,17 @@ class LocalRunExecutor:
                             "input_request_id": request["id"],
                         }
                     ],
+                    "loop_state": dict(loop_state or {}),
+                    "completed_batches": completed_batches,
+                    "captures_applied_steers": True,
+                    "prefix_user_message_ids": (
+                        _checkpoint_prefix_user_message_ids(run.snapshot_json)
+                    ),
+                    "prefix_transcript": _checkpoint_prefix_transcript(
+                        run.snapshot_json
+                    ),
+                    "post_batch_user_message_ids": post_batch_user_message_ids,
+                    "post_batch_transcript": post_batch_transcript,
                     "created_at": requested_at.isoformat(),
                 },
             }
@@ -2239,14 +2701,18 @@ class LocalRunExecutor:
         *,
         assistant_content: str | None,
         mcp_tools: Mapping[str, PreparedMcpTool],
+        loop_state: Mapping[str, Any] | None = None,
     ) -> bool:
         approval_ids: list[str] = []
         checkpoint_calls: list[dict[str, Any]] = []
         changed_approval_subtasks: list[dict[str, Any]] = []
         with session_scope() as db:
-            run = db.get(Run, run_id)
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             if run is None or run.status in TERMINAL_STATUSES:
                 return False
+            self._require_execution_owner(run)
+            if run.status == PAUSED:
+                raise _RunParked
             for call in calls:
                 arguments, canonical, digest = normalized_tool_arguments(
                     call.get("arguments")
@@ -2315,13 +2781,37 @@ class LocalRunExecutor:
                 checkpoint_calls.append(checkpoint_call)
             if not approval_ids:
                 return False
+            completed_batches = _checkpoint_completed_batches(run.snapshot_json)
+            previous_checkpoint = run.snapshot_json.get("tool_checkpoint")
+            post_batch_user_message_ids = (
+                _checkpoint_post_batch_user_message_ids(previous_checkpoint)
+                if isinstance(previous_checkpoint, Mapping)
+                else []
+            )
+            post_batch_transcript = (
+                _checkpoint_post_batch_transcript(previous_checkpoint)
+                if isinstance(previous_checkpoint, Mapping)
+                else []
+            )
             run.snapshot_json = {
                 **run.snapshot_json,
                 "tool_checkpoint": {
-                    "version": 1,
+                    "version": 2,
+                    "kind": "approval",
                     "assistant_content": assistant_content,
                     "calls": checkpoint_calls,
                     "approval_ids": approval_ids,
+                    "loop_state": dict(loop_state or {}),
+                    "completed_batches": completed_batches,
+                    "captures_applied_steers": True,
+                    "prefix_user_message_ids": (
+                        _checkpoint_prefix_user_message_ids(run.snapshot_json)
+                    ),
+                    "prefix_transcript": _checkpoint_prefix_transcript(
+                        run.snapshot_json
+                    ),
+                    "post_batch_user_message_ids": post_batch_user_message_ids,
+                    "post_batch_transcript": post_batch_transcript,
                     "created_at": utc_now().isoformat(),
                 },
             }
@@ -2351,13 +2841,63 @@ class LocalRunExecutor:
         checkpoint_kind = "approval"
         assistant_content: str | None = None
         calls: list[dict[str, Any]] = []
+        completed_tool_contents: list[str] | None = None
+        completed_batches: list[
+            tuple[
+                str | None,
+                list[dict[str, Any]],
+                list[str],
+                list[dict[str, str]],
+            ]
+        ] = []
+        prefix_transcript: list[dict[str, str]] = []
+        post_batch_transcript: list[dict[str, str]] = []
+        captures_applied_steers = False
+        checkpoint_loop_state: Mapping[str, Any] = {}
         with SessionLocal() as db:
             run = db.get(Run, run_id)
             checkpoint = run.snapshot_json.get("tool_checkpoint") if run else None
             if run is None or not isinstance(checkpoint, dict):
                 checkpoint_error = "저장된 Tool 승인 checkpoint를 찾을 수 없습니다."
             else:
+                self._require_execution_owner(run)
                 checkpoint_kind = str(checkpoint.get("kind", "approval"))
+                captures_applied_steers = (
+                    checkpoint.get("captures_applied_steers") is True
+                )
+                if captures_applied_steers:
+                    raw_prefix_ids = checkpoint.get("prefix_user_message_ids", [])
+                    raw_post_ids = checkpoint.get(
+                        "post_batch_user_message_ids", []
+                    )
+                    if (
+                        not isinstance(raw_prefix_ids, list)
+                        or not isinstance(raw_post_ids, list)
+                        or not all(
+                            isinstance(item, str) and item for item in raw_prefix_ids
+                        )
+                        or not all(
+                            isinstance(item, str) and item for item in raw_post_ids
+                        )
+                    ):
+                        checkpoint_error = "저장된 Tool steer transcript checkpoint가 올바르지 않습니다."
+                    else:
+                        try:
+                            prefix_transcript = _restored_checkpoint_transcript(
+                                checkpoint.get("prefix_transcript"),
+                                fallback_user_message_ids=raw_prefix_ids,
+                            )
+                            post_batch_transcript = _restored_checkpoint_transcript(
+                                checkpoint.get("post_batch_transcript"),
+                                fallback_user_message_ids=raw_post_ids,
+                            )
+                        except ValueError:
+                            checkpoint_error = (
+                                "Stored Tool transcript checkpoint is invalid."
+                            )
+                raw_loop_state = checkpoint.get("loop_state")
+                if isinstance(raw_loop_state, Mapping):
+                    checkpoint_loop_state = raw_loop_state
                 raw_calls = checkpoint.get("calls")
                 if not isinstance(raw_calls, list):
                     checkpoint_error = (
@@ -2376,23 +2916,7 @@ class LocalRunExecutor:
                                 "저장된 Tool 승인 checkpoint가 올바르지 않습니다."
                             )
                             break
-                        call = {
-                            "id": str(raw_call.get("id", "")),
-                            "name": str(raw_call.get("name", "")),
-                            "arguments": str(raw_call.get("arguments", "{}")),
-                            "provider_metadata": _safe_provider_metadata(
-                                raw_call.get("provider_metadata")
-                            ),
-                        }
-                        if raw_call.get("blocked_error"):
-                            call["blocked_error"] = str(raw_call["blocked_error"])
-                        if raw_call.get("provider_name"):
-                            call["provider_name"] = str(raw_call["provider_name"])
-                            call["provider_arguments"] = str(
-                                raw_call.get("provider_arguments", "{}")
-                            )
-                        if raw_call.get("input_request_id"):
-                            call["input_request_id"] = str(raw_call["input_request_id"])
+                        call = _restored_checkpoint_call(raw_call)
                         approval_id = raw_call.get("approval_id")
                         if isinstance(approval_id, str):
                             approval = approval_rows.get(approval_id)
@@ -2414,15 +2938,170 @@ class LocalRunExecutor:
                     assistant_content = (
                         raw_content if isinstance(raw_content, str) else None
                     )
+                    if checkpoint_kind in {"completed_tools", "paused_tools"}:
+                        raw_tool_contents = checkpoint.get("provider_tool_contents")
+                        if (
+                            not isinstance(raw_tool_contents, list)
+                            or len(raw_tool_contents) != len(calls)
+                            or not all(
+                                isinstance(item, str) for item in raw_tool_contents
+                            )
+                        ):
+                            checkpoint_error = (
+                                "저장된 일시 정지 Tool checkpoint가 올바르지 않습니다."
+                            )
+                        else:
+                            completed_tool_contents = list(raw_tool_contents)
+                    raw_completed_batches = checkpoint.get("completed_batches", [])
+                    if not isinstance(raw_completed_batches, list):
+                        checkpoint_error = "저장된 Tool transcript checkpoint가 올바르지 않습니다."
+                    else:
+                        for raw_batch in raw_completed_batches:
+                            if not isinstance(raw_batch, Mapping):
+                                checkpoint_error = "저장된 Tool transcript checkpoint가 올바르지 않습니다."
+                                break
+                            raw_batch_calls = raw_batch.get("calls")
+                            raw_batch_contents = raw_batch.get(
+                                "provider_tool_contents"
+                            )
+                            if (
+                                not isinstance(raw_batch_calls, list)
+                                or not isinstance(raw_batch_contents, list)
+                                or len(raw_batch_calls) != len(raw_batch_contents)
+                                or not all(
+                                    isinstance(item, Mapping)
+                                    for item in raw_batch_calls
+                                )
+                                or not all(
+                                    isinstance(item, str)
+                                    for item in raw_batch_contents
+                                )
+                            ):
+                                checkpoint_error = "저장된 Tool transcript checkpoint가 올바르지 않습니다."
+                                break
+                            raw_batch_content = raw_batch.get("assistant_content")
+                            raw_batch_post_ids = raw_batch.get(
+                                "post_batch_user_message_ids", []
+                            )
+                            if raw_batch_content is not None and not isinstance(
+                                raw_batch_content, str
+                            ):
+                                checkpoint_error = "저장된 Tool transcript checkpoint가 올바르지 않습니다."
+                                break
+                            if captures_applied_steers and (
+                                not isinstance(raw_batch_post_ids, list)
+                                or not all(
+                                    isinstance(item, str) and item
+                                    for item in raw_batch_post_ids
+                                )
+                            ):
+                                checkpoint_error = "저장된 Tool steer transcript checkpoint가 올바르지 않습니다."
+                                break
+                            batch_post_transcript: list[dict[str, str]] = []
+                            if captures_applied_steers:
+                                try:
+                                    batch_post_transcript = (
+                                        _restored_checkpoint_transcript(
+                                            raw_batch.get("post_batch_transcript"),
+                                            fallback_user_message_ids=(
+                                                raw_batch_post_ids
+                                            ),
+                                        )
+                                    )
+                                except ValueError:
+                                    checkpoint_error = (
+                                        "Stored Tool transcript checkpoint is invalid."
+                                    )
+                                    break
+                            completed_batches.append(
+                                (
+                                    raw_batch_content,
+                                    [
+                                        _restored_checkpoint_call(item)
+                                        for item in raw_batch_calls
+                                    ],
+                                    list(raw_batch_contents),
+                                    batch_post_transcript,
+                                )
+                            )
+        captured_steer_ids = [
+            *_checkpoint_transcript_user_message_ids(prefix_transcript),
+            *(
+                message_id
+                for _content, _calls, _results, transcript in completed_batches
+                for message_id in _checkpoint_transcript_user_message_ids(
+                    transcript
+                )
+            ),
+            *_checkpoint_transcript_user_message_ids(post_batch_transcript),
+        ]
+        if len(captured_steer_ids) != len(set(captured_steer_ids)):
+            checkpoint_error = "저장된 Tool steer transcript에 중복 메시지가 있습니다."
         if checkpoint_error is not None:
-            await self._fail_run(
-                run_id,
+            error_code = (
                 "input_checkpoint_invalid"
                 if checkpoint_kind == "user_input"
-                else "approval_checkpoint_invalid",
-                checkpoint_error,
+                else "pause_checkpoint_invalid"
+                if checkpoint_kind in {
+                    "pending_tools",
+                    "completed_tools",
+                    "paused_tools",
+                }
+                else "approval_checkpoint_invalid"
+            )
+            await self._fail_run(run_id, error_code, checkpoint_error)
+            return False
+        try:
+            steer_content_by_id = self._checkpoint_steer_message_map(
+                run_id, captured_steer_ids
+            )
+        except (RuntimeError, ValueError) as exc:
+            await self._fail_run(
+                run_id,
+                "pause_checkpoint_invalid",
+                str(exc),
             )
             return False
+        _append_restored_checkpoint_transcript(
+            messages, prefix_transcript, steer_content_by_id
+        )
+        for (
+            batch_content,
+            batch_calls,
+            batch_tool_contents,
+            batch_post_transcript,
+        ) in completed_batches:
+            messages.append(
+                ProviderMessage(
+                    role="assistant",
+                    content=batch_content,
+                    tool_calls=tuple(
+                        _provider_tool_call(call) for call in batch_calls
+                    ),
+                    provider_metadata={
+                        call["id"]: call["provider_metadata"]
+                        for call in batch_calls
+                        if call["provider_metadata"]
+                    },
+                )
+            )
+            for batch_index, batch_call in enumerate(batch_calls):
+                messages.append(
+                    ProviderMessage(
+                        role="tool",
+                        name=str(
+                            batch_call.get("provider_name", batch_call["name"])
+                        ),
+                        tool_call_id=str(batch_call["id"]),
+                        content=batch_tool_contents[batch_index],
+                        provider_metadata=_safe_provider_metadata(
+                            batch_call.get("provider_metadata")
+                        ),
+                    )
+                )
+            _append_restored_checkpoint_transcript(
+                messages, batch_post_transcript, steer_content_by_id
+            )
         messages.append(
             ProviderMessage(
                 role="assistant",
@@ -2435,47 +3114,88 @@ class LocalRunExecutor:
                 },
             )
         )
-        resolved_calls, violation = await self._run_tool_calls(
-            run_id,
-            calls,
-            user_message,
-            mcp_tools,
-            deferred_tool_names,
-        )
-        if violation is not None:
-            await self._limit_run(run_id, violation)
-            return False
+        if checkpoint_kind not in {"completed_tools", "paused_tools"}:
+            await self._prepare_tool_execution_plan(run_id, calls)
+        if checkpoint_kind == "pending_tools":
+            if await self._request_user_input(
+                run_id,
+                calls,
+                assistant_content=assistant_content,
+                loop_state=checkpoint_loop_state,
+            ):
+                return False
+            if await self._request_tool_approvals(
+                run_id,
+                calls,
+                assistant_content=assistant_content,
+                mcp_tools=mcp_tools,
+                loop_state=checkpoint_loop_state,
+            ):
+                return False
+            await self._set_status(run_id, TOOLS_RUNNING)
+        if checkpoint_kind in {"completed_tools", "paused_tools"}:
+            assert completed_tool_contents is not None
+            message_calls = calls
+            provider_tool_contents = completed_tool_contents
+        else:
+            if not await self._wait_until_runnable(run_id):
+                return False
+            resolved_calls, violation = await self._run_tool_calls(
+                run_id,
+                calls,
+                user_message,
+                mcp_tools,
+                deferred_tool_names,
+            )
+            if violation is not None:
+                await self._limit_run(run_id, violation)
+                return False
+            message_calls = [call for call, _result in resolved_calls]
+            delivered_web_text_chars: dict[str, int] = {}
+            provider_tool_contents = _provider_tool_result_contents(
+                resolved_calls,
+                capabilities=capabilities,
+                untrusted_tool_names=frozenset((*mcp_tools, *KNOWLEDGE_TOOL_NAMES)),
+                delivered_web_text_chars=delivered_web_text_chars,
+            )
+            _record_web_fetch_provider_context(
+                run_id, delivered_web_text_chars, worker_id=self._worker_id
+            )
+            if not await self._store_tool_checkpoint(
+                run_id,
+                message_calls,
+                kind="completed_tools",
+                assistant_content=assistant_content,
+                provider_tool_contents=provider_tool_contents,
+                loop_state=checkpoint_loop_state,
+            ):
+                return False
         with session_scope() as db:
-            run = db.get(Run, run_id)
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             if run is None or run.status in TERMINAL_STATUSES:
                 return False
-            snapshot = dict(run.snapshot_json)
-            snapshot.pop("tool_checkpoint", None)
-            run.snapshot_json = snapshot
+            self._require_execution_owner(run)
+            if run.status == PAUSED:
+                raise _RunParked
             append_event(
                 db,
                 run,
                 "input_checkpoint_consumed"
                 if checkpoint_kind == "user_input"
+                else "pause_checkpoint_consumed"
+                if checkpoint_kind
+                in {"pending_tools", "completed_tools", "paused_tools"}
                 else "approval_checkpoint_consumed",
                 (
                     {"inputRequestId": str(calls[0].get("input_request_id", ""))}
                     if checkpoint_kind == "user_input"
                     else {
-                        "toolCallIds": [str(call["id"]) for call, _ in resolved_calls]
+                        "toolCallIds": [str(call["id"]) for call in message_calls]
                     }
                 ),
             )
         await event_broker.notify(run_id)
-        delivered_web_text_chars: dict[str, int] = {}
-        provider_tool_contents = _provider_tool_result_contents(
-            resolved_calls,
-            capabilities=capabilities,
-            untrusted_tool_names=frozenset((*mcp_tools, *KNOWLEDGE_TOOL_NAMES)),
-            delivered_web_text_chars=delivered_web_text_chars,
-        )
-        _record_web_fetch_provider_context(run_id, delivered_web_text_chars)
-        for resolved_index, (call, _result) in enumerate(resolved_calls):
+        for resolved_index, call in enumerate(message_calls):
             messages.append(
                 ProviderMessage(
                     role="tool",
@@ -2487,6 +3207,9 @@ class LocalRunExecutor:
                     ),
                 )
             )
+        _append_restored_checkpoint_transcript(
+            messages, post_batch_transcript, steer_content_by_id
+        )
         steer_messages = await self._apply_pending_steers(run_id)
         messages.extend(
             ProviderMessage(role="user", content=text) for text in steer_messages
@@ -2599,6 +3322,8 @@ class LocalRunExecutor:
             call: dict[str, Any],
         ) -> tuple[dict[str, Any] | None, RunLimitViolation | None]:
             async with tool_semaphore:
+                if not await self._wait_until_runnable(run_id):
+                    raise _RunParked
                 violation = self._current_limit_violation(run_id)
                 if violation is not None:
                     return None, violation
@@ -2654,7 +3379,15 @@ class LocalRunExecutor:
                 return result, self._current_limit_violation(run_id)
 
         if should_parallelize_tool_calls(calls, mcp_tools):
-            tool_results = await asyncio.gather(*(execute_call(call) for call in calls))
+            tasks = [asyncio.create_task(execute_call(call)) for call in calls]
+            try:
+                tool_results = await asyncio.gather(*tasks)
+            except BaseException:
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                raise
         else:
             tool_results = []
             for call in calls:
@@ -2676,6 +3409,13 @@ class LocalRunExecutor:
         tool_call: Mapping[str, Any],
     ) -> dict[str, Any] | None:
         with session_scope() as db:
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
+            if run is None:
+                return None
+            self._require_execution_owner(run)
+            inline_result = _stored_inline_tool_result(run, tool_call)
+            if inline_result is not None:
+                return inline_result
             tool = db.scalar(
                 select(ToolExecution).where(
                     ToolExecution.run_id == run_id,
@@ -2701,14 +3441,12 @@ class LocalRunExecutor:
                 )
                 tool.finished_at = utc_now()
                 finish_tool_subtask(db, tool)
-                run = db.get(Run, run_id)
-                if run is not None:
-                    append_event(
-                        db,
-                        run,
-                        "tool_completed",
-                        {"execution": _tool_event(tool)},
-                    )
+                append_event(
+                    db,
+                    run,
+                    "tool_completed",
+                    {"execution": _tool_event(tool)},
+                )
             payload = {
                 "error": {
                     "code": tool.error_code or "tool_not_replayed",
@@ -2743,9 +3481,10 @@ class LocalRunExecutor:
             else arguments
         )
         with session_scope() as db:
-            run = db.get(Run, run_id)
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             if run is None:
                 raise RuntimeError("Run disappeared before Tool policy result")
+            self._require_execution_owner(run)
             tool = db.scalar(
                 select(ToolExecution).where(
                     ToolExecution.run_id == run.id,
@@ -3105,6 +3844,87 @@ class LocalRunExecutor:
                 )
         return message
 
+    def _steer_message_content(
+        self,
+        run: Run,
+        message: Message,
+        *,
+        context_window: int | None,
+    ) -> str:
+        metadata = (
+            message.metadata_json
+            if isinstance(message.metadata_json, Mapping)
+            else {}
+        )
+        content = self._message_with_context(
+            message.canonical_text,
+            attachment_ids=[
+                str(item) for item in metadata.get("attachment_ids", [])
+            ],
+            prompt_references=[
+                item
+                for item in metadata.get("prompt_references", [])
+                if isinstance(item, dict)
+            ],
+            extensions=list(run.snapshot_json.get("extensions", [])),
+            include_skill_instructions=True,
+            user_message_id=message.id,
+            context_window=context_window,
+        )
+        output_mode = metadata.get("output_mode", "auto")
+        if output_mode == "chat":
+            content = "[Output mode for this request: chat response]\n" + content
+        elif output_mode == "file":
+            content = (
+                "[Output mode for this request: create an artifact file]\n" + content
+            )
+        target_tokens = _optional_positive_int(metadata.get("target_output_tokens"))
+        if output_mode != "chat" and target_tokens is not None:
+            content = (
+                "[Artifact content length target for this request: about "
+                f"{target_tokens:,} tokens; aim for 80-105%]\n"
+                + content
+            )
+        return content
+
+    def _checkpoint_steer_message_map(
+        self, run_id: str, message_ids: Sequence[str]
+    ) -> dict[str, str]:
+        unique_ids = tuple(dict.fromkeys(message_ids))
+        if not unique_ids:
+            return {}
+        with SessionLocal() as db:
+            run = db.get(Run, run_id)
+            if run is None:
+                raise RuntimeError("Run disappeared while restoring steer transcript")
+            self._require_execution_owner(run)
+            messages = {
+                message.id: message
+                for message in db.scalars(
+                    select(Message).where(
+                        Message.id.in_(unique_ids),
+                        Message.run_id == run.id,
+                        Message.role == "user",
+                        Message.status == "completed",
+                    )
+                )
+            }
+            if len(messages) != len(unique_ids):
+                raise ValueError("Stored steer transcript references a missing message")
+            execution = run.snapshot_json.get("execution", {})
+            context_window = _optional_positive_int(
+                execution.get("capabilities", {}).get("context_window")
+                if isinstance(execution, Mapping)
+                and isinstance(execution.get("capabilities"), Mapping)
+                else None
+            )
+            return {
+                message_id: self._steer_message_content(
+                    run, messages[message_id], context_window=context_window
+                )
+                for message_id in unique_ids
+            }
+
     def _conversation_messages(
         self,
         run_id: str,
@@ -3112,11 +3932,14 @@ class LocalRunExecutor:
         *,
         images: tuple[ProviderImage, ...] = (),
         tool_schemas: tuple[Mapping[str, Any], ...] = (),
+        enforce_owner: bool = False,
     ) -> list[ProviderMessage]:
         with SessionLocal() as db:
             run = db.get(Run, run_id)
             if run is None:
                 raise RuntimeError("Run disappeared while building model context")
+            if enforce_owner:
+                self._require_execution_owner(run)
             history_conditions = (
                 Message.conversation_id == run.conversation_id,
                 Message.status == "completed",
@@ -3182,6 +4005,40 @@ class LocalRunExecutor:
                                 )
                             )
             history = list(db.scalars(history_query))
+            pending_prefix_transcript = (
+                []
+                if isinstance(run.snapshot_json.get("tool_checkpoint"), Mapping)
+                else _checkpoint_prefix_transcript(run.snapshot_json)
+            )
+            pending_prefix_message_ids = (
+                _checkpoint_transcript_user_message_ids(pending_prefix_transcript)
+            )
+            pending_prefix_messages_by_id = {
+                message.id: message
+                for message in db.scalars(
+                    select(Message).where(
+                        Message.id.in_(pending_prefix_message_ids),
+                        Message.run_id == run.id,
+                        Message.role == "user",
+                        Message.status == "completed",
+                    )
+                )
+            }
+            if len(pending_prefix_messages_by_id) != len(
+                set(pending_prefix_message_ids)
+            ):
+                raise ValueError(
+                    "Stored safe transcript references a missing user message"
+                )
+            captured_steer_message_ids = _checkpoint_captured_steer_message_ids(
+                run.snapshot_json
+            )
+            if captured_steer_message_ids:
+                history = [
+                    message
+                    for message in history
+                    if message.id not in captured_steer_message_ids
+                ]
         runtime_prompts = run.snapshot_json.get("runtime_prompts", {})
         system_document = (
             runtime_prompts.get("system", {})
@@ -3570,12 +4427,32 @@ class LocalRunExecutor:
             and isinstance(history_execution.get("capabilities"), Mapping)
             else None
         )
-        for message in history:
-            content = (
-                current_user_message
-                if message.run_id == run_id and message.role == "user"
-                else message.canonical_text
+        pending_prefix_content_by_id = {
+            message_id: self._steer_message_content(
+                run,
+                message,
+                context_window=history_context_window,
             )
+            for message_id, message in pending_prefix_messages_by_id.items()
+        }
+        pending_prefix_messages: list[ProviderMessage] = []
+        _append_restored_checkpoint_transcript(
+            pending_prefix_messages,
+            pending_prefix_transcript,
+            pending_prefix_content_by_id,
+        )
+        initial_user_message_id = str(
+            run.snapshot_json.get("user_message_id", "")
+        )
+        for message in history:
+            if message.id == initial_user_message_id and message.role == "user":
+                content = current_user_message
+            elif message.run_id == run_id and message.role == "user":
+                content = self._steer_message_content(
+                    run, message, context_window=history_context_window
+                )
+            else:
+                content = message.canonical_text
             if (
                 message.role == "user"
                 and "<source-document-manifest>" not in content
@@ -3607,9 +4484,13 @@ class LocalRunExecutor:
             if (context := _recalled_memory_context(snapshot))
         }
         with session_scope() as db:
-            attached_run = db.get(Run, run_id)
+            attached_run = db.scalar(
+                select(Run).where(Run.id == run_id).with_for_update()
+            )
             if attached_run is None:
                 raise RuntimeError("Run disappeared while compacting model context")
+            if enforce_owner:
+                self._require_execution_owner(attached_run)
             prepared = prepare_context(
                 db,
                 run=attached_run,
@@ -3617,6 +4498,7 @@ class LocalRunExecutor:
                 content_by_message_id=content_by_message_id,
                 prefix_texts=(
                     *(message.content or "" for message in messages),
+                    *(message.content or "" for message in pending_prefix_messages),
                     *(turn_system_parts or ()),
                     *recalled_context_by_run_id.values(),
                 ),
@@ -3678,7 +4560,8 @@ class LocalRunExecutor:
                     content=content,
                     images=(
                         images
-                        if message.run_id == run_id and message.role == "user"
+                        if message.id == initial_user_message_id
+                        and message.role == "user"
                         else ()
                     ),
                     provider_metadata=(
@@ -3688,6 +4571,7 @@ class LocalRunExecutor:
                     ),
                 )
             )
+        messages.extend(pending_prefix_messages)
         return messages
 
     def _provider(
@@ -3817,6 +4701,7 @@ class LocalRunExecutor:
         mcp_tools: Mapping[str, PreparedMcpTool] | None = None,
         deferred_tool_names: frozenset[str] = frozenset(),
     ) -> dict[str, Any]:
+        self._assert_execution_owner(run_id)
         arguments: dict[str, Any]
         try:
             arguments = json.loads(tool_call.get("arguments") or "{}")
@@ -3901,11 +4786,14 @@ class LocalRunExecutor:
         if tool_call["name"] == "activate_skill":
             try:
                 with session_scope() as db:
-                    active_run = db.get(Run, run_id)
+                    active_run = db.scalar(
+                        select(Run).where(Run.id == run_id).with_for_update()
+                    )
                     if active_run is None:
                         raise RuntimeError(
                             "Run disappeared during model-driven Skill activation"
                         )
+                    self._require_execution_owner(active_run)
                     selected = activate_run_skill(
                         active_run,
                         skill_id=str(arguments.get("skillId", "")),
@@ -3924,19 +4812,23 @@ class LocalRunExecutor:
                             "skill_selected",
                             {"activity": activity},
                         )
+                    result = {
+                        "activated": not bool(selected.get("already_active")),
+                        "alreadyActive": already_active,
+                        "skillId": str(selected.get("extension_id", "")),
+                        "name": str(selected.get("name", "Skill")),
+                        "slug": str(
+                            selected.get("slug", selected.get("name", "Skill"))
+                        ),
+                        "reason": str(selected.get("activation_reason", "")),
+                        "instructions": _bounded_text(
+                            str(selected.get("instructions", "")).strip(), 40_000
+                        ),
+                    }
+                    _store_inline_tool_result(active_run, tool_call, result)
                 if not already_active:
                     await event_broker.notify(run_id)
-                return {
-                    "activated": not bool(selected.get("already_active")),
-                    "alreadyActive": already_active,
-                    "skillId": str(selected.get("extension_id", "")),
-                    "name": str(selected.get("name", "Skill")),
-                    "slug": str(selected.get("slug", selected.get("name", "Skill"))),
-                    "reason": str(selected.get("activation_reason", "")),
-                    "instructions": _bounded_text(
-                        str(selected.get("instructions", "")).strip(), 40_000
-                    ),
-                }
+                return result
             except ApiProblem as exc:
                 return {"error": {"code": exc.code, "message": exc.message}}
         if tool_call["name"] == "classify_file_output_intent":
@@ -3949,14 +4841,21 @@ class LocalRunExecutor:
                 "reason": _bounded_text(str(arguments.get("reason", "")).strip(), 240),
             }
             with session_scope() as db:
-                active_run = db.get(Run, run_id)
+                active_run = db.scalar(
+                    select(Run).where(Run.id == run_id).with_for_update()
+                )
                 if active_run is None:
                     raise RuntimeError(
                         "Run disappeared during file output intent classification"
                     )
+                self._require_execution_owner(active_run)
                 existing = active_run.snapshot_json.get("output_intent")
                 if isinstance(existing, dict):
-                    return dict(existing)
+                    existing_result = dict(existing)
+                    _store_inline_tool_result(
+                        active_run, tool_call, existing_result
+                    )
+                    return existing_result
                 snapshot = {
                     **active_run.snapshot_json,
                     "output_intent": payload,
@@ -3972,6 +4871,7 @@ class LocalRunExecutor:
                         snapshot["artifact_usage"] = {}
                 active_run.snapshot_json = snapshot
                 append_event(db, active_run, "output_intent_classified", payload)
+                _store_inline_tool_result(active_run, tool_call, payload)
             await event_broker.notify(run_id)
             return payload
         if tool_call["name"] == "update_plan":
@@ -3980,12 +4880,17 @@ class LocalRunExecutor:
                 if not isinstance(raw_steps, list):
                     raise ValueError("plan must be an array")
                 with session_scope() as db:
-                    active_run = db.get(Run, run_id)
+                    active_run = db.scalar(
+                        select(Run).where(Run.id == run_id).with_for_update()
+                    )
                     if active_run is None:
                         raise RuntimeError("Run disappeared during work plan update")
+                    self._require_execution_owner(active_run)
                     work_plan = update_work_plan(db, active_run, steps=raw_steps)
+                    result = {"plan": work_plan}
+                    _store_inline_tool_result(active_run, tool_call, result)
                 await event_broker.notify(run_id)
-                return {"plan": work_plan}
+                return result
             except (TypeError, ValueError) as exc:
                 return {"error": "invalid_work_plan", "message": str(exc)}
         if tool_call["name"] == "tool_search":
@@ -4036,9 +4941,10 @@ class LocalRunExecutor:
             else arguments
         )
         with session_scope() as db:
-            run = db.get(Run, run_id)
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             if run is None:
                 raise RuntimeError("Run disappeared before tool execution")
+            self._require_execution_owner(run)
             tool = db.scalar(
                 select(ToolExecution).where(
                     ToolExecution.run_id == run.id,
@@ -4076,6 +4982,7 @@ class LocalRunExecutor:
             tool_id = tool.id
         await event_broker.notify(run_id)
         await asyncio.sleep(0.12)
+        self._assert_execution_owner(run_id)
 
         if tool_call["name"] == "read_tool_result":
             source_call_id = str(arguments.get("tool_call_id", "")).strip()
@@ -4253,7 +5160,9 @@ class LocalRunExecutor:
         if tool_call["name"] in KNOWLEDGE_TOOL_NAMES:
             try:
                 with session_scope() as db:
-                    knowledge_run = db.get(Run, run_id)
+                    knowledge_run = db.scalar(
+                        select(Run).where(Run.id == run_id).with_for_update()
+                    )
                     knowledge_user = (
                         db.get(User, knowledge_run.user_id)
                         if knowledge_run is not None
@@ -4263,6 +5172,7 @@ class LocalRunExecutor:
                         raise RuntimeError(
                             "Run context disappeared during Knowledge retrieval"
                         )
+                    self._require_execution_owner(knowledge_run)
                     payload = execute_knowledge_tool(
                         db,
                         run=knowledge_run,
@@ -4312,7 +5222,9 @@ class LocalRunExecutor:
         if tool_call["name"] == "run_python_calculation":
             try:
                 with session_scope() as db:
-                    calculation_run = db.get(Run, run_id)
+                    calculation_run = db.scalar(
+                        select(Run).where(Run.id == run_id).with_for_update()
+                    )
                     calculation_user = (
                         db.get(User, calculation_run.user_id)
                         if calculation_run is not None
@@ -4322,6 +5234,7 @@ class LocalRunExecutor:
                         raise RuntimeError(
                             "Run context disappeared during Python calculation"
                         )
+                    self._require_execution_owner(calculation_run)
                     payload = execute_python_calculation(
                         db,
                         self.file_storage,
@@ -4343,7 +5256,9 @@ class LocalRunExecutor:
         if tool_call["name"] in {"glob", "grep", "read_file", "list_dir"}:
             try:
                 with session_scope() as db:
-                    workspace_run = db.get(Run, run_id)
+                    workspace_run = db.scalar(
+                        select(Run).where(Run.id == run_id).with_for_update()
+                    )
                     workspace_user = (
                         db.get(User, workspace_run.user_id)
                         if workspace_run is not None
@@ -4353,6 +5268,7 @@ class LocalRunExecutor:
                         raise RuntimeError(
                             "Run context disappeared during workspace tool execution"
                         )
+                    self._require_execution_owner(workspace_run)
                     payload = execute_workspace_tool(
                         db,
                         self.file_storage,
@@ -4394,7 +5310,9 @@ class LocalRunExecutor:
                     cleanup_artifact_storage_on_error(self.storage) as storage_keys,
                     session_scope() as db,
                 ):
-                    workspace_run = db.get(Run, run_id)
+                    workspace_run = db.scalar(
+                        select(Run).where(Run.id == run_id).with_for_update()
+                    )
                     workspace_user = (
                         db.get(User, workspace_run.user_id)
                         if workspace_run is not None
@@ -4404,6 +5322,7 @@ class LocalRunExecutor:
                         raise RuntimeError(
                             "Run context disappeared during Artifact creation"
                         )
+                    self._require_execution_owner(workspace_run)
                     artifact, version = create_artifact(
                         db,
                         self.storage,
@@ -4466,7 +5385,9 @@ class LocalRunExecutor:
 
         try:
             with session_scope() as db:
-                report_run = db.get(Run, run_id)
+                report_run = db.scalar(
+                    select(Run).where(Run.id == run_id).with_for_update()
+                )
                 report_user = (
                     db.get(User, report_run.user_id) if report_run is not None else None
                 )
@@ -4474,6 +5395,7 @@ class LocalRunExecutor:
                     raise RuntimeError(
                         "Run context disappeared during report generation"
                     )
+                self._require_execution_owner(report_run)
                 report_model = report_run.runtime_model_id
                 target_output_tokens = _optional_positive_int(
                     report_run.snapshot_json.get("target_output_tokens")
@@ -4542,8 +5464,11 @@ class LocalRunExecutor:
                 return failure
             expansion_attempt = length_retry_count + 1
             with session_scope() as db:
-                run = db.get(Run, run_id)
+                run = db.scalar(
+                    select(Run).where(Run.id == run_id).with_for_update()
+                )
                 if run is not None:
+                    self._require_execution_owner(run)
                     run.snapshot_json = {
                         **run.snapshot_json,
                         "artifact_progress": None,
@@ -4580,11 +5505,12 @@ class LocalRunExecutor:
             cleanup_artifact_storage_on_error(self.storage) as storage_keys,
             session_scope() as db,
         ):
-            run = db.get(Run, run_id)
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             completed_tool = db.get(ToolExecution, tool_id)
             user = db.get(User, run.user_id) if run else None
             if run is None or user is None or completed_tool is None:
                 raise RuntimeError("Run context disappeared during tool execution")
+            self._require_execution_owner(run)
             report_display_name = _unique_report_display_name(
                 db, run.project_id, report.display_name
             )
@@ -4716,6 +5642,14 @@ class LocalRunExecutor:
                 cleanup_artifact_storage_on_error(self.storage) as storage_keys,
                 session_scope() as db,
             ):
+                run = db.scalar(
+                    select(Run).where(Run.id == run_id).with_for_update()
+                )
+                if run is None:
+                    raise RuntimeError(
+                        "Run context disappeared during image tool completion"
+                    )
+                self._require_execution_owner(run)
                 persisted = persist_generated_image(
                     db,
                     self.storage,
@@ -4723,9 +5657,8 @@ class LocalRunExecutor:
                     generated=generated,
                 )
                 storage_keys.append(persisted.storage_key)
-                run = db.get(Run, run_id)
                 completed_tool = db.get(ToolExecution, tool_id)
-                if run is None or completed_tool is None:
+                if completed_tool is None:
                     raise RuntimeError(
                         "Run context disappeared during image tool completion"
                     )
@@ -4817,10 +5750,11 @@ class LocalRunExecutor:
         artifact_usage: Mapping[str, Any] | None = None,
     ) -> None:
         with session_scope() as db:
-            run = db.get(Run, run_id)
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             tool = db.get(ToolExecution, tool_id)
             if run is None or tool is None:
                 raise RuntimeError("Run context disappeared during tool completion")
+            self._require_execution_owner(run)
             tool.status = "completed"
             tool.result_json = result
             tool.result_summary = summary
@@ -4881,9 +5815,10 @@ class LocalRunExecutor:
             retryable = False
         message = str(error) or "Tool 요청을 처리할 수 없습니다."
         with session_scope() as db:
-            run = db.get(Run, run_id)
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             tool = db.get(ToolExecution, tool_id)
             if run is not None and tool is not None:
+                self._require_execution_owner(run)
                 tool.status = "failed"
                 tool.error_code = code
                 tool.error_message = message
@@ -4921,10 +5856,11 @@ class LocalRunExecutor:
 
     async def _cancel_tool_execution(self, run_id: str, tool_id: str) -> None:
         with session_scope() as db:
-            run = db.get(Run, run_id)
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             tool = db.get(ToolExecution, tool_id)
             if run is None or tool is None:
                 return
+            self._require_execution_owner(run)
             tool.status = "cancelled"
             tool.error_code = "tool_cancelled"
             tool.error_message = "도구 실행이 취소되었습니다."
@@ -4947,11 +5883,56 @@ class LocalRunExecutor:
             )
         await event_broker.notify(run_id)
 
+    async def _prepare_tool_execution_plan(
+        self, run_id: str, calls: Sequence[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        execution_calls = [
+            call
+            for call in calls
+            if call["name"]
+            not in {
+                "update_plan",
+                "activate_skill",
+                "classify_file_output_intent",
+                "request_user_input",
+            }
+            and not call.get("blocked_error")
+        ]
+        if not execution_calls:
+            return execution_calls
+        await self._enter_tool_plan(run_id)
+        created_subtasks: list[dict[str, Any]] = []
+        with session_scope() as db:
+            active_run = db.scalar(
+                select(Run).where(Run.id == run_id).with_for_update()
+            )
+            if active_run is None:
+                raise RuntimeError("Run disappeared before Plan Subtask creation")
+            self._require_execution_owner(active_run)
+            if active_run.status == PAUSED:
+                raise _RunParked
+            created_subtasks = ensure_tool_subtasks(db, active_run, execution_calls)
+            if created_subtasks:
+                change_plan_step(
+                    db,
+                    active_run,
+                    "tools",
+                    result={"subtask_count": len(created_subtasks)},
+                    changed_subtasks=created_subtasks,
+                    reason="tool_subtasks_created",
+                )
+        if created_subtasks:
+            await event_broker.notify(run_id)
+        return execution_calls
+
     async def _enter_tool_plan(self, run_id: str) -> None:
         with session_scope() as db:
-            run = db.get(Run, run_id)
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             if run is None or run.status in TERMINAL_STATUSES:
                 return
+            self._require_execution_owner(run)
+            if run.status == PAUSED:
+                raise _RunParked
             complete_plan_step(
                 db,
                 run,
@@ -4964,9 +5945,12 @@ class LocalRunExecutor:
 
     async def _enter_final_plan(self, run_id: str) -> None:
         with session_scope() as db:
-            run = db.get(Run, run_id)
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             if run is None or run.status in TERMINAL_STATUSES:
                 return
+            self._require_execution_owner(run)
+            if run.status == PAUSED:
+                raise _RunParked
             tool_count = (
                 db.scalar(
                     select(func.count(ToolExecution.id)).where(
@@ -4994,9 +5978,12 @@ class LocalRunExecutor:
 
     async def _set_status(self, run_id: str, status: str) -> None:
         with session_scope() as db:
-            run = db.get(Run, run_id)
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             if run is None or run.status in TERMINAL_STATUSES:
                 return
+            self._require_execution_owner(run)
+            if run.status == PAUSED:
+                raise _RunParked
             if run.status == status:
                 return
             transition_run(db, run, status)
@@ -5010,14 +5997,15 @@ class LocalRunExecutor:
         *,
         publish_live: bool = True,
     ) -> None:
-        if publish_live:
-            await event_broker.publish_assistant_draft(run_id, message_id, text)
         mission_id: str | None = None
         mission_event_created = False
         with session_scope() as db:
-            run = db.get(Run, run_id)
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             if run is None or run.status in TERMINAL_STATUSES:
                 return
+            self._require_execution_owner(run)
+            if run.status == PAUSED:
+                raise _RunParked
             run.assistant_draft += text
             from ..deep_analysis.execution import record_output_progress
 
@@ -5033,6 +6021,8 @@ class LocalRunExecutor:
                 "assistant_text_delta",
                 {"messageId": message_id, "delta": text},
             )
+        if publish_live:
+            await event_broker.publish_assistant_draft(run_id, message_id, text)
         await event_broker.notify(run_id)
         if mission_id and mission_event_created:
             await event_broker.notify(f"mission:{mission_id}")
@@ -5044,9 +6034,10 @@ class LocalRunExecutor:
         if not normalized:
             return
         with session_scope() as db:
-            run = db.get(Run, run_id)
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             if run is None or run.status in TERMINAL_STATUSES:
                 return
+            self._require_execution_owner(run)
             recent = run.snapshot_json.get("last_progress_summary")
             if isinstance(recent, dict) and recent.get("text") == normalized:
                 return
@@ -5094,6 +6085,7 @@ class LocalRunExecutor:
         persist: bool = True,
         durable_event: bool = True,
     ) -> None:
+        self._assert_execution_owner(run_id)
         progress: dict[str, Any] = {
             "tokens": max(0, tokens),
             "lines": max(0, lines),
@@ -5106,9 +6098,12 @@ class LocalRunExecutor:
             progress["modelOutputTokens"] = max(0, model_output_tokens)
         if persist:
             with session_scope() as db:
-                run = db.get(Run, run_id)
+                run = db.scalar(
+                    select(Run).where(Run.id == run_id).with_for_update()
+                )
                 if run is None or run.status in TERMINAL_STATUSES:
                     return
+                self._require_execution_owner(run)
                 if normalized_target_tokens is None:
                     normalized_target_tokens = _optional_positive_int(
                         run.snapshot_json.get("target_output_tokens")
@@ -5136,9 +6131,10 @@ class LocalRunExecutor:
         if tool_name not in {"create_report", "write_file"}:
             raise ValueError(f"Unsupported streaming artifact tool: {tool_name}")
         with session_scope() as db:
-            run = db.get(Run, run_id)
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             if run is None or run.status in TERMINAL_STATUSES:
                 return
+            self._require_execution_owner(run)
             existing = db.scalar(
                 select(ToolExecution).where(
                     ToolExecution.run_id == run.id,
@@ -5201,9 +6197,10 @@ class LocalRunExecutor:
             {str(call.get("name") or "unknown")[:160] for call in tool_calls.values()}
         )
         with session_scope() as db:
-            run = db.get(Run, run_id)
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             if run is None or run.status in TERMINAL_STATUSES:
                 return
+            self._require_execution_owner(run)
             if call_ids:
                 interrupted = list(
                     db.scalars(
@@ -5235,9 +6232,10 @@ class LocalRunExecutor:
         lines: int,
     ) -> None:
         with session_scope() as db:
-            run = db.get(Run, run_id)
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             if run is None or run.status in TERMINAL_STATUSES:
                 return
+            self._require_execution_owner(run)
             tool = db.scalar(
                 select(ToolExecution).where(
                     ToolExecution.run_id == run.id,
@@ -5283,9 +6281,10 @@ class LocalRunExecutor:
             phase="compacting",
         )
         with session_scope() as db:
-            run = db.get(Run, run_id)
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             if run is None or run.status in TERMINAL_STATUSES:
                 return messages
+            self._require_execution_owner(run)
             previous = run.snapshot_json.get("runtime_context_compaction", {})
             count = (
                 _nonnegative_int(previous.get("count")) + 1
@@ -5322,9 +6321,12 @@ class LocalRunExecutor:
 
     def _begin_model_turn(self, run_id: str) -> tuple[RunLimitViolation | None, int]:
         with session_scope() as db:
-            run = db.get(Run, run_id)
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             if run is None or run.status in TERMINAL_STATUSES:
                 return None, 0
+            self._require_execution_owner(run)
+            if run.status == PAUSED:
+                raise _RunParked
             violation = _run_limit_violation(run)
             previous = dict(run.usage_json)
             completed_turns = _nonnegative_int(previous.get("model_turns"))
@@ -5352,9 +6354,10 @@ class LocalRunExecutor:
             return False
         delay_seconds = _provider_retry_delay_seconds(error, retry_index)
         with session_scope() as db:
-            run = db.get(Run, run_id)
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             if run is None or run.status in TERMINAL_STATUSES:
                 return False
+            self._require_execution_owner(run)
             usage = dict(run.usage_json)
             usage["model_turns"] = min(
                 _nonnegative_int(usage.get("model_turns")), round_index
@@ -5404,9 +6407,10 @@ class LocalRunExecutor:
             return False
         delay_seconds = _provider_retry_delay_seconds(error, retry_index)
         with session_scope() as db:
-            run = db.get(Run, run_id)
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             if run is None or run.status in TERMINAL_STATUSES:
                 return False
+            self._require_execution_owner(run)
             payload = {
                 "attempt": retry_index + 2,
                 "maxAttempts": len(_PROVIDER_RETRY_DELAYS_SECONDS) + 1,
@@ -5459,9 +6463,10 @@ class LocalRunExecutor:
         if not isinstance(observed, int) or isinstance(observed, bool) or observed <= 0:
             return None
         with session_scope() as db:
-            run = db.get(Run, run_id)
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             if run is None or run.status in TERMINAL_STATUSES:
                 return None
+            self._require_execution_owner(run)
             snapshot = dict(run.snapshot_json)
             execution_value = snapshot.get("execution", {})
             execution = (
@@ -5559,9 +6564,10 @@ class LocalRunExecutor:
         self, run_id: str, usage: dict[str, Any]
     ) -> RunLimitViolation | None:
         with session_scope() as db:
-            run = db.get(Run, run_id)
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             if run is None:
                 return None
+            self._require_execution_owner(run)
             previous = dict(run.usage_json)
             for key, value in usage.items():
                 if isinstance(value, int) and not isinstance(value, bool):
@@ -5649,9 +6655,10 @@ class LocalRunExecutor:
             ),
         }
         with session_scope() as db:
-            run = db.get(Run, run_id)
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             if run is None:
                 return
+            self._require_execution_owner(run)
             previous_metrics = run.snapshot_json.get("model_turn_metrics", [])
             metrics = (
                 list(previous_metrics) if isinstance(previous_metrics, list) else []
@@ -5665,33 +6672,39 @@ class LocalRunExecutor:
         await event_broker.notify(run_id)
 
     async def _wait_until_runnable(self, run_id: str) -> bool:
-        while self._started:
-            status, violation, _has_pending_steers = self._run_control_state(run_id)
-            if status is None or status in TERMINAL_STATUSES:
-                return False
-            if violation is not None:
-                await self._limit_run(run_id, violation)
-                return False
-            if status != PAUSED:
-                return True
-            await event_broker.wait(run_id, timeout=0.15)
-            self.invalidate_control(run_id)
-        return False
+        if not self._started:
+            return False
+        status, violation, _has_pending_steers, worker_id = self._run_control_state(
+            run_id
+        )
+        if worker_id != self._worker_id:
+            raise _RunParked
+        if status is None or status in TERMINAL_STATUSES or status == PAUSED:
+            return False
+        if violation is not None:
+            await self._limit_run(run_id, violation)
+            return False
+        return True
 
     async def _has_pending_steers(self, run_id: str) -> bool:
-        _status, _violation, has_pending_steers = self._run_control_state(run_id)
+        _status, _violation, has_pending_steers, worker_id = self._run_control_state(
+            run_id
+        )
+        if worker_id != self._worker_id:
+            raise _RunParked
         return has_pending_steers
 
     def _run_control_state(
         self, run_id: str
-    ) -> tuple[str | None, RunLimitViolation | None, bool]:
+    ) -> tuple[str | None, RunLimitViolation | None, bool, str | None]:
         now = time.monotonic()
         cached = self._run_control_cache.get(run_id)
         if cached is not None and now - cached[0] < _RUN_CONTROL_CACHE_SECONDS:
-            return cached[1], cached[2], cached[3]
+            return cached[1], cached[2], cached[3], cached[4]
         with SessionLocal() as db:
             run = db.get(Run, run_id)
             status = run.status if run is not None else None
+            worker_id = run.worker_id if run is not None else None
             violation = (
                 _run_limit_violation(run)
                 if run is not None and run.status not in TERMINAL_STATUSES
@@ -5704,17 +6717,34 @@ class LocalRunExecutor:
                     RunCommand.status == "waiting_safe_boundary",
                 )
             )
-        state = (status, violation, command_id is not None)
+        state = (status, violation, command_id is not None, worker_id)
         self._run_control_cache[run_id] = (now, *state)
         return state
+
+    def _store_safe_transcript(
+        self, run_id: str, entries: Sequence[Mapping[str, Any]]
+    ) -> None:
+        with session_scope() as db:
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
+            if run is None or run.status in TERMINAL_STATUSES:
+                raise _RunParked
+            self._require_execution_owner(run)
+            if run.status == PAUSED:
+                raise _RunParked
+            _append_safe_transcript_entries(run, entries)
 
     async def _mark_turn_interrupted_by_steer(
         self, run_id: str, message_id: str, partial_text: str
     ) -> None:
         with session_scope() as db:
-            run = db.get(Run, run_id)
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             if run is None or run.status in TERMINAL_STATUSES:
                 return
+            self._require_execution_owner(run)
+            if partial_text:
+                _append_safe_transcript_entries(
+                    run, ({"role": "assistant", "content": partial_text},)
+                )
             append_event(
                 db,
                 run,
@@ -5727,14 +6757,20 @@ class LocalRunExecutor:
             )
         await event_broker.notify(run_id)
 
-    async def _apply_pending_steers(self, run_id: str) -> list[str]:
+    async def _apply_pending_steers(
+        self,
+        run_id: str,
+        *,
+        preceding_assistant_content: str | None = None,
+    ) -> list[str]:
         applied = False
         steer_messages: list[str] = []
         applied_message_ids: set[str] = set()
         with session_scope() as db:
-            run = db.get(Run, run_id)
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             if run is None:
                 return steer_messages
+            self._require_execution_owner(run)
             commands = list(
                 db.scalars(
                     select(RunCommand)
@@ -5746,6 +6782,16 @@ class LocalRunExecutor:
                     .order_by(RunCommand.created_at, RunCommand.id)
                 )
             )
+            if commands and preceding_assistant_content:
+                _append_safe_transcript_entries(
+                    run,
+                    (
+                        {
+                            "role": "assistant",
+                            "content": preceding_assistant_content,
+                        },
+                    ),
+                )
             for command in commands:
                 message = db.get(Message, command.payload_json.get("message_id"))
                 if message:
@@ -5759,13 +6805,9 @@ class LocalRunExecutor:
                         if isinstance(item, dict)
                     ]
                     steer_messages.append(
-                        self._message_with_context(
-                            message.canonical_text,
-                            attachment_ids=attachment_ids,
-                            prompt_references=prompt_references,
-                            extensions=list(run.snapshot_json.get("extensions", [])),
-                            include_skill_instructions=True,
-                            user_message_id=message.id,
+                        self._steer_message_content(
+                            run,
+                            message,
                             context_window=_optional_positive_int(
                                 (
                                     run.snapshot_json.get("execution", {}).get(
@@ -5780,16 +6822,6 @@ class LocalRunExecutor:
                         )
                     )
                     steer_output_mode = message.metadata_json.get("output_mode", "auto")
-                    if steer_output_mode == "chat":
-                        steer_messages[-1] = (
-                            "[Output mode for this request: chat response]\n"
-                            + steer_messages[-1]
-                        )
-                    elif steer_output_mode == "file":
-                        steer_messages[-1] = (
-                            "[Output mode for this request: create an artifact file]\n"
-                            + steer_messages[-1]
-                        )
                     steer_target_tokens = _optional_positive_int(
                         message.metadata_json.get("target_output_tokens")
                     )
@@ -5799,14 +6831,8 @@ class LocalRunExecutor:
                     steer_answer_length = str(
                         message.metadata_json.get("answer_length", "auto")
                     )
-                    if steer_output_mode != "chat" and steer_target_tokens is not None:
-                        steer_messages[-1] = (
-                            "[Artifact content length target for this request: about "
-                            f"{steer_target_tokens:,} tokens; aim for 80-105%]\n"
-                            + steer_messages[-1]
-                        )
                     applied_message_ids.add(message.id)
-                    run.snapshot_json = {
+                    snapshot = {
                         **run.snapshot_json,
                         "analysis_depth": steer_analysis_depth,
                         "answer_length": steer_answer_length,
@@ -5826,9 +6852,14 @@ class LocalRunExecutor:
                                 "analysis_depth": steer_analysis_depth,
                                 "answer_length": steer_answer_length,
                                 "target_output_tokens": steer_target_tokens,
+                                "output_mode": steer_output_mode,
                             },
                         ],
                     }
+                    run.snapshot_json = snapshot
+                    _append_safe_transcript_entries(
+                        run, ({"role": "user", "message_id": message.id},)
+                    )
                     message.status = "completed"
                     message.metadata_json = {
                         **message.metadata_json,
@@ -5849,6 +6880,7 @@ class LocalRunExecutor:
                         if item.get("message_id") not in applied_message_ids
                     ],
                 }
+        self.invalidate_control(run_id)
         if applied:
             await event_broker.notify(run_id)
         return steer_messages
@@ -5862,9 +6894,12 @@ class LocalRunExecutor:
     ) -> None:
         completed = False
         with session_scope() as db:
-            run = db.get(Run, run_id)
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             if run is None or run.status in TERMINAL_STATUSES:
                 return
+            self._require_execution_owner(run)
+            if run.status == PAUSED:
+                raise _RunParked
             web_metadata = _web_source_metadata(db, run.id)
             knowledge_metadata = knowledge_source_metadata(db, run.id)
             web_metadata["sources"].extend(knowledge_metadata["sources"])
@@ -5919,6 +6954,12 @@ class LocalRunExecutor:
             )
             db.add(message)
             run.current_turn += 1
+            snapshot = dict(run.snapshot_json)
+            snapshot.pop("model_turn_inflight", None)
+            snapshot.pop("tool_checkpoint", None)
+            snapshot.pop("tool_checkpoint_prefix_user_message_ids", None)
+            snapshot.pop("tool_checkpoint_prefix_transcript", None)
+            run.snapshot_json = snapshot
             append_event(
                 db,
                 run,
@@ -5984,8 +7025,12 @@ class LocalRunExecutor:
         provider_error: ProviderRequestError | None = None,
     ) -> None:
         with session_scope() as db:
-            run = db.get(Run, run_id)
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             if run is None or run.status in TERMINAL_STATUSES:
+                return
+            try:
+                self._require_execution_owner(run)
+            except _RunParked:
                 return
             run.error_code = code
             run.error_message = message
@@ -6004,8 +7049,12 @@ class LocalRunExecutor:
 
     async def _limit_run(self, run_id: str, violation: RunLimitViolation) -> None:
         with session_scope() as db:
-            run = db.get(Run, run_id)
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             if run is None or run.status in TERMINAL_STATUSES:
+                return
+            try:
+                self._require_execution_owner(run)
+            except _RunParked:
                 return
             run.error_code = violation.code
             run.error_message = violation.message
@@ -6204,6 +7253,286 @@ class LocalRunExecutor:
         await event_broker.notify(completed_run_id)
         if new_run_id:
             self.enqueue(new_run_id)
+
+
+def _checkpoint_message_ids(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str) and item]
+
+
+def _checkpoint_transcript_entries(
+    value: Any, *, fallback_user_message_ids: Sequence[str] = ()
+) -> list[dict[str, str]]:
+    if value is None:
+        return [
+            {"role": "user", "message_id": message_id}
+            for message_id in fallback_user_message_ids
+        ]
+    if not isinstance(value, list):
+        return []
+    entries: list[dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            continue
+        role = item.get("role")
+        if role == "assistant" and isinstance(item.get("content"), str):
+            entries.append({"role": "assistant", "content": str(item["content"])})
+        elif role == "user" and isinstance(item.get("message_id"), str):
+            entries.append({"role": "user", "message_id": str(item["message_id"])})
+        elif role == "user" and isinstance(item.get("content"), str):
+            entries.append({"role": "user", "content": str(item["content"])})
+    return entries
+
+
+def _restored_checkpoint_transcript(
+    value: Any, *, fallback_user_message_ids: Sequence[str] = ()
+) -> list[dict[str, str]]:
+    if value is None:
+        if not all(
+            isinstance(message_id, str) and message_id
+            for message_id in fallback_user_message_ids
+        ):
+            raise ValueError("Stored steer transcript message ID is invalid")
+        return [
+            {"role": "user", "message_id": message_id}
+            for message_id in fallback_user_message_ids
+        ]
+    if not isinstance(value, list):
+        raise ValueError("Stored steer transcript must be an array")
+    entries: list[dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            raise ValueError("Stored steer transcript entry is invalid")
+        role = item.get("role")
+        if role == "assistant" and isinstance(item.get("content"), str):
+            entries.append({"role": "assistant", "content": str(item["content"])})
+            continue
+        if (
+            role == "user"
+            and isinstance(item.get("message_id"), str)
+            and item.get("message_id")
+        ):
+            entries.append({"role": "user", "message_id": str(item["message_id"])})
+            continue
+        if role == "user" and isinstance(item.get("content"), str):
+            entries.append({"role": "user", "content": str(item["content"])})
+            continue
+        raise ValueError("Stored steer transcript role or payload is invalid")
+    return entries
+
+
+def _append_restored_checkpoint_transcript(
+    messages: list[ProviderMessage],
+    entries: Sequence[Mapping[str, Any]],
+    steer_content_by_id: Mapping[str, str],
+) -> None:
+    for entry in entries:
+        role = str(entry.get("role", ""))
+        if role == "assistant":
+            content = str(entry.get("content", ""))
+        elif isinstance(entry.get("message_id"), str):
+            content = steer_content_by_id[str(entry["message_id"])]
+        else:
+            content = str(entry.get("content", ""))
+        messages.append(ProviderMessage(role=role, content=content))
+
+
+def _append_safe_transcript_entries(
+    run: Run, entries: Sequence[Mapping[str, Any]]
+) -> None:
+    restored = _restored_checkpoint_transcript(list(entries))
+    if not restored:
+        return
+    message_ids = _checkpoint_transcript_user_message_ids(restored)
+    snapshot = dict(run.snapshot_json)
+    checkpoint = snapshot.get("tool_checkpoint")
+    if isinstance(checkpoint, Mapping):
+        checkpoint = dict(checkpoint)
+        post_batch_transcript = _checkpoint_post_batch_transcript(checkpoint)
+        checkpoint["captures_applied_steers"] = True
+        checkpoint["post_batch_user_message_ids"] = [
+            *_checkpoint_post_batch_user_message_ids(checkpoint),
+            *message_ids,
+        ]
+        checkpoint["post_batch_transcript"] = [
+            *post_batch_transcript,
+            *restored,
+        ]
+        snapshot["tool_checkpoint"] = checkpoint
+    else:
+        prefix_transcript = _checkpoint_prefix_transcript(snapshot)
+        snapshot["tool_checkpoint_prefix_user_message_ids"] = [
+            *_checkpoint_message_ids(
+                snapshot.get("tool_checkpoint_prefix_user_message_ids")
+            ),
+            *message_ids,
+        ]
+        snapshot["tool_checkpoint_prefix_transcript"] = [
+            *prefix_transcript,
+            *restored,
+        ]
+    marker = snapshot.get("model_turn_inflight")
+    if isinstance(marker, Mapping):
+        snapshot["model_turn_inflight"] = {
+            **marker,
+            "turnIndex": _nonnegative_int(run.usage_json.get("model_turns")),
+            "draftCheckpoint": len(run.assistant_draft),
+            "safeBoundaryAt": utc_now().isoformat(),
+        }
+    run.snapshot_json = snapshot
+
+
+def _checkpoint_prefix_user_message_ids(snapshot: Mapping[str, Any]) -> list[str]:
+    checkpoint = snapshot.get("tool_checkpoint")
+    if not isinstance(checkpoint, Mapping):
+        return _checkpoint_message_ids(
+            snapshot.get("tool_checkpoint_prefix_user_message_ids")
+        )
+    return _checkpoint_message_ids(checkpoint.get("prefix_user_message_ids"))
+
+
+def _checkpoint_prefix_transcript(snapshot: Mapping[str, Any]) -> list[dict[str, str]]:
+    checkpoint = snapshot.get("tool_checkpoint")
+    if not isinstance(checkpoint, Mapping):
+        return _checkpoint_transcript_entries(
+            snapshot.get("tool_checkpoint_prefix_transcript"),
+            fallback_user_message_ids=_checkpoint_message_ids(
+                snapshot.get("tool_checkpoint_prefix_user_message_ids")
+            ),
+        )
+    return _checkpoint_transcript_entries(
+        checkpoint.get("prefix_transcript"),
+        fallback_user_message_ids=_checkpoint_message_ids(
+            checkpoint.get("prefix_user_message_ids")
+        ),
+    )
+
+
+def _checkpoint_post_batch_user_message_ids(
+    checkpoint: Mapping[str, Any],
+) -> list[str]:
+    return _checkpoint_message_ids(checkpoint.get("post_batch_user_message_ids"))
+
+
+def _checkpoint_post_batch_transcript(
+    checkpoint: Mapping[str, Any],
+) -> list[dict[str, str]]:
+    return _checkpoint_transcript_entries(
+        checkpoint.get("post_batch_transcript"),
+        fallback_user_message_ids=_checkpoint_post_batch_user_message_ids(checkpoint),
+    )
+
+
+def _checkpoint_transcript_user_message_ids(
+    entries: Sequence[Mapping[str, Any]],
+) -> list[str]:
+    return [
+        str(entry["message_id"])
+        for entry in entries
+        if entry.get("role") == "user"
+        and isinstance(entry.get("message_id"), str)
+        and entry.get("message_id")
+    ]
+
+
+def _checkpoint_captured_steer_message_ids(
+    snapshot: Mapping[str, Any],
+) -> set[str]:
+    checkpoint = snapshot.get("tool_checkpoint")
+    if not isinstance(checkpoint, Mapping):
+        return set(
+            _checkpoint_transcript_user_message_ids(
+                _checkpoint_prefix_transcript(snapshot)
+            )
+        )
+    if not checkpoint.get("captures_applied_steers"):
+        return set()
+    captured = set(
+        _checkpoint_transcript_user_message_ids(
+            _checkpoint_prefix_transcript(snapshot)
+        )
+    )
+    captured.update(
+        _checkpoint_transcript_user_message_ids(
+            _checkpoint_post_batch_transcript(checkpoint)
+        )
+    )
+    completed_batches = checkpoint.get("completed_batches")
+    if isinstance(completed_batches, list):
+        for batch in completed_batches:
+            if isinstance(batch, Mapping):
+                captured.update(
+                    _checkpoint_transcript_user_message_ids(
+                        _checkpoint_post_batch_transcript(batch)
+                    )
+                )
+    return captured
+
+
+def _checkpoint_completed_batches(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
+    checkpoint = snapshot.get("tool_checkpoint")
+    if not isinstance(checkpoint, Mapping):
+        return []
+    batches = checkpoint.get("completed_batches")
+    if not isinstance(batches, list):
+        return []
+    return [dict(batch) for batch in batches[-64:] if isinstance(batch, Mapping)]
+
+
+def _restored_checkpoint_call(raw_call: Mapping[str, Any]) -> dict[str, Any]:
+    call: dict[str, Any] = {
+        "id": str(raw_call.get("id", "")),
+        "name": str(raw_call.get("name", "")),
+        "arguments": str(raw_call.get("arguments", "{}")),
+        "provider_metadata": _safe_provider_metadata(
+            raw_call.get("provider_metadata")
+        ),
+    }
+    for field in ("blocked_error", "provider_name", "input_request_id", "input_request_error"):
+        if raw_call.get(field):
+            call[field] = str(raw_call[field])
+    if raw_call.get("provider_name"):
+        call["provider_arguments"] = str(
+            raw_call.get("provider_arguments", "{}")
+        )
+    approval_id = raw_call.get("approval_id")
+    if isinstance(approval_id, str):
+        call["approval_id"] = approval_id
+    if raw_call.get("approval_status"):
+        call["approval_status"] = str(raw_call["approval_status"])
+    return call
+
+
+def _stored_inline_tool_result(
+    run: Run, tool_call: Mapping[str, Any]
+) -> dict[str, Any] | None:
+    stored = run.snapshot_json.get("inline_tool_results")
+    if not isinstance(stored, Mapping):
+        return None
+    entry = stored.get(str(tool_call.get("id", "")))
+    if (
+        not isinstance(entry, Mapping)
+        or entry.get("toolName") != str(tool_call.get("name", ""))
+        or not isinstance(entry.get("result"), Mapping)
+    ):
+        return None
+    return dict(entry["result"])
+
+
+def _store_inline_tool_result(
+    run: Run, tool_call: Mapping[str, Any], result: Mapping[str, Any]
+) -> None:
+    previous = run.snapshot_json.get("inline_tool_results")
+    stored = dict(previous) if isinstance(previous, Mapping) else {}
+    call_id = str(tool_call.get("id", ""))
+    stored[call_id] = {
+        "toolName": str(tool_call.get("name", "")),
+        "result": dict(result),
+    }
+    if len(stored) > 64:
+        stored = dict(list(stored.items())[-64:])
+    run.snapshot_json = {**run.snapshot_json, "inline_tool_results": stored}
 
 
 def _tool_event(tool: ToolExecution) -> dict[str, Any]:
@@ -6515,11 +7844,17 @@ def _provider_tool_result_contents(
 
 
 def _record_web_fetch_provider_context(
-    run_id: str, delivered_web_text_chars: Mapping[str, int]
+    run_id: str,
+    delivered_web_text_chars: Mapping[str, int],
+    *,
+    worker_id: str,
 ) -> None:
     if not delivered_web_text_chars:
         return
     with session_scope() as db:
+        run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
+        if run is None or run.worker_id != worker_id:
+            raise _RunParked
         tools = db.scalars(
             select(ToolExecution).where(
                 ToolExecution.run_id == run_id,

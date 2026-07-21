@@ -2207,6 +2207,7 @@ export interface RunSnapshot {
     messageId: UUID;
     text: string;
   } | null;
+  assistantDraftRevision?: number;
   artifactProgress: {
     tokens: number;
     lines: number;
@@ -2406,6 +2407,7 @@ export type RunEventType =
   | "run_status_changed"
   | "model_turn_completed"
   | "assistant_text_delta"
+  | "assistant_draft_rewound"
   | "progress_summary"
   | "output_intent_classified"
   | "skill_selected"
@@ -2451,6 +2453,10 @@ export type RunEvent =
   | RunEventEnvelope<"run_started" | "run_status_changed", { status: RunStatus }>
   | RunEventEnvelope<"model_turn_completed", ModelTurnMetric>
   | RunEventEnvelope<"assistant_text_delta", { messageId: UUID; delta: string }>
+  | RunEventEnvelope<
+      "assistant_draft_rewound",
+      { messageId: UUID; text: string; retainedCharacters: number; revision: number }
+    >
   | RunEventEnvelope<"progress_summary", { id: UUID; text: string; phase: string }>
   | RunEventEnvelope<"output_intent_classified", NonNullable<RunSnapshot["outputIntent"]>>
   | RunEventEnvelope<"skill_selected", { activity: Extract<RunActivity, { type: "skill" }> }>

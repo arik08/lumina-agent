@@ -22,6 +22,8 @@ def _settings(tmp_path: Path) -> Settings:
         files_dir=tmp_path / "files",
         artifacts_dir=tmp_path / "artifacts",
         cookie_secure=False,
+        user_concurrency_limit=1,
+        server_concurrency_limit=1,
     )
 
 
@@ -50,6 +52,21 @@ def _wait_for_status(
             return payload
         time.sleep(0.02)
     raise AssertionError(f"Run {run_id} did not reach {sorted(expected)}")
+
+
+def _wait_for_detached_wait(run_id: str) -> None:
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        with SessionLocal() as db:
+            run = db.get(Run, run_id)
+            if (
+                run is not None
+                and run.worker_id is None
+                and run_id not in local_run_executor._tasks
+            ):
+                return
+        time.sleep(0.02)
+    raise AssertionError(f"Run {run_id} did not release its waiting executor task")
 
 
 def _clarifying_provider(
@@ -164,6 +181,24 @@ def test_account_clarification_setting_and_durable_input_resume(
         request = waiting["inputRequests"][0]
         assert request["status"] == "pending"
         assert len(request["questions"]) == 2
+
+        _wait_for_detached_wait(run_id)
+        capacity_conversation = client.post(
+            "/api/conversations",
+            headers=headers,
+            json={"projectId": project_id, "title": "확인 대기 중 슬롯 검증"},
+        )
+        capacity_started = client.post(
+            f"/api/conversations/{capacity_conversation.json()['id']}/runs",
+            headers={**headers, "Idempotency-Key": "clarification-capacity-start"},
+            json={"message": {"text": "별도 자료도 정리해 주세요."}},
+        )
+        assert capacity_started.status_code == 202, capacity_started.text
+        _wait_for_status(
+            client,
+            capacity_started.json()["run"]["runId"],
+            {"awaiting_input"},
+        )
 
         incomplete = client.post(
             f"/api/runs/{run_id}/actions",

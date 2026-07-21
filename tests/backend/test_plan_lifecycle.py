@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 import json
 import threading
 import time
@@ -311,6 +312,14 @@ def test_create_report_start_aligns_legacy_work_plan_to_report_drafting(
                 },
             ],
         )
+        now = utc_now()
+        run.worker_id = local_run_executor._worker_id
+        run.heartbeat_at = now
+        run.lease_expires_at = now + timedelta(minutes=1)
+        run.snapshot_json = {
+            **run.snapshot_json,
+            "workerId": local_run_executor._worker_id,
+        }
         db.commit()
 
     asyncio.run(
@@ -632,8 +641,8 @@ def test_pause_resume_cancel_and_retry_keep_plan_consistent(tmp_path: Path) -> N
             payload=RunActionRequest(type="resume"),
             idempotency_key="resume-action-1",
         )
-        assert run.status == MODEL_STREAMING
-        assert steps["model"].status == "running"
+        assert run.status == QUEUED
+        assert steps["model"].status == "queued"
 
         apply_run_action(
             db,

@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Collection
 
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from ..models import Plan, PlanStep, PlanSubtask, Run, ToolExecution, utc_now
-from .service import append_event, plan_snapshot
+from .plans import resume_plan
+from .service import append_event, plan_snapshot, transition_run
 from .state import (
     ACTIVE_STATUSES,
     AWAITING_APPROVAL,
@@ -26,7 +27,12 @@ class WorkerRecoveryBatch:
     waiting_run_ids: tuple[str, ...]
 
 
-def prepare_worker_recovery(db: Session) -> WorkerRecoveryBatch:
+def prepare_worker_recovery(
+    db: Session,
+    *,
+    protected_run_ids: Collection[str] = (),
+    protected_worker_id: str | None = None,
+) -> WorkerRecoveryBatch:
     """Move recoverable in-flight Runs back to the durable DB queue.
 
     An interrupted Tool call is never replayed because its external side effect may
@@ -38,31 +44,60 @@ def prepare_worker_recovery(db: Session) -> WorkerRecoveryBatch:
     resumable: list[str] = []
     waiting: list[str] = []
     now = utc_now()
-    recovery_candidates = list(
-        db.scalars(
-            select(Run)
-            .where(
-                or_(
-                    Run.status == INTERRUPTED,
-                    (
-                        Run.status.in_(ACTIVE_STATUSES)
-                        & or_(
-                            Run.lease_expires_at.is_(None),
-                            Run.lease_expires_at <= now,
-                        )
-                    ),
+    recovery_statement = (
+        select(Run)
+        .where(
+            or_(
+                Run.status == INTERRUPTED,
+                (
+                    Run.status.in_(
+                        ACTIVE_STATUSES - {AWAITING_APPROVAL, AWAITING_INPUT, PAUSED}
+                    )
+                    & or_(
+                        Run.lease_expires_at.is_(None),
+                        Run.lease_expires_at <= now,
+                    )
+                ),
+                (
+                    Run.status.in_({AWAITING_APPROVAL, AWAITING_INPUT, PAUSED})
+                    & Run.worker_id.is_not(None)
+                    & or_(
+                        Run.lease_expires_at.is_(None),
+                        Run.lease_expires_at <= now,
+                    )
+                ),
+            )
+        )
+        .order_by(Run.queued_at, Run.id)
+    )
+    if protected_run_ids:
+        protected_ids = tuple(dict.fromkeys(protected_run_ids))
+        if protected_worker_id is None:
+            recovery_statement = recovery_statement.where(Run.id.not_in(protected_ids))
+        else:
+            recovery_statement = recovery_statement.where(
+                ~(
+                    Run.id.in_(protected_ids)
+                    & (Run.worker_id == protected_worker_id)
                 )
             )
-            .order_by(Run.queued_at, Run.id)
-        )
-    )
+    if db.get_bind().dialect.name == "postgresql":
+        recovery_statement = recovery_statement.with_for_update(skip_locked=True)
+    recovery_candidates = list(db.scalars(recovery_statement))
     for run in recovery_candidates:
         if run.status == INTERRUPTED and not _is_worker_recoverable(run):
             continue
         if run.status in {AWAITING_APPROVAL, AWAITING_INPUT, PAUSED}:
-            run.worker_id = None
-            run.heartbeat_at = None
-            run.lease_expires_at = None
+            if run.status == PAUSED:
+                detach_paused_run(db, run, reason="worker_recovery")
+                if run.snapshot_json.get("resume_requested") is True:
+                    queue_paused_run_for_resume(db, run)
+                    resumable.append(run.id)
+                    continue
+            else:
+                run.worker_id = None
+                run.heartbeat_at = None
+                run.lease_expires_at = None
             waiting.append(run.id)
             continue
         _recover_run(db, run)
@@ -132,31 +167,64 @@ def clear_model_turn_inflight(db: Session, run: Run) -> None:
     db.flush()
 
 
-def _recover_run(db: Session, run: Run) -> None:
-    previous_status = run.status
+def detach_paused_run(db: Session, run: Run, *, reason: str) -> bool:
+    """Release a paused Run's worker ownership after execution reaches a safe boundary."""
+
+    if run.status != PAUSED:
+        return False
     snapshot = dict(run.snapshot_json)
-    snapshot.pop("workerRecoverable", None)
-    snapshot.pop("workerInterruptedFrom", None)
-    if previous_status != INTERRUPTED:
-        append_event(
-            db,
-            run,
-            "run_interrupted",
-            {
-                "status": INTERRUPTED,
-                "previousStatus": previous_status,
-                "recoverable": True,
-                "finishedAt": utc_now(),
-            },
-        )
+    previous_worker_id = run.worker_id
+    already_detached = isinstance(snapshot.get("paused_worker_detached"), dict)
+    discarded_placeholders = _discard_streaming_tool_placeholders(db, run)
+    interrupted_tools = _interrupt_running_tools(db, run)
+    changed = bool(
+        previous_worker_id is not None
+        or not already_detached
+        or discarded_placeholders
+        or interrupted_tools
+    )
+    if not changed:
+        run.worker_id = None
+        run.heartbeat_at = None
+        run.lease_expires_at = None
+        return False
+    snapshot = dict(run.snapshot_json)
+    snapshot["paused_worker_detached"] = {
+        "detachedAt": utc_now().isoformat(),
+        "reason": reason,
+        "interruptedToolCount": len(interrupted_tools),
+    }
+    run.snapshot_json = snapshot
+    run.worker_id = None
+    run.heartbeat_at = None
+    run.lease_expires_at = None
+    append_event(
+        db,
+        run,
+        "run_pause_parked",
+        {
+            "status": PAUSED,
+            "reason": reason,
+            "interruptedToolCount": len(interrupted_tools),
+        },
+    )
+    db.flush()
+    return True
+
+
+def queue_paused_run_for_resume(db: Session, run: Run) -> bool:
+    """Rewind volatile work and move a taskless paused Run to the durable queue."""
+
+    if run.status != PAUSED:
+        return False
+    detach_paused_run(db, run, reason="resume_requeue")
+    resume_plan(db, run, requeue=True)
+
+    snapshot = dict(run.snapshot_json)
     marker = snapshot.pop("model_turn_inflight", None)
     checkpoint = _draft_checkpoint(marker, len(run.assistant_draft))
-    if marker is None:
-        # Legacy in-flight Runs have no safe boundary for partial model text.
-        checkpoint = 0
     draft_was_reset = checkpoint != len(run.assistant_draft)
     run.assistant_draft = run.assistant_draft[:checkpoint]
-
     usage = dict(run.usage_json)
     if isinstance(marker, dict):
         turn_index = _nonnegative_int(marker.get("turnIndex"))
@@ -165,6 +233,71 @@ def _recover_run(db: Session, run: Run) -> None:
         )
     run.usage_json = usage
 
+    previous_status = snapshot.pop("resume_status", None)
+    snapshot.pop("resume_requested", None)
+    snapshot.pop("resume_requested_at", None)
+    snapshot.pop("paused_worker_detached", None)
+    draft_revision = _nonnegative_int(
+        snapshot.get("assistant_draft_revision")
+    )
+    if draft_was_reset:
+        draft_revision += 1
+        snapshot["assistant_draft_revision"] = draft_revision
+    run.snapshot_json = snapshot
+    run.queued_at = utc_now()
+    run.finished_at = None
+    run.error_code = None
+    run.error_message = None
+    transition_run(db, run, QUEUED)
+    if draft_was_reset:
+        append_event(
+            db,
+            run,
+            "assistant_draft_rewound",
+            {
+                "messageId": str(run.snapshot_json.get("assistant_message_id", "")),
+                "text": run.assistant_draft,
+                "retainedCharacters": checkpoint,
+                "revision": draft_revision,
+            },
+        )
+    append_event(
+        db,
+        run,
+        "run_resume_recovery_scheduled",
+        {
+            "status": QUEUED,
+            "previousStatus": previous_status,
+            "retainedDraftCharacters": checkpoint,
+            "draftReset": draft_was_reset,
+        },
+    )
+    db.flush()
+    return draft_was_reset
+
+
+def _discard_streaming_tool_placeholders(db: Session, run: Run) -> int:
+    placeholders = list(
+        db.scalars(
+            select(ToolExecution).where(
+                ToolExecution.run_id == run.id,
+                ToolExecution.status == "streaming",
+            )
+        )
+    )
+    for tool in placeholders:
+        db.delete(tool)
+    if placeholders:
+        append_event(
+            db,
+            run,
+            "provider_partial_tool_calls_discarded",
+            {"toolCallCount": len(placeholders), "toolNames": []},
+        )
+    return len(placeholders)
+
+
+def _interrupt_running_tools(db: Session, run: Run) -> list[ToolExecution]:
     interrupted_tools = list(
         db.scalars(
             select(ToolExecution).where(
@@ -197,6 +330,43 @@ def _recover_run(db: Session, run: Run) -> None:
                 }
             },
         )
+    return interrupted_tools
+
+
+def _recover_run(db: Session, run: Run) -> None:
+    previous_status = run.status
+    snapshot = dict(run.snapshot_json)
+    snapshot.pop("workerRecoverable", None)
+    snapshot.pop("workerInterruptedFrom", None)
+    if previous_status != INTERRUPTED:
+        append_event(
+            db,
+            run,
+            "run_interrupted",
+            {
+                "status": INTERRUPTED,
+                "previousStatus": previous_status,
+                "recoverable": True,
+                "finishedAt": utc_now(),
+            },
+        )
+    marker = snapshot.pop("model_turn_inflight", None)
+    checkpoint = _draft_checkpoint(marker, len(run.assistant_draft))
+    if marker is None and not isinstance(snapshot.get("tool_checkpoint"), dict):
+        # Legacy in-flight Runs have no safe boundary for partial model text.
+        checkpoint = 0
+    draft_was_reset = checkpoint != len(run.assistant_draft)
+    run.assistant_draft = run.assistant_draft[:checkpoint]
+
+    usage = dict(run.usage_json)
+    if isinstance(marker, dict):
+        turn_index = _nonnegative_int(marker.get("turnIndex"))
+        usage["model_turns"] = min(
+            _nonnegative_int(usage.get("model_turns")), turn_index
+        )
+    run.usage_json = usage
+
+    interrupted_tools = _interrupt_running_tools(db, run)
 
     _fail_unstarted_subtasks(db, run)
     _queue_active_plan_steps(db, run)
@@ -209,6 +379,12 @@ def _recover_run(db: Session, run: Run) -> None:
         "interruptedToolCount": len(interrupted_tools),
         "draftReset": draft_was_reset,
     }
+    draft_revision = _nonnegative_int(
+        snapshot.get("assistant_draft_revision")
+    )
+    if draft_was_reset:
+        draft_revision += 1
+        snapshot["assistant_draft_revision"] = draft_revision
     run.snapshot_json = snapshot
     run.worker_id = None
     run.heartbeat_at = None
@@ -223,6 +399,18 @@ def _recover_run(db: Session, run: Run) -> None:
             **run.snapshot_json,
             "plan": jsonable_encoder(current_plan),
         }
+    if draft_was_reset:
+        append_event(
+            db,
+            run,
+            "assistant_draft_rewound",
+            {
+                "messageId": str(run.snapshot_json.get("assistant_message_id", "")),
+                "text": run.assistant_draft,
+                "retainedCharacters": checkpoint,
+                "revision": draft_revision,
+            },
+        )
     append_event(
         db,
         run,
@@ -299,7 +487,9 @@ def _is_worker_recoverable(run: Run) -> bool:
 __all__ = [
     "WorkerRecoveryBatch",
     "clear_model_turn_inflight",
+    "detach_paused_run",
     "mark_worker_shutdown_interrupted",
     "mark_model_turn_inflight",
     "prepare_worker_recovery",
+    "queue_paused_run_for_resume",
 ]

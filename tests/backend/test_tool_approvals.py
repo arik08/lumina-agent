@@ -15,6 +15,7 @@ from lumina.main import create_app
 from lumina.models import (
     Organization,
     ProjectMembership,
+    Run,
     RunEvent,
     ToolApproval,
     ToolExecution,
@@ -31,6 +32,8 @@ def _settings(tmp_path: Path, name: str) -> Settings:
         files_dir=tmp_path / "files",
         artifacts_dir=tmp_path / "artifacts",
         cookie_secure=False,
+        user_concurrency_limit=1,
+        server_concurrency_limit=1,
     )
 
 
@@ -92,6 +95,21 @@ def _wait_for_status(
     raise AssertionError(f"Run {run_id} did not reach {sorted(expected)}")
 
 
+def _wait_for_detached_wait(run_id: str) -> None:
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        with SessionLocal() as db:
+            run = db.get(Run, run_id)
+            if (
+                run is not None
+                and run.worker_id is None
+                and run_id not in local_run_executor._tasks
+            ):
+                return
+        time.sleep(0.02)
+    raise AssertionError(f"Run {run_id} did not release its waiting executor task")
+
+
 def _dangerous_provider(
     _provider_id: str,
     *,
@@ -136,6 +154,12 @@ def test_dangerous_tool_approval_is_durable_authorized_and_idempotent(
         assert "record-value-not-for-approval" not in json.dumps(
             waiting, ensure_ascii=False, default=str
         )
+
+        _wait_for_detached_wait(run_id)
+        capacity_run_id, _capacity_project_id = _start_run(
+            client, admin_headers, suffix="capacity"
+        )
+        _wait_for_status(client, capacity_run_id, {"awaiting_approval"})
 
         with SessionLocal() as db:
             organization = db.scalar(select(Organization))

@@ -5,6 +5,7 @@ import json
 import threading
 import time
 from collections.abc import AsyncIterator, Callable
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -49,9 +50,16 @@ from lumina.providers.openai_compatible import adapter as openai_compatible_modu
 from lumina.providers.openai_compatible import OpenAICompatibleAdapter
 from lumina.runs.state import ACTIVE_STATUSES, TERMINAL_STATUSES
 from lumina.runs.broker import event_broker
+from lumina.runs.plans import pause_plan
 
 
-def _settings(tmp_path: Path, name: str) -> Settings:
+def _settings(
+    tmp_path: Path,
+    name: str,
+    *,
+    user_concurrency_limit: int = 3,
+    server_concurrency_limit: int = 12,
+) -> Settings:
     return Settings(
         environment="test",
         database_url=f"sqlite:///{(tmp_path / name).as_posix()}",
@@ -60,8 +68,8 @@ def _settings(tmp_path: Path, name: str) -> Settings:
         artifacts_dir=tmp_path / "artifacts",
         cookie_secure=False,
         session_concurrency_limit=1,
-        user_concurrency_limit=3,
-        server_concurrency_limit=12,
+        user_concurrency_limit=user_concurrency_limit,
+        server_concurrency_limit=server_concurrency_limit,
     )
 
 
@@ -140,6 +148,24 @@ def _wait_for_terminal(
     raise AssertionError(f"Run {run_id} did not reach a terminal state")
 
 
+def _wait_for_detached_pause(run_id: str, *, timeout: float = 3.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with SessionLocal() as db:
+            run = db.get(Run, run_id)
+            if (
+                run is not None
+                and run.status == "paused"
+                and run.worker_id is None
+                and isinstance(
+                    run.snapshot_json.get("paused_worker_detached"), dict
+                )
+            ):
+                return
+        time.sleep(0.02)
+    raise AssertionError(f"Run {run_id} did not detach while paused")
+
+
 class _GateProvider:
     provider_id = "mock"
     capabilities = ProviderCapabilities(tools=True)
@@ -169,6 +195,345 @@ class _GateProvider:
         if not released:
             raise AssertionError(f"Provider gate {marker} was not released")
         yield ProviderEvent(type="text_delta", text=f"completed:{marker}")
+        yield ProviderEvent(type="completed", stop_reason="stop")
+
+
+class _PauseResumeProvider:
+    provider_id = "mock"
+    capabilities = ProviderCapabilities(tools=True)
+
+    def __init__(self, markers: tuple[str, ...]) -> None:
+        self.markers = markers
+        self.attempts = {marker: 0 for marker in markers}
+        self.entered = {
+            (marker, attempt): threading.Event()
+            for marker in markers
+            for attempt in (1, 2, 3)
+        }
+        self.release = {marker: threading.Event() for marker in markers}
+        self._lock = threading.Lock()
+
+    def release_all(self) -> None:
+        for event in self.release.values():
+            event.set()
+
+    def _marker(self, request: ProviderRequest) -> str:
+        for message in reversed(request.messages):
+            if message.role != "user" or not message.content:
+                continue
+            for marker in self.markers:
+                if marker in message.content:
+                    return marker
+        raise AssertionError("No deterministic pause marker found in Provider request")
+
+    async def stream(self, request: ProviderRequest) -> AsyncIterator[ProviderEvent]:
+        marker = self._marker(request)
+        with self._lock:
+            self.attempts[marker] += 1
+            attempt = self.attempts[marker]
+        self.entered[(marker, attempt)].set()
+        while not self.release[marker].is_set():
+            await asyncio.sleep(0.01)
+        yield ProviderEvent(
+            type="text_delta", text=f"completed:{marker}:attempt-{attempt}"
+        )
+        yield ProviderEvent(type="completed", stop_reason="stop")
+
+
+class _ToolPauseProvider:
+    provider_id = "mock"
+    capabilities = ProviderCapabilities(tools=True)
+
+    def __init__(self) -> None:
+        self.attempts = 0
+        self.requests: list[ProviderRequest] = []
+
+    async def stream(self, request: ProviderRequest) -> AsyncIterator[ProviderEvent]:
+        self.attempts += 1
+        self.requests.append(request)
+        if self.attempts == 1:
+            arguments = json.dumps(
+                {
+                    "plan": [
+                        {
+                            "step": "안전한 일시 정지 경계를 검증합니다.",
+                            "status": "in_progress",
+                            "phase": "validation",
+                        },
+                        {
+                            "step": "검증 결과를 답변으로 정리합니다.",
+                            "status": "pending",
+                            "phase": "drafting",
+                        },
+                    ]
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            yield ProviderEvent(
+                type="tool_call_started",
+                tool_call_id="call_pause_update_plan",
+                tool_name="update_plan",
+            )
+            yield ProviderEvent(
+                type="tool_call_completed",
+                tool_call_id="call_pause_update_plan",
+                tool_name="update_plan",
+                arguments_json=arguments,
+            )
+            yield ProviderEvent(type="completed", stop_reason="tool_calls")
+            return
+        assert any(message.role == "tool" for message in request.messages)
+        yield ProviderEvent(type="text_delta", text="tool checkpoint resumed once")
+        yield ProviderEvent(type="completed", stop_reason="stop")
+
+
+class _OrderedToolSteerRecoveryProvider:
+    provider_id = "mock"
+    capabilities = ProviderCapabilities(tools=True)
+
+    def __init__(self) -> None:
+        self.attempts = 0
+        self.requests: list[ProviderRequest] = []
+        self.prefix_gate = threading.Event()
+        self.post_a_gate = threading.Event()
+        self.post_b_gate = threading.Event()
+        self.crash_gate = threading.Event()
+        self.recovery_request: ProviderRequest | None = None
+
+    @staticmethod
+    def _plan_arguments(label: str) -> str:
+        return json.dumps(
+            {
+                "plan": [
+                    {
+                        "step": label,
+                        "status": "in_progress",
+                        "phase": "validation",
+                    },
+                    {
+                        "step": f"finish-{label}",
+                        "status": "pending",
+                        "phase": "drafting",
+                    },
+                ]
+            },
+            separators=(",", ":"),
+        )
+
+    @staticmethod
+    def _index(
+        messages: tuple[ProviderMessage, ...], predicate: Callable[[ProviderMessage], bool]
+    ) -> int:
+        return next(index for index, message in enumerate(messages) if predicate(message))
+
+    async def stream(self, request: ProviderRequest) -> AsyncIterator[ProviderEvent]:
+        self.attempts += 1
+        self.requests.append(request)
+        if self.attempts in {1, 3, 5}:
+            partial_label = {
+                1: "partial-prefix|",
+                3: "partial-post-a|",
+                5: "partial-post-b|",
+            }[self.attempts]
+            yield ProviderEvent(type="text_delta", text=partial_label)
+            {
+                1: self.prefix_gate,
+                3: self.post_a_gate,
+                5: self.post_b_gate,
+            }[self.attempts].set()
+            while True:
+                await asyncio.sleep(0.01)
+        if self.attempts == 6:
+            self.crash_gate.set()
+            while True:
+                await asyncio.sleep(0.01)
+        if self.attempts in {2, 4}:
+            suffix = "a" if self.attempts == 2 else "b"
+            call_id = f"call_ordered_{suffix}"
+            yield ProviderEvent(
+                type="tool_call_started",
+                tool_call_id=call_id,
+                tool_name="update_plan",
+            )
+            yield ProviderEvent(
+                type="tool_call_completed",
+                tool_call_id=call_id,
+                tool_name="update_plan",
+                arguments_json=self._plan_arguments(f"round-{suffix}"),
+            )
+            yield ProviderEvent(type="completed", stop_reason="tool_calls")
+            return
+
+        self.recovery_request = request
+        messages = request.messages
+        partial_prefix_index = self._index(
+            messages,
+            lambda message: message.role == "assistant"
+            and message.content == "partial-prefix|",
+        )
+        prefix_index = self._index(
+            messages,
+            lambda message: message.role == "user"
+            and "prefix-steer" in (message.content or ""),
+        )
+        assistant_a_index = self._index(
+            messages,
+            lambda message: message.role == "assistant"
+            and any(call.get("id") == "call_ordered_a" for call in message.tool_calls),
+        )
+        tool_a_index = self._index(
+            messages,
+            lambda message: message.role == "tool"
+            and message.tool_call_id == "call_ordered_a",
+        )
+        partial_post_a_index = self._index(
+            messages,
+            lambda message: message.role == "assistant"
+            and message.content == "partial-post-a|",
+        )
+        post_a_index = self._index(
+            messages,
+            lambda message: message.role == "user"
+            and "post-a-steer" in (message.content or ""),
+        )
+        assistant_b_index = self._index(
+            messages,
+            lambda message: message.role == "assistant"
+            and any(call.get("id") == "call_ordered_b" for call in message.tool_calls),
+        )
+        tool_b_index = self._index(
+            messages,
+            lambda message: message.role == "tool"
+            and message.tool_call_id == "call_ordered_b",
+        )
+        partial_post_b_index = self._index(
+            messages,
+            lambda message: message.role == "assistant"
+            and message.content == "partial-post-b|",
+        )
+        post_b_index = self._index(
+            messages,
+            lambda message: message.role == "user"
+            and "post-b-steer" in (message.content or ""),
+        )
+        assert (
+            partial_prefix_index
+            < prefix_index
+            < assistant_a_index
+            < tool_a_index
+            < partial_post_a_index
+            < post_a_index
+            < assistant_b_index
+            < tool_b_index
+            < partial_post_b_index
+            < post_b_index
+        )
+        for marker in ("prefix-steer", "post-a-steer", "post-b-steer"):
+            assert sum(
+                marker in (message.content or "")
+                for message in messages
+                if message.role == "user"
+            ) == 1
+        yield ProviderEvent(
+            type="text_delta", text="ordered tool transcript recovered once"
+        )
+        yield ProviderEvent(type="completed", stop_reason="stop")
+
+
+class _PrefixSteerRestartProvider:
+    provider_id = "mock"
+    capabilities = ProviderCapabilities(tools=True)
+
+    def __init__(self) -> None:
+        self.attempts = 0
+        self.steer_gate = threading.Event()
+        self.crash_gate = threading.Event()
+
+    async def stream(self, request: ProviderRequest) -> AsyncIterator[ProviderEvent]:
+        self.attempts += 1
+        if self.attempts == 1:
+            yield ProviderEvent(type="text_delta", text="partial-prefix-crash|")
+            self.steer_gate.set()
+            while True:
+                await asyncio.sleep(0.01)
+        if self.attempts == 2:
+            self.crash_gate.set()
+            while True:
+                await asyncio.sleep(0.01)
+
+        partial_index = next(
+            index
+            for index, message in enumerate(request.messages)
+            if message.role == "assistant"
+            and message.content == "partial-prefix-crash|"
+        )
+        steer_indexes = [
+            index
+            for index, message in enumerate(request.messages)
+            if message.role == "user"
+            and "prefix-crash-steer" in (message.content or "")
+        ]
+        assert len(steer_indexes) == 1
+        assert partial_index < steer_indexes[0]
+        yield ProviderEvent(type="text_delta", text="prefix transcript restored once")
+        yield ProviderEvent(type="completed", stop_reason="stop")
+
+
+class _ContinuationRestartProvider:
+    provider_id = "mock"
+    capabilities = ProviderCapabilities(tools=True)
+
+    def __init__(self) -> None:
+        self.attempts = 0
+        self.crash_gate = threading.Event()
+
+    async def stream(self, request: ProviderRequest) -> AsyncIterator[ProviderEvent]:
+        self.attempts += 1
+        if self.attempts == 1:
+            yield ProviderEvent(type="text_delta", text="truncated-prefix|")
+            yield ProviderEvent(type="completed", stop_reason="max_tokens")
+            return
+        if self.attempts == 2:
+            self.crash_gate.set()
+            while True:
+                await asyncio.sleep(0.01)
+
+        transcript = [
+            (message.role, message.content)
+            for message in request.messages
+            if message.content
+            in {"truncated-prefix|", executor_module._CONTINUATION_PROMPT}
+        ]
+        assert transcript == [
+            ("assistant", "truncated-prefix|"),
+            ("user", executor_module._CONTINUATION_PROMPT),
+        ]
+        yield ProviderEvent(type="text_delta", text="continuation restored once")
+        yield ProviderEvent(type="completed", stop_reason="stop")
+
+
+class _PartialPauseProvider:
+    provider_id = "mock"
+    capabilities = ProviderCapabilities(tools=True)
+
+    def __init__(self) -> None:
+        self.attempts = 0
+        self.partial_processed = threading.Event()
+        self.second_entered = threading.Event()
+        self.release_second = threading.Event()
+
+    async def stream(self, _request: ProviderRequest) -> AsyncIterator[ProviderEvent]:
+        self.attempts += 1
+        if self.attempts == 1:
+            yield ProviderEvent(type="text_delta", text="partial-before-pause")
+            self.partial_processed.set()
+            while True:
+                await asyncio.sleep(0.01)
+        self.second_entered.set()
+        while not self.release_second.is_set():
+            await asyncio.sleep(0.01)
+        yield ProviderEvent(type="text_delta", text="final-after-resume")
         yield ProviderEvent(type="completed", stop_reason="stop")
 
 
@@ -1090,6 +1455,865 @@ def test_different_conversations_for_one_user_execute_in_parallel(
                 )
         finally:
             provider.release_all()
+
+
+def test_live_pause_releases_capacity_and_resume_requeues_same_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    provider = _PauseResumeProvider(("pause-capacity-A", "pause-capacity-B"))
+    monkeypatch.setattr(local_run_executor, "_provider", _gate_factory(provider))
+    settings = _settings(
+        tmp_path,
+        "pause-capacity.db",
+        user_concurrency_limit=1,
+        server_concurrency_limit=1,
+    )
+
+    with TestClient(create_app(settings)) as client:
+        try:
+            csrf = _login(client)
+            conversation_a = _conversation(client, csrf, "Paused capacity A")
+            conversation_b = _conversation(client, csrf, "Paused capacity B")
+            run_a = _start_run(
+                client,
+                csrf,
+                conversation_a,
+                text="pause-capacity-A",
+                idempotency_key="pause-capacity-run-a",
+            )
+            assert provider.entered[("pause-capacity-A", 1)].wait(timeout=2)
+
+            paused = client.post(
+                f"/api/runs/{run_a}/actions",
+                headers={
+                    "X-CSRF-Token": csrf,
+                    "Idempotency-Key": "pause-capacity-action",
+                },
+                json={"type": "pause"},
+            )
+            assert paused.status_code == 200, paused.text
+            assert paused.json()["run"]["status"] == "paused"
+            _wait_for_detached_pause(run_a)
+
+            run_b = _start_run(
+                client,
+                csrf,
+                conversation_b,
+                text="pause-capacity-B",
+                idempotency_key="pause-capacity-run-b",
+            )
+            assert provider.entered[("pause-capacity-B", 1)].wait(timeout=2)
+            provider.release["pause-capacity-B"].set()
+            assert _wait_for_terminal(client, run_b)["status"] == "completed"
+
+            resumed = client.post(
+                f"/api/runs/{run_a}/actions",
+                headers={
+                    "X-CSRF-Token": csrf,
+                    "Idempotency-Key": "resume-capacity-action",
+                },
+                json={"type": "resume"},
+            )
+            assert resumed.status_code == 200, resumed.text
+            assert resumed.json()["run"]["status"] == "queued"
+            assert provider.entered[("pause-capacity-A", 2)].wait(timeout=2)
+            provider.release["pause-capacity-A"].set()
+            completed = _wait_for_terminal(client, run_a)
+            assert completed["status"] == "completed"
+            assert completed["assistantDraft"]["text"] == (
+                "completed:pause-capacity-A:attempt-2"
+            )
+            assert provider.attempts["pause-capacity-A"] == 2
+        finally:
+            provider.release_all()
+
+
+def test_preparing_run_pauses_before_plan_advances_and_resumes_from_queue(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    preparing_entered = threading.Event()
+    release_preparing = threading.Event()
+    execute_attempts = 0
+    original_execute = local_run_executor._execute
+
+    async def gated_execute(run_id: str) -> None:
+        nonlocal execute_attempts
+        execute_attempts += 1
+        if execute_attempts == 1:
+            preparing_entered.set()
+            released = await asyncio.to_thread(release_preparing.wait, 5.0)
+            if not released:
+                raise AssertionError("Preparing pause gate was not released")
+        await original_execute(run_id)
+
+    monkeypatch.setattr(local_run_executor, "_execute", gated_execute)
+    settings = _settings(tmp_path, "pause-preparing.db")
+
+    with TestClient(create_app(settings)) as client:
+        try:
+            csrf = _login(client)
+            conversation_id = _conversation(client, csrf, "Pause preparing")
+            run_id = _start_run(
+                client,
+                csrf,
+                conversation_id,
+                text="pause while preparing",
+                idempotency_key="pause-preparing-run",
+            )
+            assert preparing_entered.wait(timeout=2)
+            paused = client.post(
+                f"/api/runs/{run_id}/actions",
+                headers={
+                    "X-CSRF-Token": csrf,
+                    "Idempotency-Key": "pause-preparing-action",
+                },
+                json={"type": "pause"},
+            )
+            assert paused.status_code == 200, paused.text
+            assert paused.json()["run"]["status"] == "paused"
+            prepare_step = next(
+                step
+                for step in paused.json()["run"]["plan"]["steps"]
+                if step["key"] == "prepare"
+            )
+            assert prepare_step["status"] == "blocked"
+
+            release_preparing.set()
+            _wait_for_detached_pause(run_id)
+            resumed = client.post(
+                f"/api/runs/{run_id}/actions",
+                headers={
+                    "X-CSRF-Token": csrf,
+                    "Idempotency-Key": "resume-preparing-action",
+                },
+                json={"type": "resume"},
+            )
+            assert resumed.status_code == 200, resumed.text
+            assert resumed.json()["run"]["status"] == "queued"
+            completed = _wait_for_terminal(client, run_id)
+            assert completed["status"] == "completed"
+            assert execute_attempts == 2
+        finally:
+            release_preparing.set()
+
+
+def test_resume_requested_before_pause_task_exits_requeues_after_safe_boundary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    marker = "pause-resume-race"
+    provider = _PauseResumeProvider((marker,))
+    release_started = threading.Event()
+    allow_release = threading.Event()
+    target_run_id: str | None = None
+    original_release = local_run_executor._release_parked_ownership
+
+    async def gated_release(run_id: str) -> None:
+        if run_id == target_run_id and not allow_release.is_set():
+            release_started.set()
+            released = await asyncio.to_thread(allow_release.wait, 5.0)
+            if not released:
+                raise AssertionError("Paused ownership release gate timed out")
+        await original_release(run_id)
+
+    monkeypatch.setattr(local_run_executor, "_provider", _gate_factory(provider))
+    monkeypatch.setattr(
+        local_run_executor, "_release_parked_ownership", gated_release
+    )
+    settings = _settings(tmp_path, "pause-resume-race.db")
+
+    with TestClient(create_app(settings)) as client:
+        try:
+            csrf = _login(client)
+            conversation_id = _conversation(client, csrf, "Pause resume race")
+            target_run_id = _start_run(
+                client,
+                csrf,
+                conversation_id,
+                text=marker,
+                idempotency_key="pause-resume-race-run",
+            )
+            assert provider.entered[(marker, 1)].wait(timeout=2)
+            paused = client.post(
+                f"/api/runs/{target_run_id}/actions",
+                headers={
+                    "X-CSRF-Token": csrf,
+                    "Idempotency-Key": "pause-resume-race-pause",
+                },
+                json={"type": "pause"},
+            )
+            assert paused.status_code == 200, paused.text
+            assert release_started.wait(timeout=2)
+
+            resumed = client.post(
+                f"/api/runs/{target_run_id}/actions",
+                headers={
+                    "X-CSRF-Token": csrf,
+                    "Idempotency-Key": "pause-resume-race-resume",
+                },
+                json={"type": "resume"},
+            )
+            assert resumed.status_code == 200, resumed.text
+            assert resumed.json()["run"]["status"] == "paused"
+            with SessionLocal() as db:
+                run = db.get(Run, target_run_id)
+                assert run is not None
+                assert run.snapshot_json["resume_requested"] is True
+                assert run.worker_id == local_run_executor._worker_id
+
+            allow_release.set()
+            assert provider.entered[(marker, 2)].wait(timeout=3)
+            provider.release[marker].set()
+            completed = _wait_for_terminal(client, target_run_id)
+            assert completed["status"] == "completed"
+            assert provider.attempts[marker] == 2
+            with SessionLocal() as db:
+                run = db.get(Run, target_run_id)
+                assert run is not None
+                assert "resume_requested" not in run.snapshot_json
+        finally:
+            allow_release.set()
+            provider.release_all()
+
+
+def test_model_pause_rewinds_partial_draft_and_publishes_full_replacement(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    provider = _PartialPauseProvider()
+    monkeypatch.setattr(local_run_executor, "_provider", _gate_factory(provider))
+    settings = _settings(tmp_path, "pause-partial-draft.db")
+
+    with TestClient(create_app(settings)) as client:
+        try:
+            csrf = _login(client)
+            conversation_id = _conversation(client, csrf, "Pause partial draft")
+            run_id = _start_run(
+                client,
+                csrf,
+                conversation_id,
+                text="pause partial draft",
+                idempotency_key="pause-partial-draft-run",
+            )
+            assert provider.partial_processed.wait(timeout=2)
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                with SessionLocal() as db:
+                    run = db.get(Run, run_id)
+                    if run is not None and run.assistant_draft == "partial-before-pause":
+                        break
+                time.sleep(0.02)
+            else:
+                raise AssertionError("Partial assistant draft was not persisted")
+
+            paused = client.post(
+                f"/api/runs/{run_id}/actions",
+                headers={
+                    "X-CSRF-Token": csrf,
+                    "Idempotency-Key": "pause-partial-draft-action",
+                },
+                json={"type": "pause"},
+            )
+            assert paused.status_code == 200, paused.text
+            _wait_for_detached_pause(run_id)
+            previous_transient = event_broker.latest_assistant_draft(run_id)
+            assert previous_transient is not None
+            previous_revision = previous_transient[0]
+
+            resumed = client.post(
+                f"/api/runs/{run_id}/actions",
+                headers={
+                    "X-CSRF-Token": csrf,
+                    "Idempotency-Key": "resume-partial-draft-action",
+                },
+                json={"type": "resume"},
+            )
+            assert resumed.status_code == 200, resumed.text
+            assert resumed.json()["run"]["assistantDraft"] is None
+            assert provider.second_entered.wait(timeout=2)
+            replacement = event_broker.latest_assistant_draft(
+                run_id, after_revision=previous_revision
+            )
+            assert replacement is not None
+            assert replacement[1] == {
+                "messageId": previous_transient[1]["messageId"],
+                "text": "",
+                "append": False,
+            }
+
+            provider.release_second.set()
+            completed = _wait_for_terminal(client, run_id)
+            assert completed["status"] == "completed"
+            assert completed["assistantDraft"]["text"] == "final-after-resume"
+            assert provider.attempts == 2
+        finally:
+            provider.release_second.set()
+
+
+def test_pause_after_provider_completed_event_parks_before_final_transition(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    marker = "pause-after-provider-completed"
+    provider = _PauseResumeProvider((marker,))
+    provider.release[marker].set()
+    metrics_boundary = threading.Event()
+    release_metrics_boundary = threading.Event()
+    metric_calls = 0
+    original_record_metrics = local_run_executor._record_model_turn_metrics
+
+    async def gated_record_metrics(*args, **kwargs):
+        nonlocal metric_calls
+        await original_record_metrics(*args, **kwargs)
+        metric_calls += 1
+        if metric_calls == 1:
+            metrics_boundary.set()
+            released = await asyncio.to_thread(
+                release_metrics_boundary.wait, 5.0
+            )
+            if not released:
+                raise AssertionError("Provider completion boundary was not released")
+
+    monkeypatch.setattr(local_run_executor, "_provider", _gate_factory(provider))
+    monkeypatch.setattr(
+        local_run_executor, "_record_model_turn_metrics", gated_record_metrics
+    )
+    settings = _settings(tmp_path, "pause-after-provider-completed.db")
+
+    with TestClient(create_app(settings)) as client:
+        try:
+            csrf = _login(client)
+            conversation_id = _conversation(
+                client, csrf, "Pause after provider completion"
+            )
+            run_id = _start_run(
+                client,
+                csrf,
+                conversation_id,
+                text=marker,
+                idempotency_key="pause-after-provider-completed-run",
+            )
+            assert metrics_boundary.wait(timeout=5)
+            paused = client.post(
+                f"/api/runs/{run_id}/actions",
+                headers={
+                    "X-CSRF-Token": csrf,
+                    "Idempotency-Key": "pause-after-provider-completed-action",
+                },
+                json={"type": "pause"},
+            )
+            assert paused.status_code == 200, paused.text
+            assert paused.json()["run"]["status"] == "paused"
+            release_metrics_boundary.set()
+            _wait_for_detached_pause(run_id)
+            with SessionLocal() as db:
+                run = db.get(Run, run_id)
+                assert run is not None and run.status == "paused"
+                assert "model_turn_inflight" in run.snapshot_json
+
+            resumed = client.post(
+                f"/api/runs/{run_id}/actions",
+                headers={
+                    "X-CSRF-Token": csrf,
+                    "Idempotency-Key": "resume-after-provider-completed-action",
+                },
+                json={"type": "resume"},
+            )
+            assert resumed.status_code == 200, resumed.text
+            completed = _wait_for_terminal(client, run_id)
+            assert completed["status"] == "completed"
+            assert completed["assistantDraft"]["text"] == (
+                f"completed:{marker}:attempt-2"
+            )
+        finally:
+            release_metrics_boundary.set()
+
+    assert provider.attempts[marker] == 2
+
+
+def test_paused_run_resumes_after_worker_restart_without_duplicate_draft(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    marker = "pause-worker-restart"
+    provider = _PauseResumeProvider((marker,))
+    monkeypatch.setattr(local_run_executor, "_provider", _gate_factory(provider))
+    settings = _settings(tmp_path, "pause-worker-restart.db")
+
+    with TestClient(create_app(settings)) as first_client:
+        csrf = _login(first_client)
+        conversation_id = _conversation(first_client, csrf, "Pause restart")
+        run_id = _start_run(
+            first_client,
+            csrf,
+            conversation_id,
+            text=marker,
+            idempotency_key="pause-worker-restart-run",
+        )
+        assert provider.entered[(marker, 1)].wait(timeout=2)
+        paused = first_client.post(
+            f"/api/runs/{run_id}/actions",
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": "pause-before-worker-restart",
+            },
+            json={"type": "pause"},
+        )
+        assert paused.status_code == 200, paused.text
+        _wait_for_detached_pause(run_id)
+
+    with SessionLocal() as db:
+        parked = db.get(Run, run_id)
+        assert parked is not None and parked.status == "paused"
+        assert parked.worker_id is None
+
+    with TestClient(create_app(settings)) as second_client:
+        try:
+            csrf = _login(second_client)
+            resumed = second_client.post(
+                f"/api/runs/{run_id}/actions",
+                headers={
+                    "X-CSRF-Token": csrf,
+                    "Idempotency-Key": "resume-after-worker-restart",
+                },
+                json={"type": "resume"},
+            )
+            assert resumed.status_code == 200, resumed.text
+            assert resumed.json()["run"]["status"] == "queued"
+            assert provider.entered[(marker, 2)].wait(timeout=2)
+            provider.release[marker].set()
+            completed = _wait_for_terminal(second_client, run_id)
+            assert completed["status"] == "completed"
+            assert completed["assistantDraft"]["text"] == (
+                f"completed:{marker}:attempt-2"
+            )
+            assert provider.attempts[marker] == 2
+            with SessionLocal() as db:
+                assistant_messages = list(
+                    db.scalars(
+                        select(Message).where(
+                            Message.run_id == run_id,
+                            Message.role == "assistant",
+                        )
+                    )
+                )
+                assert len(assistant_messages) == 1
+                assert assistant_messages[0].canonical_text == (
+                    f"completed:{marker}:attempt-2"
+                )
+        finally:
+            provider.release_all()
+
+
+def test_completed_tool_batch_is_checkpointed_once_across_pause_and_restart(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    provider = _ToolPauseProvider()
+    tool_batch_completed = threading.Event()
+    release_tool_boundary = threading.Event()
+    tool_batch_invocations = 0
+    update_plan_invocations = 0
+    original_run_tool_calls = local_run_executor._run_tool_calls
+    original_update_work_plan = executor_module.update_work_plan
+
+    def counting_update_work_plan(*args, **kwargs):
+        nonlocal update_plan_invocations
+        update_plan_invocations += 1
+        return original_update_work_plan(*args, **kwargs)
+
+    async def gated_run_tool_calls(*args, **kwargs):
+        nonlocal tool_batch_invocations
+        result = await original_run_tool_calls(*args, **kwargs)
+        tool_batch_invocations += 1
+        if tool_batch_invocations == 1:
+            tool_batch_completed.set()
+            released = await asyncio.to_thread(release_tool_boundary.wait, 5.0)
+            if not released:
+                raise AssertionError("Tool safe-boundary gate was not released")
+        return result
+
+    monkeypatch.setattr(local_run_executor, "_provider", _gate_factory(provider))
+    monkeypatch.setattr(local_run_executor, "_run_tool_calls", gated_run_tool_calls)
+    monkeypatch.setattr(executor_module, "update_work_plan", counting_update_work_plan)
+    settings = _settings(tmp_path, "pause-tool-restart.db")
+
+    with TestClient(create_app(settings)) as first_client:
+        csrf = _login(first_client)
+        conversation_id = _conversation(first_client, csrf, "Pause tool restart")
+        run_id = _start_run(
+            first_client,
+            csrf,
+            conversation_id,
+            text="pause a completed tool batch",
+            idempotency_key="pause-tool-restart-run",
+        )
+        assert tool_batch_completed.wait(timeout=2)
+        paused = first_client.post(
+            f"/api/runs/{run_id}/actions",
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": "pause-completed-tool-batch",
+            },
+            json={"type": "pause"},
+        )
+        assert paused.status_code == 200, paused.text
+        release_tool_boundary.set()
+        _wait_for_detached_pause(run_id)
+        with SessionLocal() as db:
+            run = db.get(Run, run_id)
+            assert run is not None
+            checkpoint = run.snapshot_json.get("tool_checkpoint")
+            assert isinstance(checkpoint, dict)
+            assert checkpoint["kind"] == "completed_tools"
+            assert checkpoint["provider_tool_contents"]
+
+    with TestClient(create_app(settings)) as second_client:
+        csrf = _login(second_client)
+        resumed = second_client.post(
+            f"/api/runs/{run_id}/actions",
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": "resume-completed-tool-batch",
+            },
+            json={"type": "resume"},
+        )
+        assert resumed.status_code == 200, resumed.text
+        assert resumed.json()["run"]["status"] == "queued"
+        completed = _wait_for_terminal(second_client, run_id)
+        assert completed["status"] == "completed"
+        assert completed["assistantDraft"]["text"] == (
+            "tool checkpoint resumed once"
+        )
+
+    assert provider.attempts == 2
+    assert tool_batch_invocations == 1
+    assert update_plan_invocations == 1
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        assert run is not None
+        assert "tool_checkpoint" not in run.snapshot_json
+
+
+def test_tool_and_steer_transcript_order_survives_worker_restart(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    provider = _OrderedToolSteerRecoveryProvider()
+    update_plan_invocations = 0
+    original_update_work_plan = executor_module.update_work_plan
+
+    def counting_update_work_plan(*args, **kwargs):
+        nonlocal update_plan_invocations
+        update_plan_invocations += 1
+        return original_update_work_plan(*args, **kwargs)
+
+    monkeypatch.setattr(local_run_executor, "_provider", _gate_factory(provider))
+    monkeypatch.setattr(executor_module, "update_work_plan", counting_update_work_plan)
+    settings = _settings(tmp_path, "ordered-tool-steer-restart.db")
+
+    def steer(
+        client: TestClient, csrf: str, run_id: str, marker: str, key: str
+    ) -> None:
+        response = client.post(
+            f"/api/runs/{run_id}/actions",
+            headers={"X-CSRF-Token": csrf, "Idempotency-Key": key},
+            json={
+                "type": "steer",
+                "message": {
+                    "text": marker,
+                    "attachmentIds": [],
+                    "promptReferences": [],
+                },
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["command"]["status"] == "waiting_safe_boundary"
+
+    with TestClient(create_app(settings)) as first_client:
+        csrf = _login(first_client)
+        conversation_id = _conversation(
+            first_client, csrf, "Ordered tool and steer recovery"
+        )
+        run_id = _start_run(
+            first_client,
+            csrf,
+            conversation_id,
+            text="preserve the exact tool and steer transcript",
+            idempotency_key="ordered-tool-steer-run",
+        )
+        assert provider.prefix_gate.wait(timeout=5)
+        steer(
+            first_client,
+            csrf,
+            run_id,
+            "prefix-steer",
+            "ordered-prefix-steer",
+        )
+        assert provider.post_a_gate.wait(timeout=5)
+        steer(
+            first_client,
+            csrf,
+            run_id,
+            "post-a-steer",
+            "ordered-post-a-steer",
+        )
+        assert provider.post_b_gate.wait(timeout=5)
+        steer(
+            first_client,
+            csrf,
+            run_id,
+            "post-b-steer",
+            "ordered-post-b-steer",
+        )
+        assert provider.crash_gate.wait(timeout=5)
+        with SessionLocal() as db:
+            run = db.get(Run, run_id)
+            assert run is not None
+            checkpoint = run.snapshot_json.get("tool_checkpoint")
+            assert isinstance(checkpoint, dict)
+            assert checkpoint["captures_applied_steers"] is True
+            assert len(checkpoint["prefix_user_message_ids"]) == 1
+            assert [entry["role"] for entry in checkpoint["prefix_transcript"]] == [
+                "assistant",
+                "user",
+            ]
+            assert len(checkpoint["completed_batches"]) == 1
+            assert len(
+                checkpoint["completed_batches"][0]["post_batch_user_message_ids"]
+            ) == 1
+            assert [
+                entry["role"]
+                for entry in checkpoint["completed_batches"][0][
+                    "post_batch_transcript"
+                ]
+            ] == ["assistant", "user"]
+            assert len(checkpoint["post_batch_user_message_ids"]) == 1
+            assert [
+                entry["role"] for entry in checkpoint["post_batch_transcript"]
+            ] == ["assistant", "user"]
+
+    with TestClient(create_app(settings)) as second_client:
+        _login(second_client)
+        completed = _wait_for_terminal(second_client, run_id)
+        assert completed["status"] == "completed"
+        assert completed["assistantDraft"]["text"] == (
+            "partial-prefix|partial-post-a|partial-post-b|"
+            "ordered tool transcript recovered once"
+        )
+
+    assert provider.attempts == 7
+    assert provider.recovery_request is not None
+    assert update_plan_invocations == 2
+
+
+def test_prefix_steer_transcript_survives_restart_before_first_tool(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    provider = _PrefixSteerRestartProvider()
+    monkeypatch.setattr(local_run_executor, "_provider", _gate_factory(provider))
+    settings = _settings(tmp_path, "prefix-steer-restart.db")
+
+    with TestClient(create_app(settings)) as first_client:
+        csrf = _login(first_client)
+        conversation_id = _conversation(
+            first_client, csrf, "Prefix steer recovery before any tool"
+        )
+        run_id = _start_run(
+            first_client,
+            csrf,
+            conversation_id,
+            text="preserve a steer before the first tool",
+            idempotency_key="prefix-steer-restart-run",
+        )
+        assert provider.steer_gate.wait(timeout=5)
+        steered = first_client.post(
+            f"/api/runs/{run_id}/actions",
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": "prefix-steer-before-tool",
+            },
+            json={
+                "type": "steer",
+                "message": {
+                    "text": "prefix-crash-steer",
+                    "attachmentIds": [],
+                    "promptReferences": [],
+                },
+            },
+        )
+        assert steered.status_code == 200, steered.text
+        assert provider.crash_gate.wait(timeout=5)
+        with SessionLocal() as db:
+            run = db.get(Run, run_id)
+            assert run is not None
+            assert "tool_checkpoint" not in run.snapshot_json
+            assert [
+                entry["role"]
+                for entry in run.snapshot_json["tool_checkpoint_prefix_transcript"]
+            ] == ["assistant", "user"]
+            marker = run.snapshot_json["model_turn_inflight"]
+            assert marker["draftCheckpoint"] == len("partial-prefix-crash|")
+
+    with TestClient(create_app(settings)) as second_client:
+        _login(second_client)
+        completed = _wait_for_terminal(second_client, run_id)
+        assert completed["status"] == "completed"
+        assert completed["assistantDraft"]["text"] == (
+            "partial-prefix-crash|prefix transcript restored once"
+        )
+
+    assert provider.attempts == 3
+
+
+def test_auto_continuation_transcript_survives_worker_restart(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    provider = _ContinuationRestartProvider()
+    monkeypatch.setattr(local_run_executor, "_provider", _gate_factory(provider))
+    settings = _settings(tmp_path, "continuation-restart.db")
+
+    with TestClient(create_app(settings)) as first_client:
+        csrf = _login(first_client)
+        conversation_id = _conversation(
+            first_client, csrf, "Automatic continuation recovery"
+        )
+        run_id = _start_run(
+            first_client,
+            csrf,
+            conversation_id,
+            text="continue a truncated answer exactly once",
+            idempotency_key="continuation-restart-run",
+        )
+        assert provider.crash_gate.wait(timeout=5)
+        with SessionLocal() as db:
+            run = db.get(Run, run_id)
+            assert run is not None
+            transcript = run.snapshot_json["tool_checkpoint_prefix_transcript"]
+            assert [entry["role"] for entry in transcript] == ["assistant", "user"]
+            assert transcript[1]["content"] == executor_module._CONTINUATION_PROMPT
+            assert run.snapshot_json["model_turn_inflight"][
+                "draftCheckpoint"
+            ] == len("truncated-prefix|")
+
+    with TestClient(create_app(settings)) as second_client:
+        _login(second_client)
+        completed = _wait_for_terminal(second_client, run_id)
+        assert completed["status"] == "completed"
+        assert completed["assistantDraft"]["text"] == (
+            "truncated-prefix|continuation restored once"
+        )
+
+    assert provider.attempts == 3
+
+
+def test_pending_tool_checkpoint_reuses_inline_result_after_worker_stops(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    provider = _ToolPauseProvider()
+    checkpoint_crash = threading.Event()
+    completed_checkpoint_attempts = 0
+    update_plan_invocations = 0
+    original_store_checkpoint = local_run_executor._store_tool_checkpoint
+    original_update_work_plan = executor_module.update_work_plan
+
+    def counting_update_work_plan(*args, **kwargs):
+        nonlocal update_plan_invocations
+        update_plan_invocations += 1
+        return original_update_work_plan(*args, **kwargs)
+
+    async def crash_before_first_completed_checkpoint(*args, **kwargs):
+        nonlocal completed_checkpoint_attempts
+        if kwargs.get("kind") == "completed_tools":
+            completed_checkpoint_attempts += 1
+            if completed_checkpoint_attempts == 1:
+                checkpoint_crash.set()
+                raise asyncio.CancelledError
+        return await original_store_checkpoint(*args, **kwargs)
+
+    monkeypatch.setattr(local_run_executor, "_provider", _gate_factory(provider))
+    monkeypatch.setattr(
+        local_run_executor,
+        "_store_tool_checkpoint",
+        crash_before_first_completed_checkpoint,
+    )
+    monkeypatch.setattr(executor_module, "update_work_plan", counting_update_work_plan)
+    settings = _settings(tmp_path, "pending-tool-worker-stop.db")
+
+    with TestClient(create_app(settings)) as first_client:
+        csrf = _login(first_client)
+        conversation_id = _conversation(first_client, csrf, "Pending tool recovery")
+        run_id = _start_run(
+            first_client,
+            csrf,
+            conversation_id,
+            text="recover a pending tool call",
+            idempotency_key="pending-tool-worker-stop-run",
+        )
+        assert checkpoint_crash.wait(timeout=5)
+        with SessionLocal() as db:
+            run = db.get(Run, run_id)
+            assert run is not None
+            checkpoint = run.snapshot_json.get("tool_checkpoint")
+            assert isinstance(checkpoint, dict)
+            assert checkpoint["kind"] == "pending_tools"
+            assert checkpoint["calls"][0]["id"] == "call_pause_update_plan"
+
+    with TestClient(create_app(settings)) as second_client:
+        csrf = _login(second_client)
+        completed = _wait_for_terminal(second_client, run_id)
+        assert completed["status"] == "completed"
+        assert completed["assistantDraft"]["text"] == (
+            "tool checkpoint resumed once"
+        )
+
+    assert provider.attempts == 2
+    assert completed_checkpoint_attempts == 2
+    assert update_plan_invocations == 1
+
+
+def test_expired_crashed_worker_lease_is_recovered_without_another_restart(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    marker = "crashed-worker-lease-recovery"
+    provider = _PauseResumeProvider((marker,))
+    monkeypatch.setattr(local_run_executor, "_provider", _gate_factory(provider))
+    settings = _settings(tmp_path, "expired-crashed-worker.db")
+
+    with TestClient(create_app(settings)) as first_client:
+        csrf = _login(first_client)
+        conversation_id = _conversation(first_client, csrf, "Crash lease recovery")
+        run_id = _start_run(
+            first_client,
+            csrf,
+            conversation_id,
+            text=marker,
+            idempotency_key="crashed-worker-lease-run",
+        )
+        assert provider.entered[(marker, 1)].wait(timeout=5)
+
+    with SessionLocal.begin() as db:
+        run = db.get(Run, run_id)
+        assert run is not None
+        run.status = "paused"
+        run.finished_at = None
+        run.error_code = None
+        run.error_message = None
+        pause_plan(db, run)
+        run.snapshot_json = {
+            **run.snapshot_json,
+            "resume_status": "model_streaming",
+            "resume_requested": True,
+            "resume_requested_at": utc_now().isoformat(),
+        }
+        run.worker_id = "worker-process-that-crashed"
+        run.heartbeat_at = utc_now()
+        run.lease_expires_at = utc_now() + timedelta(milliseconds=200)
+
+    provider.release[marker].set()
+    with TestClient(create_app(settings)) as second_client:
+        _login(second_client)
+        initial = second_client.get(f"/api/runs/{run_id}/snapshot")
+        assert initial.status_code == 200, initial.text
+        assert initial.json()["status"] == "paused"
+        completed = _wait_for_terminal(second_client, run_id)
+        assert completed["status"] == "completed"
+
+    assert provider.attempts[marker] == 2
 
 
 def test_same_conversation_second_run_stays_queued_until_first_finishes(

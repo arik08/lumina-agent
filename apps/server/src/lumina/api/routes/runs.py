@@ -101,10 +101,16 @@ async def post_run_action(
         local_run_executor.invalidate_control(run.id)
         if payload.type == "cancel":
             local_run_executor.cancel(run.id)
-        if payload.type in {"retry_step", "submit_user_input"} or (
+        if payload.type in {"resume", "retry_step", "submit_user_input"} or (
             payload.type in {"approve", "reject"} and run.status == "queued"
         ):
             local_run_executor.enqueue(run.id)
+        if payload.type == "resume" and run.status == "queued":
+            await event_broker.replace_assistant_draft(
+                run.id,
+                str(run.snapshot_json.get("assistant_message_id", "")),
+                run.assistant_draft,
+            )
         await event_broker.notify(run.id)
     return {
         "message": message_response(message, db) if message else None,
