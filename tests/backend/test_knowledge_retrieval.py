@@ -42,7 +42,7 @@ def _login(client: TestClient) -> None:
 
 def _snapshot(mode: str) -> dict[str, object]:
     return {
-        "contractVersion": "knowledge-tool-retrieval-v1",
+        "contractVersion": "knowledge-tool-retrieval-v2",
         "spaces": [{"id": "space-1", "useMode": mode, "settingsRevision": 1}],
     }
 
@@ -115,6 +115,7 @@ def test_knowledge_tools_search_read_follow_and_preserve_evidence(
                 "열연강 페라이트 조직은 냉각 조건에 따라 강도가 달라집니다.",
                 "페라이트 결정립 크기와 인성의 관계를 비교한 후속 분석입니다.",
                 "고객 지원 운영 절차와 담당자 연락 체계입니다.",
+                "Electromagnetic material hysteresis loop and domain behavior.",
             )
             documents = [
                 KnowledgeDocument(
@@ -129,7 +130,11 @@ def test_knowledge_tools_search_read_follow_and_preserve_evidence(
                     status="active",
                 )
                 for index, (title, body) in enumerate(
-                    zip(("소재 분석", "후속 분석", "운영 안내"), bodies, strict=True)
+                    zip(
+                        ("소재 분석", "후속 분석", "운영 안내", "Magnetic domains"),
+                        bodies,
+                        strict=True,
+                    )
                 )
             ]
             db.add_all(documents)
@@ -173,8 +178,15 @@ def test_knowledge_tools_search_read_follow_and_preserve_evidence(
                 arguments={"query": "ferrite", "result_limit": 5},
             )
             assert search_result["returned"] == 2
-            assert search_result["vectorAvailable"] is False
-            assert search_result["retrievalMethods"] == ["bm25", "canonical_tags"]
+            assert search_result["vectorAvailable"] is True
+            assert search_result["vectorModel"] == "local-feature-hash-v1"
+            assert search_result["vectorCandidateCount"] == 4
+            assert search_result["vectorCandidateLimitReached"] is False
+            assert search_result["retrievalMethods"] == [
+                "bm25",
+                "canonical_tags",
+                "local_hash_vector",
+            ]
             assert all(
                 item["selectionScore"] >= MIN_KNOWLEDGE_RELEVANCE_SCORE
                 for item in search_result["results"]
@@ -189,7 +201,19 @@ def test_knowledge_tools_search_read_follow_and_preserve_evidence(
                 arguments={"query": "천문 관측 위성"},
             )
             assert miss["results"] == []
-            assert miss["reason"] == "no_lexical_or_tag_match"
+            assert miss["reason"] == "below_minimum_relevance"
+
+            vector_result = execute_knowledge_tool(
+                db,
+                run=run,
+                user=user,
+                name="search_knowledge",
+                arguments={"query": "electromagnetism"},
+            )
+            assert vector_result["returned"] == 1
+            assert vector_result["results"][0]["documentId"] == documents[3].id
+            assert vector_result["results"][0]["scoreBreakdown"]["bm25"] == 0.0
+            assert vector_result["results"][0]["scoreBreakdown"]["vector"] > 0.0
 
             selected = search_result["results"][0]
             db.add(

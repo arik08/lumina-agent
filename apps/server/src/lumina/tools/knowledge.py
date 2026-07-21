@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from array import array
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from functools import lru_cache
+import hashlib
 import math
 import re
 from typing import Any
@@ -22,12 +25,19 @@ from ..models import (
 )
 
 
-KNOWLEDGE_RETRIEVAL_CONTRACT_VERSION = "knowledge-tool-retrieval-v1"
+KNOWLEDGE_RETRIEVAL_CONTRACT_VERSION = "knowledge-tool-retrieval-v2"
 KNOWLEDGE_TOOL_NAMES = frozenset(
     {"search_knowledge", "read_knowledge_document", "follow_knowledge_links"}
 )
 MIN_KNOWLEDGE_RELEVANCE_SCORE = 0.22
 MAX_SEARCH_CANDIDATES = 256
+MAX_VECTOR_CANDIDATES = 64
+LOCAL_VECTOR_DIMENSIONS = 384
+LOCAL_VECTOR_MODEL = "local-feature-hash-v1"
+MAX_VECTOR_BODY_CHARS = 12_000
+VECTOR_CHUNK_CHARS = 1_800
+VECTOR_CHUNK_OVERLAP = 240
+MAX_VECTOR_SCORE = 0.35
 _SEARCH_TOKEN = re.compile(r"[0-9A-Za-z_\u3131-\uD79D]{2,}")
 _EXPLICIT_KNOWLEDGE_REQUEST = re.compile(
     r"(?:\bwiki\b|위키|지식\s*그래프|knowledge\s*graph|저장(?:된|한)?\s*지식|지식\s*문서|프로젝트\s*지식)",
@@ -42,9 +52,10 @@ SEARCH_KNOWLEDGE_TOOL_SCHEMA = {
         "description": (
             "Search this Run's Project-scoped Knowledge documents. Use only when the answer "
             "may materially depend on stored Project knowledge. The server combines BM25-style "
-            "title/body relevance with canonical tag matches and returns an empty result below "
-            "the minimum relevance score. Results contain short candidate passages, not full "
-            "documents. Call read_knowledge_document only for the candidates needed to answer."
+            "title/body relevance, canonical tag matches, and a private deterministic local "
+            "vector score. It returns an empty result below the minimum relevance score. Results "
+            "contain short candidate passages, not full documents. Call read_knowledge_document "
+            "only for the candidates needed to answer."
         ),
         "parameters": {
             "type": "object",
@@ -366,7 +377,7 @@ def _search_knowledge(
     total_documents = db.scalar(
         select(func.count(KnowledgeDocument.id)).where(*base_conditions)
     ) or 0
-    documents = list(
+    lexical_documents = list(
         db.scalars(
             select(KnowledgeDocument)
             .where(
@@ -381,8 +392,23 @@ def _search_knowledge(
             .limit(MAX_SEARCH_CANDIDATES)
         )
     )
+    vector_documents = list(
+        db.scalars(
+            select(KnowledgeDocument)
+            .where(*base_conditions)
+            .order_by(
+                KnowledgeDocument.researched_at.desc(),
+                KnowledgeDocument.id,
+            )
+            .limit(MAX_VECTOR_CANDIDATES)
+        )
+    )
+    documents_by_id = {document.id: document for document in vector_documents}
+    for document in lexical_documents:
+        documents_by_id.setdefault(document.id, document)
+    documents = list(documents_by_id.values())
     if not documents:
-        return _empty_search_result(query, "no_lexical_or_tag_match")
+        return _empty_search_result(query, "no_available_documents")
     tags_by_document = _tags_by_document(db, tuple(item.id for item in documents))
     document_tokens = {
         item.id: _tokens(item.title) * 3 + _tokens(item.body[:64_000])
@@ -405,6 +431,7 @@ def _search_knowledge(
         for token in query_tokens
     }
     ranked: list[dict[str, Any]] = []
+    query_vector = _local_embedding(query)
     for document in documents:
         tags = tags_by_document[document.id]
         tokens = document_tokens[document.id]
@@ -435,8 +462,21 @@ def _search_knowledge(
             else 0.0
         )
         lexical_score = min(0.75, 1.0 - math.exp(-bm25))
-        selection_score = min(1.0, lexical_score + tag_score + title_score)
-        passage = _candidate_passage(document.body, query_tokens)
+        vector_similarity, vector_offset = _document_vector_match(
+            document.title,
+            document.body,
+            tags,
+            query_vector,
+        )
+        vector_score = min(MAX_VECTOR_SCORE, vector_similarity * 0.8)
+        selection_score = min(
+            1.0, lexical_score + tag_score + title_score + vector_score
+        )
+        passage = _candidate_passage(
+            document.body,
+            query_tokens,
+            preferred_offset=vector_offset,
+        )
         ranked.append(
             {
                 "documentId": document.id,
@@ -451,7 +491,8 @@ def _search_knowledge(
                     "bm25": round(bm25, 4),
                     "tag": round(tag_score, 4),
                     "title": round(title_score, 4),
-                    "vector": 0.0,
+                    "vector": round(vector_score, 4),
+                    "vectorSimilarity": round(vector_similarity, 4),
                 },
                 "passage": passage,
                 "excerpt": document.body[
@@ -471,9 +512,15 @@ def _search_knowledge(
         "results": selected,
         "returned": len(selected),
         "candidateCount": len(documents),
-        "candidateLimitReached": len(documents) == MAX_SEARCH_CANDIDATES,
-        "retrievalMethods": ["bm25", "canonical_tags"],
-        "vectorAvailable": False,
+        "vectorCandidateCount": len(vector_documents),
+        "vectorCandidateLimitReached": total_documents > len(vector_documents),
+        "candidateLimitReached": (
+            len(lexical_documents) == MAX_SEARCH_CANDIDATES
+            or total_documents > len(vector_documents)
+        ),
+        "retrievalMethods": ["bm25", "canonical_tags", "local_hash_vector"],
+        "vectorAvailable": True,
+        "vectorModel": LOCAL_VECTOR_MODEL,
         "reason": None if selected else "below_minimum_relevance",
     }
 
@@ -727,10 +774,15 @@ def _bm25_score(
     return score
 
 
-def _candidate_passage(body: str, query_tokens: tuple[str, ...]) -> dict[str, int]:
+def _candidate_passage(
+    body: str,
+    query_tokens: tuple[str, ...],
+    *,
+    preferred_offset: int = 0,
+) -> dict[str, int]:
     folded = body.casefold()
     positions = [folded.find(token) for token in query_tokens if folded.find(token) >= 0]
-    first_match = min(positions) if positions else 0
+    first_match = min(positions) if positions else preferred_offset
     offset = max(0, first_match - 240)
     if offset:
         paragraph = body.rfind("\n", 0, offset)
@@ -771,11 +823,74 @@ def _empty_search_result(query: str, reason: str) -> dict[str, Any]:
         "results": [],
         "returned": 0,
         "candidateCount": 0,
+        "vectorCandidateCount": 0,
+        "vectorCandidateLimitReached": False,
         "candidateLimitReached": False,
-        "retrievalMethods": ["bm25", "canonical_tags"],
-        "vectorAvailable": False,
+        "retrievalMethods": ["bm25", "canonical_tags", "local_hash_vector"],
+        "vectorAvailable": True,
+        "vectorModel": LOCAL_VECTOR_MODEL,
         "reason": reason,
     }
+
+
+def _document_vector_match(
+    title: str,
+    body: str,
+    tags: list[dict[str, Any]],
+    query_vector: array,
+) -> tuple[float, int]:
+    tag_text = " ".join(
+        str(value)
+        for tag in tags
+        for value in (tag["name"], *tag["aliases"])
+    )
+    prefix = "\n".join((title, title, title, tag_text)).strip()
+    searchable_body = body[:MAX_VECTOR_BODY_CHARS]
+    step = VECTOR_CHUNK_CHARS - VECTOR_CHUNK_OVERLAP
+    offsets = range(0, max(1, len(searchable_body)), step)
+    best_similarity = 0.0
+    best_offset = 0
+    for offset in offsets:
+        chunk = searchable_body[offset : offset + VECTOR_CHUNK_CHARS]
+        similarity = _vector_similarity(
+            query_vector,
+            _local_embedding(f"{prefix}\n{chunk}"),
+        )
+        if similarity > best_similarity:
+            best_similarity = similarity
+            best_offset = offset
+    return best_similarity, best_offset
+
+
+@lru_cache(maxsize=4_096)
+def _local_embedding(value: str) -> array:
+    vector = array("f", [0.0]) * LOCAL_VECTOR_DIMENSIONS
+    for token in _vector_tokens(value):
+        digest = hashlib.blake2b(
+            token.encode("utf-8", errors="ignore"), digest_size=8
+        ).digest()
+        bucket = int.from_bytes(digest[:4], "little") % LOCAL_VECTOR_DIMENSIONS
+        vector[bucket] += 1.0 if digest[4] & 1 else -1.0
+    norm = math.sqrt(sum(component * component for component in vector))
+    if norm > 0:
+        for index, component in enumerate(vector):
+            vector[index] = component / norm
+    return vector
+
+
+def _vector_tokens(value: str) -> Iterator[str]:
+    for match in _SEARCH_TOKEN.finditer(value.casefold()):
+        token = match.group(0)
+        yield token
+        if len(token) < 3:
+            continue
+        for size in (2, 3):
+            for index in range(0, len(token) - size + 1):
+                yield token[index : index + size]
+
+
+def _vector_similarity(left: array, right: array) -> float:
+    return max(0.0, sum(a * b for a, b in zip(left, right, strict=True)))
 
 
 def _tokens(value: str) -> list[str]:
