@@ -60,6 +60,10 @@ test("composer keeps model controls intact and sends independent analysis and an
   assert.match(styles, /\.artifact-output-mode-picker > span \{[^}]*font-size: 12\.5px/);
   assert.match(app, /triggerRect\.left \+ \(triggerRect\.width - popoverRect\.width\) \/ 2/);
   assert.match(styles, /\.composer-picker:has\(\.analysis-depth-control\) \.composer-picker-menu,[\s\S]*?left: 50%; transform: translateX\(-50%\)/);
+  assert.match(styles, /@container composer \(max-width: 560px\) \{[\s\S]*?\.chat-pane\.view-chat \.composer-footer \.artifact-length-control \{ display: none; \}/);
+  assert.match(styles, /@container composer \(max-width: 500px\) \{[\s\S]*?\.composer-picker:has\(\.answer-length-control\) \{ display: none; \}/);
+  assert.match(styles, /@container composer \(max-width: 440px\) \{[\s\S]*?\.composer-picker:has\(\.analysis-depth-control\) \{ display: none; \}/);
+  assert.match(styles, /@container composer \(max-width: 380px\) \{[\s\S]*?\.prompt-enhancement-picker \{ display: none; \}/);
   assert.match(app, /<ComposerPicker[\s\S]*?controlClassName="model-control"[\s\S]*?<ComposerPicker[\s\S]*?controlClassName=\{`effort-control/);
   assert.match(workspace, /analysisDepth: AnalysisDepth = "auto"/);
   assert.match(workspace, /answerLength: AnswerLength = "auto"/);
