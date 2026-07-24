@@ -2360,6 +2360,17 @@ button:disabled { cursor: default; opacity: 0.5; }
 .citation-tooltip strong { overflow: hidden; font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
 .citation-tooltip > span { overflow: hidden; color: var(--muted); font: 9.5px/1.4 var(--font-code); text-overflow: ellipsis; white-space: nowrap; }
 .citation-tooltip q { color: var(--muted); font-size: 11.5px; }
+.memory-citations { margin-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; line-height: 1.45; }
+.memory-citations-trigger { display: flex; width: 100%; align-items: center; gap: 6px; padding: 9px 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.memory-citations-trigger:hover { color: var(--ink); }
+.memory-citations-trigger:focus-visible { border-radius: var(--radius-control); outline: 2px solid color-mix(in srgb, var(--cobalt) 55%, transparent); outline-offset: 2px; }
+.memory-citations-trigger > :first-child { transition: transform 120ms ease; }
+.memory-citations.is-open .memory-citations-trigger > :first-child { transform: rotate(180deg); }
+.memory-citations-list { border-top: 1px solid var(--line); }
+.memory-citation-row { display: grid; gap: 3px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.memory-citation-row strong { color: var(--ink); font-size: 13px; font-weight: 620; }
+.memory-citation-row span { overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) { .memory-citations-trigger > :first-child { transition: none; } }
 .answer-sources { position: relative; overflow: hidden; min-width: 0; margin-left: auto; color: var(--muted); font-size: 13.5px; justify-self: end; white-space: nowrap; }
 .answer-sources-layer { display: contents; }
 .answer-sources-trigger { display: block; overflow: hidden; max-width: 100%; padding: 0; border: 0; background: transparent; color: var(--blue); font: inherit; font-weight: 620; cursor: pointer; text-overflow: clip; white-space: nowrap; }

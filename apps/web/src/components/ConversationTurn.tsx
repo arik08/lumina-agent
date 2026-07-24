@@ -75,6 +75,7 @@ import type {
   AttachmentSummary,
   ChatMessage,
   ClarificationMode,
+  MemoryCitation,
   MessageCitation,
   RunActivity,
   RunCommand,
@@ -109,6 +110,53 @@ const InteractiveChart = lazy(() => import("./InteractiveResponse").then((module
 const MermaidDiagram = lazy(() => import("./InteractiveResponse").then((module) => ({
   default: module.MermaidDiagram,
 })));
+
+function memoryCategoryLabel(category: string) {
+  const labels: Record<string, string> = {
+    communication_preference: "소통 선호",
+    user_identity: "사용자 정보",
+    user_role: "사용자 역할",
+    recurring_rule: "반복 규칙",
+    project_rule: "프로젝트 규칙",
+  };
+  return labels[category] ?? "메모리";
+}
+
+function MemoryCitations({ citations }: { citations: MemoryCitation[] }) {
+  const [open, setOpen] = useState(false);
+  const panelId = useId();
+  if (citations.length === 0) return null;
+  return (
+    <section className={`memory-citations ${open ? "is-open" : ""}`} aria-label="메모리 인용">
+      <button
+        className="memory-citations-trigger"
+        type="button"
+        aria-controls={panelId}
+        aria-expanded={open}
+        onClick={(event) => preserveConversationScrollPosition(event.currentTarget, () => setOpen((current) => !current))}
+      >
+        <ChevronDown size={15} aria-hidden="true" />
+        <Brain size={15} aria-hidden="true" />
+        <span>메모리 인용 {citations.length}개</span>
+      </button>
+      {open && (
+        <div className="memory-citations-list" id={panelId}>
+          {citations.map((citation) => (
+            <div className="memory-citation-row" key={`${citation.scope}:${citation.memoryId}`}>
+              <strong>
+                {citation.scope === "project" ? "프로젝트 메모리" : "개인 메모리"}
+                {" · "}
+                {memoryCategoryLabel(citation.category)}
+                {citation.scope === "project" && citation.revision ? ` · revision ${citation.revision}` : ""}
+              </strong>
+              <span>{citation.displayText}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
 
 function toolCallIcon(toolName: string, size = 15) {
   const normalizedName = toolName.toLowerCase().replace(/[\s-]+/g, "_");
@@ -1666,6 +1714,7 @@ export const AssistantTurn = memo(function AssistantTurn({
   const liveAssistantDraft = useRunAssistantDraft(turnSet.runId, snapshot?.assistantDraft ?? null);
   const sources = finalMessage?.metadata?.sources ?? emptySources;
   const citations = finalMessage?.metadata?.citations ?? emptyCitations;
+  const memoryCitations = finalMessage?.metadata?.memoryCitations ?? [];
   const searches = finalMessage?.metadata?.searchInvocations ?? [];
   const researchVerification = finalMessage?.metadata?.researchVerification;
   const artifacts = snapshot?.artifacts ?? turnSet.artifacts;
@@ -2113,6 +2162,7 @@ export const AssistantTurn = memo(function AssistantTurn({
                 <span className="artifact-result-action">문서 열기 <ChevronRight size={14} /></span>
               </button>
             ))}
+            {terminalPresentationReady && <MemoryCitations citations={memoryCitations} />}
             {terminalPresentationReady && (
               <div className="final-answer">
                 <div className="final-answer-meta">

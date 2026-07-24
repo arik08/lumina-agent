@@ -1243,6 +1243,15 @@ export interface MessageCitation {
   status: "cited" | "resolved" | "reference_only";
 }
 
+export interface MemoryCitation {
+  memoryId: UUID;
+  scope: "user" | "project";
+  category: string;
+  displayText: string;
+  memoryKey?: string;
+  revision?: number;
+}
+
 export interface MessageMetadata {
   usage?: Record<string, unknown>;
   artifactUsage?: {
@@ -1254,6 +1263,7 @@ export interface MessageMetadata {
   };
   sources?: SourceEvidence[];
   citations?: MessageCitation[];
+  memoryCitations?: MemoryCitation[];
   knowledgeSelections?: KnowledgeSelection[];
   searchInvocations?: Array<{
     invocationId: string;

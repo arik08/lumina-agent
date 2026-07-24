@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from lumina.agent.executor import LocalRunExecutor
+from lumina.agent.executor import LocalRunExecutor, _recalled_memory_citations
 from lumina.auth import bootstrap_database
 from lumina.config import Settings
 from lumina.context import (
@@ -315,6 +315,46 @@ def test_memory_context_is_pinned_per_turn_without_mutating_user_text(
     assert relevant[4][1] == "두 번째 질문"
     assert "memory-one" in relevant[0][1]
     assert "memory-two" in relevant[3][1]
+
+
+def test_recalled_memory_citations_preserve_injected_user_and_project_memory() -> None:
+    citations = _recalled_memory_citations(
+        {
+            "user_memories": [
+                {
+                    "id": "memory-one",
+                    "category": "communication_preference",
+                    "display_text": "결론부터 간결하게 답변합니다.",
+                }
+            ],
+            "project_memories": [
+                {
+                    "id": "project-memory-one",
+                    "memory_key": "testing",
+                    "revision": 3,
+                    "category": "project_rule",
+                    "display_text": "UI 변경은 격리 브라우저에서 확인합니다.",
+                }
+            ],
+        }
+    )
+
+    assert citations == [
+        {
+            "memoryId": "memory-one",
+            "scope": "user",
+            "category": "communication_preference",
+            "displayText": "결론부터 간결하게 답변합니다.",
+        },
+        {
+            "memoryId": "project-memory-one",
+            "scope": "project",
+            "category": "project_rule",
+            "displayText": "UI 변경은 격리 브라우저에서 확인합니다.",
+            "memoryKey": "testing",
+            "revision": 3,
+        },
+    ]
 
 
 def test_compaction_is_recoverable_and_preserves_tool_side_effects(
