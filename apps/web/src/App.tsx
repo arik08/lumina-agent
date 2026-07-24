@@ -893,6 +893,7 @@ function App() {
   const workspace = useLuminaWorkspace();
   const backendConnectionState = useBackendConnectionState();
   const [mainView, setMainView] = useState<MainView>("chat");
+  const [requestedProjectFileId, setRequestedProjectFileId] = useState<string | null>(null);
   const [projectSettingsReturnView, setProjectSettingsReturnView] = useState<MainView>("chat");
   const sidebarView = mainView === "project-settings" ? projectSettingsReturnView : mainView;
   const [settingsSection, setSettingsSection] = useState<"personal" | "admin">("personal");
@@ -2909,7 +2910,10 @@ function App() {
             ? <button type="button" aria-label="새 분석" data-tooltip="새 분석" disabled={activeProject?.role === "viewer"} onClick={startNewDeepAnalysis}><SquarePen size={18} /></button>
             : <button type="button" aria-label="새 채팅" data-tooltip="새 채팅" onClick={startNewConversation}><SquarePen size={18} /></button>}
           {navigation.map(({ id, label, icon: Icon }) => (
-            <button className={sidebarView === id ? "is-active" : ""} type="button" aria-label={label} data-tooltip={label} key={id} onClick={() => setMainView(id)}><Icon size={18} /></button>
+            <button className={sidebarView === id ? "is-active" : ""} type="button" aria-label={label} data-tooltip={label} key={id} onClick={() => {
+              if (id === "files") setRequestedProjectFileId(null);
+              setMainView(id);
+            }}><Icon size={18} /></button>
           ))}
         </nav>
         <header className="sidebar-header">
@@ -2935,6 +2939,7 @@ function App() {
 
         <nav className="primary-navigation" aria-label="주요 메뉴">
           {navigation.map(({ id, label, icon: Icon }) => <button className={sidebarView === id ? "is-active" : ""} type="button" key={id} onClick={() => {
+            if (id === "files") setRequestedProjectFileId(null);
             setMainView(id);
             setSidebarOpen(false);
           }}><Icon size={17} /> {label}</button>)}
@@ -3678,7 +3683,7 @@ function App() {
           <ViewDataCacheProvider scope={workspace.authSession.user.id}>
           {mainView === "marketplace" && <MarketplaceView key={workspace.activeProjectId ?? "none"} projectId={workspace.activeProjectId} canManage={isAdmin} onOpenNavigation={() => setSidebarOpen(true)} />}
           {mainView === "library" && <ArtifactLibraryView key={workspace.activeProjectId ?? "all"} projectId={workspace.activeProjectId} onOpenArtifact={(artifact) => void openArtifact(artifact)} onOpenNavigation={() => setSidebarOpen(true)} />}
-          {mainView === "files" && <ProjectFilesView key={workspace.activeProjectId ?? "none"} projectId={workspace.activeProjectId} onOpenNavigation={() => setSidebarOpen(true)} />}
+          {mainView === "files" && <ProjectFilesView key={workspace.activeProjectId ?? "none"} projectId={workspace.activeProjectId} requestedFileId={requestedProjectFileId} onOpenNavigation={() => setSidebarOpen(true)} />}
           {mainView === "deep-analysis" && <DeepAnalysisView
             key={workspace.activeProjectId ?? "none"}
             projectId={workspace.activeProjectId}
@@ -3690,6 +3695,10 @@ function App() {
             onMissionsChange={setDeepAnalysisMissions}
             onMissionsLoadingChange={setDeepAnalysisMissionsLoading}
             onSelectedMissionChange={setDeepAnalysisSelectedMissionId}
+            onOpenProjectFile={(fileId) => {
+              setRequestedProjectFileId(fileId);
+              setMainView("files");
+            }}
             onOpenNavigation={() => setSidebarOpen(true)}
             execution={workspace.settings?.execution ?? null}
             executionOptions={candidateModelOptions}

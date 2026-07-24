@@ -36,6 +36,7 @@ import { ResizableSplitPane } from "./ResizableSplitPane";
 
 interface ProjectFilesViewProps {
   projectId: string | null;
+  requestedFileId?: string | null;
   onOpenNavigation: () => void;
 }
 
@@ -258,6 +259,11 @@ function classifyPreview(detail: ProjectFileDetail, blob: Blob) {
   return "unsupported";
 }
 
+function looksLikeStandaloneHtml(value: string) {
+  const normalized = value.trimStart().toLocaleLowerCase("en-US");
+  return ["<!doctype html", "<html", "<head", "<body"].every((marker) => normalized.includes(marker));
+}
+
 function isMarkdownFile(detail: ProjectFileDetail) {
   const extension = detail.displayName.split(".").at(-1)?.toLocaleLowerCase("en-US");
   return extension === "md" || extension === "markdown" || detail.mimeType.toLocaleLowerCase("en-US") === "text/markdown";
@@ -286,7 +292,7 @@ function renderFilePreview(preview: PreviewState, detail: ProjectFileDetail, mar
   return <audio src={preview.url} controls />;
 }
 
-export function ProjectFilesView({ projectId, onOpenNavigation }: ProjectFilesViewProps) {
+export function ProjectFilesView({ projectId, requestedFileId = null, onOpenNavigation }: ProjectFilesViewProps) {
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const draggedNodeRef = useRef<FileTreeNode | null>(null);
@@ -296,7 +302,7 @@ export function ProjectFilesView({ projectId, onOpenNavigation }: ProjectFilesVi
   const cacheKey = `files:${projectId ?? "none"}:${query.trim().toLocaleLowerCase("ko-KR")}`;
   const [files, setFiles, hasCachedFiles] = useCachedViewState<ProjectFileSummary[]>(`${cacheKey}:items`, []);
   const [folders, setFolders, hasCachedFolders] = useCachedViewState<ProjectFolderSummary[]>(`${cacheKey}:folders`, []);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(requestedFileId);
   const [selectedFolderPath, setSelectedFolderPath] = useState<string | null>(null);
   const [detail, setDetail] = useState<ProjectFileDetail | null>(null);
   const [loading, setLoading] = useState(!hasCachedFiles || !hasCachedFolders);
@@ -341,6 +347,12 @@ export function ProjectFilesView({ projectId, onOpenNavigation }: ProjectFilesVi
   useEffect(() => {
     setMarkdownSource(false);
   }, [selectedId]);
+
+  useEffect(() => {
+    if (!requestedFileId) return;
+    setSelectedFolderPath(null);
+    setSelectedId(requestedFileId);
+  }, [requestedFileId]);
 
   useEffect(() => {
     loadMoreControllerRef.current?.abort();
@@ -442,14 +454,14 @@ export function ProjectFilesView({ projectId, onOpenNavigation }: ProjectFilesVi
   }, [folderPaths, query, tree]);
 
   useEffect(() => {
-    if (selectedId && files.some((file) => file.id === selectedId)) return;
+    if (selectedId && (selectedId === requestedFileId || files.some((file) => file.id === selectedId))) return;
     if (selectedFolderPath && folderPaths.includes(selectedFolderPath)) {
       setSelectedId(null);
       return;
     }
     setSelectedFolderPath(null);
     setSelectedId(files[0]?.id ?? null);
-  }, [files, folderPaths, selectedFolderPath, selectedId]);
+  }, [files, folderPaths, requestedFileId, selectedFolderPath, selectedId]);
 
   useEffect(() => {
     setDeleteConfirming(false);
@@ -481,6 +493,17 @@ export function ProjectFilesView({ projectId, onOpenNavigation }: ProjectFilesVi
     api.projectFiles.download(projectId, detail.id, undefined, controller.signal)
       .then(async (download) => {
         const kind = classifyPreview(detail, download.blob);
+        if (kind === "html") {
+          const text = await download.blob.text();
+          const limit = 240_000;
+          if (!looksLikeStandaloneHtml(text)) {
+            setPreview({ status: "ready", kind: "text", text: text.slice(0, limit), truncated: text.length > limit });
+            return;
+          }
+          objectUrl = URL.createObjectURL(new Blob([text], { type: "text/html;charset=utf-8" }));
+          setPreview({ status: "ready", kind, url: objectUrl });
+          return;
+        }
         if (kind === "text") {
           const text = await download.blob.text();
           const limit = 240_000;

@@ -517,7 +517,11 @@
 .deep-analysis-node-prompt[open] > summary { border-bottom: 1px solid var(--line); color: var(--ink); }
 .deep-analysis-node-prompt > pre { overflow: auto; max-height: 360px; margin: 0; padding: 10px; color: var(--ink); font-family: var(--font-mono); font-size: 10px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
 .deep-analysis-live-output { min-height: 0; flex: 1 1 0; overflow: auto; margin: 9px 0 0; border: 1px solid var(--line); border-radius: var(--radius-field); padding: 9px; background: var(--canvas); color: var(--muted); font-family: var(--font-mono); font-size: 10px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
-.deep-analysis-output-path { display: block; overflow-wrap: anywhere; margin-bottom: 9px; color: var(--faint); font-size: 9.5px; line-height: 1.45; }
+.deep-analysis-output-path { display: grid; width: 100%; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 3px 6px; margin-bottom: 9px; border: 1px solid var(--line); border-radius: var(--radius-control); padding: 7px 8px; background: var(--canvas); color: var(--muted); font: inherit; text-align: left; cursor: pointer; }
+.deep-analysis-output-path > svg { grid-row: 1 / 3; color: var(--cobalt); }
+.deep-analysis-output-path > span { overflow-wrap: anywhere; font-size: 9.5px; line-height: 1.45; }
+.deep-analysis-output-path > strong { color: var(--cobalt); font-size: 9.5px; font-weight: 620; }
+.deep-analysis-output-path:hover { border-color: color-mix(in srgb, var(--cobalt) 45%, var(--line)); background: var(--cobalt-pale); }
 .deep-analysis-output-document { min-width: 0; color: var(--ink); }
 .deep-analysis-output-document > .markdown-response > :last-child { margin-bottom: 0; }
 .deep-analysis-inspector .deep-analysis-output-document p { margin: 0 0 .9em; color: var(--ink); font-size: inherit; line-height: inherit; }

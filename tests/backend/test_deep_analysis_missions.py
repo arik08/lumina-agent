@@ -27,6 +27,7 @@ from lumina.deep_analysis.ai_planner import design_initial_workflow
 from lumina.deep_analysis.events import emit_event
 from lumina.deep_analysis.execution import (
     _output_path,
+    _output_path_for_content,
     _run_profile,
     _run_prompt,
     create_runnable_node_runs,
@@ -280,6 +281,16 @@ def test_node_output_contracts_keep_handoffs_compact_and_reports_detailed() -> N
     assert "Markdown code fence로 감싸지 마십시오" in report_prompt
     assert _output_path(mission, scope).endswith("/N001_범위 설계.md")
     assert _output_path(mission, report).endswith("/N040_최종 보고서.html")
+    assert _output_path_for_content(
+        mission,
+        report,
+        "<!doctype html><html><head><title>보고서</title></head><body>본문</body></html>",
+    ).endswith("/N040_최종 보고서.html")
+    assert _output_path_for_content(
+        mission,
+        report,
+        "# 최종 보고서\n\nHTML 생성에 실패한 Markdown 본문",
+    ).endswith("/N040_최종 보고서.md")
 
     mission.execution_settings_json["outputFormat"] = "임원용 1페이지 의사결정 메모"
     custom_prompt = _run_prompt(mission, report, [])

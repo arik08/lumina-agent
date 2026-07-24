@@ -219,6 +219,19 @@ def _output_path(mission: DeepAnalysisMission, node: DeepAnalysisWorkflowNode) -
     return f"심층분석/{mission_name}_{created_at}/{node.node_key}_{node_name}{suffix}"
 
 
+def _output_path_for_content(
+    mission: DeepAnalysisMission,
+    node: DeepAnalysisWorkflowNode,
+    content: str,
+) -> str:
+    path = _output_path(mission, node)
+    if not path.endswith(".html"):
+        return path
+    normalized = content.lstrip().casefold()
+    required_markup = ("<!doctype html", "<html", "<head", "<body")
+    return path if all(marker in normalized for marker in required_markup) else path[:-5] + ".md"
+
+
 def _partial_output_path(
     mission: DeepAnalysisMission, node: DeepAnalysisWorkflowNode
 ) -> str:
@@ -912,7 +925,7 @@ def _save_output(
 ) -> None:
     if node.output_project_file_id:
         return
-    logical_path = _output_path(mission, node)
+    logical_path = _output_path_for_content(mission, node, markdown)
     existing = db.scalar(
         select(ProjectFile).where(
             ProjectFile.project_id == mission.project_id,

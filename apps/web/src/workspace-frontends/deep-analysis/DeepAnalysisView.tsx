@@ -91,6 +91,7 @@ interface DeepAnalysisViewProps {
   onMissionsChange: (missions: DeepAnalysisMissionSummary[]) => void;
   onMissionsLoadingChange: (loading: boolean) => void;
   onSelectedMissionChange: (missionId: string | null) => void;
+  onOpenProjectFile: (fileId: string) => void;
   onOpenNavigation: () => void;
   execution: ExecutionSelection | null;
   executionOptions: DeepAnalysisExecutionOption[];
@@ -567,6 +568,7 @@ export function DeepAnalysisView({
   onMissionsChange,
   onMissionsLoadingChange,
   onSelectedMissionChange,
+  onOpenProjectFile,
   onOpenNavigation,
   execution,
   executionOptions,
@@ -3527,8 +3529,16 @@ export function DeepAnalysisView({
                       </section>
                       <section className={`deep-analysis-output-section ${selectedNode.status === "running" ? "is-streaming" : ""}`}>
                         <h3>출력</h3>
-                        {selectedNode.outputLogicalPath && (
-                          <small className="deep-analysis-output-path">{selectedNode.outputLogicalPath}</small>
+                        {selectedNode.outputLogicalPath && selectedNode.outputProjectFileId && (
+                          <button
+                            className="deep-analysis-output-path"
+                            type="button"
+                            onClick={() => onOpenProjectFile(selectedNode.outputProjectFileId!)}
+                          >
+                            <FileText size={13} />
+                            <span>{selectedNode.outputLogicalPath}</span>
+                            <strong>파일 저장소에서 열기</strong>
+                          </button>
                         )}
                         {selectedNode.status === "running" ? (
                           <>

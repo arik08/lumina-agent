@@ -53,6 +53,9 @@ test("file repository is an explorer and viewer with recursive folder upload", a
   assert.match(view, /file-workspace-explorer/);
   assert.match(view, /file-workspace-viewer/);
   assert.match(view, /renderFilePreview/);
+  assert.match(view, /looksLikeStandaloneHtml/);
+  assert.match(view, /new Blob\(\[text\], \{ type: "text\/html;charset=utf-8" \}\)/);
+  assert.match(view, /kind: "text", text: text\.slice\(0, limit\)/);
   assert.match(view, /import \{ MarkdownResponse \} from "\.\/ConversationTurn"/);
   assert.match(view, /isMarkdownFile\(detail\)[\s\S]*?<MarkdownResponse text=\{preview\.text\} \/>/);
   assert.match(view, /extension === "md" \|\| extension === "markdown" \|\| detail\.mimeType/);
