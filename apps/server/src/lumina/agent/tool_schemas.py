@@ -432,6 +432,42 @@ _REPORT_TOOL_SCHEMA: dict[str, Any] = {
 }
 
 
+_EXTEND_REPORT_TOOL_SCHEMA: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "extend_report",
+        "description": (
+            "Append new substantive content to the report Artifact saved by a preceding "
+            "create_report result whose status is needs_expansion. Provide only the new "
+            "HTML body fragment or Markdown content to add. Lumina reads the current "
+            "Artifact version and combines it with this fragment on the server, preserving "
+            "all existing content, citations, structure, and styling. Never repeat or "
+            "recreate the complete report. Do not use this tool unless create_report or a "
+            "previous extend_report explicitly requested another expansion."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200000,
+                    "description": (
+                        "Only the new content to append. For HTML reports, provide semantic "
+                        "body content such as section, article, table, figure, or aside "
+                        "elements. Do not include doctype, html, head, or body tags. Lumina "
+                        "inserts the fragment before the report's closing main or body tag. "
+                        "For Markdown reports, provide only the additional Markdown sections."
+                    ),
+                }
+            },
+            "required": ["content"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
 def _report_tool_schema(target_output_tokens: int | None) -> dict[str, Any]:
     target = _optional_positive_int(target_output_tokens)
     if target is None:

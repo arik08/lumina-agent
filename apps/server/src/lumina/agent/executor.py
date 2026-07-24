@@ -59,6 +59,7 @@ from .tool_schemas import (
     _ARTIFACT_FIRST_PASS_PREFERRED_FLOOR_RATIO,
     _ARTIFACT_TARGET_CEILING_RATIO,
     _ARTIFACT_TARGET_FLOOR_RATIO,
+    _EXTEND_REPORT_TOOL_SCHEMA,
     _FILE_OUTPUT_INTENT_TOOL_SCHEMA,
     _MAX_USER_INPUT_QUESTIONS,
     _READ_TOOL_RESULT_TOOL_SCHEMA,
@@ -1653,6 +1654,7 @@ class LocalRunExecutor:
                             run.snapshot_json.get("target_output_tokens")
                         )
                     ),
+                    _EXTEND_REPORT_TOOL_SCHEMA,
                 )
                 if artifact_tools_available
                 else ()
@@ -2380,6 +2382,54 @@ class LocalRunExecutor:
                 else:
                     empty_response_retry_attempt = 0
                     output_continuation_count = 0
+                with SessionLocal() as db:
+                    current_run = db.get(Run, run_id)
+                    report_extension_required = bool(
+                        current_run is not None
+                        and current_run.snapshot_json.get(
+                            "artifact_length_retry_artifact_id"
+                        )
+                    )
+                if report_extension_required:
+                    if round_text:
+                        messages.append(
+                            ProviderMessage(
+                                role="assistant", content="".join(round_text)
+                            )
+                        )
+                    messages.append(
+                        ProviderMessage(
+                            role="user",
+                            content=(
+                                "[Report expansion requirement] The saved report is still "
+                                "below the selected document length. Call `extend_report` with "
+                                "only new HTML body content or Markdown sections. Do not call "
+                                "`create_report`, repeat the existing document, or finish with "
+                                "chat text."
+                            ),
+                        )
+                    )
+                    self._store_safe_transcript(
+                        run_id,
+                        (
+                            *(
+                                (
+                                    {
+                                        "role": "assistant",
+                                        "content": "".join(round_text),
+                                    },
+                                )
+                                if round_text
+                                else ()
+                            ),
+                            {
+                                "role": "user",
+                                "content": str(messages[-1].content or ""),
+                            },
+                        ),
+                    )
+                    artifact_drafting_turn = True
+                    continue
                 if (
                     artifact_required
                     and not artifact_created
@@ -5711,6 +5761,13 @@ class LocalRunExecutor:
             )
             return payload
 
+        if tool_call["name"] == "extend_report":
+            return await self._execute_report_extension(
+                run_id,
+                tool_id,
+                arguments,
+            )
+
         if tool_call["name"] != "create_report":
             return await self._fail_tool_execution(
                 run_id,
@@ -5746,14 +5803,31 @@ class LocalRunExecutor:
                     report_run.snapshot_json.get("artifact_length_retry_artifact_id")
                     or ""
                 ).strip()
-                report_images = resolve_report_images(
-                    db,
-                    run=report_run,
-                    user=report_user,
-                    arguments=arguments,
-                    file_storage=self.file_storage,
-                    artifact_storage=self.storage,
-                    max_total_bytes=self.settings.max_upload_bytes,
+                report_images = (
+                    ()
+                    if revision_artifact_id
+                    else resolve_report_images(
+                        db,
+                        run=report_run,
+                        user=report_user,
+                        arguments=arguments,
+                        file_storage=self.file_storage,
+                        artifact_storage=self.storage,
+                        max_total_bytes=self.settings.max_upload_bytes,
+                    )
+                )
+            if revision_artifact_id:
+                return await self._fail_tool_execution(
+                    run_id,
+                    tool_id,
+                    WebToolError(
+                        "report_extension_tool_required",
+                        "A short report is already saved. Call `extend_report` with only "
+                        "the new HTML body fragment or Markdown sections to add; do not "
+                        "submit the complete report through `create_report` again.",
+                        stage="validation",
+                        retryable=True,
+                    ),
                 )
             report = generate_report(
                 user_message,
@@ -5927,13 +6001,14 @@ class LocalRunExecutor:
                     "only "
                     f"about {document_tokens:,} tokens, below the selected minimum of about "
                     f"{target_floor:,} tokens. Expansion check {expansion_attempt} of "
-                    f"{_MAX_ARTIFACT_LENGTH_RETRIES} failed. Edit the report from the previous "
-                    "tool call in place: preserve its useful analysis, structure, citations, "
-                    "and styling, and add about "
+                    f"{_MAX_ARTIFACT_LENGTH_RETRIES} failed. The saved report will be preserved "
+                    "by Lumina. Add about "
                     f"{missing_tokens:,} tokens of substantive analysis, explanations, tables, "
-                    "source notes, and interpretation. Call `create_report` with that edited "
-                    "document; Lumina will append it as the next immutable version of the same "
-                    "Artifact instead of creating a new report. The next version must contain "
+                    "source notes, and interpretation by calling `extend_report` with only the "
+                    "new HTML body fragment or Markdown sections. Do not repeat the existing "
+                    "document. Lumina will combine the fragment with the saved source and append "
+                    "the result as the next immutable version of the same Artifact. The combined "
+                    "version must contain "
                     f"at least about {target_floor:,} document tokens. Do not restart from "
                     "scratch and do not finish with chat text only."
                 ),
@@ -6090,6 +6165,217 @@ class LocalRunExecutor:
             "targetTokens": target_output_tokens,
             "targetMet": target_floor is None or document_tokens >= target_floor,
         }
+
+    async def _execute_report_extension(
+        self,
+        run_id: str,
+        tool_id: str,
+        arguments: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        fragment = arguments.get("content")
+        if not isinstance(fragment, str):
+            return await self._fail_tool_execution(
+                run_id,
+                tool_id,
+                ValueError("Report extension content must be a string."),
+            )
+        try:
+            with (
+                cleanup_artifact_storage_on_error(self.storage) as storage_keys,
+                session_scope() as db,
+            ):
+                run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
+                user = db.get(User, run.user_id) if run is not None else None
+                tool = db.get(ToolExecution, tool_id)
+                if run is None or user is None or tool is None:
+                    raise RuntimeError(
+                        "Run context disappeared during report extension"
+                    )
+                self._require_execution_owner(run)
+                artifact_id = str(
+                    run.snapshot_json.get("artifact_length_retry_artifact_id") or ""
+                ).strip()
+                if not artifact_id:
+                    raise ValueError(
+                        "There is no saved short report to extend. Call create_report first."
+                    )
+                artifact = require_artifact(db, user, artifact_id, write=True)
+                current = current_artifact_version(db, artifact)
+                if current is None:
+                    raise ValueError("The report Artifact has no current version.")
+                if artifact.mime_type not in {"text/html", "text/markdown"}:
+                    raise ValueError(
+                        "Only HTML and Markdown reports can be extended incrementally."
+                    )
+                source = self.storage.read_bytes(
+                    current.storage_key,
+                    expected_sha256=current.content_hash,
+                ).decode("utf-8", errors="strict")
+                combined = _append_report_fragment(
+                    source,
+                    fragment,
+                    mime_type=artifact.mime_type,
+                )
+                content = combined.encode("utf-8")
+                if len(content) > self.settings.max_upload_bytes:
+                    raise ApiProblem(
+                        413,
+                        "artifact_too_large",
+                        "확장한 보고서가 허용된 최대 크기를 초과했습니다.",
+                    )
+                document_tokens = estimate_tokens(
+                    combined,
+                    model=run.runtime_model_id,
+                )
+                document_lines = combined.count("\n") + 1
+                target_output_tokens = _optional_positive_int(
+                    run.snapshot_json.get("target_output_tokens")
+                )
+                if target_output_tokens is None:
+                    raise ValueError(
+                        "The saved report does not have an output-length target."
+                    )
+                target_floor = int(
+                    target_output_tokens * _ARTIFACT_TARGET_FLOOR_RATIO
+                )
+                length_retry_count = int(
+                    run.snapshot_json.get("artifact_length_retry_count", 0) or 0
+                )
+                below_target = document_tokens < target_floor
+                terminal_failure = (
+                    below_target
+                    and length_retry_count >= _MAX_ARTIFACT_LENGTH_RETRIES
+                )
+                version = create_artifact_version(
+                    db,
+                    self.storage,
+                    user=user,
+                    artifact_id=artifact.id,
+                    base_version=artifact.current_version_number or 0,
+                    content=content,
+                    change_type="agent_edited",
+                    change_summary=(
+                        "목표 분량 미달로 종료된 마지막 누적 보강본"
+                        if terminal_failure
+                        else "선택한 목표 분량에 맞게 기존 보고서에 내용을 누적 보강"
+                    ),
+                )
+                storage_keys.append(version.storage_key)
+                artifact_usage = {
+                    "tokens": document_tokens,
+                    "lines": document_lines,
+                    "estimated": False,
+                    "targetTokens": target_output_tokens,
+                }
+                if terminal_failure:
+                    tool.artifact_id = artifact.id
+                    run.snapshot_json = {
+                        **run.snapshot_json,
+                        "artifact_progress": None,
+                        "artifact_usage": artifact_usage,
+                    }
+                    append_event(
+                        db,
+                        run,
+                        "artifact_created",
+                        {
+                            "artifact": artifact_summary(
+                                artifact, current_artifact_version(db, artifact)
+                            )
+                        },
+                    )
+                    expansion_attempt = length_retry_count
+                elif below_target:
+                    expansion_attempt = length_retry_count + 1
+                    run.snapshot_json = {
+                        **run.snapshot_json,
+                        "artifact_progress": None,
+                        "artifact_usage": artifact_usage,
+                        "artifact_length_retry_count": expansion_attempt,
+                    }
+                else:
+                    expansion_attempt = length_retry_count
+                    run.snapshot_json = {
+                        **run.snapshot_json,
+                        "artifact_progress": None,
+                        "artifact_usage": artifact_usage,
+                        "artifact_length_retry_count": 0,
+                        "artifact_length_retry_artifact_id": None,
+                    }
+            missing_tokens = max(0, target_output_tokens - document_tokens)
+        except (ApiProblem, TypeError, UnicodeDecodeError, ValueError) as exc:
+            return await self._fail_tool_execution(run_id, tool_id, exc)
+
+        if terminal_failure:
+            failure_message = (
+                "선택한 문서 출력 목표를 반복해서 충족하지 못했습니다. "
+                f"누적된 마지막 결과는 약 {document_tokens:,}토큰이며, "
+                f"최소 허용 분량은 약 {target_floor:,}토큰입니다. "
+                f"작성된 결과는 Artifact v{version.version_number}로 보존했습니다."
+            )
+            failure = await self._fail_tool_execution(
+                run_id,
+                tool_id,
+                WebToolError(
+                    "artifact_target_not_met",
+                    failure_message,
+                    stage="validation",
+                    retryable=False,
+                ),
+            )
+            await self._fail_run(
+                run_id,
+                "artifact_target_not_met",
+                failure_message,
+            )
+            return failure
+
+        if below_target:
+            length_check = {
+                "status": "needs_expansion",
+                "artifact_id": artifact_id,
+                "version": version.version_number,
+                "documentTokens": document_tokens,
+                "targetTokens": target_output_tokens,
+                "minimumTokens": target_floor,
+                "expansionAttempt": expansion_attempt,
+                "maxExpansionAttempts": _MAX_ARTIFACT_LENGTH_RETRIES,
+                "targetLengthCheck": (
+                    f"Artifact {artifact_id} version {version.version_number} contains the "
+                    "previous report plus your new fragment and has been saved. The combined "
+                    f"document is about {document_tokens:,} tokens, below the minimum of about "
+                    f"{target_floor:,}. Call `extend_report` again with only about "
+                    f"{missing_tokens:,} tokens of additional HTML body content or Markdown "
+                    "sections. Do not repeat any existing content or call `create_report`."
+                ),
+            }
+            await self._complete_tool_execution(
+                run_id,
+                tool_id,
+                length_check,
+                "기존 보고서에 내용을 누적하고 같은 Artifact의 추가 보강을 요청했습니다.",
+                artifact_id=artifact_id,
+                artifact_usage=artifact_usage,
+            )
+            return length_check
+
+        result = {
+            "artifact_id": artifact_id,
+            "status": "completed",
+            "version": version.version_number,
+            "documentTokens": document_tokens,
+            "targetTokens": target_output_tokens,
+            "targetMet": True,
+        }
+        await self._complete_tool_execution(
+            run_id,
+            tool_id,
+            result,
+            "기존 보고서에 새 내용을 누적해 목표 분량을 충족했습니다.",
+            artifact_id=artifact_id,
+            artifact_usage=artifact_usage,
+        )
+        return result
 
     async def _execute_generate_image(
         self,
@@ -8684,6 +8970,34 @@ def _artifact_argument_progress(arguments: str) -> tuple[int, int]:
     tokens = max(1, math.ceil(character_count / 4))
     lines = max(1, arguments.count("\\n") + 1, math.ceil(character_count / 80))
     return tokens, lines
+
+
+def _append_report_fragment(source: str, fragment: str, *, mime_type: str) -> str:
+    addition = fragment.strip()
+    if not addition:
+        raise ValueError("Report extension content must not be empty.")
+    if mime_type == "text/markdown":
+        return f"{source.rstrip()}\n\n{addition}\n"
+    if mime_type != "text/html":
+        raise ValueError("Only HTML and Markdown reports can be extended incrementally.")
+    if re.search(
+        r"<!doctype\b|<\s*/?\s*(?:html|head|body)\b",
+        addition,
+        flags=re.IGNORECASE,
+    ):
+        raise ValueError(
+            "HTML report extensions must contain body fragments only, without doctype, "
+            "html, head, or body tags."
+        )
+    closing = list(re.finditer(r"</main\s*>", source, flags=re.IGNORECASE))
+    if not closing:
+        closing = list(re.finditer(r"</body\s*>", source, flags=re.IGNORECASE))
+    if not closing:
+        raise ValueError(
+            "The current HTML report has no closing main or body tag for extension."
+        )
+    insertion = closing[-1].start()
+    return f"{source[:insertion].rstrip()}\n{addition}\n{source[insertion:]}"
 
 
 def _artifact_progress_from_counts(

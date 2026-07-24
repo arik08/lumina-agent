@@ -12,8 +12,15 @@ from pptx import Presentation
 from pypdf import PdfReader
 from sqlalchemy.orm import Session
 
-from lumina.agent.executor import _REPORT_TOOL_SCHEMA, local_run_executor
-from lumina.agent.tool_schemas import _report_tool_schema
+from lumina.agent.executor import (
+    _REPORT_TOOL_SCHEMA,
+    _append_report_fragment,
+    local_run_executor,
+)
+from lumina.agent.tool_schemas import (
+    _EXTEND_REPORT_TOOL_SCHEMA,
+    _report_tool_schema,
+)
 from lumina.artifacts.render_validation import LocalArtifactRenderBackend
 from lumina.artifacts.reporting import REPORT_FORMATS, generate_report
 from lumina.artifacts.service import validate_artifact_content
@@ -181,6 +188,34 @@ def test_large_html_report_schema_keeps_html_source_required_without_legacy_fiel
     assert parameters["properties"]["html_source"]["minLength"] == 48_000
     assert parameters["oneOf"][0]["required"] == ["html_source"]
     assert "sections" not in parameters["oneOf"][0]["required"]
+
+
+def test_extend_report_appends_fragments_without_accepting_full_html() -> None:
+    html = (
+        "<!doctype html><html><head><title>원본</title></head>"
+        "<body><main><h1>원본</h1></main></body></html>"
+    )
+    fragment = "<section id='added'><h2>추가 분석</h2></section>"
+
+    extended = _append_report_fragment(html, fragment, mime_type="text/html")
+
+    assert extended.startswith(html.split("</main>", 1)[0])
+    assert f"{fragment}\n</main>" in extended
+    assert extended.count("<!doctype html>") == 1
+    with pytest.raises(ValueError, match="body fragments only"):
+        _append_report_fragment(
+            html,
+            "<html><body><p>전체 문서 재생성</p></body></html>",
+            mime_type="text/html",
+        )
+    assert _append_report_fragment(
+        "# 원본\n",
+        "## 추가 분석",
+        mime_type="text/markdown",
+    ) == "# 원본\n\n## 추가 분석\n"
+    assert _EXTEND_REPORT_TOOL_SCHEMA["function"]["parameters"]["required"] == [
+        "content"
+    ]
 
 
 def test_html_source_preserves_visual_artifact_and_executable_javascript() -> None:
@@ -526,11 +561,16 @@ def test_selected_artifact_target_retries_short_report_and_exposes_separate_coun
         "<!doctype html><html lang='ko'><head><title>짧은 보고서</title></head>"
         "<body><main><h1>짧은 보고서</h1><p>요약입니다.</p></main></body></html>"
     )
-    long_html = (
-        "<!doctype html><html lang='ko'><head><title>확장 보고서</title></head><body><main>"
+    first_extension = (
+        "<section id='first-extension'><h2>첫 번째 추가 분석</h2>"
+        + "<p>공급 구조와 계약 조건을 추가로 비교합니다.</p>\n" * 10
+        + "</section>"
+    )
+    final_extension = (
+        "<section id='final-extension'><h2>두 번째 추가 분석</h2>"
         + "<p>근거와 수치를 바탕으로 원인, 영향, 대응 방향을 구체적으로 분석합니다.</p>\n"
         * 300
-        + "</main></body></html>"
+        + "</section>"
     )
     provider_turn = 0
     requests = []
@@ -548,13 +588,27 @@ def test_selected_artifact_target_retries_short_report_and_exposes_separate_coun
         del first_turn
         assert wants_artifact is True
         provider_turn += 1
-        if provider_turn <= 3:
+        if provider_turn == 1:
             arguments = _arguments("html")
-            arguments["html_source"] = short_html if provider_turn <= 2 else long_html
+            arguments["html_source"] = short_html
             return RecordingProvider(
                 tool_call=MockToolCall(
                     name="create_report",
                     arguments=arguments,
+                    call_id=f"call_target_length_{provider_turn}",
+                )
+            )
+        if provider_turn <= 3:
+            return RecordingProvider(
+                tool_call=MockToolCall(
+                    name="extend_report",
+                    arguments={
+                        "content": (
+                            first_extension
+                            if provider_turn == 2
+                            else final_extension
+                        )
+                    },
                     call_id=f"call_target_length_{provider_turn}",
                 )
             )
@@ -587,6 +641,12 @@ def test_selected_artifact_target_retries_short_report_and_exposes_separate_coun
         artifact = client.get(
             f"/api/artifacts/{snapshot['artifacts'][0]['id']}"
         ).json()
+        version_sources = [
+            client.get(
+                f"/api/artifacts/{snapshot['artifacts'][0]['id']}/versions/{version}"
+            ).json()["sourceText"]
+            for version in (1, 2, 3)
+        ]
 
     assert snapshot["status"] == "completed"
     assert provider_turn == 4
@@ -604,6 +664,16 @@ def test_selected_artifact_target_retries_short_report_and_exposes_separate_coun
         assert result["maxExpansionAttempts"] == 2
         assert execution["artifactId"] == snapshot["artifacts"][0]["id"]
     assert snapshot["toolExecutions"][2]["artifactId"] == snapshot["artifacts"][0]["id"]
+    assert [
+        execution["toolName"] for execution in snapshot["toolExecutions"]
+    ] == ["create_report", "extend_report", "extend_report"]
+    assert version_sources[0] == short_html
+    assert short_html.split("</main>", 1)[0] in version_sources[1]
+    assert first_extension in version_sources[1]
+    assert short_html.split("</main>", 1)[0] in version_sources[2]
+    assert first_extension in version_sources[2]
+    assert final_extension in version_sources[2]
+    assert version_sources[2].count("<!doctype html>") == 1
     artifact_usage = snapshot["artifactUsage"]
     assert artifact_usage["estimated"] is False
     assert artifact_usage["targetTokens"] == 1_000
@@ -649,6 +719,14 @@ def test_selected_artifact_target_retries_short_report_and_exposes_separate_coun
         ]
         == 1_600
     )
+    extension_schema = next(
+        schema
+        for schema in first_request.tools
+        if schema.get("function", {}).get("name") == "extend_report"
+    )
+    assert "combines it with this fragment on the server" in (
+        extension_schema["function"]["description"]
+    )
 
 
 def test_selected_artifact_target_fails_instead_of_saving_repeatedly_short_report(
@@ -666,6 +744,10 @@ def test_selected_artifact_target_fails_instead_of_saving_repeatedly_short_repor
         "<!doctype html><html lang='ko'><head><title>짧은 보고서</title></head>"
         "<body><main><h1>짧은 보고서</h1><p>요약입니다.</p></main></body></html>"
     )
+    extensions = (
+        "<section id='failure-extension-1'><p>첫 번째 짧은 추가입니다.</p></section>",
+        "<section id='failure-extension-2'><p>두 번째 짧은 추가입니다.</p></section>",
+    )
     provider_turn = 0
 
     def fake_provider(
@@ -675,11 +757,16 @@ def test_selected_artifact_target_fails_instead_of_saving_repeatedly_short_repor
         del first_turn
         assert wants_artifact is True
         provider_turn += 1
-        arguments = _arguments("html")
-        arguments["html_source"] = short_html
+        if provider_turn == 1:
+            arguments = _arguments("html")
+            arguments["html_source"] = short_html
+            tool_name = "create_report"
+        else:
+            arguments = {"content": extensions[provider_turn - 2]}
+            tool_name = "extend_report"
         return MockProvider(
             tool_call=MockToolCall(
-                name="create_report",
+                name=tool_name,
                 arguments=arguments,
                 call_id=f"call_target_length_failure_{provider_turn}",
             )
@@ -709,6 +796,9 @@ def test_selected_artifact_target_fails_instead_of_saving_repeatedly_short_repor
         )
         assert started.status_code == 202, started.text
         snapshot = _wait_for_terminal(client, started.json()["run"]["runId"])
+        final_source = client.get(
+            f"/api/artifacts/{snapshot['artifacts'][0]['id']}/versions/3"
+        ).json()["sourceText"]
 
     assert snapshot["status"] == "failed"
     assert snapshot["errorCode"] == "artifact_target_not_met"
@@ -722,6 +812,120 @@ def test_selected_artifact_target_fails_instead_of_saving_repeatedly_short_repor
     assert snapshot["toolExecutions"][2]["status"] == "failed"
     assert snapshot["toolExecutions"][2]["artifactId"] == snapshot["artifacts"][0]["id"]
     assert "최소 허용 분량" in snapshot["toolExecutions"][2]["error"]
+    assert [
+        execution["toolName"] for execution in snapshot["toolExecutions"]
+    ] == ["create_report", "extend_report", "extend_report"]
+    assert short_html.split("</main>", 1)[0] in final_source
+    assert extensions[0] in final_source
+    assert extensions[1] in final_source
+    assert final_source.count("<!doctype html>") == 1
+
+
+def test_short_report_rejects_full_document_retry_before_server_side_extension(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'target-length-rewrite.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    short_html = (
+        "<!doctype html><html lang='ko'><head><title>보존할 원본</title></head>"
+        "<body><main><h1 id='original'>보존할 원본</h1></main></body></html>"
+    )
+    replacement_html = (
+        "<!doctype html><html><head><title>덮어쓴 문서</title></head>"
+        "<body><main><h1 id='replacement'>덮어쓴 문서</h1></main></body></html>"
+    )
+    extension = (
+        "<section id='server-appended'><h2>누적 분석</h2>"
+        + "<p>기존 근거를 유지하면서 원인과 영향을 추가로 분석합니다.</p>\n" * 300
+        + "</section>"
+    )
+    provider_turn = 0
+
+    def fake_provider(
+        _provider_id: str, *, wants_artifact: bool, first_turn: bool
+    ) -> MockProvider:
+        nonlocal provider_turn
+        del first_turn
+        assert wants_artifact is True
+        provider_turn += 1
+        if provider_turn == 1:
+            arguments = _arguments("html")
+            arguments["html_source"] = short_html
+            return MockProvider(
+                tool_call=MockToolCall(
+                    name="create_report",
+                    arguments=arguments,
+                    call_id="call_original_report",
+                )
+            )
+        if provider_turn == 2:
+            arguments = _arguments("html")
+            arguments["html_source"] = replacement_html
+            return MockProvider(
+                tool_call=MockToolCall(
+                    name="create_report",
+                    arguments=arguments,
+                    call_id="call_forbidden_rewrite",
+                )
+            )
+        if provider_turn == 3:
+            return MockProvider(
+                tool_call=MockToolCall(
+                    name="extend_report",
+                    arguments={"content": extension},
+                    call_id="call_server_extension",
+                )
+            )
+        return MockProvider(text_chunks=("누적 확장한 보고서를 저장했습니다.",))
+
+    monkeypatch.setattr(local_run_executor, "_provider", fake_provider)
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "보고서 전체 재작성 차단"},
+        ).json()
+        started = client.post(
+            f"/api/conversations/{conversation['id']}/runs",
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": "target-length-rewrite-0001",
+            },
+            json={
+                "message": {
+                    "text": "분석 보고서를 HTML로 만들어 주세요.",
+                    "targetOutputTokens": 1_000,
+                }
+            },
+        )
+        assert started.status_code == 202, started.text
+        snapshot = _wait_for_terminal(client, started.json()["run"]["runId"])
+        artifact_id = snapshot["artifacts"][0]["id"]
+        artifact = client.get(f"/api/artifacts/{artifact_id}").json()
+        final_source = client.get(
+            f"/api/artifacts/{artifact_id}/versions/2"
+        ).json()["sourceText"]
+
+    assert snapshot["status"] == "completed"
+    assert provider_turn == 4
+    assert artifact["versions"] == [2, 1]
+    assert [
+        execution["toolName"] for execution in snapshot["toolExecutions"]
+    ] == ["create_report", "create_report", "extend_report"]
+    rejected = snapshot["toolExecutions"][1]
+    assert rejected["status"] == "failed"
+    assert "`extend_report`" in rejected["error"]
+    assert "id='original'" in final_source
+    assert "id='server-appended'" in final_source
+    assert "id='replacement'" not in final_source
 
 
 def _assert_reopened(report_format: str, content: bytes) -> None:
