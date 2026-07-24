@@ -41,8 +41,9 @@ test("file workspace keeps refresh at the far right of the header", async () => 
 });
 
 test("file repository is an explorer and viewer with recursive folder upload", async () => {
-  const [view, resizer, styles] = await Promise.all([
+  const [view, htmlPreview, resizer, styles] = await Promise.all([
     read("../src/components/ProjectFilesView.tsx"),
+    read("../src/components/ArtifactHtmlPreview.tsx"),
     read("../src/components/ResizableSplitPane.tsx"),
     read("../src/styles.css"),
   ]);
@@ -54,7 +55,11 @@ test("file repository is an explorer and viewer with recursive folder upload", a
   assert.match(view, /file-workspace-viewer/);
   assert.match(view, /renderFilePreview/);
   assert.match(view, /looksLikeStandaloneHtml/);
-  assert.match(view, /new Blob\(\[text\], \{ type: "text\/html;charset=utf-8" \}\)/);
+  assert.match(view, /import \{ ArtifactHtmlPreview \} from "\.\/ArtifactHtmlPreview"/);
+  assert.match(view, /injectArtifactPreviewBridge\(text\)/);
+  assert.match(view, /<ArtifactHtmlPreview[\s\S]*?frameRef=\{htmlPreviewFrameRef\}[\s\S]*?source=\{preview\.source\}[\s\S]*?previewUrl=\{null\}/);
+  assert.match(view, /new URL\(bridgePath, window\.location\.origin\)\.href/);
+  assert.match(view, /setPreview\(\{ status: "ready", kind, source: text \}\)/);
   assert.match(view, /kind: "text", text: text\.slice\(0, limit\)/);
   assert.match(view, /import \{ MarkdownResponse \} from "\.\/ConversationTurn"/);
   assert.match(view, /isMarkdownFile\(detail\)[\s\S]*?<MarkdownResponse text=\{preview\.text\} \/>/);
@@ -67,8 +72,8 @@ test("file repository is an explorer and viewer with recursive folder upload", a
   assert.match(styles, /\.file-viewer-actions \.file-preview-mode-toggle\.is-active\s*\{[^}]*border-color:\s*var\(--cobalt\);[^}]*background:\s*var\(--cobalt-pale\);/s);
   assert.match(view, /className="file-preview-markdown conversation-response-typography"/);
   assert.match(styles, /\.conversation-response-typography\s*\{[^}]*font-size:\s*var\(--conversation-font-size\);[^}]*line-height:\s*1\.68;/s);
-  assert.match(view, /sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock allow-downloads"/);
-  assert.doesNotMatch(view, /allow-same-origin/);
+  assert.match(htmlPreview, /sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock allow-downloads/);
+  assert.doesNotMatch(htmlPreview, /allow-same-origin/);
   assert.doesNotMatch(view, /folder-reference-note/);
   assert.doesNotMatch(view, /채팅에서 이 폴더를 선택하면/);
   assert.doesNotMatch(view, /새 버전 사유|버전 기록|uploadVersion|currentVersion/);

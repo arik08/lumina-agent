@@ -167,6 +167,21 @@
   };
   new MutationObserver(scheduleEnhanceZoom).observe(document.documentElement, { childList: true, subtree: true });
 
+  document.addEventListener("click", (event) => {
+    const link = event.target instanceof Element ? event.target.closest('a[href^="#"]') : null;
+    const href = link?.getAttribute("href") || "";
+    if (href.length < 2) return;
+    let target = null;
+    try {
+      target = document.getElementById(decodeURIComponent(href.slice(1)));
+    } catch {
+      return;
+    }
+    if (!target) return;
+    event.preventDefault();
+    target.scrollIntoView({ block: "start" });
+  });
+
   const markers = ["①","②","③","④","⑤","⑥","⑦","⑧","⑨","⑩","⑪","⑫","⑬","⑭","⑮","⑯","⑰","⑱","⑲","⑳"];
   document.querySelectorAll("a.source-ref[href], sup.source-ref > a[href]").forEach((link) => {
     const number = Number((link.textContent || "").trim());

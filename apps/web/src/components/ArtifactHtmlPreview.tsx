@@ -2,31 +2,7 @@ import { LoaderCircle } from "lucide-react";
 import { useEffect, useState, type RefObject } from "react";
 import "./ArtifactHtmlPreview.css";
 
-export function ArtifactHtmlPreview({
-  frameRef,
-  source,
-  previewUrl,
-  title,
-}: {
-  frameRef: RefObject<HTMLIFrameElement | null>;
-  source: string | null;
-  previewUrl: string | null;
-  title: string;
-}) {
-  const [frameContent, setFrameContent] = useState<
-    { src: string; srcDoc?: never } | { src?: never; srcDoc: string } | null
-  >(null);
-  const [loaded, setLoaded] = useState(false);
-
-  useEffect(() => {
-    setLoaded(false);
-    setFrameContent(null);
-    const frame = requestAnimationFrame(() => {
-      setFrameContent(previewUrl ? { src: previewUrl } : { srcDoc: source ?? "" });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [previewUrl, source]);
-
+export function useArtifactPreviewBridge(frameRef: RefObject<HTMLIFrameElement | null>) {
   useEffect(() => {
     let renderQueue = Promise.resolve();
     const receiveMermaidRequest = (event: MessageEvent) => {
@@ -48,6 +24,33 @@ export function ArtifactHtmlPreview({
     window.addEventListener("message", receiveMermaidRequest);
     return () => window.removeEventListener("message", receiveMermaidRequest);
   }, [frameRef]);
+}
+
+export function ArtifactHtmlPreview({
+  frameRef,
+  source,
+  previewUrl,
+  title,
+}: {
+  frameRef: RefObject<HTMLIFrameElement | null>;
+  source: string | null;
+  previewUrl: string | null;
+  title: string;
+}) {
+  const [frameContent, setFrameContent] = useState<
+    { src: string; srcDoc?: never } | { src?: never; srcDoc: string } | null
+  >(null);
+  const [loaded, setLoaded] = useState(false);
+  useArtifactPreviewBridge(frameRef);
+
+  useEffect(() => {
+    setLoaded(false);
+    setFrameContent(null);
+    const frame = requestAnimationFrame(() => {
+      setFrameContent(previewUrl ? { src: previewUrl } : { srcDoc: source ?? "" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [previewUrl, source]);
 
   return <div className="artifact-preview-shell" aria-busy={!loaded}>
     {!loaded && <div className="artifact-preview-loading" role="progressbar" aria-label="HTML 미리보기 준비 중">

@@ -23,7 +23,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { type CSSProperties, type DragEvent, type MouseEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type DragEvent, type MouseEvent, type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ApiError } from "../api";
 import { projectFilesApi } from "../feature-api";
@@ -31,6 +31,7 @@ import { projectFilesApi } from "../feature-api";
 const api = { projectFiles: projectFilesApi };
 import type { ArtifactDownload, ProjectFileDetail, ProjectFileSummary, ProjectFolderSummary } from "../api-types";
 import { useCachedViewState } from "../view-data-cache";
+import { ArtifactHtmlPreview } from "./ArtifactHtmlPreview";
 import { MarkdownResponse } from "./ConversationTurn";
 import { ResizableSplitPane } from "./ResizableSplitPane";
 
@@ -89,7 +90,8 @@ type PreviewState =
   | { status: "idle" }
   | { status: "loading" }
   | { status: "ready"; kind: "text"; text: string; truncated: boolean }
-  | { status: "ready"; kind: "image" | "pdf" | "html" | "video" | "audio"; url: string }
+  | { status: "ready"; kind: "html"; source: string }
+  | { status: "ready"; kind: "image" | "pdf" | "video" | "audio"; url: string }
   | { status: "unsupported"; mimeType: string }
   | { status: "error"; message: string };
 
@@ -264,12 +266,26 @@ function looksLikeStandaloneHtml(value: string) {
   return ["<!doctype html", "<html", "<head", "<body"].every((marker) => normalized.includes(marker));
 }
 
+function injectArtifactPreviewBridge(value: string) {
+  const bridgePath = "/artifact-preview-bridge.js";
+  if (value.includes(bridgePath)) return value;
+  const bridge = `<script src="${new URL(bridgePath, window.location.origin).href}"></script>`;
+  return /<\/body\s*>/i.test(value)
+    ? value.replace(/<\/body\s*>/i, `${bridge}</body>`)
+    : `${value}${bridge}`;
+}
+
 function isMarkdownFile(detail: ProjectFileDetail) {
   const extension = detail.displayName.split(".").at(-1)?.toLocaleLowerCase("en-US");
   return extension === "md" || extension === "markdown" || detail.mimeType.toLocaleLowerCase("en-US") === "text/markdown";
 }
 
-function renderFilePreview(preview: PreviewState, detail: ProjectFileDetail, markdownSource: boolean): ReactNode {
+function renderFilePreview(
+  preview: PreviewState,
+  detail: ProjectFileDetail,
+  markdownSource: boolean,
+  htmlPreviewFrameRef: RefObject<HTMLIFrameElement | null>,
+): ReactNode {
   if (preview.status === "loading" || preview.status === "idle") {
     return <div className="feature-state"><LoaderCircle className="is-running" size={15} /> Preview 준비 중</div>;
   }
@@ -287,7 +303,12 @@ function renderFilePreview(preview: PreviewState, detail: ProjectFileDetail, mar
   }
   if (preview.kind === "image") return <img src={preview.url} alt={`${detail.displayName} Preview`} loading="lazy" decoding="async" />;
   if (preview.kind === "pdf") return <iframe src={preview.url} title={`${detail.displayName} PDF Preview`} />;
-  if (preview.kind === "html") return <iframe src={preview.url} title={`${detail.displayName} HTML Preview`} sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock allow-downloads" />;
+  if (preview.kind === "html") return <ArtifactHtmlPreview
+    frameRef={htmlPreviewFrameRef}
+    source={preview.source}
+    previewUrl={null}
+    title={`${detail.displayName} HTML Preview`}
+  />;
   if (preview.kind === "video") return <video src={preview.url} controls />;
   return <audio src={preview.url} controls />;
 }
@@ -295,6 +316,7 @@ function renderFilePreview(preview: PreviewState, detail: ProjectFileDetail, mar
 export function ProjectFilesView({ projectId, requestedFileId = null, onOpenNavigation }: ProjectFilesViewProps) {
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+  const htmlPreviewFrameRef = useRef<HTMLIFrameElement>(null);
   const draggedNodeRef = useRef<FileTreeNode | null>(null);
   const loadingMoreRef = useRef(false);
   const loadMoreControllerRef = useRef<AbortController | null>(null);
@@ -494,14 +516,14 @@ export function ProjectFilesView({ projectId, requestedFileId = null, onOpenNavi
       .then(async (download) => {
         const kind = classifyPreview(detail, download.blob);
         if (kind === "html") {
-          const text = await download.blob.text();
+          let text = await download.blob.text();
           const limit = 240_000;
           if (!looksLikeStandaloneHtml(text)) {
             setPreview({ status: "ready", kind: "text", text: text.slice(0, limit), truncated: text.length > limit });
             return;
           }
-          objectUrl = URL.createObjectURL(new Blob([text], { type: "text/html;charset=utf-8" }));
-          setPreview({ status: "ready", kind, url: objectUrl });
+          text = injectArtifactPreviewBridge(text);
+          setPreview({ status: "ready", kind, source: text });
           return;
         }
         if (kind === "text") {
@@ -977,7 +999,7 @@ export function ProjectFilesView({ projectId, requestedFileId = null, onOpenNavi
                   </div>
                 </header>
                 <div className="file-preview-surface thin-scrollbar">
-                  {renderFilePreview(preview, detail, markdownSource)}
+                  {renderFilePreview(preview, detail, markdownSource, htmlPreviewFrameRef)}
                 </div>
               </div>
             )}
