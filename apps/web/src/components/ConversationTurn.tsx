@@ -1683,11 +1683,6 @@ export const AssistantTurn = memo(function AssistantTurn({
     knowledgeSourceCount > 0 ? `지식 문서 ${knowledgeSourceCount}` : null,
   ].filter((label): label is string => label !== null);
   const tools = snapshot?.toolExecutions ?? turnSet.toolExecutions;
-  const hasArtifactWritingExecution = tools.some((execution) => (
-    ["create_report", "write_file"].some((toolName) => (
-      execution.toolName.toLocaleLowerCase().includes(toolName)
-    ))
-  ));
   const activities: RunActivity[] = snapshot?.activities?.length
     ? snapshot.activities
     : tools.map((execution, index) => ({
@@ -2069,7 +2064,7 @@ export const AssistantTurn = memo(function AssistantTurn({
                 최신성 또는 중요도가 높은 정보에 필요한 웹 본문을 확인하지 못했습니다. 답변의 관련 내용을 미검증 정보로 봐 주세요.
               </div>
             )}
-            {hasArtifactWritingExecution && artifactUsage && artifactProgress && (
+            {artifactUsage && artifactProgress && (
               <div className={`artifact-progress-count is-${artifactProgress.stage}`} role="status" aria-live={terminal ? undefined : "polite"} aria-label={`문서 ${artifactUsage.estimated === false ? "완성 분량" : "작성 중 추정 분량"} ${artifactUsage.tokens.toLocaleString()} 토큰 ${artifactUsage.lines.toLocaleString()}줄${liveModelOutputTokens > 0 ? `, 모델 출력 누계 ${liveModelOutputTokens.toLocaleString()} 토큰` : ""}`}>
                 <div className="artifact-progress-heading">
                   <span>{artifactUsage.tokens === 0 && !terminal ? "문서 작성을 준비하고 있습니다." : <>{artifactUsage.estimated === false ? "문서 약" : "작성 중 약"} {artifactUsage.tokens.toLocaleString()}토큰 · {artifactUsage.lines.toLocaleString()}줄{artifactUsage.targetTokens ? <span className="artifact-progress-target"> · 목표 {artifactUsage.targetTokens.toLocaleString()}토큰</span> : null}</>}</span>

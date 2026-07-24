@@ -21,8 +21,8 @@ test("artifact progress distinguishes document size, target, and model output us
   assert.match(app, /style=\{\{ width: `\$\{artifactProgress\.percent\}%` \}\}/);
   assert.match(app, /const liveArtifactProgress = useRunArtifactProgress\(/);
   assert.match(app, /const artifactUsage = liveArtifactProgress\s+\?\? snapshot\?\.artifactUsage\s+\?\? finalMessage\?\.metadata\?\.artifactUsage/);
-  assert.match(app, /const hasArtifactWritingExecution = tools\.some\([\s\S]*?"create_report", "write_file"[\s\S]*?\);/);
-  assert.match(app, /\{hasArtifactWritingExecution && artifactUsage && artifactProgress && \(/);
+  assert.match(app, /\{artifactUsage && artifactProgress && \(/);
+  assert.doesNotMatch(app, /hasArtifactWritingExecution/);
   assert.match(app, /문서 작성을 준비하고 있습니다\./);
   assert.match(app, /artifact-progress-meter \$\{artifactUsage\.tokens === 0 && !terminal \? "is-indeterminate"/);
   assert.match(app, /artifactUsage\.estimated === false \? "문서 약" : "작성 중 약"/);
