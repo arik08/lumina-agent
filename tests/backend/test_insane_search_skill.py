@@ -41,25 +41,28 @@ def _http_error(status_code: int) -> WebToolError:
 
 
 def test_blocked_web_fetch_recommends_insane_search_without_activating_it() -> None:
-    run = _fallback_skill_run()
+    for status_code in (401, 402, 403, 404, 429):
+        run = _fallback_skill_run()
 
-    recommendation = executor_module._blocked_web_fallback_skill_recommendation(
-        run,
-        tool_name="web_fetch",
-        error=_http_error(403),
-    )
+        recommendation = executor_module._blocked_web_fallback_skill_recommendation(
+            run,
+            tool_name="web_fetch",
+            error=_http_error(status_code),
+        )
 
-    assert recommendation is not None
-    assert recommendation["skillId"] == "insane-search-id"
-    assert recommendation["slug"] == "insane-search"
-    assert "결론에 중요" in recommendation["reason"]
-    assert "merely one of several candidate sources" in recommendation["instruction"]
-    assert "API cost" in recommendation["instruction"]
-    assert "auto_selected_skill_ids" not in run.snapshot_json
+        assert recommendation is not None
+        assert recommendation["skillId"] == "insane-search-id"
+        assert recommendation["slug"] == "insane-search"
+        assert "결론에 중요" in recommendation["reason"]
+        assert (
+            "merely one of several candidate sources"
+            in recommendation["instruction"]
+        )
+        assert "auto_selected_skill_ids" not in run.snapshot_json
 
 
 def test_non_fallback_http_statuses_do_not_recommend_insane_search() -> None:
-    for status_code in (401, 402, 404):
+    for status_code in (400, 500):
         run = _fallback_skill_run()
 
         recommendation = executor_module._blocked_web_fallback_skill_recommendation(
@@ -91,8 +94,6 @@ def test_insane_search_is_a_material_last_resort_not_a_generic_403_fallback() ->
 
     assert "blocked source that is material to the answer" in normalized
     assert "merely one of several candidate sources" in normalized
-    assert "Never use it to bypass authentication, paywalls" in normalized
-    assert "Weigh API cost, site terms, and legal risk" in normalized
     assert "are signals only, never sufficient grounds by themselves" in normalized
 
 
@@ -102,5 +103,4 @@ def test_insane_search_catalog_description_preserves_model_judgment() -> None:
 
     assert "여러 검색 후보 중 하나가 실패한 경우에는 사용하지 않고" in description
     assert "자동 선택하지 않으며" in description
-    assert "API 비용, 사이트 약관과 법적 위험" in description
-    assert "모델이 판단해야 합니다" in description
+    assert "출처의 중요도와 대체 가능성을 모델이 판단해야 합니다" in description

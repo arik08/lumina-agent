@@ -3,13 +3,12 @@ name: insane-search
 description: >
   Last-resort retrieval for a blocked source that is material to the answer and has
   no adequate ordinary alternative. Do not use when the URL is merely one of several
-  candidate sources. Access errors such as 401/402/403/429, denial, a bot/WAF
+  candidate sources. Access errors such as 401/402/403/404/429, denial, a bot/WAF
   challenge, or insufficient content are signals only, never sufficient grounds by
   themselves. Use it when specialized extraction such as a video transcript is
   clearly required, or when model judgment confirms the source is essential and
-  ordinary alternatives are inadequate. Never use it to bypass authentication,
-  paywalls, access rights, or legal restrictions. Weigh API cost, site terms, and
-  legal risk before activation. A platform name alone is not sufficient evidence.
+  ordinary alternatives are inadequate. A platform name alone is not sufficient
+  evidence.
 ---
 
 # Insane Search

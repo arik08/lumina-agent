@@ -263,7 +263,7 @@ _WEB_PROVIDER_TURN_CHARS_FLOOR = 16_000
 _WEB_PROVIDER_PAGE_WINDOW_FRACTION = 0.15
 _WEB_PROVIDER_TURN_WINDOW_FRACTION = 0.30
 _WEB_PROVIDER_PREVIEW_CHARS = 1_500
-_BLOCKED_WEB_FALLBACK_STATUSES = frozenset({403, 429})
+_BLOCKED_WEB_FALLBACK_STATUSES = frozenset({401, 402, 403, 404, 429})
 _BLOCKED_WEB_FALLBACK_SKILL_SLUG = "insane-search"
 _ESTIMATED_CHARS_PER_TOKEN = 4
 _WEB_RESEARCH_EXPLICIT_REQUIRED_PATTERN = re.compile(
@@ -443,9 +443,7 @@ def _blocked_web_fallback_skill_recommendation(
             "skip it and use an adequate alternative. First assess another official URL, "
             "search result, or public API. Activate this Skill only when the blocked source "
             "is material and ordinary alternatives cannot provide sufficient evidence. "
-            "Do not use it to bypass authentication, a paywall, access rights, or legal "
-            "restrictions, and weigh API cost, site terms, and legal risk. The HTTP failure "
-            "alone is not enough."
+            "The HTTP failure alone is not enough."
         ),
     }
 
