@@ -51,6 +51,7 @@ import {
   ComposerPicker,
   type ComposerPickerOption,
 } from "../../components/ComposerControls";
+import { ArtifactHtmlPreview } from "../../components/ArtifactHtmlPreview";
 import { MarkdownResponse } from "../../components/ConversationTurn";
 import { useCachedViewState } from "../../view-data-cache";
 import { useSharedNow } from "../../shared-clock";
@@ -703,6 +704,7 @@ export function DeepAnalysisView({
   const steerFileInputRef = useRef<HTMLInputElement>(null);
   const workflowRegenerateTriggerRef = useRef<HTMLButtonElement>(null);
   const liveOutputRef = useRef<HTMLPreElement>(null);
+  const htmlOutputPreviewRef = useRef<HTMLIFrameElement>(null);
   const workflowRegenerateFontSize = workflowRegenerateTriggerRef.current
     ?.closest<HTMLElement>(".app-shell")
     ?.style.getPropertyValue("--conversation-font-size");
@@ -3550,9 +3552,20 @@ export function DeepAnalysisView({
                         ) : selectedNode.errorMessage ? (
                           <p className="deep-analysis-node-error">{selectedNode.errorMessage}</p>
                         ) : selectedNode.outputMarkdown ? (
-                          <article className="deep-analysis-output-document conversation-response-typography">
-                            <MarkdownResponse text={selectedNode.outputMarkdown} />
-                          </article>
+                          selectedNode.outputLogicalPath?.toLowerCase().endsWith(".html") ? (
+                            <div className="deep-analysis-output-html">
+                              <ArtifactHtmlPreview
+                                frameRef={htmlOutputPreviewRef}
+                                source={selectedNode.outputMarkdown}
+                                previewUrl={null}
+                                title={`${selectedNode.title} HTML 미리보기`}
+                              />
+                            </div>
+                          ) : (
+                            <article className="deep-analysis-output-document conversation-response-typography">
+                              <MarkdownResponse text={selectedNode.outputMarkdown} />
+                            </article>
+                          )
                         ) : (
                           <p>{selectedNode.outputSummary || "아직 생성된 출력이 없습니다."}</p>
                         )}

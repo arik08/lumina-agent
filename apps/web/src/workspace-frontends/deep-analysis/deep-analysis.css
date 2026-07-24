@@ -523,6 +523,7 @@
 .deep-analysis-output-path > strong { color: var(--cobalt); font-size: 9.5px; font-weight: 620; }
 .deep-analysis-output-path:hover { border-color: color-mix(in srgb, var(--cobalt) 45%, var(--line)); background: var(--cobalt-pale); }
 .deep-analysis-output-document { min-width: 0; color: var(--ink); }
+.deep-analysis-output-html { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-field); }
 .deep-analysis-output-document > .markdown-response > :last-child { margin-bottom: 0; }
 .deep-analysis-inspector .deep-analysis-output-document p { margin: 0 0 .9em; color: var(--ink); font-size: inherit; line-height: inherit; }
 .deep-analysis-generated-files { display: grid; gap: 6px; margin-top: 11px; border-top: 1px solid var(--line); padding-top: 9px; }
