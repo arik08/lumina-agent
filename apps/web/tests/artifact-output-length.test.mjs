@@ -55,7 +55,7 @@ test("composer defaults file length to 10k and sends the selected target", async
   assert.match(app, /useState<number \| null>\(defaultArtifactOutputTokens\)/);
   assert.match(app, /resetLargeOutputTargetAfterRunRef\.current = \([\s\S]*?targetOutputTokens !== null && targetOutputTokens >= 20_000[\s\S]*?\? targetOutputTokens[\s\S]*?: null[\s\S]*?\)/);
   assert.match(app, /resetLargeOutputTargetAfterRunRef\.current === null[\s\S]*?!isTerminalRunStatus\(activeRun\.status\)[\s\S]*?current === submittedTarget \? defaultArtifactOutputTokens : current/);
-  assert.doesNotMatch(app, /setTargetOutputTokens\(\(current\) => \([\s\S]*?current !== null && current >= 20_000/);
+  assert.match(app, /const startNewConversation = useCallback[\s\S]*?setTargetOutputTokens\(\(current\) => \([\s\S]*?current !== null && current >= 20_000 \? defaultArtifactOutputTokens : current/);
   assert.match(workspace, /targetOutputTokens\?: number/);
   assert.match(workspace, /currentSettings\.outputMode !== "chat" && targetOutputTokens/);
   assert.match(types, /targetOutputTokens\?: number/);

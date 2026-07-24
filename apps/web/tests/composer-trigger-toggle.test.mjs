@@ -14,13 +14,30 @@ test("composer trigger buttons toggle their picker without inserting duplicate t
 
 test("starting a new conversation closes and resets the composer picker", async () => {
   const app = await readFile(appUrl, "utf8");
-  const startNewConversation = app.match(/const startNewConversation = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[workspace\.startNewConversation\]\);/)?.[1] ?? "";
+  const startNewConversation = app.match(/const startNewConversation = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[workspace\.resetWarningComposerSettings, workspace\.startNewConversation\]\);/)?.[1] ?? "";
 
   assert.match(startNewConversation, /setComposerTrigger\(null\);/);
   assert.match(startNewConversation, /setComposerSuggestions\(\[\]\);/);
   assert.match(startNewConversation, /setSuggestionIndex\(0\);/);
+  assert.match(startNewConversation, /current !== null && current >= 20_000 \? defaultArtifactOutputTokens : current/);
+  assert.match(startNewConversation, /setAnalysisDepth\(\(current\) => current === "deep" \? "auto" : current\);/);
+  assert.match(startNewConversation, /setAnswerLength\(\(current\) => current === "detailed" \? "auto" : current\);/);
+  assert.match(startNewConversation, /void workspace\.resetWarningComposerSettings\(\);/);
   assert.match(startNewConversation, /workspace\.startNewConversation\(\);/);
   assert.doesNotMatch(startNewConversation, /workspace\.createConversation\(/);
+});
+
+test("starting a new conversation resets only warning-colored persisted settings", async () => {
+  const workspace = await readFile(new URL("../src/use-lumina-workspace.ts", import.meta.url), "utf8");
+  const resetWarningSettings = workspace.match(/const resetWarningComposerSettings = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[persistSettings\]\);/)?.[1] ?? "";
+
+  assert.match(resetWarningSettings, /current\.outputMode === "file"\) patch\.outputMode = "auto"/);
+  assert.match(resetWarningSettings, /current\.analysisDepth === "deep"\) patch\.analysisDepth = "auto"/);
+  assert.match(resetWarningSettings, /current\.answerLength === "detailed"\) patch\.answerLength = "auto"/);
+  assert.match(resetWarningSettings, /current\.execution\.effortId === "high"/);
+  assert.match(resetWarningSettings, /patch\.execution = \{ \.\.\.current\.execution, effortId: "auto" \}/);
+  assert.match(resetWarningSettings, /Object\.keys\(patch\)\.length > 0\) await persistSettings\(patch\)/);
+  assert.doesNotMatch(resetWarningSettings, /providerId|modelKey/);
 });
 
 test("a new chat stays local until the first message is sent", async () => {

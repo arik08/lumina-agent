@@ -50,6 +50,19 @@ export interface ConversationRuntime {
   streamState: StreamState;
 }
 
+type CurrentSettingsPatch = Partial<Pick<
+  CurrentSettings,
+  | "theme"
+  | "conversationWidth"
+  | "conversationFontSize"
+  | "outputMode"
+  | "analysisDepth"
+  | "answerLength"
+  | "clarificationMode"
+  | "execution"
+  | "modelCandidates"
+>>;
+
 const UNTITLED_CONVERSATION_TITLES = new Set(["제목 없음", "새 작업"]);
 const PROVISIONAL_TITLE_MAX_LENGTH = 60;
 const ACTIVE_RUN_RECONCILIATION_INTERVAL_MS = 15_000;
@@ -1076,17 +1089,7 @@ export function useLuminaWorkspace() {
     }
   }, []);
 
-  const persistSettings = useCallback(async (patch:
-    Pick<CurrentSettings, "theme">
-    | Pick<CurrentSettings, "conversationWidth">
-    | Pick<CurrentSettings, "conversationFontSize">
-    | Pick<CurrentSettings, "outputMode">
-    | Pick<CurrentSettings, "analysisDepth">
-    | Pick<CurrentSettings, "answerLength">
-    | Pick<CurrentSettings, "clarificationMode">
-    | { execution: CurrentSettings["execution"] }
-    | { modelCandidates: CurrentSettings["modelCandidates"] }
-  ) => {
+  const persistSettings = useCallback(async (patch: CurrentSettingsPatch) => {
     const current = settingsRef.current;
     if (!current) return null;
     try {
@@ -1188,6 +1191,19 @@ export function useLuminaWorkspace() {
 
   const selectAnswerLength = useCallback(async (answerLength: AnswerLength) => {
     await persistSettings({ answerLength });
+  }, [persistSettings]);
+
+  const resetWarningComposerSettings = useCallback(async () => {
+    const current = settingsRef.current;
+    if (!current) return;
+    const patch: CurrentSettingsPatch = {};
+    if (current.outputMode === "file") patch.outputMode = "auto";
+    if (current.analysisDepth === "deep") patch.analysisDepth = "auto";
+    if (current.answerLength === "detailed") patch.answerLength = "auto";
+    if (current.execution.effortId === "high") {
+      patch.execution = { ...current.execution, effortId: "auto" };
+    }
+    if (Object.keys(patch).length > 0) await persistSettings(patch);
   }, [persistSettings]);
 
   const selectConversationWidth = useCallback(async (conversationWidth: number) => {
@@ -1749,6 +1765,7 @@ export function useLuminaWorkspace() {
     selectOutputMode,
     selectAnalysisDepth,
     selectAnswerLength,
+    resetWarningComposerSettings,
     selectConversationWidth,
     selectConversationFontSize,
     selectClarificationMode,

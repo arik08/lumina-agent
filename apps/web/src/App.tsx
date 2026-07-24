@@ -2036,9 +2036,15 @@ function App() {
     setComposerSuggestions([]);
     setSuggestionIndex(0);
     setSuggestionsLoading(false);
+    setTargetOutputTokens((current) => (
+      current !== null && current >= 20_000 ? defaultArtifactOutputTokens : current
+    ));
+    setAnalysisDepth((current) => current === "deep" ? "auto" : current);
+    setAnswerLength((current) => current === "detailed" ? "auto" : current);
+    void workspace.resetWarningComposerSettings();
     workspace.startNewConversation();
     window.requestAnimationFrame(() => composerInputRef.current?.focus());
-  }, [workspace.startNewConversation]);
+  }, [workspace.resetWarningComposerSettings, workspace.startNewConversation]);
 
   const startNewDeepAnalysis = useCallback(() => {
     setMainView("deep-analysis");
