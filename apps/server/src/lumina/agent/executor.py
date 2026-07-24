@@ -149,6 +149,10 @@ from ..tools.python_execution import (
     execute_python,
     prepare_python_execution,
 )
+from ..tools.skill_resources import (
+    SKILL_RESOURCE_TOOL_SCHEMA,
+    read_skill_resource,
+)
 from ..deep_analysis.calculations import (
     PYTHON_CALCULATION_TOOL_SCHEMA,
     execute_python_calculation,
@@ -455,6 +459,49 @@ def _blocked_web_fallback_skill_recommendation(
     }
 
 
+def _skill_resource_listing(skill: Mapping[str, Any]) -> list[str]:
+    resources = skill.get("resources", [])
+    if not isinstance(resources, list):
+        return []
+    return [str(path) for path in resources if str(path).strip()][:500]
+
+
+def _skill_resources_truncated(skill: Mapping[str, Any]) -> bool:
+    resources = skill.get("resources", [])
+    return isinstance(resources, list) and len(resources) > 500
+
+
+def _skill_resources_prompt(skill: Mapping[str, Any]) -> str:
+    resources = _skill_resource_listing(skill)
+    if not resources:
+        return ""
+    rendered = "\n".join(f"- {path}" for path in resources)
+    suffix = (
+        "\n- ... resource listing truncated"
+        if _skill_resources_truncated(skill)
+        else ""
+    )
+    return (
+        "\n\nBundled resources (paths only; load on demand with "
+        "`read_skill_resource`):\n"
+        f"{rendered}{suffix}"
+    )
+
+
+def _snapshot_has_skill_resources(snapshot: Mapping[str, Any]) -> bool:
+    if any(
+        isinstance(extension, Mapping) and bool(extension.get("resources"))
+        for extension in snapshot.get("extensions", [])
+    ):
+        return True
+    return any(
+        isinstance(server, Mapping)
+        and isinstance(server.get("skill_wrapper"), Mapping)
+        and bool(server["skill_wrapper"].get("resources"))
+        for server in snapshot.get("mcp_servers", [])
+    )
+
+
 def _web_call_signature(tool_name: str, arguments: Mapping[str, Any]) -> str:
     if tool_name == "web_search":
         tokens = _WEB_QUERY_TOKEN.findall(str(arguments.get("query", "")).casefold())
@@ -582,6 +629,43 @@ def _recalled_memory_context(snapshot: Mapping[str, Any]) -> str:
     return "\n\n".join(
         text for text in (memory_context, project_memory_context) if text
     )
+
+
+def _recalled_memory_citations(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
+    citations: list[dict[str, Any]] = []
+    for memory in snapshot.get("user_memories", []):
+        if not isinstance(memory, Mapping):
+            continue
+        display_text = str(memory.get("display_text", "")).strip()
+        memory_id = str(memory.get("id", "")).strip()
+        if not display_text or not memory_id:
+            continue
+        citations.append(
+            {
+                "memoryId": memory_id,
+                "scope": "user",
+                "category": str(memory.get("category", "")).strip(),
+                "displayText": display_text,
+            }
+        )
+    for memory in snapshot.get("project_memories", []):
+        if not isinstance(memory, Mapping):
+            continue
+        display_text = str(memory.get("display_text", "")).strip()
+        memory_id = str(memory.get("id", "")).strip()
+        if not display_text or not memory_id:
+            continue
+        citations.append(
+            {
+                "memoryId": memory_id,
+                "scope": "project",
+                "category": str(memory.get("category", "")).strip(),
+                "displayText": display_text,
+                "memoryKey": str(memory.get("memory_key", "")).strip(),
+                "revision": memory.get("revision"),
+            }
+        )
+    return citations
 
 
 class LocalRunExecutor:
@@ -1585,6 +1669,11 @@ class LocalRunExecutor:
             *knowledge_schemas,
             *SOURCE_DOCUMENT_TOOL_SCHEMAS,
             *WORKSPACE_TOOL_SCHEMAS,
+            *(
+                (SKILL_RESOURCE_TOOL_SCHEMA,)
+                if _snapshot_has_skill_resources(run.snapshot_json)
+                else ()
+            ),
             PYTHON_EXECUTION_TOOL_SCHEMA,
         )
         tool_surface = build_tool_surface(
@@ -3984,7 +4073,8 @@ class LocalRunExecutor:
                     f'<skill id="{extension.get("extension_id")}" '
                     f'digest="{extension.get("digest")}" '
                     f'name="{extension.get("name", "Skill")}">\n'
-                    f"{_bounded_text(instructions, 40_000)}\n</skill>"
+                    f"{_bounded_text(instructions, 40_000)}"
+                    f"{_skill_resources_prompt(extension)}\n</skill>"
                 )
             if skill_sections:
                 message += "\n\n[Explicit Skill instructions]\n" + "\n\n".join(
@@ -4419,8 +4509,10 @@ class LocalRunExecutor:
                 "with `update_plan` in the same response; do not pair it with substantive tools. "
                 "Do not activate a Skill merely because its name or a related word appears. "
                 "The successful tool result contains authoritative Skill instructions; follow "
-                "them on the next model turn. Skills explicitly selected with $Skill or fixed "
-                "by a scheduled Run are already active."
+                "them on the next model turn. The result lists bundled resource paths without "
+                "loading their contents. Read only a resource made relevant by the Skill "
+                "instructions. Skills explicitly selected with $Skill or fixed by a scheduled "
+                "Run are already active."
             )
         if any(
             isinstance(schema.get("function"), dict)
@@ -4579,6 +4671,7 @@ class LocalRunExecutor:
                     f"\n\n{skill_label}: {skill.get('name', 'Skill')} "
                     f"({skill.get('digest', 'unknown')})\n"
                     f"{_bounded_text(instructions, 40_000)}"
+                    f"{_skill_resources_prompt(skill)}"
                 )
         for mcp_server in run.snapshot_json.get("mcp_servers", []):
             wrapper = mcp_server.get("skill_wrapper", {})
@@ -4588,6 +4681,7 @@ class LocalRunExecutor:
                     f"\n\nSelected MCP guidance: {mcp_server.get('name', 'MCP')} "
                     f"({wrapper.get('digest', 'unknown')})\n"
                     f"{_bounded_text(instructions, 40_000)}"
+                    f"{_skill_resources_prompt(wrapper)}"
                 )
         messages: list[ProviderMessage] = [
             ProviderMessage(role="system", content=system)
@@ -4997,6 +5091,9 @@ class LocalRunExecutor:
                         "instructions": _bounded_text(
                             str(selected.get("instructions", "")).strip(), 40_000
                         ),
+                        "resources": _skill_resource_listing(selected),
+                        "resourcesTruncated": _skill_resources_truncated(selected),
+                        "compatibility": selected.get("compatibility"),
                     }
                     _store_inline_tool_result(active_run, tool_call, result)
                 if not already_active:
@@ -5423,6 +5520,32 @@ class LocalRunExecutor:
                 tool_id,
                 payload,
                 f"Python 계산 결과 {payload['rowCount']}행을 저장했습니다.",
+            )
+            return payload
+
+        if tool_call["name"] == "read_skill_resource":
+            try:
+                with session_scope() as db:
+                    resource_run = db.scalar(
+                        select(Run).where(Run.id == run_id).with_for_update()
+                    )
+                    if resource_run is None:
+                        raise RuntimeError(
+                            "Run context disappeared while reading a Skill resource"
+                        )
+                    self._require_execution_owner(resource_run)
+                    payload = read_skill_resource(
+                        db,
+                        run=resource_run,
+                        arguments=arguments,
+                    )
+            except (ApiProblem, TypeError, ValueError) as exc:
+                return await self._fail_tool_execution(run_id, tool_id, exc)
+            await self._complete_tool_execution(
+                run_id,
+                tool_id,
+                payload,
+                f"Skill resource {payload['path']} 읽기를 완료했습니다.",
             )
             return payload
 
@@ -7306,6 +7429,9 @@ class LocalRunExecutor:
             )
             artifact_usage = run.snapshot_json.get("artifact_usage")
             message_metadata = {"usage": run.usage_json, **web_metadata}
+            memory_citations = _recalled_memory_citations(run.snapshot_json)
+            if memory_citations:
+                message_metadata["memoryCitations"] = memory_citations
             if isinstance(artifact_usage, Mapping):
                 message_metadata["artifactUsage"] = dict(artifact_usage)
             message = Message(

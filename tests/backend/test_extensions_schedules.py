@@ -195,7 +195,8 @@ def test_repository_mcp_wrapper_is_classified_and_attached_to_mcp_snapshot(
             "---\n"
             "name: internal-search\n"
             "description: 승인된 사내 문서를 검색합니다.\n"
-            "source: skill-mcp:internal-search\n"
+            "metadata:\n"
+            "  lumina-source: skill-mcp:internal-search\n"
             "---\n\n"
             "# Internal Search\n\n반드시 MCP 검색 결과만 근거로 답합니다.\n",
             encoding="utf-8",
@@ -428,7 +429,9 @@ def test_skill_draft_compare_and_swap_rejects_stale_session(tmp_path: Path) -> N
         assert "package" not in listed["draft"]
         full_draft = client.get(f"/api/extensions/{created.json()['id']}/draft")
         assert full_draft.status_code == 200, full_draft.text
-        assert full_draft.json()["package"]["files"] == {"SKILL.md": "# CAS base"}
+        initial_skill_md = full_draft.json()["package"]["files"]["SKILL.md"]
+        assert "name: cas-skill" in initial_skill_md
+        assert initial_skill_md.endswith("# CAS base")
 
         with SessionLocal() as first_db, SessionLocal() as stale_db:
             first_user = first_db.scalar(
@@ -478,7 +481,9 @@ def test_skill_draft_compare_and_swap_rejects_stale_session(tmp_path: Path) -> N
             )
             assert persisted is not None
             assert persisted.current_revision == 2
-            assert persisted.package_json == {"SKILL.md": "# CAS winner"}
+            persisted_skill_md = persisted.package_json["SKILL.md"]
+            assert "name: cas-skill" in persisted_skill_md
+            assert persisted_skill_md.endswith("# CAS winner")
             assert [revision.revision_number for revision in revisions] == [1, 2]
 
 

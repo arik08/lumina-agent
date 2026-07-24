@@ -14,6 +14,7 @@ from lumina.api.errors import ApiProblem
 from lumina.artifacts.service import create_artifact
 from lumina.config import Settings
 from lumina.db import SessionLocal
+from lumina.extensions.repository_catalog import _skill_package
 from lumina.main import create_app
 from lumina.models import Extension, ExtensionVersion, Run, User, new_uuid
 from lumina.providers import MockProvider, MockToolCall
@@ -26,6 +27,13 @@ from lumina.tools.python_execution import (
     execute_python,
     prepare_python_execution,
 )
+from lumina.tools.skill_resources import (
+    SKILL_RESOURCE_TOOL_SCHEMA,
+    read_skill_resource,
+)
+
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _settings(tmp_path: Path) -> Settings:
@@ -101,6 +109,15 @@ def test_python_tool_schema_and_approval_contract() -> None:
         "run_python", approval_mode="yolo"
     ).approval_required is False
     assert _ARTIFACT_CREATION_REQUEST.search("hello.py를 작성해 주세요")
+    assert (
+        SKILL_RESOURCE_TOOL_SCHEMA["function"]["name"] == "read_skill_resource"
+    )
+    resource_risk = classify_tool_risk(
+        "read_skill_resource",
+        approval_mode="on_risk",
+    )
+    assert resource_risk.effect == "read_only"
+    assert resource_risk.approval_required is False
 
 
 def test_python_artifact_is_frozen_and_executed_with_utf8_output(
@@ -338,6 +355,7 @@ def test_active_skill_module_uses_exact_version_package(tmp_path: Path) -> None:
                     "if payload:\n"
                     "    print(ProgramInput.model_validate_json(payload).amount * 2)\n"
                 ),
+                "references/guide.md": "guide-" * 200,
             }
             version = ExtensionVersion(
                 extension_id=extension.id,
@@ -362,6 +380,11 @@ def test_active_skill_module_uses_exact_version_package(tmp_path: Path) -> None:
                         "version": 1,
                         "digest": version.package_digest,
                         "instructions": package["SKILL.md"],
+                        "resources": [
+                            "engine/__init__.py",
+                            "engine/__main__.py",
+                            "references/guide.md",
+                        ],
                     }
                 ],
                 "auto_selected_skill_ids": [extension.id],
@@ -399,6 +422,25 @@ def test_active_skill_module_uses_exact_version_package(tmp_path: Path) -> None:
                     executable=sys.executable,
                 ),
             )
+            first_page = read_skill_resource(
+                db,
+                run=run,
+                arguments={
+                    "skill_id": extension.slug,
+                    "path": "references/guide.md",
+                    "limit": 500,
+                },
+            )
+            second_page = read_skill_resource(
+                db,
+                run=run,
+                arguments={
+                    "skill_id": extension.id,
+                    "path": "references/guide.md",
+                    "offset": first_page["nextOffset"],
+                    "limit": 1_000,
+                },
+            )
             db.commit()
 
     assert prepared is not None
@@ -420,6 +462,10 @@ def test_active_skill_module_uses_exact_version_package(tmp_path: Path) -> None:
         "heavy-argument",
         "42",
     ]
+    assert first_page["content"] == package["references/guide.md"][:500]
+    assert first_page["complete"] is False
+    assert second_page["content"] == package["references/guide.md"][500:]
+    assert second_page["complete"] is True
 
 
 def test_inactive_skill_and_unsafe_entrypoint_are_rejected(tmp_path: Path) -> None:
@@ -527,6 +573,27 @@ def test_python_timeout_and_output_limit() -> None:
     assert noisy_result["ok"] is True
     assert noisy_result["stdoutTruncated"] is True
     assert len(noisy_result["stdout"].encode("utf-8")) <= MAX_PYTHON_OUTPUT_BYTES
+
+
+def test_insane_search_module_runs_from_materialized_skill_package() -> None:
+    package = _skill_package(
+        REPOSITORY_ROOT / "extensions" / "skills" / "insane-search"
+    )
+    prepared = PreparedPythonExecution(
+        source_type="skill",
+        files=package,
+        entrypoint="engine",
+        module="engine",
+        args=("--help",),
+        timeout_seconds=10,
+        source_metadata={"skillId": "insane-search", "digest": "fixture"},
+    )
+
+    result = asyncio.run(execute_python(prepared))
+
+    assert result["ok"] is True
+    assert "Generic WAF-profile fetch chain." in result["stdout"]
+    assert "--no-playwright" in result["stdout"]
 
 
 def test_heavy_python_cancellation_stops_the_process() -> None:

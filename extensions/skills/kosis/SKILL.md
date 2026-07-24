@@ -1,7 +1,8 @@
 ---
 name: kosis
 description: KOSIS 국가통계포털의 통계표, 국가통계 시계열과 메타데이터를 조회할 때 사용하는 MCP 라우팅 지침입니다.
-source: skill-mcp:kosis
+metadata:
+  lumina-source: skill-mcp:kosis
 ---
 
 # KOSIS MCP

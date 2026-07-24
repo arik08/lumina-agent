@@ -21,22 +21,24 @@ from sqlalchemy.orm import Session
 from ..api.errors import ApiProblem
 from ..artifacts.service import require_artifact
 from ..http_client import TrustProfile, redact_sensitive_text
+from ..extensions.package_content import decode_package_content
 from ..models import (
     ArtifactVersion,
-    ExtensionDraft,
-    ExtensionDraftRevision,
-    ExtensionVersion,
     Run,
     User,
 )
 from ..storage import ManagedLocalStorage
+from .skill_resources import (
+    active_skill_snapshot,
+    frozen_skill_package,
+    safe_skill_package_path,
+)
 
 
 MAX_PYTHON_ARGUMENTS = 32
 MAX_PYTHON_ARGUMENT_CHARS = 2_000
 MAX_PYTHON_INPUT_JSON_BYTES = 1_000_000
 MAX_PYTHON_OUTPUT_BYTES = 100_000
-MAX_PYTHON_PACKAGE_BYTES = 5_000_000
 MAX_PYTHON_SCRIPT_BYTES = 1_000_000
 DEFAULT_PYTHON_TIMEOUT_SECONDS = 120
 MAX_PYTHON_TIMEOUT_SECONDS = 600
@@ -371,14 +373,14 @@ def _prepare_skill_execution(
         raise ValueError("Skill Python 실행에는 skill_id가 필요합니다.")
     if arguments.get("artifact_id") or arguments.get("artifact_version"):
         raise ValueError("Skill Python 실행에는 Artifact를 함께 지정할 수 없습니다.")
-    skill = _active_skill_snapshot(run, requested_skill)
-    package = _frozen_skill_package(db, skill)
+    skill = active_skill_snapshot(run, requested_skill)
+    package = frozen_skill_package(db, skill)
     path_value = str(arguments.get("path") or "").strip()
     module_value = str(arguments.get("module") or "").strip()
     if bool(path_value) == bool(module_value):
         raise ValueError("Skill 실행에는 path 또는 module 중 하나만 지정해야 합니다.")
     if path_value:
-        entrypoint = _safe_package_path(path_value)
+        entrypoint = safe_skill_package_path(path_value)
         if PurePosixPath(entrypoint).suffix.casefold() != ".py":
             raise ValueError("Skill Python entrypoint는 .py 파일이어야 합니다.")
         if entrypoint not in package:
@@ -424,97 +426,6 @@ def _prepare_skill_execution(
         profile=profile,
         executable=executable,
     )
-
-
-def _active_skill_snapshot(run: Run, requested: str) -> dict[str, Any]:
-    extensions = [
-        dict(item)
-        for item in run.snapshot_json.get("extensions", [])
-        if isinstance(item, Mapping)
-    ]
-    if run.snapshot_json.get("extension_application") == "all_snapshot":
-        active_ids = {str(item.get("extension_id", "")) for item in extensions}
-    else:
-        active_ids = {
-            str(reference.get("reference_id", ""))
-            for reference in run.snapshot_json.get("prompt_references", [])
-            if isinstance(reference, Mapping) and reference.get("kind") == "skill"
-        }
-        active_ids.update(
-            str(item)
-            for item in run.snapshot_json.get("auto_selected_skill_ids", [])
-        )
-    selected = next(
-        (
-            item
-            for item in extensions
-            if str(item.get("extension_id", "")) in active_ids
-            and requested
-            in {
-                str(item.get("extension_id", "")),
-                str(item.get("slug", "")),
-            }
-        ),
-        None,
-    )
-    if selected is None:
-        raise ApiProblem(
-            403,
-            "skill_not_active",
-            "현재 Run에서 활성화되고 고정된 Skill만 실행할 수 있습니다.",
-        )
-    return selected
-
-
-def _frozen_skill_package(
-    db: Session,
-    snapshot: Mapping[str, Any],
-) -> dict[str, str]:
-    extension_id = str(snapshot.get("extension_id") or "")
-    digest = str(snapshot.get("digest") or "")
-    if snapshot.get("source") == "version":
-        version = db.get(ExtensionVersion, str(snapshot.get("version_id") or ""))
-        if (
-            version is None
-            or version.extension_id != extension_id
-            or version.package_digest != digest
-        ):
-            raise ValueError("고정된 Skill version package를 확인할 수 없습니다.")
-        package = dict(version.package_json)
-    elif snapshot.get("source") == "draft":
-        draft_id = str(snapshot.get("draft_id") or "")
-        revision_number = snapshot.get("draft_revision")
-        revision = (
-            db.scalar(
-                select(ExtensionDraftRevision).where(
-                    ExtensionDraftRevision.draft_id == draft_id,
-                    ExtensionDraftRevision.revision_number == revision_number,
-                )
-            )
-            if isinstance(revision_number, int)
-            and not isinstance(revision_number, bool)
-            else None
-        )
-        if revision is not None and revision.package_digest == digest:
-            package = dict(revision.package_json)
-        else:
-            draft = db.get(ExtensionDraft, draft_id)
-            if (
-                draft is None
-                or draft.extension_id != extension_id
-                or draft.current_revision != revision_number
-                or draft.current_digest != digest
-            ):
-                raise ValueError("고정된 Skill draft package를 확인할 수 없습니다.")
-            package = dict(draft.package_json)
-    else:
-        raise ValueError("지원하지 않는 Skill snapshot source입니다.")
-    total_bytes = sum(len(content.encode("utf-8")) for content in package.values())
-    if total_bytes > MAX_PYTHON_PACKAGE_BYTES:
-        raise ValueError(
-            f"Skill package가 {MAX_PYTHON_PACKAGE_BYTES} byte 실행 제한을 초과했습니다."
-        )
-    return {_safe_package_path(path): content for path, content in package.items()}
 
 
 async def execute_python(
@@ -685,21 +596,6 @@ def _python_executable(value: str) -> str:
     return str(executable)
 
 
-def _safe_package_path(value: str) -> str:
-    text = str(value).replace("\\", "/").strip()
-    path = PurePosixPath(text)
-    if (
-        not text
-        or "\x00" in text
-        or ":" in text
-        or path.is_absolute()
-        or any(part in {"", ".", ".."} for part in path.parts)
-        or len(path.parts) > 20
-    ):
-        raise ValueError("안전하지 않은 Skill package 경로입니다.")
-    return path.as_posix()
-
-
 def _safe_artifact_filename(value: str) -> str:
     name = PurePosixPath(str(value).replace("\\", "/")).name.strip()
     if not name or name in {".", ".."} or "\x00" in name:
@@ -725,14 +621,18 @@ def _decode_python(content: bytes, *, label: str) -> str:
 
 def _materialize(root: Path, files: Mapping[str, str]) -> None:
     for relative, content in files.items():
-        safe_relative = _safe_package_path(relative)
+        safe_relative = safe_skill_package_path(relative)
         target = (root / PurePosixPath(safe_relative)).resolve(strict=False)
         try:
             target.relative_to(root)
         except ValueError as exc:
             raise ValueError("Python 실행 package 경로가 임시 root를 벗어났습니다.") from exc
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8", newline="\n")
+        payload, encoding = decode_package_content(content)
+        if encoding == "utf-8":
+            target.write_text(content, encoding="utf-8", newline="\n")
+        else:
+            target.write_bytes(payload)
 
 
 def _python_environment(trust_profile: TrustProfile | None) -> dict[str, str]:

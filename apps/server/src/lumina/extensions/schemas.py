@@ -8,7 +8,7 @@ from ..api.schemas import ApiModel
 
 
 class SkillPackage(ApiModel):
-    files: dict[str, str] = Field(min_length=1, max_length=100)
+    files: dict[str, str] = Field(min_length=1)
 
 
 class ExtensionCreate(ApiModel):

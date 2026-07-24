@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from ..api.errors import ApiProblem
 from ..authorization import require_admin, require_project
+from ..extensions.agent_skill_spec import skill_resource_paths
 from ..models import (
     Extension,
     ExtensionVersion,
@@ -22,7 +23,11 @@ from ..models import (
     User,
     utc_now,
 )
-from .policy import APPROVABLE_PRIVATE_NETWORKS, SECRET_NAME_PATTERN
+from .policy import (
+    APPROVABLE_PRIVATE_NETWORKS,
+    MAX_MCP_TIMEOUT_SECONDS,
+    SECRET_NAME_PATTERN,
+)
 
 
 ALLOWED_STDIO_EXECUTABLES = frozenset(
@@ -191,9 +196,11 @@ def validate_configuration(
         configuration.get("required_secret_names", [])
     )
     timeout_seconds = int(configuration.get("timeout_seconds", 30))
-    if not 1 <= timeout_seconds <= 300:
+    if not 1 <= timeout_seconds <= MAX_MCP_TIMEOUT_SECONDS:
         raise ApiProblem(
-            422, "mcp_timeout_invalid", "MCP timeout은 1초에서 300초 사이여야 합니다."
+            422,
+            "mcp_timeout_invalid",
+            f"MCP timeout은 1초에서 {MAX_MCP_TIMEOUT_SECONDS}초 사이여야 합니다.",
         )
 
     if transport == "stdio":
@@ -1212,9 +1219,14 @@ def mcp_skill_wrappers(
             continue
         wrappers[mcp_slug] = {
             "extension_id": extension.id,
+            "slug": extension.slug,
             "name": extension.name,
             "digest": version.package_digest,
+            "source": "version",
+            "version_id": version.id,
+            "version": version.version_number,
             "instructions": instructions,
+            "resources": skill_resource_paths(version.package_json),
         }
     return wrappers
 

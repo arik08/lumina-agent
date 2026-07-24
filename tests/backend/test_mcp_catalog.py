@@ -29,6 +29,7 @@ from lumina.mcp.runtime import (
     PreparedMcpTool,
     load_pinned_server_configs,
 )
+from lumina.mcp.policy import MAX_MCP_TIMEOUT_SECONDS
 from lumina.mcp.service import validate_configuration
 from lumina.models import (
     AuditEvent,
@@ -936,6 +937,27 @@ def test_mcp_header_templates_reject_unsafe_secret_locations() -> None:
         with pytest.raises(ApiProblem) as error:
             validate_configuration(configuration)
         assert error.value.code == expected_code
+
+
+def test_mcp_timeout_supports_long_company_calculations() -> None:
+    configuration = {
+        "transport": "stdio",
+        "command": ["python", "company_calculator.py"],
+        "tools": [{"name": "calculate", "inputSchema": {"type": "object"}}],
+        "timeout_seconds": 3_600,
+    }
+
+    normalized, _digest = validate_configuration(configuration)
+    assert normalized["timeout_seconds"] == 3_600
+
+    with pytest.raises(ApiProblem) as error:
+        validate_configuration(
+            {
+                **configuration,
+                "timeout_seconds": MAX_MCP_TIMEOUT_SECONDS + 1,
+            }
+        )
+    assert error.value.code == "mcp_timeout_invalid"
 
 
 def test_mcp_migration_0009_adds_header_templates(tmp_path: Path) -> None:

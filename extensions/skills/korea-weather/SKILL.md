@@ -1,7 +1,8 @@
 ---
 name: korea-weather
 description: 대한민국 현재 날씨, 단기·중기 예보, 기상특보와 영향예보를 조회할 때 사용하는 기상청 MCP 라우팅 지침입니다.
-source: skill-mcp:korea-weather
+metadata:
+  lumina-source: skill-mcp:korea-weather
 ---
 
 # 대한민국 날씨 MCP

@@ -31,7 +31,7 @@
 - Run이 사용하는 파일, 지침, Provider 설정과 Skill·MCP는 정확한 version·revision·digest를 snapshot으로 고정합니다.
 - 새 Provider Model은 자동 활성화하지 않습니다. 지속 선택값의 원본은 서버 DB이며 새 옵션에는 저장 scope, default, restore 시점과 invalid fallback을 함께 정의합니다.
 - TLS 오류를 `verify=False`로 우회하지 않고 public CA와 company CA를 결합한 Trust Manager를 사용합니다.
-- MCP definition과 `extensions/skills/<wrapper>/SKILL.md`의 `source: skill-mcp:<mcp-slug>`를 함께 관리하고 Skill과 MCP로 중복 노출하지 않습니다.
+- MCP definition과 `extensions/skills/<wrapper>/SKILL.md`의 `metadata.lumina-source: skill-mcp:<mcp-slug>`를 함께 관리하고 Skill과 MCP로 중복 노출하지 않습니다.
 
 ## UI 변경
 

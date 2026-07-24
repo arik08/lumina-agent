@@ -55,8 +55,10 @@ def test_every_mcp_server_has_a_skill_wrapper() -> None:
     wrapped_names: list[str] = []
     for skill_path in SKILL_ROOT.glob("*/SKILL.md"):
         for line in skill_path.read_text(encoding="utf-8").splitlines():
-            if line.startswith("source: skill-mcp:"):
-                wrapped_names.append(line.removeprefix("source: skill-mcp:").strip())
+            if line.strip().startswith("lumina-source: skill-mcp:"):
+                wrapped_names.append(
+                    line.strip().removeprefix("lumina-source: skill-mcp:").strip()
+                )
                 break
     assert len(wrapped_names) == len(set(wrapped_names))
     assert set(wrapped_names) == server_names

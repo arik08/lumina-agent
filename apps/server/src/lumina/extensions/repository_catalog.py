@@ -4,7 +4,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import re
 from pathlib import Path
 from threading import Lock
 from typing import Any
@@ -33,34 +32,22 @@ from ..models import (
     User,
     utc_now,
 )
-from .package_policy import SKILL_TEXT_SUFFIXES
+from .agent_skill_spec import AgentSkillSpecError, parse_agent_skill
+from .package_content import encode_binary_package_content
 from .service import normalize_package, package_digest
 
 
-_FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.DOTALL)
-_IGNORED_PARTS = {".git", "__pycache__", "node_modules", "vendor", ".venv"}
+_IGNORED_PARTS = {
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    "__pycache__",
+    "node_modules",
+}
 _REPOSITORY_SYNC_LOCK = Lock()
 logger = logging.getLogger(__name__)
-
-
-def _frontmatter(text: str) -> dict[str, str]:
-    match = _FRONTMATTER.match(text.replace("\r\n", "\n"))
-    if not match:
-        return {}
-    result: dict[str, str] = {}
-    active_key: str | None = None
-    for raw_line in match.group(1).splitlines():
-        if raw_line[:1].isspace() and active_key:
-            result[active_key] = f"{result[active_key]} {raw_line.strip()}".strip()
-            continue
-        key, separator, value = raw_line.partition(":")
-        if separator and key.strip() in {"name", "description", "source"}:
-            active_key = key.strip()
-            cleaned = value.strip().strip("'\"")
-            result[active_key] = "" if cleaned in {">", "|", ">-", "|-"} else cleaned
-        else:
-            active_key = None
-    return result
 
 
 def _catalog_tags(value: Any) -> list[str]:
@@ -80,17 +67,17 @@ def _catalog_tags(value: Any) -> list[str]:
 def _skill_package(folder: Path) -> dict[str, str]:
     files: dict[str, str] = {}
     for path in sorted(folder.rglob("*")):
-        if not path.is_file() or path.suffix.casefold() not in SKILL_TEXT_SUFFIXES:
+        if not path.is_file():
             continue
         relative = path.relative_to(folder)
         if any(part in _IGNORED_PARTS for part in relative.parts):
             continue
-        if path.stat().st_size > 500_000:
-            continue
         try:
             files[relative.as_posix()] = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
-            continue
+            files[relative.as_posix()] = encode_binary_package_content(
+                path.read_bytes()
+            )
     return normalize_package(files)
 
 
@@ -113,18 +100,19 @@ def sync_repository_skills(
             continue
         package = _skill_package(folder)
         digest = package_digest(package)
-        metadata = _frontmatter(package["SKILL.md"])
-        slug = (
-            re.sub(
-                r"[^a-z0-9]+", "-", metadata.get("name", folder.name).casefold()
-            ).strip("-")
-            or folder.name
-        )
+        try:
+            skill_document = parse_agent_skill(
+                package["SKILL.md"],
+                expected_name=folder.name,
+            )
+        except AgentSkillSpecError as exc:
+            logger.error("Skipping invalid Agent Skill %s: %s", folder, exc)
+            continue
+        slug = skill_document.name
         catalog_entry = catalog.get(slug, {})
-        description = str(
-            catalog_entry.get("description") or metadata.get("description", "")
-        )
-        wrapper_source = metadata.get("source", "")
+        description = skill_document.description
+        tags = _catalog_tags(catalog_entry.get("tags"))
+        wrapper_source = skill_document.metadata.get("lumina-source", "")
         mcp_slug = (
             normalize_slug(wrapper_source.removeprefix("skill-mcp:"))
             if wrapper_source.startswith("skill-mcp:")
@@ -134,7 +122,7 @@ def sync_repository_skills(
             "source": "repository",
             "sourcePath": folder.relative_to(root or REPOSITORY_ROOT).as_posix(),
             "category": "기본 제공",
-            "tags": _catalog_tags(catalog_entry.get("tags")),
+            "tags": tags,
             "publisher": "Lumina",
             "fileCount": len(package),
             **(
@@ -152,7 +140,7 @@ def sync_repository_skills(
             extension = Extension(
                 kind="mcp" if mcp_slug is not None else "skill",
                 slug=slug,
-                name=metadata.get("name", folder.name),
+                name=skill_document.name,
                 description=description,
                 owner_user_id=admin.id,
                 creator_user_id=admin.id,
@@ -176,9 +164,9 @@ def sync_repository_skills(
             .where(ExtensionVersion.extension_id == extension.id)
             .order_by(ExtensionVersion.version_number.desc())
         )
-        extension.name = metadata.get("name", folder.name)
+        extension.name = skill_document.name
         extension.description = description
-        extension.tags_json = manifest["tags"]
+        extension.tags_json = tags
         extension.kind = "mcp" if mcp_slug is not None else "skill"
         extension.visibility = "organization"
         extension.publisher_user_id = admin.id

@@ -1,7 +1,8 @@
 ---
 name: ecos
 description: 한국은행 ECOS의 환율, 주요 경제지표와 통계 시계열을 조회할 때 사용하는 MCP 라우팅 지침입니다.
-source: skill-mcp:ecos
+metadata:
+  lumina-source: skill-mcp:ecos
 ---
 
 # 한국은행 ECOS MCP

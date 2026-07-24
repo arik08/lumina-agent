@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from lumina.agent import executor as executor_module
+from lumina.extensions.agent_skill_spec import parse_agent_skill
 from lumina.models import Run
 from lumina.tools.web import WebToolError
 
@@ -97,10 +97,13 @@ def test_insane_search_is_a_material_last_resort_not_a_generic_403_fallback() ->
     assert "are signals only, never sufficient grounds by themselves" in normalized
 
 
-def test_insane_search_catalog_description_preserves_model_judgment() -> None:
-    catalog = json.loads((SKILL_ROOT / "catalog.json").read_text(encoding="utf-8"))
-    description = catalog["insane-search"]["description"]
+def test_insane_search_frontmatter_description_preserves_model_judgment() -> None:
+    skill = (SKILL_ROOT / "insane-search" / "SKILL.md").read_text(encoding="utf-8")
+    description = parse_agent_skill(
+        skill,
+        expected_name="insane-search",
+    ).description
 
-    assert "여러 검색 후보 중 하나가 실패한 경우에는 사용하지 않고" in description
-    assert "자동 선택하지 않으며" in description
-    assert "출처의 중요도와 대체 가능성을 모델이 판단해야 합니다" in description
+    assert "merely one of several candidate sources" in description
+    assert "signals only, never sufficient grounds" in description
+    assert "model judgment confirms the source is essential" in description

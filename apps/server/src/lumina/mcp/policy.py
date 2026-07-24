@@ -5,6 +5,7 @@ import re
 
 
 SECRET_NAME_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]{1,79}$")
+MAX_MCP_TIMEOUT_SECONDS = 24 * 60 * 60
 APPROVABLE_PRIVATE_NETWORKS = tuple(
     ipaddress.ip_network(value)
     for value in (

@@ -1,7 +1,8 @@
 ---
 name: national-assembly
 description: 열린국회정보 OpenAPI와 국민참여입법센터 API를 함께 사용하는 대한민국 국회 MCP 라우팅 스킬입니다.
-source: skill-mcp:national-assembly
+metadata:
+  lumina-source: skill-mcp:national-assembly
 ---
 
 # 대한민국 국회 MCP

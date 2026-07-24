@@ -9,7 +9,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..audit import record_audit
-from ..extensions.package_policy import SKILL_TEXT_SUFFIXES
 from ..extensions.service import sync_workspace_skill
 from ..models import ProjectFile, ProjectFileVersion, Run, User
 from ..project_files.service import (
@@ -316,18 +315,19 @@ def _sync_workspace_skill_draft(
             len(item_parts) < 3
             or item_parts[0].casefold() != "skills"
             or item_parts[1].casefold() != slug.casefold()
-            or PurePosixPath(item.logical_path).suffix.casefold()
-            not in SKILL_TEXT_SUFFIXES
         ):
             continue
         version = get_project_file_version(db, item)
-        package[PurePosixPath(item.logical_path).relative_to(root).as_posix()] = (
-            _decode_text(
+        try:
+            content = _decode_text(
                 storage.read_bytes(
-                    version.storage_key, expected_sha256=version.content_hash
+                    version.storage_key,
+                    expected_sha256=version.content_hash,
                 )
             )
-        )
+        except ValueError:
+            continue
+        package[PurePosixPath(item.logical_path).relative_to(root).as_posix()] = content
     skill_md = next(
         (content for path, content in package.items() if path.casefold() == "skill.md"),
         None,

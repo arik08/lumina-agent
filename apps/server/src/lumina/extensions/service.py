@@ -32,6 +32,14 @@ from ..models import (
     utc_now,
 )
 from ..secret_policy import reject_secret_key_names
+from .agent_skill_spec import (
+    AgentSkillDocument,
+    AgentSkillSpecError,
+    ensure_agent_skill_package,
+    parse_agent_skill,
+    skill_resource_paths,
+)
+from .package_content import decode_package_content
 
 
 _SAFE_SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -50,7 +58,6 @@ def normalize_package(files: dict[str, str]) -> dict[str, str]:
         raise ApiProblem(422, "skill_package_empty", "Skill package가 비어 있습니다.")
     normalized: dict[str, str] = {}
     normalized_names: set[str] = set()
-    total_size = 0
     for raw_path, content in files.items():
         path_text = raw_path.replace("\\", "/").strip()
         path = PurePosixPath(path_text)
@@ -84,17 +91,19 @@ def normalize_package(files: dict[str, str]) -> dict[str, str]:
             raise ApiProblem(
                 422, "invalid_package_content", "Skill package 파일은 text여야 합니다."
             )
-        encoded_size = len(content.encode("utf-8"))
-        if encoded_size > 1_000_000:
-            raise ApiProblem(
-                413, "package_file_too_large", "Skill package 파일 크기가 너무 큽니다."
-            )
-        total_size += encoded_size
-        if total_size > 5_000_000:
-            raise ApiProblem(
-                413, "package_too_large", "Skill package 전체 크기가 너무 큽니다."
-            )
-        if "-----BEGIN" in content and "PRIVATE KEY-----" in content:
+        try:
+            raw_content, encoding = decode_package_content(content)
+        except ValueError as exc:
+            raise ApiProblem(422, "invalid_package_content", str(exc)) from exc
+        secret_scan_content = (
+            content
+            if encoding == "utf-8"
+            else raw_content.decode("utf-8", errors="ignore")
+        )
+        if (
+            "-----BEGIN" in secret_scan_content
+            and "PRIVATE KEY-----" in secret_scan_content
+        ):
             raise ApiProblem(
                 422,
                 "secret_content_forbidden",
@@ -113,6 +122,22 @@ def normalize_package(files: dict[str, str]) -> dict[str, str]:
             422, "skill_md_required", "Skill package에는 SKILL.md가 필요합니다."
         )
     return dict(sorted(normalized.items()))
+
+
+def standardize_skill_package(
+    package: dict[str, str],
+    *,
+    expected_name: str,
+    fallback_description: str,
+) -> tuple[dict[str, str], AgentSkillDocument]:
+    try:
+        return ensure_agent_skill_package(
+            package,
+            expected_name=expected_name,
+            fallback_description=fallback_description,
+        )
+    except AgentSkillSpecError as exc:
+        raise ApiProblem(422, "invalid_agent_skill", str(exc)) from exc
 
 
 def package_digest(package: dict[str, str]) -> str:
@@ -478,10 +503,17 @@ def create_skill(
                 "source_project_mismatch",
                 "원본 대화와 Skill Project가 일치하지 않습니다.",
             )
-    package = normalize_package(package_files)
-    digest = package_digest(package)
     extension_id = new_uuid()
     resolved_slug = _slug(slug, name, extension_id)
+    package, skill_document = standardize_skill_package(
+        normalize_package(package_files),
+        expected_name=resolved_slug,
+        fallback_description=(
+            description.strip()
+            or f"Use this Skill for the {name.strip()} workflow when requested."
+        ),
+    )
+    digest = package_digest(package)
     duplicate = db.scalar(
         select(Extension).where(
             Extension.owner_user_id == user.id,
@@ -496,7 +528,7 @@ def create_skill(
         kind="skill",
         slug=resolved_slug,
         name=name.strip(),
-        description=description,
+        description=skill_document.description,
         owner_user_id=user.id,
         creator_user_id=user.id,
         organization_id=user.organization_id,
@@ -618,7 +650,13 @@ def sync_workspace_skill(
         extension.description = normalized_description
         extension.updated_at = utc_now()
 
-    package = normalize_package(package_files)
+    package, skill_document = standardize_skill_package(
+        normalize_package(package_files),
+        expected_name=extension.slug,
+        fallback_description=normalized_description,
+    )
+    if extension.description != skill_document.description:
+        extension.description = skill_document.description
     digest = package_digest(package)
     if draft.current_digest == digest:
         db.flush()
@@ -647,7 +685,17 @@ def update_draft(
 ) -> tuple[ExtensionDraft, bool]:
     draft = require_owned_draft(db, user, draft_id)
     _check_draft_precondition(draft, expected_revision, expected_digest)
-    package = normalize_package(package_files)
+    extension = db.get(Extension, draft.extension_id)
+    if extension is None:
+        raise ApiProblem(404, "extension_not_found", "Skill을 찾을 수 없습니다.")
+    package, skill_document = standardize_skill_package(
+        normalize_package(package_files),
+        expected_name=extension.slug,
+        fallback_description=extension.description,
+    )
+    if extension.description != skill_document.description:
+        extension.description = skill_document.description
+        extension.updated_at = utc_now()
     digest = package_digest(package)
     if digest == draft.current_digest:
         return draft, False
@@ -1352,6 +1400,11 @@ def resolve_skill_snapshot(
     resolved: dict[str, dict[str, Any]] = {}
     for binding, draft, extension in bindings:
         effective_project_id = binding.project_id or extension.project_id
+        skill_document = _skill_document(
+            draft.package_json,
+            slug=extension.slug,
+            fallback_description=extension.description,
+        )
         allow_implicit_invocation = _skill_allows_implicit_invocation(
             draft.package_json
         )
@@ -1360,12 +1413,14 @@ def resolve_skill_snapshot(
             "kind": extension.kind,
             "slug": extension.slug,
             "name": extension.name,
-            "description": extension.description,
+            "description": skill_document.description,
             "source": "draft",
             "draft_id": draft.id,
             "draft_revision": draft.current_revision,
             "digest": draft.current_digest,
             "instructions": _skill_instructions(draft.package_json),
+            "resources": skill_resource_paths(draft.package_json),
+            "compatibility": skill_document.compatibility,
             "allow_implicit_invocation": allow_implicit_invocation,
             "scope_type": "project" if effective_project_id else "user",
             "scope_id": effective_project_id or user.id,
@@ -1402,6 +1457,11 @@ def resolve_skill_snapshot(
             continue
         if extension.id in resolved:
             continue
+        skill_document = _skill_document(
+            version.package_json,
+            slug=extension.slug,
+            fallback_description=extension.description,
+        )
         allow_implicit_invocation = _skill_allows_implicit_invocation(
             version.package_json
         )
@@ -1410,12 +1470,14 @@ def resolve_skill_snapshot(
             "kind": extension.kind,
             "slug": extension.slug,
             "name": extension.name,
-            "description": extension.description,
+            "description": skill_document.description,
             "source": "version",
             "version_id": version.id,
             "version": version.version_number,
             "digest": version.package_digest,
             "instructions": _skill_instructions(version.package_json),
+            "resources": skill_resource_paths(version.package_json),
+            "compatibility": skill_document.compatibility,
             "allow_implicit_invocation": allow_implicit_invocation,
             "installation_id": installation.id,
             "scope_type": installation.scope_type,
@@ -1436,6 +1498,24 @@ def _skill_instructions(package: dict[str, str]) -> str:
         "skill_instructions_missing",
         "Skill snapshot의 SKILL.md를 찾을 수 없습니다.",
     )
+
+
+def _skill_document(
+    package: dict[str, str],
+    *,
+    slug: str,
+    fallback_description: str,
+) -> AgentSkillDocument:
+    content = _skill_instructions(package)
+    try:
+        return parse_agent_skill(content, expected_name=slug)
+    except AgentSkillSpecError:
+        _normalized, document = standardize_skill_package(
+            package,
+            expected_name=slug,
+            fallback_description=fallback_description,
+        )
+        return document
 
 
 def _skill_allows_implicit_invocation(package: dict[str, str]) -> bool:

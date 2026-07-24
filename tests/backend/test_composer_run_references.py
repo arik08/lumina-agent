@@ -827,9 +827,9 @@ def test_run_snapshot_and_message_references_are_canonical_and_reproducible(
         extension_snapshot = run.snapshot_json["extensions"][0]
         assert extension_snapshot["draft_revision"] == 1
         assert extension_snapshot["digest"] == ids["draft_digest"]
-        assert (
-            extension_snapshot["instructions"]
-            == "# 점검 보고서\n\n초기 절차를 따릅니다."
+        assert "name: inspection-report" in extension_snapshot["instructions"]
+        assert extension_snapshot["instructions"].endswith(
+            "# 점검 보고서\n\n초기 절차를 따릅니다."
         )
         assert len(run.snapshot_json["prompt_prefix_hash"]) == 64
         assert run.snapshot_json["prompt_cache_scope"].startswith("lumina:user:v1:")
@@ -860,9 +860,8 @@ def test_run_snapshot_and_message_references_are_canonical_and_reproducible(
         db.commit()
         db.refresh(run)
         assert run.snapshot_json["extensions"][0]["draft_revision"] == 1
-        assert (
-            run.snapshot_json["extensions"][0]["instructions"]
-            == "# 점검 보고서\n\n초기 절차를 따릅니다."
+        assert run.snapshot_json["extensions"][0]["instructions"].endswith(
+            "# 점검 보고서\n\n초기 절차를 따릅니다."
         )
         current_snapshot = resolve_skill_snapshot(
             db, user=admin, project_id=ids["project_id"]

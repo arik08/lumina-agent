@@ -1,7 +1,8 @@
 ---
 name: korean-law
 description: 대한민국 법령, 판례, 행정규칙, 자치법규와 법률 쟁점을 조사할 때 사용하는 법제처 기반 MCP 라우팅 지침입니다.
-source: skill-mcp:korean-law
+metadata:
+  lumina-source: skill-mcp:korean-law
 ---
 
 # 대한민국 법률 MCP

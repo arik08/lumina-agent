@@ -1,7 +1,8 @@
 ---
 name: comtrade
 description: 국가·품목·기간별 수출입과 교역 상대국 데이터를 UN Comtrade에서 조회할 때 사용하는 MCP 라우팅 지침입니다.
-source: skill-mcp:comtrade
+metadata:
+  lumina-source: skill-mcp:comtrade
 ---
 
 # UN Comtrade MCP

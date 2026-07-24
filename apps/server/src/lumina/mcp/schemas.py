@@ -5,6 +5,7 @@ from typing import Any, Literal
 from pydantic import Field, model_validator
 
 from ..api.schemas import ApiModel
+from .policy import MAX_MCP_TIMEOUT_SECONDS
 
 
 class McpToolSchemaInput(ApiModel):
@@ -26,7 +27,11 @@ class McpConfigurationInput(ApiModel):
     header_templates: dict[str, str] = Field(default_factory=dict, max_length=16)
     tools: list[McpToolSchemaInput] = Field(min_length=1, max_length=256)
     required_secret_names: list[str] = Field(default_factory=list, max_length=32)
-    timeout_seconds: int = Field(default=30, ge=1, le=300)
+    timeout_seconds: int = Field(
+        default=30,
+        ge=1,
+        le=MAX_MCP_TIMEOUT_SECONDS,
+    )
 
 
 class McpDefinitionCreate(ApiModel):

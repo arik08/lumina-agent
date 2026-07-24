@@ -106,6 +106,7 @@ def classify_tool_risk(
         "list_dir",
         "search_source_document",
         "read_source_document",
+        "read_skill_resource",
         "search_knowledge",
         "read_knowledge_document",
         "follow_knowledge_links",
