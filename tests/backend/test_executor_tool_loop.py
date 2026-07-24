@@ -1473,6 +1473,9 @@ def test_report_request_recovers_when_model_tries_to_finish_without_artifact(
     assert event_types.index("artifact_progress") < event_types.index("tool_started")
     assert len(snapshot["artifacts"]) == 1
     assert "must call `create_report`" in observed_system_prompts[0]
+    assert "without naming a file format" in observed_system_prompts[0]
+    assert '`format="html"`; do not default to Markdown' in observed_system_prompts[0]
+    assert "explicitly requests" in observed_system_prompts[0]
     assert "`html_source` argument" in observed_system_prompts[0]
     assert (
         "Lumina renders it and supplies the expand/zoom viewer"
