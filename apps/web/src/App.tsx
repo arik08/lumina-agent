@@ -15,6 +15,7 @@ import {
   ChevronRight,
   ChevronUp,
   Circle,
+  ClipboardPaste,
   Clock3,
   Code2,
   Coins,
@@ -46,6 +47,8 @@ import {
   Play,
   RotateCcw,
   Save,
+  ScanText,
+  Scissors,
   Search,
   Send,
   Settings,
@@ -3813,12 +3816,12 @@ function App() {
                 >
                   {composerContextMenu.selectionStart !== composerContextMenu.selectionEnd ? (
                     <>
-                      <button className="lumina-select-option" type="button" role="menuitem" onClick={() => void copyComposerSelection(false)}>복사</button>
-                      <button className="lumina-select-option" type="button" role="menuitem" onClick={() => void copyComposerSelection(true)}>잘라내기</button>
+                      <button className="lumina-select-option" type="button" role="menuitem" onClick={() => void copyComposerSelection(false)}><Copy size={15} aria-hidden="true" /><span>복사</span></button>
+                      <button className="lumina-select-option" type="button" role="menuitem" onClick={() => void copyComposerSelection(true)}><Scissors size={15} aria-hidden="true" /><span>잘라내기</span></button>
                     </>
                   ) : null}
-                  <button className="lumina-select-option" type="button" role="menuitem" onClick={() => void pasteComposerText()}>붙여넣기</button>
-                  <button className="lumina-select-option" type="button" role="menuitem" onClick={selectAllComposerText}>전체 선택</button>
+                  <button className="lumina-select-option" type="button" role="menuitem" onClick={() => void pasteComposerText()}><ClipboardPaste size={15} aria-hidden="true" /><span>붙여넣기</span></button>
+                  <button className="lumina-select-option" type="button" role="menuitem" onClick={selectAllComposerText}><ScanText size={15} aria-hidden="true" /><span>전체 선택</span></button>
                 </div>,
                 document.body,
               ) : null}
