@@ -124,6 +124,35 @@ async def test_stdio_lifecycle_allowlist_call_and_secret_redaction(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mode", "expected_code", "expected_detail"),
+    (
+        ("rpc_error", "mcp_jsonrpc_error", "Invalid parameter value"),
+        ("tool_error", "mcp_tool_error", "echo=hello"),
+    ),
+)
+async def test_stdio_tool_failures_preserve_safe_server_detail(
+    tmp_path: Path,
+    mode: str,
+    expected_code: str,
+    expected_detail: str,
+) -> None:
+    runtime = McpRuntime(_settings(tmp_path), environment=_runtime_environment())
+    tool = (await runtime.prepare_servers((_stdio_config(tmp_path, mode=mode),)))[0]
+
+    try:
+        with pytest.raises(McpRuntimeError) as failure:
+            await runtime.call_tool(tool, {"value": "hello"})
+
+        assert failure.value.code == expected_code
+        assert expected_detail in str(failure.value)
+        assert "top-secret-value" not in str(failure.value)
+        assert "[REDACTED]" in str(failure.value)
+    finally:
+        await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_stdio_resolves_repository_relative_manifest_script(
     tmp_path: Path,
 ) -> None:

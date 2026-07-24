@@ -321,7 +321,11 @@ class McpRuntime:
         if not isinstance(safe_result, dict):
             raise _runtime_error("mcp_response_invalid", "result")
         if safe_result.get("isError") is True:
-            raise _runtime_error("mcp_tool_error", "tool")
+            raise _runtime_error(
+                "mcp_tool_error",
+                "tool",
+                detail=_mcp_error_detail(safe_result),
+            )
         return {
             "server": tool.server_slug,
             "tool": tool.original_name,
@@ -432,7 +436,11 @@ class McpRuntime:
             )
         else:
             raise _runtime_error("mcp_transport_invalid", "transport")
-        return _McpConnection(transport, timeout_seconds=config.timeout_seconds)
+        return _McpConnection(
+            transport,
+            timeout_seconds=config.timeout_seconds,
+            sensitive_values=tuple(secrets.values()),
+        )
 
 
 def _string_tuple(value: Any) -> tuple[str, ...]:
@@ -457,7 +465,11 @@ def _connection_cache_key(config: McpServerConfig, secrets: Mapping[str, str]) -
 
 
 def _runtime_error(
-    code: str, stage: str, *, retryable: bool = False
+    code: str,
+    stage: str,
+    *,
+    retryable: bool = False,
+    detail: str | None = None,
 ) -> McpRuntimeError:
     messages = {
         "credential": "MCP credential을 안전하게 준비할 수 없습니다.",
@@ -467,9 +479,12 @@ def _runtime_error(
         "network": "MCP 서버에 안전하게 연결할 수 없습니다.",
         "tool": "MCP 도구가 요청을 완료하지 못했습니다.",
     }
+    message = messages.get(stage, "MCP 요청을 안전하게 처리할 수 없습니다.")
+    if detail:
+        message = f"{message} 서버 응답: {detail[:1500]}"
     return McpRuntimeError(
         code,
-        messages.get(stage, "MCP 요청을 안전하게 처리할 수 없습니다."),
+        message,
         stage=stage,
         retryable=retryable,
     )
@@ -486,9 +501,16 @@ class _JsonRpcTransport(Protocol):
 
 
 class _McpConnection:
-    def __init__(self, transport: _JsonRpcTransport, *, timeout_seconds: float) -> None:
+    def __init__(
+        self,
+        transport: _JsonRpcTransport,
+        *,
+        timeout_seconds: float,
+        sensitive_values: tuple[str, ...] = (),
+    ) -> None:
         self._transport = transport
         self._timeout_seconds = timeout_seconds
+        self._sensitive_values = sensitive_values
         self._next_id = 1
         self._initialized = False
 
@@ -584,7 +606,13 @@ class _McpConnection:
         if response.get("jsonrpc") != "2.0" or response.get("id") != request_id:
             raise _runtime_error("mcp_response_invalid", "transport")
         if "error" in response:
-            raise _runtime_error("mcp_jsonrpc_error", "tool")
+            raise _runtime_error(
+                "mcp_jsonrpc_error",
+                "tool",
+                detail=_mcp_error_detail(
+                    response["error"], secrets=self._sensitive_values
+                ),
+            )
         result = response.get("result")
         if not isinstance(result, dict):
             raise _runtime_error("mcp_response_invalid", "transport")
@@ -1339,6 +1367,20 @@ def _redact_value(value: Any, secrets: tuple[str, ...]) -> Any:
     if value is None or isinstance(value, (bool, int, float)):
         return value
     return redact_sensitive_text(str(value), secrets=secrets)
+
+
+def _mcp_error_detail(value: Any, *, secrets: tuple[str, ...] = ()) -> str:
+    redacted = _redact_value(value, secrets)
+    if isinstance(redacted, (dict, list)):
+        rendered = json.dumps(
+            redacted,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    else:
+        rendered = str(redacted)
+    return redact_sensitive_text(rendered, secrets=secrets)[:1500]
 
 
 __all__ = [
