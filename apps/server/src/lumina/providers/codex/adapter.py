@@ -797,6 +797,8 @@ def _effort(value: str | None) -> ReasoningEffort | None:
 
 
 def _result_payload(raw: str | None) -> dict[str, Any]:
+    # Invalid model-generated envelopes can be regenerated safely. Mark them
+    # retryable so the executor discards streamed partial calls before retrying.
     if raw is None:
         raise _invalid_result(
             "missing_response",
@@ -812,7 +814,7 @@ def _result_payload(raw: str | None) -> dict[str, Any]:
     except (TypeError, json.JSONDecodeError) as exc:
         raise ProviderRequestError(
             "Codex OAuth 응답이 구조화된 JSON이 아닙니다.",
-            retryable=False,
+            retryable=True,
             stage="response",
             diagnostic_code="invalid_json",
             safe_diagnostic=_result_shape(raw, None),
@@ -939,7 +941,7 @@ def _invalid_result(
 ) -> ProviderRequestError:
     return ProviderRequestError(
         "Codex OAuth 응답의 final/tool_calls 계약이 올바르지 않습니다.",
-        retryable=False,
+        retryable=True,
         stage="response",
         diagnostic_code=diagnostic_code,
         safe_diagnostic=diagnostic,

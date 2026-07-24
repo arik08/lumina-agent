@@ -529,6 +529,100 @@ async def test_codex_oauth_discards_dead_client_after_partial_output(
 
 
 @pytest.mark.asyncio
+async def test_codex_oauth_classifies_streamed_malformed_report_call_as_retryable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    discarded: list[object] = []
+    report_arguments = json.dumps(
+        {
+            "filename": "report.html",
+            "html_source": f"<html><body>{'x' * 32_000}</body></html>",
+        },
+        separators=(",", ":"),
+    )
+    envelope = json.dumps(
+        {
+            "kind": "tool_calls",
+            "text": "보고서를 작성하겠습니다.",
+            "tool_calls": [
+                {
+                    "id": "call_report",
+                    "name": "create_report",
+                    "arguments_json": report_arguments,
+                },
+                {
+                    "id": "call_search",
+                    "name": "web_search",
+                    "arguments_json": '{"query":"POSCO"},{"query":"steel"}',
+                },
+            ],
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+    class Delta:
+        def __init__(self, delta: str) -> None:
+            self.delta = delta
+
+    class Completed:
+        turn = SimpleNamespace(
+            status=SimpleNamespace(value="completed"),
+            error=None,
+        )
+
+    class MalformedTurn:
+        async def stream(self):
+            for index in range(0, len(envelope), 4_096):
+                yield SimpleNamespace(payload=Delta(envelope[index : index + 4_096]))
+            yield SimpleNamespace(payload=Completed())
+
+    class MalformedThread:
+        async def turn(self, _prompt: str, **_kwargs: Any) -> MalformedTurn:
+            return MalformedTurn()
+
+    class MalformedClient:
+        async def thread_start(self, **_kwargs: Any) -> MalformedThread:
+            return MalformedThread()
+
+    client = MalformedClient()
+    adapter = CodexResponsesAdapter(direct_responses=False)
+
+    async def ready_client():
+        return client, frozenset({"gpt-5.5"}), "."
+
+    async def discard_client(expected: object) -> None:
+        discarded.append(expected)
+
+    monkeypatch.setattr(codex_adapter, "AgentMessageDeltaNotification", Delta)
+    monkeypatch.setattr(codex_adapter, "TurnCompletedNotification", Completed)
+    monkeypatch.setattr(adapter, "_ready_client", ready_client)
+    monkeypatch.setattr(adapter, "_discard_client", discard_client)
+
+    events = []
+    with pytest.raises(ProviderRequestError) as captured:
+        async for event in adapter.stream(
+            ProviderRequest(
+                model="gpt-5.5",
+                messages=(ProviderMessage(role="user", content="HTML 보고서 작성"),),
+            )
+        ):
+            events.append(event)
+
+    assert any(
+        event.type == "tool_call_started" and event.tool_name == "create_report"
+        for event in events
+    )
+    assert captured.value.retryable is True
+    assert captured.value.stage == "response"
+    assert (
+        captured.value.diagnostic_code
+        == "tool_call_arguments_trailing_content"
+    )
+    assert discarded == [client]
+
+
+@pytest.mark.asyncio
 async def test_codex_oauth_discard_tolerates_dead_process_close_error() -> None:
     class DeadClient:
         async def close(self) -> None:
@@ -687,6 +781,7 @@ async def test_codex_oauth_preserves_invalid_result_classification(
 
     assert captured.value.stage == "response"
     assert captured.value.status_code is None
+    assert captured.value.retryable is True
     assert "final/tool_calls 계약" in str(captured.value)
     assert "인증을 확인" not in str(captured.value)
 
@@ -737,6 +832,7 @@ def test_codex_invalid_result_reports_safe_shape_without_content(
         codex_adapter._result_payload(raw)
 
     error = captured.value
+    assert error.retryable is True
     assert error.diagnostic_code == expected_code
     assert error.safe_diagnostic is not None
     assert "response_present=" in error.safe_diagnostic
