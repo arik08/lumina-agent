@@ -25,6 +25,7 @@ from ...artifacts.service import (
     require_artifact,
     save_draft,
 )
+from ...artifacts.standalone_html import prepare_standalone_html_download
 from ...audit import record_audit
 from ...authorization import project_access_query
 from ...config import Settings, get_settings
@@ -510,15 +511,21 @@ def download_artifact(
         artifact_id=artifact.id,
         version_number=selected_version,
     )
+    download_content = prepare_standalone_html_download(content, artifact.mime_type)
+    download_hash = (
+        stored_version.content_hash
+        if download_content is content
+        else hashlib.sha256(download_content).hexdigest()
+    )
     filename = artifact.display_name
     encoded = quote(filename, safe="")
     return StreamingResponse(
-        iter([content]),
+        iter([download_content]),
         media_type=artifact.mime_type,
         headers={
-            "Content-Length": str(len(content)),
+            "Content-Length": str(len(download_content)),
             "Content-Disposition": f"attachment; filename*=UTF-8''{encoded}",
-            "ETag": f'"{stored_version.content_hash}"',
+            "ETag": f'"{download_hash}"',
             "Cache-Control": "private, no-store",
         },
     )

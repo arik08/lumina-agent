@@ -161,8 +161,11 @@ def test_link_snapshot_share_and_revoke(tmp_path: Path) -> None:
             },
             json={
                 "baseVersion": 1,
-                "sourceText": first_artifact_payload["sourceText"].replace(
-                    "작업 결과 보고서", "공유용 v2 작업 결과 보고서"
+                "sourceText": first_artifact_payload["sourceText"]
+                .replace("작업 결과 보고서", "공유용 v2 작업 결과 보고서")
+                .replace(
+                    "</body>",
+                    '<div class="mermaid">flowchart TD\nA-->B</div></body>',
                 ),
                 "changeSummary": "공유 version 고정 검증",
             },
@@ -273,6 +276,8 @@ def test_link_snapshot_share_and_revoke(tmp_path: Path) -> None:
         )
         assert downloaded.status_code == 200, downloaded.text
         assert "공유용 v2 작업 결과 보고서" in downloaded.text
+        assert "cdn.jsdelivr.net/npm/mermaid@11.16.0" in downloaded.text
+        assert 'data-lumina-standalone-mermaid="11.16.0"' in downloaded.text
         downloaded_original = client.get(
             f"/api/conversation-shares/{token}/artifacts/{first_artifact_id}/download?version=1"
         )

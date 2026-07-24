@@ -140,8 +140,11 @@ def test_login_run_replay_and_artifact_version(tmp_path: Path, capsys) -> None:
             },
             json={
                 "baseVersion": 1,
-                "sourceText": version_payload["sourceText"].replace(
-                    "작업 결과 보고서", "수정된 작업 결과 보고서"
+                "sourceText": version_payload["sourceText"]
+                .replace("작업 결과 보고서", "수정된 작업 결과 보고서")
+                .replace(
+                    "</body>",
+                    '<div class="mermaid">flowchart TD\nA-->B</div></body>',
                 ),
                 "changeSummary": "제목 수정",
             },
@@ -151,11 +154,15 @@ def test_login_run_replay_and_artifact_version(tmp_path: Path, capsys) -> None:
         downloaded = client.get(f"/api/artifacts/{artifact_id}/download?version=2")
         assert downloaded.status_code == 200
         assert "수정된 작업 결과 보고서" in downloaded.text
+        assert "cdn.jsdelivr.net/npm/mermaid@11.16.0" in downloaded.text
+        assert 'data-lumina-standalone-mermaid="11.16.0"' in downloaded.text
+        assert downloaded.headers["etag"] != f'"{saved.json()["etag"]}"'
         stored_version_two = next(
             path
             for path in (tmp_path / "artifacts").rglob("*")
             if path.is_file() and "수정된 작업 결과 보고서" in path.read_text("utf-8")
         )
+        assert "cdn.jsdelivr.net/npm/mermaid" not in stored_version_two.read_text("utf-8")
         stored_version_two.write_bytes(b"tampered artifact")
         unavailable = client.get(f"/api/artifacts/{artifact_id}/download?version=2")
         assert unavailable.status_code == 503

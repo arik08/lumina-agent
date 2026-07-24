@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 from urllib.parse import quote
 
@@ -9,6 +10,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from ...audit import record_audit
+from ...artifacts.standalone_html import prepare_standalone_html_download
 from ...auth.security import generate_secret_token, hash_token
 from ...config import Settings, get_settings
 from ...db import get_db
@@ -624,14 +626,20 @@ def download_shared_artifact(
         metadata={"artifact_id": artifact.id, "version": stored_version.version_number},
     )
     db.commit()
+    download_content = prepare_standalone_html_download(content, artifact.mime_type)
+    download_hash = (
+        stored_version.content_hash
+        if download_content is content
+        else hashlib.sha256(download_content).hexdigest()
+    )
     encoded = quote(artifact.display_name, safe="")
     return StreamingResponse(
-        iter([content]),
+        iter([download_content]),
         media_type=artifact.mime_type,
         headers={
-            "Content-Length": str(len(content)),
+            "Content-Length": str(len(download_content)),
             "Content-Disposition": f"attachment; filename*=UTF-8''{encoded}",
-            "ETag": f'"{stored_version.content_hash}"',
+            "ETag": f'"{download_hash}"',
             "Cache-Control": "private, no-store",
         },
     )
