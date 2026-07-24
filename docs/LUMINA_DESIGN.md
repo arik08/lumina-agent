@@ -1801,6 +1801,8 @@ AI Assist는 중앙 Agent Run과 같은 Queue, Provider, 권한과 event replay�
 
 현재 `create_report`는 HTML 형식에 완성된 standalone `html_source`를 필수로 받고, 구조화 report model은 non-HTML 형식에만 사용합니다. HTML 요청이 `html_source` 없이 구조화 section만 보내면 서버 기본 template로 평탄화하지 않고 거부해 시각 보고서 계약을 보존합니다. non-HTML 형식에 `html_source`를 보내도 거부합니다. 구조화 report의 `sections`는 본문 구성을 담당하며 `action_items`는 실제 후속 조치가 필요한 문서에서만 선택적으로 사용합니다. filename은 확장자 중복과 path 문자를 정규화하고 XLSX에서 formula처럼 보이는 모델 text도 문자열 cell로 저장합니다.
 
+수치 밀도가 높은 HTML 보고서는 비교 가능한 값·기간·범주·비율·순위·점수 축이 있으면 최소 하나의 실질적인 ECharts 또는 inline SVG 차트를 포함합니다. 표, KPI card, badge와 CSS progress bar만으로는 이 시각화 계약을 충족하지 않습니다. 값이 불완전하거나 정의가 달라 직접 비교가 오해를 만들 때만 차트를 생략하고 구체적인 이유와 대체 annotated table을 보고서에 남깁니다. ECharts를 사용할 때는 고정된 6.x runtime, 명시적 chart 높이, responsive resize, load 실패 fallback과 정확한 수치표를 함께 제공합니다.
+
 선택한 출력 목표보다 HTML·Markdown 보고서가 짧으면 최초 `create_report` 결과를 같은 Artifact의 v1로 보존하고, 후속 `extend_report`는 새 본문 조각만 받습니다. Backend는 현재 version 원문을 읽어 HTML의 닫는 `main`·`body` 앞 또는 Markdown 끝에 조각을 누적한 뒤 결합된 문서의 token을 다시 검사합니다. 완성 문서 전체를 다시 제출하는 `create_report` 재시도는 거부해 기존 내용의 유실과 사실상 처음부터 다시 쓰는 동작을 막습니다.
 
 검증 결과는 `validation_status`, `renderVerified`, error·warning과 page metadata로 나눕니다. 구조 검증만 통과하고 renderer가 없으면 완전 통과가 아니라 `structural_passed`와 `render_verification_pending`을 기록합니다. 실제 render에서는 blank page, 비정상 크기, 예상 page count 불일치, process 실패·timeout을 명시적 실패로 처리하고 임시 profile·page image를 정리합니다.

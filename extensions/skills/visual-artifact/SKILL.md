@@ -14,7 +14,7 @@ Create browser-native visual deliverables that are polished enough to screenshot
 - Lumina HTML Artifacts support inline JavaScript, `script` tags, and event handlers. Use them when the requested result is interactive, executable, app-like, or game-like. Keep the document self-contained because relative external files can break in isolated previews.
 - If the user describes report length in tokens, including Korean forms such as `5000~8000 토큰`, `10000 토큰 수준`, `15000~20000 토큰 이상`, or `30000토큰 수준`, treat the number as an approximate output-size target that should be checked, not merely a style cue. Use the target to plan content depth, but do not crowd the page with walls of prose, cramped tables, or repetitive cards just to hit a length. Preserve visual rhythm with section summaries, charts, callouts, and source notes.
 - Use a short purpose-specific filename, not `index.html`, unless the user explicitly asks for it or an existing app requires it. Prefer concise readable Korean filenames with underscores for Korean-facing reports/previews; use English kebab-case or snake_case for code-heavy demos, games, or English-facing artifacts.
-- Keep the artifact self-contained. Prefer inline CSS, JavaScript, and SVG over CDN dependencies so the saved Artifact remains executable offline.
+- Keep the artifact as one HTML file. Prefer inline CSS, JavaScript, and SVG when they are sufficient. A pinned ECharts CDN dependency is allowed when it materially improves a data-rich report, but preserve the exact values in a nearby table and provide a readable no-script fallback so the report does not become blank when the library cannot load.
 - Make the artifact readable in a constrained iframe and in a normal browser window.
 - Do not include secrets or unsanitized user-provided HTML.
 
@@ -49,6 +49,8 @@ quarterly trends, sources, or a report:
 ## Visualization-first planning
 
 - Before drafting prose, build a visual inventory from the evidence. Look explicitly for changes over time, comparisons, proportions, rankings, geographic differences, causal relationships, processes, stakeholder relationships, risks, and claim-to-evidence structure. Map every supported relationship to the clearest chart, timeline, matrix, map, flow, annotated table, or other visual form.
+- Apply a quantitative visualization gate before submitting the HTML. When the evidence contains at least two decision-relevant comparable values, periods, categories, ranks, proportions, or score dimensions, include at least one substantive chart unless a chart would be misleading because the values are incomplete, differently defined, or not comparable. In that exception, state the specific reason in the report and use an annotated comparison table or qualitative visual instead.
+- A numeric-dense report must not consist only of prose, tables, KPI cards, badges, or CSS progress bars. Use Apache ECharts for supported interactive comparisons, trends, proportions, distributions, rankings, and multi-dimensional scores; use inline SVG when a small bespoke static visual communicates the finding more reliably.
 - Maximize meaningful visualization, not the raw number of graphics. A visual must answer a concrete reader question faster or more clearly than prose. Remove decorative charts, repeated encodings, and visuals that merely restate a nearby number.
 - KPI cards, badges, icons, colored headings, and decorative shapes do not count as substantive visualizations. They may support scanning, but they do not replace charts, timelines, comparison matrices, maps, process diagrams, or evidence-rich annotated tables.
 - When the evidence supports it, place at least one substantive visualization in the first screen after the report masthead or executive-summary lead. Do not make the opening viewport only a hero, KPI cards, and prose when the report's main trend, comparison, chronology, or relationship can be shown visually.
@@ -126,11 +128,12 @@ quarterly trends, sources, or a report:
 
 ## Library choices
 
+- **Apache ECharts**: preferred for data-rich interactive report charts such as bar, line, area, pie/donut, scatter, heatmap, radar, treemap, sunburst, sankey, graph/network, and tree. Use a pinned 6.x build, initialize charts after the DOM is ready, make containers responsive with an explicit height, call `resize()` on viewport changes, and disable or simplify animation for print and reduced-motion users. Keep exact values and sources in labels, annotations, or an adjacent table, and show a compact readable fallback if ECharts fails to load.
 - **Inline SVG**: primary choice for bespoke charts, timelines, maps, and diagrams that must remain self-contained.
 - **CSS**: metric strips, comparison bars, heatmaps, callouts, and simple timelines.
 - **Inline semantic icons**: restrained section markers and status symbols when they materially improve scanning.
 - **SVG/CSS**: small bespoke static visuals, cards, fixed callouts, and simple timelines.
-- **JavaScript libraries**: avoid CDN-only dependencies when a small inline implementation is practical. If a library is necessary, preserve a useful fallback because network access is not guaranteed in Artifact preview.
+- **Other JavaScript libraries**: avoid a dependency when a small inline implementation is practical. If a library is necessary, pin its version and preserve a useful fallback because network access is not guaranteed in Artifact preview.
 
 ## Workflow
 
@@ -139,7 +142,7 @@ quarterly trends, sources, or a report:
 3. Start `create_report`, then build the single HTML artifact directly in `html_source` with responsive CSS and print/capture considerations.
 4. Include `@media print` for PDF-friendly output when the artifact is report-like or slide-like.
 5. If the user wants screenshots/PDF, use the `playwright-capture` skill after creating the HTML.
-6. For important or dense visuals, use the `visual-review` skill to inspect clipping, overflow, chart labels, and print layout.
+6. For important or dense visuals, use the `visual-review` skill to inspect clipping, overflow, chart labels, and print layout. Inventory the final HTML's substantive charts, SVGs, diagrams, and annotated tables; if a numeric-dense report has no real chart, return to the visual plan instead of submitting it.
 
 ## Capture-friendly conventions
 

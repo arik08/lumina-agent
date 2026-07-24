@@ -152,6 +152,12 @@ def test_create_report_schema_advertises_every_supported_format() -> None:
         assert color in html_description
     assert "user's designated default visual palette" in report_description
     assert "substituting Lumina app cobalt or an all-gray scheme" in html_description
+    assert "visualization coverage gate" in report_description
+    assert "Prefer Apache ECharts" in report_description
+    assert "at least two decision-relevant comparable numeric values" in html_description
+    assert "Tables, KPI cards, badges, and CSS progress bars" in html_description
+    assert "pinned 6.x runtime" in html_description
+    assert "no-script/load-failure fallback" in html_description
 
 
 def test_create_report_schema_separates_html_from_structured_report_fields() -> None:
@@ -691,6 +697,9 @@ def test_selected_artifact_target_retries_short_report_and_exposes_separate_coun
     assert "Do not plan near the lower boundary" in system_text
     assert "start the `create_report` tool call before drafting the report body" in system_text
     assert "stream the complete report directly into its arguments" in system_text
+    assert "Before submitting a numeric-dense HTML report" in system_text
+    assert "substantive ECharts or inline-SVG chart" in system_text
+    assert "CSS progress bars alone are not sufficient" in system_text
     report_schema = next(
         schema
         for schema in first_request.tools

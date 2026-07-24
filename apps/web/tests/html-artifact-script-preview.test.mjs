@@ -89,11 +89,22 @@ test("HTML Artifact generation keeps the user-designated visual palette", () => 
 
 test("HTML Artifact reports plan substantive visualizations before prose", () => {
   assert.match(visualArtifactSkillSource, /build a visual inventory from the evidence/);
+  assert.match(visualArtifactSkillSource, /Apply a quantitative visualization gate before submitting the HTML/);
+  assert.match(visualArtifactSkillSource, /must not consist only of prose, tables, KPI cards, badges, or CSS progress bars/);
+  assert.match(visualArtifactSkillSource, /Use Apache ECharts for supported interactive comparisons/);
   assert.match(visualArtifactSkillSource, /Maximize meaningful visualization, not the raw number of graphics/);
   assert.match(visualArtifactSkillSource, /KPI cards, badges, icons, colored headings, and decorative shapes do not count as substantive visualizations/);
   assert.match(visualArtifactSkillSource, /at least one substantive visualization in the first screen/);
   assert.match(visualArtifactSkillSource, /Do not invent precision to satisfy the visual plan/);
   assert.match(visualArtifactSkillSource, /name the reader question each one answers/);
+});
+
+test("HTML Artifact reports prefer ECharts for numeric-dense interactive visuals", () => {
+  assert.match(visualArtifactSkillSource, /\*\*Apache ECharts\*\*: preferred for data-rich interactive report charts/);
+  assert.match(visualArtifactSkillSource, /Use a pinned 6\.x build/);
+  assert.match(visualArtifactSkillSource, /call `resize\(\)` on viewport changes/);
+  assert.match(visualArtifactSkillSource, /show a compact readable fallback if ECharts fails to load/);
+  assert.match(visualArtifactSkillSource, /if a numeric-dense report has no real chart, return to the visual plan/);
 });
 
 test("HTML Artifact Mermaid colors retain fallbacks outside the app theme root", () => {
