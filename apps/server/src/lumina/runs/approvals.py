@@ -91,6 +91,12 @@ def classify_tool_risk(
     approval_mode: str,
     mcp_original_name: str | None = None,
 ) -> ToolRisk:
+    if tool_name == "run_python":
+        return ToolRisk(
+            "local_execution",
+            "high",
+            approval_mode != "yolo",
+        )
     if tool_name in {
         "web_search",
         "web_fetch",

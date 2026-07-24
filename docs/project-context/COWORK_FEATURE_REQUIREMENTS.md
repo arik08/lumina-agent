@@ -105,7 +105,7 @@ Local Bridge가 없는 환경에서는 “로컬 폴더 직접 접근”을 제�
 - 파일과 폴더 Drag & Drop 시 하위 구조를 보존해 업로드합니다.
 - Project 화면 왼쪽에 탐색기형 파일 트리와 검색, 오른쪽에 선택 파일 Preview를 표시합니다.
 - `@파일명`과 `@폴더명`으로 채팅에서 파일 또는 폴더 전체를 빠르게 연결합니다.
-- Agent의 Workspace Tool은 탐색과 읽기만 허용하고 생성 결과는 Artifact로 분리합니다.
+- Agent의 Workspace Tool은 탐색과 읽기만 허용하고 생성 결과는 Artifact로 분리합니다. 사용자가 `.py` 작성을 요청하면 `write_file`로 immutable Artifact version을 만들고, 실행은 해당 Artifact ID·version 또는 현재 Run에 고정된 활성 Skill package만 받는 `run_python`으로 분리합니다. 임의 host 경로나 shell command는 받지 않습니다.
 - 사용자 UI에 파일 버전 관리 흐름을 제공하지 않습니다. 저장 무결성과 감사에 필요한 내부 revision은 사용자 조작 개념과 분리합니다.
 - 삭제는 휴지통 이동과 영구 삭제를 구분하고 영구 삭제는 추가 승인을 요구합니다.
 - 생성된 파일에서 원본 입력과 생성 Run으로 이동할 수 있습니다.

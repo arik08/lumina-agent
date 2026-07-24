@@ -17,7 +17,7 @@
 5. Run은 Draft 사용 시 `draft_id + draft_revision + digest`, 저장 version 사용 시 `extension_id + version_id + digest`를 정확히 고정합니다. Draft가 바뀌어도 이미 시작한 Run은 바뀌지 않습니다.
 6. 설치 해제와 Skill 삭제를 구분합니다. Skill 삭제는 30일 보관함 이동이며 그 전에는 복원할 수 있습니다. 보존 기간 뒤 catalog·Draft·version·installation 원본은 정리하되, 이미 완료된 Run의 고정 snapshot과 감사 기록은 유지합니다.
 7. Frontend가 보낸 소유자, 조직, 경로, 권한과 비밀값을 신뢰하지 않습니다. Backend가 인증 주체와 정책으로 다시 결정합니다.
-8. Skill은 서버에서 직접 실행되는 code가 아닌 지침 package로 취급합니다. Plugin과 MCP는 실행·network 위험이 있으므로 검증과 permission policy를 통과하기 전에는 Worker에 노출하지 않습니다.
+8. Skill은 서버가 자동 import하는 code가 아닌 지침 package로 취급합니다. 다만 활성 Skill의 고정 version·Draft revision에 포함된 `.py`는 `run_python`의 명시적 고위험 승인을 거쳐 임시 전용 작업 디렉터리에서 실행할 수 있습니다. 이 디렉터리와 정리 정책은 OS 수준 sandbox를 의미하지 않으므로 실행 승인을 생략하지 않습니다. Plugin과 MCP는 실행·network 위험이 있으므로 검증과 permission policy를 통과하기 전에는 Worker에 노출하지 않습니다.
 9. `creator_user_id`는 최초 기여 기록으로 고정하고, 현재 관리 책임은 복수 `SkillOwnership`의 Owner·Maintainer로 분리합니다. 소유권 변경은 Creator 기록을 바꾸지 않습니다.
 10. 공개 Skill의 수정은 공용 WorkingDraft를 공유하지 않고 사용자별 개인 WorkingDraft를 만듭니다. 같은 사용자의 병렬 변경이 충돌하면 기존 head를 덮어쓰지 않고 별도 branch로 보존합니다.
 11. 사용자에게 보이는 `vPublish.Merge.Feedback`는 진화 상태를 설명하는 계산된 표시값입니다. 내부 정렬·참조·Run 재현은 immutable `version_id`, Draft `revision_id`와 digest를 사용합니다.
@@ -39,6 +39,8 @@
 ### Skill
 
 Skill package는 최소 `SKILL.md`를 가지며 선택적으로 manifest, references, scripts, examples와 assets를 포함합니다. Marketplace가 관리하는 Skill에는 안정적인 `skill_id`와 별도의 불변 `skill_version_id`를 부여합니다.
+
+Skill script 실행은 일반 shell을 노출하지 않습니다. `run_python`은 현재 Run에서 이미 활성화된 Skill의 정확한 `version_id` 또는 `draft_id + revision + digest`를 다시 검증하고 package를 임시 디렉터리에 materialize한 뒤, 고정된 서버 Python으로 상대 `.py` path 또는 module만 실행합니다. 실행 환경에는 Provider key와 사용자 Secret을 전달하지 않고, timeout·출력 제한·프로세스 트리 정리를 적용합니다. 기본 `on_risk`에서도 매 호출 승인이 필요하며 실행 결과에는 고정 source 식별자, 종료 코드와 제한된 stdout/stderr만 남깁니다.
 
 일반 Run의 암시적 Skill 선택은 LLM의 의미 판단으로 수행합니다. 선택 개수에는 기본값이나 상한을 두지 않고 0개·1개·여러 개를 모두 허용하되, 각 Skill의 핵심 절차가 사용자가 요청한 행동·산출물과 직접 일치하고 해당 지침을 제외하면 실행 방식이나 결과가 실질적으로 달라질 때만 선택합니다. 주제 인접성, 이름·설명의 단어 중복, 일반적인 유용성, 아직 발생하지 않은 미래 조건은 선택 근거가 아닙니다. 일반 접근 실패처럼 선행 조건이 있는 Skill은 그 조건을 실제로 관찰한 뒤 선택합니다. `agents/openai.yaml`의 `policy.allow_implicit_invocation: false`인 Skill은 LLM 후보에서 제외하되 `$Skill` 명시 호출은 계속 허용합니다.
 

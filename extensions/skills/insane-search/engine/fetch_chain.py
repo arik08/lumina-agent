@@ -1,6 +1,6 @@
 """Single entrypoint: insane-search generic fetch chain.
 
-    from insane_search.engine import fetch
+    from engine import fetch
     result = fetch("https://example.com/path", success_selectors=["article"])
 
 Public contract:
@@ -395,7 +395,7 @@ def _build_result(resp, attempt: Attempt, trace: list[Attempt], profile_used: Op
 
 # WAF profiles known to typically gate HTML but leave internal JSON APIs
 # (relatively) open. When these are detected and curl challenges pile up,
-# we surface R7 hint in the summary so the caller (or Claude) can branch
+# we surface R7 hint in the summary so the caller or Agent can branch
 # to an API-first route without waiting for full grid exhaustion.
 _R7_ELIGIBLE_PROFILES = frozenset({
     "akamai_bot_manager",
@@ -410,7 +410,7 @@ R7_HINT = (
     "💡 R7 API-first 권장: WAF가 HTML 경로를 차단 중. "
     "Playwright MCP 사용 → browser_navigate → browser_network_requests "
     "→ `/api/`·`/graphql`·`\\.json` 필터로 내부 엔드포인트 탐지 → "
-    "해당 URL을 `python3 -m engine <API_URL>`로 재호출. 대부분 API 레이어는 "
+    "해당 URL을 같은 Skill engine module로 재호출. 대부분 API 레이어는 "
     "WAF 방어가 얕아 curl_cffi만으로 수집됨."
 )
 

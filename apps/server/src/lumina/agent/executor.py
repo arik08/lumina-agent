@@ -143,6 +143,11 @@ from ..tools.workspace import (
     WORKSPACE_TOOL_SCHEMAS,
     execute_workspace_tool,
 )
+from ..tools.python_execution import (
+    PYTHON_EXECUTION_TOOL_SCHEMA,
+    execute_python,
+    prepare_python_execution,
+)
 from ..deep_analysis.calculations import (
     PYTHON_CALCULATION_TOOL_SCHEMA,
     execute_python_calculation,
@@ -1579,6 +1584,7 @@ class LocalRunExecutor:
             *knowledge_schemas,
             *SOURCE_DOCUMENT_TOOL_SCHEMAS,
             *WORKSPACE_TOOL_SCHEMAS,
+            PYTHON_EXECUTION_TOOL_SCHEMA,
         )
         tool_surface = build_tool_surface(
             core_tool_schemas,
@@ -4394,6 +4400,22 @@ class LocalRunExecutor:
                 "them on the next model turn. Skills explicitly selected with $Skill or fixed "
                 "by a scheduled Run are already active."
             )
+        if any(
+            isinstance(schema.get("function"), dict)
+            and schema["function"].get("name") == "run_python"
+            for schema in tool_schemas
+        ):
+            stable_system_parts.append(
+                "Python execution contract: Never invent a shell, host filesystem path, "
+                "python3 command, or py launcher. When an active Skill instructs you to run a "
+                "packaged Python path or `python -m module`, translate it to `run_python` with "
+                "source=skill, that active Skill ID, and the relative path or module. When the "
+                "user requests new .py code and file tools are available, create it with "
+                "`write_file`, then on the next tool turn call `run_python` with the exact "
+                "artifact_id and artifact_version returned by write_file. Never guess either "
+                "identifier. Python execution is approval-controlled; wait for the normal "
+                "approval flow instead of asking for permission in chat text."
+            )
         stable_system_parts.append(
             "Plan efficiency contract: Do not call `update_plan` alone when substantive "
             "tool calls can be chosen in the same response. Pair the plan update with those "
@@ -5370,6 +5392,48 @@ class LocalRunExecutor:
                 tool_id,
                 payload,
                 f"Python 계산 결과 {payload['rowCount']}행을 저장했습니다.",
+            )
+            return payload
+
+        if tool_call["name"] == "run_python":
+            try:
+                with session_scope() as db:
+                    python_run = db.scalar(
+                        select(Run).where(Run.id == run_id).with_for_update()
+                    )
+                    python_user = (
+                        db.get(User, python_run.user_id)
+                        if python_run is not None
+                        else None
+                    )
+                    if python_run is None or python_user is None:
+                        raise RuntimeError(
+                            "Run context disappeared during Python execution"
+                        )
+                    self._require_execution_owner(python_run)
+                    prepared = prepare_python_execution(
+                        db,
+                        self.storage,
+                        run=python_run,
+                        user=python_user,
+                        arguments=arguments,
+                    )
+                payload = await execute_python(
+                    prepared,
+                    trust_profile=self.trust_profile,
+                    secrets=_settings_secret_values(self.settings),
+                )
+            except (ApiProblem, OSError, TypeError, ValueError) as exc:
+                return await self._fail_tool_execution(run_id, tool_id, exc)
+            await self._complete_tool_execution(
+                run_id,
+                tool_id,
+                payload,
+                (
+                    "Python 실행을 완료했습니다."
+                    if payload["ok"]
+                    else "Python 실행이 오류 또는 제한시간 초과로 종료되었습니다."
+                ),
             )
             return payload
 
@@ -7890,10 +7954,10 @@ def _normalized_output_mode(requested_mode: object) -> str:
 
 
 _ARTIFACT_CREATION_REQUEST = re.compile(
-    r"(?i)(?:(?:보고서|report|html|artifact|문서|markdown|\.md|파일).{0,24}"
+    r"(?i)(?:(?:보고서|report|html|artifact|문서|markdown|\.md|\.py|파일).{0,24}"
     r"(?:만들|생성|작성|저장|create|generate|write)|"
     r"(?:create|generate|write).{0,24}"
-    r"(?:보고서|report|html|artifact|document|markdown|\.md|file))"
+    r"(?:보고서|report|html|artifact|document|markdown|\.md|\.py|file))"
 )
 
 
@@ -8435,6 +8499,23 @@ def _pgpt_environment(settings: Settings) -> dict[str, str]:
         else "",
         "PGPT_BASE_URL": settings.pgpt_base_url.strip(),
     }
+
+
+def _settings_secret_values(settings: Settings) -> tuple[str, ...]:
+    values = (
+        settings.openai_api_key,
+        settings.anthropic_api_key,
+        settings.google_api_key,
+        settings.openai_compatible_api_key,
+        settings.pgpt_api_key,
+        settings.pgpt_employee_no,
+        settings.pgpt_company_code,
+    )
+    return tuple(
+        value.get_secret_value().strip()
+        for value in values
+        if value is not None and value.get_secret_value().strip()
+    )
 
 
 def _artifact_argument_progress(arguments: str) -> tuple[int, int]:

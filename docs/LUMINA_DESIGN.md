@@ -1331,6 +1331,7 @@ Catalog ExtensionVersion
 ### 14.3 불변 version
 
 - Skill은 최소 `SKILL.md`를 가지며 선택적으로 manifest, references, scripts, examples와 assets를 포함합니다.
+- `.py` 생성물은 `write_file`로 Artifact version을 먼저 고정하고 `run_python`에는 그 Artifact ID·version만 전달합니다. 활성 Skill script는 Run snapshot의 exact version 또는 Draft revision·digest에서 package를 복원해 실행합니다. 두 경로 모두 shell 문자열과 host 경로를 받지 않고 고정 Python, 임시 전용 작업 디렉터리, Secret 없는 환경, timeout·출력 제한과 기본 고위험 승인을 사용합니다. 전용 디렉터리는 OS 수준 sandbox가 아니므로 사용자의 명시적 승인이 보안 경계에 포함됩니다.
 - 새 Skill은 version 없는 WorkingDraft로 시작하고 대화·편집 변경은 내부 `draft_revision`만 증가시킵니다.
 - Published Skill을 수정하는 사용자는 공용 Draft를 공유하지 않고 `(skill_id, owner_user_id)`로 격리된 개인 WorkingDraft를 가집니다. Owner의 Draft와 Contributor의 Draft는 서로 덮어쓰지 않습니다.
 - 사용자가 명시적으로 `저장`하면 현재 Draft 전체 package snapshot으로 첫 `v1`을 만들고, 이후 수정한 Draft를 다시 저장할 때 `v2`, `v3`를 만듭니다.

@@ -3495,7 +3495,7 @@ function App() {
                         <ShieldCheck size={15} />
                         <div className="approval-copy">
                           <strong>{approval.toolName}</strong>
-                          <span>{approval.effect === "destructive" ? "삭제 등 되돌리기 어려운 작업" : "외부 시스템을 변경하는 작업"} · 인자 {approval.summary.argumentCount}개</span>
+                          <span>{approval.effect === "destructive" ? "삭제 등 되돌리기 어려운 작업" : approval.effect === "local_execution" ? "로컬 Python 실행" : "외부 시스템을 변경하는 작업"} · 인자 {approval.summary.argumentCount}개</span>
                         </div>
                         <button type="button" disabled={workspace.runActionBusy} onClick={() => void controlRun("reject", approval.id)}>거부</button>
                         <button className="is-primary lumina-primary-action" type="button" disabled={workspace.runActionBusy} onClick={() => void controlRun("approve", approval.id)}>승인</button>

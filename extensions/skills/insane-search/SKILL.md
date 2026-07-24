@@ -15,29 +15,39 @@ description: >
 
 > 일반 접근 또는 `openweb`으로 해결되지 않는 차단/희소 소스를 대상으로, **사이트 무관한** 우회 전략을 자동 선택한다.
 
-## 하네스 규칙 (Claude에게 강제되는 지침)
+## 실행 규칙
 
-이 규칙은 Claude가 즉흥 판단으로 엇나가지 못하게 하기 위한 **고삐**다. 위반 시 이전 test.md 세션처럼 "chrome 200에서 break → safari 미시도 → Playwright 미설치라 포기" 식의 오판이 재현된다.
+이 규칙은 Agent가 즉흥 판단으로 엇나가지 않도록 실행 순서를 고정한다. 위반 시 "chrome 200에서 break → safari 미시도 → Playwright 미설치라 포기" 식의 오판이 재현된다.
 
 **R1 — 일반 웹 URL 차단/403/402 감지 시**:
 1. WebFetch, 즉흥 curl, 수동 헤더 조합 **시도 금지**
-2. 즉시 다음을 실행:
+2. Lumina에서는 현재 활성 Skill ID와 `run_python`을 사용해 고정된 Skill snapshot의 `engine` module을 실행:
+   ```json
+   {
+     "source": "skill",
+     "skill_id": "<현재 활성 insane-search Skill ID>",
+     "module": "engine",
+     "args": ["<URL>", "--device", "auto", "--trace"],
+     "timeout_seconds": 600
+   }
+   ```
+   명령 실행 도구가 있는 다른 호환 하네스에서는 Skill root를 Python 경로로 사용해 다음을 실행:
    ```bash
-   python3 -m engine "<URL>" [--selector "<CSS>"] [--device auto|desktop|mobile] [--trace]
+   python -m engine "<URL>" [--selector "<CSS>"] [--device auto|desktop|mobile] [--trace]
    ```
 3. 종료코드 0(ok) 또는 1(fail) 받은 뒤 판단. trace를 먼저 읽고 재시도 결정.
 4. 실패 시에만 `--trace --json`으로 재호출해서 원인 진단 후 `--device` 또는 `user_hint` 조정.
 
 **R2 — 첫 200에서 탈출 금지**: HTTP 200은 **검사 시작 조건**이지 성공이 아니다. `validate()`의 4-계층 검증을 통과해야 성공 선언. CLI는 이미 강제한다.
 
-**R3 — 편향 금지**: `engine/**`, `waf_profiles.yaml`에 특정 사이트 도메인·셀렉터·브랜드명 하드코딩 금지. `python3 engine/bias_check.py`가 CI 게이트. 자세한 규칙은 **No-Site-Name Rule** 섹션.
+**R3 — 편향 금지**: `engine/**`, `waf_profiles.yaml`에 특정 사이트 도메인·셀렉터·브랜드명 하드코딩 금지. `python engine/bias_check.py`가 CI 게이트. 자세한 규칙은 **No-Site-Name Rule** 섹션.
 
 **R4 — 힌트는 런타임에만**: 사이트 고유 정보(성공 셀렉터, 우선 Referer)는 CLI 인자 또는 `user_hint`로만 전달, 저장소에 고정 금지.
 
 **R5 — Phase 0 공식 API 우선**: X/Reddit/YouTube/HN/arXiv 등 **공식 공개 엔드포인트**가 있는 플랫폼은 Phase 0 테이블을 먼저 확인하고 해당 API를 쓴다. 이건 편향이 아니라 합의된 접근 경로다.
 
 **R6 — 실패 선언은 전수 시도 후에만**: 격자(URL 변환 × TLS impersonate × Referer × Playwright fallback)를 **모두** 돌린 뒤에만 "뚫을 수 없음" 결론. CLI의 `max_attempts` 기본 12가 이를 보장.
-단, R7 조건(WAF 조기 감지)이 성립하면 engine 격자는 계속 돌되, Claude가 **병렬로** MCP 정찰 루트를 시도할 수 있다. 빠른 쪽이 이긴다.
+단, R7 조건(WAF 조기 감지)이 성립하면 engine 격자는 계속 돌되, Agent가 MCP 정찰 루트를 함께 시도할 수 있다. 빠른 쪽이 이긴다.
 
 **R7 — WAF 조기 감지 시 API-first 병행 분기**:
 발동 조건 (AND):
@@ -45,17 +55,17 @@ description: >
 2. `profile_used`가 `akamai_bot_manager`, `cloudflare_turnstile`, `datadome_probable`, `perimeterx_human`, `f5_big_ip`, `aws_waf` 중 하나로 확정
 3. **사용자 요청이 리스트/수집/반복 의도** (여러 페이지, N개 이상, "전부", "크롤링", 페이지네이션 등). 단건 본문 조회는 해당 없음.
 
-세 조건 모두 참일 때 Claude는 **병렬 경로**를 시작한다:
+세 조건 모두 참일 때 Agent는 **병렬 경로**를 시작한다:
 
-**"병렬"의 실행 의미** (Claude 도구 호출이 순차이므로 명확화):
-- engine은 `run_in_background=true`로 Bash 툴에서 띄워둔다 — 격자는 그대로 돌되 블로킹하지 않음
-- Claude는 그 사이 foreground에서 MCP Playwright 정찰 루트를 진행
+**"병렬"의 실행 의미**:
+- background 실행을 지원하는 호환 하네스에서는 engine 격자를 백그라운드에서 유지한다.
+- Lumina의 동기 `run_python`에서는 engine 결과를 먼저 받은 뒤 MCP Playwright 정찰 루트를 진행한다.
 - engine이 먼저 성공해도 좋고, MCP 정찰로 얻은 API가 먼저 성공해도 좋음. 빠른 쪽 결과 채택
 
 **MCP 정찰 루트**:
 1. `mcp__playwright__browser_navigate` → 대상 페이지 로드 (브라우저 렌더링)
 2. `mcp__playwright__browser_network_requests` → XHR/fetch 호출 목록 수집, `/api/`·`/graphql`·`\.json` 필터로 내부 엔드포인트 식별
-3. 식별된 JSON API URL을 `python3 -m engine <API_URL>`로 재호출 (백그라운드 engine과는 별개 호출). 대부분 API 레이어는 페이지 HTML보다 WAF 보호가 얕아 curl_cffi로 바로 수집됨
+3. 식별된 JSON API URL을 같은 `run_python` Skill module 호출로 재실행한다. 명령 실행형 호환 하네스에서는 `python -m engine <API_URL>`을 사용한다. 대부분 API 레이어는 페이지 HTML보다 WAF 보호가 얕아 curl_cffi로 바로 수집됨
 4. 응답 스키마 파악 후 pagination / query parameter 조합해 반복 수집
 
 **왜**: SPA + WAF 사이트(쇼핑몰·커머스 다수)는 마케팅 페이지(HTML)만 WAF로 중투자하고 내부 API는 gateway 레벨 기본 방어만 쓰는 경우가 많다. HTML 격자 전수 낭비(50회 × 0.5s + Playwright fallback 40s ≈ 65초)보다 **MCP 정찰 1회(5~10초) + API 재호출(0.5초)**가 훨씬 경제적이고 성공률 높음.
@@ -69,7 +79,7 @@ description: >
 이 스킬의 핵심 불변식:
 
 - **Fallback 전용**: OpenWeb나 일반 웹 도구로 해결되지 않는 차단/희소 소스에만 사용한다.
-- **단일 진입점**: 일반 웹 페이지는 `python3 -m engine <URL>` 또는 `from engine import fetch; fetch(...)`.
+- **단일 진입점**: Lumina는 `run_python(source="skill", module="engine", ...)`, 명령 실행형 호환 하네스는 `python -m engine <URL>`, Python import는 `from engine import fetch; fetch(...)`.
 - **편향 금지**: `engine/**`, `waf_profiles.yaml`에 특정 사이트 하드코딩 금지.
 - **힌트는 런타임에만**: 사이트 고유 정보는 CLI/`user_hint` 경유.
 
@@ -109,17 +119,23 @@ description: >
 
 사용자가 YouTube 링크를 보내며 "자막 받아서 분석", "영상 내용 분석", "요약", "정리"를 요청하면 YouTube 페이지를 브라우저로 직접 열려고 하지 말고 `yt-dlp` 메타데이터와 자막 URL을 우선 사용한다.
 
-1. 먼저 재사용 스크립트를 사용한다. 영상 요약/정리처럼 자막을 바로 분석하면 되는 경우에는 첫 시도에서 `--output`을 쓰지 말고 stdout JSON을 그대로 읽는다. 첫 호출이 성공했으면 같은 URL을 저장 목적으로 재호출하지 말고, 이미 받은 JSON으로 답한다. 임시 redirection, heredoc, 긴 `python -c` 조합을 새로 만들지 않는다.
-   ```bash
-   python .skills/insane-search/scripts/youtube_transcript.py "URL" --json --max-chars 200000
+1. 먼저 재사용 스크립트를 사용한다. 영상 요약/정리처럼 자막을 바로 분석하면 되는 경우에는 첫 시도에서 `--output`을 쓰지 말고 stdout JSON을 그대로 읽는다. 첫 호출이 성공했으면 같은 URL을 저장 목적으로 재호출하지 말고, 이미 받은 JSON으로 답한다. Lumina에서는 다음 `run_python` 호출을 사용한다.
+   ```json
+   {
+     "source": "skill",
+     "skill_id": "<현재 활성 insane-search Skill ID>",
+     "path": "scripts/youtube_transcript.py",
+     "args": ["URL", "--json", "--max-chars", "200000"],
+     "timeout_seconds": 180
+   }
    ```
-2. 사용자가 파일 저장을 요청했거나 transcript를 후속 산출물로 보존해야 할 때만 `--output`을 쓴다. `>` 리다이렉션은 사용하지 않는다. 이때 경로는 현재 MyHarness 작업공간에서 보이는 `outputs/` 아래로 잡는다. 프로그램 루트에서 실행 중이고 실제 작업공간이 `Playground/shared/Default`라면 `Playground/shared/Default/outputs/...`처럼 workspace outputs를 명시한다.
+   명령 실행 도구가 있는 호환 하네스에서는 다음을 사용한다.
    ```bash
-   python .skills/insane-search/scripts/youtube_transcript.py "URL" --json --max-chars 200000 --output "Playground/shared/Default/outputs/youtube_transcript.json"
+   python scripts/youtube_transcript.py "URL" --json --max-chars 200000
    ```
-   `--output`이 없는 구버전 스크립트라면 PowerShell 파이프를 한 줄로 사용한다. `&&`, `mkdir -p`, Bash heredoc, bare `>` 리다이렉션은 피한다.
-   ```powershell
-   $out = "outputs"; New-Item -ItemType Directory -Force -Path $out | Out-Null; python .skills\insane-search\scripts\youtube_transcript.py "URL" --json --max-chars 200000 | Set-Content -Path "$out\youtube_transcript.json" -Encoding UTF8
+2. 사용자가 transcript 파일 저장을 요청했으면 Lumina에서는 `run_python` stdout을 분석한 뒤 별도의 `write_file` Artifact로 저장한다. Skill 임시 실행 디렉터리는 호출 종료 시 삭제되므로 `--output`을 영구 저장 경로로 사용하지 않는다. 명령 실행형 호환 하네스에서만 작업공간 `outputs/` 아래에 `--output`을 지정한다.
+   ```bash
+   python scripts/youtube_transcript.py "URL" --json --max-chars 200000 --output "outputs/youtube_transcript.json"
    ```
 3. 스크립트는 `ko-orig`, `ko`, `en` 순서로 `subtitles`와 `automatic_captions`를 확인하고, `json3`/`vtt`/`srv*` 자막을 텍스트로 정리한다. 분석에는 이 출력의 `title`, `duration`, `caption_language`, `transcript`를 사용한다.
 4. `ok=false`이고 `reason`이 `NO_CAPTIONS` 또는 `EMPTY_CAPTIONS`이면 영상 내용을 추측하지 말고, "자막 또는 자동생성 자막이 없어 영상 내용 분석은 할 수 없습니다"라고 답한다. 제목·설명·썸네일만으로 본문 분석한 것처럼 말하지 않는다.
@@ -191,7 +207,7 @@ PY
 ### 단일 진입점
 
 ```python
-from insane_search.engine import fetch
+from engine import fetch
 
 result = fetch(
     "https://example.com/path",
@@ -259,9 +275,9 @@ report     — FetchResult(ok, verdict, profile_used, trace, summary)
 
 ### Playwright MCP 호출 규칙
 
-`fetch_chain`의 `needs_js_exec only` 케이스는 **Claude 세션에서 MCP 도구를 직접 호출**해야 한다. subprocess 경로 없음. 즉:
-1. `result.summary`에 "Playwright MCP must be invoked from the Claude session"이 포함되면
-2. `mcp__playwright__browser_navigate` → `browser_wait_for` → `browser_snapshot` 흐름으로 Claude가 직접 처리
+`fetch_chain`의 `needs_js_exec only` 케이스는 **현재 Agent 세션에서 Playwright MCP 도구를 직접 호출**해야 한다. subprocess 경로 없음. 즉:
+1. `result.summary`에 Playwright MCP 직접 호출 안내가 포함되면
+2. 사용 가능한 Playwright navigate → wait → snapshot 흐름으로 Agent가 직접 처리
 
 ## Phase 2 — 수동 개입 (옵션)
 
@@ -277,12 +293,9 @@ result = fetch(
 
 힌트는 **현재 호출 1회에만** 적용되며 저장되지 않는다.
 
-## 의존성 자동 설치
+## 의존성
 
-최초 호출 시 필요 패키지를 자동 설치한다:
-```bash
-python3 -c "import curl_cffi, bs4, yaml" 2>/dev/null || pip install curl_cffi beautifulsoup4 pyyaml -q
-```
+Lumina 설치기는 `curl_cffi`, `beautifulsoup4`, `pyyaml`, `yt-dlp`를 서버 Python 환경에 함께 고정한다. Agent Run 중에는 `pip install`을 호출하거나 package를 임의 변경하지 않는다. 명령 실행형 호환 하네스에서는 실행 전 관리자가 같은 의존성을 설치해야 한다.
 
 Playwright 로컬 경로 사용 시 Node가 필요:
 ```bash
@@ -346,7 +359,7 @@ yt-dlp --list-subs "URL"
 
 ## 관련 문서 (references/) — 언제 무엇을 읽을지
 
-이 섹션은 **참조 파일 선택 가이드**다. 문제가 생겼을 때 어떤 `references/*.md`를 열어야 할지 결정하는 기준으로 쓴다. Claude는 필요할 때만 해당 파일을 `Read`하고, 선제적으로 전부 읽지 않는다.
+이 섹션은 **참조 파일 선택 가이드**다. 문제가 생겼을 때 어떤 `references/*.md`를 열어야 할지 결정하는 기준으로 쓴다. Agent는 필요할 때만 해당 파일을 읽고, 선제적으로 전부 읽지 않는다.
 
 ### A. Engine 확장·진단 (하네스 내부)
 
