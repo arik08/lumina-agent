@@ -12,6 +12,7 @@ from docx import Document
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from pptx import Presentation
+from pypdf import PdfWriter
 from sqlalchemy.orm import Session
 
 from lumina.api.routes.attachments import _extract_attachment, _sniff_mime
@@ -93,6 +94,40 @@ def test_text_extraction_tracks_lines() -> None:
     assert result.status == "completed"
     assert result.text == "첫 줄\n둘째 줄"
     assert result.locator_map == {"kind": "line", "count": 2}
+
+
+def test_pdf_extraction_allows_public_permission_encryption() -> None:
+    writer = PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+    writer.encrypt(user_password="", owner_password="owner-secret")
+    encrypted_buffer = BytesIO()
+    writer.write(encrypted_buffer)
+
+    extracted = extract_attachment_text(
+        filename="public-report.pdf",
+        mime_type="application/pdf",
+        content=encrypted_buffer.getvalue(),
+    )
+
+    assert extracted.status == "completed"
+    assert "[Page 1]" in extracted.text
+
+
+def test_pdf_extraction_rejects_required_reader_password() -> None:
+    writer = PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+    writer.encrypt(user_password="reader-secret", owner_password="owner-secret")
+    encrypted_buffer = BytesIO()
+    writer.write(encrypted_buffer)
+
+    extracted = extract_attachment_text(
+        filename="private-report.pdf",
+        mime_type="application/pdf",
+        content=encrypted_buffer.getvalue(),
+    )
+
+    assert extracted.status == "failed"
+    assert extracted.metadata["errorType"] == "EncryptedPdf"
 
 
 def test_office_formats_extract_without_writing_temporary_files() -> None:

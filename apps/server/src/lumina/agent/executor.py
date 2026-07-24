@@ -526,7 +526,7 @@ def _web_call_signature(tool_name: str, arguments: Mapping[str, Any]) -> str:
             and key.casefold() not in _TRACKING_QUERY_KEYS
         ]
         path = parsed.path.rstrip("/") or "/"
-        return urlunsplit(
+        normalized_url = urlunsplit(
             (
                 parsed.scheme.casefold(),
                 netloc,
@@ -535,6 +535,9 @@ def _web_call_signature(tool_name: str, arguments: Mapping[str, Any]) -> str:
                 "",
             )
         )
+        page_start = int(arguments.get("page_start") or 1)
+        page_end = int(arguments.get("page_end") or page_start + 49)
+        return f"{normalized_url}|pages={page_start}-{page_end}"
     except ValueError:
         return " ".join(value.casefold().split())
 
@@ -5463,6 +5466,16 @@ class LocalRunExecutor:
                     url,
                     tool_execution_id=tool_id,
                     query_ids=[str(item) for item in raw_query_ids],
+                    page_start=(
+                        int(arguments["page_start"])
+                        if arguments.get("page_start") is not None
+                        else None
+                    ),
+                    page_end=(
+                        int(arguments["page_end"])
+                        if arguments.get("page_end") is not None
+                        else None
+                    ),
                     policy=_web_policy(),
                     trust_profile=self.trust_profile,
                 )

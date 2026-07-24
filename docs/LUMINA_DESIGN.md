@@ -1254,6 +1254,8 @@ create_http_client(
 
 전용 Deep Research 실행기는 만들지 않습니다. Agent Loop가 문제의 복잡도에 따라 검색어 생성 → `web_search` → 필요한 문서의 `web_fetch` → 추가 검색 → 상충 근거 확인 → 최종 합성을 반복합니다. 간단한 최신 정보 확인은 한두 번의 검색으로 끝낼 수 있고, 복잡한 조사는 구조화 Plan·진행 event·steer·cancel·예산 제한을 그대로 사용합니다. 최신성 요청, 사용자 제공 URL과 의료·법률·금융 같은 고위험 질의는 Run snapshot의 `web_research_requirement=required`로 고정하고, fetched 본문을 확보하지 못하면 최종 Message를 `researchVerification=unverified`로 표시하여 모델 기억만으로 현재 사실을 검증한 것처럼 보이지 않게 합니다.
 
+`web_fetch`는 HTML·XHTML·plain text·JSON과 PDF를 지원합니다. 일반 웹 본문의 다운로드 상한은 2MB로 유지하고 PDF는 대형 연차보고서를 처리할 수 있도록 100MB까지 허용합니다. PDF 본문 추출은 event loop 밖의 제한된 worker에서 수행하고 `[Page N]` locator, 전체 page count, 선택 page range, 원문 URL과 content hash를 보존합니다. 한 번에 최대 50페이지를 반환하고 모델은 `page_start`·`page_end`로 후속 범위를 조회합니다. 모델에 전달하는 추출 text는 별도 context 상한으로 제한하며, 빈 사용자 암호로 열리는 공개 권한 암호화 PDF는 읽되 실제 비밀번호가 필요한 PDF·손상 PDF와 text layer가 없는 스캔 PDF는 성공으로 기록하지 않고 각각 추출 실패와 OCR 필요 상태로 구분합니다.
+
 ### 13.4 검증 가능한 인용과 검색 이력
 
 검색 도구의 화면용 요약과 인용 근거를 같은 문자열로 취급하지 않습니다. Backend가 Tool 결과에서 출처와 근거 문장을 구조화해 보존하고, 모델은 최종 답변에서 해당 source ID만 참조합니다.

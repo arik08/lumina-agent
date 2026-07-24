@@ -699,6 +699,32 @@ def test_web_fetch_signature_ignores_fragment_and_tracking_parameters() -> None:
     assert first == second
 
 
+def test_web_fetch_signature_distinguishes_pdf_page_ranges() -> None:
+    first = executor_module._web_call_signature(
+        "web_fetch",
+        {
+            "url": "https://example.com/report.pdf",
+            "page_start": 1,
+            "page_end": 50,
+        },
+    )
+    same_default = executor_module._web_call_signature(
+        "web_fetch",
+        {"url": "https://example.com/report.pdf"},
+    )
+    later = executor_module._web_call_signature(
+        "web_fetch",
+        {
+            "url": "https://example.com/report.pdf",
+            "page_start": 51,
+            "page_end": 100,
+        },
+    )
+
+    assert first == same_default
+    assert first != later
+
+
 def test_write_file_progress_counts_streamed_tokens_and_lines() -> None:
     streamed = executor_module._write_file_tool_progress(
         {

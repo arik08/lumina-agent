@@ -62,6 +62,9 @@ Web Search와 Web Fetch는 공통 HTTP fetch 함수를 사용합니다.
 - 회사 CA가 적용된 `SSLContext` 사용
 - timeout과 redirect 횟수 제한
 - 외부 페이지를 명령이 아닌 신뢰하지 않는 데이터로 표시
+- HTML·XHTML·plain text·JSON은 2MB, PDF는 100MB의 형식별 다운로드 상한 적용
+- PDF는 attachment extractor를 재사용해 event loop 밖에서 page locator가 있는 text로 추출하고, 한 번에 최대 50페이지를 `page_start`·`page_end` 범위로 조회
+- 빈 사용자 암호의 공개 권한 암호화 PDF는 허용하되 실제 비밀번호가 필요한 PDF·손상 PDF와 text layer가 없는 스캔 PDF는 추출 실패·OCR 필요 오류로 명시
 
 주요 참고 위치:
 
