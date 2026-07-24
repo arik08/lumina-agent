@@ -3559,6 +3559,7 @@ export function DeepAnalysisView({
                                 source={selectedNode.outputMarkdown}
                                 previewUrl={null}
                                 title={`${selectedNode.title} HTML 미리보기`}
+                                autoHeight
                               />
                             </div>
                           ) : (

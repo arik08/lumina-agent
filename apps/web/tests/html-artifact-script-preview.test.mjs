@@ -15,13 +15,22 @@ test("HTML Artifact preview paints loading feedback before mounting its streamed
   assert.match(appSource, /<Suspense fallback=\{<div className="artifact-loading" role="progressbar" aria-label="HTML 미리보기 준비 중"/);
   assert.match(appSource, /previewUrl=\{artifactEditing \? null : artifactPreviewUrl\}/);
   assert.match(previewSource, /setFrameContent\(null\);[\s\S]*?requestAnimationFrame\(\(\) => \{/);
-  assert.match(previewSource, /previewUrl \? \{ src: previewUrl \} : \{ srcDoc: source \?\? "" \}/);
+  assert.match(previewSource, /srcDoc: autoHeight \? withAutoHeightBridge\(previewSource\) : previewSource/);
   assert.match(previewSource, /role="progressbar" aria-label="HTML 미리보기 준비 중"/);
   assert.match(previewSource, /sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock allow-downloads allow-popups allow-popups-to-escape-sandbox"/);
   assert.doesNotMatch(previewSource, /allow-scripts allow-same-origin/);
   assert.match(previewSource, /src=\{frameContent\.src\}/);
   assert.match(previewStyles, /\.artifact-preview-frame \{[^}]*background: #fff;[^}]*color-scheme: light;/s);
   assert.match(previewStyles, /@media \(prefers-reduced-motion: reduce\)/);
+});
+
+test("HTML Artifact preview can hand scrolling to its parent without weakening the sandbox", () => {
+  assert.match(previewSource, /const artifactPreviewHeightMessage = "lumina:artifact-preview-height"/);
+  assert.match(previewSource, /new ResizeObserver\(publish\)\.observe\(document\.documentElement\)/);
+  assert.match(previewSource, /event\.source !== frameRef\.current\?\.contentWindow/);
+  assert.match(previewSource, /scrolling=\{autoHeight \? "no" : undefined\}/);
+  assert.match(previewStyles, /\.artifact-preview-shell\.is-auto-height \{[^}]*height: auto;[^}]*min-height: 0;/);
+  assert.match(previewStyles, /\.artifact-preview-frame\.is-auto-height \{[^}]*min-height: 0;[^}]*overflow: hidden;/);
 });
 
 test("HTML Artifact preview bridge preserves clickable citations without cloning the report in React", () => {

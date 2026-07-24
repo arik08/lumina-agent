@@ -291,6 +291,7 @@ test("Node output is one rendered document with a link to its saved file", async
   assert.doesNotMatch(css, /\.deep-analysis-output-document\s*\{[^}]*font-size:/s);
   assert.match(view, /<MarkdownResponse text=\{selectedNode\.outputMarkdown\} \/>/);
   assert.match(view, /selectedNode\.outputLogicalPath\?\.toLowerCase\(\)\.endsWith\("\.html"\)[\s\S]*?<ArtifactHtmlPreview[\s\S]*?source=\{selectedNode\.outputMarkdown\}[\s\S]*?previewUrl=\{null\}/);
+  assert.match(view, /<ArtifactHtmlPreview[\s\S]*?title=\{`\$\{selectedNode\.title\} HTML 미리보기`\}[\s\S]*?autoHeight/);
   assert.match(css, /\.deep-analysis-output-html \{[^}]*overflow: hidden;[^}]*border: 1px solid var\(--line\)/);
   assert.match(css, /\.deep-analysis-inspector > \.deep-analysis-output-section \{[^}]*display: flex;[^}]*flex-direction: column;[^}]*\}/);
   assert.match(css, /\.deep-analysis-inspector > \.deep-analysis-output-section\.is-streaming \{[^}]*flex: 1 1 0;[^}]*overflow: auto/);
