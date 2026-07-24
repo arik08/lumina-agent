@@ -84,6 +84,43 @@ def test_legacy_skill_is_migrated_and_no_nonstandard_five_mb_cap_is_applied() ->
     assert package["references/large.txt"] == large_reference
 
 
+@pytest.mark.parametrize(
+    "content",
+    [
+        "api_key = os.environ.get('OPENAI_API_KEY')\n",
+        "api_key = read_api_key(args.api_key_env)\n",
+    ],
+)
+def test_package_secret_scan_allows_runtime_key_lookup(content: str) -> None:
+    package = normalize_package(
+        {
+            "SKILL.md": "# Runtime key lookup\n",
+            "scripts/example.py": content,
+        }
+    )
+
+    assert package["scripts/example.py"] == content
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "api_key = actualsecretvalue\n",
+        "password: 'actualsecretvalue'\n",
+    ],
+)
+def test_package_secret_scan_rejects_literal_secret_assignments(content: str) -> None:
+    with pytest.raises(ApiProblem) as error:
+        normalize_package(
+            {
+                "SKILL.md": "# Unsafe secret\n",
+                "references/example.txt": content,
+            }
+        )
+
+    assert error.value.code == "secret_content_forbidden"
+
+
 def test_standardize_rejects_a_frontmatter_name_that_differs_from_slug() -> None:
     with pytest.raises(ApiProblem) as error:
         standardize_skill_package(

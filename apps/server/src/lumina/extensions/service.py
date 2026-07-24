@@ -45,7 +45,9 @@ from .package_content import decode_package_content
 _SAFE_SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _SECRET_ASSIGNMENT = re.compile(
     r"(?im)^\s*(?:api[_-]?key|access[_-]?token|password|secret)\s*[:=]\s*"
-    r"(?:['\"])?(?!<|\$\{|your[_-]|replace[_-]|example)[A-Za-z0-9_./+=-]{8,}"
+    r"(?:['\"](?!<|\$\{|your[_-]|replace[_-]|example)"
+    r"[A-Za-z0-9_./+=-]{8,}['\"]|"
+    r"(?!<|\$\{|your[_-]|replace[_-]|example)[A-Za-z0-9_./+=-]{8,})\s*$"
 )
 _FORBIDDEN_PACKAGE_NAMES = {".env", "credentials", "secrets"}
 _FORBIDDEN_PACKAGE_SUFFIXES = {".key", ".p12", ".pfx", ".pem"}
