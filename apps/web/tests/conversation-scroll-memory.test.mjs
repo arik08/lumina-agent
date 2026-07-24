@@ -15,7 +15,7 @@ test("conversation scroll position is restored per session without completed-run
   assert.match(streamingUi, /sessionStorage\.setItem\(`\$\{scrollPositionStoragePrefix\}\$\{conversationId\}`/);
   assert.match(streamingUi, /useLayoutEffect\(\(\) => \{[\s\S]*?setProgrammaticScrollTop\(container, targetTop,/);
   assert.match(streamingUi, /\(!activeRef\.current && !force\)/);
-  assert.match(streamingUi, /const observer = new ResizeObserver\(\(\) => \{[\s\S]*?follow\(false, false, !activeRef\.current\);/);
+  assert.match(streamingUi, /const observer = new ResizeObserver\(\(\) => \{[\s\S]*?follow\(!activeRef\.current, false, !activeRef\.current\);/);
   assert.doesNotMatch(streamingUi, /!activeRef\.current && conversationId && remembered\?\.atBottom/);
   assert.match(streamingUi, /setShowJumpToLatest\(!followingRef\.current && distance > jumpButtonThresholdPx\)/);
   assert.match(streamingUi, /if \(distance <= nearBottomPx\) \{[\s\S]*?followingRef\.current = true;[\s\S]*?setShowJumpToLatest\(false\);[\s\S]*?return;/);

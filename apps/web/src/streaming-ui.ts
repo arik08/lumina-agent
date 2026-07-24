@@ -398,7 +398,7 @@ export function useConversationAutoFollow(
     if (!container || !content || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
       updateJumpVisibility();
-      follow(false, false, !activeRef.current);
+      follow(!activeRef.current, false, !activeRef.current);
     });
     observer.observe(content);
     return () => observer.disconnect();
