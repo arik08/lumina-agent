@@ -58,3 +58,37 @@ def test_request_json_allows_a_fourth_attempt_after_repeated_rate_limits(
 
     assert comtrade_server._request_json("test") == {"data": []}
     assert sleeps == [1.25, 1.25, 1.75]
+
+
+def test_trade_params_omit_partner_code_for_all_partner_breakdown() -> None:
+    params = comtrade_server._trade_params(
+        reporter_code="410",
+        period="2024",
+        cmd_code="2601",
+        flow_code="M",
+        partner_code=" ALL ",
+        partner2_code="0",
+        customs_code="C00",
+        mot_code="0",
+        include_desc=True,
+    )
+
+    query = {key: value for key, value in params.items() if value is not None}
+
+    assert "partnerCode" not in query
+
+
+def test_trade_params_keep_world_partner_code() -> None:
+    params = comtrade_server._trade_params(
+        reporter_code="410",
+        period="2024",
+        cmd_code="2601",
+        flow_code="M",
+        partner_code="0",
+        partner2_code="0",
+        customs_code="C00",
+        mot_code="0",
+        include_desc=True,
+    )
+
+    assert params["partnerCode"] == "0"

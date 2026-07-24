@@ -11,7 +11,7 @@
       "tools": [
         {
           "name": "preview_trade_data",
-          "description": "Fetch UN Comtrade public preview trade data without requiring an API key.",
+          "description": "Fetch public preview trade data without an API key. Use partner_code=\"0\" for World or \"all\" for a partner breakdown.",
           "inputSchema": {
             "properties": {
               "reporter_code": {
@@ -88,7 +88,7 @@
         },
         {
           "name": "get_trade_data",
-          "description": "Fetch UN Comtrade data endpoint results. Requires UN_COMTRADE_API_KEY or COMTRADE_API_KEY.",
+          "description": "Fetch keyed trade data. Use partner_code=\"0\" for World or \"all\" for a partner breakdown. Requires UN_COMTRADE_API_KEY or COMTRADE_API_KEY.",
           "inputSchema": {
             "properties": {
               "reporter_code": {

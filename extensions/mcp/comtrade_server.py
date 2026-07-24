@@ -112,6 +112,11 @@ def _bool_param(value: bool) -> str:
     return "true" if value else "false"
 
 
+def _partner_code_param(value: str) -> str | None:
+    token = value.strip()
+    return None if token.casefold() == "all" else token
+
+
 def _to_json(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2)
 
@@ -211,7 +216,7 @@ def _trade_params(
         "flowCode": flow_code,
         "reporterCode": reporter_code,
         "period": period,
-        "partnerCode": partner_code,
+        "partnerCode": _partner_code_param(partner_code),
         "partner2Code": partner2_code,
         "customsCode": customs_code,
         "motCode": mot_code,
@@ -256,7 +261,7 @@ def preview_trade_data(
     include_desc: bool = True,
     limit: int = 100,
 ) -> str:
-    """Fetch UN Comtrade public preview trade data without requiring an API key."""
+    """Fetch public preview trade data. Use partner_code="all" for a partner breakdown."""
     payload = _request_json(
         _trade_path("public/v1/preview", type_code, freq_code, classification_code),
         _trade_params(
@@ -290,7 +295,7 @@ def get_trade_data(
     include_desc: bool = True,
     limit: int = 1000,
 ) -> str:
-    """Fetch UN Comtrade data endpoint results. Requires UN_COMTRADE_API_KEY or COMTRADE_API_KEY."""
+    """Fetch keyed trade data. Use partner_code="all" for a partner breakdown."""
     api_key = _api_key()
     if not api_key:
         raise ValueError(
