@@ -518,17 +518,26 @@ def test_selected_artifact_target_retries_short_report_and_exposes_separate_coun
         )
         assert started.status_code == 202, started.text
         snapshot = _wait_for_terminal(client, started.json()["run"]["runId"])
+        artifact = client.get(
+            f"/api/artifacts/{snapshot['artifacts'][0]['id']}"
+        ).json()
 
     assert snapshot["status"] == "completed"
     assert provider_turn == 4
     assert len(snapshot["artifacts"]) == 1
+    assert snapshot["artifacts"][0]["currentVersion"] == 3
+    assert artifact["versions"] == [3, 2, 1]
     assert len(snapshot["toolExecutions"]) == 3
     for attempt, execution in enumerate(snapshot["toolExecutions"][:2], start=1):
         result = execution["result"]
         assert result["status"] == "needs_expansion"
+        assert result["artifact_id"] == snapshot["artifacts"][0]["id"]
+        assert result["version"] == attempt
         assert result["documentTokens"] < result["minimumTokens"]
         assert result["expansionAttempt"] == attempt
         assert result["maxExpansionAttempts"] == 2
+        assert execution["artifactId"] == snapshot["artifacts"][0]["id"]
+    assert snapshot["toolExecutions"][2]["artifactId"] == snapshot["artifacts"][0]["id"]
     artifact_usage = snapshot["artifactUsage"]
     assert artifact_usage["estimated"] is False
     assert artifact_usage["targetTokens"] == 1_000
@@ -638,12 +647,14 @@ def test_selected_artifact_target_fails_instead_of_saving_repeatedly_short_repor
     assert snapshot["status"] == "failed"
     assert snapshot["errorCode"] == "artifact_target_not_met"
     assert provider_turn == 3
-    assert snapshot["artifacts"] == []
+    assert len(snapshot["artifacts"]) == 1
+    assert snapshot["artifacts"][0]["currentVersion"] == 3
     assert len(snapshot["toolExecutions"]) == 3
     assert [
         execution["result"]["status"] for execution in snapshot["toolExecutions"][:2]
     ] == ["needs_expansion", "needs_expansion"]
     assert snapshot["toolExecutions"][2]["status"] == "failed"
+    assert snapshot["toolExecutions"][2]["artifactId"] == snapshot["artifacts"][0]["id"]
     assert "최소 허용 분량" in snapshot["toolExecutions"][2]["error"]
 
 

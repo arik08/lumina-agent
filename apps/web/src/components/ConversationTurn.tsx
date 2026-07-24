@@ -1647,7 +1647,7 @@ export const AssistantTurn = memo(function AssistantTurn({
   sessionUsage: Record<string, unknown> | undefined;
   showSessionUsage: boolean;
   onCopyTool: (execution: ToolExecution) => void;
-  onOpenArtifact: (artifact: ArtifactSummary) => void;
+  onOpenArtifact: (artifact: ArtifactSummary, version?: number) => void;
   onBranch: (anchorMessageId: string) => Promise<void>;
   onShare: (anchorMessageId: string | null) => void;
   onToast: (message: string) => void;
@@ -1683,6 +1683,25 @@ export const AssistantTurn = memo(function AssistantTurn({
     knowledgeSourceCount > 0 ? `지식 문서 ${knowledgeSourceCount}` : null,
   ].filter((label): label is string => label !== null);
   const tools = snapshot?.toolExecutions ?? turnSet.toolExecutions;
+  const artifactVersionRows = artifacts.flatMap((artifact) => {
+    const executionVersions = tools.flatMap((execution) => {
+      const version = execution.result?.version;
+      return execution.artifactId === artifact.id
+        && typeof version === "number"
+        && Number.isInteger(version)
+        && version > 0
+        ? [version]
+        : [];
+    });
+    const versions = [
+      ...new Set([
+        ...(artifact.versions ?? []),
+        ...executionVersions,
+        artifact.currentVersion,
+      ]),
+    ].sort((left, right) => left - right);
+    return versions.map((version) => ({ artifact, version }));
+  });
   const activities: RunActivity[] = snapshot?.activities?.length
     ? snapshot.activities
     : tools.map((execution, index) => ({
@@ -2087,10 +2106,10 @@ export const AssistantTurn = memo(function AssistantTurn({
                 </div>
               </div>
             )}
-            {artifacts.map((artifact) => (
-              <button className="artifact-result" type="button" key={artifact.id} onClick={() => onOpenArtifact(artifact)}>
+            {artifactVersionRows.map(({ artifact, version }) => (
+              <button className="artifact-result" type="button" key={`${artifact.id}:${version}`} onClick={() => onOpenArtifact(artifact, version)}>
                 <FileCode2 size={18} />
-                <span className="artifact-result-title">{artifact.currentVersion > 1 && <small>(v{artifact.currentVersion})</small>}<strong>{artifact.displayName}</strong></span>
+                <span className="artifact-result-title"><small>{version === 1 ? "(원본)" : `(v${version})`}</small><strong>{artifact.displayName}</strong></span>
                 <span className="artifact-result-action">문서 열기 <ChevronRight size={14} /></span>
               </button>
             ))}

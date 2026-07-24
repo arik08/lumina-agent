@@ -2355,7 +2355,10 @@ function App() {
     }
   }, [showToast]);
 
-  const openArtifact = useCallback(async (artifact: ArtifactSummary) => {
+  const openArtifact = useCallback(async (
+    artifact: ArtifactSummary,
+    requestedVersion?: number,
+  ) => {
     if (artifactSaveBusy) {
       showToast("Artifact 저장이 끝난 뒤 다른 문서를 열어 주세요.");
       return;
@@ -2387,17 +2390,20 @@ function App() {
     setArtifactAiComments([]);
     setArtifactAiStatus(null);
     setArtifactDraftEtag(undefined);
+    const targetVersion = requestedVersion ?? artifact.currentVersion;
     try {
       const [summary, initialVersion, savedDraft] = await Promise.all([
         api.artifacts.get(artifact.id),
         api.artifacts.getVersion(
           artifact.id,
-          artifact.currentVersion,
+          targetVersion,
           artifact.mimeType !== "text/html",
         ),
         api.artifacts.getDraft(artifact.id),
       ]);
-      const version = summary.currentVersion === initialVersion.version
+      const version = requestedVersion !== undefined
+        ? initialVersion
+        : summary.currentVersion === initialVersion.version
         ? initialVersion
         : await api.artifacts.getVersion(
             artifact.id,

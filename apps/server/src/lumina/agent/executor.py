@@ -26,6 +26,7 @@ from ..artifacts.service import (
     artifact_summary,
     cleanup_artifact_storage_on_error,
     create_artifact,
+    create_artifact_version,
     current_artifact_version,
     require_artifact,
 )
@@ -5502,6 +5503,10 @@ class LocalRunExecutor:
                 length_retry_count = int(
                     report_run.snapshot_json.get("artifact_length_retry_count", 0) or 0
                 )
+                revision_artifact_id = str(
+                    report_run.snapshot_json.get("artifact_length_retry_artifact_id")
+                    or ""
+                ).strip()
                 report_images = resolve_report_images(
                     db,
                     run=report_run,
@@ -5540,10 +5545,57 @@ class LocalRunExecutor:
         ):
             missing_tokens = max(0, target_output_tokens - document_tokens)
             if length_retry_count >= _MAX_ARTIFACT_LENGTH_RETRIES:
+                with (
+                    cleanup_artifact_storage_on_error(self.storage) as storage_keys,
+                    session_scope() as db,
+                ):
+                    run = db.scalar(
+                        select(Run).where(Run.id == run_id).with_for_update()
+                    )
+                    user = db.get(User, run.user_id) if run is not None else None
+                    failed_tool = db.get(ToolExecution, tool_id)
+                    if run is None or user is None or failed_tool is None:
+                        raise RuntimeError(
+                            "Run context disappeared during final report revision"
+                        )
+                    self._require_execution_owner(run)
+                    artifact = require_artifact(
+                        db, user, revision_artifact_id, write=True
+                    )
+                    if (
+                        artifact.kind != report.kind
+                        or artifact.mime_type != report.mime_type
+                    ):
+                        raise ValueError(
+                            "A report expansion must keep the original Artifact format."
+                        )
+                    version = create_artifact_version(
+                        db,
+                        self.storage,
+                        user=user,
+                        artifact_id=artifact.id,
+                        base_version=artifact.current_version_number or 0,
+                        content=report.content,
+                        change_type="agent_edited",
+                        change_summary="목표 분량 미달로 종료된 마지막 보강본",
+                    )
+                    storage_keys.append(version.storage_key)
+                    failed_tool.artifact_id = artifact.id
+                    append_event(
+                        db,
+                        run,
+                        "artifact_created",
+                        {
+                            "artifact": artifact_summary(
+                                artifact, current_artifact_version(db, artifact)
+                            )
+                        },
+                    )
                 failure_message = (
                     "선택한 문서 출력 목표를 반복해서 충족하지 못했습니다. "
                     f"마지막 결과는 약 {document_tokens:,}토큰이며, "
-                    f"최소 허용 분량은 약 {target_floor:,}토큰입니다."
+                    f"최소 허용 분량은 약 {target_floor:,}토큰입니다. "
+                    f"작성된 결과는 Artifact v{version.version_number}로 보존했습니다."
                 )
                 failure = await self._fail_tool_execution(
                     run_id,
@@ -5562,42 +5614,104 @@ class LocalRunExecutor:
                 )
                 return failure
             expansion_attempt = length_retry_count + 1
-            with session_scope() as db:
-                run = db.scalar(
-                    select(Run).where(Run.id == run_id).with_for_update()
-                )
-                if run is not None:
-                    self._require_execution_owner(run)
-                    run.snapshot_json = {
-                        **run.snapshot_json,
-                        "artifact_progress": None,
-                        "artifact_length_retry_count": expansion_attempt,
-                    }
+            with (
+                cleanup_artifact_storage_on_error(self.storage) as storage_keys,
+                session_scope() as db,
+            ):
+                run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
+                user = db.get(User, run.user_id) if run is not None else None
+                if run is None or user is None:
+                    raise RuntimeError(
+                        "Run context disappeared during report revision"
+                    )
+                self._require_execution_owner(run)
+                if revision_artifact_id:
+                    artifact = require_artifact(
+                        db, user, revision_artifact_id, write=True
+                    )
+                    if (
+                        artifact.kind != report.kind
+                        or artifact.mime_type != report.mime_type
+                    ):
+                        raise ValueError(
+                            "A report expansion must keep the original Artifact format."
+                        )
+                    version = create_artifact_version(
+                        db,
+                        self.storage,
+                        user=user,
+                        artifact_id=artifact.id,
+                        base_version=artifact.current_version_number or 0,
+                        content=report.content,
+                        change_type="agent_edited",
+                        change_summary="선택한 목표 분량에 맞게 기존 보고서를 보강",
+                    )
+                else:
+                    report_display_name = _unique_report_display_name(
+                        db, run.project_id, report.display_name
+                    )
+                    artifact, version = create_artifact(
+                        db,
+                        self.storage,
+                        user=user,
+                        project_id=run.project_id,
+                        conversation_id=run.conversation_id,
+                        source_run_id=run.id,
+                        display_name=report_display_name,
+                        kind=report.kind,
+                        mime_type=report.mime_type,
+                        content=report.content,
+                        change_type="agent_generated",
+                        change_summary="목표 분량 검토 전 원본 보고서 작성",
+                        asset_manifest=list(report.asset_manifest),
+                    )
+                storage_keys.append(version.storage_key)
+                revision_artifact_id = artifact.id
+                run.snapshot_json = {
+                    **run.snapshot_json,
+                    "artifact_progress": None,
+                    "artifact_length_retry_count": expansion_attempt,
+                    "artifact_length_retry_artifact_id": artifact.id,
+                }
             length_check = {
                 "status": "needs_expansion",
+                "artifact_id": revision_artifact_id,
+                "version": version.version_number,
                 "documentTokens": document_tokens,
                 "targetTokens": target_output_tokens,
                 "minimumTokens": target_floor,
                 "expansionAttempt": expansion_attempt,
                 "maxExpansionAttempts": _MAX_ARTIFACT_LENGTH_RETRIES,
                 "targetLengthCheck": (
-                    "The report file has not been saved because its Artifact content is only "
+                    f"Artifact {revision_artifact_id} version {version.version_number} has "
+                    "been saved and is available to the user while you continue. Its content is "
+                    "only "
                     f"about {document_tokens:,} tokens, below the selected minimum of about "
                     f"{target_floor:,} tokens. Expansion check {expansion_attempt} of "
-                    f"{_MAX_ARTIFACT_LENGTH_RETRIES} failed. Call `create_report` again with "
-                    "the complete revised document in one tool call. Preserve the useful "
-                    "analysis already written instead of replacing it with a shorter rewrite, "
-                    "and add about "
+                    f"{_MAX_ARTIFACT_LENGTH_RETRIES} failed. Edit the report from the previous "
+                    "tool call in place: preserve its useful analysis, structure, citations, "
+                    "and styling, and add about "
                     f"{missing_tokens:,} tokens of substantive analysis, explanations, tables, "
-                    "source notes, and interpretation. The next report must contain at least "
-                    f"about {target_floor:,} document tokens. Do not finish with chat text only."
+                    "source notes, and interpretation. Call `create_report` with that edited "
+                    "document; Lumina will append it as the next immutable version of the same "
+                    "Artifact instead of creating a new report. The next version must contain "
+                    f"at least about {target_floor:,} document tokens. Do not restart from "
+                    "scratch and do not finish with chat text only."
                 ),
+            }
+            artifact_usage = {
+                "tokens": document_tokens,
+                "lines": document_lines,
+                "estimated": False,
+                "targetTokens": target_output_tokens,
             }
             await self._complete_tool_execution(
                 run_id,
                 tool_id,
                 length_check,
-                "선택한 목표 분량보다 짧아 보고서 확장 작성을 요청했습니다.",
+                "현재 보고서를 원본 버전으로 저장하고 같은 Artifact의 편집을 요청했습니다.",
+                artifact_id=revision_artifact_id,
+                artifact_usage=artifact_usage,
             )
             return length_check
         with (
@@ -5610,24 +5724,46 @@ class LocalRunExecutor:
             if run is None or user is None or completed_tool is None:
                 raise RuntimeError("Run context disappeared during tool execution")
             self._require_execution_owner(run)
-            report_display_name = _unique_report_display_name(
-                db, run.project_id, report.display_name
-            )
-            artifact, version = create_artifact(
-                db,
-                self.storage,
-                user=user,
-                project_id=run.project_id,
-                conversation_id=run.conversation_id,
-                source_run_id=run.id,
-                display_name=report_display_name,
-                kind=report.kind,
-                mime_type=report.mime_type,
-                content=report.content,
-                change_type="agent_generated",
-                change_summary="사용자 요청에 따라 생성",
-                asset_manifest=list(report.asset_manifest),
-            )
+            if revision_artifact_id:
+                artifact = require_artifact(
+                    db, user, revision_artifact_id, write=True
+                )
+                if (
+                    artifact.kind != report.kind
+                    or artifact.mime_type != report.mime_type
+                ):
+                    raise ValueError(
+                        "A report expansion must keep the original Artifact format."
+                    )
+                version = create_artifact_version(
+                    db,
+                    self.storage,
+                    user=user,
+                    artifact_id=artifact.id,
+                    base_version=artifact.current_version_number or 0,
+                    content=report.content,
+                    change_type="agent_edited",
+                    change_summary="선택한 목표 분량에 맞게 기존 보고서를 보강",
+                )
+            else:
+                report_display_name = _unique_report_display_name(
+                    db, run.project_id, report.display_name
+                )
+                artifact, version = create_artifact(
+                    db,
+                    self.storage,
+                    user=user,
+                    project_id=run.project_id,
+                    conversation_id=run.conversation_id,
+                    source_run_id=run.id,
+                    display_name=report_display_name,
+                    kind=report.kind,
+                    mime_type=report.mime_type,
+                    content=report.content,
+                    change_type="agent_generated",
+                    change_summary="사용자 요청에 따라 생성",
+                    asset_manifest=list(report.asset_manifest),
+                )
             storage_keys.append(version.storage_key)
             completed_tool.status = "completed"
             completed_tool.result_json = {
@@ -5687,6 +5823,8 @@ class LocalRunExecutor:
                 **run.snapshot_json,
                 "artifact_progress": None,
                 "artifact_usage": artifact_usage,
+                "artifact_length_retry_count": 0,
+                "artifact_length_retry_artifact_id": None,
             }
             append_event(db, run, "artifact_progress", artifact_usage)
             change_plan_step(
