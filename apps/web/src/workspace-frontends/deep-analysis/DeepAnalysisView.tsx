@@ -1121,13 +1121,19 @@ export function DeepAnalysisView({
         },
       },
     );
+    const projectionInterval = window.setInterval(() => {
+      void refreshProjection();
+    }, 500);
     const refreshWhenVisible = () => {
-      if (document.visibilityState === "visible") void refreshDetail();
+      if (document.visibilityState !== "visible") return;
+      void refreshDetail();
+      void refreshProjection();
     };
     document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
       active = false;
       closeStream();
+      window.clearInterval(projectionInterval);
       if (detailTimer !== null) window.clearTimeout(detailTimer);
       if (projectionTimer !== null) window.clearTimeout(projectionTimer);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
