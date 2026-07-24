@@ -45,6 +45,9 @@ test("HTML Artifact Mermaid blocks render sequentially through the bundled rende
   assert.match(previewBridge, /pendingMermaid = null;[\s\S]*?renderNextMermaid\(\)/);
   assert.match(previewBridge, /new MutationObserver\(scheduleEnhanceZoom\)/);
   assert.match(previewBridge, /aria-label", "Mermaid 다이어그램 크게 보기"/);
+  assert.match(previewBridge, /const clonedSvg = svg\.cloneNode\(true\)/);
+  assert.match(previewBridge, /clonedSvg\.setAttribute\("width", String\(viewBox\[2\]\)\)/);
+  assert.match(previewBridge, /clonedSvg\.setAttribute\("height", String\(viewBox\[3\]\)\)/);
   assert.match(previewBridge, /changeZoom\(zoom \* \(event\.deltaY > 0 \? \.9 : 1\.1\)\)/);
   assert.match(previewBridge, /viewport\.addEventListener\("pointermove"/);
   assert.match(visualArtifactSkillSource, /Lumina automatically adds a visible expand button/);

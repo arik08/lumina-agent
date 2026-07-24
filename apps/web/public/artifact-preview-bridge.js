@@ -73,7 +73,13 @@
     viewport.className = "lumina-artifact-mermaid-viewport";
     const canvas = document.createElement("div");
     canvas.className = "lumina-artifact-mermaid-canvas";
-    canvas.append(svg.cloneNode(true));
+    const clonedSvg = svg.cloneNode(true);
+    const viewBox = String(svg.getAttribute("viewBox") || "").split(/[\s,]+/).map(Number);
+    if (viewBox.length >= 4 && Number.isFinite(viewBox[2]) && Number.isFinite(viewBox[3]) && viewBox[2] > 0 && viewBox[3] > 0) {
+      clonedSvg.setAttribute("width", String(viewBox[2]));
+      clonedSvg.setAttribute("height", String(viewBox[3]));
+    }
+    canvas.append(clonedSvg);
     viewport.append(canvas);
     let zoom = 1;
     let offsetX = 0;
