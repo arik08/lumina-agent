@@ -16,7 +16,9 @@ from mcp.server.fastmcp import FastMCP
 
 DEFAULT_API_HOST = "comtradeapi.un.org"
 MAX_ROWS = 5000
-MAX_REQUEST_ATTEMPTS = 3
+MAX_REQUEST_ATTEMPTS = 4
+MAX_RETRY_AFTER_SECONDS = 10.0
+RETRY_AFTER_GRACE_SECONDS = 0.25
 TRANSIENT_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -82,8 +84,17 @@ def _request_headers(*, api_key: str | None = None) -> dict[str, str]:
     return headers
 
 
-def _retry_sleep(attempt: int) -> None:
-    time.sleep(min(0.5 * attempt, 2.0))
+def _retry_sleep(attempt: int, response: httpx.Response | None = None) -> None:
+    delay = min(0.5 * attempt, 2.0)
+    if response is not None and response.status_code == 429:
+        try:
+            retry_after = float(response.headers.get("Retry-After", ""))
+        except ValueError:
+            retry_after = 0.0
+        if retry_after > 0:
+            delay = max(delay, min(retry_after, MAX_RETRY_AFTER_SECONDS))
+            delay += RETRY_AFTER_GRACE_SECONDS
+    time.sleep(delay)
 
 
 def _clean_limit(limit: int) -> int:
@@ -133,7 +144,7 @@ def _request_json(path: str, params: dict[str, Any] | None = None, *, api_key: s
                 getattr(response, "status_code", 200) in TRANSIENT_STATUS_CODES
                 and attempt < MAX_REQUEST_ATTEMPTS
             ):
-                _retry_sleep(attempt)
+                _retry_sleep(attempt, response)
                 continue
             response.raise_for_status()
             return _response_json(response)
@@ -156,7 +167,7 @@ def _request_json(path: str, params: dict[str, Any] | None = None, *, api_key: s
             last_error = exc
             status_code = exc.response.status_code if exc.response is not None else None
             if status_code in TRANSIENT_STATUS_CODES and attempt < MAX_REQUEST_ATTEMPTS:
-                _retry_sleep(attempt)
+                _retry_sleep(attempt, exc.response)
                 continue
             break
     raise RuntimeError(_network_failure_message(_api_base_url())) from last_error
