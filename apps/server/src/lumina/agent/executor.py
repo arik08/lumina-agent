@@ -1111,6 +1111,7 @@ class LocalRunExecutor:
                     db,
                     run_id=run_id,
                     storage=self.file_storage,
+                    artifact_storage=self.storage,
                     settings=self.settings,
                 )
         except Exception:

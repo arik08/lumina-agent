@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from lumina.artifacts.service import create_artifact
 from lumina.auth.service import create_user
 from lumina.agent.executor import (
     _filter_web_sources_for_policy,
@@ -29,6 +30,7 @@ from lumina.deep_analysis.execution import (
     _run_profile,
     _run_prompt,
     create_runnable_node_runs,
+    sync_terminal_run,
 )
 from lumina.deep_analysis.planning import runnable_nodes
 from lumina.deep_analysis.models import (
@@ -63,6 +65,7 @@ from lumina.models import (
     ProjectFileVersion,
     ProjectFolder,
     Run,
+    ToolExecution,
     User,
 )
 from lumina.providers.mock import MockProvider
@@ -283,6 +286,142 @@ def test_node_output_contracts_keep_handoffs_compact_and_reports_detailed() -> N
     assert "사용자가 지정한 최종 산출물 형태는 '임원용 1페이지 의사결정 메모'" in custom_prompt
     assert "직접 입력한 형태의 원문은 Markdown 파일로 저장" in custom_prompt
     assert _output_path(mission, report).endswith("/N040_최종 보고서.md")
+
+
+def test_completed_write_file_becomes_visible_node_output_and_handoff(
+    tmp_path: Path, monkeypatch
+) -> None:
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(
+        "lumina.api.routes.deep_analysis.local_run_executor.enqueue",
+        lambda _run_id: None,
+    )
+    with TestClient(create_app(settings)) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        created = client.post(
+            f"/api/projects/{project_id}/deep-analysis/missions",
+            headers=headers,
+            json={"title": "상세 중간 산출물 보존 검증"},
+        ).json()
+        started = client.post(
+            f"/api/deep-analysis/missions/{created['id']}/start",
+            headers=headers,
+            json={"expectedRevision": created["revision"]},
+        ).json()
+        running_node = next(
+            node for node in started["workflow"]["nodes"] if node["status"] == "running"
+        )
+        run_id = running_node["runId"]
+        detailed_output = (
+            "# 상세 중간 분석\n\n"
+            "## 확인한 사실\n"
+            "- 공식 공시에서 원료 구매량과 장기계약 조건을 확인했습니다.\n\n"
+            "## 판단 근거와 불확실성\n"
+            "- 공개되지 않은 계약 단가는 다음 Node에서 추가 검증해야 합니다.\n"
+        )
+        artifact_storage = ManagedLocalStorage(settings.artifacts_dir)
+        file_storage = ManagedLocalStorage(settings.files_dir)
+
+        with SessionLocal() as db:
+            run = db.get(Run, run_id)
+            assert run is not None
+            user = db.get(User, run.user_id)
+            assert user is not None
+            artifact, version = create_artifact(
+                db,
+                artifact_storage,
+                user=user,
+                project_id=run.project_id,
+                conversation_id=run.conversation_id,
+                source_run_id=run.id,
+                display_name="상세_중간_분석.md",
+                kind="markdown",
+                mime_type="text/markdown",
+                content=detailed_output.encode("utf-8"),
+                change_type="agent_generated",
+                change_summary="상세 중간 산출물",
+            )
+            db.add(
+                ToolExecution(
+                    run_id=run.id,
+                    tool_call_id="call_write_detailed_handoff",
+                    tool_name="write_file",
+                    validated_input_json={
+                        "path": artifact.display_name,
+                        "content": detailed_output,
+                    },
+                    status="completed",
+                    result_json={
+                        "artifact_id": artifact.id,
+                        "artifact_version": version.version_number,
+                    },
+                    result_summary="사용자 요청 Artifact를 생성했습니다.",
+                    artifact_id=artifact.id,
+                )
+            )
+            run.status = "completed"
+            run.assistant_draft = "상세 중간 분석 문서를 작성했습니다."
+            run.finished_at = datetime.now(ZoneInfo("UTC"))
+            db.commit()
+
+        with SessionLocal() as db:
+            sync_terminal_run(
+                db,
+                run_id=run_id,
+                storage=file_storage,
+                artifact_storage=artifact_storage,
+                settings=settings,
+            )
+            db.commit()
+
+        restored = client.get(
+            f"/api/deep-analysis/missions/{created['id']}"
+        ).json()
+        completed_node = next(
+            node
+            for node in restored["workflow"]["nodes"]
+            if node["nodeKey"] == running_node["nodeKey"]
+        )
+        assert completed_node["outputMarkdown"] == detailed_output.strip()
+        assert completed_node["outputSummary"].startswith("상세 중간 분석")
+        next_run_ids = [
+            node["runId"]
+            for node in restored["workflow"]["nodes"]
+            if node["runId"] and node["runId"] != run_id
+        ]
+        assert next_run_ids
+
+        with SessionLocal() as db:
+            project_file = db.get(
+                ProjectFile, completed_node["outputProjectFileId"]
+            )
+            assert project_file is not None
+            project_version = db.scalar(
+                select(ProjectFileVersion).where(
+                    ProjectFileVersion.project_file_id == project_file.id,
+                    ProjectFileVersion.version_number
+                    == project_file.current_version_number,
+                )
+            )
+            assert project_version is not None
+            stored_output = file_storage.read_bytes(
+                project_version.storage_key,
+                expected_sha256=project_version.content_hash,
+            ).decode("utf-8")
+            next_prompts = list(
+                db.scalars(
+                    select(Message.canonical_text).where(
+                        Message.run_id.in_(next_run_ids),
+                        Message.role == "user",
+                    )
+                )
+            )
+        assert stored_output == detailed_output.strip()
+        assert any(
+            completed_node["outputLogicalPath"] in prompt
+            for prompt in next_prompts
+        )
 
 
 def test_node_output_contract_respects_smaller_target_and_chat_mode() -> None:

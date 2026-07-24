@@ -14,6 +14,8 @@ from ..api.errors import ApiProblem
 from ..api.schemas import ExecutionSelection, MessageReferenceInput, RunCreate, RunMessageInput
 from ..config import Settings
 from ..models import (
+    Artifact,
+    ArtifactVersion,
     Conversation,
     ProjectFile,
     ProjectFileVersion,
@@ -28,7 +30,7 @@ from ..project_files.service import (
 )
 from ..runs.service import create_run
 from ..runs.state import CANCELLED, COMPLETED, TERMINAL_STATUSES
-from ..storage import ManagedStorage
+from ..storage import ManagedStorage, StorageError
 from .models import (
     DeepAnalysisMission,
     DeepAnalysisWorkflowEdge,
@@ -845,6 +847,42 @@ def _generated_files(db: Session, run_id: str) -> list[dict[str, Any]]:
     return files
 
 
+def _completed_write_file_output(
+    db: Session,
+    run_id: str,
+    *,
+    storage: ManagedStorage,
+) -> str | None:
+    rows = db.execute(
+        select(Artifact, ArtifactVersion)
+        .join(ToolExecution, ToolExecution.artifact_id == Artifact.id)
+        .join(
+            ArtifactVersion,
+            (ArtifactVersion.artifact_id == Artifact.id)
+            & (ArtifactVersion.version_number == Artifact.current_version_number),
+        )
+        .where(
+            ToolExecution.run_id == run_id,
+            ToolExecution.tool_name == "write_file",
+            ToolExecution.status == "completed",
+            Artifact.source_run_id == run_id,
+            Artifact.deleted_at.is_(None),
+        )
+        .order_by(ToolExecution.created_at.desc(), ToolExecution.id.desc())
+    ).tuples()
+    for _artifact, version in rows:
+        try:
+            content = storage.read_bytes(
+                version.storage_key,
+                expected_sha256=version.content_hash,
+            ).decode("utf-8").strip()
+        except (StorageError, UnicodeDecodeError):
+            continue
+        if content:
+            return content
+    return None
+
+
 def _mission_spent(db: Session, workflow_revision_id: str) -> int:
     total = 0
     for item in db.scalars(
@@ -1026,6 +1064,7 @@ def sync_terminal_run(
     *,
     run_id: str,
     storage: ManagedStorage,
+    artifact_storage: ManagedStorage,
     settings: Settings,
 ) -> TerminalSyncResult:
     row = db.execute(
@@ -1064,7 +1103,11 @@ def sync_terminal_run(
         return TerminalSyncResult(changed=True)
 
     if run.status == COMPLETED:
-        markdown = run.assistant_draft.strip()
+        markdown = _completed_write_file_output(
+            db,
+            run_id,
+            storage=artifact_storage,
+        ) or run.assistant_draft.strip()
         if not markdown:
             node.status = "failed"
             node.error_message = "모델이 비어 있는 출력을 반환했습니다."
