@@ -396,8 +396,11 @@ function arrangeWorkflowTopDown(workflow: DeepAnalysisWorkflowRevision) {
   const nodeByKey = new Map(workflow.nodes.map((node) => [node.nodeKey, node]));
   const outgoing = new Map<string, string[]>();
   const incomingCount = new Map(workflow.nodes.map((node) => [node.nodeKey, 0]));
+  const connectedNodeKeys = new Set<string>();
   for (const edge of workflow.edges) {
     if (!nodeByKey.has(edge.sourceNodeKey) || !nodeByKey.has(edge.targetNodeKey)) continue;
+    connectedNodeKeys.add(edge.sourceNodeKey);
+    connectedNodeKeys.add(edge.targetNodeKey);
     outgoing.set(edge.sourceNodeKey, [...(outgoing.get(edge.sourceNodeKey) ?? []), edge.targetNodeKey]);
     incomingCount.set(edge.targetNodeKey, (incomingCount.get(edge.targetNodeKey) ?? 0) + 1);
   }
@@ -410,7 +413,7 @@ function arrangeWorkflowTopDown(workflow: DeepAnalysisWorkflowRevision) {
       || leftKey.localeCompare(rightKey);
   };
   const queue = workflow.nodes
-    .filter((node) => (incomingCount.get(node.nodeKey) ?? 0) === 0)
+    .filter((node) => connectedNodeKeys.has(node.nodeKey) && (incomingCount.get(node.nodeKey) ?? 0) === 0)
     .map((node) => node.nodeKey)
     .sort(compareNodes);
   const depth = new Map(queue.map((nodeKey) => [nodeKey, 0]));
@@ -432,12 +435,13 @@ function arrangeWorkflowTopDown(workflow: DeepAnalysisWorkflowRevision) {
 
   let fallbackDepth = Math.max(0, ...depth.values());
   for (const node of [...workflow.nodes].sort((left, right) => compareNodes(left.nodeKey, right.nodeKey))) {
-    if (visited.has(node.nodeKey)) continue;
+    if (!connectedNodeKeys.has(node.nodeKey) || visited.has(node.nodeKey)) continue;
     fallbackDepth += 1;
     depth.set(node.nodeKey, fallbackDepth);
   }
   const layers = new Map<number, DeepAnalysisWorkflowNode[]>();
   for (const node of workflow.nodes) {
+    if (!connectedNodeKeys.has(node.nodeKey)) continue;
     const nodeDepth = depth.get(node.nodeKey) ?? 0;
     layers.set(nodeDepth, [...(layers.get(nodeDepth) ?? []), node]);
   }
@@ -454,6 +458,7 @@ function arrangeWorkflowTopDown(workflow: DeepAnalysisWorkflowRevision) {
   return {
     ...workflow,
     nodes: workflow.nodes.map((node) => {
+      if (!connectedNodeKeys.has(node.nodeKey)) return node;
       const nodeDepth = depth.get(node.nodeKey) ?? 0;
       const layer = layers.get(nodeDepth) ?? [node];
       const column = layer.findIndex((item) => item.nodeKey === node.nodeKey);
@@ -1156,9 +1161,14 @@ export function DeepAnalysisView({
   const workflowMissionRoot = useMemo(() => {
     const nodes = shownWorkflow?.nodes ?? [];
     if (!nodes.length) return null;
+    const connectedNodeKeys = new Set(
+      (shownWorkflow?.edges ?? []).flatMap((edge) => [edge.sourceNodeKey, edge.targetNodeKey]),
+    );
     const targetNodeKeys = new Set((shownWorkflow?.edges ?? []).map((edge) => edge.targetNodeKey));
-    const startNodes = nodes.filter((node) => !targetNodeKeys.has(node.nodeKey));
-    const connectedNodes = startNodes.length ? startNodes : nodes;
+    const connectedNodes = nodes.filter(
+      (node) => connectedNodeKeys.has(node.nodeKey) && !targetNodeKeys.has(node.nodeKey),
+    );
+    if (!connectedNodes.length) return null;
     const left = Math.min(...connectedNodes.map((node) => node.positionX));
     const right = Math.max(...connectedNodes.map((node) => node.positionX + workflowNodeWidth));
     const top = Math.min(...connectedNodes.map((node) => node.positionY));
