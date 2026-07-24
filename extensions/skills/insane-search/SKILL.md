@@ -1,14 +1,15 @@
 ---
 name: insane-search
 description: >
-  Fallback retrieval workflow for blocked or unexpectedly sparse web sources. Use
-  only after ordinary WebFetch, WebSearch, or OpenWeb returns 401/402/403/429,
-  access denial, a bot/WAF challenge, or insufficient content, or when the requested
-  content clearly requires specialized extraction unavailable through ordinary
-  access, such as a video transcript or protected dynamic thread. Uses yt-dlp,
-  Jina Reader, public APIs, TLS impersonation, URL transforms, and real-Chrome
-  fallback. A platform name alone is not sufficient evidence. Do not activate
-  speculatively or for normal pages and searches that ordinary access can handle.
+  Last-resort retrieval for a blocked source that is material to the answer and has
+  no adequate ordinary alternative. Do not use when the URL is merely one of several
+  candidate sources. Access errors such as 401/402/403/429, denial, a bot/WAF
+  challenge, or insufficient content are signals only, never sufficient grounds by
+  themselves. Use it when specialized extraction such as a video transcript is
+  clearly required, or when model judgment confirms the source is essential and
+  ordinary alternatives are inadequate. Never use it to bypass authentication,
+  paywalls, access rights, or legal restrictions. Weigh API cost, site terms, and
+  legal risk before activation. A platform name alone is not sufficient evidence.
 ---
 
 # Insane Search

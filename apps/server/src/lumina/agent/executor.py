@@ -263,6 +263,8 @@ _WEB_PROVIDER_TURN_CHARS_FLOOR = 16_000
 _WEB_PROVIDER_PAGE_WINDOW_FRACTION = 0.15
 _WEB_PROVIDER_TURN_WINDOW_FRACTION = 0.30
 _WEB_PROVIDER_PREVIEW_CHARS = 1_500
+_BLOCKED_WEB_FALLBACK_STATUSES = frozenset({403, 429})
+_BLOCKED_WEB_FALLBACK_SKILL_SLUG = "insane-search"
 _ESTIMATED_CHARS_PER_TOKEN = 4
 _WEB_RESEARCH_EXPLICIT_REQUIRED_PATTERN = re.compile(
     r"(?:최신|최근\s+(?:뉴스|자료|정보|동향)|오늘|실시간|인터넷|웹에서|"
@@ -384,6 +386,68 @@ def _web_research_budget(
             _DEEP_WEB_FETCH_PAGE_SAFETY_LIMIT,
         )
     return (_WEB_SEARCH_CALL_SAFETY_LIMIT, _WEB_FETCH_PAGE_SAFETY_LIMIT)
+
+
+def _blocked_web_fallback_skill_recommendation(
+    run: Run,
+    *,
+    tool_name: str,
+    error: Exception,
+) -> dict[str, Any] | None:
+    if (
+        tool_name != "web_fetch"
+        or not isinstance(error, WebToolError)
+        or error.status_code not in _BLOCKED_WEB_FALLBACK_STATUSES
+    ):
+        return None
+    candidate = next(
+        (
+            extension
+            for extension in run.snapshot_json.get("extensions", [])
+            if isinstance(extension, dict)
+            and str(extension.get("slug", "")).strip().casefold()
+            == _BLOCKED_WEB_FALLBACK_SKILL_SLUG
+            and extension.get("allow_implicit_invocation", True) is not False
+            and str(extension.get("instructions", "")).strip()
+        ),
+        None,
+    )
+    if candidate is None:
+        return None
+    active_ids = {
+        str(reference.get("reference_id"))
+        for reference in run.snapshot_json.get("prompt_references", [])
+        if isinstance(reference, dict) and reference.get("kind") == "skill"
+    }
+    active_ids.update(
+        str(skill_id)
+        for skill_id in run.snapshot_json.get("auto_selected_skill_ids", [])
+    )
+    candidate_id = str(candidate.get("extension_id", ""))
+    if (
+        run.snapshot_json.get("extension_application") == "all_snapshot"
+        or candidate_id in active_ids
+    ):
+        return None
+    return {
+        "skillId": candidate_id,
+        "name": str(candidate.get("name", "Skill")),
+        "slug": str(candidate.get("slug", candidate.get("name", "Skill"))),
+        "reason": (
+            f"web_fetch가 HTTP {error.status_code}으로 차단되었습니다. "
+            "이 출처가 결론에 중요하고 다른 일반 접근 대안으로 충분한 근거를 "
+            "확보할 수 없다면 이 fallback Skill을 고려하십시오."
+        ),
+        "instruction": (
+            "Use model judgment. If this URL is merely one of several candidate sources, "
+            "skip it and use an adequate alternative. First assess another official URL, "
+            "search result, or public API. Activate this Skill only when the blocked source "
+            "is material and ordinary alternatives cannot provide sufficient evidence. "
+            "Do not use it to bypass authentication, a paywall, access rights, or legal "
+            "restrictions, and weigh API cost, site terms, and legal risk. The HTTP failure "
+            "alone is not enough."
+        ),
+    }
 
 
 def _web_call_signature(tool_name: str, arguments: Mapping[str, Any]) -> str:
@@ -5851,6 +5915,7 @@ class LocalRunExecutor:
             stage = "validation"
             retryable = False
         message = str(error) or "Tool 요청을 처리할 수 없습니다."
+        fallback_recommendation: dict[str, Any] | None = None
         with session_scope() as db:
             run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             tool = db.get(ToolExecution, tool_id)
@@ -5881,8 +5946,13 @@ class LocalRunExecutor:
                     ),
                     reason="tool_failed",
                 )
+                fallback_recommendation = _blocked_web_fallback_skill_recommendation(
+                    run,
+                    tool_name=tool.tool_name,
+                    error=error,
+                )
         await event_broker.notify(run_id)
-        return {
+        result: dict[str, Any] = {
             "error": {
                 "code": code,
                 "message": message,
@@ -5890,6 +5960,9 @@ class LocalRunExecutor:
                 "retryable": retryable,
             }
         }
+        if fallback_recommendation is not None:
+            result["fallbackSkillRecommendation"] = fallback_recommendation
+        return result
 
     async def _cancel_tool_execution(self, run_id: str, tool_id: str) -> None:
         with session_scope() as db:
