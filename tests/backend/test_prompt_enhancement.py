@@ -91,6 +91,25 @@ async def test_prompt_enhancement_defaults_unqualified_report_to_html() -> None:
 
 
 @pytest.mark.asyncio
+async def test_prompt_enhancement_accepts_only_a_custom_instruction() -> None:
+    provider = _PromptEnhancementProvider("핵심만 간단히 비교해 주세요.")
+
+    await enhance_prompt(
+        provider=provider,
+        model="fast-model",
+        text="철강사를 비교해줘",
+        options=(),
+        custom_instruction="핵심만 간단히 정리해줘",
+        references=(),
+    )
+
+    assert provider.request is not None
+    user_prompt = provider.request.messages[1].content or ""
+    assert "No preset edits selected" in user_prompt
+    assert "핵심만 간단히 정리해줘" in user_prompt
+
+
+@pytest.mark.asyncio
 async def test_prompt_enhancement_rejects_changed_reference_placeholder() -> None:
     provider = _PromptEnhancementProvider("참조 없이 다시 작성했습니다.")
 

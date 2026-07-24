@@ -29,6 +29,7 @@ _USER_SETTINGS_FIELDS = {
     "conversation_font_size",
     "analysis_depth",
     "answer_length",
+    "prompt_enhancement_instruction",
     "model_candidates",
     "clarification_mode",
 }
@@ -321,6 +322,7 @@ def _resolved_settings(
     UserSetting | ProjectSetting | None,
     UserSetting | None,
     UserSetting | None,
+    UserSetting | None,
 ]:
     theme_setting = _setting(db, user.id, "ui.theme")
     theme = theme_setting.value_json if theme_setting else "light"
@@ -346,6 +348,14 @@ def _resolved_settings(
     )
     answer_length = (
         answer_length_setting.value_json if answer_length_setting else "auto"
+    )
+    prompt_enhancement_instruction_setting = _setting(
+        db, user.id, "composer.prompt_enhancement_instruction"
+    )
+    prompt_enhancement_instruction = (
+        prompt_enhancement_instruction_setting.value_json
+        if prompt_enhancement_instruction_setting
+        else ""
     )
     execution_setting: UserSetting | ProjectSetting | None
     execution_source: str
@@ -395,6 +405,12 @@ def _resolved_settings(
         "answerLength": answer_length
         if answer_length in {"auto", "brief", "standard", "detailed"}
         else "auto",
+        "promptEnhancementInstruction": (
+            prompt_enhancement_instruction
+            if isinstance(prompt_enhancement_instruction, str)
+            and len(prompt_enhancement_instruction) <= 1_000
+            else ""
+        ),
         "execution": execution,
         "modelCandidates": model_candidates,
         "clarificationMode": clarification_mode
@@ -411,6 +427,7 @@ def _resolved_settings(
         execution_setting,
         model_candidates_setting,
         clarification_setting,
+        prompt_enhancement_instruction_setting,
     )
     return (
         result,
@@ -418,6 +435,7 @@ def _resolved_settings(
         execution_setting,
         model_candidates_setting,
         clarification_setting,
+        prompt_enhancement_instruction_setting,
     )
 
 
@@ -448,6 +466,7 @@ def _settings_revision(
     execution: UserSetting | ProjectSetting | None,
     model_candidates: UserSetting | None,
     clarification: UserSetting | None,
+    prompt_enhancement_instruction: UserSetting | None,
 ) -> str:
     payload = {
         "value": value,
@@ -463,6 +482,11 @@ def _settings_revision(
         "clarification_updated": clarification.updated_at.isoformat()
         if clarification
         else None,
+        "prompt_enhancement_instruction_updated": (
+            prompt_enhancement_instruction.updated_at.isoformat()
+            if prompt_enhancement_instruction
+            else None
+        ),
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str).encode(
@@ -536,9 +560,14 @@ def get_current_settings(
         if project_id
         else default_project(db, user)
     )
-    result, _theme, _execution, _model_candidates, _clarification = _resolved_settings(
-        db, user, project, settings
-    )
+    (
+        result,
+        _theme,
+        _execution,
+        _model_candidates,
+        _clarification,
+        _prompt_enhancement_instruction,
+    ) = _resolved_settings(db, user, project, settings)
     return result
 
 
@@ -561,6 +590,7 @@ def patch_current_settings(
         execution_setting,
         model_candidates_setting,
         clarification_setting,
+        prompt_enhancement_instruction_setting,
     ) = (
         _resolved_settings(db, context.user, project, settings)
     )
@@ -585,6 +615,10 @@ def patch_current_settings(
         ("conversation_font_size", "ui.conversation_font_size"),
         ("analysis_depth", "composer.analysis_depth"),
         ("answer_length", "composer.answer_length"),
+        (
+            "prompt_enhancement_instruction",
+            "composer.prompt_enhancement_instruction",
+        ),
     ):
         value = getattr(payload, field_name)
         if value is None:
@@ -667,9 +701,14 @@ def patch_current_settings(
         else:
             clarification_setting.value_json = payload.clarification_mode
     db.commit()
-    result, _theme, _execution, _model_candidates, _clarification = _resolved_settings(
-        db, context.user, project, settings
-    )
+    (
+        result,
+        _theme,
+        _execution,
+        _model_candidates,
+        _clarification,
+        _prompt_enhancement_instruction,
+    ) = _resolved_settings(db, context.user, project, settings)
     return result
 
 

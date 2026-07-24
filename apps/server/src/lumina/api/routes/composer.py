@@ -65,6 +65,7 @@ async def post_prompt_enhancement(
             model=execution["runtime_model_id"],
             text=payload.text,
             options=payload.options,
+            custom_instruction=payload.custom_instruction,
             references=payload.prompt_references,
         )
     except (ProviderConfigurationError, ProviderRequestError) as exc:

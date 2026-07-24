@@ -232,11 +232,18 @@ class PromptEnhancementInput(ApiModel):
     text: str = Field(min_length=1, max_length=32_000)
     options: list[
         Literal["structure", "evidence", "missing_context", "output_format"]
-    ] = Field(min_length=1, max_length=4)
+    ] = Field(default_factory=list, max_length=4)
+    custom_instruction: str = Field(default="", max_length=1_000)
     prompt_references: list[MessageReferenceInput] = Field(
         default_factory=list, max_length=100
     )
     execution: ExecutionSelection | None = None
+
+    @model_validator(mode="after")
+    def validate_enhancement_edits(self) -> "PromptEnhancementInput":
+        if not self.options and not self.custom_instruction.strip():
+            raise ValueError("at least one prompt enhancement edit is required")
+        return self
 
 
 class RunCreate(ApiModel):
@@ -384,6 +391,9 @@ class SettingsPatch(ApiModel):
     output_mode: Literal["auto", "chat", "file"] | None = None
     analysis_depth: Literal["auto", "brief", "standard", "deep"] | None = None
     answer_length: Literal["auto", "brief", "standard", "detailed"] | None = None
+    prompt_enhancement_instruction: str | None = Field(
+        default=None, max_length=1_000
+    )
     clarification_mode: Literal["autonomous", "balanced", "confirming"] | None = None
     execution: ExecutionSelection | None = None
     model_candidates: dict[str, list[str]] | None = None

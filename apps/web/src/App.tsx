@@ -2507,7 +2507,10 @@ function App() {
     setComposerSuggestions([]);
   };
 
-  const enhanceComposerPrompt = async (options: PromptEnhancementOption[]) => {
+  const enhanceComposerPrompt = async (
+    options: PromptEnhancementOption[],
+    customInstruction: string,
+  ) => {
     const sourceText = composerDraftRef.current;
     const projectId = workspace.activeProjectId;
     const execution = workspace.settings?.execution;
@@ -2522,10 +2525,14 @@ function App() {
     setPromptEnhancementLoading(true);
     setPromptEnhancementError(null);
     try {
+      if (customInstruction !== workspace.settings?.promptEnhancementInstruction) {
+        await workspace.selectPromptEnhancementInstruction(customInstruction);
+      }
       const result = await api.composer.enhancePrompt({
         projectId,
         text: sourceText,
         options,
+        customInstruction,
         promptReferences,
         execution,
       });
@@ -3876,8 +3883,9 @@ function App() {
                   <button type="button" className="composer-utility-button tooltip-control" aria-label="Skill 및 MCP 호출" data-tooltip="Skill / MCP" onClick={() => insertComposerTrigger("$")}><CircleDollarSign size={17} /></button>
                   <PromptEnhancementMenu
                     disabled={!composerHasText || !workspace.activeProjectId || !workspace.settings}
+                    instruction={workspace.settings?.promptEnhancementInstruction ?? ""}
                     loading={promptEnhancementLoading}
-                    onApply={(options) => void enhanceComposerPrompt(options)}
+                    onApply={(options, instruction) => void enhanceComposerPrompt(options, instruction)}
                   />
                   <ComposerPicker
                     options={analysisDepthOptions}

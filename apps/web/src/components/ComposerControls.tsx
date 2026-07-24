@@ -49,20 +49,30 @@ const artifactLengthSteps = [
 
 export function PromptEnhancementMenu({
   disabled,
+  instruction,
   loading,
   onApply,
 }: {
   disabled: boolean;
+  instruction: string;
   loading: boolean;
-  onApply: (options: PromptEnhancementOption[]) => void;
+  onApply: (options: PromptEnhancementOption[], instruction: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [selected, setSelected] = useState<PromptEnhancementOption[]>(
-    promptEnhancementOptions.map((option) => option.id),
-  );
+  const [selected, setSelected] = useState<PromptEnhancementOption[]>([]);
+  const [instructionDraft, setInstructionDraft] = useState(instruction);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuId = useId();
+  const instructionId = useId();
+
+  useEffect(() => {
+    setInstructionDraft(instruction);
+  }, [instruction]);
+
+  useEffect(() => {
+    if (!open) setSelected([]);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -130,14 +140,26 @@ export function PromptEnhancementMenu({
               </button>
             );
           })}
+          <label className="prompt-enhancement-instruction" htmlFor={instructionId}>
+            <span>직접 입력</span>
+            <textarea
+              id={instructionId}
+              value={instructionDraft}
+              maxLength={1_000}
+              rows={2}
+              placeholder="예: 핵심만 짧고 자연스럽게 정리"
+              onChange={(event) => setInstructionDraft(event.currentTarget.value)}
+            />
+          </label>
           <div className="prompt-enhancement-actions">
             <button
               type="button"
               className="prompt-enhancement-apply"
-              disabled={selected.length === 0}
+              disabled={selected.length === 0 && !instructionDraft.trim()}
               onClick={() => {
                 setOpen(false);
-                onApply(selected);
+                onApply(selected, instructionDraft);
+                setSelected([]);
               }}
             >
               적용

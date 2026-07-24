@@ -1482,6 +1482,8 @@ Composer 하단의 `$` 호출 버튼 오른쪽에는 `자동 | 채팅 | 파일` 
 
 선택값은 `composer.output_mode`로 서버 DB에 저장합니다. 개인 Project에서는 사용자 설정, 공유 Project에서는 Project 공용 설정을 원본으로 사용하고 새로고침·재접속 시 복원합니다. 유효하지 않거나 저장되지 않은 값은 `자동`으로 fallback합니다. 각 요청은 전송 시점의 `auto | chat | file` 값을 message metadata와 Run snapshot에 고정하여 이후 설정 변경이 이미 시작된 Run의 출력 계약을 바꾸지 않게 합니다.
 
+프롬프트 개선의 네 가지 보조 선택 항목은 기본 해제 상태로 시작하며, 사용자는 선택 항목 없이도 원하는 개선 방향을 짧게 직접 입력할 수 있습니다. 직접 입력한 마지막 지침은 `composer.prompt_enhancement_instruction` 사용자 설정으로 계정 단위 저장하고 다음 프롬프트 개선에서 복원하며, 적용 후 자동으로 비우지 않습니다.
+
 ### 15.1 사용자 문법
 
 ```text

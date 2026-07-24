@@ -168,6 +168,7 @@ def test_composer_work_settings_are_persisted_per_user(tmp_path: Path) -> None:
         current = client.get("/api/settings/current").json()
         assert current["analysisDepth"] == "auto"
         assert current["answerLength"] == "auto"
+        assert current["promptEnhancementInstruction"] == ""
 
         changed = client.patch(
             "/api/settings/current",
@@ -175,16 +176,25 @@ def test_composer_work_settings_are_persisted_per_user(tmp_path: Path) -> None:
             json={
                 "analysisDepth": "deep",
                 "answerLength": "detailed",
+                "promptEnhancementInstruction": "핵심만 간단히 정리해줘",
                 "expectedRevision": current["revision"],
             },
         )
         assert changed.status_code == 200, changed.text
         assert changed.json()["analysisDepth"] == "deep"
         assert changed.json()["answerLength"] == "detailed"
+        assert (
+            changed.json()["promptEnhancementInstruction"]
+            == "핵심만 간단히 정리해줘"
+        )
 
         restored = client.get("/api/settings/current").json()
         assert restored["analysisDepth"] == "deep"
         assert restored["answerLength"] == "detailed"
+        assert (
+            restored["promptEnhancementInstruction"]
+            == "핵심만 간단히 정리해줘"
+        )
 
 
 @pytest.mark.parametrize(

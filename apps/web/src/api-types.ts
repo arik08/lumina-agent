@@ -931,6 +931,7 @@ export interface CurrentSettings {
   outputMode: OutputMode;
   analysisDepth: AnalysisDepth;
   answerLength: AnswerLength;
+  promptEnhancementInstruction: string;
   clarificationMode: ClarificationMode;
   execution: ExecutionSelection;
   modelCandidates: Record<string, string[]>;
@@ -952,6 +953,7 @@ export interface UpdateCurrentSettingsRequest {
   outputMode?: OutputMode;
   analysisDepth?: AnalysisDepth;
   answerLength?: AnswerLength;
+  promptEnhancementInstruction?: string;
   clarificationMode?: ClarificationMode;
   execution?: ExecutionSelection;
   modelCandidates?: Record<string, string[]>;
@@ -1145,6 +1147,7 @@ export interface PromptEnhancementRequest {
   projectId: UUID;
   text: string;
   options: PromptEnhancementOption[];
+  customInstruction: string;
   promptReferences: PromptReference[];
   execution: ExecutionSelection;
 }

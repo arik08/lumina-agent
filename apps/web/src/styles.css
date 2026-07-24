@@ -2970,6 +2970,11 @@ button:disabled { cursor: default; opacity: 0.5; }
 .composer-picker-option-copy { display: grid; gap: 2px; min-width: 0; }
 .composer-picker-option-copy > strong { overflow: hidden; font-size: 12.5px; font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
 .composer-picker-option-copy > small { overflow: hidden; color: var(--muted); font-size: 11px; font-weight: 450; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.prompt-enhancement-instruction { display: grid; gap: 5px; padding: 8px 7px 4px; border-top: 1px solid var(--line); }
+.prompt-enhancement-instruction > span { color: var(--faint); font-size: 10px; font-weight: 700; letter-spacing: 0.06em; }
+.prompt-enhancement-instruction textarea { box-sizing: border-box; width: 100%; min-height: 52px; resize: vertical; padding: 7px 8px; border: 1px solid var(--line-strong); border-radius: 7px; outline: none; background: var(--surface); color: var(--ink); font: inherit; font-size: 12px; line-height: 1.4; }
+.prompt-enhancement-instruction textarea:focus { border-color: color-mix(in srgb, var(--cobalt) 58%, var(--line-strong)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--cobalt) 12%, transparent); }
+.prompt-enhancement-instruction textarea::placeholder { color: var(--faint); }
 .prompt-enhancement-actions { display: flex; justify-content: flex-end; margin-top: 4px; padding: 8px 3px 2px; border-top: 1px solid var(--line); }
 .composer-footer .prompt-enhancement-actions .prompt-enhancement-apply { min-width: 58px; height: 29px; padding: 0 12px; border-radius: var(--radius-control); background: var(--cobalt); color: white; font-size: 12.5px; font-weight: 650; }
 .composer-footer .prompt-enhancement-actions .prompt-enhancement-apply:hover { background: var(--cobalt-hover); }

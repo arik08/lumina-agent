@@ -72,6 +72,7 @@ async def enhance_prompt(
     text: str,
     options: Sequence[str],
     references: Sequence[MessageReferenceInput],
+    custom_instruction: str = "",
 ) -> str:
     masked_text, replacements = mask_prompt_references(text, references)
     option_lines = "\n".join(
@@ -79,6 +80,8 @@ async def enhance_prompt(
         for option in dict.fromkeys(options)
         if option in _OPTION_INSTRUCTIONS
     )
+    selected_edits = option_lines or "- No preset edits selected."
+    additional_edit = custom_instruction.strip() or "(none)"
     chunks: list[str] = []
     saw_tool_call = False
     stop_reason: str | None = None
@@ -103,7 +106,8 @@ async def enhance_prompt(
                 ProviderMessage(
                     role="user",
                     content=(
-                        f"Selected edits:\n{option_lines}\n\n"
+                        f"Selected edits:\n{selected_edits}\n\n"
+                        f"User's additional edit request:\n{additional_edit}\n\n"
                         f"Prompt to rewrite:\n{masked_text}"
                     ),
                 ),

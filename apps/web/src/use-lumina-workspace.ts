@@ -58,6 +58,7 @@ type CurrentSettingsPatch = Partial<Pick<
   | "outputMode"
   | "analysisDepth"
   | "answerLength"
+  | "promptEnhancementInstruction"
   | "clarificationMode"
   | "execution"
   | "modelCandidates"
@@ -1193,6 +1194,10 @@ export function useLuminaWorkspace() {
     await persistSettings({ answerLength });
   }, [persistSettings]);
 
+  const selectPromptEnhancementInstruction = useCallback(async (
+    promptEnhancementInstruction: string,
+  ) => persistSettings({ promptEnhancementInstruction }), [persistSettings]);
+
   const resetWarningComposerSettings = useCallback(async () => {
     const current = settingsRef.current;
     if (!current) return;
@@ -1765,6 +1770,7 @@ export function useLuminaWorkspace() {
     selectOutputMode,
     selectAnalysisDepth,
     selectAnswerLength,
+    selectPromptEnhancementInstruction,
     resetWarningComposerSettings,
     selectConversationWidth,
     selectConversationFontSize,

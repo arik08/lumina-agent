@@ -18,16 +18,29 @@ test("prompt enhancement uses the composer endpoint and never sends automaticall
   assert.doesNotMatch(handler, /sendMessage\(/);
 });
 
-test("prompt enhancement menu provides four selectable edits and one apply action", async () => {
+test("prompt enhancement menu defaults presets off and accepts a saved custom instruction", async () => {
   const controls = await readFile(controlsUrl, "utf8");
 
   for (const option of ["structure", "evidence", "missing_context", "output_format"]) {
     assert.match(controls, new RegExp(`id: "${option}"`));
   }
   assert.match(controls, /role="menuitemcheckbox"/);
+  assert.match(controls, /useState<PromptEnhancementOption\[]>\(\[]\)/);
+  assert.match(controls, /placeholder="예: 핵심만 짧고 자연스럽게 정리"/);
+  assert.match(controls, /instructionDraft\.trim\(\)/);
   assert.match(controls, /className="prompt-enhancement-apply"/);
-  assert.match(controls, /onApply\(selected\)/);
+  assert.match(controls, /onApply\(selected, instructionDraft\)/);
+  assert.match(controls, /setSelected\(\[]\)/);
+  assert.doesNotMatch(controls, /if \(!open\) setInstructionDraft/);
   assert.doesNotMatch(controls, /선택한 항목만 한 번의 경량 LLM 호출로 반영합니다\./);
+});
+
+test("prompt enhancement saves and sends the account instruction", async () => {
+  const app = await readFile(appUrl, "utf8");
+
+  assert.match(app, /workspace\.selectPromptEnhancementInstruction\(customInstruction\)/);
+  assert.match(app, /customInstruction,/);
+  assert.match(app, /instruction=\{workspace\.settings\?\.promptEnhancementInstruction \?\? ""\}/);
 });
 
 test("prompt enhancement keeps explicit restore and reapply paths", async () => {
