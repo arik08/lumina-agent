@@ -87,6 +87,15 @@ test("HTML Artifact generation keeps the user-designated visual palette", () => 
   assert.match(visualArtifactSkillSource, /Do not silently replace it with Lumina's app cobalt or an all-gray theme/);
 });
 
+test("HTML Artifact reports plan substantive visualizations before prose", () => {
+  assert.match(visualArtifactSkillSource, /build a visual inventory from the evidence/);
+  assert.match(visualArtifactSkillSource, /Maximize meaningful visualization, not the raw number of graphics/);
+  assert.match(visualArtifactSkillSource, /KPI cards, badges, icons, colored headings, and decorative shapes do not count as substantive visualizations/);
+  assert.match(visualArtifactSkillSource, /at least one substantive visualization in the first screen/);
+  assert.match(visualArtifactSkillSource, /Do not invent precision to satisfy the visual plan/);
+  assert.match(visualArtifactSkillSource, /name the reader question each one answers/);
+});
+
 test("HTML Artifact Mermaid colors retain fallbacks outside the app theme root", () => {
   assert.match(interactiveResponseSource, /themedSvg\.replaceAll\(value, `var\(\$\{tokenName\}, \$\{value\}\)`\)/);
 });

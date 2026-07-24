@@ -46,6 +46,17 @@ quarterly trends, sources, or a report:
 - For financial/company reports, include a compact source note area and make uncertainty explicit.
 - If important claims, numbers, charts, or recommendations rely on external knowledge such as web research, MCP/vector database results, source documents, or database queries, cite the source in the report using a compact footnote, source note, or sources section. Use the most specific identifier available: URL/title, document page/path, MCP server/resource, document id, table name, or query label. Do not invent citations when source metadata is missing; state the limitation instead.
 
+## Visualization-first planning
+
+- Before drafting prose, build a visual inventory from the evidence. Look explicitly for changes over time, comparisons, proportions, rankings, geographic differences, causal relationships, processes, stakeholder relationships, risks, and claim-to-evidence structure. Map every supported relationship to the clearest chart, timeline, matrix, map, flow, annotated table, or other visual form.
+- Maximize meaningful visualization, not the raw number of graphics. A visual must answer a concrete reader question faster or more clearly than prose. Remove decorative charts, repeated encodings, and visuals that merely restate a nearby number.
+- KPI cards, badges, icons, colored headings, and decorative shapes do not count as substantive visualizations. They may support scanning, but they do not replace charts, timelines, comparison matrices, maps, process diagrams, or evidence-rich annotated tables.
+- When the evidence supports it, place at least one substantive visualization in the first screen after the report masthead or executive-summary lead. Do not make the opening viewport only a hero, KPI cards, and prose when the report's main trend, comparison, chronology, or relationship can be shown visually.
+- Give each major analytical question a visual anchor when the source material supports one. For example, a three-month media-trend report should normally visualize chronology, issue prominence, domestic-versus-overseas framing, sentiment or risk balance, and source coverage rather than describing all of them only in paragraphs.
+- Do not invent precision to satisfy the visual plan. When structured numeric data is insufficient, use source-grounded qualitative visuals such as an annotated event timeline, issue matrix, stakeholder map, claim-evidence map, process flow, or ranked evidence table. Label qualitative scales and incomplete coverage explicitly.
+- Pair every substantive visual with a concise takeaway that states what the reader should notice. Keep exact values and source references available in labels, annotations, tables, or nearby notes.
+- During final QA, inventory the substantive visuals and name the reader question each one answers. If a major finding remains prose-only despite having supported temporal, comparative, proportional, relational, or procedural structure, either visualize it or record a concrete reason that a table or prose is clearer.
+
 ## HTML Source Footnotes
 
 - For standalone HTML reports, cite source-backed facts with compact clickable numbered source badges instead of long inline URLs or visible source chips.
@@ -124,7 +135,7 @@ quarterly trends, sources, or a report:
 ## Workflow
 
 1. Infer audience, output type, size target, reuse goal, and visual archetype. For report requests, choose the visual archetype yourself and proceed; ask only when missing information prevents the factual work or the requested output format is genuinely unclear.
-2. Structure the content before styling: sections, data, charts, interactions, export needs. Decide which reader questions deserve interactive controls and which findings must remain visible by default.
+2. Build the evidence-backed visual inventory first, then structure the content: sections, substantive visuals, exact-value tables, interactions, export needs, and concise prose takeaways. Decide which reader questions deserve interactive controls and which findings must remain visible by default.
 3. Start `create_report`, then build the single HTML artifact directly in `html_source` with responsive CSS and print/capture considerations.
 4. Include `@media print` for PDF-friendly output when the artifact is report-like or slide-like.
 5. If the user wants screenshots/PDF, use the `playwright-capture` skill after creating the HTML.

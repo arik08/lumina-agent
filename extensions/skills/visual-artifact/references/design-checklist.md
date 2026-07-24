@@ -5,6 +5,11 @@ Use this checklist before final delivery of a visual HTML artifact.
 ## Content
 
 - The first screen communicates the purpose immediately.
+- When the evidence supports a trend, comparison, chronology, or relationship, the first screen includes a substantive visualization rather than only KPI cards and prose.
+- KPI cards, badges, icons, and decorative shapes are not counted as substantive visualizations.
+- Each substantive visual answers a named reader question and has a concise takeaway.
+- Major findings with temporal, comparative, proportional, relational, or procedural structure are visualized, or the report has a concrete reason why prose or a table is clearer.
+- Qualitative visuals are explicitly labeled and do not invent numeric precision.
 - Exact values are shown in tables or labels, not only visual marks.
 - Every chart has a title, units, and readable labels.
 - The artifact has a clear ending: conclusion, recommendation, next steps, or source notes.
