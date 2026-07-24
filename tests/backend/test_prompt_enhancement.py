@@ -72,6 +72,25 @@ async def test_prompt_enhancement_is_one_low_effort_tool_free_call() -> None:
 
 
 @pytest.mark.asyncio
+async def test_prompt_enhancement_defaults_unqualified_report_to_html() -> None:
+    provider = _PromptEnhancementProvider("HTML 보고서를 작성해 주세요.")
+
+    await enhance_prompt(
+        provider=provider,
+        model="fast-model",
+        text="시장 분석 보고서를 작성해줘",
+        options=("output_format",),
+        references=(),
+    )
+
+    assert provider.request is not None
+    system_prompt = provider.request.messages[0].content or ""
+    assert "unqualified Korean '보고서'" in system_prompt
+    assert "as an HTML report" in system_prompt
+    assert "never replace an explicitly requested output format" in system_prompt
+
+
+@pytest.mark.asyncio
 async def test_prompt_enhancement_rejects_changed_reference_placeholder() -> None:
     provider = _PromptEnhancementProvider("참조 없이 다시 작성했습니다.")
 

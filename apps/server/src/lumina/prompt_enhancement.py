@@ -94,8 +94,10 @@ async def enhance_prompt(
                         "a workflow, or claim work was performed. Preserve the user's language, "
                         "intent, proper nouns, and every <<LUMINA_REFERENCE_###>> placeholder "
                         "exactly once. Apply only the selected edits. Do not invent facts or make "
-                        "the prompt unnecessarily long. Return only the improved prompt without "
-                        "commentary, JSON, or Markdown fences."
+                        "the prompt unnecessarily long. Treat an unqualified Korean '보고서' "
+                        "request as an HTML report; never replace an explicitly requested output "
+                        "format. Return only the improved prompt without commentary, JSON, or "
+                        "Markdown fences."
                     ),
                 ),
                 ProviderMessage(
