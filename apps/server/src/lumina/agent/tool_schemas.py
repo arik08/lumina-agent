@@ -309,7 +309,8 @@ _REPORT_TOOL_SCHEMA: dict[str, Any] = {
                 "For format=html, provide the complete report only in html_source; the "
                 "legacy executive_summary, key_metrics, sections, and action_items fields "
                 "are for non-HTML formats and should be omitted. For every other format, "
-                "provide executive_summary, sections, and action_items."
+                "provide executive_summary and sections. action_items is optional and "
+                "should be included only when the report genuinely calls for follow-up work."
             ),
             "properties": {
                 "format": {"type": "string", "enum": list(REPORT_FORMATS)},
@@ -422,7 +423,6 @@ _REPORT_TOOL_SCHEMA: dict[str, Any] = {
                     "required": [
                         "executive_summary",
                         "sections",
-                        "action_items",
                     ],
                 },
             ],

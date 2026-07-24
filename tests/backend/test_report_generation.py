@@ -166,10 +166,11 @@ def test_create_report_schema_separates_html_from_structured_report_fields() -> 
                     ]
                 }
             },
-            "required": ["executive_summary", "sections", "action_items"],
+            "required": ["executive_summary", "sections"],
         },
     ]
     assert "legacy executive_summary" in parameters["description"]
+    assert "action_items is optional" in parameters["description"]
 
 
 def test_large_html_report_schema_keeps_html_source_required_without_legacy_fields() -> (
@@ -213,6 +214,19 @@ def test_html_report_without_html_source_is_rejected_instead_of_flattened() -> N
 
     with pytest.raises(ValueError, match="html_source로 제공"):
         generate_report("시각 보고서를 만들어 주세요.", arguments)
+
+
+def test_non_html_report_omits_follow_up_section_when_action_items_are_absent() -> None:
+    arguments = _arguments("markdown")
+    arguments.pop("action_items")
+    arguments.pop("key_metrics")
+
+    report = generate_report("시장 동향을 분석해 주세요.", arguments)
+    source = report.content.decode("utf-8")
+
+    assert "후속 조치" not in source
+    assert "검토 섹션" in source
+    assert "문서 형식 검증" in source
 
 
 def test_report_filename_is_safe_and_does_not_repeat_the_extension() -> None:

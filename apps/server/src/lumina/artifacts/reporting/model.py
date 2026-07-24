@@ -124,7 +124,6 @@ def normalize_report_document(
     if not metrics:
         metrics = (
             ReportMetric(label="검토 섹션", value=str(len(sections))),
-            ReportMetric(label="후속 조치", value=str(len(_action_items(arguments)))),
             ReportMetric(label="문서 형식 검증", value="완료"),
         )
 
