@@ -2064,10 +2064,10 @@ export const AssistantTurn = memo(function AssistantTurn({
                 최신성 또는 중요도가 높은 정보에 필요한 웹 본문을 확인하지 못했습니다. 답변의 관련 내용을 미검증 정보로 봐 주세요.
               </div>
             )}
-            {artifactUsage && artifactProgress && (
+            {!terminal && artifactUsage && artifactUsage.tokens > 0 && artifactProgress && (
               <div className={`artifact-progress-count is-${artifactProgress.stage}`} role="status" aria-live={terminal ? undefined : "polite"} aria-label={`문서 ${artifactUsage.estimated === false ? "완성 분량" : "작성 중 추정 분량"} ${artifactUsage.tokens.toLocaleString()} 토큰 ${artifactUsage.lines.toLocaleString()}줄${liveModelOutputTokens > 0 ? `, 모델 출력 누계 ${liveModelOutputTokens.toLocaleString()} 토큰` : ""}`}>
                 <div className="artifact-progress-heading">
-                  <span>{artifactUsage.tokens === 0 && !terminal ? "문서 작성을 준비하고 있습니다." : <>{artifactUsage.estimated === false ? "문서 약" : "작성 중 약"} {artifactUsage.tokens.toLocaleString()}토큰 · {artifactUsage.lines.toLocaleString()}줄{artifactUsage.targetTokens ? <span className="artifact-progress-target"> · 목표 {artifactUsage.targetTokens.toLocaleString()}토큰</span> : null}</>}</span>
+                  <span>{artifactUsage.estimated === false ? "문서 약" : "작성 중 약"} {artifactUsage.tokens.toLocaleString()}토큰 · {artifactUsage.lines.toLocaleString()}줄{artifactUsage.targetTokens ? <span className="artifact-progress-target"> · 목표 {artifactUsage.targetTokens.toLocaleString()}토큰</span> : null}</span>
                   {liveModelOutputTokens > 0 && (
                     <span className="artifact-model-output">
                       모델 출력 누계 {liveModelOutputTokens.toLocaleString()}토큰
@@ -2082,7 +2082,7 @@ export const AssistantTurn = memo(function AssistantTurn({
                     </span>
                   )}
                 </div>
-                <div className={`artifact-progress-meter ${artifactUsage.tokens === 0 && !terminal ? "is-indeterminate" : ""}`} role="progressbar" aria-label={artifactUsage.tokens === 0 && !terminal ? "문서 작성 준비 중" : artifactUsage.targetTokens ? "선택한 문서 목표 분량 대비 작성량" : "현재 5,000 토큰 구간의 생성량"} aria-valuemin={0} aria-valuemax={artifactProgress.maxTokens} aria-valuenow={artifactUsage.tokens === 0 && !terminal ? undefined : artifactProgress.bucketTokens}>
+                <div className="artifact-progress-meter" role="progressbar" aria-label={artifactUsage.targetTokens ? "선택한 문서 목표 분량 대비 작성량" : "현재 5,000 토큰 구간의 생성량"} aria-valuemin={0} aria-valuemax={artifactProgress.maxTokens} aria-valuenow={artifactProgress.bucketTokens}>
                   <span className="artifact-progress-fill" style={{ width: `${artifactProgress.percent}%` }} />
                 </div>
               </div>

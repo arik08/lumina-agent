@@ -21,10 +21,10 @@ test("artifact progress distinguishes document size, target, and model output us
   assert.match(app, /style=\{\{ width: `\$\{artifactProgress\.percent\}%` \}\}/);
   assert.match(app, /const liveArtifactProgress = useRunArtifactProgress\(/);
   assert.match(app, /const artifactUsage = liveArtifactProgress\s+\?\? snapshot\?\.artifactUsage\s+\?\? finalMessage\?\.metadata\?\.artifactUsage/);
-  assert.match(app, /\{artifactUsage && artifactProgress && \(/);
+  assert.match(app, /\{!terminal && artifactUsage && artifactUsage\.tokens > 0 && artifactProgress && \(/);
   assert.doesNotMatch(app, /hasArtifactWritingExecution/);
-  assert.match(app, /문서 작성을 준비하고 있습니다\./);
-  assert.match(app, /artifact-progress-meter \$\{artifactUsage\.tokens === 0 && !terminal \? "is-indeterminate"/);
+  assert.doesNotMatch(app, /문서 작성을 준비하고 있습니다\./);
+  assert.doesNotMatch(app, /artifact-progress-meter \$\{artifactUsage\.tokens === 0 && !terminal \? "is-indeterminate"/);
   assert.match(app, /artifactUsage\.estimated === false \? "문서 약" : "작성 중 약"/);
   assert.match(app, /artifactUsage\?\.modelOutputTokens \?\? 0/);
   assert.match(app, /모델 출력 누계 \{liveModelOutputTokens\.toLocaleString\(\)\}토큰/);
@@ -55,7 +55,7 @@ test("artifact progress distinguishes document size, target, and model output us
   assert.match(stylesheet, /\.artifact-progress-count\.is-orange \{ --artifact-progress-color: color-mix\(in srgb, #f46d43 55%, var\(--surface\)\); \}/);
   assert.match(stylesheet, /\.artifact-progress-count\.is-red \{ --artifact-progress-color: var\(--danger\); \}/);
   assert.match(stylesheet, /\.artifact-progress-fill \{[^}]*transition: width 100ms linear/s);
-  assert.match(stylesheet, /\.artifact-progress-meter\.is-indeterminate/);
+  assert.doesNotMatch(stylesheet, /\.artifact-progress-meter\.is-indeterminate/);
   assert.match(stylesheet, /@container \(max-width: 560px\) \{\s*\.artifact-progress-target \{ display: none; \}\s*\}/);
   assert.doesNotMatch(stylesheet, /stream-meter-sweep/);
 });
