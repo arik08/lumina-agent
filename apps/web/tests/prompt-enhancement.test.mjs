@@ -27,6 +27,7 @@ test("prompt enhancement menu provides four selectable edits and one apply actio
   assert.match(controls, /role="menuitemcheckbox"/);
   assert.match(controls, /className="prompt-enhancement-apply"/);
   assert.match(controls, /onApply\(selected\)/);
+  assert.doesNotMatch(controls, /선택한 항목만 한 번의 경량 LLM 호출로 반영합니다\./);
 });
 
 test("prompt enhancement keeps explicit restore and reapply paths", async () => {
@@ -37,5 +38,7 @@ test("prompt enhancement keeps explicit restore and reapply paths", async () => 
   assert.match(app, /writeComposerDraft\(current\.original\)/);
   assert.match(app, /const reapplyEnhancedPrompt = \(\) =>/);
   assert.match(app, /writeComposerDraft\(promptEnhancementState\.enhanced\)/);
-  assert.match(app, /현재 수정 내용도 사라집니다/);
+  assert.match(app, /className={`prompt-enhancement-restore tooltip-control/);
+  assert.match(app, /: "원문으로 복원"/);
+  assert.doesNotMatch(app, /프롬프트가 개선되었습니다\./);
 });

@@ -110,10 +110,7 @@ export function PromptEnhancementMenu({
       </button>
       {open && (
         <div className="composer-picker-menu prompt-enhancement-menu has-descriptions" id={menuId} role="menu" aria-label="프롬프트 개선">
-          <div className="composer-picker-menu-label has-description">
-            <span>프롬프트 개선</span>
-            <small>선택한 항목만 한 번의 경량 LLM 호출로 반영합니다.</small>
-          </div>
+          <div className="composer-picker-menu-label">프롬프트 개선</div>
           {promptEnhancementOptions.map((option) => {
             const checked = selected.includes(option.id);
             return (

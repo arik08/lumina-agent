@@ -3702,20 +3702,23 @@ function App() {
                 </div>
               )}
               {promptEnhancementState && (
-                <div className="prompt-enhancement-status" role="status">
-                  <span>
-                    {promptEnhancementState.view === "original"
-                      ? "원문으로 복원했습니다."
+                <button
+                  type="button"
+                  className={`prompt-enhancement-restore tooltip-control${promptEnhancementState.restoreArmed ? " is-armed" : ""}`}
+                  aria-label={promptEnhancementState.view === "original" ? "증강 결과 다시 적용" : "원문으로 복원"}
+                  data-tooltip={
+                    promptEnhancementState.view === "original"
+                      ? "증강 결과 다시 적용"
                       : promptEnhancementState.restoreArmed
-                        ? "현재 수정 내용도 사라집니다."
-                        : "프롬프트가 개선되었습니다."}
-                  </span>
+                        ? "수정 내용까지 원복하려면 다시 누르세요"
+                        : "원문으로 복원"
+                  }
+                  onClick={promptEnhancementState.view === "original" ? reapplyEnhancedPrompt : restoreOriginalPrompt}
+                >
                   {promptEnhancementState.view === "original"
-                    ? <button type="button" onClick={reapplyEnhancedPrompt}>증강 결과 다시 적용</button>
-                    : <button type="button" onClick={restoreOriginalPrompt}>
-                        {promptEnhancementState.restoreArmed ? "원복 확인" : "원문으로 복원"}
-                      </button>}
-                </div>
+                    ? <Sparkles size={16} aria-hidden="true" />
+                    : <Undo2 size={16} aria-hidden="true" />}
+                </button>
               )}
               <div className="composer-footer">
                 <div>
