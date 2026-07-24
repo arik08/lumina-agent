@@ -985,6 +985,7 @@ function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const composerInputRef = useRef<HTMLTextAreaElement>(null);
   const composerDraftRef = useRef("");
+  const resetLargeOutputTargetAfterRunRef = useRef<number | null>(null);
   const fileModeButtonRef = useRef<HTMLButtonElement>(null);
   const previousConversationRef = useRef<string | null>(null);
   const artifactOpenRequestRef = useRef(0);
@@ -1243,6 +1244,18 @@ function App() {
   const artifactPaneVisible = artifactOpen && artifactPaneViews.has(mainView);
   const activeRuntime = workspace.activeRuntime;
   const activeRun = workspace.activeRun;
+  useEffect(() => {
+    if (
+      resetLargeOutputTargetAfterRunRef.current === null
+      || !activeRun
+      || !isTerminalRunStatus(activeRun.status)
+    ) return;
+    const submittedTarget = resetLargeOutputTargetAfterRunRef.current;
+    resetLargeOutputTargetAfterRunRef.current = null;
+    setTargetOutputTokens((current) => (
+      current === submittedTarget ? defaultArtifactOutputTokens : current
+    ));
+  }, [activeRun?.runId, activeRun?.status]);
   const activeSessionUsageRevision = sessionUsageRevision(
     activeRuntime.usageBeforeLoadedTurnSets,
     activeRuntime.turnSets,
@@ -2322,9 +2335,11 @@ function App() {
     if (resetFileModeAfterSend) void workspace.selectOutputMode("auto");
     writeComposerDraft("");
     setSelectedReferences([]);
-    setTargetOutputTokens((current) => (
-      current !== null && current >= 20_000 ? defaultArtifactOutputTokens : current
-    ));
+    resetLargeOutputTargetAfterRunRef.current = (
+      targetOutputTokens !== null && targetOutputTokens >= 20_000
+        ? targetOutputTokens
+        : null
+    );
     setComposerTrigger(null);
     setComposerSuggestions([]);
   };
