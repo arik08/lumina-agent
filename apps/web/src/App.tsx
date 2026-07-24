@@ -687,6 +687,14 @@ interface ComposerTriggerState {
   end: number;
 }
 
+interface ComposerContextMenuState {
+  x: number;
+  y: number;
+  selectionStart: number;
+  selectionEnd: number;
+  themeDark: boolean;
+}
+
 interface SelectedComposerReference {
   key: string;
   token: string;
@@ -948,6 +956,7 @@ function App() {
   const [promptEnhancementState, setPromptEnhancementState] = useState<PromptEnhancementState | null>(null);
   const [promptEnhancementLoading, setPromptEnhancementLoading] = useState(false);
   const [promptEnhancementError, setPromptEnhancementError] = useState<string | null>(null);
+  const [composerContextMenu, setComposerContextMenu] = useState<ComposerContextMenuState | null>(null);
   const [composerTrigger, setComposerTrigger] = useState<ComposerTriggerState | null>(null);
   const [composerSuggestions, setComposerSuggestions] = useState<ComposerSuggestion[]>([]);
   const [selectedReferences, setSelectedReferences] = useState<SelectedComposerReference[]>([]);
@@ -997,6 +1006,7 @@ function App() {
   const titleCommitRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const composerInputRef = useRef<HTMLTextAreaElement>(null);
+  const composerContextMenuRef = useRef<HTMLDivElement>(null);
   const composerDraftRef = useRef("");
   const promptEnhancementRequestRef = useRef(0);
   const resetLargeOutputTargetAfterRunRef = useRef<number | null>(null);
@@ -2129,6 +2139,25 @@ function App() {
 
   const showToast = useCallback((message: string) => setToast(message), []);
 
+  useEffect(() => {
+    if (!composerContextMenu) return;
+    composerContextMenuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+    const close = () => setComposerContextMenu(null);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      close();
+      composerInputRef.current?.focus({ preventScroll: true });
+    };
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("resize", close);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [composerContextMenu]);
+
   const updateDeepAnalysisSidebarMission = async (
     missionId: string,
     patch: { title?: string; isFavorite?: boolean; isLiked?: boolean },
@@ -2223,6 +2252,82 @@ function App() {
       return next.length === current.length ? current : next;
     });
     setComposerTrigger(findComposerTrigger(value, caret));
+  };
+
+  const openComposerContextMenu = (event: ReactMouseEvent<HTMLTextAreaElement>) => {
+    event.preventDefault();
+    const input = event.currentTarget;
+    const selectionStart = input.selectionStart;
+    const selectionEnd = input.selectionEnd;
+    const itemCount = selectionStart === selectionEnd ? 2 : 4;
+    setComposerTrigger(null);
+    setComposerContextMenu({
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - 168)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - (itemCount * 32 + 12))),
+      selectionStart,
+      selectionEnd,
+      themeDark: Boolean(input.closest(".theme-dark")),
+    });
+  };
+
+  const selectAllComposerText = () => {
+    const input = composerInputRef.current;
+    setComposerContextMenu(null);
+    if (!input) return;
+    input.focus({ preventScroll: true });
+    input.setSelectionRange(0, input.value.length);
+  };
+
+  const copyComposerSelection = async (cut: boolean) => {
+    const input = composerInputRef.current;
+    const contextMenu = composerContextMenu;
+    setComposerContextMenu(null);
+    if (!input || !contextMenu || contextMenu.selectionStart === contextMenu.selectionEnd) return;
+    const selectedText = input.value.slice(contextMenu.selectionStart, contextMenu.selectionEnd);
+    try {
+      await copyText(selectedText);
+      if (!cut) {
+        input.focus({ preventScroll: true });
+        input.setSelectionRange(contextMenu.selectionStart, contextMenu.selectionEnd);
+        return;
+      }
+      const nextDraft = `${input.value.slice(0, contextMenu.selectionStart)}${input.value.slice(contextMenu.selectionEnd)}`;
+      updateDraft(nextDraft, contextMenu.selectionStart);
+      window.requestAnimationFrame(() => {
+        input.focus({ preventScroll: true });
+        input.setSelectionRange(contextMenu.selectionStart, contextMenu.selectionStart);
+      });
+    } catch {
+      showToast(cut ? "잘라내지 못했습니다." : "복사하지 못했습니다.");
+    }
+  };
+
+  const pasteComposerText = async () => {
+    const input = composerInputRef.current;
+    const contextMenu = composerContextMenu;
+    setComposerContextMenu(null);
+    if (!input || !contextMenu || typeof navigator.clipboard?.readText !== "function") {
+      showToast("클립보드 내용을 읽지 못했습니다.");
+      return;
+    }
+    try {
+      const pasted = await navigator.clipboard.readText();
+      if (!pasted) return;
+      if (pasted.split(/\r?\n/).length > 20) {
+        await workspace.attachPastedText(pasted);
+        input.focus({ preventScroll: true });
+        return;
+      }
+      const nextDraft = `${input.value.slice(0, contextMenu.selectionStart)}${pasted}${input.value.slice(contextMenu.selectionEnd)}`;
+      const nextCaret = contextMenu.selectionStart + pasted.length;
+      updateDraft(nextDraft, nextCaret);
+      window.requestAnimationFrame(() => {
+        input.focus({ preventScroll: true });
+        input.setSelectionRange(nextCaret, nextCaret);
+      });
+    } catch {
+      showToast("클립보드 내용을 읽지 못했습니다.");
+    }
   };
 
   const applyStarterPrompt = (prompt: string) => {
@@ -3634,6 +3739,7 @@ function App() {
                 defaultValue=""
                 placeholder="메시지 보내기"
                 rows={1}
+                onContextMenu={openComposerContextMenu}
                 onChange={(event) => updateDraft(event.currentTarget.value, event.currentTarget.selectionStart)}
                 onClick={(event) => setComposerTrigger(findComposerTrigger(event.currentTarget.value, event.currentTarget.selectionStart))}
                 onKeyUp={(event) => {
@@ -3696,6 +3802,26 @@ function App() {
                   void sendMessage(event.ctrlKey || event.metaKey);
                 }
               }} />
+              {composerContextMenu ? createPortal(
+                <div
+                  ref={composerContextMenuRef}
+                  className={`composer-context-menu lumina-select-menu lumina-select-menu-global size-small${composerContextMenu.themeDark ? " theme-dark" : ""}`}
+                  role="menu"
+                  aria-label="입력란 편집 메뉴"
+                  style={{ left: composerContextMenu.x, top: composerContextMenu.y }}
+                  onPointerDown={(event) => event.stopPropagation()}
+                >
+                  {composerContextMenu.selectionStart !== composerContextMenu.selectionEnd ? (
+                    <>
+                      <button className="lumina-select-option" type="button" role="menuitem" onClick={() => void copyComposerSelection(false)}>복사</button>
+                      <button className="lumina-select-option" type="button" role="menuitem" onClick={() => void copyComposerSelection(true)}>잘라내기</button>
+                    </>
+                  ) : null}
+                  <button className="lumina-select-option" type="button" role="menuitem" onClick={() => void pasteComposerText()}>붙여넣기</button>
+                  <button className="lumina-select-option" type="button" role="menuitem" onClick={selectAllComposerText}>전체 선택</button>
+                </div>,
+                document.body,
+              ) : null}
               {promptEnhancementError && (
                 <div className="prompt-enhancement-status is-error" role="alert">
                   <span>{promptEnhancementError}</span>
