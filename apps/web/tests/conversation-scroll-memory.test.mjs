@@ -36,6 +36,16 @@ test("jump to latest accelerates quickly across long conversations", async () =>
   assert.match(streamingUi, /remaining <= Math\.max\(1, frameScrollDistance\)/);
 });
 
+test("streaming auto-follow smooths buffered reveal height changes", async () => {
+  const streamingUi = await readFile(streamingUiUrl, "utf8");
+
+  assert.match(streamingUi, /const streamScrollSmoothingMs = maxVisualLagMs;/);
+  assert.match(streamingUi, /let smoothedTarget = container\.scrollTop;/);
+  assert.match(streamingUi, /const smoothingWeight = activeRef\.current\s*\? 1 - Math\.exp\(-elapsed \/ streamScrollSmoothingMs\)\s*: 1;/);
+  assert.match(streamingUi, /smoothedTarget \+= \(target - smoothedTarget\) \* smoothingWeight;/);
+  assert.match(streamingUi, /const distance = smoothedTarget - current\.scrollTop;/);
+});
+
 test("jump to latest skips animation when the remaining distance exceeds four viewports", async () => {
   const streamingUi = await readFile(streamingUiUrl, "utf8");
 

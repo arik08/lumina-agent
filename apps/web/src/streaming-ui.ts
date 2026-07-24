@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 
 const streamStartBufferMs = 40;
 const maxVisualLagMs = 180;
+const streamScrollSmoothingMs = maxVisualLagMs;
 const renderCommitReserveMs = 80;
 const visibleFrameIntervalMs = 15;
 const frameFallbackMs = 100;
@@ -314,6 +315,7 @@ export function useConversationAutoFollow(
     let previousFrameAt = performance.now();
     let followVelocity = 0;
     let lastTarget = Math.max(0, container.scrollHeight - container.clientHeight);
+    let smoothedTarget = container.scrollTop;
     let targetStableMs = 0;
     const step = (now: number) => {
       const current = containerRef.current;
@@ -330,7 +332,11 @@ export function useConversationAutoFollow(
       } else {
         targetStableMs += elapsed;
       }
-      const distance = target - current.scrollTop;
+      const smoothingWeight = activeRef.current
+        ? 1 - Math.exp(-elapsed / streamScrollSmoothingMs)
+        : 1;
+      smoothedTarget += (target - smoothedTarget) * smoothingWeight;
+      const distance = smoothedTarget - current.scrollTop;
       const dt = elapsed / 1_000;
       const responseMs = 340;
       const omega = (1_000 / responseMs) * 2.25;
