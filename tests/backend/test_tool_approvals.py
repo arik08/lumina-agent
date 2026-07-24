@@ -22,6 +22,7 @@ from lumina.models import (
     User,
 )
 from lumina.providers import MockProvider, MockToolCall
+from lumina.runs.approvals import classify_tool_risk
 
 
 def _settings(tmp_path: Path, name: str) -> Settings:
@@ -35,6 +36,18 @@ def _settings(tmp_path: Path, name: str) -> Settings:
         user_concurrency_limit=1,
         server_concurrency_limit=1,
     )
+
+
+def test_mcp_preview_and_connection_checks_are_external_reads() -> None:
+    for tool_name in ("preview_trade_data", "check_connection"):
+        risk = classify_tool_risk(
+            f"mcp__comtrade__{tool_name}__digest",
+            approval_mode="on_risk",
+            mcp_original_name=tool_name,
+        )
+        assert risk.effect == "external_read"
+        assert risk.risk_level == "low"
+        assert risk.approval_required is False
 
 
 def _login(
