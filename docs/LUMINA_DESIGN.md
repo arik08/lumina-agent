@@ -2810,7 +2810,7 @@ PDF 실제 렌더는 `pdftoppm`, DOCX·XLSX·PPTX 실제 렌더는 LibreOffice�
 
 ### 30.6 Frontend와 위험 기반 실행 승인
 
-초기 Agent Frontend는 Lumina에 포함된 builtin module만 사용하고 외부 package·remote·sandbox Frontend loader는 구현하지 않습니다. 이 결정과 Tool 승인 방식은 별개이며, 격리된 `local_worker`의 Tool 실행은 기본 `approval_mode=on_risk`로 확정합니다. 조회와 Lumina 내부 저위험 생성은 즉시 실행하고 외부 write·삭제 등 위험 effect는 durable one-shot 승인을 받으며, 다른 사용자 데이터·Project root·조직 정책·sandbox 경계를 넘는 작업은 계속 차단합니다.
+초기 Agent Frontend는 Lumina에 포함된 builtin module만 사용하고 외부 package·remote·sandbox Frontend loader는 구현하지 않습니다. 이 결정과 Tool 승인 방식은 별개입니다. 조직의 관리자는 `설정 → 관리자 설정 → 실행 안전`에서 전역 `YOLO mode`를 관리하며 기본값은 사용입니다. YOLO mode를 사용하면 모든 Tool 작업을 별도 승인 요청 없이 실행하고, 사용하지 않으면 `approval_mode=on_risk`로 외부 write·삭제 등 위험 effect에 durable one-shot 승인을 받습니다. 어느 모드에서도 다른 사용자 데이터·Project root·조직 권한·sandbox 경계와 Secret 비저장 정책은 계속 검증하고 차단합니다. 모드는 Run 생성 시 snapshot으로 고정하며 변경값은 새 Run부터 적용합니다.
 
 ## 31. 구현 시 문서 유지 규칙
 

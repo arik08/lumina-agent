@@ -73,6 +73,14 @@ def _start_run(
     *,
     suffix: str,
 ) -> tuple[str, str]:
+    settings = client.get("/api/admin/run-safety")
+    assert settings.status_code == 200, settings.text
+    disabled_yolo = client.patch(
+        "/api/admin/run-safety",
+        headers=headers,
+        json={**settings.json(), "yoloMode": False},
+    )
+    assert disabled_yolo.status_code == 200, disabled_yolo.text
     project_id = client.get("/api/projects").json()[0]["id"]
     conversation = client.post(
         "/api/conversations",

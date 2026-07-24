@@ -43,6 +43,7 @@ def test_run_safety_defaults_are_generous_and_invalid_storage_falls_back() -> No
         "max_total_tokens": 4_000_000,
         "max_elapsed_minutes": 10_080,
         "max_cost_usd": 100.0,
+        "yolo_mode": True,
     }
     assert run_limit_snapshot(normalized)["maxElapsedSeconds"] == 604_800
 

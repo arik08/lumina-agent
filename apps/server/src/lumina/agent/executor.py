@@ -2739,7 +2739,10 @@ class LocalRunExecutor:
                     checkpoint_call["provider_arguments"] = str(
                         call.get("provider_arguments", "{}")
                     )
-                if risk.approval_required and has_sensitive_tool_arguments(arguments):
+                if (
+                    risk.effect in {"destructive", "external_write"}
+                    and has_sensitive_tool_arguments(arguments)
+                ):
                     checkpoint_call["arguments"] = "{}"
                     checkpoint_call["blocked_error"] = (
                         "sensitive_tool_argument_forbidden"

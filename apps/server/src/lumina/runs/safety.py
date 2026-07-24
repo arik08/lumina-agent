@@ -4,15 +4,16 @@ from collections.abc import Mapping
 from typing import Any
 
 
-DEFAULT_RUN_SAFETY_SETTINGS: dict[str, int | float] = {
+DEFAULT_RUN_SAFETY_SETTINGS: dict[str, int | float | bool] = {
     "max_model_turns": 400,
     "max_total_tokens": 4_000_000,
     "max_elapsed_minutes": 10_080,
     "max_cost_usd": 100.0,
+    "yolo_mode": True,
 }
 
 
-def normalize_run_safety_settings(value: Any) -> dict[str, int | float]:
+def normalize_run_safety_settings(value: Any) -> dict[str, int | float | bool]:
     raw = value if isinstance(value, Mapping) else {}
     return {
         "max_model_turns": _bounded_int(
@@ -27,16 +28,22 @@ def normalize_run_safety_settings(value: Any) -> dict[str, int | float]:
         "max_cost_usd": _bounded_float(
             raw.get("max_cost_usd"), 1.0, 10_000.0, "max_cost_usd"
         ),
+        "yolo_mode": (
+            raw["yolo_mode"]
+            if isinstance(raw.get("yolo_mode"), bool)
+            else DEFAULT_RUN_SAFETY_SETTINGS["yolo_mode"]
+        ),
     }
 
 
-def run_safety_payload(value: Any) -> dict[str, int | float]:
+def run_safety_payload(value: Any) -> dict[str, int | float | bool]:
     normalized = normalize_run_safety_settings(value)
     return {
         "maxModelTurns": normalized["max_model_turns"],
         "maxTotalTokens": normalized["max_total_tokens"],
         "maxElapsedMinutes": normalized["max_elapsed_minutes"],
         "maxCostUsd": normalized["max_cost_usd"],
+        "yoloMode": normalized["yolo_mode"],
     }
 
 
@@ -49,6 +56,10 @@ def run_limit_snapshot(value: Any) -> dict[str, int | float | str]:
         "maxCostUsd": normalized["max_cost_usd"],
         "costAccounting": "provider_reported_or_estimated",
     }
+
+
+def run_approval_mode(value: Any) -> str:
+    return "yolo" if normalize_run_safety_settings(value)["yolo_mode"] else "on_risk"
 
 
 def _bounded_int(value: Any, minimum: int, maximum: int, key: str) -> int:
@@ -72,6 +83,7 @@ def _bounded_float(value: Any, minimum: float, maximum: float, key: str) -> floa
 __all__ = [
     "DEFAULT_RUN_SAFETY_SETTINGS",
     "normalize_run_safety_settings",
+    "run_approval_mode",
     "run_limit_snapshot",
     "run_safety_payload",
 ]

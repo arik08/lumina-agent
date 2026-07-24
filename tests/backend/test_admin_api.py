@@ -102,6 +102,7 @@ def test_admin_run_safety_settings_and_emergency_stop(tmp_path: Path) -> None:
             "maxTotalTokens": 4_000_000,
             "maxElapsedMinutes": 10_080,
             "maxCostUsd": 100.0,
+            "yoloMode": True,
         }
         assert (
             admin_client.patch(
@@ -111,6 +112,7 @@ def test_admin_run_safety_settings_and_emergency_stop(tmp_path: Path) -> None:
                     "maxTotalTokens": 3_000_000,
                     "maxElapsedMinutes": 480,
                     "maxCostUsd": 75,
+                    "yoloMode": False,
                 },
             ).status_code
             == 403
@@ -124,10 +126,12 @@ def test_admin_run_safety_settings_and_emergency_stop(tmp_path: Path) -> None:
                 "maxTotalTokens": 3_000_000,
                 "maxElapsedMinutes": 480,
                 "maxCostUsd": 75,
+                "yoloMode": False,
             },
         )
         assert updated.status_code == 200, updated.text
         assert updated.json()["maxTotalTokens"] == 3_000_000
+        assert updated.json()["yoloMode"] is False
 
         with SessionLocal() as db:
             admin_user = db.scalar(
@@ -148,6 +152,7 @@ def test_admin_run_safety_settings_and_emergency_stop(tmp_path: Path) -> None:
             db.add(conversation)
             db.flush()
             assert organization.run_safety_settings_json["max_model_turns"] == 300
+            assert organization.run_safety_settings_json["yolo_mode"] is False
             active_run = Run(
                 organization_id=organization.id,
                 project_id=conversation.project_id,

@@ -86,7 +86,7 @@ from .plans import (
     start_plan_step,
     update_work_plan,
 )
-from .safety import run_limit_snapshot
+from .safety import run_approval_mode, run_limit_snapshot
 from .state import (
     ACTIVE_STATUSES,
     AWAITING_APPROVAL,
@@ -446,6 +446,7 @@ def create_run(
             409, "organization_missing", "사용자의 조직을 찾을 수 없습니다."
         )
     limits = run_limit_snapshot(organization.run_safety_settings_json)
+    approval_mode = run_approval_mode(organization.run_safety_settings_json)
     runtime_prompts = runtime_prompt_snapshot(db, organization)
     instruction_stack = resolve_instruction_stack_from_models(
         organization=organization,
@@ -524,7 +525,7 @@ def create_run(
         "extensions": extensions,
         "extension_application": extension_application,
         "environment_type": "local_worker",
-        "approval_mode": "on_risk",
+        "approval_mode": approval_mode,
         "clarification_mode": clarification_mode,
         "prompt_cache_scope": prompt_cache_scope,
     }
@@ -567,7 +568,7 @@ def create_run(
         runtime_model_id=execution["runtime_model_id"],
         model_display_name=execution["model_display_name"],
         effort=execution["effort"],
-        approval_mode="on_risk",
+        approval_mode=approval_mode,
         environment_type="local_worker",
         # Retained only for compatibility with the existing database column.
         # Runtime termination no longer depends on a model-turn count.
@@ -600,7 +601,7 @@ def create_run(
             "prompt_cache_scope": prompt_cache_scope,
             "contract_version": stable_prefix["contract_version"],
             "environment_type": "local_worker",
-            "approval_mode": "on_risk",
+            "approval_mode": approval_mode,
             "limits": limits,
             "memory_learning_mode": memory_learning_mode,
             "clarification_mode": clarification_mode,

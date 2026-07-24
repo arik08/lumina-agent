@@ -1349,6 +1349,7 @@ export interface AdminRunSafetySettings {
   maxTotalTokens: number;
   maxElapsedMinutes: number;
   maxCostUsd: number;
+  yoloMode: boolean;
 }
 
 export interface AdminEmergencyStopResult {

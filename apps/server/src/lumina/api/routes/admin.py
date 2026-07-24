@@ -101,6 +101,7 @@ class AdminRunSafetyPatch(ApiModel):
     max_total_tokens: int = Field(ge=100_000, le=100_000_000)
     max_elapsed_minutes: int = Field(ge=30, le=525_600)
     max_cost_usd: float = Field(ge=1, le=10_000)
+    yolo_mode: bool
 
 
 class AdminEmergencyStop(ApiModel):
@@ -1882,7 +1883,7 @@ def get_run_safety_settings(
     request: Request,
     actor: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> dict[str, int | float]:
+) -> dict[str, int | float | bool]:
     organization = _admin_organization(db, actor)
     record_audit(
         db,
@@ -1903,7 +1904,7 @@ def patch_run_safety_settings(
     request: Request,
     context: AuthContext = Depends(require_csrf),
     db: Session = Depends(get_db),
-) -> dict[str, int | float]:
+) -> dict[str, int | float | bool]:
     organization = _admin_organization(db, context.user)
     previous = normalize_run_safety_settings(organization.run_safety_settings_json)
     updated = normalize_run_safety_settings(payload.model_dump())

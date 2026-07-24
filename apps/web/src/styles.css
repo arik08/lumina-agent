@@ -1645,6 +1645,17 @@ button:disabled { cursor: default; opacity: 0.5; }
 .admin-run-safety-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 14px 16px 16px; padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-soft); }
 .admin-run-safety-form > label { display: grid; min-width: 0; gap: 5px; color: var(--ink); font-size: 11.5px; font-weight: 650; }
 .admin-run-safety-form > label > small { color: var(--muted); font-size: 10px; font-weight: 400; }
+.admin-yolo-mode-setting { display: flex; grid-column: 1 / -1; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 12px; border: 1px solid color-mix(in srgb, var(--danger) 24%, var(--line)); border-radius: 6px; background: color-mix(in srgb, var(--danger) 5%, var(--surface)); }
+.admin-yolo-mode-setting > span { display: grid; min-width: 0; gap: 4px; }
+.admin-yolo-mode-setting > span > strong { font-size: 12px; }
+.admin-yolo-mode-setting > span > small { color: var(--muted); font-size: 10.5px; line-height: 1.45; }
+.admin-yolo-mode-setting > button { display: inline-grid; min-width: 82px; height: 28px; flex: 0 0 auto; grid-template-columns: 14px auto; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 0 9px; background: var(--surface); color: var(--muted); font: inherit; cursor: pointer; }
+.admin-yolo-mode-setting > button > span { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.admin-yolo-mode-setting > button > strong { font-size: 10.5px; }
+.admin-yolo-mode-setting > button.is-active { border-color: color-mix(in srgb, var(--danger) 42%, var(--line)); background: color-mix(in srgb, var(--danger) 10%, var(--surface)); color: var(--danger); }
+.admin-yolo-mode-setting > button.is-active > span { background: var(--danger); }
+.admin-yolo-mode-setting > button:focus-visible { outline: 2px solid color-mix(in srgb, var(--danger) 40%, transparent); outline-offset: 2px; }
+.admin-yolo-mode-setting > button:disabled { cursor: wait; opacity: .6; }
 .admin-run-safety-form input { width: 100%; min-width: 0; height: 32px; border: 1px solid var(--line); border-radius: 5px; outline: 0; padding: 0 9px; background: var(--surface); color: var(--ink); font: inherit; font-variant-numeric: tabular-nums; }
 .admin-run-safety-form input:focus { border-color: var(--cobalt); box-shadow: 0 0 0 2px color-mix(in srgb, var(--cobalt) 12%, transparent); }
 .admin-run-safety-input { display: flex; min-width: 0; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; font-weight: 500; }
@@ -3487,6 +3498,7 @@ button:disabled { cursor: default; opacity: 0.5; }
   .admin-section { padding-right: 10px; padding-left: 10px; }
   .admin-run-safety-form { grid-template-columns: minmax(0, 1fr); }
   .admin-run-safety-form > footer { grid-column: 1; align-items: flex-start; flex-direction: column; }
+  .admin-yolo-mode-setting { grid-column: 1; align-items: flex-start; flex-direction: column; }
   .admin-emergency-stop-panel { grid-template-columns: minmax(0, 1fr); }
   .admin-emergency-stop-panel > button { justify-self: start; white-space: normal; }
   .admin-emergency-stop-panel > .admin-inline-confirm { grid-column: 1; }
