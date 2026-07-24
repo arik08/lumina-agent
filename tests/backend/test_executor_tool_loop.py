@@ -1306,6 +1306,13 @@ def test_file_mode_accepts_model_selected_artifact_without_explicit_file_words(
                     arguments={
                         "format": "html",
                         "title": "분기 실적 분석",
+                        "html_source": (
+                            "<!doctype html><html lang='ko'><head><meta charset='utf-8'>"
+                            "<title>분기 실적 분석</title></head><body><main>"
+                            "<h1>분기 실적 분석</h1><section><h2>분석 결과</h2>"
+                            "<p>파일 모드 선호를 반영해 재사용 가능한 결과로 정리했습니다.</p>"
+                            "</section></main></body></html>"
+                        ),
                         "executive_summary": "분기 실적의 핵심 흐름을 분석했습니다.",
                         "key_metrics": [],
                         "sections": [
@@ -1402,6 +1409,13 @@ def test_report_request_recovers_when_model_tries_to_finish_without_artifact(
                 arguments={
                     "format": "html",
                     "title": "시장 동향",
+                    "html_source": (
+                        "<!doctype html><html lang='ko'><head><meta charset='utf-8'>"
+                        "<title>시장 동향</title></head><body><main>"
+                        "<h1>시장 동향</h1><section><h2>주요 결과</h2>"
+                        "<p>검증된 자료를 바탕으로 정리한 결과입니다.</p>"
+                        "</section></main></body></html>"
+                    ),
                     "executive_summary": "핵심 동향을 요약했습니다.",
                     "key_metrics": [],
                     "sections": [
@@ -1555,6 +1569,13 @@ def test_web_fetch_starts_visible_report_drafting_before_create_report_output(
                     arguments={
                         "format": "html",
                         "title": "기사 동향",
+                        "html_source": (
+                            "<!doctype html><html lang='ko'><head><meta charset='utf-8'>"
+                            "<title>기사 동향</title></head><body><main>"
+                            "<h1>기사 동향</h1><section><h2>주요 참고자료</h2>"
+                            "<p>확인한 기사: https://example.com/article</p>"
+                            "</section></main></body></html>"
+                        ),
                         "executive_summary": "확인된 근거를 요약했습니다.",
                         "key_metrics": [],
                         "sections": [
