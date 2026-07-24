@@ -76,6 +76,7 @@ import {
   defaultArtifactOutputTokens,
 } from "./components/ComposerControls";
 import { copyText } from "./clipboard";
+import { clipboardTextWithLineBreaks } from "./composer-clipboard";
 import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent as ReactUIEvent } from "react";
 import { createPortal } from "react-dom";
 import { api, ApiError, attachmentContentUrl } from "./api";
@@ -3526,21 +3527,32 @@ function App() {
                   setComposerTrigger(findComposerTrigger(event.currentTarget.value, event.currentTarget.selectionStart));
                 }}
                 onPaste={(event) => {
-                const files = Array.from(event.clipboardData.items)
-                  .filter((item) => item.kind === "file")
-                  .map((item) => item.getAsFile())
-                  .filter((file): file is File => file !== null);
-                if (files.length > 0) {
-                  event.preventDefault();
-                  void workspace.uploadFiles(files, "clipboard");
-                  return;
-                }
-                const pasted = event.clipboardData.getData("text/plain");
-                if (pasted && pasted.split(/\r?\n/).length > 20) {
-                  event.preventDefault();
-                  void workspace.attachPastedText(pasted);
-                }
-              }} onKeyDown={(event) => {
+                  const files = Array.from(event.clipboardData.items)
+                    .filter((item) => item.kind === "file")
+                    .map((item) => item.getAsFile())
+                    .filter((file): file is File => file !== null);
+                  if (files.length > 0) {
+                    event.preventDefault();
+                    void workspace.uploadFiles(files, "clipboard");
+                    return;
+                  }
+                  const plainText = event.clipboardData.getData("text/plain");
+                  const pasted = clipboardTextWithLineBreaks(plainText, event.clipboardData.getData("text/html"));
+                  if (pasted && pasted.split(/\r?\n/).length > 20) {
+                    event.preventDefault();
+                    void workspace.attachPastedText(pasted);
+                    return;
+                  }
+                  if (pasted !== plainText) {
+                    event.preventDefault();
+                    const input = event.currentTarget;
+                    const selectionStart = input.selectionStart;
+                    const selectionEnd = input.selectionEnd;
+                    const nextDraft = `${input.value.slice(0, selectionStart)}${pasted}${input.value.slice(selectionEnd)}`;
+                    updateDraft(nextDraft, selectionStart + pasted.length);
+                    input.setSelectionRange(selectionStart + pasted.length, selectionStart + pasted.length);
+                  }
+                }} onKeyDown={(event) => {
                 if (event.nativeEvent.isComposing) return;
                 if (composerTrigger && composerSuggestions.length > 0 && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
                   event.preventDefault();
