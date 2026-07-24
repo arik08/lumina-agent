@@ -61,6 +61,10 @@ def generate_report(
             "본문 이미지 자산은 현재 HTML 또는 DOCX 보고서에서 지원합니다."
         )
     raw_html_source = arguments.get("html_source")
+    if report_format == "html" and raw_html_source is None:
+        raise ValueError(
+            "HTML 보고서는 완성된 standalone 문서를 html_source로 제공해야 합니다."
+        )
     if raw_html_source is not None:
         if report_format != "html":
             raise ValueError("html_source는 HTML 보고서에서만 사용할 수 있습니다.")

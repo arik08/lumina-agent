@@ -1797,7 +1797,7 @@ AI Assist는 중앙 Agent Run과 같은 Queue, Provider, 권한과 event replay�
 
 가능한 경우 선택 문장, 표 영역, cell range와 slide만 수정하며 비대상 영역 회귀를 검사합니다.
 
-현재 `create_report`는 구조화 report model과 별도로 HTML 전용 `html_source`를 받습니다. 완성된 standalone HTML은 서버 template로 다시 평탄화하지 않고 원문을 보존하며, non-HTML 형식에 `html_source`를 보내면 거부합니다. filename은 확장자 중복과 path 문자를 정규화하고 XLSX에서 formula처럼 보이는 모델 text도 문자열 cell로 저장합니다.
+현재 `create_report`는 HTML 형식에 완성된 standalone `html_source`를 필수로 받고, 구조화 report model은 non-HTML 형식에만 사용합니다. HTML 요청이 `html_source` 없이 구조화 section만 보내면 서버 기본 template로 평탄화하지 않고 거부해 시각 보고서 계약을 보존합니다. non-HTML 형식에 `html_source`를 보내도 거부합니다. filename은 확장자 중복과 path 문자를 정규화하고 XLSX에서 formula처럼 보이는 모델 text도 문자열 cell로 저장합니다.
 
 검증 결과는 `validation_status`, `renderVerified`, error·warning과 page metadata로 나눕니다. 구조 검증만 통과하고 renderer가 없으면 완전 통과가 아니라 `structural_passed`와 `render_verification_pending`을 기록합니다. 실제 render에서는 blank page, 비정상 크기, 예상 page count 불일치, process 실패·timeout을 명시적 실패로 처리하고 임시 profile·page image를 정리합니다.
 

@@ -305,6 +305,12 @@ _REPORT_TOOL_SCHEMA: dict[str, Any] = {
         ),
         "parameters": {
             "type": "object",
+            "description": (
+                "For format=html, provide the complete report only in html_source; the "
+                "legacy executive_summary, key_metrics, sections, and action_items fields "
+                "are for non-HTML formats and should be omitted. For every other format, "
+                "provide executive_summary, sections, and action_items."
+            ),
             "properties": {
                 "format": {"type": "string", "enum": list(REPORT_FORMATS)},
                 "title": {
@@ -397,9 +403,28 @@ _REPORT_TOOL_SCHEMA: dict[str, Any] = {
             "required": [
                 "format",
                 "title",
-                "executive_summary",
-                "sections",
-                "action_items",
+            ],
+            "oneOf": [
+                {
+                    "properties": {"format": {"const": "html"}},
+                    "required": ["html_source"],
+                },
+                {
+                    "properties": {
+                        "format": {
+                            "enum": [
+                                report_format
+                                for report_format in REPORT_FORMATS
+                                if report_format != "html"
+                            ]
+                        }
+                    },
+                    "required": [
+                        "executive_summary",
+                        "sections",
+                        "action_items",
+                    ],
+                },
             ],
             "additionalProperties": False,
         },

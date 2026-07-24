@@ -1410,9 +1410,12 @@ class _CapturingGeminiProvider:
                 {
                     "format": "html",
                     "title": "왕복 테스트",
-                    "executive_summary": "서명 왕복을 확인합니다.",
-                    "sections": [],
-                    "action_items": [],
+                    "html_source": (
+                        "<!doctype html><html lang='ko'><head><meta charset='utf-8'>"
+                        "<title>왕복 테스트</title></head><body><main>"
+                        "<h1>왕복 테스트</h1><p>서명 왕복을 확인합니다.</p>"
+                        "</main></body></html>"
+                    ),
                 },
                 ensure_ascii=False,
                 separators=(",", ":"),

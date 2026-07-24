@@ -13,6 +13,7 @@ from pypdf import PdfReader
 from sqlalchemy.orm import Session
 
 from lumina.agent.executor import _REPORT_TOOL_SCHEMA, local_run_executor
+from lumina.agent.tool_schemas import _report_tool_schema
 from lumina.artifacts.render_validation import LocalArtifactRenderBackend
 from lumina.artifacts.reporting import REPORT_FORMATS, generate_report
 from lumina.artifacts.service import validate_artifact_content
@@ -55,7 +56,7 @@ def _disable_host_renderers(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _arguments(report_format: str) -> dict[str, object]:
-    return {
+    arguments: dict[str, object] = {
         "format": report_format,
         "title": "광양 설비 점검 보고서",
         "executive_summary": "핵심 설비 2건을 확인했습니다.",
@@ -69,6 +70,14 @@ def _arguments(report_format: str) -> dict[str, object]:
         ],
         "action_items": ["48시간 안에 재점검합니다."],
     }
+    if report_format == "html":
+        arguments["html_source"] = """<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>광양 설비 점검 보고서</title>
+<style>@media print{body{color:#000}}</style></head>
+<body><main><h1>광양 설비 점검 보고서</h1>
+<section><h2>점검 결과</h2><p>이상 징후 1건을 확인했습니다.</p></section>
+</main></body></html>"""
+    return arguments
 
 
 @pytest.mark.parametrize("report_format", REPORT_FORMATS)
@@ -138,6 +147,41 @@ def test_create_report_schema_advertises_every_supported_format() -> None:
     assert "substituting Lumina app cobalt or an all-gray scheme" in html_description
 
 
+def test_create_report_schema_separates_html_from_structured_report_fields() -> None:
+    parameters = _REPORT_TOOL_SCHEMA["function"]["parameters"]
+
+    assert parameters["required"] == ["format", "title"]
+    assert parameters["oneOf"] == [
+        {
+            "properties": {"format": {"const": "html"}},
+            "required": ["html_source"],
+        },
+        {
+            "properties": {
+                "format": {
+                    "enum": [
+                        report_format
+                        for report_format in REPORT_FORMATS
+                        if report_format != "html"
+                    ]
+                }
+            },
+            "required": ["executive_summary", "sections", "action_items"],
+        },
+    ]
+    assert "legacy executive_summary" in parameters["description"]
+
+
+def test_large_html_report_schema_keeps_html_source_required_without_legacy_fields() -> (
+    None
+):
+    parameters = _report_tool_schema(30_000)["function"]["parameters"]
+
+    assert parameters["properties"]["html_source"]["minLength"] == 48_000
+    assert parameters["oneOf"][0]["required"] == ["html_source"]
+    assert "sections" not in parameters["oneOf"][0]["required"]
+
+
 def test_html_source_preserves_visual_artifact_and_executable_javascript() -> None:
     source = """<!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><title>시각 보고서</title>
@@ -161,6 +205,14 @@ def test_html_source_preserves_visual_artifact_and_executable_javascript() -> No
     executable_report = generate_report("시각 보고서를 만들어 주세요.", arguments)
 
     assert executable_report.content.decode("utf-8") == executable_source
+
+
+def test_html_report_without_html_source_is_rejected_instead_of_flattened() -> None:
+    arguments = _arguments("html")
+    arguments.pop("html_source")
+
+    with pytest.raises(ValueError, match="html_source로 제공"):
+        generate_report("시각 보고서를 만들어 주세요.", arguments)
 
 
 def test_report_filename_is_safe_and_does_not_repeat_the_extension() -> None:
