@@ -3,14 +3,15 @@
 Skill Initializer - Creates a new skill from template
 
 Usage:
-    init_skill.py <skill-name> --path <path> [--resources scripts,references,assets] [--examples] [--interface key=value]
+    init_skill.py <skill-name> --path <path> [--resources scripts,references,assets]
+                  [--examples] [--openai-interface] [--interface key=value]
 
 Examples:
     init_skill.py my-new-skill --path skills/public
     init_skill.py my-new-skill --path skills/public --resources scripts,references
     init_skill.py my-api-helper --path skills/private --resources scripts --examples
     init_skill.py custom-skill --path /custom/location
-    init_skill.py my-skill --path skills/public --interface short_description="Short UI label"
+    init_skill.py my-skill --path skills/public --openai-interface
 """
 
 import argparse
@@ -234,7 +235,10 @@ def create_resource_dirs(skill_dir, skill_name, skill_title, resources, include_
         if resource == "scripts":
             if include_examples:
                 example_script = resource_dir / "example.py"
-                example_script.write_text(EXAMPLE_SCRIPT.format(skill_name=skill_name))
+                example_script.write_text(
+                    EXAMPLE_SCRIPT.format(skill_name=skill_name),
+                    encoding="utf-8",
+                )
                 example_script.chmod(0o755)
                 print("[OK] Created scripts/example.py")
             else:
@@ -242,20 +246,30 @@ def create_resource_dirs(skill_dir, skill_name, skill_title, resources, include_
         elif resource == "references":
             if include_examples:
                 example_reference = resource_dir / "api_reference.md"
-                example_reference.write_text(EXAMPLE_REFERENCE.format(skill_title=skill_title))
+                example_reference.write_text(
+                    EXAMPLE_REFERENCE.format(skill_title=skill_title),
+                    encoding="utf-8",
+                )
                 print("[OK] Created references/api_reference.md")
             else:
                 print("[OK] Created references/")
         elif resource == "assets":
             if include_examples:
                 example_asset = resource_dir / "example_asset.txt"
-                example_asset.write_text(EXAMPLE_ASSET)
+                example_asset.write_text(EXAMPLE_ASSET, encoding="utf-8")
                 print("[OK] Created assets/example_asset.txt")
             else:
                 print("[OK] Created assets/")
 
 
-def init_skill(skill_name, path, resources, include_examples, interface_overrides):
+def init_skill(
+    skill_name,
+    path,
+    resources,
+    include_examples,
+    create_openai_interface,
+    interface_overrides,
+):
     """
     Initialize a new skill directory with template SKILL.md.
 
@@ -290,20 +304,21 @@ def init_skill(skill_name, path, resources, include_examples, interface_override
 
     skill_md_path = skill_dir / "SKILL.md"
     try:
-        skill_md_path.write_text(skill_content)
+        skill_md_path.write_text(skill_content, encoding="utf-8")
         print("[OK] Created SKILL.md")
     except Exception as e:
         print(f"[ERROR] Error creating SKILL.md: {e}")
         return None
 
-    # Create agents/openai.yaml
-    try:
-        result = write_openai_yaml(skill_dir, skill_name, interface_overrides)
-        if not result:
+    # agents/openai.yaml is a client extension, not part of Agent Skills.
+    if create_openai_interface or interface_overrides:
+        try:
+            result = write_openai_yaml(skill_dir, skill_name, interface_overrides)
+            if not result:
+                return None
+        except Exception as e:
+            print(f"[ERROR] Error creating agents/openai.yaml: {e}")
             return None
-    except Exception as e:
-        print(f"[ERROR] Error creating agents/openai.yaml: {e}")
-        return None
 
     # Create resource directories if requested
     if resources:
@@ -324,8 +339,11 @@ def init_skill(skill_name, path, resources, include_examples, interface_override
             print("2. Add resources to scripts/, references/, and assets/ as needed")
     else:
         print("2. Create resource directories only if needed (scripts/, references/, assets/)")
-    print("3. Update agents/openai.yaml if the UI metadata should differ")
-    print("4. Run the validator when ready to check the skill structure")
+    if create_openai_interface or interface_overrides:
+        print("3. Update agents/openai.yaml if the client metadata should differ")
+    else:
+        print("3. Add client-specific metadata only if the target client requires it")
+    print("4. Run skills-ref validate when ready to check the skill structure")
     print(
         "5. Forward-test complex skills with realistic user requests to ensure they work as intended"
     )
@@ -348,6 +366,11 @@ def main():
         "--examples",
         action="store_true",
         help="Create example files inside the selected resource directories",
+    )
+    parser.add_argument(
+        "--openai-interface",
+        action="store_true",
+        help="Create optional agents/openai.yaml client metadata",
     )
     parser.add_argument(
         "--interface",
@@ -388,7 +411,14 @@ def main():
         print("   Resources: none (create as needed)")
     print()
 
-    result = init_skill(skill_name, path, resources, args.examples, args.interface)
+    result = init_skill(
+        skill_name,
+        path,
+        resources,
+        args.examples,
+        args.openai_interface,
+        args.interface,
+    )
 
     if result:
         sys.exit(0)
