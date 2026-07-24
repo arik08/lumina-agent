@@ -391,17 +391,12 @@ export function useConversationAutoFollow(
     const content = container?.firstElementChild;
     if (!container || !content || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
-      const remembered = conversationId ? savedPositionsRef.current.get(conversationId) : null;
-      if (!activeRef.current && conversationId && remembered?.atBottom) {
-        const maximumTop = Math.max(0, container.scrollHeight - container.clientHeight);
-        setProgrammaticScrollTop(container, maximumTop, true);
-      }
       updateJumpVisibility();
-      follow();
+      follow(false, false, !activeRef.current);
     });
     observer.observe(content);
     return () => observer.disconnect();
-  }, [conversationId, follow, setProgrammaticScrollTop, updateJumpVisibility]);
+  }, [follow, updateJumpVisibility]);
 
   useEffect(() => () => {
     if (animationRef.current !== null) window.cancelAnimationFrame(animationRef.current);
