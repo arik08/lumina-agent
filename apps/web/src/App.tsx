@@ -116,6 +116,7 @@ type AdminProviderModelWithContextUsageRatio = AdminProviderModel & {
 import LoginScreen from "./components/LoginScreen";
 import { AdminRunSafetySettings } from "./components/AdminRunSafetySettings";
 import { ViewDataCacheProvider } from "./view-data-cache";
+import { preloadAppViews } from "./app-preload";
 import { SelectMenu } from "./components/SelectMenu";
 import { SharedSnapshotViewer } from "./components/SharedSnapshotViewer";
 import { ConversationSearchDialog } from "./components/ConversationSearchDialog";
@@ -1304,6 +1305,20 @@ function App() {
   }
   const cumulativeUsageByTurnSetId = cumulativeUsageCacheRef.current.value;
   const activeProject = workspace.projects.find((project) => project.id === workspace.activeProjectId) ?? null;
+  useEffect(() => {
+    const preload = () => {
+      void preloadAppViews({
+        projectId: workspace.activeProjectId,
+        isAdmin,
+      });
+    };
+    if ("requestIdleCallback" in window) {
+      const idleId = window.requestIdleCallback(preload, { timeout: 1_000 });
+      return () => window.cancelIdleCallback(idleId);
+    }
+    const timer = globalThis.setTimeout(preload, 0);
+    return () => globalThis.clearTimeout(timer);
+  }, [isAdmin, workspace.activeProjectId]);
   useEffect(() => {
     setDeepAnalysisMissions([]);
     setDeepAnalysisMissionsLoading(false);
