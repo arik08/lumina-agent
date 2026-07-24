@@ -5,12 +5,18 @@ import test from "node:test";
 const graphPath = new URL("../src/workspace-frontends/knowledge/KnowledgeGraph.tsx", import.meta.url);
 const viewPath = new URL("../src/workspace-frontends/knowledge/KnowledgeView.tsx", import.meta.url);
 const workerPath = new URL("../src/workspace-frontends/knowledge/knowledge-layout.worker.ts", import.meta.url);
+const viteConfigPath = new URL("../vite.config.ts", import.meta.url);
 
 test("Knowledge graph runs the coupled D3 force simulation in a worker", async () => {
-  const [graph, worker] = await Promise.all([readFile(graphPath, "utf8"), readFile(workerPath, "utf8")]);
+  const [graph, worker, viteConfig] = await Promise.all([
+    readFile(graphPath, "utf8"),
+    readFile(workerPath, "utf8"),
+    readFile(viteConfigPath, "utf8"),
+  ]);
   assert.doesNotMatch(graph, /from "d3-force"/);
   assert.match(graph, /new Worker\(\s*new URL\("\.\/knowledge-layout\.worker\.ts", import\.meta\.url\)/);
   assert.match(worker, /from "d3-force"/);
+  assert.match(viteConfig, /optimizeDeps:\s*\{\s*include:\s*\["d3-force"\]/);
   assert.match(worker, /forceSimulation<LayoutNode>\(nodes\)/);
   assert.match(worker, /forceLink<LayoutNode, LayoutLink>\(links\)/);
   assert.match(worker, /forceManyBody<LayoutNode>\(\)/);

@@ -24,6 +24,9 @@ export default defineConfig(({ mode }) => {
     cacheDir: "../../.cache/vite",
     envDir: repositoryRoot,
     plugins: [react()],
+    optimizeDeps: {
+      include: ["d3-force"],
+    },
     server: {
       host: "0.0.0.0",
       port: frontendPort,
