@@ -74,6 +74,7 @@ import {
   ArtifactLengthSlider,
   ComposerPicker,
   defaultArtifactOutputTokens,
+  PromptEnhancementMenu,
 } from "./components/ComposerControls";
 import { copyText } from "./clipboard";
 import { clipboardTextWithLineBreaks } from "./composer-clipboard";
@@ -98,6 +99,7 @@ import type {
   DeepAnalysisMissionSummary,
   ExecutionSelection,
   NotificationItem,
+  PromptEnhancementOption,
   PromptReference,
   ReferenceKind,
   RunSnapshot,
@@ -693,6 +695,13 @@ interface SelectedComposerReference {
   reference: PromptReference;
 }
 
+interface PromptEnhancementState {
+  original: string;
+  enhanced: string;
+  view: "enhanced" | "original" | "edited";
+  restoreArmed: boolean;
+}
+
 const navigation = [
   { id: "chat", label: "에이전트", icon: Bot },
   { id: "deep-analysis", label: "심층분석", icon: Waypoints },
@@ -936,6 +945,9 @@ function App() {
   const [targetOutputTokens, setTargetOutputTokens] = useState<number | null>(defaultArtifactOutputTokens);
   const [analysisDepth, setAnalysisDepth] = useState<AnalysisDepth>("auto");
   const [answerLength, setAnswerLength] = useState<AnswerLength>("auto");
+  const [promptEnhancementState, setPromptEnhancementState] = useState<PromptEnhancementState | null>(null);
+  const [promptEnhancementLoading, setPromptEnhancementLoading] = useState(false);
+  const [promptEnhancementError, setPromptEnhancementError] = useState<string | null>(null);
   const [composerTrigger, setComposerTrigger] = useState<ComposerTriggerState | null>(null);
   const [composerSuggestions, setComposerSuggestions] = useState<ComposerSuggestion[]>([]);
   const [selectedReferences, setSelectedReferences] = useState<SelectedComposerReference[]>([]);
@@ -986,6 +998,7 @@ function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const composerInputRef = useRef<HTMLTextAreaElement>(null);
   const composerDraftRef = useRef("");
+  const promptEnhancementRequestRef = useRef(0);
   const resetLargeOutputTargetAfterRunRef = useRef<number | null>(null);
   const fileModeButtonRef = useRef<HTMLButtonElement>(null);
   const previousConversationRef = useRef<string | null>(null);
@@ -2030,6 +2043,10 @@ function App() {
   }
 
   const startNewConversation = useCallback(() => {
+    promptEnhancementRequestRef.current += 1;
+    setPromptEnhancementState(null);
+    setPromptEnhancementLoading(false);
+    setPromptEnhancementError(null);
     setMainView("chat");
     setSidebarOpen(false);
     setComposerTrigger(null);
@@ -2191,6 +2208,16 @@ function App() {
   };
   const updateDraft = (value: string, caret: number) => {
     writeComposerDraft(value);
+    setPromptEnhancementError(null);
+    setPromptEnhancementState((current) => {
+      if (!current || !value.trim()) return value.trim() ? current : null;
+      const view = value === current.enhanced
+        ? "enhanced"
+        : value === current.original
+          ? "original"
+          : "edited";
+      return { ...current, view, restoreArmed: false };
+    });
     setSelectedReferences((current) => {
       const next = current.filter((item) => value.includes(item.token));
       return next.length === current.length ? current : next;
@@ -2199,6 +2226,8 @@ function App() {
   };
 
   const applyStarterPrompt = (prompt: string) => {
+    setPromptEnhancementState(null);
+    setPromptEnhancementError(null);
     updateDraft(prompt, prompt.length);
     window.requestAnimationFrame(() => {
       composerInputRef.current?.focus();
@@ -2340,6 +2369,10 @@ function App() {
     );
     if (!mode) return;
     if (resetFileModeAfterSend) void workspace.selectOutputMode("auto");
+    promptEnhancementRequestRef.current += 1;
+    setPromptEnhancementState(null);
+    setPromptEnhancementLoading(false);
+    setPromptEnhancementError(null);
     writeComposerDraft("");
     setSelectedReferences([]);
     resetLargeOutputTargetAfterRunRef.current = (
@@ -2349,6 +2382,81 @@ function App() {
     );
     setComposerTrigger(null);
     setComposerSuggestions([]);
+  };
+
+  const enhanceComposerPrompt = async (options: PromptEnhancementOption[]) => {
+    const sourceText = composerDraftRef.current;
+    const projectId = workspace.activeProjectId;
+    const execution = workspace.settings?.execution;
+    if (!sourceText.trim() || !projectId || !execution) return;
+    const promptReferences = selectedReferences.flatMap(({ reference, token }) => {
+      const tokenStart = sourceText.indexOf(token);
+      if (tokenStart < 0) return [];
+      return [{ ...reference, tokenStart, tokenEnd: tokenStart + token.length }];
+    });
+    const requestId = promptEnhancementRequestRef.current + 1;
+    promptEnhancementRequestRef.current = requestId;
+    setPromptEnhancementLoading(true);
+    setPromptEnhancementError(null);
+    try {
+      const result = await api.composer.enhancePrompt({
+        projectId,
+        text: sourceText,
+        options,
+        promptReferences,
+        execution,
+      });
+      if (promptEnhancementRequestRef.current !== requestId) return;
+      if (composerDraftRef.current !== sourceText) {
+        setPromptEnhancementError("입력 내용이 변경되어 개선 결과를 적용하지 않았습니다.");
+        return;
+      }
+      writeComposerDraft(result.enhancedText);
+      setPromptEnhancementState({
+        original: sourceText,
+        enhanced: result.enhancedText,
+        view: "enhanced",
+        restoreArmed: false,
+      });
+      window.requestAnimationFrame(() => {
+        const input = composerInputRef.current;
+        if (!input) return;
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      });
+    } catch (error) {
+      if (promptEnhancementRequestRef.current !== requestId) return;
+      setPromptEnhancementError(
+        error instanceof Error ? error.message : "프롬프트를 개선하지 못했습니다.",
+      );
+    } finally {
+      if (promptEnhancementRequestRef.current === requestId) {
+        setPromptEnhancementLoading(false);
+      }
+    }
+  };
+
+  const restoreOriginalPrompt = () => {
+    setPromptEnhancementState((current) => {
+      if (!current) return null;
+      if (current.view === "edited" && !current.restoreArmed) {
+        return { ...current, restoreArmed: true };
+      }
+      writeComposerDraft(current.original);
+      return { ...current, view: "original", restoreArmed: false };
+    });
+    window.requestAnimationFrame(() => composerInputRef.current?.focus());
+  };
+
+  const reapplyEnhancedPrompt = () => {
+    if (!promptEnhancementState) return;
+    writeComposerDraft(promptEnhancementState.enhanced);
+    setPromptEnhancementState({
+      ...promptEnhancementState,
+      view: "enhanced",
+      restoreArmed: false,
+    });
+    window.requestAnimationFrame(() => composerInputRef.current?.focus());
   };
 
   const controlRun = async (action: RunControlAction, targetId?: string) => {
@@ -3588,6 +3696,27 @@ function App() {
                   void sendMessage(event.ctrlKey || event.metaKey);
                 }
               }} />
+              {promptEnhancementError && (
+                <div className="prompt-enhancement-status is-error" role="alert">
+                  <span>{promptEnhancementError}</span>
+                </div>
+              )}
+              {promptEnhancementState && (
+                <div className="prompt-enhancement-status" role="status">
+                  <span>
+                    {promptEnhancementState.view === "original"
+                      ? "원문으로 복원했습니다."
+                      : promptEnhancementState.restoreArmed
+                        ? "현재 수정 내용도 사라집니다."
+                        : "프롬프트가 개선되었습니다."}
+                  </span>
+                  {promptEnhancementState.view === "original"
+                    ? <button type="button" onClick={reapplyEnhancedPrompt}>증강 결과 다시 적용</button>
+                    : <button type="button" onClick={restoreOriginalPrompt}>
+                        {promptEnhancementState.restoreArmed ? "원복 확인" : "원문으로 복원"}
+                      </button>}
+                </div>
+              )}
               <div className="composer-footer">
                 <div>
                   <input ref={fileInputRef} className="visually-hidden" type="file" multiple accept=".pdf,.docx,.xlsx,.pptx,.txt,.md,.csv,.tsv,.png,.jpg,.jpeg,.webp,.gif" onChange={(event) => {
@@ -3598,6 +3727,11 @@ function App() {
                   <button type="button" className="composer-utility-button tooltip-control" aria-label="파일 첨부" data-tooltip="업로드" disabled={workspace.uploadingAttachments} onClick={() => fileInputRef.current?.click()}>{workspace.uploadingAttachments ? <LoaderCircle className="is-running" size={17} /> : <Paperclip size={17} />}</button>
                   <button type="button" className="composer-utility-button tooltip-control" aria-label="Context 연결" data-tooltip="참고문서" onClick={() => insertComposerTrigger("@")}><AtSign size={17} /></button>
                   <button type="button" className="composer-utility-button tooltip-control" aria-label="Skill 및 MCP 호출" data-tooltip="Skill / MCP" onClick={() => insertComposerTrigger("$")}><CircleDollarSign size={17} /></button>
+                  <PromptEnhancementMenu
+                    disabled={!composerHasText || !workspace.activeProjectId || !workspace.settings}
+                    loading={promptEnhancementLoading}
+                    onApply={(options) => void enhanceComposerPrompt(options)}
+                  />
                   <ComposerPicker
                     options={analysisDepthOptions}
                     value={analysisDepth}

@@ -1139,6 +1139,22 @@ export interface PromptReference {
   tokenEnd?: number | null;
 }
 
+export type PromptEnhancementOption = "structure" | "evidence" | "missing_context" | "output_format";
+
+export interface PromptEnhancementRequest {
+  projectId: UUID;
+  text: string;
+  options: PromptEnhancementOption[];
+  promptReferences: PromptReference[];
+  execution: ExecutionSelection;
+}
+
+export interface PromptEnhancementResult {
+  enhancedText: string;
+  providerId: string;
+  modelKey: string;
+}
+
 export interface ComposerSuggestion {
   id: UUID;
   referenceId?: UUID;

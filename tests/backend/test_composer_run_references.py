@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -19,7 +20,7 @@ from lumina.api.schemas import (
     RunMessageInput,
 )
 from lumina.auth import bootstrap_database, create_user
-from lumina.agent.executor import _skill_activation_tool_schema
+from lumina.agent.executor import _skill_activation_tool_schema, local_run_executor
 from lumina.config import Settings, get_settings
 from lumina.db import SessionLocal, configure_database, create_schema
 from lumina.extensions.service import (
@@ -43,6 +44,7 @@ from lumina.models import (
     RunCommand,
     User,
 )
+from lumina.providers import ProviderCapabilities, ProviderEvent, ProviderRequest
 from lumina.runs.approvals import classify_tool_risk
 from lumina.runs.service import (
     _skill_activities,
@@ -720,6 +722,74 @@ def test_composer_candidates_are_project_scoped_and_version_pinned(
             params={"project_id": ids["other_project_id"], "trigger": "$"},
         )
         assert other_skills.json()["items"] == []
+
+
+def test_prompt_enhancement_endpoint_is_one_tool_free_provider_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Provider:
+        provider_id = "test"
+        capabilities = ProviderCapabilities(reasoning_effort=True)
+        request: ProviderRequest | None = None
+
+        async def stream(
+            self, request: ProviderRequest
+        ) -> AsyncIterator[ProviderEvent]:
+            self.request = request
+            yield ProviderEvent(
+                type="text_delta",
+                text="목적과 범위를 구분하여 설비를 점검해 주세요.",
+            )
+            yield ProviderEvent(type="completed", stop_reason="stop")
+
+    provider = Provider()
+    monkeypatch.setattr(
+        composer,
+        "resolve_execution",
+        lambda *_args, **_kwargs: {
+            "provider_id": "test",
+            "model_key": "fast-model",
+            "runtime_model_id": "fast-model",
+        },
+    )
+    monkeypatch.setattr(
+        local_run_executor,
+        "provider_for_probe",
+        lambda _provider_id: provider,
+    )
+    app, ids = _setup(tmp_path)
+    with TestClient(app) as client:
+        login = client.post(
+            "/api/auth/login",
+            json={
+                "loginName": "admin",
+                "loginDomain": "posco.com",
+                "password": "1",
+            },
+        )
+        response = client.post(
+            "/api/composer/enhance",
+            headers={"X-CSRF-Token": login.json()["csrfToken"]},
+            json={
+                "projectId": ids["project_id"],
+                "text": "설비 점검해줘",
+                "options": ["structure"],
+                "promptReferences": [],
+                "execution": {
+                    "providerId": "test",
+                    "modelKey": "fast-model",
+                    "effortId": "high",
+                },
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["enhancedText"] == (
+        "목적과 범위를 구분하여 설비를 점검해 주세요."
+    )
+    assert provider.request is not None
+    assert provider.request.tools == ()
+    assert provider.request.effort == "low"
 
 
 def test_run_snapshot_and_message_references_are_canonical_and_reproducible(

@@ -1,9 +1,9 @@
 import type { CSSProperties, ReactNode, RefObject } from "react";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronDown, FileText } from "lucide-react";
+import { Check, ChevronDown, FileText, LoaderCircle, WandSparkles } from "lucide-react";
 
-import type { OutputMode } from "../api-types";
+import type { OutputMode, PromptEnhancementOption } from "../api-types";
 
 export interface ComposerPickerOption {
   id: string;
@@ -27,6 +27,16 @@ export const answerLengthOptions: ComposerPickerOption[] = [
 ];
 
 export const defaultArtifactOutputTokens = 10_000;
+const promptEnhancementOptions: Array<{
+  id: PromptEnhancementOption;
+  label: string;
+  description: string;
+}> = [
+  { id: "structure", label: "요청 구조화", description: "목적, 범위와 수행 항목을 정리합니다." },
+  { id: "evidence", label: "근거 기준 보강", description: "수치, 출처와 검증 조건을 추가합니다." },
+  { id: "missing_context", label: "누락 조건 보완", description: "기간, 대상, 단위와 가정을 명확히 합니다." },
+  { id: "output_format", label: "출력 형식 구체화", description: "산출물의 구성과 형식을 정리합니다." },
+];
 const artifactLengthSteps = [
   { value: 8_000, label: "8k", warning: null },
   { value: 10_000, label: "10k", warning: null },
@@ -36,6 +46,111 @@ const artifactLengthSteps = [
   { value: 30_000, label: "30k", warning: "장문" },
   { value: 40_000, label: "40k", warning: "최대" },
 ] as const;
+
+export function PromptEnhancementMenu({
+  disabled,
+  loading,
+  onApply,
+}: {
+  disabled: boolean;
+  loading: boolean;
+  onApply: (options: PromptEnhancementOption[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [selected, setSelected] = useState<PromptEnhancementOption[]>(
+    promptEnhancementOptions.map((option) => option.id),
+  );
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuId = useId();
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      triggerRef.current?.focus();
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
+
+  const toggle = (option: PromptEnhancementOption) => {
+    setSelected((current) => (
+      current.includes(option)
+        ? current.filter((item) => item !== option)
+        : [...current, option]
+    ));
+  };
+
+  return (
+    <div className={`composer-picker prompt-enhancement-picker${open ? " is-open" : ""}`} ref={rootRef}>
+      <button
+        ref={triggerRef}
+        className="composer-picker-trigger composer-utility-button prompt-enhancement-control has-no-chevron tooltip-control"
+        type="button"
+        aria-label="프롬프트 개선"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
+        data-tooltip="프롬프트 개선"
+        disabled={disabled || loading}
+        onClick={() => setOpen((current) => !current)}
+      >
+        {loading
+          ? <LoaderCircle className="is-running" size={16} aria-hidden="true" />
+          : <WandSparkles size={16} aria-hidden="true" />}
+      </button>
+      {open && (
+        <div className="composer-picker-menu prompt-enhancement-menu has-descriptions" id={menuId} role="menu" aria-label="프롬프트 개선">
+          <div className="composer-picker-menu-label has-description">
+            <span>프롬프트 개선</span>
+            <small>선택한 항목만 한 번의 경량 LLM 호출로 반영합니다.</small>
+          </div>
+          {promptEnhancementOptions.map((option) => {
+            const checked = selected.includes(option.id);
+            return (
+              <button
+                key={option.id}
+                className={checked ? "is-selected" : ""}
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked={checked}
+                onClick={() => toggle(option.id)}
+              >
+                <span className="composer-picker-option-copy">
+                  <strong>{option.label}</strong>
+                  <small>{option.description}</small>
+                </span>
+                <Check size={14} aria-hidden="true" />
+              </button>
+            );
+          })}
+          <div className="prompt-enhancement-actions">
+            <button
+              type="button"
+              className="prompt-enhancement-apply"
+              disabled={selected.length === 0}
+              onClick={() => {
+                setOpen(false);
+                onApply(selected);
+              }}
+            >
+              적용
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function ArtifactLengthSlider({
   value,

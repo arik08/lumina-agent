@@ -126,6 +126,8 @@ import type {
   ProjectLearningProposalStatus,
   ProjectMemory,
   ProjectMemoryHistory,
+  PromptEnhancementRequest,
+  PromptEnhancementResult,
   McpConfiguration,
   McpDefinition,
   McpDefinitionCreateRequest,
@@ -1272,6 +1274,17 @@ export async function listComposerSuggestions(
 ) {
   return request<CursorPage<ComposerSuggestion>>("/composer/suggestions", {
     query: { project_id: projectId, trigger, query, limit: 12 },
+    signal,
+  });
+}
+
+export async function enhanceComposerPrompt(
+  payload: PromptEnhancementRequest,
+  signal?: AbortSignal,
+) {
+  return request<PromptEnhancementResult>("/composer/enhance", {
+    method: "POST",
+    body: payload,
     signal,
   });
 }
@@ -2623,7 +2636,10 @@ export const api = {
     report: reportMessage,
   },
   attachments: { upload: uploadAttachment, uploadPastedText },
-  composer: { listSuggestions: listComposerSuggestions },
+  composer: {
+    listSuggestions: listComposerSuggestions,
+    enhancePrompt: enhanceComposerPrompt,
+  },
   sharing: {
     create: createConversationShare,
     get: getSharedConversation,

@@ -2792,6 +2792,11 @@ button:disabled { cursor: default; opacity: 0.5; }
 
 .composer textarea { display: block; width: 100%; min-height: var(--control-height-sm); max-height: 120px; margin: 0; overflow-y: auto; field-sizing: content; resize: none; border: 0; outline: 0; padding: var(--space-1) var(--space-2); background: transparent; color: var(--ink); font-size: var(--conversation-font-size); line-height: 1.5; }
 .composer textarea::placeholder { color: #a4aab3; }
+.prompt-enhancement-status { display: flex; min-height: 25px; align-items: center; justify-content: space-between; gap: 10px; margin: 0 4px 3px; color: var(--muted); font-size: 12px; }
+.prompt-enhancement-status.is-error { color: var(--danger); }
+.prompt-enhancement-status > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prompt-enhancement-status > button { flex: 0 0 auto; min-height: 24px; padding: 0 5px; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--cobalt); font-size: 12px; font-weight: 620; cursor: pointer; }
+.prompt-enhancement-status > button:hover { background: var(--cobalt-pale); }
 .composer-footer { --artifact-length-warning: oklch(62% 0.18 52); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .composer-footer > div { display: flex; align-items: center; gap: 3px; }
 .composer-footer > div:first-child { min-width: 0; flex: 1 1 auto; }
@@ -2916,6 +2921,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 }
 .composer-picker:has(.analysis-depth-control) .composer-picker-menu,
 .composer-picker:has(.answer-length-control) .composer-picker-menu { right: auto; left: 50%; transform: translateX(-50%); }
+.prompt-enhancement-picker .prompt-enhancement-menu { right: auto; left: 0; width: min(310px, calc(100vw - 28px)); }
 .composer-picker-menu-label { padding: 5px 8px 7px; color: var(--faint); font-size: 10px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; }
 .composer-picker-menu-label.has-description { display: grid; gap: 3px; padding-bottom: 9px; letter-spacing: normal; text-transform: none; }
 .composer-picker-menu-label.has-description > span { letter-spacing: 0.09em; text-transform: uppercase; }
@@ -2945,6 +2951,10 @@ button:disabled { cursor: default; opacity: 0.5; }
 .composer-picker-option-copy { display: grid; gap: 2px; min-width: 0; }
 .composer-picker-option-copy > strong { overflow: hidden; font-size: 12.5px; font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
 .composer-picker-option-copy > small { overflow: hidden; color: var(--muted); font-size: 11px; font-weight: 450; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.prompt-enhancement-actions { display: flex; justify-content: flex-end; margin-top: 4px; padding: 8px 3px 2px; border-top: 1px solid var(--line); }
+.composer-footer .prompt-enhancement-actions .prompt-enhancement-apply { min-width: 58px; height: 29px; padding: 0 12px; border-radius: var(--radius-control); background: var(--cobalt); color: white; font-size: 12.5px; font-weight: 650; }
+.composer-footer .prompt-enhancement-actions .prompt-enhancement-apply:hover { background: var(--cobalt-hover); }
+.composer-footer .prompt-enhancement-actions .prompt-enhancement-apply:disabled { cursor: default; opacity: 0.45; }
 .composer-footer .send-button { width: 34px; min-width: 34px; height: 34px; margin-left: 3px; border-radius: 8px; background: var(--cobalt); color: white; transition: background-color 160ms cubic-bezier(0.25, 1, 0.5, 1), border-radius 160ms cubic-bezier(0.25, 1, 0.5, 1), box-shadow 160ms cubic-bezier(0.25, 1, 0.5, 1), color 160ms cubic-bezier(0.25, 1, 0.5, 1), transform 100ms cubic-bezier(0.25, 1, 0.5, 1); }
 .composer-footer .send-button:hover { background: var(--cobalt-hover); }
 .composer-footer .send-button.is-stop { border-radius: 50%; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--ink); }
@@ -3573,6 +3583,16 @@ button:disabled { cursor: default; opacity: 0.5; }
 
 @media (max-width: 460px) {
   .starter-prompts { grid-template-columns: minmax(0, 1fr); }
+  .prompt-enhancement-picker .prompt-enhancement-menu {
+    position: fixed;
+    right: 14px;
+    bottom: 78px;
+    left: 14px;
+    box-sizing: border-box;
+    width: calc(100vw - 28px);
+    min-width: 0;
+    max-width: calc(100vw - 28px);
+  }
 }
 
 @media (hover: none) {

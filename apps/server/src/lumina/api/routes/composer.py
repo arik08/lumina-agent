@@ -8,7 +8,9 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ...agent.executor import local_run_executor
 from ...authorization import require_project
+from ...config import Settings, get_settings
 from ...db import get_db
 from ...extensions.service import resolve_skill_snapshot
 from ...mcp.service import resolve_mcp_snapshot
@@ -21,11 +23,68 @@ from ...models import (
     ProjectFileVersion,
     User,
 )
-from ..dependencies import get_current_user
+from ...prompt_enhancement import enhance_prompt
+from ...providers import ProviderConfigurationError, ProviderRequestError
+from ...runs.service import resolve_execution
+from ..dependencies import AuthContext, get_current_user, require_csrf
 from ..errors import ApiProblem
+from ..schemas import PromptEnhancementInput, RunCreate, RunMessageInput
 
 
 router = APIRouter(prefix="/composer", tags=["composer"])
+
+
+@router.post("/enhance")
+async def post_prompt_enhancement(
+    payload: PromptEnhancementInput,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    project = require_project(db, context.user, payload.project_id)
+    execution = resolve_execution(
+        db,
+        RunCreate(
+            message=RunMessageInput(text=payload.text),
+            execution=payload.execution,
+        ),
+        user=context.user,
+        project=project,
+        settings=settings,
+    )
+    if execution["provider_id"] == "mock":
+        raise ApiProblem(
+            409,
+            "real_provider_required",
+            "프롬프트 개선에는 Mock이 아닌 LLM Provider를 선택해 주세요.",
+        )
+    try:
+        provider = local_run_executor.provider_for_probe(execution["provider_id"])
+        enhanced_text = await enhance_prompt(
+            provider=provider,
+            model=execution["runtime_model_id"],
+            text=payload.text,
+            options=payload.options,
+            references=payload.prompt_references,
+        )
+    except (ProviderConfigurationError, ProviderRequestError) as exc:
+        raise ApiProblem(
+            502,
+            "prompt_enhancement_provider_failed",
+            "프롬프트 개선 응답을 받지 못했습니다.",
+            details={"stage": getattr(exc, "stage", "configuration")},
+        ) from exc
+    except ValueError as exc:
+        raise ApiProblem(
+            502,
+            "prompt_enhancement_invalid",
+            "프롬프트 개선 결과가 올바르지 않아 원문을 유지했습니다.",
+        ) from exc
+    return {
+        "enhancedText": enhanced_text,
+        "providerId": execution["provider_id"],
+        "modelKey": execution["model_key"],
+    }
 
 
 @router.get("/suggestions")

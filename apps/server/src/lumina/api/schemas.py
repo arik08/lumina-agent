@@ -227,6 +227,18 @@ class RunMessageInput(ApiModel):
     target_output_tokens: int | None = Field(default=None, ge=1, le=40_000)
 
 
+class PromptEnhancementInput(ApiModel):
+    project_id: str
+    text: str = Field(min_length=1, max_length=32_000)
+    options: list[
+        Literal["structure", "evidence", "missing_context", "output_format"]
+    ] = Field(min_length=1, max_length=4)
+    prompt_references: list[MessageReferenceInput] = Field(
+        default_factory=list, max_length=100
+    )
+    execution: ExecutionSelection | None = None
+
+
 class RunCreate(ApiModel):
     message: RunMessageInput
     execution: ExecutionSelection | None = None
