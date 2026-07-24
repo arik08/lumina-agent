@@ -10,6 +10,7 @@ ProviderEventType = Literal[
     "tool_call_started",
     "tool_call_delta",
     "tool_call_completed",
+    "tool_call_discarded",
     "usage",
     "completed",
 ]

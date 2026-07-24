@@ -725,6 +725,83 @@ class _PartialReportToolCallThenCompletingProvider:
         yield ProviderEvent(type="completed", stop_reason="stop")
 
 
+class _ValidReportWithDiscardedToolCallProvider:
+    provider_id = "mock"
+    capabilities = ProviderCapabilities(tools=True)
+
+    def __init__(self) -> None:
+        self.attempts = 0
+
+    async def stream(self, request: ProviderRequest) -> AsyncIterator[ProviderEvent]:
+        self.attempts += 1
+        if self.attempts == 1:
+            report_arguments = json.dumps(
+                {
+                    "format": "html",
+                    "title": "Preserved report",
+                    "executive_summary": "The valid report call was preserved.",
+                    "key_metrics": [],
+                    "sections": [],
+                    "action_items": [],
+                    "html_source": (
+                        "<!doctype html><html><head><meta charset='utf-8'>"
+                        "<title>Preserved report</title></head><body>"
+                        "<h1>Preserved report</h1><p>Verified evidence.</p>"
+                        "</body></html>"
+                    ),
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            yield ProviderEvent(
+                type="tool_call_started",
+                tool_call_id="call_valid_report",
+                tool_name="create_report",
+            )
+            yield ProviderEvent(
+                type="tool_call_delta",
+                tool_call_id="call_valid_report",
+                tool_name="create_report",
+                arguments_delta=report_arguments,
+            )
+            yield ProviderEvent(
+                type="tool_call_started",
+                tool_call_id="call_malformed_search",
+                tool_name="web_search",
+            )
+            yield ProviderEvent(
+                type="tool_call_delta",
+                tool_call_id="call_malformed_search",
+                tool_name="web_search",
+                arguments_delta='{"query":"POSCO"},{"query":"steel"}',
+            )
+            yield ProviderEvent(
+                type="tool_call_discarded",
+                tool_call_id="call_malformed_search",
+                tool_name="web_search",
+            )
+            yield ProviderEvent(
+                type="tool_call_completed",
+                tool_call_id="call_valid_report",
+                tool_name="create_report",
+                arguments_json=report_arguments,
+            )
+            yield ProviderEvent(type="completed", stop_reason="tool_calls")
+            return
+
+        assert any(
+            message.role == "tool"
+            and message.tool_call_id == "call_valid_report"
+            for message in request.messages
+        )
+        assert not any(
+            message.tool_call_id == "call_malformed_search"
+            for message in request.messages
+        )
+        yield ProviderEvent(type="text_delta", text="Preserved HTML report created.")
+        yield ProviderEvent(type="completed", stop_reason="stop")
+
+
 class _ReportThenRepeatedEmptyProvider:
     provider_id = "mock"
     capabilities = ProviderCapabilities(tools=True)
@@ -1159,6 +1236,55 @@ def test_retryable_failure_regenerates_unexecuted_partial_report_tool_call(
         "toolCallCount": 1,
         "toolNames": ["create_report"],
     }
+
+
+def test_valid_report_survives_discarded_malformed_sibling_call(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    provider = _ValidReportWithDiscardedToolCallProvider()
+    monkeypatch.setattr(
+        local_run_executor, "_provider", lambda *_args, **_kwargs: provider
+    )
+
+    with TestClient(
+        create_app(_settings(tmp_path, "preserved-valid-report.db"))
+    ) as client:
+        csrf = _login(client)
+        conversation_id = _conversation(client, csrf, "Preserved valid report")
+        run_id = _start_run(
+            client,
+            csrf,
+            conversation_id,
+            text="조사 결과를 HTML 보고서 파일로 만들어 주세요.",
+            idempotency_key="preserve-valid-report-tool-0001",
+        )
+        snapshot = _wait_for_terminal(client, run_id)
+
+    assert snapshot["status"] == "completed"
+    assert provider.attempts == 2
+    assert len(snapshot["artifacts"]) == 1
+    assert [
+        (tool["toolName"], tool["status"]) for tool in snapshot["toolExecutions"]
+    ] == [("create_report", "completed")]
+    with SessionLocal() as db:
+        discarded_event = db.scalar(
+            select(RunEvent).where(
+                RunEvent.run_id == run_id,
+                RunEvent.event_type == "provider_partial_tool_calls_discarded",
+            )
+        )
+        recovery_event = db.scalar(
+            select(RunEvent).where(
+                RunEvent.run_id == run_id,
+                RunEvent.event_type == "provider_partial_response_recovery_scheduled",
+            )
+        )
+    assert discarded_event is not None
+    assert discarded_event.payload_json == {
+        "toolCallCount": 1,
+        "toolNames": ["web_search"],
+    }
+    assert recovery_event is None
 
 
 def test_provider_retry_delay_prefers_retry_after_and_caps_it() -> None:

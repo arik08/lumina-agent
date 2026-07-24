@@ -69,6 +69,13 @@ _OUTPUT_SCHEMA: dict[str, Any] = {
 
 
 _JSON_FIELD_VALUE = r'"{field}"\s*:\s*"((?:\\.|[^"\\])*)"'
+_ISOLATABLE_TOOL_ARGUMENT_ERRORS = frozenset(
+    {
+        "tool_call_arguments_invalid_json",
+        "tool_call_arguments_trailing_content",
+        "tool_call_arguments_not_object",
+    }
+)
 PROVIDER_ID = CODEX_PROVIDER_ID
 _CODEX_RESPONSES_BASE_URL = "https://chatgpt.com/backend-api/codex"
 _CODEX_JWT_AUTH_CLAIM = "https://api.openai.com/auth"
@@ -469,6 +476,7 @@ class CodexResponsesAdapter:
                     usage_raw = result.usage
                 payload = _result_payload(raw_response)
                 calls = payload["tool_calls"]
+                discarded_calls = payload["_discarded_tool_calls"]
                 text = payload["text"]
                 if streamed.emitted_text and not text.startswith(streamed.emitted_text):
                     raise _invalid_result(
@@ -479,6 +487,16 @@ class CodexResponsesAdapter:
                 if remaining_text:
                     emitted_output = True
                     yield ProviderEvent(type="text_delta", text=remaining_text)
+                for call in discarded_calls:
+                    if call["id"] in streamed.started_ids:
+                        yield ProviderEvent(
+                            type="tool_call_discarded",
+                            tool_call_id=call["id"],
+                            tool_name=call["name"],
+                            provider_metadata={
+                                "diagnostic_code": call["diagnostic_code"]
+                            },
+                        )
                 for call in calls:
                     emitted = streamed.emitted_arguments.get(call["id"], "")
                     if call["id"] not in streamed.started_ids:
@@ -835,6 +853,8 @@ def _result_payload(raw: str | None) -> dict[str, Any]:
     if not isinstance(raw_calls, list):
         raise _invalid_result("tool_calls_not_list", diagnostic=diagnostic)
     calls: list[dict[str, str]] = []
+    discarded_calls: list[dict[str, str]] = []
+    first_discarded_error: ProviderRequestError | None = None
     seen_ids: set[str] = set()
     for call_index, raw_call in enumerate(raw_calls):
         if not isinstance(raw_call, Mapping):
@@ -865,19 +885,40 @@ def _result_payload(raw: str | None) -> dict[str, Any]:
                 "tool_call_arguments_not_string",
                 diagnostic=f"{diagnostic} invalid_call_index={call_index}",
             )
-        arguments_json = _normalized_tool_arguments(
-            arguments_json,
-            diagnostic=f"{diagnostic} invalid_call_index={call_index}",
-        )
         seen_ids.add(call_id)
+        try:
+            arguments_json = _normalized_tool_arguments(
+                arguments_json,
+                diagnostic=f"{diagnostic} invalid_call_index={call_index}",
+            )
+        except ProviderRequestError as exc:
+            if exc.diagnostic_code not in _ISOLATABLE_TOOL_ARGUMENT_ERRORS:
+                raise
+            if first_discarded_error is None:
+                first_discarded_error = exc
+            discarded_calls.append(
+                {
+                    "id": call_id,
+                    "name": name,
+                    "diagnostic_code": str(exc.diagnostic_code),
+                }
+            )
+            continue
         calls.append({"id": call_id, "name": name, "arguments_json": arguments_json})
-    if kind == "final" and calls:
+    if kind == "final" and (calls or discarded_calls):
         raise _invalid_result("final_with_tool_calls", diagnostic=diagnostic)
     if kind == "final" and not text.strip():
         raise _invalid_result("final_empty_text", diagnostic=diagnostic)
     if kind == "tool_calls" and not calls:
+        if first_discarded_error is not None:
+            raise first_discarded_error
         raise _invalid_result("tool_calls_empty", diagnostic=diagnostic)
-    return {"kind": kind, "text": text, "tool_calls": calls}
+    return {
+        "kind": kind,
+        "text": text,
+        "tool_calls": calls,
+        "_discarded_tool_calls": discarded_calls,
+    }
 
 
 def _result_shape(raw: str | None, payload: object) -> str:

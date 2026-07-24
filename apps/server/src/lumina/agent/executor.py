@@ -1798,6 +1798,7 @@ class LocalRunExecutor:
                             "tool_call_started",
                             "tool_call_delta",
                             "tool_call_completed",
+                            "tool_call_discarded",
                         }:
                             if first_provider_output_at is None:
                                 first_provider_output_at = time.perf_counter()
@@ -1806,6 +1807,7 @@ class LocalRunExecutor:
                             "tool_call_started",
                             "tool_call_delta",
                             "tool_call_completed",
+                            "tool_call_discarded",
                         }:
                             provider_tool_output_started = True
                         if not await self._wait_until_runnable(run_id):
@@ -1966,6 +1968,23 @@ class LocalRunExecutor:
                                 call["provider_metadata"].update(
                                     _safe_provider_metadata(event.provider_metadata)
                                 )
+                        elif event.type == "tool_call_discarded":
+                            await flush_pending_text()
+                            discarded_call_id = event.tool_call_id or active_call_id
+                            discarded_call = (
+                                tool_calls.pop(discarded_call_id, None)
+                                if discarded_call_id
+                                else None
+                            )
+                            if discarded_call_id in tool_order:
+                                tool_order.remove(discarded_call_id)
+                            if discarded_call is not None:
+                                await self._discard_partial_tool_calls(
+                                    run_id,
+                                    {str(discarded_call_id): discarded_call},
+                                )
+                            if active_call_id == discarded_call_id:
+                                active_call_id = None
                         elif event.type == "usage" and event.usage:
                             await flush_pending_text()
                             turn_usage = _usage_payload(

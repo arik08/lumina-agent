@@ -529,7 +529,7 @@ async def test_codex_oauth_discards_dead_client_after_partial_output(
 
 
 @pytest.mark.asyncio
-async def test_codex_oauth_classifies_streamed_malformed_report_call_as_retryable(
+async def test_codex_oauth_preserves_valid_report_and_discards_only_malformed_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     discarded: list[object] = []
@@ -599,27 +599,39 @@ async def test_codex_oauth_classifies_streamed_malformed_report_call_as_retryabl
     monkeypatch.setattr(adapter, "_ready_client", ready_client)
     monkeypatch.setattr(adapter, "_discard_client", discard_client)
 
-    events = []
-    with pytest.raises(ProviderRequestError) as captured:
+    events = [
+        event
         async for event in adapter.stream(
             ProviderRequest(
                 model="gpt-5.5",
                 messages=(ProviderMessage(role="user", content="HTML 보고서 작성"),),
             )
-        ):
-            events.append(event)
+        )
+    ]
 
     assert any(
         event.type == "tool_call_started" and event.tool_name == "create_report"
         for event in events
     )
-    assert captured.value.retryable is True
-    assert captured.value.stage == "response"
-    assert (
-        captured.value.diagnostic_code
-        == "tool_call_arguments_trailing_content"
+    assert any(
+        event.type == "tool_call_completed"
+        and event.tool_call_id == "call_report"
+        and event.arguments_json == report_arguments
+        for event in events
     )
-    assert discarded == [client]
+    assert any(
+        event.type == "tool_call_discarded"
+        and event.tool_call_id == "call_search"
+        for event in events
+    )
+    assert not any(
+        event.type == "tool_call_completed"
+        and event.tool_call_id == "call_search"
+        for event in events
+    )
+    assert events[-1].type == "completed"
+    assert events[-1].stop_reason == "tool_calls"
+    assert discarded == []
 
 
 @pytest.mark.asyncio
