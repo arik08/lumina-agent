@@ -238,6 +238,7 @@ class _RunSteered(Exception):
 _PROVIDER_RETRY_DELAYS_SECONDS = (1.0, 2.0, 4.0)
 _MAX_PROVIDER_RETRY_AFTER_SECONDS = 600.0
 _PROVIDER_FIRST_OUTPUT_TIMEOUT_SECONDS = 120.0
+_PROVIDER_EVENT_IDLE_TIMEOUT_SECONDS = 120.0
 _MAX_AUTO_CONTINUATIONS = 4
 _MAX_EMPTY_RESPONSE_RETRIES = 1
 _ARTIFACT_EMPTY_RESPONSE_FALLBACK = (
@@ -889,24 +890,34 @@ class LocalRunExecutor:
         request: ProviderRequest,
         *,
         first_output_timeout_seconds: float = _PROVIDER_FIRST_OUTPUT_TIMEOUT_SECONDS,
+        event_idle_timeout_seconds: float = _PROVIDER_EVENT_IDLE_TIMEOUT_SECONDS,
     ) -> AsyncIterator[ProviderEvent]:
-        """Stop a silent Provider stream on control changes or missing first output."""
+        """Stop a silent Provider stream on control changes or missing output."""
         stream = provider.stream(request)
         pending: asyncio.Future[ProviderEvent] = asyncio.ensure_future(anext(stream))
         first_output_deadline = time.monotonic() + first_output_timeout_seconds
         first_event_received = False
+        event_idle_deadline: float | None = None
         try:
             while True:
                 wait_seconds = _RUN_CANCELLATION_POLL_SECONDS
-                if not first_event_received:
-                    remaining = first_output_deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise ProviderRequestError(
-                            "Provider가 제한 시간 안에 첫 응답을 보내지 않았습니다.",
-                            retryable=True,
-                            stage="first_output",
-                        )
-                    wait_seconds = min(wait_seconds, remaining)
+                deadline = (
+                    event_idle_deadline
+                    if event_idle_deadline is not None
+                    else first_output_deadline
+                )
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise ProviderRequestError(
+                        (
+                            "Provider 스트림이 제한 시간 동안 새 응답을 보내지 않았습니다."
+                            if first_event_received
+                            else "Provider가 제한 시간 안에 첫 응답을 보내지 않았습니다."
+                        ),
+                        retryable=True,
+                        stage="stream" if first_event_received else "first_output",
+                    )
+                wait_seconds = min(wait_seconds, remaining)
                 done, _ = await asyncio.wait(
                     (pending,), timeout=wait_seconds
                 )
@@ -918,6 +929,9 @@ class LocalRunExecutor:
                     first_event_received = True
                     yield event
                     pending = asyncio.ensure_future(anext(stream))
+                    event_idle_deadline = (
+                        time.monotonic() + event_idle_timeout_seconds
+                    )
                     continue
                 if self._run_is_terminal(run_id):
                     raise asyncio.CancelledError
