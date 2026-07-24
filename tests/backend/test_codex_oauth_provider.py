@@ -12,6 +12,7 @@ from openai_codex import ApprovalMode
 
 from lumina.providers import (
     ProviderConfigurationError,
+    ProviderEvent,
     ProviderMessage,
     ProviderRequest,
     ProviderRequestError,
@@ -77,7 +78,7 @@ async def test_codex_direct_routes_same_prefix_across_new_run_sessions(
         body = f"data: {json.dumps(response)}\n\n".encode()
         return httpx.Response(200, content=body)
 
-    adapter = CodexResponsesAdapter()
+    adapter = CodexResponsesAdapter(direct_responses=True)
     adapter._responses_client = httpx.AsyncClient(
         transport=httpx.MockTransport(handler)
     )
@@ -125,6 +126,35 @@ async def test_codex_direct_routes_same_prefix_across_new_run_sessions(
         "content": [{"type": "input_text", "text": "stable system"}],
     }
     await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_codex_oauth_defaults_to_app_server_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = CodexResponsesAdapter()
+
+    async def app_server_stream(_request: ProviderRequest):
+        yield ProviderEvent(type="completed", stop_reason="stop")
+
+    async def unexpected_direct_stream(_request: ProviderRequest):
+        raise AssertionError("Direct Responses must remain opt-in")
+        yield
+
+    monkeypatch.setattr(adapter, "_stream_app_server", app_server_stream)
+    monkeypatch.setattr(adapter, "_stream_direct", unexpected_direct_stream)
+
+    events = [
+        event
+        async for event in adapter.stream(
+            ProviderRequest(
+                model="gpt-5.5",
+                messages=(ProviderMessage(role="user", content="hello"),),
+            )
+        )
+    ]
+
+    assert [event.type for event in events] == ["completed"]
 
 
 def test_codex_transport_close_is_classified_as_retryable_stream_failure() -> None:

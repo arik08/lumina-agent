@@ -235,7 +235,7 @@ def codex_oauth_available() -> bool:
 
 
 class CodexResponsesAdapter:
-    """ChatGPT OAuth adapter with direct Responses and App Server fallback."""
+    """ChatGPT OAuth adapter backed by Codex App Server by default."""
 
     provider_id = PROVIDER_ID
     capabilities = ProviderCapabilities(
@@ -244,7 +244,7 @@ class CodexResponsesAdapter:
         reasoning_effort=True,
     )
 
-    def __init__(self, *, direct_responses: bool = True) -> None:
+    def __init__(self, *, direct_responses: bool = False) -> None:
         self._client: AsyncCodex | None = None
         self._available_models: frozenset[str] = frozenset()
         self._workspace: tempfile.TemporaryDirectory[str] | None = None
