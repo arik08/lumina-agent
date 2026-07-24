@@ -41,4 +41,8 @@ test("prompt enhancement keeps explicit restore and reapply paths", async () => 
   assert.match(app, /className={`prompt-enhancement-restore tooltip-control/);
   assert.match(app, /: "원문으로 복원"/);
   assert.doesNotMatch(app, /프롬프트가 개선되었습니다\./);
+
+  const styles = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
+  assert.match(styles, /\.run-dock:has\(\.prompt-enhancement-restore\) > \.composer:first-child \{ border-radius: inherit; \}/);
+  assert.match(styles, /\.composer textarea \{[^}]*max-height: 180px;/);
 });
