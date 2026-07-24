@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 import time
 from collections.abc import AsyncIterator, Callable
@@ -1177,6 +1178,50 @@ def test_provider_retry_delay_prefers_retry_after_and_caps_it() -> None:
     assert executor_module._provider_retry_delay_seconds(retry_after, 0) == 12.5
     assert executor_module._provider_retry_delay_seconds(excessive, 0) == 600.0
     assert executor_module._PROVIDER_RETRY_DELAYS_SECONDS == (1.0, 2.0, 4.0)
+
+
+@pytest.mark.asyncio
+async def test_provider_failure_log_includes_safe_run_diagnostics(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = "run-safe-diagnostic"
+    error = ProviderRequestError(
+        "public error",
+        retryable=False,
+        stage="response",
+        diagnostic_code="final_empty_text",
+        safe_diagnostic=(
+            "response_present=True response_type=str response_length=48 "
+            "payload_type=dict kind=final text_type=str text_length=0 "
+            "tool_calls_type=list tool_call_count=0"
+        ),
+    )
+
+    async def fail_execute(_run_id: str) -> None:
+        raise error
+
+    async def no_op(_run_id: str, *_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(local_run_executor, "_execute", fail_execute)
+    monkeypatch.setattr(local_run_executor, "_fail_run", no_op)
+    monkeypatch.setattr(local_run_executor, "_sync_deep_analysis", no_op)
+    monkeypatch.setattr(local_run_executor, "_promote_next_message", no_op)
+    monkeypatch.setattr(local_run_executor, "_release_parked_ownership", no_op)
+
+    with caplog.at_level(logging.WARNING, logger=executor_module.__name__):
+        await local_run_executor._run_claimed(run_id)
+
+    message = next(
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("Provider run failed")
+    )
+    assert f"run_id={run_id}" in message
+    assert "stage=response" in message
+    assert "diagnostic_code=final_empty_text" in message
+    assert "text_length=0" in message
 
 
 def test_retry_after_parser_accepts_nested_json_scalars_only() -> None:

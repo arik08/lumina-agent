@@ -20,6 +20,8 @@ class ProviderRequestError(ProviderError):
         retry_after_seconds: float | None = None,
         context_window_tokens: int | None = None,
         attempt_count: int | None = None,
+        diagnostic_code: str | None = None,
+        safe_diagnostic: str | None = None,
     ) -> None:
         super().__init__(message)
         self.retryable = retryable
@@ -28,3 +30,5 @@ class ProviderRequestError(ProviderError):
         self.retry_after_seconds = retry_after_seconds
         self.context_window_tokens = context_window_tokens
         self.attempt_count = attempt_count
+        self.diagnostic_code = diagnostic_code
+        self.safe_diagnostic = safe_diagnostic

@@ -1101,7 +1101,10 @@ class LocalRunExecutor:
             raise
         except McpRuntimeError as exc:
             logger.warning(
-                "MCP run preparation failed",
+                "MCP run preparation failed run_id=%s code=%s stage=%s",
+                run_id,
+                exc.code,
+                exc.stage,
                 extra={
                     "run_id": run_id,
                     "mcp_error": exc.code,
@@ -1113,7 +1116,9 @@ class LocalRunExecutor:
             await self._promote_next_message(run_id)
         except ProviderConfigurationError as exc:
             logger.warning(
-                "Provider run failed",
+                "Provider run failed run_id=%s error_type=%s",
+                run_id,
+                type(exc).__name__,
                 extra={"run_id": run_id, "provider_error": type(exc).__name__},
             )
             await self._fail_run(run_id, "provider_configuration", str(exc))
@@ -1121,7 +1126,18 @@ class LocalRunExecutor:
             await self._promote_next_message(run_id)
         except ProviderRequestError as exc:
             logger.warning(
-                "Provider run failed",
+                (
+                    "Provider run failed run_id=%s error_type=%s stage=%s "
+                    "status_code=%s attempt_count=%s diagnostic_code=%s "
+                    "diagnostic=%s"
+                ),
+                run_id,
+                type(exc).__name__,
+                exc.stage,
+                exc.status_code,
+                exc.attempt_count,
+                exc.diagnostic_code,
+                exc.safe_diagnostic,
                 extra={
                     "run_id": run_id,
                     "provider_error": type(exc).__name__,
@@ -1140,7 +1156,9 @@ class LocalRunExecutor:
             await self._promote_next_message(run_id)
         except ProviderError as exc:
             logger.warning(
-                "Provider run failed",
+                "Provider run failed run_id=%s error_type=%s",
+                run_id,
+                type(exc).__name__,
                 extra={"run_id": run_id, "provider_error": type(exc).__name__},
             )
             await self._fail_run(run_id, "provider_request", str(exc))
@@ -1148,7 +1166,9 @@ class LocalRunExecutor:
             await self._promote_next_message(run_id)
         except Exception:
             logger.exception(
-                "Unhandled local run executor failure", extra={"run_id": run_id}
+                "Unhandled local run executor failure run_id=%s",
+                run_id,
+                extra={"run_id": run_id},
             )
             await self._fail_run(
                 run_id, "executor_error", "로컬 실행기에서 오류가 발생했습니다."

@@ -691,6 +691,60 @@ async def test_codex_oauth_preserves_invalid_result_classification(
     assert "인증을 확인" not in str(captured.value)
 
 
+@pytest.mark.parametrize(
+    ("raw", "expected_code"),
+    [
+        (None, "missing_response"),
+        ("", "empty_response"),
+        ("   ", "empty_response"),
+        ("not-json", "invalid_json"),
+        (json.dumps([]), "response_not_object"),
+        (
+            json.dumps({"kind": "unknown", "text": "secret", "tool_calls": []}),
+            "unsupported_kind",
+        ),
+        (
+            json.dumps({"kind": "final", "text": "", "tool_calls": []}),
+            "final_empty_text",
+        ),
+        (
+            json.dumps({"kind": "tool_calls", "text": "", "tool_calls": []}),
+            "tool_calls_empty",
+        ),
+        (
+            json.dumps(
+                {
+                    "kind": "tool_calls",
+                    "text": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_secret",
+                            "name": "secret_tool",
+                            "arguments_json": '{"token":"must-not-be-logged"} trailing',
+                        }
+                    ],
+                }
+            ),
+            "tool_call_arguments_trailing_content",
+        ),
+    ],
+)
+def test_codex_invalid_result_reports_safe_shape_without_content(
+    raw: str | None,
+    expected_code: str,
+) -> None:
+    with pytest.raises(ProviderRequestError) as captured:
+        codex_adapter._result_payload(raw)
+
+    error = captured.value
+    assert error.diagnostic_code == expected_code
+    assert error.safe_diagnostic is not None
+    assert "response_present=" in error.safe_diagnostic
+    assert "response_length=" in error.safe_diagnostic
+    assert "secret" not in error.safe_diagnostic
+    assert "must-not-be-logged" not in error.safe_diagnostic
+
+
 @pytest.mark.asyncio
 async def test_codex_oauth_requires_chatgpt_account(
     monkeypatch: pytest.MonkeyPatch,
