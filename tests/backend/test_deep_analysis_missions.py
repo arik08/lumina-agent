@@ -23,6 +23,7 @@ from lumina.agent.executor import (
 from lumina.config import Settings
 from lumina.db import SessionLocal
 from lumina.deep_analysis.calculations import execute_python_calculation
+from lumina.deep_analysis.context_manifest import current_file_version
 from lumina.deep_analysis.ai_planner import design_initial_workflow
 from lumina.deep_analysis.events import emit_event
 from lumina.deep_analysis.execution import (
@@ -31,6 +32,7 @@ from lumina.deep_analysis.execution import (
     _run_profile,
     _run_prompt,
     create_runnable_node_runs,
+    pending_terminal_run_ids,
     sync_terminal_run,
 )
 from lumina.deep_analysis.planning import runnable_nodes
@@ -70,6 +72,7 @@ from lumina.models import (
     User,
 )
 from lumina.providers.mock import MockProvider
+from lumina.project_files.service import create_project_file_version
 from lumina.storage import ManagedLocalStorage
 
 
@@ -271,7 +274,8 @@ def test_node_output_contracts_keep_handoffs_compact_and_reports_detailed() -> N
 
     scope_prompt = _run_prompt(mission, scope, [])
     assert "분석 질문을 검증 가능한 형태로 구체화" in scope_prompt
-    assert "최종 보고서가 아니라 다음 Node를 위한 압축 인계물" in scope_prompt
+    assert "사용자가 직접 읽는 중간보고서이자 다음 Node를 위한 압축 인계물" in scope_prompt
+    assert "완료 안내만 쓰지 마십시오" in scope_prompt
     assert "선행 산출물의 내용을 반복 요약하지" in scope_prompt
 
     report_prompt = _run_prompt(mission, report, [])
@@ -299,8 +303,9 @@ def test_node_output_contracts_keep_handoffs_compact_and_reports_detailed() -> N
     assert _output_path(mission, report).endswith("/N040_최종 보고서.md")
 
 
-def test_completed_write_file_becomes_visible_node_output_and_handoff(
-    tmp_path: Path, monkeypatch
+@pytest.mark.parametrize("artifact_tool_name", ["write_file", "create_report"])
+def test_completed_artifact_becomes_visible_node_output_and_handoff(
+    tmp_path: Path, monkeypatch, artifact_tool_name: str
 ) -> None:
     settings = _settings(tmp_path)
     monkeypatch.setattr(
@@ -357,7 +362,7 @@ def test_completed_write_file_becomes_visible_node_output_and_handoff(
                 ToolExecution(
                     run_id=run.id,
                     tool_call_id="call_write_detailed_handoff",
-                    tool_name="write_file",
+                    tool_name=artifact_tool_name,
                     validated_input_json={
                         "path": artifact.display_name,
                         "content": detailed_output,
@@ -433,6 +438,58 @@ def test_completed_write_file_becomes_visible_node_output_and_handoff(
             completed_node["outputLogicalPath"] in prompt
             for prompt in next_prompts
         )
+        if artifact_tool_name == "create_report":
+            completion_notice = "상세 중간 분석 문서를 작성했습니다."
+            with SessionLocal() as db:
+                node = db.get(DeepAnalysisWorkflowNode, running_node["id"])
+                run = db.get(Run, run_id)
+                user = db.get(User, run.user_id if run is not None else "")
+                assert node is not None
+                assert run is not None
+                assert user is not None
+                project_file = db.get(ProjectFile, node.output_project_file_id)
+                assert project_file is not None
+                create_project_file_version(
+                    db,
+                    user=user,
+                    project_id=run.project_id,
+                    file_id=project_file.id,
+                    base_version=project_file.current_version_number,
+                    original_filename=Path(project_file.logical_path).name,
+                    content=completion_notice.encode("utf-8"),
+                    change_reason="과거 잘못 저장된 완료 안내 재현",
+                    source_run_id=run.id,
+                    max_upload_bytes=settings.max_upload_bytes,
+                    storage=file_storage,
+                )
+                node.output_markdown = completion_notice
+                node.output_summary = completion_notice
+                db.commit()
+
+            with SessionLocal() as db:
+                assert run_id in pending_terminal_run_ids(db)
+                repaired = sync_terminal_run(
+                    db,
+                    run_id=run_id,
+                    storage=file_storage,
+                    artifact_storage=artifact_storage,
+                    settings=settings,
+                )
+                assert repaired.changed is True
+                db.commit()
+
+            with SessionLocal() as db:
+                node = db.get(DeepAnalysisWorkflowNode, running_node["id"])
+                assert node is not None
+                assert node.output_markdown == detailed_output.strip()
+                version_row = current_file_version(db, node.output_project_file_id)
+                assert version_row is not None
+                _project_file, repaired_version = version_row
+                repaired_content = file_storage.read_bytes(
+                    repaired_version.storage_key,
+                    expected_sha256=repaired_version.content_hash,
+                ).decode("utf-8")
+                assert repaired_content == detailed_output.strip()
 
 
 def test_node_output_contract_respects_smaller_target_and_chat_mode() -> None:

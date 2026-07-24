@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -26,6 +27,7 @@ from ..models import (
 )
 from ..project_files.service import (
     create_project_file,
+    create_project_file_version,
     logical_path_key,
 )
 from ..runs.service import create_run
@@ -53,7 +55,7 @@ class TerminalSyncResult:
 
 
 def pending_terminal_run_ids(db: Session) -> tuple[str, ...]:
-    return tuple(
+    pending = list(
         db.scalars(
             select(DeepAnalysisWorkflowNode.run_id)
             .join(
@@ -67,6 +69,23 @@ def pending_terminal_run_ids(db: Session) -> tuple[str, ...]:
             )
         )
     )
+    repairable = list(
+        db.scalars(
+            select(DeepAnalysisWorkflowNode.run_id)
+            .join(Run, Run.id == DeepAnalysisWorkflowNode.run_id)
+            .join(ToolExecution, ToolExecution.run_id == Run.id)
+            .where(
+                DeepAnalysisWorkflowNode.status == "completed",
+                DeepAnalysisWorkflowNode.run_id.is_not(None),
+                Run.status == COMPLETED,
+                ToolExecution.tool_name.in_({"create_report", "write_file"}),
+                ToolExecution.status == "completed",
+                ToolExecution.artifact_id.is_not(None),
+            )
+            .distinct()
+        )
+    )
+    return tuple(dict.fromkeys((*pending, *repairable)))
 
 
 def record_recovered_run_ids(db: Session, run_ids: tuple[str, ...]) -> None:
@@ -465,9 +484,10 @@ def _output_instruction(
             f"한계와 후속 조치를 충분히 설명하십시오. {format_instruction}"
         )
     return (
-        "이 Node는 최종 보고서가 아니라 다음 Node를 위한 압축 인계물입니다. 서론, Executive Summary, "
-        "맺음말과 일반 배경 설명으로 분량을 늘리지 마십시오. 이 단계에서 새로 확인하거나 판단한 사실, "
-        "근거·출처, 계산 결과, 반대 근거·불확실성, 다음 Node가 반드시 알아야 할 내용만 남기십시오. "
+        "이 Node의 출력은 사용자가 직접 읽는 중간보고서이자 다음 Node를 위한 압축 인계물입니다. "
+        "파일을 작성했다거나 항목을 반영했다는 완료 안내만 쓰지 마십시오. 서론, Executive Summary, "
+        "맺음말과 일반 배경 설명으로 분량을 늘리지 말고, 이 단계에서 새로 확인하거나 판단한 사실, "
+        "근거·출처, 계산 결과, 반대 근거·불확실성, 다음 Node가 반드시 알아야 할 내용을 본문으로 남기십시오. "
         "선행 산출물의 내용을 반복 요약하지 말고 필요한 경우 해당 파일이나 섹션을 가리키십시오."
     )
 
@@ -860,7 +880,7 @@ def _generated_files(db: Session, run_id: str) -> list[dict[str, Any]]:
     return files
 
 
-def _completed_write_file_output(
+def _completed_artifact_output(
     db: Session,
     run_id: str,
     *,
@@ -876,7 +896,7 @@ def _completed_write_file_output(
         )
         .where(
             ToolExecution.run_id == run_id,
-            ToolExecution.tool_name == "write_file",
+            ToolExecution.tool_name.in_({"create_report", "write_file"}),
             ToolExecution.status == "completed",
             Artifact.source_run_id == run_id,
             Artifact.deleted_at.is_(None),
@@ -924,7 +944,47 @@ def _save_output(
     settings: Settings,
 ) -> None:
     if node.output_project_file_id:
-        return
+        version_row = current_file_version(db, node.output_project_file_id)
+        if version_row is not None:
+            project_file, version = version_row
+            expected_path = _output_path_for_content(mission, node, markdown)
+            if PurePosixPath(project_file.logical_path).suffix == PurePosixPath(
+                expected_path
+            ).suffix:
+                content = markdown.encode("utf-8")
+                if version.content_hash != hashlib.sha256(content).hexdigest():
+                    project_file, version = create_project_file_version(
+                        db,
+                        user=user,
+                        project_id=mission.project_id,
+                        file_id=project_file.id,
+                        base_version=project_file.current_version_number,
+                        original_filename=PurePosixPath(
+                            project_file.logical_path
+                        ).name,
+                        content=content,
+                        change_reason=(
+                            f"심층분석 {mission.id} {node.node_key} 산출물 복구"
+                        ),
+                        source_run_id=run.id,
+                        max_upload_bytes=settings.max_upload_bytes,
+                        storage=storage,
+                    )
+                node.output_logical_path = project_file.logical_path
+                link_file(
+                    db,
+                    mission=mission,
+                    project_file_id=project_file.id,
+                    version_id=version.id,
+                    node=node,
+                    run=run,
+                    purpose="node_output",
+                    validation_status="completed",
+                    metadata={"logicalPath": project_file.logical_path},
+                )
+                return
+        node.output_project_file_id = None
+        node.output_logical_path = None
     logical_path = _output_path_for_content(mission, node, markdown)
     existing = db.scalar(
         select(ProjectFile).where(
@@ -1101,7 +1161,46 @@ def sync_terminal_run(
     run = db.get(Run, run_id)
     if run is None or run.status not in TERMINAL_STATUSES:
         return TerminalSyncResult()
-    if node.status in {"completed", "failed", "cancelled"}:
+    artifact_output = (
+        _completed_artifact_output(db, run_id, storage=artifact_storage)
+        if run.status == COMPLETED
+        else None
+    )
+    if node.status == "completed":
+        if not artifact_output or artifact_output == node.output_markdown:
+            return TerminalSyncResult()
+        user = db.get(User, mission.created_by_user_id)
+        if user is None:
+            return TerminalSyncResult()
+        _save_output(
+            db,
+            user=user,
+            mission=mission,
+            node=node,
+            run=run,
+            markdown=artifact_output,
+            storage=storage,
+            settings=settings,
+        )
+        node.output_markdown = artifact_output
+        node.output_summary = _summary(artifact_output)
+        node.error_message = None
+        mission.revision += 1
+        emit_event(
+            db,
+            mission,
+            "mission_file_created",
+            {
+                "nodeId": node.id,
+                "nodeKey": node.node_key,
+                "projectFileId": node.output_project_file_id,
+                "logicalPath": node.output_logical_path,
+                "purpose": "node_output_repair",
+                "missionRevision": mission.revision,
+            },
+        )
+        return TerminalSyncResult(changed=True)
+    if node.status in {"failed", "cancelled"}:
         return TerminalSyncResult()
 
     node.actual_cost_microusd = _cost_microusd(run.usage_json)
@@ -1116,11 +1215,7 @@ def sync_terminal_run(
         return TerminalSyncResult(changed=True)
 
     if run.status == COMPLETED:
-        markdown = _completed_write_file_output(
-            db,
-            run_id,
-            storage=artifact_storage,
-        ) or run.assistant_draft.strip()
+        markdown = artifact_output or run.assistant_draft.strip()
         if not markdown:
             node.status = "failed"
             node.error_message = "모델이 비어 있는 출력을 반환했습니다."
