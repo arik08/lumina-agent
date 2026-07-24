@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import locale
 import os
 from dataclasses import dataclass
@@ -33,11 +34,14 @@ from ..storage import ManagedLocalStorage
 
 MAX_PYTHON_ARGUMENTS = 32
 MAX_PYTHON_ARGUMENT_CHARS = 2_000
+MAX_PYTHON_INPUT_JSON_BYTES = 1_000_000
 MAX_PYTHON_OUTPUT_BYTES = 100_000
 MAX_PYTHON_PACKAGE_BYTES = 5_000_000
 MAX_PYTHON_SCRIPT_BYTES = 1_000_000
 DEFAULT_PYTHON_TIMEOUT_SECONDS = 120
 MAX_PYTHON_TIMEOUT_SECONDS = 600
+DEFAULT_HEAVY_PYTHON_TIMEOUT_SECONDS = 30 * 60
+ABSOLUTE_MAX_PYTHON_TIMEOUT_SECONDS = 24 * 60 * 60
 
 _MODULE_NAME = re.compile(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$")
 _SAFE_ARTIFACT_NAME = re.compile(r"[^0-9A-Za-z가-힣._ -]+")
@@ -133,6 +137,15 @@ PYTHON_EXECUTION_TOOL_SCHEMA: dict[str, Any] = {
                         "python -m module. Use this for packages such as engine."
                     ),
                 },
+                "profile": {
+                    "type": "string",
+                    "enum": ["standard", "heavy"],
+                    "default": "standard",
+                    "description": (
+                        "Use heavy only for an active Skill that needs a long-running "
+                        "managed Python runtime. The server administrator must enable it."
+                    ),
+                },
                 "args": {
                     "type": "array",
                     "items": {
@@ -142,10 +155,19 @@ PYTHON_EXECUTION_TOOL_SCHEMA: dict[str, Any] = {
                     "maxItems": MAX_PYTHON_ARGUMENTS,
                     "default": [],
                 },
+                "input_json": {
+                    "type": "string",
+                    "maxLength": MAX_PYTHON_INPUT_JSON_BYTES,
+                    "description": (
+                        "Optional JSON object collected from the user. Lumina validates "
+                        "and writes it to the program's UTF-8 stdin. Skill wrappers should "
+                        "read one JSON value from stdin and print their result to stdout."
+                    ),
+                },
                 "timeout_seconds": {
                     "type": "integer",
                     "minimum": 1,
-                    "maximum": MAX_PYTHON_TIMEOUT_SECONDS,
+                    "maximum": ABSOLUTE_MAX_PYTHON_TIMEOUT_SECONDS,
                     "default": DEFAULT_PYTHON_TIMEOUT_SECONDS,
                 },
             },
@@ -181,6 +203,32 @@ PYTHON_EXECUTION_TOOL_SCHEMA: dict[str, Any] = {
 
 
 @dataclass(frozen=True, slots=True)
+class PythonExecutionPolicy:
+    heavy_enabled: bool = False
+    heavy_max_timeout_seconds: int = 24 * 60 * 60
+    executable: str = sys.executable
+
+    @classmethod
+    def from_settings(cls, settings: Any) -> "PythonExecutionPolicy":
+        configured_executable = getattr(
+            settings, "python_execution_executable", None
+        )
+        return cls(
+            heavy_enabled=bool(
+                getattr(settings, "python_heavy_execution_enabled", False)
+            ),
+            heavy_max_timeout_seconds=int(
+                getattr(
+                    settings,
+                    "python_heavy_max_timeout_seconds",
+                    24 * 60 * 60,
+                )
+            ),
+            executable=str(configured_executable or sys.executable),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class PreparedPythonExecution:
     source_type: str
     files: Mapping[str, str]
@@ -189,6 +237,9 @@ class PreparedPythonExecution:
     args: tuple[str, ...]
     timeout_seconds: int
     source_metadata: Mapping[str, Any]
+    profile: str = "standard"
+    executable: str = sys.executable
+    stdin_json: str | None = None
 
 
 def prepare_python_execution(
@@ -198,10 +249,25 @@ def prepare_python_execution(
     run: Run,
     user: User,
     arguments: Mapping[str, Any],
+    policy: PythonExecutionPolicy | None = None,
 ) -> PreparedPythonExecution:
+    execution_policy = policy or PythonExecutionPolicy()
     source = str(arguments.get("source") or "").strip().casefold()
+    profile = _profile(arguments.get("profile"))
+    if profile == "heavy" and not execution_policy.heavy_enabled:
+        raise ValueError(
+            "heavy Python 실행은 서버 관리자가 활성화해야 합니다."
+        )
+    if source == "artifact" and profile != "standard":
+        raise ValueError("heavy Python 실행은 고정된 활성 Skill에만 허용됩니다.")
     args = _arguments(arguments.get("args"))
-    timeout_seconds = _timeout(arguments.get("timeout_seconds"))
+    stdin_json = _input_json(arguments.get("input_json"))
+    timeout_seconds = _timeout(
+        arguments.get("timeout_seconds"),
+        profile=profile,
+        policy=execution_policy,
+    )
+    executable = _python_executable(execution_policy.executable)
     if source == "artifact":
         return _prepare_artifact_execution(
             db,
@@ -210,7 +276,9 @@ def prepare_python_execution(
             user=user,
             arguments=arguments,
             args=args,
+            stdin_json=stdin_json,
             timeout_seconds=timeout_seconds,
+            executable=executable,
         )
     if source == "skill":
         return _prepare_skill_execution(
@@ -218,7 +286,10 @@ def prepare_python_execution(
             run=run,
             arguments=arguments,
             args=args,
+            stdin_json=stdin_json,
             timeout_seconds=timeout_seconds,
+            profile=profile,
+            executable=executable,
         )
     raise ValueError("source는 artifact 또는 skill이어야 합니다.")
 
@@ -231,7 +302,9 @@ def _prepare_artifact_execution(
     user: User,
     arguments: Mapping[str, Any],
     args: tuple[str, ...],
+    stdin_json: str | None,
     timeout_seconds: int,
+    executable: str,
 ) -> PreparedPythonExecution:
     artifact_id = str(arguments.get("artifact_id") or "").strip()
     if not artifact_id:
@@ -271,12 +344,14 @@ def _prepare_artifact_execution(
         entrypoint=filename,
         module=None,
         args=args,
+        stdin_json=stdin_json,
         timeout_seconds=timeout_seconds,
         source_metadata={
             "artifactId": artifact.id,
             "artifactVersion": version.version_number,
             "contentHash": version.content_hash,
         },
+        executable=executable,
     )
 
 
@@ -286,7 +361,10 @@ def _prepare_skill_execution(
     run: Run,
     arguments: Mapping[str, Any],
     args: tuple[str, ...],
+    stdin_json: str | None,
     timeout_seconds: int,
+    profile: str,
+    executable: str,
 ) -> PreparedPythonExecution:
     requested_skill = str(arguments.get("skill_id") or "").strip()
     if not requested_skill:
@@ -325,6 +403,7 @@ def _prepare_skill_execution(
         entrypoint=entrypoint,
         module=module,
         args=args,
+        stdin_json=stdin_json,
         timeout_seconds=timeout_seconds,
         source_metadata={
             "skillId": str(skill.get("extension_id", "")),
@@ -342,6 +421,8 @@ def _prepare_skill_execution(
                 }
             ),
         },
+        profile=profile,
+        executable=executable,
     )
 
 
@@ -386,7 +467,8 @@ def _active_skill_snapshot(run: Run, requested: str) -> dict[str, Any]:
 
 
 def _frozen_skill_package(
-    db: Session, snapshot: Mapping[str, Any]
+    db: Session,
+    snapshot: Mapping[str, Any],
 ) -> dict[str, str]:
     extension_id = str(snapshot.get("extension_id") or "")
     digest = str(snapshot.get("digest") or "")
@@ -429,7 +511,9 @@ def _frozen_skill_package(
         raise ValueError("지원하지 않는 Skill snapshot source입니다.")
     total_bytes = sum(len(content.encode("utf-8")) for content in package.values())
     if total_bytes > MAX_PYTHON_PACKAGE_BYTES:
-        raise ValueError("Skill package가 5MB 실행 제한을 초과했습니다.")
+        raise ValueError(
+            f"Skill package가 {MAX_PYTHON_PACKAGE_BYTES} byte 실행 제한을 초과했습니다."
+        )
     return {_safe_package_path(path): content for path, content in package.items()}
 
 
@@ -450,7 +534,7 @@ async def execute_python(
             worker = _RUN_MODULE_WORKER
             target = prepared.module
         command = [
-            sys.executable,
+            prepared.executable,
             "-I",
             "-B",
             "-c",
@@ -460,7 +544,19 @@ async def execute_python(
             *prepared.args,
         ]
         environment = _python_environment(trust_profile)
-        process = await _create_process(command, cwd=root, env=environment)
+        process = await _create_process(
+            command,
+            cwd=root,
+            env=environment,
+            pipe_stdin=prepared.stdin_json is not None,
+        )
+        stdin_task = (
+            asyncio.create_task(
+                _write_stdin(process.stdin, prepared.stdin_json.encode("utf-8"))
+            )
+            if prepared.stdin_json is not None
+            else None
+        )
         stdout_task = asyncio.create_task(_collect_output(process.stdout))
         stderr_task = asyncio.create_task(_collect_output(process.stderr))
         timed_out = False
@@ -475,6 +571,9 @@ async def execute_python(
             await _terminate_process_tree(process)
             raise
         finally:
+            if stdin_task is not None:
+                with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+                    await stdin_task
             stdout_bytes, stdout_truncated = await stdout_task
             stderr_bytes, stderr_truncated = await stderr_task
     stdout = _redact_execution_paths(_decode_output(stdout_bytes), root)
@@ -488,6 +587,7 @@ async def execute_python(
             "type": prepared.source_type,
             **dict(prepared.source_metadata),
         },
+        "profile": prepared.profile,
         "entrypoint": prepared.entrypoint,
         "returnCode": return_code,
         "timedOut": timed_out,
@@ -517,16 +617,72 @@ def _arguments(value: Any) -> tuple[str, ...]:
     return tuple(arguments)
 
 
-def _timeout(value: Any) -> int:
+def _input_json(value: Any) -> str | None:
     if value is None:
-        return DEFAULT_PYTHON_TIMEOUT_SECONDS
+        return None
+    if not isinstance(value, str):
+        raise ValueError("input_json은 JSON object 문자열이어야 합니다.")
+    if "\x00" in value:
+        raise ValueError("input_json에 NUL byte를 포함할 수 없습니다.")
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError("input_json이 올바른 JSON이 아닙니다.") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError("input_json의 최상위 값은 object여야 합니다.")
+    normalized = json.dumps(
+        parsed,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    if len(normalized.encode("utf-8")) > MAX_PYTHON_INPUT_JSON_BYTES:
+        raise ValueError(
+            f"input_json은 UTF-8 기준 {MAX_PYTHON_INPUT_JSON_BYTES} byte 이하여야 합니다."
+        )
+    return normalized + "\n"
+
+
+def _profile(value: Any) -> str:
+    profile = str(value or "standard").strip().casefold()
+    if profile not in {"standard", "heavy"}:
+        raise ValueError("profile은 standard 또는 heavy여야 합니다.")
+    return profile
+
+
+def _timeout(
+    value: Any,
+    *,
+    profile: str,
+    policy: PythonExecutionPolicy,
+) -> int:
+    if value is None:
+        return (
+            DEFAULT_HEAVY_PYTHON_TIMEOUT_SECONDS
+            if profile == "heavy"
+            else DEFAULT_PYTHON_TIMEOUT_SECONDS
+        )
     if not isinstance(value, int) or isinstance(value, bool):
         raise ValueError("timeout_seconds는 정수여야 합니다.")
-    if not 1 <= value <= MAX_PYTHON_TIMEOUT_SECONDS:
+    maximum = (
+        policy.heavy_max_timeout_seconds
+        if profile == "heavy"
+        else MAX_PYTHON_TIMEOUT_SECONDS
+    )
+    maximum = min(maximum, ABSOLUTE_MAX_PYTHON_TIMEOUT_SECONDS)
+    if not 1 <= value <= maximum:
         raise ValueError(
-            f"timeout_seconds는 1~{MAX_PYTHON_TIMEOUT_SECONDS} 범위여야 합니다."
+            f"timeout_seconds는 {profile} profile에서 1~{maximum} 범위여야 합니다."
         )
     return value
+
+
+def _python_executable(value: str) -> str:
+    executable = Path(value).expanduser().resolve()
+    if not executable.is_file():
+        raise ValueError(
+            "관리자가 설정한 Python 실행 파일을 찾을 수 없습니다."
+        )
+    return str(executable)
 
 
 def _safe_package_path(value: str) -> str:
@@ -611,6 +767,7 @@ async def _create_process(
     *,
     cwd: Path,
     env: Mapping[str, str],
+    pipe_stdin: bool,
 ) -> asyncio.subprocess.Process:
     options: dict[str, Any] = {}
     if os.name == "nt":
@@ -623,11 +780,26 @@ async def _create_process(
         *command,
         cwd=str(cwd),
         env=dict(env),
-        stdin=asyncio.subprocess.DEVNULL,
+        stdin=asyncio.subprocess.PIPE if pipe_stdin else asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         **options,
     )
+
+
+async def _write_stdin(
+    stream: asyncio.StreamWriter | None,
+    content: bytes,
+) -> None:
+    if stream is None:
+        return
+    try:
+        stream.write(content)
+        await stream.drain()
+    finally:
+        stream.close()
+        with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+            await stream.wait_closed()
 
 
 async def _collect_output(
@@ -702,6 +874,7 @@ def _redact_execution_paths(value: str, root: Path) -> str:
 __all__ = [
     "PYTHON_EXECUTION_TOOL_SCHEMA",
     "PreparedPythonExecution",
+    "PythonExecutionPolicy",
     "execute_python",
     "prepare_python_execution",
 ]

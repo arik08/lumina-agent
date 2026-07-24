@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+import sys
 import time
 
 import pytest
@@ -21,6 +22,7 @@ from lumina.tools.python_execution import (
     MAX_PYTHON_OUTPUT_BYTES,
     PYTHON_EXECUTION_TOOL_SCHEMA,
     PreparedPythonExecution,
+    PythonExecutionPolicy,
     execute_python,
     prepare_python_execution,
 )
@@ -85,6 +87,8 @@ def test_python_tool_schema_and_approval_contract() -> None:
         "artifact_id",
         "artifact_version",
     ]
+    assert schema["properties"]["profile"]["enum"] == ["standard", "heavy"]
+    assert schema["properties"]["input_json"]["type"] == "string"
     on_risk = classify_tool_risk("run_python", approval_mode="on_risk")
     assert on_risk.effect == "local_execution"
     assert on_risk.risk_level == "high"
@@ -139,6 +143,20 @@ def test_python_artifact_is_frozen_and_executed_with_utf8_output(
                         "source": "artifact",
                         "artifact_id": artifact.id,
                     },
+                )
+            with pytest.raises(ValueError, match="활성 Skill"):
+                prepare_python_execution(
+                    db,
+                    local_run_executor.storage,
+                    run=run,
+                    user=user,
+                    arguments={
+                        "source": "artifact",
+                        "artifact_id": artifact.id,
+                        "artifact_version": version.version_number,
+                        "profile": "heavy",
+                    },
+                    policy=PythonExecutionPolicy(heavy_enabled=True),
                 )
             prepared = prepare_python_execution(
                 db,
@@ -271,11 +289,19 @@ def test_agent_run_exposes_python_and_resumes_after_high_risk_approval(
         if isinstance(schema.get("function"), dict)
     }
     assert "run_python" in tool_names
+    assert len(requests) >= 2
+    tool_result_message = next(
+        message for message in requests[-1].messages if message.role == "tool"
+    )
+    assert tool_result_message.content is not None
+    assert "approved-ok" in tool_result_message.content
+    assert "<untrusted_tool_result" in tool_result_message.content
 
 
 def test_active_skill_module_uses_exact_version_package(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     prepared = None
+    heavy_prepared = None
     with TestClient(create_app(settings)) as client:
         headers = _login(client)
         _project_id, run_id = _run_context(client, headers, title="python-skill")
@@ -301,7 +327,16 @@ def test_active_skill_module_uses_exact_version_package(tmp_path: Path) -> None:
                 ),
                 "engine/__init__.py": "VALUE = 'snapshot-ok'\n",
                 "engine/__main__.py": (
-                    "import sys\nfrom . import VALUE\nprint(VALUE)\nprint(sys.argv[1])\n"
+                    "import sys\n"
+                    "from pydantic import BaseModel\n"
+                    "from . import VALUE\n"
+                    "class ProgramInput(BaseModel):\n"
+                    "    amount: int\n"
+                    "print(VALUE)\n"
+                    "print(sys.argv[1])\n"
+                    "payload = sys.stdin.read()\n"
+                    "if payload:\n"
+                    "    print(ProgramInput.model_validate_json(payload).amount * 2)\n"
                 ),
             }
             version = ExtensionVersion(
@@ -344,6 +379,26 @@ def test_active_skill_module_uses_exact_version_package(tmp_path: Path) -> None:
                     "timeout_seconds": 10,
                 },
             )
+            heavy_prepared = prepare_python_execution(
+                db,
+                local_run_executor.storage,
+                run=run,
+                user=user,
+                arguments={
+                    "source": "skill",
+                    "skill_id": extension.id,
+                    "module": "engine",
+                    "profile": "heavy",
+                    "args": ["heavy-argument"],
+                    "input_json": '{"amount": 21}',
+                    "timeout_seconds": 3_600,
+                },
+                policy=PythonExecutionPolicy(
+                    heavy_enabled=True,
+                    heavy_max_timeout_seconds=7_200,
+                    executable=sys.executable,
+                ),
+            )
             db.commit()
 
     assert prepared is not None
@@ -353,6 +408,18 @@ def test_active_skill_module_uses_exact_version_package(tmp_path: Path) -> None:
     assert result["stdout"].splitlines() == ["snapshot-ok", "module-argument"]
     assert result["source"]["digest"] == "a" * 64
     assert result["source"]["version"] == 1
+    assert heavy_prepared is not None
+    assert heavy_prepared.profile == "heavy"
+    assert heavy_prepared.timeout_seconds == 3_600
+    assert Path(heavy_prepared.executable).resolve() == Path(sys.executable).resolve()
+    heavy_result = asyncio.run(execute_python(heavy_prepared))
+    assert heavy_result["ok"] is True
+    assert heavy_result["profile"] == "heavy"
+    assert heavy_result["stdout"].splitlines() == [
+        "snapshot-ok",
+        "heavy-argument",
+        "42",
+    ]
 
 
 def test_inactive_skill_and_unsafe_entrypoint_are_rejected(tmp_path: Path) -> None:
@@ -374,6 +441,60 @@ def test_inactive_skill_and_unsafe_entrypoint_are_rejected(tmp_path: Path) -> No
                         "source": "skill",
                         "skill_id": new_uuid(),
                         "path": "../outside.py",
+                    },
+                )
+            with pytest.raises(ValueError, match="관리자가 활성화"):
+                prepare_python_execution(
+                    db,
+                    local_run_executor.storage,
+                    run=run,
+                    user=user,
+                    arguments={
+                        "source": "skill",
+                        "skill_id": new_uuid(),
+                        "module": "engine",
+                        "profile": "heavy",
+                    },
+                )
+            with pytest.raises(ValueError, match="실행 파일"):
+                prepare_python_execution(
+                    db,
+                    local_run_executor.storage,
+                    run=run,
+                    user=user,
+                    arguments={
+                        "source": "skill",
+                        "skill_id": new_uuid(),
+                        "module": "engine",
+                    },
+                    policy=PythonExecutionPolicy(
+                        executable=str(tmp_path / "missing-python")
+                    ),
+                )
+            with pytest.raises(ValueError, match="올바른 JSON"):
+                prepare_python_execution(
+                    db,
+                    local_run_executor.storage,
+                    run=run,
+                    user=user,
+                    arguments={
+                        "source": "skill",
+                        "skill_id": new_uuid(),
+                        "module": "engine",
+                        "input_json": "{broken",
+                    },
+                )
+            with pytest.raises(ValueError, match="최상위 값은 object"):
+                prepare_python_execution(
+                    db,
+                    local_run_executor.storage,
+                    run=run,
+                    user=user,
+                    arguments={
+                        "source": "skill",
+                        "skill_id": new_uuid(),
+                        "module": "engine",
+                        "input_json": "[1, 2]",
                     },
                 )
 
@@ -406,3 +527,27 @@ def test_python_timeout_and_output_limit() -> None:
     assert noisy_result["ok"] is True
     assert noisy_result["stdoutTruncated"] is True
     assert len(noisy_result["stdout"].encode("utf-8")) <= MAX_PYTHON_OUTPUT_BYTES
+
+
+def test_heavy_python_cancellation_stops_the_process() -> None:
+    prepared = PreparedPythonExecution(
+        source_type="skill",
+        files={"worker.py": "import time\ntime.sleep(60)\n"},
+        entrypoint="worker.py",
+        module=None,
+        args=(),
+        timeout_seconds=3_600,
+        source_metadata={"skillId": "fixture", "digest": "a" * 64},
+        profile="heavy",
+    )
+
+    async def cancel_execution() -> None:
+        task = asyncio.create_task(execute_python(prepared))
+        await asyncio.sleep(0.2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    started = time.monotonic()
+    asyncio.run(cancel_execution())
+    assert time.monotonic() - started < 5
