@@ -74,6 +74,8 @@ test("catalog uses a searchable card grid with installed-only package viewing", 
   assert.match(styles, /\.skill-catalog-skeleton \{[^}]*min-height: 200px;/);
   assert.match(styles, /\.skill-catalog-scroll \{[^}]*overflow-anchor: none;/);
   assert.match(styles, /\.skill-catalog-card\.is-installed \{[^}]*background: var\(--surface-selected\)/);
+  assert.match(styles, /\.app-shell:not\(\.theme-dark\) \.skill-catalog-card\.is-installed \.skill-catalog-tags button \{[^}]*background: color-mix\(in srgb, var\(--cobalt\) 8%, var\(--surface-selected\)\);/);
+  assert.match(styles, /\.app-shell:not\(\.theme-dark\) \.skill-catalog-card\.is-installed \.skill-catalog-tags button:hover \{[^}]*background: color-mix\(in srgb, var\(--cobalt\) 14%, var\(--surface-selected\)\);/);
   assert.match(styles, /\.skill-catalog-card\.is-liked \{[^}]*border-color: color-mix\(in srgb, var\(--cobalt\) 48%, var\(--line\)\);/);
   assert.doesNotMatch(styles, /\.skill-catalog-card\.is-liked \{[^}]*background:/);
   assert.match(styles, /\.skill-catalog-metrics \{[^}]*gap: var\(--space-5\)/);

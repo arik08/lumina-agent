@@ -1260,6 +1260,8 @@ button:disabled { cursor: default; opacity: 0.5; }
 .skill-catalog-tags { display: flex; flex-wrap: wrap; gap: 5px; padding-top: 2px; }
 .skill-catalog-tags button { height: 25px; padding: 0 7px; border: 0; border-radius: 5px; background: var(--surface-soft); color: color-mix(in srgb, var(--cobalt) 78%, var(--muted)); cursor: pointer; }
 .skill-catalog-tags button:hover { background: var(--cobalt-pale); color: var(--cobalt); }
+.app-shell:not(.theme-dark) .skill-catalog-card.is-installed .skill-catalog-tags button { background: color-mix(in srgb, var(--cobalt) 8%, var(--surface-selected)); }
+.app-shell:not(.theme-dark) .skill-catalog-card.is-installed .skill-catalog-tags button:hover { background: color-mix(in srgb, var(--cobalt) 14%, var(--surface-selected)); color: var(--cobalt); }
 .skill-catalog-card > footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 16px; padding-top: 12px; border-top: 1px solid color-mix(in srgb, var(--line) 82%, transparent); }
 .skill-catalog-metrics { display: flex; min-width: 0; align-items: center; gap: var(--space-5); color: var(--muted); }
 .skill-catalog-metric, .skill-catalog-like { display: inline-flex; height: 26px; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
