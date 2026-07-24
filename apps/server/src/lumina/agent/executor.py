@@ -237,6 +237,7 @@ class _RunSteered(Exception):
 
 _PROVIDER_RETRY_DELAYS_SECONDS = (1.0, 2.0, 4.0)
 _MAX_PROVIDER_RETRY_AFTER_SECONDS = 600.0
+_PROVIDER_FIRST_OUTPUT_TIMEOUT_SECONDS = 120.0
 _MAX_AUTO_CONTINUATIONS = 4
 _MAX_EMPTY_RESPONSE_RETRIES = 1
 _ARTIFACT_EMPTY_RESPONSE_FALLBACK = (
@@ -886,20 +887,35 @@ class LocalRunExecutor:
         run_id: str,
         provider: ProviderAdapter,
         request: ProviderRequest,
+        *,
+        first_output_timeout_seconds: float = _PROVIDER_FIRST_OUTPUT_TIMEOUT_SECONDS,
     ) -> AsyncIterator[ProviderEvent]:
-        """Stop a silent Provider stream when another process cancels or pauses the Run."""
+        """Stop a silent Provider stream on control changes or missing first output."""
         stream = provider.stream(request)
         pending: asyncio.Future[ProviderEvent] = asyncio.ensure_future(anext(stream))
+        first_output_deadline = time.monotonic() + first_output_timeout_seconds
+        first_event_received = False
         try:
             while True:
+                wait_seconds = _RUN_CANCELLATION_POLL_SECONDS
+                if not first_event_received:
+                    remaining = first_output_deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise ProviderRequestError(
+                            "Provider가 제한 시간 안에 첫 응답을 보내지 않았습니다.",
+                            retryable=True,
+                            stage="first_output",
+                        )
+                    wait_seconds = min(wait_seconds, remaining)
                 done, _ = await asyncio.wait(
-                    (pending,), timeout=_RUN_CANCELLATION_POLL_SECONDS
+                    (pending,), timeout=wait_seconds
                 )
                 if pending in done:
                     try:
                         event = pending.result()
                     except StopAsyncIteration:
                         return
+                    first_event_received = True
                     yield event
                     pending = asyncio.ensure_future(anext(stream))
                     continue
@@ -918,6 +934,9 @@ class LocalRunExecutor:
             if not pending.done():
                 pending.cancel()
             await asyncio.gather(pending, return_exceptions=True)
+            close_stream = getattr(stream, "aclose", None)
+            if close_stream is not None:
+                await close_stream()
 
     def _discard_task(self, task: asyncio.Task[None]) -> None:
         for run_id, current in list(self._tasks.items()):
@@ -6350,10 +6369,15 @@ class LocalRunExecutor:
         round_index: int,
         output_started: bool,
     ) -> bool:
+        max_retries = (
+            1
+            if error.stage == "first_output"
+            else len(_PROVIDER_RETRY_DELAYS_SECONDS)
+        )
         if (
             not error.retryable
             or output_started
-            or retry_index >= len(_PROVIDER_RETRY_DELAYS_SECONDS)
+            or retry_index >= max_retries
         ):
             return False
         delay_seconds = _provider_retry_delay_seconds(error, retry_index)
@@ -6373,7 +6397,7 @@ class LocalRunExecutor:
                 "provider_retry_scheduled",
                 {
                     "attempt": retry_index + 2,
-                    "maxAttempts": len(_PROVIDER_RETRY_DELAYS_SECONDS) + 1,
+                    "maxAttempts": max_retries + 1,
                     "delaySeconds": delay_seconds,
                     "stage": error.stage,
                     "statusCode": error.status_code,

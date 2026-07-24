@@ -7,7 +7,11 @@ from pathlib import Path
 from lumina.agent.executor import LocalRunExecutor, _run_limit_violation
 from lumina.config import Settings
 from lumina.models import Run, utc_now
-from lumina.providers import ProviderCapabilities, ProviderRequest
+from lumina.providers import (
+    ProviderCapabilities,
+    ProviderRequest,
+    ProviderRequestError,
+)
 from lumina.runs.broker import RunEventBroker
 from lumina.runs.safety import normalize_run_safety_settings, run_limit_snapshot
 
@@ -310,6 +314,58 @@ def test_provider_wait_stops_when_database_run_becomes_terminal(tmp_path: Path) 
             asyncio.gather(task, return_exceptions=True), timeout=0.5
         )
         assert isinstance(result[0], asyncio.CancelledError)
+        assert stream_closed.is_set()
+
+    asyncio.run(exercise())
+
+
+def test_provider_wait_times_out_before_first_event(tmp_path: Path) -> None:
+    settings = Settings(
+        environment="test",
+        DATABASE_URL=f"sqlite:///{(tmp_path / 'provider-timeout.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    executor = LocalRunExecutor(settings)
+    stream_closed = asyncio.Event()
+
+    class SilentProvider:
+        provider_id = "silent"
+        capabilities = ProviderCapabilities()
+
+        async def stream(self, _request: ProviderRequest):
+            try:
+                await asyncio.Event().wait()
+                yield
+            finally:
+                stream_closed.set()
+
+    async def exercise() -> None:
+        executor._run_is_terminal = lambda _run_id: False  # type: ignore[assignment]
+        executor._run_control_state = lambda _run_id: (  # type: ignore[assignment]
+            "model_streaming",
+            None,
+            False,
+            executor._worker_id,
+        )
+
+        async def consume() -> None:
+            async for _event in executor._provider_events(
+                "run-id",
+                SilentProvider(),
+                ProviderRequest(model="silent", messages=()),
+                first_output_timeout_seconds=0.03,
+            ):
+                raise AssertionError("A silent Provider must not emit an event")
+
+        result = await asyncio.gather(
+            asyncio.create_task(consume()), return_exceptions=True
+        )
+        assert isinstance(result[0], ProviderRequestError)
+        assert result[0].retryable is True
+        assert result[0].stage == "first_output"
         assert stream_closed.is_set()
 
     asyncio.run(exercise())

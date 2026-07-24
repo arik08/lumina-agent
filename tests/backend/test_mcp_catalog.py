@@ -585,6 +585,33 @@ def test_mcp_catalog_binding_snapshot_and_cross_user_isolation(
             assert frozen["configuration_revision"] == 1
             assert frozen["digest"] == revision_one["digest"]
             assert frozen["tool_allowlist"] == ["search_docs"]
+
+            inferred_run, inferred_message, inferred_created = create_run(
+                db,
+                user=admin,
+                conversation_id=ids["admin_conversation_id"],
+                payload=RunCreate(
+                    message=RunMessageInput(
+                        text="$mcp:internal-search 최신 규정을 다시 찾아주세요.",
+                        prompt_references=[],
+                    )
+                ),
+                idempotency_key="mcp-snapshot-inferred-0001",
+            )
+            assert inferred_created is True
+            inferred_reference = inferred_run.snapshot_json["prompt_references"][0]
+            assert inferred_reference["kind"] == "mcp"
+            assert inferred_reference["reference_id"] == definition["id"]
+            assert inferred_reference["version_or_digest"] == revision_one["digest"]
+            assert inferred_reference["token_start"] == 0
+            assert inferred_reference["token_end"] == len("$mcp:internal-search")
+            assert inferred_message.metadata_json["prompt_references"] == [
+                inferred_reference
+            ]
+            assert inferred_run.snapshot_json["mcp_servers"][0]["slug"] == (
+                "internal-search"
+            )
+
             serialized_snapshot = json.dumps(
                 run.snapshot_json, ensure_ascii=False, default=str
             )

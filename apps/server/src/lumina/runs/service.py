@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -98,6 +99,12 @@ from .state import (
     QUEUED,
     TERMINAL_STATUSES,
     ensure_transition,
+)
+
+
+_EXPLICIT_MCP_REFERENCE_RE = re.compile(
+    r"(?<![A-Za-z0-9_$])\$mcp:([a-z0-9]+(?:-[a-z0-9]+)*)",
+    re.IGNORECASE,
 )
 
 
@@ -733,6 +740,10 @@ def validate_project_references(
         str(item["definition_id"]): item
         for item in resolve_mcp_snapshot(db, user=user, project_id=project_id)
     }
+    references = [
+        *references,
+        *_explicit_mcp_references(message_text, mcp_snapshots.values()),
+    ]
     validated: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str | None]] = set()
     for reference in references:
@@ -984,6 +995,35 @@ def validate_project_references(
         seen.add(canonical_key)
         validated.append(payload)
     return validated
+
+
+def _explicit_mcp_references(
+    message_text: str, snapshots: Iterable[Mapping[str, Any]]
+) -> list[MessageReferenceInput]:
+    by_slug = {
+        str(snapshot.get("slug", "")).casefold(): snapshot
+        for snapshot in snapshots
+        if snapshot.get("slug")
+    }
+    inferred: list[MessageReferenceInput] = []
+    for match in _EXPLICIT_MCP_REFERENCE_RE.finditer(message_text):
+        slug = match.group(1).casefold()
+        snapshot = by_slug.get(slug)
+        if snapshot is None:
+            raise ApiProblem(
+                409,
+                "extension_not_installed",
+                f"$mcp:{slug} MCP가 현재 Project 범위에서 준비되지 않았습니다.",
+            )
+        inferred.append(
+            MessageReferenceInput(
+                kind="mcp",
+                reference_id=str(snapshot["definition_id"]),
+                token_start=match.start(),
+                token_end=match.end(),
+            )
+        )
+    return inferred
 
 
 def _selected_mcp_snapshots(
