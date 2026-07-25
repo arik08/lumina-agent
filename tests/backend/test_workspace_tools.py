@@ -510,3 +510,17 @@ def test_write_file_allows_executable_html_and_exposes_html_artifact(
             "</body>"
         )
         assert html not in preview.text
+        standalone_preview = client.get(
+            version.json()["previewUrl"],
+            params={
+                "version": artifact["currentVersion"],
+                "standalone": True,
+            },
+        )
+        assert standalone_preview.status_code == 200
+        assert standalone_preview.text == html
+        assert "artifact-preview-bridge.js" not in standalone_preview.text
+        assert standalone_preview.headers["content-disposition"] == "inline"
+        assert standalone_preview.headers["content-security-policy"].startswith(
+            "sandbox allow-scripts"
+        )

@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ...audit import record_audit
+from ...artifacts.standalone_html import prepare_standalone_html_download
 from ...config import Settings, get_settings
 from ...db import get_db
 from ...models import ProjectFile, ProjectFileVersion, ProjectFolder, User
@@ -485,6 +486,48 @@ def download_project_file(
             "Content-Disposition": (
                 f"attachment; filename=project-file; filename*=UTF-8''{quote(filename)}"
             )
+        },
+    )
+
+
+@router.get("/{file_id}/preview")
+def preview_project_file(
+    project_id: str,
+    file_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    project_file = get_project_file(db, user, project_id, file_id)
+    selected = get_project_file_version(db, project_file)
+    if selected.mime_type != "text/html":
+        raise ApiProblem(
+            415,
+            "project_file_preview_unsupported",
+            "HTML Project 파일만 새 창 미리보기를 지원합니다.",
+        )
+    try:
+        content = _storage(settings).read_bytes(
+            selected.storage_key, expected_sha256=selected.content_hash
+        )
+    except StorageError as exc:
+        raise ApiProblem(
+            503,
+            "project_file_content_missing",
+            "Project 파일 원본을 읽을 수 없습니다.",
+        ) from exc
+    standalone_content = prepare_standalone_html_download(content, selected.mime_type)
+    return Response(
+        content=standalone_content,
+        media_type="text/html",
+        headers={
+            "Content-Disposition": "inline",
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": (
+                "sandbox allow-scripts allow-forms allow-modals "
+                "allow-downloads allow-popups"
+            ),
         },
     )
 

@@ -3,15 +3,20 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const appPath = new URL("../src/App.tsx", import.meta.url);
+const actionsPath = new URL("../src/components/ArtifactPreviewActions.tsx", import.meta.url);
 const stylesheetPath = new URL("../src/styles.css", import.meta.url);
 
 test("artifact header keeps its actions visible above the preview", async () => {
-  const [app, stylesheet] = await Promise.all([
+  const [app, actions, stylesheet] = await Promise.all([
     readFile(appPath, "utf8"),
+    readFile(actionsPath, "utf8"),
     readFile(stylesheetPath, "utf8"),
   ]);
 
-  for (const label of ["본문 수정", "코드 보기", "전체화면", "Artifact 공유 링크 복사", "Artifact 다운로드", "Artifact 닫기"]) {
+  for (const label of ["소스코드 보기", "공유 링크 복사", "다운로드", "새 창에서 열기"]) {
+    assert.ok(actions.includes(label), `missing shared Artifact preview action: ${label}`);
+  }
+  for (const label of ["본문 수정", "전체화면", "Artifact 닫기"]) {
     assert.ok(app.includes(label), `missing Artifact header action: ${label}`);
   }
   assert.match(stylesheet, /\.artifact-header\s*\{[^}]*position:\s*relative[^}]*z-index:\s*4[^}]*background:\s*var\(--surface\)/s);
@@ -26,11 +31,12 @@ test("artifact header keeps its actions visible above the preview", async () => 
   assert.match(app, /const artifactDownloadVersion = artifactVersion\?\.version \?\? artifactSummary\?\.currentVersion \?\? null/);
   assert.match(app, /const \[summary, initialVersion, savedDraft\] = await Promise\.all\(\[[\s\S]*?api\.artifacts\.getVersion\([\s\S]*?artifact\.mimeType !== "text\/html"[\s\S]*?api\.artifacts\.getDraft\(artifact\.id\)/);
   assert.match(app, /artifactVersion\?\.sourceAvailable/);
-  assert.match(app, /aria-label="Artifact 공유 링크 복사"[^>]*disabled=\{!artifactSummary\?\.conversationId\}/);
+  assert.match(app, /<ArtifactPreviewActions[\s\S]*?shareDisabled=\{!artifactSummary\?\.conversationId\}/);
   assert.match(app, /url\.searchParams\.set\("artifact", artifactSummary\.id\)/);
   assert.match(app, /url\.searchParams\.set\("version", String\(artifactDownloadVersion \?\? artifactSummary\.currentVersion\)\)/);
-  assert.match(app, /aria-label="Artifact 다운로드"[^>]*disabled=\{!artifactSummary \|\| artifactDownloadVersion === null\}/);
-  assert.match(app, /aria-label="Artifact 다운로드"[\s\S]*?aria-label=\{artifactFullscreen \? "전체화면 종료" : "전체화면"\}[\s\S]*?aria-label="Artifact 닫기"/);
+  assert.match(app, /downloadDisabled=\{!artifactSummary \|\| artifactDownloadVersion === null\}/);
+  assert.match(app, /artifactStandalonePreviewUrl\(artifactSummary\.id, artifactVersion\.version\)/);
+  assert.match(app, /<ArtifactPreviewActions[\s\S]*?aria-label=\{artifactFullscreen \? "전체화면 종료" : "전체화면"\}[\s\S]*?aria-label="Artifact 닫기"/);
   assert.ok(!app.includes('className="artifact-footer"'), "artifact footer should not be rendered");
   assert.ok(!stylesheet.includes(".artifact-footer"), "artifact footer styles should be removed");
 });

@@ -557,6 +557,7 @@ def download_artifact(
 def preview_artifact(
     artifact_id: str,
     version: int | None = None,
+    standalone: bool = False,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
@@ -582,6 +583,24 @@ def preview_artifact(
         version_number=selected_version,
     )
     if artifact.mime_type == "text/html":
+        if standalone:
+            standalone_content = prepare_standalone_html_download(
+                content, artifact.mime_type
+            )
+            return Response(
+                content=standalone_content,
+                media_type="text/html",
+                headers={
+                    "Content-Disposition": "inline",
+                    "ETag": f'"{hashlib.sha256(standalone_content).hexdigest()}"',
+                    "Cache-Control": "private, no-store",
+                    "X-Content-Type-Options": "nosniff",
+                    "Content-Security-Policy": (
+                        "sandbox allow-scripts allow-forms allow-modals "
+                        "allow-downloads allow-popups"
+                    ),
+                },
+            )
         return StreamingResponse(
             _stream_html_preview(content),
             media_type="text/html",

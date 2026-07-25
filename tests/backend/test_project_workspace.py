@@ -116,6 +116,34 @@ def test_project_file_api_rejects_html_document_with_markdown_extension(
         assert created.json()["code"] == "mime_mismatch"
 
 
+def test_project_file_html_preview_opens_inline_with_sandbox(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path, "html-project-file-preview.db")
+    html = "<!doctype html><html><head><title>보고서</title></head><body>본문</body></html>"
+    with TestClient(create_app(settings)) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        created = client.post(
+            f"/api/projects/{project_id}/files",
+            headers=headers,
+            data={"logicalPath": "reports/final.html", "changeReason": "최종 보고서"},
+            files={"file": ("final.html", html.encode(), "text/html")},
+        )
+        assert created.status_code == 201, created.text
+
+        preview = client.get(
+            f"/api/projects/{project_id}/files/{created.json()['id']}/preview"
+        )
+
+        assert preview.status_code == 200
+        assert preview.text == html
+        assert preview.headers["content-disposition"] == "inline"
+        assert preview.headers["content-security-policy"].startswith(
+            "sandbox allow-scripts"
+        )
+
+
 def test_project_file_api_keyset_pages_without_duplicates(tmp_path: Path) -> None:
     settings = _settings(tmp_path, "project-file-pages.db")
     with TestClient(create_app(settings)) as client:

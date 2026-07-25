@@ -157,6 +157,20 @@ const prefetchedRequests = new Map<string, {
 let apiPrefetchDepth = 0;
 const BACKEND_CONTRACT_MISMATCH_MESSAGE = "Frontend와 Backend 버전이 일치하지 않습니다. Lumina 실행 창에서 R을 눌러 다시 시작해 주세요.";
 
+export function artifactStandalonePreviewUrl(artifactId: string, version: number) {
+  return buildUrl(apiBase, `/artifacts/${encodeURIComponent(artifactId)}/preview`, {
+    version,
+    standalone: true,
+  });
+}
+
+export function projectFilePreviewUrl(projectId: string, fileId: string) {
+  return buildUrl(
+    apiBase,
+    `/projects/${encodeURIComponent(projectId)}/files/${encodeURIComponent(fileId)}/preview`,
+  );
+}
+
 export function attachmentContentUrl(attachmentId: string) {
   return `${apiBase}/attachments/${encodeURIComponent(attachmentId)}/content`;
 }

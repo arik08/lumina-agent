@@ -83,7 +83,7 @@ import { copyText } from "./clipboard";
 import { clipboardTextWithLineBreaks } from "./composer-clipboard";
 import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent as ReactUIEvent } from "react";
 import { createPortal } from "react-dom";
-import { api, ApiError, attachmentContentUrl } from "./api";
+import { api, ApiError, artifactStandalonePreviewUrl, attachmentContentUrl } from "./api";
 import { deepAnalysisSidebarApi } from "./feature-api";
 import { isTerminalRunStatus } from "./run-status";
 import { IsolatedSyntaxTextarea, SyntaxCode } from "./components/SyntaxCode";
@@ -132,7 +132,7 @@ import {
   runStatusLabel,
   sessionUsageRevision,
 } from "./components/ConversationTurn";
-import { ShareActionIcon } from "./components/ActionIcons";
+import { ArtifactPreviewActions } from "./components/ArtifactPreviewActions";
 import { ImageAttachmentViewer } from "./components/ImageAttachmentViewer";
 import { TextAttachmentViewer } from "./components/TextAttachmentViewer";
 
@@ -4281,11 +4281,20 @@ function App() {
                   }}><Undo2 size={16} /></button>
                 </>
               )}
-              <button className="artifact-view-control tooltip-control" type="button" aria-label={artifactTab === "preview" ? "코드 보기" : "미리보기"} data-tooltip={artifactHasTextSource ? artifactTab === "preview" ? "코드 보기" : "미리보기" : "Binary 형식은 소스 보기 없음"} disabled={!artifactHasTextSource} onClick={() => void toggleArtifactTab()}>
-                {artifactTab === "preview" ? <Code2 size={17} /> : <Eye size={17} />}
-              </button>
-              <button className="tooltip-control" type="button" aria-label="Artifact 공유 링크 복사" data-tooltip={artifactSummary?.conversationId ? "공유 링크 복사" : "대화에 연결된 Artifact만 공유 가능"} disabled={!artifactSummary?.conversationId} onClick={() => void shareArtifact()}><ShareActionIcon size={17} /></button>
-              <button className="artifact-file-control tooltip-control" type="button" aria-label="Artifact 다운로드" data-tooltip="다운로드" disabled={!artifactSummary || artifactDownloadVersion === null} onClick={() => void downloadArtifact()}><Download size={17} /></button>
+              <ArtifactPreviewActions
+                sourceActive={artifactTab === "source"}
+                sourceDisabled={!artifactHasTextSource}
+                shareDisabled={!artifactSummary?.conversationId}
+                downloadDisabled={!artifactSummary || artifactDownloadVersion === null}
+                openWindowHref={
+                  artifactSummary && artifactVersion?.mimeType === "text/html"
+                    ? artifactStandalonePreviewUrl(artifactSummary.id, artifactVersion.version)
+                    : null
+                }
+                onToggleSource={toggleArtifactTab}
+                onShare={shareArtifact}
+                onDownload={downloadArtifact}
+              />
               <button className="tooltip-control" type="button" aria-label={artifactFullscreen ? "전체화면 종료" : "전체화면"} data-tooltip={artifactFullscreen ? "전체화면 종료" : "전체화면"} onClick={() => setArtifactFullscreen((value) => !value)}>
                 {artifactFullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
               </button>

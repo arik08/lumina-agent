@@ -6,6 +6,7 @@ const turnSource = await readFile(new URL("../src/components/ConversationTurn.ts
 const appSource = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
 const workspaceSource = await readFile(new URL("../src/use-lumina-workspace.ts", import.meta.url), "utf8");
 const actionIconsSource = await readFile(new URL("../src/components/ActionIcons.tsx", import.meta.url), "utf8");
+const artifactActionsSource = await readFile(new URL("../src/components/ArtifactPreviewActions.tsx", import.meta.url), "utf8");
 
 test("answer actions place usage first and branch immediately before share", () => {
   const actions = turnSource.match(/<div className="answer-actions"[\s\S]*?<\/div>/)?.[0] ?? "";
@@ -30,7 +31,7 @@ test("branch icon uses the attached split-arrow shape and every share action use
   assert.doesNotMatch(actionIconsSource, /\["circle"/);
   assert.match(actionIconsSource, /transform: "rotate\(90deg\)"/);
   assert.match(turnSource, /aria-label="링크 공유" data-tooltip="링크 공유"[\s\S]*?<ShareActionIcon size=\{16\}/);
-  assert.match(appSource, /aria-label="Artifact 공유 링크 복사"[\s\S]*?<ShareActionIcon size=\{17\}/);
+  assert.match(artifactActionsSource, /aria-label="공유 링크 복사"[\s\S]*?<ShareActionIcon size=\{17\}/);
   assert.match(turnSource, /kind === "mermaid" \? <BranchFromHereIcon size=\{18\}/);
   assert.match(appSource, /title: "업무 흐름 다이어그램"[\s\S]*?icon: BranchFromHereIcon/);
   assert.doesNotMatch(`${turnSource}\n${appSource}`, /\bGitBranch\b/);

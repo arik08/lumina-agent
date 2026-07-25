@@ -291,6 +291,12 @@ test("Node output is one rendered document with a link to its saved file", async
 
   assert.match(view, /className="deep-analysis-output-path"[\s\S]*?onOpenProjectFile\(selectedNode\.outputProjectFileId!?\)/);
   assert.match(view, /파일 저장소에서 열기/);
+  assert.match(view, /<ArtifactPreviewActions[\s\S]*?sourceActive=\{selectedNodeShowsSource\}/);
+  assert.match(view, /api\.sharing\.create\(selectedNode\.conversationId\)/);
+  assert.match(view, /api\.projectFiles\.download\([\s\S]*?selectedNode\.outputProjectFileId/);
+  assert.match(view, /projectFilePreviewUrl\(projectId, selectedNode\.outputProjectFileId\)/);
+  assert.match(view, /className="deep-analysis-output-source"/);
+  assert.match(css, /\.deep-analysis-output-actions > :is\(button, a\) \{[^}]*width: 28px;[^}]*height: 28px/);
   assert.match(view, /className=\{`deep-analysis-output-section \$\{selectedNode\.status === "running" \? "is-streaming" : ""\}`\}/);
   assert.match(view, /selectedNode\.status === "running" \? \(/);
   assert.doesNotMatch(view, /selectedNode\.status === "running" && !selectedNode\.outputSummary/);

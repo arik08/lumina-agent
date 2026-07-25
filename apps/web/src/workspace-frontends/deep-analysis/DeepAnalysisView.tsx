@@ -42,8 +42,9 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
-import { api as coreApi, ApiError } from "../../api";
+import { api as coreApi, ApiError, projectFilePreviewUrl } from "../../api";
 import { deepAnalysisApi, projectFilesApi } from "../../feature-api";
+import { copyText } from "../../clipboard";
 import {
   analysisDepthOptions,
   answerLengthOptions,
@@ -52,6 +53,7 @@ import {
   type ComposerPickerOption,
 } from "../../components/ComposerControls";
 import { ArtifactHtmlPreview } from "../../components/ArtifactHtmlPreview";
+import { ArtifactPreviewActions } from "../../components/ArtifactPreviewActions";
 import { MarkdownResponse } from "../../components/ConversationTurn";
 import { useCachedViewState } from "../../view-data-cache";
 import { useSharedNow } from "../../shared-clock";
@@ -644,6 +646,8 @@ export function DeepAnalysisView({
   const [loadingReferences, setLoadingReferences] = useState(false);
   const [uploadingSources, setUploadingSources] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [outputSourceNodeId, setOutputSourceNodeId] = useState<string | null>(null);
+  const [outputActionStatus, setOutputActionStatus] = useState<string | null>(null);
   const [costModeActive, setCostModeActive] = useState(false);
   const [costDetailsOpen, setCostDetailsOpen] = useState(false);
   const [costDetails, setCostDetails] = useState<DeepAnalysisMissionCosts | null>(null);
@@ -1204,6 +1208,42 @@ export function DeepAnalysisView({
     () => selectedNodeKey ? shownWorkflowNodeByKey.get(selectedNodeKey) ?? null : null,
     [selectedNodeKey, shownWorkflowNodeByKey],
   );
+  const selectedNodeShowsSource = selectedNode?.id === outputSourceNodeId;
+
+  useEffect(() => {
+    setOutputActionStatus(null);
+  }, [selectedNode?.id]);
+
+  async function downloadSelectedNodeOutput() {
+    if (!projectId || !selectedNode?.outputProjectFileId) return;
+    setOutputActionStatus(null);
+    try {
+      const download = await api.projectFiles.download(
+        projectId,
+        selectedNode.outputProjectFileId,
+      );
+      const url = URL.createObjectURL(download.blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = download.fileName;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "산출물을 다운로드하지 못했습니다.");
+    }
+  }
+
+  async function shareSelectedNodeOutput() {
+    if (!selectedNode?.conversationId) return;
+    setOutputActionStatus(null);
+    try {
+      const share = await api.sharing.create(selectedNode.conversationId);
+      await copyText(new URL(share.viewerPath, window.location.origin).toString());
+      setOutputActionStatus("공유 링크를 복사했습니다.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "공유 링크를 만들지 못했습니다.");
+    }
+  }
 
   useEffect(() => {
     if (selectedNode?.status !== "running" || !selectedNode.liveOutput) return;
@@ -3548,7 +3588,38 @@ export function DeepAnalysisView({
                         )}
                       </section>
                       <section className={`deep-analysis-output-section ${selectedNode.status === "running" ? "is-streaming" : ""}`}>
-                        <h3>출력</h3>
+                        <div className="deep-analysis-output-heading">
+                          <h3>출력</h3>
+                          {selectedNode.outputMarkdown && (
+                            <nav className="deep-analysis-output-actions" aria-label="산출물 작업">
+                              <ArtifactPreviewActions
+                                sourceActive={selectedNodeShowsSource}
+                                shareDisabled={!selectedNode.conversationId}
+                                downloadDisabled={!projectId || !selectedNode.outputProjectFileId}
+                                openWindowHref={
+                                  projectId
+                                  && selectedNode.outputProjectFileId
+                                  && (
+                                    selectedNode.outputLogicalPath?.toLowerCase().endsWith(".html")
+                                    || isCompleteHtmlDocument(selectedNode.outputMarkdown)
+                                  )
+                                    ? projectFilePreviewUrl(projectId, selectedNode.outputProjectFileId)
+                                    : null
+                                }
+                                onToggleSource={() => setOutputSourceNodeId(
+                                  selectedNodeShowsSource ? null : selectedNode.id,
+                                )}
+                                onShare={() => void shareSelectedNodeOutput()}
+                                onDownload={() => void downloadSelectedNodeOutput()}
+                              />
+                            </nav>
+                          )}
+                        </div>
+                        {outputActionStatus && (
+                          <p className="deep-analysis-output-action-status" role="status">
+                            {outputActionStatus}
+                          </p>
+                        )}
                         {selectedNode.outputLogicalPath && selectedNode.outputProjectFileId && (
                           <button
                             className="deep-analysis-output-path"
@@ -3570,7 +3641,9 @@ export function DeepAnalysisView({
                         ) : selectedNode.errorMessage ? (
                           <p className="deep-analysis-node-error">{selectedNode.errorMessage}</p>
                         ) : selectedNode.outputMarkdown ? (
-                          selectedNode.outputLogicalPath?.toLowerCase().endsWith(".html")
+                          selectedNodeShowsSource ? (
+                            <pre className="deep-analysis-output-source">{selectedNode.outputMarkdown}</pre>
+                          ) : selectedNode.outputLogicalPath?.toLowerCase().endsWith(".html")
                           || isCompleteHtmlDocument(selectedNode.outputMarkdown) ? (
                             <div className="deep-analysis-output-html">
                               <ArtifactHtmlPreview
