@@ -63,6 +63,7 @@ test("file repository is an explorer and viewer with recursive folder upload", a
   assert.match(view, /kind: "text", text: text\.slice\(0, limit\)/);
   assert.match(view, /import \{ MarkdownResponse \} from "\.\/ConversationTurn"/);
   assert.match(view, /isMarkdownFile\(detail\)[\s\S]*?<MarkdownResponse text=\{preview\.text\} \/>/);
+  assert.match(view, /if \(kind === "text"\) \{[\s\S]*?looksLikeStandaloneHtml\(text\)[\s\S]*?kind: "html", source: injectArtifactPreviewBridge\(text\)/);
   assert.match(view, /extension === "md" \|\| extension === "markdown" \|\| detail\.mimeType/);
   assert.match(view, /isMarkdownFile\(detail\) && !markdownSource/);
   assert.match(view, /aria-label=\{markdownSource \? "렌더링 보기" : "원문 보기"\}/);

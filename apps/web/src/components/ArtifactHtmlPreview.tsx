@@ -5,7 +5,7 @@ import "./ArtifactHtmlPreview.css";
 const artifactPreviewHeightMessage = "lumina:artifact-preview-height";
 
 function withAutoHeightBridge(source: string) {
-  const bridge = `<script>(()=>{const publish=()=>parent.postMessage({type:"${artifactPreviewHeightMessage}",height:Math.ceil(Math.max(document.documentElement.scrollHeight,document.body?.scrollHeight||0))},"*");addEventListener("load",publish);new ResizeObserver(publish).observe(document.documentElement);setTimeout(publish,0)})()</script>`;
+  const bridge = `<script src="/artifact-preview-bridge.js"></script><script>(()=>{const publish=()=>parent.postMessage({type:"${artifactPreviewHeightMessage}",height:Math.ceil(Math.max(document.documentElement.scrollHeight,document.body?.scrollHeight||0))},"*");addEventListener("load",publish);new ResizeObserver(publish).observe(document.documentElement);setTimeout(publish,0)})()</script>`;
   if (/<\/body\s*>/i.test(source)) return source.replace(/<\/body\s*>/i, `${bridge}</body>`);
   if (/<\/html\s*>/i.test(source)) return source.replace(/<\/html\s*>/i, `${bridge}</html>`);
   return `${source}${bridge}`;

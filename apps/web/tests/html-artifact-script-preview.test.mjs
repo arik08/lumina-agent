@@ -26,6 +26,7 @@ test("HTML Artifact preview paints loading feedback before mounting its streamed
 
 test("HTML Artifact preview can hand scrolling to its parent without weakening the sandbox", () => {
   assert.match(previewSource, /const artifactPreviewHeightMessage = "lumina:artifact-preview-height"/);
+  assert.match(previewSource, /<script src="\/artifact-preview-bridge\.js"><\/script>/);
   assert.match(previewSource, /new ResizeObserver\(publish\)\.observe\(document\.documentElement\)/);
   assert.match(previewSource, /event\.source !== frameRef\.current\?\.contentWindow/);
   assert.match(previewSource, /scrolling=\{autoHeight \? "no" : undefined\}/);

@@ -297,6 +297,11 @@ def test_node_output_contracts_keep_handoffs_compact_and_reports_detailed() -> N
         report,
         "# 최종 보고서\n\nHTML 생성에 실패한 Markdown 본문",
     ).endswith("/N040_최종 보고서.md")
+    assert _output_path_for_content(
+        mission,
+        scope,
+        "<!doctype html><html><head><title>중간 보고서</title></head><body>본문</body></html>",
+    ).endswith("/N001_범위 설계.html")
 
     mission.execution_settings_json["outputFormat"] = "임원용 1페이지 의사결정 메모"
     custom_prompt = _run_prompt(mission, report, [])

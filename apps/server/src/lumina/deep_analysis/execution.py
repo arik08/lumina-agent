@@ -244,11 +244,12 @@ def _output_path_for_content(
     content: str,
 ) -> str:
     path = _output_path(mission, node)
-    if not path.endswith(".html"):
-        return path
     normalized = content.lstrip().casefold()
     required_markup = ("<!doctype html", "<html", "<head", "<body")
-    return path if all(marker in normalized for marker in required_markup) else path[:-5] + ".md"
+    is_complete_html = all(marker in normalized for marker in required_markup)
+    if is_complete_html:
+        return str(PurePosixPath(path).with_suffix(".html"))
+    return str(PurePosixPath(path).with_suffix(".md"))
 
 
 def _partial_output_path(

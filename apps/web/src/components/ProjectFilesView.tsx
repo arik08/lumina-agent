@@ -528,6 +528,10 @@ export function ProjectFilesView({ projectId, requestedFileId = null, onOpenNavi
         }
         if (kind === "text") {
           const text = await download.blob.text();
+          if (looksLikeStandaloneHtml(text)) {
+            setPreview({ status: "ready", kind: "html", source: injectArtifactPreviewBridge(text) });
+            return;
+          }
           const limit = 240_000;
           setPreview({ status: "ready", kind: "text", text: text.slice(0, limit), truncated: text.length > limit });
           return;

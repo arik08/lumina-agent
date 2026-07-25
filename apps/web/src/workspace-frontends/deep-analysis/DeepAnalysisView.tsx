@@ -102,6 +102,14 @@ type MissionAnalysisDepth = "auto" | "brief" | "standard" | "deep";
 type MissionAnswerLength = "auto" | "brief" | "standard" | "detailed";
 type WebSourceMode = "all" | "prioritize" | "restrict";
 
+function isCompleteHtmlDocument(value: string) {
+  const normalized = value.trimStart().toLowerCase();
+  return normalized.startsWith("<!doctype html")
+    && normalized.includes("<html")
+    && normalized.includes("<head")
+    && normalized.includes("<body");
+}
+
 const webSourceModeLabels: Record<WebSourceMode, string> = {
   all: "전체 웹",
   prioritize: "지정 출처 우선",
@@ -3562,7 +3570,8 @@ export function DeepAnalysisView({
                         ) : selectedNode.errorMessage ? (
                           <p className="deep-analysis-node-error">{selectedNode.errorMessage}</p>
                         ) : selectedNode.outputMarkdown ? (
-                          selectedNode.outputLogicalPath?.toLowerCase().endsWith(".html") ? (
+                          selectedNode.outputLogicalPath?.toLowerCase().endsWith(".html")
+                          || isCompleteHtmlDocument(selectedNode.outputMarkdown) ? (
                             <div className="deep-analysis-output-html">
                               <ArtifactHtmlPreview
                                 frameRef={htmlOutputPreviewRef}
