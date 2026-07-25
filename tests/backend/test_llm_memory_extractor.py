@@ -1,6 +1,9 @@
 import json
 
-from lumina.agent.executor import _InlineMemoryStream
+from lumina.agent.executor import (
+    _InlineMemoryStream,
+    _used_memory_ids_from_inline_json,
+)
 from lumina.memories.service import memory_candidates_from_inline_json
 
 
@@ -90,3 +93,16 @@ def test_inline_memory_stream_preserves_plain_responses_without_envelope() -> No
 
     assert visible == "일반 답변입니다.<lum"
     assert stream.payload is None
+
+
+def test_used_memory_ids_accept_only_nonempty_string_ids() -> None:
+    payload = json.dumps(
+        {
+            "candidates": [],
+            "usedMemoryIds": ["memory-one", "", 3, "memory-one"],
+        }
+    )
+
+    assert _used_memory_ids_from_inline_json(payload) == {"memory-one"}
+    assert _used_memory_ids_from_inline_json('{"candidates":[]}') == set()
+    assert _used_memory_ids_from_inline_json("not-json") == set()

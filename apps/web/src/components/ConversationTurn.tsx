@@ -127,7 +127,7 @@ function MemoryCitations({ citations }: { citations: MemoryCitation[] }) {
   const panelId = useId();
   if (citations.length === 0) return null;
   return (
-    <section className={`memory-citations ${open ? "is-open" : ""}`} aria-label="메모리 인용">
+    <section className={`memory-citations ${open ? "is-open" : ""}`} aria-label="활용한 메모리">
       <button
         className="memory-citations-trigger"
         type="button"
@@ -137,7 +137,7 @@ function MemoryCitations({ citations }: { citations: MemoryCitation[] }) {
       >
         <ChevronDown size={15} aria-hidden="true" />
         <Brain size={15} aria-hidden="true" />
-        <span>메모리 인용 {citations.length}개</span>
+        <span>활용한 메모리 {citations.length}개</span>
       </button>
       {open && (
         <div className="memory-citations-list" id={panelId}>

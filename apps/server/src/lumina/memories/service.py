@@ -660,11 +660,7 @@ def select_relevant_memories(
     query_terms = _memory_terms(query)
     ranked: list[tuple[int, int, float, str, UserMemory]] = []
     for memory in candidates:
-        always_relevant = memory.category in {
-            "communication_preference",
-            "user_identity",
-            "user_role",
-        }
+        always_relevant = memory.category == "communication_preference"
         memory_terms = _memory_terms(
             " ".join(
                 (

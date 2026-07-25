@@ -636,14 +636,35 @@ def _recalled_memory_context(snapshot: Mapping[str, Any]) -> str:
     )
 
 
-def _recalled_memory_citations(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
+def _used_memory_ids_from_inline_json(raw_json: str | None) -> set[str]:
+    if not raw_json:
+        return set()
+    try:
+        parsed = json.loads(raw_json)
+    except (TypeError, json.JSONDecodeError):
+        return set()
+    rows = parsed.get("usedMemoryIds") if isinstance(parsed, dict) else None
+    if not isinstance(rows, list):
+        return set()
+    return {
+        str(memory_id).strip()
+        for memory_id in rows
+        if isinstance(memory_id, str) and str(memory_id).strip()
+    }
+
+
+def _recalled_memory_citations(
+    snapshot: Mapping[str, Any],
+    *,
+    used_memory_ids: set[str],
+) -> list[dict[str, Any]]:
     citations: list[dict[str, Any]] = []
     for memory in snapshot.get("user_memories", []):
         if not isinstance(memory, Mapping):
             continue
         display_text = str(memory.get("display_text", "")).strip()
         memory_id = str(memory.get("id", "")).strip()
-        if not display_text or not memory_id:
+        if not display_text or not memory_id or memory_id not in used_memory_ids:
             continue
         citations.append(
             {
@@ -658,7 +679,7 @@ def _recalled_memory_citations(snapshot: Mapping[str, Any]) -> list[dict[str, An
             continue
         display_text = str(memory.get("display_text", "")).strip()
         memory_id = str(memory.get("id", "")).strip()
-        if not display_text or not memory_id:
+        if not display_text or not memory_id or memory_id not in used_memory_ids:
             continue
         citations.append(
             {
@@ -1621,6 +1642,10 @@ class LocalRunExecutor:
         memory_learning_enabled = (
             run.snapshot_json.get("memory_learning_mode", "auto") != "off"
         )
+        memory_envelope_enabled = memory_learning_enabled or bool(
+            run.snapshot_json.get("user_memories")
+            or run.snapshot_json.get("project_memories")
+        )
         artifact_required = (
             retry_step_key != "final"
             and output_mode == "auto"
@@ -1834,7 +1859,7 @@ class LocalRunExecutor:
             model_turn_started = time.perf_counter()
             first_provider_output_at: float | None = None
             turn_usage: dict[str, Any] | None = None
-            memory_stream = _InlineMemoryStream() if memory_learning_enabled else None
+            memory_stream = _InlineMemoryStream() if memory_envelope_enabled else None
             continuation_deduper = _ContinuationDeduper(pending_continuation_reference)
             pending_continuation_reference = None
 
@@ -4543,11 +4568,24 @@ class LocalRunExecutor:
         }
         if answer_length in answer_length_contracts:
             stable_system_parts.append(answer_length_contracts[answer_length])
-        if run.snapshot_json.get("memory_learning_mode", "auto") != "off":
+        recalled_memory_ids = {
+            str(memory.get("id", "")).strip()
+            for key in ("user_memories", "project_memories")
+            for memory in run.snapshot_json.get(key, [])
+            if isinstance(memory, Mapping) and str(memory.get("id", "")).strip()
+        }
+        memory_learning_enabled = (
+            run.snapshot_json.get("memory_learning_mode", "auto") != "off"
+        )
+        if memory_learning_enabled or recalled_memory_ids:
             stable_system_parts.append(
-                "Memory capture contract: In the same final response, after all user-visible "
+                "Memory result contract: In the same final response, after all user-visible "
                 "answer text, append exactly one hidden Memory envelope in this form: "
-                '<lumina_memory>{"candidates":[]}</lumina_memory>. Populate candidates by '
+                '<lumina_memory>{"candidates":[],"usedMemoryIds":[]}</lumina_memory>. '
+                "Set usedMemoryIds to only the recalled memory IDs that materially influenced "
+                "the visible answer; merely receiving or reading a memory is insufficient. "
+                "Only use IDs explicitly present in the recalled memory context, and use an "
+                "empty array when none materially influenced the answer. Populate candidates by "
                 "semantic judgment from only user-authored statements in the current Run; "
                 "do not use keyword or phrase matching. Include only explicit, durable facts "
                 "about the user, their lasting preferences, recurring rules, long-term goals, "
@@ -4560,8 +4598,8 @@ class LocalRunExecutor:
                 "standalone Korean factual sentence; omit conversational commands and "
                 "explanations. confidence is 0-1. Use a stable conflictKey when a newer fact "
                 "should replace an older value, otherwise null. Return an empty candidates "
-                "array when there is nothing worth remembering. Never mention the envelope "
-                "or its contents in the visible answer."
+                "array when memory learning is off or there is nothing worth remembering. "
+                "Never mention the envelope or its contents in the visible answer."
             )
         if any(
             isinstance(schema.get("function"), dict)
@@ -7763,7 +7801,10 @@ class LocalRunExecutor:
             )
             artifact_usage = run.snapshot_json.get("artifact_usage")
             message_metadata = {"usage": run.usage_json, **web_metadata}
-            memory_citations = _recalled_memory_citations(run.snapshot_json)
+            memory_citations = _recalled_memory_citations(
+                run.snapshot_json,
+                used_memory_ids=_used_memory_ids_from_inline_json(memory_json),
+            )
             if memory_citations:
                 message_metadata["memoryCitations"] = memory_citations
             if isinstance(artifact_usage, Mapping):

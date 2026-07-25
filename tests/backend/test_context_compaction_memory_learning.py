@@ -317,7 +317,7 @@ def test_memory_context_is_pinned_per_turn_without_mutating_user_text(
     assert "memory-two" in relevant[3][1]
 
 
-def test_recalled_memory_citations_preserve_injected_user_and_project_memory() -> None:
+def test_recalled_memory_citations_include_only_model_reported_used_memory() -> None:
     citations = _recalled_memory_citations(
         {
             "user_memories": [
@@ -336,16 +336,11 @@ def test_recalled_memory_citations_preserve_injected_user_and_project_memory() -
                     "display_text": "UI 변경은 격리 브라우저에서 확인합니다.",
                 }
             ],
-        }
+        },
+        used_memory_ids={"project-memory-one"},
     )
 
     assert citations == [
-        {
-            "memoryId": "memory-one",
-            "scope": "user",
-            "category": "communication_preference",
-            "displayText": "결론부터 간결하게 답변합니다.",
-        },
         {
             "memoryId": "project-memory-one",
             "scope": "project",
@@ -1746,10 +1741,9 @@ def test_memory_retrieval_selects_relevant_subset_with_core_preferences(
             user_id=user.id,
             query="설비 점검 결과를 HTML 보고서로 작성해 주세요.",
         )
-        assert len(selected) == 4
+        assert len(selected) == 3
         assert {memory.category for memory in selected} == {
             "communication_preference",
-            "user_identity",
             "user_role",
             "output_preference",
         }
