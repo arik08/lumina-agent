@@ -12,8 +12,8 @@ from .text_utils import _bounded_text
 
 
 _MAX_USER_INPUT_QUESTIONS = 10
-_ARTIFACT_TARGET_FLOOR_RATIO = 0.8
-_ARTIFACT_TARGET_CEILING_RATIO = 1.05
+_ARTIFACT_TARGET_FLOOR_RATIO = 0.7
+_ARTIFACT_TARGET_CEILING_RATIO = 1.3
 _ARTIFACT_FIRST_PASS_PREFERRED_FLOOR_RATIO = 0.9
 _ARTIFACT_HTML_CHARS_PER_FLOOR_TOKEN = 2
 
@@ -496,7 +496,7 @@ def _report_tool_schema(target_output_tokens: int | None) -> dict[str, Any]:
         f"validation floor is about {floor:,} tokens. Start this tool call as soon as research "
         f"and analysis are ready, then draft the complete first-pass report directly in its "
         f"arguments. The acceptable range is about {floor:,} to {ceiling:,} "
-        f"tokens (80-105%), but plan near {preferred_floor:,} to {target:,} tokens (90-100%) "
+        f"tokens (70-130%), but plan near {preferred_floor:,} to {target:,} tokens (90-100%) "
         "to absorb estimation error. Do not plan near the lower boundary, submit an abbreviated "
         "draft for later expansion, or intentionally exceed the upper bound."
     )

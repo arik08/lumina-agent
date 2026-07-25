@@ -4173,7 +4173,7 @@ class LocalRunExecutor:
         if output_mode != "chat" and target_tokens is not None:
             content = (
                 "[Artifact content length target for this request: about "
-                f"{target_tokens:,} tokens; aim for 80-105%]\n"
+                f"{target_tokens:,} tokens; aim for 70-130%]\n"
                 + content
             )
         return content
@@ -4657,7 +4657,7 @@ class LocalRunExecutor:
                     "as the first-pass writing target, not merely an upper cap. Briefly allocate "
                     "enough substantive coverage across the sections, then start `create_report` "
                     "and draft the complete report directly inside that one call; do not submit a short "
-                    "draft for later expansion. The acceptable first-call range is 80-105% of "
+                    "draft for later expansion. The acceptable first-call range is 70-130% of "
                     f"the selected target: about {floor_tokens:,} to {ceiling_tokens:,} tokens. "
                     "Because token counts are estimates, plan and draft near 90-100%—about "
                     f"{preferred_floor_tokens:,} to {target_output_tokens:,} tokens—so estimation "

@@ -191,7 +191,7 @@ def test_large_html_report_schema_keeps_html_source_required_without_legacy_fiel
 ):
     parameters = _report_tool_schema(30_000)["function"]["parameters"]
 
-    assert parameters["properties"]["html_source"]["minLength"] == 48_000
+    assert parameters["properties"]["html_source"]["minLength"] == 42_000
     assert parameters["oneOf"][0]["required"] == ["html_source"]
     assert "sections" not in parameters["oneOf"][0]["required"]
 
@@ -683,7 +683,7 @@ def test_selected_artifact_target_retries_short_report_and_exposes_separate_coun
     artifact_usage = snapshot["artifactUsage"]
     assert artifact_usage["estimated"] is False
     assert artifact_usage["targetTokens"] == 1_000
-    assert artifact_usage["tokens"] >= 800
+    assert artifact_usage["tokens"] >= 700
     first_request = requests[0]
     system_text = "\n".join(
         str(message.content)
@@ -691,8 +691,8 @@ def test_selected_artifact_target_retries_short_report_and_exposes_separate_coun
         if message.role == "system"
     )
     assert "first-pass writing target" in system_text
-    assert "acceptable first-call range is 80-105%" in system_text
-    assert "about 800 to 1,050 tokens" in system_text
+    assert "acceptable first-call range is 70-130%" in system_text
+    assert "about 700 to 1,300 tokens" in system_text
     assert "plan and draft near 90-100%—about 900 to 1,000 tokens" in system_text
     assert "Do not plan near the lower boundary" in system_text
     assert "start the `create_report` tool call before drafting the report body" in system_text
@@ -719,14 +719,14 @@ def test_selected_artifact_target_retries_short_report_and_exposes_separate_coun
         "html_source"
     ]["description"]
     assert "html_source itself must carry the full report content" in html_description
-    assert "acceptable range is about 800 to 1,050 tokens" in html_description
+    assert "acceptable range is about 700 to 1,300 tokens" in html_description
     assert "prefer about 900 to 1,000 tokens" in html_description
-    assert "at least 1,600 Unicode characters" in html_description
+    assert "at least 1,400 Unicode characters" in html_description
     assert (
         report_schema["function"]["parameters"]["properties"]["html_source"][
             "minLength"
         ]
-        == 1_600
+        == 1_400
     )
     extension_schema = next(
         schema
