@@ -4127,8 +4127,10 @@ class LocalRunExecutor:
                     sort_keys=True,
                 )
                 + "\nProject file bodies are not included in this prompt.\n"
-                "Use search_source_document only for files relevant to the request, "
+                "For broad or cross-section analysis, use explore_source_document on the "
+                "relevant file first. Otherwise use search_source_document, "
                 "then verify exact ranges with read_source_document.\n"
+                "Do not claim exhaustive coverage for a source marked truncated.\n"
                 "Do not request or paste an entire document into one model turn.\n"
                 "</source-document-index>"
             )
@@ -5633,6 +5635,7 @@ class LocalRunExecutor:
             return payload
 
         if tool_call["name"] in {
+            "explore_source_document",
             "search_source_document",
             "read_source_document",
         }:

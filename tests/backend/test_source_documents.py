@@ -31,6 +31,7 @@ from lumina.tools.source_documents import (
     SOURCE_DOCUMENT_TOOL_SCHEMAS,
     artifact_source_document_id,
     attachment_source_document_id,
+    build_source_document_manifest,
     execute_source_document_tool,
     message_source_document_id,
     project_file_source_document_id,
@@ -70,6 +71,7 @@ def _large_document() -> str:
 
 def test_source_document_tool_schema_and_dynamic_threshold() -> None:
     assert [item["function"]["name"] for item in SOURCE_DOCUMENT_TOOL_SCHEMAS] == [
+        "explore_source_document",
         "search_source_document",
         "read_source_document",
     ]
@@ -77,8 +79,60 @@ def test_source_document_tool_schema_and_dynamic_threshold() -> None:
     assert source_document_threshold_tokens(16_000) == 4_000
     assert source_document_threshold_tokens(128_000) == 25_600
     assert source_document_threshold_tokens(1_050_000) == 80_000
-    for name in ("search_source_document", "read_source_document"):
+    for name in (
+        "explore_source_document",
+        "search_source_document",
+        "read_source_document",
+    ):
         assert classify_tool_risk(name, approval_mode="on_risk").effect == "read_only"
+
+
+def test_source_document_manifest_selects_navigation_from_structure_and_intent() -> None:
+    content = "\n".join(
+        (
+            "# Policy",
+            "Introduction",
+            "## Governance",
+            "Approval rules",
+            "## Exceptions",
+            "Exception rules",
+        )
+    )
+    broad = build_source_document_manifest(
+        document_id="message:one:digest",
+        name="policy.md",
+        source_kind="message",
+        content=content,
+        user_request="Analyze all exceptions and conflicting sections.",
+    )
+    exact = build_source_document_manifest(
+        document_id="message:one:digest",
+        name="policy.md",
+        source_kind="message",
+        content=content,
+        user_request="Find section 2.",
+    )
+    unstructured = build_source_document_manifest(
+        document_id="message:two:digest",
+        name="records.txt",
+        source_kind="message",
+        content="\n".join(f"{index:05d}. record" for index in range(100)),
+        user_request="Analyze the entire document.",
+    )
+    truncated = build_source_document_manifest(
+        document_id="message:three:digest",
+        name="partial-policy.md",
+        source_kind="message",
+        content=content,
+        source_truncated=True,
+        user_request="Analyze all exceptions and conflicting sections.",
+    )
+
+    assert '"strategy": "explore_then_search_then_read"' in broad
+    assert "explore_source_document" in broad
+    assert '"strategy": "search_then_read"' in exact
+    assert '"reason": "no_reliable_section_structure"' in unstructured
+    assert '"reason": "source_extraction_incomplete"' in truncated
 
 
 def test_large_attachment_uses_recoverable_manifest_and_line_tools(
@@ -87,6 +141,12 @@ def test_large_attachment_uses_recoverable_manifest_and_line_tools(
     settings = _settings(tmp_path)
     executor = LocalRunExecutor(settings)
     long_text = _large_document()
+    long_lines = long_text.splitlines()
+    long_lines[0] = "# Corporate Policy"
+    long_lines[1_000] = "## Governance"
+    long_lines[4_000] = "### Reorganization"
+    long_lines[6_000] = "## Compliance"
+    long_text = "\n".join(long_lines)
     assert len(long_text) > 500_000
 
     with TestClient(create_app(settings)) as client:
@@ -162,6 +222,8 @@ def test_large_attachment_uses_recoverable_manifest_and_line_tools(
         )
         assert "<source-document-manifest>" in prepared
         assert document_id in prepared
+        assert "explore_source_document" in prepared
+        assert '"strategy": "explore_then_search_then_read"' in prepared
         assert "TARGET-4321" not in prepared
         assert len(prepared) < 5_000
 
@@ -202,6 +264,34 @@ def test_large_attachment_uses_recoverable_manifest_and_line_tools(
             assert read["nextStartLine"] == 4_323
             assert read["untrustedExternalContent"] is True
 
+            outline = execute_source_document_tool(
+                db,
+                executor.file_storage,
+                executor.storage,
+                run=run,
+                name="explore_source_document",
+                arguments={"document_id": document_id},
+            )
+            assert outline["available"] is True
+            assert outline["nodes"][0]["title"] == "Corporate Policy"
+            assert outline["nodes"][0]["childCount"] == 2
+            root_node_id = outline["nodes"][0]["nodeId"]
+            children = execute_source_document_tool(
+                db,
+                executor.file_storage,
+                executor.storage,
+                run=run,
+                name="explore_source_document",
+                arguments={
+                    "document_id": document_id,
+                    "parent_node_id": root_node_id,
+                },
+            )
+            assert [item["title"] for item in children["nodes"]] == [
+                "Governance",
+                "Compliance",
+            ]
+
             dispatched = asyncio.run(
                 executor._execute_tool(
                     run_id,
@@ -220,6 +310,19 @@ def test_large_attachment_uses_recoverable_manifest_and_line_tools(
                 )
             )
             assert "TARGET-4321" in dispatched["content"]
+
+            dispatched_outline = asyncio.run(
+                executor._execute_tool(
+                    run_id,
+                    {
+                        "id": "source-document-explore-dispatch",
+                        "name": "explore_source_document",
+                        "arguments": json.dumps({"document_id": document_id}),
+                    },
+                    "Inspect the document structure.",
+                )
+            )
+            assert dispatched_outline["available"] is True
 
             other_attachment = db.get(Attachment, other_upload.json()["id"])
             assert other_attachment is not None
@@ -422,6 +525,7 @@ def test_project_file_and_artifact_source_documents_resolve_exact_versions(
                 assert "Project file exact version" not in prepared
                 assert "<source-document-index>" in prepared
                 assert document_id in prepared
+                assert "explore_source_document" in prepared
                 assert "search_source_document" in prepared
                 assert "read_source_document" in prepared
 
