@@ -29,7 +29,7 @@ test("session titles keep the same horizontal position in management mode", () =
   assert.match(stylesSource, /\.session-item\.is-bulk \.session-row \{ padding-left: 7px; \}/);
 });
 
-test("title filtering is shared by chat and deep analysis and replaces the global search dialog", () => {
+test("title filtering is shared by chat and deep analysis with always-visible heading actions", () => {
   assert.match(recentItemsSource, /aria-label="세션 제목 검색"/);
   assert.match(recentItemsSource, /aria-label="세션 제목 필터 해제"/);
   assert.match(recentItemsSource, /aria-label=\{titleFilterAriaLabel\}/);
@@ -41,8 +41,8 @@ test("title filtering is shared by chat and deep analysis and replaces the globa
   assert.doesNotMatch(appSource, /ConversationSearchDialog|conversationSearchOpen|aria-label="대화 검색"/);
   assert.match(workspaceSource, /setConversations\(\(items\) => \[\.\.\.items\.filter[\s\S]*conversation\]\.sort/);
   assert.doesNotMatch(workspaceSource, /setConversations\(\(items\) => \[conversation, \.\.\.items\.filter/);
-  assert.match(stylesSource, /\.session-heading:hover \.session-heading-action,[\s\S]*opacity: 1; pointer-events: auto;/);
-  assert.doesNotMatch(stylesSource, /\.session-heading-actions > \.session-title-filter-(?:toggle|clear)[^}]*opacity: 1/);
+  assert.match(stylesSource, /\.session-heading-action,\s*\.bulk-session-open \{ opacity: 1; pointer-events: auto; transform: translateX\(0\); \}/);
+  assert.doesNotMatch(stylesSource, /\.session-heading:hover \.(?:session-heading-action|bulk-session-open)/);
 });
 
 test("shared recent-item submenus close when another area is pressed", () => {

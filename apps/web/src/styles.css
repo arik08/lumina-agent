@@ -363,11 +363,7 @@ button:focus-visible, textarea:focus-visible, a:focus-visible {
 .bulk-session-heading-actions > .is-danger { color: var(--danger); }
 .bulk-session-heading-actions > .is-danger.is-armed { background: color-mix(in srgb, var(--danger) 9%, var(--surface)); }
 .session-heading-action,
-.bulk-session-open { opacity: 0; pointer-events: none; transform: translateX(2px); transition: opacity 120ms ease, transform 120ms ease; }
-.session-heading:hover .session-heading-action,
-.session-heading:hover .bulk-session-open,
-.session-heading-action:focus-visible,
-.bulk-session-open:focus-visible { opacity: 1; pointer-events: auto; transform: translateX(0); }
+.bulk-session-open { opacity: 1; pointer-events: auto; transform: translateX(0); }
 .bulk-session-open:disabled { display: none; }
 .session-title-filter {
   display: flex;
