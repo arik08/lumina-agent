@@ -18,7 +18,8 @@ test("conversation sidebar preloads before reaching the bottom", () => {
   assert.match(recentItems, /Math\.max\(132, list\.clientHeight \* 0\.35\)/);
   assert.match(recentItems, /list\.scrollHeight - list\.scrollTop - list\.clientHeight <= prefetchDistance/);
   assert.match(recentItems, /hasMore &&[\s\S]*onLoadMore\?\.\(\)/);
-  assert.match(app, /hasMore=\{workspace\.hasMoreConversations\}/);
+  assert.match(app, /hasMore=\{normalizedConversationTitleFilter \? conversationTitleNextCursor !== null : workspace\.hasMoreConversations\}/);
   assert.match(app, /const loadMoreSidebarConversations = useCallback\([\s\S]*workspace\.loadMoreConversations\(\)/);
+  assert.match(app, /titleQuery: normalizedConversationTitleFilter,[\s\S]*cursor: conversationTitleNextCursor/);
   assert.match(app, /onLoadMore=\{loadMoreSidebarConversations\}/);
 });

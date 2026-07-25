@@ -39,6 +39,10 @@ test("title filtering is shared by chat and deep analysis and replaces the globa
   assert.match(appSource, /items=\{conversationSidebarItems\}[\s\S]*titleFilterQuery=\{conversationTitleFilter\}/);
   assert.match(appSource, /titleFilterAriaLabel="채팅 세션 제목으로 필터링"/);
   assert.doesNotMatch(appSource, /ConversationSearchDialog|conversationSearchOpen|aria-label="대화 검색"/);
+  assert.match(workspaceSource, /setConversations\(\(items\) => \[\.\.\.items\.filter[\s\S]*conversation\]\.sort/);
+  assert.doesNotMatch(workspaceSource, /setConversations\(\(items\) => \[conversation, \.\.\.items\.filter/);
+  assert.match(stylesSource, /\.session-heading:hover \.session-heading-action,[\s\S]*opacity: 1; pointer-events: auto;/);
+  assert.doesNotMatch(stylesSource, /\.session-heading-actions > \.session-title-filter-(?:toggle|clear)[^}]*opacity: 1/);
 });
 
 test("shared recent-item submenus close when another area is pressed", () => {

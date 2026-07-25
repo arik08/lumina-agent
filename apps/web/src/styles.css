@@ -353,8 +353,6 @@ button:focus-visible, textarea:focus-visible, a:focus-visible {
 .session-heading > div { display: flex; align-items: center; gap: 2px; }
 .session-heading-actions { min-width: 54px; justify-content: flex-end; }
 .session-title-filter-toggle { color: var(--faint); }
-.session-heading-actions > .session-title-filter-toggle,
-.session-heading-actions > .session-title-filter-clear { opacity: 1; pointer-events: auto; transform: none; }
 .session-title-filter-toggle:hover,
 .session-title-filter-toggle.is-active { color: var(--muted); }
 .liked-sessions-filter { color: var(--faint); }

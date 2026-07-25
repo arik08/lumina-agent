@@ -1325,7 +1325,11 @@ export function useLuminaWorkspace() {
     if (conversation.projectId !== activeProjectIdRef.current) {
       setActiveProjectIdState(conversation.projectId);
     }
-    setConversations((items) => [conversation, ...items.filter((item) => item.id !== conversation.id)]);
+    setConversations((items) => [...items.filter((item) => item.id !== conversation.id), conversation].sort((left, right) => {
+      if (left.isFavorite !== right.isFavorite) return left.isFavorite ? -1 : 1;
+      const activityOrder = right.updatedAt.localeCompare(left.updatedAt);
+      return activityOrder || left.id.localeCompare(right.id);
+    }));
     setActiveConversationId(conversation.id);
   }, []);
 
