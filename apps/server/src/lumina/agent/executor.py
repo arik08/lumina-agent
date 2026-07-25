@@ -5923,6 +5923,16 @@ class LocalRunExecutor:
                         "Run context disappeared during report generation"
                     )
                 self._require_execution_owner(report_run)
+                deep_analysis = report_run.snapshot_json.get("deep_analysis")
+                reject_unexpected_html = (
+                    isinstance(deep_analysis, Mapping)
+                    and str(arguments.get("format") or "").casefold() == "html"
+                    and (
+                        deep_analysis.get("node_type") != "report"
+                        or str(deep_analysis.get("output_format") or "").casefold()
+                        not in {"html", "html (.html)", ".html"}
+                    )
+                )
                 report_model = report_run.runtime_model_id
                 target_output_tokens = _optional_positive_int(
                     report_run.snapshot_json.get("target_output_tokens")
@@ -5936,7 +5946,7 @@ class LocalRunExecutor:
                 ).strip()
                 report_images = (
                     ()
-                    if revision_artifact_id
+                    if revision_artifact_id or reject_unexpected_html
                     else resolve_report_images(
                         db,
                         run=report_run,
@@ -5946,6 +5956,19 @@ class LocalRunExecutor:
                         artifact_storage=self.storage,
                         max_total_bytes=self.settings.max_upload_bytes,
                     )
+                )
+            if reject_unexpected_html:
+                return await self._fail_tool_execution(
+                    run_id,
+                    tool_id,
+                    WebToolError(
+                        "deep_analysis_intermediate_markdown_required",
+                        "This Deep Analysis node requires Markdown. Create Markdown "
+                        "content only; HTML is reserved for a final report configured "
+                        "with HTML output.",
+                        stage="validation",
+                        retryable=True,
+                    ),
                 )
             if revision_artifact_id:
                 return await self._fail_tool_execution(

@@ -484,6 +484,9 @@ def _output_instruction(
             f"한계와 후속 조치를 충분히 설명하십시오. {format_instruction}"
         )
     return (
+        "형식 경계(최우선): Mission 설명의 HTML 보고서 요청은 report 유형의 최종 Node에만 적용됩니다. "
+        "현재 Node는 report가 아니므로 완전한 Markdown만 작성하고 <!doctype html>, <html>, <head>, "
+        "<body>, <style>, <script>를 포함하지 마십시오. "
         "이 Node의 출력은 사용자가 직접 읽는 중간보고서이자 다음 Node를 위한 압축 인계물입니다. "
         "파일을 작성했다거나 항목을 반영했다는 완료 안내만 쓰지 마십시오. 서론, Executive Summary, "
         "맺음말과 일반 배경 설명으로 분량을 늘리지 말고, 이 단계에서 새로 확인하거나 판단한 사실, "
@@ -717,6 +720,8 @@ def create_node_run(
             "mission_id": mission.id,
             "node_id": node.id,
             "node_key": node.node_key,
+            "node_type": node.node_type,
+            "output_format": _configured_output_format(mission),
             "attempt": attempt,
             "output_directory": output_directory(mission),
             "research_period": execution_settings.get(

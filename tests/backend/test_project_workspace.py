@@ -96,6 +96,26 @@ def test_project_file_api_accepts_blank_text_files(
         assert downloaded.content == content.encode()
 
 
+def test_project_file_api_rejects_html_document_with_markdown_extension(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path, "html-as-markdown.db")
+    with TestClient(create_app(settings)) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+
+        created = _upload(
+            client,
+            headers,
+            project_id,
+            logical_path="reports/intermediate.md",
+            content=" \n<!doctype html><html><body>wrong format</body></html>",
+        )
+
+        assert created.status_code == 415
+        assert created.json()["code"] == "mime_mismatch"
+
+
 def test_project_file_api_keyset_pages_without_duplicates(tmp_path: Path) -> None:
     settings = _settings(tmp_path, "project-file-pages.db")
     with TestClient(create_app(settings)) as client:

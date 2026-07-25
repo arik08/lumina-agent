@@ -47,9 +47,12 @@ def sniff_mime(content: bytes, extension: str) -> str:
         return _sniff_openxml_mime(content, extension)
     if extension in {".txt", ".html", ".md", ".csv", ".tsv", ".py"}:
         try:
-            content.decode("utf-8")
+            decoded = content.decode("utf-8")
         except UnicodeDecodeError:
             return "application/octet-stream"
+        normalized = decoded.lstrip("\ufeff \t\r\n").casefold()
+        if extension == ".md" and normalized.startswith(("<!doctype html", "<html")):
+            return "text/html"
         return MIME_BY_EXTENSION[extension]
     return "application/octet-stream"
 

@@ -275,6 +275,8 @@ def test_node_output_contracts_keep_handoffs_compact_and_reports_detailed() -> N
     scope_prompt = _run_prompt(mission, scope, [])
     assert "분석 질문을 검증 가능한 형태로 구체화" in scope_prompt
     assert "사용자가 직접 읽는 중간보고서이자 다음 Node를 위한 압축 인계물" in scope_prompt
+    assert "HTML 보고서 요청은 report 유형의 최종 Node에만 적용" in scope_prompt
+    assert "<!doctype html>" in scope_prompt
     assert "완료 안내만 쓰지 마십시오" in scope_prompt
     assert "선행 산출물의 내용을 반복 요약하지" in scope_prompt
 
@@ -2264,6 +2266,11 @@ def test_mission_executes_all_nodes_and_persists_markdown_outputs(
         assert all(node["runId"] for node in restored["workflow"]["nodes"])
         assert all(node["conversationId"] for node in restored["workflow"]["nodes"])
         assert all(node["outputMarkdown"] for node in restored["workflow"]["nodes"])
+        assert all(
+            not node["outputMarkdown"].lstrip().casefold().startswith("<!doctype html")
+            for node in restored["workflow"]["nodes"]
+            if node["nodeType"] != "report"
+        )
         assert all(
             "LUMINA_ANALYSIS_LEDGER" not in node["executionPrompt"]
             and "LUMINA_WORKFLOW_DECISION" not in node["executionPrompt"]
