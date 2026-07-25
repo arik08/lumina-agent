@@ -1005,7 +1005,7 @@ def test_runtime_compaction_leaves_headroom_when_recent_tool_rounds_are_large(
     assert prepared.compacted is True
     assert prepared.compacted_payload_count >= 3
     assert prepared.estimated_tokens_after <= int(
-        prepared.effective_input_budget * 0.75
+        prepared.effective_input_budget * 0.25
     )
     recent_tool_results = [
         message for message in prepared.messages if message.role == "tool"
