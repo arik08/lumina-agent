@@ -649,7 +649,7 @@ class _ObservedContextThenCompletingProvider:
         yield ProviderEvent(type="completed", stop_reason="stop")
 
 
-class _PartialReportToolCallThenCompletingProvider:
+class _PartialReportToolCallThenResumingProvider:
     provider_id = "mock"
     capabilities = ProviderCapabilities(tools=True)
 
@@ -669,8 +669,9 @@ class _PartialReportToolCallThenCompletingProvider:
                 tool_call_id="call_partial_report",
                 tool_name="create_report",
                 arguments_delta=(
-                    '{"format":"html","html_source":"<!doctype html><html>'
-                    "<body><h1>interrupted"
+                    '{"format":"html","html_source":"<!doctype html><html><head>'
+                    "<meta charset='utf-8'><title>Recovered report</title></head>"
+                    "<body><h1>Recovered"
                 ),
             )
             raise ProviderRequestError(
@@ -680,10 +681,10 @@ class _PartialReportToolCallThenCompletingProvider:
                 status_code=503,
             )
         if self.attempts == 2:
-            assert request.messages[-1] == ProviderMessage(
-                role="user",
-                content=executor_module._PARTIAL_TOOL_CALL_RETRY_PROMPT,
-            )
+            recovery_prompt = request.messages[-1]
+            assert recovery_prompt.role == "user"
+            assert "Lumina preserved" in str(recovery_prompt.content)
+            assert "only the exact HTML suffix" in str(recovery_prompt.content)
             arguments = json.dumps(
                 {
                     "format": "html",
@@ -693,10 +694,7 @@ class _PartialReportToolCallThenCompletingProvider:
                     "sections": [],
                     "action_items": [],
                     "html_source": (
-                        "<!doctype html><html><head><meta charset='utf-8'>"
-                        "<title>Recovered report</title></head><body>"
-                        "<h1>Recovered report</h1><p>Verified evidence.</p>"
-                        "</body></html>"
+                        " report</h1><p>Verified evidence.</p></body></html>"
                     ),
                 },
                 ensure_ascii=False,
@@ -1182,10 +1180,10 @@ def test_provider_context_error_lowers_run_window_before_recovery(
     assert adjustment.payload_json["observedContextWindow"] == 4_096
 
 
-def test_retryable_failure_regenerates_unexecuted_partial_report_tool_call(
+def test_retryable_failure_resumes_unexecuted_partial_report_tool_call(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    provider = _PartialReportToolCallThenCompletingProvider()
+    provider = _PartialReportToolCallThenResumingProvider()
     monkeypatch.setattr(
         local_run_executor, "_provider", lambda *_args, **_kwargs: provider
     )
@@ -1231,6 +1229,7 @@ def test_retryable_failure_regenerates_unexecuted_partial_report_tool_call(
         )
     assert recovery_event is not None
     assert recovery_event.payload_json["discardedToolCalls"] == 1
+    assert recovery_event.payload_json["preservedReportChars"] > 0
     assert discarded_event is not None
     assert discarded_event.payload_json == {
         "toolCallCount": 1,

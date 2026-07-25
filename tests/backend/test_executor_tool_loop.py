@@ -775,6 +775,48 @@ def test_artifact_progress_counts_tool_arguments_incrementally() -> None:
     assert progress == executor_module._artifact_argument_progress(arguments)
 
 
+def test_partial_report_checkpoint_decodes_complete_streamed_json_prefix() -> None:
+    calls = {
+        "call_report": {
+            "name": "create_report",
+            "argument_chunks": [
+                '{"format":"html","html_source":"<main>first\\n둘째',
+                '\\u0020section\\',
+            ],
+        }
+    }
+
+    checkpoint = executor_module._partial_report_source_checkpoint(calls)
+
+    assert checkpoint == "<main>first\n둘째 section"
+
+
+def test_partial_report_checkpoint_merges_suffix_without_boundary_replay() -> None:
+    calls = [
+        {
+            "name": "create_report",
+            "arguments": json.dumps(
+                {
+                    "format": "html",
+                    "html_source": "continued</p></main></body></html>",
+                }
+            ),
+        }
+    ]
+
+    merged = executor_module._merge_partial_report_checkpoint(
+        calls,
+        "<!doctype html><html><body><main><p>interrupted continued",
+    )
+
+    assert merged is True
+    arguments = json.loads(calls[0]["arguments"])
+    assert arguments["html_source"] == (
+        "<!doctype html><html><body><main><p>interrupted "
+        "continued</p></main></body></html>"
+    )
+
+
 def test_report_progress_waits_for_artifact_tool_output(
     monkeypatch, tmp_path: Path
 ) -> None:
