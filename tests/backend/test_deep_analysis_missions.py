@@ -27,6 +27,7 @@ from lumina.deep_analysis.context_manifest import current_file_version
 from lumina.deep_analysis.ai_planner import design_initial_workflow
 from lumina.deep_analysis.events import emit_event
 from lumina.deep_analysis.execution import (
+    _node_output_mode,
     _output_path,
     _output_path_for_content,
     _run_profile,
@@ -268,8 +269,11 @@ def test_node_output_contracts_keep_handoffs_compact_and_reports_detailed() -> N
         purpose="최종 결론을 작성합니다.",
     )
 
-    assert _run_profile(mission, scope) == ("deep", "brief", 1_200)
-    assert _run_profile(mission, analysis) == ("deep", "standard", 3_500)
+    assert _node_output_mode(mission, scope) == "chat"
+    assert _node_output_mode(mission, analysis) == "chat"
+    assert _node_output_mode(mission, report) == "file"
+    assert _run_profile(mission, scope) == ("deep", "brief", None)
+    assert _run_profile(mission, analysis) == ("deep", "standard", None)
     assert _run_profile(mission, report) == ("deep", "detailed", 10_000)
 
     scope_prompt = _run_prompt(mission, scope, [])
@@ -301,7 +305,7 @@ def test_node_output_contracts_keep_handoffs_compact_and_reports_detailed() -> N
         mission,
         scope,
         "<!doctype html><html><head><title>중간 보고서</title></head><body>본문</body></html>",
-    ).endswith("/N001_범위 설계.html")
+    ).endswith("/N001_범위 설계.md")
 
     mission.execution_settings_json["outputFormat"] = "임원용 1페이지 의사결정 메모"
     custom_prompt = _run_prompt(mission, report, [])
@@ -499,7 +503,7 @@ def test_completed_artifact_becomes_visible_node_output_and_handoff(
                 assert repaired_content == detailed_output.strip()
 
 
-def test_node_output_contract_respects_smaller_target_and_chat_mode() -> None:
+def test_intermediate_node_output_contract_always_uses_chat_mode() -> None:
     analysis = DeepAnalysisWorkflowNode(
         node_key="N020",
         node_type="analysis",
@@ -523,7 +527,9 @@ def test_node_output_contract_respects_smaller_target_and_chat_mode() -> None:
         },
     )
 
-    assert _run_profile(file_mission, analysis) == ("auto", "standard", 1_000)
+    assert _node_output_mode(file_mission, analysis) == "chat"
+    assert _node_output_mode(chat_mission, analysis) == "chat"
+    assert _run_profile(file_mission, analysis) == ("auto", "standard", None)
     assert _run_profile(chat_mission, analysis) == ("auto", "standard", None)
 
 
@@ -1096,7 +1102,9 @@ def test_mission_without_references_does_not_include_project_files(
             assert run is not None
             assert run.snapshot_json["project_file_manifest"] == []
             assert run.snapshot_json["answer_length"] == "brief"
-            assert run.snapshot_json["target_output_tokens"] == 1_200
+            assert run.snapshot_json["output_mode"] == "chat"
+            assert run.snapshot_json["target_output_tokens"] is None
+            assert run.snapshot_json["deep_analysis"]["output_format"] == "markdown"
 
 
 def test_mission_sidebar_preferences_rename_and_project_move_persist(tmp_path: Path) -> None:

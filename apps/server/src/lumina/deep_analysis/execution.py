@@ -247,7 +247,7 @@ def _output_path_for_content(
     normalized = content.lstrip().casefold()
     required_markup = ("<!doctype html", "<html", "<head", "<body")
     is_complete_html = all(marker in normalized for marker in required_markup)
-    if is_complete_html:
+    if node.node_type == "report" and is_complete_html:
         return str(PurePosixPath(path).with_suffix(".html"))
     return str(PurePosixPath(path).with_suffix(".md"))
 
@@ -410,17 +410,19 @@ def _stage_instruction(node: DeepAnalysisWorkflowNode) -> str:
     return instructions.get(node.node_type, node.purpose)
 
 
-_HANDOFF_TARGET_TOKENS = {
-    "scope": 1_200,
-    "data_check": 1_800,
-    "research": 3_000,
-    "analysis": 3_500,
-    "validation": 3_000,
-    "synthesis": 3_500,
-}
 _AnalysisDepth = Literal["auto", "brief", "standard", "deep"]
 _AnswerLength = Literal["auto", "brief", "standard", "detailed"]
 _OutputMode = Literal["auto", "chat", "file"]
+
+
+def _node_output_mode(
+    mission: DeepAnalysisMission,
+    node: DeepAnalysisWorkflowNode,
+) -> _OutputMode:
+    if node.node_type != "report":
+        return "chat"
+    settings = mission.execution_settings_json or {}
+    return cast(_OutputMode, str(settings.get("outputMode") or "auto"))
 
 
 def _run_profile(
@@ -445,17 +447,10 @@ def _run_profile(
             answer_length,
             target_output_tokens if output_mode != "chat" else None,
         )
-    handoff_target = _HANDOFF_TARGET_TOKENS.get(node.node_type, 3_000)
-    if target_output_tokens is not None:
-        handoff_target = min(handoff_target, target_output_tokens)
     handoff_length: _AnswerLength = (
         "brief" if node.node_type in {"scope", "data_check"} else "standard"
     )
-    return (
-        analysis_depth,
-        handoff_length,
-        handoff_target if output_mode != "chat" else None,
-    )
+    return (analysis_depth, handoff_length, None)
 
 
 def _output_instruction(
@@ -685,7 +680,7 @@ def create_node_run(
             reference["token_start"] = int(reference["token_start"]) + objective_offset
             reference["token_end"] = int(reference["token_end"]) + objective_offset
         prompt_references.append(MessageReferenceInput.model_validate(reference))
-    output_mode = cast(_OutputMode, str(execution_settings.get("outputMode") or "auto"))
+    output_mode = _node_output_mode(mission, node)
     frozen_execution = execution_settings.get("execution")
     selected_execution = (
         ExecutionSelection.model_validate(frozen_execution)
@@ -722,7 +717,11 @@ def create_node_run(
             "node_id": node.id,
             "node_key": node.node_key,
             "node_type": node.node_type,
-            "output_format": _configured_output_format(mission),
+            "output_format": (
+                _configured_output_format(mission)
+                if node.node_type == "report"
+                else "markdown"
+            ),
             "attempt": attempt,
             "output_directory": output_directory(mission),
             "research_period": execution_settings.get(
