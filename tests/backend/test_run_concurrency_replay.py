@@ -289,6 +289,64 @@ class _ToolPauseProvider:
         yield ProviderEvent(type="completed", stop_reason="stop")
 
 
+class _ToolBoundarySteerProvider:
+    provider_id = "mock"
+    capabilities = ProviderCapabilities(tools=True)
+
+    def __init__(self) -> None:
+        self.attempts = 0
+        self.boundary_reached = threading.Event()
+        self.release_boundary = threading.Event()
+
+    async def stream(self, request: ProviderRequest) -> AsyncIterator[ProviderEvent]:
+        self.attempts += 1
+        if self.attempts == 1:
+            arguments = json.dumps(
+                {
+                    "plan": [
+                        {
+                            "step": "This tool must not run after steering.",
+                            "status": "in_progress",
+                            "phase": "execution",
+                        }
+                    ]
+                },
+                separators=(",", ":"),
+            )
+            yield ProviderEvent(
+                type="tool_call_started",
+                tool_call_id="call_before_steer",
+                tool_name="update_plan",
+            )
+            yield ProviderEvent(
+                type="tool_call_completed",
+                tool_call_id="call_before_steer",
+                tool_name="update_plan",
+                arguments_json=arguments,
+            )
+            yield ProviderEvent(type="completed", stop_reason="tool_calls")
+            self.boundary_reached.set()
+            released = await asyncio.to_thread(self.release_boundary.wait, 5.0)
+            if not released:
+                raise AssertionError("Tool boundary was not released")
+            return
+
+        assert any(
+            message.role == "user"
+            and "reply-in-chat-instead" in (message.content or "")
+            for message in request.messages
+        )
+        assert not any(
+            message.role == "tool"
+            or any(
+                call.get("id") == "call_before_steer" for call in message.tool_calls
+            )
+            for message in request.messages
+        )
+        yield ProviderEvent(type="text_delta", text="steering applied before tool execution")
+        yield ProviderEvent(type="completed", stop_reason="stop")
+
+
 class _OrderedToolSteerRecoveryProvider:
     provider_id = "mock"
     capabilities = ProviderCapabilities(tools=True)
@@ -2069,6 +2127,72 @@ def test_paused_run_resumes_after_worker_restart_without_duplicate_draft(
                 )
         finally:
             provider.release_all()
+
+
+def test_steer_after_provider_tool_response_applies_before_tool_execution(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    provider = _ToolBoundarySteerProvider()
+    update_plan_invocations = 0
+    original_update_work_plan = executor_module.update_work_plan
+
+    def counting_update_work_plan(*args, **kwargs):
+        nonlocal update_plan_invocations
+        update_plan_invocations += 1
+        return original_update_work_plan(*args, **kwargs)
+
+    monkeypatch.setattr(local_run_executor, "_provider", _gate_factory(provider))
+    monkeypatch.setattr(executor_module, "update_work_plan", counting_update_work_plan)
+    settings = _settings(tmp_path, "steer-before-tool-execution.db")
+
+    with TestClient(create_app(settings)) as client:
+        try:
+            csrf = _login(client)
+            conversation_id = _conversation(client, csrf, "Steer before tool execution")
+            run_id = _start_run(
+                client,
+                csrf,
+                conversation_id,
+                text="prepare a tool call",
+                idempotency_key="steer-before-tool-run",
+            )
+            assert provider.boundary_reached.wait(timeout=2)
+            steered = client.post(
+                f"/api/runs/{run_id}/actions",
+                headers={
+                    "X-CSRF-Token": csrf,
+                    "Idempotency-Key": "steer-before-tool-action",
+                },
+                json={
+                    "type": "steer",
+                    "message": {
+                        "text": "reply-in-chat-instead",
+                        "attachmentIds": [],
+                        "promptReferences": [],
+                    },
+                },
+            )
+            assert steered.status_code == 200, steered.text
+            assert steered.json()["command"]["status"] == "waiting_safe_boundary"
+            provider.release_boundary.set()
+
+            completed = _wait_for_terminal(client, run_id)
+            assert completed["status"] == "completed"
+            assert completed["assistantDraft"]["text"] == (
+                "steering applied before tool execution"
+            )
+            assert provider.attempts == 2
+            assert update_plan_invocations == 0
+            with SessionLocal() as db:
+                command = db.scalar(
+                    select(RunCommand).where(
+                        RunCommand.run_id == run_id,
+                        RunCommand.command_type == "steer",
+                    )
+                )
+                assert command is not None and command.status == "applied"
+        finally:
+            provider.release_boundary.set()
 
 
 def test_completed_tool_batch_is_checkpointed_once_across_pause_and_restart(

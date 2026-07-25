@@ -2315,6 +2315,21 @@ class LocalRunExecutor:
                 calls, partial_report_checkpoint
             ):
                 partial_report_checkpoint = None
+            if calls and await self._has_pending_steers(run_id):
+                await self._discard_partial_tool_calls(run_id, tool_calls)
+                if round_text:
+                    messages.append(
+                        ProviderMessage(role="assistant", content="".join(round_text))
+                    )
+                await self._mark_turn_interrupted_by_steer(
+                    run_id, assistant_message_id, "".join(round_text)
+                )
+                steer_messages = await self._apply_pending_steers(run_id)
+                messages.extend(
+                    ProviderMessage(role="user", content=text)
+                    for text in steer_messages
+                )
+                continue
             if not calls:
                 steer_messages = await self._apply_pending_steers(
                     run_id,
