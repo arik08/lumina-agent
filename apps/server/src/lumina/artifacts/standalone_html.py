@@ -5,7 +5,11 @@ import re
 
 MERMAID_CDN_VERSION = "11.16.0"
 _RAW_MERMAID_BLOCK = re.compile(
-    br'class=["\'][^"\']*\bmermaid\b',
+    br'(?:class=["\'][^"\']*\bmermaid\b|'
+    br'<pre\b[^>]*>\s*(?:<code\b[^>]*>\s*)?'
+    br'(?:(?:flowchart|graph)\s+(?:TB|TD|BT|RL|LR)\b|'
+    br'(?:sequenceDiagram|classDiagram(?:-v2)?|stateDiagram(?:-v2)?|'
+    br'erDiagram|journey|gantt|gitGraph|requirementDiagram|mindmap)\b))',
     flags=re.IGNORECASE,
 )
 _EXISTING_MERMAID_RUNTIME = re.compile(
@@ -159,8 +163,22 @@ _STANDALONE_MERMAID_LAYER = f"""
     }});
     host.prepend(button);
   }};
+  const isMermaidSource = (source) =>
+    /^(?:(?:flowchart|graph)\\s+(?:TB|TD|BT|RL|LR)\\b|(?:sequenceDiagram|classDiagram(?:-v2)?|stateDiagram(?:-v2)?|erDiagram|journey|gantt|gitGraph|requirementDiagram|mindmap)\\b)/i.test(source.trim());
+  const recoverBareMermaid = () => {{
+    document.querySelectorAll("pre").forEach((pre) => {{
+      if (pre.closest(".mermaid") || pre.querySelector("code.language-mermaid,code.lang-mermaid,code.language-mmd,code.lang-mmd")) return;
+      const source = pre.textContent?.trim() || "";
+      if (!isMermaidSource(source)) return;
+      const element = document.createElement("div");
+      element.className = "mermaid";
+      element.textContent = source;
+      pre.replaceWith(element);
+    }});
+  }};
   const start = async () => {{
     if (!window.mermaid) return;
+    recoverBareMermaid();
     window.mermaid.initialize({{
       startOnLoad: false,
       securityLevel: "strict",

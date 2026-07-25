@@ -213,6 +213,8 @@
   });
 
   const rawMermaid = [];
+  const isMermaidSource = (source) =>
+    /^(?:(?:flowchart|graph)\s+(?:TB|TD|BT|RL|LR)\b|(?:sequenceDiagram|classDiagram(?:-v2)?|stateDiagram(?:-v2)?|erDiagram|journey|gantt|gitGraph|requirementDiagram|mindmap)\b)/i.test(source.trim());
   document.querySelectorAll(".mermaid").forEach((element) => {
     if (!element.querySelector("svg") && element.textContent?.trim()) rawMermaid.push({ element, source: element.textContent.trim() });
   });
@@ -222,6 +224,15 @@
     element.className = "mermaid";
     code.closest("pre")?.replaceWith(element);
     rawMermaid.push({ element, source: code.textContent.trim() });
+  });
+  document.querySelectorAll("pre").forEach((pre) => {
+    if (pre.closest(".mermaid") || pre.querySelector("code.language-mermaid,code.lang-mermaid,code.language-mmd,code.lang-mmd")) return;
+    const source = pre.textContent?.trim() || "";
+    if (!isMermaidSource(source)) return;
+    const element = document.createElement("div");
+    element.className = "mermaid";
+    pre.replaceWith(element);
+    rawMermaid.push({ element, source });
   });
   let mermaidIndex = 0;
   let pendingMermaid = null;

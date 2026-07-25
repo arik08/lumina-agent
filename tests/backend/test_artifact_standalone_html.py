@@ -52,3 +52,19 @@ def test_mermaid_html_fragment_receives_runtime_at_the_end() -> None:
 
     assert downloaded.startswith(fragment)
     assert downloaded.rstrip().endswith(b"</script>")
+
+
+def test_bare_pre_mermaid_download_is_recovered_and_rendered() -> None:
+    source = (
+        b"<!doctype html><html><body><pre>\n"
+        b"flowchart TD\nA[Research] --> B[Report]\n"
+        b"</pre></body></html>"
+    )
+
+    downloaded = prepare_standalone_html_download(source, "text/html")
+
+    assert downloaded != source
+    assert b'data-lumina-standalone-mermaid="11.16.0"' in downloaded
+    assert b'const isMermaidSource = (source)' in downloaded
+    assert b'document.querySelectorAll("pre")' in downloaded
+    assert b'element.className = "mermaid"' in downloaded

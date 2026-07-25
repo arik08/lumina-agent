@@ -45,6 +45,10 @@ test("HTML Artifact preview bridge preserves clickable citations without cloning
 });
 
 test("HTML Artifact Mermaid blocks render sequentially through the bundled renderer", () => {
+  assert.match(appSource, /const isArtifactMermaidSource = \(source: string\) =>/);
+  assert.match(appSource, /document\.querySelectorAll<HTMLElement>\("pre"\)/);
+  assert.match(previewBridge, /const isMermaidSource = \(source\) =>/);
+  assert.match(previewBridge, /document\.querySelectorAll\("pre"\)/);
   assert.match(previewSource, /let renderQueue = Promise\.resolve\(\)/);
   assert.match(previewSource, /renderQueue = renderQueue\.then\(async \(\) =>/);
   assert.match(previewSource, /await import\("\.\/InteractiveResponse"\)/);
@@ -105,6 +109,10 @@ test("HTML Artifact reports prefer ECharts for numeric-dense interactive visuals
   assert.match(visualArtifactSkillSource, /call `resize\(\)` on viewport changes/);
   assert.match(visualArtifactSkillSource, /show a compact readable fallback if ECharts fails to load/);
   assert.match(visualArtifactSkillSource, /if a numeric-dense report has no real chart, return to the visual plan/);
+  assert.match(visualArtifactSkillSource, /title, subtitle, legend, and plot as separate non-overlapping vertical bands/);
+  assert.match(visualArtifactSkillSource, /table body text at least 14px/);
+  assert.match(visualArtifactSkillSource, /wrapping and horizontal overflow/);
+  assert.match(visualArtifactSkillSource, /Never put Mermaid source in a plain `pre` block/);
 });
 
 test("HTML Artifact reports do not connect nominal categories as trends", () => {

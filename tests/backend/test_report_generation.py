@@ -159,6 +159,10 @@ def test_create_report_schema_advertises_every_supported_format() -> None:
     assert "Tables, KPI cards, badges, and CSS progress bars" in html_description
     assert "pinned 6.x runtime" in html_description
     assert "no-script/load-failure fallback" in html_description
+    assert "separate non-overlapping vertical bands" in html_description
+    assert "at least 14px" in html_description
+    assert "horizontal overflow" in html_description
+    assert "plain `pre`" in html_description
 
 
 def test_create_report_schema_separates_html_from_structured_report_fields() -> None:
@@ -747,6 +751,10 @@ def test_selected_artifact_target_retries_short_report_and_exposes_separate_coun
     assert "masthead background may be full bleed" in system_text
     assert "Do not mix viewport-relative header padding such as 7vw" in system_text
     assert "Verify those axes at desktop and narrow widths" in system_text
+    assert "separate non-overlapping vertical bands" in system_text
+    assert "at least 14px" in system_text
+    assert "horizontal overflow" in system_text
+    assert "plain `pre`" in system_text
     extension_requirement = snapshot["toolExecutions"][0]["result"][
         "targetLengthCheck"
     ]

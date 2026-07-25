@@ -192,10 +192,14 @@ const artifactCitationMarkers = [
 ];
 
 const artifactMermaidCodeSelector = "pre > code.language-mermaid, pre > code.lang-mermaid, pre > code.language-mmd, pre > code.lang-mmd";
+const artifactMermaidCodeWithinPreSelector = "code.language-mermaid, code.lang-mermaid, code.language-mmd, code.lang-mmd";
+const isArtifactMermaidSource = (source: string) =>
+  /^(?:(?:flowchart|graph)\s+(?:TB|TD|BT|RL|LR)\b|(?:sequenceDiagram|classDiagram(?:-v2)?|stateDiagram(?:-v2)?|erDiagram|journey|gantt|gitGraph|requirementDiagram|mindmap)\b)/i.test(source.trim());
 
 function hasRawArtifactMermaid(source: string) {
   return /class=["'][^"']*\bmermaid\b/i.test(source)
-    || /class=["'][^"']*\b(?:language|lang)-(?:mermaid|mmd)\b/i.test(source);
+    || /class=["'][^"']*\b(?:language|lang)-(?:mermaid|mmd)\b/i.test(source)
+    || /<pre\b[^>]*>\s*(?:<code\b[^>]*>\s*)?(?:(?:flowchart|graph)\s+(?:TB|TD|BT|RL|LR)\b|(?:sequenceDiagram|classDiagram(?:-v2)?|stateDiagram(?:-v2)?|erDiagram|journey|gantt|gitGraph|requirementDiagram|mindmap)\b)/i.test(source);
 }
 
 function serializeArtifactHtml(document: Document, fullDocument: boolean, source: string) {
@@ -220,6 +224,14 @@ async function renderArtifactMermaidHtml(source: string) {
     const mermaidSource = (code.textContent ?? "").trim();
     const pre = code.closest("pre");
     if (!mermaidSource || !pre) return;
+    const target = document.createElement("div");
+    target.className = "mermaid";
+    tasks.push({ source: mermaidSource, target, replaceTarget: pre });
+  });
+  document.querySelectorAll<HTMLElement>("pre").forEach((pre) => {
+    if (pre.closest(".mermaid") || pre.querySelector(artifactMermaidCodeWithinPreSelector)) return;
+    const mermaidSource = (pre.textContent ?? "").trim();
+    if (!isArtifactMermaidSource(mermaidSource)) return;
     const target = document.createElement("div");
     target.className = "mermaid";
     tasks.push({ source: mermaidSource, target, replaceTarget: pre });
