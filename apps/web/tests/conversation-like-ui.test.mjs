@@ -8,8 +8,8 @@ const stylesSource = await readFile(new URL("../src/styles.css", import.meta.url
 const workspaceSource = await readFile(new URL("../src/use-lumina-workspace.ts", import.meta.url), "utf8");
 
 test("conversation like is available below favorite and drives the sidebar heart and filter", () => {
-  const favoritePosition = recentItemsSource.indexOf('item.isFavorite ? "즐겨찾기 해제"');
-  const likePosition = recentItemsSource.indexOf('item.isLiked ? "좋아요 취소"', favoritePosition);
+  const favoritePosition = recentItemsSource.indexOf('openMenuItem.isFavorite ? "즐겨찾기 해제"');
+  const likePosition = recentItemsSource.indexOf('openMenuItem.isLiked ? "좋아요 취소"', favoritePosition);
 
   assert.ok(favoritePosition >= 0 && likePosition > favoritePosition);
   assert.match(recentItemsSource, /item\.isLiked \? <Heart className="session-like"/);
@@ -52,6 +52,14 @@ test("always-visible recent-item actions keep breathing room in the heading", ()
 
 test("shared recent-item submenus close when another area is pressed", () => {
   assert.match(recentItemsSource, /document\.addEventListener\("pointerdown", closeOutsideSubmenu\)/);
-  assert.match(recentItemsSource, /clickedItem\?\.dataset\.recentItemId === menuId/);
+  assert.match(recentItemsSource, /menuRef\.current\?\.contains\(target\) \|\| menuTriggerRef\.current\?\.contains\(target\)/);
   assert.match(recentItemsSource, /setMenuId\(null\);[\s\S]*setMoveMenuId\(null\);[\s\S]*setDeleteArmedId\(null\);/);
+});
+
+test("recent-item menu uses a viewport-aware global layer above the account footer", () => {
+  assert.match(recentItemsSource, /createPortal\([\s\S]*className=\{`session-options-menu session-options-menu-global/);
+  assert.match(recentItemsSource, /querySelector<HTMLElement>\("\.sidebar-footer"\)/);
+  assert.match(recentItemsSource, /menuRect\.height > availableBelow && availableAbove > availableBelow/);
+  assert.match(recentItemsSource, /document\.body/);
+  assert.match(stylesSource, /\.session-options-menu-global \{ position: fixed; z-index: 500; \}/);
 });

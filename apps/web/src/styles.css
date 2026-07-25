@@ -542,10 +542,6 @@ button:focus-visible, textarea:focus-visible, a:focus-visible {
 .session-options-button[aria-expanded="true"] { opacity: 1; pointer-events: auto; transform: scale(1); }
 .session-options-button:hover, .session-options-button[aria-expanded="true"] { background: rgba(32, 36, 44, 0.075); color: var(--ink); }
 .session-options-menu {
-  position: absolute;
-  z-index: 35;
-  top: calc(100% - 1px);
-  right: 1px;
   display: grid;
   width: max-content;
   max-width: min(280px, calc(100vw - 20px));
@@ -555,6 +551,7 @@ button:focus-visible, textarea:focus-visible, a:focus-visible {
   background: var(--menu-surface);
   box-shadow: 0 9px 24px rgba(30, 36, 45, 0.12);
 }
+.session-options-menu-global { position: fixed; z-index: 500; }
 .session-options-menu button {
   display: flex;
   width: 100%;
@@ -3171,6 +3168,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .file-tree-context-menu.theme-dark,
 .global-tooltip-layer.theme-dark,
 .lumina-select-menu.theme-dark,
+.session-options-menu.theme-dark,
 .response-zoom-backdrop.theme-dark,
 .app-shell.theme-dark,
 .shared-viewer.theme-dark,
@@ -3282,14 +3280,17 @@ button:disabled { cursor: default; opacity: 0.5; }
 .theme-dark .chat-actions button:hover,
 .theme-dark .artifact-header > div:last-child > button:hover { background: rgba(255, 255, 255, 0.075); }
 .theme-dark .artifact-header .artifact-open-window-control:hover { background: rgba(255, 255, 255, 0.075); }
-.theme-dark .session-options-menu button { color: #d5dae1; }
+.theme-dark .session-options-menu button,
+.session-options-menu.theme-dark button { color: #d5dae1; }
 .theme-dark .session-options-menu button:hover,
+.session-options-menu.theme-dark button:hover,
 .theme-dark .account-menu > button:hover,
 .theme-dark .account-provider-toggle:hover,
 .theme-dark .account-model-checklist > button:hover { background: #292d34; }
 .theme-dark .sidebar-footer .account-provider-checkbox:not(.is-checked),
 .theme-dark .account-model-checkbox:not(.is-checked) { border-color: #596271; }
-.theme-dark .session-options-menu .is-danger { color: #e37b7d; }
+.theme-dark .session-options-menu .is-danger,
+.session-options-menu.theme-dark .is-danger { color: #e37b7d; }
 .theme-dark .chat-header { background: rgba(23, 25, 29, 0.98); }
 .theme-dark .notification-badge { border-color: var(--surface); }
 .theme-dark .notification-panel { box-shadow: 0 16px 38px rgba(0, 0, 0, 0.32); }

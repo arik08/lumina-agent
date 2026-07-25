@@ -1,4 +1,5 @@
-import { memo, useEffect, useMemo, useRef, useState, type UIEventHandler } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type UIEventHandler } from "react";
+import { createPortal } from "react-dom";
 import {
   AlertCircle,
   Check,
@@ -36,6 +37,16 @@ interface SidebarProjectOption {
   id: string;
   name: string;
 }
+
+interface SessionMenuPosition {
+  left: number;
+  top: number;
+  opensAbove: boolean;
+  themeDark: boolean;
+}
+
+const SESSION_MENU_GAP = 1;
+const SESSION_MENU_VIEWPORT_MARGIN = 8;
 
 interface SidebarRecentItemsProps {
   items: SidebarRecentItem[];
@@ -101,7 +112,10 @@ export const SidebarRecentItems = memo(function SidebarRecentItems({
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkDeleteArmed, setBulkDeleteArmed] = useState(false);
   const [titleFilterOpen, setTitleFilterOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState<SessionMenuPosition | null>(null);
   const titleFilterInputRef = useRef<HTMLInputElement>(null);
+  const menuTriggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const titleFiltering = Boolean(titleFilterQuery?.trim());
   const visibleItems = useMemo(
     () => items.filter((item) => !likedOnly || item.isLiked),
@@ -109,6 +123,44 @@ export const SidebarRecentItems = memo(function SidebarRecentItems({
   );
   const virtualList = useFixedVirtualList(visibleItems.length, 34, { threshold: 60, overscan: 8 });
   const renderedItems = visibleItems.slice(virtualList.start, virtualList.end);
+  const openMenuItem = menuId ? visibleItems.find((item) => item.id === menuId) : undefined;
+
+  const positionSessionMenu = useCallback(() => {
+    const trigger = menuTriggerRef.current;
+    const menu = menuRef.current;
+    if (!trigger?.isConnected || !menu) return;
+    const triggerRect = trigger.getBoundingClientRect();
+    const menuRect = menu.getBoundingClientRect();
+    const footerTop = trigger.closest(".sidebar")
+      ?.querySelector<HTMLElement>(".sidebar-footer")
+      ?.getBoundingClientRect().top ?? window.innerHeight;
+    const availableBelow = Math.max(0, footerTop - triggerRect.bottom - SESSION_MENU_GAP);
+    const availableAbove = Math.max(0, triggerRect.top - SESSION_MENU_GAP - SESSION_MENU_VIEWPORT_MARGIN);
+    const opensAbove = menuRect.height > availableBelow && availableAbove > availableBelow;
+    const left = Math.min(
+      Math.max(SESSION_MENU_VIEWPORT_MARGIN, triggerRect.right - menuRect.width),
+      Math.max(SESSION_MENU_VIEWPORT_MARGIN, window.innerWidth - menuRect.width - SESSION_MENU_VIEWPORT_MARGIN),
+    );
+    const top = opensAbove
+      ? Math.max(SESSION_MENU_VIEWPORT_MARGIN, triggerRect.top - SESSION_MENU_GAP - menuRect.height)
+      : Math.min(
+        triggerRect.bottom + SESSION_MENU_GAP,
+        window.innerHeight - SESSION_MENU_VIEWPORT_MARGIN - menuRect.height,
+      );
+    const nextPosition = {
+      left,
+      top,
+      opensAbove,
+      themeDark: Boolean(trigger.closest(".theme-dark")),
+    };
+    setMenuPosition((current) => current
+      && current.left === nextPosition.left
+      && current.top === nextPosition.top
+      && current.opensAbove === nextPosition.opensAbove
+      && current.themeDark === nextPosition.themeDark
+      ? current
+      : nextPosition);
+  }, []);
 
   useEffect(() => {
     if (!titleFilterOpen) return;
@@ -123,6 +175,26 @@ export const SidebarRecentItems = memo(function SidebarRecentItems({
     });
     if (menuId && !ids.has(menuId)) setMenuId(null);
   }, [items, menuId]);
+
+  useLayoutEffect(() => {
+    if (!menuId) {
+      setMenuPosition(null);
+      return;
+    }
+    positionSessionMenu();
+    const reposition = () => positionSessionMenu();
+    const observer = typeof ResizeObserver === "function" && menuRef.current
+      ? new ResizeObserver(reposition)
+      : null;
+    if (menuRef.current) observer?.observe(menuRef.current);
+    window.addEventListener("resize", reposition);
+    window.addEventListener("scroll", reposition, true);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
+    };
+  }, [menuId, moveMenuId, positionSessionMenu, projects.length]);
 
   useEffect(() => {
     const close = (event: KeyboardEvent) => {
@@ -140,8 +212,7 @@ export const SidebarRecentItems = memo(function SidebarRecentItems({
     if (!menuId && !bulkMoveOpen) return undefined;
     const closeOutsideSubmenu = (event: PointerEvent) => {
       const target = event.target instanceof Element ? event.target : null;
-      const clickedItem = target?.closest<HTMLElement>(".session-item");
-      if (menuId && clickedItem?.dataset.recentItemId === menuId) return;
+      if (menuId && target && (menuRef.current?.contains(target) || menuTriggerRef.current?.contains(target))) return;
       if (bulkMoveOpen && target?.closest(".bulk-session-heading-actions")) return;
       setMenuId(null);
       setMoveMenuId(null);
@@ -292,28 +363,46 @@ export const SidebarRecentItems = memo(function SidebarRecentItems({
               event.stopPropagation();
               setMoveMenuId(null);
               setDeleteArmedId(null);
-              setMenuId((current) => current === item.id ? null : item.id);
+              if (menuId === item.id) {
+                setMenuId(null);
+                menuTriggerRef.current = null;
+                return;
+              }
+              menuTriggerRef.current = event.currentTarget;
+              setMenuPosition(null);
+              setMenuId(item.id);
             }}><MoreVertical size={15} /></button>}
-            {!bulkMode && menuId === item.id && (
-              <div className="session-options-menu" role="menu" onClick={(event) => event.stopPropagation()}>
-                <button type="button" role="menuitem" onClick={() => { setMenuId(null); void onToggleFavorite(item.id); }}>{item.isFavorite ? <PinOff size={14} /> : <Pin size={14} />} {item.isFavorite ? "즐겨찾기 해제" : "즐겨찾기"}</button>
-                <button type="button" role="menuitem" onClick={() => { setMenuId(null); void onToggleLiked(item.id); }}><Heart size={14} fill={item.isLiked ? "currentColor" : "none"} /> {item.isLiked ? "좋아요 취소" : "좋아요"}</button>
-                <button type="button" role="menuitem" onClick={() => { setTitleDraft(item.title); setEditingId(item.id); setMenuId(null); }}><Pencil size={14} /> 세션명 변경</button>
-                <button type="button" role="menuitem" onClick={() => setMoveMenuId((current) => current === item.id ? null : item.id)}><FolderInput size={14} /> 프로젝트 변경</button>
-                {moveMenuId === item.id && (
-                  <div className="session-project-options">
-                    {projects.filter((project) => project.id !== item.projectId).map((project) => <button type="button" key={project.id} onClick={async () => { if (await onMove(item.id, project.id)) setMenuId(null); }}><Folder size={13} /> {project.name}</button>)}
-                    {projects.length === 0 && <span>이동할 프로젝트가 없습니다.</span>}
-                  </div>
-                )}
-                <button className={`is-danger ${deleteArmedId === item.id ? "is-armed" : ""}`} type="button" role="menuitem" disabled={deleteBusyId === item.id} onClick={() => void deleteOne(item.id)}>{deleteBusyId === item.id ? <LoaderCircle className="is-running" size={14} /> : deleteArmedId === item.id ? <AlertCircle size={14} /> : <Trash2 size={14} />} {deleteArmedId === item.id ? "삭제 확인" : "삭제"}</button>
-              </div>
-            )}
           </div>
         ))}
         </div>
         {!loading && !titleFilterLoading && visibleItems.length === 0 && <p className="sidebar-empty">{likedOnly ? likedEmptyText : titleFiltering ? (filterEmptyText ?? "일치하는 항목이 없습니다.") : emptyText}</p>}
       </div>
+      {openMenuItem && createPortal(
+        <div
+          className={`session-options-menu session-options-menu-global${menuPosition?.opensAbove ? " opens-above" : ""}${menuPosition?.themeDark ? " theme-dark" : ""}`}
+          ref={menuRef}
+          role="menu"
+          style={{
+            left: menuPosition?.left ?? 0,
+            top: menuPosition?.top ?? 0,
+            visibility: menuPosition ? "visible" : "hidden",
+          } as CSSProperties}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button type="button" role="menuitem" onClick={() => { setMenuId(null); void onToggleFavorite(openMenuItem.id); }}>{openMenuItem.isFavorite ? <PinOff size={14} /> : <Pin size={14} />} {openMenuItem.isFavorite ? "즐겨찾기 해제" : "즐겨찾기"}</button>
+          <button type="button" role="menuitem" onClick={() => { setMenuId(null); void onToggleLiked(openMenuItem.id); }}><Heart size={14} fill={openMenuItem.isLiked ? "currentColor" : "none"} /> {openMenuItem.isLiked ? "좋아요 취소" : "좋아요"}</button>
+          <button type="button" role="menuitem" onClick={() => { setTitleDraft(openMenuItem.title); setEditingId(openMenuItem.id); setMenuId(null); }}><Pencil size={14} /> 세션명 변경</button>
+          <button type="button" role="menuitem" onClick={() => setMoveMenuId((current) => current === openMenuItem.id ? null : openMenuItem.id)}><FolderInput size={14} /> 프로젝트 변경</button>
+          {moveMenuId === openMenuItem.id && (
+            <div className="session-project-options">
+              {projects.filter((project) => project.id !== openMenuItem.projectId).map((project) => <button type="button" key={project.id} onClick={async () => { if (await onMove(openMenuItem.id, project.id)) setMenuId(null); }}><Folder size={13} /> {project.name}</button>)}
+              {projects.length === 0 && <span>이동할 프로젝트가 없습니다.</span>}
+            </div>
+          )}
+          <button className={`is-danger ${deleteArmedId === openMenuItem.id ? "is-armed" : ""}`} type="button" role="menuitem" disabled={deleteBusyId === openMenuItem.id} onClick={() => void deleteOne(openMenuItem.id)}>{deleteBusyId === openMenuItem.id ? <LoaderCircle className="is-running" size={14} /> : deleteArmedId === openMenuItem.id ? <AlertCircle size={14} /> : <Trash2 size={14} />} {deleteArmedId === openMenuItem.id ? "삭제 확인" : "삭제"}</button>
+        </div>,
+        document.body,
+      )}
     </section>
   );
 });
