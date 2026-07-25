@@ -1,14 +1,18 @@
-import { Code2, Download, ExternalLink, Eye } from "lucide-react";
+import { BookPlus, Code2, Download, ExternalLink, Eye, LoaderCircle } from "lucide-react";
 
 import { ShareActionIcon } from "./ActionIcons";
 
 interface ArtifactPreviewActionsProps {
   sourceActive: boolean;
   sourceDisabled?: boolean;
+  knowledgeDisabled?: boolean;
+  knowledgeSaving?: boolean;
+  knowledgeSaved?: boolean;
   shareDisabled?: boolean;
   downloadDisabled?: boolean;
   openWindowHref?: string | null;
   onToggleSource: () => void | Promise<void>;
+  onSaveKnowledge?: () => void | Promise<void>;
   onShare: () => void | Promise<void>;
   onDownload: () => void | Promise<void>;
 }
@@ -16,10 +20,14 @@ interface ArtifactPreviewActionsProps {
 export function ArtifactPreviewActions({
   sourceActive,
   sourceDisabled = false,
+  knowledgeDisabled = false,
+  knowledgeSaving = false,
+  knowledgeSaved = false,
   shareDisabled = false,
   downloadDisabled = false,
   openWindowHref = null,
   onToggleSource,
+  onSaveKnowledge,
   onShare,
   onDownload,
 }: ArtifactPreviewActionsProps) {
@@ -34,6 +42,19 @@ export function ArtifactPreviewActions({
     >
       {sourceActive ? <Eye size={17} /> : <Code2 size={17} />}
     </button>
+    {onSaveKnowledge && (
+      <button
+        className={`artifact-knowledge-control tooltip-control ${knowledgeSaving ? "is-saving" : knowledgeSaved ? "is-saved" : ""}`}
+        type="button"
+        aria-label="지식 그래프 등록"
+        aria-pressed={knowledgeSaved}
+        data-tooltip={knowledgeDisabled ? "텍스트 소스가 있는 Artifact만 등록할 수 있습니다." : knowledgeSaved ? "지식 그래프 등록 완료" : "지식 그래프 등록"}
+        disabled={knowledgeDisabled || knowledgeSaving || knowledgeSaved}
+        onClick={() => void onSaveKnowledge()}
+      >
+        {knowledgeSaving ? <LoaderCircle className="is-running" size={17} /> : <BookPlus size={17} />}
+      </button>
+    )}
     <button
       className="tooltip-control"
       type="button"

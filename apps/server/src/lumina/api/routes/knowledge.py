@@ -11,6 +11,7 @@ from ...audit import record_audit
 from ...authorization import require_project
 from ...db import get_db
 from ...config import Settings, get_settings
+from ...storage import ManagedLocalStorage
 from ...knowledge.schemas import (
     KnowledgeBatchTagRequest,
     KnowledgeDocumentTagsUpdate,
@@ -37,6 +38,7 @@ from ...knowledge.service import (
     require_knowledge_document,
     resolve_knowledge_tag_proposal,
     resolve_knowledge_tag_proposals,
+    save_artifact_as_knowledge_document,
     save_message_as_knowledge_document,
     space_payload,
     tag_untagged_knowledge_documents,
@@ -50,6 +52,12 @@ from ..dependencies import AuthContext, get_current_user, require_csrf
 
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
+
+
+def _artifact_storage(settings: Settings) -> ManagedLocalStorage:
+    if settings.artifacts_dir is None:
+        raise RuntimeError("LUMINA_ARTIFACTS_DIR is not configured")
+    return ManagedLocalStorage(settings.artifacts_dir)
 
 
 @router.get("/spaces")
@@ -327,6 +335,44 @@ def post_knowledge_document_from_message(
         actor=context.user,
         request_id=getattr(request.state, "request_id", None),
         metadata={"message_id": message_id},
+    )
+    db.commit()
+    db.refresh(document)
+    response.status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+    return {**document_payload(db, document), "created": created}
+
+
+@router.post("/documents/from-artifact/{artifact_id}")
+def post_knowledge_document_from_artifact(
+    artifact_id: str,
+    request: Request,
+    response: Response,
+    version: int | None = Query(default=None, ge=1),
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    document, created = save_artifact_as_knowledge_document(
+        db,
+        _artifact_storage(settings),
+        context.user,
+        artifact_id,
+        version_number=version,
+    )
+    record_audit(
+        db,
+        action="knowledge_document_saved" if created else "knowledge_document_reused",
+        target_type="knowledge_document",
+        target_id=document.id,
+        result="success",
+        actor=context.user,
+        request_id=getattr(request.state, "request_id", None),
+        metadata={
+            "artifact_id": artifact_id,
+            "artifact_version": version,
+            "space_id": document.space_id,
+            "project_id": document.project_id,
+        },
     )
     db.commit()
     db.refresh(document)

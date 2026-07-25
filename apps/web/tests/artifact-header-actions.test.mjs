@@ -13,7 +13,7 @@ test("artifact header keeps its actions visible above the preview", async () => 
     readFile(stylesheetPath, "utf8"),
   ]);
 
-  for (const label of ["소스코드 보기", "공유 링크 복사", "다운로드", "새 창에서 열기"]) {
+  for (const label of ["소스코드 보기", "지식 그래프 등록", "공유 링크 복사", "다운로드", "새 창에서 열기"]) {
     assert.ok(actions.includes(label), `missing shared Artifact preview action: ${label}`);
   }
   for (const label of ["본문 수정", "전체화면", "Artifact 닫기"]) {
@@ -32,6 +32,10 @@ test("artifact header keeps its actions visible above the preview", async () => 
   assert.match(app, /const \[summary, initialVersion, savedDraft\] = await Promise\.all\(\[[\s\S]*?api\.artifacts\.getVersion\([\s\S]*?artifact\.mimeType !== "text\/html"[\s\S]*?api\.artifacts\.getDraft\(artifact\.id\)/);
   assert.match(app, /artifactVersion\?\.sourceAvailable/);
   assert.match(app, /<ArtifactPreviewActions[\s\S]*?shareDisabled=\{!artifactSummary\?\.conversationId\}/);
+  assert.match(app, /knowledgeDisabled=\{!artifactHasTextSource \|\| artifactLoading\}/);
+  assert.match(app, /saveKnowledgeDocumentFromArtifact\(artifactSummary\.id, artifactVersion\.version\)/);
+  assert.match(actions, /artifact-knowledge-control[\s\S]*?knowledgeSaving[\s\S]*?knowledgeSaved/);
+  assert.match(stylesheet, /\.artifact-header > div:last-child > \.artifact-knowledge-control\.is-saved:disabled[\s\S]*?color:\s*var\(--success\)/);
   assert.match(app, /url\.searchParams\.set\("artifact", artifactSummary\.id\)/);
   assert.match(app, /url\.searchParams\.set\("version", String\(artifactDownloadVersion \?\? artifactSummary\.currentVersion\)\)/);
   assert.match(app, /downloadDisabled=\{!artifactSummary \|\| artifactDownloadVersion === null\}/);

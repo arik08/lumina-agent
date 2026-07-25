@@ -1827,6 +1827,13 @@ export async function deleteKnowledgeDocument(documentId: string, signal?: Abort
 export async function saveKnowledgeDocumentFromMessage(messageId: string, signal?: AbortSignal) {
   return request<KnowledgeDocument>(`/knowledge/documents/from-message/${encodeURIComponent(messageId)}`, { method: "POST", signal });
 }
+export async function saveKnowledgeDocumentFromArtifact(artifactId: string, version: number, signal?: AbortSignal) {
+  return request<KnowledgeDocument>(`/knowledge/documents/from-artifact/${encodeURIComponent(artifactId)}`, {
+    method: "POST",
+    query: { version },
+    signal,
+  });
+}
 export async function batchTagKnowledgeDocuments(payload: KnowledgeBatchTagRequest, signal?: AbortSignal) {
   return request<KnowledgeBatchTagResult>("/knowledge/documents/tag-batch", { method: "POST", body: payload, signal });
 }

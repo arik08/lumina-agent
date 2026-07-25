@@ -83,7 +83,7 @@ import { copyText } from "./clipboard";
 import { clipboardTextWithLineBreaks } from "./composer-clipboard";
 import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent as ReactUIEvent } from "react";
 import { createPortal } from "react-dom";
-import { api, ApiError, artifactStandalonePreviewUrl, attachmentContentUrl } from "./api";
+import { api, ApiError, artifactStandalonePreviewUrl, attachmentContentUrl, saveKnowledgeDocumentFromArtifact } from "./api";
 import { deepAnalysisSidebarApi } from "./feature-api";
 import { isTerminalRunStatus } from "./run-status";
 import { IsolatedSyntaxTextarea, SyntaxCode } from "./components/SyntaxCode";
@@ -998,6 +998,8 @@ function App() {
   const [artifactAiSubmitting, setArtifactAiSubmitting] = useState(false);
   const [artifactAiStatus, setArtifactAiStatus] = useState<string | null>(null);
   const [artifactSaveBusy, setArtifactSaveBusy] = useState<"draft" | "version" | null>(null);
+  const [artifactKnowledgeSaving, setArtifactKnowledgeSaving] = useState(false);
+  const [artifactKnowledgeSavedKey, setArtifactKnowledgeSavedKey] = useState<string | null>(null);
   const titleCommitRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const composerInputRef = useRef<HTMLTextAreaElement>(null);
@@ -1860,6 +1862,9 @@ function App() {
     ? [...new Set(artifactSummary.versions?.length ? artifactSummary.versions : [artifactSummary.currentVersion])].sort((left, right) => right - left)
     : [];
   const artifactDownloadVersion = artifactVersion?.version ?? artifactSummary?.currentVersion ?? null;
+  const artifactKnowledgeKey = artifactSummary && artifactVersion
+    ? `${artifactSummary.id}:${artifactVersion.version}`
+    : null;
   const artifactPreviewUrl = artifactVersion?.previewUrl
     ?? (artifactSummary && artifactVersion && ["application/pdf", "text/html"].includes(artifactVersion.mimeType)
       ? `/api/artifacts/${encodeURIComponent(artifactSummary.id)}/preview?version=${encodeURIComponent(String(artifactVersion.version))}`
@@ -2632,6 +2637,8 @@ function App() {
     setArtifactAiComments([]);
     setArtifactAiStatus(null);
     setArtifactDraftEtag(undefined);
+    setArtifactKnowledgeSaving(false);
+    setArtifactKnowledgeSavedKey(null);
     const targetVersion = requestedVersion ?? artifact.currentVersion;
     try {
       const [summary, initialVersion, savedDraft] = await Promise.all([
@@ -2904,6 +2911,21 @@ function App() {
       await copyText(url.toString());
     } catch (error) {
       showToast(error instanceof Error ? error.message : "공유 링크를 만들지 못했습니다.");
+    }
+  };
+
+  const saveArtifactToKnowledge = async () => {
+    if (!artifactSummary || !artifactVersion?.sourceAvailable || artifactKnowledgeSaving) return;
+    const key = `${artifactSummary.id}:${artifactVersion.version}`;
+    setArtifactKnowledgeSaving(true);
+    try {
+      await saveKnowledgeDocumentFromArtifact(artifactSummary.id, artifactVersion.version);
+      setArtifactKnowledgeSavedKey(key);
+      showToast("Artifact를 지식 그래프에 등록했습니다.");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Artifact를 지식 그래프에 등록하지 못했습니다.");
+    } finally {
+      setArtifactKnowledgeSaving(false);
     }
   };
 
@@ -4284,6 +4306,9 @@ function App() {
               <ArtifactPreviewActions
                 sourceActive={artifactTab === "source"}
                 sourceDisabled={!artifactHasTextSource}
+                knowledgeDisabled={!artifactHasTextSource || artifactLoading}
+                knowledgeSaving={artifactKnowledgeSaving}
+                knowledgeSaved={artifactKnowledgeKey !== null && artifactKnowledgeSavedKey === artifactKnowledgeKey}
                 shareDisabled={!artifactSummary?.conversationId}
                 downloadDisabled={!artifactSummary || artifactDownloadVersion === null}
                 openWindowHref={
@@ -4292,6 +4317,7 @@ function App() {
                     : null
                 }
                 onToggleSource={toggleArtifactTab}
+                onSaveKnowledge={saveArtifactToKnowledge}
                 onShare={shareArtifact}
                 onDownload={downloadArtifact}
               />

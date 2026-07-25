@@ -10,9 +10,11 @@ from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from ..api.errors import ApiProblem
+from ..artifacts.service import current_artifact_version, require_artifact
 from ..authorization import require_project
 from ..messages.service import require_message
 from ..models import (
+    ArtifactVersion,
     Conversation,
     KnowledgeDocument,
     KnowledgeDocumentTag,
@@ -25,6 +27,8 @@ from ..models import (
     utc_now,
 )
 from ..providers.types import ProviderAdapter
+from ..storage import ManagedLocalStorage
+from ..tools.web import WebToolError, extract_readable_html
 from .schemas import (
     KnowledgeDocumentTagsUpdate,
     KnowledgeSpaceCreate,
@@ -329,6 +333,94 @@ def save_message_as_knowledge_document(
         body=body,
         researched_at=(run.started_at if run and run.started_at else message.created_at),
         citations_json=_citation_snapshot(message.metadata_json),
+        content_digest=sha256(body.encode("utf-8")).hexdigest(),
+        status="active",
+    )
+    db.add(document)
+    db.flush()
+    return document, True
+
+
+def save_artifact_as_knowledge_document(
+    db: Session,
+    storage: ManagedLocalStorage,
+    user: User,
+    artifact_id: str,
+    *,
+    version_number: int | None = None,
+) -> tuple[KnowledgeDocument, bool]:
+    artifact = require_artifact(db, user, artifact_id)
+    version = (
+        current_artifact_version(db, artifact)
+        if version_number is None
+        else db.scalar(
+            select(ArtifactVersion).where(
+                ArtifactVersion.artifact_id == artifact.id,
+                ArtifactVersion.version_number == version_number,
+            )
+        )
+    )
+    if version is None:
+        raise ApiProblem(404, "version_not_found", "Artifact 버전을 찾을 수 없습니다.")
+
+    existing = db.scalar(
+        select(KnowledgeDocument).where(
+            KnowledgeDocument.source_artifact_version_id == version.id,
+            KnowledgeDocument.owner_user_id == user.id,
+        )
+    )
+    if existing is not None:
+        if existing.status != "active":
+            existing.status = "active"
+            db.flush()
+        return existing, False
+
+    if not (
+        artifact.mime_type.startswith("text/")
+        or artifact.mime_type in {"application/json", "application/xml"}
+    ):
+        raise ApiProblem(
+            409,
+            "knowledge_artifact_unsupported",
+            "텍스트 소스가 있는 Artifact만 지식 그래프에 등록할 수 있습니다.",
+        )
+    raw = storage.read_bytes(
+        version.storage_key, expected_sha256=version.content_hash
+    )
+    source = raw.decode("utf-8", errors="replace")
+    body = source.strip()
+    title = artifact.display_name
+    if artifact.mime_type in {"text/html", "application/xhtml+xml"}:
+        try:
+            html_title, body = extract_readable_html(source)
+        except WebToolError as exc:
+            raise ApiProblem(
+                409,
+                "knowledge_artifact_unreadable",
+                "HTML Artifact 본문을 읽을 수 없습니다.",
+            ) from exc
+        title = html_title or title
+    body = body.strip()
+    if not body:
+        raise ApiProblem(
+            409,
+            "knowledge_document_empty",
+            "저장할 Artifact 본문이 없습니다.",
+        )
+
+    space = ensure_default_space(db, user)
+    document = KnowledgeDocument(
+        space_id=space.id,
+        project_id=artifact.project_id,
+        owner_user_id=user.id,
+        source_run_id=artifact.source_run_id,
+        source_conversation_id=artifact.conversation_id,
+        source_artifact_id=artifact.id,
+        source_artifact_version_id=version.id,
+        title=_document_title(title, body),
+        body=body,
+        researched_at=version.created_at,
+        citations_json=[],
         content_digest=sha256(body.encode("utf-8")).hexdigest(),
         status="active",
     )
@@ -1313,6 +1405,7 @@ __all__ = [
     "resolve_knowledge_tag_proposal",
     "resolve_knowledge_tag_proposals",
     "save_message_as_knowledge_document",
+    "save_artifact_as_knowledge_document",
     "space_payload",
     "tag_untagged_knowledge_documents",
     "create_knowledge_tag",

@@ -2026,6 +2026,12 @@ class KnowledgeDocument(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     source_conversation_id: Mapped[str | None] = mapped_column(
         ForeignKey("conversations.id", ondelete="SET NULL"), index=True
     )
+    source_artifact_id: Mapped[str | None] = mapped_column(
+        ForeignKey("artifacts.id", ondelete="SET NULL"), index=True
+    )
+    source_artifact_version_id: Mapped[str | None] = mapped_column(
+        ForeignKey("artifact_versions.id", ondelete="SET NULL"), unique=True, index=True
+    )
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     researched_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
