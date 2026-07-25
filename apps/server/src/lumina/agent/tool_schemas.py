@@ -451,14 +451,13 @@ _EXTEND_REPORT_TOOL_SCHEMA: dict[str, Any] = {
     "function": {
         "name": "extend_report",
         "description": (
-            "Append new substantive Markdown content to the report Artifact saved by a "
-            "preceding create_report result whose status is needs_expansion. Lumina reads "
-            "the current Markdown version and combines it with this fragment on the server, "
-            "preserving all existing content and citations. HTML reports must instead be "
-            "recomposed as a complete coherent document through create_report so added depth "
-            "is integrated into the existing visual structure. Do not use this tool unless "
-            "create_report or a previous extend_report explicitly requested another Markdown "
-            "expansion."
+            "Extend a report Artifact saved by a preceding create_report result whose status "
+            "is needs_expansion without resending the whole document. For HTML, replace one "
+            "existing element by its target_id with a complete upgraded element that preserves "
+            "its evidence and citations while adding useful visual structure. Lumina keeps "
+            "every byte outside that element unchanged. For Markdown, append only new sections. "
+            "Do not use this tool unless create_report or a previous extend_report explicitly "
+            "requested another expansion."
         ),
         "parameters": {
             "type": "object",
@@ -468,10 +467,20 @@ _EXTEND_REPORT_TOOL_SCHEMA: dict[str, Any] = {
                     "minLength": 1,
                     "maxLength": 200000,
                     "description": (
-                        "Only the additional Markdown sections to append. Do not submit HTML "
-                        "fragments or a complete replacement document through this tool."
+                        "For HTML, one complete replacement element carrying the same target_id "
+                        "as the existing element; do not include doctype, html, head, or body. "
+                        "For Markdown, only the additional Markdown sections to append."
                     ),
-                }
+                },
+                "target_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "description": (
+                        "Required for HTML: the exact id of one existing section, article, div, "
+                        "aside, or other closed element to replace. Omit for Markdown."
+                    ),
+                },
             },
             "required": ["content"],
             "additionalProperties": False,

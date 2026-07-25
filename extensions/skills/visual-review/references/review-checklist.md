@@ -14,7 +14,7 @@
 - Similar elements have consistent alignment, spacing, and sizing.
 - On a gray or tinted report canvas, major headings and introductory copy sit inside a clear section surface or intentional section band instead of floating bare between detached cards.
 - No major analytical section runs for four or more paragraphs without a chart, table, diagram, timeline, matrix, callout, evidence-card group, or structured list unless uninterrupted prose is explicitly justified as clearer.
-- Added depth is integrated into the document's existing visual hierarchy; a chain of new prose sections does not continue after the executive conclusion.
+- Added depth replaces targeted sections inside the existing visual hierarchy while preserving the rest of the report; a chain of new prose sections does not continue after the executive conclusion.
 - Charts are labeled and not over-decorated.
 - Tables are used for exact values.
 

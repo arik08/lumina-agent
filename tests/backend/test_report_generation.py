@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from lumina.agent.executor import (
     _REPORT_TOOL_SCHEMA,
     _append_report_fragment,
+    _replace_html_report_element,
     local_run_executor,
 )
 from lumina.agent.tool_schemas import (
@@ -196,24 +197,43 @@ def test_large_html_report_schema_keeps_html_source_required_without_legacy_fiel
     assert "sections" not in parameters["oneOf"][0]["required"]
 
 
-def test_extend_report_appends_fragments_without_accepting_full_html() -> None:
+def test_extend_report_replaces_one_html_element_and_appends_markdown() -> None:
     html = (
         "<!doctype html><html><head><title>원본</title></head>"
-        "<body><main><h1>원본</h1></main></body></html>"
+        "<body><main><section id='analysis'><h2>원본 분석</h2><p>근거</p>"
+        "</section><footer id='conclusion'>결론</footer></main></body></html>"
     )
-    fragment = "<section id='added'><h2>추가 분석</h2></section>"
+    replacement = (
+        "<section id='analysis'><h2>시각화한 분석</h2>"
+        "<svg aria-label='비교 차트'></svg><p>근거</p></section>"
+    )
 
-    extended = _append_report_fragment(html, fragment, mime_type="text/html")
+    extended = _replace_html_report_element(
+        html,
+        replacement,
+        target_id="analysis",
+    )
 
-    assert extended.startswith(html.split("</main>", 1)[0])
-    assert f"{fragment}\n</main>" in extended
+    assert extended == html.replace(
+        "<section id='analysis'><h2>원본 분석</h2><p>근거</p></section>",
+        replacement,
+    )
+    assert "<footer id='conclusion'>결론</footer>" in extended
     assert extended.count("<!doctype html>") == 1
-    with pytest.raises(ValueError, match="body fragments only"):
-        _append_report_fragment(
+    with pytest.raises(ValueError, match="exactly one root element"):
+        _replace_html_report_element(
             html,
-            "<html><body><p>전체 문서 재생성</p></body></html>",
-            mime_type="text/html",
+            "<section id='other'>다른 절</section>",
+            target_id="analysis",
         )
+    with pytest.raises(ValueError, match="exactly one element"):
+        _replace_html_report_element(
+            html,
+            replacement,
+            target_id="missing",
+        )
+    with pytest.raises(ValueError, match="Only Markdown"):
+        _append_report_fragment(html, replacement, mime_type="text/html")
     assert _append_report_fragment(
         "# 원본\n",
         "## 추가 분석",
@@ -221,6 +241,9 @@ def test_extend_report_appends_fragments_without_accepting_full_html() -> None:
     ) == "# 원본\n\n## 추가 분석\n"
     assert _EXTEND_REPORT_TOOL_SCHEMA["function"]["parameters"]["required"] == [
         "content"
+    ]
+    assert "target_id" in _EXTEND_REPORT_TOOL_SCHEMA["function"]["parameters"][
+        "properties"
     ]
 
 
@@ -565,20 +588,21 @@ def test_selected_artifact_target_retries_short_report_and_exposes_separate_coun
     )
     short_html = (
         "<!doctype html><html lang='ko'><head><title>짧은 보고서</title></head>"
-        "<body><main><h1>짧은 보고서</h1><p>요약입니다.</p></main></body></html>"
+        "<body><main><h1>짧은 보고서</h1>"
+        "<section id='analysis-1'><h2>공급 구조</h2><p>요약입니다.</p></section>"
+        "<section id='analysis-2'><h2>계약 경쟁력</h2><p>요약입니다.</p></section>"
+        "<footer id='conclusion'>결론</footer></main></body></html>"
     )
-    first_revision = (
-        "<!doctype html><html lang='ko'><head><title>첫 번째 재구성</title></head>"
-        "<body><main><h1 id='first-revision'>첫 번째 재구성</h1><table>"
+    first_replacement = (
+        "<section id='analysis-1'><h2>공급 구조 비교</h2><table>"
         + "<tr><th>항목</th><td>공급 구조와 계약 조건을 비교합니다.</td></tr>\n" * 10
-        + "</table><footer>결론</footer></main></body></html>"
+        + "</table><p>핵심 근거를 보존한 해석입니다.</p></section>"
     )
-    final_revision = (
-        "<!doctype html><html lang='ko'><head><title>최종 재구성</title></head>"
-        "<body><main><h1 id='final-revision'>최종 재구성</h1><table>"
+    final_replacement = (
+        "<section id='analysis-2'><h2>계약 경쟁력 비교</h2><table>"
         + "<tr><th>항목</th><td>근거와 수치를 바탕으로 원인, 영향, 대응 방향을 구체적으로 분석합니다.</td></tr>\n"
         * 300
-        + "</table><footer id='final-conclusion'>최종 결론</footer></main></body></html>"
+        + "</table><p>최종 시사점입니다.</p></section>"
     )
     provider_turn = 0
     requests = []
@@ -607,18 +631,23 @@ def test_selected_artifact_target_retries_short_report_and_exposes_separate_coun
                 )
             )
         if provider_turn <= 3:
-            arguments = _arguments("html")
-            arguments["html_source"] = (
-                first_revision if provider_turn == 2 else final_revision
-            )
             return RecordingProvider(
                 tool_call=MockToolCall(
-                    name="create_report",
-                    arguments=arguments,
+                    name="extend_report",
+                    arguments={
+                        "content": (
+                            first_replacement
+                            if provider_turn == 2
+                            else final_replacement
+                        ),
+                        "target_id": (
+                            "analysis-1" if provider_turn == 2 else "analysis-2"
+                        ),
+                    },
                     call_id=f"call_target_length_{provider_turn}",
                 )
             )
-        return RecordingProvider(text_chunks=("재구성한 HTML 보고서를 저장했습니다.",))
+        return RecordingProvider(text_chunks=("부분 시각화한 HTML 보고서를 저장했습니다.",))
 
     monkeypatch.setattr(local_run_executor, "_provider", fake_provider)
     with TestClient(create_app(settings)) as client:
@@ -672,13 +701,20 @@ def test_selected_artifact_target_retries_short_report_and_exposes_separate_coun
     assert snapshot["toolExecutions"][2]["artifactId"] == snapshot["artifacts"][0]["id"]
     assert [
         execution["toolName"] for execution in snapshot["toolExecutions"]
-    ] == ["create_report", "create_report", "create_report"]
+    ] == ["create_report", "extend_report", "extend_report"]
     assert version_sources[0] == short_html
-    assert version_sources[1] == first_revision
-    assert "id='original'" not in version_sources[1]
-    assert version_sources[2] == final_revision
-    assert "id='first-revision'" not in version_sources[2]
-    assert "id='final-conclusion'" in version_sources[2]
+    assert version_sources[1] == short_html.replace(
+        "<section id='analysis-1'><h2>공급 구조</h2><p>요약입니다.</p></section>",
+        first_replacement,
+    )
+    assert version_sources[2] == version_sources[1].replace(
+        "<section id='analysis-2'><h2>계약 경쟁력</h2><p>요약입니다.</p></section>",
+        final_replacement,
+    )
+    assert "<head><title>짧은 보고서</title></head>" in version_sources[2]
+    assert version_sources[2].index(final_replacement) < version_sources[2].index(
+        "<footer id='conclusion'>"
+    )
     assert version_sources[2].count("<!doctype html>") == 1
     artifact_usage = snapshot["artifactUsage"]
     assert artifact_usage["estimated"] is False
@@ -702,13 +738,18 @@ def test_selected_artifact_target_retries_short_report_and_exposes_separate_coun
     assert "CSS progress bars alone are not sufficient" in system_text
     assert "do not leave more than two substantial paragraphs in sequence" in system_text
     assert "flag every major section with four or more paragraphs" in system_text
-    rewrite_requirement = snapshot["toolExecutions"][0]["result"][
+    assert "every major HTML report section a short, stable, unique id" in system_text
+    extension_requirement = snapshot["toolExecutions"][0]["result"][
         "targetLengthCheck"
     ]
-    assert "one complete replacement HTML document" in rewrite_requirement
-    assert "recompose the whole report" in rewrite_requirement
-    assert "keep the conclusion at the end" in rewrite_requirement
-    assert "Do not call `extend_report`" in rewrite_requirement
+    assert "target_id of one existing prose-heavy section" in extension_requirement
+    assert "one complete replacement element carrying the same id" in (
+        extension_requirement
+    )
+    assert "keep every byte outside the target element unchanged" in (
+        extension_requirement
+    )
+    assert "Do not resend the full document" in extension_requirement
     report_schema = next(
         schema
         for schema in first_request.tools
@@ -742,14 +783,15 @@ def test_selected_artifact_target_retries_short_report_and_exposes_separate_coun
         for schema in first_request.tools
         if schema.get("function", {}).get("name") == "extend_report"
     )
-    assert "HTML reports must instead be recomposed as a complete coherent document" in (
+    assert "For HTML, replace one existing element by its target_id" in (
         extension_schema["function"]["description"]
     )
-    assert "Do not submit HTML fragments" in (
+    assert "one complete replacement element carrying the same target_id" in (
         extension_schema["function"]["parameters"]["properties"]["content"][
             "description"
         ]
     )
+    assert "target_id" in extension_schema["function"]["parameters"]["properties"]
 
 
 def test_selected_artifact_target_fails_instead_of_saving_repeatedly_short_report(
@@ -765,15 +807,14 @@ def test_selected_artifact_target_fails_instead_of_saving_repeatedly_short_repor
     )
     short_html = (
         "<!doctype html><html lang='ko'><head><title>짧은 보고서</title></head>"
-        "<body><main><h1>짧은 보고서</h1><p>요약입니다.</p></main></body></html>"
+        "<body><main><h1>짧은 보고서</h1>"
+        "<section id='failure-1'><p>첫 번째 요약입니다.</p></section>"
+        "<section id='failure-2'><p>두 번째 요약입니다.</p></section>"
+        "<footer id='failure-conclusion'>결론</footer></main></body></html>"
     )
-    revisions = (
-        "<!doctype html><html><head><title>첫 번째 재구성</title></head>"
-        "<body><main id='failure-revision-1'>"
-        "<p>첫 번째 짧은 재구성입니다.</p></main></body></html>",
-        "<!doctype html><html><head><title>두 번째 재구성</title></head>"
-        "<body><main id='failure-revision-2'>"
-        "<p>두 번째 짧은 재구성입니다.</p></main></body></html>",
+    replacements = (
+        "<section id='failure-1'><p>첫 번째 짧은 부분 보강입니다.</p></section>",
+        "<section id='failure-2'><p>두 번째 짧은 부분 보강입니다.</p></section>",
     )
     provider_turn = 0
 
@@ -786,13 +827,19 @@ def test_selected_artifact_target_fails_instead_of_saving_repeatedly_short_repor
         provider_turn += 1
         if provider_turn > 3:
             return MockProvider(text_chunks=("목표 분량을 충족하지 못했습니다.",))
-        arguments = _arguments("html")
-        arguments["html_source"] = (
-            short_html if provider_turn == 1 else revisions[provider_turn - 2]
-        )
+        if provider_turn == 1:
+            arguments = _arguments("html")
+            arguments["html_source"] = short_html
+            tool_name = "create_report"
+        else:
+            arguments = {
+                "content": replacements[provider_turn - 2],
+                "target_id": f"failure-{provider_turn - 1}",
+            }
+            tool_name = "extend_report"
         return MockProvider(
             tool_call=MockToolCall(
-                name="create_report",
+                name=tool_name,
                 arguments=arguments,
                 call_id=f"call_target_length_failure_{provider_turn}",
             )
@@ -840,14 +887,19 @@ def test_selected_artifact_target_fails_instead_of_saving_repeatedly_short_repor
     assert "최소 허용 분량" in snapshot["toolExecutions"][2]["error"]
     assert [
         execution["toolName"] for execution in snapshot["toolExecutions"]
-    ] == ["create_report", "create_report", "create_report"]
-    assert final_source == revisions[1]
-    assert "failure-revision-1" not in final_source
-    assert "failure-revision-2" in final_source
+    ] == ["create_report", "extend_report", "extend_report"]
+    assert final_source == short_html.replace(
+        "<section id='failure-1'><p>첫 번째 요약입니다.</p></section>",
+        replacements[0],
+    ).replace(
+        "<section id='failure-2'><p>두 번째 요약입니다.</p></section>",
+        replacements[1],
+    )
+    assert "<footer id='failure-conclusion'>결론</footer>" in final_source
     assert final_source.count("<!doctype html>") == 1
 
 
-def test_short_html_report_accepts_full_document_retry_as_coherent_replacement(
+def test_short_html_report_rejects_full_document_retry_and_accepts_targeted_patch(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     settings = Settings(
@@ -860,7 +912,9 @@ def test_short_html_report_accepts_full_document_retry_as_coherent_replacement(
     )
     short_html = (
         "<!doctype html><html lang='ko'><head><title>보존할 원본</title></head>"
-        "<body><main><h1 id='original'>보존할 원본</h1></main></body></html>"
+        "<body><main><h1 id='original'>보존할 원본</h1>"
+        "<section id='analysis'><p>짧은 분석</p></section>"
+        "<footer id='original-conclusion'>원본 결론</footer></main></body></html>"
     )
     replacement_html = (
         "<!doctype html><html><head><title>덮어쓴 문서</title></head>"
@@ -868,6 +922,12 @@ def test_short_html_report_accepts_full_document_retry_as_coherent_replacement(
         + "<tr><th>근거</th><td>공급 경쟁력의 원인과 영향 및 대응을 구조적으로 비교합니다.</td></tr>\n"
         * 300
         + "</table><footer id='replacement-conclusion'>결론</footer></main></body></html>"
+    )
+    targeted_replacement = (
+        "<section id='analysis'><h2>시각화한 분석</h2><table>"
+        + "<tr><th>근거</th><td>공급 경쟁력의 원인과 영향 및 대응을 구조적으로 비교합니다.</td></tr>\n"
+        * 300
+        + "</table></section>"
     )
     provider_turn = 0
 
@@ -898,7 +958,18 @@ def test_short_html_report_accepts_full_document_retry_as_coherent_replacement(
                     call_id="call_coherent_rewrite",
                 )
             )
-        return MockProvider(text_chunks=("전체 재구성한 보고서를 저장했습니다.",))
+        if provider_turn == 3:
+            return MockProvider(
+                tool_call=MockToolCall(
+                    name="extend_report",
+                    arguments={
+                        "content": targeted_replacement,
+                        "target_id": "analysis",
+                    },
+                    call_id="call_targeted_visual_patch",
+                )
+            )
+        return MockProvider(text_chunks=("부분 시각화한 보고서를 저장했습니다.",))
 
     monkeypatch.setattr(local_run_executor, "_provider", fake_provider)
     with TestClient(create_app(settings)) as client:
@@ -907,7 +978,7 @@ def test_short_html_report_accepts_full_document_retry_as_coherent_replacement(
         conversation = client.post(
             "/api/conversations",
             headers={"X-CSRF-Token": csrf},
-            json={"projectId": project_id, "title": "보고서 전체 재작성"},
+            json={"projectId": project_id, "title": "보고서 부분 시각화"},
         ).json()
         started = client.post(
             f"/api/conversations/{conversation['id']}/runs",
@@ -931,15 +1002,17 @@ def test_short_html_report_accepts_full_document_retry_as_coherent_replacement(
         ).json()["sourceText"]
 
     assert snapshot["status"] == "completed"
-    assert provider_turn == 3
+    assert provider_turn == 4
     assert artifact["versions"] == [2, 1]
     assert [
         execution["toolName"] for execution in snapshot["toolExecutions"]
-    ] == ["create_report", "create_report"]
-    assert snapshot["toolExecutions"][1]["status"] == "completed"
-    assert "id='original'" not in final_source
-    assert "id='replacement'" in final_source
-    assert "id='replacement-conclusion'" in final_source
+    ] == ["create_report", "create_report", "extend_report"]
+    assert snapshot["toolExecutions"][1]["status"] == "failed"
+    assert "`extend_report`" in snapshot["toolExecutions"][1]["error"]
+    assert "id='original'" in final_source
+    assert targeted_replacement in final_source
+    assert "id='original-conclusion'" in final_source
+    assert "id='replacement'" not in final_source
 
 
 def _assert_reopened(report_format: str, content: bytes) -> None:

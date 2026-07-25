@@ -12,6 +12,7 @@ import time
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -2467,16 +2468,17 @@ class LocalRunExecutor:
                             role="user",
                             content=(
                                 (
-                                    "[Report rewrite requirement] The saved HTML report is "
+                                    "[Report targeted-extension requirement] The saved HTML "
+                                    "report is "
                                     "still below the selected document length. Call "
-                                    "`create_report` with one complete coherent replacement "
-                                    "HTML document for the same report. Preserve its evidence "
-                                    "and citations, but integrate the added depth into the "
-                                    "existing sections with purposeful charts, tables, "
-                                    "timelines, matrices, or callouts. Rebalance prose-heavy "
-                                    "sections and keep the conclusion at the end. Do not call "
-                                    "`extend_report`, append new sections after the conclusion, "
-                                    "or finish with chat text."
+                                    "`extend_report` with the target_id of one existing "
+                                    "prose-heavy section and one complete replacement element "
+                                    "carrying that same id. Preserve that section's evidence "
+                                    "and citations while adding purposeful charts, tables, "
+                                    "timelines, matrices, callouts, or structured takeaways. "
+                                    "Lumina will keep the rest of the HTML unchanged. Do not "
+                                    "resend the full document, append new sections after the "
+                                    "conclusion, or finish with chat text."
                                 )
                                 if report_revision_mime_type == "text/html"
                                 else (
@@ -4719,7 +4721,9 @@ class LocalRunExecutor:
                 "cards or unsupported charts merely to interrupt prose. Before submitting, "
                 "flag every major section with four or more paragraphs and no such structured "
                 "anchor; redesign it or keep uninterrupted prose only when it is concretely "
-                "clearer for the evidence. Give every report a short, specific title that names "
+                "clearer for the evidence. Give every major HTML report section a short, stable, "
+                "unique id so a later length correction can replace only that section without "
+                "resending the complete document. Give every report a short, specific title that names "
                 "its actual subject and deliverable in the user's language; avoid generic "
                 "titles such as 'Lumina report' or 'work report' because the title is also "
                 "used to create its filename. In HTML, use a `.mermaid` block when a process, "
@@ -5921,16 +5925,6 @@ class LocalRunExecutor:
                     report_run.snapshot_json.get("artifact_length_retry_artifact_id")
                     or ""
                 ).strip()
-                revision_artifact = (
-                    db.get(Artifact, revision_artifact_id)
-                    if revision_artifact_id
-                    else None
-                )
-                revision_mime_type = (
-                    revision_artifact.mime_type
-                    if revision_artifact is not None
-                    else None
-                )
                 report_images = (
                     ()
                     if revision_artifact_id
@@ -5944,15 +5938,15 @@ class LocalRunExecutor:
                         max_total_bytes=self.settings.max_upload_bytes,
                     )
                 )
-            if revision_artifact_id and revision_mime_type != "text/html":
+            if revision_artifact_id:
                 return await self._fail_tool_execution(
                     run_id,
                     tool_id,
                     WebToolError(
                         "report_extension_tool_required",
-                        "A short Markdown report is already saved. Call `extend_report` "
-                        "with only the new Markdown sections to add; do not submit the "
-                        "complete report through `create_report` again.",
+                        "A short report is already saved. Call `extend_report` with one "
+                        "targeted HTML element replacement or only the new Markdown sections; "
+                        "do not submit the complete report through `create_report` again.",
                         stage="validation",
                         retryable=True,
                     ),
@@ -6128,17 +6122,17 @@ class LocalRunExecutor:
                         f"Artifact {revision_artifact_id} version {version.version_number} "
                         "has been saved and is available to the user while you continue. Its "
                         f"content is only about {document_tokens:,} tokens, below the selected "
-                        f"minimum of about {target_floor:,} tokens. Rewrite check "
+                        f"minimum of about {target_floor:,} tokens. Expansion check "
                         f"{expansion_attempt} of {_MAX_ARTIFACT_LENGTH_RETRIES} failed. Call "
-                        "`create_report` with one complete replacement HTML document containing "
-                        f"about {missing_tokens:,} more tokens of substantive analysis. Preserve "
-                        "the evidence and citations, but recompose the whole report: integrate "
-                        "added depth into the existing visual hierarchy, replace prose runs with "
-                        "supported charts, tables, timelines, matrices, or callouts, and keep "
-                        "the conclusion at the end. Lumina will save that complete source as the "
-                        "next immutable version of the same Artifact. Do not call "
-                        "`extend_report`, append a block of new sections after the conclusion, "
-                        "or finish with chat text only."
+                        "`extend_report` with the target_id of one existing prose-heavy section "
+                        "and one complete replacement element carrying the same id. Add useful "
+                        f"analysis toward the remaining {missing_tokens:,} tokens inside that "
+                        "section, preserving its evidence and citations while adding supported "
+                        "charts, tables, timelines, matrices, callouts, or structured takeaways. "
+                        "Lumina will keep every byte outside the target element unchanged and "
+                        "save the result as the next immutable version of the same Artifact. "
+                        "Do not resend the full document, append new sections after the "
+                        "conclusion, or finish with chat text only."
                     )
                     if report.mime_type == "text/html"
                     else (
@@ -6165,8 +6159,8 @@ class LocalRunExecutor:
                 tool_id,
                 length_check,
                 (
-                    "현재 HTML 보고서를 원본 버전으로 저장하고 같은 Artifact의 "
-                    "전체 재구성을 요청했습니다."
+                    "현재 HTML 보고서를 원본 버전으로 저장하고 기존 절의 "
+                    "부분 시각화를 요청했습니다."
                     if report.mime_type == "text/html"
                     else "현재 보고서를 원본 버전으로 저장하고 같은 Artifact의 편집을 요청했습니다."
                 ),
@@ -6319,6 +6313,7 @@ class LocalRunExecutor:
         arguments: Mapping[str, Any],
     ) -> dict[str, Any]:
         fragment = arguments.get("content")
+        target_id = arguments.get("target_id")
         if not isinstance(fragment, str):
             return await self._fail_tool_execution(
                 run_id,
@@ -6346,27 +6341,34 @@ class LocalRunExecutor:
                         "There is no saved short report to extend. Call create_report first."
                     )
                 artifact = require_artifact(db, user, artifact_id, write=True)
+                report_mime_type = artifact.mime_type
                 current = current_artifact_version(db, artifact)
                 if current is None:
                     raise ValueError("The report Artifact has no current version.")
-                if artifact.mime_type not in {"text/html", "text/markdown"}:
+                if report_mime_type not in {"text/html", "text/markdown"}:
                     raise ValueError(
                         "Only HTML and Markdown reports can be extended incrementally."
-                    )
-                if artifact.mime_type == "text/html":
-                    raise ValueError(
-                        "HTML report length retries must use create_report with one complete "
-                        "coherent replacement document. Do not append an HTML fragment."
                     )
                 source = self.storage.read_bytes(
                     current.storage_key,
                     expected_sha256=current.content_hash,
                 ).decode("utf-8", errors="strict")
-                combined = _append_report_fragment(
-                    source,
-                    fragment,
-                    mime_type=artifact.mime_type,
-                )
+                if report_mime_type == "text/html":
+                    if not isinstance(target_id, str):
+                        raise ValueError(
+                            "HTML report extensions require a target_id string."
+                        )
+                    combined = _replace_html_report_element(
+                        source,
+                        fragment,
+                        target_id=target_id,
+                    )
+                else:
+                    combined = _append_report_fragment(
+                        source,
+                        fragment,
+                        mime_type=report_mime_type,
+                    )
                 content = combined.encode("utf-8")
                 if len(content) > self.settings.max_upload_bytes:
                     raise ApiProblem(
@@ -6406,9 +6408,13 @@ class LocalRunExecutor:
                     content=content,
                     change_type="agent_edited",
                     change_summary=(
-                        "목표 분량 미달로 종료된 마지막 누적 보강본"
+                        "목표 분량 미달로 종료된 마지막 부분 보강본"
                         if terminal_failure
-                        else "선택한 목표 분량에 맞게 기존 보고서에 내용을 누적 보강"
+                        else (
+                            "선택한 목표 분량에 맞게 기존 HTML 절을 부분 보강"
+                            if report_mime_type == "text/html"
+                            else "선택한 목표 분량에 맞게 기존 보고서에 내용을 누적 보강"
+                        )
                     ),
                 )
                 storage_keys.append(version.storage_key)
@@ -6460,7 +6466,7 @@ class LocalRunExecutor:
         if terminal_failure:
             failure_message = (
                 "선택한 문서 출력 목표를 반복해서 충족하지 못했습니다. "
-                f"누적된 마지막 결과는 약 {document_tokens:,}토큰이며, "
+                f"보강한 마지막 결과는 약 {document_tokens:,}토큰이며, "
                 f"최소 허용 분량은 약 {target_floor:,}토큰입니다. "
                 f"작성된 결과는 Artifact v{version.version_number}로 보존했습니다."
             )
@@ -6492,19 +6498,39 @@ class LocalRunExecutor:
                 "expansionAttempt": expansion_attempt,
                 "maxExpansionAttempts": _MAX_ARTIFACT_LENGTH_RETRIES,
                 "targetLengthCheck": (
-                    f"Artifact {artifact_id} version {version.version_number} contains the "
-                    "previous report plus your new fragment and has been saved. The combined "
-                    f"document is about {document_tokens:,} tokens, below the minimum of about "
-                    f"{target_floor:,}. Call `extend_report` again with only about "
-                    f"{missing_tokens:,} tokens of additional HTML body content or Markdown "
-                    "sections. Do not repeat any existing content or call `create_report`."
+                    (
+                        f"Artifact {artifact_id} version {version.version_number} keeps the "
+                        "existing HTML and replaces only target_id "
+                        f"{str(target_id)!r}. The combined document is about "
+                        f"{document_tokens:,} tokens, below the minimum of about "
+                        f"{target_floor:,}. Call `extend_report` again with a different "
+                        "prose-heavy target_id and one complete upgraded element carrying that "
+                        f"same id, adding useful analysis toward the remaining "
+                        f"{missing_tokens:,} tokens. Preserve that section's evidence and "
+                        "citations while adding a chart, table, timeline, matrix, callout, or "
+                        "structured takeaway when supported. Do not resend the full document, "
+                        "append after the conclusion, or call `create_report`."
+                    )
+                    if report_mime_type == "text/html"
+                    else (
+                        f"Artifact {artifact_id} version {version.version_number} contains the "
+                        "previous report plus your new Markdown sections and has been saved. "
+                        f"The combined document is about {document_tokens:,} tokens, below the "
+                        f"minimum of about {target_floor:,}. Call `extend_report` again with "
+                        f"only about {missing_tokens:,} tokens of additional Markdown sections. "
+                        "Do not repeat any existing content or call `create_report`."
+                    )
                 ),
             }
             await self._complete_tool_execution(
                 run_id,
                 tool_id,
                 length_check,
-                "기존 보고서에 내용을 누적하고 같은 Artifact의 추가 보강을 요청했습니다.",
+                (
+                    "기존 HTML 절만 교체하고 같은 Artifact의 추가 부분 보강을 요청했습니다."
+                    if report_mime_type == "text/html"
+                    else "기존 보고서에 내용을 누적하고 같은 Artifact의 추가 보강을 요청했습니다."
+                ),
                 artifact_id=artifact_id,
                 artifact_usage=artifact_usage,
             )
@@ -6522,7 +6548,11 @@ class LocalRunExecutor:
             run_id,
             tool_id,
             result,
-            "기존 보고서에 새 내용을 누적해 목표 분량을 충족했습니다.",
+            (
+                "기존 HTML의 대상 절만 교체해 목표 분량을 충족했습니다."
+                if report_mime_type == "text/html"
+                else "기존 보고서에 새 내용을 누적해 목표 분량을 충족했습니다."
+            ),
             artifact_id=artifact_id,
             artifact_usage=artifact_usage,
         )
@@ -9138,26 +9168,124 @@ def _append_report_fragment(source: str, fragment: str, *, mime_type: str) -> st
         raise ValueError("Report extension content must not be empty.")
     if mime_type == "text/markdown":
         return f"{source.rstrip()}\n\n{addition}\n"
-    if mime_type != "text/html":
-        raise ValueError("Only HTML and Markdown reports can be extended incrementally.")
+    raise ValueError("Only Markdown reports can append content incrementally.")
+
+
+class _HTMLTargetSpanParser(HTMLParser):
+    def __init__(self, source: str, target_id: str) -> None:
+        super().__init__(convert_charrefs=False)
+        self.source = source
+        self.target_id = target_id
+        self.line_offsets = [0]
+        self.line_offsets.extend(
+            match.end() for match in re.finditer(r"\n", source)
+        )
+        self.matches = 0
+        self.start: int | None = None
+        self.end: int | None = None
+        self.tag: str | None = None
+        self.depth = 0
+
+    def _offset(self) -> int:
+        line, column = self.getpos()
+        return self.line_offsets[line - 1] + column
+
+    def _tag_end(self) -> int:
+        closing = self.source.find(">", self._offset())
+        if closing < 0:
+            raise ValueError("The target HTML element has an incomplete tag.")
+        return closing + 1
+
+    def _matches_target(self, attrs: list[tuple[str, str | None]]) -> bool:
+        return any(name.lower() == "id" and value == self.target_id for name, value in attrs)
+
+    def handle_starttag(
+        self, tag: str, attrs: list[tuple[str, str | None]]
+    ) -> None:
+        if self._matches_target(attrs):
+            self.matches += 1
+            if self.start is None:
+                self.start = self._offset()
+                self.tag = tag
+                self.depth = 1
+                return
+        if self.start is not None and self.end is None and tag == self.tag:
+            self.depth += 1
+
+    def handle_startendtag(
+        self, tag: str, attrs: list[tuple[str, str | None]]
+    ) -> None:
+        if not self._matches_target(attrs):
+            return
+        self.matches += 1
+        if self.start is None:
+            self.start = self._offset()
+            self.end = self._tag_end()
+            self.tag = tag
+
+    def handle_endtag(self, tag: str) -> None:
+        if self.start is None or self.end is not None or tag != self.tag:
+            return
+        self.depth -= 1
+        if self.depth == 0:
+            self.end = self._tag_end()
+
+
+def _replace_html_report_element(
+    source: str,
+    replacement: str,
+    *,
+    target_id: str,
+) -> str:
+    normalized_target = target_id.strip()
+    if not normalized_target:
+        raise ValueError("HTML report extensions require a target_id.")
+    addition = replacement.strip()
+    if not addition:
+        raise ValueError("HTML report replacement content must not be empty.")
     if re.search(
         r"<!doctype\b|<\s*/?\s*(?:html|head|body)\b",
         addition,
         flags=re.IGNORECASE,
     ):
         raise ValueError(
-            "HTML report extensions must contain body fragments only, without doctype, "
-            "html, head, or body tags."
+            "HTML report replacements must contain one existing report element, "
+            "without doctype, html, head, or body tags."
         )
-    closing = list(re.finditer(r"</main\s*>", source, flags=re.IGNORECASE))
-    if not closing:
-        closing = list(re.finditer(r"</body\s*>", source, flags=re.IGNORECASE))
-    if not closing:
+
+    source_parser = _HTMLTargetSpanParser(source, normalized_target)
+    source_parser.feed(source)
+    source_parser.close()
+    if source_parser.matches != 1:
         raise ValueError(
-            "The current HTML report has no closing main or body tag for extension."
+            f"HTML report target_id {normalized_target!r} must identify exactly one element."
         )
-    insertion = closing[-1].start()
-    return f"{source[:insertion].rstrip()}\n{addition}\n{source[insertion:]}"
+    if source_parser.start is None or source_parser.end is None:
+        raise ValueError(
+            f"HTML report target_id {normalized_target!r} is not a closed element."
+        )
+
+    replacement_parser = _HTMLTargetSpanParser(addition, normalized_target)
+    replacement_parser.feed(addition)
+    replacement_parser.close()
+    if (
+        replacement_parser.matches != 1
+        or replacement_parser.start != 0
+        or replacement_parser.end != len(addition)
+    ):
+        raise ValueError(
+            "HTML report replacement content must be exactly one root element carrying "
+            "the requested target_id."
+        )
+    if replacement_parser.tag != source_parser.tag:
+        raise ValueError(
+            "HTML report replacement content must keep the target element's tag name."
+        )
+    return (
+        source[: source_parser.start]
+        + addition
+        + source[source_parser.end :]
+    )
 
 
 def _artifact_progress_from_counts(

@@ -113,8 +113,10 @@ test("HTML Artifact reports keep section text off an unbounded tinted canvas", (
   assert.match(visualArtifactSkillSource, /Do not place a bare heading between detached white cards/);
 });
 
-test("HTML Artifact reports structure prose-heavy sections and recompose expansions", () => {
+test("HTML Artifact reports structure prose-heavy sections and patch expansions", () => {
   assert.match(visualArtifactSkillSource, /do not leave more than two substantial paragraphs in sequence without a reader-facing structure/);
+  assert.match(visualArtifactSkillSource, /Give every major HTML report section a short, stable, unique `id`/);
+  assert.match(visualArtifactSkillSource, /replace only targeted prose-heavy sections with upgraded elements carrying the same ids/);
   assert.match(visualArtifactSkillSource, /Never grow a report by appending a chain of new prose sections after its conclusion/);
   assert.match(visualArtifactSkillSource, /flag every major section with four or more paragraphs and no chart, table, diagram, timeline, matrix, callout, evidence-card group, or structured list/);
 });
