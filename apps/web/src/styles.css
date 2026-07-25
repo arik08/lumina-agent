@@ -349,8 +349,8 @@ button:focus-visible, textarea:focus-visible, a:focus-visible {
 }
 .project-heading { padding-right: 2px; }
 .project-heading > button { margin-right: 0; }
-.session-heading { padding-right: 2px; }
-.session-heading > div { display: flex; align-items: center; gap: 2px; }
+.session-heading { height: 32px; padding-right: 2px; }
+.session-heading > div { display: flex; align-items: center; gap: 4px; }
 .session-heading-actions { min-width: 54px; justify-content: flex-end; }
 .session-title-filter-toggle { color: var(--faint); }
 .session-title-filter-toggle:hover,

@@ -45,6 +45,11 @@ test("title filtering is shared by chat and deep analysis with always-visible he
   assert.doesNotMatch(stylesSource, /\.session-heading:hover \.(?:session-heading-action|bulk-session-open)/);
 });
 
+test("always-visible recent-item actions keep breathing room in the heading", () => {
+  assert.match(stylesSource, /\.session-heading \{ height: 32px; padding-right: 2px; \}/);
+  assert.match(stylesSource, /\.session-heading > div \{ display: flex; align-items: center; gap: 4px; \}/);
+});
+
 test("shared recent-item submenus close when another area is pressed", () => {
   assert.match(recentItemsSource, /document\.addEventListener\("pointerdown", closeOutsideSubmenu\)/);
   assert.match(recentItemsSource, /clickedItem\?\.dataset\.recentItemId === menuId/);
