@@ -2551,22 +2551,23 @@ button:disabled { cursor: default; opacity: 0.5; }
 .tool-message-actions button.is-copied,
 .tool-message-actions button.is-copied:hover { background: color-mix(in srgb, var(--success) 14%, transparent); color: var(--success); }
 
+.artifact-results { margin: 20px 0 23px; }
 .artifact-result {
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr) auto;
   width: 100%;
   align-items: center;
   gap: 8px;
-  margin: 20px 0 23px;
+  margin: 0;
   padding: 8px 3px;
   border: 0;
-  border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
   background: transparent;
   cursor: pointer;
   text-align: left;
 }
 
+.artifact-result:first-child { border-top: 1px solid var(--line); }
 .artifact-result:hover { background: #f5f6f7; }
 .artifact-result-title { display: flex; min-width: 0; align-items: baseline; gap: 6px; }
 .artifact-result strong { font-size: 14px; font-weight: 630; }

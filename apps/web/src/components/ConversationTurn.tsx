@@ -2155,13 +2155,17 @@ export const AssistantTurn = memo(function AssistantTurn({
                 </div>
               </div>
             )}
-            {artifactVersionRows.map(({ artifact, version }) => (
-              <button className="artifact-result" type="button" key={`${artifact.id}:${version}`} onClick={() => onOpenArtifact(artifact, version)}>
-                <FileCode2 size={18} />
-                <span className="artifact-result-title"><small>{version === 1 ? "(원본)" : `(v${version})`}</small><strong>{artifact.displayName}</strong></span>
-                <span className="artifact-result-action">문서 열기 <ChevronRight size={14} /></span>
-              </button>
-            ))}
+            {artifactVersionRows.length > 0 && (
+              <div className="artifact-results">
+                {artifactVersionRows.map(({ artifact, version }) => (
+                  <button className="artifact-result" type="button" key={`${artifact.id}:${version}`} onClick={() => onOpenArtifact(artifact, version)}>
+                    <FileCode2 size={18} />
+                    <span className="artifact-result-title"><small>{version === 1 ? "(원본)" : `(v${version})`}</small><strong>{artifact.displayName}</strong></span>
+                    <span className="artifact-result-action">문서 열기 <ChevronRight size={14} /></span>
+                  </button>
+                ))}
+              </div>
+            )}
             {terminalPresentationReady && <MemoryCitations citations={memoryCitations} />}
             {terminalPresentationReady && (
               <div className="final-answer">
