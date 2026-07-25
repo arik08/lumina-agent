@@ -5033,15 +5033,7 @@ class LocalRunExecutor:
                         arguments={
                             "format": "html",
                             "title": "작업 결과 보고서",
-                            "executive_summary": (
-                                "요청 범위와 제공된 자료를 기준으로 검토 가능한 "
-                                "결과 초안을 구성했습니다."
-                            ),
-                            "sections": [],
-                            "action_items": [
-                                "원문 수치와 담당자 정보를 최종 확인합니다.",
-                                "확정 후 문서 버전을 저장하고 공유 범위를 지정합니다.",
-                            ],
+                            "html_source": _mock_report_html(),
                         },
                         call_id="call_create_report",
                     ),
@@ -9120,9 +9112,33 @@ def _web_source_metadata(db: Session, run_id: str) -> dict[str, Any]:
 
 def _report_html(request: str, arguments: dict[str, Any]) -> str:
     """Compatibility helper for existing HTML rendering callers and tests."""
-    html_arguments = dict(arguments)
-    html_arguments["format"] = "html"
-    return generate_report(request, html_arguments).content.decode("utf-8")
+    from ..artifacts.reporting.html import generate_html
+    from ..artifacts.reporting.model import normalize_report_document
+
+    document = normalize_report_document(request, arguments)
+    return generate_html(document).decode("utf-8")
+
+
+def _mock_report_html() -> str:
+    sections = "".join(
+        (
+            f"<section id='check-{index}'><h2>검토 항목 {index}</h2>"
+            "<p>요청 목적과 제공 자료를 대조하고 사실, 가정, 한계를 구분했습니다. "
+            "확인 가능한 근거를 중심으로 결과를 정리하며 미확인 수치와 담당자 정보는 "
+            "최종 검토 대상으로 남겼습니다.</p><ul>"
+            "<li>근거의 출처와 적용 범위를 확인합니다.</li>"
+            "<li>결론에 영향을 주는 불확실성을 표시합니다.</li>"
+            "<li>담당자가 후속 확인할 항목을 구분합니다.</li></ul></section>"
+        )
+        for index in range(1, 61)
+    )
+    return (
+        "<!doctype html><html lang='ko'><head><meta charset='utf-8'>"
+        "<title>작업 결과 보고서</title></head><body><main>"
+        "<h1>작업 결과 보고서</h1>"
+        "<p>요청 범위와 제공된 자료를 기준으로 검토 가능한 결과 초안을 구성했습니다.</p>"
+        f"{sections}</main></body></html>"
+    )
 
 
 def _artifact_root(settings: Settings) -> Path:

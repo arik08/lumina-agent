@@ -1011,7 +1011,7 @@ async def test_pgpt_adapter_uses_streaming_cache_payload_and_normalizes_response
             in report_tool["description"]
         )
         assert (
-            "acceptable range is about 8,000 to 10,500 tokens"
+            "acceptable range is about 7,000 to 13,000 tokens"
             in report_tool["parameters"]["properties"]["html_source"]["description"]
         )
         assert (
@@ -1020,7 +1020,7 @@ async def test_pgpt_adapter_uses_streaming_cache_payload_and_normalizes_response
         )
         assert (
             report_tool["parameters"]["properties"]["html_source"]["minLength"]
-            == 16_000
+            == 14_000
         )
         assert "response_format" not in payload
         return httpx.Response(

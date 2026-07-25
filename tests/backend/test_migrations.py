@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 from alembic import command
@@ -21,9 +22,12 @@ from lumina.models import (
 def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
     database = tmp_path / "migrated.db"
     database_url = f"sqlite:///{database.as_posix()}"
+    executor_logger = logging.getLogger("lumina.agent.executor")
+    executor_logger.disabled = False
 
     upgrade_database(database_url)
 
+    assert executor_logger.disabled is False
     engine = create_engine(database_url)
     try:
         inspector = inspect(engine)

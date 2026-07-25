@@ -3026,16 +3026,15 @@ def _report_arguments() -> dict[str, object]:
     return {
         "format": "html",
         "title": "Replay contract report",
-        "executive_summary": "Replay must preserve every persisted event.",
-        "key_metrics": [{"label": "events", "value": "lossless"}],
-        "sections": [
-            {
-                "heading": "Replay",
-                "body": "Text, tool, and artifact state remains canonical.",
-                "bullets": ["No gaps", "No duplicates"],
-            }
-        ],
-        "action_items": ["Reconnect from the last applied sequence"],
+        "html_source": (
+            "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+            "<title>Replay contract report</title></head><body><main>"
+            "<h1>Replay contract report</h1>"
+            "<p>Replay must preserve every persisted event.</p>"
+            "<section><h2>Replay</h2><p>Text, tool, and artifact state remains "
+            "canonical.</p><ul><li>No gaps</li><li>No duplicates</li></ul></section>"
+            "<p>Reconnect from the last applied sequence.</p></main></body></html>"
+        ),
     }
 
 

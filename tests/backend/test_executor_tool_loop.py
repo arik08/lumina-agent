@@ -1171,7 +1171,7 @@ def test_file_mode_is_a_general_delivery_preference_not_a_file_command(
         assert "File intent JSON contract" in system_text
         assert "Artifact opportunity contract" in system_text
         assert "Do not call `create_report` or `write_file`" in system_text
-        assert "Memory capture contract" in system_text
+        assert "Memory result contract" in system_text
         assert (
             "Artifact contract: The user requested a reusable file." not in system_text
         )
