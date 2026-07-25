@@ -175,6 +175,14 @@ def test_codex_app_server_request_failure_is_retryable_stream_failure() -> None:
     assert error.stage == "stream"
 
 
+def test_unknown_codex_app_server_failure_is_retryable_before_output() -> None:
+    error = codex_adapter._request_error(RuntimeError("thread start failed"))
+
+    assert error.retryable is True
+    assert error.stage == "request"
+    assert error.diagnostic_code == "RuntimeError"
+
+
 class _Thread:
     def __init__(self, state: dict[str, Any]) -> None:
         self.state = state

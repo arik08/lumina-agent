@@ -37,6 +37,7 @@ RECENT_MESSAGES_TO_PRESERVE = 4
 RUNTIME_RECENT_UNITS_TO_PRESERVE = 3
 RUNTIME_SUMMARY_MARKER = "[Compacted runtime context]"
 CURRENT_RUN_CONTEXT_METADATA_KEY = "lumina_current_run_required"
+RUNTIME_POST_COMPACTION_TARGET_RATIO = 0.75
 RUNTIME_TOOL_ARGUMENT_STRING_LIMIT = 240
 RUNTIME_TOOL_RESULT_HEAD_CHARS = 1_200
 RUNTIME_TOOL_RESULT_TAIL_CHARS = 600
@@ -201,6 +202,10 @@ def compact_runtime_messages(
         _estimate_provider_messages(messages, tool_schemas),
     )
     threshold = _compaction_threshold(run, effective_budget)
+    post_compaction_target = min(
+        threshold,
+        max(1, int(effective_budget * RUNTIME_POST_COMPACTION_TARGET_RATIO)),
+    )
     if not force and estimated_before <= threshold:
         return RuntimeContextPreparation(
             messages=tuple(messages),
@@ -242,7 +247,7 @@ def compact_runtime_messages(
             required_start=min(required_unit_indexes),
             required_end=max(required_unit_indexes),
             tool_schemas=tool_schemas,
-            threshold=threshold,
+            post_compaction_target=post_compaction_target,
             estimated_before=estimated_before,
             effective_budget=effective_budget,
             force=force,
@@ -278,7 +283,7 @@ def compact_runtime_messages(
                 run,
                 _estimate_provider_messages(payload_prepared, tool_schemas),
             )
-            if payload_estimated_after <= threshold:
+            if payload_estimated_after <= post_compaction_target:
                 return RuntimeContextPreparation(
                     messages=tuple(payload_prepared),
                     compacted=True,
@@ -353,7 +358,7 @@ def _compact_runtime_messages_with_required_context(
     required_start: int,
     required_end: int,
     tool_schemas: Sequence[Mapping[str, Any]],
-    threshold: int,
+    post_compaction_target: int,
     estimated_before: int,
     effective_budget: int,
     force: bool,
@@ -422,7 +427,7 @@ def _compact_runtime_messages_with_required_context(
         _estimate_provider_messages(prepared_messages, tool_schemas),
     )
     compacted_payload_count = 0
-    if estimated_after > threshold:
+    if estimated_after > post_compaction_target:
         prepared_messages, compacted_payload_count = _compact_runtime_payloads(
             prepared_messages
         )

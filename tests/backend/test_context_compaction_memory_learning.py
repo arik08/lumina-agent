@@ -948,6 +948,75 @@ def test_runtime_compaction_microcompacts_old_tool_payload_before_summarizing(
     assert "full result remains stored" in str(prepared.messages[2].content)
 
 
+def test_runtime_compaction_leaves_headroom_when_recent_tool_rounds_are_large(
+    tmp_path: Path,
+) -> None:
+    user, project, conversation = _configure(tmp_path, "runtime-recent-tool-headroom")
+    with SessionLocal() as db:
+        run = _run(
+            db,
+            user=db.merge(user),
+            project=db.merge(project),
+            conversation=db.merge(conversation),
+            sequence=1,
+            context_window=20_000,
+        )
+        messages = [
+            ProviderMessage(role="system", content="System contract"),
+            ProviderMessage(
+                role="user",
+                content="Produce a sourced report.",
+                provider_metadata={CURRENT_RUN_CONTEXT_METADATA_KEY: True},
+            ),
+        ]
+        for index in range(4):
+            call_id = f"call-{index}"
+            messages.extend(
+                (
+                    ProviderMessage(
+                        role="assistant",
+                        content=f"Research round {index}",
+                        tool_calls=(
+                            {
+                                "id": call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": "mcp_read_records",
+                                    "arguments": json.dumps({"page": index}),
+                                },
+                            },
+                        ),
+                    ),
+                    ProviderMessage(
+                        role="tool",
+                        name="mcp_read_records",
+                        tool_call_id=call_id,
+                        content=f"recoverable evidence {index} " * 1_000,
+                    ),
+                )
+            )
+
+        prepared = compact_runtime_messages(
+            run,
+            messages,
+            ({"name": "mcp_read_records"},),
+        )
+
+    assert prepared.compacted is True
+    assert prepared.compacted_payload_count >= 3
+    assert prepared.estimated_tokens_after <= int(
+        prepared.effective_input_budget * 0.75
+    )
+    recent_tool_results = [
+        message for message in prepared.messages if message.role == "tool"
+    ]
+    assert recent_tool_results
+    assert all(
+        "full result remains stored" in str(message.content)
+        for message in recent_tool_results
+    )
+
+
 def test_runtime_payload_compaction_deduplicates_old_results_and_removes_images() -> (
     None
 ):

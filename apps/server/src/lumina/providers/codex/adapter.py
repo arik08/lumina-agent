@@ -1047,8 +1047,9 @@ def _request_error(exc: Exception) -> ProviderRequestError:
         )
     return ProviderRequestError(
         "Codex App Server 요청이 실패했습니다.",
-        retryable=False,
-        stage="runtime",
+        retryable=True,
+        stage="request",
+        diagnostic_code=type(exc).__name__,
     )
 
 
