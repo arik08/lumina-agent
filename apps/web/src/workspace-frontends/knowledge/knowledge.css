@@ -253,6 +253,7 @@
   --knowledge-graph-node-4: #ad7021;
   --knowledge-graph-node-5: #b85678;
   --knowledge-graph-node-6: #74808f;
+  --knowledge-graph-selected-outline: #20242c;
   position: relative;
   min-height: 0;
   flex: 1;

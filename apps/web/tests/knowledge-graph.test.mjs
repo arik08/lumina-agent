@@ -134,7 +134,7 @@ test("Knowledge graph eases node hover emphasis over a short animation", async (
   assert.match(graph, /hoverFrame = requestAnimationFrame\(animateHover\)/);
   assert.match(graph, /const nodeAlpha = selected \? 1 : 1 - 0\.84 \* Math\.max\(0, focusLevel - relatedLevel\)/);
   assert.match(graph, /0\.84 - 0\.74 \* Math\.max\(0, focusLevel - relatedLevel\) \+ 0\.16 \* ownLevel/);
-  assert.match(graph, /node\.radius \* \(selected \? 1\.32 : 1 \+ 0\.2 \* ownLevel\)/);
+  assert.match(graph, /node\.radius \* \(selected \? 1\.45 : 1 \+ 0\.2 \* ownLevel\)/);
   assert.match(graph, /if \(reducedMotion\) \{\s*nodeHoverLevels\.clear\(\)/);
   assert.match(graph, /if \(hoverFrame !== null\) cancelAnimationFrame\(hoverFrame\)/);
 });
@@ -177,7 +177,9 @@ test("Graph nodes use representative-tag colors while selection keeps the catego
   assert.match(graph, /function buildNodeColorGroups/);
   assert.match(graph, /\(tagUsage\.get\(right\.id\) \?\? 0\) - \(tagUsage\.get\(left\.id\) \?\? 0\)/);
   assert.match(graph, /context\.fillStyle = colors\.nodePalette\[node\.colorIndex\]/);
-  assert.match(graph, /context\.strokeStyle = selected \? colors\.cobalt : colors\.ink/);
+  assert.match(graph, /context\.arc\(node\.x, node\.y, node\.radius \* \(selected \? 1\.45 : 1 \+ 0\.2 \* ownLevel\)/);
+  assert.match(graph, /selectedOutline: token\("--knowledge-graph-selected-outline", "#20242c"\)/);
+  assert.match(graph, /context\.strokeStyle = selected \? colors\.selectedOutline : colors\.ink/);
   assert.match(graph, /className="knowledge-graph-legend" aria-label="노드 색상: 대표 태그"/);
   assert.match(graph, /if \(selected\) button\.setAttribute\("aria-current", "true"\)/);
   assert.match(graph, /else button\.removeAttribute\("aria-current"\)/);

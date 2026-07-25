@@ -295,6 +295,7 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
         muted: token("--muted", "#69717d"),
         line: token("--line-strong", "#d4d8de"),
         cobalt: token("--cobalt", "#3f66c9"),
+        selectedOutline: token("--knowledge-graph-selected-outline", "#20242c"),
         nodePalette: Array.from({ length: graphNodeColorCount + 1 }, (_, index) =>
           token(`--knowledge-graph-node-${index + 1}`, index === graphNodeColorCount ? "#74808f" : "#3f66c9")),
         edgeHighlight: token("--ink", "#20242c"),
@@ -355,12 +356,12 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
         const nodeAlpha = selected ? 1 : 1 - 0.84 * Math.max(0, focusLevel - relatedLevel);
         context.globalAlpha = nodeAlpha;
         context.beginPath();
-        context.arc(node.x, node.y, node.radius * (selected ? 1.32 : 1 + 0.2 * ownLevel), 0, Math.PI * 2);
+        context.arc(node.x, node.y, node.radius * (selected ? 1.45 : 1 + 0.2 * ownLevel), 0, Math.PI * 2);
         context.fillStyle = colors.nodePalette[node.colorIndex];
         context.fill();
         if (selected || ownLevel > 0.001) {
           context.globalAlpha = nodeAlpha * (selected ? 1 : ownLevel);
-          context.strokeStyle = selected ? colors.cobalt : colors.ink;
+          context.strokeStyle = selected ? colors.selectedOutline : colors.ink;
           context.lineWidth = (selected ? 2.4 : 1.6) / viewport.scale;
           context.stroke();
         }
