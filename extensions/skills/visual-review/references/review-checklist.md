@@ -18,6 +18,8 @@
 - No major analytical section runs for four or more paragraphs without a chart, table, diagram, timeline, matrix, callout, evidence-card group, or structured list unless uninterrupted prose is explicitly justified as clearer.
 - Added depth replaces targeted sections inside the existing visual hierarchy while preserving the rest of the report; a chain of new prose sections does not continue after the executive conclusion.
 - Charts are labeled and not over-decorated.
+- Chart geometry matches the data semantics: lines connect time, continuous values, or meaningful ordered stages, not nominal categories such as countries or companies.
+- Multi-series comparisons across nominal categories use grouped bars, dot plots, or aligned small multiples; a secondary axis or different unit does not by itself justify a line series.
 - Tables are used for exact values.
 
 ## Export quality

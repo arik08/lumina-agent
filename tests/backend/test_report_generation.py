@@ -736,6 +736,10 @@ def test_selected_artifact_target_retries_short_report_and_exposes_separate_coun
     assert "Before submitting a numeric-dense HTML report" in system_text
     assert "substantive ECharts or inline-SVG chart" in system_text
     assert "CSS progress bars alone are not sufficient" in system_text
+    assert "Match chart geometry to the independent variable" in system_text
+    assert "Do not connect nominal categories" in system_text
+    assert "prefer distinct-color grouped bars, dot plots, or aligned small multiples" in system_text
+    assert "A different unit or secondary axis alone does not justify a line series" in system_text
     assert "do not leave more than two substantial paragraphs in sequence" in system_text
     assert "flag every major section with four or more paragraphs" in system_text
     assert "every major HTML report section a short, stable, unique id" in system_text

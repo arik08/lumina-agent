@@ -107,6 +107,14 @@ test("HTML Artifact reports prefer ECharts for numeric-dense interactive visuals
   assert.match(visualArtifactSkillSource, /if a numeric-dense report has no real chart, return to the visual plan/);
 });
 
+test("HTML Artifact reports do not connect nominal categories as trends", () => {
+  assert.match(visualArtifactSkillSource, /Use a line or area chart only when the x-axis has a meaningful continuous or ordered progression/);
+  assert.match(visualArtifactSkillSource, /Countries, companies, suppliers, products, regions, and other nominal categories do not become a trend/);
+  assert.match(visualArtifactSkillSource, /prefer distinct-color grouped bars, dot plots, or aligned small multiples/);
+  assert.match(visualArtifactSkillSource, /Do not draw lines between unrelated categories or use a line merely to distinguish a secondary-axis series/);
+  assert.match(visualArtifactSkillSource, /otherwise split them into aligned panels with the same category order/);
+});
+
 test("HTML Artifact reports keep section text off an unbounded tinted canvas", () => {
   assert.match(visualArtifactSkillSource, /Never leave a major section heading, subtitle, or introductory paragraph floating directly on a persistent gray or tinted report canvas/);
   assert.match(visualArtifactSkillSource, /establish an explicit section surface or intentional full-width section band/);

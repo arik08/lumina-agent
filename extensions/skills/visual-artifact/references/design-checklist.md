@@ -12,6 +12,8 @@ Use this checklist before final delivery of a visual HTML artifact.
 - Qualitative visuals are explicitly labeled and do not invent numeric precision.
 - Exact values are shown in tables or labels, not only visual marks.
 - Every chart has a title, units, and readable labels.
+- Line and area charts use a genuinely continuous or meaningfully ordered x-axis; nominal categories such as countries, companies, suppliers, products, and regions are not connected as if they formed a trend.
+- Multiple measures over the same nominal categories use grouped bars, dot plots, or aligned small multiples. A different unit or secondary axis alone is not a reason to turn a categorical series into a line.
 - The artifact has a clear ending: conclusion, recommendation, next steps, or source notes.
 
 ## Layout
