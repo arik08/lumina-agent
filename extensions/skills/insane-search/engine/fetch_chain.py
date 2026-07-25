@@ -42,6 +42,8 @@ REFERER_STRATEGIES = {
     "none": lambda _url: "",
 }
 
+_PUBLIC_DOH_URL = "https://1.1.1.1/dns-query"  # NOTE-BIAS-OK: generic DNS recovery, not target-site logic
+
 
 # --- Attempt & result schema (Codex: "evidence schema first") ----------------
 @dataclass
@@ -102,17 +104,39 @@ def _curl_probe(
     if referer:
         headers["Referer"] = referer
 
+    request_options = {
+        "impersonate": impersonate,
+        "headers": headers,
+        "timeout": timeout,
+        "allow_redirects": True,
+    }
     try:
-        resp = cffi_requests.get(
-            url,
-            impersonate=impersonate,
-            headers=headers,
-            timeout=timeout,
-            allow_redirects=True,
-        )
+        resp = cffi_requests.get(url, **request_options)
         return resp, None
     except Exception as e:
-        return None, f"{type(e).__name__}:{str(e)[:200]}"
+        if not _is_dns_failure(e):
+            return None, f"{type(e).__name__}:{str(e)[:200]}"
+        try:
+            from curl_cffi.const import CurlOpt
+
+            resp = cffi_requests.get(
+                url,
+                **request_options,
+                curl_options={CurlOpt.DOH_URL: _PUBLIC_DOH_URL},
+            )
+            return resp, None
+        except Exception as retry_error:
+            return None, f"{type(retry_error).__name__}:{str(retry_error)[:200]}"
+
+
+def _is_dns_failure(error: Exception) -> bool:
+    message = f"{type(error).__name__}: {error}".casefold()
+    return (
+        type(error).__name__.casefold() == "dnserror"
+        or getattr(error, "code", None) == 6
+        or "could not resolve host" in message
+        or "resolving timed out" in message
+    )
 
 
 def _run_attempt(
