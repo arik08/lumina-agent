@@ -451,13 +451,14 @@ _EXTEND_REPORT_TOOL_SCHEMA: dict[str, Any] = {
     "function": {
         "name": "extend_report",
         "description": (
-            "Append new substantive content to the report Artifact saved by a preceding "
-            "create_report result whose status is needs_expansion. Provide only the new "
-            "HTML body fragment or Markdown content to add. Lumina reads the current "
-            "Artifact version and combines it with this fragment on the server, preserving "
-            "all existing content, citations, structure, and styling. Never repeat or "
-            "recreate the complete report. Do not use this tool unless create_report or a "
-            "previous extend_report explicitly requested another expansion."
+            "Append new substantive Markdown content to the report Artifact saved by a "
+            "preceding create_report result whose status is needs_expansion. Lumina reads "
+            "the current Markdown version and combines it with this fragment on the server, "
+            "preserving all existing content and citations. HTML reports must instead be "
+            "recomposed as a complete coherent document through create_report so added depth "
+            "is integrated into the existing visual structure. Do not use this tool unless "
+            "create_report or a previous extend_report explicitly requested another Markdown "
+            "expansion."
         ),
         "parameters": {
             "type": "object",
@@ -467,11 +468,8 @@ _EXTEND_REPORT_TOOL_SCHEMA: dict[str, Any] = {
                     "minLength": 1,
                     "maxLength": 200000,
                     "description": (
-                        "Only the new content to append. For HTML reports, provide semantic "
-                        "body content such as section, article, table, figure, or aside "
-                        "elements. Do not include doctype, html, head, or body tags. Lumina "
-                        "inserts the fragment before the report's closing main or body tag. "
-                        "For Markdown reports, provide only the additional Markdown sections."
+                        "Only the additional Markdown sections to append. Do not submit HTML "
+                        "fragments or a complete replacement document through this tool."
                     ),
                 }
             },

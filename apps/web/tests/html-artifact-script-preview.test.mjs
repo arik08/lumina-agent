@@ -107,6 +107,18 @@ test("HTML Artifact reports prefer ECharts for numeric-dense interactive visuals
   assert.match(visualArtifactSkillSource, /if a numeric-dense report has no real chart, return to the visual plan/);
 });
 
+test("HTML Artifact reports keep section text off an unbounded tinted canvas", () => {
+  assert.match(visualArtifactSkillSource, /Never leave a major section heading, subtitle, or introductory paragraph floating directly on a persistent gray or tinted report canvas/);
+  assert.match(visualArtifactSkillSource, /establish an explicit section surface or intentional full-width section band/);
+  assert.match(visualArtifactSkillSource, /Do not place a bare heading between detached white cards/);
+});
+
+test("HTML Artifact reports structure prose-heavy sections and recompose expansions", () => {
+  assert.match(visualArtifactSkillSource, /do not leave more than two substantial paragraphs in sequence without a reader-facing structure/);
+  assert.match(visualArtifactSkillSource, /Never grow a report by appending a chain of new prose sections after its conclusion/);
+  assert.match(visualArtifactSkillSource, /flag every major section with four or more paragraphs and no chart, table, diagram, timeline, matrix, callout, evidence-card group, or structured list/);
+});
+
 test("HTML Artifact Mermaid colors retain fallbacks outside the app theme root", () => {
   assert.match(interactiveResponseSource, /themedSvg\.replaceAll\(value, `var\(\$\{tokenName\}, \$\{value\}\)`\)/);
 });

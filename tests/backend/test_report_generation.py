@@ -567,16 +567,18 @@ def test_selected_artifact_target_retries_short_report_and_exposes_separate_coun
         "<!doctype html><html lang='ko'><head><title>짧은 보고서</title></head>"
         "<body><main><h1>짧은 보고서</h1><p>요약입니다.</p></main></body></html>"
     )
-    first_extension = (
-        "<section id='first-extension'><h2>첫 번째 추가 분석</h2>"
-        + "<p>공급 구조와 계약 조건을 추가로 비교합니다.</p>\n" * 10
-        + "</section>"
+    first_revision = (
+        "<!doctype html><html lang='ko'><head><title>첫 번째 재구성</title></head>"
+        "<body><main><h1 id='first-revision'>첫 번째 재구성</h1><table>"
+        + "<tr><th>항목</th><td>공급 구조와 계약 조건을 비교합니다.</td></tr>\n" * 10
+        + "</table><footer>결론</footer></main></body></html>"
     )
-    final_extension = (
-        "<section id='final-extension'><h2>두 번째 추가 분석</h2>"
-        + "<p>근거와 수치를 바탕으로 원인, 영향, 대응 방향을 구체적으로 분석합니다.</p>\n"
+    final_revision = (
+        "<!doctype html><html lang='ko'><head><title>최종 재구성</title></head>"
+        "<body><main><h1 id='final-revision'>최종 재구성</h1><table>"
+        + "<tr><th>항목</th><td>근거와 수치를 바탕으로 원인, 영향, 대응 방향을 구체적으로 분석합니다.</td></tr>\n"
         * 300
-        + "</section>"
+        + "</table><footer id='final-conclusion'>최종 결론</footer></main></body></html>"
     )
     provider_turn = 0
     requests = []
@@ -605,20 +607,18 @@ def test_selected_artifact_target_retries_short_report_and_exposes_separate_coun
                 )
             )
         if provider_turn <= 3:
+            arguments = _arguments("html")
+            arguments["html_source"] = (
+                first_revision if provider_turn == 2 else final_revision
+            )
             return RecordingProvider(
                 tool_call=MockToolCall(
-                    name="extend_report",
-                    arguments={
-                        "content": (
-                            first_extension
-                            if provider_turn == 2
-                            else final_extension
-                        )
-                    },
+                    name="create_report",
+                    arguments=arguments,
                     call_id=f"call_target_length_{provider_turn}",
                 )
             )
-        return RecordingProvider(text_chunks=("확장한 HTML 보고서를 저장했습니다.",))
+        return RecordingProvider(text_chunks=("재구성한 HTML 보고서를 저장했습니다.",))
 
     monkeypatch.setattr(local_run_executor, "_provider", fake_provider)
     with TestClient(create_app(settings)) as client:
@@ -672,13 +672,13 @@ def test_selected_artifact_target_retries_short_report_and_exposes_separate_coun
     assert snapshot["toolExecutions"][2]["artifactId"] == snapshot["artifacts"][0]["id"]
     assert [
         execution["toolName"] for execution in snapshot["toolExecutions"]
-    ] == ["create_report", "extend_report", "extend_report"]
+    ] == ["create_report", "create_report", "create_report"]
     assert version_sources[0] == short_html
-    assert short_html.split("</main>", 1)[0] in version_sources[1]
-    assert first_extension in version_sources[1]
-    assert short_html.split("</main>", 1)[0] in version_sources[2]
-    assert first_extension in version_sources[2]
-    assert final_extension in version_sources[2]
+    assert version_sources[1] == first_revision
+    assert "id='original'" not in version_sources[1]
+    assert version_sources[2] == final_revision
+    assert "id='first-revision'" not in version_sources[2]
+    assert "id='final-conclusion'" in version_sources[2]
     assert version_sources[2].count("<!doctype html>") == 1
     artifact_usage = snapshot["artifactUsage"]
     assert artifact_usage["estimated"] is False
@@ -700,6 +700,15 @@ def test_selected_artifact_target_retries_short_report_and_exposes_separate_coun
     assert "Before submitting a numeric-dense HTML report" in system_text
     assert "substantive ECharts or inline-SVG chart" in system_text
     assert "CSS progress bars alone are not sufficient" in system_text
+    assert "do not leave more than two substantial paragraphs in sequence" in system_text
+    assert "flag every major section with four or more paragraphs" in system_text
+    rewrite_requirement = snapshot["toolExecutions"][0]["result"][
+        "targetLengthCheck"
+    ]
+    assert "one complete replacement HTML document" in rewrite_requirement
+    assert "recompose the whole report" in rewrite_requirement
+    assert "keep the conclusion at the end" in rewrite_requirement
+    assert "Do not call `extend_report`" in rewrite_requirement
     report_schema = next(
         schema
         for schema in first_request.tools
@@ -733,8 +742,13 @@ def test_selected_artifact_target_retries_short_report_and_exposes_separate_coun
         for schema in first_request.tools
         if schema.get("function", {}).get("name") == "extend_report"
     )
-    assert "combines it with this fragment on the server" in (
+    assert "HTML reports must instead be recomposed as a complete coherent document" in (
         extension_schema["function"]["description"]
+    )
+    assert "Do not submit HTML fragments" in (
+        extension_schema["function"]["parameters"]["properties"]["content"][
+            "description"
+        ]
     )
 
 
@@ -753,9 +767,13 @@ def test_selected_artifact_target_fails_instead_of_saving_repeatedly_short_repor
         "<!doctype html><html lang='ko'><head><title>짧은 보고서</title></head>"
         "<body><main><h1>짧은 보고서</h1><p>요약입니다.</p></main></body></html>"
     )
-    extensions = (
-        "<section id='failure-extension-1'><p>첫 번째 짧은 추가입니다.</p></section>",
-        "<section id='failure-extension-2'><p>두 번째 짧은 추가입니다.</p></section>",
+    revisions = (
+        "<!doctype html><html><head><title>첫 번째 재구성</title></head>"
+        "<body><main id='failure-revision-1'>"
+        "<p>첫 번째 짧은 재구성입니다.</p></main></body></html>",
+        "<!doctype html><html><head><title>두 번째 재구성</title></head>"
+        "<body><main id='failure-revision-2'>"
+        "<p>두 번째 짧은 재구성입니다.</p></main></body></html>",
     )
     provider_turn = 0
 
@@ -766,16 +784,15 @@ def test_selected_artifact_target_fails_instead_of_saving_repeatedly_short_repor
         del first_turn
         assert wants_artifact is True
         provider_turn += 1
-        if provider_turn == 1:
-            arguments = _arguments("html")
-            arguments["html_source"] = short_html
-            tool_name = "create_report"
-        else:
-            arguments = {"content": extensions[provider_turn - 2]}
-            tool_name = "extend_report"
+        if provider_turn > 3:
+            return MockProvider(text_chunks=("목표 분량을 충족하지 못했습니다.",))
+        arguments = _arguments("html")
+        arguments["html_source"] = (
+            short_html if provider_turn == 1 else revisions[provider_turn - 2]
+        )
         return MockProvider(
             tool_call=MockToolCall(
-                name=tool_name,
+                name="create_report",
                 arguments=arguments,
                 call_id=f"call_target_length_failure_{provider_turn}",
             )
@@ -823,14 +840,14 @@ def test_selected_artifact_target_fails_instead_of_saving_repeatedly_short_repor
     assert "최소 허용 분량" in snapshot["toolExecutions"][2]["error"]
     assert [
         execution["toolName"] for execution in snapshot["toolExecutions"]
-    ] == ["create_report", "extend_report", "extend_report"]
-    assert short_html.split("</main>", 1)[0] in final_source
-    assert extensions[0] in final_source
-    assert extensions[1] in final_source
+    ] == ["create_report", "create_report", "create_report"]
+    assert final_source == revisions[1]
+    assert "failure-revision-1" not in final_source
+    assert "failure-revision-2" in final_source
     assert final_source.count("<!doctype html>") == 1
 
 
-def test_short_report_rejects_full_document_retry_before_server_side_extension(
+def test_short_html_report_accepts_full_document_retry_as_coherent_replacement(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     settings = Settings(
@@ -847,12 +864,10 @@ def test_short_report_rejects_full_document_retry_before_server_side_extension(
     )
     replacement_html = (
         "<!doctype html><html><head><title>덮어쓴 문서</title></head>"
-        "<body><main><h1 id='replacement'>덮어쓴 문서</h1></main></body></html>"
-    )
-    extension = (
-        "<section id='server-appended'><h2>누적 분석</h2>"
-        + "<p>기존 근거를 유지하면서 원인과 영향을 추가로 분석합니다.</p>\n" * 300
-        + "</section>"
+        "<body><main><h1 id='replacement'>덮어쓴 문서</h1><table>"
+        + "<tr><th>근거</th><td>공급 경쟁력의 원인과 영향 및 대응을 구조적으로 비교합니다.</td></tr>\n"
+        * 300
+        + "</table><footer id='replacement-conclusion'>결론</footer></main></body></html>"
     )
     provider_turn = 0
 
@@ -880,18 +895,10 @@ def test_short_report_rejects_full_document_retry_before_server_side_extension(
                 tool_call=MockToolCall(
                     name="create_report",
                     arguments=arguments,
-                    call_id="call_forbidden_rewrite",
+                    call_id="call_coherent_rewrite",
                 )
             )
-        if provider_turn == 3:
-            return MockProvider(
-                tool_call=MockToolCall(
-                    name="extend_report",
-                    arguments={"content": extension},
-                    call_id="call_server_extension",
-                )
-            )
-        return MockProvider(text_chunks=("누적 확장한 보고서를 저장했습니다.",))
+        return MockProvider(text_chunks=("전체 재구성한 보고서를 저장했습니다.",))
 
     monkeypatch.setattr(local_run_executor, "_provider", fake_provider)
     with TestClient(create_app(settings)) as client:
@@ -900,7 +907,7 @@ def test_short_report_rejects_full_document_retry_before_server_side_extension(
         conversation = client.post(
             "/api/conversations",
             headers={"X-CSRF-Token": csrf},
-            json={"projectId": project_id, "title": "보고서 전체 재작성 차단"},
+            json={"projectId": project_id, "title": "보고서 전체 재작성"},
         ).json()
         started = client.post(
             f"/api/conversations/{conversation['id']}/runs",
@@ -924,17 +931,15 @@ def test_short_report_rejects_full_document_retry_before_server_side_extension(
         ).json()["sourceText"]
 
     assert snapshot["status"] == "completed"
-    assert provider_turn == 4
+    assert provider_turn == 3
     assert artifact["versions"] == [2, 1]
     assert [
         execution["toolName"] for execution in snapshot["toolExecutions"]
-    ] == ["create_report", "create_report", "extend_report"]
-    rejected = snapshot["toolExecutions"][1]
-    assert rejected["status"] == "failed"
-    assert "`extend_report`" in rejected["error"]
-    assert "id='original'" in final_source
-    assert "id='server-appended'" in final_source
-    assert "id='replacement'" not in final_source
+    ] == ["create_report", "create_report"]
+    assert snapshot["toolExecutions"][1]["status"] == "completed"
+    assert "id='original'" not in final_source
+    assert "id='replacement'" in final_source
+    assert "id='replacement-conclusion'" in final_source
 
 
 def _assert_reopened(report_format: str, content: bytes) -> None:

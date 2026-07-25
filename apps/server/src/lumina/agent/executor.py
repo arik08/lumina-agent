@@ -2434,11 +2434,26 @@ class LocalRunExecutor:
                     output_continuation_count = 0
                 with SessionLocal() as db:
                     current_run = db.get(Run, run_id)
-                    report_extension_required = bool(
-                        current_run is not None
-                        and current_run.snapshot_json.get(
-                            "artifact_length_retry_artifact_id"
+                    report_revision_artifact_id = str(
+                        (
+                            current_run.snapshot_json.get(
+                                "artifact_length_retry_artifact_id"
+                            )
+                            if current_run is not None
+                            else ""
                         )
+                        or ""
+                    ).strip()
+                    report_revision_artifact = (
+                        db.get(Artifact, report_revision_artifact_id)
+                        if report_revision_artifact_id
+                        else None
+                    )
+                    report_extension_required = bool(report_revision_artifact_id)
+                    report_revision_mime_type = (
+                        report_revision_artifact.mime_type
+                        if report_revision_artifact is not None
+                        else None
                     )
                 if report_extension_required:
                     if round_text:
@@ -2451,11 +2466,26 @@ class LocalRunExecutor:
                         ProviderMessage(
                             role="user",
                             content=(
-                                "[Report expansion requirement] The saved report is still "
-                                "below the selected document length. Call `extend_report` with "
-                                "only new HTML body content or Markdown sections. Do not call "
-                                "`create_report`, repeat the existing document, or finish with "
-                                "chat text."
+                                (
+                                    "[Report rewrite requirement] The saved HTML report is "
+                                    "still below the selected document length. Call "
+                                    "`create_report` with one complete coherent replacement "
+                                    "HTML document for the same report. Preserve its evidence "
+                                    "and citations, but integrate the added depth into the "
+                                    "existing sections with purposeful charts, tables, "
+                                    "timelines, matrices, or callouts. Rebalance prose-heavy "
+                                    "sections and keep the conclusion at the end. Do not call "
+                                    "`extend_report`, append new sections after the conclusion, "
+                                    "or finish with chat text."
+                                )
+                                if report_revision_mime_type == "text/html"
+                                else (
+                                    "[Report expansion requirement] The saved Markdown report "
+                                    "is still below the selected document length. Call "
+                                    "`extend_report` with only new Markdown sections. Do not "
+                                    "call `create_report`, repeat the existing document, or "
+                                    "finish with chat text."
+                                )
                             ),
                         )
                     )
@@ -4681,7 +4711,15 @@ class LocalRunExecutor:
                 "badges, and CSS progress bars alone are not sufficient. Keep exact values in "
                 "labels or a nearby table; omit the chart only when it would mislead because "
                 "the values are incomplete, differently defined, or not comparable, and state "
-                "that concrete reason in the report. Give every report a short, specific title that names "
+                "that concrete reason in the report. Treat purposeful structure as part of "
+                "the analysis: as a strong default, do not leave more than two substantial "
+                "paragraphs in sequence without a reader-facing chart, exact-value table, "
+                "annotated timeline, comparison matrix, process map, evidence-card group, "
+                "decision stack, or concise takeaway list. Do not manufacture decorative "
+                "cards or unsupported charts merely to interrupt prose. Before submitting, "
+                "flag every major section with four or more paragraphs and no such structured "
+                "anchor; redesign it or keep uninterrupted prose only when it is concretely "
+                "clearer for the evidence. Give every report a short, specific title that names "
                 "its actual subject and deliverable in the user's language; avoid generic "
                 "titles such as 'Lumina report' or 'work report' because the title is also "
                 "used to create its filename. In HTML, use a `.mermaid` block when a process, "
@@ -5883,6 +5921,16 @@ class LocalRunExecutor:
                     report_run.snapshot_json.get("artifact_length_retry_artifact_id")
                     or ""
                 ).strip()
+                revision_artifact = (
+                    db.get(Artifact, revision_artifact_id)
+                    if revision_artifact_id
+                    else None
+                )
+                revision_mime_type = (
+                    revision_artifact.mime_type
+                    if revision_artifact is not None
+                    else None
+                )
                 report_images = (
                     ()
                     if revision_artifact_id
@@ -5896,15 +5944,15 @@ class LocalRunExecutor:
                         max_total_bytes=self.settings.max_upload_bytes,
                     )
                 )
-            if revision_artifact_id:
+            if revision_artifact_id and revision_mime_type != "text/html":
                 return await self._fail_tool_execution(
                     run_id,
                     tool_id,
                     WebToolError(
                         "report_extension_tool_required",
-                        "A short report is already saved. Call `extend_report` with only "
-                        "the new HTML body fragment or Markdown sections to add; do not "
-                        "submit the complete report through `create_report` again.",
+                        "A short Markdown report is already saved. Call `extend_report` "
+                        "with only the new Markdown sections to add; do not submit the "
+                        "complete report through `create_report` again.",
                         stage="validation",
                         retryable=True,
                     ),
@@ -6076,21 +6124,34 @@ class LocalRunExecutor:
                 "expansionAttempt": expansion_attempt,
                 "maxExpansionAttempts": _MAX_ARTIFACT_LENGTH_RETRIES,
                 "targetLengthCheck": (
-                    f"Artifact {revision_artifact_id} version {version.version_number} has "
-                    "been saved and is available to the user while you continue. Its content is "
-                    "only "
-                    f"about {document_tokens:,} tokens, below the selected minimum of about "
-                    f"{target_floor:,} tokens. Expansion check {expansion_attempt} of "
-                    f"{_MAX_ARTIFACT_LENGTH_RETRIES} failed. The saved report will be preserved "
-                    "by Lumina. Add about "
-                    f"{missing_tokens:,} tokens of substantive analysis, explanations, tables, "
-                    "source notes, and interpretation by calling `extend_report` with only the "
-                    "new HTML body fragment or Markdown sections. Do not repeat the existing "
-                    "document. Lumina will combine the fragment with the saved source and append "
-                    "the result as the next immutable version of the same Artifact. The combined "
-                    "version must contain "
-                    f"at least about {target_floor:,} document tokens. Do not restart from "
-                    "scratch and do not finish with chat text only."
+                    (
+                        f"Artifact {revision_artifact_id} version {version.version_number} "
+                        "has been saved and is available to the user while you continue. Its "
+                        f"content is only about {document_tokens:,} tokens, below the selected "
+                        f"minimum of about {target_floor:,} tokens. Rewrite check "
+                        f"{expansion_attempt} of {_MAX_ARTIFACT_LENGTH_RETRIES} failed. Call "
+                        "`create_report` with one complete replacement HTML document containing "
+                        f"about {missing_tokens:,} more tokens of substantive analysis. Preserve "
+                        "the evidence and citations, but recompose the whole report: integrate "
+                        "added depth into the existing visual hierarchy, replace prose runs with "
+                        "supported charts, tables, timelines, matrices, or callouts, and keep "
+                        "the conclusion at the end. Lumina will save that complete source as the "
+                        "next immutable version of the same Artifact. Do not call "
+                        "`extend_report`, append a block of new sections after the conclusion, "
+                        "or finish with chat text only."
+                    )
+                    if report.mime_type == "text/html"
+                    else (
+                        f"Artifact {revision_artifact_id} version {version.version_number} has "
+                        "been saved and is available to the user while you continue. Its content "
+                        f"is only about {document_tokens:,} tokens, below the selected minimum "
+                        f"of about {target_floor:,} tokens. Expansion check {expansion_attempt} "
+                        f"of {_MAX_ARTIFACT_LENGTH_RETRIES} failed. Add about "
+                        f"{missing_tokens:,} tokens of substantive analysis, explanations, "
+                        "tables, source notes, and interpretation by calling `extend_report` "
+                        "with only the new Markdown sections. Do not repeat the existing "
+                        "document or finish with chat text only."
+                    )
                 ),
             }
             artifact_usage = {
@@ -6103,7 +6164,12 @@ class LocalRunExecutor:
                 run_id,
                 tool_id,
                 length_check,
-                "현재 보고서를 원본 버전으로 저장하고 같은 Artifact의 편집을 요청했습니다.",
+                (
+                    "현재 HTML 보고서를 원본 버전으로 저장하고 같은 Artifact의 "
+                    "전체 재구성을 요청했습니다."
+                    if report.mime_type == "text/html"
+                    else "현재 보고서를 원본 버전으로 저장하고 같은 Artifact의 편집을 요청했습니다."
+                ),
                 artifact_id=revision_artifact_id,
                 artifact_usage=artifact_usage,
             )
@@ -6286,6 +6352,11 @@ class LocalRunExecutor:
                 if artifact.mime_type not in {"text/html", "text/markdown"}:
                     raise ValueError(
                         "Only HTML and Markdown reports can be extended incrementally."
+                    )
+                if artifact.mime_type == "text/html":
+                    raise ValueError(
+                        "HTML report length retries must use create_report with one complete "
+                        "coherent replacement document. Do not append an HTML fragment."
                     )
                 source = self.storage.read_bytes(
                     current.storage_key,
