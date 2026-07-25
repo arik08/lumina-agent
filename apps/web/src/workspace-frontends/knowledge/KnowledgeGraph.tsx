@@ -1,12 +1,14 @@
 import { GitBranch, RotateCcw, SlidersHorizontal, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import type { KnowledgeGraphResponse } from "../../api-types";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { KnowledgeDocumentTag, KnowledgeGraphResponse } from "../../api-types";
 
 interface KnowledgeGraphProps { graph: KnowledgeGraphResponse; layoutKey: string; selectedNodeId: string | null; onSelectDocument: (documentId: string) => void; }
 
 interface GraphNode {
   id: string;
   name: string;
+  colorIndex: number;
+  categoryLabel: string;
   radius: number;
   degree: number;
   x?: number;
@@ -31,6 +33,17 @@ interface ForceSettings {
 }
 
 interface Viewport { x: number; y: number; scale: number; }
+
+interface NodeColorGroup {
+  key: string;
+  label: string;
+  colorIndex: number;
+}
+
+interface NodeColorGroups {
+  assignments: Map<string, NodeColorGroup>;
+  legend: NodeColorGroup[];
+}
 
 interface GraphLayout {
   graphSignature: string;
@@ -74,6 +87,57 @@ const graphLabelGap = 7;
 const hoverTransitionDuration = 160;
 const graphLayouts = new Map<string, GraphLayout>();
 const graphLayoutNodeBudget = 1_600;
+const graphNodeColorCount = 5;
+
+function buildNodeColorGroups(nodes: KnowledgeGraphResponse["nodes"]): NodeColorGroups {
+  const tagUsage = new Map<string, number>();
+  nodes.forEach((node) => node.tags.forEach((tag) => {
+    tagUsage.set(tag.id, (tagUsage.get(tag.id) ?? 0) + 1);
+  }));
+  const representativeTags = new Map<string, KnowledgeDocumentTag>();
+  nodes.forEach((node) => {
+    const representative = [...node.tags].sort((left, right) =>
+      (tagUsage.get(right.id) ?? 0) - (tagUsage.get(left.id) ?? 0)
+      || left.namespace.localeCompare(right.namespace)
+      || left.name.localeCompare(right.name)
+      || left.id.localeCompare(right.id)
+    )[0];
+    if (representative) representativeTags.set(node.id, representative);
+  });
+  const groupUsage = new Map<string, { tag: KnowledgeDocumentTag; count: number }>();
+  representativeTags.forEach((tag) => {
+    const current = groupUsage.get(tag.id);
+    groupUsage.set(tag.id, { tag, count: (current?.count ?? 0) + 1 });
+  });
+  const primaryGroups = [...groupUsage.values()]
+    .sort((left, right) => right.count - left.count
+      || left.tag.name.localeCompare(right.tag.name)
+      || left.tag.id.localeCompare(right.tag.id))
+    .slice(0, graphNodeColorCount)
+    .map(({ tag }, colorIndex) => ({
+      key: tag.id,
+      label: `#${tag.name}`,
+      colorIndex,
+    }));
+  const primaryByKey = new Map(primaryGroups.map((group) => [group.key, group]));
+  const fallbackGroup: NodeColorGroup = {
+    key: "other",
+    label: "기타 / 태그 없음",
+    colorIndex: graphNodeColorCount,
+  };
+  const assignments = new Map<string, NodeColorGroup>();
+  let usesFallback = false;
+  nodes.forEach((node) => {
+    const representative = representativeTags.get(node.id);
+    const group = representative ? primaryByKey.get(representative.id) : undefined;
+    assignments.set(node.id, group ?? fallbackGroup);
+    if (!group) usesFallback = true;
+  });
+  return {
+    assignments,
+    legend: usesFallback ? [...primaryGroups, fallbackGroup] : primaryGroups,
+  };
+}
 
 function rememberGraphLayout(layoutKey: string, layout: GraphLayout) {
   graphLayouts.delete(layoutKey);
@@ -127,6 +191,7 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
   const selectedNodeIdRef = useRef(selectedNodeId);
   const [forceSettings, setForceSettings] = useState(defaultForceSettings);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const nodeColorGroups = useMemo(() => buildNodeColorGroups(graph.nodes), [graph.nodes]);
   onSelectDocumentRef.current = onSelectDocument;
   selectedNodeIdRef.current = selectedNodeId;
 
@@ -165,6 +230,8 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
       return {
         id: node.id,
         name: node.title,
+        colorIndex: nodeColorGroups.assignments.get(node.id)?.colorIndex ?? graphNodeColorCount,
+        categoryLabel: nodeColorGroups.assignments.get(node.id)?.label ?? "기타 / 태그 없음",
         degree,
         radius: 6 + Math.min(8, Math.sqrt(degree) * 2.2),
         ...(position ? { x: position.x, y: position.y } : {}),
@@ -194,7 +261,7 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
       const button = document.createElement("button");
       button.type = "button";
       button.className = "knowledge-graph-node-hit-target";
-      button.setAttribute("aria-label", `${node.name} 문서 열기`);
+      button.setAttribute("aria-label", `${node.name} 문서 열기 · 대표 태그 ${node.categoryLabel}`);
       button.dataset.nodeId = node.id;
       nodeButtons.set(node.id, button);
     });
@@ -228,8 +295,8 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
         muted: token("--muted", "#69717d"),
         line: token("--line-strong", "#d4d8de"),
         cobalt: token("--cobalt", "#3f66c9"),
-        cobaltHover: token("--cobalt-hover", "#3158b8"),
-        success: token("--success", "#2f9765"),
+        nodePalette: Array.from({ length: graphNodeColorCount + 1 }, (_, index) =>
+          token(`--knowledge-graph-node-${index + 1}`, index === graphNodeColorCount ? "#74808f" : "#3f66c9")),
         edgeHighlight: token("--ink", "#20242c"),
         font: token("--font-ui", '"Segoe UI", sans-serif'),
       };
@@ -289,19 +356,20 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
         context.globalAlpha = nodeAlpha;
         context.beginPath();
         context.arc(node.x, node.y, node.radius * (selected ? 1.32 : 1 + 0.2 * ownLevel), 0, Math.PI * 2);
-        context.fillStyle = selected ? colors.success : colors.cobalt;
+        context.fillStyle = colors.nodePalette[node.colorIndex];
         context.fill();
-        if (!selected && ownLevel > 0.001) {
-          context.globalAlpha = nodeAlpha * ownLevel;
-          context.fillStyle = colors.cobaltHover;
-          context.fill();
+        if (selected || ownLevel > 0.001) {
+          context.globalAlpha = nodeAlpha * (selected ? 1 : ownLevel);
+          context.strokeStyle = selected ? colors.cobalt : colors.ink;
+          context.lineWidth = (selected ? 2.4 : 1.6) / viewport.scale;
+          context.stroke();
         }
 
         const showLabel = selected || relatedLevel > 0.01 || viewport.scale >= 0.82 || node.degree >= 5;
         if (!showLabel) return;
         context.globalAlpha = clamp(0.84 - 0.74 * Math.max(0, focusLevel - relatedLevel) + 0.16 * ownLevel, 0.1, 1);
-        context.fillStyle = selected ? colors.success : colors.ink;
-        context.font = `${graphLabelFontSize / viewport.scale}px ${colors.font}`;
+        context.fillStyle = colors.ink;
+        context.font = `${selected ? 600 : 400} ${graphLabelFontSize / viewport.scale}px ${colors.font}`;
         context.textBaseline = "middle";
         const label = node.name.length > 38 ? `${node.name.slice(0, 37)}…` : node.name;
         context.fillText(label, node.x + node.radius + graphLabelGap / viewport.scale, node.y);
@@ -313,7 +381,8 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
         const button = nodeButtons.get(node.id);
         if (!button || node.x === undefined || node.y === undefined) return;
         const selected = node.id === selectedNodeIdRef.current;
-        button.toggleAttribute("aria-current", selected);
+        if (selected) button.setAttribute("aria-current", "true");
+        else button.removeAttribute("aria-current");
         const hitRadius = node.radius * viewport.scale + 6;
         const ownLevel = nodeHoverLevels.get(node.id) ?? 0;
         let relatedLevel = ownLevel;
@@ -732,7 +801,7 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
       if (hoverFrame !== null) cancelAnimationFrame(hoverFrame);
       if (zoomFrame !== null) cancelAnimationFrame(zoomFrame);
     };
-  }, [graph, layoutKey]);
+  }, [graph, layoutKey, nodeColorGroups]);
 
   const updateForce = (key: keyof ForceSettings, value: number) => setForceSettings((current) => ({ ...current, [key]: value }));
 
@@ -740,6 +809,13 @@ export function KnowledgeGraph({ graph, layoutKey, selectedNodeId, onSelectDocum
   return <div className="knowledge-graph-canvas">
     <canvas ref={canvasRef} data-force-engine="d3-worker" role="img" aria-label="공통 태그로 연결된 문서 그래프" />
     <div ref={nodeLayerRef} className="knowledge-graph-node-layer" aria-label="지식 문서 노드" />
+    <aside className="knowledge-graph-legend" aria-label="노드 색상: 대표 태그">
+      <strong>대표 태그</strong>
+      {nodeColorGroups.legend.map((group) => <span key={group.key}>
+        <i style={{ backgroundColor: `var(--knowledge-graph-node-${group.colorIndex + 1})` }} />
+        {group.label}
+      </span>)}
+    </aside>
     <div ref={tooltipRef} className="knowledge-graph-edge-tooltip" role="tooltip" hidden />
     <button className="knowledge-graph-force-trigger" type="button" aria-label="그래프 장력 설정" aria-expanded={settingsOpen} onClick={() => setSettingsOpen((open) => !open)}><SlidersHorizontal size={15} /></button>
     {settingsOpen && <section className="knowledge-graph-force-panel" aria-label="그래프 장력 설정">

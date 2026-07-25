@@ -66,7 +66,7 @@ test("Knowledge graph opens documents from the node circle and its visible label
   assert.match(graph, /const hitRadius = node\.radius \+ 6 \/ viewport\.scale/);
   assert.match(graph, /\(world\.x - node\.x\) \*\* 2 \+ \(world\.y - node\.y\) \*\* 2 <= hitRadius \*\* 2/);
   assert.match(graph, /button\.className = "knowledge-graph-node-hit-target"/);
-  assert.match(graph, /button\.setAttribute\("aria-label", `\$\{node\.name\} 문서 열기`\)/);
+  assert.match(graph, /button\.setAttribute\("aria-label", `\$\{node\.name\} 문서 열기 · 대표 태그 \$\{node\.categoryLabel\}`\)/);
   assert.match(graph, /const labelWidth = showLabel \? context\.measureText\(label\)\.width \* viewport\.scale : 0/);
   assert.match(graph, /const hitWidth = showLabel \?/);
   assert.match(graph, /button\.style\.width = `\$\{hitWidth\}px`/);
@@ -165,7 +165,7 @@ test("Knowledge graph restores the last layout when its tab remounts", async () 
   assert.match(graph, /viewport: \{ \.\.\.viewport \}/);
 });
 
-test("Graph document list selection stays on the graph and highlights the matching node and label in green", async () => {
+test("Graph nodes use representative-tag colors while selection keeps the category color", async () => {
   const [graph, view] = await Promise.all([readFile(graphPath, "utf8"), readFile(viewPath, "utf8")]);
   assert.match(view, /tab === "graph" \? setSelectedGraphNodeId\(id\) : openDocument\(id, tab\)/);
   assert.match(view, /onRead=\{tab === "graph" \? \(id\) => openDocument\(id, "wiki", "graph"\) : undefined\}/);
@@ -174,10 +174,13 @@ test("Graph document list selection stays on the graph and highlights the matchi
   assert.match(view, /openDocument\(selectedGraphNodeId, view, "graph"\)/);
   assert.match(view, /loadDocument\(documentId\)\.then\(\(\) => setTab\(nextTab\)\)/);
   assert.match(view, /selectedNodeId=\{selectedGraphNodeId\}/);
-  assert.match(graph, /success: token\("--success", "#2f9765"\)/);
-  assert.match(graph, /context\.fillStyle = selected \? colors\.success : colors\.cobalt/);
-  assert.match(graph, /context\.fillStyle = selected \? colors\.success : colors\.ink/);
-  assert.match(graph, /button\.toggleAttribute\("aria-current", selected\)/);
+  assert.match(graph, /function buildNodeColorGroups/);
+  assert.match(graph, /\(tagUsage\.get\(right\.id\) \?\? 0\) - \(tagUsage\.get\(left\.id\) \?\? 0\)/);
+  assert.match(graph, /context\.fillStyle = colors\.nodePalette\[node\.colorIndex\]/);
+  assert.match(graph, /context\.strokeStyle = selected \? colors\.cobalt : colors\.ink/);
+  assert.match(graph, /className="knowledge-graph-legend" aria-label="노드 색상: 대표 태그"/);
+  assert.match(graph, /if \(selected\) button\.setAttribute\("aria-current", "true"\)/);
+  assert.match(graph, /else button\.removeAttribute\("aria-current"\)/);
 });
 
 test("Graph documents provide visible and browser-history return paths", async () => {
