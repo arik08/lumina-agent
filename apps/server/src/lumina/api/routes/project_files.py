@@ -4,6 +4,7 @@ from base64 import urlsafe_b64decode, urlsafe_b64encode
 from binascii import Error as Base64Error
 from contextlib import suppress
 from datetime import datetime
+import hashlib
 import json
 from pathlib import PurePosixPath
 from urllib.parse import quote
@@ -478,14 +479,23 @@ def download_project_file(
             "project_file_content_missing",
             "Project 파일 원본을 읽을 수 없습니다.",
         ) from exc
+    download_content = prepare_standalone_html_download(content, selected.mime_type)
+    download_hash = (
+        selected.content_hash
+        if download_content is content
+        else hashlib.sha256(download_content).hexdigest()
+    )
     filename = PurePosixPath(project_file.logical_path).name
     return Response(
-        content=content,
+        content=download_content,
         media_type=selected.mime_type,
         headers={
+            "Content-Length": str(len(download_content)),
             "Content-Disposition": (
                 f"attachment; filename=project-file; filename*=UTF-8''{quote(filename)}"
-            )
+            ),
+            "ETag": f'"{download_hash}"',
+            "Cache-Control": "private, no-store",
         },
     )
 

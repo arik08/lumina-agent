@@ -120,7 +120,10 @@ def test_project_file_html_preview_opens_inline_with_sandbox(
     tmp_path: Path,
 ) -> None:
     settings = _settings(tmp_path, "html-project-file-preview.db")
-    html = "<!doctype html><html><head><title>보고서</title></head><body>본문</body></html>"
+    html = (
+        "<!doctype html><html><head><title>보고서</title></head><body>"
+        '<div class="mermaid">flowchart TD\nA-->B</div></body></html>'
+    )
     with TestClient(create_app(settings)) as client:
         headers = _login(client)
         project_id = client.get("/api/projects").json()[0]["id"]
@@ -137,11 +140,27 @@ def test_project_file_html_preview_opens_inline_with_sandbox(
         )
 
         assert preview.status_code == 200
-        assert preview.text == html
+        assert 'data-lumina-standalone-mermaid="11.16.0"' in preview.text
         assert preview.headers["content-disposition"] == "inline"
         assert preview.headers["content-security-policy"].startswith(
             "sandbox allow-scripts"
         )
+
+        downloaded = client.get(
+            f"/api/projects/{project_id}/files/{created.json()['id']}/download",
+            headers={"Accept-Encoding": "identity"},
+        )
+
+        assert downloaded.status_code == 200
+        assert 'data-lumina-standalone-mermaid="11.16.0"' in downloaded.text
+        assert downloaded.headers["content-length"] == str(len(downloaded.content))
+        assert downloaded.headers["etag"] != f'"{created.json()["contentHash"]}"'
+        stored_html = next(
+            path
+            for path in (settings.files_dir / "project-files").rglob("*")
+            if path.is_file() and path.read_bytes() == html.encode()
+        )
+        assert "cdn.jsdelivr.net/npm/mermaid" not in stored_html.read_text("utf-8")
 
 
 def test_project_file_api_keyset_pages_without_duplicates(tmp_path: Path) -> None:
