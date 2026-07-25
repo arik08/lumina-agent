@@ -28,3 +28,15 @@ test("report revision rows form one continuous list without repeated outer spaci
   assert.match(styles, /\.artifact-result \{[\s\S]*?margin: 0;[\s\S]*?border-bottom: 1px solid var\(--line\);/);
   assert.match(styles, /\.artifact-result:first-child \{ border-top: 1px solid var\(--line\); \}/);
 });
+
+test("each generated artifact version shows its own document token count", () => {
+  assert.match(turnSource, /candidate\.artifactId === artifact\.id[\s\S]*?candidate\.result\?\.version === version/);
+  assert.match(turnSource, /const documentTokens = execution\?\.result\?\.documentTokens/);
+  assert.match(turnSource, /const artifactUsageTargetKey = artifactUsageExecution\?\.artifactId/);
+  assert.match(turnSource, /artifacts\.length === 1[\s\S]*?artifacts\[0\]\.currentVersion/);
+  assert.match(turnSource, /tokens: row\.tokens \?\? \([\s\S]*?artifactUsage\.tokens/);
+  assert.match(turnSource, /\{tokens \? `\$\{tokens\.toLocaleString\(\)\} 토큰` : null\}/);
+  assert.match(styles, /\.artifact-result-usage \{[^}]*font-variant-numeric: tabular-nums;[^}]*white-space: nowrap;/);
+  assert.match(styles, /\.chat-pane\.view-chat \.conversation-response-typography \.artifact-result-usage\s*\{\s*font-size: calc\(var\(--conversation-font-size\) - 1px\);/);
+  assert.match(styles, /@media \(max-width: 720px\)[\s\S]*?\.artifact-result \{ grid-template-columns: 22px minmax\(0, 1fr\) auto; \}/);
+});

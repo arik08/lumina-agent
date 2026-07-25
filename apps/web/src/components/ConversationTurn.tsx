@@ -1749,7 +1749,22 @@ export const AssistantTurn = memo(function AssistantTurn({
         artifact.currentVersion,
       ]),
     ].sort((left, right) => left - right);
-    return versions.map((version) => ({ artifact, version }));
+    return versions.map((version) => {
+      const execution = [...tools].reverse().find((candidate) => (
+        candidate.artifactId === artifact.id
+        && candidate.result?.version === version
+      ));
+      const documentTokens = execution?.result?.documentTokens;
+      return {
+        artifact,
+        version,
+        tokens: typeof documentTokens === "number"
+          && Number.isInteger(documentTokens)
+          && documentTokens > 0
+          ? documentTokens
+          : null,
+      };
+    });
   });
   const activities: RunActivity[] = snapshot?.activities?.length
     ? snapshot.activities
@@ -2024,6 +2039,25 @@ export const AssistantTurn = memo(function AssistantTurn({
   const artifactProgress = artifactUsage
     ? tokenBucketProgress(artifactUsage.tokens, artifactUsage.targetTokens)
     : null;
+  const artifactUsageExecution = [...tools].reverse().find((execution) => (
+    execution.artifactId
+    && typeof execution.result?.version === "number"
+    && Number.isInteger(execution.result.version)
+    && execution.result.version > 0
+  ));
+  const artifactUsageTargetKey = artifactUsageExecution?.artifactId
+    ? `${artifactUsageExecution.artifactId}:${artifactUsageExecution.result?.version}`
+    : artifacts.length === 1
+      ? `${artifacts[0].id}:${artifacts[0].currentVersion}`
+      : null;
+  const artifactVersionRowsWithUsage = artifactVersionRows.map((row) => ({
+    ...row,
+    tokens: row.tokens ?? (
+      artifactUsage && artifactUsageTargetKey === `${row.artifact.id}:${row.version}`
+        ? artifactUsage.tokens
+        : null
+    ),
+  }));
   const runUsage = finalMessage?.metadata?.usage ?? snapshot?.usage;
   const reasoningTokens = optionalUsageNumber(runUsage, "reasoning_tokens");
   const modelOutputTokens = usageNumber(runUsage, "output_tokens");
@@ -2155,12 +2189,15 @@ export const AssistantTurn = memo(function AssistantTurn({
                 </div>
               </div>
             )}
-            {artifactVersionRows.length > 0 && (
+            {artifactVersionRowsWithUsage.length > 0 && (
               <div className="artifact-results">
-                {artifactVersionRows.map(({ artifact, version }) => (
+                {artifactVersionRowsWithUsage.map(({ artifact, version, tokens }) => (
                   <button className="artifact-result" type="button" key={`${artifact.id}:${version}`} onClick={() => onOpenArtifact(artifact, version)}>
                     <FileCode2 size={18} />
                     <span className="artifact-result-title"><small>{version === 1 ? "(원본)" : `(v${version})`}</small><strong>{artifact.displayName}</strong></span>
+                    <span className="artifact-result-usage">
+                      {tokens ? `${tokens.toLocaleString()} 토큰` : null}
+                    </span>
                     <span className="artifact-result-action">문서 열기 <ChevronRight size={14} /></span>
                   </button>
                 ))}
