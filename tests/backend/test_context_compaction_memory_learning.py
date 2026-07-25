@@ -1741,9 +1741,8 @@ def test_memory_retrieval_selects_relevant_subset_with_core_preferences(
             user_id=user.id,
             query="설비 점검 결과를 HTML 보고서로 작성해 주세요.",
         )
-        assert len(selected) == 3
+        assert len(selected) == 2
         assert {memory.category for memory in selected} == {
-            "communication_preference",
             "user_role",
             "output_preference",
         }

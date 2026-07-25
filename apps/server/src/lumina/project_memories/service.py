@@ -750,12 +750,11 @@ def select_relevant_project_memories(
                 " ".join((memory.category, memory.normalized_fact, memory.display_text))
             )
         )
-        always_relevant = memory.category == "project_rule"
-        if not always_relevant and overlap == 0:
+        if overlap == 0:
             continue
         ranked.append(
             (
-                (1000 if always_relevant else 0) + overlap * 50,
+                overlap * 50,
                 memory.revision,
                 memory.id,
                 memory,
