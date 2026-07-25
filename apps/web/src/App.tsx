@@ -119,7 +119,6 @@ import { AdminRunSafetySettings } from "./components/AdminRunSafetySettings";
 import { ViewDataCacheProvider } from "./view-data-cache";
 import { preloadAppViews } from "./app-preload";
 import { SelectMenu } from "./components/SelectMenu";
-import { SharedSnapshotViewer } from "./components/SharedSnapshotViewer";
 import { ConversationQuestionNavigator } from "./components/ConversationQuestionNavigator";
 import { SidebarRecentItems } from "./components/SidebarRecentItems";
 import { type PendingCommandAction, type RunControlAction, useLuminaWorkspace } from "./use-lumina-workspace";
@@ -774,30 +773,6 @@ function referenceKindLabel(kind: ReferenceKind) {
   if (kind === "skill") return "Skill";
   if (kind === "mcp") return "MCP";
   return "파일";
-}
-
-function sharedTokenFromPath(pathname: string) {
-  const match = pathname.match(/^\/shared\/([^/]+)\/?$/);
-  if (!match) return null;
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    return match[1];
-  }
-}
-
-function sharedThemeFromLocation() {
-  return new URLSearchParams(window.location.search).get("theme") === "dark" ? "dark" : "light";
-}
-
-function sharedArtifactFromLocation() {
-  const params = new URLSearchParams(window.location.search);
-  const artifactId = params.get("artifact");
-  const parsedVersion = Number(params.get("version"));
-  return {
-    artifactId,
-    artifactVersion: Number.isInteger(parsedVersion) && parsedVersion > 0 ? parsedVersion : null,
-  };
 }
 
 function formalizePlanStepLabel(label: string) {
@@ -1877,9 +1852,6 @@ function App() {
     ?? (artifactSummary && artifactVersion && ["application/pdf", "text/html"].includes(artifactVersion.mimeType)
       ? `/api/artifacts/${encodeURIComponent(artifactSummary.id)}/preview?version=${encodeURIComponent(String(artifactVersion.version))}`
       : null);
-  const sharedViewerToken = sharedTokenFromPath(window.location.pathname);
-  const sharedArtifactTarget = sharedArtifactFromLocation();
-
   useEffect(() => {
     if (!toast) return;
     const timer = window.setTimeout(() => setToast(null), 2600);
@@ -3178,16 +3150,6 @@ function App() {
       </>
     );
   }
-  if (sharedViewerToken) {
-    return (
-      <SharedSnapshotViewer
-        artifactId={sharedArtifactTarget.artifactId}
-        artifactVersion={sharedArtifactTarget.artifactVersion}
-        token={sharedViewerToken}
-        theme={sharedThemeFromLocation()}
-      />
-    );
-  }
   const streamLabel = backendConnectionState === "offline"
     ? "연결 끊김"
     : backendConnectionState === "recovering"
@@ -3439,7 +3401,7 @@ function App() {
                 if (event.key === "Escape") { event.preventDefault(); setSessionTitleEditing(false); }
               }} />
             ) : (
-              <h1><button className="chat-title-button" type="button" aria-label={sharedViewerToken ? "공유된 대화" : "세션명 수정"} disabled={Boolean(sharedViewerToken) || !workspace.activeConversation} onClick={() => beginSessionTitleEdit()}>{sharedViewerToken ? "공유된 대화" : workspace.activeConversation?.title ?? "새 작업"}</button></h1>
+              <h1><button className="chat-title-button" type="button" aria-label="세션명 수정" disabled={!workspace.activeConversation} onClick={() => beginSessionTitleEdit()}>{workspace.activeConversation?.title ?? "새 작업"}</button></h1>
             )}
           </div>
           <div className="chat-actions">

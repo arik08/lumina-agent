@@ -4,13 +4,13 @@ import test from "node:test";
 
 const viewerPath = new URL("../src/components/SharedSnapshotViewer.tsx", import.meta.url);
 const stylesheetPath = new URL("../src/styles.css", import.meta.url);
-const appPath = new URL("../src/App.tsx", import.meta.url);
+const frontendHostPath = new URL("../src/frontend-host/AgentFrontendHost.tsx", import.meta.url);
 
 test("shared Artifact links open the selected immutable version in a direct viewer", async () => {
-  const [viewer, stylesheet, app] = await Promise.all([
+  const [viewer, stylesheet, frontendHost] = await Promise.all([
     readFile(viewerPath, "utf8"),
     readFile(stylesheetPath, "utf8"),
-    readFile(appPath, "utf8"),
+    readFile(frontendHostPath, "utf8"),
   ]);
 
   assert.match(viewer, /artifactId\?: string \| null/);
@@ -25,6 +25,8 @@ test("shared Artifact links open the selected immutable version in a direct view
   assert.match(viewer, /className="shared-artifact-frame"[^>]*sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock allow-downloads"[^>]*srcDoc=\{sharedArtifactSource\}/);
   assert.doesNotMatch(stylesheet, /\.shared-artifact-viewer\.is-fullscreen/);
   assert.match(stylesheet, /\.shared-artifact-body\s*\{[^}]*scrollbar-width:\s*thin/s);
-  assert.match(app, /if \(sharedViewerToken\) \{\s*return \(\s*<SharedSnapshotViewer[\s\S]*?\);\s*\}\s*const streamLabel/);
-  assert.doesNotMatch(app, /<SharedSnapshotViewer[\s\S]*?embedded/);
+  assert.match(frontendHost, /const sharedRoute = sharedRouteFromLocation\(\);\s*if \(sharedRoute\) \{\s*return <SharedSnapshotViewer \{\.\.\.sharedRoute\} \/>;\s*\}\s*const Frontend/);
+  assert.match(frontendHost, /artifactVersion: artifactId && Number\.isInteger\(parsedVersion\) && parsedVersion > 0/);
+  assert.match(viewer, /<h1>공유 대화를 불러오지 못했습니다<\/h1>/);
+  assert.match(viewer, /setLoadRevision\(\(revision\) => revision \+ 1\)/);
 });
