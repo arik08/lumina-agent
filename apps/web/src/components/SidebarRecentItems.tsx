@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState, type UIEventHandler } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type UIEventHandler } from "react";
 import {
   AlertCircle,
   Check,
@@ -6,6 +6,7 @@ import {
   Clock3,
   Folder,
   FolderInput,
+  FilterX,
   Heart,
   LoaderCircle,
   MessageCircle,
@@ -14,6 +15,7 @@ import {
   Pencil,
   Pin,
   PinOff,
+  Search,
   Trash2,
   Waypoints,
   X,
@@ -53,6 +55,12 @@ interface SidebarRecentItemsProps {
   onScroll?: UIEventHandler<HTMLDivElement>;
   onLoadMore?: () => void;
   hasMore?: boolean;
+  titleFilterQuery?: string;
+  titleFilterLoading?: boolean;
+  titleFilterAriaLabel?: string;
+  filterEmptyText?: string;
+  onTitleFilterChange?: (query: string) => void;
+  onTitleFilterClear?: () => void;
 }
 
 export const SidebarRecentItems = memo(function SidebarRecentItems({
@@ -73,6 +81,12 @@ export const SidebarRecentItems = memo(function SidebarRecentItems({
   onScroll,
   onLoadMore,
   hasMore = false,
+  titleFilterQuery,
+  titleFilterLoading = false,
+  titleFilterAriaLabel = "항목 제목으로 필터링",
+  filterEmptyText,
+  onTitleFilterChange,
+  onTitleFilterClear,
 }: SidebarRecentItemsProps) {
   const [likedOnly, setLikedOnly] = useState(false);
   const [menuId, setMenuId] = useState<string | null>(null);
@@ -86,12 +100,20 @@ export const SidebarRecentItems = memo(function SidebarRecentItems({
   const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkDeleteArmed, setBulkDeleteArmed] = useState(false);
+  const [titleFilterOpen, setTitleFilterOpen] = useState(false);
+  const titleFilterInputRef = useRef<HTMLInputElement>(null);
+  const titleFiltering = Boolean(titleFilterQuery?.trim());
   const visibleItems = useMemo(
     () => items.filter((item) => !likedOnly || item.isLiked),
     [items, likedOnly],
   );
   const virtualList = useFixedVirtualList(visibleItems.length, 34, { threshold: 60, overscan: 8 });
   const renderedItems = visibleItems.slice(virtualList.start, virtualList.end);
+
+  useEffect(() => {
+    if (!titleFilterOpen) return;
+    titleFilterInputRef.current?.focus();
+  }, [titleFilterOpen]);
 
   useEffect(() => {
     const ids = new Set(items.map((item) => item.id));
@@ -190,12 +212,40 @@ export const SidebarRecentItems = memo(function SidebarRecentItems({
           </div>
         ) : (
           <div className="session-heading-actions">
-            {loading && <LoaderCircle className="is-running" size={13} />}
+            {(loading || titleFilterLoading) && <LoaderCircle className="is-running" size={13} />}
+            {onTitleFilterChange && titleFiltering && (
+              <button className="session-title-filter-clear session-heading-action tooltip-control" type="button" aria-label="세션 제목 필터 해제" data-tooltip="필터 해제" onClick={() => {
+                onTitleFilterClear?.();
+                setTitleFilterOpen(false);
+              }}><FilterX size={14} /></button>
+            )}
+            {onTitleFilterChange && (
+              <button className={`session-title-filter-toggle session-heading-action tooltip-control ${titleFilterOpen || titleFiltering ? "is-active" : ""}`} type="button" aria-label="세션 제목 검색" aria-expanded={titleFilterOpen || titleFiltering} data-tooltip="제목 검색" onClick={() => setTitleFilterOpen(true)}><Search size={14} /></button>
+            )}
             <button className={`liked-sessions-filter session-heading-action tooltip-control ${likedOnly ? "is-active" : ""}`} type="button" aria-label={likedOnly ? "전체 보기" : "좋아요만 보기"} aria-pressed={likedOnly} data-tooltip={likedOnly ? "전체 보기" : "좋아요만"} onClick={() => setLikedOnly((active) => !active)}><Heart size={14} fill={likedOnly ? "currentColor" : "none"} /></button>
             <button className="bulk-session-open tooltip-control" type="button" aria-label="항목 관리" data-tooltip="항목 관리" disabled={items.length === 0} onClick={() => { setBulkMode(true); setBulkIds(new Set()); setMenuId(null); setMoveMenuId(null); }}><CheckCheck size={14} /></button>
           </div>
         )}
       </div>
+      {onTitleFilterChange && (titleFilterOpen || titleFiltering) && (
+        <label className="session-title-filter">
+          <Search size={13} aria-hidden="true" />
+          <input
+            ref={titleFilterInputRef}
+            type="search"
+            aria-label={titleFilterAriaLabel}
+            placeholder="세션 제목 검색"
+            value={titleFilterQuery ?? ""}
+            onChange={(event) => onTitleFilterChange(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Escape") return;
+              event.preventDefault();
+              onTitleFilterClear?.();
+              setTitleFilterOpen(false);
+            }}
+          />
+        </label>
+      )}
       <div className="session-list" ref={virtualList.containerRef} onScroll={(event) => {
         virtualList.onScroll(event.currentTarget);
         onScroll?.(event);
@@ -262,7 +312,7 @@ export const SidebarRecentItems = memo(function SidebarRecentItems({
           </div>
         ))}
         </div>
-        {!loading && visibleItems.length === 0 && <p className="sidebar-empty">{likedOnly ? likedEmptyText : emptyText}</p>}
+        {!loading && !titleFilterLoading && visibleItems.length === 0 && <p className="sidebar-empty">{likedOnly ? likedEmptyText : titleFiltering ? (filterEmptyText ?? "일치하는 항목이 없습니다.") : emptyText}</p>}
       </div>
     </section>
   );

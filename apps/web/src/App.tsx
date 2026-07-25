@@ -99,6 +99,7 @@ import type {
   ArtifactVersion,
   OutputMode,
   ComposerSuggestion,
+  ConversationListItem,
   DeepAnalysisMissionSummary,
   ExecutionSelection,
   NotificationItem,
@@ -119,7 +120,6 @@ import { ViewDataCacheProvider } from "./view-data-cache";
 import { preloadAppViews } from "./app-preload";
 import { SelectMenu } from "./components/SelectMenu";
 import { SharedSnapshotViewer } from "./components/SharedSnapshotViewer";
-import { ConversationSearchDialog } from "./components/ConversationSearchDialog";
 import { ConversationQuestionNavigator } from "./components/ConversationQuestionNavigator";
 import { SidebarRecentItems } from "./components/SidebarRecentItems";
 import { type PendingCommandAction, type RunControlAction, useLuminaWorkspace } from "./use-lumina-workspace";
@@ -927,6 +927,7 @@ function App() {
   const sidebarAutoCollapsedRef = useRef(false);
   const [deepAnalysisMissions, setDeepAnalysisMissions] = useState<DeepAnalysisMissionSummary[]>([]);
   const [deepAnalysisMissionsLoading, setDeepAnalysisMissionsLoading] = useState(false);
+  const [deepAnalysisTitleFilter, setDeepAnalysisTitleFilter] = useState("");
   const [deepAnalysisSelectedMissionId, setDeepAnalysisSelectedMissionId] = useState<string | null>(null);
   const [deepAnalysisRemovedMissionIds, setDeepAnalysisRemovedMissionIds] = useState<Set<string>>(new Set());
   const [deepAnalysisCreateRequest, setDeepAnalysisCreateRequest] = useState(0);
@@ -939,7 +940,10 @@ function App() {
   const [adminFooterModels, setAdminFooterModels] = useState<Record<string, AdminProviderModel[]>>({});
   const [adminFooterBusyId, setAdminFooterBusyId] = useState<string | null>(null);
   const [modelNameTooltip, setModelNameTooltip] = useState<{ name: string; left: number; top: number } | null>(null);
-  const [conversationSearchOpen, setConversationSearchOpen] = useState(false);
+  const [conversationTitleFilter, setConversationTitleFilter] = useState("");
+  const [conversationTitleResults, setConversationTitleResults] = useState<ConversationListItem[]>([]);
+  const [conversationTitleNextCursor, setConversationTitleNextCursor] = useState<string | null>(null);
+  const [conversationTitleFilterLoading, setConversationTitleFilterLoading] = useState(false);
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [notificationTab, setNotificationTab] = useState<NotificationTab>("notifications");
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
@@ -2112,11 +2116,6 @@ function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!event.repeat && (event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && event.code === "KeyF") {
-        event.preventDefault();
-        setConversationSearchOpen((open) => !open);
-        return;
-      }
       if (!event.repeat && (event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && event.code === "KeyT") {
         event.preventDefault();
         void workspace.toggleTheme();
@@ -2140,7 +2139,6 @@ function App() {
       if (event.key !== "Escape") return;
       if (artifactSaveBusy) return;
       if (notificationOpen) setNotificationOpen(false);
-      else if (conversationSearchOpen) setConversationSearchOpen(false);
       else if (sessionTitleEditing) setSessionTitleEditing(false);
       else if (artifactEditing) setArtifactEditing(false);
       else if (sessionMenuId) setSessionMenuId(null);
@@ -2153,7 +2151,7 @@ function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [accountMenuOpen, artifactEditing, artifactFullscreen, artifactOpen, artifactSaveBusy, closeArtifact, conversationSearchOpen, isAdmin, notificationOpen, openAdmin, openSettings, providerMenuOpen, providerModelMenuId, sessionMenuId, sessionTitleEditing, sidebarOpen, startNewConversation, workspace.toggleTheme]);
+  }, [accountMenuOpen, artifactEditing, artifactFullscreen, artifactOpen, artifactSaveBusy, closeArtifact, isAdmin, notificationOpen, openAdmin, openSettings, providerMenuOpen, providerModelMenuId, sessionMenuId, sessionTitleEditing, sidebarOpen, startNewConversation, workspace.toggleTheme]);
 
   const showToast = useCallback((message: string) => setToast(message), []);
 
@@ -3071,8 +3069,37 @@ function App() {
       .map((project) => ({ id: project.id, name: project.name })),
     [workspace.activeProjectId, workspace.projects],
   );
+  const normalizedConversationTitleFilter = conversationTitleFilter.trim();
+  useEffect(() => {
+    if (!normalizedConversationTitleFilter || !workspace.activeProjectId) {
+      setConversationTitleResults([]);
+      setConversationTitleNextCursor(null);
+      setConversationTitleFilterLoading(false);
+      return undefined;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      setConversationTitleFilterLoading(true);
+      void api.conversations.list({
+        projectId: workspace.activeProjectId ?? undefined,
+        titleQuery: normalizedConversationTitleFilter,
+        limit: 30,
+      }, controller.signal).then((page) => {
+        setConversationTitleResults(page.items);
+        setConversationTitleNextCursor(page.nextCursor);
+      }).catch((error) => {
+        if (!controller.signal.aborted) showToast(error instanceof ApiError ? error.message : "세션 제목을 검색하지 못했습니다.");
+      }).finally(() => {
+        if (!controller.signal.aborted) setConversationTitleFilterLoading(false);
+      });
+    }, 220);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [normalizedConversationTitleFilter, showToast, workspace.activeProjectId]);
   const conversationSidebarItems = useMemo(
-    () => workspace.conversations.map((conversation) => ({
+    () => (normalizedConversationTitleFilter ? conversationTitleResults : workspace.conversations).map((conversation) => ({
       id: conversation.id,
       projectId: conversation.projectId,
       title: isUntitledConversation(conversation.title) ? "제목 없음" : conversation.title,
@@ -3081,18 +3108,27 @@ function App() {
       status: conversation.lastRunStatus ?? undefined,
       kind: "conversation" as const,
     })),
-    [workspace.conversations],
+    [conversationTitleResults, normalizedConversationTitleFilter, workspace.conversations],
   );
   const deepAnalysisSidebarItems = useMemo(
-    () => deepAnalysisMissions.map((mission) => ({ ...mission, kind: "deep-analysis" as const })),
-    [deepAnalysisMissions],
+    () => {
+      const normalizedQuery = deepAnalysisTitleFilter.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+      return deepAnalysisMissions
+        .filter((mission) => !normalizedQuery || mission.title.trim().replace(/\s+/g, " ").toLocaleLowerCase().includes(normalizedQuery))
+        .map((mission) => ({ ...mission, kind: "deep-analysis" as const }));
+    },
+    [deepAnalysisMissions, deepAnalysisTitleFilter],
   );
   const selectSidebarConversation = useCallback((conversationId: string) => {
     setSessionTitleEditing(false);
     setMainView("chat");
-    workspace.selectConversation(conversationId);
+    const filteredConversation = normalizedConversationTitleFilter
+      ? conversationTitleResults.find((conversation) => conversation.id === conversationId)
+      : null;
+    if (filteredConversation) workspace.openConversation(filteredConversation);
+    else workspace.selectConversation(conversationId);
     setSidebarOpen(false);
-  }, [workspace.selectConversation]);
+  }, [conversationTitleResults, normalizedConversationTitleFilter, workspace.openConversation, workspace.selectConversation]);
   const renameSidebarConversation = useCallback(
     async (conversationId: string, title: string) => Boolean(await workspace.renameConversation(conversationId, title)),
     [workspace.renameConversation],
@@ -3106,8 +3142,29 @@ function App() {
     [workspace.toggleLikedConversation],
   );
   const loadMoreSidebarConversations = useCallback(
-    () => { void workspace.loadMoreConversations(); },
-    [workspace.loadMoreConversations],
+    () => {
+      if (!normalizedConversationTitleFilter) {
+        void workspace.loadMoreConversations();
+        return;
+      }
+      if (!workspace.activeProjectId || !conversationTitleNextCursor || conversationTitleFilterLoading) return;
+      setConversationTitleFilterLoading(true);
+      void api.conversations.list({
+        projectId: workspace.activeProjectId,
+        titleQuery: normalizedConversationTitleFilter,
+        cursor: conversationTitleNextCursor,
+        limit: 30,
+      }).then((page) => {
+        setConversationTitleResults((current) => {
+          const ids = new Set(current.map((item) => item.id));
+          return [...current, ...page.items.filter((item) => !ids.has(item.id))];
+        });
+        setConversationTitleNextCursor(page.nextCursor);
+      }).catch((error) => {
+        showToast(error instanceof ApiError ? error.message : "세션 제목 검색 결과를 더 불러오지 못했습니다.");
+      }).finally(() => setConversationTitleFilterLoading(false));
+    },
+    [conversationTitleFilterLoading, conversationTitleNextCursor, normalizedConversationTitleFilter, showToast, workspace.activeProjectId, workspace.loadMoreConversations],
   );
 
   if (workspace.authSession === undefined) {
@@ -3185,7 +3242,6 @@ function App() {
         <header className="sidebar-header">
           <a className="wordmark" href="#top" aria-label="Lumina 홈" onClick={() => setMainView("chat")}><Sparkles size={20} strokeWidth={1.7} /><span>Lumina</span></a>
           <div className="sidebar-header-actions">
-            <button type="button" aria-label="대화 검색" onClick={() => setConversationSearchOpen(true)}><Search size={17} /></button>
             <button className="tooltip-control" type="button" aria-label={theme === "dark" ? "Light 테마로 변경" : "Dark 테마로 변경"} data-tooltip={theme === "dark" ? "Light 테마" : "Dark 테마"} onClick={() => void workspace.toggleTheme()}>
               {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
             </button>
@@ -3275,6 +3331,11 @@ function App() {
               onBulkMove={(missionIds, projectId) => applyDeepAnalysisSidebarBulk(missionIds, (missionId) => moveDeepAnalysisSidebarMission(missionId, projectId))}
               onBulkDelete={(missionIds) => applyDeepAnalysisSidebarBulk(missionIds, deleteDeepAnalysisSidebarMission)}
               onScroll={handleSessionListScroll}
+              titleFilterQuery={deepAnalysisTitleFilter}
+              titleFilterAriaLabel="심층분석 제목으로 필터링"
+              filterEmptyText="일치하는 심층분석이 없습니다."
+              onTitleFilterChange={setDeepAnalysisTitleFilter}
+              onTitleFilterClear={() => setDeepAnalysisTitleFilter("")}
             />
           ) : (
             <SidebarRecentItems
@@ -3293,8 +3354,14 @@ function App() {
               onBulkMove={workspace.moveConversations}
               onBulkDelete={workspace.deleteConversations}
               onScroll={handleSessionListScroll}
-              hasMore={workspace.hasMoreConversations}
+              hasMore={normalizedConversationTitleFilter ? conversationTitleNextCursor !== null : workspace.hasMoreConversations}
               onLoadMore={loadMoreSidebarConversations}
+              titleFilterQuery={conversationTitleFilter}
+              titleFilterAriaLabel="채팅 세션 제목으로 필터링"
+              titleFilterLoading={conversationTitleFilterLoading}
+              filterEmptyText="일치하는 채팅 세션이 없습니다."
+              onTitleFilterChange={setConversationTitleFilter}
+              onTitleFilterClear={() => setConversationTitleFilter("")}
             />
           )}
         </div>
@@ -4335,20 +4402,6 @@ function App() {
             )}
           </div>
         </aside>
-      )}
-
-      {conversationSearchOpen && (
-        <ConversationSearchDialog
-          projectId={workspace.activeProjectId}
-          projectName={activeProject?.name ?? null}
-          onClose={() => setConversationSearchOpen(false)}
-          onSelect={(conversation) => {
-            workspace.openConversation(conversation);
-            setMainView("chat");
-            setSidebarOpen(false);
-            setConversationSearchOpen(false);
-          }}
-        />
       )}
 
       {toast && <div className="toast" role="status">{toast}</div>}
