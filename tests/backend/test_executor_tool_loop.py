@@ -817,6 +817,16 @@ def test_partial_report_checkpoint_merges_suffix_without_boundary_replay() -> No
     )
 
 
+def test_partial_report_continuation_prompt_includes_complete_checkpoint() -> None:
+    checkpoint = f"<main>BEGIN{'x' * 2_500}END"
+
+    prompt = executor_module._partial_report_continuation_prompt(checkpoint)
+
+    assert json.dumps(checkpoint, ensure_ascii=False) in prompt
+    assert "BEGIN" in prompt
+    assert "END" in prompt
+
+
 def test_report_progress_waits_for_artifact_tool_output(
     monkeypatch, tmp_path: Path
 ) -> None:
