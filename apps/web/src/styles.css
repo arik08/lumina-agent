@@ -1508,8 +1508,8 @@ button:disabled { cursor: default; opacity: 0.5; }
 .file-viewer-heading p { overflow: hidden; margin: 0; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .file-viewer-icon { display: inline-flex; width: 38px; height: 38px; flex: 0 0 38px; align-items: center; justify-content: center; border-radius: var(--radius-field); background: var(--surface-soft); color: var(--cobalt); }
 .file-viewer-actions { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; gap: 5px; }
-.file-viewer-actions button { display: inline-flex; height: 29px; flex: 0 0 auto; align-items: center; gap: 5px; padding: 0 8px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); color: var(--ink); font-size: 10.5px; white-space: nowrap; cursor: pointer; }
-.file-viewer-actions button:hover { background: var(--surface-soft); }
+.file-viewer-actions :is(button, a) { display: inline-flex; height: 29px; flex: 0 0 auto; align-items: center; gap: 5px; padding: 0 8px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); color: var(--ink); font-size: 10.5px; text-decoration: none; white-space: nowrap; cursor: pointer; }
+.file-viewer-actions :is(button, a):hover { background: var(--surface-soft); }
 .file-viewer-actions .file-preview-mode-toggle { width: 29px; justify-content: center; padding: 0; }
 .file-viewer-actions .file-preview-mode-toggle.is-active { border-color: var(--cobalt); background: var(--cobalt-pale); color: var(--cobalt); }
 .file-viewer-actions .is-danger { color: var(--danger); }

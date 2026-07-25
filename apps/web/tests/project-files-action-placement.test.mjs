@@ -111,13 +111,26 @@ test("file detail keeps compact metadata immediately before download", async () 
 
   assert.ok(detailStart >= 0 && headerStart > detailStart && headerEnd > headerStart);
   assert.match(header, /<h2>\{detail\.displayName\}<\/h2>/);
-  assert.doesNotMatch(header, /detail\.logicalPath|detail\.mimeType/);
+  assert.doesNotMatch(header, /detail\.logicalPath|<span>\{detail\.mimeType\}<\/span>/);
   assert.match(header, /formatBytes\(detail\.size\)/);
   assert.match(header, /formatDate\(detail\.createdAt\)/);
   assert.ok(metadata >= 0 && metadata < download && download < remove);
   assert.equal((view.match(/className="file-viewer-meta"/g) ?? []).length, 1);
   assert.match(styles, /\.file-viewer-meta\s*\{[^}]*display:\s*inline-flex;[^}]*white-space:\s*nowrap;/s);
-  assert.match(styles, /\.file-viewer-actions button\s*\{[^}]*flex:\s*0 0 auto;[^}]*white-space:\s*nowrap;/s);
+  assert.match(styles, /\.file-viewer-actions :is\(button, a\)\s*\{[^}]*flex:\s*0 0 auto;[^}]*white-space:\s*nowrap;/s);
+});
+
+test("HTML project files can open their standalone preview in a new window", async () => {
+  const [view, api, styles] = await Promise.all([
+    read("../src/components/ProjectFilesView.tsx"),
+    read("../src/api.ts"),
+    read("../src/styles.css"),
+  ]);
+
+  assert.match(view, /import \{ ApiError, projectFilePreviewUrl \} from "\.\.\/api"/);
+  assert.match(view, /detail\.mimeType === "text\/html"[\s\S]*?href=\{projectFilePreviewUrl\(projectId, detail\.id\)\}[\s\S]*?target="_blank"[\s\S]*?rel="noopener noreferrer"[\s\S]*?새 창에서 열기/);
+  assert.match(api, /export function projectFilePreviewUrl\(projectId: string, fileId: string\)/);
+  assert.match(styles, /\.file-viewer-actions :is\(button, a\)\s*\{[^}]*text-decoration:\s*none;/s);
 });
 
 test("file explorer supports context actions and drag moves", async () => {

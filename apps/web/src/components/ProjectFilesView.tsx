@@ -7,6 +7,7 @@ import {
   Code2,
   Download,
   Eye,
+  ExternalLink,
   FilePlus2,
   FileText,
   Folder,
@@ -25,7 +26,7 @@ import {
 } from "lucide-react";
 import { type CSSProperties, type DragEvent, type MouseEvent, type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ApiError } from "../api";
+import { ApiError, projectFilePreviewUrl } from "../api";
 import { projectFilesApi } from "../feature-api";
 
 const api = { projectFiles: projectFilesApi };
@@ -997,6 +998,13 @@ export function ProjectFilesView({ projectId, requestedFileId = null, onOpenNavi
                         data-tooltip={markdownSource ? "렌더링 보기" : "원문 보기"}
                         onClick={() => setMarkdownSource((current) => !current)}
                       >{markdownSource ? <Eye size={14} /> : <Code2 size={14} />}</button>
+                    ) : null}
+                    {projectId && detail.mimeType === "text/html" ? (
+                      <a
+                        href={projectFilePreviewUrl(projectId, detail.id)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      ><ExternalLink size={14} /> 새 창에서 열기</a>
                     ) : null}
                     <button type="button" disabled={busy} onClick={() => void download()}><Download size={14} /> 다운로드</button>
                     <button className={`is-danger ${deleteConfirming ? "is-confirming" : ""}`} type="button" disabled={busy} onClick={() => void remove()}><Trash2 size={14} /> {deleteConfirming ? "한 번 더 눌러 삭제" : "삭제"}</button>
