@@ -26,6 +26,7 @@ from ..models import (
 )
 from ..providers.types import ProviderAdapter
 from .schemas import (
+    KnowledgeDocumentTagsUpdate,
     KnowledgeSpaceCreate,
     KnowledgeSpaceUpdate,
     KnowledgeTagCreate,
@@ -215,6 +216,72 @@ def delete_knowledge_document(
 ) -> KnowledgeDocument:
     document = require_knowledge_document(db, user, document_id)
     document.status = "deleted"
+    db.flush()
+    return document
+
+
+def update_knowledge_document_tags(
+    db: Session,
+    user: User,
+    document_id: str,
+    payload: KnowledgeDocumentTagsUpdate,
+) -> KnowledgeDocument:
+    document = require_knowledge_document(db, user, document_id)
+    require_knowledge_space(db, user, document.space_id, write=True)
+
+    current_tags = list(
+        db.scalars(
+            select(KnowledgeTag)
+            .join(KnowledgeDocumentTag, KnowledgeDocumentTag.tag_id == KnowledgeTag.id)
+            .where(KnowledgeDocumentTag.document_id == document.id)
+        )
+    )
+    available_tags = list(
+        db.scalars(
+            select(KnowledgeTag)
+            .where(
+                KnowledgeTag.space_id == document.space_id,
+                KnowledgeTag.status == "active",
+            )
+            .order_by(KnowledgeTag.namespace != "topic", KnowledgeTag.id)
+        )
+    )
+    tags_by_name: dict[str, KnowledgeTag] = {}
+    for tag in [*available_tags, *current_tags]:
+        tags_by_name.setdefault(tag.normalized_name, tag)
+
+    resolved_tags: list[KnowledgeTag] = []
+    seen_names: set[str] = set()
+    for value in payload.tags:
+        canonical_name = " ".join(value.split())
+        normalized_name = _normalize_tag(canonical_name)
+        if not normalized_name or normalized_name in seen_names:
+            continue
+        seen_names.add(normalized_name)
+        tag = tags_by_name.get(normalized_name)
+        if tag is None:
+            tag = KnowledgeTag(
+                space_id=document.space_id,
+                namespace="topic",
+                canonical_name=canonical_name,
+                normalized_name=normalized_name,
+                definition="",
+                scope_note="",
+                revision=1,
+                status="active",
+            )
+            db.add(tag)
+            db.flush()
+            tags_by_name[normalized_name] = tag
+        resolved_tags.append(tag)
+
+    db.execute(
+        delete(KnowledgeDocumentTag).where(
+            KnowledgeDocumentTag.document_id == document.id
+        )
+    )
+    for tag in resolved_tags:
+        db.add(KnowledgeDocumentTag(document_id=document.id, tag_id=tag.id))
     db.flush()
     return document
 
@@ -1251,4 +1318,5 @@ __all__ = [
     "create_knowledge_tag",
     "update_knowledge_tag",
     "update_knowledge_space",
+    "update_knowledge_document_tags",
 ]

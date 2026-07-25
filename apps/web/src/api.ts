@@ -53,6 +53,7 @@ import type {
   KnowledgeTag,
   KnowledgeTagProposal,
   UpdateKnowledgeTagRequest,
+  UpdateKnowledgeDocumentTagsRequest,
   UpdateKnowledgeSpaceRequest,
   CursorPage,
   ListConversationsQuery,
@@ -1795,6 +1796,9 @@ export async function listKnowledgeDocuments(filters: { spaceId?: string; projec
 }
 export async function getKnowledgeDocument(documentId: string, signal?: AbortSignal) {
   return request<KnowledgeDocument>(`/knowledge/documents/${encodeURIComponent(documentId)}`, { signal });
+}
+export async function updateKnowledgeDocumentTags(documentId: string, payload: UpdateKnowledgeDocumentTagsRequest, signal?: AbortSignal) {
+  return request<KnowledgeDocument>(`/knowledge/documents/${encodeURIComponent(documentId)}`, { method: "PATCH", body: payload, signal });
 }
 export async function deleteKnowledgeDocument(documentId: string, signal?: AbortSignal) {
   return request<void>(`/knowledge/documents/${encodeURIComponent(documentId)}`, { method: "DELETE", signal });

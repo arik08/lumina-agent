@@ -120,6 +120,15 @@
 .knowledge-wiki-metrics, .knowledge-tag-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .knowledge-wiki-metrics span { border: 1px solid var(--line); border-radius: var(--radius-pill); padding: 3px 7px; color: var(--muted); font-size: 9px; }
 .knowledge-tag-row span { border-radius: var(--radius-pill); padding: 3px 7px; background: color-mix(in srgb, var(--cobalt) 10%, transparent); color: var(--cobalt); font-size: 9px; }
+.knowledge-tag-edit { display: grid; width: 26px; min-width: 26px; height: 26px; margin-left: auto; place-items: center; border: 1px solid var(--line); border-radius: var(--radius-control); padding: 0; background: var(--surface); color: var(--muted); }
+.knowledge-tag-edit:hover, .knowledge-tag-edit:focus-visible { border-color: var(--line-strong); background: var(--surface-soft); color: var(--ink); }
+.knowledge-tag-inline-editor { display: grid; grid-template-columns: minmax(0, 1fr) 30px 30px; gap: 6px; }
+.knowledge-tag-inline-editor input { width: 100%; height: 32px; min-width: 0; border: 1px solid var(--line-strong); border-radius: var(--radius-control); padding: 0 9px; outline: 0; background: var(--surface); color: var(--ink); font-size: 13px; }
+.knowledge-tag-inline-editor input:focus { border-color: var(--cobalt); box-shadow: 0 0 0 2px color-mix(in srgb, var(--cobalt) 12%, transparent); }
+.knowledge-tag-inline-editor button { display: grid; width: 30px; height: 32px; place-items: center; border: 1px solid var(--line); border-radius: var(--radius-control); padding: 0; background: var(--surface); color: var(--muted); }
+.knowledge-tag-inline-editor button:hover:not(:disabled), .knowledge-tag-inline-editor button:focus-visible { border-color: var(--line-strong); background: var(--surface-soft); color: var(--ink); }
+.knowledge-tag-inline-editor button[type="submit"] { color: var(--cobalt); }
+.knowledge-tag-inline-editor > small { grid-column: 1 / -1; color: var(--danger); font-size: 12px; }
 .knowledge-markdown { max-width: 900px; padding-top: 20px; }
 .knowledge-citations { display: flex; max-width: 900px; flex-wrap: wrap; justify-content: flex-end; gap: 6px; margin-top: 30px; padding-top: 14px; border-top: 1px solid var(--line); }
 .knowledge-citations a { max-width: min(420px, 100%); overflow: hidden; padding: 5px 8px; border: 1px solid color-mix(in srgb, var(--cobalt) 35%, var(--line)); border-radius: var(--radius-pill); color: var(--cobalt); font-size: 10px; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }

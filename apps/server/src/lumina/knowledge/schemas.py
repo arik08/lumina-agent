@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
 
@@ -46,6 +46,12 @@ class KnowledgeBatchTagRequest(ApiModel):
     model_key: str = Field(min_length=1, max_length=240)
     target: Literal["untagged", "all"] = "untagged"
     new_tag_policy: Literal["pool_only", "propose", "auto_approve"] = "propose"
+
+
+class KnowledgeDocumentTagsUpdate(ApiModel):
+    tags: list[Annotated[str, Field(min_length=1, max_length=160)]] = Field(
+        max_length=5
+    )
 
 
 class KnowledgeTagProposalResolve(ApiModel):
@@ -103,6 +109,7 @@ class KnowledgeTagUpdate(ApiModel):
 
 __all__ = [
     "KnowledgeDocumentListQuery",
+    "KnowledgeDocumentTagsUpdate",
     "KnowledgeBatchTagRequest",
     "KnowledgeTagProposalBatchResolve",
     "KnowledgeTagProposalResolve",

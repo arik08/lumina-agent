@@ -792,6 +792,7 @@ export interface KnowledgeDocumentTag {
   scopeNote: string;
   parentTagId: UUID | null;
 }
+export interface UpdateKnowledgeDocumentTagsRequest { tags: string[]; }
 export interface KnowledgeTag extends KnowledgeDocumentTag {
   aliases: string[];
   status: "active" | "deprecated";

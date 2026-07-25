@@ -13,6 +13,7 @@ from ...db import get_db
 from ...config import Settings, get_settings
 from ...knowledge.schemas import (
     KnowledgeBatchTagRequest,
+    KnowledgeDocumentTagsUpdate,
     KnowledgeSpaceCreate,
     KnowledgeSpaceUpdate,
     KnowledgeTagCreate,
@@ -40,6 +41,7 @@ from ...knowledge.service import (
     space_payload,
     tag_untagged_knowledge_documents,
     update_knowledge_space,
+    update_knowledge_document_tags,
     update_knowledge_tag,
 )
 from ...models import ProviderModel, User
@@ -258,6 +260,31 @@ def get_knowledge_document(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     return document_payload(db, require_knowledge_document(db, user, document_id))
+
+
+@router.patch("/documents/{document_id}")
+def patch_knowledge_document_tags(
+    document_id: str,
+    payload: KnowledgeDocumentTagsUpdate,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    document = update_knowledge_document_tags(
+        db, context.user, document_id, payload
+    )
+    record_audit(
+        db,
+        action="knowledge_document_tags_updated",
+        target_type="knowledge_document",
+        target_id=document.id,
+        result="success",
+        actor=context.user,
+        request_id=getattr(request.state, "request_id", None),
+        metadata={"space_id": document.space_id, "tag_count": len(payload.tags)},
+    )
+    db.commit()
+    return document_payload(db, document)
 
 
 @router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -235,6 +235,27 @@ test("Knowledge document tags keep their chip layout separate from tag-managemen
   assert.doesNotMatch(styles, /\.knowledge-tag-row \{ display: grid;/);
 });
 
+test("Knowledge document tags can be edited together with hash-delimited names", async () => {
+  const [view, api, featureApi, types, styles] = await Promise.all([
+    readFile(viewPath, "utf8"),
+    readFile(apiPath, "utf8"),
+    readFile(new URL("../src/feature-api.ts", import.meta.url), "utf8"),
+    readFile(typesPath, "utf8"),
+    readFile(stylesPath, "utf8"),
+  ]);
+  assert.match(view, /tags\.map\(\(tag\) => `#\$\{tag\.name\}`\)\.join\(" "\)/);
+  assert.match(view, /\.split\("#"\)\s*\.slice\(1\)/);
+  assert.match(view, /aria-label="문서 태그 편집"/);
+  assert.match(view, /aria-label="문서 태그 전체 편집"/);
+  assert.match(view, /placeholder="#태그 하나 #공백 포함 태그"/);
+  assert.match(view, /tagNames\.length > 5/);
+  assert.match(api, /\/knowledge\/documents\/\$\{encodeURIComponent\(documentId\)\}.*method: "PATCH"/);
+  assert.match(featureApi, /updateDocumentTags: updateKnowledgeDocumentTags/);
+  assert.match(types, /interface UpdateKnowledgeDocumentTagsRequest \{ tags: string\[\]; \}/);
+  assert.match(styles, /\.knowledge-tag-edit \{[^}]*margin-left: auto;/);
+  assert.match(styles, /\.knowledge-tag-inline-editor \{[^}]*grid-template-columns: minmax\(0, 1fr\) 30px 30px;/);
+});
+
 test("legacy approval, ingestion, and entity workspaces are absent", async () => {
   const [view, api] = await Promise.all([readFile(viewPath, "utf8"), readFile(apiPath, "utf8")]);
   assert.doesNotMatch(view, /KnowledgeReview|KnowledgeSources|KnowledgeWiki|KnowledgeEntity/);

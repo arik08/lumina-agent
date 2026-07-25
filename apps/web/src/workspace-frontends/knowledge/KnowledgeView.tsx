@@ -97,6 +97,24 @@ function sortKnowledgeDocuments(documents: KnowledgeDocumentSummary[], sort: Kno
   });
 }
 
+function documentTagsInput(tags: KnowledgeDocument["tags"]) {
+  return tags.map((tag) => `#${tag.name}`).join(" ");
+}
+
+function parseDocumentTags(value: string) {
+  const seen = new Set<string>();
+  return value
+    .split("#")
+    .slice(1)
+    .map((tag) => tag.trim())
+    .filter((tag) => {
+      const normalized = tag.toLocaleLowerCase();
+      if (!tag || seen.has(normalized)) return false;
+      seen.add(normalized);
+      return true;
+    });
+}
+
 export function KnowledgeView() {
   const [spaces, setSpaces] = useState<KnowledgeSpace[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -377,6 +395,12 @@ export function KnowledgeView() {
     }
   }
 
+  async function updateDocumentTags(documentId: string, tagNames: string[]) {
+    const updated = await api.knowledge.updateDocumentTags(documentId, { tags: tagNames });
+    setSelectedDocument(updated);
+    void refreshKnowledgeContent().catch((refreshError) => setError(errorMessage(refreshError)));
+  }
+
   function openDocument(documentId: string, nextTab: KnowledgeTab = "wiki", returnTab?: KnowledgeTab) {
     if (returnTab) {
       try {
@@ -445,7 +469,7 @@ export function KnowledgeView() {
               return <button key={id} className={active ? "is-active" : ""} type="button" role="tab" aria-selected={active} onClick={() => setTab(id === "wiki" ? "graph" : id)}><Icon size={14} /> {label}</button>;
             })}</div></nav>
           </header>
-          {loadingContent ? <div className="knowledge-loading knowledge-loading-content"><LoaderCircle className="is-running" size={18} /> 지식을 불러오는 중</div> : <KnowledgeContent tab={tab} documents={documents} filteredDocuments={filteredDocuments} selectedDocument={selectedDocument} selectedGraphNodeId={selectedGraphNodeId} graph={graph} tags={tags} tagLoadError={tagLoadError} query={query} citationCount={citationCount} space={selectedSpace} editingSpaceField={editingSpaceField} spaceEditValue={spaceEditValue} savingSpaceDetails={savingSpaceDetails} spaceEditError={spaceEditError} savingUseMode={savingUseMode} useModeError={useModeError} setTab={setTab} setQuery={setQuery} setSpaceEditValue={setSpaceEditValue} setTags={setTags} setSelectedGraphNodeId={setSelectedGraphNodeId} beginSpaceDetailsEdit={beginSpaceDetailsEdit} cancelSpaceDetailsEdit={cancelSpaceDetailsEdit} saveSpaceDetails={saveSpaceDetails} saveUseMode={saveUseMode} deleteDocument={deleteDocument} openDocument={openDocument} returnToGraph={returnToGraph} refreshKnowledgeContent={refreshKnowledgeContent} />}
+          {loadingContent ? <div className="knowledge-loading knowledge-loading-content"><LoaderCircle className="is-running" size={18} /> 지식을 불러오는 중</div> : <KnowledgeContent tab={tab} documents={documents} filteredDocuments={filteredDocuments} selectedDocument={selectedDocument} selectedGraphNodeId={selectedGraphNodeId} graph={graph} tags={tags} tagLoadError={tagLoadError} query={query} citationCount={citationCount} space={selectedSpace} editingSpaceField={editingSpaceField} spaceEditValue={spaceEditValue} savingSpaceDetails={savingSpaceDetails} spaceEditError={spaceEditError} savingUseMode={savingUseMode} useModeError={useModeError} setTab={setTab} setQuery={setQuery} setSpaceEditValue={setSpaceEditValue} setTags={setTags} setSelectedGraphNodeId={setSelectedGraphNodeId} beginSpaceDetailsEdit={beginSpaceDetailsEdit} cancelSpaceDetailsEdit={cancelSpaceDetailsEdit} saveSpaceDetails={saveSpaceDetails} saveUseMode={saveUseMode} deleteDocument={deleteDocument} updateDocumentTags={updateDocumentTags} openDocument={openDocument} returnToGraph={returnToGraph} refreshKnowledgeContent={refreshKnowledgeContent} />}
         </> : <div className="knowledge-empty"><BookOpenText size={25} /><h3>새 지식 그래프를 만들어 주세요.</h3><p>저장한 AI 답변이 문서 단위로 이 그래프에 쌓입니다.</p></div>}
       </section>
     </div>
@@ -480,13 +504,14 @@ interface KnowledgeContentProps {
   saveSpaceDetails: (event: FormEvent<HTMLFormElement>) => void;
   saveUseMode: (useMode: KnowledgeUseMode) => Promise<void>;
   deleteDocument: (document: KnowledgeDocumentSummary) => Promise<void>;
+  updateDocumentTags: (documentId: string, tagNames: string[]) => Promise<void>;
   openDocument: (documentId: string, tab?: KnowledgeTab, returnTab?: KnowledgeTab) => void;
   returnToGraph: () => void;
   refreshKnowledgeContent: () => Promise<void>;
 }
 
 function KnowledgeContent(props: KnowledgeContentProps) {
-  const { tab, documents, filteredDocuments, selectedDocument, selectedGraphNodeId, graph, tags, tagLoadError, query, citationCount, space, editingSpaceField, spaceEditValue, savingSpaceDetails, spaceEditError, savingUseMode, useModeError, setTab, setQuery, setSpaceEditValue, setTags, setSelectedGraphNodeId, beginSpaceDetailsEdit, cancelSpaceDetailsEdit, saveSpaceDetails, saveUseMode, deleteDocument, openDocument, returnToGraph, refreshKnowledgeContent } = props;
+  const { tab, documents, filteredDocuments, selectedDocument, selectedGraphNodeId, graph, tags, tagLoadError, query, citationCount, space, editingSpaceField, spaceEditValue, savingSpaceDetails, spaceEditError, savingUseMode, useModeError, setTab, setQuery, setSpaceEditValue, setTags, setSelectedGraphNodeId, beginSpaceDetailsEdit, cancelSpaceDetailsEdit, saveSpaceDetails, saveUseMode, deleteDocument, updateDocumentTags, openDocument, returnToGraph, refreshKnowledgeContent } = props;
   const switchDocumentView = (view: KnowledgeDocumentView) => {
     if (tab === "graph" && view !== "graph" && selectedGraphNodeId) {
       openDocument(selectedGraphNodeId, view, "graph");
@@ -504,7 +529,7 @@ function KnowledgeContent(props: KnowledgeContentProps) {
   if (isDocumentView(tab)) return <div className="knowledge-master-detail">
     <DocumentList documents={documents} selectedId={tab === "graph" ? selectedGraphNodeId : selectedDocument?.id ?? null} onOpen={(id) => tab === "graph" ? setSelectedGraphNodeId(id) : openDocument(id, tab)} onRead={tab === "graph" ? (id) => openDocument(id, "wiki", "graph") : undefined} onDelete={deleteDocument} label={`${documents.length}개 문서`} activeView={tab} onViewChange={switchDocumentView} />
     {tab === "graph" && <section className="knowledge-graph-detail"><KnowledgeGraph graph={graph} layoutKey={space.id} selectedNodeId={selectedGraphNodeId} onSelectDocument={(id) => openDocument(id, "wiki", "graph")} /></section>}
-    {tab === "wiki" && <WikiDocument document={selectedDocument} onBackToGraph={returnToGraph} />}
+    {tab === "wiki" && <WikiDocument document={selectedDocument} onBackToGraph={returnToGraph} onUpdateTags={updateDocumentTags} />}
     {tab === "sources" && <section className="knowledge-source-detail">{selectedDocument ? <><header><small>보존된 citation</small><h3>{selectedDocument.title}</h3><p>{selectedDocument.citations.length}개의 참조가 답변과 함께 저장되어 있습니다.</p></header><div className="knowledge-source-cards">{selectedDocument.citations.map((citation, index) => <a key={`${citation.sourceId}-${index}`} href={citation.url || undefined} target="_blank" rel="noreferrer"><span>[{citation.markerNumber ?? index + 1}]</span><strong>{citation.title}</strong><small>{citation.domain || citation.url || "참조 정보"}</small>{citation.excerpt && <p>{citation.excerpt}</p>}</a>)}{!selectedDocument.citations.length && <EmptyState text="이 문서에는 참조가 없습니다." />}</div></> : <EmptyState text="문서를 선택해 주세요." />}</section>}
   </div>;
 
@@ -959,9 +984,55 @@ function DocumentList({ documents, selectedId, onOpen, onRead, onDelete, label, 
   );
 }
 
-function WikiDocument({ document, onBackToGraph }: { document: KnowledgeDocument | null; onBackToGraph: () => void }) {
+function WikiDocument({ document, onBackToGraph, onUpdateTags }: { document: KnowledgeDocument | null; onBackToGraph: () => void; onUpdateTags: (documentId: string, tagNames: string[]) => Promise<void> }) {
+  const [editingTags, setEditingTags] = useState(false);
+  const [tagInput, setTagInput] = useState("");
+  const [savingTags, setSavingTags] = useState(false);
+  const [tagEditError, setTagEditError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setEditingTags(false);
+    setTagEditError(null);
+    setTagInput(document ? documentTagsInput(document.tags) : "");
+  }, [document?.id]);
+
   if (!document) return <EmptyState text="답변 하단의 지식 그래프 저장 버튼을 눌러 문서를 추가해 주세요." />;
-  return <article className="knowledge-wiki-article"><header><div className="knowledge-wiki-navigation"><button type="button" onClick={onBackToGraph}><ArrowLeft size={13} /> 그래프로 돌아가기</button><span>지식 문서</span></div><h2>{document.title}</h2><div className="knowledge-wiki-metrics"><span>조사일 {researchedDate(document.researchedAt)}</span><span>태그 {document.tags.length}</span><span>참조 {document.citations.length}</span></div><div className="knowledge-tag-row">{document.tags.map((tag) => <span key={tag.id}>#{tag.name}</span>)}</div></header><div className="knowledge-markdown conversation-response-typography"><MarkdownResponse text={document.body} /></div>{!!document.citations.length && <footer className="knowledge-citations">{document.citations.map((citation, index) => <a key={`${citation.sourceId}-${index}`} href={citation.url || undefined} target="_blank" rel="noreferrer">[{citation.markerNumber ?? index + 1}] {citation.title}</a>)}</footer>}</article>;
+
+  const beginTagEdit = () => {
+    setTagInput(documentTagsInput(document.tags));
+    setTagEditError(null);
+    setEditingTags(true);
+  };
+
+  const cancelTagEdit = () => {
+    setEditingTags(false);
+    setTagEditError(null);
+  };
+
+  const saveTags = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const tagNames = parseDocumentTags(tagInput);
+    if (tagInput.trim() && !tagInput.includes("#")) {
+      setTagEditError("각 태그 앞에 #을 붙여 주세요.");
+      return;
+    }
+    if (tagNames.length > 5) {
+      setTagEditError("태그는 최대 5개까지 저장할 수 있습니다.");
+      return;
+    }
+    setSavingTags(true);
+    setTagEditError(null);
+    try {
+      await onUpdateTags(document.id, tagNames);
+      setEditingTags(false);
+    } catch (saveError) {
+      setTagEditError(saveError instanceof ApiError ? saveError.message : "태그를 저장하지 못했습니다.");
+    } finally {
+      setSavingTags(false);
+    }
+  };
+
+  return <article className="knowledge-wiki-article"><header><div className="knowledge-wiki-navigation"><button type="button" onClick={onBackToGraph}><ArrowLeft size={13} /> 그래프로 돌아가기</button><span>지식 문서</span></div><h2>{document.title}</h2><div className="knowledge-wiki-metrics"><span>조사일 {researchedDate(document.researchedAt)}</span><span>태그 {document.tags.length}</span><span>참조 {document.citations.length}</span></div>{editingTags ? <form className="knowledge-tag-inline-editor" onSubmit={saveTags}><input autoFocus value={tagInput} maxLength={805} aria-label="문서 태그 전체 편집" placeholder="#태그 하나 #공백 포함 태그" onChange={(event) => setTagInput(event.target.value)} /><button className="tooltip-control" type="submit" aria-label="태그 저장" data-tooltip="저장" disabled={savingTags}>{savingTags ? <LoaderCircle className="is-running" size={14} /> : <Check size={14} />}</button><button className="tooltip-control" type="button" aria-label="태그 편집 취소" data-tooltip="취소" disabled={savingTags} onClick={cancelTagEdit}><X size={14} /></button>{tagEditError && <small role="alert">{tagEditError}</small>}</form> : <div className="knowledge-tag-row">{document.tags.map((tag) => <span key={tag.id}>#{tag.name}</span>)}<button className="knowledge-tag-edit tooltip-control" type="button" aria-label="문서 태그 편집" data-tooltip="태그 편집" onClick={beginTagEdit}><Pencil size={13} /></button></div>}</header><div className="knowledge-markdown conversation-response-typography"><MarkdownResponse text={document.body} /></div>{!!document.citations.length && <footer className="knowledge-citations">{document.citations.map((citation, index) => <a key={`${citation.sourceId}-${index}`} href={citation.url || undefined} target="_blank" rel="noreferrer">[{citation.markerNumber ?? index + 1}] {citation.title}</a>)}</footer>}</article>;
 }
 
 function EmptyState({ text }: { text: string }) { return <div className="knowledge-empty-state"><BookOpenText size={22} /><p>{text}</p></div>; }

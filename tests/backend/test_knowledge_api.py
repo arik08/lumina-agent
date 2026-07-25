@@ -543,6 +543,86 @@ def test_answer_is_saved_without_tags_then_batch_tagged_with_selected_model(
             assert deleted_document.status == "deleted"
 
 
+def test_document_tags_can_be_replaced_with_existing_and_new_names(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'knowledge-tag-edit.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        headers = {"X-CSRF-Token": csrf}
+        project_id = client.get("/api/projects").json()[0]["id"]
+        space_response = client.post(
+            "/api/knowledge/spaces",
+            headers=headers,
+            json={"name": "Tag editing"},
+        )
+        assert space_response.status_code == 201, space_response.text
+        space_id = space_response.json()["id"]
+        existing_tag = client.post(
+            "/api/knowledge/tags",
+            headers=headers,
+            json={
+                "spaceId": space_id,
+                "namespace": "topic",
+                "canonicalName": "AI 자동화",
+            },
+        )
+        assert existing_tag.status_code == 201, existing_tag.text
+
+        body = "문서 태그를 한 입력란에서 수정합니다."
+        with SessionLocal() as db:
+            user = db.scalar(select(User).where(User.login_name == "admin"))
+            assert user is not None
+            document = KnowledgeDocument(
+                space_id=space_id,
+                project_id=project_id,
+                owner_user_id=user.id,
+                title="태그 편집 문서",
+                body=body,
+                researched_at=datetime(2026, 7, 25, tzinfo=UTC),
+                citations_json=[],
+                content_digest=sha256(body.encode("utf-8")).hexdigest(),
+                status="active",
+            )
+            db.add(document)
+            db.commit()
+            document_id = document.id
+
+        updated = client.patch(
+            f"/api/knowledge/documents/{document_id}",
+            headers=headers,
+            json={"tags": ["AI 자동화", "두 울", "AI 자동화"]},
+        )
+        assert updated.status_code == 200, updated.text
+        assert [tag["name"] for tag in updated.json()["tags"]] == [
+            "AI 자동화",
+            "두 울",
+        ]
+        assert updated.json()["tags"][0]["id"] == existing_tag.json()["id"]
+
+        cleared = client.patch(
+            f"/api/knowledge/documents/{document_id}",
+            headers=headers,
+            json={"tags": []},
+        )
+        assert cleared.status_code == 200, cleared.text
+        assert cleared.json()["tags"] == []
+
+        too_many = client.patch(
+            f"/api/knowledge/documents/{document_id}",
+            headers=headers,
+            json={"tags": ["하나", "둘", "셋", "넷", "다섯", "여섯"]},
+        )
+        assert too_many.status_code == 422, too_many.text
+
+
 def test_legacy_entity_and_statement_routes_are_gone(tmp_path: Path) -> None:
     settings = Settings(
         environment="test",
