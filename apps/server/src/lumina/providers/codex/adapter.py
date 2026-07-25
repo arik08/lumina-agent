@@ -1018,6 +1018,7 @@ def _request_error(exc: Exception) -> ProviderRequestError:
     if (
         type(exc).__name__ == "TransportClosedError"
         or "process closed stdout" in message
+        or "app server request failed" in message
     ):
         return ProviderRequestError(
             "Codex App Server 연결이 일시적으로 종료되었습니다.",

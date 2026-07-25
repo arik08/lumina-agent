@@ -166,6 +166,15 @@ def test_codex_transport_close_is_classified_as_retryable_stream_failure() -> No
     assert error.stage == "stream"
 
 
+def test_codex_app_server_request_failure_is_retryable_stream_failure() -> None:
+    error = codex_adapter._request_error(
+        RuntimeError("Codex App Server request failed")
+    )
+
+    assert error.retryable is True
+    assert error.stage == "stream"
+
+
 class _Thread:
     def __init__(self, state: dict[str, Any]) -> None:
         self.state = state
