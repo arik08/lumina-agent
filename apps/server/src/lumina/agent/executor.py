@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 import math
@@ -8920,6 +8921,32 @@ def _provider_tool_result_content(
         )
 
     preview = dict(result)
+    serialized = json.dumps(preview, ensure_ascii=False, default=str)
+    if tool_name.startswith("mcp__") and len(serialized) > serialized_limit:
+        projection = _structured_mcp_result_projection(preview)
+        bounded: dict[str, Any] = {
+            "providerContextProjection": projection,
+            "providerContextTruncated": True,
+            "providerContextOriginalChars": len(serialized),
+            "providerContextDigest": hashlib.sha256(
+                serialized.encode("utf-8")
+            ).hexdigest(),
+        }
+        if recoverable and tool_call_id:
+            bounded["toolResultReference"] = {
+                "toolCallId": tool_call_id,
+                "toolName": tool_name,
+                "instruction": (
+                    "Use read_tool_result with this Tool Call ID only when exact "
+                    "source rows are required."
+                ),
+            }
+        bounded_serialized = json.dumps(bounded, ensure_ascii=False)
+        return (
+            wrap_untrusted_tool_result(bounded_serialized, source=tool_name)
+            if untrusted
+            else bounded_serialized
+        )
     if tool_name == "activate_skill":
         serialized = _bounded_text(
             json.dumps(preview, ensure_ascii=False, default=str),
@@ -9000,7 +9027,14 @@ def _provider_tool_result_reference_content(
         payload["instruction"] = (
             "The complete result is not replayable; use this bounded summary."
         )
-    if include_preview:
+    if include_preview and tool_name.startswith("mcp__"):
+        payload["providerContextProjection"] = _structured_mcp_result_projection(
+            result
+        )
+        payload["providerContextDigest"] = hashlib.sha256(
+            serialized.encode("utf-8")
+        ).hexdigest()
+    elif include_preview:
         payload["providerContextPreview"] = _bounded_text(
             serialized, _WEB_PROVIDER_PREVIEW_CHARS
         )
@@ -9008,6 +9042,212 @@ def _provider_tool_result_reference_content(
     return (
         wrap_untrusted_tool_result(bounded, source=tool_name) if untrusted else bounded
     )
+
+
+def _structured_mcp_result_projection(result: Any) -> dict[str, Any]:
+    payload = _structured_mcp_payload(result)
+    if payload is None:
+        return {
+            "schema": "structured-tool-summary-v1",
+            "summaryAvailable": False,
+            "instruction": "Use the Tool result reference to inspect exact source data.",
+        }
+    summary: dict[str, Any] = {
+        "schema": "structured-tool-summary-v1",
+        "payloadType": type(payload).__name__,
+    }
+    records: list[Mapping[str, Any]] = []
+    if isinstance(payload, Mapping):
+        scalars = {
+            str(key): value
+            for key, value in payload.items()
+            if len(str(key)) <= 80 and _projection_scalar(value)
+        }
+        if scalars:
+            summary["metadata"] = dict(list(scalars.items())[:16])
+        for key in ("data", "results", "rows", "items", "records"):
+            value = payload.get(key)
+            if isinstance(value, list) and any(
+                isinstance(item, Mapping) for item in value
+            ):
+                records = [item for item in value if isinstance(item, Mapping)]
+                summary["recordCollection"] = key
+                break
+    elif isinstance(payload, list):
+        records = [item for item in payload if isinstance(item, Mapping)]
+
+    if not records:
+        return summary
+
+    summary["recordCount"] = len(records)
+    columns = sorted(
+        {
+            str(key)
+            for row in records[:100]
+            for key in row
+            if len(str(key)) <= 80
+        }
+    )
+    summary["columns"] = columns[:40]
+    quantitative_fields = [
+        field
+        for field in columns
+        if _quantitative_projection_field(field)
+        and any(_projection_number(row.get(field)) is not None for row in records)
+    ][:12]
+    numeric_stats: dict[str, dict[str, int | float]] = {}
+    for field in quantitative_fields:
+        values = [
+            number
+            for row in records
+            if (number := _projection_number(row.get(field))) is not None
+        ]
+        if not values:
+            continue
+        numeric_stats[field] = {
+            "count": len(values),
+            "sum": _compact_projection_number(sum(values)),
+            "average": _compact_projection_number(sum(values) / len(values)),
+            "min": _compact_projection_number(min(values)),
+            "max": _compact_projection_number(max(values)),
+        }
+    if numeric_stats:
+        summary["numericStats"] = numeric_stats
+
+    rank_field = _projection_rank_field(quantitative_fields)
+    if rank_field is not None:
+        ranked = sorted(
+            records,
+            key=lambda row: _projection_number(row.get(rank_field))
+            or float("-inf"),
+            reverse=True,
+        )
+        top_records = [
+            projected
+            for row in ranked
+            if (projected := _projected_record(row, quantitative_fields))
+        ][:8]
+        if top_records:
+            summary["topRecordsBy"] = rank_field
+            summary["topRecords"] = top_records
+    return summary
+
+
+def _structured_mcp_payload(result: Any) -> Mapping[str, Any] | list[Any] | None:
+    if not isinstance(result, Mapping):
+        return None
+    candidates: list[Any] = []
+    structured = result.get("structuredContent")
+    if isinstance(structured, Mapping):
+        if "result" in structured:
+            candidates.append(structured["result"])
+        candidates.append(structured)
+    content = result.get("content")
+    if isinstance(content, list):
+        candidates.extend(
+            item.get("text")
+            for item in content
+            if isinstance(item, Mapping) and isinstance(item.get("text"), str)
+        )
+    for candidate in candidates:
+        if isinstance(candidate, (Mapping, list)):
+            return candidate
+        if isinstance(candidate, str):
+            try:
+                decoded = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(decoded, (Mapping, list)):
+                return decoded
+    return None
+
+
+def _projection_scalar(value: Any) -> bool:
+    if value is None or isinstance(value, (bool, int)):
+        return True
+    if isinstance(value, float):
+        return math.isfinite(value)
+    return isinstance(value, str) and len(value) <= 160
+
+
+def _projection_number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+def _compact_projection_number(value: float) -> int | float:
+    if value.is_integer():
+        return int(value)
+    return float(f"{value:.12g}")
+
+
+def _quantitative_projection_field(field: str) -> bool:
+    normalized = field.casefold()
+    if normalized.endswith(("code", "id", "year", "month")):
+        return False
+    return any(
+        marker in normalized
+        for marker in (
+            "value",
+            "amount",
+            "weight",
+            "wgt",
+            "quantity",
+            "qty",
+            "volume",
+            "price",
+            "rate",
+            "share",
+            "count",
+        )
+    )
+
+
+def _projection_rank_field(fields: Sequence[str]) -> str | None:
+    priorities = (
+        "primaryvalue",
+        "tradevalue",
+        "cifvalue",
+        "fobvalue",
+        "amount",
+        "netwgt",
+        "weight",
+        "qty",
+        "quantity",
+    )
+    normalized = {field.casefold(): field for field in fields}
+    for priority in priorities:
+        if priority in normalized:
+            return normalized[priority]
+    return fields[0] if fields else None
+
+
+def _projected_record(
+    row: Mapping[str, Any], quantitative_fields: Sequence[str]
+) -> dict[str, Any]:
+    projected: dict[str, Any] = {}
+    for key, value in row.items():
+        field = str(key)
+        if len(field) > 80:
+            continue
+        normalized = field.casefold()
+        if field in quantitative_fields or any(
+            marker in normalized
+            for marker in (
+                "desc",
+                "name",
+                "iso",
+                "period",
+                "year",
+            )
+        ):
+            if _projection_scalar(value):
+                projected[field] = value
+        if len(projected) >= 12:
+            break
+    return projected
 
 
 def _is_context_overflow_error(exc: ProviderRequestError) -> bool:

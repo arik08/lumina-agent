@@ -495,6 +495,83 @@ def test_individual_truncated_tool_result_exposes_recoverable_reference() -> Non
     assert "read_tool_result" in payload["toolResultReference"]["instruction"]
 
 
+def test_large_structured_mcp_result_uses_compact_quantitative_projection() -> None:
+    raw_marker = "RAW-ROW-MUST-NOT-ENTER-PROVIDER-CONTEXT-" + ("x" * 2_000)
+    rows = [
+        {
+            "partnerDesc": "Australia",
+            "partnerISO": "AUS",
+            "period": "2025",
+            "primaryValue": 300,
+            "netWgt": 30,
+            "rawPayload": raw_marker,
+        },
+        {
+            "partnerDesc": "Brazil",
+            "partnerISO": "BRA",
+            "period": "2025",
+            "primaryValue": 100,
+            "netWgt": 20,
+            "rawPayload": raw_marker,
+        },
+    ]
+    inner = json.dumps(
+        {"count": 2, "returned": 2, "data": rows, "error": ""},
+        ensure_ascii=False,
+    )
+    result = {
+        "content": [{"type": "text", "text": inner}],
+        "structuredContent": {"result": inner},
+        "isError": False,
+    }
+
+    content = executor_module._provider_tool_result_content(
+        "mcp__generic_trade__preview_data__digest",
+        result,
+        serialized_limit=500,
+        tool_call_id="call-large-mcp",
+        untrusted=False,
+    )
+    payload = json.loads(content)
+    projection = payload["providerContextProjection"]
+
+    assert raw_marker not in content
+    assert "providerContextPreview" not in payload
+    assert payload["providerContextTruncated"] is True
+    assert len(payload["providerContextDigest"]) == 64
+    assert payload["toolResultReference"]["toolCallId"] == "call-large-mcp"
+    assert projection["schema"] == "structured-tool-summary-v1"
+    assert projection["recordCollection"] == "data"
+    assert projection["recordCount"] == 2
+    assert projection["numericStats"]["primaryValue"] == {
+        "count": 2,
+        "sum": 400,
+        "average": 200,
+        "min": 100,
+        "max": 300,
+    }
+    assert projection["topRecordsBy"] == "primaryValue"
+    assert projection["topRecords"][0]["partnerDesc"] == "Australia"
+    assert len(content) < 4_000
+
+
+def test_large_unparseable_mcp_result_keeps_only_reference_and_digest() -> None:
+    raw_marker = "UNPARSEABLE-RAW-MUST-NOT-ENTER-CONTEXT-" + ("z" * 4_000)
+    content = executor_module._provider_tool_result_content(
+        "mcp__generic__opaque_result__digest",
+        {"content": [{"type": "text", "text": raw_marker}], "isError": False},
+        serialized_limit=500,
+        tool_call_id="call-opaque-mcp",
+        untrusted=False,
+    )
+    payload = json.loads(content)
+
+    assert raw_marker not in content
+    assert payload["providerContextProjection"]["summaryAvailable"] is False
+    assert payload["toolResultReference"]["toolCallId"] == "call-opaque-mcp"
+    assert len(payload["providerContextDigest"]) == 64
+
+
 def test_web_research_uses_adaptive_guidance_with_separate_safety_limits() -> None:
     assert executor_module._web_research_budget("최신 동향을 조사해줘", "brief") == (
         3,
