@@ -50,7 +50,7 @@ class KnowledgeBatchTagRequest(ApiModel):
 
 class KnowledgeDocumentTagsUpdate(ApiModel):
     tags: list[Annotated[str, Field(min_length=1, max_length=160)]] = Field(
-        max_length=5
+        max_length=10
     )
 
 

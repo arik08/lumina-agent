@@ -248,12 +248,15 @@ test("Knowledge document tags can be edited together with hash-delimited names",
   assert.match(view, /aria-label="문서 태그 편집"/);
   assert.match(view, /aria-label="문서 태그 전체 편집"/);
   assert.match(view, /placeholder="#태그 하나 #공백 포함 태그"/);
-  assert.match(view, /tagNames\.length > 5/);
+  assert.match(view, /tagNames\.length > 10/);
+  assert.match(view, /태그는 최대 10개까지 저장할 수 있습니다/);
   assert.match(api, /\/knowledge\/documents\/\$\{encodeURIComponent\(documentId\)\}.*method: "PATCH"/);
   assert.match(featureApi, /updateDocumentTags: updateKnowledgeDocumentTags/);
   assert.match(types, /interface UpdateKnowledgeDocumentTagsRequest \{ tags: string\[\]; \}/);
-  assert.match(styles, /\.knowledge-tag-edit \{[^}]*margin-left: auto;/);
-  assert.match(styles, /\.knowledge-tag-inline-editor \{[^}]*grid-template-columns: minmax\(0, 1fr\) 30px 30px;/);
+  assert.match(styles, /\.knowledge-tag-edit \{[^}]*border-radius: var\(--radius-pill\);/);
+  assert.match(styles, /\.knowledge-tag-edit \{[^}]*background: color-mix\(in srgb, var\(--cobalt\) 10%, transparent\);[^}]*color: var\(--cobalt\);/);
+  assert.doesNotMatch(styles, /\.knowledge-tag-edit \{[^}]*margin-left: auto;/);
+  assert.match(styles, /\.knowledge-tag-inline-editor \{[^}]*max-width: 900px;[^}]*grid-template-columns: minmax\(0, 1fr\) 30px 30px;/);
 });
 
 test("legacy approval, ingestion, and entity workspaces are absent", async () => {

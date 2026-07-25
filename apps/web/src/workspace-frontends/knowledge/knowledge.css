@@ -119,10 +119,11 @@
 .knowledge-wiki-article h2 { margin: 0; font-size: 26px; }
 .knowledge-wiki-metrics, .knowledge-tag-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .knowledge-wiki-metrics span { border: 1px solid var(--line); border-radius: var(--radius-pill); padding: 3px 7px; color: var(--muted); font-size: 9px; }
+.knowledge-tag-row { align-items: center; }
 .knowledge-tag-row span { border-radius: var(--radius-pill); padding: 3px 7px; background: color-mix(in srgb, var(--cobalt) 10%, transparent); color: var(--cobalt); font-size: 9px; }
-.knowledge-tag-edit { display: grid; width: 26px; min-width: 26px; height: 26px; margin-left: auto; place-items: center; border: 1px solid var(--line); border-radius: var(--radius-control); padding: 0; background: var(--surface); color: var(--muted); }
-.knowledge-tag-edit:hover, .knowledge-tag-edit:focus-visible { border-color: var(--line-strong); background: var(--surface-soft); color: var(--ink); }
-.knowledge-tag-inline-editor { display: grid; grid-template-columns: minmax(0, 1fr) 30px 30px; gap: 6px; }
+.knowledge-tag-edit { display: grid; width: 26px; min-width: 26px; height: 26px; place-items: center; border: 1px solid color-mix(in srgb, var(--cobalt) 18%, transparent); border-radius: var(--radius-pill); padding: 0; background: color-mix(in srgb, var(--cobalt) 10%, transparent); color: var(--cobalt); }
+.knowledge-tag-edit:hover, .knowledge-tag-edit:focus-visible { border-color: color-mix(in srgb, var(--cobalt) 32%, transparent); background: color-mix(in srgb, var(--cobalt) 16%, transparent); color: var(--cobalt-hover); }
+.knowledge-tag-inline-editor { display: grid; width: 100%; max-width: 900px; grid-template-columns: minmax(0, 1fr) 30px 30px; gap: 6px; }
 .knowledge-tag-inline-editor input { width: 100%; height: 32px; min-width: 0; border: 1px solid var(--line-strong); border-radius: var(--radius-control); padding: 0 9px; outline: 0; background: var(--surface); color: var(--ink); font-size: 13px; }
 .knowledge-tag-inline-editor input:focus { border-color: var(--cobalt); box-shadow: 0 0 0 2px color-mix(in srgb, var(--cobalt) 12%, transparent); }
 .knowledge-tag-inline-editor button { display: grid; width: 30px; height: 32px; place-items: center; border: 1px solid var(--line); border-radius: var(--radius-control); padding: 0; background: var(--surface); color: var(--muted); }

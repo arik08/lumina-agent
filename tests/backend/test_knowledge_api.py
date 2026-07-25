@@ -607,6 +607,19 @@ def test_document_tags_can_be_replaced_with_existing_and_new_names(
         ]
         assert updated.json()["tags"][0]["id"] == existing_tag.json()["id"]
 
+        ten_tags = client.patch(
+            f"/api/knowledge/documents/{document_id}",
+            headers=headers,
+            json={
+                "tags": [
+                    "하나", "둘", "셋", "넷", "다섯",
+                    "여섯", "일곱", "여덟", "아홉", "열",
+                ]
+            },
+        )
+        assert ten_tags.status_code == 200, ten_tags.text
+        assert len(ten_tags.json()["tags"]) == 10
+
         cleared = client.patch(
             f"/api/knowledge/documents/{document_id}",
             headers=headers,
@@ -618,7 +631,12 @@ def test_document_tags_can_be_replaced_with_existing_and_new_names(
         too_many = client.patch(
             f"/api/knowledge/documents/{document_id}",
             headers=headers,
-            json={"tags": ["하나", "둘", "셋", "넷", "다섯", "여섯"]},
+            json={
+                "tags": [
+                    "하나", "둘", "셋", "넷", "다섯", "여섯",
+                    "일곱", "여덟", "아홉", "열", "열하나",
+                ]
+            },
         )
         assert too_many.status_code == 422, too_many.text
 

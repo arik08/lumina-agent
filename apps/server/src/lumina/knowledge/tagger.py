@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from ..providers.types import ProviderAdapter, ProviderMessage, ProviderRequest
 
 
-MAX_DOCUMENT_TAGS = 5
+MAX_DOCUMENT_TAGS = 10
 MAX_TAG_BATCH_DOCUMENTS = 8
 MAX_TAG_BATCH_INPUT_CHARACTERS = 48_000
 MAX_TAG_INPUT_CHARACTERS = 16_000
