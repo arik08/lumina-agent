@@ -182,6 +182,14 @@ def create_run_transition_notification(
         "awaiting_input",
     }:
         return None, False
+    deep_analysis = run.snapshot_json.get("deep_analysis")
+    if (
+        target == "completed"
+        and isinstance(deep_analysis, dict)
+        and isinstance(deep_analysis.get("node_type"), str)
+        and deep_analysis["node_type"] != "report"
+    ):
+        return None, False
     scheduled_task_id = run.snapshot_json.get("scheduled_task_id")
     artifact_id = db.scalar(
         select(Artifact.id)

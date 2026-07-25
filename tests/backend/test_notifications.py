@@ -229,6 +229,52 @@ def test_simple_chat_completion_does_not_create_notification(tmp_path: Path) -> 
         assert listing.json()["unreadCount"] == 0
 
 
+def test_deep_analysis_only_notifies_for_final_report_completion(
+    tmp_path: Path,
+) -> None:
+    app = create_app(_settings(tmp_path, "deep-analysis-notifications.db"))
+    with TestClient(app) as client:
+        csrf = _login(client)
+        _project_id, conversation_id = _conversation(client, csrf, "심층분석")
+        with SessionLocal() as db:
+            user = db.scalar(select(User).where(User.login_id == "admin@posco.com"))
+            assert user is not None
+
+            for node_type in ("research", "report"):
+                run, _message, _created = create_run(
+                    db,
+                    user=user,
+                    conversation_id=conversation_id,
+                    payload=RunCreate(
+                        message=RunMessageInput(text=f"{node_type} 노드 실행")
+                    ),
+                    idempotency_key=f"notification-deep-analysis-{node_type}",
+                )
+                run.snapshot_json = {
+                    **run.snapshot_json,
+                    "deep_analysis": {"node_type": node_type},
+                }
+                transition_run(db, run, PREPARING)
+                transition_run(db, run, MODEL_STREAMING)
+                db.add(
+                    ToolExecution(
+                        run_id=run.id,
+                        tool_call_id=f"deep-analysis-{node_type}-tool",
+                        tool_name="write_file",
+                        validated_input_json={},
+                        status="completed",
+                    )
+                )
+                transition_run(db, run, COMPLETED)
+            db.commit()
+
+        listing = client.get("/api/notifications")
+        assert listing.status_code == 200, listing.text
+        assert [item["kind"] for item in listing.json()["items"]] == [
+            "run_completed"
+        ]
+
+
 def test_failure_approval_and_read_all_notifications(tmp_path: Path) -> None:
     app = create_app(_settings(tmp_path, "state-notifications.db"))
     with TestClient(app) as client:
