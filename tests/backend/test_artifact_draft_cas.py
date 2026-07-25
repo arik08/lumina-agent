@@ -96,6 +96,25 @@ def _draft_files(settings: Settings, artifact_id: str) -> list[Path]:
     return [path for path in root.rglob("*") if path.is_file()]
 
 
+def test_delete_artifact_soft_deletes_and_hides_it(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    app = create_app(settings)
+    with TestClient(app) as client:
+        csrf = _login(client)
+        artifact_id = _create_text_artifact(settings, "delete-me")
+
+        deleted = client.delete(f"/api/artifacts/{artifact_id}", headers=csrf)
+
+        assert deleted.status_code == 204, deleted.text
+        assert client.get(f"/api/artifacts/{artifact_id}").status_code == 404
+        listing = client.get("/api/artifacts")
+        assert listing.status_code == 200
+        assert artifact_id not in {item["id"] for item in listing.json()["items"]}
+        with SessionLocal() as db:
+            artifact = db.get(Artifact, artifact_id)
+            assert artifact is not None and artifact.deleted_at is not None
+
+
 def test_artifact_draft_get_put_cas_stale_and_user_isolation(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     app = create_app(settings)

@@ -31,7 +31,7 @@ from ...authorization import project_access_query
 from ...config import Settings, get_settings
 from ...db import get_db
 from ...messages.service import require_message
-from ...models import Artifact, ArtifactVersion, Conversation, Project, User
+from ...models import Artifact, ArtifactVersion, Conversation, Project, User, utc_now
 from ...storage import ManagedLocalStorage
 from ..dependencies import AuthContext, get_current_user, require_csrf
 from ..errors import ApiProblem
@@ -226,6 +226,28 @@ def get_artifact(
         )
     )
     return payload
+
+
+@router.delete("/{artifact_id}", status_code=204)
+def delete_artifact(
+    artifact_id: str,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> Response:
+    artifact = require_artifact(db, context.user, artifact_id, write=True)
+    artifact.deleted_at = utc_now()
+    record_audit(
+        db,
+        action="artifact_deleted",
+        target_type="artifact",
+        target_id=artifact.id,
+        result="success",
+        actor=context.user,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    db.commit()
+    return Response(status_code=204)
 
 
 @router.get("/{artifact_id}/versions/{version_number}")

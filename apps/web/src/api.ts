@@ -1350,6 +1350,13 @@ export async function listArtifacts(projectId?: string, signal?: AbortSignal) {
   });
 }
 
+export async function deleteArtifact(artifactId: string, signal?: AbortSignal) {
+  return request<void>(`/artifacts/${encodeURIComponent(artifactId)}`, {
+    method: "DELETE",
+    signal,
+  });
+}
+
 export async function createConversationShare(
   conversationId: string,
   anchorMessageId?: string | null,
@@ -2680,6 +2687,7 @@ export const api = {
   artifacts: {
     list: listArtifacts,
     get: getArtifact,
+    delete: deleteArtifact,
     createFromMessage: createMessageMarkdownArtifact,
     getVersion: getArtifactVersion,
     getDraft: getArtifactDraft,

@@ -4077,7 +4077,7 @@ function App() {
         <Suspense fallback={<FeatureViewLoading />}>
           <ViewDataCacheProvider scope={workspace.authSession.user.id}>
           {mainView === "marketplace" && <MarketplaceView key={workspace.activeProjectId ?? "none"} projectId={workspace.activeProjectId} canManage={isAdmin} onOpenNavigation={() => setSidebarOpen(true)} />}
-          {mainView === "library" && <ArtifactLibraryView key={workspace.activeProjectId ?? "all"} projectId={workspace.activeProjectId} onOpenArtifact={(artifact) => void openArtifact(artifact)} onOpenNavigation={() => setSidebarOpen(true)} />}
+          {mainView === "library" && <ArtifactLibraryView key={workspace.activeProjectId ?? "all"} projectId={workspace.activeProjectId} canDelete={isAdmin || Boolean(activeProject && activeProject.role !== "viewer")} onOpenArtifact={(artifact) => void openArtifact(artifact)} onArtifactDeleted={(artifactId) => { if (artifactSummary?.id === artifactId) closeArtifact(); }} onOpenNavigation={() => setSidebarOpen(true)} />}
           {mainView === "files" && <ProjectFilesView key={workspace.activeProjectId ?? "none"} projectId={workspace.activeProjectId} requestedFileId={requestedProjectFileId} onOpenNavigation={() => setSidebarOpen(true)} />}
           {mainView === "deep-analysis" && <DeepAnalysisView
             key={workspace.activeProjectId ?? "none"}
