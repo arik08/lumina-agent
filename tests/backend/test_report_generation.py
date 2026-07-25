@@ -739,6 +739,10 @@ def test_selected_artifact_target_retries_short_report_and_exposes_separate_coun
     assert "do not leave more than two substantial paragraphs in sequence" in system_text
     assert "flag every major section with four or more paragraphs" in system_text
     assert "every major HTML report section a short, stable, unique id" in system_text
+    assert "one shared centered content shell" in system_text
+    assert "masthead background may be full bleed" in system_text
+    assert "Do not mix viewport-relative header padding such as 7vw" in system_text
+    assert "Verify those axes at desktop and narrow widths" in system_text
     extension_requirement = snapshot["toolExecutions"][0]["result"][
         "targetLengthCheck"
     ]

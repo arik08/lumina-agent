@@ -113,6 +113,14 @@ test("HTML Artifact reports keep section text off an unbounded tinted canvas", (
   assert.match(visualArtifactSkillSource, /Do not place a bare heading between detached white cards/);
 });
 
+test("HTML Artifact reports align full-bleed masthead content to the main shell", () => {
+  assert.match(visualArtifactSkillSource, /Establish one shared centered content shell for ordinary vertical reports/);
+  assert.match(visualArtifactSkillSource, /--report-content-width/);
+  assert.match(visualArtifactSkillSource, /reuse that shell for the masthead's inner content, executive summary, main sections, and footer/);
+  assert.match(visualArtifactSkillSource, /do not combine viewport-relative header padding such as `7vw` with a separately centered fixed-width `main`/);
+  assert.match(visualArtifactSkillSource, /compare the computed left and right edges of the masthead inner content, first main content row, and footer/);
+});
+
 test("HTML Artifact reports structure prose-heavy sections and patch expansions", () => {
   assert.match(visualArtifactSkillSource, /do not leave more than two substantial paragraphs in sequence without a reader-facing structure/);
   assert.match(visualArtifactSkillSource, /Give every major HTML report section a short, stable, unique `id`/);

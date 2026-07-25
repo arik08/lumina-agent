@@ -17,6 +17,8 @@ Use this checklist before final delivery of a visual HTML artifact.
 ## Layout
 
 - No accidental horizontal scroll at desktop or mobile widths.
+- Full-bleed mastheads and section bands use an inner content shell whose left and right edges match the main report and footer.
+- The report defines its content width and horizontal gutter once and does not mix viewport-relative header padding with an independently centered fixed-width body.
 - Cards in the same row align consistently.
 - Major sections have enough contrast without looking like unrelated templates.
 - Dense information uses tables, small multiples, or grouped sections instead of giant cards.
