@@ -2081,7 +2081,7 @@ deep_analysis_missions.execution_settings_json     Mission 실행·출력 설정
 knowledge_tags.definition / parent / revision      편집 가능한 태그 사전과 계층 CAS
 ```
 
-현재 migration head는 `0064_knowledge_tag_proposals`입니다. `0009`, `0013`~`0018`, `0020`~`0030`은 기존 table과 seed data에 MCP runtime header, instruction hierarchy·revision, 공개 share link, 사용자 소속, 알림 compact metadata, Skill 개인 Draft·소유권, 대화 좋아요, Codex OAuth catalog·표시 순서, 조직별 Run 안전 설정·내부 prompt override·최초 실행 설정, Project Folder, Help Center, 공지, 설정 revision과 P-GPT 실측 입력 상한을 증분 추가합니다. `0031`~`0064`는 Skill tag·Project 설치 scope·공지 receipt, 심층분석 Mission·실행·event·export·Node 대화·실행 설정, 지식 문서·태그·Project scope·검색 사용 모드·신규 태그 제안, SQLite Message FTS, Run event cache 통계 index, Skill version history를 순차 추가하거나 단순화합니다. `0026`, `0030`처럼 catalog row를 갱신하거나 `0052`, `0055`처럼 개발 중 계약을 교체하는 data migration도 같은 Alembic chain에서 재현합니다.
+현재 migration head는 `0065_knowledge_artifact_sources`입니다. `0009`, `0013`~`0018`, `0020`~`0030`은 기존 table과 seed data에 MCP runtime header, instruction hierarchy·revision, 공개 share link, 사용자 소속, 알림 compact metadata, Skill 개인 Draft·소유권, 대화 좋아요, Codex OAuth catalog·표시 순서, 조직별 Run 안전 설정·내부 prompt override·최초 실행 설정, Project Folder, Help Center, 공지, 설정 revision과 P-GPT 실측 입력 상한을 증분 추가합니다. `0031`~`0065`는 Skill tag·Project 설치 scope·공지 receipt, 심층분석 Mission·실행·event·export·Node 대화·실행 설정, 지식 문서·태그·Project scope·검색 사용 모드·신규 태그 제안·Artifact 원본 연결, SQLite Message FTS, Run event cache 통계 index, Skill version history를 순차 추가하거나 단순화합니다. `0026`, `0030`처럼 catalog row를 갱신하거나 `0052`, `0055`처럼 개발 중 계약을 교체하는 data migration도 같은 Alembic chain에서 재현합니다.
 
 ### 21.3 후속 기능에서 추가할 table
 

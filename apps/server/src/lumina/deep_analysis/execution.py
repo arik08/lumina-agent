@@ -85,7 +85,11 @@ def pending_terminal_run_ids(db: Session) -> tuple[str, ...]:
             .distinct()
         )
     )
-    return tuple(dict.fromkeys((*pending, *repairable)))
+    return tuple(
+        dict.fromkeys(
+            run_id for run_id in (*pending, *repairable) if run_id is not None
+        )
+    )
 
 
 def record_recovered_run_ids(db: Session, run_ids: tuple[str, ...]) -> None:
@@ -141,7 +145,7 @@ def _run_context(
             DeepAnalysisMission.id == DeepAnalysisWorkflowRevision.mission_id,
         )
         .where(DeepAnalysisWorkflowNode.run_id == run_id)
-    ).one_or_none()
+    ).tuples().one_or_none()
 
 
 def record_node_started(db: Session, run: Run) -> None:
@@ -784,9 +788,15 @@ def create_node_run(
                 "token_start", "token_end",
             )
         }
-        if objective_offset >= 0 and isinstance(reference.get("token_start"), int):
-            reference["token_start"] = int(reference["token_start"]) + objective_offset
-            reference["token_end"] = int(reference["token_end"]) + objective_offset
+        token_start = reference.get("token_start")
+        token_end = reference.get("token_end")
+        if (
+            objective_offset >= 0
+            and isinstance(token_start, int)
+            and isinstance(token_end, int)
+        ):
+            reference["token_start"] = token_start + objective_offset
+            reference["token_end"] = token_end + objective_offset
         prompt_references.append(MessageReferenceInput.model_validate(reference))
     output_mode = _node_output_mode(mission, node)
     frozen_execution = execution_settings.get("execution")

@@ -190,4 +190,4 @@ def current_file_version(
             & (ProjectFileVersion.version_number == ProjectFile.current_version_number),
         )
         .where(ProjectFile.id == project_file_id)
-    ).one_or_none()
+    ).tuples().one_or_none()

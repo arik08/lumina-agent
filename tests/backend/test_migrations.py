@@ -61,6 +61,12 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
         knowledge_tag_columns = {
             column["name"] for column in inspector.get_columns("knowledge_tags")
         }
+        knowledge_document_columns = {
+            column["name"] for column in inspector.get_columns("knowledge_documents")
+        }
+        knowledge_document_indexes = {
+            index["name"] for index in inspector.get_indexes("knowledge_documents")
+        }
         knowledge_space_columns = {
             column["name"] for column in inspector.get_columns("knowledge_spaces")
         }
@@ -175,7 +181,15 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
     assert {"project_ids_json", "use_mode"} <= knowledge_space_columns
     assert "conversation_id" in workflow_node_columns
     assert {"definition", "parent_tag_id", "revision"} <= knowledge_tag_columns
-    assert revision == "0064"
+    assert {
+        "source_artifact_id",
+        "source_artifact_version_id",
+    } <= knowledge_document_columns
+    assert {
+        "ix_knowledge_documents_source_artifact_id",
+        "ix_knowledge_documents_source_artifact_version_id",
+    } <= knowledge_document_indexes
+    assert revision == "0065"
     assert "ix_run_events_run_type" in {
         index["name"] for index in inspector.get_indexes("run_events")
     }
@@ -441,7 +455,7 @@ def test_context_migration_adopts_legacy_create_all_table(tmp_path: Path) -> Non
         }
         with engine.connect() as connection:
             assert (
-                MigrationContext.configure(connection).get_current_revision() == "0064"
+                MigrationContext.configure(connection).get_current_revision() == "0065"
             )
     finally:
         engine.dispose()
@@ -471,7 +485,7 @@ def test_recent_migrations_adopt_tables_precreated_by_runtime_schema(
     try:
         with engine.connect() as connection:
             revision = MigrationContext.configure(connection).get_current_revision()
-        assert revision == "0064"
+        assert revision == "0065"
     finally:
         engine.dispose()
 
