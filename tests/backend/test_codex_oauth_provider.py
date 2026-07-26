@@ -12,6 +12,7 @@ from openai_codex import ApprovalMode
 
 from lumina.providers import (
     ProviderConfigurationError,
+    ProviderEvent,
     ProviderMessage,
     ProviderRequest,
     ProviderRequestError,
@@ -77,7 +78,7 @@ async def test_codex_direct_routes_same_prefix_across_new_run_sessions(
         body = f"data: {json.dumps(response)}\n\n".encode()
         return httpx.Response(200, content=body)
 
-    adapter = CodexResponsesAdapter()
+    adapter = CodexResponsesAdapter(direct_responses=True)
     adapter._responses_client = httpx.AsyncClient(
         transport=httpx.MockTransport(handler)
     )
@@ -127,6 +128,35 @@ async def test_codex_direct_routes_same_prefix_across_new_run_sessions(
     await adapter.close()
 
 
+@pytest.mark.asyncio
+async def test_codex_oauth_defaults_to_app_server_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = CodexResponsesAdapter()
+
+    async def app_server_stream(_request: ProviderRequest):
+        yield ProviderEvent(type="completed", stop_reason="stop")
+
+    async def unexpected_direct_stream(_request: ProviderRequest):
+        raise AssertionError("Direct Responses must remain opt-in")
+        yield
+
+    monkeypatch.setattr(adapter, "_stream_app_server", app_server_stream)
+    monkeypatch.setattr(adapter, "_stream_direct", unexpected_direct_stream)
+
+    events = [
+        event
+        async for event in adapter.stream(
+            ProviderRequest(
+                model="gpt-5.5",
+                messages=(ProviderMessage(role="user", content="hello"),),
+            )
+        )
+    ]
+
+    assert [event.type for event in events] == ["completed"]
+
+
 def test_codex_transport_close_is_classified_as_retryable_stream_failure() -> None:
     error = codex_adapter._request_error(
         TransportClosedError("Codex process closed stdout")
@@ -134,6 +164,23 @@ def test_codex_transport_close_is_classified_as_retryable_stream_failure() -> No
 
     assert error.retryable is True
     assert error.stage == "stream"
+
+
+def test_codex_app_server_request_failure_is_retryable_stream_failure() -> None:
+    error = codex_adapter._request_error(
+        RuntimeError("Codex App Server request failed")
+    )
+
+    assert error.retryable is True
+    assert error.stage == "stream"
+
+
+def test_unknown_codex_app_server_failure_is_retryable_before_output() -> None:
+    error = codex_adapter._request_error(RuntimeError("thread start failed"))
+
+    assert error.retryable is True
+    assert error.stage == "request"
+    assert error.diagnostic_code == "RuntimeError"
 
 
 class _Thread:
@@ -499,6 +546,112 @@ async def test_codex_oauth_discards_dead_client_after_partial_output(
 
 
 @pytest.mark.asyncio
+async def test_codex_oauth_preserves_valid_report_and_discards_only_malformed_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    discarded: list[object] = []
+    report_arguments = json.dumps(
+        {
+            "filename": "report.html",
+            "html_source": f"<html><body>{'x' * 32_000}</body></html>",
+        },
+        separators=(",", ":"),
+    )
+    envelope = json.dumps(
+        {
+            "kind": "tool_calls",
+            "text": "보고서를 작성하겠습니다.",
+            "tool_calls": [
+                {
+                    "id": "call_report",
+                    "name": "create_report",
+                    "arguments_json": report_arguments,
+                },
+                {
+                    "id": "call_search",
+                    "name": "web_search",
+                    "arguments_json": '{"query":"POSCO"},{"query":"steel"}',
+                },
+            ],
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+    class Delta:
+        def __init__(self, delta: str) -> None:
+            self.delta = delta
+
+    class Completed:
+        turn = SimpleNamespace(
+            status=SimpleNamespace(value="completed"),
+            error=None,
+        )
+
+    class MalformedTurn:
+        async def stream(self):
+            for index in range(0, len(envelope), 4_096):
+                yield SimpleNamespace(payload=Delta(envelope[index : index + 4_096]))
+            yield SimpleNamespace(payload=Completed())
+
+    class MalformedThread:
+        async def turn(self, _prompt: str, **_kwargs: Any) -> MalformedTurn:
+            return MalformedTurn()
+
+    class MalformedClient:
+        async def thread_start(self, **_kwargs: Any) -> MalformedThread:
+            return MalformedThread()
+
+    client = MalformedClient()
+    adapter = CodexResponsesAdapter(direct_responses=False)
+
+    async def ready_client():
+        return client, frozenset({"gpt-5.5"}), "."
+
+    async def discard_client(expected: object) -> None:
+        discarded.append(expected)
+
+    monkeypatch.setattr(codex_adapter, "AgentMessageDeltaNotification", Delta)
+    monkeypatch.setattr(codex_adapter, "TurnCompletedNotification", Completed)
+    monkeypatch.setattr(adapter, "_ready_client", ready_client)
+    monkeypatch.setattr(adapter, "_discard_client", discard_client)
+
+    events = [
+        event
+        async for event in adapter.stream(
+            ProviderRequest(
+                model="gpt-5.5",
+                messages=(ProviderMessage(role="user", content="HTML 보고서 작성"),),
+            )
+        )
+    ]
+
+    assert any(
+        event.type == "tool_call_started" and event.tool_name == "create_report"
+        for event in events
+    )
+    assert any(
+        event.type == "tool_call_completed"
+        and event.tool_call_id == "call_report"
+        and event.arguments_json == report_arguments
+        for event in events
+    )
+    assert any(
+        event.type == "tool_call_discarded"
+        and event.tool_call_id == "call_search"
+        for event in events
+    )
+    assert not any(
+        event.type == "tool_call_completed"
+        and event.tool_call_id == "call_search"
+        for event in events
+    )
+    assert events[-1].type == "completed"
+    assert events[-1].stop_reason == "tool_calls"
+    assert discarded == []
+
+
+@pytest.mark.asyncio
 async def test_codex_oauth_discard_tolerates_dead_process_close_error() -> None:
     class DeadClient:
         async def close(self) -> None:
@@ -657,8 +810,64 @@ async def test_codex_oauth_preserves_invalid_result_classification(
 
     assert captured.value.stage == "response"
     assert captured.value.status_code is None
+    assert captured.value.retryable is True
     assert "final/tool_calls 계약" in str(captured.value)
     assert "인증을 확인" not in str(captured.value)
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected_code"),
+    [
+        (None, "missing_response"),
+        ("", "empty_response"),
+        ("   ", "empty_response"),
+        ("not-json", "invalid_json"),
+        (json.dumps([]), "response_not_object"),
+        (
+            json.dumps({"kind": "unknown", "text": "secret", "tool_calls": []}),
+            "unsupported_kind",
+        ),
+        (
+            json.dumps({"kind": "final", "text": "", "tool_calls": []}),
+            "final_empty_text",
+        ),
+        (
+            json.dumps({"kind": "tool_calls", "text": "", "tool_calls": []}),
+            "tool_calls_empty",
+        ),
+        (
+            json.dumps(
+                {
+                    "kind": "tool_calls",
+                    "text": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_secret",
+                            "name": "secret_tool",
+                            "arguments_json": '{"token":"must-not-be-logged"} trailing',
+                        }
+                    ],
+                }
+            ),
+            "tool_call_arguments_trailing_content",
+        ),
+    ],
+)
+def test_codex_invalid_result_reports_safe_shape_without_content(
+    raw: str | None,
+    expected_code: str,
+) -> None:
+    with pytest.raises(ProviderRequestError) as captured:
+        codex_adapter._result_payload(raw)
+
+    error = captured.value
+    assert error.retryable is True
+    assert error.diagnostic_code == expected_code
+    assert error.safe_diagnostic is not None
+    assert "response_present=" in error.safe_diagnostic
+    assert "response_length=" in error.safe_diagnostic
+    assert "secret" not in error.safe_diagnostic
+    assert "must-not-be-logged" not in error.safe_diagnostic
 
 
 @pytest.mark.asyncio

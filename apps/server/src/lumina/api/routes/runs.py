@@ -24,9 +24,16 @@ from ...runs.service import (
     plan_snapshot,
     run_for_user,
     run_snapshot,
+    run_snapshots,
+    runs_for_user,
 )
 from ...runs.state import TERMINAL_STATUSES
-from ..dependencies import AuthContext, get_auth_context, get_current_user, require_csrf
+from ..dependencies import (
+    AuthContext,
+    get_current_user,
+    get_stream_auth_context,
+    require_csrf,
+)
 from ..errors import ApiProblem
 from ..schemas import RunActionRequest, RunCreate
 
@@ -91,12 +98,19 @@ async def post_run_action(
     )
     db.commit()
     if changed:
+        local_run_executor.invalidate_control(run.id)
         if payload.type == "cancel":
             local_run_executor.cancel(run.id)
-        if payload.type in {"retry_step", "submit_user_input"} or (
+        if payload.type in {"resume", "retry_step", "submit_user_input"} or (
             payload.type in {"approve", "reject"} and run.status == "queued"
         ):
             local_run_executor.enqueue(run.id)
+        if payload.type == "resume" and run.status == "queued":
+            await event_broker.replace_assistant_draft(
+                run.id,
+                str(run.snapshot_json.get("assistant_message_id", "")),
+                run.assistant_draft,
+            )
         await event_broker.notify(run.id)
     return {
         "message": message_response(message, db) if message else None,
@@ -113,6 +127,26 @@ def get_run_snapshot(
 ) -> dict[str, object]:
     run = run_for_user(db, user, run_id)
     return run_snapshot(db, run)
+
+
+@router.post("/runs/snapshots")
+def post_run_snapshots(
+    payload: dict[str, object],
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db, scope="function"),
+) -> list[dict[str, object]]:
+    raw_run_ids = payload.get("runIds")
+    if not isinstance(raw_run_ids, list) or not 1 <= len(raw_run_ids) <= 20:
+        raise ApiProblem(
+            422,
+            "invalid_run_ids",
+            "Run snapshot은 한 번에 1개 이상 20개 이하로 요청해야 합니다.",
+        )
+    run_ids = list(dict.fromkeys(str(item) for item in raw_run_ids if item))
+    if len(run_ids) != len(raw_run_ids):
+        raise ApiProblem(422, "invalid_run_ids", "Run ID가 올바르지 않습니다.")
+    runs = runs_for_user(db, context.user, run_ids)
+    return run_snapshots(db, runs)
 
 
 @router.get("/runs/{run_id}/plan")
@@ -134,8 +168,8 @@ async def stream_run(
     request: Request,
     after_sequence: int = 0,
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
-    context: AuthContext = Depends(get_auth_context),
-    db: Session = Depends(get_db),
+    context: AuthContext = Depends(get_stream_auth_context),
+    db: Session = Depends(get_db, scope="function"),
 ) -> StreamingResponse:
     run_for_user(db, context.user, run_id)
     cursor = max(0, after_sequence)
@@ -149,42 +183,83 @@ async def stream_run(
 
     async def events() -> AsyncIterator[str]:
         nonlocal cursor
+        progress_revision = 0
+        assistant_draft_revision = 0
+        wake_revision, durable_revision = event_broker.revisions(run_id)
+        query_required = True
         while True:
             if await request.is_disconnected():
                 return
-            with SessionLocal() as event_db:
-                resolved = resolve_server_session(event_db, context.session_token)
-                if resolved is None:
-                    return
-                try:
-                    run = run_for_user(event_db, resolved.user, run_id)
-                except ApiProblem:
-                    return
-                rows = list(
-                    event_db.scalars(
-                        select(RunEvent)
-                        .where(RunEvent.run_id == run_id, RunEvent.sequence > cursor)
-                        .order_by(RunEvent.sequence)
-                        .limit(200)
+            if query_required:
+                observed_durable_revision = event_broker.revisions(run_id)[1]
+                with SessionLocal() as event_db:
+                    resolved = resolve_server_session(event_db, context.session_token)
+                    if resolved is None:
+                        return
+                    try:
+                        run = run_for_user(event_db, resolved.user, run_id)
+                    except ApiProblem:
+                        return
+                    rows = list(
+                        event_db.scalars(
+                            select(RunEvent)
+                            .where(RunEvent.run_id == run_id, RunEvent.sequence > cursor)
+                            .order_by(RunEvent.sequence)
+                            .limit(200)
+                        )
                     )
+                    terminal = run.status in TERMINAL_STATUSES
+                    last_sequence = run.last_sequence
+                    encoded = [event_response(event) for event in rows]
+                durable_revision = max(durable_revision, observed_durable_revision)
+                if encoded:
+                    for event in encoded:
+                        cursor = int(event["sequence"])
+                        data = json.dumps(
+                            jsonable_encoder(event),
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        )
+                        yield f"id: {cursor}\nevent: run_event\ndata: {data}\n\n"
+                    continue
+                if terminal and cursor >= last_sequence:
+                    event_broker.clear_artifact_progress(run_id)
+                    event_broker.clear_assistant_draft(run_id)
+                    return
+            delivered_transient = False
+            transient_draft = event_broker.latest_assistant_draft(
+                run_id, after_revision=assistant_draft_revision
+            )
+            if transient_draft is not None:
+                assistant_draft_revision, draft = transient_draft
+                data = json.dumps(
+                    {"runId": run_id, "draft": draft},
+                    ensure_ascii=False,
+                    separators=(",", ":"),
                 )
-                terminal = run.status in TERMINAL_STATUSES
-                last_sequence = run.last_sequence
-                encoded = [event_response(event) for event in rows]
-            if encoded:
-                for event in encoded:
-                    cursor = int(event["sequence"])
-                    data = json.dumps(
-                        jsonable_encoder(event),
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                    )
-                    yield f"id: {cursor}\nevent: run_event\ndata: {data}\n\n"
-                continue
-            if terminal and cursor >= last_sequence:
-                return
-            yield ": keep-alive\n\n"
-            await event_broker.wait(run_id, timeout=10.0)
+                yield f"event: assistant_draft\ndata: {data}\n\n"
+                delivered_transient = True
+            transient_progress = event_broker.latest_artifact_progress(
+                run_id, after_revision=progress_revision
+            )
+            if transient_progress is not None:
+                progress_revision, progress = transient_progress
+                data = json.dumps(
+                    {"runId": run_id, "progress": progress},
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+                yield f"event: artifact_progress\ndata: {data}\n\n"
+                delivered_transient = True
+            if not delivered_transient:
+                yield ": keep-alive\n\n"
+            wake_revision, timed_out = await event_broker.wait(
+                run_id,
+                timeout=10.0,
+                after_revision=wake_revision,
+            )
+            current_durable_revision = event_broker.revisions(run_id)[1]
+            query_required = timed_out or current_durable_revision > durable_revision
 
     return StreamingResponse(
         events(),

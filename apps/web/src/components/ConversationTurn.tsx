@@ -3,6 +3,7 @@ import {
   ArrowDown,
   ArrowLeft,
   Bot,
+  BookPlus,
   Brain,
   Check,
   CheckCircle2,
@@ -37,12 +38,15 @@ import {
   X,
 } from "lucide-react";
 import { copyText } from "../clipboard";
+import { useSharedNow } from "../shared-clock";
 import { isTerminalRunStatus, runActivityOutcome, shouldCollapseRunWorkDetails, type RunActivityOutcome } from "../run-status";
 import type { Link, Parent, PhrasingContent, Root, Text } from "mdast";
 import {
   Children,
   isValidElement,
+  lazy,
   memo,
+  Suspense,
   useCallback,
   useEffect,
   useId,
@@ -53,6 +57,7 @@ import {
   type FormEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
+  type UIEvent as ReactUIEvent,
 } from "react";
 import ReactMarkdown, {
   defaultUrlTransform,
@@ -62,12 +67,15 @@ import ReactMarkdown, {
 import { createPortal, flushSync } from "react-dom";
 import remarkGfm from "remark-gfm";
 import { visit } from "unist-util-visit";
-import { api, attachmentContentUrl } from "../api";
+import { api, attachmentContentUrl, saveKnowledgeDocumentFromMessage, type UsdKrwExchangeRate } from "../api";
+import { ImageAttachmentViewer } from "./ImageAttachmentViewer";
+import { TextAttachmentViewer } from "./TextAttachmentViewer";
 import type {
   ArtifactSummary,
   AttachmentSummary,
   ChatMessage,
   ClarificationMode,
+  MemoryCitation,
   MessageCitation,
   RunActivity,
   RunCommand,
@@ -86,14 +94,69 @@ import {
   progressStageTimingById,
 } from "../run-activity-duration";
 import { useStreamingText } from "../streaming-ui";
+import { useRunAssistantDraft } from "../run-assistant-draft-store";
+import { useRunArtifactProgress } from "../run-artifact-progress-store";
+import { useStreamingMarkdownParts, type StreamingPendingKind } from "../streaming-markdown";
 import { SyntaxCode, SyntaxCodeContent } from "./SyntaxCode";
 import { BranchFromHereIcon, ShareActionIcon } from "./ActionIcons";
-import {
-  InlineMarkdownImage,
-  InteractiveChart,
-  MermaidDiagram,
-} from "./InteractiveResponse";
 import { UserInputRequestCard } from "./UserInputRequestCard";
+
+const InlineMarkdownImage = lazy(() => import("./InteractiveResponse").then((module) => ({
+  default: module.InlineMarkdownImage,
+})));
+const InteractiveChart = lazy(() => import("./InteractiveResponse").then((module) => ({
+  default: module.InteractiveChart,
+})));
+const MermaidDiagram = lazy(() => import("./InteractiveResponse").then((module) => ({
+  default: module.MermaidDiagram,
+})));
+
+function memoryCategoryLabel(category: string) {
+  const labels: Record<string, string> = {
+    communication_preference: "소통 선호",
+    user_identity: "사용자 정보",
+    user_role: "사용자 역할",
+    recurring_rule: "반복 규칙",
+    project_rule: "프로젝트 규칙",
+  };
+  return labels[category] ?? "메모리";
+}
+
+function MemoryCitations({ citations }: { citations: MemoryCitation[] }) {
+  const [open, setOpen] = useState(false);
+  const panelId = useId();
+  if (citations.length === 0) return null;
+  return (
+    <section className={`memory-citations ${open ? "is-open" : ""}`} aria-label="활용한 메모리">
+      <button
+        className="memory-citations-trigger"
+        type="button"
+        aria-controls={panelId}
+        aria-expanded={open}
+        onClick={(event) => preserveConversationScrollPosition(event.currentTarget, () => setOpen((current) => !current))}
+      >
+        <ChevronDown size={15} aria-hidden="true" />
+        <Brain size={15} aria-hidden="true" />
+        <span>활용한 메모리 {citations.length}개</span>
+      </button>
+      {open && (
+        <div className="memory-citations-list" id={panelId}>
+          {citations.map((citation) => (
+            <div className="memory-citation-row" key={`${citation.scope}:${citation.memoryId}`}>
+              <strong>
+                {citation.scope === "project" ? "프로젝트 메모리" : "개인 메모리"}
+                {" · "}
+                {memoryCategoryLabel(citation.category)}
+                {citation.scope === "project" && citation.revision ? ` · revision ${citation.revision}` : ""}
+              </strong>
+              <span>{citation.displayText}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
 
 function toolCallIcon(toolName: string, size = 15) {
   const normalizedName = toolName.toLowerCase().replace(/[\s-]+/g, "_");
@@ -227,11 +290,14 @@ function estimatedModelCostParts(usage: Record<string, unknown> | undefined) {
 }
 
 export function cumulativeSessionUsageByTurnSet(
+  initialUsage: Record<string, unknown> | undefined,
   turnSets: TurnSet[],
   snapshots: Record<string, RunSnapshot>,
 ) {
   const usageByTurnSetId: Record<string, Record<string, unknown>> = {};
-  let cumulativeUsage: Record<string, unknown> | undefined;
+  let cumulativeUsage = usageHasData(initialUsage)
+    ? normalizedUsage(initialUsage!)
+    : undefined;
   for (const turnSet of turnSets) {
     const finalAssistantMessage = turnSet.messages.filter((message) => message.role === "assistant").at(-1);
     const snapshot = turnSet.runId ? snapshots[turnSet.runId] : undefined;
@@ -242,6 +308,18 @@ export function cumulativeSessionUsageByTurnSet(
   return usageByTurnSetId;
 }
 
+export function sessionUsageRevision(
+  initialUsage: Record<string, unknown> | undefined,
+  turnSets: TurnSet[],
+  snapshots: Record<string, RunSnapshot>,
+) {
+  return `${JSON.stringify(initialUsage ?? null)}|${turnSets.map((turnSet) => {
+    const finalAssistantMessage = turnSet.messages.filter((message) => message.role === "assistant").at(-1);
+    const snapshot = turnSet.runId ? snapshots[turnSet.runId] : undefined;
+    return `${turnSet.id}:${JSON.stringify(finalAssistantMessage?.metadata?.usage ?? snapshot?.usage ?? null)}`;
+  }).join("|")}`;
+}
+
 type UsageRow = {
   cost: string;
   label: string;
@@ -249,9 +327,10 @@ type UsageRow = {
   tone?: string;
 };
 
-function UsageCostPopover({ usage, sessionUsage, model, provider }: {
+function UsageCostPopover({ usage, sessionUsage, showSessionUsage, model, provider }: {
   usage: Record<string, unknown> | undefined;
   sessionUsage: Record<string, unknown> | undefined;
+  showSessionUsage: boolean;
   model?: string;
   provider?: string;
 }) {
@@ -263,18 +342,28 @@ function UsageCostPopover({ usage, sessionUsage, model, provider }: {
     && typeof rawUsage === "object"
     && rawUsage !== null
     && (rawUsage as Record<string, unknown>).billing === "subscription_usage";
-  const [usdKrwRate, setUsdKrwRate] = useState<number | null | undefined>(undefined);
+  const [exchangeRate, setExchangeRate] = useState<UsdKrwExchangeRate | undefined>(undefined);
   useEffect(() => {
     let active = true;
     void api.finance.getUsdKrwExchangeRate()
       .then((result) => {
-        if (active) setUsdKrwRate(result.rate);
+        if (active) setExchangeRate(result);
       })
       .catch(() => {
-        if (active) setUsdKrwRate(null);
+        if (active) {
+          setExchangeRate({
+            base: "USD",
+            quote: "KRW",
+            rate: null,
+            asOf: null,
+            source: null,
+            status: "unavailable",
+          });
+        }
       });
     return () => { active = false; };
   }, []);
+  const usdKrwRate = exchangeRate?.rate;
   const formatCost = (value: number | undefined) => {
     if (value === undefined) return "—";
     if (usdKrwRate === undefined) return "…";
@@ -303,7 +392,7 @@ function UsageCostPopover({ usage, sessionUsage, model, provider }: {
     ];
   };
   const answerRows = usageRows(usage);
-  const cumulativeRows = usageRows(sessionUsage);
+  const cumulativeRows = showSessionUsage ? usageRows(sessionUsage) : [];
   const costHeading = `예상비용(${currencySymbol})`;
   return (
     <span
@@ -317,22 +406,23 @@ function UsageCostPopover({ usage, sessionUsage, model, provider }: {
       }}
     >
       <button className="answer-usage-button" type="button" aria-label={isSubscriptionUsage ? "토큰 및 예상 비용 확인" : "토큰 비용 확인"} aria-describedby={popoverOpen ? popoverId : undefined}><Coins size={16} /></button>
-      <GlobalTooltipLayer anchor={controlRef.current} className="answer-usage-popover" id={popoverId} open={popoverOpen}>
-        <table aria-label="이번 답변과 세션 누적 토큰 및 예상 비용">
+      <GlobalTooltipLayer anchor={controlRef.current} className={`answer-usage-popover ${showSessionUsage ? "" : "is-answer-only"}`} id={popoverId} open={popoverOpen}>
+        <table aria-label={showSessionUsage ? "이번 답변과 세션 누적 토큰 및 예상 비용" : "이번 답변 토큰 및 예상 비용"}>
           <colgroup>
             <col className="answer-usage-label-column" />
-            <col /><col /><col /><col />
+            <col /><col />
+            {showSessionUsage && <><col /><col /></>}
           </colgroup>
           <thead>
-            <tr><th rowSpan={2}>{model || "사용량"}</th><th colSpan={2}>이번 답변</th><th colSpan={2}>세션 누적</th></tr>
-            <tr><th>토큰</th><th>{costHeading}</th><th>토큰</th><th>{costHeading}</th></tr>
+            <tr><th rowSpan={2}>{model || "사용량"}</th><th colSpan={2}>이번 답변</th>{showSessionUsage && <th colSpan={2}>세션 누적</th>}</tr>
+            <tr><th>토큰</th><th>{costHeading}</th>{showSessionUsage && <><th>토큰</th><th>{costHeading}</th></>}</tr>
           </thead>
           <tbody>
             {answerRows.map((row, index) => (
               <tr className={row.label === "Total" ? "is-total" : row.label === "Cached" || row.label === "Uncached" || row.label === "Cache rate" ? "is-child" : ""} key={row.label}>
                 <th scope="row">{row.label}</th>
                 <td className={row.tone}>{row.tokens}</td><td>{row.cost}</td>
-                <td className={cumulativeRows[index]?.tone}>{cumulativeRows[index]?.tokens ?? "0"}</td><td>{cumulativeRows[index]?.cost ?? "—"}</td>
+                {showSessionUsage && <><td className={cumulativeRows[index]?.tone}>{cumulativeRows[index]?.tokens ?? "0"}</td><td>{cumulativeRows[index]?.cost ?? "—"}</td></>}
               </tr>
             ))}
           </tbody>
@@ -496,8 +586,16 @@ function ToolCallRow({
   onCopy: (execution: ToolExecution) => void;
 }) {
   const [overlayStyle, setOverlayStyle] = useState<CSSProperties | null>(null);
+  const [copied, setCopied] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
+  const copyFeedbackTimerRef = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (copyFeedbackTimerRef.current !== null) window.clearTimeout(copyFeedbackTimerRef.current);
+  }, []);
+  useEffect(() => {
+    if (!isOpen) setCopied(false);
+  }, [isOpen]);
   useEffect(() => {
     if (!isOpen) {
       setOverlayStyle(null);
@@ -507,11 +605,13 @@ function ToolCallRow({
       const rect = triggerRef.current?.getBoundingClientRect();
       if (!rect) return;
       const top = rect.bottom + 2;
+      const availableHeight = Math.max(160, window.innerHeight - top - 12);
+      const preferredHeight = Math.max(160, Math.round(window.innerHeight * 0.6));
       setOverlayStyle({
         top,
         left: rect.left,
         width: rect.width,
-        maxHeight: Math.max(160, window.innerHeight - top - 12),
+        maxHeight: Math.min(520, preferredHeight, availableHeight),
       });
     };
     updateOverlayPosition();
@@ -539,13 +639,7 @@ function ToolCallRow({
   const stoppedByRun = executionActive && (runOutcome === "stopped" || runOutcome === "failed");
   const running = executionActive && !stoppedByRun;
   const writeFileActive = execution.toolName === "write_file" && running;
-  const [liveNow, setLiveNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!running || !execution.startedAt) return;
-    setLiveNow(Date.now());
-    const timer = window.setInterval(() => setLiveNow(Date.now()), 100);
-    return () => window.clearInterval(timer);
-  }, [execution.startedAt, running]);
+  const liveNow = useSharedNow(running && Boolean(execution.startedAt), 100);
   const liveDurationMs = execution.durationMs ?? (
     (running || stoppedByRun) && execution.startedAt
       ? Math.max(0, (stoppedByRun ? terminalAtMs : liveNow) - Date.parse(execution.startedAt))
@@ -570,6 +664,15 @@ function ToolCallRow({
       resultText: statusExplanation ? `${rawResultText}\n\n${statusExplanation}` : rawResultText,
     };
   }, [execution.error, execution.input, execution.inputSummary, execution.result, execution.resultSummary, isOpen, running, stoppedByRun]);
+  const handleCopy = () => {
+    onCopy(execution);
+    setCopied(true);
+    if (copyFeedbackTimerRef.current !== null) window.clearTimeout(copyFeedbackTimerRef.current);
+    copyFeedbackTimerRef.current = window.setTimeout(() => {
+      setCopied(false);
+      copyFeedbackTimerRef.current = null;
+    }, 1600);
+  };
   return (
     <div className={`tool-call ${isOpen ? "is-open" : ""}`}>
       <button ref={triggerRef} className={`tool-call-trigger ${summaryText ? "has-summary" : ""}`} type="button" aria-expanded={isOpen} aria-controls={contentId} onClick={onToggle}>
@@ -585,15 +688,15 @@ function ToolCallRow({
             <Circle className="status-icon is-waiting" size={15} aria-hidden="true" />
           )}
         </span>
-        <span className="tool-call-detail" title={headerDetail ?? undefined}>{headerDetail}</span>
+        <span className="tool-call-detail" data-tooltip={headerDetail ?? undefined}>{headerDetail}</span>
         <span className={`tool-call-status status-${running ? "running" : complete ? "complete" : "warning"}`}>{stoppedByRun ? (runOutcome === "failed" ? "실패" : "중지됨") : toolStatusLabel(execution.status)}</span>
-        <span className="tool-call-duration" title={execution.toolName === "write_file" ? "파일 내용 생성 시작부터 디스크 저장 완료까지의 시간" : "도구 실행 시간"}>{formatDuration(liveDurationMs)}</span>
+        <span className="tool-call-duration" data-tooltip={execution.toolName === "write_file" ? "파일 내용 생성 시작부터 디스크 저장 완료까지의 시간" : "도구 실행 시간"}>{formatDuration(liveDurationMs)}</span>
         {isOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
       </button>
       {writeFileActive && execution.progress && (
         <div className={`write-file-stream-progress is-${writeProgress.stage}`} role="status" aria-live="polite" aria-label={`${activeWriteFileName ?? "파일"} 작성 중 ${execution.progress.tokens.toLocaleString()} 토큰 ${execution.progress.lines.toLocaleString()}줄`}>
           <div className="write-file-stream-heading">
-            <strong title={activeWriteFileName ?? undefined}>WRITE FILE · {activeWriteFileName ?? "파일명 확인 중"}</strong>
+            <strong data-tooltip={activeWriteFileName ?? undefined}>WRITE FILE · {activeWriteFileName ?? "파일명 확인 중"}</strong>
             <span>{execution.progress.tokens.toLocaleString()} 토큰 · {execution.progress.lines.toLocaleString()}줄</span>
           </div>
           <div className="write-file-stream-meter" role="progressbar" aria-label="현재 5,000 토큰 구간의 생성량" aria-valuemin={0} aria-valuemax={TOKEN_PROGRESS_BUCKET_SIZE} aria-valuenow={writeProgress.bucketTokens}>
@@ -603,6 +706,11 @@ function ToolCallRow({
       )}
       {isOpen && overlayStyle && toolDetailText && createPortal(
         <div ref={overlayRef} className="tool-message is-global" id={contentId} style={overlayStyle}>
+          <div className="tool-message-actions">
+            <button className={copied ? "is-copied" : undefined} type="button" aria-live="polite" onClick={handleCopy}>
+              {copied ? <Check size={13} /> : <Copy size={13} />} {copied ? "복사됨" : "복사"}
+            </button>
+          </div>
           <section className="tool-message-section">
             <div className="tool-message-heading"><span>도구 요청</span><code>{execution.toolName}</code></div>
             <SyntaxCode value={toolDetailText.requestText} language={execution.input ? "json" : "plaintext"} />
@@ -611,9 +719,6 @@ function ToolCallRow({
             <div className="tool-message-heading"><span>도구 결과</span><span className="tool-message-state">{stoppedByRun ? (runOutcome === "failed" ? "실패" : "중지됨") : toolStatusLabel(execution.status)} · {formatDuration(liveDurationMs)}</span></div>
             <SyntaxCode value={toolDetailText.resultText} language={execution.result ? "json" : "plaintext"} />
           </section>
-          <div className="tool-message-actions">
-            <button type="button" onClick={() => onCopy(execution)}><Copy size={13} /> 복사</button>
-          </div>
         </div>,
         triggerRef.current?.closest(".app-shell") ?? document.body,
       )}
@@ -629,15 +734,17 @@ function modelExchangeText(value: unknown) {
 
 type ModelProcessingState = RunActivityOutcome | "awaiting_input";
 
-function ModelProcessingRow({ durationMs, state, sent, received, model, provider }: {
+function ModelProcessingRow({ durationMs, state, sent, received, model, provider, reasoningTokens }: {
   durationMs: number;
   state: ModelProcessingState;
   sent: ModelExchangeItem[];
   received: ModelExchangeItem[];
   model?: string;
   provider?: string;
+  reasoningTokens?: number;
 }) {
   const [isOpen, setIsOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
   const contentId = useId();
   const running = state === "running";
   const awaitingInput = state === "awaiting_input";
@@ -647,8 +754,19 @@ function ModelProcessingRow({ durationMs, state, sent, received, model, provider
     { title: "Provider에서 받음", items: received, empty: running ? "응답을 수신하고 있습니다." : state === "stopped" ? "모델 응답이 완료되기 전에 작업을 중지했습니다." : "공개 가능한 응답 내용이 없습니다." },
   ];
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) {
+        if (rootRef.current) preserveConversationScrollPosition(rootRef.current, () => setIsOpen(false));
+      }
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    return () => document.removeEventListener("pointerdown", closeOnOutsidePointer);
+  }, [isOpen]);
+
   return (
-    <div className={`tool-call model-processing-call ${isOpen ? "is-open" : ""}`}>
+    <div className={`tool-call model-processing-call ${isOpen ? "is-open" : ""}`} ref={rootRef}>
       <button
         className={`tool-call-trigger model-processing-row ${running ? "" : "without-status-icon"}`}
         type="button"
@@ -664,9 +782,9 @@ function ModelProcessingRow({ durationMs, state, sent, received, model, provider
           {running ? <LoaderCircle className="status-icon is-running" size={15} aria-hidden="true" /> : null}
           {!running && !awaitingInput && state !== "completed" ? <AlertCircle className="status-icon status-warning" size={15} aria-hidden="true" /> : null}
         </span>
-        <span className="tool-call-detail">{awaitingInput ? "확인 질문 · 사용자 답변 대기" : state === "stopped" ? "사용자 요청으로 모델 처리를 중지했습니다." : "모델 판단 · 내부 실행 합계"}</span>
+        <span className="tool-call-detail">{awaitingInput ? "확인 질문 · 사용자 답변 대기" : state === "stopped" ? "사용자 요청으로 모델 처리를 중지했습니다." : `모델 판단 · 내부 실행 합계${reasoningTokens === undefined ? "" : ` · 내부 추론 ${reasoningTokens.toLocaleString()} 토큰`}`}</span>
         <span className={`tool-call-status status-${running ? "running" : state === "completed" ? "complete" : "warning"}`}>{statusLabel}</span>
-        <span className="tool-call-duration" title="여러 모델 호출과 Skill·계획 처리, 재시도 시간을 합산한 값(외부 도구 실행 제외)">{formatDuration(durationMs)}</span>
+        <span className="tool-call-duration" data-tooltip="여러 모델 호출과 Skill·계획 처리, 재시도 시간을 합산한 값(외부 도구 실행 제외)">{formatDuration(durationMs)}</span>
         {isOpen ? <ChevronDown size={15} aria-hidden="true" /> : <ChevronRight size={15} aria-hidden="true" />}
       </button>
       {isOpen && (
@@ -728,6 +846,7 @@ function preserveConversationScrollPosition(target: HTMLElement, update: () => v
 }
 
 const runActivityRevealDelayMs = 85;
+const toolGroupMinimumVisibleMs = 700;
 const toolGroupCompletionSettleMs = 500;
 const toolGroupContentExitMs = 240;
 const toolGroupReflowMs = 350;
@@ -765,6 +884,26 @@ function useStaggeredRunActivities(activities: RunActivity[], enabled: boolean) 
   return activities.slice(0, visibleCount);
 }
 
+function WorkDurationLabel({
+  startedAtMs,
+  finishedAtMs,
+  running,
+  statusSuffix,
+}: {
+  startedAtMs: number;
+  finishedAtMs: number | null;
+  running: boolean;
+  statusSuffix: string;
+}) {
+  const clockNow = useSharedNow(running);
+
+  const effectiveFinishedAtMs = finishedAtMs ?? clockNow;
+  const duration = Number.isFinite(startedAtMs) && Number.isFinite(effectiveFinishedAtMs)
+    ? formatWorkDuration(effectiveFinishedAtMs - startedAtMs)
+    : "0초";
+  return <span>{duration} 동안 작업{statusSuffix}</span>;
+}
+
 function RunActivityTimeline({
   activities,
   timelineStartedAtMs,
@@ -777,10 +916,10 @@ function RunActivityTimeline({
   assistantResponse,
   model,
   provider,
+  reasoningTokens,
   openCalls,
   onToggleCall,
   onCopy,
-  onVisibleGrowth,
   clarificationMode,
   inputBusy,
   onSubmitUserInput,
@@ -788,7 +927,7 @@ function RunActivityTimeline({
 }: {
   activities: RunActivity[];
   timelineStartedAtMs: number;
-  timelineFinishedAtMs: number;
+  timelineFinishedAtMs: number | null;
   timelineRunning: boolean;
   awaitingInput: boolean;
   runOutcome: RunActivityOutcome;
@@ -797,10 +936,10 @@ function RunActivityTimeline({
   assistantResponse: string;
   model?: string;
   provider?: string;
+  reasoningTokens?: number;
   openCalls: Set<string>;
   onToggleCall: (id: string) => void;
   onCopy: (execution: ToolExecution) => void;
-  onVisibleGrowth?: () => void;
   clarificationMode: ClarificationMode;
   inputBusy: boolean;
   onSubmitUserInput: (
@@ -810,18 +949,20 @@ function RunActivityTimeline({
   ) => Promise<boolean>;
   onClarificationModeChange: (mode: ClarificationMode) => Promise<unknown>;
 }) {
+  const timelineClock = useSharedNow(timelineRunning);
   const [openSummaryIds, setOpenSummaryIds] = useState<Set<string>>(new Set());
   const [collapsingSummaryIds, setCollapsingSummaryIds] = useState<Set<string>>(new Set());
   const previousAutoOpenSummaryIds = useRef<Set<string>>(new Set());
   const manuallyOpenSummaryIds = useRef<Set<string>>(new Set());
   const manuallyClosedSummaryIds = useRef<Set<string>>(new Set());
   const summaryGroupElements = useRef<Map<string, HTMLDivElement>>(new Map());
+  const autoOpenedAtMs = useRef<Map<string, number>>(new Map());
   const settleTimers = useRef<Map<string, number>>(new Map());
   const collapseTimers = useRef<Map<string, number>>(new Map());
   const visibleActivities = useStaggeredRunActivities(activities, timelineRunning);
-  const latestVisibleActivityId = visibleActivities.at(-1)?.id ?? "";
+  const effectiveTimelineFinishedAtMs = timelineFinishedAtMs ?? timelineClock;
   const activityGroups = visibleActivities.reduce<RunActivity[][]>((groups, activity) => {
-    if (activity.type === "progress_summary" || activity.type === "skill" || groups.length === 0) groups.push([]);
+    if (activity.type === "progress_summary" || activity.type === "skill" || activity.type === "input_request" || groups.length === 0) groups.push([]);
     groups.at(-1)?.push(activity);
     return groups;
   }, []);
@@ -831,7 +972,7 @@ function RunActivityTimeline({
       return summary ? [{ id: summary.id, createdAt: summary.createdAt }] : [];
     }),
     timelineStartedAtMs,
-    timelineFinishedAtMs,
+    effectiveTimelineFinishedAtMs,
   );
   const activeSummaryIds = new Set(activityGroups.flatMap((group) => {
     const summary = group[0]?.type === "progress_summary" ? group[0] : null;
@@ -890,6 +1031,7 @@ function RunActivityTimeline({
         return next;
       });
     });
+    autoOpenedAtMs.current.delete(id);
     collapseTimers.current.delete(id);
     followingGroups.forEach((element) => {
       const previousTop = previousTops.get(element);
@@ -911,6 +1053,7 @@ function RunActivityTimeline({
     autoOpenSummaryIds.forEach((id) => {
       cancelScheduledCollapse(id);
       if (manuallyClosedSummaryIds.current.has(id)) return;
+      if (!previous.has(id)) autoOpenedAtMs.current.set(id, performance.now());
       setOpenSummaryIds((current) => current.has(id) ? current : new Set(current).add(id));
     });
     previous.forEach((id) => {
@@ -921,13 +1064,15 @@ function RunActivityTimeline({
         finishAutoCollapse(id);
         return;
       }
+      const openedAtMs = autoOpenedAtMs.current.get(id) ?? performance.now();
+      const minimumVisibleRemainingMs = Math.max(0, toolGroupMinimumVisibleMs - (performance.now() - openedAtMs));
       const settleTimer = window.setTimeout(() => {
         settleTimers.current.delete(id);
         if (manuallyOpenSummaryIds.current.has(id)) return;
         setCollapsingSummaryIds((current) => new Set(current).add(id));
         const collapseTimer = window.setTimeout(() => finishAutoCollapse(id), toolGroupContentExitMs);
         collapseTimers.current.set(id, collapseTimer);
-      }, toolGroupCompletionSettleMs);
+      }, Math.max(toolGroupCompletionSettleMs, minimumVisibleRemainingMs));
       settleTimers.current.set(id, settleTimer);
     });
     previousAutoOpenSummaryIds.current = autoOpenSummaryIds;
@@ -937,10 +1082,6 @@ function RunActivityTimeline({
     settleTimers.current.forEach((timer) => window.clearTimeout(timer));
     collapseTimers.current.forEach((timer) => window.clearTimeout(timer));
   }, []);
-
-  useEffect(() => {
-    if (timelineRunning && latestVisibleActivityId) onVisibleGrowth?.();
-  }, [latestVisibleActivityId, onVisibleGrowth, timelineRunning]);
 
   return (
     <section className="run-activity-timeline" aria-label="실행 과정">
@@ -1007,6 +1148,7 @@ function RunActivityTimeline({
               const next = new Set(current);
               if (toolsOpen) {
                 next.delete(summary.id);
+                autoOpenedAtMs.current.delete(summary.id);
                 manuallyOpenSummaryIds.current.delete(summary.id);
                 manuallyClosedSummaryIds.current.add(summary.id);
               } else {
@@ -1048,12 +1190,12 @@ function RunActivityTimeline({
                 <div className="tool-call-group-summary">
                   {toolCallIcon(toolActivities[0].execution.toolName, 14)}
                   <span>{toolCallGroupSummary(toolActivities)}</span>
-                  <span className="tool-call-group-duration" title="도구 실행 시간">{formatDuration(toolGroupDurationMs)}</span>
+                  <span className="tool-call-group-duration" data-tooltip="도구 실행 시간">{formatDuration(toolGroupDurationMs)}</span>
                   {toolsOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
                 </div>
               </button>
             ) : (
-              <div className={`progress-summary phase-${summary.phase}`}><div className="progress-summary-text"><span>{summary.text}</span>{showStageDuration && <span className="progress-summary-duration" title="단계 전체 소요 시간">{formatDuration(stageDurationMs)}</span>}</div></div>
+              <div className={`progress-summary phase-${summary.phase}`}><div className="progress-summary-text"><span>{summary.text}</span>{showStageDuration && <span className="progress-summary-duration" data-tooltip="단계 전체 소요 시간">{formatDuration(stageDurationMs)}</span>}</div></div>
             ))}
             {toolsOpen && summary && (
               <div className={`progress-tools ${summary && collapsingSummaryIds.has(summary.id) ? "is-collapsing" : ""}`} id={toolGroupId}>
@@ -1063,7 +1205,7 @@ function RunActivityTimeline({
                     isOpen={openCalls.has(activity.execution.id)}
                     key={activity.id}
                     runOutcome={runOutcome}
-                    terminalAtMs={timelineFinishedAtMs}
+                    terminalAtMs={effectiveTimelineFinishedAtMs}
                     onCopy={onCopy}
                     onToggle={() => onToggleCall(activity.execution.id)}
                   />
@@ -1076,6 +1218,7 @@ function RunActivityTimeline({
                     received={received}
                     model={model}
                     provider={provider}
+                    reasoningTokens={!timelineRunning && groupIndex === activityGroups.length - 1 ? reasoningTokens : undefined}
                   />
                 )}
               </div>
@@ -1134,20 +1277,46 @@ function citationMarkerLabel(markerNumber: number) {
   return circledCitationMarkers[markerNumber - 1] ?? `[${markerNumber}]`;
 }
 
+function searchPurposeLabel(purpose?: string) {
+  return ({
+    broad_discovery: "폭넓게 탐색",
+    official_facts: "공식 정보 확인",
+    latest_update: "최신 정보 확인",
+    independent_evaluation: "외부 평가 확인",
+    contradiction_check: "상충 근거 확인",
+  } as Record<string, string>)[purpose ?? ""] ?? null;
+}
+
 function citationTargets(text: string, sources: SourceEvidence[], citations: MessageCitation[]) {
-  return sources.map((source, index): CitationTarget => {
-    const citation = citations.find((item) => (item.sourceId ?? item.source_id) === source.sourceId);
+  return sources.map((source, index) => {
+    const citationOrder = citations.findIndex((item) => (item.sourceId ?? item.source_id) === source.sourceId);
+    const citation = citationOrder >= 0 ? citations[citationOrder] : undefined;
     const explicitMarker = citation?.markerNumber ?? citation?.marker_number;
     const markerNumber = explicitMarker && explicitMarker > 0 ? explicitMarker : index + 1;
-    const hasSourceToken = text.includes(`[${source.sourceId}]`) || text.includes(`[[${source.sourceId}]]`);
+    const hasSourceToken = text.includes(`[source:${source.sourceId}]`) || text.includes(`[${source.sourceId}]`) || text.includes(`[[${source.sourceId}]]`);
     const hasMarkerToken = text.includes(citationMarkerLabel(markerNumber)) || text.includes(`[${markerNumber}]`);
     return {
       source,
       markerNumber,
       cited: citation ? citation.status === "cited" || citation.status === "resolved" : hasSourceToken || hasMarkerToken,
-      reviewed: source.evidenceKind === "fetched_content",
+      reviewed: source.evidenceKind === "fetched_content" || source.evidenceKind === "knowledge_document",
+      citationOrder: citationOrder >= 0 ? citationOrder : Number.MAX_SAFE_INTEGER,
+      sourceOrder: index,
     };
-  });
+  }).sort((left, right) => {
+    const leftRank = left.cited ? 0 : left.reviewed ? 1 : 2;
+    const rightRank = right.cited ? 0 : right.reviewed ? 1 : 2;
+    if (leftRank !== rightRank) return leftRank - rightRank;
+    if (left.cited && left.citationOrder !== right.citationOrder) {
+      return left.citationOrder - right.citationOrder;
+    }
+    return left.sourceOrder - right.sourceOrder;
+  }).map((target): CitationTarget => ({
+    source: target.source,
+    markerNumber: target.markerNumber,
+    cited: target.cited,
+    reviewed: target.reviewed,
+  }));
 }
 
 function citationLinkUrl(sourceId: string) {
@@ -1160,6 +1329,7 @@ function splitCitationText(value: string, targets: CitationTarget[]): PhrasingCo
   const byToken = new Map<string, CitationTarget>();
   citedTargets.forEach((target) => {
     byToken.set(target.source.sourceId, target);
+    byToken.set(`source:${target.source.sourceId}`, target);
     byToken.set(String(target.markerNumber), target);
     byToken.set(citationMarkerLabel(target.markerNumber), target);
   });
@@ -1183,54 +1353,6 @@ function splitCitationText(value: string, targets: CitationTarget[]): PhrasingCo
   if (lastIndex === 0) return null;
   if (lastIndex < value.length) parts.push({ type: "text", value: value.slice(lastIndex) } satisfies Text);
   return parts;
-}
-
-function normalizeCitationPositions(text: string, targets: CitationTarget[]) {
-  const byToken = new Map<string, CitationTarget>();
-  targets.filter((target) => target.cited).forEach((target) => {
-    byToken.set(target.source.sourceId, target);
-    byToken.set(String(target.markerNumber), target);
-    byToken.set(citationMarkerLabel(target.markerNumber), target);
-  });
-  if (byToken.size === 0) return text;
-
-  const markerPattern = /\[\[([^\]\n]+)\]\]|\[([^\]\n]+)\]|[①-⑳]/gu;
-  const sentenceEndPattern = /[.!?。！？]+(?=\s|$)/gu;
-  let inFence = false;
-  return text.split(/(\r?\n)/).map((line) => {
-    if (/^\s*(`{3,}|~{3,})/.test(line)) {
-      inFence = !inFence;
-      return line;
-    }
-    if (inFence || /^\r?\n$/.test(line)) return line;
-
-    const boundaries = [...line.matchAll(sentenceEndPattern)].map((match) => (match.index ?? 0) + match[0].length);
-    boundaries.push(line.length);
-    let start = 0;
-    return boundaries.map((boundary) => {
-      if (boundary <= start) return "";
-      const sentence = line.slice(start, boundary);
-      start = boundary;
-      const matches = [...sentence.matchAll(markerPattern)].filter((match) => {
-        const token = match[1] ?? match[2] ?? match[0];
-        return byToken.has(token);
-      });
-      if (matches.length === 0) return sentence;
-      let cleaned = sentence;
-      [...matches].reverse().forEach((match) => {
-        const index = match.index ?? 0;
-        let removalStart = index;
-        let removalEnd = index + match[0].length;
-        const before = cleaned.slice(Math.max(0, removalStart - 2), removalStart);
-        const after = cleaned.slice(removalEnd, removalEnd + 2);
-        if ((before === "**" || before === "__") && /[ \t]/.test(cleaned[removalEnd] ?? "")) removalEnd += 1;
-        if ((after === "**" || after === "__") && /[ \t]/.test(cleaned[removalStart - 1] ?? "")) removalStart -= 1;
-        cleaned = cleaned.slice(0, removalStart) + cleaned.slice(removalEnd);
-      });
-      cleaned = cleaned.replace(/[ \t]{2,}/g, " ").trimEnd();
-      return `${cleaned} ${matches.map((match) => match[0]).join(" ")}`;
-    }).join("");
-  }).join("");
 }
 
 function remarkCitationLinks(options: { targets: CitationTarget[] }) {
@@ -1276,7 +1398,6 @@ function normalizeKoreanMarkdownEmphasis(text: string) {
   return text.replace(/(\*\*[^*\n]+?\*\*)(?=[가-힣])/gu, "$1<!-- -->");
 }
 
-type StreamingPendingKind = "mermaid" | "chart" | "table" | null;
 const streamingLeadingEdgeLength = 24;
 const streamingLeadingEdgeRankSize = 4;
 const streamingLeadingEdgeRanks = 6;
@@ -1347,70 +1468,6 @@ function remarkStreamingLeadingEdge() {
   };
 }
 
-function splitStreamingMarkdown(text: string) {
-  const source = text.replace(/\r\n/g, "\n");
-  let stableBoundary = 0;
-  let position = 0;
-  let inFence = false;
-  let fenceMarker = "";
-  for (const match of source.matchAll(/[^\n]*(?:\n|$)/g)) {
-    const rawLine = match[0];
-    if (!rawLine) break;
-    const lineEnd = position + rawLine.length;
-    const line = rawLine.endsWith("\n") ? rawLine.slice(0, -1) : rawLine;
-    const fence = line.match(/^ {0,3}(`{3,}|~{3,})/);
-    if (fence) {
-      const marker = fence[1];
-      if (!inFence) {
-        inFence = true;
-        fenceMarker = marker;
-      } else if (marker[0] === fenceMarker[0] && marker.length >= fenceMarker.length) {
-        inFence = false;
-        stableBoundary = lineEnd;
-      }
-    } else if (!inFence && line.trim() === "") {
-      stableBoundary = lineEnd;
-    }
-    position = lineEnd;
-  }
-  return { prefix: source.slice(0, stableBoundary).trimEnd(), liveTail: source.slice(stableBoundary) };
-}
-
-function markdownTableCells(line: string) {
-  const trimmed = line.trim();
-  if (!trimmed.includes("|")) return [];
-  return trimmed.replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
-}
-
-function isMarkdownTableRow(line: string) {
-  const cells = markdownTableCells(line);
-  return cells.length >= 2 && cells.some(Boolean);
-}
-
-function isMarkdownTableDivider(line: string) {
-  const cells = markdownTableCells(line);
-  return cells.length >= 2 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
-}
-
-function pendingStreamingKind(liveTail: string): StreamingPendingKind {
-  const lines = liveTail.replace(/\r\n/g, "\n").trimStart().split("\n");
-  const fence = lines[0]?.match(/^(`{3,}|~{3,})\s*([A-Za-z0-9_-]+)?/);
-  if (fence) {
-    const marker = fence[1];
-    const closed = lines.slice(1).some((line) => {
-      const close = line.match(/^ {0,3}(`{3,}|~{3,})\s*$/);
-      return Boolean(close && close[1][0] === marker[0] && close[1].length >= marker.length);
-    });
-    const language = String(fence[2] || "").toLowerCase();
-    if (!closed && (language === "mermaid" || language === "mmd")) return "mermaid";
-    if (!closed && language === "lumina-chart") return "chart";
-  }
-  for (let index = 1; index < lines.length; index += 1) {
-    if (isMarkdownTableRow(lines[index - 1]) && isMarkdownTableDivider(lines[index])) return "table";
-  }
-  return null;
-}
-
 function StreamingBlockPending({ kind }: { kind: Exclude<StreamingPendingKind, null> }) {
   const label = kind === "mermaid" ? "다이어그램 작성 중" : kind === "chart" ? "인터랙티브 차트 작성 중" : "표 작성 중";
   return (
@@ -1427,72 +1484,108 @@ export function pastedTextAttachmentLabel(attachment: AttachmentSummary, index: 
   return `[텍스트 첨부 #${index + 1}${lineCount > 0 ? ` +${lineCount}줄` : ""}]`;
 }
 
-type CodeCopyState = "idle" | "copied" | "failed";
-
-function markdownNodeText(node: ReactNode): string {
-  if (typeof node === "string" || typeof node === "number") return String(node);
-  if (isValidElement<{ children?: ReactNode }>(node)) return markdownNodeText(node.props.children);
-  return Children.toArray(node).map(markdownNodeText).join("");
-}
-
-function MarkdownCodeBlock({ children }: { children?: ReactNode }) {
-  const [copyState, setCopyState] = useState<CodeCopyState>("idle");
-  const resetTimerRef = useRef<number | null>(null);
-  const child = Children.toArray(children)[0];
-  const className = isValidElement<{ className?: string }>(child) ? child.props.className ?? "" : "";
-  const language = /language-([\w-]+)/.exec(className)?.[1]?.toLowerCase();
-  const source = markdownNodeText(children).replace(/\n$/, "");
-
-  useEffect(() => () => {
-    if (resetTimerRef.current !== null) window.clearTimeout(resetTimerRef.current);
-  }, []);
-
-  if (language === "mermaid" || language === "mmd" || language === "lumina-chart") {
-    return <pre>{children}</pre>;
-  }
-
-  const copyCode = async () => {
-    if (!source) return;
-    if (resetTimerRef.current !== null) window.clearTimeout(resetTimerRef.current);
-    try {
-      await copyText(source);
-      setCopyState("copied");
-    } catch {
-      setCopyState("failed");
-    }
-    resetTimerRef.current = window.setTimeout(() => setCopyState("idle"), 1800);
-  };
-  const copyLabel = copyState === "copied" ? "복사됨" : copyState === "failed" ? "복사 실패" : "복사";
-
-  return (
-    <div className="markdown-code-block">
-      <button
-        className={`markdown-code-copy is-${copyState}`}
-        type="button"
-        aria-label={copyState === "copied" ? "코드 복사 완료" : copyState === "failed" ? "코드 복사 실패" : "코드 내용 복사"}
-        data-tooltip={copyLabel}
-        disabled={!source}
-        onClick={() => void copyCode()}
-      >
-        {copyState === "copied" ? <Check size={14} /> : copyState === "failed" ? <AlertCircle size={14} /> : <Copy size={14} />}
-        <span aria-live="polite">{copyLabel}</span>
-      </button>
-      <pre>{children}</pre>
-    </div>
-  );
-}
-
 const markdownCodeComponent: NonNullable<Components["code"]> = ({ className, children }) => {
   const language = /language-([\w-]+)/.exec(className || "")?.[1]?.toLowerCase();
   const source = String(children).replace(/\n$/, "");
   return language === "mermaid" || language === "mmd"
-    ? <MermaidDiagram source={source} />
+    ? <Suspense fallback={<StreamingBlockPending kind="mermaid" />}><MermaidDiagram source={source} /></Suspense>
     : language === "lumina-chart"
-      ? <InteractiveChart source={source} />
+      ? <Suspense fallback={<StreamingBlockPending kind="chart" />}><InteractiveChart source={source} /></Suspense>
       : language
         ? <SyntaxCodeContent value={source} language={language} className={className} />
         : <code className={className}>{children}</code>;
 };
+
+function MarkdownCodeBlock({ children }: { children?: ReactNode }) {
+  const preRef = useRef<HTMLPreElement>(null);
+  const feedbackTimerRef = useRef<number | null>(null);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
+  const child = Children.toArray(children)[0];
+  const childClassName = isValidElement<{ className?: string }>(child)
+    ? String(child.props.className || "")
+    : "";
+  const language = /language-([\w-]+)/.exec(childClassName)?.[1]?.toLowerCase();
+  const interactive = language === "mermaid" || language === "mmd" || language === "lumina-chart";
+
+  useEffect(() => () => {
+    if (feedbackTimerRef.current !== null) window.clearTimeout(feedbackTimerRef.current);
+  }, []);
+
+  if (interactive) return <pre>{children}</pre>;
+
+  const handleCopy = async () => {
+    try {
+      const source = preRef.current?.querySelector("code")?.textContent?.replace(/\n$/, "") ?? "";
+      await copyText(source);
+      setCopyState("copied");
+    } catch {
+      setCopyState("error");
+    }
+    if (feedbackTimerRef.current !== null) window.clearTimeout(feedbackTimerRef.current);
+    feedbackTimerRef.current = window.setTimeout(() => {
+      setCopyState("idle");
+      feedbackTimerRef.current = null;
+    }, 1600);
+  };
+  const feedback = copyState === "copied" ? "코드를 복사했습니다." : copyState === "error" ? "코드를 복사하지 못했습니다." : "";
+
+  return (
+    <div className="markdown-code-block">
+      <pre ref={preRef}>{children}</pre>
+      <button
+        className={`markdown-code-copy${copyState === "copied" ? " is-copied" : copyState === "error" ? " is-error" : ""}`}
+        type="button"
+        aria-label={copyState === "copied" ? "코드 복사됨" : copyState === "error" ? "코드 복사 실패" : "코드 복사"}
+        data-tooltip={copyState === "copied" ? "복사됨" : copyState === "error" ? "복사 실패" : "코드 복사"}
+        onClick={() => void handleCopy()}
+      >
+        {copyState === "copied" ? <Check size={14} aria-hidden="true" /> : copyState === "error" ? <AlertCircle size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
+      </button>
+      <span className="visually-hidden" role="status" aria-live="polite">{feedback}</span>
+    </div>
+  );
+}
+
+function UserMessageCopyButton({ text }: { text: string }) {
+  const feedbackTimerRef = useRef<number | null>(null);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
+
+  useEffect(() => () => {
+    if (feedbackTimerRef.current !== null) window.clearTimeout(feedbackTimerRef.current);
+  }, []);
+
+  const handleCopy = async () => {
+    try {
+      await copyText(text);
+      setCopyState("copied");
+    } catch {
+      setCopyState("error");
+    }
+    if (feedbackTimerRef.current !== null) window.clearTimeout(feedbackTimerRef.current);
+    feedbackTimerRef.current = window.setTimeout(() => {
+      setCopyState("idle");
+      feedbackTimerRef.current = null;
+    }, 1600);
+  };
+  const feedback = copyState === "copied" ? "메시지를 복사했습니다." : copyState === "error" ? "메시지를 복사하지 못했습니다." : "";
+
+  return (
+    <>
+      <button
+        className={`user-message-copy${copyState === "copied" ? " is-copied" : copyState === "error" ? " is-error" : ""}`}
+        type="button"
+        aria-label={copyState === "copied" ? "메시지 복사됨" : copyState === "error" ? "메시지 복사 실패" : "메시지 복사"}
+        data-tooltip={copyState === "copied" ? "복사됨" : copyState === "error" ? "복사 실패" : "메시지 복사"}
+        onClick={() => void handleCopy()}
+      >
+        {copyState === "copied" ? <Check size={14} aria-hidden="true" /> : copyState === "error" ? <AlertCircle size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
+      </button>
+      <span className="visually-hidden" role="status" aria-live="polite">{feedback}</span>
+    </>
+  );
+}
+
+const markdownPreComponent: NonNullable<Components["pre"]> = ({ children }) => <MarkdownCodeBlock>{children}</MarkdownCodeBlock>;
 
 const MemoizedMarkdownChunk = memo(function MarkdownChunk({
   text,
@@ -1532,12 +1625,12 @@ const MemoizedMarkdownChunk = memo(function MarkdownChunk({
     img: ({ src, alt }) => {
       const safeSrc = src ? defaultUrlTransform(src) : "";
       return safeSrc
-        ? <InlineMarkdownImage src={safeSrc} alt={alt || ""} />
+        ? <Suspense fallback={<span>{alt || "이미지 불러오는 중"}</span>}><InlineMarkdownImage src={safeSrc} alt={alt || ""} /></Suspense>
         : <span>{alt || "이미지"}</span>;
     },
     table: ({ children }) => <div className="markdown-table-scroll"><table>{children}</table></div>,
-    pre: MarkdownCodeBlock,
     code: markdownCodeComponent,
+    pre: markdownPreComponent,
   }), [targetById]);
 
   return (
@@ -1562,16 +1655,19 @@ export function MarkdownResponse({
   settling?: boolean;
   artifact?: boolean;
 }) {
-  const targets = useMemo(() => citationTargets(text, sources, citations), [citations, sources, text]);
-  const renderedText = useMemo(() => streaming ? text : normalizeCitationPositions(text, targets), [streaming, targets, text]);
-  const streamingParts = useMemo(() => streaming ? splitStreamingMarkdown(renderedText) : { prefix: renderedText, liveTail: "" }, [renderedText, streaming]);
-  const pendingKind = useMemo(() => streaming ? pendingStreamingKind(streamingParts.liveTail) : null, [streaming, streamingParts.liveTail]);
-  const prefixText = useMemo(() => normalizeKoreanMarkdownEmphasis(streamingParts.prefix), [streamingParts.prefix]);
+  const streamingParts = useStreamingMarkdownParts(text, streaming);
+  const pendingKind = streamingParts.pendingKind;
+  const stableBlocks = useMemo(
+    () => streamingParts.stableBlocks.map(normalizeKoreanMarkdownEmphasis),
+    [streamingParts.stableBlocks],
+  );
   const tailText = useMemo(() => normalizeKoreanMarkdownEmphasis(streamingParts.liveTail), [streamingParts.liveTail]);
 
   return (
     <div className={`markdown-response ${streaming ? "streaming-text" : ""} ${settling ? "streaming-text-settling" : ""} ${artifact ? "artifact-markdown-content" : ""}`}>
-      {prefixText && <MemoizedMarkdownChunk text={prefixText} sources={sources} citations={citations} leadingEdge={false} />}
+      {stableBlocks.map((block, index) => (
+        <MemoizedMarkdownChunk key={index} text={block} sources={sources} citations={citations} leadingEdge={false} />
+      ))}
       {pendingKind
         ? <StreamingBlockPending kind={pendingKind} />
         : tailText && <MemoizedMarkdownChunk text={tailText} sources={sources} citations={citations} leadingEdge />}
@@ -1579,18 +1675,16 @@ export function MarkdownResponse({
   );
 }
 
-export function AssistantTurn({
+export const AssistantTurn = memo(function AssistantTurn({
   turnSet,
   snapshot,
   sessionUsage,
-  openCalls,
-  onToggleCall,
+  showSessionUsage,
   onCopyTool,
   onOpenArtifact,
   onBranch,
   onShare,
   onToast,
-  onVisibleGrowth,
   clarificationMode,
   inputBusy,
   onSubmitUserInput,
@@ -1599,14 +1693,12 @@ export function AssistantTurn({
   turnSet: TurnSet;
   snapshot: RunSnapshot | null;
   sessionUsage: Record<string, unknown> | undefined;
-  openCalls: Set<string>;
-  onToggleCall: (id: string) => void;
+  showSessionUsage: boolean;
   onCopyTool: (execution: ToolExecution) => void;
-  onOpenArtifact: (artifact: ArtifactSummary) => void;
+  onOpenArtifact: (artifact: ArtifactSummary, version?: number) => void;
   onBranch: (anchorMessageId: string) => Promise<void>;
   onShare: (anchorMessageId: string | null) => void;
   onToast: (message: string) => void;
-  onVisibleGrowth: () => void;
   clarificationMode: ClarificationMode;
   inputBusy: boolean;
   onSubmitUserInput: (
@@ -1619,22 +1711,61 @@ export function AssistantTurn({
   const userMessages = turnSet.messages.filter((message) => message.role === "user");
   const assistantMessages = turnSet.messages.filter((message) => message.role === "assistant");
   const finalMessage = assistantMessages.at(-1) ?? null;
+  const liveAssistantDraft = useRunAssistantDraft(turnSet.runId, snapshot?.assistantDraft ?? null);
   const sources = finalMessage?.metadata?.sources ?? emptySources;
   const citations = finalMessage?.metadata?.citations ?? emptyCitations;
+  const memoryCitations = finalMessage?.metadata?.memoryCitations ?? [];
   const searches = finalMessage?.metadata?.searchInvocations ?? [];
+  const researchVerification = finalMessage?.metadata?.researchVerification;
   const artifacts = snapshot?.artifacts ?? turnSet.artifacts;
-  const assistantText = finalMessage?.text || snapshot?.assistantDraft?.text || "";
+  const assistantText = finalMessage?.text || liveAssistantDraft?.text || "";
   const sanitizedAssistantText = sanitizeAssistantResponse(assistantText, artifacts.length > 0);
   const sourceTargets = citationTargets(sanitizedAssistantText, sources, citations);
   const citedSourceCount = sourceTargets.filter((target) => target.cited).length;
-  const reviewedSourceCount = sourceTargets.filter((target) => !target.cited && target.reviewed).length;
-  const referenceSourceCount = sources.length - citedSourceCount - reviewedSourceCount;
+  const reviewedSourceCount = sourceTargets.filter((target) => !target.cited && target.source.evidenceKind === "fetched_content").length;
+  const referenceSourceCount = sourceTargets.filter((target) => !target.cited && target.source.evidenceKind === "search_snippet").length;
+  const knowledgeSourceCount = sources.filter((source) => source.evidenceKind === "knowledge_document").length;
   const sourceCountLabels = [
     citedSourceCount > 0 ? `인용 ${citedSourceCount}` : null,
     reviewedSourceCount > 0 ? `본문 확인 ${reviewedSourceCount}` : null,
     referenceSourceCount > 0 ? `검색 참고 ${referenceSourceCount}` : null,
+    knowledgeSourceCount > 0 ? `지식 문서 ${knowledgeSourceCount}` : null,
   ].filter((label): label is string => label !== null);
   const tools = snapshot?.toolExecutions ?? turnSet.toolExecutions;
+  const artifactVersionRows = artifacts.flatMap((artifact) => {
+    const executionVersions = tools.flatMap((execution) => {
+      const version = execution.result?.version;
+      return execution.artifactId === artifact.id
+        && typeof version === "number"
+        && Number.isInteger(version)
+        && version > 0
+        ? [version]
+        : [];
+    });
+    const versions = [
+      ...new Set([
+        ...(artifact.versions ?? []),
+        ...executionVersions,
+        artifact.currentVersion,
+      ]),
+    ].sort((left, right) => left - right);
+    return versions.map((version) => {
+      const execution = [...tools].reverse().find((candidate) => (
+        candidate.artifactId === artifact.id
+        && candidate.result?.version === version
+      ));
+      const documentTokens = execution?.result?.documentTokens;
+      return {
+        artifact,
+        version,
+        tokens: typeof documentTokens === "number"
+          && Number.isInteger(documentTokens)
+          && documentTokens > 0
+          ? documentTokens
+          : null,
+      };
+    });
+  });
   const activities: RunActivity[] = snapshot?.activities?.length
     ? snapshot.activities
     : tools.map((execution, index) => ({
@@ -1654,11 +1785,23 @@ export function AssistantTurn({
     ? snapshot?.errorMessage?.trim() || (status === "cancelled" ? "요청에 따라 작업을 중지했습니다." : "작업을 완료하지 못했습니다. 다시 실행해 주세요.")
     : "";
   const copyableAnswerText = sanitizedAssistantText || terminalReason;
-  const streaming = !finalMessage && Boolean(snapshot?.assistantDraft);
+  const streaming = !finalMessage && Boolean(liveAssistantDraft);
   const { visibleText: displayedText, revealing, settling } = useStreamingText(sanitizedAssistantText, streaming);
+  const terminalPresentationReady = terminal && displayedText === sanitizedAssistantText;
   const [reportOpen, setReportOpen] = useState(false);
   const [markdownSaving, setMarkdownSaving] = useState(false);
+  const [knowledgeSaving, setKnowledgeSaving] = useState(false);
+  const [knowledgeSaved, setKnowledgeSaved] = useState(false);
   const [branching, setBranching] = useState(false);
+  const [openCalls, setOpenCalls] = useState<Set<string>>(new Set());
+  const toggleOpenCall = useCallback((id: string) => {
+    setOpenCalls((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
   const [reportText, setReportText] = useState("");
   const [reportSubmitting, setReportSubmitting] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
@@ -1666,12 +1809,21 @@ export function AssistantTurn({
   const [ratingSubmitting, setRatingSubmitting] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [expandedSourceId, setExpandedSourceId] = useState<string | null>(null);
+  const [sourceContent, setSourceContent] = useState<{
+    sourceId: string;
+    content: string;
+    nextOffset: number;
+    totalChars: number;
+    llmTextChars: number;
+    llmTextCharsEstimated: boolean;
+    hasMore: boolean;
+    loading: boolean;
+    error: string | null;
+  } | null>(null);
+  const sourceContentLoadingRef = useRef(false);
   const [previewAttachment, setPreviewAttachment] = useState<AttachmentSummary | null>(null);
   const [textPreviewAttachment, setTextPreviewAttachment] = useState<AttachmentSummary | null>(null);
-  const [textPreviewContent, setTextPreviewContent] = useState("");
-  const [textPreviewError, setTextPreviewError] = useState<string | null>(null);
   const [workDetailsOpen, setWorkDetailsOpen] = useState(!collapseWorkDetails);
-  const [workClock, setWorkClock] = useState(() => Date.now());
   const expandedSourceTarget = sourceTargets.find(({ source }) => source.sourceId === expandedSourceId) ?? null;
   const workStartedAt = snapshot?.startedAt ?? turnSet.createdAt;
   const workFinishedAt = snapshot?.finishedAt ?? turnSet.completedAt;
@@ -1681,10 +1833,7 @@ export function AssistantTurn({
     ? new Date(workFinishedAt).getTime()
     : awaitingInput && Number.isFinite(inputWaitStartedAtMs)
       ? inputWaitStartedAtMs
-      : workClock;
-  const workDuration = Number.isFinite(workStartedAtMs) && Number.isFinite(workFinishedAtMs)
-    ? formatWorkDuration(workFinishedAtMs - workStartedAtMs)
-    : "0초";
+      : null;
   const hasWorkDetails = activities.length > 0;
 
   useEffect(() => {
@@ -1693,14 +1842,8 @@ export function AssistantTurn({
 
   useEffect(() => {
     setAnswerRating(null);
+    setKnowledgeSaved(false);
   }, [finalMessage?.id]);
-
-  useEffect(() => {
-    if (terminal || awaitingInput || !hasWorkDetails) return;
-    setWorkClock(Date.now());
-    const timer = window.setInterval(() => setWorkClock(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [awaitingInput, hasWorkDetails, terminal]);
 
   const openSourceDetail = useCallback((sourceId: string) => {
     const currentDetail = window.history.state?.luminaSourceDetail;
@@ -1709,6 +1852,74 @@ export function AssistantTurn({
     else window.history.pushState(nextState, "");
     setExpandedSourceId(sourceId);
   }, [turnSet.id]);
+
+  useEffect(() => {
+    const source = sources.find((item) => item.sourceId === expandedSourceId);
+    const conversationId = finalMessage?.conversationId;
+    const runId = finalMessage?.runId ?? turnSet.runId;
+    if (!source || source.evidenceKind !== "fetched_content" || !conversationId || !runId) {
+      setSourceContent(null);
+      return;
+    }
+    const controller = new AbortController();
+    sourceContentLoadingRef.current = true;
+    setSourceContent({
+      sourceId: source.sourceId,
+      content: "",
+      nextOffset: 0,
+      totalChars: source.textChars ?? 0,
+      llmTextChars: source.llmTextChars ?? 0,
+      llmTextCharsEstimated: false,
+      hasMore: true,
+      loading: true,
+      error: null,
+    });
+    void api.conversations.getSourceContent(conversationId, runId, source.sourceId, 0, 4_000, controller.signal)
+      .then((page) => {
+        setSourceContent({ ...page, sourceId: source.sourceId, loading: false, error: null });
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setSourceContent((current) => current?.sourceId === source.sourceId
+          ? { ...current, loading: false, error: "본문을 불러오지 못했습니다." }
+          : current);
+      })
+      .finally(() => { sourceContentLoadingRef.current = false; });
+    return () => controller.abort();
+  }, [expandedSourceId, finalMessage?.conversationId, finalMessage?.runId, sources, turnSet.runId]);
+
+  const loadMoreSourceContent = useCallback(() => {
+    const conversationId = finalMessage?.conversationId;
+    const runId = finalMessage?.runId ?? turnSet.runId;
+    if (!sourceContent || !conversationId || !runId || !sourceContent.hasMore || sourceContentLoadingRef.current) return;
+    sourceContentLoadingRef.current = true;
+    setSourceContent((current) => current ? { ...current, loading: true, error: null } : current);
+    void api.conversations.getSourceContent(conversationId, runId, sourceContent.sourceId, sourceContent.nextOffset)
+      .then((page) => {
+        setSourceContent((current) => current?.sourceId === page.sourceId
+          ? {
+              ...current,
+              content: current.content + page.content,
+              nextOffset: page.nextOffset,
+              totalChars: page.totalChars,
+              llmTextChars: page.llmTextChars,
+              llmTextCharsEstimated: page.llmTextCharsEstimated,
+              hasMore: page.hasMore,
+              loading: false,
+              error: null,
+            }
+          : current);
+      })
+      .catch(() => {
+        setSourceContent((current) => current ? { ...current, loading: false, error: "다음 본문을 불러오지 못했습니다." } : current);
+      })
+      .finally(() => { sourceContentLoadingRef.current = false; });
+  }, [finalMessage?.conversationId, finalMessage?.runId, sourceContent, turnSet.runId]);
+
+  const handleSourcesScroll = useCallback((event: ReactUIEvent<HTMLDivElement>) => {
+    const element = event.currentTarget;
+    if (element.scrollHeight - element.scrollTop - element.clientHeight < 240) loadMoreSourceContent();
+  }, [loadMoreSourceContent]);
 
   const returnToSourceList = useCallback(() => {
     if (window.history.state?.luminaSourceDetail?.turnSetId === turnSet.id) window.history.back();
@@ -1735,28 +1946,6 @@ export function AssistantTurn({
     return () => window.removeEventListener("popstate", handlePopState);
   }, [turnSet.id]);
 
-  useEffect(() => {
-    if (!textPreviewAttachment) return;
-    const controller = new AbortController();
-    setTextPreviewContent("");
-    setTextPreviewError(null);
-    void fetch(attachmentContentUrl(textPreviewAttachment.id), { signal: controller.signal })
-      .then((response) => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return response.text();
-      })
-      .then(setTextPreviewContent)
-      .catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === "AbortError") return;
-        setTextPreviewError("텍스트 첨부 내용을 불러오지 못했습니다.");
-      });
-    return () => controller.abort();
-  }, [textPreviewAttachment]);
-
-  useEffect(() => {
-    if (revealing && displayedText) onVisibleGrowth();
-  }, [displayedText, onVisibleGrowth, revealing]);
-
   const copyAnswer = async () => {
     if (!copyableAnswerText) {
       onToast("복사할 내용이 없습니다.");
@@ -1782,6 +1971,18 @@ export function AssistantTurn({
       onToast("답변을 Markdown Artifact로 저장하지 못했습니다.");
     } finally {
       setMarkdownSaving(false);
+    }
+  };
+  const saveAnswerToKnowledge = async () => {
+    if (!finalMessage || knowledgeSaving || knowledgeSaved) return;
+    setKnowledgeSaving(true);
+    try {
+      await saveKnowledgeDocumentFromMessage(finalMessage.id);
+      setKnowledgeSaved(true);
+    } catch {
+      onToast("지식 그래프에 답변을 저장하지 못했습니다.");
+    } finally {
+      setKnowledgeSaving(false);
     }
   };
   const branchAnswer = async () => {
@@ -1827,21 +2028,45 @@ export function AssistantTurn({
       setReportSubmitting(false);
     }
   };
-  const artifactUsage = snapshot?.artifactProgress
+  const liveArtifactProgress = useRunArtifactProgress(
+    turnSet.runId,
+    snapshot?.artifactProgress ?? null,
+  );
+  const artifactUsage = liveArtifactProgress
     ?? snapshot?.artifactUsage
     ?? finalMessage?.metadata?.artifactUsage
     ?? null;
   const artifactProgress = artifactUsage
     ? tokenBucketProgress(artifactUsage.tokens, artifactUsage.targetTokens)
     : null;
+  const artifactUsageExecution = [...tools].reverse().find((execution) => (
+    execution.artifactId
+    && typeof execution.result?.version === "number"
+    && Number.isInteger(execution.result.version)
+    && execution.result.version > 0
+  ));
+  const artifactUsageTargetKey = artifactUsageExecution?.artifactId
+    ? `${artifactUsageExecution.artifactId}:${artifactUsageExecution.result?.version}`
+    : artifacts.length === 1
+      ? `${artifacts[0].id}:${artifacts[0].currentVersion}`
+      : null;
+  const artifactVersionRowsWithUsage = artifactVersionRows.map((row) => ({
+    ...row,
+    tokens: row.tokens ?? (
+      artifactUsage && artifactUsageTargetKey === `${row.artifact.id}:${row.version}`
+        ? artifactUsage.tokens
+        : null
+    ),
+  }));
   const runUsage = finalMessage?.metadata?.usage ?? snapshot?.usage;
+  const reasoningTokens = optionalUsageNumber(runUsage, "reasoning_tokens");
   const modelOutputTokens = usageNumber(runUsage, "output_tokens");
   const liveModelOutputTokens = Math.max(
     modelOutputTokens,
     artifactUsage?.modelOutputTokens ?? 0,
   );
   return (
-    <div className="turn-set" data-run-id={turnSet.runId ?? undefined}>
+    <div className={`turn-set ${terminalPresentationReady ? "is-terminal" : "is-active"}`} data-run-id={turnSet.runId ?? undefined}>
       {userMessages.map((message) => (
         <div className="user-message-group" data-question-anchor={message.id} key={message.id}>
           {message.attachments?.length > 0 && (
@@ -1854,7 +2079,7 @@ export function AssistantTurn({
                   onClick={() => setPreviewAttachment(attachment)}
                   key={attachment.id}
                 >
-                  <img src={attachmentContentUrl(attachment.id)} alt={attachment.fileName} />
+                  <img src={attachmentContentUrl(attachment.id)} alt={attachment.fileName} loading="lazy" decoding="async" />
                 </button>
               ) : attachment.kind === "pasted_text" ? (
                 <div className="user-pasted-attachment-wrap" key={attachment.id}>
@@ -1868,17 +2093,7 @@ export function AssistantTurn({
                     <span>{pastedTextAttachmentLabel(attachment, message.attachments.slice(0, attachmentIndex).filter((item) => item.kind === "pasted_text").length)}</span>
                   </button>
                   {textPreviewAttachment?.id === attachment.id && (
-                    <>
-                      <button className="text-attachment-backdrop" type="button" aria-label="텍스트 첨부 닫기" onClick={() => setTextPreviewAttachment(null)} />
-                      <div className="text-attachment-popover" role="dialog" aria-label={`${attachment.fileName} 내용`}>
-                        <button className="text-attachment-close" type="button" aria-label="텍스트 첨부 닫기" onClick={() => setTextPreviewAttachment(null)}><X size={18} /></button>
-                        {textPreviewError
-                          ? <p role="alert">{textPreviewError}</p>
-                          : textPreviewContent
-                            ? <SyntaxCode value={textPreviewContent} fileName={attachment.fileName} mimeType={attachment.mimeType} />
-                            : <p>내용을 불러오는 중...</p>}
-                      </div>
-                    </>
+                    <TextAttachmentViewer attachment={attachment} onClose={() => setTextPreviewAttachment(null)} />
                   )}
                 </div>
               ) : (
@@ -1888,8 +2103,11 @@ export function AssistantTurn({
               ))}
             </div>
           )}
-          <div className="user-message">
-            {message.text && <div className="user-message-text">{message.text}</div>}
+          <div className="user-message-row">
+            {message.text && <UserMessageCopyButton text={message.text} />}
+            <div className="user-message">
+              {message.text && <div className="user-message-text">{message.text}</div>}
+            </div>
           </div>
           {messageDeliveryLabel(message, pendingCommands) && <small className="message-state">{messageDeliveryLabel(message, pendingCommands)}</small>}
         </div>
@@ -1903,7 +2121,12 @@ export function AssistantTurn({
             aria-expanded={workDetailsOpen}
             onClick={(event) => preserveConversationScrollPosition(event.currentTarget, () => setWorkDetailsOpen((open) => !open))}
           >
-            <span>{workDuration} 동안 작업{awaitingInput ? " · 답변 대기" : terminal && status !== "completed" ? ` · ${runStatusLabel(status)}` : ""}</span>
+            <WorkDurationLabel
+              startedAtMs={workStartedAtMs}
+              finishedAtMs={workFinishedAtMs}
+              running={!terminal && !awaitingInput}
+              statusSuffix={awaitingInput ? " · 답변 대기" : terminal && status !== "completed" ? ` · ${runStatusLabel(status)}` : ""}
+            />
             <ChevronRight size={15} aria-hidden="true" />
           </button>
           {workDetailsOpen && (
@@ -1920,10 +2143,10 @@ export function AssistantTurn({
                 assistantResponse={sanitizedAssistantText}
                 model={snapshot?.execution.runtimeModelId}
                 provider={snapshot?.execution.providerId}
+                reasoningTokens={reasoningTokens}
                 openCalls={openCalls}
                 onCopy={onCopyTool}
-                onToggleCall={onToggleCall}
-                onVisibleGrowth={onVisibleGrowth}
+                onToggleCall={toggleOpenCall}
                 clarificationMode={clarificationMode}
                 inputBusy={inputBusy}
                 onSubmitUserInput={onSubmitUserInput}
@@ -1933,17 +2156,17 @@ export function AssistantTurn({
           )}
         </section>
       )}
-      {previewAttachment && (
-        <div className="image-attachment-viewer" role="dialog" aria-modal="true" aria-label={`${previewAttachment.fileName} 이미지 보기`} onClick={(event) => { if (event.target === event.currentTarget) setPreviewAttachment(null); }}>
-          <button type="button" aria-label="이미지 닫기" onClick={() => setPreviewAttachment(null)}><X size={18} /></button>
-          <img src={attachmentContentUrl(previewAttachment.id)} alt={previewAttachment.fileName} />
-        </div>
-      )}
+      {previewAttachment && <ImageAttachmentViewer attachment={previewAttachment} onClose={() => setPreviewAttachment(null)} />}
       {(assistantText || tools.length > 0 || artifacts.length > 0 || snapshot) && (
         <section className="assistant-turn">
-          <div className="assistant-content">
+          <div className="assistant-content conversation-response-typography">
             {assistantText && <MarkdownResponse text={displayedText} sources={sources} citations={citations} streaming={revealing} settling={settling} />}
-            {artifactUsage && artifactProgress && (
+            {terminalPresentationReady && researchVerification === "unverified" && (
+              <div className="research-verification-warning" role="status">
+                최신성 또는 중요도가 높은 정보에 필요한 웹 본문을 확인하지 못했습니다. 답변의 관련 내용을 미검증 정보로 봐 주세요.
+              </div>
+            )}
+            {!terminal && artifactUsage && artifactUsage.tokens > 0 && artifactProgress && (
               <div className={`artifact-progress-count is-${artifactProgress.stage}`} role="status" aria-live={terminal ? undefined : "polite"} aria-label={`문서 ${artifactUsage.estimated === false ? "완성 분량" : "작성 중 추정 분량"} ${artifactUsage.tokens.toLocaleString()} 토큰 ${artifactUsage.lines.toLocaleString()}줄${liveModelOutputTokens > 0 ? `, 모델 출력 누계 ${liveModelOutputTokens.toLocaleString()} 토큰` : ""}`}>
                 <div className="artifact-progress-heading">
                   <span>{artifactUsage.estimated === false ? "문서 약" : "작성 중 약"} {artifactUsage.tokens.toLocaleString()}토큰 · {artifactUsage.lines.toLocaleString()}줄{artifactUsage.targetTokens ? <span className="artifact-progress-target"> · 목표 {artifactUsage.targetTokens.toLocaleString()}토큰</span> : null}</span>
@@ -1966,14 +2189,22 @@ export function AssistantTurn({
                 </div>
               </div>
             )}
-            {artifacts.map((artifact) => (
-              <button className="artifact-result" type="button" key={artifact.id} onClick={() => onOpenArtifact(artifact)}>
-                <FileCode2 size={18} />
-                <span className="artifact-result-title">{artifact.currentVersion > 1 && <small>(v{artifact.currentVersion})</small>}<strong>{artifact.displayName}</strong></span>
-                <span className="artifact-result-action">문서 열기 <ChevronRight size={14} /></span>
-              </button>
-            ))}
-            {terminal && (
+            {artifactVersionRowsWithUsage.length > 0 && (
+              <div className="artifact-results">
+                {artifactVersionRowsWithUsage.map(({ artifact, version, tokens }) => (
+                  <button className="artifact-result" type="button" key={`${artifact.id}:${version}`} onClick={() => onOpenArtifact(artifact, version)}>
+                    <FileCode2 size={18} />
+                    <span className="artifact-result-title"><small>{version === 1 ? "(원본)" : `(v${version})`}</small><strong>{artifact.displayName}</strong></span>
+                    <span className="artifact-result-usage">
+                      {tokens ? `${tokens.toLocaleString()} 토큰` : null}
+                    </span>
+                    <span className="artifact-result-action">문서 열기 <ChevronRight size={14} /></span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {terminalPresentationReady && <MemoryCitations citations={memoryCitations} />}
+            {terminalPresentationReady && (
               <div className="final-answer">
                 <div className="final-answer-meta">
                   <div className={`final-answer-status ${status !== "completed" ? "is-error" : ""}`}>
@@ -1984,13 +2215,15 @@ export function AssistantTurn({
                     <UsageCostPopover
                       usage={runUsage}
                       sessionUsage={sessionUsage}
+                      showSessionUsage={showSessionUsage}
                       model={snapshot?.execution.runtimeModelId}
                       provider={snapshot?.execution.providerId}
                     />
-                    <button className="tooltip-control" type="button" aria-label="답변 복사" data-tooltip="복사" disabled={!copyableAnswerText} onClick={() => void copyAnswer()}><Copy size={16} /></button>
-                    <button className="tooltip-control" type="button" aria-label="답변 저장" data-tooltip="저장" disabled={!finalMessage || !sanitizedAssistantText || markdownSaving} onClick={() => void saveAnswerAsMarkdown()}>{markdownSaving ? <LoaderCircle className="is-running" size={16} /> : <Download size={16} />}</button>
+                    <button className="tooltip-control" type="button" aria-label="원문 복사" data-tooltip="원문 복사" disabled={!copyableAnswerText} onClick={() => void copyAnswer()}><Copy size={16} /></button>
+                    <button className="tooltip-control" type="button" aria-label="라이브러리 저장" data-tooltip="라이브러리 저장" disabled={!finalMessage || !sanitizedAssistantText || markdownSaving} onClick={() => void saveAnswerAsMarkdown()}>{markdownSaving ? <LoaderCircle className="is-running" size={16} /> : <Download size={16} />}</button>
+                    <button className={`tooltip-control knowledge-save-control ${knowledgeSaving ? "is-saving" : knowledgeSaved ? "is-saved" : ""}`} type="button" aria-label="지식 그래프 등록" data-tooltip="지식 그래프 등록" aria-pressed={knowledgeSaved} disabled={!finalMessage || !sanitizedAssistantText || knowledgeSaving || knowledgeSaved} onClick={() => void saveAnswerToKnowledge()}>{knowledgeSaving ? <LoaderCircle className="is-running" size={16} /> : <BookPlus size={16} />}</button>
                     <button className="tooltip-control" type="button" aria-label="이 답변까지 새 채팅으로 분기" data-tooltip="여기서 분기" disabled={!finalMessage || branching} onClick={() => void branchAnswer()}>{branching ? <LoaderCircle className="is-running" size={16} /> : <BranchFromHereIcon size={16} />}</button>
-                    <button className="tooltip-control" type="button" aria-label="답변 공유" data-tooltip="공유" disabled={!assistantText} onClick={() => onShare(finalMessage?.id ?? null)}><ShareActionIcon size={16} /></button>
+                    <button className="tooltip-control" type="button" aria-label="링크 공유" data-tooltip="링크 공유" disabled={!assistantText} onClick={() => onShare(finalMessage?.id ?? null)}><ShareActionIcon size={16} /></button>
                     <button className={`tooltip-control answer-rating-control ${answerRating === "like" ? "is-like" : ""}`} type="button" aria-label="좋아요" aria-pressed={answerRating === "like"} data-tooltip="좋아요" disabled={!finalMessage || ratingSubmitting} onClick={() => void rateAnswer("like")}><ThumbsUp size={16} /></button>
                     <button className={`tooltip-control answer-rating-control ${answerRating === "dislike" ? "is-dislike" : ""}`} type="button" aria-label="싫어요" aria-pressed={answerRating === "dislike"} data-tooltip="싫어요" disabled={!finalMessage || ratingSubmitting} onClick={() => void rateAnswer("dislike")}><ThumbsDown size={16} /></button>
                     <button className={`tooltip-control ${reportOpen ? "is-active" : ""}`} type="button" aria-label="의견 게시" aria-expanded={reportOpen} data-tooltip="의견 게시" disabled={!finalMessage} onClick={() => { setReportOpen((open) => !open); setReportError(null); }}><MessageSquarePlus size={16} /></button>
@@ -2007,13 +2240,14 @@ export function AssistantTurn({
                       >
                         <span>검색 및 참고 출처</span>
                         {citedSourceCount > 0 && <span className="answer-source-count is-cited"> · 인용 {citedSourceCount}</span>}
+                        {knowledgeSourceCount > 0 && <span className="answer-source-count is-knowledge"> · 지식 문서 {knowledgeSourceCount}</span>}
                         {reviewedSourceCount > 0 && <span className="answer-source-count is-reviewed"> · 본문 확인 {reviewedSourceCount}</span>}
                         {referenceSourceCount > 0 && <span className="answer-source-count is-reference-only"> · 검색 참고 {referenceSourceCount}</span>}
                       </button>
-                      {sourcesOpen && (
-                        <>
+                      {sourcesOpen && createPortal((
+                        <div className="answer-sources answer-sources-layer">
                           <button className="answer-sources-backdrop" type="button" aria-label="검색 및 참고 출처 닫기" onClick={closeSources} />
-                          <div className="answer-sources-popover">
+                          <div className="answer-sources-popover" onScroll={handleSourcesScroll}>
                             {expandedSourceTarget ? (
                               <div className="source-detail">
                                 <div className="source-detail-navigation">
@@ -2021,28 +2255,45 @@ export function AssistantTurn({
                                   <button className="source-detail-back is-icon" type="button" aria-label="출처 목록으로 돌아가기" onClick={returnToSourceList}><ArrowLeft size={15} /></button>
                                 </div>
                                 <div className="source-header">
-                                  <span className={`source-kind${expandedSourceTarget.cited ? "" : expandedSourceTarget.reviewed ? " is-reviewed" : " is-reference-only"}`}>{expandedSourceTarget.cited ? `${citationMarkerLabel(expandedSourceTarget.markerNumber)} 본문 인용` : expandedSourceTarget.reviewed ? "본문 확인" : "검색 참고"}</span>
+                                  <span className={`source-kind${expandedSourceTarget.cited ? "" : expandedSourceTarget.reviewed ? " is-reviewed" : " is-reference-only"}`}>{expandedSourceTarget.source.evidenceKind === "knowledge_document" ? `${expandedSourceTarget.cited ? `${citationMarkerLabel(expandedSourceTarget.markerNumber)} ` : ""}지식 문서` : expandedSourceTarget.cited ? `${citationMarkerLabel(expandedSourceTarget.markerNumber)} 본문 인용` : expandedSourceTarget.reviewed ? "본문 확인" : "검색 참고"}</span>
                                   {defaultUrlTransform(expandedSourceTarget.source.normalizedUrl || expandedSourceTarget.source.originalUrl)
                                     ? <a href={defaultUrlTransform(expandedSourceTarget.source.normalizedUrl || expandedSourceTarget.source.originalUrl)} target="_blank" rel="noreferrer noopener">{expandedSourceTarget.source.title || expandedSourceTarget.source.domain}</a>
                                     : <strong>{expandedSourceTarget.source.title || expandedSourceTarget.source.domain}</strong>}
-                                  <small>{expandedSourceTarget.source.domain}</small>
+                                  <small>{expandedSourceTarget.source.domain}{expandedSourceTarget.source.selectionScore !== undefined ? ` · 선택 점수 ${expandedSourceTarget.source.selectionScore.toFixed(2)}` : ""}</small>
                                 </div>
-                                <p className="source-detail-excerpt">{expandedSourceTarget.source.verbatimExcerpt}</p>
+                                {sourceContent?.sourceId === expandedSourceTarget.source.sourceId ? (
+                                  <>
+                                    <div className="source-detail-stats" aria-label="출처 본문 글자 수">
+                                      <span>LLM 전달 {sourceContent.llmTextChars.toLocaleString()}자{sourceContent.llmTextCharsEstimated ? " (기존 기록 기준 추정)" : ""}</span>
+                                      <span>추출 본문 {sourceContent.totalChars.toLocaleString()}자</span>
+                                      <span>현재 표시 {sourceContent.content.length.toLocaleString()}자</span>
+                                    </div>
+                                    <p className="source-detail-excerpt">{sourceContent.content || expandedSourceTarget.source.verbatimExcerpt}</p>
+                                    {sourceContent.loading && <p className="source-detail-loading" role="status">본문을 이어서 불러오는 중…</p>}
+                                    {sourceContent.error && <p className="source-detail-error" role="alert">{sourceContent.error}</p>}
+                                    {!sourceContent.hasMore && sourceContent.content && <p className="source-detail-end">본문 끝 · {sourceContent.totalChars.toLocaleString()}자</p>}
+                                  </>
+                                ) : (
+                                  <p className="source-detail-excerpt">{expandedSourceTarget.source.verbatimExcerpt}</p>
+                                )}
                               </div>
                             ) : (
                               <>
                                 {searches.length > 0 && (
-                                  <div className="source-queries">{searches.map((search) => <span key={search.invocationId}>{search.query}</span>)}</div>
+                                  <div className="source-queries">{searches.map((search) => {
+                                    const purposeLabel = searchPurposeLabel(search.purpose);
+                                    return <span key={search.invocationId}>{purposeLabel && <small>{purposeLabel}</small>}{search.query}</span>;
+                                  })}</div>
                                 )}
                                 <ol>
                                   {sourceTargets.map(({ source, markerNumber, cited, reviewed }) => (
                                     <li className={cited ? "is-cited" : reviewed ? "is-reviewed" : "is-reference-only"} key={source.sourceId}>
                                       <div className="source-header">
-                                        <span className="source-kind">{cited ? `${citationMarkerLabel(markerNumber)} 본문 인용` : reviewed ? "본문 확인" : "검색 참고"}</span>
+                                        <span className="source-kind">{source.evidenceKind === "knowledge_document" ? `${cited ? `${citationMarkerLabel(markerNumber)} ` : ""}지식 문서` : cited ? `${citationMarkerLabel(markerNumber)} 본문 인용` : reviewed ? "본문 확인" : "검색 참고"}</span>
                                         {defaultUrlTransform(source.normalizedUrl || source.originalUrl)
                                           ? <a href={defaultUrlTransform(source.normalizedUrl || source.originalUrl)} target="_blank" rel="noreferrer noopener">{source.title || source.domain}</a>
                                           : <strong>{source.title || source.domain}</strong>}
-                                        <small>{source.domain}</small>
+                                        <small>{source.domain}{source.selectionScore !== undefined ? ` · 선택 점수 ${source.selectionScore.toFixed(2)}` : ""}</small>
                                         </div>
                                       {source.verbatimExcerpt && (
                                         <div className="source-excerpt-row">
@@ -2059,8 +2310,8 @@ export function AssistantTurn({
                               </>
                             )}
                           </div>
-                        </>
-                      )}
+                        </div>
+                      ), document.querySelector(".app-shell") ?? document.body)}
                     </div>
                   )}
                 </div>
@@ -2080,4 +2331,4 @@ export function AssistantTurn({
       )}
     </div>
   );
-}
+});

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import importlib.util
 import json
 import re
 import shutil
@@ -25,11 +26,15 @@ DEFAULT_EXTS = ("json3", "vtt", "srv3", "srv2", "srv1")
 
 
 def run_ytdlp(url: str, timeout: int) -> dict[str, Any]:
-    if not shutil.which("yt-dlp"):
+    if importlib.util.find_spec("yt_dlp") is not None:
+        command = [sys.executable, "-m", "yt_dlp"]
+    elif executable := shutil.which("yt-dlp"):
+        command = [executable]
+    else:
         raise RuntimeError("yt-dlp is not installed or not on PATH")
 
     proc = subprocess.run(
-        ["yt-dlp", "--dump-json", "--skip-download", url],
+        [*command, "--dump-json", "--skip-download", url],
         capture_output=True,
         text=True,
         encoding="utf-8",

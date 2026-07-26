@@ -7,6 +7,7 @@ import inspect
 import json
 import os
 import re
+import shutil
 import socket
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -28,6 +29,7 @@ from ..models import (
     McpInstallation,
     McpSecretBinding,
     Run,
+    User,
 )
 from .service import ALLOWED_SECRET_HEADER_NAMES, ALLOWED_STDIO_EXECUTABLES
 from .policy import APPROVABLE_PRIVATE_NETWORKS, SECRET_NAME_PATTERN
@@ -192,6 +194,51 @@ def load_pinned_server_configs(db: Session, run: Run) -> tuple[McpServerConfig, 
     return tuple(configs)
 
 
+def load_installation_server_config(
+    db: Session, installation: McpInstallation, *, user: User
+) -> McpServerConfig:
+    revision = db.get(
+        McpConfigurationRevision, installation.configuration_revision_id
+    )
+    definition = db.get(McpDefinition, installation.definition_id)
+    if (
+        revision is None
+        or definition is None
+        or revision.definition_id != definition.id
+    ):
+        raise _runtime_error("mcp_snapshot_invalid", "snapshot")
+    bindings = {
+        binding.secret_name: binding.secret_ref
+        for binding in db.scalars(
+            select(McpSecretBinding).where(
+                McpSecretBinding.installation_id == installation.id,
+                McpSecretBinding.user_id == user.id,
+            )
+        )
+    }
+    required = tuple(revision.required_secret_names_json)
+    if set(required) != set(bindings):
+        raise _runtime_error("mcp_secret_binding_missing", "credential")
+    return McpServerConfig(
+        definition_id=definition.id,
+        installation_id=installation.id,
+        configuration_revision_id=revision.id,
+        digest=revision.config_digest,
+        slug=definition.slug,
+        transport=revision.transport,
+        command=tuple(revision.command_json),
+        url=revision.url_template,
+        allowed_hosts=tuple(revision.allowed_hosts_json),
+        allowed_ip_ranges=tuple(revision.allowed_ip_ranges_json),
+        header_templates=dict(revision.header_templates_json),
+        declared_tools=tuple(revision.tool_schemas_json),
+        tool_allowlist=tuple(installation.tool_allowlist_json),
+        required_secret_names=required,
+        secret_refs=bindings,
+        timeout_seconds=float(revision.timeout_seconds),
+    )
+
+
 class McpRuntime:
     def __init__(
         self,
@@ -274,7 +321,11 @@ class McpRuntime:
         if not isinstance(safe_result, dict):
             raise _runtime_error("mcp_response_invalid", "result")
         if safe_result.get("isError") is True:
-            raise _runtime_error("mcp_tool_error", "tool")
+            raise _runtime_error(
+                "mcp_tool_error",
+                "tool",
+                detail=_mcp_error_detail(safe_result),
+            )
         return {
             "server": tool.server_slug,
             "tool": tool.original_name,
@@ -350,7 +401,7 @@ class McpRuntime:
             match = _ENV_SECRET_REF_RE.fullmatch(secret_ref)
             if match is None:
                 raise _runtime_error("mcp_secret_resolver_unavailable", "credential")
-            value = self._environment.get(match.group(1), "")
+            value = _environment_value(self._environment, match.group(1))
             if not value:
                 raise _runtime_error("mcp_secret_unavailable", "credential")
             resolved[secret_name] = value
@@ -372,7 +423,7 @@ class McpRuntime:
                 config,
                 secrets,
                 profile,
-                runtime_dir=self.settings.data_dir / "mcp-runtime",
+                working_dir=Path(__file__).resolve().parents[5],
                 base_environment=self._environment,
             )
         elif config.transport == "streamable_http":
@@ -385,7 +436,11 @@ class McpRuntime:
             )
         else:
             raise _runtime_error("mcp_transport_invalid", "transport")
-        return _McpConnection(transport, timeout_seconds=config.timeout_seconds)
+        return _McpConnection(
+            transport,
+            timeout_seconds=config.timeout_seconds,
+            sensitive_values=tuple(secrets.values()),
+        )
 
 
 def _string_tuple(value: Any) -> tuple[str, ...]:
@@ -410,7 +465,11 @@ def _connection_cache_key(config: McpServerConfig, secrets: Mapping[str, str]) -
 
 
 def _runtime_error(
-    code: str, stage: str, *, retryable: bool = False
+    code: str,
+    stage: str,
+    *,
+    retryable: bool = False,
+    detail: str | None = None,
 ) -> McpRuntimeError:
     messages = {
         "credential": "MCP credential을 안전하게 준비할 수 없습니다.",
@@ -420,9 +479,12 @@ def _runtime_error(
         "network": "MCP 서버에 안전하게 연결할 수 없습니다.",
         "tool": "MCP 도구가 요청을 완료하지 못했습니다.",
     }
+    message = messages.get(stage, "MCP 요청을 안전하게 처리할 수 없습니다.")
+    if detail:
+        message = f"{message} 서버 응답: {detail[:1500]}"
     return McpRuntimeError(
         code,
-        messages.get(stage, "MCP 요청을 안전하게 처리할 수 없습니다."),
+        message,
         stage=stage,
         retryable=retryable,
     )
@@ -439,9 +501,16 @@ class _JsonRpcTransport(Protocol):
 
 
 class _McpConnection:
-    def __init__(self, transport: _JsonRpcTransport, *, timeout_seconds: float) -> None:
+    def __init__(
+        self,
+        transport: _JsonRpcTransport,
+        *,
+        timeout_seconds: float,
+        sensitive_values: tuple[str, ...] = (),
+    ) -> None:
         self._transport = transport
         self._timeout_seconds = timeout_seconds
+        self._sensitive_values = sensitive_values
         self._next_id = 1
         self._initialized = False
 
@@ -537,7 +606,13 @@ class _McpConnection:
         if response.get("jsonrpc") != "2.0" or response.get("id") != request_id:
             raise _runtime_error("mcp_response_invalid", "transport")
         if "error" in response:
-            raise _runtime_error("mcp_jsonrpc_error", "tool")
+            raise _runtime_error(
+                "mcp_jsonrpc_error",
+                "tool",
+                detail=_mcp_error_detail(
+                    response["error"], secrets=self._sensitive_values
+                ),
+            )
         result = response.get("result")
         if not isinstance(result, dict):
             raise _runtime_error("mcp_response_invalid", "transport")
@@ -568,36 +643,36 @@ class _StdioTransport:
         secrets: Mapping[str, str],
         trust_profile: TrustProfile,
         *,
-        runtime_dir: Path,
+        working_dir: Path,
         base_environment: Mapping[str, str],
     ) -> None:
         self._config = config
         self._secrets = dict(secrets)
         self._trust_profile = trust_profile
-        self._runtime_dir = runtime_dir
+        self._working_dir = working_dir
         self._base_environment = base_environment
         self._process: asyncio.subprocess.Process | None = None
         self._stderr_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
         _validate_runtime_command(self._config.command)
-        self._runtime_dir.mkdir(parents=True, exist_ok=True)
         environment = {
-            name: self._base_environment[name]
+            name: value
             for name in _SAFE_ENV_NAMES
-            if self._base_environment.get(name)
+            if (value := _environment_value(self._base_environment, name))
         }
         environment.update(self._secrets)
         environment.setdefault("PYTHONUTF8", "1")
         environment.setdefault("PYTHONIOENCODING", "utf-8")
         environment = self._trust_profile.subprocess_environment(environment)
         try:
+            command = _resolve_stdio_command(self._config.command)
             self._process = await asyncio.create_subprocess_exec(
-                *self._config.command,
+                *command,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                cwd=self._runtime_dir,
+                cwd=self._working_dir,
                 env=environment,
                 limit=_MAX_MESSAGE_BYTES + 1,
             )
@@ -1151,6 +1226,33 @@ def _validate_runtime_command(command: Sequence[str]) -> None:
             raise _runtime_error("mcp_command_invalid", "transport")
 
 
+def _environment_value(environment: Mapping[str, str], name: str) -> str:
+    value = environment.get(name, "")
+    if value or os.name != "nt":
+        return value
+    folded_name = name.casefold()
+    return next(
+        (
+            value
+            for key, value in environment.items()
+            if key.casefold() == folded_name
+        ),
+        "",
+    )
+
+
+def _resolve_stdio_command(command: Sequence[str]) -> tuple[str, ...]:
+    if os.name != "nt" or command[0].casefold().removesuffix(".exe") != "npx":
+        return tuple(command)
+    executable = shutil.which(command[0])
+    if executable is None or Path(executable).suffix.casefold() not in {".cmd", ".bat"}:
+        return tuple(command)
+    npx_cli = Path(executable).parent / "node_modules" / "npm" / "bin" / "npx-cli.js"
+    if not npx_cli.is_file():
+        raise _runtime_error("mcp_process_start_failed", "network")
+    return ("node", str(npx_cli), *command[1:])
+
+
 def _render_header_templates(
     config: McpServerConfig, secrets: Mapping[str, str]
 ) -> dict[str, str]:
@@ -1265,6 +1367,20 @@ def _redact_value(value: Any, secrets: tuple[str, ...]) -> Any:
     if value is None or isinstance(value, (bool, int, float)):
         return value
     return redact_sensitive_text(str(value), secrets=secrets)
+
+
+def _mcp_error_detail(value: Any, *, secrets: tuple[str, ...] = ()) -> str:
+    redacted = _redact_value(value, secrets)
+    if isinstance(redacted, (dict, list)):
+        rendered = json.dumps(
+            redacted,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    else:
+        rendered = str(redacted)
+    return redact_sensitive_text(rendered, secrets=secrets)[:1500]
 
 
 __all__ = [

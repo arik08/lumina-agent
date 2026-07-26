@@ -28,12 +28,14 @@ from ...extensions.schemas import (
     PublishVersion,
     SkillFolderMove,
     SkillOwnershipCreate,
+    SkillVersionRollback,
 )
 from ...extensions.service import (
     activate_draft,
     add_skill_ownership,
     can_view_skill_package,
     can_manage_skill,
+    compare_skill_versions,
     create_folder,
     create_skill,
     checkout_draft,
@@ -42,6 +44,7 @@ from ...extensions.service import (
     draft_etag,
     draft_payload,
     extension_payload,
+    extension_payloads,
     folder_payload,
     install_version,
     installation_payload,
@@ -56,8 +59,9 @@ from ...extensions.service import (
     require_extension,
     remove_skill_ownership,
     restore_skill,
+    rollback_skill_version,
     save_draft_version,
-    set_installation_enabled,
+    update_installation,
     uninstall,
     update_draft,
     update_extension_metadata,
@@ -84,14 +88,32 @@ def get_extensions(
 ) -> list[dict[str, Any]]:
     if purge_expired_trashed_skills(db):
         db.commit()
-    return [
-        extension_payload(
-            db,
-            extension,
-            user=user,
+    return extension_payloads(
+        db,
+        list_extensions(db, user=user, query=query),
+        user=user,
+        include_draft_package=False,
+    )
+
+
+@router.get("/extensions/{extension_id}/draft")
+def get_extension_draft(
+    extension_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    extension = require_extension(db, user, extension_id)
+    draft = db.scalar(
+        select(ExtensionDraft).where(
+            ExtensionDraft.extension_id == extension.id,
+            ExtensionDraft.owner_user_id == user.id,
+            ExtensionDraft.status == "active",
         )
-        for extension in list_extensions(db, user=user, query=query)
-    ]
+    )
+    if draft is None:
+        raise ApiProblem(404, "draft_not_found", "Skill Draft를 찾을 수 없습니다.")
+    base = db.get(ExtensionVersion, draft.base_version_id) if draft.base_version_id else None
+    return draft_payload(draft, base_version=base, include_package=True)
 
 
 @router.get("/extensions/catalog")
@@ -249,6 +271,7 @@ def patch_extension(
         extension_id=extension_id,
         name=payload.name,
         description=payload.description,
+        tags=payload.tags,
     )
     record_audit(
         db,
@@ -525,7 +548,69 @@ def get_extension_version(
             "version_not_found",
             "설치된 Skill version만 열 수 있습니다.",
         )
-    return version_payload(version, include_package=True)
+    creator = db.get(User, version.created_by_user_id)
+    return version_payload(
+        version,
+        include_package=True,
+        created_by_display_name=(
+            creator.display_name or creator.login_id if creator else None
+        ),
+    )
+
+
+@router.get("/skills/{skill_id}/compare")
+def get_skill_version_comparison(
+    skill_id: str,
+    from_version_id: str,
+    to_version_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    return compare_skill_versions(
+        db,
+        user=user,
+        extension_id=skill_id,
+        from_version_id=from_version_id,
+        to_version_id=to_version_id,
+    )
+
+
+@router.post("/skills/{skill_id}/rollbacks", status_code=201)
+def post_skill_version_rollback(
+    skill_id: str,
+    payload: SkillVersionRollback,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    extension, version = rollback_skill_version(
+        db,
+        user=context.user,
+        extension_id=skill_id,
+        target_version_id=payload.target_version_id,
+        expected_current_version_id=payload.expected_current_version_id,
+        change_summary=payload.change_summary,
+    )
+    record_audit(
+        db,
+        action="skill_version_rolled_back",
+        target_type="extension_version",
+        target_id=version.id,
+        result="success",
+        actor=context.user,
+        request_id=_request_id(request),
+        metadata={
+            "extension_id": extension.id,
+            "version": version.version_number,
+            "restored_from_version_id": version.restored_from_version_id,
+        },
+    )
+    db.commit()
+    return version_payload(
+        version,
+        include_package=False,
+        created_by_display_name=context.user.display_name or context.user.login_id,
+    )
 
 
 @router.post("/extension-versions/{version_id}/publish")
@@ -606,11 +691,13 @@ def patch_extension_installation(
     context: AuthContext = Depends(require_csrf),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    installation = set_installation_enabled(
+    installation = update_installation(
         db,
         user=context.user,
         installation_id=installation_id,
         enabled=payload.enabled,
+        project_ids=payload.project_ids,
+        update_project_ids="project_ids" in payload.model_fields_set,
     )
     record_audit(
         db,
@@ -620,7 +707,10 @@ def patch_extension_installation(
         result="success",
         actor=context.user,
         request_id=_request_id(request),
-        metadata={"enabled": installation.enabled},
+        metadata={
+            "enabled": installation.enabled,
+            "project_ids": installation.project_ids_json,
+        },
     )
     db.commit()
     return installation_payload(installation)

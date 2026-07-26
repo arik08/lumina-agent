@@ -31,9 +31,15 @@ test("simple selections use the shared rounded menu instead of native selects", 
   assert.match(component, /event\.key === "Enter" \|\| event\.key === " "/);
   assert.match(component, /"ArrowDown", "ArrowUp", "Home", "End"/);
   assert.match(component, /createPortal\([\s\S]*document\.body/);
+  assert.match(component, /\.style\.getPropertyValue\("--conversation-font-size"\)/);
+  assert.match(component, /conversationFontSize \? \{ "--conversation-font-size": conversationFontSize \} : \{\}/);
   assert.match(component, /!menuRef\.current\?\.contains\(event\.target\)/);
   assert.match(component, /window\.addEventListener\("scroll", reposition, true\)/);
   assert.match(styles, /\.lumina-select-menu\s*\{[\s\S]*?border-radius: var\(--radius-menu\);/);
   assert.match(styles, /\.lumina-select-menu-global\s*\{[^}]*position: fixed;/);
-  assert.match(styles, /\.lumina-select-menu > button\s*\{[\s\S]*?border-radius: var\(--radius-option\);/);
+  assert.match(styles, /\.lumina-select-menu \.lumina-select-option\s*\{[\s\S]*?border-radius: var\(--radius-option\);/);
+  assert.match(styles, /\.lumina-select-trigger\s*\{[\s\S]*?font-size: 14px;/);
+  assert.match(styles, /\.lumina-select-menu \.lumina-select-option\s*\{[\s\S]*?height: 32px;[\s\S]*?font-size: 14px;/);
+  assert.match(styles, /\.lumina-select\.size-small \.lumina-select-trigger \{[^}]*font-size: 14px;/);
+  assert.match(styles, /\.lumina-select-menu-global\.size-small \.lumina-select-option \{[^}]*font-size: 14px;/);
 });

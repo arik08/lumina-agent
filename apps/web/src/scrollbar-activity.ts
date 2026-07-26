@@ -14,6 +14,9 @@ export function installScrollbarActivity() {
     if (!element) {
       return;
     }
+    if (element.dataset.programmaticScroll === "true") {
+      return;
+    }
 
     element.classList.add("has-scrollbar-fade", "is-scrolling");
     const previousTimer = idleTimers.get(element);

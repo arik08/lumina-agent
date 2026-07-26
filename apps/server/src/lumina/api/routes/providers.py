@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any
+from typing import Any, NoReturn
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from ...authorization import require_project
@@ -22,6 +22,18 @@ from ..schemas import SettingsPatch
 
 
 router = APIRouter(tags=["providers", "settings"])
+
+_USER_SETTINGS_FIELDS = {
+    "theme",
+    "conversation_width",
+    "conversation_font_size",
+    "analysis_depth",
+    "answer_length",
+    "prompt_enhancement_instruction",
+    "model_candidates",
+    "clarification_mode",
+}
+_PROJECT_SETTINGS_FIELDS = {"output_mode", "execution"}
 
 PROVIDER_NAMES = {
     "mock": "Lumina Mock",
@@ -191,6 +203,76 @@ def get_provider_models(
     ]
 
 
+@router.get("/provider-catalog")
+def get_provider_catalog(
+    project_id: str | None = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    if project_id:
+        require_project(db, user, project_id)
+    enabled_models = list(
+        db.scalars(
+            select(ProviderModel)
+            .where(ProviderModel.enabled.is_(True))
+            .order_by(
+                ProviderModel.provider_id,
+                ProviderModel.sort_order,
+                ProviderModel.model_key,
+            )
+        )
+    )
+    models_by_provider: dict[str, list[dict[str, object]]] = {}
+    for model in enabled_models:
+        models_by_provider.setdefault(model.provider_id, []).append(
+            {
+                "modelKey": model.model_key,
+                "displayName": model.display_name,
+                "enabled": model.enabled,
+                "isDefault": model.is_default,
+                "catalogRevision": model.catalog_revision,
+                "capabilities": _capabilities(model.capabilities_json),
+            }
+        )
+    if settings.environment != "production":
+        models_by_provider = {
+            "mock": [
+                {
+                    "modelKey": "mock-agent",
+                    "displayName": "Lumina Mock Agent",
+                    "enabled": True,
+                    "isDefault": True,
+                    "catalogRevision": "development",
+                    "capabilities": _capabilities(
+                        {"tools": True, "structured_output": True}
+                    ),
+                }
+            ],
+            **models_by_provider,
+        }
+    providers = []
+    for provider_id, models in models_by_provider.items():
+        status = _provider_status(provider_id, settings)
+        providers.append(
+            {
+                "id": provider_id,
+                "displayName": PROVIDER_NAMES.get(provider_id, provider_id),
+                "enabled": status == "ready",
+                "connectionStatus": status,
+                "defaultModelKey": next(
+                    (
+                        str(model["modelKey"])
+                        for model in models
+                        if model["isDefault"]
+                    ),
+                    None,
+                ),
+            }
+        )
+    return {"providers": providers, "modelsByProvider": models_by_provider}
+
+
 def _capabilities(raw: dict[str, Any]) -> dict[str, object]:
     provider_efforts = raw.get("effort_options") or ("low", "medium", "high")
     efforts = ("auto", *(value for value in provider_efforts if value != "auto"))
@@ -200,6 +282,7 @@ def _capabilities(raw: dict[str, Any]) -> dict[str, object]:
         "imageInput": bool(raw.get("image_input", False)),
         "imageGeneration": bool(raw.get("image_generation", False)),
         "contextWindow": raw.get("context_window"),
+        "maxInputTokens": raw.get("max_input_tokens"),
         "effortOptions": [
             {
                 "id": value,
@@ -239,9 +322,18 @@ def _resolved_settings(
     UserSetting | ProjectSetting | None,
     UserSetting | None,
     UserSetting | None,
+    UserSetting | None,
 ]:
     theme_setting = _setting(db, user.id, "ui.theme")
     theme = theme_setting.value_json if theme_setting else "light"
+    conversation_width_setting = _setting(db, user.id, "ui.conversation_width")
+    conversation_font_size_setting = _setting(db, user.id, "ui.conversation_font_size")
+    conversation_width = (
+        conversation_width_setting.value_json if conversation_width_setting else 900
+    )
+    conversation_font_size = (
+        conversation_font_size_setting.value_json if conversation_font_size_setting else 14
+    )
     output_mode_key = "composer.output_mode"
     output_mode_setting = (
         _project_setting(db, project.id, output_mode_key)
@@ -249,6 +341,22 @@ def _resolved_settings(
         else _setting(db, user.id, output_mode_key)
     )
     output_mode = output_mode_setting.value_json if output_mode_setting else "auto"
+    analysis_depth_setting = _setting(db, user.id, "composer.analysis_depth")
+    answer_length_setting = _setting(db, user.id, "composer.answer_length")
+    analysis_depth = (
+        analysis_depth_setting.value_json if analysis_depth_setting else "auto"
+    )
+    answer_length = (
+        answer_length_setting.value_json if answer_length_setting else "auto"
+    )
+    prompt_enhancement_instruction_setting = _setting(
+        db, user.id, "composer.prompt_enhancement_instruction"
+    )
+    prompt_enhancement_instruction = (
+        prompt_enhancement_instruction_setting.value_json
+        if prompt_enhancement_instruction_setting
+        else ""
+    )
     execution_setting: UserSetting | ProjectSetting | None
     execution_source: str
     if project.project_type == "shared":
@@ -278,9 +386,31 @@ def _resolved_settings(
     )
     result: dict[str, Any] = {
         "theme": theme if theme in {"light", "dark"} else "light",
+        "conversationWidth": (
+            conversation_width
+            if isinstance(conversation_width, int) and 600 <= conversation_width <= 1400
+            else 900
+        ),
+        "conversationFontSize": (
+            conversation_font_size
+            if isinstance(conversation_font_size, int) and 14 <= conversation_font_size <= 24
+            else 14
+        ),
         "outputMode": output_mode
         if output_mode in {"auto", "chat", "file"}
         else "auto",
+        "analysisDepth": analysis_depth
+        if analysis_depth in {"auto", "brief", "standard", "deep"}
+        else "auto",
+        "answerLength": answer_length
+        if answer_length in {"auto", "brief", "standard", "detailed"}
+        else "auto",
+        "promptEnhancementInstruction": (
+            prompt_enhancement_instruction
+            if isinstance(prompt_enhancement_instruction, str)
+            and len(prompt_enhancement_instruction) <= 1_000
+            else ""
+        ),
         "execution": execution,
         "modelCandidates": model_candidates,
         "clarificationMode": clarification_mode
@@ -291,10 +421,13 @@ def _resolved_settings(
     }
     result["revision"] = _settings_revision(
         result,
+        user,
+        project,
         theme_setting,
         execution_setting,
         model_candidates_setting,
         clarification_setting,
+        prompt_enhancement_instruction_setting,
     )
     return (
         result,
@@ -302,6 +435,7 @@ def _resolved_settings(
         execution_setting,
         model_candidates_setting,
         clarification_setting,
+        prompt_enhancement_instruction_setting,
     )
 
 
@@ -326,13 +460,20 @@ def _default_model_candidates(db: Session) -> dict[str, list[str]]:
 
 def _settings_revision(
     value: dict[str, Any],
+    user: User,
+    project: Project,
     theme: UserSetting | None,
     execution: UserSetting | ProjectSetting | None,
     model_candidates: UserSetting | None,
     clarification: UserSetting | None,
+    prompt_enhancement_instruction: UserSetting | None,
 ) -> str:
     payload = {
         "value": value,
+        "user_settings_revision": user.settings_revision,
+        "project_settings_revision": (
+            project.settings_revision if project.project_type == "shared" else None
+        ),
         "theme_updated": theme.updated_at.isoformat() if theme else None,
         "execution_updated": execution.updated_at.isoformat() if execution else None,
         "model_candidates_updated": (
@@ -341,12 +482,70 @@ def _settings_revision(
         "clarification_updated": clarification.updated_at.isoformat()
         if clarification
         else None,
+        "prompt_enhancement_instruction_updated": (
+            prompt_enhancement_instruction.updated_at.isoformat()
+            if prompt_enhancement_instruction
+            else None
+        ),
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str).encode(
             "utf-8"
         )
     ).hexdigest()[:24]
+
+
+def _raise_settings_revision_conflict(db: Session) -> NoReturn:
+    db.rollback()
+    raise ApiProblem(
+        409, "settings_revision_conflict", "설정이 다른 곳에서 변경되었습니다."
+    )
+
+
+def _claim_settings_revision(
+    db: Session,
+    *,
+    user: User,
+    project: Project,
+    payload: SettingsPatch,
+) -> None:
+    changed_fields = payload.model_fields_set - {"expected_revision"}
+    user_fields = set(_USER_SETTINGS_FIELDS)
+    if project.project_type != "shared":
+        user_fields.update(_PROJECT_SETTINGS_FIELDS)
+
+    if changed_fields & user_fields:
+        expected_user_revision = user.settings_revision
+        result = db.execute(
+            update(User)
+            .where(
+                User.id == user.id,
+                User.settings_revision == expected_user_revision,
+            )
+            .values(settings_revision=expected_user_revision + 1)
+            .execution_options(synchronize_session=False)
+        )
+        if getattr(result, "rowcount", 0) != 1:
+            _raise_settings_revision_conflict(db)
+        db.expire(user, ["settings_revision"])
+
+    if (
+        project.project_type == "shared"
+        and changed_fields & _PROJECT_SETTINGS_FIELDS
+    ):
+        expected_project_revision = project.settings_revision
+        result = db.execute(
+            update(Project)
+            .where(
+                Project.id == project.id,
+                Project.settings_revision == expected_project_revision,
+            )
+            .values(settings_revision=expected_project_revision + 1)
+            .execution_options(synchronize_session=False)
+        )
+        if getattr(result, "rowcount", 0) != 1:
+            _raise_settings_revision_conflict(db)
+        db.expire(project, ["settings_revision"])
 
 
 @router.get("/settings/current")
@@ -361,9 +560,14 @@ def get_current_settings(
         if project_id
         else default_project(db, user)
     )
-    result, _theme, _execution, _model_candidates, _clarification = _resolved_settings(
-        db, user, project, settings
-    )
+    (
+        result,
+        _theme,
+        _execution,
+        _model_candidates,
+        _clarification,
+        _prompt_enhancement_instruction,
+    ) = _resolved_settings(db, user, project, settings)
     return result
 
 
@@ -386,13 +590,18 @@ def patch_current_settings(
         execution_setting,
         model_candidates_setting,
         clarification_setting,
+        prompt_enhancement_instruction_setting,
     ) = (
         _resolved_settings(db, context.user, project, settings)
     )
     if current["revision"] != payload.expected_revision:
-        raise ApiProblem(
-            409, "settings_revision_conflict", "설정이 다른 곳에서 변경되었습니다."
-        )
+        _raise_settings_revision_conflict(db)
+    _claim_settings_revision(
+        db,
+        user=context.user,
+        project=project,
+        payload=payload,
+    )
     if payload.theme is not None:
         if theme_setting is None:
             theme_setting = UserSetting(
@@ -401,8 +610,27 @@ def patch_current_settings(
             db.add(theme_setting)
         else:
             theme_setting.value_json = payload.theme
+    for field_name, key in (
+        ("conversation_width", "ui.conversation_width"),
+        ("conversation_font_size", "ui.conversation_font_size"),
+        ("analysis_depth", "composer.analysis_depth"),
+        ("answer_length", "composer.answer_length"),
+        (
+            "prompt_enhancement_instruction",
+            "composer.prompt_enhancement_instruction",
+        ),
+    ):
+        value = getattr(payload, field_name)
+        if value is None:
+            continue
+        target = _setting(db, context.user.id, key)
+        if target is None:
+            db.add(UserSetting(user_id=context.user.id, key=key, value_json=value))
+        else:
+            target.value_json = value
     if payload.output_mode is not None:
         key = "composer.output_mode"
+        output_target: UserSetting | ProjectSetting | None
         if project.project_type == "shared":
             output_target = _project_setting(db, project.id, key)
             if output_target is None:
@@ -473,9 +701,14 @@ def patch_current_settings(
         else:
             clarification_setting.value_json = payload.clarification_mode
     db.commit()
-    result, _theme, _execution, _model_candidates, _clarification = _resolved_settings(
-        db, context.user, project, settings
-    )
+    (
+        result,
+        _theme,
+        _execution,
+        _model_candidates,
+        _clarification,
+        _prompt_enhancement_instruction,
+    ) = _resolved_settings(db, context.user, project, settings)
     return result
 
 

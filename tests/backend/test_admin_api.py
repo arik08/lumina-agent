@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 from datetime import timedelta
+from io import BytesIO
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from openpyxl import load_workbook
 from sqlalchemy import select
 
 from lumina.api.routes import admin
@@ -20,6 +22,7 @@ from lumina.models import (
     Project,
     QueuedMessage,
     Run,
+    RunEvent,
     User,
     utc_now,
 )
@@ -99,6 +102,7 @@ def test_admin_run_safety_settings_and_emergency_stop(tmp_path: Path) -> None:
             "maxTotalTokens": 4_000_000,
             "maxElapsedMinutes": 10_080,
             "maxCostUsd": 100.0,
+            "yoloMode": True,
         }
         assert (
             admin_client.patch(
@@ -108,6 +112,7 @@ def test_admin_run_safety_settings_and_emergency_stop(tmp_path: Path) -> None:
                     "maxTotalTokens": 3_000_000,
                     "maxElapsedMinutes": 480,
                     "maxCostUsd": 75,
+                    "yoloMode": False,
                 },
             ).status_code
             == 403
@@ -121,10 +126,12 @@ def test_admin_run_safety_settings_and_emergency_stop(tmp_path: Path) -> None:
                 "maxTotalTokens": 3_000_000,
                 "maxElapsedMinutes": 480,
                 "maxCostUsd": 75,
+                "yoloMode": False,
             },
         )
         assert updated.status_code == 200, updated.text
         assert updated.json()["maxTotalTokens"] == 3_000_000
+        assert updated.json()["yoloMode"] is False
 
         with SessionLocal() as db:
             admin_user = db.scalar(
@@ -145,6 +152,7 @@ def test_admin_run_safety_settings_and_emergency_stop(tmp_path: Path) -> None:
             db.add(conversation)
             db.flush()
             assert organization.run_safety_settings_json["max_model_turns"] == 300
+            assert organization.run_safety_settings_json["yolo_mode"] is False
             active_run = Run(
                 organization_id=organization.id,
                 project_id=conversation.project_id,
@@ -327,6 +335,77 @@ def test_admin_usage_statistics_are_organization_scoped_and_admin_only(
         finally:
             user_client.close()
 
+        with SessionLocal() as db:
+            analyst_user = db.scalar(
+                select(User).where(User.login_id == "analyst@posco.com")
+            )
+            project = db.scalar(select(Project))
+            assert analyst_user is not None and project is not None
+            conversation = Conversation(
+                organization_id=analyst_user.organization_id,
+                project_id=project.id,
+                owner_user_id=analyst_user.id,
+                title="Cache 모니터링 집계",
+            )
+            db.add(conversation)
+            db.flush()
+            first_run = Run(
+                organization_id=analyst_user.organization_id,
+                project_id=project.id,
+                conversation_id=conversation.id,
+                user_id=analyst_user.id,
+                status="completed",
+                provider_id="codex",
+                model_key="gpt-5.5",
+                runtime_model_id="gpt-5.5",
+                model_display_name="GPT-5.5",
+                snapshot_json={"prompt_cache_static_digest": "digest-a"},
+                usage_json={},
+                idempotency_key="admin-cache-first-run",
+            )
+            second_run = Run(
+                organization_id=analyst_user.organization_id,
+                project_id=project.id,
+                conversation_id=conversation.id,
+                user_id=analyst_user.id,
+                status="completed",
+                provider_id="codex",
+                model_key="gpt-5.5",
+                runtime_model_id="gpt-5.5",
+                model_display_name="GPT-5.5",
+                snapshot_json={"prompt_cache_static_digest": "digest-b"},
+                usage_json={},
+                idempotency_key="admin-cache-second-run",
+            )
+            db.add_all((first_run, second_run))
+            db.flush()
+            db.add_all(
+                (
+                    RunEvent(
+                        run_id=first_run.id,
+                        conversation_id=conversation.id,
+                        sequence=1,
+                        event_type="model_turn_completed",
+                        payload_json={"turnIndex": 0, "inputTokens": 100, "cachedInputTokens": 20, "cacheWriteTokens": 10, "uncachedInputTokens": 70},
+                    ),
+                    RunEvent(
+                        run_id=first_run.id,
+                        conversation_id=conversation.id,
+                        sequence=2,
+                        event_type="model_turn_completed",
+                        payload_json={"turnIndex": 1, "inputTokens": 200, "cachedInputTokens": 180, "cacheWriteTokens": 5, "uncachedInputTokens": 15},
+                    ),
+                    RunEvent(
+                        run_id=second_run.id,
+                        conversation_id=conversation.id,
+                        sequence=1,
+                        event_type="model_turn_completed",
+                        payload_json={"turnIndex": 0, "inputTokens": 300, "cachedInputTokens": 150, "cacheWriteTokens": 30, "uncachedInputTokens": 120},
+                    ),
+                )
+            )
+            db.commit()
+
         response = admin_client.get("/api/admin/usage-statistics?days=30")
         assert response.status_code == 200, response.text
         payload = response.json()
@@ -346,6 +425,23 @@ def test_admin_usage_statistics_are_organization_scoped_and_admin_only(
         assert analyst["cachedInputTokens"] == 0
         assert analyst["cacheHitRatioPercent"] == 0
         assert analyst["outputTokens"] == 0
+        assert payload["cache"]["firstCall"] == {
+            "modelCalls": 2,
+            "inputTokens": 400,
+            "cachedInputTokens": 170,
+            "cacheWriteTokens": 40,
+            "uncachedInputTokens": 190,
+            "cacheHitRatioPercent": 42.5,
+        }
+        assert payload["cache"]["subsequentCalls"]["cacheHitRatioPercent"] == 90.0
+        assert [item["digest"] for item in payload["cache"]["byStaticDigest"]] == [
+            "digest-a",
+            "digest-b",
+        ]
+        digest_a = payload["cache"]["byStaticDigest"][0]
+        assert digest_a["cacheWriteTokens"] == 15
+        assert digest_a["firstCall"]["cacheHitRatioPercent"] == 20.0
+        assert digest_a["subsequentCalls"]["cacheHitRatioPercent"] == 90.0
 
         audit = admin_client.get(
             "/api/admin/audit-events?action=admin_usage_statistics_viewed"
@@ -484,7 +580,7 @@ def test_admin_conversation_view_is_audited(tmp_path: Path) -> None:
                 conversation_id=conversation_id,
                 role="assistant",
                 status="completed",
-                canonical_text="관리자 의견 조회 대상 답변",
+                canonical_text="=1+1 관리자 의견 조회 대상 답변",
                 turn_index=0,
                 metadata_json={},
             )
@@ -528,6 +624,65 @@ def test_admin_conversation_view_is_audited(tmp_path: Path) -> None:
         assert audit.status_code == 200
         assert len(audit.json()["items"]) == 2
 
+        rating = client.put(
+            f"/api/messages/{message_id}/rating",
+            headers={"X-CSRF-Token": csrf},
+            json={"value": "dislike"},
+        )
+        assert rating.status_code == 200, rating.text
+
+        exported = client.get(
+            "/api/admin/conversations/export.xlsx"
+            "?query=조회%20감사&feedback_only=true&limit=120"
+        )
+        assert exported.status_code == 200, exported.text
+        assert exported.headers["content-type"].startswith(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        assert "lumina_conversations_" in exported.headers["content-disposition"]
+
+        workbook = load_workbook(BytesIO(exported.content))
+        assert workbook.sheetnames == ["대화 분석"]
+        analysis_sheet = workbook["대화 분석"]
+        headers = {
+            cell.value: index for index, cell in enumerate(analysis_sheet[1], start=1)
+        }
+        assert analysis_sheet.max_row == 2
+        assert analysis_sheet.freeze_panes == "A2"
+        assert analysis_sheet.auto_filter.ref is not None
+        assert (
+            analysis_sheet.cell(2, headers["메시지 내용"]).value
+            == "=1+1 관리자 의견 조회 대상 답변"
+        )
+        assert analysis_sheet.cell(2, headers["의견 종류"]).value == "rating + report"
+        assert analysis_sheet.cell(2, headers["평가"]).value == "dislike"
+        assert analysis_sheet.cell(2, headers["좋아요 수"]).value == 0
+        assert analysis_sheet.cell(2, headers["싫어요 수"]).value == 1
+        assert analysis_sheet.cell(2, headers["Category"]).value == "other"
+        assert analysis_sheet.cell(2, headers["Comment 수"]).value == 1
+        assert (
+            analysis_sheet.cell(2, headers["Comment"]).value
+            == "관리 화면에서 확인할 의견"
+        )
+        assert (
+            analysis_sheet.cell(2, headers["의견 작성자"]).value
+            == "admin@posco.com"
+        )
+        assert analysis_sheet.cell(2, headers["메시지 내용"]).data_type == "s"
+
+        export_audit = client.get(
+            "/api/admin/audit-events?action=admin_conversations_exported"
+        )
+        assert export_audit.status_code == 200
+        assert export_audit.json()["items"][0]["metadata"] == {
+            "query_used": True,
+            "feedback_only": True,
+            "limit": 120,
+            "conversation_count": 1,
+            "message_count": 1,
+            "feedback_count": 2,
+        }
+
 
 def test_admin_announcements_are_managed_by_admins_and_visible_to_users(
     tmp_path: Path,
@@ -566,10 +721,30 @@ def test_admin_announcements_are_managed_by_admins_and_visible_to_users(
             announcement = created.json()
             assert announcement["author"]["loginId"] == "admin@posco.com"
 
+            for invalid_payload in ({}, {"title": None, "body": None}):
+                rejected_update = admin_client.patch(
+                    f"/api/admin/announcements/{announcement['id']}",
+                    headers={"X-CSRF-Token": admin_csrf},
+                    json=invalid_payload,
+                )
+                assert rejected_update.status_code == 422, rejected_update.text
+
             user_listing = user_client.get("/api/notifications/announcements")
             assert user_listing.status_code == 200, user_listing.text
             assert user_listing.json()["items"][0]["title"] == "서비스 점검 안내"
             assert user_listing.json()["total"] == 1
+            assert user_listing.json()["unreadCount"] == 1
+            assert user_listing.json()["items"][0]["readAt"] is None
+
+            marked_read = user_client.post(
+                f"/api/notifications/announcements/{announcement['id']}/read",
+                headers={"X-CSRF-Token": user_csrf},
+            )
+            assert marked_read.status_code == 200, marked_read.text
+            assert marked_read.json()["readAt"] is not None
+            assert user_client.get(
+                "/api/notifications/announcements/unread-count"
+            ).json() == {"unreadCount": 0}
 
             updated = admin_client.patch(
                 f"/api/admin/announcements/{announcement['id']}",
@@ -581,6 +756,9 @@ def test_admin_announcements_are_managed_by_admins_and_visible_to_users(
             )
             assert updated.status_code == 200, updated.text
             assert updated.json()["title"] == "서비스 점검 시간 변경"
+            assert user_client.get(
+                "/api/notifications/announcements/unread-count"
+            ).json() == {"unreadCount": 1}
 
             searched = admin_client.get(
                 "/api/admin/announcements?query=시간 변경"
@@ -598,6 +776,7 @@ def test_admin_announcements_are_managed_by_admins_and_visible_to_users(
             assert user_client.get("/api/notifications/announcements").json() == {
                 "items": [],
                 "total": 0,
+                "unreadCount": 0,
             }
 
         finally:
@@ -607,6 +786,7 @@ def test_admin_announcements_are_managed_by_admins_and_visible_to_users(
         assert audit.status_code == 200
         assert {item["action"] for item in audit.json()["items"]} == {
             "announcement_created",
+            "announcement_read",
             "announcement_updated",
             "announcement_deleted",
         }

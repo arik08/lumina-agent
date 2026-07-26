@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ...audit import record_audit
 from ...db import get_db
-from ...models import Announcement, User
+from ...models import Announcement, AnnouncementReceipt, User, utc_now
 from ...notifications import (
     delete_all_notifications,
     delete_notification,
@@ -17,8 +19,10 @@ from ...notifications import (
     unread_notification_count,
 )
 from ..dependencies import AuthContext, get_current_user, require_csrf
+from ..errors import ApiProblem
 from ..schemas import (
     AnnouncementListResponse,
+    AnnouncementResponse,
     NotificationListResponse,
     NotificationReadAllResponse,
     NotificationResponse,
@@ -29,7 +33,12 @@ from ..schemas import (
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
 
-def _announcement_payload(db: Session, announcement: Announcement) -> dict[str, object]:
+def _announcement_payload(
+    db: Session,
+    announcement: Announcement,
+    *,
+    read_at: datetime | None = None,
+) -> dict[str, object]:
     author = db.get(User, announcement.creator_user_id) if announcement.creator_user_id else None
     return {
         "id": announcement.id,
@@ -42,9 +51,41 @@ def _announcement_payload(db: Session, announcement: Announcement) -> dict[str, 
         }
         if author is not None
         else None,
+        "readAt": read_at,
         "createdAt": announcement.created_at,
         "updatedAt": announcement.updated_at,
     }
+
+
+def _announcement_unread_filter(user: User):
+    return ~select(AnnouncementReceipt.id).where(
+        AnnouncementReceipt.announcement_id == Announcement.id,
+        AnnouncementReceipt.user_id == user.id,
+        AnnouncementReceipt.read_at >= Announcement.updated_at,
+    ).exists()
+
+
+def _announcement_unread_count(db: Session, user: User) -> int:
+    return int(
+        db.scalar(
+            select(func.count(Announcement.id)).where(
+                Announcement.organization_id == user.organization_id,
+                _announcement_unread_filter(user),
+            )
+        )
+        or 0
+    )
+
+
+@router.get(
+    "/announcements/unread-count",
+    response_model=NotificationUnreadCountResponse,
+)
+def get_announcement_unread_count(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, int]:
+    return {"unreadCount": _announcement_unread_count(db, user)}
 
 
 @router.get("/announcements", response_model=AnnouncementListResponse)
@@ -65,7 +106,81 @@ def get_announcements(
             .limit(limit)
         )
     )
-    return {"items": [_announcement_payload(db, row) for row in rows], "total": total}
+    announcement_ids = [row.id for row in rows]
+    receipts = {
+        receipt.announcement_id: receipt.read_at
+        for receipt in db.scalars(
+            select(AnnouncementReceipt).where(
+                AnnouncementReceipt.user_id == user.id,
+                AnnouncementReceipt.announcement_id.in_(announcement_ids),
+            )
+        )
+    } if announcement_ids else {}
+    items = [
+        _announcement_payload(
+            db,
+            row,
+            read_at=(
+                receipts.get(row.id)
+                if receipts.get(row.id) is not None
+                and receipts[row.id] >= row.updated_at
+                else None
+            ),
+        )
+        for row in rows
+    ]
+    return {
+        "items": items,
+        "total": total,
+        "unreadCount": _announcement_unread_count(db, user),
+    }
+
+
+@router.post(
+    "/announcements/{announcement_id}/read",
+    response_model=AnnouncementResponse,
+)
+def post_announcement_read(
+    announcement_id: str,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    announcement = db.scalar(
+        select(Announcement).where(
+            Announcement.id == announcement_id,
+            Announcement.organization_id == context.user.organization_id,
+        )
+    )
+    if announcement is None:
+        raise ApiProblem(404, "announcement_not_found", "공지사항을 찾을 수 없습니다.")
+    receipt = db.scalar(
+        select(AnnouncementReceipt).where(
+            AnnouncementReceipt.announcement_id == announcement.id,
+            AnnouncementReceipt.user_id == context.user.id,
+        )
+    )
+    read_at = utc_now()
+    if receipt is None:
+        receipt = AnnouncementReceipt(
+            announcement_id=announcement.id,
+            user_id=context.user.id,
+            read_at=read_at,
+        )
+        db.add(receipt)
+    else:
+        receipt.read_at = read_at
+    record_audit(
+        db,
+        actor=context.user,
+        action="announcement_read",
+        target_type="announcement",
+        target_id=announcement.id,
+        result="success",
+        request_id=getattr(request.state, "request_id", None),
+    )
+    db.commit()
+    return _announcement_payload(db, announcement, read_at=read_at)
 
 
 @router.delete("", status_code=204)

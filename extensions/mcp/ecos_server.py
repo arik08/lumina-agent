@@ -14,6 +14,7 @@ from mcp.server.fastmcp import FastMCP
 
 
 DEFAULT_API_HOST = "ecos.bok.or.kr/api"
+DEFAULT_API_KEY = "sample"
 MAX_ROWS = 1000
 MAX_REQUEST_ATTEMPTS = 3
 TRANSIENT_STATUS_CODES = {408, 429, 500, 502, 503, 504}
@@ -59,10 +60,7 @@ def _env_value(*names: str) -> str | None:
 
 
 def _api_key() -> str:
-    key = _env_value("ECOS_API_KEY", "BOK_ECOS_API_KEY")
-    if not key:
-        raise ValueError("ECOS_API_KEY is required for the Bank of Korea ECOS MCP.")
-    return key
+    return _env_value("ECOS_API_KEY", "BOK_ECOS_API_KEY") or DEFAULT_API_KEY
 
 
 def _api_base_url() -> str:

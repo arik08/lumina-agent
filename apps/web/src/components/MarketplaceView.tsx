@@ -1,20 +1,29 @@
-import { AlertTriangle, Braces, Check, ChevronDown, ChevronRight, Code2, Download, Eye, FileCode2, FileJson, FileText, Folder, FolderOpen, Info, LoaderCircle, Maximize2, Menu, Minimize2, Package, Pencil, RefreshCw, Save, Search, Sparkles, Store, Trash2, Undo2, Wrench, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Braces, Check, ChevronDown, ChevronRight, Code2, Download, Eye, FileCode2, FileJson, FileText, Folder, FolderOpen, History, Info, LoaderCircle, Maximize2, Menu, Minimize2, Package, Pencil, Power, RefreshCw, Save, Search, ServerCog, Settings2, Sparkles, Store, Trash2, Undo2, Wrench, X } from "lucide-react";
 import { type DragEvent, type KeyboardEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { api, ApiError } from "../api";
-import type { ExtensionInstallation, SkillCatalogItem, SkillCatalogResponse, SkillExtension, SkillVersion } from "../api-types";
+import { api as coreApi, ApiError } from "../api";
+import { extensionsApi } from "../feature-api";
+import type { ExtensionInstallation, ProjectSummary, SkillCatalogItem, SkillCatalogResponse, SkillExtension, SkillVersion, SkillVersionComparison } from "../api-types";
 import { useCachedViewState } from "../view-data-cache";
+import { AdminMcpPanel } from "./AdminMcpPanel";
 import { McpMarketplacePanel } from "./McpMarketplacePanel";
 import { MarketplaceInstallButton } from "./MarketplaceInstallButton";
 import { ResizableSplitPane } from "./ResizableSplitPane";
 import { SkillCatalogPanel, type SkillCatalogSort } from "./SkillCatalogPanel";
+import { SkillVersionHistory } from "./SkillVersionHistory";
 import { SyntaxCode, SyntaxTextarea } from "./SyntaxCode";
+import { useDismissablePopover } from "./useDismissablePopover";
+import "./MarketplaceTagEditor.css";
 import { markdownBodyAfterFrontmatter, splitMarkdownFrontmatter } from "./markdownFrontmatter";
+
+const api = { ...coreApi, extensions: extensionsApi };
 
 interface MarketplaceViewProps {
   projectId: string | null;
   onOpenNavigation: () => void;
+  canManage: boolean;
 }
 
 interface SkillFileNode {
@@ -73,6 +82,8 @@ const EMPTY_SKILL_CATALOG: SkillCatalogResponse = {
 };
 
 function skillTags(item: SkillExtension): string[] {
+  const storedTags = (item as SkillExtension & { tags?: unknown }).tags;
+  if (Array.isArray(storedTags) && storedTags.length > 0) return storedTags.slice(0, 3);
   const manifest = item.versions.at(-1)?.manifest;
   const configured = Array.isArray(manifest?.tags)
     ? manifest.tags.filter((tag): tag is string => typeof tag === "string" && Boolean(tag.trim())).map((tag) => tag.trim().replace(/^#/, ""))
@@ -123,11 +134,14 @@ function SkillMarkdownPreview({ value }: { value: string }) {
   </div>;
 }
 
-export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceViewProps) {
+export function MarketplaceView({ projectId, onOpenNavigation, canManage }: MarketplaceViewProps) {
   const skillContentRef = useRef<HTMLDivElement>(null);
+  const projectScopeButtonRef = useRef<HTMLButtonElement>(null);
+  const projectScopeMenuRef = useRef<HTMLDivElement>(null);
   const repositoryRevisionRef = useRef<string | null>(null);
   const catalogRequestIdRef = useRef(0);
   const [marketKind, setMarketKind] = useState<"skill" | "mcp">("skill");
+  const [mcpView, setMcpView] = useState<"catalog" | "admin">("catalog");
   const [mcpRefreshKey, setMcpRefreshKey] = useState(0);
   const cacheKey = `marketplace:${projectId ?? "none"}`;
   const [items, setItems, hasCachedItems] = useCachedViewState<SkillExtension[]>(`${cacheKey}:items`, []);
@@ -141,37 +155,54 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
   const [pendingLikeIds, setPendingLikeIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [skillView, setSkillView] = useState<"catalog" | "installed" | "drafts" | "trash">("catalog");
+  const [enteredInstalledFromCatalog, setEnteredInstalledFromCatalog] = useState(false);
 
   const [query, setQuery] = useState("");
   const [catalogQuery, setCatalogQuery] = useState("");
   const [catalogCategory, setCatalogCategory] = useState("");
   const [catalogTag, setCatalogTag] = useState("");
   const [catalogSort, setCatalogSort] = useState<SkillCatalogSort>("popular");
-  const catalogCacheKey = `${cacheKey}:catalog:${catalogQuery.trim().toLocaleLowerCase("ko-KR")}:${catalogCategory}:${catalogSort}`;
+  const [catalogScrollPosition, setCatalogScrollPosition] = useState(0);
+  const catalogCacheKey = `${cacheKey}:catalog:${catalogQuery.trim().toLocaleLowerCase("ko-KR")}:${catalogCategory}:${catalogTag}:${catalogSort}`;
   const [catalog, setCatalog, hasCachedCatalog] = useCachedViewState<SkillCatalogResponse>(catalogCacheKey, EMPTY_SKILL_CATALOG);
+  const lastVisibleCatalogRef = useRef(catalog);
+  useEffect(() => {
+    if (hasCachedCatalog) lastVisibleCatalogRef.current = catalog;
+  }, [catalog, hasCachedCatalog]);
+  const visibleCatalog = hasCachedCatalog ? catalog : lastVisibleCatalogRef.current;
+  const selectedTagCount = catalogTag
+    ? visibleCatalog.facets.tags.find((item) => item.value === catalogTag)?.count
+    : undefined;
+  const catalogTabCount = hasCachedCatalog
+    ? catalog.total
+    : selectedTagCount ?? (visibleCatalog.total || items.length);
   const [catalogLoading, setCatalogLoading] = useState(!hasCachedCatalog);
   const [catalogLoadingMore, setCatalogLoadingMore] = useState(false);
-  const filteredCatalog = useMemo(() => {
-    if (!catalogTag) return catalog;
-    const normalizedTag = catalogTag.toLocaleLowerCase("ko-KR");
-    const filteredItems = catalog.items.filter((item) => item.tags.some((tag) => tag.toLocaleLowerCase("ko-KR") === normalizedTag));
-    const total = catalog.facets.tags.find((item) => item.value.toLocaleLowerCase("ko-KR") === normalizedTag)?.count ?? filteredItems.length;
-    return { ...catalog, items: filteredItems, total, hasMore: catalog.hasMore && filteredItems.length < total };
-  }, [catalog, catalogTag]);
   const [versionDetail, setVersionDetail] = useState<SkillVersion | null>(null);
+  const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
+  const [versionComparison, setVersionComparison] = useState<SkillVersionComparison | null>(null);
   const [activeFile, setActiveFile] = useState("SKILL.md");
-  const [skillContentView, setSkillContentView] = useState<"source" | "rendered">("source");
+  const [skillContentView, setSkillContentView] = useState<"source" | "rendered">("rendered");
   const [skillContentExpanded, setSkillContentExpanded] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [editMode, setEditMode] = useState(false);
   const [editableFiles, setEditableFiles] = useState<Record<string, string>>({});
   const [editableName, setEditableName] = useState("");
   const [editableDescription, setEditableDescription] = useState("");
+  const [editableChangeSummary, setEditableChangeSummary] = useState("");
+  const [editableTags, setEditableTags] = useState<string[]>([]);
+  const [editableTagInput, setEditableTagInput] = useState("");
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [draggedPath, setDraggedPath] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [projectScopeOpen, setProjectScopeOpen] = useState(false);
+  const [projectScopeDraft, setProjectScopeDraft] = useState<Set<string> | null>(null);
+  const [projectScopeBusy, setProjectScopeBusy] = useState(false);
+  const [projectScopePosition, setProjectScopePosition] = useState({ top: 0, right: 0 });
+  useDismissablePopover(projectScopeOpen, projectScopeButtonRef, projectScopeMenuRef, setProjectScopeOpen);
 
   useEffect(() => {
     const element = skillContentRef.current;
@@ -181,19 +212,22 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
   }, [activeFile, selectedId, skillView]);
 
   const currentItems = skillView === "trash" ? trashedItems : items;
-  const selected = currentItems.find((item) => item.id === selectedId) ?? currentItems[0] ?? null;
+  const selectedCandidate = currentItems.find((item) => item.id === selectedId) ?? currentItems[0] ?? null;
+  const selected = skillView === "installed" && selectedCandidate && !installations.some((entry) => entry.extensionId === selectedCandidate.id)
+    ? currentItems.find((item) => installations.some((entry) => entry.extensionId === item.id)) ?? null
+    : selectedCandidate;
   const installation = selected ? installations.find((item) => item.extensionId === selected.id) ?? null : null;
   const latestVersion = selected?.versions.at(-1) ?? null;
   const visibleItems = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
     return currentItems.filter((item) => {
-      if (skillView === "drafts" && !item.draft) return false;
+      if (skillView === "drafts" && !item.draft?.dirty) return false;
       if (skillView === "installed" && !installations.some((entry) => entry.extensionId === item.id)) return false;
       const tags = skillTags(item);
       return !normalized || `${item.name} ${item.description} ${item.slug} ${tags.join(" ")} ${tags.map((tag) => `#${tag}`).join(" ")}`.toLocaleLowerCase().includes(normalized);
     });
   }, [currentItems, installations, query, skillView]);
-  const sourceDetailFiles = selected?.draft?.package.files ?? versionDetail?.package?.files ?? {};
+  const sourceDetailFiles = selected?.draft?.package?.files ?? versionDetail?.package?.files ?? {};
   const detailFiles = editMode ? editableFiles : sourceDetailFiles;
   const activeFileIsMarkdown = activeFile.toLocaleLowerCase().endsWith(".md");
   const fileTree = useMemo(() => buildSkillFileTree(Object.keys(detailFiles)), [detailFiles]);
@@ -202,14 +236,16 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
     setLoading(true);
     setError(null);
     try {
-      const [extensions, trashed, installed] = await Promise.all([
+      const [extensions, trashed, installed, availableProjects] = await Promise.all([
         api.extensions.list(),
         api.extensions.listTrash(),
         api.extensions.listInstallations(),
+        api.projects.list(),
       ]);
       setItems(extensions);
       setTrashedItems(trashed);
       setInstallations(installed.filter((entry) => entry.scopeType === "user"));
+      setProjects(availableProjects);
       setSelectedId((current) => preferredId ?? (current && [...extensions, ...trashed].some((item) => item.id === current) ? current : extensions[0]?.id ?? trashed[0]?.id ?? null));
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "Marketplace를 불러오지 못했습니다.");
@@ -234,6 +270,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
       const response = await api.extensions.listCatalog({
         query: catalogQuery.trim() || undefined,
         category: catalogCategory || undefined,
+        tag: catalogTag || undefined,
         sort: catalogSort,
         offset,
         limit: 60,
@@ -249,7 +286,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
         setCatalogLoadingMore(false);
       }
     }
-  }, [catalogCategory, catalogQuery, catalogSort]);
+  }, [catalogCategory, catalogQuery, catalogSort, catalogTag]);
 
   useEffect(() => {
     void refresh();
@@ -279,13 +316,29 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
         else setMcpRefreshKey((value) => value + 1);
       }).catch(() => undefined);
     };
-    pollRepositoryState();
-    const timer = window.setInterval(pollRepositoryState, 3_000);
+    const pollWhenVisible = () => {
+      if (document.visibilityState === "visible") pollRepositoryState();
+    };
+    pollWhenVisible();
+    const timer = window.setInterval(pollWhenVisible, 15_000);
+    document.addEventListener("visibilitychange", pollWhenVisible);
     return () => {
       window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", pollWhenVisible);
       controller.abort();
     };
   }, [marketKind, projectId]);
+
+  useEffect(() => {
+    if (!selected?.draft || selected.draft.package) return;
+    const controller = new AbortController();
+    void api.extensions.getDraft(selected.id, controller.signal).then((draft) => {
+      setItems((current) => current.map((item) => (
+        item.id === selected.id ? { ...item, draft } : item
+      )));
+    }).catch(() => undefined);
+    return () => controller.abort();
+  }, [selected?.draft?.id, selected?.draft?.package, selected?.id]);
 
   const refreshRepository = async () => {
     setError(null);
@@ -322,6 +375,8 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
 
   useEffect(() => {
     setEditMode(false);
+    setVersionHistoryOpen(false);
+    setVersionComparison(null);
     setRenamingPath(null);
     setDraggedPath(null);
     setDropTarget(null);
@@ -350,6 +405,39 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
     }
   };
 
+  const compareVersions = async (fromVersionId: string, toVersionId: string) => {
+    if (!selected || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setVersionComparison(await api.extensions.compareVersions(selected.id, fromVersionId, toVersionId));
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : "Skill 버전을 비교하지 못했습니다.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const rollbackVersion = async (target: SkillVersion, changeSummary: string) => {
+    if (!selected?.latestPublishedVersionId || selected.currentUserRole !== "owner" || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.extensions.rollbackVersion(
+        selected.id,
+        target.id,
+        selected.latestPublishedVersionId,
+        changeSummary,
+      );
+      setVersionComparison(null);
+      await refresh(selected.id);
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : "Skill 버전을 복원하지 못했습니다.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const deleteSelectedSkill = async () => {
     if (!selected?.canDelete || busy) return;
     if (deleteConfirmId !== selected.id) {
@@ -362,7 +450,6 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
       const deletedId = selected.id;
       await api.extensions.delete(deletedId);
       setDeleteConfirmId(null);
-      setSkillView("trash");
       await refresh(deletedId);
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "Skill을 보관함으로 이동하지 못했습니다.");
@@ -486,19 +573,102 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
     }
   };
 
+  useEffect(() => {
+    setProjectScopeOpen(false);
+    setProjectScopeDraft(null);
+  }, [selected?.id]);
+
+  const openProjectScope = () => {
+    if (!installation) return;
+    const rect = projectScopeButtonRef.current?.getBoundingClientRect();
+    if (rect) setProjectScopePosition({ top: rect.bottom + 4, right: Math.max(8, window.innerWidth - rect.right) });
+    setProjectScopeDraft(installation.projectIds === null ? null : new Set(installation.projectIds));
+    setProjectScopeOpen((current) => !current);
+  };
+
+  const toggleProjectScope = (targetProjectId: string) => {
+    setProjectScopeDraft((current) => {
+      const next = current === null ? new Set(projects.map((item) => item.id)) : new Set(current);
+      if (next.has(targetProjectId)) next.delete(targetProjectId);
+      else next.add(targetProjectId);
+      return next;
+    });
+  };
+
+  const saveProjectScope = async () => {
+    if (!installation) return;
+    setProjectScopeBusy(true);
+    setError(null);
+    try {
+      const updated = await api.extensions.updateProjects(
+        installation.id,
+        projectScopeDraft === null ? null : [...projectScopeDraft],
+      );
+      setInstallations((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setProjectScopeOpen(false);
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : "프로젝트 사용 범위를 저장하지 못했습니다.");
+    } finally {
+      setProjectScopeBusy(false);
+    }
+  };
+
+  const viewCatalogSkill = (target: SkillCatalogItem) => {
+    if (!target.installed) return;
+    window.history.pushState({
+      ...window.history.state,
+      luminaMarketplaceCatalogDetail: {
+        projectId: projectId ?? "none",
+        skillId: target.id,
+      },
+    }, "");
+    setSelectedId(target.id);
+    setEnteredInstalledFromCatalog(true);
+    setSkillView("installed");
+  };
+
+  const returnToCatalog = () => {
+    if (window.history.state?.luminaMarketplaceCatalogDetail?.projectId === (projectId ?? "none")) {
+      window.history.back();
+      return;
+    }
+    setEnteredInstalledFromCatalog(false);
+    setSkillView("catalog");
+  };
+
+  useEffect(() => {
+    const handlePopState = (event: PopStateEvent) => {
+      const detail = event.state?.luminaMarketplaceCatalogDetail;
+      if (detail?.projectId === (projectId ?? "none") && typeof detail.skillId === "string") {
+        setSelectedId(detail.skillId);
+        setEnteredInstalledFromCatalog(true);
+        setSkillView("installed");
+      } else if (enteredInstalledFromCatalog) {
+        setEnteredInstalledFromCatalog(false);
+        setSkillView("catalog");
+      }
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [enteredInstalledFromCatalog, projectId]);
+
   const beginPackageEdit = async () => {
     if (!selected?.canCreateDraft || busy) return;
     setBusy(true);
     setError(null);
     try {
-      const draft = selected.draft ?? await api.extensions.checkoutDraft(selected.id);
-      if (!selected.draft) {
-        setItems((current) => current.map((item) => item.id === selected.id ? { ...item, draft } : item));
-      }
+      let draft = selected.draft ?? await api.extensions.checkoutDraft(selected.id);
+      if (!draft.package) draft = await api.extensions.getDraft(selected.id);
+      if (!draft.package) throw new Error("Skill Draft package is unavailable.");
+      setItems((current) => current.map((item) => item.id === selected.id ? { ...item, draft } : item));
       setEditableFiles({ ...draft.package.files });
       setEditableName(selected.name);
       setEditableDescription(selected.description);
+      setEditableChangeSummary("");
+      setEditableTags(selected.tags);
+      setEditableTagInput("");
       setActiveFile(draft.package.files[activeFile] !== undefined ? activeFile : "SKILL.md");
+      setVersionHistoryOpen(false);
       setEditMode(true);
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "Skill 편집을 시작하지 못했습니다.");
@@ -509,14 +679,23 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
 
   const savePackageEdit = async () => {
     if (!selected?.draft || (selected.canEdit && !editableName.trim()) || busy) return;
+    const pendingTag = editableTagInput.trim().replace(/^#/, "").trim().slice(0, 40);
+    const tagsToSave = pendingTag && !editableTags.includes(pendingTag) && editableTags.length < 8
+      ? [...editableTags, pendingTag]
+      : editableTags;
     setBusy(true);
     setError(null);
     try {
-      await api.extensions.updateDraft(selected.draft, editableFiles, "Marketplace 패키지 편집");
+      await api.extensions.updateDraft(
+        selected.draft,
+        editableFiles,
+        editableChangeSummary.trim() || "Marketplace 패키지 편집",
+      );
       if (selected.canEdit) {
         await api.extensions.updateMetadata(selected.id, {
           name: editableName.trim(),
           description: editableDescription.trim(),
+          ...(selected.canEditTags ? { tags: tagsToSave } : {}),
         });
       }
       await refresh(selected.id);
@@ -527,6 +706,16 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
     } finally {
       setBusy(false);
     }
+  };
+
+  const addEditableTag = () => {
+    const tag = editableTagInput.trim().replace(/^#/, "").trim();
+    if (!tag || editableTags.includes(tag) || editableTags.length >= 8) {
+      setEditableTagInput("");
+      return;
+    }
+    setEditableTags((current) => [...current, tag.slice(0, 40)]);
+    setEditableTagInput("");
   };
 
   const remapPackagePath = (fromPath: string, toPath: string) => {
@@ -578,7 +767,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
     setDraggedPath(path);
   };
 
-  const counts = useMemo(() => ({ drafts: items.filter((item) => item.draft).length, installed: installations.filter((entry) => items.some((item) => item.id === entry.extensionId)).length, trashed: trashedItems.length }), [installations, items, trashedItems.length]);
+  const counts = useMemo(() => ({ drafts: items.filter((item) => item.draft?.dirty).length, installed: installations.filter((entry) => items.some((item) => item.id === entry.extensionId)).length, trashed: trashedItems.length }), [installations, items, trashedItems.length]);
   const pendingCatalogInstallIds = useMemo(() => new Set(Object.entries(pendingInstallationSurfaceById).filter(([, surface]) => surface === "catalog").map(([id]) => id)), [pendingInstallationSurfaceById]);
 
   const renderFileTree = (nodes: SkillFileNode[]): ReactNode => nodes.map((node) => {
@@ -626,22 +815,75 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
     </ResizableSplitPane>
   );
 
+  const renderSkillDetail = () => (
+    <section className={`feature-detail ${skillContentExpanded ? "is-skill-content-expanded" : selected ? "has-skill-package" : ""}`}>
+      {!selected ? <div className="feature-state">Skill을 선택해 주세요.</div> : (
+        skillContentExpanded ? renderPackageBrowser() : <>
+          <header className="detail-heading">
+            <div>{enteredInstalledFromCatalog && skillView === "installed" && <button className="marketplace-catalog-back" type="button" onClick={returnToCatalog}><ArrowLeft size={14} /> 뒤로가기</button>}{editMode && selected.canEdit ? <><h2 className="marketplace-inline-editor" contentEditable="plaintext-only" suppressContentEditableWarning role="textbox" aria-label="Skill 이름" aria-multiline="false" onInput={(event) => setEditableName(event.currentTarget.textContent ?? "")} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }}>{editableName}</h2><p className="marketplace-inline-editor" contentEditable="plaintext-only" suppressContentEditableWarning role="textbox" aria-label="Skill 설명" aria-multiline="false" data-placeholder="설명 없음" onInput={(event) => setEditableDescription(event.currentTarget.textContent ?? "")} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }}>{editableDescription}</p>{selected.canEditTags && <div className="marketplace-tag-editor" aria-label="Skill 태그 편집"><div>{editableTags.map((tag) => <button type="button" key={tag} aria-label={`${tag} 태그 삭제`} onClick={() => setEditableTags((current) => current.filter((item) => item !== tag))}>#{tag}<X size={11} /></button>)}</div><input aria-label="Skill 태그 추가" placeholder={editableTags.length >= 8 ? "태그는 최대 8개입니다" : "태그 입력 후 Enter"} value={editableTagInput} maxLength={41} disabled={editableTags.length >= 8} onChange={(event) => setEditableTagInput(event.currentTarget.value)} onBlur={addEditableTag} onKeyDown={(event) => { if (event.key === "Enter" || event.key === ",") { event.preventDefault(); addEditableTag(); } }} /></div>}</> : <><h2>{selected.name}</h2><p>{selected.description || "설명 없음"}</p></>}</div>
+            <div className="detail-badges"><span>{skillView === "trash" ? "보관함" : visibilityLabel(selected.visibility)}</span><span>{skillDisplayVersion(selected)}</span></div>
+          </header>
+          <div className={`marketplace-package-detail ${editMode ? "is-editing" : ""}`}>
+            <div className="marketplace-package-summary">
+              <div>{skillView === "trash" && <strong>{trashRetentionLabel(selected.purgesAt)}</strong>}<span>Owner {selected.ownerships.filter((item) => item.role === "owner").map((item) => item.displayName).join(", ") || "미지정"}</span>{editMode && <input className="marketplace-change-summary" aria-label="Skill 변경 요약" placeholder="이번 변경 요약" value={editableChangeSummary} maxLength={500} onChange={(event) => setEditableChangeSummary(event.currentTarget.value)} />}</div>
+              <div className="marketplace-package-actions">
+                {skillView === "trash" ? <button className="lumina-primary-action" type="button" disabled={busy} onClick={() => void restoreSelectedSkill()}>{busy ? <LoaderCircle className="is-running" size={14} /> : <Undo2 size={14} />} 복원</button> : <>
+                  {editMode ? <><button type="button" disabled={busy} onClick={() => { setEditMode(false); setRenamingPath(null); }}><X size={14} /> 취소</button><button className="lumina-primary-action" type="button" disabled={busy || (selected.canEdit && !editableName.trim())} onClick={() => void savePackageEdit()}><Save size={14} /> 초안 저장</button></> : selected.canCreateDraft && <button type="button" disabled={busy} onClick={() => void beginPackageEdit()}><Pencil size={14} /> {selected.canEdit ? "편집" : "내 버전으로 수정"}</button>}
+                  {!editMode && selected.draft?.dirty && <button type="button" disabled={busy} onClick={() => void saveVersion()}><Check size={14} /> {nextSavedSkillDisplayVersion(selected)}로 저장</button>}
+                  {!editMode && selected.versions.length > 0 && <button type="button" aria-pressed={versionHistoryOpen} disabled={busy} onClick={() => setVersionHistoryOpen((current) => !current)}><History size={14} /> {versionHistoryOpen ? "패키지 보기" : "버전 이력"}</button>}
+                  {!editMode && installation && <div className="marketplace-project-selector" onClick={(event) => event.stopPropagation()}>
+                    <button ref={projectScopeButtonRef} type="button" aria-haspopup="listbox" aria-expanded={projectScopeOpen} onClick={openProjectScope}><Settings2 size={14} /> 프로젝트 설정</button>
+                    {projectScopeOpen && createPortal(<div ref={projectScopeMenuRef} className="marketplace-project-options project-options" style={{ top: projectScopePosition.top, right: projectScopePosition.right }} role="listbox" aria-label="Skill을 사용할 프로젝트" aria-multiselectable="true" onClick={(event) => event.stopPropagation()}>
+                      <button className="marketplace-project-all" type="button" role="option" aria-selected={projectScopeDraft === null || projectScopeDraft.size === projects.length} onClick={() => setProjectScopeDraft(projectScopeDraft === null || projectScopeDraft.size === projects.length ? new Set() : null)}><FolderOpen size={15} /><span>{projectScopeDraft === null || projectScopeDraft.size === projects.length ? "전체 해제" : "전체 선택"}</span><Check size={14} /></button>
+                      <div className="marketplace-project-option-list">{projects.map((item) => {
+                        const checked = projectScopeDraft === null || projectScopeDraft.has(item.id);
+                        return <button type="button" role="option" aria-selected={checked} key={item.id} onClick={() => toggleProjectScope(item.id)}><Folder size={15} /><span>{item.name}</span>{checked && <Check size={14} />}</button>;
+                      })}</div>
+                      <footer><span>{projectScopeDraft === null ? "모든 프로젝트" : `${projectScopeDraft.size}개 선택`}</span><div><button type="button" disabled={projectScopeBusy} onClick={() => setProjectScopeOpen(false)}>취소</button><button className="lumina-primary-action" type="button" disabled={projectScopeBusy} onClick={() => void saveProjectScope()}>{projectScopeBusy ? <LoaderCircle className="is-running" size={13} /> : <Save size={13} />} 적용</button></div></footer>
+                    </div>, document.body)}
+                  </div>}
+                  {!editMode && <button className={`marketplace-detail-install-toggle ${installation ? "is-disable" : "is-primary lumina-primary-action"}`} type="button" aria-busy={pendingInstallationSurfaceById[selected.id] === "detail"} disabled={!latestVersion || busy || pendingInstallationSurfaceById[selected.id] === "detail"} onClick={() => selected && void toggleInstallation(selected, "detail")}>{pendingInstallationSurfaceById[selected.id] === "detail" ? <><LoaderCircle className="is-running" size={14} /> 처리 중</> : <>{installation ? <Power size={14} /> : <Download size={14} />}{installation ? "미사용" : "설치"}</>}</button>}
+                  {!editMode && selected.canDelete && <button className={`text-danger ${deleteConfirmId === selected.id ? "is-delete-armed" : ""}`} type="button" aria-label={deleteConfirmId === selected.id ? `${selected.name} 삭제 경고, 한 번 더 누르면 보관함으로 이동` : `${selected.name} 삭제`} disabled={busy} onClick={() => void deleteSelectedSkill()}>{busy && deleteConfirmId === selected.id ? <LoaderCircle className="is-running" size={14} /> : deleteConfirmId === selected.id ? <AlertTriangle size={14} /> : <Trash2 size={14} />} {deleteConfirmId === selected.id ? "경고" : "삭제"}</button>}
+                </>}
+              </div>
+            </div>
+            {skillView === "trash" ? <div className="feature-state">복원하면 Skill 파일과 버전을 다시 사용할 수 있습니다.</div> : versionHistoryOpen ? <SkillVersionHistory
+              versions={selected.versions}
+              latestPublishedVersionId={selected.latestPublishedVersionId}
+              comparison={versionComparison}
+              busy={busy}
+              canRollback={selected.currentUserRole === "owner" && Boolean(selected.latestPublishedVersionId)}
+              onCompare={(fromVersionId, toVersionId) => void compareVersions(fromVersionId, toVersionId)}
+              onRollback={(target, changeSummary) => void rollbackVersion(target, changeSummary)}
+            /> : renderPackageBrowser()}
+          </div>
+        </>
+      )}
+    </section>
+  );
+
   return (
     <div className="feature-view marketplace-view">
       <header className="feature-header"><div><button className="feature-mobile-menu" type="button" aria-label="사이드바 열기" onClick={onOpenNavigation}><Menu size={17} /></button><Store size={17} /><h1>마켓스토어</h1><div className="feature-kind-tabs" role="tablist" aria-label="Marketplace 유형"><button type="button" role="tab" aria-selected={marketKind === "skill"} onClick={() => setMarketKind("skill")}><Sparkles size={14} /> Skill</button><button type="button" role="tab" aria-selected={marketKind === "mcp"} onClick={() => setMarketKind("mcp")}><Wrench size={14} /> MCP</button></div><span>탐색·설치·관리</span></div><div><button type="button" aria-label="새로 고침" onClick={() => void refreshRepository()}><RefreshCw size={15} /></button></div></header>
       {marketKind === "skill" && <div className="marketplace-toolbar">
         <div className="marketplace-scope-tabs" role="tablist" aria-label="Skill 보기">
-          <button type="button" role="tab" aria-selected={skillView === "catalog"} onClick={() => setSkillView("catalog")}><Package size={14} /> 카탈로그 <span>{catalog.total || items.length}</span></button>
-          <button type="button" role="tab" aria-selected={skillView === "installed"} onClick={() => setSkillView("installed")}><Download size={14} /> 설치됨 <span>{counts.installed}</span></button>
-          <button type="button" role="tab" aria-selected={skillView === "drafts"} onClick={() => setSkillView("drafts")}><Sparkles size={14} /> 내 초안 <span>{counts.drafts}</span></button>
-          <button className="tooltip-control" type="button" role="tab" aria-selected={skillView === "trash"} data-tooltip="삭제한 Skill은 30일 동안 보관되며 그 전에 복원할 수 있습니다." onClick={() => setSkillView("trash")}><Trash2 size={14} /> 삭제됨 <span>{counts.trashed}</span></button>
+          <button type="button" role="tab" aria-selected={skillView === "catalog"} onClick={returnToCatalog}><Package size={14} /> 카탈로그 <span>{catalogTabCount}</span></button>
+          <button type="button" role="tab" aria-selected={skillView === "installed"} onClick={() => { setEnteredInstalledFromCatalog(false); setSkillView("installed"); }}><Download size={14} /> 설치됨 <span>{counts.installed}</span></button>
+          <button type="button" role="tab" aria-selected={skillView === "drafts"} onClick={() => { setEnteredInstalledFromCatalog(false); setSkillView("drafts"); }}><Sparkles size={14} /> 내 초안 <span>{counts.drafts}</span></button>
+          <button className="tooltip-control" type="button" role="tab" aria-selected={skillView === "trash"} data-tooltip="삭제한 Skill은 30일 동안 보관되며 그 전에 복원할 수 있습니다." onClick={() => { setEnteredInstalledFromCatalog(false); setSkillView("trash"); }}><Trash2 size={14} /> 삭제됨 <span>{counts.trashed}</span></button>
         </div>
         {skillView !== "catalog" && <label className="marketplace-search"><Search size={14} /><input aria-label="Skill 검색" placeholder="Skill 이름 또는 설명 검색" value={query} onChange={(event) => setQuery(event.currentTarget.value)} /></label>}
       </div>}
+      {marketKind === "mcp" && <div className="marketplace-toolbar">
+        <div className="marketplace-scope-tabs" role="tablist" aria-label="MCP 보기">
+          <button type="button" role="tab" aria-selected={mcpView === "catalog"} onClick={() => setMcpView("catalog")}><Package size={14} /> 카탈로그·설치</button>
+          {canManage && <button type="button" role="tab" aria-selected={mcpView === "admin"} onClick={() => setMcpView("admin")}><ServerCog size={14} /> 정의 관리</button>}
+        </div>
+      </div>}
       {error && <div className="feature-error" role="alert">{error}</div>}
-      {marketKind === "mcp" ? <McpMarketplacePanel key={`${projectId ?? "none"}:${mcpRefreshKey}`} projectId={projectId} /> : skillView === "catalog" ? <SkillCatalogPanel
-        catalog={filteredCatalog}
-        loading={!hasCachedCatalog && (catalogLoading || !error)}
+      {marketKind === "mcp" ? mcpView === "admin" && canManage ? <AdminMcpPanel key={mcpRefreshKey} /> : <McpMarketplacePanel key={`${projectId ?? "none"}:${mcpRefreshKey}`} projectId={projectId} /> : skillView === "catalog" ? <SkillCatalogPanel
+        catalog={visibleCatalog}
+        loading={!hasCachedCatalog && visibleCatalog.items.length === 0 && (catalogLoading || !error)}
         loadingMore={catalogLoadingMore}
         query={catalogQuery}
         category={catalogCategory}
@@ -649,6 +891,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
         sort={catalogSort}
         pendingInstallIds={pendingCatalogInstallIds}
         pendingLikeIds={pendingLikeIds}
+        scrollPosition={catalogScrollPosition}
         onQueryChange={setCatalogQuery}
         onCategoryChange={setCatalogCategory}
         onTagChange={setCatalogTag}
@@ -656,6 +899,8 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
         onReset={() => { setCatalogQuery(""); setCatalogCategory(""); setCatalogTag(""); }}
         onToggleInstall={(item) => void toggleCatalogInstallation(item)}
         onToggleLike={(item) => void toggleCatalogLike(item)}
+        onView={viewCatalogSkill}
+        onScrollPositionChange={setCatalogScrollPosition}
         onLoadMore={() => void refreshCatalog({ offset: catalog.items.length, append: true })}
       /> : <ResizableSplitPane storageKey="lumina:marketplace-list-width" ariaLabel="Skill 목록 너비 조절" className="marketplace-split">
         <aside className="feature-list" aria-label={skillView === "trash" ? "삭제된 Skill 목록" : "Skill 목록"}>
@@ -671,30 +916,7 @@ export function MarketplaceView({ projectId, onOpenNavigation }: MarketplaceView
             </div>;
           })}
         </aside>
-        <section className={`feature-detail ${skillContentExpanded ? "is-skill-content-expanded" : selected ? "has-skill-package" : ""}`}>
-          {!selected ? <div className="feature-state">Skill을 선택해 주세요.</div> : (
-            skillContentExpanded ? renderPackageBrowser() : <>
-              <header className="detail-heading">
-                <div>{editMode && selected.canEdit ? <><h2 className="marketplace-inline-editor" contentEditable="plaintext-only" suppressContentEditableWarning role="textbox" aria-label="Skill 이름" aria-multiline="false" onInput={(event) => setEditableName(event.currentTarget.textContent ?? "")} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }}>{editableName}</h2><p className="marketplace-inline-editor" contentEditable="plaintext-only" suppressContentEditableWarning role="textbox" aria-label="Skill 설명" aria-multiline="false" data-placeholder="설명 없음" onInput={(event) => setEditableDescription(event.currentTarget.textContent ?? "")} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }}>{editableDescription}</p></> : <><h2>{selected.name}</h2><p>{selected.description || "설명 없음"}</p></>}</div>
-                <div className="detail-badges"><span>{skillView === "trash" ? "보관함" : visibilityLabel(selected.visibility)}</span><span>{skillDisplayVersion(selected)}</span></div>
-              </header>
-              <div className={`marketplace-package-detail ${editMode ? "is-editing" : ""}`}>
-                <div className="marketplace-package-summary">
-                  <div>{skillView === "trash" && <strong>{trashRetentionLabel(selected.purgesAt)}</strong>}<span>Owner {selected.ownerships.filter((item) => item.role === "owner").map((item) => item.displayName).join(", ") || "미지정"}</span></div>
-                  <div className="marketplace-package-actions">
-                    {skillView === "trash" ? <button className="lumina-primary-action" type="button" disabled={busy} onClick={() => void restoreSelectedSkill()}>{busy ? <LoaderCircle className="is-running" size={14} /> : <Undo2 size={14} />} 복원</button> : <>
-                      {editMode ? <><button type="button" disabled={busy} onClick={() => { setEditMode(false); setRenamingPath(null); }}><X size={14} /> 취소</button><button className="lumina-primary-action" type="button" disabled={busy || (selected.canEdit && !editableName.trim())} onClick={() => void savePackageEdit()}><Save size={14} /> 초안 저장</button></> : selected.canCreateDraft && <button type="button" disabled={busy} onClick={() => void beginPackageEdit()}><Pencil size={14} /> {selected.canEdit ? "편집" : "내 버전으로 수정"}</button>}
-                      {!editMode && selected.draft?.dirty && <button type="button" disabled={busy} onClick={() => void saveVersion()}><Check size={14} /> {nextSavedSkillDisplayVersion(selected)}로 저장</button>}
-                      {!editMode && <button className={installation ? "is-danger" : "is-primary lumina-primary-action"} type="button" aria-busy={pendingInstallationSurfaceById[selected.id] === "detail"} disabled={!latestVersion || busy || pendingInstallationSurfaceById[selected.id] === "detail"} onClick={() => selected && void toggleInstallation(selected, "detail")}>{pendingInstallationSurfaceById[selected.id] === "detail" ? <><LoaderCircle className="is-running" size={14} /> 처리 중</> : <>{installation ? <Trash2 size={14} /> : <Download size={14} />}{installation ? "미사용" : "설치"}</>}</button>}
-                      {!editMode && selected.canDelete && <button className={`text-danger ${deleteConfirmId === selected.id ? "is-delete-armed" : ""}`} type="button" aria-label={deleteConfirmId === selected.id ? `${selected.name} 삭제 경고, 한 번 더 누르면 보관함으로 이동` : `${selected.name} 삭제`} disabled={busy} onClick={() => void deleteSelectedSkill()}>{busy && deleteConfirmId === selected.id ? <LoaderCircle className="is-running" size={14} /> : deleteConfirmId === selected.id ? <AlertTriangle size={14} /> : <Trash2 size={14} />} {deleteConfirmId === selected.id ? "경고" : "삭제"}</button>}
-                    </>}
-                  </div>
-                </div>
-                {skillView === "trash" ? <div className="feature-state">복원하면 Skill 파일과 버전을 다시 사용할 수 있습니다.</div> : renderPackageBrowser()}
-                </div>
-            </>
-          )}
-        </section>
+        {renderSkillDetail()}
       </ResizableSplitPane>}
     </div>
   );

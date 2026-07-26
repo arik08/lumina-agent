@@ -1,7 +1,8 @@
 ---
 name: vector-db-rag
 description: 로컬 Markdown 조직 업무 문서를 SQLite GraphRAG MCP로 검색합니다. 회사 조직별 업무, 조직 계층, 부서별 역할, 두 문서 간 업무 비교, 특정 조직 산하 업무 조회가 필요할 때 사용합니다.
-source: skill-mcp:vector_db
+metadata:
+  lumina-source: skill-mcp:vector_db
 ---
 
 # Vector DB RAG

@@ -5,14 +5,15 @@ import test from "node:test";
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
 test("scheduled tasks expose an inline two-step delete control", async () => {
-  const [view, api, styles] = await Promise.all([
+  const [view, api, featureApi, styles] = await Promise.all([
     read("../src/components/SchedulesView.tsx"),
     read("../src/api.ts"),
+    read("../src/feature-api.ts"),
     read("../src/styles.css"),
   ]);
 
   assert.match(api, /request<void>\(`\/scheduled-tasks\/\$\{encodeURIComponent\(taskId\)\}`,[\s\S]*?method: "DELETE"/);
-  assert.match(api, /schedules:\s*\{[\s\S]*?delete: deleteScheduledTask/);
+  assert.match(featureApi, /export const schedulesApi = \{[\s\S]*?delete: deleteScheduledTask/);
   assert.match(view, /deleteConfirmId !== selected\.id[\s\S]*?setDeleteConfirmId\(selected\.id\)/);
   assert.match(view, /await api\.schedules\.delete\(selected\.id\)/);
   assert.match(view, /"한 번 더 눌러 삭제"/);
@@ -34,7 +35,7 @@ test("schedule creation lives in the left list and replaces the detail panel", a
   const createAction = view.indexOf('className="feature-primary-action lumina-primary-action"', toolbarStart);
   const refreshAction = view.indexOf('className="schedule-list-refresh"', headerStart);
   const detailStart = view.indexOf('className="feature-detail schedule-detail"');
-  const createBranch = view.indexOf("{createOpen ? (", detailStart);
+  const createBranch = view.indexOf("{createOpen || editOpen ? (", detailStart);
   const formStart = view.indexOf('className="compact-form schedule-form schedule-detail-form"', detailStart);
 
   assert.ok(headerStart >= 0 && headerEnd > headerStart);
@@ -100,6 +101,26 @@ test("new schedules choose the project where each session is saved", async () =>
   assert.match(view, /선택한 프로젝트에 새 채팅을 만들고 결과를 저장합니다\./);
 });
 
+test("existing schedules can edit project timing and execution in place", async () => {
+  const [view, api, featureApi] = await Promise.all([
+    read("../src/components/SchedulesView.tsx"),
+    read("../src/api.ts"),
+    read("../src/feature-api.ts"),
+  ]);
+
+  assert.match(api, /updateScheduledTask[\s\S]*?method: "PATCH"/);
+  assert.match(featureApi, /export const schedulesApi = \{[\s\S]*?update: updateScheduledTask/);
+  assert.match(view, /setDraftProjectId\(selected\.projectId\)/);
+  assert.match(view, /setDraftExecution\(selected\.execution\)/);
+  assert.match(view, /setKind\(selected\.scheduleKind\)/);
+  assert.match(view, /setHour\(selected\.scheduleConfig\.hour \?\? 9\)/);
+  assert.match(view, /setMinute\(selected\.scheduleConfig\.minute \?\? 0\)/);
+  assert.match(view, /setWeekday\(selected\.scheduleConfig\.weekday \?\? 0\)/);
+  assert.match(view, /await api\.schedules\.update\(selected\.id/);
+  assert.match(view, /예약 작업 편집/);
+  assert.match(view, /변경 저장/);
+});
+
 test("weekly schedule controls keep weekday before hour with balanced widths", async () => {
   const [view, styles] = await Promise.all([
     read("../src/components/SchedulesView.tsx"),
@@ -111,4 +132,14 @@ test("weekly schedule controls keep weekday before hour with balanced widths", a
   const timingControls = view.slice(timingStart, timingEnd);
   assert.ok(timingControls.indexOf("예약 요일") < timingControls.indexOf('<span>시</span>'));
   assert.match(styles, /\.schedule-form-row\s*\{[^}]*repeat\(auto-fit, minmax\(92px, 1fr\)\)/);
+});
+
+test("active schedule history polling pauses while hidden and never overlaps", async () => {
+  const view = await read("../src/components/SchedulesView.tsx");
+
+  assert.match(view, /let refreshing = false;/);
+  assert.match(view, /document\.visibilityState !== "visible" \|\| refreshing/);
+  assert.match(view, /refreshing = true;[\s\S]*?listRuns/);
+  assert.match(view, /\.then\(\(nextRuns\) => \{[\s\S]*?refreshing = false;/);
+  assert.match(view, /\.catch\(\(caught\) => \{[\s\S]*?refreshing = false;/);
 });

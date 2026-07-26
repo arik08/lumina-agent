@@ -21,6 +21,23 @@ def respond(request_id: object, result: dict[str, object]) -> None:
     sys.stdout.flush()
 
 
+def respond_error(
+    request_id: object, code: int, message: str, data: dict[str, object]
+) -> None:
+    sys.stdout.write(
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {"code": code, "message": message, "data": data},
+            },
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
+    sys.stdout.flush()
+
+
 for line in sys.stdin:
     message = json.loads(line)
     method = str(message.get("method", ""))
@@ -61,6 +78,17 @@ for line in sys.stdin:
         )
     elif method == "tools/call":
         arguments = message.get("params", {}).get("arguments", {})
+        if MODE == "rpc_error":
+            respond_error(
+                message["id"],
+                -32602,
+                "Invalid parameter value",
+                {
+                    "field": "partnerCode",
+                    "secret": os.environ.get("MCP_TEST_TOKEN", ""),
+                },
+            )
+            continue
         respond(
             message["id"],
             {
@@ -77,6 +105,6 @@ for line in sys.stdin:
                     "value": arguments.get("value"),
                     "secret": os.environ.get("MCP_TEST_TOKEN", ""),
                 },
-                "isError": False,
+                "isError": MODE == "tool_error",
             },
         )

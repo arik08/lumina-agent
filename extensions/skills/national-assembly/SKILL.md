@@ -1,7 +1,8 @@
 ---
 name: national-assembly
 description: 열린국회정보 OpenAPI와 국민참여입법센터 API를 함께 사용하는 대한민국 국회 MCP 라우팅 스킬입니다.
-source: skill-mcp:national-assembly
+metadata:
+  lumina-source: skill-mcp:national-assembly
 ---
 
 # 대한민국 국회 MCP
@@ -40,4 +41,4 @@ source: skill-mcp:national-assembly
 - 국민참여입법센터 정보공개 서비스 신청 ID: `LAWMKING_OC`
 - 기본 프로필: `MCP_PROFILE=full`
 
-초기 실행 시 upstream `hollobit/assembly-api-mcp` 저장소를 `.myharness/mcp-cache/assembly-api-mcp`에 내려받아 빌드합니다. 이미 별도 위치에 빌드해 둔 경우 `NATIONAL_ASSEMBLY_MCP_DIR`로 해당 경로를 지정할 수 있습니다.
+`installer.bat` 실행 시 upstream `hollobit/assembly-api-mcp`의 고정 revision을 `.cache/mcp/assembly-api-mcp`에 내려받아 빌드합니다. 이미 별도 위치에 빌드해 둔 경우 `NATIONAL_ASSEMBLY_MCP_DIR`로 해당 경로를 지정할 수 있습니다.

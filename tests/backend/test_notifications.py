@@ -20,9 +20,11 @@ from lumina.models import (
     Notification,
     Organization,
     Run,
+    ToolExecution,
     User,
 )
 from lumina.notifications import create_run_transition_notification
+from lumina.notifications import service as notification_service
 from lumina.runs.service import create_run, transition_run
 from lumina.runs.state import (
     AWAITING_APPROVAL,
@@ -117,6 +119,15 @@ def test_run_notification_is_persistent_idempotent_isolated_and_device_synced(
             )
             transition_run(db, run, PREPARING)
             transition_run(db, run, MODEL_STREAMING)
+            db.add(
+                ToolExecution(
+                    run_id=run.id,
+                    tool_call_id="notification-tool-call-0001",
+                    tool_name="web_search",
+                    validated_input_json={},
+                    status="completed",
+                )
+            )
             transition_run(db, run, COMPLETED)
             db.commit()
             run_id = run.id
@@ -192,6 +203,78 @@ def test_run_notification_is_persistent_idempotent_isolated_and_device_synced(
             other.close()
 
 
+def test_simple_chat_completion_does_not_create_notification(tmp_path: Path) -> None:
+    app = create_app(_settings(tmp_path, "simple-chat-notifications.db"))
+    with TestClient(app) as client:
+        csrf = _login(client)
+        _project_id, conversation_id = _conversation(client, csrf, "단순 채팅")
+        with SessionLocal() as db:
+            user = db.scalar(select(User).where(User.login_id == "admin@posco.com"))
+            assert user is not None
+            run, _message, _created = create_run(
+                db,
+                user=user,
+                conversation_id=conversation_id,
+                payload=RunCreate(message=RunMessageInput(text="간단한 질문")),
+                idempotency_key="notification-simple-chat-0001",
+            )
+            transition_run(db, run, PREPARING)
+            transition_run(db, run, MODEL_STREAMING)
+            transition_run(db, run, COMPLETED)
+            db.commit()
+
+        listing = client.get("/api/notifications")
+        assert listing.status_code == 200, listing.text
+        assert listing.json()["items"] == []
+        assert listing.json()["unreadCount"] == 0
+
+
+def test_deep_analysis_only_notifies_for_final_report_completion(
+    tmp_path: Path,
+) -> None:
+    app = create_app(_settings(tmp_path, "deep-analysis-notifications.db"))
+    with TestClient(app) as client:
+        csrf = _login(client)
+        _project_id, conversation_id = _conversation(client, csrf, "심층분석")
+        with SessionLocal() as db:
+            user = db.scalar(select(User).where(User.login_id == "admin@posco.com"))
+            assert user is not None
+
+            for node_type in ("research", "report"):
+                run, _message, _created = create_run(
+                    db,
+                    user=user,
+                    conversation_id=conversation_id,
+                    payload=RunCreate(
+                        message=RunMessageInput(text=f"{node_type} 노드 실행")
+                    ),
+                    idempotency_key=f"notification-deep-analysis-{node_type}",
+                )
+                run.snapshot_json = {
+                    **run.snapshot_json,
+                    "deep_analysis": {"node_type": node_type},
+                }
+                transition_run(db, run, PREPARING)
+                transition_run(db, run, MODEL_STREAMING)
+                db.add(
+                    ToolExecution(
+                        run_id=run.id,
+                        tool_call_id=f"deep-analysis-{node_type}-tool",
+                        tool_name="write_file",
+                        validated_input_json={},
+                        status="completed",
+                    )
+                )
+                transition_run(db, run, COMPLETED)
+            db.commit()
+
+        listing = client.get("/api/notifications")
+        assert listing.status_code == 200, listing.text
+        assert [item["kind"] for item in listing.json()["items"]] == [
+            "run_completed"
+        ]
+
+
 def test_failure_approval_and_read_all_notifications(tmp_path: Path) -> None:
     app = create_app(_settings(tmp_path, "state-notifications.db"))
     with TestClient(app) as client:
@@ -240,6 +323,16 @@ def test_failure_approval_and_read_all_notifications(tmp_path: Path) -> None:
         deleted_all = client.delete("/api/notifications", headers=csrf)
         assert deleted_all.status_code == 204, deleted_all.text
         assert client.get("/api/notifications").json()["items"] == []
+
+
+def test_notification_rowcount_normalizes_unknown_driver_results() -> None:
+    class Result:
+        def __init__(self, rowcount: object) -> None:
+            self.rowcount = rowcount
+
+    assert notification_service._affected_row_count(Result(3)) == 3
+    for rowcount in (-1, None, True, "3"):
+        assert notification_service._affected_row_count(Result(rowcount)) == 0
 
 
 def test_scheduled_run_result_creates_one_deep_link_notification(

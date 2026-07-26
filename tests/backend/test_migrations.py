@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
+import logging
 from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
 from alembic.migration import MigrationContext
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
 
 from lumina.db import Base
 from lumina.migrations import SERVER_ROOT, upgrade_database
@@ -20,9 +22,12 @@ from lumina.models import (
 def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
     database = tmp_path / "migrated.db"
     database_url = f"sqlite:///{database.as_posix()}"
+    executor_logger = logging.getLogger("lumina.agent.executor")
+    executor_logger.disabled = False
 
     upgrade_database(database_url)
 
+    assert executor_logger.disabled is False
     engine = create_engine(database_url)
     try:
         inspector = inspect(engine)
@@ -37,11 +42,48 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
         extension_columns = {
             column["name"] for column in inspector.get_columns("extensions")
         }
+        extension_version_columns = {
+            column["name"] for column in inspector.get_columns("extension_versions")
+        }
         conversation_columns = {
             column["name"] for column in inspector.get_columns("conversations")
         }
+        run_columns = {column["name"] for column in inspector.get_columns("runs")}
+        run_indexes = {index["name"] for index in inspector.get_indexes("runs")}
+        run_unique_constraints = {
+            constraint["name"]
+            for constraint in inspector.get_unique_constraints("runs")
+        }
+        workflow_node_columns = {
+            column["name"]
+            for column in inspector.get_columns("deep_analysis_workflow_nodes")
+        }
+        knowledge_tag_columns = {
+            column["name"] for column in inspector.get_columns("knowledge_tags")
+        }
+        knowledge_document_columns = {
+            column["name"] for column in inspector.get_columns("knowledge_documents")
+        }
+        knowledge_document_indexes = {
+            index["name"] for index in inspector.get_indexes("knowledge_documents")
+        }
+        knowledge_space_columns = {
+            column["name"] for column in inspector.get_columns("knowledge_spaces")
+        }
         with engine.connect() as connection:
             revision = MigrationContext.configure(connection).get_current_revision()
+            knowledge_fts_trigger_count = connection.scalar(
+                text(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' "
+                    "AND name LIKE 'trg_knowledge_%_fts_%'"
+                )
+            )
+            message_fts_trigger_count = connection.scalar(
+                text(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' "
+                    "AND name LIKE 'trg_messages_search_fts_%'"
+                )
+            )
     finally:
         engine.dispose()
 
@@ -70,8 +112,33 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
         "project_learning_proposals",
         "notifications",
         "announcements",
+        "announcement_receipts",
         "skill_ownerships",
         "runtime_prompt_overrides",
+        "deep_analysis_missions",
+        "deep_analysis_workflow_revisions",
+        "deep_analysis_workflow_nodes",
+        "deep_analysis_workflow_edges",
+        "deep_analysis_decisions",
+        "deep_analysis_decision_responses",
+        "deep_analysis_quality_gate_results",
+        "deep_analysis_claims",
+        "deep_analysis_evidence_references",
+        "deep_analysis_claim_evidence_links",
+        "deep_analysis_open_issues",
+        "deep_analysis_mission_exports",
+        "deep_analysis_workflow_patterns",
+        "deep_analysis_workflow_pattern_versions",
+        "deep_analysis_events",
+        "deep_analysis_commands",
+        "deep_analysis_context_manifests",
+        "deep_analysis_mission_file_links",
+        "knowledge_spaces",
+        "knowledge_documents",
+        "knowledge_tags",
+        "knowledge_tag_aliases",
+        "knowledge_document_tags",
+        "knowledge_tag_proposals",
     } <= tables
     assert {"concept_revision", "concept_hash"} <= project_columns
     assert {
@@ -95,14 +162,196 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
         "affiliation",
     } <= user_columns
     assert "creator_user_id" in extension_columns
+    assert {
+        "change_summary",
+        "change_type",
+        "restored_from_version_id",
+    } <= extension_version_columns
     assert "is_liked" in conversation_columns
-    assert revision == "0028"
+    assert "surface" in conversation_columns
+    assert "next_turn_index" in conversation_columns
+    assert "actual_cost_microusd" in workflow_node_columns
+    assert "estimated_cost_microusd" not in workflow_node_columns
+    assert knowledge_fts_trigger_count == 0
+    assert "message_search_fts" in tables
+    assert message_fts_trigger_count == 3
+    assert {"is_favorite", "is_liked", "last_export_requested_at"} <= {
+        column["name"] for column in inspector.get_columns("deep_analysis_missions")
+    }
+    assert {"project_ids_json", "use_mode"} <= knowledge_space_columns
+    assert "conversation_id" in workflow_node_columns
+    assert {"definition", "parent_tag_id", "revision"} <= knowledge_tag_columns
+    assert {
+        "source_artifact_id",
+        "source_artifact_version_id",
+    } <= knowledge_document_columns
+    assert {
+        "ix_knowledge_documents_source_artifact_id",
+        "ix_knowledge_documents_source_artifact_version_id",
+    } <= knowledge_document_indexes
+    assert revision == "0065"
+    assert "ix_run_events_run_type" in {
+        index["name"] for index in inspector.get_indexes("run_events")
+    }
+    assert "ix_runs_queue_claim" in run_indexes
+    assert "ix_runs_worker_lease" in run_indexes
+    assert "uq_runs_conversation_user_idempotency" in run_unique_constraints
+    assert {"worker_id", "heartbeat_at", "lease_expires_at"}.issubset(run_columns)
+
+
+def test_message_search_fts_migration_0056_round_trip(tmp_path: Path) -> None:
+    database = tmp_path / "message-fts-round-trip.db"
+    database_url = f"sqlite:///{database.as_posix()}"
+    upgrade_database(database_url, "0055")
+
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO run_events "
+                    "(id, run_id, conversation_id, sequence, event_type, "
+                    "payload_json, created_at) VALUES "
+                    "(:id, :run_id, :conversation_id, 1, "
+                    "'plan_step_changed', :payload, :created_at)"
+                ),
+                {
+                    "id": "event-legacy-plan",
+                    "run_id": "run-legacy-plan",
+                    "conversation_id": "conversation-legacy-plan",
+                    "payload": json.dumps(
+                        {
+                            "plan": {"steps": [{"large": "duplicate"}]},
+                            "step": {
+                                "stepKey": "tools",
+                                "subtasks": [{"id": "duplicate-subtask"}],
+                            },
+                            "reason": "preserved",
+                        }
+                    ),
+                    "created_at": "2026-07-19T00:00:00+00:00",
+                },
+            )
+    finally:
+        engine.dispose()
+
+    upgrade_database(database_url, "0056")
+
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            cleaned_payload = json.loads(
+                connection.scalar(
+                    text(
+                        "SELECT payload_json FROM run_events "
+                        "WHERE id = 'event-legacy-plan'"
+                    )
+                )
+            )
+    finally:
+        engine.dispose()
+    assert "plan" not in cleaned_payload
+    assert "subtasks" not in cleaned_payload["step"]
+    assert cleaned_payload["reason"] == "preserved"
+
+    config = Config(str(SERVER_ROOT / "alembic.ini"))
+    config.attributes["database_url"] = database_url
+    command.downgrade(config, "0055")
+
+    engine = create_engine(database_url)
+    try:
+        tables = set(inspect(engine).get_table_names())
+        with engine.connect() as connection:
+            revision = MigrationContext.configure(connection).get_current_revision()
+            trigger_count = connection.scalar(
+                text(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' "
+                    "AND name LIKE 'trg_messages_search_fts_%'"
+                )
+            )
+    finally:
+        engine.dispose()
+
+    assert "message_search_fts" not in tables
+    assert trigger_count == 0
+    assert revision == "0055"
+
+
+def test_knowledge_fts_migration_0048_round_trip(tmp_path: Path) -> None:
+    database = tmp_path / "knowledge-fts-round-trip.db"
+    database_url = f"sqlite:///{database.as_posix()}"
+    upgrade_database(database_url, "0048")
+
+    config = Config(str(SERVER_ROOT / "alembic.ini"))
+    config.attributes["database_url"] = database_url
+    command.downgrade(config, "0047")
+
+    engine = create_engine(database_url)
+    try:
+        tables = set(inspect(engine).get_table_names())
+        with engine.connect() as connection:
+            revision = MigrationContext.configure(connection).get_current_revision()
+            trigger_count = connection.scalar(
+                text(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' "
+                    "AND name LIKE 'trg_knowledge_%_fts_%'"
+                )
+            )
+    finally:
+        engine.dispose()
+
+    assert (
+        not {
+            "knowledge_entity_fts",
+            "knowledge_statement_fts",
+            "knowledge_source_fts",
+            "knowledge_evidence_fts",
+        }
+        & tables
+    )
+    assert trigger_count == 0
+    assert revision == "0047"
+
+
+def test_deep_analysis_node_estimated_cost_migration_0049_round_trip(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "deep-analysis-node-cost-round-trip.db"
+    database_url = f"sqlite:///{database.as_posix()}"
+    upgrade_database(database_url, "0049")
+
+    engine = create_engine(database_url)
+    try:
+        columns = {
+            column["name"]
+            for column in inspect(engine).get_columns("deep_analysis_workflow_nodes")
+        }
+    finally:
+        engine.dispose()
+    assert "estimated_cost_microusd" not in columns
+
+    config = Config(str(SERVER_ROOT / "alembic.ini"))
+    config.attributes["database_url"] = database_url
+    command.downgrade(config, "0048")
+
+    engine = create_engine(database_url)
+    try:
+        columns = {
+            column["name"]
+            for column in inspect(engine).get_columns("deep_analysis_workflow_nodes")
+        }
+        with engine.connect() as connection:
+            revision = MigrationContext.configure(connection).get_current_revision()
+    finally:
+        engine.dispose()
+    assert "estimated_cost_microusd" in columns
+    assert revision == "0048"
 
 
 def test_structured_plan_migration_round_trip(tmp_path: Path) -> None:
     database = tmp_path / "round-trip.db"
     database_url = f"sqlite:///{database.as_posix()}"
-    upgrade_database(database_url)
+    upgrade_database(database_url, "0051")
 
     config = Config(str(SERVER_ROOT / "alembic.ini"))
     config.attributes["database_url"] = database_url
@@ -118,13 +367,13 @@ def test_structured_plan_migration_round_trip(tmp_path: Path) -> None:
     finally:
         engine.dispose()
 
-    command.upgrade(config, "head")
+    command.upgrade(config, "0051")
     engine = create_engine(database_url)
     try:
         assert {"plans", "plan_steps"} <= set(inspect(engine).get_table_names())
         with engine.connect() as connection:
             assert (
-                MigrationContext.configure(connection).get_current_revision() == "0028"
+                MigrationContext.configure(connection).get_current_revision() == "0051"
             )
     finally:
         engine.dispose()
@@ -135,7 +384,7 @@ def test_context_compaction_memory_learning_migration_round_trip(
 ) -> None:
     database = tmp_path / "context-memory-round-trip.db"
     database_url = f"sqlite:///{database.as_posix()}"
-    upgrade_database(database_url)
+    upgrade_database(database_url, "0051")
 
     engine = create_engine(database_url)
     try:
@@ -164,7 +413,7 @@ def test_context_compaction_memory_learning_migration_round_trip(
     finally:
         engine.dispose()
 
-    command.upgrade(config, "head")
+    command.upgrade(config, "0051")
     engine = create_engine(database_url)
     try:
         inspector = inspect(engine)
@@ -174,7 +423,7 @@ def test_context_compaction_memory_learning_migration_round_trip(
         }
         with engine.connect() as connection:
             assert (
-                MigrationContext.configure(connection).get_current_revision() == "0028"
+                MigrationContext.configure(connection).get_current_revision() == "0051"
             )
     finally:
         engine.dispose()
@@ -206,7 +455,7 @@ def test_context_migration_adopts_legacy_create_all_table(tmp_path: Path) -> Non
         }
         with engine.connect() as connection:
             assert (
-                MigrationContext.configure(connection).get_current_revision() == "0028"
+                MigrationContext.configure(connection).get_current_revision() == "0065"
             )
     finally:
         engine.dispose()
@@ -236,7 +485,7 @@ def test_recent_migrations_adopt_tables_precreated_by_runtime_schema(
     try:
         with engine.connect() as connection:
             revision = MigrationContext.configure(connection).get_current_revision()
-        assert revision == "0028"
+        assert revision == "0065"
     finally:
         engine.dispose()
 

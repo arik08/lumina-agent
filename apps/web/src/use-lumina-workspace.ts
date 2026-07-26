@@ -3,6 +3,8 @@ import { api, ApiError } from "./api";
 import { imageAttachmentFileName } from "./attachment-file-name";
 import { createClientId } from "./client-id";
 import type {
+  AnalysisDepth,
+  AnswerLength,
   AuthSession,
   AttachmentSummary,
   ChatMessage,
@@ -23,6 +25,12 @@ import type {
   UserInputAnswer,
 } from "./api-types";
 import { isTerminalRunEvent, isTerminalRunStatus } from "./run-status";
+import {
+  advanceRunAssistantDraft,
+  appendRunAssistantDraft,
+  setRunAssistantDraft,
+} from "./run-assistant-draft-store";
+import { setRunArtifactProgress } from "./run-artifact-progress-store";
 
 export type StreamState = "idle" | "connecting" | "connected" | "reconnecting";
 export type RunControlAction = "pause" | "resume" | "cancel" | "retry_step" | "approve" | "reject";
@@ -30,13 +38,31 @@ export type PendingCommandAction = "steer_queued" | "cancel_command";
 
 export interface ConversationRuntime {
   turnSets: TurnSet[];
+  totalQuestionCount: number;
+  usageBeforeLoadedTurnSets: Record<string, unknown>;
   snapshots: Record<string, RunSnapshot>;
   lastSequences: Record<string, number>;
+  previousTurnSetCursor: string | null;
+  hasMoreTurnSetsBefore: boolean;
   loaded: boolean;
   loading: boolean;
   error: string | null;
   streamState: StreamState;
 }
+
+type CurrentSettingsPatch = Partial<Pick<
+  CurrentSettings,
+  | "theme"
+  | "conversationWidth"
+  | "conversationFontSize"
+  | "outputMode"
+  | "analysisDepth"
+  | "answerLength"
+  | "promptEnhancementInstruction"
+  | "clarificationMode"
+  | "execution"
+  | "modelCandidates"
+>>;
 
 const UNTITLED_CONVERSATION_TITLES = new Set(["제목 없음", "새 작업"]);
 const PROVISIONAL_TITLE_MAX_LENGTH = 60;
@@ -58,8 +84,12 @@ function provisionalConversationTitle(messageText: string) {
 function emptyRuntime(): ConversationRuntime {
   return {
     turnSets: [],
+    totalQuestionCount: 0,
+    usageBeforeLoadedTurnSets: {},
     snapshots: {},
     lastSequences: {},
+    previousTurnSetCursor: null,
+    hasMoreTurnSetsBefore: false,
     loaded: false,
     loading: false,
     error: null,
@@ -123,12 +153,28 @@ function apiMessage(error: unknown) {
   return "요청을 처리하지 못했습니다.";
 }
 
+async function getRunSnapshotsBestEffort(runIds: string[]) {
+  try {
+    return await api.runs.getSnapshots(runIds);
+  } catch (batchError) {
+    const settled = await Promise.allSettled(runIds.map((runId) => api.runs.getSnapshot(runId)));
+    const snapshots = settled.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+    if (snapshots.length === 0) throw batchError;
+    return snapshots;
+  }
+}
+
+const CONVERSATION_LIST_PAGE_SIZE = 20;
+const CACHED_CONVERSATION_RUNTIME_LIMIT = 8;
+
 export function useLuminaWorkspace() {
   const [authSession, setAuthSession] = useState<AuthSession | null | undefined>(undefined);
   const [bootError, setBootError] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [activeProjectId, setActiveProjectIdState] = useState<string | null>(null);
   const [conversations, setConversations] = useState<ConversationListItem[]>([]);
+  const [conversationNextCursor, setConversationNextCursor] = useState<string | null>(null);
+  const [loadingMoreConversations, setLoadingMoreConversations] = useState(false);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [settings, setSettings] = useState<CurrentSettings | null>(null);
   const [providers, setProviders] = useState<ProviderSummary[]>([]);
@@ -145,14 +191,20 @@ export function useLuminaWorkspace() {
 
   const activeProjectIdRef = useRef<string | null>(null);
   const conversationsRef = useRef<ConversationListItem[]>([]);
+  const conversationNextCursorRef = useRef<string | null>(null);
+  const loadingMoreConversationsRef = useRef(false);
   const settingsRef = useRef<CurrentSettings | null>(null);
   const runtimesRef = useRef<Record<string, ConversationRuntime>>({});
   const composerAttachmentsRef = useRef<AttachmentSummary[]>([]);
   const creatingConversationRef = useRef(false);
+  const newConversationPendingRef = useRef(false);
   const streamsRef = useRef(new Map<string, () => void>());
+  const loadingOlderTurnSetsRef = useRef(new Set<string>());
   const hydratingRef = useRef(new Set<string>());
   const reconcilingRunIdsRef = useRef(new Set<string>());
   const reconciliationTimersRef = useRef(new Set<number>());
+  const eventSequencesRef = useRef(new Map<string, number>());
+  const runtimeAccessRef = useRef(new Map<string, number>());
 
   useEffect(() => {
     activeProjectIdRef.current = activeProjectId;
@@ -161,11 +213,51 @@ export function useLuminaWorkspace() {
     conversationsRef.current = conversations;
   }, [conversations]);
   useEffect(() => {
+    conversationNextCursorRef.current = conversationNextCursor;
+  }, [conversationNextCursor]);
+  useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
   useEffect(() => {
     runtimesRef.current = runtimes;
   }, [runtimes]);
+  useEffect(() => {
+    if (!activeConversationId) return;
+    runtimeAccessRef.current.delete(activeConversationId);
+    runtimeAccessRef.current.set(activeConversationId, Date.now());
+    const current = runtimesRef.current;
+    const runtimeIds = Object.keys(current);
+    if (runtimeIds.length <= CACHED_CONVERSATION_RUNTIME_LIMIT) return;
+    const removable = runtimeIds
+      .filter((conversationId) => {
+        if (conversationId === activeConversationId) return false;
+        const runtime = current[conversationId];
+        return runtime.streamState === "idle"
+          && Object.values(runtime.snapshots).every((snapshot) => isTerminalRunStatus(snapshot.status));
+      })
+      .sort((left, right) => (
+        runtimeAccessRef.current.get(left) ?? 0
+      ) - (
+        runtimeAccessRef.current.get(right) ?? 0
+      ));
+    const evicted = removable.slice(
+      0,
+      Math.max(0, runtimeIds.length - CACHED_CONVERSATION_RUNTIME_LIMIT),
+    );
+    if (evicted.length === 0) return;
+    const evictedSet = new Set(evicted);
+    evicted.forEach((conversationId) => {
+      Object.keys(current[conversationId].snapshots).forEach((runId) => {
+        eventSequencesRef.current.delete(runId);
+        setRunAssistantDraft(runId, null);
+        setRunArtifactProgress(runId, null);
+      });
+      runtimeAccessRef.current.delete(conversationId);
+    });
+    setRuntimes((latest) => Object.fromEntries(
+      Object.entries(latest).filter(([conversationId]) => !evictedSet.has(conversationId)),
+    ));
+  }, [activeConversationId, runtimes]);
   useEffect(() => {
     composerAttachmentsRef.current = composerAttachments;
   }, [composerAttachments]);
@@ -201,12 +293,42 @@ export function useLuminaWorkspace() {
   const refreshConversations = useCallback(async (projectId?: string | null) => {
     const targetProjectId = projectId ?? activeProjectIdRef.current;
     if (!targetProjectId) return [];
-    const page = await api.conversations.list({ projectId: targetProjectId, limit: 60 });
+    const page = await api.conversations.list({ projectId: targetProjectId, limit: CONVERSATION_LIST_PAGE_SIZE });
     setConversations(page.items);
-    setActiveConversationId((current) =>
-      current && page.items.some((item) => item.id === current) ? current : (page.items[0]?.id ?? null),
-    );
+    conversationNextCursorRef.current = page.nextCursor;
+    setConversationNextCursor(page.nextCursor);
+    setActiveConversationId((current) => {
+      if (newConversationPendingRef.current) return null;
+      return current && page.items.some((item) => item.id === current) ? current : (page.items[0]?.id ?? null);
+    });
     return page.items;
+  }, []);
+
+  const loadMoreConversations = useCallback(async () => {
+    const projectId = activeProjectIdRef.current;
+    const cursor = conversationNextCursorRef.current;
+    if (!projectId || !cursor || loadingMoreConversationsRef.current) return;
+    loadingMoreConversationsRef.current = true;
+    setLoadingMoreConversations(true);
+    try {
+      const page = await api.conversations.list({
+        projectId,
+        cursor,
+        limit: CONVERSATION_LIST_PAGE_SIZE,
+      });
+      if (activeProjectIdRef.current !== projectId) return;
+      setConversations((current) => {
+        const currentIds = new Set(current.map((item) => item.id));
+        return [...current, ...page.items.filter((item) => !currentIds.has(item.id))];
+      });
+      conversationNextCursorRef.current = page.nextCursor;
+      setConversationNextCursor(page.nextCursor);
+    } catch (error) {
+      setNotice(apiMessage(error));
+    } finally {
+      loadingMoreConversationsRef.current = false;
+      setLoadingMoreConversations(false);
+    }
   }, []);
 
   const loadConversation = useCallback(async (conversationId: string, force = false) => {
@@ -223,6 +345,10 @@ export function useLuminaWorkspace() {
         [conversationId]: {
           ...(current[conversationId] ?? emptyRuntime()),
           turnSets: page.turnSets,
+          totalQuestionCount: page.totalQuestionCount ?? 0,
+          usageBeforeLoadedTurnSets: page.usageBeforePage,
+          previousTurnSetCursor: page.previousCursor,
+          hasMoreTurnSetsBefore: page.hasMoreBefore,
           loaded: true,
           loading: false,
           error: null,
@@ -230,8 +356,16 @@ export function useLuminaWorkspace() {
       }));
       const runIds = page.turnSets.flatMap((turnSet) => turnSet.runId ? [turnSet.runId] : []);
       if (runIds.length > 0) {
-        const snapshotResults = await Promise.allSettled(runIds.map((runId) => api.runs.getSnapshot(runId)));
-        const restoredSnapshots = snapshotResults.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+        const restoredSnapshots = page.runSnapshots
+          ?? await api.runs.getSnapshots(runIds).catch(() => []);
+        restoredSnapshots.forEach((snapshot) => {
+          setRunAssistantDraft(snapshot.runId, snapshot.assistantDraft);
+          setRunArtifactProgress(snapshot.runId, snapshot.artifactProgress ?? null);
+          eventSequencesRef.current.set(
+            snapshot.runId,
+            Math.max(eventSequencesRef.current.get(snapshot.runId) ?? 0, snapshot.lastSequence),
+          );
+        });
         setRuntimes((current) => {
           const runtime = current[conversationId] ?? emptyRuntime();
           const snapshots = { ...runtime.snapshots };
@@ -256,10 +390,124 @@ export function useLuminaWorkspace() {
     }
   }, []);
 
+  const loadOlderConversationTurnSets = useCallback(async (
+    conversationId: string,
+    throughQuestionIndex?: number,
+  ) => {
+    const runtime = runtimesRef.current[conversationId];
+    if (
+      !runtime?.loaded
+      || !runtime.hasMoreTurnSetsBefore
+      || !runtime.previousTurnSetCursor
+      || loadingOlderTurnSetsRef.current.has(conversationId)
+    ) return false;
+
+    loadingOlderTurnSetsRef.current.add(conversationId);
+    try {
+      const requestedQuestionIndex = typeof throughQuestionIndex === "number"
+        ? Math.max(0, Math.floor(throughQuestionIndex))
+        : null;
+      const pageSize = requestedQuestionIndex === null ? 3 : 20;
+      const loadedQuestionCount = runtime.turnSets.reduce(
+        (count, turnSet) => count + turnSet.messages.filter(
+          (message) => message.role === "user" && Boolean(message.text.trim()),
+        ).length,
+        0,
+      );
+      let unloadedQuestionCount = Math.max(0, runtime.totalQuestionCount - loadedQuestionCount);
+      let cursor: string | null = runtime.previousTurnSetCursor;
+      let hasMoreBefore: boolean = runtime.hasMoreTurnSetsBefore;
+      let previousCursor: string | null = runtime.previousTurnSetCursor;
+      let totalQuestionCount = runtime.totalQuestionCount;
+      let usageBeforeLoadedTurnSets = runtime.usageBeforeLoadedTurnSets;
+      let fetchedTurnSets: TurnSet[] = [];
+      let fetchedSnapshots: RunSnapshot[] | null = [];
+
+      do {
+        const page = await api.conversations.getTurnSets(conversationId, cursor, pageSize);
+        fetchedTurnSets = [...page.turnSets, ...fetchedTurnSets];
+        fetchedSnapshots = page.runSnapshots && fetchedSnapshots
+          ? [...page.runSnapshots, ...fetchedSnapshots]
+          : null;
+        unloadedQuestionCount = Math.max(
+          0,
+          unloadedQuestionCount - page.turnSets.reduce(
+            (count, turnSet) => count + turnSet.messages.filter(
+              (message) => message.role === "user" && Boolean(message.text.trim()),
+            ).length,
+            0,
+          ),
+        );
+        previousCursor = page.previousCursor;
+        hasMoreBefore = page.hasMoreBefore;
+        totalQuestionCount = page.totalQuestionCount ?? totalQuestionCount;
+        usageBeforeLoadedTurnSets = page.usageBeforePage;
+        cursor = page.previousCursor;
+      } while (
+        requestedQuestionIndex !== null
+        && requestedQuestionIndex < unloadedQuestionCount
+        && hasMoreBefore
+        && cursor
+      );
+
+      const restoredSnapshots = fetchedSnapshots
+        ?? await api.runs.getSnapshots(
+          fetchedTurnSets.flatMap((turnSet) => turnSet.runId ? [turnSet.runId] : []),
+        ).catch(() => []);
+      restoredSnapshots.forEach((snapshot) => {
+        setRunAssistantDraft(snapshot.runId, snapshot.assistantDraft);
+        setRunArtifactProgress(snapshot.runId, snapshot.artifactProgress ?? null);
+        eventSequencesRef.current.set(
+          snapshot.runId,
+          Math.max(eventSequencesRef.current.get(snapshot.runId) ?? 0, snapshot.lastSequence),
+        );
+      });
+      const knownTurnSetIds = new Set(runtime.turnSets.map((turnSet) => turnSet.id));
+      const added = fetchedTurnSets.some((turnSet) => !knownTurnSetIds.has(turnSet.id));
+      setRuntimes((current) => {
+        const currentRuntime = current[conversationId] ?? emptyRuntime();
+        const currentTurnSetIds = new Set(currentRuntime.turnSets.map((turnSet) => turnSet.id));
+        const olderTurnSets = fetchedTurnSets.filter((turnSet) => !currentTurnSetIds.has(turnSet.id));
+        const snapshots = { ...currentRuntime.snapshots };
+        const lastSequences = { ...currentRuntime.lastSequences };
+        restoredSnapshots.forEach((snapshot) => {
+          const existing = snapshots[snapshot.runId];
+          if (!existing || snapshot.lastSequence >= existing.lastSequence) snapshots[snapshot.runId] = snapshot;
+          lastSequences[snapshot.runId] = Math.max(lastSequences[snapshot.runId] ?? 0, snapshot.lastSequence);
+        });
+        return {
+          ...current,
+          [conversationId]: {
+            ...currentRuntime,
+            turnSets: [...olderTurnSets, ...currentRuntime.turnSets],
+            totalQuestionCount,
+            usageBeforeLoadedTurnSets,
+            snapshots,
+            lastSequences,
+            previousTurnSetCursor: previousCursor,
+            hasMoreTurnSetsBefore: hasMoreBefore,
+          },
+        };
+      });
+      return added;
+    } catch (error) {
+      setNotice(apiMessage(error));
+      return false;
+    } finally {
+      loadingOlderTurnSetsRef.current.delete(conversationId);
+    }
+  }, []);
+
   const mergeRunMutation = useCallback((mutation: RunMutationResponse) => {
     const { run, message } = mutation;
+    setRunAssistantDraft(run.runId, run.assistantDraft);
+    setRunArtifactProgress(run.runId, run.artifactProgress ?? null);
+    eventSequencesRef.current.set(run.runId, run.lastSequence);
     setRuntimes((current) => {
       const runtime = current[run.conversationId] ?? emptyRuntime();
+      const addsQuestion = message?.role === "user"
+        && Boolean(message.text.trim())
+        && !runtime.turnSets.some((turnSet) => turnSet.messages.some((item) => item.id === message.id));
       const turnSets = ensureTurnSet(runtime, run.runId, message).map((turnSet) => ({
         ...turnSet,
         messages: turnSet.messages.filter((item) => !(
@@ -270,6 +518,7 @@ export function useLuminaWorkspace() {
         ...current,
         [run.conversationId]: {
           ...runtime,
+          totalQuestionCount: runtime.totalQuestionCount + (addsQuestion ? 1 : 0),
           turnSets: turnSets.map((turnSet) =>
             turnSet.runId === run.runId
               ? {
@@ -303,6 +552,36 @@ export function useLuminaWorkspace() {
   }, []);
 
   const applyRunEvent = useCallback((event: RunEvent) => {
+    const knownSequence = eventSequencesRef.current.get(event.runId)
+      ?? runtimesRef.current[event.conversationId]?.lastSequences[event.runId]
+      ?? 0;
+    if (event.sequence <= knownSequence) return;
+    eventSequencesRef.current.set(event.runId, event.sequence);
+    if (event.type === "assistant_text_delta") {
+      // The broker's transient full draft drives live text. Durable deltas are
+      // retained only for replay; snapshots restore the authoritative draft.
+      return;
+    }
+    if (event.type === "assistant_draft_rewound") {
+      setRunAssistantDraft(
+        event.runId,
+        event.payload.text
+          ? { messageId: event.payload.messageId, text: event.payload.text }
+          : null,
+      );
+    }
+    if (event.type === "artifact_progress") {
+      setRunArtifactProgress(event.runId, event.payload);
+    } else if (
+      event.type === "artifact_created"
+      || isTerminalRunEvent(event)
+      || (event.type === "output_intent_classified" && event.payload.fileCreationRequested === false)
+    ) {
+      setRunArtifactProgress(event.runId, null);
+    }
+    if (event.type === "assistant_turn_completed" || isTerminalRunEvent(event)) {
+      setRunAssistantDraft(event.runId, null);
+    }
     setRuntimes((current) => {
       const runtime = current[event.conversationId] ?? emptyRuntime();
       const previousSequence = runtime.lastSequences[event.runId] ?? 0;
@@ -315,12 +594,6 @@ export function useLuminaWorkspace() {
 
       if (event.type === "run_started" || event.type === "run_status_changed") {
         nextSnapshot.status = event.payload.status;
-      } else if (event.type === "assistant_text_delta") {
-        const previousDraft = nextSnapshot.assistantDraft;
-        nextSnapshot.assistantDraft = {
-          messageId: event.payload.messageId,
-          text: `${previousDraft?.text ?? ""}${event.payload.delta}`,
-        };
       } else if (event.type === "progress_summary") {
         nextSnapshot.activities = [
           ...nextSnapshot.activities,
@@ -353,9 +626,21 @@ export function useLuminaWorkspace() {
       } else if (event.type === "work_plan_updated") {
         nextSnapshot.workPlan = event.payload.steps;
       } else if (event.type === "plan_step_changed" && nextSnapshot.plan) {
+        const previousStep = nextSnapshot.plan.steps.find((step) => step.id === event.payload.step.id);
+        const changedSubtasks = event.payload.subtasks ?? event.payload.step.subtasks;
+        const nextSubtasks = changedSubtasks
+          ? changedSubtasks.reduce(
+            (subtasks, subtask) => upsertById(subtasks, subtask),
+            previousStep?.subtasks ?? [],
+          )
+          : previousStep?.subtasks;
         nextSnapshot.plan = {
           ...nextSnapshot.plan,
-          steps: upsertById(nextSnapshot.plan.steps, event.payload.step),
+          steps: upsertById(nextSnapshot.plan.steps, {
+            ...previousStep,
+            ...event.payload.step,
+            ...(nextSubtasks ? { subtasks: nextSubtasks } : {}),
+          }),
         };
       } else if (event.type === "tool_started" || event.type === "tool_progress" || event.type === "tool_completed") {
         nextSnapshot.toolExecutions = upsertTool(nextSnapshot.toolExecutions, event.payload.execution);
@@ -415,7 +700,16 @@ export function useLuminaWorkspace() {
       } else if (isTerminalRunEvent(event)) {
         nextSnapshot.status = event.payload.status;
         nextSnapshot.finishedAt = event.payload.finishedAt;
+        nextSnapshot.assistantDraft = null;
         nextSnapshot.artifactProgress = null;
+      } else if (event.type === "assistant_draft_rewound") {
+        nextSnapshot.assistantDraft = event.payload.text
+          ? { messageId: event.payload.messageId, text: event.payload.text }
+          : null;
+        nextSnapshot.assistantDraftRevision = Math.max(
+          nextSnapshot.assistantDraftRevision ?? 0,
+          event.payload.revision,
+        );
       } else if (
         event.type === "steer_received"
         || event.type === "steer_waiting_safe_boundary"
@@ -461,6 +755,7 @@ export function useLuminaWorkspace() {
         ? event.payload.status
         : null;
     const titleUpdate = event.type === "conversation_title_updated" ? event.payload : null;
+    if (!status && !titleUpdate) return;
     setConversations((items) => items.map((item) =>
       item.id === event.conversationId
         ? {
@@ -477,8 +772,11 @@ export function useLuminaWorkspace() {
 
     const terminal = isTerminalRunEvent(event);
     if (terminal) {
+      const expectedQueuedPromotion = (
+        runtimesRef.current[event.conversationId]?.snapshots[event.runId]?.pendingCommands ?? []
+      ).some((command) => command.type === "queue_next" && command.status === "queued");
       void loadConversation(event.conversationId, true);
-      const retryDelays = [40, 220, 650];
+      const retryDelays = expectedQueuedPromotion ? [60, 260, 760] : [100];
       const reconcile = (attempt: number) => {
         const timer = window.setTimeout(() => {
           reconciliationTimersRef.current.delete(timer);
@@ -528,6 +826,22 @@ export function useLuminaWorkspace() {
 
   const mergeAuthoritativeRunSnapshot = useCallback((snapshot: RunSnapshot) => {
     const terminal = isTerminalRunStatus(snapshot.status);
+    const knownEventSequence = eventSequencesRef.current.get(snapshot.runId) ?? 0;
+    const existingSnapshot = runtimesRef.current[snapshot.conversationId]?.snapshots[snapshot.runId];
+    const hasNewerDraftRevision = (snapshot.assistantDraftRevision ?? 0)
+      > (existingSnapshot?.assistantDraftRevision ?? 0);
+    if (snapshot.lastSequence >= knownEventSequence) {
+      if (hasNewerDraftRevision || terminal || !snapshot.assistantDraft) {
+        setRunAssistantDraft(snapshot.runId, snapshot.assistantDraft);
+      } else {
+        advanceRunAssistantDraft(snapshot.runId, snapshot.assistantDraft);
+      }
+      setRunArtifactProgress(snapshot.runId, snapshot.artifactProgress ?? null);
+    }
+    eventSequencesRef.current.set(
+      snapshot.runId,
+      Math.max(knownEventSequence, snapshot.lastSequence),
+    );
     setRuntimes((current) => {
       const runtime = current[snapshot.conversationId] ?? emptyRuntime();
       const existing = runtime.snapshots[snapshot.runId];
@@ -581,18 +895,26 @@ export function useLuminaWorkspace() {
     }
   }, []);
 
-  const reconcileRunSnapshot = useCallback(async (runId: string) => {
-    if (reconcilingRunIdsRef.current.has(runId)) return;
-    reconcilingRunIdsRef.current.add(runId);
+  const reconcileRunSnapshots = useCallback(async (runIds: Iterable<string>) => {
+    const pendingRunIds = [...new Set(runIds)].filter(
+      (runId) => !reconcilingRunIdsRef.current.has(runId),
+    );
+    if (pendingRunIds.length === 0) return;
+    pendingRunIds.forEach((runId) => reconcilingRunIdsRef.current.add(runId));
     try {
-      mergeAuthoritativeRunSnapshot(await api.runs.getSnapshot(runId));
+      const snapshots = await getRunSnapshotsBestEffort(pendingRunIds);
+      snapshots.forEach(mergeAuthoritativeRunSnapshot);
     } catch {
       // The SSE reconnect path keeps retrying. A later interval or focus event
       // will reconcile the authoritative state when the Backend is reachable.
     } finally {
-      reconcilingRunIdsRef.current.delete(runId);
+      pendingRunIds.forEach((runId) => reconcilingRunIdsRef.current.delete(runId));
     }
   }, [mergeAuthoritativeRunSnapshot]);
+
+  const reconcileRunSnapshot = useCallback(async (runId: string) => {
+    await reconcileRunSnapshots([runId]);
+  }, [reconcileRunSnapshots]);
 
   const openSnapshotStream = useCallback((snapshot: RunSnapshot) => {
     if (isTerminalRunStatus(snapshot.status) || streamsRef.current.has(snapshot.runId)) return;
@@ -612,6 +934,11 @@ export function useLuminaWorkspace() {
         },
       })),
       onEvent: applyRunEvent,
+      onAssistantDraft: (runId, draft, append) => {
+        if (append) appendRunAssistantDraft(runId, draft.messageId, draft.text);
+        else setRunAssistantDraft(runId, draft);
+      },
+      onArtifactProgress: setRunArtifactProgress,
       onError: () => {
         setRuntimes((current) => ({
           ...current,
@@ -626,40 +953,31 @@ export function useLuminaWorkspace() {
     streamsRef.current.set(snapshot.runId, close);
   }, [applyRunEvent, reconcileRunSnapshot]);
 
-  const hydrateRun = useCallback(async (runId: string, conversationId: string) => {
-    if (streamsRef.current.has(runId) || hydratingRef.current.has(runId)) return;
-    hydratingRef.current.add(runId);
+  const hydrateRuns = useCallback(async (runIds: Iterable<string>) => {
+    const pendingRunIds = [...new Set(runIds)].filter(
+      (runId) => !streamsRef.current.has(runId) && !hydratingRef.current.has(runId),
+    );
+    if (pendingRunIds.length === 0) return;
+    pendingRunIds.forEach((runId) => hydratingRef.current.add(runId));
     try {
-      const snapshot = await api.runs.getSnapshot(runId);
-      setRuntimes((current) => {
-        const runtime = current[conversationId] ?? emptyRuntime();
-        return {
-          ...current,
-          [conversationId]: {
-            ...runtime,
-            turnSets: ensureTurnSet(runtime, runId).map((turnSet) =>
-              turnSet.runId === runId
-                ? { ...turnSet, plan: snapshot.plan, toolExecutions: snapshot.toolExecutions, artifacts: snapshot.artifacts }
-                : turnSet,
-            ),
-            snapshots: { ...runtime.snapshots, [runId]: snapshot },
-            lastSequences: { ...runtime.lastSequences, [runId]: snapshot.lastSequence },
-          },
-        };
+      const snapshots = await getRunSnapshotsBestEffort(pendingRunIds);
+      snapshots.forEach((snapshot) => {
+        mergeAuthoritativeRunSnapshot(snapshot);
+        openSnapshotStream(snapshot);
       });
-      openSnapshotStream(snapshot);
     } catch (error) {
       setNotice(apiMessage(error));
     } finally {
-      hydratingRef.current.delete(runId);
+      pendingRunIds.forEach((runId) => hydratingRef.current.delete(runId));
     }
-  }, [openSnapshotStream]);
+  }, [mergeAuthoritativeRunSnapshot, openSnapshotStream]);
 
   useEffect(() => {
-    conversations.forEach((conversation) => {
-      if (conversation.activeRunId) void hydrateRun(conversation.activeRunId, conversation.id);
-    });
-  }, [conversations, hydrateRun]);
+    const runIds = conversations.flatMap(
+      (conversation) => conversation.activeRunId ? [conversation.activeRunId] : [],
+    );
+    void hydrateRuns(runIds);
+  }, [conversations, hydrateRuns]);
 
   useEffect(() => {
     if (!authSession) return;
@@ -673,20 +991,20 @@ export function useLuminaWorkspace() {
       conversationsRef.current.forEach((conversation) => {
         if (conversation.activeRunId) runIds.add(conversation.activeRunId);
       });
-      runIds.forEach((runId) => void reconcileRunSnapshot(runId));
+      void reconcileRunSnapshots(runIds);
     };
-    const onVisibilityChange = () => {
+    const reconcileActiveRunsWhenVisible = () => {
       if (document.visibilityState === "visible") reconcileActiveRuns();
     };
-    const interval = window.setInterval(reconcileActiveRuns, ACTIVE_RUN_RECONCILIATION_INTERVAL_MS);
-    window.addEventListener("focus", reconcileActiveRuns);
-    document.addEventListener("visibilitychange", onVisibilityChange);
+    const interval = window.setInterval(reconcileActiveRunsWhenVisible, ACTIVE_RUN_RECONCILIATION_INTERVAL_MS);
+    window.addEventListener("focus", reconcileActiveRunsWhenVisible);
+    document.addEventListener("visibilitychange", reconcileActiveRunsWhenVisible);
     return () => {
       window.clearInterval(interval);
-      window.removeEventListener("focus", reconcileActiveRuns);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("focus", reconcileActiveRunsWhenVisible);
+      document.removeEventListener("visibilitychange", reconcileActiveRunsWhenVisible);
     };
-  }, [authSession, reconcileRunSnapshot]);
+  }, [authSession, reconcileRunSnapshots]);
 
   useEffect(() => {
     if (!activeConversationId) return;
@@ -718,21 +1036,30 @@ export function useLuminaWorkspace() {
   useEffect(() => {
     if (!authSession || !activeProjectId) return;
     const controller = new AbortController();
+    conversationNextCursorRef.current = null;
+    setConversationNextCursor(null);
     setLoadingWorkspace(true);
     Promise.all([
       api.settings.getCurrent(activeProjectId, controller.signal),
-      api.providers.list(activeProjectId, controller.signal),
-      api.conversations.list({ projectId: activeProjectId, limit: 60 }, controller.signal),
+      api.providers.getCatalog(activeProjectId, controller.signal),
+      api.conversations.list({ projectId: activeProjectId, limit: CONVERSATION_LIST_PAGE_SIZE }, controller.signal),
     ])
-      .then(([currentSettings, providerItems, conversationPage]) => {
+      .then(([currentSettings, providerCatalog, conversationPage]) => {
         setSettings(currentSettings);
-        setProviders(providerItems);
-        setConversations(conversationPage.items);
-        setActiveConversationId((current) =>
-          current && conversationPage.items.some((item) => item.id === current)
-            ? current
-            : (conversationPage.items[0]?.id ?? null),
+        setProviders(providerCatalog.providers);
+        setProviderModels(providerCatalog.modelsByProvider);
+        setModels(
+          providerCatalog.modelsByProvider[currentSettings.execution.providerId] ?? [],
         );
+        setConversations(conversationPage.items);
+        conversationNextCursorRef.current = conversationPage.nextCursor;
+        setConversationNextCursor(conversationPage.nextCursor);
+        setActiveConversationId((current) => {
+          if (newConversationPendingRef.current) return null;
+          return current && conversationPage.items.some((item) => item.id === current)
+            ? current
+            : (conversationPage.items[0]?.id ?? null);
+        });
       })
       .catch((error) => {
         if (!controller.signal.aborted) setNotice(apiMessage(error));
@@ -746,64 +1073,24 @@ export function useLuminaWorkspace() {
   useEffect(() => {
     const providerId = settings?.execution.providerId;
     if (!providerId) return;
-    const controller = new AbortController();
-    api.providers.listModels(providerId, activeProjectId ?? undefined, controller.signal)
-      .then(setModels)
-      .catch((error) => {
-        if (!controller.signal.aborted) setNotice(apiMessage(error));
-      });
-    return () => controller.abort();
-  }, [activeProjectId, settings?.execution.providerId]);
-
-  useEffect(() => {
-    if (!activeProjectId || providers.length === 0) return;
-    const controller = new AbortController();
-    const providerIds = providers
-      .filter((provider) => provider.id !== "mock")
-      .map((provider) => provider.id);
-    Promise.all(
-      providerIds.map(async (providerId) => [
-        providerId,
-        await api.providers.listModels(providerId, activeProjectId, controller.signal),
-      ] as const),
-    )
-      .then((entries) => setProviderModels(Object.fromEntries(entries)))
-      .catch((error) => {
-        if (!controller.signal.aborted) setNotice(apiMessage(error));
-      });
-    return () => controller.abort();
-  }, [activeProjectId, providers]);
+    setModels(providerModels[providerId] ?? []);
+  }, [providerModels, settings?.execution.providerId]);
 
   const refreshProviderCatalog = useCallback(async () => {
     const projectId = activeProjectIdRef.current;
     if (!projectId) return;
     try {
-      const providerItems = await api.providers.list(projectId);
-      const entries = await Promise.all(
-        providerItems
-          .filter((provider) => provider.id !== "mock")
-          .map(async (provider) => [
-            provider.id,
-            await api.providers.listModels(provider.id, projectId),
-          ] as const),
-      );
-      const nextProviderModels = Object.fromEntries(entries);
-      setProviders(providerItems);
-      setProviderModels(nextProviderModels);
+      const catalog = await api.providers.getCatalog(projectId);
+      setProviders(catalog.providers);
+      setProviderModels(catalog.modelsByProvider);
       const selectedProviderId = settingsRef.current?.execution.providerId;
-      if (selectedProviderId) setModels(nextProviderModels[selectedProviderId] ?? []);
+      if (selectedProviderId) setModels(catalog.modelsByProvider[selectedProviderId] ?? []);
     } catch (error) {
       setNotice(apiMessage(error));
     }
   }, []);
 
-  const persistSettings = useCallback(async (patch:
-    Pick<CurrentSettings, "theme">
-    | Pick<CurrentSettings, "outputMode">
-    | Pick<CurrentSettings, "clarificationMode">
-    | { execution: CurrentSettings["execution"] }
-    | { modelCandidates: CurrentSettings["modelCandidates"] }
-  ) => {
+  const persistSettings = useCallback(async (patch: CurrentSettingsPatch) => {
     const current = settingsRef.current;
     if (!current) return null;
     try {
@@ -899,6 +1186,39 @@ export function useLuminaWorkspace() {
     await persistSettings({ outputMode });
   }, [persistSettings]);
 
+  const selectAnalysisDepth = useCallback(async (analysisDepth: AnalysisDepth) => {
+    await persistSettings({ analysisDepth });
+  }, [persistSettings]);
+
+  const selectAnswerLength = useCallback(async (answerLength: AnswerLength) => {
+    await persistSettings({ answerLength });
+  }, [persistSettings]);
+
+  const selectPromptEnhancementInstruction = useCallback(async (
+    promptEnhancementInstruction: string,
+  ) => persistSettings({ promptEnhancementInstruction }), [persistSettings]);
+
+  const resetWarningComposerSettings = useCallback(async () => {
+    const current = settingsRef.current;
+    if (!current) return;
+    const patch: CurrentSettingsPatch = {};
+    if (current.outputMode === "file") patch.outputMode = "auto";
+    if (current.analysisDepth === "deep") patch.analysisDepth = "auto";
+    if (current.answerLength === "detailed") patch.answerLength = "auto";
+    if (current.execution.effortId === "high") {
+      patch.execution = { ...current.execution, effortId: "auto" };
+    }
+    if (Object.keys(patch).length > 0) await persistSettings(patch);
+  }, [persistSettings]);
+
+  const selectConversationWidth = useCallback(async (conversationWidth: number) => {
+    await persistSettings({ conversationWidth });
+  }, [persistSettings]);
+
+  const selectConversationFontSize = useCallback(async (conversationFontSize: number) => {
+    await persistSettings({ conversationFontSize });
+  }, [persistSettings]);
+
   const selectClarificationMode = useCallback(async (
     clarificationMode: CurrentSettings["clarificationMode"],
   ) => persistSettings({ clarificationMode }), [persistSettings]);
@@ -910,6 +1230,7 @@ export function useLuminaWorkspace() {
   }, [persistSettings]);
 
   const setActiveProjectId = useCallback((projectId: string) => {
+    newConversationPendingRef.current = false;
     setActiveProjectIdState(projectId);
     setActiveConversationId(null);
   }, []);
@@ -971,6 +1292,7 @@ export function useLuminaWorkspace() {
     if (!projectId) return null;
     const mostRecent = conversationsRef.current.find((conversation) => conversation.projectId === projectId);
     if (mostRecent && isUntouchedConversation(mostRecent)) {
+      newConversationPendingRef.current = false;
       setActiveConversationId(mostRecent.id);
       return mostRecent;
     }
@@ -981,6 +1303,7 @@ export function useLuminaWorkspace() {
       const nextConversations = [conversation, ...conversationsRef.current];
       conversationsRef.current = nextConversations;
       setConversations(nextConversations);
+      newConversationPendingRef.current = false;
       setActiveConversationId(conversation.id);
       setRuntimes((current) => ({ ...current, [conversation.id]: { ...emptyRuntime(), loaded: true } }));
       return conversation;
@@ -993,14 +1316,20 @@ export function useLuminaWorkspace() {
   }, []);
 
   const startNewConversation = useCallback(() => {
+    newConversationPendingRef.current = true;
     setActiveConversationId(null);
   }, []);
 
   const openConversation = useCallback((conversation: ConversationListItem) => {
+    newConversationPendingRef.current = false;
     if (conversation.projectId !== activeProjectIdRef.current) {
       setActiveProjectIdState(conversation.projectId);
     }
-    setConversations((items) => [conversation, ...items.filter((item) => item.id !== conversation.id)]);
+    setConversations((items) => [...items.filter((item) => item.id !== conversation.id), conversation].sort((left, right) => {
+      if (left.isFavorite !== right.isFavorite) return left.isFavorite ? -1 : 1;
+      const activityOrder = right.updatedAt.localeCompare(left.updatedAt);
+      return activityOrder || left.id.localeCompare(right.id);
+    }));
     setActiveConversationId(conversation.id);
   }, []);
 
@@ -1142,7 +1471,7 @@ export function useLuminaWorkspace() {
 
   const uploadFiles = useCallback(async (files: File[], source = "upload") => {
     if (!files.length) return [];
-    let conversationId = activeConversationId;
+    let conversationId = newConversationPendingRef.current ? null : activeConversationId;
     if (!conversationId) {
       const created = await createConversation();
       conversationId = created?.id ?? null;
@@ -1200,10 +1529,12 @@ export function useLuminaWorkspace() {
     queueNext: boolean,
     promptReferences: PromptReference[] = [],
     targetOutputTokens?: number,
+    analysisDepth: AnalysisDepth = "auto",
+    answerLength: AnswerLength = "auto",
   ) => {
     const messageText = text.trim();
     if (!messageText || sending) return null;
-    let conversationId = activeConversationId;
+    let conversationId = newConversationPendingRef.current ? null : activeConversationId;
     let createdConversation: ConversationListItem | null = null;
     if (!conversationId) {
       const created = await createConversation();
@@ -1237,6 +1568,8 @@ export function useLuminaWorkspace() {
       attachmentIds,
       promptReferences,
       outputMode: currentSettings.outputMode,
+      analysisDepth,
+      answerLength,
       ...(currentSettings.outputMode !== "chat" && targetOutputTokens
         ? { targetOutputTokens }
         : {}),
@@ -1404,6 +1737,9 @@ export function useLuminaWorkspace() {
     updateProjectDetails,
     archiveProject,
     conversations,
+    hasMoreConversations: conversationNextCursor !== null,
+    loadingMoreConversations,
+    loadMoreConversations,
     activeConversation,
     activeConversationId,
     selectConversation: setActiveConversationId,
@@ -1422,6 +1758,7 @@ export function useLuminaWorkspace() {
     activeRuntime,
     activeRun,
     loadConversation,
+    loadOlderConversationTurnSets,
     settings,
     providers,
     models,
@@ -1435,6 +1772,12 @@ export function useLuminaWorkspace() {
     setModelCandidates,
     selectEffort,
     selectOutputMode,
+    selectAnalysisDepth,
+    selectAnswerLength,
+    selectPromptEnhancementInstruction,
+    resetWarningComposerSettings,
+    selectConversationWidth,
+    selectConversationFontSize,
     selectClarificationMode,
     toggleTheme,
     sendMessage,

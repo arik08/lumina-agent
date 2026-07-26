@@ -1,0 +1,4 @@
+interface:
+  display_name: "Idea Orchestrator"
+  short_description: "문제에 맞는 발상법을 조합해 실행 가능한 아이디어를 만듭니다"
+  default_prompt: "Use $idea-orchestrator to generate and rank practical ideas for this problem."

@@ -12,6 +12,6 @@ test("composer stays compact for a single-line draft and grows only when needed"
   assert.match(app, /<textarea[\s\S]*?rows=\{1\}/);
   assert.doesNotMatch(composerRule, /min-height/);
   assert.match(composerRule, /padding:\s*var\(--space-1\) var\(--space-3\) var\(--space-2\)/);
-  assert.match(styles, /\.composer textarea \{[^}]*min-height:\s*var\(--control-height-sm\);[^}]*max-height:\s*120px;[^}]*field-sizing:\s*content;/);
+  assert.match(styles, /\.composer textarea \{[^}]*min-height:\s*var\(--control-height-sm\);[^}]*max-height:\s*180px;[^}]*field-sizing:\s*content;/);
   assert.match(styles, /\.composer textarea \{[^}]*padding:\s*var\(--space-2\);/);
 });

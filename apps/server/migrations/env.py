@@ -6,12 +6,13 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from lumina.config import get_settings
+from lumina.deep_analysis import models as _deep_analysis_models  # noqa: F401
 from lumina.models import Base
 
 
 config = context.config
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 database_url = config.attributes.get("database_url") or get_settings().database_url
 config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))

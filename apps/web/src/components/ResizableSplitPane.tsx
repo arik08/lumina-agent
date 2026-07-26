@@ -8,6 +8,7 @@ interface ResizableSplitPaneProps {
   defaultWidth?: number;
   minimumWidth?: number;
   maximumRatio?: number;
+  primarySide?: "left" | "right";
 }
 
 function storedWidth(storageKey: string, fallback: number) {
@@ -27,6 +28,7 @@ export function ResizableSplitPane({
   defaultWidth = 300,
   minimumWidth = 220,
   maximumRatio = 0.58,
+  primarySide = "left",
 }: ResizableSplitPaneProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [primaryWidth, setPrimaryWidth] = useState(() => storedWidth(storageKey, defaultWidth));
@@ -55,12 +57,15 @@ export function ResizableSplitPane({
   const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!rootRef.current) return;
     event.preventDefault();
-    const left = rootRef.current.getBoundingClientRect().left;
+    const bounds = rootRef.current.getBoundingClientRect();
     const handle = event.currentTarget;
     handle.setPointerCapture(event.pointerId);
-    const move = (pointerEvent: PointerEvent) => setPrimaryWidth(clampWidth(pointerEvent.clientX - left));
+    const widthAt = (clientX: number) => (
+      primarySide === "right" ? bounds.right - clientX : clientX - bounds.left
+    );
+    const move = (pointerEvent: PointerEvent) => setPrimaryWidth(clampWidth(widthAt(pointerEvent.clientX)));
     const finish = (pointerEvent: PointerEvent) => {
-      const nextWidth = clampWidth(pointerEvent.clientX - left);
+      const nextWidth = clampWidth(widthAt(pointerEvent.clientX));
       setPrimaryWidth(nextWidth);
       remember(nextWidth);
       handle.removeEventListener("pointermove", move);
@@ -75,7 +80,8 @@ export function ResizableSplitPane({
   const resizeWithKeyboard = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     event.preventDefault();
-    const nextWidth = clampWidth(primaryWidth + (event.key === "ArrowRight" ? 16 : -16));
+    const boundaryDelta = event.key === "ArrowRight" ? 16 : -16;
+    const nextWidth = clampWidth(primaryWidth + (primarySide === "right" ? -boundaryDelta : boundaryDelta));
     setPrimaryWidth(nextWidth);
     remember(nextWidth);
   };
@@ -83,7 +89,7 @@ export function ResizableSplitPane({
   return (
     <div
       ref={rootRef}
-      className={`split-feature resizable-split ${className}`.trim()}
+      className={`split-feature resizable-split is-primary-${primarySide} ${className}`.trim()}
       style={{ "--split-primary-width": `${primaryWidth}px` } as CSSProperties}
     >
       {panes[0]}

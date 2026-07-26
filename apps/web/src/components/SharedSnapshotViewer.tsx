@@ -48,6 +48,8 @@ export function SharedSnapshotViewer({
   const [snapshot, setSnapshot] = useState<SharedConversationSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [invalid, setInvalid] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadRevision, setLoadRevision] = useState(0);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [sharedArtifactBlob, setSharedArtifactBlob] = useState<Blob | null>(null);
   const [sharedArtifactFileName, setSharedArtifactFileName] = useState("");
@@ -67,16 +69,22 @@ export function SharedSnapshotViewer({
     const controller = new AbortController();
     setLoading(true);
     setInvalid(false);
+    setLoadError(null);
     api.sharing.get(token, controller.signal)
       .then(setSnapshot)
       .catch((error) => {
-        if (!controller.signal.aborted) setInvalid(error instanceof ApiError && error.status === 404);
+        if (controller.signal.aborted) return;
+        if (error instanceof ApiError && error.status === 404) {
+          setInvalid(true);
+          return;
+        }
+        setLoadError(error instanceof Error ? error.message : "공유 대화를 불러오지 못했습니다.");
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [token]);
+  }, [loadRevision, token]);
 
   const sharedArtifact = artifactId
     ? snapshot?.artifacts.find((artifact) => artifact.id === artifactId) ?? null
@@ -176,13 +184,23 @@ export function SharedSnapshotViewer({
   if (loading) {
     return <main className={`shared-viewer-state ${theme === "dark" ? "theme-dark" : ""}`}><LoaderCircle className="is-running" size={19} /><span>공유 snapshot을 확인하고 있습니다.</span></main>;
   }
-  if (invalid || !snapshot) {
+  if (invalid) {
     return (
       <main className={`shared-viewer-state is-error ${theme === "dark" ? "theme-dark" : ""}`}>
         <AlertCircle size={22} />
         <h1>공유된 대화를 열 수 없습니다</h1>
         <p>주소가 잘못되었거나, 공유가 취소 또는 만료되었을 수 있습니다.</p>
         <button type="button" onClick={() => { window.location.href = "/"; }}><ArrowLeft size={15} /> Lumina로 돌아가기</button>
+      </main>
+    );
+  }
+  if (loadError || !snapshot) {
+    return (
+      <main className={`shared-viewer-state is-error ${theme === "dark" ? "theme-dark" : ""}`}>
+        <AlertCircle size={22} />
+        <h1>공유 대화를 불러오지 못했습니다</h1>
+        <p>{loadError ?? "Backend 연결을 확인한 뒤 다시 시도해 주세요."}</p>
+        <button type="button" onClick={() => setLoadRevision((revision) => revision + 1)}>다시 시도</button>
       </main>
     );
   }
@@ -224,7 +242,7 @@ export function SharedSnapshotViewer({
               : sharedArtifact.mimeType === "application/pdf"
                 ? <object className="shared-artifact-frame" data={sharedArtifactUrl} type="application/pdf" aria-label={`${sharedArtifact.displayName} PDF 미리보기`} />
                 : sharedArtifact.mimeType.startsWith("image/")
-                  ? <div className="shared-artifact-image"><img src={sharedArtifactUrl} alt={sharedArtifact.displayName} /></div>
+                  ? <div className="shared-artifact-image"><img src={sharedArtifactUrl} alt={sharedArtifact.displayName} loading="lazy" decoding="async" /></div>
                   : sharedArtifactSource !== null
                     ? <pre className="shared-artifact-source"><code>{sharedArtifactSource}</code></pre>
                     : <div className="shared-artifact-status"><FileCode2 size={22} /><strong>{sharedArtifact.displayName}</strong><span>이 형식은 브라우저 미리보기를 지원하지 않습니다. 다운로드하여 확인해 주세요.</span></div>

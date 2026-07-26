@@ -88,3 +88,25 @@ def test_context_policy_falls_back_to_catalog_metadata() -> None:
     assert _compaction_threshold(run, effective_input_budget) == int(
         effective_input_budget * 0.85
     )
+
+
+def test_context_budget_honors_measured_input_limit() -> None:
+    run = SimpleNamespace(
+        snapshot_json={
+            "execution": {
+                "capabilities": {
+                    "context_window": 1_050_000,
+                    "max_input_tokens": 911_900,
+                    "configured_max_output_tokens": 42_000,
+                }
+            }
+        },
+        provider_id="pgpt",
+        model_key="gpt-5.5",
+        runtime_model_id="gpt-5.5",
+    )
+
+    context_window, effective_input_budget = _context_budget(run, ())
+
+    assert context_window == 1_050_000
+    assert effective_input_budget == 907_804

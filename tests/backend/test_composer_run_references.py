@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -7,6 +8,7 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import event as sqlalchemy_event
 from sqlalchemy import func, select
 
 from lumina.api.errors import ApiProblem, install_error_handlers
@@ -18,23 +20,31 @@ from lumina.api.schemas import (
     RunMessageInput,
 )
 from lumina.auth import bootstrap_database, create_user
-from lumina.agent.executor import _skill_activation_tool_schema
+from lumina.agent.executor import _skill_activation_tool_schema, local_run_executor
 from lumina.config import Settings, get_settings
 from lumina.db import SessionLocal, configure_database, create_schema
-from lumina.extensions.service import create_skill, resolve_skill_snapshot, update_draft
+from lumina.extensions.service import (
+    _skill_allows_implicit_invocation,
+    create_skill,
+    resolve_skill_snapshot,
+    update_draft,
+)
 from lumina.models import (
     Artifact,
     ArtifactVersion,
     Attachment,
     Conversation,
+    Message,
     MessageReference,
     Organization,
     Project,
     ProjectMembership,
     QueuedMessage,
+    Run,
     RunCommand,
     User,
 )
+from lumina.providers import ProviderCapabilities, ProviderEvent, ProviderRequest
 from lumina.runs.approvals import classify_tool_risk
 from lumina.runs.service import (
     _skill_activities,
@@ -43,6 +53,8 @@ from lumina.runs.service import (
     apply_run_action,
     create_run,
     run_snapshot,
+    run_snapshots,
+    runs_for_user,
 )
 
 
@@ -65,6 +77,7 @@ def test_implicit_skill_activation_requires_a_model_tool_choice() -> None:
             "instructions": "Create a presentation.",
             "version": 1,
             "digest": "pptx-digest",
+            "allow_implicit_invocation": False,
         },
     ]
     run = SimpleNamespace(
@@ -81,8 +94,9 @@ def test_implicit_skill_activation_requires_a_model_tool_choice() -> None:
     assert schema["function"]["name"] == "activate_skill"
     assert schema["function"]["parameters"]["properties"]["skillId"]["enum"] == [
         "visual-id",
-        "pptx-id",
     ]
+    assert "There is no target Skill count" in schema["function"]["description"]
+    assert "mere topic overlap" in schema["function"]["description"]
     assert (
         classify_tool_risk("activate_skill", approval_mode="on_risk").approval_required
         is False
@@ -99,6 +113,46 @@ def test_implicit_skill_activation_requires_a_model_tool_choice() -> None:
     assert _skill_activities(run)[0]["reason"] == (
         "요청한 시장 동향을 읽기 쉬운 HTML 보고서로 구성하기 위해 선택했습니다."
     )
+
+
+def test_skill_interface_can_disable_implicit_invocation() -> None:
+    assert (
+        _skill_allows_implicit_invocation(
+            {
+                "SKILL.md": "---\nname: ask-me\ndescription: Ask questions.\n---\n",
+                "agents/openai.yaml": (
+                    "interface:\n  display_name: Ask Me\npolicy:\n"
+                    "  allow_implicit_invocation: false\n"
+                ),
+            }
+        )
+        is False
+    )
+    assert _skill_allows_implicit_invocation({"SKILL.md": "# Default"}) is True
+
+
+def test_scheduled_snapshot_keeps_skills_as_model_selected_candidates() -> None:
+    snapshot = {
+        "extensions": [
+            {
+                "extension_id": "frozen-skill-id",
+                "slug": "frozen-skill",
+                "name": "Frozen Skill",
+                "description": "A frozen candidate selected only when semantically useful.",
+                "instructions": "Follow the frozen workflow.",
+                "allow_implicit_invocation": True,
+            }
+        ],
+        "extension_application": "snapshot_candidates",
+        "prompt_references": [],
+    }
+
+    schema = _skill_activation_tool_schema(snapshot)
+
+    assert schema is not None
+    assert schema["function"]["parameters"]["properties"]["skillId"]["enum"] == [
+        "frozen-skill-id"
+    ]
 
 
 def test_skill_activities_show_which_skill_was_actually_applied() -> None:
@@ -373,6 +427,209 @@ def test_model_selected_skill_keeps_its_event_sequence_in_run_snapshot(
         )
 
 
+def test_run_idempotency_reuses_the_turn_reservation_without_gaps(
+    tmp_path: Path,
+) -> None:
+    _app, ids = _setup(tmp_path)
+    with SessionLocal() as db:
+        admin = db.get(User, ids["admin_id"])
+        conversation = db.get(Conversation, ids["conversation_id"])
+        assert admin is not None and conversation is not None
+        payload = RunCreate(message=RunMessageInput(text="첫 번째 요청"))
+
+        first_run, first_message, first_created = create_run(
+            db,
+            user=admin,
+            conversation_id=conversation.id,
+            payload=payload,
+            idempotency_key="atomic-turn-0001",
+        )
+        db.commit()
+        db.refresh(conversation)
+        assert first_created is True
+        assert first_message.turn_index == 1
+        assert conversation.next_turn_index == 2
+
+        repeated_run, repeated_message, repeated_created = create_run(
+            db,
+            user=admin,
+            conversation_id=conversation.id,
+            payload=payload,
+            idempotency_key="atomic-turn-0001",
+        )
+        db.commit()
+        db.refresh(conversation)
+        assert repeated_created is False
+        assert repeated_run.id == first_run.id
+        assert repeated_message.id == first_message.id
+        assert conversation.next_turn_index == 2
+
+        _second_run, second_message, second_created = create_run(
+            db,
+            user=admin,
+            conversation_id=conversation.id,
+            payload=RunCreate(message=RunMessageInput(text="두 번째 요청")),
+            idempotency_key="atomic-turn-0002",
+        )
+        db.commit()
+        assert second_created is True
+        assert second_message.turn_index == 2
+        assert list(
+            db.scalars(
+                select(Message.turn_index)
+                .where(
+                    Message.conversation_id == conversation.id,
+                    Message.role == "user",
+                )
+                .order_by(Message.turn_index)
+            )
+        ) == [1, 2]
+
+
+def test_run_snapshot_batch_query_count_is_independent_of_page_size(
+    tmp_path: Path,
+) -> None:
+    _app, ids = _setup(tmp_path)
+    with SessionLocal() as db:
+        runs = [
+            Run(
+                organization_id=db.get(User, ids["admin_id"]).organization_id,
+                project_id=ids["project_id"],
+                conversation_id=ids["conversation_id"],
+                user_id=ids["admin_id"],
+                status="queued",
+                provider_id="mock",
+                model_key="mock-agent",
+                runtime_model_id="mock-agent",
+                model_display_name="Mock Agent",
+                snapshot_json={},
+                usage_json={},
+            )
+            for _index in range(20)
+        ]
+        db.add_all(runs)
+        db.commit()
+        bind = db.get_bind()
+
+        def query_count(selected: list[Run]) -> int:
+            count = 0
+
+            def increment(*_args: object) -> None:
+                nonlocal count
+                count += 1
+
+            sqlalchemy_event.listen(bind, "before_cursor_execute", increment)
+            try:
+                assert len(run_snapshots(db, selected)) == len(selected)
+            finally:
+                sqlalchemy_event.remove(bind, "before_cursor_execute", increment)
+            return count
+
+        assert query_count(runs[:1]) == query_count(runs)
+
+
+def test_run_access_batch_uses_one_query_for_multiple_sessions(tmp_path: Path) -> None:
+    _app, ids = _setup(tmp_path)
+    with SessionLocal() as db:
+        admin = db.get(User, ids["admin_id"])
+        assert admin is not None
+        runs = [
+            Run(
+                organization_id=admin.organization_id,
+                project_id=ids["project_id"],
+                conversation_id=ids["conversation_id"],
+                user_id=admin.id,
+                status="queued",
+                provider_id="mock",
+                model_key="mock-agent",
+                runtime_model_id="mock-agent",
+                model_display_name="Mock Agent",
+                snapshot_json={},
+                usage_json={},
+            )
+            for _index in range(20)
+        ]
+        db.add_all(runs)
+        db.commit()
+        run_ids = [run.id for run in runs]
+        bind = db.get_bind()
+
+        def query_count(selected_ids: list[str]) -> int:
+            count = 0
+
+            def increment(*_args: object) -> None:
+                nonlocal count
+                count += 1
+
+            sqlalchemy_event.listen(bind, "before_cursor_execute", increment)
+            try:
+                assert len(runs_for_user(db, admin, selected_ids)) == len(selected_ids)
+            finally:
+                sqlalchemy_event.remove(bind, "before_cursor_execute", increment)
+            return count
+
+        assert query_count(run_ids[:1]) == 1
+        assert query_count(run_ids) == 1
+
+
+def test_context_candidate_query_count_is_independent_of_artifact_count(
+    tmp_path: Path,
+) -> None:
+    _app, ids = _setup(tmp_path)
+    with SessionLocal() as db:
+        admin = db.get(User, ids["admin_id"])
+        assert admin is not None
+        bind = db.get_bind()
+
+        def query_count() -> tuple[int, list[dict[str, Any]]]:
+            count = 0
+
+            def increment(*_args: object) -> None:
+                nonlocal count
+                count += 1
+
+            sqlalchemy_event.listen(bind, "before_cursor_execute", increment)
+            try:
+                candidates = composer._context_candidates(db, ids["project_id"])
+            finally:
+                sqlalchemy_event.remove(bind, "before_cursor_execute", increment)
+            return count, candidates
+
+        initial_count, initial_candidates = query_count()
+        for index in range(12):
+            artifact = Artifact(
+                organization_id=admin.organization_id,
+                project_id=ids["project_id"],
+                conversation_id=ids["conversation_id"],
+                created_by_user_id=admin.id,
+                display_name=f"성능 검증 산출물 {index}",
+                kind="html",
+                mime_type="text/html",
+                current_version_number=1,
+            )
+            db.add(artifact)
+            db.flush()
+            db.add(
+                ArtifactVersion(
+                    artifact_id=artifact.id,
+                    version_number=1,
+                    storage_key=f"artifacts/query-count/{index}.html",
+                    content_hash=f"{index + 1:064x}",
+                    size_bytes=128,
+                    change_type="create",
+                    validation_status="valid",
+                    created_by_user_id=admin.id,
+                )
+            )
+        db.commit()
+
+        expanded_count, expanded_candidates = query_count()
+
+        assert initial_count == expanded_count == 3
+        assert sum(item["kind"] == "artifact" for item in initial_candidates) == 1
+        assert sum(item["kind"] == "artifact" for item in expanded_candidates) == 13
+
+
 def _login(client: TestClient) -> None:
     response = client.post(
         "/api/auth/login",
@@ -467,6 +724,74 @@ def test_composer_candidates_are_project_scoped_and_version_pinned(
         assert other_skills.json()["items"] == []
 
 
+def test_prompt_enhancement_endpoint_is_one_tool_free_provider_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Provider:
+        provider_id = "test"
+        capabilities = ProviderCapabilities(reasoning_effort=True)
+        request: ProviderRequest | None = None
+
+        async def stream(
+            self, request: ProviderRequest
+        ) -> AsyncIterator[ProviderEvent]:
+            self.request = request
+            yield ProviderEvent(
+                type="text_delta",
+                text="목적과 범위를 구분하여 설비를 점검해 주세요.",
+            )
+            yield ProviderEvent(type="completed", stop_reason="stop")
+
+    provider = Provider()
+    monkeypatch.setattr(
+        composer,
+        "resolve_execution",
+        lambda *_args, **_kwargs: {
+            "provider_id": "test",
+            "model_key": "fast-model",
+            "runtime_model_id": "fast-model",
+        },
+    )
+    monkeypatch.setattr(
+        local_run_executor,
+        "provider_for_probe",
+        lambda _provider_id: provider,
+    )
+    app, ids = _setup(tmp_path)
+    with TestClient(app) as client:
+        login = client.post(
+            "/api/auth/login",
+            json={
+                "loginName": "admin",
+                "loginDomain": "posco.com",
+                "password": "1",
+            },
+        )
+        response = client.post(
+            "/api/composer/enhance",
+            headers={"X-CSRF-Token": login.json()["csrfToken"]},
+            json={
+                "projectId": ids["project_id"],
+                "text": "설비 점검해줘",
+                "options": ["structure"],
+                "promptReferences": [],
+                "execution": {
+                    "providerId": "test",
+                    "modelKey": "fast-model",
+                    "effortId": "high",
+                },
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["enhancedText"] == (
+        "목적과 범위를 구분하여 설비를 점검해 주세요."
+    )
+    assert provider.request is not None
+    assert provider.request.tools == ()
+    assert provider.request.effort == "low"
+
+
 def test_run_snapshot_and_message_references_are_canonical_and_reproducible(
     tmp_path: Path,
 ) -> None:
@@ -502,9 +827,9 @@ def test_run_snapshot_and_message_references_are_canonical_and_reproducible(
         extension_snapshot = run.snapshot_json["extensions"][0]
         assert extension_snapshot["draft_revision"] == 1
         assert extension_snapshot["digest"] == ids["draft_digest"]
-        assert (
-            extension_snapshot["instructions"]
-            == "# 점검 보고서\n\n초기 절차를 따릅니다."
+        assert "name: inspection-report" in extension_snapshot["instructions"]
+        assert extension_snapshot["instructions"].endswith(
+            "# 점검 보고서\n\n초기 절차를 따릅니다."
         )
         assert len(run.snapshot_json["prompt_prefix_hash"]) == 64
         assert run.snapshot_json["prompt_cache_scope"].startswith("lumina:user:v1:")
@@ -535,9 +860,8 @@ def test_run_snapshot_and_message_references_are_canonical_and_reproducible(
         db.commit()
         db.refresh(run)
         assert run.snapshot_json["extensions"][0]["draft_revision"] == 1
-        assert (
-            run.snapshot_json["extensions"][0]["instructions"]
-            == "# 점검 보고서\n\n초기 절차를 따릅니다."
+        assert run.snapshot_json["extensions"][0]["instructions"].endswith(
+            "# 점검 보고서\n\n초기 절차를 따릅니다."
         )
         current_snapshot = resolve_skill_snapshot(
             db, user=admin, project_id=ids["project_id"]
@@ -720,7 +1044,9 @@ def test_steer_and_queue_next_validate_and_persist_stable_references(
                 run_id=run.id,
                 payload=RunActionRequest(
                     type="queue_next",
-                    message=RunMessageInput(text="세 번째 요청도 순서대로 실행해 주세요."),
+                    message=RunMessageInput(
+                        text="세 번째 요청도 순서대로 실행해 주세요."
+                    ),
                 ),
                 idempotency_key="queue-2",
             )

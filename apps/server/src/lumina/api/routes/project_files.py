@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+from base64 import urlsafe_b64decode, urlsafe_b64encode
+from binascii import Error as Base64Error
+from contextlib import suppress
+from datetime import datetime
+import hashlib
+import json
 from pathlib import PurePosixPath
 from urllib.parse import quote
 
@@ -9,10 +15,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ...audit import record_audit
+from ...artifacts.standalone_html import prepare_standalone_html_download
 from ...config import Settings, get_settings
 from ...db import get_db
 from ...models import ProjectFile, ProjectFileVersion, ProjectFolder, User
 from ...project_files import (
+    cleanup_project_file_version_storage,
     create_project_folder,
     create_project_file,
     create_project_file_version,
@@ -26,8 +34,9 @@ from ...project_files import (
     soft_delete_project_file,
     soft_delete_project_folder,
 )
-from ...storage import ManagedLocalStorage
+from ...storage import ManagedLocalStorage, StorageError
 from ..dependencies import AuthContext, get_current_user, require_csrf
+from ..errors import ApiProblem
 from ..schemas import (
     ProjectFileDetailResponse,
     ProjectFileMove,
@@ -39,6 +48,39 @@ from ..schemas import (
 
 
 router = APIRouter(prefix="/projects/{project_id}/files", tags=["project-files"])
+
+
+def _encode_file_cursor(project_file: ProjectFile) -> str:
+    raw = json.dumps(
+        [
+            project_file.updated_at.isoformat(),
+            project_file.logical_path,
+            project_file.id,
+        ],
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_file_cursor(value: str | None) -> tuple[datetime, str, str] | None:
+    if not value:
+        return None
+    try:
+        padded = value + "=" * (-len(value) % 4)
+        decoded = json.loads(urlsafe_b64decode(padded).decode("utf-8"))
+        if not isinstance(decoded, list) or len(decoded) != 3:
+            raise ValueError
+        return (
+            datetime.fromisoformat(str(decoded[0])),
+            str(decoded[1]),
+            str(decoded[2]),
+        )
+    except (ValueError, TypeError, json.JSONDecodeError, Base64Error) as exc:
+        raise ApiProblem(
+            400,
+            "invalid_file_cursor",
+            "파일 목록 cursor가 올바르지 않습니다.",
+        ) from exc
 
 
 def _storage(settings: Settings) -> ManagedLocalStorage:
@@ -114,25 +156,43 @@ def _latest_version_map(
     return {version.project_file_id: version for version in versions}
 
 
-@router.get("", response_model=list[ProjectFileResponse])
+@router.get("")
 def get_project_files(
     project_id: str,
     q: str = Query(default="", max_length=500),
     include_deleted: bool = Query(default=False, alias="includeDeleted"),
     limit: int = Query(default=200, ge=1, le=500),
+    cursor: str | None = Query(default=None, max_length=2000),
+    page: bool = Query(default=False),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> list[dict[str, object]]:
+) -> dict[str, object] | list[dict[str, object]]:
     rows = list_project_files(
         db,
         user,
         project_id,
         query=q,
         include_deleted=include_deleted,
-        limit=limit,
+        limit=limit + 1,
+        cursor=_decode_file_cursor(cursor),
     )
-    versions = _latest_version_map(db, rows)
-    return [_file_payload(row, versions[row.id]) for row in rows if row.id in versions]
+    page_rows = rows[:limit]
+    versions = _latest_version_map(db, page_rows)
+    items = [
+        _file_payload(row, versions[row.id])
+        for row in page_rows
+        if row.id in versions
+    ]
+    if not page:
+        return items
+    return {
+        "items": items,
+        "nextCursor": (
+            _encode_file_cursor(page_rows[-1])
+            if len(rows) > limit and page_rows
+            else None
+        ),
+    }
 
 
 @router.post("", status_code=201, response_model=ProjectFileResponse)
@@ -149,6 +209,7 @@ async def post_project_file(
     content = await file.read(settings.max_upload_bytes + 1)
     original_filename = _safe_original_filename(file.filename)
     target_path = normalize_logical_path(logical_path or original_filename)
+    storage = _storage(settings)
     project_file, version = create_project_file(
         db,
         user=context.user,
@@ -158,24 +219,30 @@ async def post_project_file(
         content=content,
         change_reason=change_reason,
         max_upload_bytes=settings.max_upload_bytes,
-        storage=_storage(settings),
+        storage=storage,
     )
-    record_audit(
-        db,
-        action="project_file_created",
-        target_type="project_file",
-        target_id=project_file.id,
-        result="success",
-        actor=context.user,
-        request_id=getattr(request.state, "request_id", None),
-        metadata={
-            "project_id": project_id,
-            "logical_path": project_file.logical_path,
-            "version": version.version_number,
-            "content_hash": version.content_hash,
-        },
-    )
-    db.commit()
+    try:
+        record_audit(
+            db,
+            action="project_file_created",
+            target_type="project_file",
+            target_id=project_file.id,
+            result="success",
+            actor=context.user,
+            request_id=getattr(request.state, "request_id", None),
+            metadata={
+                "project_id": project_id,
+                "logical_path": project_file.logical_path,
+                "version": version.version_number,
+                "content_hash": version.content_hash,
+            },
+        )
+        db.commit()
+    except BaseException:
+        with suppress(Exception):
+            db.rollback()
+        cleanup_project_file_version_storage(storage, version)
+        raise
     return _file_payload(project_file, version)
 
 
@@ -352,6 +419,7 @@ async def post_project_file_version(
     settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
     content = await file.read(settings.max_upload_bytes + 1)
+    storage = _storage(settings)
     project_file, version = create_project_file_version(
         db,
         user=context.user,
@@ -363,24 +431,30 @@ async def post_project_file_version(
         change_reason=change_reason,
         source_run_id=source_run_id,
         max_upload_bytes=settings.max_upload_bytes,
-        storage=_storage(settings),
+        storage=storage,
     )
-    record_audit(
-        db,
-        action="project_file_version_created",
-        target_type="project_file",
-        target_id=project_file.id,
-        result="success",
-        actor=context.user,
-        request_id=getattr(request.state, "request_id", None),
-        metadata={
-            "project_id": project_id,
-            "version": version.version_number,
-            "content_hash": version.content_hash,
-            "source_run_id": source_run_id,
-        },
-    )
-    db.commit()
+    try:
+        record_audit(
+            db,
+            action="project_file_version_created",
+            target_type="project_file",
+            target_id=project_file.id,
+            result="success",
+            actor=context.user,
+            request_id=getattr(request.state, "request_id", None),
+            metadata={
+                "project_id": project_id,
+                "version": version.version_number,
+                "content_hash": version.content_hash,
+                "source_run_id": source_run_id,
+            },
+        )
+        db.commit()
+    except BaseException:
+        with suppress(Exception):
+            db.rollback()
+        cleanup_project_file_version_storage(storage, version)
+        raise
     return _file_payload(project_file, version)
 
 
@@ -395,17 +469,75 @@ def download_project_file(
 ) -> Response:
     project_file = get_project_file(db, user, project_id, file_id)
     selected = get_project_file_version(db, project_file, version)
-    content = _storage(settings).read_bytes(
-        selected.storage_key, expected_sha256=selected.content_hash
+    try:
+        content = _storage(settings).read_bytes(
+            selected.storage_key, expected_sha256=selected.content_hash
+        )
+    except StorageError as exc:
+        raise ApiProblem(
+            503,
+            "project_file_content_missing",
+            "Project 파일 원본을 읽을 수 없습니다.",
+        ) from exc
+    download_content = prepare_standalone_html_download(content, selected.mime_type)
+    download_hash = (
+        selected.content_hash
+        if download_content is content
+        else hashlib.sha256(download_content).hexdigest()
     )
     filename = PurePosixPath(project_file.logical_path).name
     return Response(
-        content=content,
+        content=download_content,
         media_type=selected.mime_type,
         headers={
+            "Content-Length": str(len(download_content)),
             "Content-Disposition": (
                 f"attachment; filename=project-file; filename*=UTF-8''{quote(filename)}"
-            )
+            ),
+            "ETag": f'"{download_hash}"',
+            "Cache-Control": "private, no-store",
+        },
+    )
+
+
+@router.get("/{file_id}/preview")
+def preview_project_file(
+    project_id: str,
+    file_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    project_file = get_project_file(db, user, project_id, file_id)
+    selected = get_project_file_version(db, project_file)
+    if selected.mime_type != "text/html":
+        raise ApiProblem(
+            415,
+            "project_file_preview_unsupported",
+            "HTML Project 파일만 새 창 미리보기를 지원합니다.",
+        )
+    try:
+        content = _storage(settings).read_bytes(
+            selected.storage_key, expected_sha256=selected.content_hash
+        )
+    except StorageError as exc:
+        raise ApiProblem(
+            503,
+            "project_file_content_missing",
+            "Project 파일 원본을 읽을 수 없습니다.",
+        ) from exc
+    standalone_content = prepare_standalone_html_download(content, selected.mime_type)
+    return Response(
+        content=standalone_content,
+        media_type="text/html",
+        headers={
+            "Content-Disposition": "inline",
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": (
+                "sandbox allow-scripts allow-forms allow-modals "
+                "allow-downloads allow-popups"
+            ),
         },
     )
 

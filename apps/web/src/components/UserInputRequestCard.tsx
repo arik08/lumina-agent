@@ -3,10 +3,11 @@ import {
   ChevronDown,
   ChevronUp,
   MessageCircleQuestion,
+  Send,
   Settings,
   Sparkles,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useMemo, useRef, useState, type FormEvent } from "react";
 import type {
   ClarificationMode,
   UserInputAnswer,
@@ -61,21 +62,20 @@ export function UserInputRequestCard({
     [answers, request.questions],
   );
 
-  useEffect(() => {
+  const submitAnswers = async () => {
     if (!pending || !complete || busy || submissionStarted.current) return;
     submissionStarted.current = true;
-    void onSubmit(orderedAnswers).then((succeeded) => {
-      if (!succeeded) {
-        submissionStarted.current = false;
-        return;
-      }
-      setCollapsing(true);
-      window.setTimeout(() => {
-        setCompact(true);
-        setCollapsing(false);
-      }, 240);
-    });
-  }, [busy, complete, onSubmit, orderedAnswers, pending]);
+    const succeeded = await onSubmit(orderedAnswers);
+    if (!succeeded) {
+      submissionStarted.current = false;
+      return;
+    }
+    setCollapsing(true);
+    window.setTimeout(() => {
+      setCompact(true);
+      setCollapsing(false);
+    }, 240);
+  };
 
   const chooseCustom = (questionId: string, event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -223,6 +223,16 @@ export function UserInputRequestCard({
           </button>
         )}
         <span>{orderedAnswers.length} / {request.questions.length} 답변</span>
+        {pending && (
+          <button
+            className="clarification-submit"
+            type="button"
+            disabled={!complete || busy}
+            onClick={() => void submitAnswers()}
+          >
+            <Send size={14} /> {busy ? "보내는 중" : "보내기"}
+          </button>
+        )}
       </footer>
     </section>
   );

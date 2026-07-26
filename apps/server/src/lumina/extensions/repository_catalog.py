@@ -4,7 +4,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import re
 from pathlib import Path
 from threading import Lock
 from typing import Any
@@ -28,38 +27,27 @@ from ..models import (
     ExtensionVersion,
     McpConfigurationRevision,
     McpDefinition,
+    McpInstallation,
     SkillOwnership,
     User,
     utc_now,
 )
-from .package_policy import SKILL_TEXT_SUFFIXES
+from .agent_skill_spec import AgentSkillSpecError, parse_agent_skill
+from .package_content import encode_binary_package_content
 from .service import normalize_package, package_digest
 
 
-_FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.DOTALL)
-_IGNORED_PARTS = {".git", "__pycache__", "node_modules", "vendor", ".venv"}
+_IGNORED_PARTS = {
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    "__pycache__",
+    "node_modules",
+}
 _REPOSITORY_SYNC_LOCK = Lock()
 logger = logging.getLogger(__name__)
-
-
-def _frontmatter(text: str) -> dict[str, str]:
-    match = _FRONTMATTER.match(text.replace("\r\n", "\n"))
-    if not match:
-        return {}
-    result: dict[str, str] = {}
-    active_key: str | None = None
-    for raw_line in match.group(1).splitlines():
-        if raw_line[:1].isspace() and active_key:
-            result[active_key] = f"{result[active_key]} {raw_line.strip()}".strip()
-            continue
-        key, separator, value = raw_line.partition(":")
-        if separator and key.strip() in {"name", "description", "source"}:
-            active_key = key.strip()
-            cleaned = value.strip().strip("'\"")
-            result[active_key] = "" if cleaned in {">", "|", ">-", "|-"} else cleaned
-        else:
-            active_key = None
-    return result
 
 
 def _catalog_tags(value: Any) -> list[str]:
@@ -79,17 +67,17 @@ def _catalog_tags(value: Any) -> list[str]:
 def _skill_package(folder: Path) -> dict[str, str]:
     files: dict[str, str] = {}
     for path in sorted(folder.rglob("*")):
-        if not path.is_file() or path.suffix.casefold() not in SKILL_TEXT_SUFFIXES:
+        if not path.is_file():
             continue
         relative = path.relative_to(folder)
         if any(part in _IGNORED_PARTS for part in relative.parts):
             continue
-        if path.stat().st_size > 500_000:
-            continue
         try:
             files[relative.as_posix()] = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
-            continue
+            files[relative.as_posix()] = encode_binary_package_content(
+                path.read_bytes()
+            )
     return normalize_package(files)
 
 
@@ -99,15 +87,11 @@ def sync_repository_skills(
     skills_root = (root or REPOSITORY_ROOT) / "extensions" / "skills"
     if not skills_root.is_dir():
         return 0
-    translations_path = skills_root / "catalog.ko.json"
-    translations = (
-        json.loads(translations_path.read_text(encoding="utf-8"))
-        if translations_path.is_file()
+    catalog_path = skills_root / "catalog.json"
+    catalog = (
+        json.loads(catalog_path.read_text(encoding="utf-8"))
+        if catalog_path.is_file()
         else {}
-    )
-    tags_path = skills_root / "catalog.tags.json"
-    tags_by_slug = (
-        json.loads(tags_path.read_text(encoding="utf-8")) if tags_path.is_file() else {}
     )
     changed = 0
     for folder in sorted(path for path in skills_root.iterdir() if path.is_dir()):
@@ -116,15 +100,19 @@ def sync_repository_skills(
             continue
         package = _skill_package(folder)
         digest = package_digest(package)
-        metadata = _frontmatter(package["SKILL.md"])
-        slug = (
-            re.sub(
-                r"[^a-z0-9]+", "-", metadata.get("name", folder.name).casefold()
-            ).strip("-")
-            or folder.name
-        )
-        description = str(translations.get(slug) or metadata.get("description", ""))
-        wrapper_source = metadata.get("source", "")
+        try:
+            skill_document = parse_agent_skill(
+                package["SKILL.md"],
+                expected_name=folder.name,
+            )
+        except AgentSkillSpecError as exc:
+            logger.error("Skipping invalid Agent Skill %s: %s", folder, exc)
+            continue
+        slug = skill_document.name
+        catalog_entry = catalog.get(slug, {})
+        description = skill_document.description
+        tags = _catalog_tags(catalog_entry.get("tags"))
+        wrapper_source = skill_document.metadata.get("lumina-source", "")
         mcp_slug = (
             normalize_slug(wrapper_source.removeprefix("skill-mcp:"))
             if wrapper_source.startswith("skill-mcp:")
@@ -134,7 +122,7 @@ def sync_repository_skills(
             "source": "repository",
             "sourcePath": folder.relative_to(root or REPOSITORY_ROOT).as_posix(),
             "category": "기본 제공",
-            "tags": _catalog_tags(tags_by_slug.get(slug)),
+            "tags": tags,
             "publisher": "Lumina",
             "fileCount": len(package),
             **(
@@ -152,7 +140,7 @@ def sync_repository_skills(
             extension = Extension(
                 kind="mcp" if mcp_slug is not None else "skill",
                 slug=slug,
-                name=metadata.get("name", folder.name),
+                name=skill_document.name,
                 description=description,
                 owner_user_id=admin.id,
                 creator_user_id=admin.id,
@@ -176,8 +164,9 @@ def sync_repository_skills(
             .where(ExtensionVersion.extension_id == extension.id)
             .order_by(ExtensionVersion.version_number.desc())
         )
-        extension.name = metadata.get("name", folder.name)
+        extension.name = skill_document.name
         extension.description = description
+        extension.tags_json = tags
         extension.kind = "mcp" if mcp_slug is not None else "skill"
         extension.visibility = "organization"
         extension.publisher_user_id = admin.id
@@ -209,30 +198,7 @@ def sync_repository_skills(
     return changed
 
 
-def _declared_python_tools(
-    raw: dict[str, Any], repository_root: Path
-) -> list[dict[str, Any]]:
-    args = [str(item) for item in raw.get("args", [])]
-    script = next(
-        (repository_root / item for item in args if item.endswith(".py")), None
-    )
-    if script is None or not script.is_file():
-        return []
-    source = script.read_text(encoding="utf-8")
-    names = re.findall(
-        r"@\w+\.tool\(\)\s*\ndef\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(", source
-    )
-    return [
-        {
-            "name": name,
-            "description": f"{name.replace('_', ' ')} 도구",
-            "input_schema": {"type": "object", "additionalProperties": True},
-        }
-        for name in names
-    ]
-
-
-def _mcp_configuration(raw: dict[str, Any], repository_root: Path) -> dict[str, Any]:
+def _mcp_configuration(raw: dict[str, Any]) -> dict[str, Any]:
     transport = "streamable_http" if raw.get("type") == "streamable_http" else "stdio"
     command = (
         [str(raw.get("command", "")), *[str(item) for item in raw.get("args", [])]]
@@ -246,7 +212,7 @@ def _mcp_configuration(raw: dict[str, Any], repository_root: Path) -> dict[str, 
         "allowed_hosts": raw.get("allowedHosts", []),
         "allowed_ip_ranges": raw.get("allowedIpRanges", []),
         "header_templates": raw.get("headers", {}),
-        "tools": raw.get("tools", []) or _declared_python_tools(raw, repository_root),
+        "tools": raw.get("tools", []),
         "required_secret_names": raw.get("requiredSecretNames", []),
         "timeout_seconds": raw.get("timeoutSeconds", 30),
     }
@@ -262,7 +228,7 @@ def sync_repository_mcp(db: Session, *, admin: User, root: Path | None = None) -
         payload = json.loads(path.read_text(encoding="utf-8"))
         for slug, raw in payload.get("mcpServers", {}).items():
             catalog_slug = normalize_slug(slug)
-            configuration = _mcp_configuration(raw, repository_root)
+            configuration = _mcp_configuration(raw)
             if not configuration["tools"]:
                 continue
             _, digest = validate_configuration(configuration)
@@ -272,6 +238,7 @@ def sync_repository_mcp(db: Session, *, admin: User, root: Path | None = None) -
                     McpDefinition.slug == catalog_slug,
                 )
             )
+            revision_changed = definition is None
             if definition is None:
                 definition, revision = create_definition(
                     db,
@@ -288,17 +255,42 @@ def sync_repository_mcp(db: Session, *, admin: User, root: Path | None = None) -
                     else None
                 )
                 if current is not None and current.config_digest == digest:
-                    continue
-                revision = add_configuration_revision(
+                    revision = current
+                else:
+                    revision = add_configuration_revision(
+                        db,
+                        user=admin,
+                        definition_id=definition.id,
+                        configuration=configuration,
+                    )
+                    revision_changed = True
+            if revision_changed:
+                approve_revision(
                     db,
                     user=admin,
                     definition_id=definition.id,
-                    configuration=configuration,
+                    revision_id=revision.id,
                 )
-            approve_revision(
-                db, user=admin, definition_id=definition.id, revision_id=revision.id
-            )
-            changed += 1
+                changed += 1
+            available_tools = {
+                str(tool["name"])
+                for tool in revision.tool_schemas_json
+                if isinstance(tool, dict) and tool.get("name")
+            }
+            for installation in db.scalars(
+                select(McpInstallation).where(
+                    McpInstallation.definition_id == definition.id,
+                    McpInstallation.configuration_revision_id != revision.id,
+                )
+            ):
+                installation.configuration_revision_id = revision.id
+                installation.tool_allowlist_json = [
+                    name
+                    for name in installation.tool_allowlist_json
+                    if name in available_tools
+                ]
+                if not installation.tool_allowlist_json:
+                    installation.enabled = False
     db.flush()
     return changed
 

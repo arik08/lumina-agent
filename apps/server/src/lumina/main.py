@@ -14,7 +14,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.types import Scope
+from starlette.middleware.gzip import GZipMiddleware
+from starlette.types import Receive, Scope, Send
 from sqlalchemy import text
 
 from .agent.executor import local_run_executor
@@ -27,10 +28,12 @@ from .api.routes import (
     auth,
     composer,
     conversations,
+    deep_analysis,
     extensions,
     finance,
     help,
     instructions,
+    knowledge,
     mcp,
     memories,
     messages,
@@ -138,7 +141,25 @@ class SPAStaticFiles(StaticFiles):
             return await super().get_response("index.html", scope)
         if response.status_code == 404 and "." not in filename:
             return await super().get_response("index.html", scope)
+        if path.startswith("assets/") and response.status_code == 200:
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        elif filename == "index.html" or "." not in filename:
+            response.headers["Cache-Control"] = "no-cache"
         return response
+
+
+class ApiGZipMiddleware(GZipMiddleware):
+    """Compress regular responses without buffering event-stream delivery."""
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        path = str(scope.get("path", ""))
+        bypass_streaming = path.startswith("/stream/") or (
+            path.startswith("/api/artifacts/") and path.endswith("/preview")
+        )
+        if scope["type"] == "http" and bypass_streaming:
+            await self.app(scope, receive, send)
+            return
+        await super().__call__(scope, receive, send)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -221,6 +242,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ],
         expose_headers=["X-CSRF-Token", "ETag", "X-Request-ID", "Content-Disposition"],
     )
+    application.add_middleware(
+        ApiGZipMiddleware,
+        minimum_size=1_000,
+        compresslevel=5,
+    )
 
     @application.middleware("http")
     async def request_context(request: Request, call_next):
@@ -264,11 +290,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         project_memberships,
         project_memories,
         conversations,
+        deep_analysis,
         composer,
         extensions,
         finance,
         help,
         instructions,
+        knowledge,
         mcp,
         messages,
         notifications,
@@ -282,6 +310,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ):
         application.include_router(route_module.router, prefix="/api")
     application.include_router(runs.stream_router)
+    application.include_router(deep_analysis.stream_router)
 
     @application.get("/api/health/live", tags=["health"])
     def liveness() -> dict[str, str]:
@@ -310,6 +339,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.get("/api/health/startup", tags=["health"])
     def startup_status() -> dict[str, Any]:
         return startup_tracker.snapshot(executor_started=local_run_executor.started)
+
+    @application.api_route(
+        "/api/{path:path}",
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+        include_in_schema=False,
+    )
+    @application.api_route(
+        "/stream/{path:path}",
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+        include_in_schema=False,
+    )
+    def backend_route_not_found(path: str) -> JSONResponse:
+        del path
+        return JSONResponse(status_code=404, content={"detail": "Not Found"})
 
     frontend_dist = REPOSITORY_ROOT / "apps" / "web" / "dist"
     if frontend_dist.is_dir():

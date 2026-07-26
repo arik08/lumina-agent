@@ -82,9 +82,17 @@ def test_initial_model_catalog_matches_detailed_design_section_12_3() -> None:
 
     pgpt = initial_model_catalog("pgpt")[0]
     assert pgpt.capabilities.context_window == 1_050_000
+    assert pgpt.capabilities.max_input_tokens == 911_900
     assert pgpt.capabilities.max_output_tokens == 128_000
     assert pgpt.default_max_output_tokens == 42_000
     assert pgpt.output_token_step == 1_000
+
+    pgpt_mini = initial_model_catalog("pgpt")[1]
+    assert pgpt_mini.capabilities.context_window == 400_000
+    assert pgpt_mini.capabilities.max_input_tokens == 270_000
+
+    pgpt_55 = initial_model_catalog("pgpt")[2]
+    assert pgpt_55.capabilities.max_input_tokens == 911_900
 
 
 def test_application_default_execution_tracks_the_catalog_default() -> None:

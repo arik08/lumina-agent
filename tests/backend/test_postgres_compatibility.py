@@ -36,6 +36,8 @@ def test_postgres_alembic_offline_head_contains_cross_dialect_contracts() -> Non
     assert "ADD COLUMN header_templates_json JSON" in normalized
     assert "CREATE TABLE project_files" in normalized
     assert "CREATE TABLE project_memories" in normalized
+    assert "CREATE TABLE knowledge_spaces" in normalized
+    assert "CREATE TABLE knowledge_statements" in normalized
     assert " JSON " in normalized
     assert "uq_projects_default_owner" in normalized
     assert "WHERE is_default" in normalized
@@ -69,6 +71,9 @@ def test_sqlalchemy_metadata_compiles_for_postgres_json_and_partial_indexes() ->
     revision_table = Base.metadata.tables["mcp_configuration_revisions"]
     assert isinstance(revision_table.c.allowed_ip_ranges_json.type, JSON)
     assert isinstance(revision_table.c.header_templates_json.type, JSON)
+    assert isinstance(
+        Base.metadata.tables["knowledge_documents"].c.citations_json.type, JSON
+    )
 
 
 @pytest.mark.skipif(

@@ -53,6 +53,20 @@ def test_html_validation_allows_executable_javascript() -> None:
     assert "executable_content" in validation["checks"]
 
 
+def test_html_validation_rejects_visible_content_after_the_document() -> None:
+    source = (
+        '<!doctype html><html lang="ja"><head><title>x</title></head>'
+        "<body><p>正常な日本語ば</p></body></html>" + "ば" * 100
+    )
+
+    status, validation = validate_artifact_content(
+        kind="html", mime_type="text/html", content=source.encode()
+    )
+
+    assert status == "failed"
+    assert validation["errors"] == ["trailing_content_after_html"]
+
+
 def test_binary_validation_checks_real_file_signature() -> None:
     status, validation = validate_artifact_content(
         kind="pdf", mime_type="application/pdf", content=b"not a pdf"

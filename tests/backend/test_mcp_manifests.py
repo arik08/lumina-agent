@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
+from lumina.extensions.agent_skill_spec import parse_agent_skill
+
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 MCP_ROOT = REPOSITORY_ROOT / "extensions" / "mcp"
@@ -15,6 +17,9 @@ def test_mcp_manifests_use_portable_repository_relative_paths() -> None:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         for server_name, server in manifest["mcpServers"].items():
             assert server.get("cwd") == ".", f"{manifest_path.name}:{server_name}"
+            assert server.get("tools"), (
+                f"{manifest_path.name}:{server_name} must pin runtime Tool schemas"
+            )
             for argument in server.get("args", []):
                 assert not PureWindowsPath(argument).is_absolute(), (
                     f"{manifest_path.name}:{server_name} has an absolute Windows path"
@@ -51,9 +56,24 @@ def test_every_mcp_server_has_a_skill_wrapper() -> None:
     }
     wrapped_names: list[str] = []
     for skill_path in SKILL_ROOT.glob("*/SKILL.md"):
-        for line in skill_path.read_text(encoding="utf-8").splitlines():
-            if line.startswith("source: skill-mcp:"):
-                wrapped_names.append(line.removeprefix("source: skill-mcp:").strip())
-                break
+        document = parse_agent_skill(
+            skill_path.read_text(encoding="utf-8"),
+            expected_name=skill_path.parent.name,
+        )
+        source = document.metadata.get("lumina-source", "")
+        if source.startswith("skill-mcp:"):
+            wrapped_names.append(source.removeprefix("skill-mcp:").strip())
     assert len(wrapped_names) == len(set(wrapped_names))
     assert set(wrapped_names) == server_names
+
+
+def test_korea_weather_keeps_its_required_secret_binding() -> None:
+    required_by_server = {
+        server_name: server.get("requiredSecretNames", [])
+        for manifest_path in MCP_ROOT.glob("*.json")
+        for server_name, server in json.loads(
+            manifest_path.read_text(encoding="utf-8")
+        )["mcpServers"].items()
+    }
+
+    assert required_by_server["korea-weather"] == ["KOREA_WEATHER_API_KEY"]

@@ -5,7 +5,7 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
+from typing import Literal, TypedDict
 
 from sqlalchemy import update
 from sqlalchemy.orm import Session
@@ -42,6 +42,27 @@ RICH_CHAT_RENDERING_CONTRACT = (
     "Rich chat rendering contract: Lumina renders more than plain Markdown. "
     "When relationships, architecture, sequence, state, or process are materially "
     "clearer as a diagram, return a fenced `mermaid` block with valid Mermaid source. "
+    "Choose the diagram type and direction for legibility at normal chat width. Prefer a "
+    "balanced, taller hierarchy for broad overviews, keep labels concise, and usually keep "
+    "top-level branches to three through five. Group dense detail into meaningful subgraphs "
+    "or explain it in prose instead of drawing one hub with a wide fan of tiny sibling nodes. "
+    "If the complete diagram would require shrinking its text to understand the whole, simplify "
+    "or split it into focused diagrams. "
+    "When color would improve a Mermaid diagram, infer a coherent grouping from the "
+    "actual subject and encode that visual system directly in the Mermaid source with "
+    "`classDef` and `class` assignments. In a categorical or hierarchical flowchart, give "
+    "each top-level semantic branch one hue family and apply it to every descendant in "
+    "that branch; use restrained lightness or saturation changes within that family only "
+    "when hierarchy needs reinforcement. Style the root and shared nodes as a distinct "
+    "anchor. If authored classes are used, assign every node instead of leaving arbitrary "
+    "nodes on the viewer default. Reserve red, coral, and amber for explicit risk, warning, "
+    "or status meaning, never generic emphasis; do not add isolated exception colors that "
+    "introduce a second unexplained classification. Keep the diagram understandable from "
+    "its labels and structure without color, and use text colors with at least 4.5:1 "
+    "contrast against node fills. Prefix authored Mermaid class names with `lumina-`; do not "
+    "reuse Mermaid structural class names such as `root`. Avoid assigning colors by node "
+    "order. Do not rely on the "
+    "viewer to infer or reassign semantic colors. "
     "When quantitative or relational data are materially clearer as an interactive chart, "
     "return a fenced `lumina-chart` block containing a strict-JSON Apache ECharts option. "
     "Use any declarative ECharts series and component supported by ECharts 6, including "
@@ -176,13 +197,25 @@ class ResolvedInstructionStack:
         )
 
 
+class RuntimePromptDocument(TypedDict):
+    key: RuntimePromptKey
+    name: str
+    description: str
+    content: str
+    defaultContent: str
+    revision: int
+    digest: str
+    overridden: bool
+    updatedAt: datetime | None
+
+
 def instruction_digest(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
 def runtime_prompt_document(
     db: Session, organization: Organization, prompt_key: RuntimePromptKey
-) -> dict[str, object]:
+) -> RuntimePromptDocument:
     definition = RUNTIME_PROMPT_DEFAULTS[prompt_key]
     stored = db.get(RuntimePromptOverride, (organization.id, prompt_key))
     content = stored.content if stored is not None else definition["content"]
@@ -201,7 +234,7 @@ def runtime_prompt_document(
 
 def runtime_prompt_documents(
     db: Session, organization: Organization
-) -> list[dict[str, object]]:
+) -> list[RuntimePromptDocument]:
     return [
         runtime_prompt_document(db, organization, prompt_key)
         for prompt_key in RUNTIME_PROMPT_DEFAULTS
@@ -231,11 +264,11 @@ def update_runtime_prompt(
     expected_revision: int,
     expected_digest: str,
     updated_by_user_id: str,
-) -> tuple[dict[str, object], bool]:
+) -> tuple[RuntimePromptDocument, bool]:
     current = runtime_prompt_document(db, organization, prompt_key)
     _check_precondition(
-        int(current["revision"]),
-        str(current["digest"]),
+        current["revision"],
+        current["digest"],
         expected_revision,
         expected_digest,
     )

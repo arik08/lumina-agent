@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 from urllib.parse import quote
 
@@ -9,6 +10,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from ...audit import record_audit
+from ...artifacts.standalone_html import prepare_standalone_html_download
 from ...auth.security import generate_secret_token, hash_token
 from ...config import Settings, get_settings
 from ...db import get_db
@@ -22,7 +24,7 @@ from ...models import (
     User,
     utc_now,
 )
-from ...storage import ManagedLocalStorage, StorageNotFoundError
+from ...storage import ManagedLocalStorage, StorageError
 from ..dependencies import AuthContext, get_current_user, require_csrf
 from ..errors import ApiProblem
 from ..schemas import ShareCreate
@@ -214,7 +216,11 @@ def list_conversation_shares(
     )
     recipients: dict[str, User] = {}
     if not received:
-        recipient_ids = {grant.recipient_user_id for grant in grants}
+        recipient_ids = {
+            grant.recipient_user_id
+            for grant in grants
+            if grant.recipient_user_id is not None
+        }
         if recipient_ids:
             recipients = {
                 recipient.id: recipient
@@ -222,12 +228,12 @@ def list_conversation_shares(
                     select(User).where(User.id.in_(recipient_ids))
                 )
             }
-    return {
-        "items": [
-            _share_payload(grant, recipient=recipients.get(grant.recipient_user_id))
-            for grant in grants
-        ]
-    }
+    items: list[dict[str, object]] = []
+    for grant in grants:
+        recipient_id = grant.recipient_user_id
+        recipient = recipients.get(recipient_id) if recipient_id is not None else None
+        items.append(_share_payload(grant, recipient=recipient))
+    return {"items": items}
 
 
 @router.delete("/{share_id}", status_code=204)
@@ -604,7 +610,7 @@ def download_shared_artifact(
             stored_version.storage_key,
             expected_sha256=stored_version.content_hash,
         )
-    except StorageNotFoundError as exc:
+    except StorageError as exc:
         raise ApiProblem(
             503, "artifact_content_missing", "Artifact 원본을 읽을 수 없습니다."
         ) from exc
@@ -620,14 +626,20 @@ def download_shared_artifact(
         metadata={"artifact_id": artifact.id, "version": stored_version.version_number},
     )
     db.commit()
+    download_content = prepare_standalone_html_download(content, artifact.mime_type)
+    download_hash = (
+        stored_version.content_hash
+        if download_content is content
+        else hashlib.sha256(download_content).hexdigest()
+    )
     encoded = quote(artifact.display_name, safe="")
     return StreamingResponse(
-        iter([content]),
+        iter([download_content]),
         media_type=artifact.mime_type,
         headers={
-            "Content-Length": str(len(content)),
+            "Content-Length": str(len(download_content)),
             "Content-Disposition": f"attachment; filename*=UTF-8''{encoded}",
-            "ETag": f'"{stored_version.content_hash}"',
+            "ETag": f'"{download_hash}"',
             "Cache-Control": "private, no-store",
         },
     )
@@ -676,7 +688,7 @@ def download_shared_attachment(
             attachment.storage_key,
             expected_sha256=attachment.content_hash,
         )
-    except StorageNotFoundError as exc:
+    except StorageError as exc:
         raise ApiProblem(
             503, "attachment_content_missing", "첨부 원본을 읽을 수 없습니다."
         ) from exc

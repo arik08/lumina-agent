@@ -1,7 +1,8 @@
 ---
 name: eia
 description: 미국 EIA의 원유·천연가스 등 에너지 가격과 시계열을 조회할 때 사용하는 MCP 라우팅 지침입니다.
-source: skill-mcp:eia
+metadata:
+  lumina-source: skill-mcp:eia
 ---
 
 # U.S. EIA MCP

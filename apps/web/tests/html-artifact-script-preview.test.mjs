@@ -2,45 +2,84 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
-const stylesSource = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
-const visualArtifactSkillSource = readFileSync(new URL("../../../extensions/skills/visual-artifact/SKILL.md", import.meta.url), "utf8");
+const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
+const appSource = read("../src/App.tsx");
+const previewSource = read("../src/components/ArtifactHtmlPreview.tsx");
+const previewStyles = read("../src/components/ArtifactHtmlPreview.css");
+const previewBridge = read("../public/artifact-preview-bridge.js");
+const interactiveResponseSource = read("../src/components/InteractiveResponse.tsx");
+const visualArtifactSkillSource = read("../../../extensions/skills/visual-artifact/SKILL.md");
 
-test("HTML Artifact preview executes JavaScript without same-origin access", () => {
-  assert.match(
-    appSource,
-    /sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock allow-downloads allow-popups allow-popups-to-escape-sandbox"/,
-  );
-  assert.doesNotMatch(appSource, /allow-scripts allow-same-origin/);
-  assert.match(stylesSource, /\.artifact-preview-frame \{[^}]*background: #fff;[^}]*color-scheme: light;/);
+test("HTML Artifact preview paints loading feedback before mounting its streamed iframe", () => {
+  assert.match(appSource, /const ArtifactHtmlPreview = lazy\(\(\) => import\("\.\/components\/ArtifactHtmlPreview"\)/);
+  assert.match(appSource, /<Suspense fallback=\{<div className="artifact-loading" role="progressbar" aria-label="HTML 미리보기 준비 중"/);
+  assert.match(appSource, /previewUrl=\{artifactEditing \? null : artifactPreviewUrl\}/);
+  assert.match(previewSource, /setFrameContent\(null\);[\s\S]*?requestAnimationFrame\(\(\) => \{/);
+  assert.match(previewSource, /srcDoc: autoHeight \? withAutoHeightBridge\(previewSource\) : previewSource/);
+  assert.match(previewSource, /role="progressbar" aria-label="HTML 미리보기 준비 중"/);
+  assert.match(previewSource, /sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock allow-downloads allow-popups allow-popups-to-escape-sandbox"/);
+  assert.doesNotMatch(previewSource, /allow-scripts allow-same-origin/);
+  assert.match(previewSource, /src=\{frameContent\.src\}/);
+  assert.match(previewStyles, /\.artifact-preview-frame \{[^}]*background: #fff;[^}]*color-scheme: light;/s);
+  assert.match(previewStyles, /@media \(prefers-reduced-motion: reduce\)/);
 });
 
-test("legacy HTML report footnotes match chat citations and remain clickable", () => {
-  assert.match(appSource, /function previewArtifactHtml\(source: string\)/);
-  assert.match(appSource, /sup\.source-ref \{[^}]*vertical-align: baseline;/s);
-  assert.match(appSource, /a\.source-ref:hover, sup\.source-ref > a:hover \{ text-decoration: none !important; \}/);
+test("HTML Artifact preview can hand scrolling to its parent without weakening the sandbox", () => {
+  assert.match(previewSource, /const artifactPreviewHeightMessage = "lumina:artifact-preview-height"/);
+  assert.match(previewSource, /<script src="\/artifact-preview-bridge\.js"><\/script>/);
+  assert.match(previewSource, /new ResizeObserver\(publish\)\.observe\(document\.documentElement\)/);
+  assert.match(previewSource, /event\.source !== frameRef\.current\?\.contentWindow/);
+  assert.match(previewSource, /scrolling=\{autoHeight \? "no" : undefined\}/);
+  assert.match(previewStyles, /\.artifact-preview-shell\.is-auto-height \{[^}]*height: auto;[^}]*min-height: 0;/);
+  assert.match(previewStyles, /\.artifact-preview-frame\.is-auto-height \{[^}]*min-height: 0;[^}]*overflow: hidden;/);
+});
+
+test("HTML Artifact preview bridge preserves clickable citations without cloning the report in React", () => {
+  assert.match(previewBridge, /sup\.source-ref \{[^}]*vertical-align:baseline;/s);
+  assert.match(previewBridge, /a\.source-ref, sup\.source-ref > a/);
   assert.match(visualArtifactSkillSource, /\.source-ref:hover \{ text-decoration:none; \}/);
-  assert.match(appSource, /link\.textContent = markers\[number - 1\]/);
-  assert.match(appSource, /link\.target = "_blank"/);
-  assert.match(appSource, /card\.setAttribute\("aria-label", "출처 링크"\)/);
-  assert.match(appSource, /sourceLink\.textContent = link\.href/);
-  assert.match(appSource, /<ArtifactHtmlPreview[\s\S]*?renderMermaid=\{!artifactEditing\}/);
-  assert.match(appSource, /srcDoc=\{previewHtml\}/);
+  assert.match(previewBridge, /link\.textContent = markers\[number - 1\]/);
+  assert.match(previewBridge, /link\.target = "_blank"/);
+  assert.match(previewBridge, /card\.setAttribute\("aria-label", "출처 링크"\)/);
+  assert.match(previewBridge, /sourceLink\.textContent = link\.href/);
+  assert.doesNotMatch(previewSource, /DOMParser|cloneNode/);
 });
 
-test("HTML Artifact Mermaid blocks use the bundled renderer and expandable viewer", () => {
-  assert.match(appSource, /import \{ renderMermaidSvg \} from "\.\/components\/InteractiveResponse"/);
-  assert.match(appSource, /const artifactMermaidCodeSelector = "pre > code\.language-mermaid/);
-  assert.match(appSource, /await renderMermaidSvg\(task\.source\)/);
-  assert.match(appSource, /task\.target\.dataset\.luminaRenderedMermaid = "true"/);
-  assert.match(appSource, /id="lumina-artifact-mermaid-zoom-style"/);
-  assert.match(appSource, /aria-label", "Mermaid 다이어그램 크게 보기"/);
-  assert.match(appSource, /clonedSvg\.setAttribute\("width", String\(viewBox\[2\]\)\)/);
-  assert.match(appSource, /clonedSvg\.setAttribute\("height", String\(viewBox\[3\]\)\)/);
-  assert.match(appSource, /changeZoom\(zoom \* \(event\.deltaY > 0 \? \.9 : 1\.1\)\)/);
-  assert.match(appSource, /viewport\.addEventListener\("pointermove"/);
+test("HTML Artifact Mermaid blocks render sequentially through the bundled renderer", () => {
+  assert.match(appSource, /const isArtifactMermaidSource = \(source: string\) =>/);
+  assert.match(appSource, /document\.querySelectorAll<HTMLElement>\("pre"\)/);
+  assert.match(previewBridge, /const isMermaidSource = \(source\) =>/);
+  assert.match(previewBridge, /document\.querySelectorAll\("pre"\)/);
+  assert.match(previewSource, /let renderQueue = Promise\.resolve\(\)/);
+  assert.match(previewSource, /renderQueue = renderQueue\.then\(async \(\) =>/);
+  assert.match(previewSource, /await import\("\.\/InteractiveResponse"\)/);
+  assert.match(previewBridge, /const renderNextMermaid = \(\) =>/);
+  assert.match(previewBridge, /if \(pendingMermaid \|\| mermaidIndex >= rawMermaid\.length\) return/);
+  assert.match(previewBridge, /parent\.postMessage\(\{ type: "lumina:artifact-mermaid-request"/);
+  assert.match(previewBridge, /pendingMermaid = null;[\s\S]*?renderNextMermaid\(\)/);
+  assert.match(previewBridge, /new MutationObserver\(scheduleEnhanceZoom\)/);
+  assert.match(previewBridge, /closest\('a\[href\^="#"\]'\)/);
+  assert.match(previewBridge, /target\.scrollIntoView\(\{ block: "start" \}\)/);
+  assert.match(previewBridge, /aria-label", "Mermaid 다이어그램 크게 보기"/);
+  assert.match(previewBridge, /const clonedSvg = svg\.cloneNode\(true\)/);
+  assert.match(previewBridge, /clonedSvg\.setAttribute\("width", String\(viewBox\[2\]\)\)/);
+  assert.match(previewBridge, /clonedSvg\.setAttribute\("height", String\(viewBox\[3\]\)\)/);
+  assert.match(previewBridge, /changeZoom\(zoom \* \(event\.deltaY > 0 \? \.9 : 1\.1\)\)/);
+  assert.match(previewBridge, /viewport\.addEventListener\("pointermove"/);
   assert.match(visualArtifactSkillSource, /Lumina automatically adds a visible expand button/);
   assert.match(visualArtifactSkillSource, /Do not add a CDN script or initialize Mermaid/);
+});
+
+test("HTML direct editing sends cheap dirty signals and serializes only when source or save needs it", () => {
+  assert.match(appSource, /document\.addEventListener\('input', publishArtifactEditDirty\)/);
+  assert.match(appSource, /parent\.postMessage\(\{ type: '\$\{artifactPreviewEditDirtyMessage\}' \}, '\*'\)/);
+  assert.match(appSource, /event\.data\?\.type === '\$\{artifactPreviewEditSnapshotRequest\}'/);
+  assert.match(appSource, /nextTab === "source"[\s\S]*?const source = await requestArtifactEditSnapshot\(\);[\s\S]*?setArtifactDraft\(source\)/);
+  assert.match(appSource, /artifactVersion\?\.sourceAvailable[\s\S]*?api\.artifacts\.getVersion\([\s\S]*?true/);
+  assert.match(appSource, /const sourceText = await requestArtifactEditSnapshot\(\);[\s\S]*?api\.artifacts\.saveDraft/);
+  assert.match(appSource, /const sourceText = await requestArtifactEditSnapshot\(\);[\s\S]*?api\.artifacts\.saveVersion/);
+  assert.doesNotMatch(appSource, /document\.addEventListener\('input', publishArtifactEdit\)/);
+  assert.doesNotMatch(appSource, /requestIdleCallback\(checkpoint/);
 });
 
 test("HTML Artifact generation keeps the user-designated visual palette", () => {
@@ -51,6 +90,64 @@ test("HTML Artifact generation keeps the user-designated visual palette", () => 
   assert.match(visualArtifactSkillSource, /--viz-blue/);
   assert.match(visualArtifactSkillSource, /--viz-purple/);
   assert.match(visualArtifactSkillSource, /Do not silently replace it with Lumina's app cobalt or an all-gray theme/);
+});
+
+test("HTML Artifact reports plan substantive visualizations before prose", () => {
+  assert.match(visualArtifactSkillSource, /build a visual inventory from the evidence/);
+  assert.match(visualArtifactSkillSource, /Apply a quantitative visualization gate before submitting the HTML/);
+  assert.match(visualArtifactSkillSource, /must not consist only of prose, tables, KPI cards, badges, or CSS progress bars/);
+  assert.match(visualArtifactSkillSource, /Use Apache ECharts for supported interactive comparisons/);
+  assert.match(visualArtifactSkillSource, /Maximize meaningful visualization, not the raw number of graphics/);
+  assert.match(visualArtifactSkillSource, /KPI cards, badges, icons, colored headings, and decorative shapes do not count as substantive visualizations/);
+  assert.match(visualArtifactSkillSource, /at least one substantive visualization in the first screen/);
+  assert.match(visualArtifactSkillSource, /Do not invent precision to satisfy the visual plan/);
+  assert.match(visualArtifactSkillSource, /name the reader question each one answers/);
+});
+
+test("HTML Artifact reports prefer ECharts for numeric-dense interactive visuals", () => {
+  assert.match(visualArtifactSkillSource, /\*\*Apache ECharts\*\*: preferred for data-rich interactive report charts/);
+  assert.match(visualArtifactSkillSource, /Use a pinned 6\.x build/);
+  assert.match(visualArtifactSkillSource, /call `resize\(\)` on viewport changes/);
+  assert.match(visualArtifactSkillSource, /show a compact readable fallback if ECharts fails to load/);
+  assert.match(visualArtifactSkillSource, /if a numeric-dense report has no real chart, return to the visual plan/);
+  assert.match(visualArtifactSkillSource, /title, subtitle, legend, and plot as separate non-overlapping vertical bands/);
+  assert.match(visualArtifactSkillSource, /table body text at least 14px/);
+  assert.match(visualArtifactSkillSource, /wrapping and horizontal overflow/);
+  assert.match(visualArtifactSkillSource, /Never put Mermaid source in a plain `pre` block/);
+});
+
+test("HTML Artifact reports do not connect nominal categories as trends", () => {
+  assert.match(visualArtifactSkillSource, /Use a line or area chart only when the x-axis has a meaningful continuous or ordered progression/);
+  assert.match(visualArtifactSkillSource, /Countries, companies, suppliers, products, regions, and other nominal categories do not become a trend/);
+  assert.match(visualArtifactSkillSource, /prefer distinct-color grouped bars, dot plots, or aligned small multiples/);
+  assert.match(visualArtifactSkillSource, /Do not draw lines between unrelated categories or use a line merely to distinguish a secondary-axis series/);
+  assert.match(visualArtifactSkillSource, /otherwise split them into aligned panels with the same category order/);
+});
+
+test("HTML Artifact reports keep section text off an unbounded tinted canvas", () => {
+  assert.match(visualArtifactSkillSource, /Never leave a major section heading, subtitle, or introductory paragraph floating directly on a persistent gray or tinted report canvas/);
+  assert.match(visualArtifactSkillSource, /establish an explicit section surface or intentional full-width section band/);
+  assert.match(visualArtifactSkillSource, /Do not place a bare heading between detached white cards/);
+});
+
+test("HTML Artifact reports align full-bleed masthead content to the main shell", () => {
+  assert.match(visualArtifactSkillSource, /Establish one shared centered content shell for ordinary vertical reports/);
+  assert.match(visualArtifactSkillSource, /--report-content-width/);
+  assert.match(visualArtifactSkillSource, /reuse that shell for the masthead's inner content, executive summary, main sections, and footer/);
+  assert.match(visualArtifactSkillSource, /do not combine viewport-relative header padding such as `7vw` with a separately centered fixed-width `main`/);
+  assert.match(visualArtifactSkillSource, /compare the computed left and right edges of the masthead inner content, first main content row, and footer/);
+});
+
+test("HTML Artifact reports structure prose-heavy sections and patch expansions", () => {
+  assert.match(visualArtifactSkillSource, /do not leave more than two substantial paragraphs in sequence without a reader-facing structure/);
+  assert.match(visualArtifactSkillSource, /Give every major HTML report section a short, stable, unique `id`/);
+  assert.match(visualArtifactSkillSource, /replace only targeted prose-heavy sections with upgraded elements carrying the same ids/);
+  assert.match(visualArtifactSkillSource, /Never grow a report by appending a chain of new prose sections after its conclusion/);
+  assert.match(visualArtifactSkillSource, /flag every major section with four or more paragraphs and no chart, table, diagram, timeline, matrix, callout, evidence-card group, or structured list/);
+});
+
+test("HTML Artifact Mermaid colors retain fallbacks outside the app theme root", () => {
+  assert.match(interactiveResponseSource, /themedSvg\.replaceAll\(value, `var\(\$\{tokenName\}, \$\{value\}\)`\)/);
 });
 
 test("visual Artifact report drafting starts inside create_report", () => {

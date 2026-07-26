@@ -8,6 +8,117 @@
       ],
       "cwd": ".",
       "auto_connect": false,
+      "tools": [
+        {
+          "name": "retrieve_context",
+          "description": "Retrieve context from the local organization knowledge base using vector, graph, or hybrid search.",
+          "inputSchema": {
+            "properties": {
+              "query": {
+                "title": "Query",
+                "type": "string"
+              },
+              "document_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Document Name"
+              },
+              "org_unit": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Org Unit"
+              },
+              "mode": {
+                "default": "hybrid",
+                "title": "Mode",
+                "type": "string"
+              },
+              "limit": {
+                "default": 5,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "query"
+            ],
+            "title": "retrieve_contextArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "explore_org",
+          "description": "Explore parent, child, and sibling organization/work sections for one organization unit.",
+          "inputSchema": {
+            "properties": {
+              "org_unit": {
+                "title": "Org Unit",
+                "type": "string"
+              },
+              "document_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Document Name"
+              },
+              "depth": {
+                "default": 2,
+                "title": "Depth",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "org_unit"
+            ],
+            "title": "explore_orgArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "list_sources",
+          "description": "List indexed source documents with chunk, graph node, and graph edge counts.",
+          "inputSchema": {
+            "properties": {
+              "limit": {
+                "default": 100,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "title": "list_sourcesArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "store_status",
+          "description": "Return Vector GraphRAG store status and index counts.",
+          "inputSchema": {
+            "properties": {},
+            "title": "store_statusArguments",
+            "type": "object"
+          }
+        }
+      ],
       "description": "로컬 Markdown 조직 업무 문서를 SQLite GraphRAG(vector+graph)로 검색합니다. `python extensions/mcp/vector_db/ingest.py index`로 인덱싱한 뒤 사용하세요."
     }
   }

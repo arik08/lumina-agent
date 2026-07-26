@@ -1,10 +1,12 @@
 import {
   AlertCircle,
+  AlignLeft,
   ArrowDown,
   ArrowLeft,
   AtSign,
   Bell,
   Bot,
+  BookOpenText,
   Brain,
   Check,
   CheckCircle2,
@@ -13,6 +15,7 @@ import {
   ChevronRight,
   ChevronUp,
   Circle,
+  ClipboardPaste,
   Clock3,
   Code2,
   Coins,
@@ -26,31 +29,26 @@ import {
   FileText,
   Folder,
   FolderOpen,
-  FolderInput,
   FolderSearch,
   Globe2,
-  Heart,
   Library,
   LoaderCircle,
   LogOut,
   Maximize2,
   Menu,
-  MessageCircle,
-  MessageCircleQuestion,
   MessageSquarePlus,
   Megaphone,
   Minimize2,
   Moon,
-  MoreVertical,
   Paperclip,
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
-  Pin,
-  PinOff,
   Play,
   RotateCcw,
   Save,
+  ScanText,
+  Scissors,
   Search,
   Send,
   Settings,
@@ -68,27 +66,44 @@ import {
   Image as ImageIcon,
   Info,
   Wrench,
+  Waypoints,
   X,
 } from "lucide-react";
 import { createClientId } from "./client-id";
 import { BranchFromHereIcon } from "./components/ActionIcons";
+import {
+  analysisDepthOptions,
+  answerLengthOptions,
+  ArtifactLengthSlider,
+  ComposerPicker,
+  defaultArtifactOutputTokens,
+  PromptEnhancementMenu,
+} from "./components/ComposerControls";
 import { copyText } from "./clipboard";
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type RefObject, type UIEvent as ReactUIEvent } from "react";
+import { clipboardTextWithLineBreaks } from "./composer-clipboard";
+import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent as ReactUIEvent } from "react";
 import { createPortal } from "react-dom";
-import { api, ApiError, attachmentContentUrl } from "./api";
+import { api, ApiError, artifactStandalonePreviewUrl, attachmentContentUrl, saveKnowledgeDocumentFromArtifact } from "./api";
+import { deepAnalysisSidebarApi } from "./feature-api";
 import { isTerminalRunStatus } from "./run-status";
-import { SyntaxCode, SyntaxTextarea } from "./components/SyntaxCode";
+import { IsolatedSyntaxTextarea, SyntaxCode } from "./components/SyntaxCode";
 import { GlobalTooltipLayer } from "./components/GlobalTooltip";
-import { renderMermaidSvg } from "./components/InteractiveResponse";
 import type {
+  AnalysisDepth,
   AnnouncementItem,
+  AnswerLength,
   AdminProviderModel,
   AdminProviderSummary,
+  AttachmentSummary,
   ArtifactSummary,
   ArtifactVersion,
+  OutputMode,
   ComposerSuggestion,
+  ConversationListItem,
+  DeepAnalysisMissionSummary,
   ExecutionSelection,
   NotificationItem,
+  PromptEnhancementOption,
   PromptReference,
   ReferenceKind,
   RunSnapshot,
@@ -100,20 +115,12 @@ type AdminProviderModelWithContextUsageRatio = AdminProviderModel & {
   defaultContextUsageRatio?: number;
 };
 import LoginScreen from "./components/LoginScreen";
-import { AdminView } from "./components/AdminView";
 import { AdminRunSafetySettings } from "./components/AdminRunSafetySettings";
-import { ArtifactLibraryView } from "./components/ArtifactLibraryView";
-import { MarketplaceView } from "./components/MarketplaceView";
-import { MemoryView } from "./components/MemoryView";
-import { ProjectSettings } from "./components/ProjectSettings";
-import { ProjectFilesView } from "./components/ProjectFilesView";
-import { HelpCenterView } from "./components/HelpCenterView";
-import { SchedulesView } from "./components/SchedulesView";
 import { ViewDataCacheProvider } from "./view-data-cache";
+import { preloadAppViews } from "./app-preload";
 import { SelectMenu } from "./components/SelectMenu";
-import { SharedSnapshotViewer } from "./components/SharedSnapshotViewer";
-import { ConversationSearchDialog } from "./components/ConversationSearchDialog";
 import { ConversationQuestionNavigator } from "./components/ConversationQuestionNavigator";
+import { SidebarRecentItems } from "./components/SidebarRecentItems";
 import { type PendingCommandAction, type RunControlAction, useLuminaWorkspace } from "./use-lumina-workspace";
 import { useBackendConnectionState } from "./BackendConnectionGuard";
 import { useConversationAutoFollow } from "./streaming-ui";
@@ -123,18 +130,43 @@ import {
   MarkdownResponse,
   pastedTextAttachmentLabel,
   runStatusLabel,
+  sessionUsageRevision,
 } from "./components/ConversationTurn";
-import { ShareActionIcon } from "./components/ActionIcons";
+import { ArtifactPreviewActions } from "./components/ArtifactPreviewActions";
+import { ImageAttachmentViewer } from "./components/ImageAttachmentViewer";
+import { TextAttachmentViewer } from "./components/TextAttachmentViewer";
+
+const AdminView = lazy(() => import("./components/AdminView").then(({ AdminView }) => ({ default: AdminView })));
+const ArtifactHtmlPreview = lazy(() => import("./components/ArtifactHtmlPreview").then(({ ArtifactHtmlPreview }) => ({ default: ArtifactHtmlPreview })));
+const ArtifactLibraryView = lazy(() => import("./components/ArtifactLibraryView").then(({ ArtifactLibraryView }) => ({ default: ArtifactLibraryView })));
+const HelpCenterView = lazy(() => import("./components/HelpCenterView").then(({ HelpCenterView }) => ({ default: HelpCenterView })));
+const MarketplaceView = lazy(() => import("./components/MarketplaceView").then(({ MarketplaceView }) => ({ default: MarketplaceView })));
+const MemoryView = lazy(() => import("./components/MemoryView").then(({ MemoryView }) => ({ default: MemoryView })));
+const ProjectFilesView = lazy(() => import("./components/ProjectFilesView").then(({ ProjectFilesView }) => ({ default: ProjectFilesView })));
+const ProjectSettings = lazy(() => import("./components/ProjectSettings").then(({ ProjectSettings }) => ({ default: ProjectSettings })));
+const SchedulesView = lazy(() => import("./components/SchedulesView").then(({ SchedulesView }) => ({ default: SchedulesView })));
+const DeepAnalysisView = lazy(() => import("./workspace-frontends/deep-analysis").then(({ DeepAnalysisView }) => ({ default: DeepAnalysisView })));
+const KnowledgeView = lazy(() => import("./workspace-frontends/knowledge").then(({ KnowledgeView }) => ({ default: KnowledgeView })));
 
 type ArtifactTab = "preview" | "source";
 type NotificationTab = "notifications" | "announcements";
 
-const artifactPreviewEditMessage = "lumina:artifact-preview-edit";
+const artifactPreviewEditDirtyMessage = "lumina:artifact-preview-edit-dirty";
+const artifactPreviewEditSnapshotRequest = "lumina:artifact-preview-edit-snapshot-request";
+const artifactPreviewEditSnapshotMessage = "lumina:artifact-preview-edit-snapshot";
 const artifactAiCommentMessage = "lumina:artifact-ai-comment";
 const artifactAiCommentsMessage = "lumina:artifact-ai-comments";
 const artifactPaneMinWidth = 360;
+const artifactPaneDefaultWidth = 1200;
 const artifactSplitPaneMinViewport = 1024;
 const chatPaneMinWidth = 440;
+const modelChangeCacheWarning = "모델을 변경하면 다음 요청에서 새 모델이 기존 대화를 다시 처리하므로 추가 API 비용이 발생할 수 있습니다.";
+
+function clampArtifactPaneWidth(value: number, collapsed: boolean) {
+  const sidebarWidth = collapsed ? 48 : 278;
+  const maximum = Math.max(artifactPaneMinWidth, window.innerWidth - sidebarWidth - chatPaneMinWidth);
+  return Math.min(Math.max(value, artifactPaneMinWidth), maximum);
+}
 
 function focusSelectableRegion(event: ReactPointerEvent<HTMLElement>) {
   if (event.target instanceof Element && event.target.closest("a, button, input, textarea, select, [contenteditable='true']")) return;
@@ -160,10 +192,14 @@ const artifactCitationMarkers = [
 ];
 
 const artifactMermaidCodeSelector = "pre > code.language-mermaid, pre > code.lang-mermaid, pre > code.language-mmd, pre > code.lang-mmd";
+const artifactMermaidCodeWithinPreSelector = "code.language-mermaid, code.lang-mermaid, code.language-mmd, code.lang-mmd";
+const isArtifactMermaidSource = (source: string) =>
+  /^(?:(?:flowchart|graph)\s+(?:TB|TD|BT|RL|LR)\b|(?:sequenceDiagram|classDiagram(?:-v2)?|stateDiagram(?:-v2)?|erDiagram|journey|gantt|gitGraph|requirementDiagram|mindmap)\b)/i.test(source.trim());
 
 function hasRawArtifactMermaid(source: string) {
   return /class=["'][^"']*\bmermaid\b/i.test(source)
-    || /class=["'][^"']*\b(?:language|lang)-(?:mermaid|mmd)\b/i.test(source);
+    || /class=["'][^"']*\b(?:language|lang)-(?:mermaid|mmd)\b/i.test(source)
+    || /<pre\b[^>]*>\s*(?:<code\b[^>]*>\s*)?(?:(?:flowchart|graph)\s+(?:TB|TD|BT|RL|LR)\b|(?:sequenceDiagram|classDiagram(?:-v2)?|stateDiagram(?:-v2)?|erDiagram|journey|gantt|gitGraph|requirementDiagram|mindmap)\b)/i.test(source);
 }
 
 function serializeArtifactHtml(document: Document, fullDocument: boolean, source: string) {
@@ -192,9 +228,18 @@ async function renderArtifactMermaidHtml(source: string) {
     target.className = "mermaid";
     tasks.push({ source: mermaidSource, target, replaceTarget: pre });
   });
+  document.querySelectorAll<HTMLElement>("pre").forEach((pre) => {
+    if (pre.closest(".mermaid") || pre.querySelector(artifactMermaidCodeWithinPreSelector)) return;
+    const mermaidSource = (pre.textContent ?? "").trim();
+    if (!isArtifactMermaidSource(mermaidSource)) return;
+    const target = document.createElement("div");
+    target.className = "mermaid";
+    tasks.push({ source: mermaidSource, target, replaceTarget: pre });
+  });
 
   await Promise.all(tasks.map(async (task) => {
     try {
+      const { renderMermaidSvg } = await import("./components/InteractiveResponse");
       const { svg } = await renderMermaidSvg(task.source);
       task.target.innerHTML = svg;
       task.target.dataset.luminaRenderedMermaid = "true";
@@ -419,32 +464,6 @@ a.source-ref:focus-visible, sup.source-ref > a:focus-visible { outline: 2px soli
     : `${source}${compatibilityLayer}`;
 }
 
-function ArtifactHtmlPreview({
-  frameRef,
-  source,
-  title,
-  renderMermaid,
-}: {
-  frameRef: RefObject<HTMLIFrameElement | null>;
-  source: string;
-  title: string;
-  renderMermaid: boolean;
-}) {
-  const [previewHtml, setPreviewHtml] = useState(() => previewArtifactHtml(source));
-  useEffect(() => {
-    let cancelled = false;
-    if (!renderMermaid || !hasRawArtifactMermaid(source)) {
-      setPreviewHtml(previewArtifactHtml(source));
-      return undefined;
-    }
-    void renderArtifactMermaidHtml(source).then((rendered) => {
-      if (!cancelled) setPreviewHtml(previewArtifactHtml(rendered));
-    });
-    return () => { cancelled = true; };
-  }, [renderMermaid, source]);
-  return <iframe ref={frameRef} className="artifact-preview-frame" title={title} sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock allow-downloads allow-popups allow-popups-to-escape-sandbox" srcDoc={previewHtml} />;
-}
-
 type ArtifactAiComment = {
   id: string;
   text: string;
@@ -490,18 +509,22 @@ function editableArtifactHtml(source: string) {
   bridge.id = "lumina-artifact-edit-bridge";
   bridge.textContent = `
     window.__luminaArtifactEditBridgeReady = true;
-    const publishArtifactEdit = () => {
+    const publishArtifactEdit = (requestId = null) => {
       const clone = document.documentElement.cloneNode(true);
       clone.querySelector('#lumina-artifact-edit-bridge')?.remove();
       clone.querySelector('#lumina-artifact-edit-style')?.remove();
+      clone.querySelector('#lumina-artifact-preview-style')?.remove();
       clone.querySelectorAll('.lumina-ai-comment-highlight').forEach((mark) => mark.replaceWith(...mark.childNodes));
       clone.querySelectorAll('.lumina-ai-comment-popover').forEach((item) => item.remove());
       const body = clone.querySelector('body');
       body?.removeAttribute('contenteditable');
       body?.removeAttribute('data-lumina-editable');
-      parent.postMessage({ type: '${artifactPreviewEditMessage}', html: '<!doctype html>\\n' + clone.outerHTML }, '*');
+      parent.postMessage({ type: '${artifactPreviewEditSnapshotMessage}', requestId, html: '<!doctype html>\\n' + clone.outerHTML }, '*');
     };
-    document.addEventListener('input', publishArtifactEdit);
+    const publishArtifactEditDirty = () => {
+      parent.postMessage({ type: '${artifactPreviewEditDirtyMessage}' }, '*');
+    };
+    document.addEventListener('input', publishArtifactEditDirty);
     let pendingRange = null;
     let savedRange = null;
     const pendingHighlightName = 'lumina-comment-pending';
@@ -515,6 +538,10 @@ function editableArtifactHtml(source: string) {
       document.querySelectorAll('[data-lumina-comment-id="' + CSS.escape(id) + '"]').forEach((mark) => mark.replaceWith(...mark.childNodes));
     };
     window.addEventListener('message', (event) => {
+      if (event.data?.type === '${artifactPreviewEditSnapshotRequest}') {
+        publishArtifactEdit(typeof event.data.requestId === 'string' ? event.data.requestId : null);
+        return;
+      }
       if (event.data?.type !== '${artifactAiCommentsMessage}') return;
       const comments = Array.isArray(event.data.comments) ? event.data.comments : [];
       document.querySelectorAll('.lumina-ai-comment-highlight').forEach((mark) => {
@@ -664,7 +691,7 @@ function StarterPrompts({ onSelect }: { onSelect: (prompt: string) => void }) {
     </div>
   );
 }
-type MainView = "chat" | "marketplace" | "library" | "files" | "help" | "schedules" | "memory" | "admin" | "settings" | "project-settings";
+type MainView = "chat" | "deep-analysis" | "knowledge" | "marketplace" | "library" | "files" | "help" | "schedules" | "memory" | "admin" | "settings" | "project-settings";
 
 const artifactPaneViews = new Set<MainView>(["chat", "library"]);
 
@@ -675,6 +702,14 @@ interface ComposerTriggerState {
   end: number;
 }
 
+interface ComposerContextMenuState {
+  x: number;
+  y: number;
+  selectionStart: number;
+  selectionEnd: number;
+  themeDark: boolean;
+}
+
 interface SelectedComposerReference {
   key: string;
   token: string;
@@ -683,11 +718,20 @@ interface SelectedComposerReference {
   reference: PromptReference;
 }
 
+interface PromptEnhancementState {
+  original: string;
+  enhanced: string;
+  view: "enhanced" | "original" | "edited";
+  restoreArmed: boolean;
+}
+
 const navigation = [
   { id: "chat", label: "에이전트", icon: Bot },
+  { id: "deep-analysis", label: "심층분석", icon: Waypoints },
   { id: "marketplace", label: "마켓스토어", icon: Store },
+  { id: "knowledge", label: "지식 그래프", icon: BookOpenText },
   { id: "library", label: "라이브러리", icon: Library },
-  { id: "files", label: "파일", icon: FolderOpen },
+  { id: "files", label: "파일 저장소", icon: FolderOpen },
   { id: "schedules", label: "예약 작업", icon: Clock3 },
   { id: "memory", label: "Memory", icon: Brain },
 ] satisfies Array<{ id: MainView; label: string; icon: typeof Bot }>;
@@ -743,30 +787,6 @@ function referenceKindLabel(kind: ReferenceKind) {
   return "파일";
 }
 
-function sharedTokenFromPath(pathname: string) {
-  const match = pathname.match(/^\/shared\/([^/]+)\/?$/);
-  if (!match) return null;
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    return match[1];
-  }
-}
-
-function sharedThemeFromLocation() {
-  return new URLSearchParams(window.location.search).get("theme") === "dark" ? "dark" : "light";
-}
-
-function sharedArtifactFromLocation() {
-  const params = new URLSearchParams(window.location.search);
-  const artifactId = params.get("artifact");
-  const parsedVersion = Number(params.get("version"));
-  return {
-    artifactId,
-    artifactVersion: Number.isInteger(parsedVersion) && parsedVersion > 0 ? parsedVersion : null,
-  };
-}
-
 function formalizePlanStepLabel(label: string) {
   return label
     .replace(/한다([.!?]?)$/u, "합니다$1")
@@ -809,286 +829,71 @@ function formatNotificationTime(value: string) {
   }).format(timestamp);
 }
 
-interface ComposerPickerOption {
-  id: string;
-  label: string;
-  triggerLabel?: string;
+function FeatureViewLoading() {
+  return (
+    <main className="feature-view feature-view-loading" aria-label="화면 로딩" aria-busy="true">
+      <LoaderCircle className="is-running" size={17} />
+      <span>화면을 불러오고 있습니다.</span>
+    </main>
+  );
 }
 
-const defaultArtifactOutputTokens = 10_000;
-
-const artifactLengthSteps = [
-  { value: 8_000, label: "8k", warning: null },
-  { value: 10_000, label: "10k", warning: null },
-  { value: 12_000, label: "12k", warning: null },
-  { value: 15_000, label: "15k", warning: null },
-  { value: 20_000, label: "20k", warning: "장문" },
-  { value: 30_000, label: "30k", warning: "장문" },
-  { value: 40_000, label: "40k", warning: "최대" },
-] as const;
-
-function ArtifactLengthSlider({
-  value,
-  onChange,
-  disabled = false,
+function WindowedTurn({
+  root,
+  retain,
+  questionAnchorIds,
+  children,
 }: {
-  value: number | null;
-  onChange: (value: number | null) => void;
-  disabled?: boolean;
+  root: { current: HTMLDivElement | null };
+  retain: boolean;
+  questionAnchorIds: string[];
+  children: ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
-  const [popoverStyle, setPopoverStyle] = useState<CSSProperties>({ left: 0, top: 0, visibility: "hidden" });
-  const rootRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const popoverRef = useRef<HTMLDivElement>(null);
-  const inputId = useId();
-  const popoverId = useId();
-  const selectedIndex = Math.max(
-    0,
-    artifactLengthSteps.findIndex((option) => option.value === (value ?? defaultArtifactOutputTokens)),
-  );
-  const selected = artifactLengthSteps[selectedIndex];
-  const selectStep = (index: number) => {
-    const boundedIndex = Math.min(artifactLengthSteps.length - 1, Math.max(0, index));
-    const option = artifactLengthSteps[boundedIndex];
-    onChange(option ? option.value : defaultArtifactOutputTokens);
-  };
-  const tone = selected.warning === "최대"
-    ? "danger"
-    : selected.warning
-      ? "warning"
-      : selected.value <= 10_000
-        ? "muted"
-        : "normal";
-  const ariaValueText = `${selected.label}${selected.warning ? `, ${selected.warning}` : ""}, 채팅 답변이 아닌 생성 파일의 목표 분량`;
+  const hostRef = useRef<HTMLDivElement>(null);
+  const [nearViewport, setNearViewport] = useState(true);
+  const [retainedHeight, setRetainedHeight] = useState(0);
+  const renderContent = retain || nearViewport;
 
   useEffect(() => {
-    if (!open) return;
-    const closeOnOutsidePointer = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (!rootRef.current?.contains(target) && !popoverRef.current?.contains(target)) setOpen(false);
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      setOpen(false);
-      triggerRef.current?.focus();
-    };
-    document.addEventListener("pointerdown", closeOnOutsidePointer);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("pointerdown", closeOnOutsidePointer);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [open]);
+    const host = hostRef.current;
+    if (!host || typeof IntersectionObserver !== "function") return undefined;
+    const observer = new IntersectionObserver(
+      ([entry]) => setNearViewport(entry.isIntersecting),
+      { root: root.current, rootMargin: "1600px 0px" },
+    );
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, [root]);
 
   useLayoutEffect(() => {
-    if (!open) return undefined;
-    const updatePosition = () => {
-      const trigger = triggerRef.current;
-      const popover = popoverRef.current;
-      if (!trigger || !popover) return;
-      const triggerRect = trigger.getBoundingClientRect();
-      const popoverRect = popover.getBoundingClientRect();
-      const viewportPadding = 12;
-      const gap = 8;
-      const maximumLeft = Math.max(viewportPadding, window.innerWidth - viewportPadding - popoverRect.width);
-      const left = Math.min(
-        maximumLeft,
-        Math.max(viewportPadding, triggerRect.left),
-      );
-      setPopoverStyle({
-        left,
-        top: Math.max(viewportPadding, triggerRect.top - gap - popoverRect.height),
-        visibility: "visible",
-      });
+    const host = hostRef.current;
+    if (!host || !renderContent) return undefined;
+    const rememberHeight = () => {
+      const next = Math.ceil(host.getBoundingClientRect().height);
+      if (next > 0) setRetainedHeight((current) => current === next ? current : next);
     };
-    updatePosition();
-    window.addEventListener("resize", updatePosition);
-    window.addEventListener("scroll", updatePosition, true);
-    return () => {
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", updatePosition, true);
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (disabled) setOpen(false);
-  }, [disabled]);
+    rememberHeight();
+    if (typeof ResizeObserver !== "function") return undefined;
+    const observer = new ResizeObserver(rememberHeight);
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, [renderContent]);
 
   return (
     <div
-      ref={rootRef}
-      className={`artifact-length-control is-${tone}${open ? " is-open" : ""}`}
+      className="turn-window"
+      ref={hostRef}
+      style={!renderContent && retainedHeight > 0 ? { height: retainedHeight } : undefined}
     >
-      <button
-        ref={triggerRef}
-        className="artifact-length-trigger"
-        type="button"
-        disabled={disabled}
-        aria-label={`문서 출력 토큰: ${selected.label}${selected.warning ? `, ${selected.warning}` : ""}`}
-        aria-expanded={open}
-        aria-controls={popoverId}
-        onClick={() => setOpen((current) => !current)}
-      >
-        <FileText size={12} aria-hidden="true" />
-        <span className="artifact-length-value">{selected.label}</span>
-        {selected.warning && <small>{selected.warning}</small>}
-      </button>
-      {open && createPortal(
-        <div
-          ref={popoverRef}
-          id={popoverId}
-          className={`artifact-length-popover is-${tone}${rootRef.current?.closest(".theme-dark") ? " theme-dark" : ""}`}
-          role="group"
-          aria-label="문서 출력 토큰 조절"
-          style={{
-            ...popoverStyle,
-            "--artifact-length-progress": `${(selectedIndex / (artifactLengthSteps.length - 1)) * 100}%`,
-          } as CSSProperties}
-        >
-          <div>
-            <label htmlFor={inputId}>문서 출력 토큰</label>
-            <output htmlFor={inputId}>
-              <span>{selected.label}</span>
-              {selected.warning && <small>{selected.warning}</small>}
-            </output>
-          </div>
-          <input
-            id={inputId}
-            data-testid="artifact-length-slider"
-            type="range"
-            min={0}
-            max={artifactLengthSteps.length - 1}
-            step={1}
-            value={selectedIndex}
-            aria-label="문서 출력 토큰"
-            aria-valuetext={ariaValueText}
-            onChange={(event) => selectStep(Number(event.currentTarget.value))}
-            onKeyDown={(event) => {
-              const nextIndex = event.key === "Home"
-                ? 0
-                : event.key === "End"
-                  ? artifactLengthSteps.length - 1
-                  : ["ArrowRight", "ArrowUp"].includes(event.key)
-                    ? selectedIndex + 1
-                    : ["ArrowLeft", "ArrowDown"].includes(event.key)
-                      ? selectedIndex - 1
-                      : null;
-              if (nextIndex === null) return;
-              event.preventDefault();
-              selectStep(nextIndex);
-            }}
-          />
-        </div>,
-        document.body,
-      )}
-    </div>
-  );
-}
-
-function ComposerPicker({
-  options,
-  value,
-  onChange,
-  ariaLabel,
-  menuLabel,
-  controlClassName,
-  placeholder,
-  tooltip,
-  disabled = false,
-}: {
-  options: ComposerPickerOption[];
-  value: string;
-  onChange: (id: string) => void;
-  ariaLabel: string;
-  menuLabel: string;
-  controlClassName: string;
-  placeholder?: string;
-  tooltip?: string;
-  disabled?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const [activeIndex, setActiveIndex] = useState(0);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const listId = useId();
-  const selectedIndex = options.findIndex((option) => option.id === value);
-  const selected = options[selectedIndex];
-
-  const openMenu = () => {
-    setActiveIndex(Math.max(selectedIndex, 0));
-    setOpen(true);
-  };
-
-  useEffect(() => {
-    if (!open) return;
-    const closeOnOutsidePointer = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener("pointerdown", closeOnOutsidePointer);
-    return () => document.removeEventListener("pointerdown", closeOnOutsidePointer);
-  }, [open]);
-
-  const choose = (option: ComposerPickerOption) => {
-    onChange(option.id);
-    setOpen(false);
-    triggerRef.current?.focus();
-  };
-
-  return (
-    <div className={`composer-picker ${open ? "is-open" : ""}`} ref={rootRef}>
-      <button
-        ref={triggerRef}
-        className={`composer-picker-trigger ${controlClassName}${tooltip ? " tooltip-control" : ""}`}
-        type="button"
-        aria-label={ariaLabel}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-controls={open ? listId : undefined}
-        disabled={disabled || options.length === 0}
-        data-tooltip={tooltip}
-        onClick={() => open ? setOpen(false) : openMenu()}
-        onKeyDown={(event) => {
-          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-            event.preventDefault();
-            if (!open) {
-              openMenu();
-              return;
-            }
-            const direction = event.key === "ArrowDown" ? 1 : -1;
-            setActiveIndex((current) => (current + direction + options.length) % options.length);
-          } else if (event.key === "Enter" && open) {
-            event.preventDefault();
-            const active = options[activeIndex];
-            if (active) choose(active);
-          } else if (event.key === "Escape" && open) {
-            event.preventDefault();
-            setOpen(false);
-          }
-        }}
-      >
-        <span>{selected?.triggerLabel ?? selected?.label ?? placeholder ?? ariaLabel}</span>
-        <ChevronDown size={13} aria-hidden="true" />
-      </button>
-      {open && (
-        <div className="composer-picker-menu" id={listId} role="listbox" aria-label={ariaLabel}>
-          <div className="composer-picker-menu-label">{menuLabel}</div>
-          {options.map((option, index) => (
-            <button
-              key={option.id}
-              className={`${option.id === value ? "is-selected" : ""} ${index === activeIndex ? "is-active" : ""}`}
-              type="button"
-              role="option"
-              aria-selected={option.id === value}
-              onMouseEnter={() => setActiveIndex(index)}
-              onClick={() => choose(option)}
-            >
-              <span>{option.label}</span>
-              <Check size={14} aria-hidden="true" />
-            </button>
-          ))}
-        </div>
-      )}
+      {questionAnchorIds.map((anchorId) => (
+        <span
+          className="turn-window-question-anchor"
+          data-question-anchor-placeholder={anchorId}
+          aria-hidden="true"
+          key={anchorId}
+        />
+      ))}
+      {renderContent ? children : null}
     </div>
   );
 }
@@ -1097,24 +902,23 @@ function App() {
   const workspace = useLuminaWorkspace();
   const backendConnectionState = useBackendConnectionState();
   const [mainView, setMainView] = useState<MainView>("chat");
+  const [requestedProjectFileId, setRequestedProjectFileId] = useState<string | null>(null);
+  const [projectSettingsReturnView, setProjectSettingsReturnView] = useState<MainView>("chat");
+  const sidebarView = mainView === "project-settings" ? projectSettingsReturnView : mainView;
   const [settingsSection, setSettingsSection] = useState<"personal" | "admin">("personal");
   const [progressOpen, setProgressOpen] = useState(false);
   const progressRunIdRef = useRef<string | null>(null);
   const progressPlanIdRef = useRef<string | null>(null);
-  const [openCalls, setOpenCalls] = useState<Set<string>>(new Set());
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const sidebarAutoCollapsedRef = useRef(false);
+  const [deepAnalysisMissions, setDeepAnalysisMissions] = useState<DeepAnalysisMissionSummary[]>([]);
+  const [deepAnalysisMissionsLoading, setDeepAnalysisMissionsLoading] = useState(false);
+  const [deepAnalysisTitleFilter, setDeepAnalysisTitleFilter] = useState("");
+  const [deepAnalysisSelectedMissionId, setDeepAnalysisSelectedMissionId] = useState<string | null>(null);
+  const [deepAnalysisRemovedMissionIds, setDeepAnalysisRemovedMissionIds] = useState<Set<string>>(new Set());
+  const [deepAnalysisCreateRequest, setDeepAnalysisCreateRequest] = useState(0);
   const [sessionMenuId, setSessionMenuId] = useState<string | null>(null);
-  const [likedSessionsOnly, setLikedSessionsOnly] = useState(false);
-  const [sessionDeleteArmedId, setSessionDeleteArmedId] = useState<string | null>(null);
-  const [sessionDeleteBusyId, setSessionDeleteBusyId] = useState<string | null>(null);
-  const [moveMenuId, setMoveMenuId] = useState<string | null>(null);
-  const [bulkSessionMode, setBulkSessionMode] = useState(false);
-  const [bulkSessionIds, setBulkSessionIds] = useState<Set<string>>(new Set());
-  const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
-  const [bulkSessionBusy, setBulkSessionBusy] = useState(false);
-  const [bulkSessionDeleteArmed, setBulkSessionDeleteArmed] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [providerMenuOpen, setProviderMenuOpen] = useState(false);
@@ -1123,28 +927,41 @@ function App() {
   const [adminFooterModels, setAdminFooterModels] = useState<Record<string, AdminProviderModel[]>>({});
   const [adminFooterBusyId, setAdminFooterBusyId] = useState<string | null>(null);
   const [modelNameTooltip, setModelNameTooltip] = useState<{ name: string; left: number; top: number } | null>(null);
-  const [conversationSearchOpen, setConversationSearchOpen] = useState(false);
+  const [conversationTitleFilter, setConversationTitleFilter] = useState("");
+  const [conversationTitleResults, setConversationTitleResults] = useState<ConversationListItem[]>([]);
+  const [conversationTitleNextCursor, setConversationTitleNextCursor] = useState<string | null>(null);
+  const [conversationTitleFilterLoading, setConversationTitleFilterLoading] = useState(false);
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [notificationTab, setNotificationTab] = useState<NotificationTab>("notifications");
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
   const [helpAnnouncementId, setHelpAnnouncementId] = useState<string | null>(null);
   const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
+  const [announcementUnreadCount, setAnnouncementUnreadCount] = useState(0);
   const [notificationLoading, setNotificationLoading] = useState(false);
   const [notificationError, setNotificationError] = useState<string | null>(null);
   const [notificationBusyId, setNotificationBusyId] = useState<string | null>(null);
   const [notificationDeleteArmedId, setNotificationDeleteArmedId] = useState<string | null>(null);
   const [sessionTitleEditing, setSessionTitleEditing] = useState(false);
   const [sessionTitleDraft, setSessionTitleDraft] = useState("");
-  const [draft, setDraft] = useState("");
+  const [composerHasText, setComposerHasText] = useState(false);
   const [targetOutputTokens, setTargetOutputTokens] = useState<number | null>(defaultArtifactOutputTokens);
+  const [analysisDepth, setAnalysisDepth] = useState<AnalysisDepth>("auto");
+  const [answerLength, setAnswerLength] = useState<AnswerLength>("auto");
+  const [promptEnhancementState, setPromptEnhancementState] = useState<PromptEnhancementState | null>(null);
+  const [promptEnhancementLoading, setPromptEnhancementLoading] = useState(false);
+  const [promptEnhancementError, setPromptEnhancementError] = useState<string | null>(null);
+  const [composerContextMenu, setComposerContextMenu] = useState<ComposerContextMenuState | null>(null);
   const [composerTrigger, setComposerTrigger] = useState<ComposerTriggerState | null>(null);
   const [composerSuggestions, setComposerSuggestions] = useState<ComposerSuggestion[]>([]);
   const [selectedReferences, setSelectedReferences] = useState<SelectedComposerReference[]>([]);
+  const [previewComposerAttachment, setPreviewComposerAttachment] = useState<AttachmentSummary | null>(null);
+  const [previewComposerTextAttachment, setPreviewComposerTextAttachment] = useState<AttachmentSummary | null>(null);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   const [pendingCommandAction, setPendingCommandAction] = useState<{ id: string; action: PendingCommandAction } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const modelChangeOriginRef = useRef<{ conversationId: string | null; candidateId: string } | null>(null);
   const [adminSettingsProviderId, setAdminSettingsProviderId] = useState("");
   const [adminSettingsModels, setAdminSettingsModels] = useState<AdminProviderModel[]>([]);
   const [adminSettingsModelKey, setAdminSettingsModelKey] = useState("");
@@ -1152,6 +969,7 @@ function App() {
   const [adminInitialExecutionBusy, setAdminInitialExecutionBusy] = useState(false);
   const [adminInitialExecutionError, setAdminInitialExecutionError] = useState<string | null>(null);
   const [adminMaxTokens, setAdminMaxTokens] = useState("");
+  const [adminInputTokens, setAdminInputTokens] = useState("");
   const [adminContextUsagePercent, setAdminContextUsagePercent] = useState("");
   const [adminOutputTokens, setAdminOutputTokens] = useState(0);
   const [adminSettingsBusy, setAdminSettingsBusy] = useState(false);
@@ -1161,7 +979,7 @@ function App() {
     const saved = Number(localStorage.getItem("lumina:artifactPaneWidth"));
     return Number.isFinite(saved) && saved >= artifactPaneMinWidth
       ? saved
-      : Math.max(520, Math.round(window.innerWidth * 0.42));
+      : artifactPaneDefaultWidth;
   });
   const [artifactResizing, setArtifactResizing] = useState(false);
   const [artifactFullscreen, setArtifactFullscreen] = useState(false);
@@ -1180,28 +998,49 @@ function App() {
   const [artifactAiSubmitting, setArtifactAiSubmitting] = useState(false);
   const [artifactAiStatus, setArtifactAiStatus] = useState<string | null>(null);
   const [artifactSaveBusy, setArtifactSaveBusy] = useState<"draft" | "version" | null>(null);
+  const [artifactKnowledgeSaving, setArtifactKnowledgeSaving] = useState(false);
+  const [artifactKnowledgeSavedKey, setArtifactKnowledgeSavedKey] = useState<string | null>(null);
   const titleCommitRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const composerInputRef = useRef<HTMLTextAreaElement>(null);
+  const composerContextMenuRef = useRef<HTMLDivElement>(null);
+  const composerDraftRef = useRef("");
+  const promptEnhancementRequestRef = useRef(0);
+  const resetLargeOutputTargetAfterRunRef = useRef<number | null>(null);
   const fileModeButtonRef = useRef<HTMLButtonElement>(null);
   const previousConversationRef = useRef<string | null>(null);
   const artifactOpenRequestRef = useRef(0);
   const artifactHistoryOpenRef = useRef(false);
   const artifactPreviewFrameRef = useRef<HTMLIFrameElement>(null);
+  const artifactEditSnapshotResolversRef = useRef(new Map<string, (html: string) => void>());
+  const artifactEditSnapshotCounterRef = useRef(0);
+  const artifactDraftRef = useRef("");
   const dockAreaRef = useRef<HTMLDivElement>(null);
   const notificationMenuRef = useRef<HTMLDivElement>(null);
   const modelNameTooltipTimerRef = useRef<number | null>(null);
   const sessionScrollbarIdleTimerRef = useRef<number | null>(null);
 
+  const writeComposerDraft = useCallback((value: string) => {
+    composerDraftRef.current = value;
+    const input = composerInputRef.current;
+    if (input && input.value !== value) input.value = value;
+    const nextHasText = Boolean(value.trim());
+    setComposerHasText((current) => current === nextHasText ? current : nextHasText);
+  }, []);
+
   useEffect(() => {
     localStorage.setItem("lumina:artifactPaneWidth", String(artifactPaneWidth));
   }, [artifactPaneWidth]);
 
-  function clampArtifactPaneWidth(value: number, collapsed: boolean) {
-    const sidebarWidth = collapsed ? 48 : 278;
-    const maximum = Math.max(artifactPaneMinWidth, window.innerWidth - sidebarWidth - chatPaneMinWidth);
-    return Math.min(Math.max(value, artifactPaneMinWidth), maximum);
-  }
+  useEffect(() => {
+    artifactDraftRef.current = artifactDraft;
+  }, [artifactDraft]);
+
+  useEffect(() => {
+    if (!workspace.settings) return;
+    setAnalysisDepth(workspace.settings.analysisDepth);
+    setAnswerLength(workspace.settings.answerLength);
+  }, [workspace.settings?.analysisDepth, workspace.settings?.answerLength]);
 
   function beginArtifactResize(event: ReactPointerEvent<HTMLButtonElement>) {
     if (artifactFullscreen || window.innerWidth < artifactSplitPaneMinViewport) return;
@@ -1282,10 +1121,18 @@ function App() {
     if (!artifactEditing || artifactVersion?.mimeType !== "text/html") return;
     const receivePreviewEdit = (event: MessageEvent) => {
       if (event.source !== artifactPreviewFrameRef.current?.contentWindow) return;
-      if (event.data?.type === artifactPreviewEditMessage && typeof event.data.html === "string") {
+      if (event.data?.type === artifactPreviewEditDirtyMessage) {
+        setArtifactDraftSaved(false);
+        setArtifactDraftNotice(null);
+      }
+      if (event.data?.type === artifactPreviewEditSnapshotMessage && typeof event.data.html === "string") {
         setArtifactDraft(event.data.html);
         setArtifactDraftSaved(false);
         setArtifactDraftNotice(null);
+        if (typeof event.data.requestId === "string") {
+          artifactEditSnapshotResolversRef.current.get(event.data.requestId)?.(event.data.html);
+          artifactEditSnapshotResolversRef.current.delete(event.data.requestId);
+        }
       }
       if (event.data?.type === artifactAiCommentMessage && event.data.comment) {
         const comment = event.data.comment as ArtifactAiComment;
@@ -1298,6 +1145,72 @@ function App() {
     window.addEventListener("message", receivePreviewEdit);
     return () => window.removeEventListener("message", receivePreviewEdit);
   }, [artifactEditing, artifactVersion?.mimeType]);
+
+  const requestArtifactEditSnapshot = useCallback(() => {
+    if (!artifactEditing || artifactVersion?.mimeType !== "text/html") {
+      return Promise.resolve(artifactDraftRef.current);
+    }
+    const target = artifactPreviewFrameRef.current?.contentWindow;
+    if (!target) return Promise.resolve(artifactDraftRef.current);
+    const requestId = `artifact-edit-${++artifactEditSnapshotCounterRef.current}`;
+    return new Promise<string>((resolve) => {
+      const timeout = window.setTimeout(() => {
+        artifactEditSnapshotResolversRef.current.delete(requestId);
+        resolve(artifactDraftRef.current);
+      }, 3_000);
+      artifactEditSnapshotResolversRef.current.set(requestId, (html) => {
+        window.clearTimeout(timeout);
+        resolve(html);
+      });
+      target.postMessage({ type: artifactPreviewEditSnapshotRequest, requestId }, "*");
+    });
+  }, [artifactEditing, artifactVersion?.mimeType]);
+
+  const toggleArtifactTab = useCallback(async () => {
+    const nextTab: ArtifactTab = artifactTab === "preview" ? "source" : "preview";
+    if (
+      nextTab === "source"
+      && artifactSummary
+      && artifactVersion?.sourceAvailable
+      && artifactVersion.sourceText === null
+    ) {
+      const requestId = artifactOpenRequestRef.current;
+      setArtifactLoading(true);
+      try {
+        const hydrated = await api.artifacts.getVersion(
+          artifactSummary.id,
+          artifactVersion.version,
+          true,
+        );
+        if (artifactOpenRequestRef.current !== requestId) return;
+        setArtifactVersion(hydrated);
+        if (!artifactDraftSaved) setArtifactDraft(hydrated.sourceText ?? "");
+      } catch (error) {
+        setToast(error instanceof Error ? error.message : "Artifact 소스를 불러오지 못했습니다.");
+        return;
+      } finally {
+        if (artifactOpenRequestRef.current === requestId) setArtifactLoading(false);
+      }
+    }
+    if (
+      nextTab === "source"
+      && artifactEditing
+      && artifactVersion?.mimeType === "text/html"
+    ) {
+      const source = await requestArtifactEditSnapshot();
+      artifactDraftRef.current = source;
+      setArtifactDraft(source);
+      setArtifactEditablePreview(editableArtifactHtml(source));
+    }
+    setArtifactTab(nextTab);
+  }, [
+    artifactDraftSaved,
+    artifactEditing,
+    artifactSummary,
+    artifactTab,
+    artifactVersion,
+    requestArtifactEditSnapshot,
+  ]);
 
   useEffect(() => {
     if (!artifactEditing || artifactVersion?.mimeType !== "text/html") return;
@@ -1321,17 +1234,16 @@ function App() {
 
   const closeArtifact = useCallback(() => {
     if (artifactSaveBusy) return;
-    if (artifactHistoryOpenRef.current) {
-      window.history.back();
-      return;
-    }
+    const shouldRewindHistory = artifactHistoryOpenRef.current;
     finishCloseArtifact();
+    if (shouldRewindHistory) window.history.back();
   }, [artifactSaveBusy, finishCloseArtifact]);
 
   useEffect(() => {
     if (!artifactOpen || artifactPaneViews.has(mainView)) return;
-    if (artifactHistoryOpenRef.current) window.history.back();
-    else finishCloseArtifact();
+    const shouldRewindHistory = artifactHistoryOpenRef.current;
+    finishCloseArtifact();
+    if (shouldRewindHistory) window.history.back();
   }, [artifactOpen, finishCloseArtifact, mainView]);
 
   useEffect(() => {
@@ -1343,15 +1255,69 @@ function App() {
   }, [finishCloseArtifact]);
 
   const theme = workspace.settings?.theme ?? "light";
+  const conversationWidth = workspace.settings?.conversationWidth ?? 900;
+  const conversationFontSize = workspace.settings?.conversationFontSize ?? 14;
+  const conversationLayoutStyle = {
+    "--conversation-content-width": `${conversationWidth}px`,
+    "--conversation-font-size": `${conversationFontSize}px`,
+  } as CSSProperties;
   const isAdmin = workspace.authSession?.user.role === "admin";
   const artifactPaneVisible = artifactOpen && artifactPaneViews.has(mainView);
   const activeRuntime = workspace.activeRuntime;
   const activeRun = workspace.activeRun;
-  const cumulativeUsageByTurnSetId = useMemo(
-    () => cumulativeSessionUsageByTurnSet(activeRuntime.turnSets, activeRuntime.snapshots),
-    [activeRuntime.snapshots, activeRuntime.turnSets],
+  useEffect(() => {
+    if (
+      resetLargeOutputTargetAfterRunRef.current === null
+      || !activeRun
+      || !isTerminalRunStatus(activeRun.status)
+    ) return;
+    const submittedTarget = resetLargeOutputTargetAfterRunRef.current;
+    resetLargeOutputTargetAfterRunRef.current = null;
+    setTargetOutputTokens((current) => (
+      current === submittedTarget ? defaultArtifactOutputTokens : current
+    ));
+  }, [activeRun?.runId, activeRun?.status]);
+  const activeSessionUsageRevision = sessionUsageRevision(
+    activeRuntime.usageBeforeLoadedTurnSets,
+    activeRuntime.turnSets,
+    activeRuntime.snapshots,
   );
+  const cumulativeUsageCacheRef = useRef<{
+    revision: string;
+    value: ReturnType<typeof cumulativeSessionUsageByTurnSet>;
+  } | null>(null);
+  if (cumulativeUsageCacheRef.current?.revision !== activeSessionUsageRevision) {
+    cumulativeUsageCacheRef.current = {
+      revision: activeSessionUsageRevision,
+      value: cumulativeSessionUsageByTurnSet(
+        activeRuntime.usageBeforeLoadedTurnSets,
+        activeRuntime.turnSets,
+        activeRuntime.snapshots,
+      ),
+    };
+  }
+  const cumulativeUsageByTurnSetId = cumulativeUsageCacheRef.current.value;
   const activeProject = workspace.projects.find((project) => project.id === workspace.activeProjectId) ?? null;
+  useEffect(() => {
+    const preload = () => {
+      void preloadAppViews({
+        projectId: workspace.activeProjectId,
+        isAdmin,
+      });
+    };
+    if ("requestIdleCallback" in window) {
+      const idleId = window.requestIdleCallback(preload, { timeout: 1_000 });
+      return () => window.cancelIdleCallback(idleId);
+    }
+    const timer = globalThis.setTimeout(preload, 0);
+    return () => globalThis.clearTimeout(timer);
+  }, [isAdmin, workspace.activeProjectId]);
+  useEffect(() => {
+    setDeepAnalysisMissions([]);
+    setDeepAnalysisMissionsLoading(false);
+    setDeepAnalysisSelectedMissionId(null);
+    setDeepAnalysisRemovedMissionIds(new Set());
+  }, [workspace.activeProjectId]);
   const restoringActiveConversation = Boolean(
     workspace.activeConversationId && !activeRuntime.loaded && !activeRuntime.error,
   );
@@ -1510,6 +1476,7 @@ function App() {
       ?? selectedAdminSettingsModel?.capabilities.contextCompactionThreshold
       ?? adminDefaultContextUsageRatio;
     setAdminMaxTokens(typeof value === "number" ? value.toLocaleString("en-US") : "");
+    setAdminInputTokens(selectedAdminSettingsModel?.maxInputTokens?.toLocaleString("en-US") ?? "");
     setAdminContextUsagePercent(typeof ratio === "number" ? String(Math.round(ratio * 100)) : "75");
     setAdminOutputTokens(
       selectedAdminSettingsModel?.configuredMaxOutputTokens
@@ -1519,14 +1486,24 @@ function App() {
   }, [adminDefaultContextUsageRatio, selectedAdminSettingsModel]);
 
   const parsedAdminContextWindow = Number(adminMaxTokens.replaceAll(",", ""));
+  const parsedAdminInputTokens = Number(adminInputTokens.replaceAll(",", ""));
   const parsedAdminContextUsagePercent = Number(adminContextUsagePercent);
+  const adminMeasuredInputTokenLimit = Number.isSafeInteger(parsedAdminInputTokens) && parsedAdminInputTokens > 0
+    ? parsedAdminInputTokens
+    : null;
   const adminBaseInputContext = (() => {
     if (!Number.isSafeInteger(parsedAdminContextWindow) || parsedAdminContextWindow < 1) return null;
     const reservedOutput = adminOutputTokens > 0
       ? adminOutputTokens
       : Math.max(512, Math.min(4_096, Math.floor(parsedAdminContextWindow / 8)));
     const safetyMargin = Math.max(256, Math.min(4_096, Math.floor(parsedAdminContextWindow / 20)));
-    return Math.max(256, parsedAdminContextWindow - reservedOutput - safetyMargin);
+    return Math.max(
+      256,
+      Math.min(
+        parsedAdminContextWindow - reservedOutput,
+        adminMeasuredInputTokenLimit ?? parsedAdminContextWindow,
+      ) - safetyMargin,
+    );
   })();
   const adminBaseCompactionThreshold = (
     adminBaseInputContext !== null
@@ -1578,6 +1555,38 @@ function App() {
     } finally {
       setAdminSettingsBusy(false);
     }
+  };
+  const saveAdminInputTokens = async (value = parsedAdminInputTokens) => {
+    if (!selectedAdminSettingsModel) return;
+    if (!Number.isSafeInteger(value) || value < 1 || value > parsedAdminContextWindow) {
+      setAdminSettingsError("실측 입력 토큰 상한은 전체 컨텍스트 이내의 1 이상 정수여야 합니다.");
+      return;
+    }
+    setAdminSettingsBusy(true);
+    setAdminSettingsError(null);
+    try {
+      const capabilities: Record<string, unknown> = {
+        ...selectedAdminSettingsModel.capabilities,
+        max_input_tokens: value,
+      };
+      delete capabilities.maxInputTokens;
+      const updated = await api.adminProviders.updateModel(
+        adminSettingsProviderId,
+        selectedAdminSettingsModel.modelKey,
+        { capabilities },
+      );
+      setAdminSettingsModels((models) => models.map((model) => model.modelKey === updated.modelKey ? updated : model));
+    } catch (error) {
+      setAdminSettingsError(error instanceof Error ? error.message : "실측 입력 토큰 상한을 저장하지 못했습니다.");
+    } finally {
+      setAdminSettingsBusy(false);
+    }
+  };
+  const resetAdminInputTokens = () => {
+    const defaultValue = selectedAdminSettingsModel?.defaultMaxInputTokens;
+    if (!defaultValue) return;
+    setAdminInputTokens(defaultValue.toLocaleString("en-US"));
+    void saveAdminInputTokens(defaultValue);
   };
   const saveAdminContextUsagePercent = async (nextPercent = parsedAdminContextUsagePercent) => {
     if (!selectedAdminSettingsModel) return;
@@ -1729,7 +1738,7 @@ function App() {
     activeRun && !isTerminalRunStatus(activeRun.status),
   );
   const runIsPaused = activeRun?.status === "paused";
-  const composerHasPayload = Boolean(draft.trim() || workspace.composerAttachments.length > 0);
+  const composerHasPayload = composerHasText || workspace.composerAttachments.length > 0;
   const composerShowsStop = Boolean(runIsActive && !composerHasPayload);
   const queuedComposerCommands = useMemo(
     () => (activeRun?.pendingCommands ?? [])
@@ -1737,37 +1746,138 @@ function App() {
       .sort((left, right) => (left.queuePosition ?? Number.MAX_SAFE_INTEGER) - (right.queuePosition ?? Number.MAX_SAFE_INTEGER)),
     [activeRun?.pendingCommands],
   );
+  const pendingComposerMode = useMemo(
+    () => [...(activeRun?.pendingCommands ?? [])]
+      .filter((command) => command.type === "steer" || command.type === "queue_next")
+      .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))[0]?.type ?? null,
+    [activeRun?.pendingCommands],
+  );
   const shouldNudgeFileMode = mainView === "chat"
     && workspace.settings?.outputMode === "file"
-    && draft.trim().length === 0
+    && !composerHasText
     && activeRun?.outputIntent?.fileCreationRequested === false;
   const conversationFollow = useConversationAutoFollow(
     runIsActive,
     workspace.activeConversationId,
     activeRuntime.loaded,
   );
+  const olderTurnSetsLoadingRef = useRef(false);
+  const prependScrollAnchorRef = useRef<{
+    conversationId: string;
+    scrollHeight: number;
+    scrollTop: number;
+    turnSetCount: number;
+  } | null>(null);
+  const loadOlderTurnSetsNearTop = useCallback(async () => {
+    const conversationId = workspace.activeConversationId;
+    const container = conversationFollow.containerRef.current;
+    const prefetchDistance = container
+      ? Math.max(240, container.clientHeight * 0.75)
+      : 0;
+    if (
+      !conversationId
+      || !container
+      || container.scrollTop > prefetchDistance
+      || !activeRuntime.hasMoreTurnSetsBefore
+      || olderTurnSetsLoadingRef.current
+    ) return;
+
+    olderTurnSetsLoadingRef.current = true;
+    prependScrollAnchorRef.current = {
+      conversationId,
+      scrollHeight: container.scrollHeight,
+      scrollTop: container.scrollTop,
+      turnSetCount: activeRuntime.turnSets.length,
+    };
+    try {
+      const loaded = await workspace.loadOlderConversationTurnSets(conversationId);
+      if (!loaded) prependScrollAnchorRef.current = null;
+    } finally {
+      olderTurnSetsLoadingRef.current = false;
+    }
+  }, [
+    activeRuntime.hasMoreTurnSetsBefore,
+    activeRuntime.turnSets.length,
+    conversationFollow.containerRef,
+    workspace.activeConversationId,
+    workspace.loadOlderConversationTurnSets,
+  ]);
+  const loadQuestionFromNavigator = useCallback(async (questionIndex: number) => {
+    const conversationId = workspace.activeConversationId;
+    const container = conversationFollow.containerRef.current;
+    if (!conversationId || !container || olderTurnSetsLoadingRef.current) return false;
+
+    olderTurnSetsLoadingRef.current = true;
+    prependScrollAnchorRef.current = {
+      conversationId,
+      scrollHeight: container.scrollHeight,
+      scrollTop: container.scrollTop,
+      turnSetCount: activeRuntime.turnSets.length,
+    };
+    try {
+      const loaded = await workspace.loadOlderConversationTurnSets(conversationId, questionIndex);
+      if (!loaded) prependScrollAnchorRef.current = null;
+      return loaded;
+    } finally {
+      olderTurnSetsLoadingRef.current = false;
+    }
+  }, [
+    activeRuntime.turnSets.length,
+    conversationFollow.containerRef,
+    workspace.activeConversationId,
+    workspace.loadOlderConversationTurnSets,
+  ]);
+  useLayoutEffect(() => {
+    const anchor = prependScrollAnchorRef.current;
+    const container = conversationFollow.containerRef.current;
+    if (!anchor || !container) return;
+    if (anchor.conversationId !== workspace.activeConversationId) {
+      prependScrollAnchorRef.current = null;
+      return;
+    }
+    if (activeRuntime.turnSets.length <= anchor.turnSetCount) return;
+    container.scrollTop = anchor.scrollTop + (container.scrollHeight - anchor.scrollHeight);
+    prependScrollAnchorRef.current = null;
+  }, [
+    activeRuntime.turnSets.length,
+    conversationFollow.containerRef,
+    workspace.activeConversationId,
+  ]);
   useEffect(() => {
-    setOpenCalls(new Set());
-  }, [activeRun?.runId]);
+    if (!activeRuntime.loaded || !activeRuntime.hasMoreTurnSetsBefore) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      void loadOlderTurnSetsNearTop();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [
+    activeRuntime.hasMoreTurnSetsBefore,
+    activeRuntime.loaded,
+    activeRuntime.turnSets.length,
+    loadOlderTurnSetsNearTop,
+  ]);
   const effortOptions = workspace.selectedModel?.capabilities.effortOptions ?? [];
-  const artifactHasTextSource = artifactVersion?.sourceText !== null && artifactVersion?.sourceText !== undefined;
+  const artifactHasTextSource = Boolean(artifactVersion?.sourceAvailable);
   const artifactIsCurrentVersion = Boolean(artifactSummary && artifactVersion && artifactVersion.version === artifactSummary.currentVersion);
   const artifactVersionOptions = artifactSummary
     ? [...new Set(artifactSummary.versions?.length ? artifactSummary.versions : [artifactSummary.currentVersion])].sort((left, right) => right - left)
     : [];
   const artifactDownloadVersion = artifactVersion?.version ?? artifactSummary?.currentVersion ?? null;
+  const artifactKnowledgeKey = artifactSummary && artifactVersion
+    ? `${artifactSummary.id}:${artifactVersion.version}`
+    : null;
   const artifactPreviewUrl = artifactVersion?.previewUrl
-    ?? (artifactSummary && artifactVersion?.mimeType === "application/pdf"
+    ?? (artifactSummary && artifactVersion && ["application/pdf", "text/html"].includes(artifactVersion.mimeType)
       ? `/api/artifacts/${encodeURIComponent(artifactSummary.id)}/preview?version=${encodeURIComponent(String(artifactVersion.version))}`
       : null);
-  const sharedViewerToken = sharedTokenFromPath(window.location.pathname);
-  const sharedArtifactTarget = sharedArtifactFromLocation();
-
   useEffect(() => {
     if (!toast) return;
     const timer = window.setTimeout(() => setToast(null), 2600);
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  useEffect(() => {
+    modelChangeOriginRef.current = null;
+  }, [activeRuntime.turnSets.length, workspace.activeConversationId]);
 
   useEffect(() => {
     const dock = dockAreaRef.current;
@@ -1805,15 +1915,23 @@ function App() {
       setNotifications([]);
       setAnnouncements([]);
       setNotificationUnreadCount(0);
+      setAnnouncementUnreadCount(0);
       setNotificationError(null);
       return;
     }
     const controller = new AbortController();
+    let refreshing = false;
     const refresh = async () => {
+      if (refreshing) return;
+      refreshing = true;
       try {
-        const count = await api.notifications.getUnreadCount(controller.signal);
+        const [count, announcementCount] = await Promise.all([
+          api.notifications.getUnreadCount(controller.signal),
+          api.notifications.getAnnouncementUnreadCount(controller.signal),
+        ]);
         if (controller.signal.aborted) return;
         setNotificationUnreadCount(count.unreadCount);
+        setAnnouncementUnreadCount(announcementCount.unreadCount);
         if (notificationOpen) {
           setNotificationLoading(true);
           const [page, announcementPage] = await Promise.all([
@@ -1824,6 +1942,7 @@ function App() {
           setNotifications(page.items);
           setAnnouncements(announcementPage.items);
           setNotificationUnreadCount(page.unreadCount);
+          setAnnouncementUnreadCount(announcementPage.unreadCount);
           setNotificationError(null);
         }
       } catch (error) {
@@ -1831,17 +1950,22 @@ function App() {
           setNotificationError(error instanceof Error ? error.message : "알림을 불러오지 못했습니다.");
         }
       } finally {
+        refreshing = false;
         if (!controller.signal.aborted) setNotificationLoading(false);
       }
     };
-    const onFocus = () => void refresh();
-    void refresh();
-    const interval = window.setInterval(() => void refresh(), 30_000);
-    window.addEventListener("focus", onFocus);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    refreshWhenVisible();
+    const interval = window.setInterval(refreshWhenVisible, 30_000);
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
       controller.abort();
       window.clearInterval(interval);
-      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [notificationOpen, workspace.authSession?.user.id]);
 
@@ -1898,15 +2022,13 @@ function App() {
     previousConversationRef.current = workspace.activeConversationId;
     setSessionTitleEditing(false);
     setSessionMenuId(null);
-    setMoveMenuId(null);
-    setOpenCalls(new Set());
     if (!preservePendingComposer) {
-      setDraft("");
+      writeComposerDraft("");
       setSelectedReferences([]);
       setComposerTrigger(null);
       setComposerSuggestions([]);
     }
-  }, [workspace.activeConversationId]);
+  }, [workspace.activeConversationId, writeComposerDraft]);
 
   useEffect(() => {
     if (!accountMenuOpen) {
@@ -1941,24 +2063,33 @@ function App() {
     }, 650);
   }
 
-  useEffect(() => {
-    setSessionDeleteArmedId(null);
-  }, [sessionMenuId]);
-
-  useEffect(() => {
-    setBulkSessionDeleteArmed(false);
-  }, [bulkSessionIds, bulkSessionMode]);
-
   const startNewConversation = useCallback(() => {
+    promptEnhancementRequestRef.current += 1;
+    setPromptEnhancementState(null);
+    setPromptEnhancementLoading(false);
+    setPromptEnhancementError(null);
     setMainView("chat");
     setSidebarOpen(false);
     setComposerTrigger(null);
     setComposerSuggestions([]);
     setSuggestionIndex(0);
     setSuggestionsLoading(false);
+    setTargetOutputTokens((current) => (
+      current !== null && current >= 20_000 ? defaultArtifactOutputTokens : current
+    ));
+    setAnalysisDepth((current) => current === "deep" ? "auto" : current);
+    setAnswerLength((current) => current === "detailed" ? "auto" : current);
+    void workspace.resetWarningComposerSettings();
     workspace.startNewConversation();
     window.requestAnimationFrame(() => composerInputRef.current?.focus());
-  }, [workspace.startNewConversation]);
+  }, [workspace.resetWarningComposerSettings, workspace.startNewConversation]);
+
+  const startNewDeepAnalysis = useCallback(() => {
+    setMainView("deep-analysis");
+    setSidebarOpen(false);
+    setDeepAnalysisCreateRequest((current) => current + 1);
+  }, []);
+  const handleDeepAnalysisCreateRequest = useCallback(() => setDeepAnalysisCreateRequest(0), []);
 
   const openAdmin = useCallback(() => {
     setMainView("admin");
@@ -1974,11 +2105,6 @@ function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!event.repeat && (event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && event.code === "KeyF") {
-        event.preventDefault();
-        setConversationSearchOpen((open) => !open);
-        return;
-      }
       if (!event.repeat && (event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && event.code === "KeyT") {
         event.preventDefault();
         void workspace.toggleTheme();
@@ -2002,7 +2128,6 @@ function App() {
       if (event.key !== "Escape") return;
       if (artifactSaveBusy) return;
       if (notificationOpen) setNotificationOpen(false);
-      else if (conversationSearchOpen) setConversationSearchOpen(false);
       else if (sessionTitleEditing) setSessionTitleEditing(false);
       else if (artifactEditing) setArtifactEditing(false);
       else if (sessionMenuId) setSessionMenuId(null);
@@ -2015,85 +2140,204 @@ function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [accountMenuOpen, artifactEditing, artifactFullscreen, artifactOpen, artifactSaveBusy, closeArtifact, conversationSearchOpen, isAdmin, notificationOpen, openAdmin, openSettings, providerMenuOpen, providerModelMenuId, sessionMenuId, sessionTitleEditing, sidebarOpen, startNewConversation, workspace.toggleTheme]);
+  }, [accountMenuOpen, artifactEditing, artifactFullscreen, artifactOpen, artifactSaveBusy, closeArtifact, isAdmin, notificationOpen, openAdmin, openSettings, providerMenuOpen, providerModelMenuId, sessionMenuId, sessionTitleEditing, sidebarOpen, startNewConversation, workspace.toggleTheme]);
 
   const showToast = useCallback((message: string) => setToast(message), []);
 
-  const finishBulkSessionAction = (succeeded: string[]) => {
-    const remaining = new Set([...bulkSessionIds].filter((id) => !succeeded.includes(id)));
-    setBulkSessionIds(remaining);
-    if (remaining.size === 0) {
-      setBulkSessionMode(false);
-      setBulkMoveOpen(false);
+  useEffect(() => {
+    if (!composerContextMenu) return;
+    composerContextMenuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+    const close = () => setComposerContextMenu(null);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      close();
+      composerInputRef.current?.focus({ preventScroll: true });
+    };
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("resize", close);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [composerContextMenu]);
+
+  const updateDeepAnalysisSidebarMission = async (
+    missionId: string,
+    patch: { title?: string; isFavorite?: boolean; isLiked?: boolean },
+  ) => {
+    const mission = deepAnalysisMissions.find((item) => item.id === missionId);
+    if (!mission) return false;
+    try {
+      const updated = await deepAnalysisSidebarApi.updateMission(missionId, {
+        expectedRevision: mission.revision,
+        ...patch,
+      });
+      setDeepAnalysisMissions((items) => items
+        .map((item) => item.id === missionId ? updated : item)
+        .sort((left, right) => Number(right.isFavorite) - Number(left.isFavorite)
+          || Date.parse(right.updatedAt) - Date.parse(left.updatedAt)));
+      return true;
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "심층분석을 변경하지 못했습니다.");
+      return false;
     }
   };
 
-  const moveSelectedSessions = async (projectId: string) => {
-    const ids = [...bulkSessionIds];
-    if (!ids.length || bulkSessionBusy) return;
-    setBulkSessionBusy(true);
+  const moveDeepAnalysisSidebarMission = async (missionId: string, projectId: string) => {
     try {
-      const succeeded = await workspace.moveConversations(ids, projectId);
-      finishBulkSessionAction(succeeded);
-    } finally {
-      setBulkSessionBusy(false);
+      await deepAnalysisSidebarApi.moveMission(missionId, projectId);
+      setDeepAnalysisRemovedMissionIds((current) => new Set(current).add(missionId));
+      setDeepAnalysisMissions((items) => {
+        const remaining = items.filter((item) => item.id !== missionId);
+        if (deepAnalysisSelectedMissionId === missionId) {
+          setDeepAnalysisSelectedMissionId(remaining[0]?.id ?? null);
+        }
+        return remaining;
+      });
+      return true;
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "심층분석을 이동하지 못했습니다.");
+      return false;
     }
   };
 
-  const deleteSelectedSessions = async () => {
-    const ids = [...bulkSessionIds];
-    if (!ids.length || bulkSessionBusy) return;
-    if (!bulkSessionDeleteArmed) {
-      setBulkSessionDeleteArmed(true);
-      return;
-    }
-    setBulkSessionBusy(true);
+  const deleteDeepAnalysisSidebarMission = async (missionId: string) => {
+    const mission = deepAnalysisMissions.find((item) => item.id === missionId);
+    if (!mission) return false;
     try {
-      const succeeded = await workspace.deleteConversations(ids);
-      finishBulkSessionAction(succeeded);
-    } finally {
-      setBulkSessionBusy(false);
-      setBulkSessionDeleteArmed(false);
+      await deepAnalysisSidebarApi.deleteMission(missionId, mission.revision);
+      setDeepAnalysisRemovedMissionIds((current) => new Set(current).add(missionId));
+      setDeepAnalysisMissions((items) => {
+        const remaining = items.filter((item) => item.id !== missionId);
+        if (deepAnalysisSelectedMissionId === missionId) {
+          setDeepAnalysisSelectedMissionId(remaining[0]?.id ?? null);
+        }
+        return remaining;
+      });
+      return true;
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "심층분석을 삭제하지 못했습니다.");
+      return false;
     }
   };
 
-  const deleteSessionFromMenu = async (conversationId: string) => {
-    if (sessionDeleteBusyId) return;
-    if (sessionDeleteArmedId !== conversationId) {
-      setSessionDeleteArmedId(conversationId);
-      return;
+  const applyDeepAnalysisSidebarBulk = async (
+    missionIds: string[],
+    action: (missionId: string) => Promise<boolean>,
+  ) => {
+    const succeeded: string[] = [];
+    for (const missionId of missionIds) {
+      if (await action(missionId)) succeeded.push(missionId);
     }
-    setSessionDeleteBusyId(conversationId);
-    try {
-      const deleted = await workspace.deleteConversation(conversationId);
-      if (deleted) setSessionMenuId(null);
-    } finally {
-      setSessionDeleteBusyId(null);
-      setSessionDeleteArmedId(null);
-    }
+    return succeeded;
   };
+
   const composerSuggestionDisabled = (suggestion: ComposerSuggestion) => {
     const attached = suggestion.kind === "file" && workspace.composerAttachments.some((item) => item.id === suggestion.id);
     const referenceId = suggestion.referenceId ?? suggestion.id;
     const key = `${suggestion.kind}:${referenceId}:${suggestion.versionOrDigest ?? ""}`;
     return suggestion.status !== undefined && suggestion.status !== "available" || attached || selectedReferences.some((item) => item.key === key);
   };
-  const toggleSetItem = (setter: React.Dispatch<React.SetStateAction<Set<string>>>, id: string) => {
-    setter((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
   const updateDraft = (value: string, caret: number) => {
-    setDraft(value);
-    setSelectedReferences((current) => current.filter((item) => value.includes(item.token)));
+    writeComposerDraft(value);
+    setPromptEnhancementError(null);
+    setPromptEnhancementState((current) => {
+      if (!current || !value.trim()) return value.trim() ? current : null;
+      const view = value === current.enhanced
+        ? "enhanced"
+        : value === current.original
+          ? "original"
+          : "edited";
+      return { ...current, view, restoreArmed: false };
+    });
+    setSelectedReferences((current) => {
+      const next = current.filter((item) => value.includes(item.token));
+      return next.length === current.length ? current : next;
+    });
     setComposerTrigger(findComposerTrigger(value, caret));
   };
 
+  const openComposerContextMenu = (event: ReactMouseEvent<HTMLTextAreaElement>) => {
+    event.preventDefault();
+    const input = event.currentTarget;
+    const selectionStart = input.selectionStart;
+    const selectionEnd = input.selectionEnd;
+    const itemCount = selectionStart === selectionEnd ? 2 : 4;
+    setComposerTrigger(null);
+    setComposerContextMenu({
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - 168)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - (itemCount * 32 + 12))),
+      selectionStart,
+      selectionEnd,
+      themeDark: Boolean(input.closest(".theme-dark")),
+    });
+  };
+
+  const selectAllComposerText = () => {
+    const input = composerInputRef.current;
+    setComposerContextMenu(null);
+    if (!input) return;
+    input.focus({ preventScroll: true });
+    input.setSelectionRange(0, input.value.length);
+  };
+
+  const copyComposerSelection = async (cut: boolean) => {
+    const input = composerInputRef.current;
+    const contextMenu = composerContextMenu;
+    setComposerContextMenu(null);
+    if (!input || !contextMenu || contextMenu.selectionStart === contextMenu.selectionEnd) return;
+    const selectedText = input.value.slice(contextMenu.selectionStart, contextMenu.selectionEnd);
+    try {
+      await copyText(selectedText);
+      if (!cut) {
+        input.focus({ preventScroll: true });
+        input.setSelectionRange(contextMenu.selectionStart, contextMenu.selectionEnd);
+        return;
+      }
+      const nextDraft = `${input.value.slice(0, contextMenu.selectionStart)}${input.value.slice(contextMenu.selectionEnd)}`;
+      updateDraft(nextDraft, contextMenu.selectionStart);
+      window.requestAnimationFrame(() => {
+        input.focus({ preventScroll: true });
+        input.setSelectionRange(contextMenu.selectionStart, contextMenu.selectionStart);
+      });
+    } catch {
+      showToast(cut ? "잘라내지 못했습니다." : "복사하지 못했습니다.");
+    }
+  };
+
+  const pasteComposerText = async () => {
+    const input = composerInputRef.current;
+    const contextMenu = composerContextMenu;
+    setComposerContextMenu(null);
+    if (!input || !contextMenu || typeof navigator.clipboard?.readText !== "function") {
+      showToast("클립보드 내용을 읽지 못했습니다.");
+      return;
+    }
+    try {
+      const pasted = await navigator.clipboard.readText();
+      if (!pasted) return;
+      if (pasted.split(/\r?\n/).length > 20) {
+        await workspace.attachPastedText(pasted);
+        input.focus({ preventScroll: true });
+        return;
+      }
+      const nextDraft = `${input.value.slice(0, contextMenu.selectionStart)}${pasted}${input.value.slice(contextMenu.selectionEnd)}`;
+      const nextCaret = contextMenu.selectionStart + pasted.length;
+      updateDraft(nextDraft, nextCaret);
+      window.requestAnimationFrame(() => {
+        input.focus({ preventScroll: true });
+        input.setSelectionRange(nextCaret, nextCaret);
+      });
+    } catch {
+      showToast("클립보드 내용을 읽지 못했습니다.");
+    }
+  };
+
   const applyStarterPrompt = (prompt: string) => {
+    setPromptEnhancementState(null);
+    setPromptEnhancementError(null);
     updateDraft(prompt, prompt.length);
     window.requestAnimationFrame(() => {
       composerInputRef.current?.focus();
@@ -2110,11 +2354,12 @@ function App() {
     const referenceId = suggestion.referenceId ?? suggestion.id;
     const key = `${suggestion.kind}:${referenceId}:${suggestion.versionOrDigest ?? ""}`;
     const token = suggestion.insertText ?? `${composerTrigger.trigger}${suggestion.name}`;
-    const before = draft.slice(0, composerTrigger.start);
-    const after = draft.slice(composerTrigger.end);
+    const currentDraft = composerDraftRef.current;
+    const before = currentDraft.slice(0, composerTrigger.start);
+    const after = currentDraft.slice(composerTrigger.end);
     const separator = after.startsWith(" ") ? "" : " ";
     const nextDraft = `${before}${token}${separator}${after}`;
-    setDraft(nextDraft);
+    writeComposerDraft(nextDraft);
     setSelectedReferences((current) => [
       ...current,
       {
@@ -2145,13 +2390,14 @@ function App() {
     const target = selectedReferences.find((item) => item.key === key);
     if (!target) return;
     setSelectedReferences((current) => current.filter((item) => item.key !== key));
-    setDraft((current) => current.replace(target.token, "").replace(/ {2,}/g, " "));
+    writeComposerDraft(composerDraftRef.current.replace(target.token, "").replace(/ {2,}/g, " "));
     composerInputRef.current?.focus();
   };
 
   const insertComposerTrigger = (trigger: "@" | "$") => {
     const input = composerInputRef.current;
-    const caret = input?.selectionStart ?? draft.length;
+    const currentDraft = composerDraftRef.current;
+    const caret = input?.selectionStart ?? currentDraft.length;
     if (composerTrigger?.trigger === trigger) {
       setComposerTrigger(null);
       setComposerSuggestions([]);
@@ -2160,16 +2406,16 @@ function App() {
       window.requestAnimationFrame(() => input?.focus());
       return;
     }
-    const existingTrigger = findComposerTrigger(draft, caret);
+    const existingTrigger = findComposerTrigger(currentDraft, caret);
     if (existingTrigger?.trigger === trigger) {
       setComposerTrigger(existingTrigger);
       window.requestAnimationFrame(() => input?.focus());
       return;
     }
-    const prefix = caret > 0 && !/\s/.test(draft.charAt(caret - 1)) ? ` ${trigger}` : trigger;
-    const nextDraft = `${draft.slice(0, caret)}${prefix}${draft.slice(caret)}`;
+    const prefix = caret > 0 && !/\s/.test(currentDraft.charAt(caret - 1)) ? ` ${trigger}` : trigger;
+    const nextDraft = `${currentDraft.slice(0, caret)}${prefix}${currentDraft.slice(caret)}`;
     const nextCaret = caret + prefix.length;
-    setDraft(nextDraft);
+    writeComposerDraft(nextDraft);
     setComposerTrigger({ trigger, query: "", start: nextCaret - 1, end: nextCaret });
     window.requestAnimationFrame(() => {
       input?.focus();
@@ -2212,7 +2458,7 @@ function App() {
   };
 
   const sendMessage = async (queueNext = false) => {
-    const value = draft.trim() || (workspace.composerAttachments.length > 0 ? "첨부한 내용을 확인해 주세요." : "");
+    const value = composerDraftRef.current.trim() || (workspace.composerAttachments.length > 0 ? "첨부한 내용을 확인해 주세요." : "");
     if (!value) {
       showToast("요청 내용을 입력해 주세요.");
       return;
@@ -2228,14 +2474,106 @@ function App() {
       queueNext,
       promptReferences,
       targetOutputTokens ?? undefined,
+      analysisDepth,
+      answerLength,
     );
     if (!mode) return;
     if (resetFileModeAfterSend) void workspace.selectOutputMode("auto");
-    setDraft("");
+    promptEnhancementRequestRef.current += 1;
+    setPromptEnhancementState(null);
+    setPromptEnhancementLoading(false);
+    setPromptEnhancementError(null);
+    writeComposerDraft("");
     setSelectedReferences([]);
-    setTargetOutputTokens(defaultArtifactOutputTokens);
+    resetLargeOutputTargetAfterRunRef.current = (
+      targetOutputTokens !== null && targetOutputTokens >= 20_000
+        ? targetOutputTokens
+        : null
+    );
     setComposerTrigger(null);
     setComposerSuggestions([]);
+  };
+
+  const enhanceComposerPrompt = async (
+    options: PromptEnhancementOption[],
+    customInstruction: string,
+  ) => {
+    const sourceText = composerDraftRef.current;
+    const projectId = workspace.activeProjectId;
+    const execution = workspace.settings?.execution;
+    if (!sourceText.trim() || !projectId || !execution) return;
+    const promptReferences = selectedReferences.flatMap(({ reference, token }) => {
+      const tokenStart = sourceText.indexOf(token);
+      if (tokenStart < 0) return [];
+      return [{ ...reference, tokenStart, tokenEnd: tokenStart + token.length }];
+    });
+    const requestId = promptEnhancementRequestRef.current + 1;
+    promptEnhancementRequestRef.current = requestId;
+    setPromptEnhancementLoading(true);
+    setPromptEnhancementError(null);
+    try {
+      if (customInstruction !== workspace.settings?.promptEnhancementInstruction) {
+        await workspace.selectPromptEnhancementInstruction(customInstruction);
+      }
+      const result = await api.composer.enhancePrompt({
+        projectId,
+        text: sourceText,
+        options,
+        customInstruction,
+        promptReferences,
+        execution,
+      });
+      if (promptEnhancementRequestRef.current !== requestId) return;
+      if (composerDraftRef.current !== sourceText) {
+        setPromptEnhancementError("입력 내용이 변경되어 개선 결과를 적용하지 않았습니다.");
+        return;
+      }
+      writeComposerDraft(result.enhancedText);
+      setPromptEnhancementState({
+        original: sourceText,
+        enhanced: result.enhancedText,
+        view: "enhanced",
+        restoreArmed: false,
+      });
+      window.requestAnimationFrame(() => {
+        const input = composerInputRef.current;
+        if (!input) return;
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      });
+    } catch (error) {
+      if (promptEnhancementRequestRef.current !== requestId) return;
+      setPromptEnhancementError(
+        error instanceof Error ? error.message : "프롬프트를 개선하지 못했습니다.",
+      );
+    } finally {
+      if (promptEnhancementRequestRef.current === requestId) {
+        setPromptEnhancementLoading(false);
+      }
+    }
+  };
+
+  const restoreOriginalPrompt = () => {
+    setPromptEnhancementState((current) => {
+      if (!current) return null;
+      if (current.view === "edited" && !current.restoreArmed) {
+        return { ...current, restoreArmed: true };
+      }
+      writeComposerDraft(current.original);
+      return { ...current, view: "original", restoreArmed: false };
+    });
+    window.requestAnimationFrame(() => composerInputRef.current?.focus());
+  };
+
+  const reapplyEnhancedPrompt = () => {
+    if (!promptEnhancementState) return;
+    writeComposerDraft(promptEnhancementState.enhanced);
+    setPromptEnhancementState({
+      ...promptEnhancementState,
+      view: "enhanced",
+      restoreArmed: false,
+    });
+    window.requestAnimationFrame(() => composerInputRef.current?.focus());
   };
 
   const controlRun = async (action: RunControlAction, targetId?: string) => {
@@ -2250,7 +2588,7 @@ function App() {
     setPendingCommandAction(null);
   };
 
-  const copyTool = async (execution: ToolExecution) => {
+  const copyTool = useCallback(async (execution: ToolExecution) => {
     const requestText = execution.input
       ? JSON.stringify(execution.input, null, 2)
       : execution.inputSummary.join("\n") || "입력 없음";
@@ -2262,9 +2600,12 @@ function App() {
     } catch {
       showToast("Tool 메시지를 복사하지 못했습니다.");
     }
-  };
+  }, [showToast]);
 
-  const openArtifact = async (artifact: ArtifactSummary) => {
+  const openArtifact = useCallback(async (
+    artifact: ArtifactSummary,
+    requestedVersion?: number,
+  ) => {
     if (artifactSaveBusy) {
       showToast("Artifact 저장이 끝난 뒤 다른 문서를 열어 주세요.");
       return;
@@ -2296,15 +2637,28 @@ function App() {
     setArtifactAiComments([]);
     setArtifactAiStatus(null);
     setArtifactDraftEtag(undefined);
+    setArtifactKnowledgeSaving(false);
+    setArtifactKnowledgeSavedKey(null);
+    const targetVersion = requestedVersion ?? artifact.currentVersion;
     try {
       const [summary, initialVersion, savedDraft] = await Promise.all([
         api.artifacts.get(artifact.id),
-        api.artifacts.getVersion(artifact.id, artifact.currentVersion),
+        api.artifacts.getVersion(
+          artifact.id,
+          targetVersion,
+          artifact.mimeType !== "text/html",
+        ),
         api.artifacts.getDraft(artifact.id),
       ]);
-      const version = summary.currentVersion === initialVersion.version
+      const version = requestedVersion !== undefined
         ? initialVersion
-        : await api.artifacts.getVersion(artifact.id, summary.currentVersion);
+        : summary.currentVersion === initialVersion.version
+        ? initialVersion
+        : await api.artifacts.getVersion(
+            artifact.id,
+            summary.currentVersion,
+            summary.mimeType !== "text/html",
+          );
       if (artifactOpenRequestRef.current !== requestId) return;
       setArtifactSummary(summary);
       setArtifactVersion(version);
@@ -2327,16 +2681,36 @@ function App() {
     } finally {
       if (artifactOpenRequestRef.current === requestId) setArtifactLoading(false);
     }
-  };
+  }, [artifactOpen, artifactSaveBusy, showToast, sidebarCollapsed]);
+
+  const branchFromMessage = useCallback(async (anchorMessageId: string) => {
+    if (!workspace.activeConversationId) return;
+    await workspace.branchConversation(workspace.activeConversationId, anchorMessageId);
+  }, [workspace.activeConversationId, workspace.branchConversation]);
+
+  const shareFromMessage = useCallback((anchorMessageId: string | null) => {
+    if (!workspace.activeConversationId) return;
+    void api.sharing.create(workspace.activeConversationId, anchorMessageId)
+      .then(async (share) => {
+        const url = new URL(share.viewerPath, window.location.origin).toString();
+        const themedUrl = new URL(url);
+        themedUrl.searchParams.set("theme", theme);
+        await copyText(themedUrl.toString());
+      })
+      .catch((error) => {
+        showToast(error instanceof ApiError ? error.message : "공유 링크를 만들지 못했습니다.");
+      });
+  }, [showToast, theme, workspace.activeConversationId]);
 
   const saveArtifactDraft = async () => {
     if (!artifactSummary || !artifactVersion || artifactVersion.sourceText === null || !artifactIsCurrentVersion || artifactSaveBusy) return;
     setArtifactSaveBusy("draft");
     try {
+      const sourceText = await requestArtifactEditSnapshot();
       const saved = await api.artifacts.saveDraft(
         artifactSummary.id,
         artifactVersion.version,
-        artifactDraft,
+        sourceText,
         artifactDraftEtag,
       );
       setArtifactDraftEtag(saved.etag);
@@ -2394,12 +2768,13 @@ function App() {
     if (!artifactSummary || !artifactVersion || artifactVersion.sourceText === null || !artifactIsCurrentVersion || artifactSaveBusy) return;
     setArtifactSaveBusy("version");
     try {
+      const sourceText = await requestArtifactEditSnapshot();
       const cleanupDraftEtag = artifactDraftSaved ? artifactDraftEtag : undefined;
       const version = await api.artifacts.saveVersion(
         artifactSummary.id,
         {
           baseVersion: artifactVersion.version,
-          sourceText: artifactDraft,
+          sourceText,
           changeSummary: "Artifact 패널에서 직접 편집",
           idempotencyKey: createClientId(),
         },
@@ -2450,7 +2825,11 @@ function App() {
     setArtifactDraftNotice(null);
     try {
       const [version, savedDraft] = await Promise.all([
-        api.artifacts.getVersion(artifactSummary.id, versionNumber),
+        api.artifacts.getVersion(
+          artifactSummary.id,
+          versionNumber,
+          artifactSummary.mimeType !== "text/html",
+        ),
         versionNumber === artifactSummary.currentVersion
           ? api.artifacts.getDraft(artifactSummary.id)
           : Promise.resolve(null),
@@ -2476,6 +2855,34 @@ function App() {
     } finally {
       if (artifactOpenRequestRef.current === requestId) setArtifactLoading(false);
     }
+  };
+
+  const beginArtifactEditing = async () => {
+    if (!artifactSummary || !artifactVersion?.sourceAvailable || !artifactIsCurrentVersion) return;
+    let version = artifactVersion;
+    if (version.sourceText === null) {
+      const requestId = artifactOpenRequestRef.current;
+      setArtifactLoading(true);
+      try {
+        version = await api.artifacts.getVersion(
+          artifactSummary.id,
+          artifactVersion.version,
+          true,
+        );
+        if (artifactOpenRequestRef.current !== requestId) return;
+        setArtifactVersion(version);
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : "Artifact 소스를 불러오지 못했습니다.");
+        return;
+      } finally {
+        if (artifactOpenRequestRef.current === requestId) setArtifactLoading(false);
+      }
+    }
+    const editSource = artifactDraftSaved ? artifactDraft : version.sourceText ?? "";
+    setArtifactEditing(true);
+    setArtifactTab(version.mimeType === "text/html" ? "preview" : "source");
+    setArtifactDraft(editSource);
+    setArtifactEditablePreview(version.mimeType === "text/html" ? editableArtifactHtml(editSource) : "");
   };
 
   const downloadArtifact = async () => {
@@ -2504,6 +2911,21 @@ function App() {
       await copyText(url.toString());
     } catch (error) {
       showToast(error instanceof Error ? error.message : "공유 링크를 만들지 못했습니다.");
+    }
+  };
+
+  const saveArtifactToKnowledge = async () => {
+    if (!artifactSummary || !artifactVersion?.sourceAvailable || artifactKnowledgeSaving) return;
+    const key = `${artifactSummary.id}:${artifactVersion.version}`;
+    setArtifactKnowledgeSaving(true);
+    try {
+      await saveKnowledgeDocumentFromArtifact(artifactSummary.id, artifactVersion.version);
+      setArtifactKnowledgeSavedKey(key);
+      showToast("Artifact를 지식 그래프에 등록했습니다.");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Artifact를 지식 그래프에 등록하지 못했습니다.");
+    } finally {
+      setArtifactKnowledgeSaving(false);
     }
   };
 
@@ -2634,11 +3056,122 @@ function App() {
   };
 
   const openAnnouncementInHelp = (announcementId: string | null) => {
+    const unreadAnnouncement = announcements.find((item) => item.id === announcementId && !item.readAt);
+    if (unreadAnnouncement) {
+      void api.notifications.markAnnouncementRead(unreadAnnouncement.id).then((updated) => {
+        setAnnouncements((items) => items.map((item) => item.id === updated.id ? updated : item));
+        setAnnouncementUnreadCount((count) => Math.max(0, count - 1));
+      }).catch(() => showToast("공지사항 읽음 상태를 저장하지 못했습니다."));
+    }
     setHelpAnnouncementId(announcementId);
     setNotificationOpen(false);
     setMainView("help");
     setSidebarOpen(false);
   };
+
+  const sidebarProjectOptions = useMemo(
+    () => workspace.projects
+      .filter((project) => project.id !== workspace.activeProjectId)
+      .map((project) => ({ id: project.id, name: project.name })),
+    [workspace.activeProjectId, workspace.projects],
+  );
+  const normalizedConversationTitleFilter = conversationTitleFilter.trim();
+  useEffect(() => {
+    if (!normalizedConversationTitleFilter || !workspace.activeProjectId) {
+      setConversationTitleResults([]);
+      setConversationTitleNextCursor(null);
+      setConversationTitleFilterLoading(false);
+      return undefined;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      setConversationTitleFilterLoading(true);
+      void api.conversations.list({
+        projectId: workspace.activeProjectId ?? undefined,
+        titleQuery: normalizedConversationTitleFilter,
+        limit: 30,
+      }, controller.signal).then((page) => {
+        setConversationTitleResults(page.items);
+        setConversationTitleNextCursor(page.nextCursor);
+      }).catch((error) => {
+        if (!controller.signal.aborted) showToast(error instanceof ApiError ? error.message : "세션 제목을 검색하지 못했습니다.");
+      }).finally(() => {
+        if (!controller.signal.aborted) setConversationTitleFilterLoading(false);
+      });
+    }, 220);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [normalizedConversationTitleFilter, showToast, workspace.activeProjectId]);
+  const conversationSidebarItems = useMemo(
+    () => (normalizedConversationTitleFilter ? conversationTitleResults : workspace.conversations).map((conversation) => ({
+      id: conversation.id,
+      projectId: conversation.projectId,
+      title: isUntitledConversation(conversation.title) ? "제목 없음" : conversation.title,
+      isFavorite: conversation.isFavorite,
+      isLiked: conversation.isLiked,
+      status: conversation.lastRunStatus ?? undefined,
+      kind: "conversation" as const,
+    })),
+    [conversationTitleResults, normalizedConversationTitleFilter, workspace.conversations],
+  );
+  const deepAnalysisSidebarItems = useMemo(
+    () => {
+      const normalizedQuery = deepAnalysisTitleFilter.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+      return deepAnalysisMissions
+        .filter((mission) => !normalizedQuery || mission.title.trim().replace(/\s+/g, " ").toLocaleLowerCase().includes(normalizedQuery))
+        .map((mission) => ({ ...mission, kind: "deep-analysis" as const }));
+    },
+    [deepAnalysisMissions, deepAnalysisTitleFilter],
+  );
+  const selectSidebarConversation = useCallback((conversationId: string) => {
+    setSessionTitleEditing(false);
+    setMainView("chat");
+    const filteredConversation = normalizedConversationTitleFilter
+      ? conversationTitleResults.find((conversation) => conversation.id === conversationId)
+      : null;
+    if (filteredConversation) workspace.openConversation(filteredConversation);
+    else workspace.selectConversation(conversationId);
+    setSidebarOpen(false);
+  }, [conversationTitleResults, normalizedConversationTitleFilter, workspace.openConversation, workspace.selectConversation]);
+  const renameSidebarConversation = useCallback(
+    async (conversationId: string, title: string) => Boolean(await workspace.renameConversation(conversationId, title)),
+    [workspace.renameConversation],
+  );
+  const toggleSidebarConversationFavorite = useCallback(
+    async (conversationId: string) => { await workspace.toggleFavoriteConversation(conversationId); },
+    [workspace.toggleFavoriteConversation],
+  );
+  const toggleSidebarConversationLiked = useCallback(
+    async (conversationId: string) => { await workspace.toggleLikedConversation(conversationId); },
+    [workspace.toggleLikedConversation],
+  );
+  const loadMoreSidebarConversations = useCallback(
+    () => {
+      if (!normalizedConversationTitleFilter) {
+        void workspace.loadMoreConversations();
+        return;
+      }
+      if (!workspace.activeProjectId || !conversationTitleNextCursor || conversationTitleFilterLoading) return;
+      setConversationTitleFilterLoading(true);
+      void api.conversations.list({
+        projectId: workspace.activeProjectId,
+        titleQuery: normalizedConversationTitleFilter,
+        cursor: conversationTitleNextCursor,
+        limit: 30,
+      }).then((page) => {
+        setConversationTitleResults((current) => {
+          const ids = new Set(current.map((item) => item.id));
+          return [...current, ...page.items.filter((item) => !ids.has(item.id))];
+        });
+        setConversationTitleNextCursor(page.nextCursor);
+      }).catch((error) => {
+        showToast(error instanceof ApiError ? error.message : "세션 제목 검색 결과를 더 불러오지 못했습니다.");
+      }).finally(() => setConversationTitleFilterLoading(false));
+    },
+    [conversationTitleFilterLoading, conversationTitleNextCursor, normalizedConversationTitleFilter, showToast, workspace.activeProjectId, workspace.loadMoreConversations],
+  );
 
   if (workspace.authSession === undefined) {
     return <div className="app-boot"><Sparkles size={22} /><span>Lumina를 준비하고 있습니다.</span><LoaderCircle className="is-running" size={18} /></div>;
@@ -2649,16 +3182,6 @@ function App() {
         <LoginScreen onAuthenticated={workspace.onAuthenticated} />
         {workspace.bootError && <div className="toast is-error" role="alert">{workspace.bootError}</div>}
       </>
-    );
-  }
-  if (sharedViewerToken) {
-    return (
-      <SharedSnapshotViewer
-        artifactId={sharedArtifactTarget.artifactId}
-        artifactVersion={sharedArtifactTarget.artifactVersion}
-        token={sharedViewerToken}
-        theme={sharedThemeFromLocation()}
-      />
     );
   }
   const streamLabel = backendConnectionState === "offline"
@@ -2679,10 +3202,9 @@ function App() {
   return (
     <div
       className={`app-shell ${artifactPaneVisible ? "has-artifact" : ""} ${sidebarCollapsed ? "is-sidebar-collapsed" : ""} ${artifactResizing ? "is-artifact-resizing" : ""} ${theme === "dark" ? "theme-dark" : ""}`}
-      style={{ "--artifact-pane-width": `${artifactPaneWidth}px` } as CSSProperties}
+      style={{ ...conversationLayoutStyle, "--artifact-pane-width": `${artifactPaneWidth}px` } as CSSProperties}
       onClick={() => {
         setSessionMenuId(null);
-        setMoveMenuId(null);
         setAccountMenuOpen(false);
         setProjectMenuOpen(false);
       }}
@@ -2702,16 +3224,20 @@ function App() {
             setSidebarCollapsed(false);
           }}
         >
-          <button type="button" aria-label="사이드바 펼치기" title="사이드바 펼치기" onClick={() => { sidebarAutoCollapsedRef.current = false; setSidebarCollapsed(false); }}><PanelLeftOpen size={17} /></button>
-          <button type="button" aria-label="새 채팅" title="새 채팅" onClick={startNewConversation}><SquarePen size={18} /></button>
+          <button type="button" aria-label="사이드바 펼치기" data-tooltip="사이드바 펼치기" onClick={() => { sidebarAutoCollapsedRef.current = false; setSidebarCollapsed(false); }}><PanelLeftOpen size={17} /></button>
+          {sidebarView === "deep-analysis"
+            ? <button type="button" aria-label="새 분석" data-tooltip="새 분석" disabled={activeProject?.role === "viewer"} onClick={startNewDeepAnalysis}><SquarePen size={18} /></button>
+            : <button type="button" aria-label="새 채팅" data-tooltip="새 채팅" onClick={startNewConversation}><SquarePen size={18} /></button>}
           {navigation.map(({ id, label, icon: Icon }) => (
-            <button className={mainView === id ? "is-active" : ""} type="button" aria-label={label} title={label} key={id} onClick={() => setMainView(id)}><Icon size={18} /></button>
+            <button className={sidebarView === id ? "is-active" : ""} type="button" aria-label={label} data-tooltip={label} key={id} onClick={() => {
+              if (id === "files") setRequestedProjectFileId(null);
+              setMainView(id);
+            }}><Icon size={18} /></button>
           ))}
         </nav>
         <header className="sidebar-header">
           <a className="wordmark" href="#top" aria-label="Lumina 홈" onClick={() => setMainView("chat")}><Sparkles size={20} strokeWidth={1.7} /><span>Lumina</span></a>
           <div className="sidebar-header-actions">
-            <button type="button" aria-label="대화 검색" onClick={() => setConversationSearchOpen(true)}><Search size={17} /></button>
             <button className="tooltip-control" type="button" aria-label={theme === "dark" ? "Light 테마로 변경" : "Dark 테마로 변경"} data-tooltip={theme === "dark" ? "Light 테마" : "Dark 테마"} onClick={() => void workspace.toggleTheme()}>
               {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
             </button>
@@ -2730,7 +3256,8 @@ function App() {
         </header>
 
         <nav className="primary-navigation" aria-label="주요 메뉴">
-          {navigation.map(({ id, label, icon: Icon }) => <button className={mainView === id ? "is-active" : ""} type="button" key={id} onClick={() => {
+          {navigation.map(({ id, label, icon: Icon }) => <button className={sidebarView === id ? "is-active" : ""} type="button" key={id} onClick={() => {
+            if (id === "files") setRequestedProjectFileId(null);
             setMainView(id);
             setSidebarOpen(false);
           }}><Icon size={17} /> {label}</button>)}
@@ -2738,13 +3265,22 @@ function App() {
 
         <div className="sidebar-scroll">
           <section className="sidebar-section">
-            <button className="new-task-button" type="button" onClick={startNewConversation}><SquarePen size={17} /> <span>새 채팅</span><kbd aria-hidden="true">Ctrl + Shift + O</kbd></button>
+            {sidebarView === "deep-analysis"
+              ? <button className="new-task-button" type="button" disabled={activeProject?.role === "viewer"} onClick={startNewDeepAnalysis}><SquarePen size={17} /> <span>새 분석</span></button>
+              : <button className="new-task-button" type="button" onClick={startNewConversation}><SquarePen size={17} /> <span>새 채팅</span><kbd aria-hidden="true">Ctrl + Shift + O</kbd></button>}
           </section>
 
           <section className="sidebar-section">
             <div className="sidebar-section-heading project-heading">
               <span>프로젝트</span>
-              <button className="tooltip-control" type="button" aria-label="프로젝트 설정" data-tooltip="프로젝트 설정" disabled={!activeProject} onClick={() => { setMainView(mainView === "project-settings" ? "chat" : "project-settings"); setSidebarOpen(false); }}><Settings size={15} /></button>
+              <button className="tooltip-control" type="button" aria-label="프로젝트 설정" data-tooltip="프로젝트 설정" disabled={!activeProject} onClick={() => {
+                if (mainView === "project-settings") setMainView(projectSettingsReturnView);
+                else {
+                  setProjectSettingsReturnView(mainView);
+                  setMainView("project-settings");
+                }
+                setSidebarOpen(false);
+              }}><Settings size={15} /></button>
             </div>
             <div className="project-selector" onClick={(event) => event.stopPropagation()}>
               <button className="project-row is-selected" type="button" aria-haspopup="listbox" aria-expanded={projectMenuOpen} disabled={!activeProject} onClick={() => setProjectMenuOpen((open) => !open)}>
@@ -2755,7 +3291,6 @@ function App() {
                   {workspace.projects.map((project) => (
                     <button type="button" role="option" aria-selected={project.id === workspace.activeProjectId} key={project.id} onClick={() => {
                       workspace.setActiveProjectId(project.id);
-                      setMainView("chat");
                       setProjectMenuOpen(false);
                     }}>
                       <Folder size={15} /><span>{project.name}</span>{project.id === workspace.activeProjectId && <Check size={14} />}
@@ -2766,89 +3301,65 @@ function App() {
             </div>
           </section>
 
-          <section className="sidebar-section session-section">
-            <div className="sidebar-section-heading session-heading">
-              <span>{bulkSessionMode ? `${likedSessionsOnly ? "좋아요 · " : ""}${bulkSessionIds.size}개 선택` : likedSessionsOnly ? "좋아요" : "최근 항목"}</span>
-              {bulkSessionMode ? (
-                <div className="bulk-session-heading-actions">
-                  <button className="tooltip-control" type="button" aria-label="선택한 대화 이동" data-tooltip="이동" disabled={!bulkSessionIds.size || bulkSessionBusy || workspace.projects.length < 2} onClick={() => setBulkMoveOpen((open) => !open)}><FolderInput size={14} /></button>
-                  <button className={`tooltip-control is-danger ${bulkSessionDeleteArmed ? "is-armed" : ""}`} type="button" aria-label={bulkSessionDeleteArmed ? "선택한 대화 삭제 확인, 한 번 더 누르면 삭제" : "선택한 대화 삭제"} data-tooltip={bulkSessionDeleteArmed ? "삭제경고" : "삭제"} disabled={!bulkSessionIds.size || bulkSessionBusy} onClick={() => void deleteSelectedSessions()}>{bulkSessionBusy ? <LoaderCircle className="is-running" size={14} /> : bulkSessionDeleteArmed ? <AlertCircle size={14} /> : <Trash2 size={14} />}</button>
-                  <button className="bulk-session-select tooltip-control" type="button" aria-label={bulkSessionIds.size === workspace.conversations.length ? "모든 대화 선택 해제" : "모든 대화 선택"} data-tooltip={bulkSessionIds.size === workspace.conversations.length ? "선택 해제" : "전체 선택"} onClick={() => setBulkSessionIds((current) => current.size === workspace.conversations.length ? new Set() : new Set(workspace.conversations.map((item) => item.id)))}><CheckCheck size={14} /></button>
-                  <button className="tooltip-control" type="button" aria-label="세션 관리 닫기" data-tooltip="닫기" onClick={() => { setBulkSessionMode(false); setBulkSessionIds(new Set()); setBulkMoveOpen(false); }}><X size={14} /></button>
-                  {bulkMoveOpen && (
-                    <div className="bulk-session-projects">
-                      {workspace.projects.filter((project) => project.id !== workspace.activeProjectId).map((project) => (
-                        <button type="button" key={project.id} disabled={bulkSessionBusy} onClick={() => void moveSelectedSessions(project.id)}><Folder size={13} /> {project.name}</button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="session-heading-actions">
-                  {workspace.loadingWorkspace && <LoaderCircle className="is-running" size={13} />}
-                  <button className={`liked-sessions-filter session-heading-action tooltip-control ${likedSessionsOnly ? "is-active" : ""}`} type="button" aria-label={likedSessionsOnly ? "전체 보기" : "좋아요만 보기"} aria-pressed={likedSessionsOnly} data-tooltip={likedSessionsOnly ? "전체 보기" : "좋아요만"} onClick={() => setLikedSessionsOnly((active) => !active)}><Heart size={14} fill={likedSessionsOnly ? "currentColor" : "none"} /></button>
-                  <button className="bulk-session-open tooltip-control" type="button" aria-label="세션 관리" data-tooltip="세션 관리" disabled={workspace.conversations.length === 0} onClick={() => { setBulkSessionMode(true); setBulkSessionIds(new Set()); setSessionMenuId(null); setMoveMenuId(null); }}><CheckCheck size={14} /></button>
-                </div>
-              )}
-            </div>
-            <div className="session-list" onScroll={handleSessionListScroll}>
-              {workspace.conversations.filter((conversation) => !likedSessionsOnly || conversation.isLiked).map((conversation) => (
-                <div className={`session-item ${conversation.id === workspace.activeConversationId && !bulkSessionMode ? "is-selected" : ""} ${bulkSessionMode ? "is-bulk" : ""}`} key={conversation.id}>
-                  {bulkSessionMode ? (
-                    <button className="session-row" type="button" onClick={() => {
-                      setBulkSessionIds((current) => {
-                        const next = new Set(current);
-                        if (next.has(conversation.id)) next.delete(conversation.id);
-                        else next.add(conversation.id);
-                        return next;
-                      });
-                    }} aria-pressed={bulkSessionIds.has(conversation.id)}>
-                      <span className={`bulk-session-checkbox ${bulkSessionIds.has(conversation.id) ? "is-checked" : ""}`}>{bulkSessionIds.has(conversation.id) && <Check size={11} />}</span>
-                      <span className={isUntitledConversation(conversation.title) ? "is-untitled" : undefined}>{isUntitledConversation(conversation.title) ? "제목 없음" : conversation.title}</span>
-                    </button>
-                  ) : (
-                    <>
-                      <button className="session-like-button" type="button" aria-label={`${conversation.title} ${conversation.isLiked ? "좋아요 취소" : "좋아요"}`} aria-pressed={conversation.isLiked} onClick={() => void workspace.toggleLikedConversation(conversation.id)}>
-                        {conversation.isLiked ? <Heart className="session-like" size={14} fill="currentColor" /> : conversation.lastRunStatus === "running" ? <LoaderCircle className="is-running" size={14} /> : conversation.lastRunStatus === "queued" ? <Clock3 size={14} /> : conversation.lastRunStatus === "input" ? <MessageCircleQuestion size={14} /> : conversation.lastRunStatus === "failed" ? <AlertCircle size={14} /> : conversation.isFavorite ? <Pin className="session-pin" size={14} /> : <MessageCircle size={14} />}
-                      </button>
-                      <button className="session-row session-title-button" type="button" onClick={() => {
-                        setSessionTitleEditing(false);
-                        setMainView("chat");
-                        workspace.selectConversation(conversation.id);
-                        setSidebarOpen(false);
-                      }}>
-                        <span className={isUntitledConversation(conversation.title) ? "is-untitled" : undefined}>{isUntitledConversation(conversation.title) ? "제목 없음" : conversation.title}</span>
-                      </button>
-                    </>
-                  )}
-                  {!bulkSessionMode && <button className="session-options-button" type="button" aria-label={`${conversation.title} 옵션`} aria-expanded={sessionMenuId === conversation.id} onClick={(event) => {
-                    event.stopPropagation();
-                    setAccountMenuOpen(false);
-                    setMoveMenuId(null);
-                    setSessionMenuId((current) => current === conversation.id ? null : conversation.id);
-                  }}><MoreVertical size={15} /></button>}
-                  {!bulkSessionMode && sessionMenuId === conversation.id && (
-                    <div className="session-options-menu" role="menu" onClick={(event) => event.stopPropagation()}>
-                      <button type="button" role="menuitem" onClick={() => { setSessionMenuId(null); void workspace.toggleFavoriteConversation(conversation.id); }}>{conversation.isFavorite ? <PinOff size={14} /> : <Pin size={14} />} {conversation.isFavorite ? "즐겨찾기 해제" : "즐겨찾기"}</button>
-                      <button type="button" role="menuitem" onClick={() => { setSessionMenuId(null); void workspace.toggleLikedConversation(conversation.id); }}><Heart size={14} fill={conversation.isLiked ? "currentColor" : "none"} /> {conversation.isLiked ? "좋아요 취소" : "좋아요"}</button>
-                      <button type="button" role="menuitem" onClick={() => beginSessionTitleEdit(conversation.id)}><Pencil size={14} /> 세션명 변경</button>
-                      <button type="button" role="menuitem" onClick={() => setMoveMenuId((current) => current === conversation.id ? null : conversation.id)}><FolderInput size={14} /> 프로젝트 변경</button>
-                      {moveMenuId === conversation.id && (
-                        <div className="session-project-options">
-                          {workspace.projects.filter((project) => project.id !== conversation.projectId).map((project) => (
-                            <button type="button" key={project.id} onClick={() => void workspace.moveConversation(conversation.id, project.id)}><Folder size={13} /> {project.name}</button>
-                          ))}
-                          {workspace.projects.length < 2 && <span>이동할 프로젝트가 없습니다.</span>}
-                        </div>
-                      )}
-                      <button className={`is-danger ${sessionDeleteArmedId === conversation.id ? "is-armed" : ""}`} type="button" role="menuitem" disabled={sessionDeleteBusyId === conversation.id} onClick={() => void deleteSessionFromMenu(conversation.id)}>{sessionDeleteBusyId === conversation.id ? <LoaderCircle className="is-running" size={14} /> : sessionDeleteArmedId === conversation.id ? <AlertCircle size={14} /> : <Trash2 size={14} />} {sessionDeleteArmedId === conversation.id ? "삭제 확인" : "삭제"}</button>
-                    </div>
-                  )}
-                </div>
-              ))}
-              {!workspace.loadingWorkspace && workspace.conversations.filter((conversation) => !likedSessionsOnly || conversation.isLiked).length === 0 && <p className="sidebar-empty">{likedSessionsOnly ? "좋아요한 채팅이 없습니다." : "새 채팅을 만들어 시작하세요."}</p>}
-            </div>
-          </section>
+          {sidebarView === "deep-analysis" ? (
+            <SidebarRecentItems
+              items={deepAnalysisSidebarItems}
+              projects={sidebarProjectOptions}
+              activeId={deepAnalysisSelectedMissionId}
+              loading={deepAnalysisMissionsLoading}
+              emptyText="새 분석을 만들어 시작하세요."
+              likedEmptyText="좋아요한 분석이 없습니다."
+              onSelect={(missionId) => {
+                setDeepAnalysisSelectedMissionId(missionId);
+                setSidebarOpen(false);
+              }}
+              onRename={(missionId, title) => updateDeepAnalysisSidebarMission(missionId, { title })}
+              onToggleFavorite={async (missionId) => {
+                const mission = deepAnalysisMissions.find((item) => item.id === missionId);
+                if (mission) await updateDeepAnalysisSidebarMission(missionId, { isFavorite: !mission.isFavorite });
+              }}
+              onToggleLiked={async (missionId) => {
+                const mission = deepAnalysisMissions.find((item) => item.id === missionId);
+                if (mission) await updateDeepAnalysisSidebarMission(missionId, { isLiked: !mission.isLiked });
+              }}
+              onMove={moveDeepAnalysisSidebarMission}
+              onDelete={deleteDeepAnalysisSidebarMission}
+              onBulkMove={(missionIds, projectId) => applyDeepAnalysisSidebarBulk(missionIds, (missionId) => moveDeepAnalysisSidebarMission(missionId, projectId))}
+              onBulkDelete={(missionIds) => applyDeepAnalysisSidebarBulk(missionIds, deleteDeepAnalysisSidebarMission)}
+              onScroll={handleSessionListScroll}
+              titleFilterQuery={deepAnalysisTitleFilter}
+              titleFilterAriaLabel="심층분석 제목으로 필터링"
+              filterEmptyText="일치하는 심층분석이 없습니다."
+              onTitleFilterChange={setDeepAnalysisTitleFilter}
+              onTitleFilterClear={() => setDeepAnalysisTitleFilter("")}
+            />
+          ) : (
+            <SidebarRecentItems
+              items={conversationSidebarItems}
+              projects={sidebarProjectOptions}
+              activeId={workspace.activeConversationId}
+              loading={workspace.loadingWorkspace || workspace.loadingMoreConversations}
+              emptyText="새 채팅을 만들어 시작하세요."
+              likedEmptyText="좋아요한 채팅이 없습니다."
+              onSelect={selectSidebarConversation}
+              onRename={renameSidebarConversation}
+              onToggleFavorite={toggleSidebarConversationFavorite}
+              onToggleLiked={toggleSidebarConversationLiked}
+              onMove={workspace.moveConversation}
+              onDelete={workspace.deleteConversation}
+              onBulkMove={workspace.moveConversations}
+              onBulkDelete={workspace.deleteConversations}
+              onScroll={handleSessionListScroll}
+              hasMore={normalizedConversationTitleFilter ? conversationTitleNextCursor !== null : workspace.hasMoreConversations}
+              onLoadMore={loadMoreSidebarConversations}
+              titleFilterQuery={conversationTitleFilter}
+              titleFilterAriaLabel="채팅 세션 제목으로 필터링"
+              titleFilterLoading={conversationTitleFilterLoading}
+              filterEmptyText="일치하는 채팅 세션이 없습니다."
+              onTitleFilterChange={setConversationTitleFilter}
+              onTitleFilterClear={() => setConversationTitleFilter("")}
+            />
+          )}
         </div>
 
         <footer className="sidebar-footer" onClick={(event) => event.stopPropagation()}>
@@ -2924,16 +3435,16 @@ function App() {
                 if (event.key === "Escape") { event.preventDefault(); setSessionTitleEditing(false); }
               }} />
             ) : (
-              <h1><button className="chat-title-button" type="button" aria-label={sharedViewerToken ? "공유된 대화" : "세션명 수정"} disabled={Boolean(sharedViewerToken) || !workspace.activeConversation} onClick={() => beginSessionTitleEdit()}>{sharedViewerToken ? "공유된 대화" : workspace.activeConversation?.title ?? "새 작업"}</button></h1>
+              <h1><button className="chat-title-button" type="button" aria-label="세션명 수정" disabled={!workspace.activeConversation} onClick={() => beginSessionTitleEdit()}>{workspace.activeConversation?.title ?? "새 작업"}</button></h1>
             )}
           </div>
           <div className="chat-actions">
             <span className={`connection-state state-${connectionIndicatorState}`}>{streamLabel} <i /></span>
             <div className="notification-menu" ref={notificationMenuRef}>
               <button
-                className={`notification-trigger tooltip-control ${notificationOpen ? "is-active" : ""}`}
+                className={`notification-trigger tooltip-control ${notificationOpen ? "is-active" : ""} ${notificationUnreadCount > 0 || announcementUnreadCount > 0 ? "has-counts" : ""}`}
                 type="button"
-                aria-label={notificationUnreadCount > 0 ? `알림 · 읽지 않음 ${notificationUnreadCount}개` : "알림"}
+                aria-label={`알림${notificationUnreadCount > 0 ? ` · 읽지 않은 알림 ${notificationUnreadCount}개` : ""}${announcementUnreadCount > 0 ? ` · 읽지 않은 공지 ${announcementUnreadCount}개` : ""}`}
                 aria-expanded={notificationOpen}
                 data-tooltip={notificationOpen ? undefined : "알림"}
                 onClick={() => {
@@ -2943,8 +3454,11 @@ function App() {
                 }}
               >
                 <Bell size={16} />
-                {notificationUnreadCount > 0 && (
-                  <span className="notification-badge" aria-hidden="true">{notificationUnreadCount > 99 ? "99+" : notificationUnreadCount}</span>
+                {(notificationUnreadCount > 0 || announcementUnreadCount > 0) && (
+                  <span className="notification-trigger-counts" aria-hidden="true">
+                    {notificationUnreadCount > 0 && <span className="notification-trigger-count is-notification">{notificationUnreadCount > 99 ? "99+" : notificationUnreadCount}</span>}
+                    {announcementUnreadCount > 0 && <span className="notification-trigger-count is-announcement"><Megaphone size={10} />{announcementUnreadCount > 99 ? "99+" : announcementUnreadCount}</span>}
+                  </span>
                 )}
               </button>
               {notificationOpen && (
@@ -2974,6 +3488,7 @@ function App() {
                         }}
                       >
                         공지사항
+                        {announcementUnreadCount > 0 && <span>{announcementUnreadCount > 99 ? "99+" : announcementUnreadCount}</span>}
                       </button>
                     </div>
                     {notificationTab === "notifications" && (
@@ -3056,7 +3571,7 @@ function App() {
                     >
                       {!notificationLoading && notificationError && <div className="notification-state is-error"><AlertCircle size={15} /> {notificationError}</div>}
                       {!notificationLoading && !notificationError && announcements.length === 0 && <div className="announcement-empty"><Megaphone size={18} /><strong>게시된 공지사항이 없습니다.</strong><span>새 공지가 등록되면 이곳에서 확인할 수 있습니다.</span></div>}
-                      {announcements.map((announcement) => <button className="announcement-item" type="button" key={announcement.id} onClick={() => openAnnouncementInHelp(announcement.id)}><Megaphone size={16} aria-hidden="true" /><span><strong>{announcement.title}</strong><p>{announcement.body}</p><small>{announcement.author?.displayName || announcement.author?.loginId || "관리자"} · {formatNotificationTime(announcement.createdAt)}</small></span></button>)}
+                      {announcements.map((announcement) => <button className="announcement-item" type="button" key={announcement.id} onClick={() => openAnnouncementInHelp(announcement.id)}><Megaphone size={16} aria-hidden="true" /><span><span className="announcement-item-heading"><strong>{announcement.title}</strong><small>{formatNotificationTime(announcement.createdAt)}</small></span><p>{announcement.body}</p></span></button>)}
                     </div>
                   )}
                 </section>
@@ -3066,9 +3581,12 @@ function App() {
         </header>
 
         <ConversationQuestionNavigator
+          key={workspace.activeConversationId ?? "empty-conversation"}
           turnSets={activeRuntime.turnSets}
+          totalQuestionCount={activeRuntime.totalQuestionCount}
           theme={theme}
           scrollContainerRef={conversationFollow.containerRef}
+          onLoadQuestion={loadQuestionFromNavigator}
           onNavigateStart={conversationFollow.onUserIntent}
         />
 
@@ -3077,11 +3595,17 @@ function App() {
           ref={conversationFollow.containerRef}
           tabIndex={-1}
           onKeyDown={selectAllInRegion}
-          onScroll={conversationFollow.onScroll}
+          onScroll={() => {
+            conversationFollow.onScroll();
+            void loadOlderTurnSetsNearTop();
+          }}
           onWheel={(event) => conversationFollow.onWheel(event.deltaY)}
           onPointerDown={(event) => {
             conversationFollow.onPointerDown();
             focusSelectableRegion(event);
+          }}
+          onMouseDown={(event) => {
+            if (event.detail > 1) event.preventDefault();
           }}
           onTouchStart={conversationFollow.onPointerDown}
           onDoubleClick={() => { if (artifactOpen) closeArtifact(); }}
@@ -3092,40 +3616,34 @@ function App() {
             {showNewConversationWelcome && (
               <div className="conversation-empty"><Sparkles size={24} /><h2>무엇을 함께 진행할까요?</h2><p>요청을 보내면 진행 과정, Tool 사용과 Artifact가 이곳에 이어집니다.</p><StarterPrompts onSelect={applyStarterPrompt} /></div>
             )}
-            {activeRuntime.turnSets.map((turnSet) => (
-              <AssistantTurn
+            {activeRuntime.turnSets.map((turnSet, turnIndex) => (
+              <WindowedTurn
                 key={turnSet.id}
-                turnSet={turnSet}
-                snapshot={turnSet.runId ? activeRuntime.snapshots[turnSet.runId] ?? null : null}
-                sessionUsage={cumulativeUsageByTurnSetId[turnSet.id]}
-                openCalls={openCalls}
-                onToggleCall={(id) => toggleSetItem(setOpenCalls, id)}
-                onCopyTool={(execution) => void copyTool(execution)}
-                onOpenArtifact={(artifact) => void openArtifact(artifact)}
-                onBranch={async (anchorMessageId) => {
-                  if (!workspace.activeConversationId) return;
-                  await workspace.branchConversation(workspace.activeConversationId, anchorMessageId);
-                }}
-                onShare={(anchorMessageId) => {
-                  if (!workspace.activeConversationId) return;
-                  void api.sharing.create(workspace.activeConversationId, anchorMessageId)
-                    .then(async (share) => {
-                      const url = new URL(share.viewerPath, window.location.origin).toString();
-                      const themedUrl = new URL(url);
-                      themedUrl.searchParams.set("theme", theme);
-                      await copyText(themedUrl.toString());
-                    })
-                    .catch((error) => {
-                      showToast(error instanceof ApiError ? error.message : "공유 링크를 만들지 못했습니다.");
-                    });
-                }}
-                onToast={showToast}
-                onVisibleGrowth={conversationFollow.notifyGrowth}
-                clarificationMode={workspace.settings?.clarificationMode ?? "balanced"}
-                inputBusy={workspace.runActionBusy}
-                onSubmitUserInput={workspace.submitUserInput}
-                onClarificationModeChange={workspace.selectClarificationMode}
-              />
+                root={conversationFollow.containerRef}
+                retain={Boolean(
+                  turnSet.runId
+                  && !isTerminalRunStatus(activeRuntime.snapshots[turnSet.runId]?.status ?? "completed"),
+                )}
+                questionAnchorIds={turnSet.messages
+                  .filter((message) => message.role === "user" && Boolean(message.text.trim()))
+                  .map((message) => message.id)}
+              >
+                <AssistantTurn
+                  turnSet={turnSet}
+                  snapshot={turnSet.runId ? activeRuntime.snapshots[turnSet.runId] ?? null : null}
+                  sessionUsage={cumulativeUsageByTurnSetId[turnSet.id]}
+                  showSessionUsage={turnIndex > 0 || activeRuntime.hasMoreTurnSetsBefore}
+                  onCopyTool={copyTool}
+                  onOpenArtifact={openArtifact}
+                  onBranch={branchFromMessage}
+                  onShare={shareFromMessage}
+                  onToast={showToast}
+                  clarificationMode={workspace.settings?.clarificationMode ?? "balanced"}
+                  inputBusy={workspace.runActionBusy}
+                  onSubmitUserInput={workspace.submitUserInput}
+                  onClarificationModeChange={workspace.selectClarificationMode}
+                />
+              </WindowedTurn>
             ))}
           </main>
         </div>
@@ -3147,16 +3665,10 @@ function App() {
                 }}
               >
                 <div className="progress-header">
-                  <button
-                    className={`progress-trigger ${progressOpen ? "is-open" : "is-collapsed"}`}
-                    type="button"
-                    aria-label={progressOpen ? "작업 계획 접기" : `작업 계획 펼치기, ${progress.filter((item) => item.status === "complete").length} / ${progress.length}, ${runStatusLabel(activeRun.status)}`}
-                    aria-expanded={progressOpen}
-                    aria-controls="active-run-progress-steps"
-                  >
+                  <button className="progress-trigger" type="button" aria-label={progressOpen ? "작업 계획 접기" : "작업 계획 펼치기"} aria-expanded={progressOpen} aria-controls="active-run-progress-steps">
                     <div className="progress-title"><Sparkles size={15} /><strong>작업 계획</strong></div>
                     {!progressOpen && (
-                      <span className="current-step" title={latestProgressSummary?.text}>
+                      <span className="current-step">
                         {latestProgressSummary?.text ?? runStatusLabel(activeRun.status)}
                       </span>
                     )}
@@ -3165,7 +3677,7 @@ function App() {
                   </button>
                   {runIsPaused && (
                     <div className="run-controls" role="group" aria-label="Run 실행 제어">
-                      {runIsPaused && <button type="button" aria-label="Run 재개" title="재개" disabled={workspace.runActionBusy} onClick={() => void controlRun("resume")}><Play size={14} /></button>}
+                      {runIsPaused && <button type="button" aria-label="Run 재개" data-tooltip="재개" disabled={workspace.runActionBusy} onClick={() => void controlRun("resume")}><Play size={14} /></button>}
                     </div>
                   )}
                 </div>
@@ -3176,7 +3688,7 @@ function App() {
                         <ShieldCheck size={15} />
                         <div className="approval-copy">
                           <strong>{approval.toolName}</strong>
-                          <span>{approval.effect === "destructive" ? "삭제 등 되돌리기 어려운 작업" : "외부 시스템을 변경하는 작업"} · 인자 {approval.summary.argumentCount}개</span>
+                          <span>{approval.effect === "destructive" ? "삭제 등 되돌리기 어려운 작업" : approval.effect === "local_execution" ? "로컬 Python 실행" : "외부 시스템을 변경하는 작업"} · 인자 {approval.summary.argumentCount}개</span>
                         </div>
                         <button type="button" disabled={workspace.runActionBusy} onClick={() => void controlRun("reject", approval.id)}>거부</button>
                         <button className="is-primary lumina-primary-action" type="button" disabled={workspace.runActionBusy} onClick={() => void controlRun("approve", approval.id)}>승인</button>
@@ -3240,10 +3752,13 @@ function App() {
               {workspace.composerAttachments.length > 0 && (
                 <div className="composer-attachments" aria-label="첨부 Context">
                   {workspace.composerAttachments.map((attachment, attachmentIndex) => (
-                    <span key={attachment.id}>
-                      <FileText size={13} />
-                      <span>{attachment.kind === "pasted_text" ? pastedTextAttachmentLabel(attachment, workspace.composerAttachments.slice(0, attachmentIndex).filter((item) => item.kind === "pasted_text").length) : attachment.fileName}</span>
-                      <button type="button" aria-label={`${attachment.fileName} 첨부 제거`} onClick={() => workspace.removeComposerAttachment(attachment.id)}><X size={12} /></button>
+                    <span className={`composer-attachment kind-${attachment.kind}`} key={attachment.id}>
+                      {attachment.kind === "image"
+                        ? <button className="composer-attachment-preview" type="button" aria-label={`${attachment.fileName} 이미지 크게 보기`} onClick={() => setPreviewComposerAttachment(attachment)}><ImageIcon size={15} /><strong>{attachment.fileName}</strong></button>
+                        : attachment.kind === "pasted_text"
+                          ? <button className="composer-attachment-preview" type="button" aria-label={`${attachment.fileName} 내용 보기`} onClick={() => setPreviewComposerTextAttachment(attachment)}><FileText size={15} /><strong>{pastedTextAttachmentLabel(attachment, workspace.composerAttachments.slice(0, attachmentIndex).filter((item) => item.kind === "pasted_text").length)}</strong></button>
+                          : <><FileText size={15} /><strong>{attachment.fileName}</strong></>}
+                      <button className="composer-attachment-remove" type="button" aria-label={`${attachment.fileName} 첨부 제거`} onClick={() => workspace.removeComposerAttachment(attachment.id)}><X size={12} /></button>
                     </span>
                   ))}
                 </div>
@@ -3253,14 +3768,16 @@ function App() {
                   {selectedReferences.map((item) => (
                     <span className={`composer-reference kind-${item.reference.kind}`} key={item.key}>
                       {suggestionIcon(item.reference.kind)}
-                      <span><strong>{item.token}</strong><small>{item.subtitle}</small></span>
+                      <span><strong>{item.token}</strong></span>
                       <button type="button" aria-label={`${item.name} 연결 제거`} onClick={() => removeComposerReference(item.key)}><X size={12} /></button>
                     </span>
                   ))}
                 </div>
               )}
+              {previewComposerAttachment && <ImageAttachmentViewer attachment={previewComposerAttachment} onClose={() => setPreviewComposerAttachment(null)} />}
+              {previewComposerTextAttachment && <TextAttachmentViewer attachment={previewComposerTextAttachment} onClose={() => setPreviewComposerTextAttachment(null)} />}
               {composerTrigger && (
-                <div className={`composer-suggestions ${composerTrigger.trigger === "$" ? "is-extension-list" : ""}`} id="composer-suggestions" role="listbox" aria-label={composerTrigger.trigger === "@" ? "파일 및 Artifact 후보" : "Skill 및 MCP 후보"}>
+                <div className={`composer-suggestions is-trigger-list ${composerTrigger.trigger === "$" ? "is-extension-list" : ""}`} id="composer-suggestions" role="listbox" aria-label={composerTrigger.trigger === "@" ? "파일, 폴더 및 Artifact 후보" : "Skill 및 MCP 후보"}>
                   <div className="composer-suggestions-heading">
                     <span>{composerTrigger.trigger === "@" ? "Context 연결" : "Skill / MCP 호출"}</span>
                     <small>{composerTrigger.query ? `'${composerTrigger.query}' 검색` : "사용 가능한 항목"}</small>
@@ -3290,9 +3807,10 @@ function App() {
                         <span className="composer-suggestion-copy">
                           <strong>{suggestion.name}</strong>
                           {composerTrigger.trigger === "$" && suggestion.description && <small className="composer-suggestion-description">· {suggestion.description}</small>}
-                          {composerTrigger.trigger === "@" && <small>{suggestion.subtitle}</small>}
                         </span>
-                        <span className="composer-suggestion-kind">{unavailable ? "사용 불가" : disabled ? attached ? "첨부됨" : "선택됨" : referenceKindLabel(suggestion.kind)}</span>
+                        {composerTrigger.trigger === "@"
+                          ? <small className="composer-suggestion-path" data-tooltip={suggestion.subtitle}>{suggestion.subtitle}</small>
+                          : <span className="composer-suggestion-kind">{unavailable ? "사용 불가" : disabled ? attached ? "첨부됨" : "선택됨" : referenceKindLabel(suggestion.kind)}</span>}
                       </button>
                     );
                   })}
@@ -3306,9 +3824,10 @@ function App() {
                 aria-controls={composerTrigger ? "composer-suggestions" : undefined}
                 aria-expanded={Boolean(composerTrigger)}
                 aria-activedescendant={composerTrigger && composerSuggestions[suggestionIndex] ? `composer-suggestion-${suggestionIndex}` : undefined}
-                value={draft}
+                defaultValue=""
                 placeholder="메시지 보내기"
                 rows={1}
+                onContextMenu={openComposerContextMenu}
                 onChange={(event) => updateDraft(event.currentTarget.value, event.currentTarget.selectionStart)}
                 onClick={(event) => setComposerTrigger(findComposerTrigger(event.currentTarget.value, event.currentTarget.selectionStart))}
                 onKeyUp={(event) => {
@@ -3316,21 +3835,32 @@ function App() {
                   setComposerTrigger(findComposerTrigger(event.currentTarget.value, event.currentTarget.selectionStart));
                 }}
                 onPaste={(event) => {
-                const files = Array.from(event.clipboardData.items)
-                  .filter((item) => item.kind === "file")
-                  .map((item) => item.getAsFile())
-                  .filter((file): file is File => file !== null);
-                if (files.length > 0) {
-                  event.preventDefault();
-                  void workspace.uploadFiles(files, "clipboard");
-                  return;
-                }
-                const pasted = event.clipboardData.getData("text/plain");
-                if (pasted && pasted.split(/\r?\n/).length > 20) {
-                  event.preventDefault();
-                  void workspace.attachPastedText(pasted);
-                }
-              }} onKeyDown={(event) => {
+                  const files = Array.from(event.clipboardData.items)
+                    .filter((item) => item.kind === "file")
+                    .map((item) => item.getAsFile())
+                    .filter((file): file is File => file !== null);
+                  if (files.length > 0) {
+                    event.preventDefault();
+                    void workspace.uploadFiles(files, "clipboard");
+                    return;
+                  }
+                  const plainText = event.clipboardData.getData("text/plain");
+                  const pasted = clipboardTextWithLineBreaks(plainText, event.clipboardData.getData("text/html"));
+                  if (pasted && pasted.split(/\r?\n/).length > 20) {
+                    event.preventDefault();
+                    void workspace.attachPastedText(pasted);
+                    return;
+                  }
+                  if (pasted !== plainText) {
+                    event.preventDefault();
+                    const input = event.currentTarget;
+                    const selectionStart = input.selectionStart;
+                    const selectionEnd = input.selectionEnd;
+                    const nextDraft = `${input.value.slice(0, selectionStart)}${pasted}${input.value.slice(selectionEnd)}`;
+                    updateDraft(nextDraft, selectionStart + pasted.length);
+                    input.setSelectionRange(selectionStart + pasted.length, selectionStart + pasted.length);
+                  }
+                }} onKeyDown={(event) => {
                 if (event.nativeEvent.isComposing) return;
                 if (composerTrigger && composerSuggestions.length > 0 && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
                   event.preventDefault();
@@ -3360,6 +3890,50 @@ function App() {
                   void sendMessage(event.ctrlKey || event.metaKey);
                 }
               }} />
+              {composerContextMenu ? createPortal(
+                <div
+                  ref={composerContextMenuRef}
+                  className={`composer-context-menu lumina-select-menu lumina-select-menu-global size-small${composerContextMenu.themeDark ? " theme-dark" : ""}`}
+                  role="menu"
+                  aria-label="입력란 편집 메뉴"
+                  style={{ left: composerContextMenu.x, top: composerContextMenu.y }}
+                  onPointerDown={(event) => event.stopPropagation()}
+                >
+                  {composerContextMenu.selectionStart !== composerContextMenu.selectionEnd ? (
+                    <>
+                      <button className="lumina-select-option" type="button" role="menuitem" onClick={() => void copyComposerSelection(false)}><Copy size={15} aria-hidden="true" /><span>복사</span></button>
+                      <button className="lumina-select-option" type="button" role="menuitem" onClick={() => void copyComposerSelection(true)}><Scissors size={15} aria-hidden="true" /><span>잘라내기</span></button>
+                    </>
+                  ) : null}
+                  <button className="lumina-select-option" type="button" role="menuitem" onClick={() => void pasteComposerText()}><ClipboardPaste size={15} aria-hidden="true" /><span>붙여넣기</span></button>
+                  <button className="lumina-select-option" type="button" role="menuitem" onClick={selectAllComposerText}><ScanText size={15} aria-hidden="true" /><span>전체 선택</span></button>
+                </div>,
+                document.body,
+              ) : null}
+              {promptEnhancementError && (
+                <div className="prompt-enhancement-status is-error" role="alert">
+                  <span>{promptEnhancementError}</span>
+                </div>
+              )}
+              {promptEnhancementState && (
+                <button
+                  type="button"
+                  className={`prompt-enhancement-restore tooltip-control${promptEnhancementState.restoreArmed ? " is-armed" : ""}`}
+                  aria-label={promptEnhancementState.view === "original" ? "증강 결과 다시 적용" : "원문으로 복원"}
+                  data-tooltip={
+                    promptEnhancementState.view === "original"
+                      ? "증강 결과 다시 적용"
+                      : promptEnhancementState.restoreArmed
+                        ? "수정 내용까지 원복하려면 다시 누르세요"
+                        : "원문으로 복원"
+                  }
+                  onClick={promptEnhancementState.view === "original" ? reapplyEnhancedPrompt : restoreOriginalPrompt}
+                >
+                  {promptEnhancementState.view === "original"
+                    ? <Sparkles size={16} aria-hidden="true" />
+                    : <Undo2 size={16} aria-hidden="true" />}
+                </button>
+              )}
               <div className="composer-footer">
                 <div>
                   <input ref={fileInputRef} className="visually-hidden" type="file" multiple accept=".pdf,.docx,.xlsx,.pptx,.txt,.md,.csv,.tsv,.png,.jpg,.jpeg,.webp,.gif" onChange={(event) => {
@@ -3367,25 +3941,56 @@ function App() {
                     event.currentTarget.value = "";
                     void workspace.uploadFiles(files);
                   }} />
-                  <button type="button" aria-label="파일 첨부" disabled={workspace.uploadingAttachments} onClick={() => fileInputRef.current?.click()}>{workspace.uploadingAttachments ? <LoaderCircle className="is-running" size={17} /> : <Paperclip size={17} />}</button>
-                  <button type="button" aria-label="Context 연결" onClick={() => insertComposerTrigger("@")}><AtSign size={17} /></button>
-                  <button type="button" className="tooltip-control" aria-label="Skill 및 MCP 호출" data-tooltip="Skill / MCP" onClick={() => insertComposerTrigger("$")}><CircleDollarSign size={17} /></button>
-                  <div className="output-mode-toggle" role="group" aria-label="출력 방식">
-                    {([['auto', '자동'], ['chat', '채팅'], ['file', '파일']] as const).map(([value, label]) => (
-                      <button
-                        type="button"
-                        key={value}
-                        ref={value === "file" ? fileModeButtonRef : undefined}
-                        className={`${workspace.settings?.outputMode === value ? "is-active" : ""} ${value === "file" && shouldNudgeFileMode ? "is-file-mode-nudged" : ""}`.trim()}
-                        aria-pressed={workspace.settings?.outputMode === value}
-                        aria-describedby={value === "file" && shouldNudgeFileMode ? "file-mode-nudge" : undefined}
-                        onClick={() => {
-                          setTargetOutputTokens((current) => value === "chat" ? null : current ?? defaultArtifactOutputTokens);
-                          void workspace.selectOutputMode(value);
-                        }}
-                      >{label}</button>
-                    ))}
-                  </div>
+                  <button type="button" className="composer-utility-button tooltip-control" aria-label="파일 첨부" data-tooltip="업로드" disabled={workspace.uploadingAttachments} onClick={() => fileInputRef.current?.click()}>{workspace.uploadingAttachments ? <LoaderCircle className="is-running" size={17} /> : <Paperclip size={17} />}</button>
+                  <button type="button" className="composer-utility-button tooltip-control" aria-label="Context 연결" data-tooltip="참고문서" onClick={() => insertComposerTrigger("@")}><AtSign size={17} /></button>
+                  <button type="button" className="composer-utility-button tooltip-control" aria-label="Skill 및 MCP 호출" data-tooltip="Skill / MCP" onClick={() => insertComposerTrigger("$")}><CircleDollarSign size={17} /></button>
+                  <PromptEnhancementMenu
+                    disabled={!composerHasText || !workspace.activeProjectId || !workspace.settings}
+                    instruction={workspace.settings?.promptEnhancementInstruction ?? ""}
+                    loading={promptEnhancementLoading}
+                    onApply={(options, instruction) => void enhanceComposerPrompt(options, instruction)}
+                  />
+                  <ComposerPicker
+                    options={analysisDepthOptions}
+                    value={analysisDepth}
+                    onChange={(value) => {
+                      const next = value as AnalysisDepth;
+                      setAnalysisDepth(next);
+                      void workspace.selectAnalysisDepth(next);
+                    }}
+                    ariaLabel="분석 범위 설정"
+                    menuLabel="분석 범위"
+                    menuDescription="웹 검색과 자료 확인을 포함해 어디까지 분석할지 정합니다."
+                    controlClassName={`analysis-depth-control is-${analysisDepth}`}
+                    triggerIcon={<Search size={15} aria-hidden="true" />}
+                    hideChevron
+                  />
+                  <ComposerPicker
+                    options={answerLengthOptions}
+                    value={answerLength}
+                    onChange={(value) => {
+                      const next = value as AnswerLength;
+                      setAnswerLength(next);
+                      void workspace.selectAnswerLength(next);
+                    }}
+                    ariaLabel="채팅 답변 분량 설정"
+                    menuLabel="답변 분량"
+                    menuDescription="채팅에 표시할 최종 답변의 분량을 정합니다."
+                    controlClassName={`answer-length-control is-${answerLength}`}
+                    triggerIcon={<AlignLeft size={15} aria-hidden="true" />}
+                    hideChevron
+                  />
+                  <ArtifactLengthSlider
+                    value={targetOutputTokens}
+                    onChange={setTargetOutputTokens}
+                    outputMode={workspace.settings?.outputMode ?? "auto"}
+                    onOutputModeChange={(value) => {
+                      setTargetOutputTokens((current) => value === "chat" ? null : current ?? defaultArtifactOutputTokens);
+                      void workspace.selectOutputMode(value);
+                    }}
+                    controlRef={fileModeButtonRef}
+                    attention={shouldNudgeFileMode}
+                  />
                   <GlobalTooltipLayer
                     anchor={fileModeButtonRef.current}
                     className="file-mode-nudge-layer"
@@ -3398,19 +4003,34 @@ function App() {
                       <small>현재는 파일 모드입니다. 대화만 원하면 ‘채팅’을 선택하세요.</small>
                     </span>
                   </GlobalTooltipLayer>
-                  <ArtifactLengthSlider
-                    value={targetOutputTokens}
-                    onChange={setTargetOutputTokens}
-                    disabled={workspace.settings?.outputMode === "chat"}
-                  />
                 </div>
                 <div>
+                  {pendingComposerMode && (
+                    <span className="composer-command-mode" role="status">
+                      {pendingComposerMode === "queue_next" ? "Queue" : "Steering"}
+                    </span>
+                  )}
                   <ComposerPicker
                     options={candidateModelOptions}
                     value={selectedCandidateId}
                     onChange={(candidateId) => {
                       const candidate = candidateModelOptions.find((option) => option.id === candidateId);
-                      if (candidate) void workspace.selectModelCandidate(candidate.providerId, candidate.modelKey);
+                      if (candidate && candidateId !== selectedCandidateId) {
+                        if (activeRuntime.turnSets.length > 0) {
+                          const origin = modelChangeOriginRef.current;
+                          if (origin?.conversationId === workspace.activeConversationId && candidateId === origin.candidateId) {
+                            modelChangeOriginRef.current = null;
+                            setToast((current) => current === modelChangeCacheWarning ? null : current);
+                          } else {
+                            modelChangeOriginRef.current ??= {
+                              conversationId: workspace.activeConversationId,
+                              candidateId: selectedCandidateId,
+                            };
+                            showToast(modelChangeCacheWarning);
+                          }
+                        }
+                        void workspace.selectModelCandidate(candidate.providerId, candidate.modelKey);
+                      }
                     }}
                     ariaLabel="모델 선택"
                     menuLabel="Model"
@@ -3423,7 +4043,7 @@ function App() {
                     onChange={(effortId) => void workspace.selectEffort(effortId || null)}
                     ariaLabel="추론 노력도 설정"
                     menuLabel="Effort"
-                    controlClassName="effort-control"
+                    controlClassName={`effort-control is-${workspace.settings?.execution.effortId ?? "auto"}`}
                   />
                   <button
                     className={`send-button tooltip-control ${composerShowsStop ? "is-stop" : ""}`}
@@ -3450,16 +4070,37 @@ function App() {
           </div>
         </div>
 
-        <ViewDataCacheProvider scope={workspace.authSession.user.id}>
-          {mainView === "marketplace" && <MarketplaceView key={workspace.activeProjectId ?? "none"} projectId={workspace.activeProjectId} onOpenNavigation={() => setSidebarOpen(true)} />}
-          {mainView === "library" && <ArtifactLibraryView key={workspace.activeProjectId ?? "all"} projectId={workspace.activeProjectId} onOpenArtifact={(artifact) => void openArtifact(artifact)} onOpenNavigation={() => setSidebarOpen(true)} />}
-          {mainView === "files" && <ProjectFilesView key={workspace.activeProjectId ?? "none"} projectId={workspace.activeProjectId} onOpenNavigation={() => setSidebarOpen(true)} />}
+        <Suspense fallback={<FeatureViewLoading />}>
+          <ViewDataCacheProvider scope={workspace.authSession.user.id}>
+          {mainView === "marketplace" && <MarketplaceView key={workspace.activeProjectId ?? "none"} projectId={workspace.activeProjectId} canManage={isAdmin} onOpenNavigation={() => setSidebarOpen(true)} />}
+          {mainView === "library" && <ArtifactLibraryView key={workspace.activeProjectId ?? "all"} projectId={workspace.activeProjectId} canDelete={isAdmin || Boolean(activeProject && activeProject.role !== "viewer")} onOpenArtifact={(artifact) => void openArtifact(artifact)} onArtifactDeleted={(artifactId) => { if (artifactSummary?.id === artifactId) closeArtifact(); }} onOpenNavigation={() => setSidebarOpen(true)} />}
+          {mainView === "files" && <ProjectFilesView key={workspace.activeProjectId ?? "none"} projectId={workspace.activeProjectId} requestedFileId={requestedProjectFileId} onOpenNavigation={() => setSidebarOpen(true)} />}
+          {mainView === "deep-analysis" && <DeepAnalysisView
+            key={workspace.activeProjectId ?? "none"}
+            projectId={workspace.activeProjectId}
+            canEdit={activeProject?.role !== "viewer"}
+            requestedMissionId={deepAnalysisSelectedMissionId}
+            removedMissionIds={deepAnalysisRemovedMissionIds}
+            createRequest={deepAnalysisCreateRequest}
+            onCreateRequestHandled={handleDeepAnalysisCreateRequest}
+            onMissionsChange={setDeepAnalysisMissions}
+            onMissionsLoadingChange={setDeepAnalysisMissionsLoading}
+            onSelectedMissionChange={setDeepAnalysisSelectedMissionId}
+            onOpenProjectFile={(fileId) => {
+              setRequestedProjectFileId(fileId);
+              setMainView("files");
+            }}
+            onOpenNavigation={() => setSidebarOpen(true)}
+            execution={workspace.settings?.execution ?? null}
+            executionOptions={candidateModelOptions}
+          />}
+          {mainView === "knowledge" && <KnowledgeView />}
           {mainView === "help" && <HelpCenterView canManage={isAdmin} initialAnnouncementId={helpAnnouncementId} onOpenNavigation={() => setSidebarOpen(true)} />}
           {mainView === "schedules" && <SchedulesView key={workspace.activeProjectId ?? "none"} projectId={workspace.activeProjectId} projects={workspace.projects} execution={workspace.settings?.execution ?? null} executionOptions={candidateModelOptions} onOpenNavigation={() => setSidebarOpen(true)} onProjectChange={workspace.setActiveProjectId} onConversationsChanged={workspace.refreshConversations} />}
           {mainView === "memory" && <MemoryView key={activeProject?.id ?? "none"} project={activeProject} completedRunId={completedProjectLearningRunId} canReviewProjectLearning={canReviewProjectLearning} onOpenNavigation={() => setSidebarOpen(true)} />}
-        </ViewDataCacheProvider>
-        {mainView === "admin" && isAdmin && <AdminView onOpenNavigation={() => setSidebarOpen(true)} onToast={showToast} onUserUpdated={() => void workspace.refreshAuthSession()} />}
-        {mainView === "settings" && (
+          </ViewDataCacheProvider>
+          {mainView === "admin" && isAdmin && <AdminView onOpenNavigation={() => setSidebarOpen(true)} onToast={showToast} onUserUpdated={() => void workspace.refreshAuthSession()} />}
+          {mainView === "settings" && (
           <main className="feature-view settings-view" aria-label="설정">
             <aside className="settings-section-nav" aria-label="설정 항목">
               <header><Settings size={16} /><strong>설정</strong></header>
@@ -3474,6 +4115,8 @@ function App() {
                 <section className="settings-card" aria-labelledby="appearance-settings-title">
                   <header><h2 id="appearance-settings-title">모양</h2></header>
                   <div className="settings-row"><span><strong>테마</strong><small>앱 화면의 밝기를 선택합니다.</small></span><button className="settings-value-button" type="button" onClick={() => void workspace.toggleTheme()}>{theme === "dark" ? "다크" : "라이트"}</button></div>
+                  <div className="settings-row"><span><strong>대화 영역 폭</strong><small>대화, 작업 진행, 입력 영역의 공통 최대 폭입니다.</small></span><div className="settings-stepper" role="group" aria-label="대화 영역 폭"><button type="button" aria-label="대화 영역 폭 줄이기" disabled={conversationWidth <= 600} onClick={() => void workspace.selectConversationWidth(Math.max(600, conversationWidth - 20))}>−</button><output>{conversationWidth}px</output><button type="button" aria-label="대화 영역 폭 늘리기" disabled={conversationWidth >= 1400} onClick={() => void workspace.selectConversationWidth(Math.min(1400, conversationWidth + 20))}>+</button></div></div>
+                  <div className="settings-row"><span><strong>대화 글꼴 크기</strong><small>현재 크기를 최솟값으로 하며 1px 단위로 조절합니다.</small></span><div className="settings-stepper" role="group" aria-label="대화 글꼴 크기"><button type="button" aria-label="대화 글꼴 크기 줄이기" disabled={conversationFontSize <= 14} onClick={() => void workspace.selectConversationFontSize(Math.max(14, conversationFontSize - 1))}>−</button><output>{conversationFontSize}px</output><button type="button" aria-label="대화 글꼴 크기 늘리기" disabled={conversationFontSize >= 24} onClick={() => void workspace.selectConversationFontSize(Math.min(24, conversationFontSize + 1))}>+</button></div></div>
                 </section>
                 <section className="settings-card" aria-labelledby="clarification-settings-title">
                   <header><h2 id="clarification-settings-title">대화 방식</h2></header>
@@ -3517,6 +4160,22 @@ function App() {
                         <button type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked} onClick={() => void saveAdminMaxTokens()}>저장</button>
                       </div>
                     </div>
+                    <div className="settings-row settings-context-budget-row">
+                      <span>
+                        <strong>실측 입력 토큰 상한</strong>
+                        <small>
+                          공식 전체 컨텍스트와 별도로 확인한 입력 상한입니다. 아래 입력 컨텍스트 계산에서 먼저 적용합니다.
+                          {selectedAdminSettingsModel?.defaultMaxInputTokens
+                            ? ` 카탈로그 기본값 ${selectedAdminSettingsModel.defaultMaxInputTokens.toLocaleString()} 토큰.`
+                            : " 등록된 기본값이 없습니다."}
+                        </small>
+                      </span>
+                      <div className="settings-inline-control">
+                        <input aria-label="실측 입력 토큰 상한" type="text" inputMode="numeric" value={adminInputTokens} disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked} onChange={(event) => setAdminInputTokens(event.currentTarget.value.replace(/\D/g, "").replace(/\B(?=(\d{3})+(?!\d))/g, ","))} />
+                        <button className="is-secondary" type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel?.defaultMaxInputTokens || selectedAdminSettingsModel.contextPolicyLocked} onClick={resetAdminInputTokens}>초기화</button>
+                        <button type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked || adminMeasuredInputTokenLimit === null} onClick={() => void saveAdminInputTokens()}>저장</button>
+                      </div>
+                    </div>
                     <div className="settings-row settings-output-token-row">
                       <span>
                         <strong>최대 출력 토큰</strong>
@@ -3549,7 +4208,7 @@ function App() {
                     <div className="settings-row settings-context-budget-row">
                       <span>
                         <strong>기본 최대 입력 컨텍스트</strong>
-                        <small>전체 컨텍스트에서 최대 출력 토큰과 안전 여유를 뺀 시스템 입력 상한입니다. Tool 적용 전 기준이며 실제 Run에서는 Tool schema 토큰을 추가 차감합니다.</small>
+                        <small>전체 컨텍스트에서 출력 예약을 뺀 값과 모델 입력 상한 중 작은 값에서 안전 여유를 뺀 시스템 입력 예산입니다. Tool 적용 전 기준이며 실제 Run에서는 Tool schema 토큰을 추가 차감합니다.</small>
                       </span>
                       <output aria-live="polite">{adminBaseInputContext === null ? "계산할 수 없음" : `${adminBaseInputContext.toLocaleString()} 토큰`}</output>
                     </div>
@@ -3583,27 +4242,28 @@ function App() {
               </div>
             </section>
           </main>
-        )}
-        {mainView === "project-settings" && <ProjectSettings
-          projects={workspace.projects}
-          project={activeProject}
-          onOpenNavigation={() => setSidebarOpen(true)}
-          onSelect={(projectId) => workspace.setActiveProjectId(projectId)}
-          onCreate={async () => {
-            const names = new Set(workspace.projects.map((item) => item.name));
-            let name = "새 프로젝트";
-            let suffix = 2;
-            while (names.has(name)) {
-              name = `새 프로젝트 ${suffix}`;
-              suffix += 1;
-            }
-            const created = await workspace.createProject(name);
-            if (!created) showToast("프로젝트를 생성하지 못했습니다.");
-          }}
-          onSave={(projectId, changes) => workspace.updateProjectDetails(projectId, changes)}
-          onDelete={(projectId) => workspace.archiveProject(projectId)}
-          onMembershipsChanged={workspace.refreshProjects}
-        />}
+          )}
+          {mainView === "project-settings" && <ProjectSettings
+            projects={workspace.projects}
+            project={activeProject}
+            onOpenNavigation={() => setSidebarOpen(true)}
+            onSelect={(projectId) => workspace.setActiveProjectId(projectId)}
+            onCreate={async () => {
+              const names = new Set(workspace.projects.map((item) => item.name));
+              let name = "새 프로젝트";
+              let suffix = 2;
+              while (names.has(name)) {
+                name = `새 프로젝트 ${suffix}`;
+                suffix += 1;
+              }
+              const created = await workspace.createProject(name);
+              if (!created) showToast("프로젝트를 생성하지 못했습니다.");
+            }}
+            onSave={(projectId, changes) => workspace.updateProjectDetails(projectId, changes)}
+            onDelete={(projectId) => workspace.archiveProject(projectId)}
+            onMembershipsChanged={workspace.refreshProjects}
+          />}
+        </Suspense>
       </section>
 
       {artifactPaneVisible && (
@@ -3627,11 +4287,7 @@ function App() {
                   setArtifactDraftSaved(false);
                   return;
                 }
-                setArtifactEditing(true);
-                setArtifactTab(artifactVersion?.mimeType === "text/html" ? "preview" : "source");
-                const editSource = artifactDraftSaved ? artifactDraft : artifactVersion?.sourceText ?? "";
-                setArtifactDraft(editSource);
-                setArtifactEditablePreview(artifactVersion?.mimeType === "text/html" ? editableArtifactHtml(editSource) : "");
+                void beginArtifactEditing();
               }}><Pencil size={16} /></button>
               {artifactEditing && (
                 <>
@@ -3647,11 +4303,24 @@ function App() {
                   }}><Undo2 size={16} /></button>
                 </>
               )}
-              <button className="artifact-view-control tooltip-control" type="button" aria-label={artifactTab === "preview" ? "코드 보기" : "미리보기"} data-tooltip={artifactHasTextSource ? artifactTab === "preview" ? "코드 보기" : "미리보기" : "Binary 형식은 소스 보기 없음"} disabled={!artifactHasTextSource} onClick={() => setArtifactTab((current) => current === "preview" ? "source" : "preview")}>
-                {artifactTab === "preview" ? <Code2 size={17} /> : <Eye size={17} />}
-              </button>
-              <button className="tooltip-control" type="button" aria-label="Artifact 공유 링크 복사" data-tooltip={artifactSummary?.conversationId ? "공유 링크 복사" : "대화에 연결된 Artifact만 공유 가능"} disabled={!artifactSummary?.conversationId} onClick={() => void shareArtifact()}><ShareActionIcon size={17} /></button>
-              <button className="artifact-file-control tooltip-control" type="button" aria-label="Artifact 다운로드" data-tooltip="다운로드" disabled={!artifactSummary || artifactDownloadVersion === null} onClick={() => void downloadArtifact()}><Download size={17} /></button>
+              <ArtifactPreviewActions
+                sourceActive={artifactTab === "source"}
+                sourceDisabled={!artifactHasTextSource}
+                knowledgeDisabled={!artifactHasTextSource || artifactLoading}
+                knowledgeSaving={artifactKnowledgeSaving}
+                knowledgeSaved={artifactKnowledgeKey !== null && artifactKnowledgeSavedKey === artifactKnowledgeKey}
+                shareDisabled={!artifactSummary?.conversationId}
+                downloadDisabled={!artifactSummary || artifactDownloadVersion === null}
+                openWindowHref={
+                  artifactSummary && artifactVersion?.mimeType === "text/html"
+                    ? artifactStandalonePreviewUrl(artifactSummary.id, artifactVersion.version)
+                    : null
+                }
+                onToggleSource={toggleArtifactTab}
+                onSaveKnowledge={saveArtifactToKnowledge}
+                onShare={shareArtifact}
+                onDownload={downloadArtifact}
+              />
               <button className="tooltip-control" type="button" aria-label={artifactFullscreen ? "전체화면 종료" : "전체화면"} data-tooltip={artifactFullscreen ? "전체화면 종료" : "전체화면"} onClick={() => setArtifactFullscreen((value) => !value)}>
                 {artifactFullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
               </button>
@@ -3695,7 +4364,7 @@ function App() {
             {!artifactLoading && artifactVersion && !artifactHasTextSource && artifactVersion.mimeType !== "application/pdf" && (
               <div className={`artifact-binary-summary ${artifactVersion.mimeType.startsWith("image/") ? "is-image" : ""}`}>
                 {artifactVersion.mimeType.startsWith("image/") && artifactVersion.previewUrl
-                  ? <img className="artifact-image-preview" src={artifactVersion.previewUrl} alt={artifactSummary?.displayName ?? "생성 이미지"} />
+                  ? <img className="artifact-image-preview" src={artifactVersion.previewUrl} alt={artifactSummary?.displayName ?? "생성 이미지"} decoding="async" />
                   : <FileCheck2 size={24} />}
                 <h2>{artifactSummary?.displayName}</h2>
                 <p>{artifactVersion.mimeType.startsWith("image/") ? "원본 비율로 미리보기 중입니다." : "이 형식은 본문 편집과 소스 미리보기를 지원하지 않습니다."}</p>
@@ -3714,12 +4383,14 @@ function App() {
               artifactVersion.mimeType === "text/markdown" || artifactSummary?.kind === "markdown" ? (
                 <div className="artifact-markdown-preview"><MarkdownResponse text={artifactEditing ? artifactDraft : artifactVersion.sourceText ?? ""} artifact /></div>
               ) : artifactVersion.mimeType === "text/html" ? (
-                <ArtifactHtmlPreview
-                  frameRef={artifactPreviewFrameRef}
-                  source={artifactEditing ? artifactEditablePreview : artifactVersion.sourceText ?? ""}
-                  title={artifactSummary?.displayName ?? "Artifact 미리보기"}
-                  renderMermaid={!artifactEditing}
-                />
+                <Suspense fallback={<div className="artifact-loading" role="progressbar" aria-label="HTML 미리보기 준비 중"><LoaderCircle className="is-running" size={17} /> HTML 미리보기를 준비하고 있습니다.</div>}>
+                  <ArtifactHtmlPreview
+                    frameRef={artifactPreviewFrameRef}
+                    source={artifactEditing ? artifactEditablePreview : null}
+                    previewUrl={artifactEditing ? null : artifactPreviewUrl}
+                    title={artifactSummary?.displayName ?? "Artifact 미리보기"}
+                  />
+                </Suspense>
               ) : (
                 <SyntaxCode className="artifact-text-preview" value={artifactEditing ? artifactDraft : artifactVersion.sourceText ?? ""} fileName={artifactSummary?.displayName} mimeType={artifactVersion.mimeType} />
               )
@@ -3728,8 +4399,8 @@ function App() {
               <div className="source-view">
                 <div className="source-toolbar"><Code2 size={15} /> {artifactSummary?.displayName}<span>{artifactVersion.mimeType}</span></div>
                 {artifactEditing ? (
-                  <SyntaxTextarea className="artifact-source-editor" ariaLabel="Artifact 소스 편집" disabled={artifactSaveBusy !== null} value={artifactDraft} fileName={artifactSummary?.displayName} mimeType={artifactVersion.mimeType} onChange={(event) => {
-                    setArtifactDraft(event.currentTarget.value);
+                  <IsolatedSyntaxTextarea className="artifact-source-editor" ariaLabel="Artifact 소스 편집" disabled={artifactSaveBusy !== null} value={artifactDraft} fileName={artifactSummary?.displayName} mimeType={artifactVersion.mimeType} onValueChange={(value) => {
+                    artifactDraftRef.current = value;
                     setArtifactDraftSaved(false);
                     setArtifactDraftNotice(null);
                   }} />
@@ -3742,22 +4413,8 @@ function App() {
         </aside>
       )}
 
-      {conversationSearchOpen && (
-        <ConversationSearchDialog
-          projectId={workspace.activeProjectId}
-          projectName={activeProject?.name ?? null}
-          onClose={() => setConversationSearchOpen(false)}
-          onSelect={(conversation) => {
-            workspace.openConversation(conversation);
-            setMainView("chat");
-            setSidebarOpen(false);
-            setConversationSearchOpen(false);
-          }}
-        />
-      )}
-
       {toast && <div className="toast" role="status">{toast}</div>}
-      {modelNameTooltip && createPortal(<div className="account-model-tooltip" role="tooltip" style={{ left: modelNameTooltip.left, top: modelNameTooltip.top }}>{modelNameTooltip.name}</div>, document.body)}
+      {modelNameTooltip && createPortal(<div className={`account-model-tooltip${theme === "dark" ? " theme-dark" : ""}`} role="tooltip" style={{ left: modelNameTooltip.left, top: modelNameTooltip.top }}>{modelNameTooltip.name}</div>, document.body)}
     </div>
   );
 }

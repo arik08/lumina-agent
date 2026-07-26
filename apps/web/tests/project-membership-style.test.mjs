@@ -38,3 +38,18 @@ test("project role menus suppress the white focus aura without hiding state colo
     /\.app-shell\.theme-dark,[\s\S]*?--shadow-overlay: 0 12px 28px rgba\(0, 0, 0, 0\.38\)/,
   );
 });
+
+test("project membership labels and compact role menus keep readable body text", () => {
+  assert.match(
+    projectSettingsSource,
+    /className="project-member-role-select" menuClassName="project-member-role-menu" size="small"/,
+  );
+  assert.match(
+    projectSettingsStyles,
+    /\.project-member-add :is\(label, \.project-role-field\) > span \{[^}]*font-size: 12px;/,
+  );
+  assert.match(
+    projectSettingsStyles,
+    /\.project-member-role-select\.size-small \.lumina-select-trigger,[\s\S]*?\.project-member-role-menu\.size-small > button \{ font-size: 12px; \}/,
+  );
+});

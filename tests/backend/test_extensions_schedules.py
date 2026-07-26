@@ -13,13 +13,14 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from lumina.api.errors import install_error_handlers
+from lumina.api.errors import ApiProblem, install_error_handlers
 from lumina.api.routes import auth, extensions, projects, schedules
 from lumina.agent.executor import LocalRunExecutor
 from lumina.auth import bootstrap_database, create_user
 from lumina.config import Settings, get_settings
 from lumina.db import SessionLocal, configure_database, create_schema
 from lumina.extensions import repository_catalog
+from lumina.extensions.service import save_draft_version, update_draft
 from lumina.mcp.service import install_definition, resolve_mcp_snapshot
 from lumina.models import (
     Artifact,
@@ -28,9 +29,11 @@ from lumina.models import (
     Extension,
     ExtensionDraft,
     ExtensionDraftBinding,
+    ExtensionDraftRevision,
     ExtensionInstallation,
     ExtensionVersion,
     McpDefinition,
+    McpInstallation,
     Organization,
     Project,
     Run,
@@ -47,6 +50,7 @@ from lumina.schedules.service import (
     maintain_scheduled_runs,
     next_occurrence,
     scheduled_run_payload,
+    start_scheduled_run,
 )
 from lumina.schedules import service as schedules_service
 
@@ -191,7 +195,8 @@ def test_repository_mcp_wrapper_is_classified_and_attached_to_mcp_snapshot(
             "---\n"
             "name: internal-search\n"
             "description: 승인된 사내 문서를 검색합니다.\n"
-            "source: skill-mcp:internal-search\n"
+            "metadata:\n"
+            "  lumina-source: skill-mcp:internal-search\n"
             "---\n\n"
             "# Internal Search\n\n반드시 MCP 검색 결과만 근거로 답합니다.\n",
             encoding="utf-8",
@@ -245,7 +250,7 @@ def test_repository_mcp_wrapper_is_classified_and_attached_to_mcp_snapshot(
             assert version is not None
             assert version.manifest_json["classification"] == "mcp"
             assert version.manifest_json["mcpSlug"] == "internal-search"
-            install_definition(
+            installation = install_definition(
                 db,
                 user=admin,
                 definition_id=definition.id,
@@ -255,9 +260,54 @@ def test_repository_mcp_wrapper_is_classified_and_attached_to_mcp_snapshot(
                 enabled=True,
                 tool_allowlist=["search_docs"],
             )
+            old_revision_id = installation.configuration_revision_id
+            installation_id = installation.id
+            db.commit()
             snapshot = resolve_mcp_snapshot(db, user=admin, project_id=project_id)[0]
             assert snapshot["skill_wrapper"]["extension_id"] == extension.id
             assert "반드시 MCP 검색 결과만" in snapshot["skill_wrapper"]["instructions"]
+        manifest = json.loads(
+            (mcp_root / "internal-search.json").read_text(encoding="utf-8")
+        )
+        manifest["mcpServers"]["internal-search"]["tools"][0]["description"] = (
+            "updated repository schema"
+        )
+        (mcp_root / "internal-search.json").write_text(
+            json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
+        )
+        upgraded = client.post(
+            "/api/extensions/repository-sync",
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert upgraded.status_code == 200, upgraded.text
+        assert upgraded.json()["mcpChanged"] == 1
+
+        with SessionLocal() as db:
+            installation = db.get(McpInstallation, installation_id)
+            definition = db.scalar(
+                select(McpDefinition).where(McpDefinition.slug == "internal-search")
+            )
+            assert installation is not None and definition is not None
+            assert installation.configuration_revision_id != old_revision_id
+            assert installation.configuration_revision_id == definition.current_revision_id
+            assert installation.tool_allowlist_json == ["search_docs"]
+            installation.configuration_revision_id = old_revision_id
+            db.commit()
+
+        repaired = client.post(
+            "/api/extensions/repository-sync",
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert repaired.status_code == 200, repaired.text
+        assert repaired.json()["mcpChanged"] == 0
+
+        with SessionLocal() as db:
+            installation = db.get(McpInstallation, installation_id)
+            definition = db.scalar(
+                select(McpDefinition).where(McpDefinition.slug == "internal-search")
+            )
+            assert installation is not None and definition is not None
+            assert installation.configuration_revision_id == definition.current_revision_id
 
 
 def test_selected_mcp_wrapper_guidance_enters_the_run_context(tmp_path: Path) -> None:
@@ -351,6 +401,161 @@ def test_repository_watcher_detects_explorer_style_file_addition(
                 await watcher
 
     asyncio.run(exercise_watcher())
+
+
+def test_skill_draft_compare_and_swap_rejects_stale_session(tmp_path: Path) -> None:
+    app, _settings = _test_app(tmp_path)
+    with TestClient(app) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        created = client.post(
+            "/api/extensions",
+            headers={"X-CSRF-Token": csrf},
+            json={
+                "name": "CAS Skill",
+                "slug": "cas-skill",
+                "projectId": project_id,
+                "package": {"files": {"SKILL.md": "# CAS base"}},
+            },
+        )
+        assert created.status_code == 201, created.text
+        draft_payload = created.json()["draft"]
+        draft_id = draft_payload["id"]
+        initial_digest = draft_payload["digest"]
+        listed = next(
+            item for item in client.get("/api/extensions").json()
+            if item["id"] == created.json()["id"]
+        )
+        assert "package" not in listed["draft"]
+        full_draft = client.get(f"/api/extensions/{created.json()['id']}/draft")
+        assert full_draft.status_code == 200, full_draft.text
+        initial_skill_md = full_draft.json()["package"]["files"]["SKILL.md"]
+        assert "name: cas-skill" in initial_skill_md
+        assert initial_skill_md.endswith("# CAS base")
+
+        with SessionLocal() as first_db, SessionLocal() as stale_db:
+            first_user = first_db.scalar(
+                select(User).where(User.login_id == "admin@posco.com")
+            )
+            stale_user = stale_db.scalar(
+                select(User).where(User.login_id == "admin@posco.com")
+            )
+            stale_draft = stale_db.get(ExtensionDraft, draft_id)
+            assert first_user is not None and stale_user is not None
+            assert stale_draft is not None
+            assert stale_draft.current_revision == 1
+
+            winner, changed = update_draft(
+                first_db,
+                user=first_user,
+                draft_id=draft_id,
+                expected_revision=1,
+                expected_digest=initial_digest,
+                package_files={"SKILL.md": "# CAS winner"},
+                change_summary="winner",
+            )
+            first_db.commit()
+            assert changed is True
+            assert winner.current_revision == 2
+
+            with pytest.raises(ApiProblem) as conflict:
+                update_draft(
+                    stale_db,
+                    user=stale_user,
+                    draft_id=draft_id,
+                    expected_revision=1,
+                    expected_digest=initial_digest,
+                    package_files={"SKILL.md": "# CAS stale writer"},
+                    change_summary="stale",
+                )
+            assert conflict.value.code == "draft_conflict"
+
+        with SessionLocal() as db:
+            persisted = db.get(ExtensionDraft, draft_id)
+            revisions = list(
+                db.scalars(
+                    select(ExtensionDraftRevision)
+                    .where(ExtensionDraftRevision.draft_id == draft_id)
+                    .order_by(ExtensionDraftRevision.revision_number)
+                )
+            )
+            assert persisted is not None
+            assert persisted.current_revision == 2
+            persisted_skill_md = persisted.package_json["SKILL.md"]
+            assert "name: cas-skill" in persisted_skill_md
+            assert persisted_skill_md.endswith("# CAS winner")
+            assert [revision.revision_number for revision in revisions] == [1, 2]
+
+
+def test_skill_version_save_rejects_stale_base_pointer(tmp_path: Path) -> None:
+    app, _settings = _test_app(tmp_path)
+    with TestClient(app) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        created = client.post(
+            "/api/extensions",
+            headers={"X-CSRF-Token": csrf},
+            json={
+                "name": "Version CAS Skill",
+                "slug": "version-cas-skill",
+                "projectId": project_id,
+                "package": {"files": {"SKILL.md": "# Version CAS"}},
+            },
+        )
+        assert created.status_code == 201, created.text
+        draft_payload = created.json()["draft"]
+        draft_id = draft_payload["id"]
+        digest = draft_payload["digest"]
+
+        with SessionLocal() as first_db, SessionLocal() as stale_db:
+            first_user = first_db.scalar(
+                select(User).where(User.login_id == "admin@posco.com")
+            )
+            stale_user = stale_db.scalar(
+                select(User).where(User.login_id == "admin@posco.com")
+            )
+            stale_draft = stale_db.get(ExtensionDraft, draft_id)
+            assert first_user is not None and stale_user is not None
+            assert stale_draft is not None
+            assert stale_draft.base_version_id is None
+
+            winner = save_draft_version(
+                first_db,
+                user=first_user,
+                draft_id=draft_id,
+                expected_revision=1,
+                expected_digest=digest,
+                base_version_id=None,
+                manifest={"category": "cas"},
+            )
+            first_db.commit()
+            assert winner.version_number == 1
+
+            with pytest.raises(ApiProblem) as conflict:
+                save_draft_version(
+                    stale_db,
+                    user=stale_user,
+                    draft_id=draft_id,
+                    expected_revision=1,
+                    expected_digest=digest,
+                    base_version_id=None,
+                    manifest={"category": "stale"},
+                )
+            assert conflict.value.code == "base_version_conflict"
+
+        with SessionLocal() as db:
+            persisted = db.get(ExtensionDraft, draft_id)
+            versions = list(
+                db.scalars(
+                    select(ExtensionVersion)
+                    .where(ExtensionVersion.extension_id == created.json()["id"])
+                    .order_by(ExtensionVersion.version_number)
+                )
+            )
+            assert persisted is not None
+            assert persisted.base_version_id == winner.id
+            assert [version.version_number for version in versions] == [1]
+            assert versions[0].parent_version_id is None
 
 
 def test_skill_draft_versions_installation_and_folder_move(tmp_path: Path) -> None:
@@ -482,6 +687,16 @@ def test_skill_draft_versions_installation_and_folder_move(tmp_path: Path) -> No
             json={"scopeType": "user", "name": "설비 관리"},
         )
         assert folder.status_code == 201, folder.text
+        for invalid_patch in ({}, {"name": None}, {"sortOrder": None}):
+            rejected_patch = client.patch(
+                f"/api/skill-folders/{folder.json()['id']}",
+                headers=headers,
+                json=invalid_patch,
+            )
+            assert rejected_patch.status_code == 422, (
+                invalid_patch,
+                rejected_patch.text,
+            )
         child_folder = client.post(
             "/api/skill-folders",
             headers=headers,
@@ -523,6 +738,36 @@ def test_skill_draft_versions_installation_and_folder_move(tmp_path: Path) -> No
         )
         assert installed.status_code == 201, installed.text
         installation_id = installed.json()["id"]
+        assert installed.json()["projectIds"] is None
+        projects_before_scope = client.get("/api/projects").json()
+        default_project_id = projects_before_scope[0]["id"]
+        second_project = client.post(
+            "/api/projects",
+            headers=headers,
+            json={"name": "Skill 제외 프로젝트"},
+        )
+        assert second_project.status_code == 201, second_project.text
+        scoped = client.patch(
+            f"/api/extension-installations/{installation_id}",
+            headers=headers,
+            json={"projectIds": [default_project_id]},
+        )
+        assert scoped.status_code == 200, scoped.text
+        assert scoped.json()["projectIds"] == [default_project_id]
+        assert any(
+            item["id"] == installation_id
+            for item in client.get(
+                "/api/extension-installations",
+                params={"project_id": default_project_id},
+            ).json()
+        )
+        assert all(
+            item["id"] != installation_id
+            for item in client.get(
+                "/api/extension-installations",
+                params={"project_id": second_project.json()["id"]},
+            ).json()
+        )
         upgraded = client.post(
             "/api/extension-installations",
             headers=headers,
@@ -1133,6 +1378,190 @@ def test_skill_trash_requires_owner_or_admin_and_supports_restore_and_expiry(
         assert {"extension_trashed", "extension_restored"} <= actions
 
 
+def test_skill_version_history_compare_and_revert_style_rollback(
+    tmp_path: Path,
+) -> None:
+    app, _settings = _test_app(tmp_path)
+    with SessionLocal() as db:
+        organization = db.scalar(select(Organization))
+        admin = db.scalar(select(User).where(User.login_id == "admin@posco.com"))
+        assert organization is not None and admin is not None
+        maintainer = create_user(
+            db,
+            login_name="version-maintainer",
+            password="pw",
+            organization_id=organization.id,
+            created_by_user_id=admin.id,
+        )
+        maintainer_id = maintainer.id
+        db.commit()
+
+    with TestClient(app) as client:
+        admin_csrf = _login(client)
+        admin_headers = {"X-CSRF-Token": admin_csrf}
+        created = client.post(
+            "/api/extensions",
+            headers=admin_headers,
+            json={
+                "name": "Versioned report skill",
+                "slug": "versioned-report-skill",
+                "description": "Exercises immutable skill history.",
+                "package": {
+                    "files": {
+                        "SKILL.md": "# Report\n\nCreate the original report.\n",
+                        "scripts/old.py": "print('old')\n",
+                    }
+                },
+            },
+        )
+        assert created.status_code == 201, created.text
+        skill = created.json()
+        draft = skill["draft"]
+        saved_v1 = client.post(
+            f"/api/skill-drafts/{draft['id']}/save-version",
+            headers=admin_headers,
+            json={
+                "expectedRevision": draft["revision"],
+                "expectedDigest": draft["digest"],
+                "baseVersionId": None,
+                "manifest": {},
+            },
+        )
+        assert saved_v1.status_code == 201, saved_v1.text
+        v1 = saved_v1.json()
+        assert v1["changeType"] == "save"
+        assert v1["restoredFromVersionId"] is None
+        assert (
+            client.post(
+                f"/api/extension-versions/{v1['id']}/publish",
+                headers=admin_headers,
+                json={},
+            ).status_code
+            == 200
+        )
+
+        current_draft = client.get(f"/api/extensions/{skill['id']}/draft").json()
+        changed = client.patch(
+            f"/api/skill-drafts/{current_draft['id']}",
+            headers=admin_headers,
+            json={
+                "expectedRevision": current_draft["revision"],
+                "expectedDigest": current_draft["digest"],
+                "package": {
+                    "files": {
+                        "SKILL.md": "# Report\n\nCreate the safer report.\n",
+                        "scripts/new.py": "print('new')\n",
+                    }
+                },
+                "changeSummary": "Use the safer report workflow",
+            },
+        )
+        assert changed.status_code == 200, changed.text
+        changed_draft = changed.json()
+        saved_v2 = client.post(
+            f"/api/skill-drafts/{changed_draft['id']}/save-version",
+            headers=admin_headers,
+            json={
+                "expectedRevision": changed_draft["revision"],
+                "expectedDigest": changed_draft["digest"],
+                "baseVersionId": v1["id"],
+                "manifest": {},
+            },
+        )
+        assert saved_v2.status_code == 201, saved_v2.text
+        v2 = saved_v2.json()
+        assert v2["changeSummary"] == "Use the safer report workflow"
+        assert v2["parentVersionId"] == v1["id"]
+        assert (
+            client.post(
+                f"/api/extension-versions/{v2['id']}/publish",
+                headers=admin_headers,
+                json={},
+            ).status_code
+            == 200
+        )
+
+        comparison = client.get(
+            f"/api/skills/{skill['id']}/compare",
+            params={"from_version_id": v1["id"], "to_version_id": v2["id"]},
+        )
+        assert comparison.status_code == 200, comparison.text
+        diff = comparison.json()
+        assert diff["summary"] == {"filesChanged": 3, "additions": 2, "deletions": 2}
+        assert {item["path"]: item["status"] for item in diff["files"]} == {
+            "SKILL.md": "modified",
+            "scripts/new.py": "added",
+            "scripts/old.py": "deleted",
+        }
+        skill_diff = next(item for item in diff["files"] if item["path"] == "SKILL.md")
+        assert {line["kind"] for line in skill_diff["hunks"][0]["lines"]} >= {
+            "add",
+            "delete",
+        }
+
+        ownership = client.post(
+            f"/api/skills/{skill['id']}/ownerships",
+            headers=admin_headers,
+            json={"userId": maintainer_id, "role": "maintainer"},
+        )
+        assert ownership.status_code == 201, ownership.text
+        client.cookies.clear()
+        maintainer_csrf = _login(client, "version-maintainer", "pw")
+        forbidden = client.post(
+            f"/api/skills/{skill['id']}/rollbacks",
+            headers={"X-CSRF-Token": maintainer_csrf},
+            json={
+                "targetVersionId": v1["id"],
+                "expectedCurrentVersionId": v2["id"],
+                "changeSummary": "Maintainer should not publish",
+            },
+        )
+        assert forbidden.status_code == 403
+        assert forbidden.json()["code"] == "skill_rollback_forbidden"
+
+        client.cookies.clear()
+        admin_csrf = _login(client)
+        rollback = client.post(
+            f"/api/skills/{skill['id']}/rollbacks",
+            headers={"X-CSRF-Token": admin_csrf},
+            json={
+                "targetVersionId": v1["id"],
+                "expectedCurrentVersionId": v2["id"],
+                "changeSummary": "Restore the proven workflow",
+            },
+        )
+        assert rollback.status_code == 201, rollback.text
+        restored = rollback.json()
+        assert restored["version"] == 3
+        assert restored["changeType"] == "rollback"
+        assert restored["changeSummary"] == "Restore the proven workflow"
+        assert restored["parentVersionId"] == v2["id"]
+        assert restored["restoredFromVersionId"] == v1["id"]
+        assert restored["status"] == "published"
+
+        restored_package = client.get(f"/api/extension-versions/{restored['id']}")
+        assert restored_package.status_code == 200, restored_package.text
+        assert restored_package.json()["package"] == v1["package"]
+        refreshed = client.get(f"/api/extensions/{skill['id']}").json()
+        assert refreshed["latestPublishedVersionId"] == restored["id"]
+        assert [version["version"] for version in refreshed["versions"]] == [1, 2, 3]
+
+        stale = client.post(
+            f"/api/skills/{skill['id']}/rollbacks",
+            headers={"X-CSRF-Token": admin_csrf},
+            json={
+                "targetVersionId": v2["id"],
+                "expectedCurrentVersionId": v2["id"],
+                "changeSummary": "Stale restore",
+            },
+        )
+        assert stale.status_code == 409
+        assert stale.json()["code"] == "published_version_conflict"
+
+    with SessionLocal() as db:
+        assert "skill_version_rolled_back" in set(db.scalars(select(AuditEvent.action)))
+
+
 def test_schedule_run_now_enable_disable_and_due_dispatch(tmp_path: Path) -> None:
     app, _settings = _test_app(tmp_path)
     with TestClient(app) as client:
@@ -1220,6 +1649,174 @@ def test_schedule_run_now_enable_disable_and_due_dispatch(tmp_path: Path) -> Non
         assert len(scheduled_rows) == 2
 
 
+def test_schedule_patch_rejects_empty_and_null_non_nullable_fields(
+    tmp_path: Path,
+) -> None:
+    app, _settings = _test_app(tmp_path)
+    with TestClient(app, raise_server_exceptions=False) as client:
+        csrf = _login(client)
+        headers = {"X-CSRF-Token": csrf}
+        project_id = client.get("/api/projects").json()[0]["id"]
+        created = client.post(
+            "/api/scheduled-tasks",
+            headers=headers,
+            json={
+                "projectId": project_id,
+                "name": "예약 수정 검증",
+                "instructions": "예약 수정 입력을 검증합니다.",
+                "scheduleKind": "daily",
+                "scheduleConfig": {"hour": 9, "minute": 30},
+                "timezone": "Asia/Seoul",
+            },
+        )
+        assert created.status_code == 201, created.text
+        task_id = created.json()["id"]
+
+        invalid_patches = [
+            {},
+            {"projectId": None},
+            {"name": None},
+            {"instructions": None},
+            {"scheduleKind": None},
+            {"scheduleConfig": None},
+            {"timezone": None},
+            {"contextMode": None},
+            {"execution": None},
+            {"extensionSnapshotPolicy": None},
+            {"deliveryPolicy": None},
+            {"maxAttempts": None},
+            {"timeoutSeconds": None},
+        ]
+        for patch in invalid_patches:
+            response = client.patch(
+                f"/api/scheduled-tasks/{task_id}", headers=headers, json=patch
+            )
+            assert response.status_code == 422, (patch, response.text)
+
+        unchanged = client.get(f"/api/scheduled-tasks/{task_id}")
+        assert unchanged.status_code == 200
+        assert unchanged.json()["name"] == "예약 수정 검증"
+        assert unchanged.json()["scheduleConfig"] == {"hour": 9, "minute": 30}
+
+
+def test_schedule_patch_updates_project_timing_and_execution(tmp_path: Path) -> None:
+    app, _settings = _test_app(tmp_path)
+    with TestClient(app) as client:
+        csrf = _login(client)
+        headers = {"X-CSRF-Token": csrf}
+        projects = client.get("/api/projects").json()
+        source_project_id = projects[0]["id"]
+        destination = client.post(
+            "/api/projects",
+            headers=headers,
+            json={"name": "예약 결과 프로젝트"},
+        )
+        assert destination.status_code == 201, destination.text
+        destination_project_id = destination.json()["id"]
+        created = client.post(
+            "/api/scheduled-tasks",
+            headers=headers,
+            json={
+                "projectId": source_project_id,
+                "name": "예약 수정 전",
+                "instructions": "수정 전 지시사항",
+                "scheduleKind": "daily",
+                "scheduleConfig": {"hour": 9, "minute": 30},
+            },
+        )
+        assert created.status_code == 201, created.text
+
+        updated = client.patch(
+            f"/api/scheduled-tasks/{created.json()['id']}",
+            headers=headers,
+            json={
+                "projectId": destination_project_id,
+                "name": "예약 수정 후",
+                "instructions": "수정 후 지시사항",
+                "scheduleKind": "weekly",
+                "scheduleConfig": {"weekday": 4, "hour": 18, "minute": 45},
+                "execution": {
+                    "providerId": "mock",
+                    "modelKey": "mock-agent",
+                    "effortId": "high",
+                },
+            },
+        )
+        assert updated.status_code == 200, updated.text
+        payload = updated.json()
+        assert payload["projectId"] == destination_project_id
+        assert payload["name"] == "예약 수정 후"
+        assert payload["instructions"] == "수정 후 지시사항"
+        assert payload["scheduleKind"] == "weekly"
+        assert payload["scheduleConfig"] == {
+            "weekday": 4,
+            "hour": 18,
+            "minute": 45,
+        }
+        assert payload["execution"] == {
+            "providerId": "mock",
+            "modelKey": "mock-agent",
+            "effortId": "high",
+        }
+        assert client.get(
+            "/api/scheduled-tasks", params={"project_id": source_project_id}
+        ).json() == []
+        destination_tasks = client.get(
+            "/api/scheduled-tasks", params={"project_id": destination_project_id}
+        ).json()
+        assert [task["id"] for task in destination_tasks] == [payload["id"]]
+
+
+def test_scheduled_run_recovers_idempotency_conflict_after_stale_lookup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, _settings = _test_app(tmp_path)
+    with TestClient(app) as client:
+        csrf = _login(client)
+        task_payload, scheduled_payload = _create_manual_scheduled_run(
+            client,
+            csrf=csrf,
+            name="동시 예약 충돌 복구",
+            idempotency_key="schedule-race-0001",
+            max_attempts=1,
+        )
+
+    with SessionLocal() as db:
+        task = db.get(ScheduledTask, str(task_payload["id"]))
+        scheduled_run = db.get(ScheduledRun, str(scheduled_payload["id"]))
+        assert task is not None and scheduled_run is not None
+        owner = db.get(User, task.owner_user_id)
+        assert owner is not None
+        run_count = len(list(db.scalars(select(Run.id))))
+        conversation_count = len(list(db.scalars(select(Conversation.id))))
+
+        real_scalar = db.scalar
+        stale_lookup_returned = False
+
+        def scalar_with_stale_first_lookup(*args: object, **kwargs: object) -> object:
+            nonlocal stale_lookup_returned
+            if not stale_lookup_returned:
+                stale_lookup_returned = True
+                return None
+            return real_scalar(*args, **kwargs)
+
+        monkeypatch.setattr(db, "scalar", scalar_with_stale_first_lookup)
+        recovered, created = start_scheduled_run(
+            db,
+            user=owner,
+            task=task,
+            trigger_type="manual",
+            scheduled_for=scheduled_run.scheduled_for,
+            idempotency_key=scheduled_run.idempotency_key,
+        )
+
+        assert stale_lookup_returned is True
+        assert created is False
+        assert recovered.id == scheduled_run.id
+        assert len(list(db.scalars(select(Run.id)))) == run_count
+        assert len(list(db.scalars(select(Conversation.id)))) == conversation_count
+
+
 def test_scheduled_run_syncs_terminal_artifacts_and_in_app_delivery(
     tmp_path: Path,
 ) -> None:
@@ -1270,7 +1867,7 @@ def test_scheduled_run_syncs_terminal_artifacts_and_in_app_delivery(
         }
 
 
-def test_scheduled_run_applies_frozen_skill_snapshot_to_hash_and_prompt(
+def test_scheduled_run_uses_frozen_skill_snapshot_as_model_selected_candidates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     frozen_extensions = [
@@ -1307,17 +1904,19 @@ def test_scheduled_run_applies_frozen_skill_snapshot_to_hash_and_prompt(
         assert run is not None
         snapshot = run.snapshot_json
         assert snapshot["extensions"] == frozen_extensions
-        assert snapshot["extension_application"] == "all_snapshot"
+        assert snapshot["extension_application"] == "snapshot_candidates"
         stable_prefix = {
             "contract_version": snapshot["contract_version"],
             "agent": snapshot["agent"],
             "project": snapshot["project"],
             "execution": snapshot["execution"],
             "output_mode": snapshot["output_mode"],
+            "analysis_depth": snapshot["analysis_depth"],
+            "answer_length": snapshot["answer_length"],
             "instructions": snapshot["instructions"],
             "runtime_prompts": snapshot["runtime_prompts"],
             "extensions": frozen_extensions,
-            "extension_application": "all_snapshot",
+            "extension_application": "snapshot_candidates",
             "environment_type": snapshot["environment_type"],
             "approval_mode": snapshot["approval_mode"],
             "clarification_mode": snapshot["clarification_mode"],
@@ -1338,8 +1937,9 @@ def test_scheduled_run_applies_frozen_skill_snapshot_to_hash_and_prompt(
     messages = LocalRunExecutor(settings)._conversation_messages(
         run_id, "점검 보고서를 작성해 주세요."
     )
-    assert "Scheduled Skill snapshot: 동결 점검 절차" in messages[0].content
-    assert "반드시 동결된 점검 절차 v1을 적용합니다." in messages[0].content
+    assert "Scheduled Skill snapshot:" not in messages[0].content
+    assert "Selected Skill:" not in messages[0].content
+    assert "반드시 동결된 점검 절차 v1을 적용합니다." not in messages[0].content
 
     interrupted_at = datetime.now(UTC)
     with SessionLocal() as db:
@@ -1359,7 +1959,7 @@ def test_scheduled_run_applies_frozen_skill_snapshot_to_hash_and_prompt(
         retry_run = db.get(Run, enqueue_ids[0])
         assert retry_run is not None
         assert retry_run.snapshot_json["extensions"] == frozen_extensions
-        assert retry_run.snapshot_json["extension_application"] == "all_snapshot"
+        assert retry_run.snapshot_json["extension_application"] == "snapshot_candidates"
         assert retry_run.snapshot_json["prompt_prefix_hash"] == expected_hash
         retry_run_id = retry_run.id
         db.commit()
@@ -1367,8 +1967,9 @@ def test_scheduled_run_applies_frozen_skill_snapshot_to_hash_and_prompt(
     retry_messages = LocalRunExecutor(settings)._conversation_messages(
         retry_run_id, "점검 보고서를 다시 작성해 주세요."
     )
-    assert "Scheduled Skill snapshot: 동결 점검 절차" in retry_messages[0].content
-    assert "반드시 동결된 점검 절차 v1을 적용합니다." in retry_messages[0].content
+    assert "Scheduled Skill snapshot:" not in retry_messages[0].content
+    assert "Selected Skill:" not in retry_messages[0].content
+    assert "반드시 동결된 점검 절차 v1을 적용합니다." not in retry_messages[0].content
 
 
 def test_scheduled_timeout_retries_once_and_duplicate_ticks_do_not_dispatch_twice(
@@ -1534,3 +2135,80 @@ def test_next_occurrence_respects_timezone_and_weekdays() -> None:
         after=friday_after_work,
     )
     assert result == datetime(2026, 7, 13, 0, 0, tzinfo=UTC)
+
+
+def test_skill_tags_are_editable_only_by_owner_or_admin(tmp_path: Path) -> None:
+    app, _settings = _test_app(tmp_path)
+    with SessionLocal() as db:
+        organization = db.scalar(select(Organization))
+        admin = db.scalar(select(User).where(User.login_id == "admin@posco.com"))
+        assert organization is not None and admin is not None
+        maintainer = create_user(
+            db,
+            login_name="tag-maintainer",
+            password="pw",
+            organization_id=organization.id,
+            created_by_user_id=admin.id,
+        )
+        maintainer_id = maintainer.id
+        db.commit()
+
+    with TestClient(app) as client:
+        admin_csrf = _login(client)
+        admin_headers = {"X-CSRF-Token": admin_csrf}
+        created = client.post(
+            "/api/extensions",
+            headers=admin_headers,
+            json={
+                "name": "태그 권한 Skill",
+                "description": "태그 권한 확인",
+                "package": {"files": {"SKILL.md": "# 태그 권한 Skill"}},
+            },
+        )
+        assert created.status_code == 201, created.text
+        skill = created.json()
+        assert skill["canEditTags"] is True
+
+        ownership = client.post(
+            f"/api/skills/{skill['id']}/ownerships",
+            headers=admin_headers,
+            json={"userId": maintainer_id, "role": "maintainer"},
+        )
+        assert ownership.status_code == 201, ownership.text
+
+        client.cookies.clear()
+        maintainer_csrf = _login(client, "tag-maintainer", "pw")
+        maintainer_view = client.get(f"/api/extensions/{skill['id']}").json()
+        assert maintainer_view["canEdit"] is True
+        assert maintainer_view["canEditTags"] is False
+        forbidden = client.patch(
+            f"/api/extensions/{skill['id']}",
+            headers={"X-CSRF-Token": maintainer_csrf},
+            json={
+                "name": skill["name"],
+                "description": skill["description"],
+                "tags": ["금지"],
+            },
+        )
+        assert forbidden.status_code == 403
+        assert forbidden.json()["code"] == "skill_tags_write_forbidden"
+
+        client.cookies.clear()
+        admin_csrf = _login(client)
+        updated = client.patch(
+            f"/api/extensions/{skill['id']}",
+            headers={"X-CSRF-Token": admin_csrf},
+            json={
+                "name": skill["name"],
+                "description": skill["description"],
+                "tags": ["Agent", "개발", "#Agent"],
+            },
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["tags"] == ["Agent", "개발"]
+        catalog_item = next(
+            item
+            for item in client.get("/api/extensions/catalog").json()["items"]
+            if item["id"] == skill["id"]
+        )
+        assert catalog_item["tags"] == ["Agent", "개발"]

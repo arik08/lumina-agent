@@ -10,10 +10,14 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from lumina.agent.executor import LocalRunExecutor
+from lumina.agent.executor import LocalRunExecutor, _recalled_memory_citations
 from lumina.auth import bootstrap_database
 from lumina.config import Settings
-from lumina.context import compact_runtime_messages, prepare_context
+from lumina.context import (
+    CURRENT_RUN_CONTEXT_METADATA_KEY,
+    compact_runtime_messages,
+    prepare_context,
+)
 from lumina.context import service as context_service
 from lumina.db import SessionLocal, configure_database, create_schema
 from lumina.memories.service import (
@@ -260,6 +264,31 @@ def test_memory_context_is_pinned_per_turn_without_mutating_user_text(
             artifacts_dir=root / "artifacts",
         )
     )._conversation_messages(second_id, "두 번째 질문")
+    first_user_index = next(
+        index
+        for index, message in enumerate(messages)
+        if message.role == "user" and message.content == "첫 번째 질문"
+    )
+    assert messages[0].role == "system"
+    assert "Clarification mode:" in str(messages[0].content)
+    current_context_index = next(
+        index
+        for index, message in enumerate(messages)
+        if message.role == "system"
+        and "memory-two" in str(message.content)
+    )
+    current_user_index = next(
+        index
+        for index, message in enumerate(messages)
+        if message.role == "user" and message.content == "두 번째 질문"
+    )
+    assert first_user_index < current_context_index < current_user_index
+    assert messages[current_context_index].provider_metadata.get(
+        CURRENT_RUN_CONTEXT_METADATA_KEY
+    ) is True
+    assert messages[current_user_index].provider_metadata.get(
+        CURRENT_RUN_CONTEXT_METADATA_KEY
+    ) is True
     relevant = [
         (message.role, str(message.content))
         for message in messages
@@ -286,6 +315,41 @@ def test_memory_context_is_pinned_per_turn_without_mutating_user_text(
     assert relevant[4][1] == "두 번째 질문"
     assert "memory-one" in relevant[0][1]
     assert "memory-two" in relevant[3][1]
+
+
+def test_recalled_memory_citations_include_only_model_reported_used_memory() -> None:
+    citations = _recalled_memory_citations(
+        {
+            "user_memories": [
+                {
+                    "id": "memory-one",
+                    "category": "communication_preference",
+                    "display_text": "결론부터 간결하게 답변합니다.",
+                }
+            ],
+            "project_memories": [
+                {
+                    "id": "project-memory-one",
+                    "memory_key": "testing",
+                    "revision": 3,
+                    "category": "project_rule",
+                    "display_text": "UI 변경은 격리 브라우저에서 확인합니다.",
+                }
+            ],
+        },
+        used_memory_ids={"project-memory-one"},
+    )
+
+    assert citations == [
+        {
+            "memoryId": "project-memory-one",
+            "scope": "project",
+            "category": "project_rule",
+            "displayText": "UI 변경은 격리 브라우저에서 확인합니다.",
+            "memoryKey": "testing",
+            "revision": 3,
+        },
+    ]
 
 
 def test_compaction_is_recoverable_and_preserves_tool_side_effects(
@@ -488,6 +552,103 @@ def test_compaction_failure_keeps_the_existing_full_context(tmp_path: Path) -> N
         )
 
 
+def test_incremental_compaction_keeps_cumulative_source_lineage(
+    tmp_path: Path,
+) -> None:
+    user, project, conversation = _configure(tmp_path, "incremental-lineage")
+    with SessionLocal() as db:
+        user = db.merge(user)
+        project = db.merge(project)
+        conversation = db.merge(conversation)
+        first_run = _run(
+            db,
+            user=user,
+            project=project,
+            conversation=conversation,
+            sequence=1,
+            context_window=1_500,
+        )
+        first_history = [
+            _message(
+                db,
+                run=first_run,
+                user=user,
+                role="user" if index % 2 == 0 else "assistant",
+                text=f"first segment {index} " * 220,
+                turn_index=index // 2 + 1,
+                offset=index,
+            )
+            for index in range(8)
+        ]
+        first_history[0].metadata_json = {
+            "prompt_references": [{"kind": "file", "reference_id": "old-ref"}]
+        }
+        first = prepare_context(
+            db,
+            run=first_run,
+            history=first_history,
+            content_by_message_id={
+                message.id: message.canonical_text for message in first_history
+            },
+            prefix_texts=(),
+            tool_schemas=(),
+        )
+        assert first.compaction is not None
+        assert first.compaction.status == "active"
+        first_source_ids = list(first.compaction.source_message_ids_json)
+        first_range = dict(first.compaction.source_message_range_json)
+        first_hash = first.compaction.source_hash
+
+        second_run = _run(
+            db,
+            user=user,
+            project=project,
+            conversation=conversation,
+            sequence=2,
+            context_window=1_500,
+        )
+        new_history = [
+            _message(
+                db,
+                run=second_run,
+                user=user,
+                role="user" if index % 2 == 0 else "assistant",
+                text=f"second segment {index} " * 220,
+                turn_index=5 + index // 2,
+                offset=index,
+            )
+            for index in range(8)
+        ]
+        second = prepare_context(
+            db,
+            run=second_run,
+            history=new_history,
+            content_by_message_id={
+                message.id: message.canonical_text for message in new_history
+            },
+            prefix_texts=(),
+            tool_schemas=(),
+            now=first.compaction.cooldown_until + timedelta(seconds=1),
+        )
+
+        assert second.compaction is not None
+        assert second.compaction.status == "active"
+        assert second.compaction.parent_compaction_id == first.compaction.id
+        assert set(first_source_ids) < set(second.compaction.source_message_ids_json)
+        assert (
+            second.compaction.source_message_range_json["firstMessageId"]
+            == (first_range["firstMessageId"])
+        )
+        assert second.compaction.source_message_range_json["lastMessageId"] in {
+            message.id for message in new_history
+        }
+        assert any(
+            reference.get("reference_id") == "old-ref"
+            for reference in second.compaction.source_refs_json
+        )
+        assert second.compaction.source_hash != first_hash
+
+
 def test_runtime_compaction_preserves_recent_tool_pairs_and_marks_summary(
     tmp_path: Path,
 ) -> None:
@@ -541,6 +702,106 @@ def test_runtime_compaction_preserves_recent_tool_pairs_and_marks_summary(
         assert assistant.role == "assistant" and assistant.tool_calls
         assert tool.role == "tool"
         assert tool.tool_call_id == assistant.tool_calls[0]["id"]
+
+
+@pytest.mark.parametrize("force", (False, True))
+def test_runtime_compaction_preserves_current_run_required_context(
+    tmp_path: Path,
+    force: bool,
+) -> None:
+    user, project, conversation = _configure(
+        tmp_path, f"runtime-required-context-{force}"
+    )
+    with SessionLocal() as db:
+        run = _run(
+            db,
+            user=db.merge(user),
+            project=db.merge(project),
+            conversation=db.merge(conversation),
+            sequence=1,
+            context_window=2_500,
+        )
+        marker = {CURRENT_RUN_CONTEXT_METADATA_KEY: True}
+        messages = [ProviderMessage(role="system", content="Stable system contract")]
+        for index in range(5):
+            messages.extend(
+                (
+                    ProviderMessage(
+                        role="user",
+                        content=f"old question {index} " * 120,
+                    ),
+                    ProviderMessage(
+                        role="assistant",
+                        content=f"old answer {index} " * 120,
+                    ),
+                )
+            )
+        required = (
+            ProviderMessage(
+                role="system",
+                content="CURRENT DYNAMIC CONTRACT " * 120,
+                provider_metadata=marker,
+            ),
+            ProviderMessage(
+                role="system",
+                content="CURRENT RETAINED TOOL CONTEXT " * 80,
+                provider_metadata=marker,
+            ),
+            ProviderMessage(
+                role="system",
+                content="CURRENT RECALLED MEMORY " * 80,
+                provider_metadata=marker,
+            ),
+            ProviderMessage(
+                role="user",
+                content="CURRENT USER REQUEST " * 80,
+                provider_metadata=marker,
+            ),
+        )
+        messages.extend(required)
+        for index in range(5):
+            messages.extend(
+                (
+                    ProviderMessage(
+                        role="assistant",
+                        content=f"tool round {index}",
+                        tool_calls=(
+                            {
+                                "id": f"call-{index}",
+                                "name": "web_search",
+                                "arguments": '{"query":"cache context"}',
+                            },
+                        ),
+                    ),
+                    ProviderMessage(
+                        role="tool",
+                        name="web_search",
+                        tool_call_id=f"call-{index}",
+                        content=f"large result {index} " * 180,
+                    ),
+                )
+            )
+
+        prepared = compact_runtime_messages(
+            run,
+            messages,
+            ({"name": "web_search"},),
+            force=force,
+        )
+
+    assert prepared.compacted is True
+    for required_message in required:
+        assert required_message in prepared.messages
+        assert next(
+            message
+            for message in prepared.messages
+            if message is required_message
+        ).content == required_message.content
+    required_indices = [prepared.messages.index(message) for message in required]
+    assert required_indices == list(
+        range(required_indices[0], required_indices[0] + len(required))
+    )
+    assert prepared.estimated_tokens_after < prepared.estimated_tokens_before
 
 
 def test_runtime_compaction_shrinks_oversized_recent_tool_pair_as_valid_json(
@@ -643,7 +904,9 @@ def test_runtime_compaction_microcompacts_old_tool_payload_before_summarizing(
                                 "type": "function",
                                 "function": {
                                     "name": "web_search",
-                                    "arguments": json.dumps({"query": f"topic {index}"}),
+                                    "arguments": json.dumps(
+                                        {"query": f"topic {index}"}
+                                    ),
                                 },
                             },
                         ),
@@ -685,7 +948,78 @@ def test_runtime_compaction_microcompacts_old_tool_payload_before_summarizing(
     assert "full result remains stored" in str(prepared.messages[2].content)
 
 
-def test_runtime_payload_compaction_deduplicates_old_results_and_removes_images() -> None:
+def test_runtime_compaction_leaves_headroom_when_recent_tool_rounds_are_large(
+    tmp_path: Path,
+) -> None:
+    user, project, conversation = _configure(tmp_path, "runtime-recent-tool-headroom")
+    with SessionLocal() as db:
+        run = _run(
+            db,
+            user=db.merge(user),
+            project=db.merge(project),
+            conversation=db.merge(conversation),
+            sequence=1,
+            context_window=20_000,
+        )
+        messages = [
+            ProviderMessage(role="system", content="System contract"),
+            ProviderMessage(
+                role="user",
+                content="Produce a sourced report.",
+                provider_metadata={CURRENT_RUN_CONTEXT_METADATA_KEY: True},
+            ),
+        ]
+        for index in range(4):
+            call_id = f"call-{index}"
+            messages.extend(
+                (
+                    ProviderMessage(
+                        role="assistant",
+                        content=f"Research round {index}",
+                        tool_calls=(
+                            {
+                                "id": call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": "mcp_read_records",
+                                    "arguments": json.dumps({"page": index}),
+                                },
+                            },
+                        ),
+                    ),
+                    ProviderMessage(
+                        role="tool",
+                        name="mcp_read_records",
+                        tool_call_id=call_id,
+                        content=f"recoverable evidence {index} " * 1_000,
+                    ),
+                )
+            )
+
+        prepared = compact_runtime_messages(
+            run,
+            messages,
+            ({"name": "mcp_read_records"},),
+        )
+
+    assert prepared.compacted is True
+    assert prepared.compacted_payload_count >= 3
+    assert prepared.estimated_tokens_after <= int(
+        prepared.effective_input_budget * 0.25
+    )
+    recent_tool_results = [
+        message for message in prepared.messages if message.role == "tool"
+    ]
+    assert recent_tool_results
+    assert all(
+        "full result remains stored" in str(message.content)
+        for message in recent_tool_results
+    )
+
+
+def test_runtime_payload_compaction_deduplicates_old_results_and_removes_images() -> (
+    None
+):
     repeated = "same external result " * 200
     messages = (
         ProviderMessage(
@@ -767,6 +1101,18 @@ def test_read_tool_result_pages_full_result_from_same_run(tmp_path: Path) -> Non
             cookie_secure=False,
         )
     )
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        assert run is not None
+        now = utc_now()
+        run.worker_id = executor._worker_id
+        run.heartbeat_at = now
+        run.lease_expires_at = now + timedelta(minutes=1)
+        run.snapshot_json = {
+            **run.snapshot_json,
+            "workerId": executor._worker_id,
+        }
+        db.commit()
     result = asyncio.run(
         executor._execute_tool(
             run_id,
@@ -1337,7 +1683,9 @@ def test_automatic_memory_learning_merge_conflict_delete_and_modes(
         )
 
 
-def test_general_inline_llm_fact_is_stored_without_local_extraction(tmp_path: Path) -> None:
+def test_general_inline_llm_fact_is_stored_without_local_extraction(
+    tmp_path: Path,
+) -> None:
     user, project, conversation = _configure(tmp_path, "inline-memory")
     with SessionLocal() as db:
         user = db.merge(user)
@@ -1462,10 +1810,8 @@ def test_memory_retrieval_selects_relevant_subset_with_core_preferences(
             user_id=user.id,
             query="설비 점검 결과를 HTML 보고서로 작성해 주세요.",
         )
-        assert len(selected) == 4
+        assert len(selected) == 2
         assert {memory.category for memory in selected} == {
-            "communication_preference",
-            "user_identity",
             "user_role",
             "output_preference",
         }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 import json
 import threading
 import time
@@ -195,6 +196,42 @@ def test_model_authored_work_plan_is_persisted_with_stable_step_ids(
         assert events[-1].payload_json["steps"] == updated
 
 
+def test_work_plan_ignores_invalid_legacy_order_metadata(tmp_path: Path) -> None:
+    run_id, _user_id = _direct_run(tmp_path, key="work-plan-legacy-order")
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        assert run is not None
+        run.snapshot_json = {
+            **run.snapshot_json,
+            "work_plan": [
+                {
+                    "id": "stable-step-id",
+                    "step": "Legacy analysis",
+                    "status": "in_progress",
+                    "order": 1,
+                    "phase": "analysis",
+                },
+                {
+                    "id": "invalid-boolean-order",
+                    "step": "Invalid legacy row",
+                    "status": "pending",
+                    "order": True,
+                    "phase": "drafting",
+                },
+                None,
+            ],
+        }
+
+        updated = update_work_plan(
+            db,
+            run,
+            steps=[{"step": "Renamed analysis", "status": "in_progress"}],
+        )
+
+        assert updated[0]["id"] == "stable-step-id"
+        assert updated[0]["phase"] == "analysis"
+
+
 def test_work_plan_stays_active_until_the_run_completes(tmp_path: Path) -> None:
     run_id, _user_id = _direct_run(tmp_path, key="work-plan-final-stream")
     with SessionLocal() as db:
@@ -275,6 +312,14 @@ def test_create_report_start_aligns_legacy_work_plan_to_report_drafting(
                 },
             ],
         )
+        now = utc_now()
+        run.worker_id = local_run_executor._worker_id
+        run.heartbeat_at = now
+        run.lease_expires_at = now + timedelta(minutes=1)
+        run.snapshot_json = {
+            **run.snapshot_json,
+            "workerId": local_run_executor._worker_id,
+        }
         db.commit()
 
     asyncio.run(
@@ -358,6 +403,46 @@ def test_create_report_alignment_does_not_advance_past_active_drafting(
                 RunEvent.event_type == "work_plan_updated",
             )
         ) == event_count
+
+
+def test_create_report_alignment_normalizes_invalid_legacy_status(
+    tmp_path: Path,
+) -> None:
+    run_id, _user_id = _direct_run(tmp_path, key="report-plan-invalid-status")
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        assert run is not None
+        run.snapshot_json = {
+            **run.snapshot_json,
+            "work_plan": [
+                {
+                    "step": "Review source material",
+                    "status": "in_progress",
+                    "phase": "analysis",
+                },
+                {
+                    "step": "Draft the HTML report",
+                    "status": "pending",
+                    "phase": "drafting",
+                },
+                {
+                    "step": "Validate the report",
+                    "status": None,
+                    "phase": "validation",
+                },
+            ],
+        }
+
+        aligned = align_work_plan_for_tool_start(
+            db, run, tool_name="create_report"
+        )
+
+        assert aligned is not None
+        assert [item["status"] for item in aligned] == [
+            "completed",
+            "in_progress",
+            "pending",
+        ]
 
 
 def test_tool_calls_are_durable_plan_subtasks_without_raw_arguments(
@@ -477,6 +562,16 @@ def test_executor_persists_db_owned_plan_timeline_and_events(tmp_path: Path) -> 
             for event in events
             if event["type"] == "plan_step_changed"
         )
+        assert all(
+            "subtasks" not in event["payload"]["step"]
+            for event in events
+            if event["type"] == "plan_step_changed"
+        )
+        assert any(
+            event["payload"].get("subtasks")
+            for event in events
+            if event["type"] == "plan_step_changed"
+        )
         for expected in (
             ("prepare", "running"),
             ("prepare", "completed"),
@@ -488,6 +583,11 @@ def test_executor_persists_db_owned_plan_timeline_and_events(tmp_path: Path) -> 
             ("final", "completed"),
         ):
             assert expected in plan_changes
+
+        with SessionLocal() as db:
+            stored_run = db.get(Run, run_id)
+            assert stored_run is not None
+            assert "plan" not in stored_run.snapshot_json
 
         plain = client.post(
             f"/api/conversations/{conversation['id']}/runs",
@@ -541,8 +641,8 @@ def test_pause_resume_cancel_and_retry_keep_plan_consistent(tmp_path: Path) -> N
             payload=RunActionRequest(type="resume"),
             idempotency_key="resume-action-1",
         )
-        assert run.status == MODEL_STREAMING
-        assert steps["model"].status == "running"
+        assert run.status == QUEUED
+        assert steps["model"].status == "queued"
 
         apply_run_action(
             db,

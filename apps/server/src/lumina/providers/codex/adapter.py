@@ -69,6 +69,13 @@ _OUTPUT_SCHEMA: dict[str, Any] = {
 
 
 _JSON_FIELD_VALUE = r'"{field}"\s*:\s*"((?:\\.|[^"\\])*)"'
+_ISOLATABLE_TOOL_ARGUMENT_ERRORS = frozenset(
+    {
+        "tool_call_arguments_invalid_json",
+        "tool_call_arguments_trailing_content",
+        "tool_call_arguments_not_object",
+    }
+)
 PROVIDER_ID = CODEX_PROVIDER_ID
 _CODEX_RESPONSES_BASE_URL = "https://chatgpt.com/backend-api/codex"
 _CODEX_JWT_AUTH_CLAIM = "https://api.openai.com/auth"
@@ -235,7 +242,7 @@ def codex_oauth_available() -> bool:
 
 
 class CodexResponsesAdapter:
-    """ChatGPT OAuth adapter with direct Responses and App Server fallback."""
+    """ChatGPT OAuth adapter backed by Codex App Server by default."""
 
     provider_id = PROVIDER_ID
     capabilities = ProviderCapabilities(
@@ -244,7 +251,7 @@ class CodexResponsesAdapter:
         reasoning_effort=True,
     )
 
-    def __init__(self, *, direct_responses: bool = True) -> None:
+    def __init__(self, *, direct_responses: bool = False) -> None:
         self._client: AsyncCodex | None = None
         self._available_models: frozenset[str] = frozenset()
         self._workspace: tempfile.TemporaryDirectory[str] | None = None
@@ -382,6 +389,7 @@ class CodexResponsesAdapter:
                                 cache_write_tokens=usage.cache_write_tokens,
                                 uncached_input_tokens=usage.uncached_input_tokens,
                                 output_tokens=usage.output_tokens,
+                                reasoning_tokens=usage.reasoning_tokens,
                                 raw={
                                     **dict(usage.raw),
                                     "auth_mode": "chatgpt",
@@ -468,13 +476,27 @@ class CodexResponsesAdapter:
                     usage_raw = result.usage
                 payload = _result_payload(raw_response)
                 calls = payload["tool_calls"]
+                discarded_calls = payload["_discarded_tool_calls"]
                 text = payload["text"]
                 if streamed.emitted_text and not text.startswith(streamed.emitted_text):
-                    raise _invalid_result()
+                    raise _invalid_result(
+                        "streamed_text_mismatch",
+                        diagnostic=_result_shape(raw_response, payload),
+                    )
                 remaining_text = text[len(streamed.emitted_text) :]
                 if remaining_text:
                     emitted_output = True
                     yield ProviderEvent(type="text_delta", text=remaining_text)
+                for call in discarded_calls:
+                    if call["id"] in streamed.started_ids:
+                        yield ProviderEvent(
+                            type="tool_call_discarded",
+                            tool_call_id=call["id"],
+                            tool_name=call["name"],
+                            provider_metadata={
+                                "diagnostic_code": call["diagnostic_code"]
+                            },
+                        )
                 for call in calls:
                     emitted = streamed.emitted_arguments.get(call["id"], "")
                     if call["id"] not in streamed.started_ids:
@@ -793,53 +815,136 @@ def _effort(value: str | None) -> ReasoningEffort | None:
 
 
 def _result_payload(raw: str | None) -> dict[str, Any]:
+    # Invalid model-generated envelopes can be regenerated safely. Mark them
+    # retryable so the executor discards streamed partial calls before retrying.
     if raw is None:
-        raise _invalid_result()
+        raise _invalid_result(
+            "missing_response",
+            diagnostic=_result_shape(raw, None),
+        )
+    if not raw.strip():
+        raise _invalid_result(
+            "empty_response",
+            diagnostic=_result_shape(raw, None),
+        )
     try:
         payload = json.loads(raw)
     except (TypeError, json.JSONDecodeError) as exc:
         raise ProviderRequestError(
             "Codex OAuth 응답이 구조화된 JSON이 아닙니다.",
-            retryable=False,
+            retryable=True,
             stage="response",
+            diagnostic_code="invalid_json",
+            safe_diagnostic=_result_shape(raw, None),
         ) from exc
     if not isinstance(payload, dict):
-        raise _invalid_result()
+        raise _invalid_result(
+            "response_not_object",
+            diagnostic=_result_shape(raw, payload),
+        )
+    diagnostic = _result_shape(raw, payload)
     kind = payload.get("kind")
     text = payload.get("text")
     raw_calls = payload.get("tool_calls")
-    if kind not in {"final", "tool_calls"} or not isinstance(text, str):
-        raise _invalid_result()
+    if kind not in {"final", "tool_calls"}:
+        raise _invalid_result("unsupported_kind", diagnostic=diagnostic)
+    if not isinstance(text, str):
+        raise _invalid_result("text_not_string", diagnostic=diagnostic)
     if not isinstance(raw_calls, list):
-        raise _invalid_result()
+        raise _invalid_result("tool_calls_not_list", diagnostic=diagnostic)
     calls: list[dict[str, str]] = []
+    discarded_calls: list[dict[str, str]] = []
+    first_discarded_error: ProviderRequestError | None = None
     seen_ids: set[str] = set()
-    for raw_call in raw_calls:
+    for call_index, raw_call in enumerate(raw_calls):
         if not isinstance(raw_call, Mapping):
-            raise _invalid_result()
+            raise _invalid_result(
+                "tool_call_not_object",
+                diagnostic=f"{diagnostic} invalid_call_index={call_index}",
+            )
         call_id = raw_call.get("id")
         name = raw_call.get("name")
         arguments_json = raw_call.get("arguments_json")
-        if (
-            not isinstance(call_id, str)
-            or not call_id
-            or call_id in seen_ids
-            or not isinstance(name, str)
-            or not name
-            or not isinstance(arguments_json, str)
-        ):
-            raise _invalid_result()
-        arguments_json = _normalized_tool_arguments(arguments_json)
+        if not isinstance(call_id, str) or not call_id:
+            raise _invalid_result(
+                "tool_call_id_invalid",
+                diagnostic=f"{diagnostic} invalid_call_index={call_index}",
+            )
+        if call_id in seen_ids:
+            raise _invalid_result(
+                "tool_call_id_duplicate",
+                diagnostic=f"{diagnostic} invalid_call_index={call_index}",
+            )
+        if not isinstance(name, str) or not name:
+            raise _invalid_result(
+                "tool_call_name_invalid",
+                diagnostic=f"{diagnostic} invalid_call_index={call_index}",
+            )
+        if not isinstance(arguments_json, str):
+            raise _invalid_result(
+                "tool_call_arguments_not_string",
+                diagnostic=f"{diagnostic} invalid_call_index={call_index}",
+            )
         seen_ids.add(call_id)
+        try:
+            arguments_json = _normalized_tool_arguments(
+                arguments_json,
+                diagnostic=f"{diagnostic} invalid_call_index={call_index}",
+            )
+        except ProviderRequestError as exc:
+            if exc.diagnostic_code not in _ISOLATABLE_TOOL_ARGUMENT_ERRORS:
+                raise
+            if first_discarded_error is None:
+                first_discarded_error = exc
+            discarded_calls.append(
+                {
+                    "id": call_id,
+                    "name": name,
+                    "diagnostic_code": str(exc.diagnostic_code),
+                }
+            )
+            continue
         calls.append({"id": call_id, "name": name, "arguments_json": arguments_json})
-    if kind == "final" and (calls or not text.strip()):
-        raise _invalid_result()
+    if kind == "final" and (calls or discarded_calls):
+        raise _invalid_result("final_with_tool_calls", diagnostic=diagnostic)
+    if kind == "final" and not text.strip():
+        raise _invalid_result("final_empty_text", diagnostic=diagnostic)
     if kind == "tool_calls" and not calls:
-        raise _invalid_result()
-    return {"kind": kind, "text": text, "tool_calls": calls}
+        if first_discarded_error is not None:
+            raise first_discarded_error
+        raise _invalid_result("tool_calls_empty", diagnostic=diagnostic)
+    return {
+        "kind": kind,
+        "text": text,
+        "tool_calls": calls,
+        "_discarded_tool_calls": discarded_calls,
+    }
 
 
-def _normalized_tool_arguments(raw: str) -> str:
+def _result_shape(raw: str | None, payload: object) -> str:
+    raw_type = "none" if raw is None else type(raw).__name__
+    response_length = len(raw) if isinstance(raw, str) else 0
+    if not isinstance(payload, Mapping):
+        return (
+            f"response_present={raw is not None} response_type={raw_type} "
+            f"response_length={response_length} payload_type={type(payload).__name__}"
+        )
+    kind = payload.get("kind")
+    kind_shape = kind if kind in {"final", "tool_calls"} else type(kind).__name__
+    text = payload.get("text")
+    raw_calls = payload.get("tool_calls")
+    text_length = len(text) if isinstance(text, str) else -1
+    tool_call_count = len(raw_calls) if isinstance(raw_calls, list) else -1
+    return (
+        f"response_present={raw is not None} response_type={raw_type} "
+        f"response_length={response_length} payload_type=dict kind={kind_shape} "
+        f"text_type={type(text).__name__} text_length={text_length} "
+        f"tool_calls_type={type(raw_calls).__name__} "
+        f"tool_call_count={tool_call_count}"
+    )
+
+
+def _normalized_tool_arguments(raw: str, *, diagnostic: str) -> str:
     try:
         arguments = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -847,25 +952,40 @@ def _normalized_tool_arguments(raw: str) -> str:
         try:
             arguments, end = json.JSONDecoder().raw_decode(stripped)
         except json.JSONDecodeError:
-            raise _invalid_result() from exc
+            raise _invalid_result(
+                "tool_call_arguments_invalid_json",
+                diagnostic=diagnostic,
+            ) from exc
         trailing = stripped[end:].strip()
         # Codex can append the start of an abandoned second JSON value.
         if (
             not isinstance(arguments, dict)
             or "".join(trailing.split()) not in {",", ",{", ",["}
         ):
-            raise _invalid_result() from exc
+            raise _invalid_result(
+                "tool_call_arguments_trailing_content",
+                diagnostic=diagnostic,
+            ) from exc
         return json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
     if not isinstance(arguments, dict):
-        raise _invalid_result()
+        raise _invalid_result(
+            "tool_call_arguments_not_object",
+            diagnostic=diagnostic,
+        )
     return raw
 
 
-def _invalid_result() -> ProviderRequestError:
+def _invalid_result(
+    diagnostic_code: str,
+    *,
+    diagnostic: str | None = None,
+) -> ProviderRequestError:
     return ProviderRequestError(
         "Codex OAuth 응답의 final/tool_calls 계약이 올바르지 않습니다.",
-        retryable=False,
+        retryable=True,
         stage="response",
+        diagnostic_code=diagnostic_code,
+        safe_diagnostic=diagnostic,
     )
 
 
@@ -876,11 +996,17 @@ def _usage(raw: object) -> ProviderUsage | None:
     input_tokens = max(0, int(getattr(last, "input_tokens", 0) or 0))
     cached = max(0, int(getattr(last, "cached_input_tokens", 0) or 0))
     output_tokens = max(0, int(getattr(last, "output_tokens", 0) or 0))
+    raw_reasoning_tokens = getattr(last, "reasoning_output_tokens", None)
     return ProviderUsage(
         input_tokens=input_tokens,
         cached_input_tokens=cached,
         uncached_input_tokens=max(0, input_tokens - cached),
         output_tokens=output_tokens,
+        reasoning_tokens=(
+            max(0, int(raw_reasoning_tokens))
+            if raw_reasoning_tokens is not None
+            else None
+        ),
         raw={"auth_mode": "chatgpt", "billing": "subscription_usage"},
     )
 
@@ -892,6 +1018,7 @@ def _request_error(exc: Exception) -> ProviderRequestError:
     if (
         type(exc).__name__ == "TransportClosedError"
         or "process closed stdout" in message
+        or "app server request failed" in message
     ):
         return ProviderRequestError(
             "Codex App Server 연결이 일시적으로 종료되었습니다.",
@@ -920,8 +1047,9 @@ def _request_error(exc: Exception) -> ProviderRequestError:
         )
     return ProviderRequestError(
         "Codex App Server 요청이 실패했습니다.",
-        retryable=False,
-        stage="runtime",
+        retryable=True,
+        stage="request",
+        diagnostic_code=type(exc).__name__,
     )
 
 

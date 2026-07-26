@@ -19,15 +19,18 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 
-import { api } from "../api";
+import { api as coreApi } from "../api";
+import { adminApi, helpApi } from "../feature-api";
 import type { AnnouncementItem, HelpItem, HelpItemKind } from "../api-types";
+import { MarkdownResponse } from "./ConversationTurn";
 import { ResizableSplitPane } from "./ResizableSplitPane";
 
+const api = { ...coreApi, admin: adminApi, help: helpApi };
+
 type HelpSection = "manuals" | "announcements";
+const helpTreeDragMime = "application/x-lumina-help-tree";
 
 interface HelpCenterViewProps {
   canManage: boolean;
@@ -84,7 +87,17 @@ function announcementWasEdited(announcement: AnnouncementItem) {
   return new Date(announcement.updatedAt).getTime() - new Date(announcement.createdAt).getTime() >= 1000;
 }
 
+function isHelpItemSelfOrDescendant(items: HelpItem[], itemId: string, candidateParentId: string) {
+  let current = items.find((item) => item.id === candidateParentId) ?? null;
+  while (current) {
+    if (current.id === itemId) return true;
+    current = current.parentId ? items.find((item) => item.id === current?.parentId) ?? null : null;
+  }
+  return false;
+}
+
 export function HelpCenterView({ canManage, initialAnnouncementId = null, onOpenNavigation }: HelpCenterViewProps) {
+  const draggedHelpItemRef = useRef<HelpItem | null>(null);
   const [section, setSection] = useState<HelpSection>(initialAnnouncementId ? "announcements" : "manuals");
   const [items, setItems] = useState<HelpItem[]>([]);
   const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
@@ -107,6 +120,7 @@ export function HelpCenterView({ canManage, initialAnnouncementId = null, onOpen
   const [announcementTitle, setAnnouncementTitle] = useState("");
   const [announcementBody, setAnnouncementBody] = useState("");
   const [announcementDeleteArmed, setAnnouncementDeleteArmed] = useState(false);
+  const [helpTreeDropParentId, setHelpTreeDropParentId] = useState<string | null | undefined>(undefined);
 
   const effectiveCanManage = canManage && serverCanManage;
   const selected = items.find((item) => item.id === selectedId) ?? null;
@@ -251,6 +265,33 @@ export function HelpCenterView({ canManage, initialAnnouncementId = null, onOpen
     }
   };
 
+  const moveHelpItem = async (item: HelpItem, parentId: string | null) => {
+    if (busy || item.parentId === parentId) {
+      draggedHelpItemRef.current = null;
+      setHelpTreeDropParentId(undefined);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = await api.help.update(item.id, {
+        title: item.title,
+        markdownContent: item.markdownContent,
+        parentId,
+        expectedRevision: item.revision,
+      });
+      setItems((current) => current.map((candidate) => candidate.id === updated.id ? updated : candidate));
+      setSelectedId(updated.id);
+      if (parentId) setExpanded((current) => new Set(current).add(parentId));
+    } catch (moveError) {
+      setError(errorMessage(moveError));
+    } finally {
+      setBusy(false);
+      draggedHelpItemRef.current = null;
+      setHelpTreeDropParentId(undefined);
+    }
+  };
+
   const beginAnnouncementCreate = () => {
     setSelectedAnnouncementId(null);
     setAnnouncementTitle("");
@@ -317,12 +358,14 @@ export function HelpCenterView({ canManage, initialAnnouncementId = null, onOpen
   const renderTree = (nodes: HelpTreeNode[], depth = 0): React.ReactNode => nodes.map((node) => {
     const isFolder = node.item.kind === "folder";
     const isExpanded = query.trim() ? true : expanded.has(node.item.id);
+    const isDropTarget = isFolder && helpTreeDropParentId === node.item.id;
     return (
       <div key={node.item.id}>
         <button
-          className={`file-tree-row help-tree-row ${isFolder ? "is-folder" : ""} ${selectedId === node.item.id ? "is-selected" : ""}`}
+          className={`file-tree-row help-tree-row ${isFolder ? "is-folder" : ""} ${selectedId === node.item.id ? "is-selected" : ""} ${isDropTarget ? "is-drop-target" : ""}`}
           style={{ "--tree-depth": depth } as CSSProperties}
           type="button"
+          draggable={effectiveCanManage && !busy}
           onClick={() => {
             setSelectedId(node.item.id);
             setCreating(null);
@@ -335,6 +378,36 @@ export function HelpCenterView({ canManage, initialAnnouncementId = null, onOpen
               return next;
             });
           }}
+          onDragStart={(event) => {
+            event.dataTransfer.effectAllowed = "move";
+            event.dataTransfer.setData(helpTreeDragMime, node.item.id);
+            draggedHelpItemRef.current = node.item;
+          }}
+          onDragEnd={() => {
+            draggedHelpItemRef.current = null;
+            setHelpTreeDropParentId(undefined);
+          }}
+          onDragOver={isFolder ? (event) => {
+            const source = draggedHelpItemRef.current;
+            if (!source && !Array.from(event.dataTransfer.types).includes(helpTreeDragMime)) return;
+            if (source && isHelpItemSelfOrDescendant(items, source.id, node.item.id)) {
+              event.stopPropagation();
+              event.dataTransfer.dropEffect = "none";
+              setHelpTreeDropParentId(undefined);
+              return;
+            }
+            event.preventDefault();
+            event.stopPropagation();
+            event.dataTransfer.dropEffect = "move";
+            setHelpTreeDropParentId(node.item.id);
+          } : undefined}
+          onDrop={isFolder ? (event) => {
+            const source = draggedHelpItemRef.current ?? items.find((item) => item.id === event.dataTransfer.getData(helpTreeDragMime));
+            if (!source || isHelpItemSelfOrDescendant(items, source.id, node.item.id)) return;
+            event.preventDefault();
+            event.stopPropagation();
+            void moveHelpItem(source, node.item.id);
+          } : undefined}
         >
           <span className="file-tree-chevron" aria-hidden="true">{isFolder ? (isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />) : null}</span>
           {isFolder ? <Folder size={14} /> : <FileText size={14} />}
@@ -355,14 +428,34 @@ export function HelpCenterView({ canManage, initialAnnouncementId = null, onOpen
         <button type="button" role="tab" aria-selected={section === "announcements"} onClick={() => switchSection("announcements")}><Megaphone size={14} />공지사항 <span>{announcementTotal}</span></button>
         <button type="button" role="tab" aria-selected={section === "manuals"} onClick={() => switchSection("manuals")}><FileText size={14} />매뉴얼 <span>{documentCount}</span></button>
       </div>
-      <div className="feature-toolbar help-center-toolbar">
-        <label className="feature-search"><Search size={14} /><input value={query} placeholder={section === "manuals" ? "매뉴얼 제목이나 내용 검색" : "공지 제목이나 내용 검색"} onChange={(event) => setQuery(event.currentTarget.value)} /></label>
-        {effectiveCanManage && section === "manuals" ? <div className="help-create-actions"><button type="button" disabled={busy} onClick={() => beginCreate("folder")}><FolderPlus size={14} />폴더</button><button type="button" disabled={busy} onClick={() => beginCreate("document")}><FilePlus2 size={14} />문서</button></div> : null}
-        {effectiveCanManage && section === "announcements" ? <div className="help-create-actions"><button className="lumina-primary-action" type="button" disabled={busy} onClick={beginAnnouncementCreate}><Plus size={14} />공지 작성</button></div> : null}
-      </div>
+      {section === "manuals" ? <div className="feature-toolbar help-center-toolbar">
+        <label className="feature-search"><Search size={14} /><input value={query} placeholder="매뉴얼 제목이나 내용 검색" onChange={(event) => setQuery(event.currentTarget.value)} /></label>
+        {effectiveCanManage ? <div className="help-create-actions"><button type="button" disabled={busy} onClick={() => beginCreate("folder")}><FolderPlus size={14} />폴더</button><button type="button" disabled={busy} onClick={() => beginCreate("document")}><FilePlus2 size={14} />문서</button></div> : null}
+      </div> : null}
       {error ? <div className="feature-error" role="alert">{error}</div> : null}
       <ResizableSplitPane storageKey="lumina:help-explorer-width" ariaLabel="사용 안내 탐색기 너비 조절" className="file-workspace-split help-center-split">
-        <aside className="file-workspace-explorer" aria-label={section === "manuals" ? "매뉴얼 탐색기" : "공지사항 목록"}>
+        <aside
+          className={`file-workspace-explorer ${section === "manuals" && helpTreeDropParentId === null ? "is-root-drop-target" : ""}`}
+          aria-label={section === "manuals" ? "매뉴얼 탐색기" : "공지사항 목록"}
+          onDragOver={(event) => {
+            if (section !== "manuals" || !effectiveCanManage) return;
+            if (!draggedHelpItemRef.current && !Array.from(event.dataTransfer.types).includes(helpTreeDragMime)) return;
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "move";
+            setHelpTreeDropParentId(null);
+          }}
+          onDrop={(event) => {
+            if (section !== "manuals" || !effectiveCanManage) return;
+            const source = draggedHelpItemRef.current ?? items.find((item) => item.id === event.dataTransfer.getData(helpTreeDragMime));
+            if (!source) return;
+            event.preventDefault();
+            void moveHelpItem(source, null);
+          }}
+        >
+          {section === "announcements" ? <div className="help-announcement-explorer-controls">
+            {effectiveCanManage ? <div className="help-create-actions"><button className="lumina-primary-action" type="button" disabled={busy} onClick={beginAnnouncementCreate}><Plus size={14} />공지 작성</button></div> : null}
+            <label className="feature-search"><Search size={14} /><input value={query} placeholder="공지 제목이나 내용 검색" onChange={(event) => setQuery(event.currentTarget.value)} /></label>
+          </div> : null}
           <div className="file-explorer-heading">{section === "manuals" ? <FolderOpen size={14} /> : <Megaphone size={14} />}<strong>{section === "manuals" ? "매뉴얼 목차" : "공지사항"}</strong>{effectiveCanManage ? <small>관리자 편집</small> : null}</div>
           {section === "manuals" && creating ? (
             <form className="help-create-form" onSubmit={(event) => { event.preventDefault(); void createItem(); }}>
@@ -400,8 +493,8 @@ export function HelpCenterView({ canManage, initialAnnouncementId = null, onOpen
               ) : editing ? (
                 <div className="help-markdown-editor"><div><strong>Markdown</strong><span>제목, 목록, 표, 링크와 코드 블록을 사용할 수 있습니다.</span></div><textarea className="thin-scrollbar" value={draftContent} spellCheck={false} aria-label="안내 Markdown 편집" placeholder="# 시작하기\n\n사용 방법과 팁을 Markdown으로 작성해 주세요." onChange={(event) => setDraftContent(event.currentTarget.value)} /></div>
               ) : (
-                <article className="help-markdown thin-scrollbar">
-                  {selected.markdownContent.trim() ? <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: (props) => <a {...props} target="_blank" rel="noreferrer" /> }}>{selected.markdownContent}</ReactMarkdown> : <div className="file-viewer-empty"><FileText size={28} /><strong>아직 내용이 없습니다.</strong><span>{effectiveCanManage ? "편집을 눌러 Markdown 매뉴얼을 작성해 주세요." : "관리자가 내용을 준비하고 있습니다."}</span></div>}
+                <article className="help-chat-markdown-body thin-scrollbar">
+                  {selected.markdownContent.trim() ? <MarkdownResponse text={selected.markdownContent} /> : <div className="file-viewer-empty"><FileText size={28} /><strong>아직 내용이 없습니다.</strong><span>{effectiveCanManage ? "편집을 눌러 Markdown 매뉴얼을 작성해 주세요." : "관리자가 내용을 준비하고 있습니다."}</span></div>}
                 </article>
               )}
             </div>
@@ -409,7 +502,7 @@ export function HelpCenterView({ canManage, initialAnnouncementId = null, onOpen
             <form className="help-announcement-form" onSubmit={(event) => void saveAnnouncement(event)}>
               <header><span className="file-viewer-icon"><Megaphone size={22} /></span><div><h2>{announcementMode === "create" ? "새 공지 작성" : "공지사항 수정"}</h2><p>게시하면 조직의 모든 사용자가 알림과 사용 안내에서 볼 수 있습니다.</p></div></header>
               <label><span>제목</span><input autoFocus maxLength={240} value={announcementTitle} onChange={(event) => setAnnouncementTitle(event.currentTarget.value)} placeholder="공지 제목" required /></label>
-              <label><span>내용</span><textarea className="thin-scrollbar" maxLength={20000} value={announcementBody} onChange={(event) => setAnnouncementBody(event.currentTarget.value)} placeholder="사용자에게 전달할 상세 내용을 입력하세요." required /></label>
+              <label className="help-announcement-body-field"><span>본문 Markdown 원문 (Raw code)</span><textarea className="thin-scrollbar" maxLength={20000} value={announcementBody} spellCheck={false} onChange={(event) => setAnnouncementBody(event.currentTarget.value)} placeholder="사용자에게 전달할 상세 내용을 Markdown으로 입력하세요." required /></label>
               <footer><button type="button" onClick={() => { setAnnouncementMode("idle"); if (!selectedAnnouncementId) setSelectedAnnouncementId(announcements[0]?.id ?? null); }}><X size={14} />취소</button><button className="lumina-primary-action" type="submit" disabled={busy || !announcementTitle.trim() || !announcementBody.trim()}>{busy ? <LoaderCircle className="is-running" size={14} /> : <Check size={14} />}{announcementMode === "create" ? "게시" : "저장"}</button></footer>
             </form>
           ) : !selectedAnnouncement ? (
@@ -421,7 +514,7 @@ export function HelpCenterView({ canManage, initialAnnouncementId = null, onOpen
                 <div><h2>{selectedAnnouncement.title}</h2><p>{selectedAnnouncement.author?.displayName || selectedAnnouncement.author?.loginId || "관리자"} · {formatDate(selectedAnnouncement.createdAt)}{announcementWasEdited(selectedAnnouncement) ? " · 수정됨" : ""}</p></div>
                 {effectiveCanManage ? <div className="file-viewer-actions"><button type="button" disabled={busy} onClick={beginAnnouncementEdit}><Pencil size={14} />편집</button><button className={`is-danger ${announcementDeleteArmed ? "is-confirming" : ""}`} type="button" disabled={busy} onClick={() => void removeAnnouncement()}>{announcementDeleteArmed ? <AlertCircle size={14} /> : <Trash2 size={14} />}{announcementDeleteArmed ? "한 번 더 눌러 삭제" : "삭제"}</button></div> : null}
               </header>
-              <article className="help-announcement-body thin-scrollbar">{selectedAnnouncement.body}</article>
+              <article className="help-chat-markdown-body thin-scrollbar"><MarkdownResponse text={selectedAnnouncement.body} /></article>
             </div>
           )}
         </section>

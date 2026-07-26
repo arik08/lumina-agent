@@ -169,6 +169,7 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     personal_instruction_digest: Mapped[str] = mapped_column(
         String(64), default=EMPTY_SHA256, nullable=False
     )
+    settings_revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(512), nullable=False)
     role: Mapped[str] = mapped_column(String(32), default="user", nullable=False)
     status: Mapped[str] = mapped_column(
@@ -242,6 +243,7 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     instruction_digest: Mapped[str] = mapped_column(
         String(64), default=EMPTY_SHA256, nullable=False
     )
+    settings_revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     project_type: Mapped[str] = mapped_column(
         String(24), default="personal", nullable=False
     )
@@ -292,11 +294,15 @@ class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     status: Mapped[str] = mapped_column(
         String(24), default="active", index=True, nullable=False
     )
+    surface: Mapped[str] = mapped_column(
+        String(32), default="chat", index=True, nullable=False
+    )
     is_favorite: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_liked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     agent_id: Mapped[str] = mapped_column(String(80), default="general", nullable=False)
     agent_version: Mapped[str] = mapped_column(String(40), default="1", nullable=False)
     revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    next_turn_index: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     parent_conversation_id: Mapped[str | None] = mapped_column(
         ForeignKey("conversations.id", ondelete="SET NULL"), index=True
     )
@@ -310,8 +316,21 @@ class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 class Run(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "runs"
     __table_args__ = (
+        UniqueConstraint(
+            "conversation_id",
+            "user_id",
+            "idempotency_key",
+            name="uq_runs_conversation_user_idempotency",
+        ),
         Index("ix_runs_conversation_status", "conversation_id", "status"),
         Index("ix_runs_user_status", "user_id", "status"),
+        Index(
+            "ix_runs_queue_claim",
+            "status",
+            "queued_at",
+            "conversation_id",
+        ),
+        Index("ix_runs_worker_lease", "worker_id", "lease_expires_at"),
     )
 
     organization_id: Mapped[str] = mapped_column(
@@ -356,6 +375,9 @@ class Run(UUIDPrimaryKeyMixin, Base):
     # deadline, token and cost policies plus context compaction.
     max_turns: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     idempotency_key: Mapped[str | None] = mapped_column(String(128))
+    worker_id: Mapped[str | None] = mapped_column(String(36))
+    heartbeat_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    lease_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     error_code: Mapped[str | None] = mapped_column(String(120))
     error_message: Mapped[str | None] = mapped_column(Text)
     queued_at: Mapped[datetime] = mapped_column(
@@ -660,6 +682,7 @@ class RunEvent(UUIDPrimaryKeyMixin, Base):
     __table_args__ = (
         UniqueConstraint("run_id", "sequence"),
         Index("ix_run_events_replay", "run_id", "sequence"),
+        Index("ix_run_events_run_type", "run_id", "event_type"),
     )
 
     run_id: Mapped[str] = mapped_column(
@@ -1348,6 +1371,7 @@ class Extension(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     slug: Mapped[str] = mapped_column(String(160), nullable=False)
     name: Mapped[str] = mapped_column(String(240), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    tags_json: Mapped[list[str] | None] = mapped_column(JSON)
     owner_user_id: Mapped[str] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), index=True, nullable=False
     )
@@ -1469,6 +1493,11 @@ class ExtensionVersion(UUIDPrimaryKeyMixin, Base):
     manifest_json: Mapped[dict[str, Any]] = mapped_column(
         JSON, default=dict, nullable=False
     )
+    change_summary: Mapped[str] = mapped_column(String(500), default="", nullable=False)
+    change_type: Mapped[str] = mapped_column(String(24), default="save", nullable=False)
+    restored_from_version_id: Mapped[str | None] = mapped_column(
+        ForeignKey("extension_versions.id", ondelete="SET NULL"), index=True
+    )
     status: Mapped[str] = mapped_column(String(24), default="private", nullable=False)
     created_by_user_id: Mapped[str] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
@@ -1506,6 +1535,7 @@ class ExtensionInstallation(UUIDPrimaryKeyMixin, Base):
     settings_json: Mapped[dict[str, Any]] = mapped_column(
         JSON, default=dict, nullable=False
     )
+    project_ids_json: Mapped[list[str] | None] = mapped_column(JSON)
     installed_by_user_id: Mapped[str] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
@@ -1715,6 +1745,7 @@ class McpInstallation(UUIDPrimaryKeyMixin, Base):
     tool_allowlist_json: Mapped[list[str]] = mapped_column(
         JSON, default=list, nullable=False
     )
+    project_ids_json: Mapped[list[str] | None] = mapped_column(JSON)
     installed_by_user_id: Mapped[str] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
@@ -1911,8 +1942,206 @@ class Announcement(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     body: Mapped[str] = mapped_column(Text, nullable=False)
 
 
+class AnnouncementReceipt(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "announcement_receipts"
+    __table_args__ = (
+        UniqueConstraint(
+            "announcement_id",
+            "user_id",
+            name="uq_announcement_receipts_announcement_user",
+        ),
+        Index("ix_announcement_receipts_user_read", "user_id", "read_at"),
+    )
+
+    announcement_id: Mapped[str] = mapped_column(
+        ForeignKey("announcements.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    read_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, nullable=False
+    )
+
+
+class KnowledgeSpace(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "knowledge_spaces"
+    __table_args__ = (
+        Index("ix_knowledge_spaces_owner_activity", "owner_user_id", "updated_at"),
+    )
+
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), index=True, nullable=False
+    )
+    owner_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), index=True
+    )
+    space_type: Mapped[str] = mapped_column(
+        String(24), default="personal", nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(240), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    purpose: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    visibility: Mapped[str] = mapped_column(
+        String(24), default="private", nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(24), default="active", index=True, nullable=False
+    )
+    settings_revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    use_mode: Mapped[str] = mapped_column(String(16), default="auto", nullable=False)
+    project_ids_json: Mapped[list[str] | None] = mapped_column(JSON)
+    archived_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+
+
+class KnowledgeDocument(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "knowledge_documents"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_message_id", name="uq_knowledge_documents_source_message"
+        ),
+        Index("ix_knowledge_documents_space_researched", "space_id", "researched_at"),
+        Index(
+            "ix_knowledge_documents_project_researched", "project_id", "researched_at"
+        ),
+    )
+
+    space_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_spaces.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    owner_user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    source_message_id: Mapped[str | None] = mapped_column(
+        ForeignKey("messages.id", ondelete="SET NULL"), index=True
+    )
+    source_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("runs.id", ondelete="SET NULL"), index=True
+    )
+    source_conversation_id: Mapped[str | None] = mapped_column(
+        ForeignKey("conversations.id", ondelete="SET NULL"), index=True
+    )
+    source_artifact_id: Mapped[str | None] = mapped_column(
+        ForeignKey("artifacts.id", ondelete="SET NULL"), index=True
+    )
+    source_artifact_version_id: Mapped[str | None] = mapped_column(
+        ForeignKey("artifact_versions.id", ondelete="SET NULL"), unique=True, index=True
+    )
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    researched_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    citations_json: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
+    content_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(24), default="active", index=True, nullable=False
+    )
+
+
+class KnowledgeTag(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "knowledge_tags"
+    __table_args__ = (
+        UniqueConstraint(
+            "space_id", "namespace", "normalized_name", name="uq_knowledge_tags_name"
+        ),
+        Index("ix_knowledge_tags_space_name", "space_id", "canonical_name"),
+    )
+
+    space_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_spaces.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    namespace: Mapped[str] = mapped_column(String(80), default="topic", nullable=False)
+    canonical_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    normalized_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    definition: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    scope_note: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    parent_tag_id: Mapped[str | None] = mapped_column(
+        ForeignKey("knowledge_tags.id", ondelete="SET NULL"), index=True
+    )
+    revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(24), default="active", index=True, nullable=False
+    )
+
+
+class KnowledgeTagAlias(Base):
+    __tablename__ = "knowledge_tag_aliases"
+
+    tag_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_tags.id", ondelete="CASCADE"), primary_key=True
+    )
+    normalized_alias: Mapped[str] = mapped_column(String(160), primary_key=True)
+    alias: Mapped[str] = mapped_column(String(160), nullable=False)
+    language: Mapped[str | None] = mapped_column(String(24))
+
+
+class KnowledgeDocumentTag(Base):
+    __tablename__ = "knowledge_document_tags"
+
+    document_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_documents.id", ondelete="CASCADE"), primary_key=True
+    )
+    tag_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_tags.id", ondelete="CASCADE"),
+        primary_key=True,
+        index=True,
+    )
+
+
+class KnowledgeTagProposal(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "knowledge_tag_proposals"
+    __table_args__ = (
+        UniqueConstraint(
+            "space_id",
+            "namespace",
+            "normalized_name",
+            name="uq_knowledge_tag_proposals_name",
+        ),
+        Index(
+            "ix_knowledge_tag_proposals_space_status",
+            "space_id",
+            "status",
+            "updated_at",
+        ),
+    )
+
+    space_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_spaces.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    namespace: Mapped[str] = mapped_column(String(80), default="topic", nullable=False)
+    canonical_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    normalized_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    scope_note: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    aliases_json: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    document_ids_json: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    provider_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    model_key: Mapped[str] = mapped_column(String(240), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(24), default="pending", index=True, nullable=False
+    )
+    revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    resolved_tag_id: Mapped[str | None] = mapped_column(
+        ForeignKey("knowledge_tags.id", ondelete="SET NULL"), index=True
+    )
+    resolved_by_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+
+
 __all__ = [
     "Announcement",
+    "AnnouncementReceipt",
     "Artifact",
     "ArtifactDraft",
     "ArtifactVersion",
@@ -1929,6 +2158,12 @@ __all__ = [
     "ExtensionInstallation",
     "ExtensionVersion",
     "HelpItem",
+    "KnowledgeDocument",
+    "KnowledgeDocumentTag",
+    "KnowledgeSpace",
+    "KnowledgeTag",
+    "KnowledgeTagAlias",
+    "KnowledgeTagProposal",
     "Message",
     "MessageFeedback",
     "MessageReference",

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
+from functools import partial
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
@@ -12,7 +16,7 @@ from ...attachments import MIME_BY_EXTENSION, extract_attachment_text, sniff_mim
 from ...config import Settings, get_settings
 from ...db import get_db
 from ...models import Attachment, User, utc_now
-from ...storage import ManagedLocalStorage
+from ...storage import ManagedLocalStorage, StorageError
 from ..dependencies import AuthContext, get_current_user, require_csrf
 from ..errors import ApiProblem
 
@@ -20,12 +24,38 @@ from ..errors import ApiProblem
 router = APIRouter(tags=["attachments"])
 
 _MIME_BY_EXTENSION = MIME_BY_EXTENSION
+_EXTRACTION_WORKERS = ThreadPoolExecutor(
+    max_workers=2,
+    thread_name_prefix="lumina-attachment-extraction",
+)
+
+
+async def _extract_attachment(
+    *, filename: str, mime_type: str, content: bytes
+):
+    return await asyncio.get_running_loop().run_in_executor(
+        _EXTRACTION_WORKERS,
+        partial(
+            extract_attachment_text,
+            filename=filename,
+            mime_type=mime_type,
+            content=content,
+        ),
+    )
 
 
 def _storage(settings: Settings) -> ManagedLocalStorage:
     if settings.files_dir is None:
         raise RuntimeError("LUMINA_FILES_DIR is not configured")
     return ManagedLocalStorage(settings.files_dir)
+
+
+def _cleanup_storage(storage: ManagedLocalStorage, keys: list[str]) -> None:
+    for key in reversed(keys):
+        try:
+            storage.delete(key)
+        except StorageError:
+            continue
 
 
 def _payload(attachment: Attachment) -> dict[str, object]:
@@ -101,7 +131,7 @@ async def post_attachment(
 
     if not content or (mime_type.startswith("text/") and not content.strip()):
         raise ApiProblem(422, "attachment_empty", "빈 파일은 첨부할 수 없습니다.")
-    extraction = extract_attachment_text(
+    extraction = await _extract_attachment(
         filename=filename, mime_type=mime_type, content=content
     )
     if extraction.status == "failed":
@@ -137,30 +167,40 @@ async def post_attachment(
     )
     db.add(attachment)
     db.flush()
-    key = f"attachments/{context.user.id}/{attachment.id}/{digest}.{extension}"
-    stored = _storage(settings).put_bytes(key, content, expected_sha256=digest)
-    attachment.storage_key = stored.key
-    attachment.status = "ready"
-    attachment.extraction_status = extraction.status
-    attachment.extraction_version = "lumina-text-v1"
-    attachment.locator_map_json = extraction.locator_map
-    attachment.metadata_json = {**metadata, **extraction.metadata}
-    if extraction.status == "completed":
-        extracted = extraction.text.encode("utf-8")
-        extracted_digest = hashlib.sha256(extracted).hexdigest()
-        extraction_key = (
-            f"extractions/{context.user.id}/{attachment.id}/{extracted_digest}.txt"
-        )
-        stored_extraction = _storage(settings).put_bytes(
-            extraction_key, extracted, expected_sha256=extracted_digest
-        )
-        attachment.metadata_json = {
-            **attachment.metadata_json,
-            "extractedStorageKey": stored_extraction.key,
-            "extractedContentHash": extracted_digest,
-            "extractedSize": len(extracted),
-        }
-    db.commit()
+    storage = _storage(settings)
+    managed_keys: list[str] = []
+    try:
+        key = f"attachments/{context.user.id}/{attachment.id}/{digest}.{extension}"
+        managed_keys.append(key)
+        stored = storage.put_bytes(key, content, expected_sha256=digest)
+        attachment.storage_key = stored.key
+        attachment.status = "ready"
+        attachment.extraction_status = extraction.status
+        attachment.extraction_version = "lumina-text-v1"
+        attachment.locator_map_json = extraction.locator_map
+        attachment.metadata_json = {**metadata, **extraction.metadata}
+        if extraction.status == "completed":
+            extracted = extraction.text.encode("utf-8")
+            extracted_digest = hashlib.sha256(extracted).hexdigest()
+            extraction_key = (
+                f"extractions/{context.user.id}/{attachment.id}/{extracted_digest}.txt"
+            )
+            managed_keys.append(extraction_key)
+            stored_extraction = storage.put_bytes(
+                extraction_key, extracted, expected_sha256=extracted_digest
+            )
+            attachment.metadata_json = {
+                **attachment.metadata_json,
+                "extractedStorageKey": stored_extraction.key,
+                "extractedContentHash": extracted_digest,
+                "extractedSize": len(extracted),
+            }
+        db.commit()
+    except BaseException:
+        with suppress(Exception):
+            db.rollback()
+        _cleanup_storage(storage, managed_keys)
+        raise
     return _payload(attachment)
 
 
@@ -188,9 +228,14 @@ def get_attachment_content(
     if attachment is None or attachment.deleted_at is not None:
         raise ApiProblem(404, "not_found", "첨부 파일을 찾을 수 없습니다.")
     require_conversation(db, user, attachment.conversation_id or "")
-    content = _storage(settings).read_bytes(
-        attachment.storage_key, expected_sha256=attachment.content_hash
-    )
+    try:
+        content = _storage(settings).read_bytes(
+            attachment.storage_key, expected_sha256=attachment.content_hash
+        )
+    except StorageError as exc:
+        raise ApiProblem(
+            503, "attachment_content_missing", "첨부 원본을 읽을 수 없습니다."
+        ) from exc
     return Response(content=content, media_type=attachment.sniffed_mime_type)
 
 

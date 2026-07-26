@@ -1,7 +1,9 @@
 import { AlertTriangle, CircleStop, LoaderCircle, Save, ShieldAlert } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
-import { api } from "../api";
+import { adminApi } from "../feature-api";
 import type { AdminRunSafetySettings as RunSafetySettings } from "../api-types";
+
+const api = { admin: adminApi };
 
 interface AdminRunSafetySettingsProps {
   onToast: (message: string) => void;
@@ -76,6 +78,10 @@ export function AdminRunSafetySettings({ onToast }: AdminRunSafetySettingsProps)
       {loading && <p className="settings-run-safety-loading"><LoaderCircle className="is-running" size={14} /> 실행 안전 설정을 불러오는 중입니다.</p>}
       {runSafety && (
         <form className="admin-run-safety-form" onSubmit={(event) => void saveRunSafety(event)}>
+          <div className="admin-yolo-mode-setting">
+            <span><strong>YOLO mode 사용</strong><small>모든 Tool 작업을 승인 요청 없이 실행합니다. 권한·격리·Secret 안전 정책은 그대로 적용됩니다.</small></span>
+            <button className={runSafety.yoloMode ? "is-active" : ""} type="button" role="switch" aria-label="YOLO mode 사용" aria-checked={runSafety.yoloMode} disabled={saving} onClick={() => setRunSafety({ ...runSafety, yoloMode: !runSafety.yoloMode })}><span aria-hidden="true" /><strong>{runSafety.yoloMode ? "사용" : "미사용"}</strong></button>
+          </div>
           <label><span>최대 모델 Turn</span><input type="number" min="10" max="10000" value={runSafety.maxModelTurns} onChange={(event) => setRunSafety({ ...runSafety, maxModelTurns: Number(event.currentTarget.value) })} /><small>Run당 모델 호출 단계</small></label>
           <label><span>최대 누적 Token</span><input type="number" min="100000" max="100000000" step="100000" value={runSafety.maxTotalTokens} onChange={(event) => setRunSafety({ ...runSafety, maxTotalTokens: Number(event.currentTarget.value) })} /><small>입력과 출력 Token 합계</small></label>
           <label><span>최대 실행 시간</span><div className="admin-run-safety-input"><input type="number" min="30" max="525600" step="1" value={runSafety.maxElapsedMinutes} onChange={(event) => setRunSafety({ ...runSafety, maxElapsedMinutes: Number(event.currentTarget.value) })} /><span>분</span></div><small>실제 실행 시작 이후 기준</small></label>

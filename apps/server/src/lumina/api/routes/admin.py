@@ -2,13 +2,19 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
+from io import BytesIO
 from pathlib import Path
 from typing import Literal, get_args
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query, Request, Response
-from pydantic import Field
+from openpyxl import Workbook
+from openpyxl.cell.cell import Cell
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.worksheet.worksheet import Worksheet
+from pydantic import Field, model_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
@@ -30,12 +36,18 @@ from ...models import (
     MessageFeedback,
     Organization,
     Run,
+    RunEvent,
     User,
     utc_now,
 )
 from ...runs.broker import event_broker
 from ...runs.safety import normalize_run_safety_settings, run_safety_payload
-from ...runs.service import cancel_organization_work, message_response, run_snapshot
+from ...runs.service import (
+    cancel_organization_work,
+    message_response,
+    preload_message_attachments,
+    run_snapshots,
+)
 from ..dependencies import AuthContext, get_current_user, require_csrf
 from ..errors import ApiProblem
 from ..schemas import AnnouncementListResponse, AnnouncementResponse, ApiModel
@@ -49,6 +61,12 @@ _USER_STATUSES = frozenset(get_args(UserStatus))
 _USER_ROLES = frozenset(get_args(UserRole))
 _LAUNCHER_EVENT_TYPES = frozenset({"automatic_recovery", "manual_restart"})
 _ANALYTICS_TIMEZONE = ZoneInfo("Asia/Seoul")
+_XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+_XLSX_MAX_CELL_LENGTH = 32_767
+_XLSX_HEADER_FILL = PatternFill("solid", fgColor="E8F0FF")
+_XLSX_HEADER_FONT = Font(name="맑은 고딕", bold=True, color="172033")
+_XLSX_BODY_FONT = Font(name="맑은 고딕", size=10, color="172033")
+_XLSX_ROW_BORDER = Border(bottom=Side(style="thin", color="DCE3EF"))
 
 
 class AdminUserCreate(ApiModel):
@@ -83,6 +101,7 @@ class AdminRunSafetyPatch(ApiModel):
     max_total_tokens: int = Field(ge=100_000, le=100_000_000)
     max_elapsed_minutes: int = Field(ge=30, le=525_600)
     max_cost_usd: float = Field(ge=1, le=10_000)
+    yolo_mode: bool
 
 
 class AdminEmergencyStop(ApiModel):
@@ -98,13 +117,23 @@ class AdminAnnouncementPatch(ApiModel):
     title: str | None = Field(default=None, min_length=1, max_length=240)
     body: str | None = Field(default=None, min_length=1, max_length=20_000)
 
+    @model_validator(mode="after")
+    def require_change(self) -> "AdminAnnouncementPatch":
+        if self.title is None and self.body is None:
+            raise ValueError("title or body is required")
+        return self
+
 
 def _request_id(request: Request) -> str | None:
     return getattr(request.state, "request_id", None)
 
 
 def _announcement_payload(db: Session, announcement: Announcement) -> dict[str, object]:
-    author = db.get(User, announcement.creator_user_id) if announcement.creator_user_id else None
+    author = (
+        db.get(User, announcement.creator_user_id)
+        if announcement.creator_user_id
+        else None
+    )
     return {
         "id": announcement.id,
         "title": announcement.title,
@@ -121,7 +150,9 @@ def _announcement_payload(db: Session, announcement: Announcement) -> dict[str, 
     }
 
 
-def _require_announcement(db: Session, actor: User, announcement_id: str) -> Announcement:
+def _require_announcement(
+    db: Session, actor: User, announcement_id: str
+) -> Announcement:
     require_admin(actor)
     announcement = db.scalar(
         select(Announcement).where(
@@ -388,11 +419,19 @@ def get_usage_statistics(
         )
     )
     session_query = (
-        select(AuthSession)
+        select(AuthSession.user_id, AuthSession.created_at)
         .join(User, User.id == AuthSession.user_id)
         .where(User.organization_id == actor.organization_id)
     )
-    run_query = select(Run).where(Run.organization_id == actor.organization_id)
+    run_query = select(
+        Run.id,
+        Run.user_id,
+        Run.created_at,
+        Run.usage_json,
+        Run.snapshot_json,
+        Run.provider_id,
+        Run.model_key,
+    ).where(Run.organization_id == actor.organization_id)
     if days:
         requested_first_day = today - timedelta(days=days - 1)
         range_start = datetime.combine(
@@ -400,24 +439,143 @@ def get_usage_statistics(
         ).astimezone(UTC)
         session_query = session_query.where(AuthSession.created_at >= range_start)
         run_query = run_query.where(Run.created_at >= range_start)
-    sessions = list(db.scalars(session_query))
-    runs = list(db.scalars(run_query))
+    sessions = list(db.execute(session_query))
+    runs = list(db.execute(run_query))
+
+    def empty_cache_bucket() -> dict[str, int]:
+        return {
+            "modelCalls": 0,
+            "inputTokens": 0,
+            "cachedInputTokens": 0,
+            "cacheWriteTokens": 0,
+            "uncachedInputTokens": 0,
+        }
+
+    def add_cache_metric(
+        bucket: dict[str, object],
+        *,
+        input_tokens: int,
+        cached_tokens: int,
+        cache_write_tokens: int,
+        uncached_tokens: int,
+    ) -> None:
+        for key, value in (
+            ("modelCalls", 1),
+            ("inputTokens", input_tokens),
+            ("cachedInputTokens", cached_tokens),
+            ("cacheWriteTokens", cache_write_tokens),
+            ("uncachedInputTokens", uncached_tokens),
+        ):
+            bucket[key] = int(bucket[key]) + value
+
+    cache_buckets: dict[str, dict[str, int]] = {
+        "firstCall": empty_cache_bucket(),
+        "subsequentCalls": empty_cache_bucket(),
+    }
+    digest_buckets: dict[tuple[str, str, str], dict[str, object]] = {}
+    runs_by_id = {run.id: run for run in runs}
+    if runs_by_id:
+        model_turns = db.execute(
+            select(RunEvent.run_id, RunEvent.payload_json).where(
+                RunEvent.run_id.in_(runs_by_id),
+                RunEvent.event_type == "model_turn_completed",
+            )
+        )
+        for run_id, payload in model_turns:
+            input_tokens = int(_usage_number(payload, "inputTokens"))
+            if input_tokens <= 0:
+                continue
+            cached_tokens = int(_usage_number(payload, "cachedInputTokens"))
+            cache_write_tokens = int(_usage_number(payload, "cacheWriteTokens"))
+            uncached_tokens = int(_usage_number(payload, "uncachedInputTokens"))
+            if "uncachedInputTokens" not in payload:
+                uncached_tokens = max(
+                    0, input_tokens - cached_tokens - cache_write_tokens
+                )
+            try:
+                turn_index = int(payload.get("turnIndex", 0))
+            except (TypeError, ValueError):
+                turn_index = 0
+            bucket = cache_buckets[
+                "firstCall" if turn_index == 0 else "subsequentCalls"
+            ]
+            add_cache_metric(
+                bucket,
+                input_tokens=input_tokens,
+                cached_tokens=cached_tokens,
+                cache_write_tokens=cache_write_tokens,
+                uncached_tokens=uncached_tokens,
+            )
+
+            run = runs_by_id[run_id]
+            digest = str(
+                run.snapshot_json.get("prompt_cache_static_digest") or "unknown"
+            )
+            digest_key = (digest, run.provider_id, run.model_key)
+            digest_bucket = digest_buckets.setdefault(
+                digest_key,
+                {
+                    "digest": digest,
+                    "providerId": run.provider_id,
+                    "modelKey": run.model_key,
+                    "modelCalls": 0,
+                    "inputTokens": 0,
+                    "cachedInputTokens": 0,
+                    "cacheWriteTokens": 0,
+                    "uncachedInputTokens": 0,
+                    "firstCall": empty_cache_bucket(),
+                    "subsequentCalls": empty_cache_bucket(),
+                },
+            )
+            add_cache_metric(
+                digest_bucket,
+                input_tokens=input_tokens,
+                cached_tokens=cached_tokens,
+                cache_write_tokens=cache_write_tokens,
+                uncached_tokens=uncached_tokens,
+            )
+            digest_call_bucket = digest_bucket[
+                "firstCall" if turn_index == 0 else "subsequentCalls"
+            ]
+            assert isinstance(digest_call_bucket, dict)
+            add_cache_metric(
+                digest_call_bucket,
+                input_tokens=input_tokens,
+                cached_tokens=cached_tokens,
+                cache_write_tokens=cache_write_tokens,
+                uncached_tokens=uncached_tokens,
+            )
+
+    def cache_metric_payload(values: dict[str, object]) -> dict[str, object]:
+        cached_tokens = int(values["cachedInputTokens"])
+        input_tokens = int(values["inputTokens"])
+        payload = dict(values)
+        for key in ("firstCall", "subsequentCalls"):
+            nested = payload.get(key)
+            if isinstance(nested, dict):
+                payload[key] = cache_metric_payload(nested)
+        return {
+            **payload,
+            "cacheHitRatioPercent": round(cached_tokens / input_tokens * 100, 1)
+            if input_tokens
+            else 0,
+        }
 
     if days:
         first_day = today - timedelta(days=days - 1)
     else:
         activity_dates = [
-            item.created_at.astimezone(_ANALYTICS_TIMEZONE).date()
-            for item in [*sessions, *runs]
-        ]
+            session.created_at.astimezone(_ANALYTICS_TIMEZONE).date()
+            for session in sessions
+        ] + [run.created_at.astimezone(_ANALYTICS_TIMEZONE).date() for run in runs]
         first_day = min(activity_dates, default=today)
     period_days = (today - first_day).days + 1
 
     dates = [first_day + timedelta(days=index) for index in range(period_days)]
-    daily_users: dict[object, set[str]] = {day: set() for day in dates}
+    daily_users: dict[date, set[str]] = {day: set() for day in dates}
     daily_logins = {day: 0 for day in dates}
     daily_runs = {day: 0 for day in dates}
-    user_activity: dict[str, set[object]] = {user.id: set() for user in users}
+    user_activity: dict[str, set[date]] = {user.id: set() for user in users}
     user_logins = {user.id: 0 for user in users}
     user_runs = {user.id: 0 for user in users}
     user_input_tokens = {user.id: 0 for user in users}
@@ -471,49 +629,39 @@ def get_usage_statistics(
         *(daily_users[day] for day in dates if day >= today - timedelta(days=29))
     )
     new_users = sum(1 for user in users if user.created_at >= month_start)
-    per_user = []
+    per_user_rows: list[tuple[tuple[int, int, str], dict[str, object]]] = []
     for user in users:
         active_days = user_activity.get(user.id, set())
         last_active_day = max(active_days) if active_days else None
         cached_input_tokens = user_cached_input_tokens.get(user.id, 0)
         uncached_input_tokens = user_uncached_input_tokens.get(user.id, 0)
         cacheable_input_tokens = cached_input_tokens + uncached_input_tokens
-        per_user.append(
-            {
-                "userId": user.id,
-                "loginId": user.login_id,
-                "displayName": user.display_name,
-                "affiliation": user.affiliation,
-                "status": user.status,
-                "lastLoginAt": user.last_login_at,
-                "activeDays": len(active_days),
-                "loginCount": user_logins.get(user.id, 0),
-                "runCount": user_runs.get(user.id, 0),
-                "inputTokens": user_input_tokens.get(user.id, 0),
-                "cachedInputTokens": cached_input_tokens,
-                "cacheHitRatioPercent": round(
-                    cached_input_tokens / cacheable_input_tokens * 100, 1
-                )
-                if cacheable_input_tokens
-                else 0,
-                "outputTokens": user_output_tokens.get(user.id, 0),
-                "estimatedCostUsd": round(user_cost.get(user.id, 0.0), 6),
-                "lastActiveDate": last_active_day.isoformat()
-                if last_active_day
-                else None,
-                "inactiveDays": (today - last_active_day).days
-                if last_active_day
-                else None,
-            }
-        )
-    per_user.sort(
-        key=lambda item: (
-            int(item["activeDays"]),
-            int(item["runCount"]),
-            str(item["loginId"]),
-        ),
-        reverse=True,
-    )
+        run_count = user_runs.get(user.id, 0)
+        row: dict[str, object] = {
+            "userId": user.id,
+            "loginId": user.login_id,
+            "displayName": user.display_name,
+            "affiliation": user.affiliation,
+            "status": user.status,
+            "lastLoginAt": user.last_login_at,
+            "activeDays": len(active_days),
+            "loginCount": user_logins.get(user.id, 0),
+            "runCount": run_count,
+            "inputTokens": user_input_tokens.get(user.id, 0),
+            "cachedInputTokens": cached_input_tokens,
+            "cacheHitRatioPercent": round(
+                cached_input_tokens / cacheable_input_tokens * 100, 1
+            )
+            if cacheable_input_tokens
+            else 0,
+            "outputTokens": user_output_tokens.get(user.id, 0),
+            "estimatedCostUsd": round(user_cost.get(user.id, 0.0), 6),
+            "lastActiveDate": last_active_day.isoformat() if last_active_day else None,
+            "inactiveDays": (today - last_active_day).days if last_active_day else None,
+        }
+        per_user_rows.append(((len(active_days), run_count, user.login_id), row))
+    per_user_rows.sort(key=lambda item: item[0], reverse=True)
+    per_user = [row for _sort_key, row in per_user_rows]
 
     record_audit(
         db,
@@ -548,6 +696,17 @@ def get_usage_statistics(
             }
             for day in dates
         ],
+        "cache": {
+            "firstCall": cache_metric_payload(cache_buckets["firstCall"]),
+            "subsequentCalls": cache_metric_payload(cache_buckets["subsequentCalls"]),
+            "byStaticDigest": [
+                cache_metric_payload(bucket)
+                for bucket in sorted(
+                    digest_buckets.values(),
+                    key=lambda item: (-int(item["inputTokens"]), str(item["digest"])),
+                )
+            ],
+        },
         "users": per_user,
     }
 
@@ -827,21 +986,16 @@ def _conversation_list_payload(
     }
 
 
-@router.get("/conversations")
-def list_admin_conversations(
-    request: Request,
-    query: str = "",
+def _admin_conversation_filters(
+    actor: User,
+    *,
+    query: str,
     owner_login_id: str | None = None,
     project_id: str | None = None,
     status: str | None = None,
     feedback_only: bool = False,
-    limit: int = Query(default=50, ge=1, le=500),
-    offset: int = Query(default=0, ge=0),
-    actor: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict[str, object]:
-    require_admin(actor)
-    filters = [
+) -> tuple[list[object], str]:
+    filters: list[object] = [
         Conversation.organization_id == actor.organization_id,
         Conversation.deleted_at.is_(None),
     ]
@@ -864,6 +1018,31 @@ def list_admin_conversations(
             )
             .exists()
         )
+    return filters, normalized_query
+
+
+@router.get("/conversations")
+def list_admin_conversations(
+    request: Request,
+    query: str = "",
+    owner_login_id: str | None = None,
+    project_id: str | None = None,
+    status: str | None = None,
+    feedback_only: bool = False,
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    actor: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    require_admin(actor)
+    filters, normalized_query = _admin_conversation_filters(
+        actor,
+        query=query,
+        owner_login_id=owner_login_id,
+        project_id=project_id,
+        status=status,
+        feedback_only=feedback_only,
+    )
 
     base = (
         select(Conversation, User)
@@ -885,51 +1064,59 @@ def list_admin_conversations(
             .limit(limit)
         ).all()
     )
+    conversation_ids = [conversation.id for conversation, _owner in rows]
+
+    def grouped_counts(statement: object) -> dict[str, int]:
+        if not conversation_ids:
+            return {}
+        return {
+            conversation_id: int(count)
+            for conversation_id, count in db.execute(statement).all()
+        }
+
+    run_counts = grouped_counts(
+        select(Run.conversation_id, func.count(Run.id))
+        .where(Run.conversation_id.in_(conversation_ids))
+        .group_by(Run.conversation_id)
+    )
+    artifact_counts = grouped_counts(
+        select(Artifact.conversation_id, func.count(Artifact.id))
+        .where(
+            Artifact.conversation_id.in_(conversation_ids),
+            Artifact.deleted_at.is_(None),
+        )
+        .group_by(Artifact.conversation_id)
+    )
+    share_counts = grouped_counts(
+        select(
+            ConversationShareGrant.conversation_id,
+            func.count(ConversationShareGrant.id),
+        )
+        .where(
+            ConversationShareGrant.conversation_id.in_(conversation_ids),
+            ConversationShareGrant.revoked_at.is_(None),
+        )
+        .group_by(ConversationShareGrant.conversation_id)
+    )
+    feedback_counts = grouped_counts(
+        select(Message.conversation_id, func.count(MessageFeedback.id))
+        .join(MessageFeedback, MessageFeedback.message_id == Message.id)
+        .where(
+            Message.conversation_id.in_(conversation_ids),
+            MessageFeedback.deleted_at.is_(None),
+        )
+        .group_by(Message.conversation_id)
+    )
     items: list[dict[str, object]] = []
     for conversation, owner in rows:
-        run_count = int(
-            db.scalar(
-                select(func.count(Run.id)).where(Run.conversation_id == conversation.id)
-            )
-            or 0
-        )
-        artifact_count = int(
-            db.scalar(
-                select(func.count(Artifact.id)).where(
-                    Artifact.conversation_id == conversation.id,
-                    Artifact.deleted_at.is_(None),
-                )
-            )
-            or 0
-        )
-        share_count = int(
-            db.scalar(
-                select(func.count(ConversationShareGrant.id)).where(
-                    ConversationShareGrant.conversation_id == conversation.id,
-                    ConversationShareGrant.revoked_at.is_(None),
-                )
-            )
-            or 0
-        )
-        feedback_count = int(
-            db.scalar(
-                select(func.count(MessageFeedback.id))
-                .join(Message, Message.id == MessageFeedback.message_id)
-                .where(
-                    Message.conversation_id == conversation.id,
-                    MessageFeedback.deleted_at.is_(None),
-                )
-            )
-            or 0
-        )
         items.append(
             _conversation_list_payload(
                 conversation,
                 owner,
-                run_count=run_count,
-                artifact_count=artifact_count,
-                share_count=share_count,
-                feedback_count=feedback_count,
+                run_count=run_counts.get(conversation.id, 0),
+                artifact_count=artifact_counts.get(conversation.id, 0),
+                share_count=share_counts.get(conversation.id, 0),
+                feedback_count=feedback_counts.get(conversation.id, 0),
             )
         )
 
@@ -954,6 +1141,352 @@ def list_admin_conversations(
         "offset": offset,
         "hasMore": offset + len(items) < total,
     }
+
+
+def _xlsx_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        value = value.astimezone(_ANALYTICS_TIMEZONE).replace(tzinfo=None)
+    return value
+
+
+def _set_xlsx_value(cell: Cell, value: object) -> None:
+    if isinstance(value, str):
+        cell.value = value[:_XLSX_MAX_CELL_LENGTH]
+        cell.data_type = "s"
+        return
+    cell.value = value
+    if isinstance(value, datetime):
+        cell.number_format = "yyyy-mm-dd hh:mm:ss"
+
+
+def _write_xlsx_sheet(
+    sheet: Worksheet,
+    headers: list[str],
+    rows: list[list[object]],
+    widths: list[float],
+) -> None:
+    sheet.sheet_view.showGridLines = False
+    sheet.freeze_panes = "A2"
+    for column, (header, width) in enumerate(
+        zip(headers, widths, strict=True), start=1
+    ):
+        cell = sheet.cell(1, column)
+        _set_xlsx_value(cell, header)
+        cell.font = _XLSX_HEADER_FONT
+        cell.fill = _XLSX_HEADER_FILL
+        cell.border = _XLSX_ROW_BORDER
+        cell.alignment = Alignment(vertical="center", wrap_text=True)
+        sheet.column_dimensions[cell.column_letter].width = width
+    sheet.row_dimensions[1].height = 28
+    for row_index, values in enumerate(rows, start=2):
+        for column, value in enumerate(values, start=1):
+            cell = sheet.cell(row_index, column)
+            _set_xlsx_value(cell, value)
+            cell.font = _XLSX_BODY_FONT
+            cell.border = _XLSX_ROW_BORDER
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+        sheet.row_dimensions[row_index].height = 42
+    last_row = max(1, len(rows) + 1)
+    sheet.auto_filter.ref = f"A1:{sheet.cell(1, len(headers)).column_letter}{last_row}"
+
+
+def _admin_conversation_workbook(
+    conversation_rows: list[tuple[Conversation, User]],
+    messages: list[Message],
+    feedback_rows: list[tuple[MessageFeedback, Message, User]],
+    run_counts: dict[str, int],
+    artifact_counts: dict[str, int],
+    share_counts: dict[str, int],
+) -> bytes:
+    feedback_by_message: dict[str, list[tuple[MessageFeedback, User]]] = {}
+    for feedback, message, author in feedback_rows:
+        feedback_by_message.setdefault(message.id, []).append((feedback, author))
+
+    messages_by_conversation: dict[str, list[Message]] = {}
+    for message in messages:
+        messages_by_conversation.setdefault(message.conversation_id, []).append(message)
+
+    workbook = Workbook()
+    analysis_sheet = workbook.active
+    assert isinstance(analysis_sheet, Worksheet)
+    analysis_sheet.title = "대화 분석"
+    analysis_data: list[list[object]] = []
+    for conversation, owner in conversation_rows:
+        conversation_messages = messages_by_conversation.get(conversation.id, [])
+        for message in conversation_messages or [None]:
+            feedback = feedback_by_message.get(message.id, []) if message else []
+            feedback_items = [item for item, _author in feedback]
+            analysis_data.append(
+                [
+                    conversation.id,
+                    conversation.title,
+                    owner.login_id,
+                    owner.display_name or "",
+                    conversation.project_id,
+                    conversation.status,
+                    conversation.visibility,
+                    run_counts.get(conversation.id, 0),
+                    artifact_counts.get(conversation.id, 0),
+                    share_counts.get(conversation.id, 0),
+                    _xlsx_datetime(conversation.created_at),
+                    _xlsx_datetime(conversation.last_activity_at),
+                    message.id if message else "",
+                    message.run_id or "" if message else "",
+                    message.turn_index if message else "",
+                    message.role if message else "",
+                    message.status if message else "",
+                    message.canonical_text if message else "",
+                    (
+                        "예"
+                        if message
+                        and len(message.canonical_text) > _XLSX_MAX_CELL_LENGTH
+                        else "아니요"
+                    ),
+                    _xlsx_datetime(message.created_at) if message else None,
+                    " + ".join(
+                        kind
+                        for kind in ("rating", "report")
+                        if any(item.kind == kind for item in feedback_items)
+                    ),
+                    ", ".join(
+                        dict.fromkeys(
+                            item.rating_value
+                            for item in feedback_items
+                            if item.rating_value
+                        )
+                    ),
+                    sum(item.rating_value == "like" for item in feedback_items),
+                    sum(item.rating_value == "dislike" for item in feedback_items),
+                    ", ".join(
+                        dict.fromkeys(
+                            item.report_category
+                            for item in feedback_items
+                            if item.report_category
+                        )
+                    ),
+                    sum(item.kind == "report" for item in feedback_items),
+                    "\n\n".join(
+                        item.report_description
+                        for item in feedback_items
+                        if item.report_description
+                    ),
+                    ", ".join(
+                        dict.fromkeys(author.login_id for _item, author in feedback)
+                    ),
+                    (
+                        _xlsx_datetime(min(item.created_at for item in feedback_items))
+                        if feedback_items
+                        else None
+                    ),
+                    (
+                        _xlsx_datetime(max(item.updated_at for item in feedback_items))
+                        if feedback_items
+                        else None
+                    ),
+                    "\n".join(item.id for item in feedback_items),
+                ]
+            )
+    _write_xlsx_sheet(
+        analysis_sheet,
+        [
+            "대화 ID",
+            "대화 제목",
+            "소유자 ID",
+            "소유자 이름",
+            "프로젝트 ID",
+            "대화 상태",
+            "공개 범위",
+            "대화 Run 수",
+            "대화 Artifact 수",
+            "대화 공유 수",
+            "대화 생성 일시",
+            "최근 활동 일시",
+            "메시지 ID",
+            "Run ID",
+            "Turn",
+            "메시지 역할",
+            "메시지 상태",
+            "메시지 내용",
+            "내용 잘림",
+            "메시지 생성 일시",
+            "의견 종류",
+            "평가",
+            "좋아요 수",
+            "싫어요 수",
+            "Category",
+            "Comment 수",
+            "Comment",
+            "의견 작성자",
+            "의견 작성 일시",
+            "의견 수정 일시",
+            "의견 ID",
+        ],
+        analysis_data,
+        [
+            38,
+            36,
+            28,
+            18,
+            38,
+            14,
+            14,
+            11,
+            14,
+            11,
+            20,
+            20,
+            38,
+            38,
+            9,
+            12,
+            14,
+            80,
+            11,
+            20,
+            14,
+            12,
+            10,
+            10,
+            16,
+            11,
+            55,
+            28,
+            20,
+            20,
+            38,
+        ],
+    )
+
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+@router.get("/conversations/export.xlsx")
+def export_admin_conversations(
+    request: Request,
+    query: str = "",
+    feedback_only: bool = False,
+    limit: int = Query(default=120, ge=1, le=500),
+    actor: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    require_admin(actor)
+    filters, normalized_query = _admin_conversation_filters(
+        actor,
+        query=query,
+        feedback_only=feedback_only,
+    )
+    conversation_rows = list(
+        db.execute(
+            select(Conversation, User)
+            .join(User, User.id == Conversation.owner_user_id)
+            .where(*filters)
+            .order_by(Conversation.last_activity_at.desc(), Conversation.id)
+            .limit(limit)
+        ).all()
+    )
+    conversation_ids = [conversation.id for conversation, _owner in conversation_rows]
+    messages = (
+        list(
+            db.scalars(
+                select(Message)
+                .where(Message.conversation_id.in_(conversation_ids))
+                .order_by(Message.conversation_id, Message.created_at, Message.id)
+            )
+        )
+        if conversation_ids
+        else []
+    )
+    feedback_rows = (
+        list(
+            db.execute(
+                select(MessageFeedback, Message, User)
+                .join(Message, Message.id == MessageFeedback.message_id)
+                .join(User, User.id == MessageFeedback.user_id)
+                .where(
+                    Message.conversation_id.in_(conversation_ids),
+                    MessageFeedback.deleted_at.is_(None),
+                )
+                .order_by(
+                    Message.conversation_id,
+                    Message.created_at,
+                    MessageFeedback.created_at,
+                )
+            ).all()
+        )
+        if conversation_ids
+        else []
+    )
+
+    def grouped_counts(statement: object) -> dict[str, int]:
+        if not conversation_ids:
+            return {}
+        return {
+            conversation_id: int(count)
+            for conversation_id, count in db.execute(statement).all()
+        }
+
+    run_counts = grouped_counts(
+        select(Run.conversation_id, func.count(Run.id))
+        .where(Run.conversation_id.in_(conversation_ids))
+        .group_by(Run.conversation_id)
+    )
+    artifact_counts = grouped_counts(
+        select(Artifact.conversation_id, func.count(Artifact.id))
+        .where(
+            Artifact.conversation_id.in_(conversation_ids),
+            Artifact.deleted_at.is_(None),
+        )
+        .group_by(Artifact.conversation_id)
+    )
+    share_counts = grouped_counts(
+        select(
+            ConversationShareGrant.conversation_id,
+            func.count(ConversationShareGrant.id),
+        )
+        .where(
+            ConversationShareGrant.conversation_id.in_(conversation_ids),
+            ConversationShareGrant.revoked_at.is_(None),
+        )
+        .group_by(ConversationShareGrant.conversation_id)
+    )
+    content = _admin_conversation_workbook(
+        conversation_rows,
+        messages,
+        feedback_rows,
+        run_counts,
+        artifact_counts,
+        share_counts,
+    )
+    record_audit(
+        db,
+        action="admin_conversations_exported",
+        target_type="conversation",
+        result="success",
+        actor=actor,
+        request_id=_request_id(request),
+        metadata={
+            "query_used": bool(normalized_query),
+            "feedback_only": feedback_only,
+            "limit": limit,
+            "conversation_count": len(conversation_rows),
+            "message_count": len(messages),
+            "feedback_count": len(feedback_rows),
+        },
+    )
+    db.commit()
+    generated_at = datetime.now(_ANALYTICS_TIMEZONE)
+    filename = quote(
+        generated_at.strftime("lumina_conversations_%Y%m%d_%H%M.xlsx"), safe=""
+    )
+    return Response(
+        content=content,
+        media_type=_XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+    )
 
 
 def _require_admin_conversation(
@@ -1028,6 +1561,7 @@ def get_admin_conversation(
         metadata={"owner_user_id": conversation.owner_user_id},
     )
     db.commit()
+    attachments_by_message = preload_message_attachments(db, messages)
     return {
         "conversation": {
             "id": conversation.id,
@@ -1042,8 +1576,15 @@ def get_admin_conversation(
             "createdAt": conversation.created_at,
             "updatedAt": conversation.updated_at,
         },
-        "messages": [message_response(message, db) for message in messages],
-        "runs": [run_snapshot(db, run) for run in runs],
+        "messages": [
+            message_response(
+                message,
+                db,
+                preloaded_attachments=attachments_by_message.get(message.id, []),
+            )
+            for message in messages
+        ],
+        "runs": run_snapshots(db, runs),
         "artifacts": [
             {
                 "id": artifact.id,
@@ -1124,15 +1665,26 @@ def get_admin_conversation_turn_sets(
         metadata={"view": "turn_sets"},
     )
     db.commit()
+    attachments_by_message = preload_message_attachments(db, messages)
+    snapshots_by_run = {
+        snapshot["runId"]: snapshot for snapshot in run_snapshots(db, runs)
+    }
     return {
         "turnSets": [
             {
                 "id": run.id,
                 "runId": run.id,
                 "messages": [
-                    message_response(message, db) for message in grouped.get(run.id, [])
+                    message_response(
+                        message,
+                        db,
+                        preloaded_attachments=attachments_by_message.get(
+                            message.id, []
+                        ),
+                    )
+                    for message in grouped.get(run.id, [])
                 ],
-                "run": run_snapshot(db, run),
+                "run": snapshots_by_run[run.id],
             }
             for run in reversed(runs)
         ],
@@ -1236,7 +1788,7 @@ def get_audit_traffic(
             )
         )
     )
-    counts = {
+    counts: dict[datetime, dict[str, int]] = {
         window_start + timedelta(minutes=index): {
             "normal": 0,
             "abnormal_audit": 0,
@@ -1269,27 +1821,32 @@ def get_audit_traffic(
         metadata={"minutes": minutes},
     )
     db.commit()
-    buckets = []
+    buckets: list[dict[str, object]] = []
+    bucket_values: list[int] = []
+    normal_values: list[int] = []
+    abnormal_values: list[int] = []
     for minute, bucket in counts.items():
+        normal_count = bucket["normal"]
         abnormal_count = (
             bucket["abnormal_audit"]
             + bucket["automatic_recovery"]
             + bucket["manual_restart"]
         )
+        total_count = normal_count + abnormal_count
+        bucket_values.append(total_count)
+        normal_values.append(normal_count)
+        abnormal_values.append(abnormal_count)
         buckets.append(
             {
                 "minute": minute,
-                "count": bucket["normal"] + abnormal_count,
-                "normalCount": bucket["normal"],
+                "count": total_count,
+                "normalCount": normal_count,
                 "abnormalCount": abnormal_count,
                 "abnormalAuditCount": bucket["abnormal_audit"],
                 "automaticRecoveryCount": bucket["automatic_recovery"],
                 "manualRestartCount": bucket["manual_restart"],
             }
         )
-    bucket_values = [bucket["count"] for bucket in buckets]
-    normal_values = [bucket["normalCount"] for bucket in buckets]
-    abnormal_values = [bucket["abnormalCount"] for bucket in buckets]
     return {
         "generatedAt": now,
         "timezone": str(_ANALYTICS_TIMEZONE),
@@ -1301,13 +1858,13 @@ def get_audit_traffic(
         "abnormalTotal": sum(abnormal_values),
         "abnormalPeak": max(abnormal_values, default=0),
         "abnormalAuditTotal": sum(
-            bucket["abnormalAuditCount"] for bucket in buckets
+            bucket["abnormal_audit"] for bucket in counts.values()
         ),
         "automaticRecoveryTotal": sum(
-            bucket["automaticRecoveryCount"] for bucket in buckets
+            bucket["automatic_recovery"] for bucket in counts.values()
         ),
         "manualRestartTotal": sum(
-            bucket["manualRestartCount"] for bucket in buckets
+            bucket["manual_restart"] for bucket in counts.values()
         ),
         "buckets": buckets,
     }
@@ -1326,7 +1883,7 @@ def get_run_safety_settings(
     request: Request,
     actor: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> dict[str, int | float]:
+) -> dict[str, int | float | bool]:
     organization = _admin_organization(db, actor)
     record_audit(
         db,
@@ -1347,7 +1904,7 @@ def patch_run_safety_settings(
     request: Request,
     context: AuthContext = Depends(require_csrf),
     db: Session = Depends(get_db),
-) -> dict[str, int | float]:
+) -> dict[str, int | float | bool]:
     organization = _admin_organization(db, context.user)
     previous = normalize_run_safety_settings(organization.run_safety_settings_json)
     updated = normalize_run_safety_settings(payload.model_dump())

@@ -14,7 +14,11 @@
 installer.bat
 ```
 
+Codex Provider는 선택 설치입니다. 대화형 설치의 `Install the optional Codex Provider support? [y/N]` 질문은 기본값이 `N`이므로, 사용하지 않으면 `openai-codex`와 Codex CLI 바이너리를 설치하지 않습니다. Codex를 사용하는 개발 PC에서는 `installer.bat -InstallCodex`, 사용하지 않는 회사 PC나 자동 설치에서는 `installer.bat -SkipCodex`를 사용할 수 있습니다. `-NonInteractive`에서 별도 옵션이 없으면 Codex를 설치하지 않습니다.
+
 설치기는 dependency, data directory, `.env`, Alembic migration과 Frontend build를 준비합니다. 기존 `.env`는 통째로 덮어쓰지 않으며 사용자가 P-GPT 설정을 명시적으로 선택한 경우에만 해당 key를 갱신합니다. API Key, employee number와 company code는 숨김 입력으로 받고 완료 메시지나 오류에 값을 다시 표시하지 않습니다.
+
+장시간 bundled Python script는 Backend 서버 환경과 dependency를 공유하지 않도록 승인된 별도 virtual environment를 준비합니다. 실제 Python 실행 파일을 `LUMINA_PYTHON_EXECUTION_EXECUTABLE`에 지정하고 dependency import, JSON stdin, stdout 결과와 Skill fixture를 검증한 뒤에만 `LUMINA_PYTHON_HEAVY_EXECUTION_ENABLED=true`를 설정합니다. `.bat`·`.cmd`, shell command와 Run 중 `pip install`은 허용하지 않습니다. `heavy` 시간 hard cap은 24시간이며 `LUMINA_PYTHON_HEAVY_MAX_TIMEOUT_SECONDS`로 더 낮출 수 있습니다. 전체 Run 기본 제한은 15분이므로 장시간 실행은 `LUMINA_RUN_TIMEOUT_SECONDS`도 요청 시간 이상(최대 24시간)으로 설정해야 합니다. Agent Skills 표준에 없는 5MB package 상한은 설정하지 않습니다. 200MB급 회사 program은 Skill에 포함하지 말고 MCP server의 별도 runtime image·virtual environment에 wheel·lockfile 또는 image digest로 고정합니다. MCP Tool timeout은 기본 30초이며 승인된 장시간 계산은 최대 24시간 범위에서 명시적으로 늘리고, 전체 Run deadline도 그 이상으로 맞춥니다. MCP Tool의 입력·출력 JSON schema, 권한, Secret binding과 재시도 정책을 검증하고, 연결된 표준 Skill wrapper가 입력 수집·검증·호출·결과 해석 절차를 제공하는지 함께 확인합니다. 큰 model·data에는 권한 검증된 Artifact·object storage 입력 계약을 추가합니다.
 
 네트워크를 사용하지 않는 CI 설치 예시는 다음과 같습니다.
 
@@ -119,7 +123,7 @@ Backend 회귀 테스트는 저장소 루트에서 다음 명령으로 실행합
 
 ```powershell
 $env:PYTHONPYCACHEPREFIX = "$PWD\.cache\pycache"
-uv run --project apps/server pytest -c apps/server/pyproject.toml
+uv run --project apps/server --extra codex pytest -c apps/server/pyproject.toml
 ```
 
 Frontend는 빠른 Node 단위 테스트를 먼저 실행한 뒤 TypeScript와 production bundle을 검증합니다.

@@ -36,17 +36,21 @@ test("the leading edge settles before streaming markup is removed", async () => 
   assert.match(source, /revealing: streaming \|\| visibleText !== targetText \|\| settling, settling/);
 });
 
-test("streaming reparses only the changing markdown tail while keeping the 15ms cadence", async () => {
-  const [turnSource, streamingSource] = await Promise.all([
+test("streaming keeps completed markdown blocks immutable with buffered smooth frames", async () => {
+  const [turnSource, streamingSource, streamingMarkdownSource] = await Promise.all([
     read("../src/components/ConversationTurn.tsx"),
     read("../src/streaming-ui.ts"),
+    read("../src/streaming-markdown.ts"),
   ]);
 
   assert.match(streamingSource, /const visibleFrameIntervalMs = 15;/);
+  assert.match(streamingSource, /function smoothBufferedRevealCount\(pendingLength: number, remainingMs: number\)/);
   assert.match(turnSource, /const MemoizedMarkdownChunk = memo\(function MarkdownChunk/);
-  assert.match(turnSource, /prefixText && <MemoizedMarkdownChunk text=\{prefixText\}[\s\S]*?leadingEdge=\{false\}/);
+  assert.match(streamingMarkdownSource, /stableBlocks: \[\]/);
+  assert.match(streamingMarkdownSource, /!input\.startsWith\(previous\.input\)/);
+  assert.match(turnSource, /stableBlocks\.map\(\(block, index\) => \([\s\S]*?<MemoizedMarkdownChunk key=\{index\} text=\{block\}[\s\S]*?leadingEdge=\{false\}/);
   assert.match(turnSource, /tailText && <MemoizedMarkdownChunk text=\{tailText\}[\s\S]*?leadingEdge \/>/);
-  assert.doesNotMatch(turnSource, /prefixText && <ReactMarkdown/);
+  assert.doesNotMatch(turnSource, /prefixText/);
 });
 
 test("closed tool rows defer hidden request and result serialization", async () => {

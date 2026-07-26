@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   BarChart3,
   ChevronDown,
+  Download,
   FileText,
   KeyRound,
   List,
@@ -17,7 +18,7 @@ import {
   Users,
 } from "lucide-react";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
-import { api } from "../api";
+import { adminApi } from "../feature-api";
 import type {
   AdminAuditEvent,
   AdminConversationDetail,
@@ -27,6 +28,8 @@ import type {
   UserRole,
   UserStatus,
 } from "../api-types";
+
+const api = { admin: adminApi };
 import { AdminTrafficChart } from "./AdminTrafficChart";
 import { OrganizationInstructionsPanel } from "./OrganizationInstructionsPanel";
 import { SelectMenu } from "./SelectMenu";
@@ -118,6 +121,7 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
   const [conversationLimit, setConversationLimit] = useState<AdminListLimit>(120);
   const [collapsedConversationUsers, setCollapsedConversationUsers] = useState<Set<string>>(new Set());
   const [feedbackOnly, setFeedbackOnly] = useState(false);
+  const [exportingConversations, setExportingConversations] = useState(false);
   const [auditEvents, setAuditEvents] = useState<AdminAuditEvent[]>([]);
   const [auditTotal, setAuditTotal] = useState(0);
   const [auditLimit, setAuditLimit] = useState<AdminListLimit>(120);
@@ -161,7 +165,7 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
   }, [conversations]);
 
   useEffect(() => {
-    if (tab === "policy") {
+    if (tab === "policy" || tab === "usage") {
       setLoading(false);
       setError(null);
       return;
@@ -175,17 +179,15 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
             setUsers(page.items);
             setUserTotal(page.total);
           })
-        : tab === "usage"
-          ? api.admin.getUsageStatistics(usagePeriod, controller.signal).then(setUsageStatistics)
         : tab === "conversations"
           ? api.admin.listConversations({ query, feedbackOnly, limit: conversationLimit }, controller.signal).then((page) => {
               setConversations(page.items);
               setConversationTotal(page.total);
             })
           : api.admin.listAuditEvents({ action: query, limit: auditLimit }, controller.signal).then((page) => {
-                setAuditEvents(page.items);
-                setAuditTotal(page.total);
-              });
+              setAuditEvents(page.items);
+              setAuditTotal(page.total);
+            });
       request.catch((requestError) => {
         if (!controller.signal.aborted) setError(errorMessage(requestError));
       }).finally(() => {
@@ -196,7 +198,23 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [auditLimit, conversationLimit, feedbackOnly, query, refreshKey, tab, usagePeriod]);
+  }, [auditLimit, conversationLimit, feedbackOnly, query, refreshKey, tab]);
+
+  useEffect(() => {
+    if (tab !== "usage" && tab !== "audit") return;
+    const controller = new AbortController();
+    if (tab === "usage") setLoading(true);
+    setError(null);
+    void api.admin.getUsageStatistics(usagePeriod, controller.signal)
+      .then(setUsageStatistics)
+      .catch((requestError) => {
+        if (!controller.signal.aborted) setError(errorMessage(requestError));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted && tab === "usage") setLoading(false);
+      });
+    return () => controller.abort();
+  }, [refreshKey, tab, usagePeriod]);
 
   const chooseUser = (user: AdminUser) => {
     const next = selectedUser?.id === user.id ? null : user;
@@ -314,6 +332,27 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
     }
   };
 
+  const exportConversations = async () => {
+    setExportingConversations(true);
+    try {
+      const download = await api.admin.exportConversations({
+        query,
+        feedbackOnly,
+        limit: conversationLimit,
+      });
+      const url = URL.createObjectURL(download.blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = download.fileName;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (requestError) {
+      onToast(errorMessage(requestError));
+    } finally {
+      setExportingConversations(false);
+    }
+  };
+
   const renderConversationRow = (conversation: AdminConversationSummary) => (
     <button className="admin-conversation-row" type="button" key={conversation.id} onClick={() => void openConversation(conversation.id)}>
       <span><strong>{conversation.title}</strong><small>{conversation.owner.loginId}</small><small>{formatDate(conversation.lastActivityAt)}</small></span>
@@ -367,7 +406,7 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
               <article className={`admin-row ${selectedUser?.id === user.id ? "is-open" : ""}`} key={user.id}>
                 {selectedUser?.id === user.id ? (
                   <form className="admin-user-inline-edit" onSubmit={(event) => { event.preventDefault(); void saveUser(); }} onKeyDown={(event) => { if (event.key !== "Enter") return; event.preventDefault(); void saveUser(); }}>
-                    <strong title={user.loginId}>{user.loginId}</strong>
+                    <strong data-tooltip={user.loginId}>{user.loginId}</strong>
                     <input aria-label="표시 이름" value={userDisplayName} onChange={(event) => setUserDisplayName(event.currentTarget.value)} />
                     <input aria-label="소속" value={userAffiliation} onChange={(event) => setUserAffiliation(event.currentTarget.value)} />
                     <SelectMenu className="admin-user-select" size="small" value={userRole} options={userRoleOptions} ariaLabel="역할" onChange={(value) => { setUserRole(value as UserRole); setUserChangeArmed(false); }} />
@@ -438,6 +477,7 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
               <div className="admin-count">대화 {conversations.length} / {conversationTotal}건</div>
               <div className="admin-conversation-controls">
                 <div className="admin-control-label"><span>조회 한도</span><SelectMenu className="admin-limit-select" size="small" width="auto" align="end" value={String(conversationLimit)} options={adminListLimitOptions} ariaLabel="대화 조회 한도" onChange={(value) => setConversationLimit(Number(value) as AdminListLimit)} /></div>
+                <button className="tooltip-control admin-conversation-export" type="button" aria-label="대화 Excel 내보내기" data-tooltip="Excel 내보내기" disabled={exportingConversations} onClick={() => void exportConversations()}>{exportingConversations ? <LoaderCircle className="is-running" size={14} /> : <Download size={14} />}</button>
                 <div className="admin-conversation-view-toggle" role="group" aria-label="대화 목록 보기 방식">
                   <button className="tooltip-control" type="button" aria-label="메시지순" data-tooltip="메시지순" aria-pressed={conversationViewMode === "recent"} onClick={() => setConversationViewMode("recent")}><MessageSquare size={14} /></button>
                   <button className="tooltip-control" type="button" aria-label="사용자별" data-tooltip="사용자별" aria-pressed={conversationViewMode === "user"} onClick={() => setConversationViewMode("user")}><Users size={14} /></button>
@@ -482,6 +522,23 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
 
       {tab === "audit" && (
         <section className="admin-section" aria-label="모니터링 로그">
+          {usageStatistics && (
+            <section className="admin-cache-monitoring" aria-label="Prefix cache 모니터링">
+              <div className="admin-cache-monitoring-heading">
+                <div><strong>Prefix cache</strong><small>Provider 모델 호출 기준 · 같은 Run의 첫 호출과 후속 호출을 분리합니다.</small></div>
+                <div className="admin-usage-period"><span>조회 기간</span><SelectMenu className="admin-usage-period-select" size="small" width="auto" align="end" value={String(usagePeriod)} options={usagePeriodOptions} ariaLabel="Cache 조회 기간" onChange={(value) => setUsagePeriod(Number(value) as 0 | 30 | 90)} /></div>
+              </div>
+              <div className="admin-cache-summary">
+                <div><span>Run 첫 호출</span><strong>{usageStatistics.cache.firstCall.cacheHitRatioPercent.toFixed(1)}%</strong><small>{usageStatistics.cache.firstCall.modelCalls.toLocaleString()}회 · Cached {usageStatistics.cache.firstCall.cachedInputTokens.toLocaleString()}</small></div>
+                <div><span>Run 내부 후속</span><strong>{usageStatistics.cache.subsequentCalls.cacheHitRatioPercent.toFixed(1)}%</strong><small>{usageStatistics.cache.subsequentCalls.modelCalls.toLocaleString()}회 · Cached {usageStatistics.cache.subsequentCalls.cachedInputTokens.toLocaleString()}</small></div>
+              </div>
+              <div className="admin-cache-digest-table" role="table" aria-label="Prompt cache static digest별 집계">
+                <div className="admin-cache-digest-row is-header" role="row"><span>Static digest</span><span>Provider / Model</span><span>호출</span><span>Cache write</span><span>첫 호출</span><span>후속 호출</span></div>
+                {usageStatistics.cache.byStaticDigest.map((item) => <div className="admin-cache-digest-row" role="row" key={`${item.providerId}:${item.modelKey}:${item.digest}`}><code className="tooltip-control" data-tooltip={item.digest}>{item.digest === "unknown" ? "unknown" : item.digest.slice(0, 12)}</code><span>{item.providerId} · {item.modelKey}</span><span>{item.modelCalls.toLocaleString()}</span><span>{item.cacheWriteTokens.toLocaleString()}</span><strong>{item.firstCall.cacheHitRatioPercent.toFixed(1)}%</strong><strong>{item.subsequentCalls.cacheHitRatioPercent.toFixed(1)}%</strong></div>)}
+                {usageStatistics.cache.byStaticDigest.length === 0 && <p>집계할 모델 호출이 없습니다.</p>}
+              </div>
+            </section>
+          )}
           <AdminTrafficChart refreshKey={refreshKey} />
           <div className="admin-audit-heading">
             <div className="admin-count">최근 모니터링 이벤트 {auditEvents.length} / {auditTotal}건</div>

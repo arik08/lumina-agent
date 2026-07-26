@@ -139,6 +139,8 @@ Office/PDF Artifact를 실제 페이지로 렌더링해 검증하려면 LibreOff
 installer.bat
 ```
 
+설치기는 Codex Provider 지원을 설치할지 묻습니다. 기본값은 `N`이며, 선택하지 않으면 대용량 Codex CLI 바이너리를 설치하지 않습니다. 집처럼 Codex를 사용하는 환경에서는 질문에 `y`로 답하거나 `installer.bat -InstallCodex`를 사용합니다. 회사처럼 사용하지 않는 환경이나 비대화형 설치에서는 기본적으로 제외되며, `-SkipCodex`로 명시할 수도 있습니다.
+
 설치기는 다음 작업을 수행합니다.
 
 - Python과 Frontend 의존성 설치
@@ -275,7 +277,7 @@ Backend 테스트:
 
 ```powershell
 $env:PYTHONPYCACHEPREFIX = "$PWD\.cache\pycache"
-uv run --project apps/server pytest -c apps/server/pyproject.toml
+uv run --project apps/server --extra codex pytest -c apps/server/pyproject.toml
 ```
 
 Frontend 단위 테스트, typecheck와 build:

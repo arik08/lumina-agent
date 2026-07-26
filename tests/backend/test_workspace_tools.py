@@ -395,7 +395,13 @@ def test_write_file_result_is_exposed_as_document_artifact(
         started = client.post(
             f"/api/conversations/{conversation['id']}/runs",
             headers={**headers, "Idempotency-Key": "write-file-artifact-run"},
-            json={"message": {"text": "파일을 만들어 주세요."}},
+            json={
+                "message": {
+                    "text": "파일을 만들어 주세요.",
+                    "outputMode": "file",
+                    "targetOutputTokens": 10_000,
+                }
+            },
         )
         assert started.status_code == 202, started.text
 
@@ -416,6 +422,11 @@ def test_write_file_result_is_exposed_as_document_artifact(
     assert snapshot["toolExecutions"][0]["durationMs"] >= 100
     assert snapshot["artifacts"][0]["displayName"] == "result.md"
     assert snapshot["artifacts"][0]["mimeType"] == "text/markdown"
+    assert snapshot["artifactProgress"] is None
+    assert snapshot["artifactUsage"]["tokens"] > 0
+    assert snapshot["artifactUsage"]["lines"] == 1
+    assert snapshot["artifactUsage"]["estimated"] is False
+    assert snapshot["artifactUsage"]["targetTokens"] == 10_000
 
 
 def test_write_file_allows_executable_html_and_exposes_html_artifact(
@@ -480,3 +491,36 @@ def test_write_file_allows_executable_html_and_exposes_html_artifact(
         assert version.status_code == 200, version.text
         assert version.json()["sourceText"] == html
         assert version.json()["validationStatus"] == "structural_passed"
+        assert version.json()["previewUrl"].endswith(
+            f"version={artifact['currentVersion']}"
+        )
+        metadata_only = client.get(
+            f"/api/artifacts/{artifact['id']}/versions/{artifact['currentVersion']}",
+            params={"include_source": False},
+        )
+        assert metadata_only.status_code == 200
+        assert metadata_only.json()["sourceAvailable"] is True
+        assert metadata_only.json()["sourceText"] is None
+        preview = client.get(version.json()["previewUrl"])
+        assert preview.status_code == 200, preview.text
+        assert preview.headers["content-type"].startswith("text/html")
+        assert preview.headers.get("content-encoding") is None
+        assert '<script src="/artifact-preview-bridge.js"></script>' in preview.text
+        assert preview.text.index("artifact-preview-bridge.js") < preview.text.index(
+            "</body>"
+        )
+        assert html not in preview.text
+        standalone_preview = client.get(
+            version.json()["previewUrl"],
+            params={
+                "version": artifact["currentVersion"],
+                "standalone": True,
+            },
+        )
+        assert standalone_preview.status_code == 200
+        assert standalone_preview.text == html
+        assert "artifact-preview-bridge.js" not in standalone_preview.text
+        assert standalone_preview.headers["content-disposition"] == "inline"
+        assert standalone_preview.headers["content-security-policy"].startswith(
+            "sandbox allow-scripts"
+        )

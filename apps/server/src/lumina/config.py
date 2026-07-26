@@ -109,6 +109,13 @@ class Settings(BaseSettings):
     login_lock_seconds: int = Field(default=900, ge=1)
     max_upload_bytes: int = Field(default=25 * 1024 * 1024, ge=1024)
     max_pasted_text_bytes: int = Field(default=2 * 1024 * 1024, ge=1024)
+    python_execution_executable: Path | None = None
+    python_heavy_execution_enabled: bool = False
+    python_heavy_max_timeout_seconds: int = Field(
+        default=24 * 60 * 60,
+        ge=600,
+        le=24 * 60 * 60,
+    )
 
     @model_validator(mode="after")
     def resolve_storage_directories(self) -> "Settings":
@@ -119,6 +126,10 @@ class Settings(BaseSettings):
         self.artifacts_dir = (
             (self.artifacts_dir or self.data_dir / "artifacts").expanduser().resolve()
         )
+        if self.python_execution_executable is not None:
+            self.python_execution_executable = (
+                self.python_execution_executable.expanduser().resolve()
+            )
         if self.environment == "production":
             self.cookie_secure = True
         return self

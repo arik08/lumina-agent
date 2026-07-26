@@ -27,13 +27,18 @@ test("clarification card identifies questions and supports objective, custom, an
   assert.doesNotMatch(cardSource, /setCustomText\(\(current\)[\s\S]{0,120}event\.currentTarget\.value/);
   assert.match(cardSource, /request\.questions\.every/);
   assert.match(cardSource, /onSubmit\(orderedAnswers\)/);
+  assert.doesNotMatch(cardSource, /useEffect\(\(\) => \{[\s\S]{0,200}onSubmit\(orderedAnswers\)/);
+  assert.match(cardSource, /className="clarification-submit"[\s\S]*disabled=\{!complete \|\| busy\}[\s\S]*onClick=\{\(\) => void submitAnswers\(\)\}/);
+  assert.match(cardSource, /busy \? "보내는 중" : "보내기"/);
   assert.match(cardSource, /is-collapsing/);
   assert.match(cardSource, /답변한 확인 질문 다시 보기/);
   assert.match(cardSource, /다시 접기/);
   assert.match(turnSource, /inputRequestActivity[\s\S]*<UserInputRequestCard/);
+  assert.match(turnSource, /activity\.type === "input_request" \|\| groups\.length === 0/);
   assert.doesNotMatch(turnSource, /assistant-content">[\s\S]{0,300}inputRequests/);
   assert.match(stylesheet, /\.run-activity-timeline \.clarification-card \{[^}]*margin: 3px 0 1px/);
   assert.match(stylesheet, /\.clarification-question:disabled :is\(button, input\) \{ opacity: 0\.78; \}/);
+  assert.match(stylesheet, /\.clarification-footer \.clarification-submit \{[^}]*background: var\(--cobalt\);[^}]*color: var\(--surface\);/);
 });
 
 test("awaiting clarification is shown as Q&A and freezes the model-work clock", () => {
@@ -58,4 +63,8 @@ test("clarification mode is an account setting available in settings and the que
   assert.match(cardSource, /균형 있게/);
   assert.match(cardSource, /먼저 확인/);
   assert.match(workspaceSource, /type: "submit_user_input"/);
+  assert.match(stylesheet, /\.settings-card h2 \{[^}]*font-size: 16px;/);
+  assert.match(stylesheet, /\.settings-row strong \{ font-size: 14px; \}/);
+  assert.match(stylesheet, /\.settings-row small \{[^}]*font-size: 13px; \}/);
+  assert.match(stylesheet, /\.settings-row \.settings-select \.lumina-select-trigger \{[^}]*font-size: 14px; \}/);
 });

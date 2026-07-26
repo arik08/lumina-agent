@@ -42,9 +42,15 @@ test("group heading shows only merged tool time while model time has its own row
   const app = await read("../src/components/ConversationTurn.tsx");
 
   assert.match(app, /const toolGroupDurationMs = stageTiming/);
-  assert.match(app, /tool-call-group-duration" title="도구 실행 시간"/);
+  assert.match(app, /tool-call-group-duration" data-tooltip="도구 실행 시간"/);
   assert.match(app, /formatDuration\(toolGroupDurationMs\)/);
   assert.doesNotMatch(app, /formatDuration\(stageDurationMs \?\? toolCallGroupDuration/);
+});
+
+test("tool and model durations never wrap between the number and seconds unit", async () => {
+  const styles = await read("../src/styles.css");
+
+  assert.match(styles, /\.tool-call-duration \{[^}]*white-space: nowrap;/);
 });
 
 test("a stage hides its parent duration whenever timed child rows already account for it", async () => {
@@ -87,6 +93,8 @@ test("non-tool time is rendered as a model processing row with a clear explanati
 
   assert.match(app, /<ModelProcessingRow[\s\S]*durationMs=\{modelProcessingDurationMs\}/);
   assert.match(app, /모델 판단 · 내부 실행 합계/);
+  assert.match(app, /내부 추론 \$\{reasoningTokens\.toLocaleString\(\)\} 토큰/);
+  assert.match(app, /reasoningTokens=\{!timelineRunning && groupIndex === activityGroups\.length - 1 \? reasoningTokens : undefined\}/);
   assert.match(app, /여러 모델 호출과 Skill·계획 처리, 재시도 시간을 합산한 값\(외부 도구 실행 제외\)/);
   assert.doesNotMatch(app, /Provider 요청 전송 · 응답 수신/);
 });
@@ -112,4 +120,13 @@ test("model processing expands to the actual persisted exchange instead of token
   assert.match(app, /Provider에서 받음/);
   assert.doesNotMatch(app, /화면에 저장된 실제 사용자 메시지/);
   assert.doesNotMatch(app, /현재 Run 누적 토큰/);
+});
+
+test("expanded model processing closes when the surrounding blank area is pressed", async () => {
+  const app = await read("../src/components/ConversationTurn.tsx");
+
+  assert.match(app, /const rootRef = useRef<HTMLDivElement>\(null\);/);
+  assert.match(app, /if \(!isOpen\) return;[\s\S]*document\.addEventListener\("pointerdown", closeOnOutsidePointer\)/);
+  assert.match(app, /event\.target instanceof Node && !rootRef\.current\?\.contains\(event\.target\)/);
+  assert.match(app, /model-processing-call[\s\S]*ref=\{rootRef\}/);
 });

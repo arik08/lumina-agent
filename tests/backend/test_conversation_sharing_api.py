@@ -161,8 +161,11 @@ def test_link_snapshot_share_and_revoke(tmp_path: Path) -> None:
             },
             json={
                 "baseVersion": 1,
-                "sourceText": first_artifact_payload["sourceText"].replace(
-                    "작업 결과 보고서", "공유용 v2 작업 결과 보고서"
+                "sourceText": first_artifact_payload["sourceText"]
+                .replace("작업 결과 보고서", "공유용 v2 작업 결과 보고서")
+                .replace(
+                    "</body>",
+                    '<div class="mermaid">flowchart TD\nA-->B</div></body>',
                 ),
                 "changeSummary": "공유 version 고정 검증",
             },
@@ -206,6 +209,16 @@ def test_link_snapshot_share_and_revoke(tmp_path: Path) -> None:
         share_id = created_payload["id"]
         token = created_payload["urlToken"]
         assert token
+        listed = client.get("/api/conversation-shares")
+        assert listed.status_code == 200, listed.text
+        assert listed.json()["items"] == [
+            {
+                key: value
+                for key, value in created_payload.items()
+                if key not in {"urlToken", "viewerPath"}
+            }
+        ]
+        assert listed.json()["items"][0]["recipient"] is None
 
         # A later Run must not expand the already-created snapshot.
         _start_and_wait(client, alice_csrf, conversation_id, "second-share-run")
@@ -263,6 +276,8 @@ def test_link_snapshot_share_and_revoke(tmp_path: Path) -> None:
         )
         assert downloaded.status_code == 200, downloaded.text
         assert "공유용 v2 작업 결과 보고서" in downloaded.text
+        assert "cdn.jsdelivr.net/npm/mermaid@11.16.0" in downloaded.text
+        assert 'data-lumina-standalone-mermaid="11.16.0"' in downloaded.text
         downloaded_original = client.get(
             f"/api/conversation-shares/{token}/artifacts/{first_artifact_id}/download?version=1"
         )
@@ -274,6 +289,17 @@ def test_link_snapshot_share_and_revoke(tmp_path: Path) -> None:
         )
         assert downloaded_attachment.status_code == 200
         assert "점검 원문" in downloaded_attachment.text
+        shared_attachment_file = next(
+            path
+            for path in (tmp_path / "files" / "attachments").rglob("*")
+            if path.is_file()
+        )
+        shared_attachment_file.write_bytes(b"tampered shared attachment")
+        unavailable_attachment = client.get(
+            f"/api/conversation-shares/{token}/attachments/{attachment_id}/download"
+        )
+        assert unavailable_attachment.status_code == 503
+        assert unavailable_attachment.json()["code"] == "attachment_content_missing"
 
         _restore_cookies(client, alice_cookies)
         revoked = client.delete(

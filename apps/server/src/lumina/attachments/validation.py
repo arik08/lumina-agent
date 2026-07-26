@@ -16,6 +16,7 @@ MIME_BY_EXTENSION = {
     ".md": "text/markdown",
     ".csv": "text/csv",
     ".tsv": "text/tab-separated-values",
+    ".py": "text/x-python",
     ".png": "image/png",
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
@@ -44,11 +45,14 @@ def sniff_mime(content: bytes, extension: str) -> str:
         return "image/webp"
     if extension in _OPENXML_REQUIRED_MEMBER:
         return _sniff_openxml_mime(content, extension)
-    if extension in {".txt", ".html", ".md", ".csv", ".tsv"}:
+    if extension in {".txt", ".html", ".md", ".csv", ".tsv", ".py"}:
         try:
-            content.decode("utf-8")
+            decoded = content.decode("utf-8")
         except UnicodeDecodeError:
             return "application/octet-stream"
+        normalized = decoded.lstrip("\ufeff \t\r\n").casefold()
+        if extension == ".md" and normalized.startswith(("<!doctype html", "<html")):
+            return "text/html"
         return MIME_BY_EXTENSION[extension]
     return "application/octet-stream"
 

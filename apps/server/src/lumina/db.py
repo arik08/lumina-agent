@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from typing import Any
@@ -24,9 +25,18 @@ class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
 
+def _json_serializer(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
 def build_engine(database_url: str, **kwargs: Any) -> Engine:
-    options: dict[str, Any] = {"pool_pre_ping": True, **kwargs}
-    if database_url.startswith("sqlite"):
+    is_sqlite = database_url.startswith("sqlite")
+    options: dict[str, Any] = {
+        "pool_pre_ping": not is_sqlite,
+        "json_serializer": _json_serializer,
+        **kwargs,
+    }
+    if is_sqlite:
         options.setdefault("connect_args", {"check_same_thread": False})
 
     database_engine = create_engine(database_url, **options)
@@ -83,5 +93,6 @@ def get_db() -> Generator[Session, None, None]:
 def create_schema(bind: Engine | None = None) -> None:
     # Importing registers all mapped classes on Base.metadata.
     from . import models as _models  # noqa: F401
+    from .deep_analysis import models as _deep_analysis_models  # noqa: F401
 
     Base.metadata.create_all(bind or engine)

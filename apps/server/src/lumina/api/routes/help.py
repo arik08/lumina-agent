@@ -4,7 +4,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -31,6 +31,7 @@ class HelpItemCreate(ApiModel):
 class HelpItemUpdate(ApiModel):
     title: str = Field(min_length=1, max_length=160)
     markdown_content: str = Field(default="", max_length=1_000_000)
+    parent_id: str | None = None
     expected_revision: int = Field(ge=1)
 
 
@@ -88,6 +89,71 @@ def _next_sort_order(db: Session, user: User, parent_id: str | None) -> int:
         )
     )
     return max(siblings, default=-1) + 1
+
+
+def _update_help_item_record(
+    db: Session,
+    user: User,
+    item_id: str,
+    *,
+    title: str,
+    markdown_content: str,
+    expected_revision: int,
+    parent_id: str | None = None,
+    move_parent: bool = False,
+) -> HelpItem:
+    item = _item(db, user, item_id)
+    if item.revision != expected_revision:
+        raise ApiProblem(
+            409,
+            "help_revision_conflict",
+            "다른 관리자가 먼저 수정했습니다. 새로 고침 후 다시 시도해 주세요.",
+        )
+    normalized_title = _title(title)
+    values: dict[str, object] = {
+        "title": normalized_title,
+        "title_key": normalized_title.casefold(),
+        "markdown_content": markdown_content if item.kind == "document" else "",
+        "revision": expected_revision + 1,
+        "updated_by_user_id": user.id,
+    }
+    if move_parent and parent_id != item.parent_id:
+        parent = _parent(db, user, parent_id)
+        ancestor = parent
+        while ancestor is not None:
+            if ancestor.id == item.id:
+                raise ApiProblem(
+                    422,
+                    "help_parent_cycle",
+                    "폴더를 자기 자신이나 하위 폴더 안으로 이동할 수 없습니다.",
+                )
+            ancestor = _item(db, user, ancestor.parent_id) if ancestor.parent_id else None
+        values.update(
+            parent_id=parent.id if parent else None,
+            parent_scope_key=parent.id if parent else ROOT_SCOPE_KEY,
+            sort_order=_next_sort_order(db, user, parent.id if parent else None),
+        )
+    result = db.execute(
+        update(HelpItem)
+        .where(
+            HelpItem.id == item.id,
+            HelpItem.organization_id == user.organization_id,
+            HelpItem.revision == expected_revision,
+        )
+        .values(**values)
+        .execution_options(synchronize_session=False)
+    )
+    if getattr(result, "rowcount", 0) != 1:
+        db.expire(item)
+        db.refresh(item)
+        raise ApiProblem(
+            409,
+            "help_revision_conflict",
+            "다른 관리자가 먼저 수정했습니다. 새로 고침 후 다시 시도해 주세요.",
+        )
+    db.expire(item)
+    db.refresh(item)
+    return item
 
 
 @router.get("/items")
@@ -157,26 +223,32 @@ def update_help_item(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     require_admin(context.user)
-    item = _item(db, context.user, item_id)
-    if item.revision != payload.expected_revision:
-        raise ApiProblem(409, "help_revision_conflict", "다른 관리자가 먼저 수정했습니다. 새로 고침 후 다시 시도해 주세요.")
-    title = _title(payload.title)
-    item.title = title
-    item.title_key = title.casefold()
-    item.markdown_content = payload.markdown_content if item.kind == "document" else ""
-    item.revision += 1
-    item.updated_by_user_id = context.user.id
-    record_audit(
-        db,
-        action="help_item_updated",
-        target_type="help_item",
-        target_id=item.id,
-        result="success",
-        actor=context.user,
-        request_id=getattr(request.state, "request_id", None),
-        metadata={"kind": item.kind, "title": item.title, "revision": item.revision},
-    )
     try:
+        item = _update_help_item_record(
+            db,
+            context.user,
+            item_id,
+            title=payload.title,
+            markdown_content=payload.markdown_content,
+            expected_revision=payload.expected_revision,
+            parent_id=payload.parent_id,
+            move_parent="parent_id" in payload.model_fields_set,
+        )
+        record_audit(
+            db,
+            action="help_item_updated",
+            target_type="help_item",
+            target_id=item.id,
+            result="success",
+            actor=context.user,
+            request_id=getattr(request.state, "request_id", None),
+            metadata={
+                "kind": item.kind,
+                "title": item.title,
+                "parent_id": item.parent_id,
+                "revision": item.revision,
+            },
+        )
         db.commit()
     except IntegrityError as exc:
         db.rollback()

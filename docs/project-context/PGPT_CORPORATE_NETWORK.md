@@ -62,6 +62,9 @@ Web Search와 Web Fetch는 공통 HTTP fetch 함수를 사용합니다.
 - 회사 CA가 적용된 `SSLContext` 사용
 - timeout과 redirect 횟수 제한
 - 외부 페이지를 명령이 아닌 신뢰하지 않는 데이터로 표시
+- HTML·XHTML·plain text·JSON은 2MB, PDF는 100MB의 형식별 다운로드 상한 적용
+- PDF는 attachment extractor를 재사용해 event loop 밖에서 page locator가 있는 text로 추출하고, 한 번에 최대 50페이지를 `page_start`·`page_end` 범위로 조회
+- 빈 사용자 암호의 공개 권한 암호화 PDF는 허용하되 실제 비밀번호가 필요한 PDF·손상 PDF와 text layer가 없는 스캔 PDF는 추출 실패·OCR 필요 오류로 명시
 
 주요 참고 위치:
 
@@ -189,6 +192,7 @@ def build_pgpt_auth_token(
 - streaming text와 Tool Call delta 누적
 - Tool Call ID와 Tool Result 연결
 - P-GPT가 거부하는 `response_format`은 제외하고 interactive output은 `max_completion_tokens` 42,000 이하로 제한
+- 공식 전체 Context window와 실측 입력 Token 상한을 별도 capability와 관리자 설정으로 관리합니다. 2026-07-17 VS Code Codex 확장 경로 실측 기준 `gpt-5.4-mini`는 270,000 Token, `gpt-5.5`는 911,900 Token까지 입력 가능했습니다. `gpt-5.4`는 사용자 관측상 `gpt-5.5`와 같은 계열로 추정하여 911,900 Token을 임시 상한으로 적용합니다. 관리자 화면에서 실측값을 바꿔도 공식 전체 Context 값은 유지합니다. Lumina 자체 System prompt와 Tool schema도 입력을 소비하므로 실제 대화 Context 예산에서는 두 값 중 작은 한도에서 Tool schema와 안전 여유를 추가로 제외합니다.
 - `stream_options.include_usage`, 안정적인 `prompt_cache_key`와 retention 전달
 - usage와 cached token 정규화
 - retry 가능한 timeout·network·429·5xx 분류
@@ -358,6 +362,8 @@ create_http_client(
 5. Browser automation fallback
 
 DuckDuckGo가 회사 정책, 네트워크 또는 일시적 장애로 실패했다고 해서 임의의 검색 사이트로 조용히 전환하지 않습니다. 대체 Backend는 관리자 정책과 allowlist에 포함되어야 하며, 사용자에게 현재 사용된 Backend 또는 검색 제한 상태를 알립니다.
+
+현재 활성 Backend는 `duckduckgo_html` 하나입니다. 검색 도구는 Backend protocol 경계를 통해 호출하여 공급자 구현을 분리합니다. **Vertex AI 기반 Google 검색은 향후 추가 예정이지만 현재는 미구현·비활성 상태**이며, 이름만 설정하거나 자동 fallback 대상으로 사용하지 않습니다. 추후 Vertex adapter, 인증·과금·조직 egress 정책과 관리자 명시 활성화를 함께 구현한 뒤 별도 Backend로 등록합니다. 기존 Run은 snapshot에 기록된 Backend를 유지하고, 새 Backend 발견이나 코드 배포만으로 자동 전환하지 않습니다.
 
 Web Search 실패 시 “인증서 문제”로 단정하지 않고 DNS, proxy, TLS, HTTP status와 content policy 단계로 진단합니다.
 

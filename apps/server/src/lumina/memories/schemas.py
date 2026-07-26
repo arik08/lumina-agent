@@ -29,6 +29,13 @@ class MemoryPatch(ApiModel):
     def require_change(self) -> "MemoryPatch":
         if not self.model_fields_set:
             raise ValueError("at least one field is required")
+        null_fields = sorted(
+            field_name
+            for field_name in self.model_fields_set - {"expires_at"}
+            if getattr(self, field_name) is None
+        )
+        if null_fields:
+            raise ValueError(f"memory fields cannot be null: {', '.join(null_fields)}")
         return self
 
 

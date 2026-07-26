@@ -22,7 +22,14 @@ from lumina.auth import bootstrap_database, create_user
 from lumina.config import Settings, get_settings
 from lumina.db import SessionLocal, configure_database, create_schema
 from lumina.migrations import SERVER_ROOT, upgrade_database
-from lumina.mcp.runtime import McpRuntimeError, load_pinned_server_configs
+from lumina.agent.executor import local_run_executor
+from lumina.mcp.runtime import (
+    McpRuntime,
+    McpRuntimeError,
+    PreparedMcpTool,
+    load_pinned_server_configs,
+)
+from lumina.mcp.policy import MAX_MCP_TIMEOUT_SECONDS
 from lumina.mcp.service import validate_configuration
 from lumina.models import (
     AuditEvent,
@@ -32,10 +39,12 @@ from lumina.models import (
     Organization,
     Project,
     ProjectMembership,
+    ProviderModel,
     Run,
     RunEvent,
     User,
 )
+from lumina.providers import MockProvider, MockToolCall
 from lumina.runs.service import create_run, run_snapshot
 
 
@@ -168,6 +177,7 @@ def _configuration(*, timeout_seconds: int = 30) -> dict[str, object]:
 
 def test_mcp_catalog_binding_snapshot_and_cross_user_isolation(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app, ids = _setup(tmp_path)
     alice_ref = "vault://users/alice/mcp/internal-search"
@@ -264,6 +274,10 @@ def test_mcp_catalog_binding_snapshot_and_cross_user_isolation(
         assert approved.json()["status"] == "approved"
         catalog = alice_client.get("/api/mcp/catalog")
         assert catalog.status_code == 200
+        assert catalog.json()[0]["skillWrapper"] == {
+            "wrapped": False,
+            "name": None,
+        }
         assert catalog.json()[0]["revisions"][0]["target"] == "mcp.corp.example"
         assert "configuration" not in catalog.json()[0]["revisions"][0]
 
@@ -294,6 +308,34 @@ def test_mcp_catalog_binding_snapshot_and_cross_user_isolation(
         assert installation["supportedSecretSchemes"] == ["env"]
         assert installation["secretBindingRole"] == "admin"
         assert installation["ready"] is False
+
+        user_installation = admin_client.post(
+            "/api/mcp/installations",
+            headers={"X-CSRF-Token": admin_csrf},
+            json={
+                "definitionId": definition["id"],
+                "configurationRevisionId": revision_one["id"],
+                "scopeType": "user",
+                "toolAllowlist": ["search_docs"],
+            },
+        )
+        assert user_installation.status_code == 201, user_installation.text
+        assert user_installation.json()["projectIds"] is None
+        user_installation_id = user_installation.json()["id"]
+        user_scope_disabled = admin_client.patch(
+            f"/api/mcp/installations/{user_installation_id}",
+            headers={"X-CSRF-Token": admin_csrf},
+            json={"projectIds": []},
+        )
+        assert user_scope_disabled.status_code == 200, user_scope_disabled.text
+        assert user_scope_disabled.json()["projectIds"] == []
+        assert all(
+            item["id"] != user_installation_id
+            for item in admin_client.get(
+                "/api/mcp/installations",
+                params={"project_id": ids["project_id"]},
+            ).json()
+        )
 
         no_candidate = alice_client.get(
             "/api/composer/suggestions",
@@ -378,10 +420,132 @@ def test_mcp_catalog_binding_snapshot_and_cross_user_isolation(
             json={"secretRef": admin_ref},
         )
         assert admin_bound.status_code == 200, admin_bound.text
-        assert admin_bound.json()["ready"] is True
+        assert admin_bound.json()["ready"] is False
         assert admin_bound.json()["secretResolutionStatus"] == "ready"
         assert admin_bound.json()["boundSecrets"][0]["resolvable"] is True
         assert admin_ref not in admin_bound.text
+
+        answer_test_without_real_provider = admin_client.post(
+            f"/api/mcp/installations/{installation['id']}/answer-test",
+            headers={"X-CSRF-Token": admin_csrf},
+            json={
+                "projectId": ids["project_id"],
+                "prompt": "검색 연결이 실제로 동작하는지 확인해 주세요.",
+            },
+        )
+        assert answer_test_without_real_provider.status_code == 409
+        assert (
+            answer_test_without_real_provider.json()["code"]
+            == "real_provider_required"
+        )
+
+        with SessionLocal() as db:
+            organization = db.scalar(select(Organization))
+            test_model = next(
+                model
+                for model in db.scalars(select(ProviderModel))
+                if model.enabled and model.capabilities_json.get("tools") is True
+            )
+            assert organization is not None
+            organization.initial_execution_settings_json = {
+                "providerId": test_model.provider_id,
+                "modelKey": test_model.model_key,
+                "effortId": "auto",
+            }
+            db.commit()
+
+        async def prepare_answer_test(
+            _runtime: McpRuntime, configs: object
+        ) -> tuple[PreparedMcpTool, ...]:
+            config = tuple(configs)[0]  # type: ignore[arg-type]
+            return (
+                PreparedMcpTool(
+                    provider_name="mcp_answer_test_search",
+                    server_slug=config.slug,
+                    original_name="search_docs",
+                    description="Search documents",
+                    input_schema={"type": "object"},
+                    config=config,
+                ),
+            )
+
+        async def call_answer_test_tool(
+            _runtime: McpRuntime, _tool: PreparedMcpTool, arguments: object
+        ) -> dict[str, object]:
+            assert arguments == {"query": "연결 확인"}
+            return {"content": [{"type": "text", "text": "실제 MCP 결과"}]}
+
+        class AnswerTestProvider:
+            async def stream(self, request: object):  # type: ignore[no-untyped-def]
+                provider_request = request  # keep the test provider protocol explicit
+                delegate = (
+                    MockProvider(
+                        text_chunks=(),
+                        tool_call=MockToolCall(
+                            name="mcp_answer_test_search",
+                            arguments={"query": "연결 확인"},
+                        ),
+                    )
+                    if provider_request.tools
+                    else MockProvider(text_chunks=("실제 MCP 결과로 답변했습니다.",))
+                )
+                async for event in delegate.stream(provider_request):
+                    yield event
+
+        monkeypatch.setattr(McpRuntime, "prepare_servers", prepare_answer_test)
+        monkeypatch.setattr(McpRuntime, "call_tool", call_answer_test_tool)
+        monkeypatch.setattr(
+            local_run_executor,
+            "provider_for_probe",
+            lambda _provider_id: AnswerTestProvider(),
+        )
+        answer_test = admin_client.post(
+            f"/api/mcp/installations/{installation['id']}/answer-test",
+            headers={"X-CSRF-Token": admin_csrf},
+            json={
+                "projectId": ids["project_id"],
+                "prompt": "검색 연결이 실제로 동작하는지 확인해 주세요.",
+            },
+        )
+        assert answer_test.status_code == 200, answer_test.text
+        assert answer_test.json()["answer"] == "실제 MCP 결과로 답변했습니다."
+        assert answer_test.json()["toolName"] == "search_docs"
+
+        async def prepare_success(
+            _runtime: McpRuntime, _configs: object
+        ) -> tuple[object, ...]:
+            return ()
+
+        monkeypatch.setattr(McpRuntime, "prepare_servers", prepare_success)
+        verified = admin_client.post(
+            f"/api/mcp/installations/{installation['id']}/verify",
+            headers={"X-CSRF-Token": admin_csrf},
+        )
+        assert verified.status_code == 200, verified.text
+        assert verified.json()["healthStatus"] == "connected"
+        assert verified.json()["schemaStatus"] == "valid"
+        assert verified.json()["ready"] is True
+        assert verified.json()["connectionErrorCode"] is None
+
+        async def prepare_failure(
+            _runtime: McpRuntime, _configs: object
+        ) -> tuple[object, ...]:
+            raise McpRuntimeError(
+                "mcp_transport_failed",
+                "MCP 서버에 안전하게 연결할 수 없습니다.",
+                stage="network",
+            )
+
+        monkeypatch.setattr(McpRuntime, "prepare_servers", prepare_failure)
+        unavailable = admin_client.post(
+            f"/api/mcp/installations/{installation['id']}/verify",
+            headers={"X-CSRF-Token": admin_csrf},
+        )
+        assert unavailable.status_code == 200, unavailable.text
+        assert unavailable.json()["healthStatus"] == "failed"
+        assert unavailable.json()["schemaStatus"] == "pending"
+        assert unavailable.json()["ready"] is False
+        assert unavailable.json()["connectionErrorCode"] == "mcp_transport_failed"
 
         suggestions = admin_client.get(
             "/api/composer/suggestions",
@@ -422,6 +586,33 @@ def test_mcp_catalog_binding_snapshot_and_cross_user_isolation(
             assert frozen["configuration_revision"] == 1
             assert frozen["digest"] == revision_one["digest"]
             assert frozen["tool_allowlist"] == ["search_docs"]
+
+            inferred_run, inferred_message, inferred_created = create_run(
+                db,
+                user=admin,
+                conversation_id=ids["admin_conversation_id"],
+                payload=RunCreate(
+                    message=RunMessageInput(
+                        text="$mcp:internal-search 최신 규정을 다시 찾아주세요.",
+                        prompt_references=[],
+                    )
+                ),
+                idempotency_key="mcp-snapshot-inferred-0001",
+            )
+            assert inferred_created is True
+            inferred_reference = inferred_run.snapshot_json["prompt_references"][0]
+            assert inferred_reference["kind"] == "mcp"
+            assert inferred_reference["reference_id"] == definition["id"]
+            assert inferred_reference["version_or_digest"] == revision_one["digest"]
+            assert inferred_reference["token_start"] == 0
+            assert inferred_reference["token_end"] == len("$mcp:internal-search")
+            assert inferred_message.metadata_json["prompt_references"] == [
+                inferred_reference
+            ]
+            assert inferred_run.snapshot_json["mcp_servers"][0]["slug"] == (
+                "internal-search"
+            )
+
             serialized_snapshot = json.dumps(
                 run.snapshot_json, ensure_ascii=False, default=str
             )
@@ -570,6 +761,73 @@ def test_mcp_catalog_binding_snapshot_and_cross_user_isolation(
             )
 
 
+def test_user_mcp_installation_can_be_scoped_by_project(tmp_path: Path) -> None:
+    app, ids = _setup(tmp_path)
+    with TestClient(app) as admin_client, TestClient(app) as alice_client:
+        admin_csrf = _login(admin_client, "admin", "1")
+        alice_csrf = _login(alice_client, "alice", "alice-pw")
+
+        created = admin_client.post(
+            "/api/admin/mcp-definitions",
+            headers={"X-CSRF-Token": admin_csrf},
+            json={
+                "name": "프로젝트별 MCP",
+                "slug": "project-scoped-mcp",
+                "description": "프로젝트별 사용 여부를 검증합니다.",
+                "configuration": _configuration(),
+            },
+        )
+        assert created.status_code == 201, created.text
+        definition = created.json()
+        revision = definition["revisions"][0]
+        approved = admin_client.post(
+            f"/api/admin/mcp-definitions/{definition['id']}/approve",
+            headers={"X-CSRF-Token": admin_csrf},
+            json={"configurationRevisionId": revision["id"]},
+        )
+        assert approved.status_code == 200, approved.text
+
+        second_project = alice_client.post(
+            "/api/projects",
+            headers={"X-CSRF-Token": alice_csrf},
+            json={"name": "MCP 제외 프로젝트"},
+        )
+        assert second_project.status_code == 201, second_project.text
+        installed = alice_client.post(
+            "/api/mcp/installations",
+            headers={"X-CSRF-Token": alice_csrf},
+            json={
+                "definitionId": definition["id"],
+                "configurationRevisionId": revision["id"],
+                "scopeType": "user",
+                "toolAllowlist": ["search_docs"],
+            },
+        )
+        assert installed.status_code == 201, installed.text
+        assert installed.json()["projectIds"] is None
+
+        scoped = alice_client.patch(
+            f"/api/mcp/installations/{installed.json()['id']}",
+            headers={"X-CSRF-Token": alice_csrf},
+            json={"projectIds": [ids["project_id"]]},
+        )
+        assert scoped.status_code == 200, scoped.text
+        assert scoped.json()["projectIds"] == [ids["project_id"]]
+        assert any(
+            item["id"] == installed.json()["id"]
+            for item in alice_client.get(
+                "/api/mcp/installations", params={"project_id": ids["project_id"]}
+            ).json()
+        )
+        assert all(
+            item["id"] != installed.json()["id"]
+            for item in alice_client.get(
+                "/api/mcp/installations",
+                params={"project_id": second_project.json()["id"]},
+            ).json()
+        )
+
+
 def test_mcp_migration_0006_round_trip(tmp_path: Path) -> None:
     database = tmp_path / "mcp-round-trip.db"
     database_url = f"sqlite:///{database.as_posix()}"
@@ -679,6 +937,27 @@ def test_mcp_header_templates_reject_unsafe_secret_locations() -> None:
         with pytest.raises(ApiProblem) as error:
             validate_configuration(configuration)
         assert error.value.code == expected_code
+
+
+def test_mcp_timeout_supports_long_company_calculations() -> None:
+    configuration = {
+        "transport": "stdio",
+        "command": ["python", "company_calculator.py"],
+        "tools": [{"name": "calculate", "inputSchema": {"type": "object"}}],
+        "timeout_seconds": 3_600,
+    }
+
+    normalized, _digest = validate_configuration(configuration)
+    assert normalized["timeout_seconds"] == 3_600
+
+    with pytest.raises(ApiProblem) as error:
+        validate_configuration(
+            {
+                **configuration,
+                "timeout_seconds": MAX_MCP_TIMEOUT_SECONDS + 1,
+            }
+        )
+    assert error.value.code == "mcp_timeout_invalid"
 
 
 def test_mcp_migration_0009_adds_header_templates(tmp_path: Path) -> None:

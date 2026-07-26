@@ -1,0 +1,37 @@
+{
+  "repository": "https://github.com/neurofoo/agent-skills",
+  "revision": "0e7ac2aa4d094352a082ebeedf1dbb4c52b77782",
+  "license": "MIT",
+  "files": [
+    {
+      "source": "LICENSE.txt",
+      "target": "upstream-neurofoo-license.txt",
+      "sha256": "06dcddbb6908a0c6dd4a9e8ec822eea41d5a460a53089fecccc8a68049e99241"
+    },
+    {
+      "source": "scamper/SKILL.md",
+      "target": "upstream-scamper.md",
+      "sha256": "3f778ab809064911b14e93cc8b237400ba7b749427fbaa747d05c3b3d62523a3"
+    },
+    {
+      "source": "sixhats/SKILL.md",
+      "target": "upstream-six-thinking-hats.md",
+      "sha256": "49139dff049cee540672ab8e14b56f600edf609e6195279b1b0830626ecd097d"
+    },
+    {
+      "source": "design/SKILL.md",
+      "target": "upstream-design-thinking.md",
+      "sha256": "35ce4d9d1e16bd25d14e58e1f70437701e6f68f0a5983c4498ad11cf23df4c48"
+    },
+    {
+      "source": "jtbd/SKILL.md",
+      "target": "upstream-jtbd.md",
+      "sha256": "6bd538ee2fb0199573bb0eed0e38e30dcd71e205467cc5cca1f82d9e93c39c6b"
+    },
+    {
+      "source": "5whys/SKILL.md",
+      "target": "upstream-five-whys.md",
+      "sha256": "8f2555d13c75fa595bf5483c8798f122e7741110e684d7f2355b817ed62fea82"
+    }
+  ]
+}

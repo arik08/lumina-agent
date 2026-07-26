@@ -205,6 +205,7 @@ async def test_openai_responses_streams_text_usage_and_builds_responses_payload(
                             "input_tokens": 10,
                             "input_tokens_details": {"cached_tokens": 3},
                             "output_tokens": 4,
+                            "output_tokens_details": {"reasoning_tokens": 2},
                             "total_tokens": 14,
                         },
                     },
@@ -246,6 +247,7 @@ async def test_openai_responses_streams_text_usage_and_builds_responses_payload(
     assert usage.cached_input_tokens == 3
     assert usage.uncached_input_tokens == 7
     assert usage.output_tokens == 4
+    assert usage.reasoning_tokens == 2
     assert events[-1].stop_reason == "stop"
 
 

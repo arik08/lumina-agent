@@ -1,26 +1,38 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
-const streamStartBufferMs = 180;
-const streamRevealDurationMs = 420;
+const streamStartBufferMs = 40;
+const maxVisualLagMs = 180;
+const streamScrollSmoothingMs = maxVisualLagMs;
+const renderCommitReserveMs = 80;
 const visibleFrameIntervalMs = 15;
 const frameFallbackMs = 100;
-const streamCatchUpDeadlineMs = 1_200;
 const streamSettleDurationMs = 180;
-const minRevealRate = 1 / 96;
-const maxRevealRate = 0.5;
-const chunkSampleSize = 3;
-const minChunkIntervalMs = 24;
-const maxChunkIntervalMs = 600;
 const nearBottomPx = 140;
 const streamingRejoinPx = 360;
 const jumpButtonThresholdPx = 40;
+const instantJumpDistanceViewports = 4;
 const exactBottomPx = 2;
 const scrollPositionStoragePrefix = "lumina:conversation-scroll:";
+const rememberedScrollPositionLimit = 100;
 
 type ConversationScrollPosition = {
   top: number;
   atBottom: boolean;
 };
+
+function rememberScrollPosition(
+  positions: Map<string, ConversationScrollPosition>,
+  conversationId: string,
+  position: ConversationScrollPosition,
+) {
+  positions.delete(conversationId);
+  positions.set(conversationId, position);
+  while (positions.size > rememberedScrollPositionLimit) {
+    const oldestConversationId = positions.keys().next().value;
+    if (typeof oldestConversationId !== "string") break;
+    positions.delete(oldestConversationId);
+  }
+}
 
 function readConversationScrollPosition(conversationId: string) {
   try {
@@ -42,36 +54,33 @@ function writeConversationScrollPosition(conversationId: string, position: Conve
   }
 }
 
-function smoothRevealCount(pendingLength: number, desiredCount: number) {
-  if (!pendingLength || desiredCount <= 0) return 0;
-  const maxTickChars = pendingLength >= 1_400
-    ? 24
-    : pendingLength >= 700
-      ? 16
-      : pendingLength >= 220
-        ? 12
-        : pendingLength >= 40
-          ? 8
-          : 4;
-  return Math.min(pendingLength, Math.max(1, Math.min(maxTickChars, desiredCount)));
+function commonPrefixLength(left: string, right: string) {
+  const limit = Math.min(left.length, right.length);
+  let index = 0;
+  while (index < limit && left[index] === right[index]) index += 1;
+  return index;
+}
+
+function smoothBufferedRevealCount(pendingLength: number, remainingMs: number) {
+  if (pendingLength <= 0) return 0;
+  const remainingFrames = Math.max(1, Math.ceil(remainingMs / visibleFrameIntervalMs));
+  return Math.min(pendingLength, Math.max(1, Math.ceil(pendingLength / remainingFrames)));
 }
 
 export function useStreamingText(targetText: string, streaming: boolean) {
   const [visibleText, setVisibleText] = useState(() => (streaming ? "" : targetText));
   const [settling, setSettling] = useState(false);
   const visibleRef = useRef(visibleText);
-  const pendingRef = useRef("");
+  const pendingRef = useRef(targetText);
+  const pendingCharactersRef = useRef<string[]>(streaming ? Array.from(targetText) : []);
+  const pendingOffsetRef = useRef(0);
   const startTimerRef = useRef<number | null>(null);
   const frameTimerRef = useRef<number | null>(null);
   const animationRef = useRef<number | null>(null);
   const fallbackRef = useRef<number | null>(null);
-  const deadlineRef = useRef<number | null>(null);
-  const lastFrameAtRef = useRef<number | null>(null);
-  const revealBudgetRef = useRef(0);
-  const revealRateRef = useRef(0);
+  const lastFrameAtRef = useRef(0);
+  const pendingStartedAtRef = useRef<number | null>(null);
   const displayStartedRef = useRef(false);
-  const recentChunksRef = useRef<Array<{ chars: number; intervalMs: number }>>([]);
-  const lastChunkAtRef = useRef<number | null>(null);
   const settleTimerRef = useRef<number | null>(null);
 
   const clearScheduled = useCallback(() => {
@@ -79,53 +88,24 @@ export function useStreamingText(targetText: string, streaming: boolean) {
     if (frameTimerRef.current !== null) window.clearTimeout(frameTimerRef.current);
     if (animationRef.current !== null) window.cancelAnimationFrame(animationRef.current);
     if (fallbackRef.current !== null) window.clearTimeout(fallbackRef.current);
-    if (deadlineRef.current !== null) window.clearTimeout(deadlineRef.current);
     startTimerRef.current = null;
     frameTimerRef.current = null;
     animationRef.current = null;
     fallbackRef.current = null;
-    deadlineRef.current = null;
-    lastFrameAtRef.current = null;
-    revealBudgetRef.current = 0;
-    revealRateRef.current = 0;
   }, []);
 
-  const flushAll = useCallback(() => {
+  const flushAll = useCallback((timestamp = performance.now()) => {
     clearScheduled();
-    if (!pendingRef.current) return;
     displayStartedRef.current = true;
-    visibleRef.current += pendingRef.current;
-    pendingRef.current = "";
-    setVisibleText(visibleRef.current);
+    lastFrameAtRef.current = timestamp;
+    const nextText = pendingRef.current;
+    pendingCharactersRef.current = [];
+    pendingOffsetRef.current = 0;
+    if (visibleRef.current === nextText) return;
+    visibleRef.current = nextText;
+    pendingStartedAtRef.current = null;
+    setVisibleText(nextText);
   }, [clearScheduled]);
-
-  const retune = useCallback(() => {
-    const pendingLength = Array.from(pendingRef.current).length;
-    if (!pendingLength) return;
-    const samples = recentChunksRef.current;
-    const totalChars = samples.reduce((total, sample) => total + sample.chars, 0);
-    const totalIntervalMs = samples.reduce((total, sample) => total + sample.intervalMs, 0);
-    const averageChars = samples.length ? totalChars / samples.length : 0;
-    const baseRate = totalChars > 0 && totalIntervalMs > 0 ? totalChars / totalIntervalMs : null;
-    const backlogBoost = baseRate === null
-      ? 1
-      : 1 + Math.min(2.5, Math.max(0, pendingLength - averageChars * 2) / Math.max(averageChars * 4, 1));
-    const targetRate = Math.max(
-      minRevealRate,
-      Math.min(
-        maxRevealRate,
-        baseRate === null ? Math.max(1 / 16, pendingLength / streamRevealDurationMs) : baseRate * 0.9 * backlogBoost,
-      ),
-    );
-    revealRateRef.current = revealRateRef.current > 0
-      ? revealRateRef.current * 0.7 + targetRate * 0.3
-      : targetRate;
-    if (deadlineRef.current !== null) window.clearTimeout(deadlineRef.current);
-    deadlineRef.current = window.setTimeout(
-      flushAll,
-      Math.max(streamCatchUpDeadlineMs, streamRevealDurationMs * 3),
-    );
-  }, [flushAll]);
 
   const flushFrameRef = useRef<(timestamp?: number) => void>(() => undefined);
   const scheduleFrame = useCallback(() => {
@@ -138,6 +118,8 @@ export function useStreamingText(targetText: string, streaming: boolean) {
       flushAll();
       return;
     }
+    const elapsed = performance.now() - lastFrameAtRef.current;
+    const delay = Math.max(0, visibleFrameIntervalMs - elapsed);
     frameTimerRef.current = window.setTimeout(() => {
       frameTimerRef.current = null;
       animationRef.current = window.requestAnimationFrame((timestamp) => {
@@ -152,34 +134,39 @@ export function useStreamingText(targetText: string, streaming: boolean) {
         animationRef.current = null;
         flushFrameRef.current(performance.now());
       }, frameFallbackMs);
-    }, visibleFrameIntervalMs);
+    }, delay);
   }, [flushAll]);
 
   flushFrameRef.current = (timestamp = performance.now()) => {
-    const pending = pendingRef.current;
-    if (!pending) return;
     displayStartedRef.current = true;
-    const elapsed = lastFrameAtRef.current === null
-      ? 16
-      : Math.max(8, Math.min(64, timestamp - lastFrameAtRef.current));
     lastFrameAtRef.current = timestamp;
-    if (revealRateRef.current <= 0) retune();
-    revealBudgetRef.current += elapsed * revealRateRef.current;
-    if (revealBudgetRef.current < 1) {
-      scheduleFrame();
+    const target = pendingRef.current;
+    if (visibleRef.current === target) {
+      pendingStartedAtRef.current = null;
       return;
     }
-    const chars = Array.from(pending);
-    const revealCount = smoothRevealCount(chars.length, Math.floor(revealBudgetRef.current));
-    if (revealCount <= 0) {
-      scheduleFrame();
-      return;
+    if (!target.startsWith(visibleRef.current)) {
+      visibleRef.current = target.slice(0, commonPrefixLength(visibleRef.current, target));
     }
-    revealBudgetRef.current = Math.max(0, revealBudgetRef.current - revealCount);
-    visibleRef.current += chars.slice(0, revealCount).join("");
-    pendingRef.current = chars.slice(revealCount).join("");
+    const pendingStartedAt = pendingStartedAtRef.current ?? timestamp;
+    pendingStartedAtRef.current = pendingStartedAt;
+    const pendingCharacters = pendingCharactersRef.current;
+    const pendingOffset = pendingOffsetRef.current;
+    const pendingLength = pendingCharacters.length - pendingOffset;
+    const remainingMs = Math.max(
+      visibleFrameIntervalMs,
+      pendingStartedAt + maxVisualLagMs - renderCommitReserveMs - timestamp,
+    );
+    const revealCount = smoothBufferedRevealCount(pendingLength, remainingMs);
+    visibleRef.current += pendingCharacters.slice(pendingOffset, pendingOffset + revealCount).join("");
+    pendingOffsetRef.current += revealCount;
+    if (pendingOffsetRef.current > 2_048 && pendingOffsetRef.current * 2 >= pendingCharacters.length) {
+      pendingCharactersRef.current = pendingCharacters.slice(pendingOffsetRef.current);
+      pendingOffsetRef.current = 0;
+    }
     setVisibleText(visibleRef.current);
-    if (pendingRef.current) scheduleFrame();
+    if (visibleRef.current !== pendingRef.current) scheduleFrame();
+    else pendingStartedAtRef.current = null;
   };
 
   const scheduleReveal = useCallback(() => {
@@ -199,59 +186,27 @@ export function useStreamingText(targetText: string, streaming: boolean) {
   }, [flushAll, scheduleFrame]);
 
   useEffect(() => {
-    if (!streaming) {
-      recentChunksRef.current = [];
-      lastChunkAtRef.current = null;
-      const queued = visibleRef.current + pendingRef.current;
-      if (queued === targetText) {
-        if (pendingRef.current) {
-          retune();
-          scheduleReveal();
-        }
-        return;
+    const previousTarget = pendingRef.current;
+    pendingRef.current = targetText;
+    if (targetText.startsWith(previousTarget)) {
+      for (const character of targetText.slice(previousTarget.length)) {
+        pendingCharactersRef.current.push(character);
       }
-      if (targetText.startsWith(visibleRef.current)) {
-        pendingRef.current = targetText.slice(visibleRef.current.length);
-        retune();
-        scheduleReveal();
-        return;
-      }
+    } else {
       clearScheduled();
-      pendingRef.current = "";
-      displayStartedRef.current = false;
-      visibleRef.current = targetText;
-      setVisibleText((current) => current === targetText ? current : targetText);
-      return;
+      visibleRef.current = targetText.slice(0, commonPrefixLength(visibleRef.current, targetText));
+      pendingCharactersRef.current = Array.from(targetText.slice(visibleRef.current.length));
+      pendingOffsetRef.current = 0;
+      displayStartedRef.current = visibleRef.current.length > 0;
+      setVisibleText((current) => current === visibleRef.current ? current : visibleRef.current);
     }
-    const queued = visibleRef.current + pendingRef.current;
-    if (queued === targetText) return;
-    if (targetText.startsWith(queued)) {
-      const nextChunk = targetText.slice(queued.length);
-      const now = performance.now();
-      const chars = Array.from(nextChunk).length;
-      if (displayStartedRef.current && chars > 0 && lastChunkAtRef.current !== null) {
-        recentChunksRef.current = [
-          ...recentChunksRef.current,
-          {
-            chars,
-            intervalMs: Math.max(minChunkIntervalMs, Math.min(maxChunkIntervalMs, now - lastChunkAtRef.current)),
-          },
-        ].slice(-chunkSampleSize);
-      }
-      if (displayStartedRef.current && chars > 0) lastChunkAtRef.current = now;
-      pendingRef.current += nextChunk;
-      retune();
+    if (visibleRef.current !== targetText) {
+      pendingStartedAtRef.current ??= performance.now();
       scheduleReveal();
-      return;
+    } else {
+      pendingStartedAtRef.current = null;
     }
-    clearScheduled();
-    pendingRef.current = "";
-    displayStartedRef.current = true;
-    recentChunksRef.current = [];
-    lastChunkAtRef.current = null;
-    visibleRef.current = targetText;
-    setVisibleText(targetText);
-  }, [clearScheduled, retune, scheduleReveal, streaming, targetText]);
+  }, [clearScheduled, scheduleReveal, streaming, targetText]);
 
   useEffect(() => clearScheduled, [clearScheduled]);
 
@@ -287,10 +242,14 @@ export function useConversationAutoFollow(
   const animationRef = useRef<number | null>(null);
   const userIntentUntilRef = useRef(0);
   const activeRef = useRef(active);
+  const conversationIdRef = useRef(conversationId);
+  const programmaticScrollMarkerRef = useRef(0);
+  const programmaticScrollUntilRef = useRef(0);
   const savedPositionsRef = useRef(new Map<string, ConversationScrollPosition>());
   const saveTimersRef = useRef(new Map<string, number>());
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   activeRef.current = active;
+  conversationIdRef.current = conversationId;
 
   const flushPosition = useCallback((targetConversationId: string) => {
     const timer = saveTimersRef.current.get(targetConversationId);
@@ -300,10 +259,9 @@ export function useConversationAutoFollow(
     if (position) writeConversationScrollPosition(targetConversationId, position);
   }, []);
 
-  const rememberPosition = useCallback((targetConversationId: string, container: HTMLDivElement) => {
-    const distance = container.scrollHeight - container.clientHeight - container.scrollTop;
-    savedPositionsRef.current.set(targetConversationId, {
-      top: Math.max(0, container.scrollTop),
+  const rememberPosition = useCallback((targetConversationId: string, top: number, distance: number) => {
+    rememberScrollPosition(savedPositionsRef.current, targetConversationId, {
+      top: Math.max(0, top),
       atBottom: distance <= exactBottomPx,
     });
     const existingTimer = saveTimersRef.current.get(targetConversationId);
@@ -313,11 +271,28 @@ export function useConversationAutoFollow(
     }, 120));
   }, [flushPosition]);
 
-  const updateJumpVisibility = useCallback(() => {
+  const updateJumpVisibility = useCallback((knownDistance?: number) => {
     const container = containerRef.current;
     if (!container) return;
-    const distance = container.scrollHeight - container.clientHeight - container.scrollTop;
+    const distance = knownDistance ?? container.scrollHeight - container.clientHeight - container.scrollTop;
     setShowJumpToLatest(!followingRef.current && distance > jumpButtonThresholdPx);
+  }, []);
+
+  const setProgrammaticScrollTop = useCallback((container: HTMLDivElement, top: number, atBottom: boolean) => {
+    const marker = programmaticScrollMarkerRef.current + 1;
+    programmaticScrollMarkerRef.current = marker;
+    programmaticScrollUntilRef.current = performance.now() + 80;
+    container.dataset.programmaticScroll = "true";
+    container.scrollTop = top;
+    const targetConversationId = conversationIdRef.current;
+    if (targetConversationId) {
+      rememberScrollPosition(savedPositionsRef.current, targetConversationId, { top, atBottom });
+    }
+    window.requestAnimationFrame(() => {
+      if (programmaticScrollMarkerRef.current === marker) {
+        delete container.dataset.programmaticScroll;
+      }
+    });
   }, []);
 
   const stop = useCallback(() => {
@@ -332,13 +307,15 @@ export function useConversationAutoFollow(
     if (animationRef.current !== null) return;
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
     if (immediate || reduceMotion || (document.hidden && !animateWhenHidden)) {
-      container.scrollTop = container.scrollHeight;
+      const target = Math.max(0, container.scrollHeight - container.clientHeight);
+      setProgrammaticScrollTop(container, target, true);
       setShowJumpToLatest(false);
       return;
     }
     let previousFrameAt = performance.now();
     let followVelocity = 0;
     let lastTarget = Math.max(0, container.scrollHeight - container.clientHeight);
+    let smoothedTarget = container.scrollTop;
     let targetStableMs = 0;
     const step = (now: number) => {
       const current = containerRef.current;
@@ -355,7 +332,11 @@ export function useConversationAutoFollow(
       } else {
         targetStableMs += elapsed;
       }
-      const distance = target - current.scrollTop;
+      const smoothingWeight = activeRef.current
+        ? 1 - Math.exp(-elapsed / streamScrollSmoothingMs)
+        : 1;
+      smoothedTarget += (target - smoothedTarget) * smoothingWeight;
+      const distance = smoothedTarget - current.scrollTop;
       const dt = elapsed / 1_000;
       const responseMs = 340;
       const omega = (1_000 / responseMs) * 2.25;
@@ -364,11 +345,13 @@ export function useConversationAutoFollow(
       followVelocity += Math.max(-maxAcceleration, Math.min(maxAcceleration, acceleration)) * dt;
       const maxVelocity = Math.max(700, Math.min(9_000, current.clientHeight * 7 + Math.abs(distance) * 4));
       followVelocity = Math.max(0, Math.min(maxVelocity, followVelocity));
-      const nextTop = current.scrollTop + followVelocity * dt;
-      current.scrollTop = Math.max(current.scrollTop, Math.min(target, nextTop));
+      const maxFrameScrollDistance = Math.max(32, Math.min(96, current.clientHeight * 0.12));
+      const frameScrollDistance = Math.min(maxFrameScrollDistance, followVelocity * dt);
+      const nextTop = current.scrollTop + frameScrollDistance;
+      setProgrammaticScrollTop(current, Math.max(current.scrollTop, Math.min(target, nextTop)), false);
       const remaining = target - current.scrollTop;
-      if (targetStableMs > 120 && remaining <= Math.max(1, followVelocity * dt)) {
-        current.scrollTop = target;
+      if (targetStableMs > 120 && remaining <= Math.max(1, frameScrollDistance)) {
+        setProgrammaticScrollTop(current, target, true);
         setShowJumpToLatest(false);
         animationRef.current = null;
         return;
@@ -376,7 +359,7 @@ export function useConversationAutoFollow(
       animationRef.current = window.requestAnimationFrame(step);
     };
     animationRef.current = window.requestAnimationFrame(step);
-  }, []);
+  }, [setProgrammaticScrollTop]);
 
   useLayoutEffect(() => {
     if (animationRef.current !== null) window.cancelAnimationFrame(animationRef.current);
@@ -393,17 +376,17 @@ export function useConversationAutoFollow(
     const targetTop = stored
       ? stored.atBottom ? maximumTop : Math.min(stored.top, maximumTop)
       : maximumTop;
-    container.scrollTop = targetTop;
+    setProgrammaticScrollTop(container, targetTop, maximumTop - targetTop <= exactBottomPx);
     const restoredPosition = {
       top: targetTop,
       atBottom: maximumTop - targetTop <= exactBottomPx,
     };
-    savedPositionsRef.current.set(conversationId, restoredPosition);
+    rememberScrollPosition(savedPositionsRef.current, conversationId, restoredPosition);
     followingRef.current = restoredPosition.atBottom;
     setShowJumpToLatest(maximumTop - targetTop > jumpButtonThresholdPx);
 
     return () => flushPosition(conversationId);
-  }, [contentReady, conversationId, flushPosition]);
+  }, [contentReady, conversationId, flushPosition, setProgrammaticScrollTop]);
 
   useEffect(() => {
     if (active) follow();
@@ -414,36 +397,33 @@ export function useConversationAutoFollow(
     const content = container?.firstElementChild;
     if (!container || !content || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
-      const remembered = conversationId ? savedPositionsRef.current.get(conversationId) : null;
-      if (!activeRef.current && conversationId && remembered?.atBottom) {
-        const maximumTop = Math.max(0, container.scrollHeight - container.clientHeight);
-        container.scrollTop = maximumTop;
-        savedPositionsRef.current.set(conversationId, { top: maximumTop, atBottom: true });
-      }
       updateJumpVisibility();
-      follow();
+      follow(!activeRef.current, false, !activeRef.current);
     });
     observer.observe(content);
     return () => observer.disconnect();
-  }, [conversationId, follow, updateJumpVisibility]);
+  }, [follow, updateJumpVisibility]);
 
   useEffect(() => () => {
     if (animationRef.current !== null) window.cancelAnimationFrame(animationRef.current);
+    if (containerRef.current) delete containerRef.current.dataset.programmaticScroll;
     for (const targetConversationId of savedPositionsRef.current.keys()) flushPosition(targetConversationId);
   }, []);
 
   const onScroll = useCallback(() => {
     const container = containerRef.current;
     if (!container) return;
-    const distance = container.scrollHeight - container.clientHeight - container.scrollTop;
-    if (conversationId) rememberPosition(conversationId, container);
+    if (container.dataset.programmaticScroll === "true" || performance.now() <= programmaticScrollUntilRef.current) return;
+    const scrollTop = container.scrollTop;
+    const distance = container.scrollHeight - container.clientHeight - scrollTop;
+    if (conversationId) rememberPosition(conversationId, scrollTop, distance);
     if (distance <= nearBottomPx) {
       followingRef.current = true;
       setShowJumpToLatest(false);
       return;
     }
     if (distance > streamingRejoinPx && Date.now() <= userIntentUntilRef.current) stop();
-    updateJumpVisibility();
+    updateJumpVisibility(distance);
   }, [conversationId, rememberPosition, stop, updateJumpVisibility]);
 
   const onUserIntent = useCallback(() => {
@@ -460,9 +440,13 @@ export function useConversationAutoFollow(
   }, [onUserIntent]);
 
   const jumpToLatest = useCallback(() => {
+    const container = containerRef.current;
+    const distance = container
+      ? container.scrollHeight - container.clientHeight - container.scrollTop
+      : 0;
     followingRef.current = true;
     setShowJumpToLatest(false);
-    follow(false, true, true);
+    follow(distance > (container?.clientHeight ?? 0) * instantJumpDistanceViewports, true, true);
   }, [follow]);
 
   return {
@@ -474,6 +458,5 @@ export function useConversationAutoFollow(
     jumpToLatest,
     showJumpToLatest,
     follow,
-    notifyGrowth: follow,
   };
 }

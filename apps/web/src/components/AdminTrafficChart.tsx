@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState, type KeyboardEvent, type PointerEvent } from "react";
-import { api } from "../api";
+import { adminApi } from "../feature-api";
 import type { AdminAuditTraffic } from "../api-types";
 import { SelectMenu } from "./SelectMenu";
 import "./AdminTrafficChart.css";
+
+const api = { admin: adminApi };
 
 interface AdminTrafficChartProps {
   refreshKey: number;
@@ -115,6 +117,7 @@ export function AdminTrafficChart({ refreshKey }: AdminTrafficChartProps) {
             <strong id="admin-traffic-title">분당 트래픽</strong>
             <SelectMenu
               className="admin-traffic-period-select"
+              menuClassName="admin-traffic-period-menu"
               size="small"
               width="auto"
               value={String(periodMinutes)}

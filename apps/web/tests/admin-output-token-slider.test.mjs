@@ -21,6 +21,10 @@ test("admin model settings expose the configured and hard output token limits", 
   assert.match(app, /configured_max_output_tokens/);
   assert.match(app, /모델 전체 컨텍스트/);
   assert.match(app, /기본 최대 입력 컨텍스트/);
+  assert.match(app, /실측 입력 토큰 상한/);
+  assert.match(app, /adminMeasuredInputTokenLimit/);
+  assert.match(app, /max_input_tokens/);
+  assert.match(app, /Math\.min\(\s*parsedAdminContextWindow - reservedOutput,\s*adminMeasuredInputTokenLimit \?\? parsedAdminContextWindow/);
   assert.match(app, /자동 압축 시작 비율/);
   assert.match(app, /기본 자동 압축 시작점/);
   assert.match(app, /최초 사용자 실행 기본값/);
@@ -33,6 +37,8 @@ test("admin model settings expose the configured and hard output token limits", 
   assert.doesNotMatch(app, /adminSettingsBusy \? "저장 중"/);
   assert.match(api, /\/admin\/providers\/initial-execution/);
   assert.match(types, /configuredMaxOutputTokens: number \| null/);
+  assert.match(types, /maxInputTokens: number \| null/);
+  assert.match(types, /defaultMaxInputTokens: number \| null/);
   assert.match(types, /maxOutputTokens: number \| null/);
   assert.match(types, /contextPolicyLocked: boolean/);
   assert.match(types, /"organization" \| "application"/);

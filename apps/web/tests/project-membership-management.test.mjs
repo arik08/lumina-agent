@@ -5,9 +5,9 @@ import test from "node:test";
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
 test("project settings manage registered accounts inline", async () => {
-  const [view, api, types, styles, selectMenu, selectStyles] = await Promise.all([
+  const [view, featureApi, types, styles, selectMenu, selectStyles] = await Promise.all([
     read("../src/components/ProjectSettings.tsx"),
-    read("../src/api.ts"),
+    read("../src/feature-api.ts"),
     read("../src/api-types.ts"),
     read("../src/components/ProjectSettings.css"),
     read("../src/components/SelectMenu.tsx"),
@@ -15,10 +15,10 @@ test("project settings manage registered accounts inline", async () => {
   ]);
 
   assert.match(types, /interface ProjectMembership/);
-  assert.match(api, /projectMemberships:\s*\{/);
-  assert.match(api, /add: addProjectMembership/);
-  assert.match(api, /update: updateProjectMembership/);
-  assert.match(api, /remove: removeProjectMembership/);
+  assert.match(featureApi, /export const projectMembershipsApi = \{/);
+  assert.match(featureApi, /add: addProjectMembership/);
+  assert.match(featureApi, /update: updateProjectMembership/);
+  assert.match(featureApi, /remove: removeProjectMembership/);
   assert.match(view, /공유 및 구성원/);
   assert.match(view, /<span>계정명<\/span>/);
   assert.doesNotMatch(view, /<span>등록 계정<\/span>/);

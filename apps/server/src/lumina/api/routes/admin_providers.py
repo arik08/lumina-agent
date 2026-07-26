@@ -58,6 +58,13 @@ class ProviderModelPatch(ApiModel):
     def require_change(self) -> "ProviderModelPatch":
         if not self.model_fields_set:
             raise ValueError("At least one model field is required")
+        null_fields = sorted(
+            field_name
+            for field_name in self.model_fields_set
+            if getattr(self, field_name) is None
+        )
+        if null_fields:
+            raise ValueError(f"Model fields cannot be null: {', '.join(null_fields)}")
         return self
 
 
@@ -88,6 +95,16 @@ def _payload(model: ProviderModel) -> dict[str, Any]:
             model.capabilities_json.get("configuredMaxOutputTokens"),
         )
     )
+    default_max_input_tokens = _positive_int(
+        catalog_entry.capabilities.max_input_tokens if catalog_entry else None
+    )
+    max_input_tokens = _positive_int(
+        model.capabilities_json.get(
+            "max_input_tokens", model.capabilities_json.get("maxInputTokens")
+        )
+    )
+    if max_input_tokens is None:
+        max_input_tokens = default_max_input_tokens
     if configured_max is None or (hard_max is not None and configured_max > hard_max):
         configured_max = default_max
     return {
@@ -109,6 +126,8 @@ def _payload(model: ProviderModel) -> dict[str, Any]:
             else DEFAULT_CONTEXT_COMPACTION_THRESHOLD
         ),
         "contextPolicyLocked": context_policy_locked,
+        "maxInputTokens": max_input_tokens,
+        "defaultMaxInputTokens": default_max_input_tokens,
         "maxOutputTokens": hard_max,
         "defaultMaxOutputTokens": default_max,
         "configuredMaxOutputTokens": configured_max,
@@ -134,6 +153,20 @@ def _validate_capabilities(
             422,
             "invalid_model_context_window",
             "최대 컨텍스트 토큰은 1 이상의 정수여야 합니다.",
+        )
+    max_input_tokens = capabilities.get(
+        "max_input_tokens", capabilities.get("maxInputTokens")
+    )
+    if max_input_tokens is not None and (
+        isinstance(max_input_tokens, bool)
+        or not isinstance(max_input_tokens, int)
+        or max_input_tokens < 1
+        or (context_window is not None and max_input_tokens > context_window)
+    ):
+        raise ApiProblem(
+            422,
+            "invalid_model_input_token_limit",
+            "모델 입력 토큰 상한은 전체 컨텍스트 이내의 1 이상 정수여야 합니다.",
         )
     context_usage_ratio = capabilities.get(
         "context_compaction_threshold",

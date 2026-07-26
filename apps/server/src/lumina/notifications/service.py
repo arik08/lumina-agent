@@ -16,6 +16,7 @@ from ..models import (
     Run,
     ScheduledRun,
     ScheduledTask,
+    ToolExecution,
     User,
     utc_now,
 )
@@ -181,6 +182,14 @@ def create_run_transition_notification(
         "awaiting_input",
     }:
         return None, False
+    deep_analysis = run.snapshot_json.get("deep_analysis")
+    if (
+        target == "completed"
+        and isinstance(deep_analysis, dict)
+        and isinstance(deep_analysis.get("node_type"), str)
+        and deep_analysis["node_type"] != "report"
+    ):
+        return None, False
     scheduled_task_id = run.snapshot_json.get("scheduled_task_id")
     artifact_id = db.scalar(
         select(Artifact.id)
@@ -188,6 +197,14 @@ def create_run_transition_notification(
         .order_by(Artifact.created_at, Artifact.id)
         .limit(1)
     )
+    if target == "completed" and artifact_id is None:
+        tool_execution_id = db.scalar(
+            select(ToolExecution.id)
+            .where(ToolExecution.run_id == run.id)
+            .limit(1)
+        )
+        if tool_execution_id is None:
+            return None, False
     kind, title, body = copy
     conversation = db.get(Conversation, run.conversation_id)
     if target == "completed":
@@ -257,7 +274,7 @@ def delete_notification(
 
 def delete_all_notifications(db: Session, *, user: User) -> int:
     result = db.execute(delete(Notification).where(Notification.user_id == user.id))
-    return int(result.rowcount or 0)
+    return _affected_row_count(result)
 
 
 def create_scheduled_run_result_notification(
@@ -379,7 +396,14 @@ def mark_all_notifications_read(db: Session, *, user: User) -> tuple[int, dateti
         .where(Notification.user_id == user.id, Notification.read_at.is_(None))
         .values(read_at=read_at)
     )
-    return int(getattr(result, "rowcount", 0)), read_at
+    return _affected_row_count(result), read_at
+
+
+def _affected_row_count(result: object) -> int:
+    rowcount = getattr(result, "rowcount", None)
+    if isinstance(rowcount, bool) or not isinstance(rowcount, int):
+        return 0
+    return max(0, rowcount)
 
 
 def notification_payload(notification: Notification) -> dict[str, Any]:

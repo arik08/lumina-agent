@@ -11,6 +11,7 @@ from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, inspect, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from lumina.agent.executor import LocalRunExecutor
 from lumina.api.errors import ApiProblem
@@ -24,6 +25,7 @@ from lumina.models import AuditEvent, MessageReference, Project, ProjectFile, Ru
 from lumina.project_files.service import create_project_file
 from lumina.runs.service import create_run
 from lumina.storage import ManagedLocalStorage
+from lumina.tools.source_documents import project_file_source_document_id
 
 
 def _settings(tmp_path: Path, database_name: str = "workspace.db") -> Settings:
@@ -92,6 +94,121 @@ def test_project_file_api_accepts_blank_text_files(
         )
         assert downloaded.status_code == 200
         assert downloaded.content == content.encode()
+
+
+def test_project_file_api_rejects_html_document_with_markdown_extension(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path, "html-as-markdown.db")
+    with TestClient(create_app(settings)) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+
+        created = _upload(
+            client,
+            headers,
+            project_id,
+            logical_path="reports/intermediate.md",
+            content=" \n<!doctype html><html><body>wrong format</body></html>",
+        )
+
+        assert created.status_code == 415
+        assert created.json()["code"] == "mime_mismatch"
+
+
+def test_project_file_html_preview_opens_inline_with_sandbox(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path, "html-project-file-preview.db")
+    html = (
+        "<!doctype html><html><head><title>보고서</title></head><body>"
+        '<div class="mermaid">flowchart TD\nA-->B</div></body></html>'
+    )
+    with TestClient(create_app(settings)) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        created = client.post(
+            f"/api/projects/{project_id}/files",
+            headers=headers,
+            data={"logicalPath": "reports/final.html", "changeReason": "최종 보고서"},
+            files={"file": ("final.html", html.encode(), "text/html")},
+        )
+        assert created.status_code == 201, created.text
+
+        preview = client.get(
+            f"/api/projects/{project_id}/files/{created.json()['id']}/preview"
+        )
+
+        assert preview.status_code == 200
+        assert 'data-lumina-standalone-mermaid="11.16.0"' in preview.text
+        assert preview.headers["content-disposition"] == "inline"
+        assert preview.headers["content-security-policy"].startswith(
+            "sandbox allow-scripts"
+        )
+
+        downloaded = client.get(
+            f"/api/projects/{project_id}/files/{created.json()['id']}/download",
+            headers={"Accept-Encoding": "identity"},
+        )
+
+        assert downloaded.status_code == 200
+        assert 'data-lumina-standalone-mermaid="11.16.0"' in downloaded.text
+        assert downloaded.headers["content-length"] == str(len(downloaded.content))
+        assert downloaded.headers["etag"] != f'"{created.json()["contentHash"]}"'
+        stored_html = next(
+            path
+            for path in (settings.files_dir / "project-files").rglob("*")
+            if path.is_file() and path.read_bytes() == html.encode()
+        )
+        assert "cdn.jsdelivr.net/npm/mermaid" not in stored_html.read_text("utf-8")
+
+
+def test_project_file_api_keyset_pages_without_duplicates(tmp_path: Path) -> None:
+    settings = _settings(tmp_path, "project-file-pages.db")
+    with TestClient(create_app(settings)) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        created_ids = {
+            _upload(
+                client,
+                headers,
+                project_id,
+                logical_path=f"pages/{index}.txt",
+                content=f"page {index}",
+            ).json()["id"]
+            for index in range(3)
+        }
+
+        first = client.get(
+            f"/api/projects/{project_id}/files",
+            params={"page": True, "limit": 2},
+        )
+        assert first.status_code == 200, first.text
+        assert len(first.json()["items"]) == 2
+        assert first.json()["nextCursor"]
+
+        second = client.get(
+            f"/api/projects/{project_id}/files",
+            params={
+                "page": True,
+                "limit": 2,
+                "cursor": first.json()["nextCursor"],
+            },
+        )
+        assert second.status_code == 200, second.text
+        assert len(second.json()["items"]) == 1
+        assert second.json()["nextCursor"] is None
+        listed_ids = {
+            item["id"] for item in first.json()["items"] + second.json()["items"]
+        }
+        assert listed_ids == created_ids
+
+        invalid = client.get(
+            f"/api/projects/{project_id}/files",
+            params={"page": True, "cursor": "not-a-cursor"},
+        )
+        assert invalid.status_code == 400
+        assert invalid.json()["code"] == "invalid_file_cursor"
 
 
 def test_project_file_api_versions_paths_search_and_isolation(tmp_path: Path) -> None:
@@ -170,6 +287,18 @@ def test_project_file_api_versions_paths_search_and_isolation(tmp_path: Path) ->
         )
         assert old_download.status_code == 200
         assert old_download.content == "첫 버전 점검 내용".encode()
+        stored_version_one = next(
+            path
+            for path in (settings.files_dir / "project-files").rglob("*")
+            if path.is_file() and path.read_bytes() == "첫 버전 점검 내용".encode()
+        )
+        stored_version_one.write_bytes(b"tampered project file")
+        unavailable = client.get(
+            f"/api/projects/{project_id}/files/{first['id']}/download",
+            params={"version": 1},
+        )
+        assert unavailable.status_code == 503
+        assert unavailable.json()["code"] == "project_file_content_missing"
 
         extension_change = client.patch(
             f"/api/projects/{project_id}/files/{first['id']}",
@@ -421,8 +550,12 @@ def test_composer_and_run_pin_exact_project_file_version_and_project(
             prompt_references=loaded_run.snapshot_json["prompt_references"],
             extensions=[],
         )
-        assert "첫 버전 기준: 베어링 온도 확인" in prepared
+        assert "첫 버전 기준: 베어링 온도 확인" not in prepared
         assert "둘째 버전 기준" not in prepared
+        assert "<source-document-index>" in prepared
+        assert project_file_source_document_id(
+            uploaded["id"], uploaded["contentHash"]
+        ) in prepared
 
         deleted = client.delete(
             f"/api/projects/{project_id}/files/{uploaded['id']}",
@@ -561,6 +694,109 @@ def test_failed_database_commit_cleans_managed_storage_objects(tmp_path: Path) -
     ] == []
     with SessionLocal() as db:
         assert db.scalar(select(ProjectFile)) is None
+
+
+def test_unexpected_database_flush_cleans_managed_storage_objects(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path, "unexpected-flush-cleanup.db")
+    configure_database(settings.database_url)
+    create_schema()
+    bootstrap_database(settings=settings)
+    storage = ManagedLocalStorage(settings.files_dir or tmp_path / "files")
+
+    with SessionLocal() as db:
+        admin = db.scalar(select(User).where(User.login_id == "admin@posco.com"))
+        assert admin is not None
+        project = db.scalar(select(Project).where(Project.owner_user_id == admin.id))
+        assert project is not None
+        original_flush = db.flush
+
+        def fail_project_file_flush(*args, **kwargs):
+            if any(isinstance(item, ProjectFile) for item in db.new):
+                raise RuntimeError("forced project file flush failure")
+            return original_flush(*args, **kwargs)
+
+        with patch.object(db, "flush", side_effect=fail_project_file_flush):
+            with pytest.raises(RuntimeError, match="forced project file flush failure"):
+                create_project_file(
+                    db,
+                    user=admin,
+                    project_id=project.id,
+                    logical_path="cleanup/unexpected.md",
+                    original_filename="unexpected.md",
+                    content="unexpected cleanup".encode(),
+                    change_reason="cleanup test",
+                    max_upload_bytes=settings.max_upload_bytes,
+                    storage=storage,
+                )
+
+    assert not [path for path in storage.root.rglob("*") if path.is_file()]
+
+
+def test_project_file_commit_failures_clean_only_new_storage_objects(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path, "route-commit-cleanup.db")
+    with TestClient(create_app(settings)) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+
+        with patch.object(
+            Session, "commit", side_effect=RuntimeError("forced create commit failure")
+        ):
+            with pytest.raises(RuntimeError, match="forced create commit failure"):
+                _upload(
+                    client,
+                    headers,
+                    project_id,
+                    logical_path="cleanup/create.md",
+                    content="uncommitted create",
+                )
+
+        assert client.get(f"/api/projects/{project_id}/files").json() == []
+        assert not [
+            path for path in settings.files_dir.rglob("*") if path.is_file()
+        ]
+
+        created = _upload(
+            client,
+            headers,
+            project_id,
+            logical_path="cleanup/version.md",
+            content="committed version one",
+        )
+        assert created.status_code == 201, created.text
+        project_file = created.json()
+        committed_files = {
+            path for path in settings.files_dir.rglob("*") if path.is_file()
+        }
+
+        with patch.object(
+            Session, "commit", side_effect=RuntimeError("forced version commit failure")
+        ):
+            with pytest.raises(RuntimeError, match="forced version commit failure"):
+                client.post(
+                    f"/api/projects/{project_id}/files/{project_file['id']}/versions",
+                    headers=headers,
+                    data={"baseVersion": 1, "changeReason": "forced failure"},
+                    files={
+                        "file": (
+                            "version.md",
+                            b"uncommitted version two",
+                            "text/markdown",
+                        )
+                    },
+                )
+
+        detail = client.get(
+            f"/api/projects/{project_id}/files/{project_file['id']}"
+        )
+        assert detail.status_code == 200
+        assert detail.json()["currentVersion"] == 1
+        assert {
+            path for path in settings.files_dir.rglob("*") if path.is_file()
+        } == committed_files
 
 
 def test_project_workspace_migration_round_trip(tmp_path: Path) -> None:

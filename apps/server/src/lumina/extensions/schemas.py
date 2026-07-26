@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from ..api.schemas import ApiModel
 
 
 class SkillPackage(ApiModel):
-    files: dict[str, str] = Field(min_length=1, max_length=100)
+    files: dict[str, str] = Field(min_length=1)
 
 
 class ExtensionCreate(ApiModel):
@@ -24,6 +24,7 @@ class ExtensionCreate(ApiModel):
 class ExtensionPatch(ApiModel):
     name: str = Field(min_length=1, max_length=240)
     description: str = Field(default="", max_length=4000)
+    tags: list[str] | None = Field(default=None, max_length=8)
 
 
 class DraftUpdate(ApiModel):
@@ -54,7 +55,14 @@ class InstallationCreate(ApiModel):
 
 
 class InstallationPatch(ApiModel):
-    enabled: bool
+    enabled: bool | None = None
+    project_ids: list[str] | None = None
+
+    @model_validator(mode="after")
+    def require_change(self) -> "InstallationPatch":
+        if not self.model_fields_set:
+            raise ValueError("enabled or projectIds is required")
+        return self
 
 
 class FolderCreate(ApiModel):
@@ -68,6 +76,12 @@ class FolderCreate(ApiModel):
 class FolderPatch(ApiModel):
     name: str | None = Field(default=None, min_length=1, max_length=160)
     sort_order: int | None = Field(default=None, ge=-1_000_000, le=1_000_000)
+
+    @model_validator(mode="after")
+    def require_change(self) -> "FolderPatch":
+        if not self.model_fields_set or (self.name is None and self.sort_order is None):
+            raise ValueError("name or sortOrder is required")
+        return self
 
 
 class FolderMove(ApiModel):
@@ -87,6 +101,12 @@ class SkillOwnershipCreate(ApiModel):
 
 class PublishVersion(ApiModel):
     visibility: Literal["organization"] = "organization"
+
+
+class SkillVersionRollback(ApiModel):
+    target_version_id: str
+    expected_current_version_id: str
+    change_summary: str = Field(default="", max_length=500)
 
 
 class ExtensionQuery(ApiModel):

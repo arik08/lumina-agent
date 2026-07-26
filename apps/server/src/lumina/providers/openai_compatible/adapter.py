@@ -6,7 +6,6 @@ import re
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlsplit
 
 import httpx
 
@@ -18,6 +17,7 @@ from lumina.http_client import (
 )
 
 from ..errors import ProviderConfigurationError, ProviderRequestError
+from ..http import validate_http_base_url
 from ..types import (
     ProviderCapabilities,
     ProviderEvent,
@@ -90,12 +90,24 @@ def normalize_openai_usage(raw: Mapping[str, Any]) -> ProviderUsage:
         or prompt_details.get("cache_creation_input_tokens")
         or 0
     )
+    output_details = (
+        raw.get("completion_tokens_details") or raw.get("output_tokens_details") or {}
+    )
+    if not isinstance(output_details, Mapping):
+        output_details = {}
+    raw_reasoning_tokens = output_details.get("reasoning_tokens")
+    reasoning_tokens = (
+        max(0, int(raw_reasoning_tokens))
+        if raw_reasoning_tokens is not None
+        else None
+    )
     return ProviderUsage(
         input_tokens=input_tokens,
         cached_input_tokens=cached,
         cache_write_tokens=cache_write,
         uncached_input_tokens=max(0, input_tokens - cached),
         output_tokens=output_tokens,
+        reasoning_tokens=reasoning_tokens,
         raw=dict(raw),
     )
 
@@ -475,12 +487,21 @@ def _retry_after_seconds(value: object) -> float | None:
                 if parsed is not None:
                     return parsed
         for item in value.values():
-            if isinstance(item, Mapping):
+            if isinstance(item, (Mapping, list, tuple)):
+                parsed = _retry_after_seconds(item)
+                if parsed is not None:
+                    return parsed
+        return None
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            if isinstance(item, (Mapping, list, tuple)):
                 parsed = _retry_after_seconds(item)
                 if parsed is not None:
                     return parsed
         return None
     if isinstance(value, bool):
+        return None
+    if not isinstance(value, (str, int, float)):
         return None
     try:
         parsed = float(value)
@@ -606,21 +627,7 @@ def _is_retryable_stream_error(error: Mapping[str, Any]) -> bool:
 
 
 def _validated_base_url(value: str) -> str:
-    normalized = value.strip().rstrip("/")
-    parsed = urlsplit(normalized)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise ProviderConfigurationError(
-            "Provider base URL must be an absolute HTTP(S) URL."
-        )
-    if parsed.username or parsed.password:
-        raise ProviderConfigurationError(
-            "Provider base URL must not contain credentials."
-        )
-    if parsed.query or parsed.fragment:
-        raise ProviderConfigurationError(
-            "Provider base URL must not contain a query or fragment."
-        )
-    return normalized
+    return validate_http_base_url(value, "Provider")
 
 
 def _stage_for_status(status: int) -> str:

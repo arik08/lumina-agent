@@ -38,7 +38,7 @@ queued
 
 상태 변경과 주요 이벤트를 DB에 기록하고 SSE 또는 WebSocket으로 Frontend에 전달합니다. Backend나 Worker가 재시작되어도 저장된 상태를 기준으로 실패 여부를 판단하거나 안전하게 이어갈 수 있어야 합니다.
 
-각 Run은 생성 시 조직의 관리자 실행 안전 한도를 snapshot으로 고정합니다. 기본값은 Run당 400 model Turn, 총 4,000,000 Token, 시작 후 10,080분(7일), 예상 비용 $100이며 관리자가 `설정 → 관리자 설정`에서 모두 조정할 수 있습니다. 한도는 Session 누적이 아니라 Run마다 새로 계산하고, 변경된 설정은 새 Run부터 적용합니다. 한도에 도달하면 부분 결과, 사용량과 checkpoint를 보존한 채 `limit_reached`로 종료합니다. Context가 모델 입력 창에 가까워지면 원본 메시지와 Tool 실행 근거는 저장소에 유지한 채 이전 대화와 진행 상태를 복구 가능한 요약으로 압축하고, 최신 메시지와 미완료 Plan을 보존하여 같은 Run의 다음 Turn을 계속합니다. 압축은 `context_compacted` 이벤트와 revision·source hash를 남겨 재접속과 감사 시 동일한 진행 상태를 복원할 수 있어야 합니다.
+각 Run은 생성 시 조직의 관리자 실행 안전 한도와 전역 YOLO mode를 snapshot으로 고정합니다. 기본값은 Run당 400 model Turn, 총 4,000,000 Token, 시작 후 10,080분(7일), 예상 비용 $100, YOLO mode 사용이며 관리자가 `설정 → 관리자 설정`에서 모두 조정할 수 있습니다. YOLO mode를 사용하면 모든 Tool 작업을 승인 요청 없이 실행하고, 사용하지 않으면 위험 기반 승인을 적용합니다. 권한·Project 격리·sandbox 경계와 Secret 비저장 정책은 두 모드에서 모두 유지합니다. 한도와 모드는 Session 누적이 아니라 Run마다 새로 계산하고, 변경된 설정은 새 Run부터 적용합니다. 한도에 도달하면 부분 결과, 사용량과 checkpoint를 보존한 채 `limit_reached`로 종료합니다. Context가 모델 입력 창에 가까워지면 원본 메시지와 Tool 실행 근거는 저장소에 유지한 채 이전 대화와 진행 상태를 복구 가능한 요약으로 압축하고, 최신 메시지와 미완료 Plan을 보존하여 같은 Run의 다음 Turn을 계속합니다. 압축은 `context_compacted` 이벤트와 revision·source hash를 남겨 재접속과 감사 시 동일한 진행 상태를 복원할 수 있어야 합니다.
 
 ## 한 Turn의 처리
 
@@ -49,12 +49,12 @@ queued
 5. Tool Call이 없으면 assistant 메시지와 사용량을 저장하고 Run을 완료합니다.
 6. Tool Call이 있으면 각 입력을 schema로 검증하고 권한 정책과 `pre_tool_use` hook을 실행합니다.
 7. 승인이 필요한 Tool은 `awaiting_approval` 상태에서 사용자 또는 관리자의 결정을 기다립니다.
-8. 결과를 크게 바꿀 모호함이 있으면 `request_user_input`을 단독 호출하여 최대 10개 질문을 한 묶음으로 저장하고 `awaiting_input`에서 계정 소유자의 답변을 기다립니다.
+8. 결과를 크게 바꿀 모호함이 있으면 `request_user_input`을 단독 호출하여 질문 묶음을 저장하고 `awaiting_input`에서 계정 소유자의 답변을 기다립니다. 답변에 종속된 후속 결정이 있으면 같은 Run에서 다시 호출할 수 있지만 전체 질문은 최대 10개입니다.
 9. Tool을 실행하고 성공 또는 실패 결과를 반드시 원래 Tool Call ID와 연결합니다.
 10. `post_tool_use` hook과 artifact 저장을 처리한 뒤 Tool Result를 대화에 추가합니다.
 11. 갱신된 Context로 다음 모델 Turn을 실행합니다.
 
-확인 질문의 기본 민감도는 계정별 `agent.clarification_mode`에 영구 저장하며 `autonomous`, `balanced`, `confirming` 중 하나를 사용합니다. 새 Run은 시작 시점의 값을 snapshot에 고정합니다. 질문 묶음은 Run당 한 번만 허용하고 각 질문은 2~4개의 객관식 선택지를 제공하며 Frontend가 직접 답변 입력을 항상 함께 표시합니다. 사용자는 현재 묶음에 한해 `이번에는 AI가 판단`을 선택할 수 있고 이 선택은 계정 기본값을 바꾸지 않습니다. 답변은 `input_submitted` 이벤트와 checkpoint에 저장한 뒤 같은 Run을 `queued`로 되돌려 재개합니다. 사용자가 `$ask-me`를 명시적으로 적용하면 같은 `request_user_input` UI를 사용하되 기본 1개, 보통 3개 이내를 권장하고 각 답변이 실행 전에 독립적으로 꼭 필요할 때만 최대 10개를 한 묶음으로 질문합니다. 이미 확인 가능한 사실, 되돌릴 수 있는 세부사항과 결과를 크게 바꾸지 않는 선택은 묻지 않습니다.
+확인 질문의 기본 민감도는 계정별 `agent.clarification_mode`에 영구 저장하며 `autonomous`, `balanced`, `confirming` 중 하나를 사용합니다. 새 Run은 시작 시점의 값을 snapshot에 고정합니다. 각 질문은 2~4개의 객관식 선택지를 제공하며 Frontend가 직접 답변 입력을 항상 함께 표시합니다. 사용자는 현재 묶음에 한해 `이번에는 AI가 판단`을 선택할 수 있고 이 선택은 계정 기본값을 바꾸지 않습니다. 답변은 `input_submitted` 이벤트와 checkpoint에 저장한 뒤 같은 Run을 `queued`로 되돌려 재개합니다. 독립적이고 이미 알려진 질문은 한 묶음으로 제시하고, 앞 답변에 따라 다음 질문이 달라지는 명시적 인터뷰는 한 번에 하나씩 같은 UI를 반복합니다. 이전 질문 카드는 실행 과정에 답변과 함께 남고 새 질문 카드가 별도 단계로 이어집니다. 같은 Run에서 해결된 질문 ID를 다시 사용할 수 없으며 모든 묶음을 합쳐 최대 10개까지만 질문합니다. 사용자가 `$ask-me`를 명시적으로 적용하면 이 적응형 질의응답으로 목표·제약·완료 조건을 구체화하고, 그 실행 계약에 따라 작업을 수행·검증합니다. 사용자가 개인적으로 무엇을 해야 하는지 묻고 누락된 사용자 사실이 권고·긴급성·안전·범위·다음 행동을 실질적으로 바꿀 수 있으면, 일반적인 조건문 목록으로 대신하지 않고 최소한의 고가치 사실을 질문 UI로 먼저 확인합니다. 직업 역할을 부여한 문장은 사용자 사실을 제공한 것으로 보지 않습니다. 파일·사내 검색·MCP·웹 검색 등으로 대상을 찾는 요청도 대화에 검색 대상을 구분할 정보가 없으면 도구 호출 전에 주제·목적·범위·최신성·소유자·문서 유형 중 가장 정보량이 큰 누락 기준을 질문 UI로 확인합니다. 모든 필터를 기계적으로 묻지 않으며, 앞선 대화·선택 파일·프로젝트 문맥만으로 검색 대상이 충분히 특정되면 바로 검색합니다. 반대로 일반 지식, 명백한 가상 사례, 개인 결정을 요구하지 않는 브레인스토밍과 이미 충분한 사실이 있는 요청에는 이 규칙만으로 질문 UI를 열지 않습니다. 이미 확인 가능한 사실, 되돌릴 수 있는 세부사항과 결과를 크게 바꾸지 않는 선택은 묻지 않습니다.
 
 Provider가 `max_tokens`, `length` 같은 출력 한도 종료를 보고하면 해당 응답을 최종 답변으로 확정하지 않습니다. 이미 저장한 assistant text를 Context tail에 그대로 두고 짧은 이어쓰기 지시만 추가하여 제한된 횟수 안에서 자동으로 계속하며, 완료 시 누적 draft와 최종 Message가 한 번만 이어진 동일한 text로 수렴해야 합니다. 내용도 Tool Call도 없는 정상 종료는 빈 답변으로 완료하지 않고 한 번 재시도하며, 반복되면 부분 draft와 이벤트를 보존한 채 명시적인 Provider 오류로 종료합니다. 출력 한도에 걸린 Tool Call은 인자가 완전하다고 증명할 수 없으므로 실행하지 않습니다.
 
@@ -91,6 +91,8 @@ Agent Loop는 다음 조건 중 하나에서 끝납니다.
 - 서버 종료 또는 Worker 중단
 
 실행기는 매 model Turn 전후에 `modelTurns`, `inputTokens + outputTokens`, `costUsd`와 `started_at` 기준 경과 시간을 검사합니다. 이 값은 Run 단위이며 같은 Session에서 다음 작업으로 생성된 새 Run은 0부터 시작합니다. 사용자가 Effort를 명시하면 Run 전체에서 고정하고, `Auto`를 선택하면 별도 모델 호출 없이 요청의 산출물·첨부·참조·조사 범위에 따라 실효 Effort를 결정합니다. 기본은 `low`이며 일반 조사·복잡 작업·산출물 생성·첨부 또는 참조 3개 이상은 `medium`, 사용자가 심층·철저·전수 조사 범위를 명시한 경우만 `high`를 사용합니다. Model Turn이 이어졌다는 이유만으로 Effort를 올리지 않습니다. 각 Turn의 요청·실효 Effort, TTFT, 전체 시간, cached·uncached input Token과 cache hit ratio는 `model_turn_completed` event와 snapshot에 저장합니다. Context는 별도로 각 model Turn 전에 계산하고 기본적으로 유효 입력 예산의 75%를 넘으면 이전 assistant·Tool 구간을 구조화된 요약으로 축약하되 최근 Tool Call/Result pair는 그대로 보존합니다. Codex의 GPT-5.4·5.5·5.6 계열만 서비스 정책상 272K Context와 85% 임계값을 사용합니다. P-GPT, OpenAI API, Gemini API와 Claude API는 각 표준 API model capability의 Context window를 그대로 사용합니다. 축약 전에는 `컨텍스트 축약 중`, 완료 후에는 축약 전·후 추정 Token과 보존 범위를 Timeline에 표시하고 snapshot과 event replay에 남깁니다. 개별 Provider·Tool 호출의 transport timeout은 해당 호출의 실패·재시도 조건이며 Run 전체의 경과 시간 한도와 구분합니다.
+
+Composer의 `analysis_depth=auto | brief | standard | deep`와 `answer_length=auto | brief | standard | detailed`는 Provider Effort와 분리한 Run별 실행 옵션입니다. 둘 다 기본 `auto`이며 전송 시 Run snapshot, user Message metadata, Steering과 Queue 승격 정보에 고정합니다. `analysis_depth`는 웹 검색·페이지 확인 상한과 자료 탐색·교차 검증 범위를 조절하되 상한을 목표 횟수처럼 채우지 않고, 최신성·안전·권한에 필요한 검증은 `brief`에서도 생략하지 않습니다. `answer_length`는 최종 산출물이 채팅일 때의 보이는 답변 분량만 조절하며 분석 범위나 Provider Effort를 낮추지 않습니다. 문서 분량은 별도의 `target_output_tokens`로 유지하고 `auto`와 `file` 출력 모드에서 사용할 수 있으며 `chat` 모드에는 적용하지 않습니다.
 
 ## Context 관리
 

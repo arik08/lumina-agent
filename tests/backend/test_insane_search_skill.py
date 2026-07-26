@@ -1,0 +1,109 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from lumina.agent import executor as executor_module
+from lumina.extensions.agent_skill_spec import parse_agent_skill
+from lumina.models import Run
+from lumina.tools.web import WebToolError
+
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+SKILL_ROOT = REPOSITORY_ROOT / "extensions" / "skills"
+
+
+def _fallback_skill_run(*, allow_implicit_invocation: bool = True) -> Run:
+    return Run(
+        snapshot_json={
+            "extensions": [
+                {
+                    "extension_id": "insane-search-id",
+                    "slug": "insane-search",
+                    "name": "insane-search",
+                    "instructions": "# Insane Search\nUse the fallback retrieval chain.",
+                    "digest": "digest",
+                    "allow_implicit_invocation": allow_implicit_invocation,
+                }
+            ],
+            "extension_application": "explicit_references",
+            "prompt_references": [],
+        }
+    )
+
+
+def _http_error(status_code: int) -> WebToolError:
+    return WebToolError(
+        "http_error",
+        f"외부 서버 요청이 HTTP {status_code}로 실패했습니다.",
+        stage="http",
+        status_code=status_code,
+    )
+
+
+def test_blocked_web_fetch_recommends_insane_search_without_activating_it() -> None:
+    for status_code in (401, 402, 403, 404, 429):
+        run = _fallback_skill_run()
+
+        recommendation = executor_module._blocked_web_fallback_skill_recommendation(
+            run,
+            tool_name="web_fetch",
+            error=_http_error(status_code),
+        )
+
+        assert recommendation is not None
+        assert recommendation["skillId"] == "insane-search-id"
+        assert recommendation["slug"] == "insane-search"
+        assert "결론에 중요" in recommendation["reason"]
+        assert (
+            "merely one of several candidate sources"
+            in recommendation["instruction"]
+        )
+        assert "auto_selected_skill_ids" not in run.snapshot_json
+
+
+def test_non_fallback_http_statuses_do_not_recommend_insane_search() -> None:
+    for status_code in (400, 500):
+        run = _fallback_skill_run()
+
+        recommendation = executor_module._blocked_web_fallback_skill_recommendation(
+            run,
+            tool_name="web_fetch",
+            error=_http_error(status_code),
+        )
+
+        assert recommendation is None
+        assert "auto_selected_skill_ids" not in run.snapshot_json
+
+
+def test_blocked_web_fetch_respects_disabled_implicit_skill_activation() -> None:
+    run = _fallback_skill_run(allow_implicit_invocation=False)
+
+    recommendation = executor_module._blocked_web_fallback_skill_recommendation(
+        run,
+        tool_name="web_fetch",
+        error=_http_error(403),
+    )
+
+    assert recommendation is None
+    assert "auto_selected_skill_ids" not in run.snapshot_json
+
+
+def test_insane_search_is_a_material_last_resort_not_a_generic_403_fallback() -> None:
+    skill = (SKILL_ROOT / "insane-search" / "SKILL.md").read_text(encoding="utf-8")
+    normalized = " ".join(skill.split())
+
+    assert "blocked source that is material to the answer" in normalized
+    assert "merely one of several candidate sources" in normalized
+    assert "are signals only, never sufficient grounds by themselves" in normalized
+
+
+def test_insane_search_frontmatter_description_preserves_model_judgment() -> None:
+    skill = (SKILL_ROOT / "insane-search" / "SKILL.md").read_text(encoding="utf-8")
+    description = parse_agent_skill(
+        skill,
+        expected_name="insane-search",
+    ).description
+
+    assert "merely one of several candidate sources" in description
+    assert "signals only, never sufficient grounds" in description
+    assert "model judgment confirms the source is essential" in description

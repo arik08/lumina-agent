@@ -70,19 +70,31 @@ function questionItems(turnSets: TurnSet[]) {
 
 export function ConversationQuestionNavigator({
   turnSets,
+  totalQuestionCount,
   theme,
   scrollContainerRef,
+  onLoadQuestion,
   onNavigateStart,
 }: {
   turnSets: TurnSet[];
+  totalQuestionCount?: number;
   theme: Theme;
   scrollContainerRef: RefObject<HTMLDivElement | null>;
+  onLoadQuestion: (questionIndex: number) => Promise<boolean>;
   onNavigateStart: () => void;
 }) {
   const items = useMemo(() => questionItems(turnSets), [turnSets]);
+  const authoritativeQuestionCount = typeof totalQuestionCount === "number" && Number.isFinite(totalQuestionCount)
+    ? totalQuestionCount
+    : 0;
+  const questionCount = Math.max(authoritativeQuestionCount, items.length);
+  const unloadedQuestionCount = questionCount - items.length;
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const [loadingQuestionIndex, setLoadingQuestionIndex] = useState<number | null>(null);
+  const [pendingNavigationIndex, setPendingNavigationIndex] = useState<number | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const markerRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const loadingQuestionIndexesRef = useRef(new Set<number>());
   const itemKey = items.map((item) => item.anchorId).join("|");
 
   const cancelScrollAnimation = () => {
@@ -92,7 +104,6 @@ export function ConversationQuestionNavigator({
 
   useEffect(() => {
     cancelScrollAnimation();
-    setActiveIndex(null);
   }, [itemKey]);
 
   useEffect(() => {
@@ -113,8 +124,13 @@ export function ConversationQuestionNavigator({
   const navigateToQuestion = (item: QuestionNavigatorItem) => {
     const container = scrollContainerRef.current;
     if (!container) return;
-    const target = [...container.querySelectorAll<HTMLElement>("[data-question-anchor]")]
-      .find((element) => element.dataset.questionAnchor === item.anchorId);
+    const findQuestionTarget = () => (
+      [...container.querySelectorAll<HTMLElement>("[data-question-anchor]")]
+        .find((element) => element.dataset.questionAnchor === item.anchorId)
+      ?? [...container.querySelectorAll<HTMLElement>("[data-question-anchor-placeholder]")]
+        .find((element) => element.dataset.questionAnchorPlaceholder === item.anchorId)
+    );
+    const target = findQuestionTarget();
     if (!target) return;
 
     onNavigateStart();
@@ -125,9 +141,32 @@ export function ConversationQuestionNavigator({
     const maximumTop = Math.max(0, container.scrollHeight - container.clientHeight);
     const targetTop = Math.max(0, Math.min(maximumTop, startTop + targetRect.top - containerRect.top - 24));
     const distance = targetTop - startTop;
+    const alignToRenderedTarget = (remainingAttempts = 8) => {
+      const renderedTarget = findQuestionTarget();
+      if (!renderedTarget) {
+        animationFrameRef.current = remainingAttempts > 1
+          ? window.requestAnimationFrame(() => alignToRenderedTarget(remainingAttempts - 1))
+          : null;
+        return;
+      }
+      const renderedContainerRect = container.getBoundingClientRect();
+      const renderedTargetRect = renderedTarget.getBoundingClientRect();
+      const renderedMaximumTop = Math.max(0, container.scrollHeight - container.clientHeight);
+      container.scrollTop = Math.max(
+        0,
+        Math.min(
+          renderedMaximumTop,
+          container.scrollTop + renderedTargetRect.top - renderedContainerRect.top - 24,
+        ),
+      );
+      animationFrameRef.current = remainingAttempts > 1
+        ? window.requestAnimationFrame(() => alignToRenderedTarget(remainingAttempts - 1))
+        : null;
+    };
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
     if (reduceMotion || Math.abs(distance) < 2) {
       container.scrollTop = targetTop;
+      animationFrameRef.current = window.requestAnimationFrame(alignToRenderedTarget);
       return;
     }
 
@@ -139,47 +178,87 @@ export function ConversationQuestionNavigator({
       if (progress < 1) {
         animationFrameRef.current = window.requestAnimationFrame(step);
       } else {
-        animationFrameRef.current = null;
+        animationFrameRef.current = window.requestAnimationFrame(alignToRenderedTarget);
       }
     };
     animationFrameRef.current = window.requestAnimationFrame(step);
   };
 
-  if (items.length === 0) return null;
+  const loadQuestion = async (questionIndex: number, navigateAfterLoad: boolean) => {
+    if (navigateAfterLoad) setPendingNavigationIndex(questionIndex);
+    if (loadingQuestionIndexesRef.current.has(questionIndex)) return;
+    loadingQuestionIndexesRef.current.add(questionIndex);
+    setLoadingQuestionIndex(questionIndex);
+    try {
+      const loaded = await onLoadQuestion(questionIndex);
+      if (!loaded && navigateAfterLoad) {
+        setPendingNavigationIndex((current) => current === questionIndex ? null : current);
+      }
+    } finally {
+      loadingQuestionIndexesRef.current.delete(questionIndex);
+      setLoadingQuestionIndex((current) => current === questionIndex ? null : current);
+    }
+  };
+
+  useEffect(() => {
+    if (pendingNavigationIndex === null || pendingNavigationIndex < unloadedQuestionCount) return;
+    const item = items[pendingNavigationIndex - unloadedQuestionCount];
+    if (!item) return;
+    setPendingNavigationIndex(null);
+    navigateToQuestion(item);
+  }, [itemKey, pendingNavigationIndex, unloadedQuestionCount]);
+
+  if (questionCount === 0) return null;
 
   return (
     <nav
       className="question-navigator"
-      aria-label={`사용자 질문 ${items.length}개 바로가기`}
+      aria-label={`사용자 질문 ${questionCount}개 바로가기`}
       onMouseLeave={() => setActiveIndex(null)}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setActiveIndex(null);
       }}
     >
-      <div className="question-navigator-track" style={{ "--question-count": items.length } as NavigatorStyle}>
-        {items.map((item, index) => {
-          const distance = activeIndex === null ? Number.POSITIVE_INFINITY : Math.abs(activeIndex - index);
-          const tooltipId = `question-navigator-tooltip-${item.anchorId}`;
+      <div className="question-navigator-track" style={{ "--question-count": questionCount } as NavigatorStyle}>
+        {Array.from({ length: questionCount }, (_, questionIndex) => {
+          const item = questionIndex >= unloadedQuestionCount
+            ? items[questionIndex - unloadedQuestionCount]
+            : undefined;
+          const isUnloaded = !item;
+          const distance = activeIndex === null ? Number.POSITIVE_INFINITY : Math.abs(activeIndex - questionIndex);
+          const tooltipId = item ? `question-navigator-tooltip-${item.anchorId}` : undefined;
           const markerStyle = {
             "--question-marker-scale": markerScaleForDistance(distance),
             "--question-marker-opacity": distance === 0 ? 1 : distance <= 3 ? 0.72 : 0.42,
           } as NavigatorStyle;
           return (
             <button
-              className={`question-navigator-marker ${index < 2 ? "is-tooltip-start" : ""} ${index >= items.length - 2 ? "is-tooltip-end" : ""}`}
+              className={`question-navigator-marker ${isUnloaded ? "is-unloaded" : ""} ${loadingQuestionIndex === questionIndex ? "is-loading" : ""} ${questionIndex < 2 ? "is-tooltip-start" : ""} ${questionIndex >= questionCount - 2 ? "is-tooltip-end" : ""}`}
               type="button"
-              ref={(node) => { markerRefs.current[index] = node; }}
-              aria-label={`질문 ${index + 1}로 이동: ${item.questionPreview}`}
-              aria-describedby={activeIndex === index ? tooltipId : undefined}
+              ref={(node) => { markerRefs.current[questionIndex] = node; }}
+              aria-label={item
+                ? `질문 ${questionIndex + 1}로 이동: ${item.questionPreview}`
+                : `질문 ${questionIndex + 1} 불러오기`}
+              aria-busy={loadingQuestionIndex === questionIndex || undefined}
+              aria-describedby={item && activeIndex === questionIndex ? tooltipId : undefined}
               style={markerStyle}
-              onMouseEnter={() => setActiveIndex(index)}
-              onFocus={() => setActiveIndex(index)}
-              onClick={() => navigateToQuestion(item)}
-              key={item.anchorId}
+              onMouseEnter={() => {
+                setActiveIndex(questionIndex);
+                if (isUnloaded) void loadQuestion(questionIndex, false);
+              }}
+              onFocus={() => {
+                setActiveIndex(questionIndex);
+                if (isUnloaded) void loadQuestion(questionIndex, false);
+              }}
+              onClick={() => {
+                if (item) navigateToQuestion(item);
+                else void loadQuestion(questionIndex, true);
+              }}
+              key={`question-${questionIndex}`}
             >
-              {activeIndex === index && (
-                <GlobalTooltipLayer anchor={markerRefs.current[index]} className={`question-navigator-tooltip is-${theme}`} id={tooltipId} open preferredPlacement="right">
-                  <strong>질문 {index + 1}</strong>
+              {item && activeIndex === questionIndex && (
+                <GlobalTooltipLayer anchor={markerRefs.current[questionIndex]} className={`question-navigator-tooltip is-${theme}`} id={tooltipId} open preferredPlacement="right">
+                  <strong>질문 {questionIndex + 1}</strong>
                   <span className="question-navigator-preview-row">
                     <small>질문</small>
                     <span>{item.questionPreview}</span>

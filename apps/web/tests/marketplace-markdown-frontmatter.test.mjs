@@ -5,6 +5,7 @@ import { markdownBodyAfterFrontmatter, splitMarkdownFrontmatter } from "../src/c
 
 const marketplacePath = new URL("../src/components/MarketplaceView.tsx", import.meta.url);
 const syntaxCodePath = new URL("../src/components/SyntaxCode.tsx", import.meta.url);
+const syntaxRenderPath = new URL("../src/components/syntax-highlight-render.ts", import.meta.url);
 const stylesPath = new URL("../src/styles.css", import.meta.url);
 
 test("Skill Markdown preview preserves YAML trigger metadata separately from the body", () => {
@@ -26,9 +27,10 @@ test("ordinary or incomplete Markdown separators remain visible", () => {
 });
 
 test("Marketplace preview and source highlighting share the frontmatter boundary", async () => {
-  const [marketplace, syntaxCode, styles] = await Promise.all([
+  const [marketplace, syntaxCode, syntaxRender, styles] = await Promise.all([
     readFile(marketplacePath, "utf8"),
     readFile(syntaxCodePath, "utf8"),
+    readFile(syntaxRenderPath, "utf8"),
     readFile(stylesPath, "utf8"),
   ]);
 
@@ -36,7 +38,8 @@ test("Marketplace preview and source highlighting share the frontmatter boundary
   assert.match(marketplace, /<SyntaxCode value=\{frontmatter\.yaml\} language="yaml"/);
   assert.match(marketplace, /<hr \/>[\s\S]*?<SyntaxCode[\s\S]*?<hr \/>/);
   assert.match(marketplace, /<ReactMarkdown skipHtml remarkPlugins=\{\[remarkGfm\]\}>\{markdown\}<\/ReactMarkdown>/);
-  assert.match(syntaxCode, /splitMarkdownFrontmatter\(value\)/);
+  assert.match(syntaxCode, /requestSyntaxHighlight/);
+  assert.match(syntaxRender, /splitMarkdownFrontmatter\(value\)/);
   assert.match(styles, /\.skill-markdown-preview \.skill-frontmatter-preview pre code \{ white-space: pre-wrap; word-break: break-word; \}/);
 });
 
@@ -49,6 +52,7 @@ test("Skill source and rendered views share a resizable inline expanded-view con
   assert.match(marketplace, /className="skill-content-view-actions"/);
   assert.match(marketplace, /current === "source" \? "rendered" : "source"/);
   assert.match(marketplace, /skillContentView === "source" \? <Eye size=\{14\} \/> : <Code2 size=\{14\} \/>/);
+  assert.match(marketplace, /useState<"source" \| "rendered">\("rendered"\)/);
   assert.match(marketplace, /skillContentExpanded \? "원래 크기로 보기" : "확대해서 보기"/);
   assert.match(marketplace, /skillContentExpanded \? <Minimize2 size=\{14\} \/> : <Maximize2 size=\{14\} \/>/);
   assert.match(marketplace, /storageKey="lumina:marketplace-file-explorer-width"/);

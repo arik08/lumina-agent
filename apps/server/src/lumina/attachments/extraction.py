@@ -9,7 +9,7 @@ from typing import Any
 from docx import Document
 from openpyxl import load_workbook
 from pptx import Presentation
-from pypdf import PdfReader
+from pypdf import PasswordType, PdfReader
 
 from ..document_limits import MAX_DOCUMENT_PAGES
 
@@ -37,7 +37,7 @@ def extract_attachment_text(
                 locator_map={"kind": "line", "count": len(text.splitlines())},
             )
         if mime_type == "application/pdf":
-            return _extract_pdf(content)
+            return extract_pdf_text(content=content)
         if mime_type.endswith("wordprocessingml.document"):
             return _extract_docx(content)
         if mime_type.endswith("spreadsheetml.sheet"):
@@ -57,19 +57,56 @@ def extract_attachment_text(
         )
 
 
-def _extract_pdf(content: bytes) -> ExtractionResult:
-    reader = PdfReader(BytesIO(content))
-    if reader.is_encrypted:
-        return ExtractionResult(status="failed", metadata={"errorType": "EncryptedPdf"})
-    pages: list[str] = []
-    total_pages = len(reader.pages)
-    for index, page in enumerate(reader.pages[:MAX_DOCUMENT_PAGES], start=1):
-        pages.append(f"[Page {index}]\n{page.extract_text() or ''}")
-    return _completed(
-        "\n\n".join(pages),
-        locator_map={"kind": "page", "count": total_pages},
-        metadata={"truncatedByPageLimit": total_pages > MAX_DOCUMENT_PAGES},
-    )
+def extract_pdf_text(
+    *,
+    content: bytes,
+    page_start: int = 1,
+    page_end: int | None = None,
+) -> ExtractionResult:
+    try:
+        if page_start < 1 or (page_end is not None and page_end < page_start):
+            raise ValueError("invalid PDF page range")
+        reader = PdfReader(BytesIO(content))
+        if (
+            reader.is_encrypted
+            and reader.decrypt("") == PasswordType.NOT_DECRYPTED
+        ):
+            return ExtractionResult(
+                status="failed",
+                metadata={"errorType": "EncryptedPdf"},
+            )
+        total_pages = len(reader.pages)
+        if page_start > total_pages:
+            raise ValueError("PDF page range starts after the final page")
+        selected_end = min(
+            page_end or total_pages,
+            total_pages,
+            page_start + MAX_DOCUMENT_PAGES - 1,
+        )
+        pages = [
+            f"[Page {index}]\n{reader.pages[index - 1].extract_text() or ''}"
+            for index in range(page_start, selected_end + 1)
+        ]
+        return _completed(
+            "\n\n".join(pages),
+            locator_map={
+                "kind": "page",
+                "count": total_pages,
+                "start": page_start,
+                "end": selected_end,
+            },
+            metadata={
+                "hasMorePages": selected_end < total_pages,
+                "truncatedByPageLimit": (
+                    selected_end < min(page_end or total_pages, total_pages)
+                ),
+            },
+        )
+    except Exception as exc:
+        return ExtractionResult(
+            status="failed",
+            metadata={"errorType": type(exc).__name__},
+        )
 
 
 def _extract_docx(content: bytes) -> ExtractionResult:

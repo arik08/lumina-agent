@@ -12,9 +12,11 @@ test("rendered code blocks expose an inline copy action with local feedback", as
 
   assert.match(turn, /function MarkdownCodeBlock/);
   assert.match(turn, /await copyText\(source\)/);
-  assert.match(turn, /"복사됨"[\s\S]*"복사 실패"[\s\S]*"복사"/);
-  assert.match(turn, /pre: MarkdownCodeBlock/);
-  assert.match(turn, /language === "mermaid"[\s\S]*language === "lumina-chart"/);
-  assert.match(styles, /\.markdown-code-copy\s*\{[^}]*position:\s*absolute;[^}]*top:\s*7px;[^}]*right:\s*8px;/s);
-  assert.match(styles, /\.markdown-code-copy:focus-visible/);
+  assert.match(turn, /copyState === "copied" \? "복사됨" : copyState === "error" \? "복사 실패" : "코드 복사"/);
+  assert.match(turn, /const markdownPreComponent:[\s\S]*<MarkdownCodeBlock>\{children\}<\/MarkdownCodeBlock>/);
+  assert.match(turn, /const interactive = language === "mermaid" \|\| language === "mmd" \|\| language === "lumina-chart"/);
+  assert.match(turn, /className="visually-hidden" role="status" aria-live="polite"/);
+  assert.match(styles, /\.markdown-code-copy\s*\{[^}]*position:\s*absolute;[^}]*top:\s*6px;[^}]*right:\s*6px;/s);
+  assert.match(styles, /\.markdown-code-copy\.is-copied/);
+  assert.match(styles, /\.markdown-code-copy\.is-error/);
 });

@@ -7,13 +7,17 @@ import ipaddress
 import re
 import socket
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from functools import partial
 from html.parser import HTMLParser
+from typing import Protocol
 from urllib.parse import (
     parse_qs,
     parse_qsl,
+    unquote,
     urlencode,
     urljoin,
     urlsplit,
@@ -23,6 +27,7 @@ from uuid import uuid4
 
 import httpx
 
+from ..attachments.extraction import extract_pdf_text
 from ..http_client import (
     HttpClientOptions,
     TrustManager,
@@ -38,7 +43,13 @@ UNTRUSTED_CONTENT_BANNER = (
 
 _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 _ALLOWED_CONTENT_TYPES = frozenset(
-    {"text/html", "application/xhtml+xml", "text/plain", "application/json"}
+    {
+        "text/html",
+        "application/xhtml+xml",
+        "text/plain",
+        "application/json",
+        "application/pdf",
+    }
 )
 _TRACKING_PARAMETERS = frozenset(
     {
@@ -64,6 +75,12 @@ _BLOCKED_HOSTNAMES = frozenset(
 _CHARSET = re.compile(r"charset\s*=\s*[\"']?([^;\s\"']+)", re.IGNORECASE)
 _WHITESPACE = re.compile(r"[\t\f\v ]+")
 _NEWLINES = re.compile(r"\n{3,}")
+_PDF_PAGE_MARKER = re.compile(r"(?m)^\[Page \d+\]\s*$")
+_PDF_PAGES_PER_FETCH = 50
+_PDF_EXTRACTION_WORKERS = ThreadPoolExecutor(
+    max_workers=2,
+    thread_name_prefix="lumina-web-pdf-extraction",
+)
 
 AddressResolver = Callable[[str, int], Awaitable[Sequence[str]]]
 
@@ -91,9 +108,10 @@ class WebToolError(RuntimeError):
 class WebToolPolicy:
     """Public-web limits. Proxy use is opt-in and never inherited from env."""
 
-    timeout_seconds: float = 15.0
+    timeout_seconds: float = 45.0
     max_redirects: int = 5
     max_response_bytes: int = 2_000_000
+    max_pdf_response_bytes: int = 100 * 1024 * 1024
     max_text_chars: int = 200_000
     max_query_chars: int = 500
     max_search_results: int = 10
@@ -108,7 +126,11 @@ class WebToolPolicy:
             raise ValueError("timeout_seconds must be positive")
         if not 0 <= self.max_redirects <= 10:
             raise ValueError("max_redirects must be between 0 and 10")
-        if self.max_response_bytes <= 0 or self.max_text_chars <= 0:
+        if (
+            self.max_response_bytes <= 0
+            or self.max_pdf_response_bytes <= 0
+            or self.max_text_chars <= 0
+        ):
             raise ValueError("response and text limits must be positive")
         if not 1 <= self.max_query_chars <= 2_000:
             raise ValueError("max_query_chars must be between 1 and 2000")
@@ -134,15 +156,22 @@ class SearchInvocation:
     query: str
     backend: str
     started_at: datetime
+    purpose: str | None = None
+    parent_invocation_id: str | None = None
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "invocationId": self.invocation_id,
             "toolExecutionId": self.tool_execution_id,
             "query": self.query,
             "backend": self.backend,
             "startedAt": self.started_at.isoformat(),
         }
+        if self.purpose:
+            payload["purpose"] = self.purpose
+        if self.parent_invocation_id:
+            payload["parentInvocationId"] = self.parent_invocation_id
+        return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +187,10 @@ class SourceEvidence:
     fetched_at: datetime
     content_hash: str
     evidence_kind: str
+    content_type: str | None = None
+    extraction_status: str = "complete"
+    search_backends: tuple[str, ...] = ()
+    text_chars: int | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -172,6 +205,10 @@ class SourceEvidence:
             "fetchedAt": self.fetched_at.isoformat(),
             "contentHash": self.content_hash,
             "evidenceKind": self.evidence_kind,
+            "contentType": self.content_type,
+            "extractionStatus": self.extraction_status,
+            "searchBackends": list(self.search_backends),
+            "textChars": self.text_chars,
         }
 
 
@@ -194,19 +231,26 @@ class WebFetchResult:
     text: str
     content_type: str
     redirect_count: int
+    locator_map: dict[str, object] | None = None
+    extraction_metadata: dict[str, object] | None = None
 
     @property
     def prompt_text(self) -> str:
         return f"{UNTRUSTED_CONTENT_BANNER}\n\n{self.text}"
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "source": self.evidence.to_dict(),
             "text": self.prompt_text,
             "contentType": self.content_type,
             "redirectCount": self.redirect_count,
             "untrustedExternalContent": True,
         }
+        if self.locator_map is not None:
+            payload["locatorMap"] = self.locator_map
+        if self.extraction_metadata is not None:
+            payload["extractionMetadata"] = self.extraction_metadata
+        return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,6 +279,57 @@ class _SearchEntry:
     snippet: str
 
 
+class WebSearchBackend(Protocol):
+    """Approved search discovery boundary; only DuckDuckGo is active today."""
+
+    name: str
+
+    async def search(
+        self,
+        query: str,
+        *,
+        policy: WebToolPolicy,
+        client: httpx.AsyncClient | None,
+        trust_manager: TrustManager | None,
+        trust_profile: TrustProfile | None,
+        resolver: AddressResolver,
+    ) -> tuple[_SearchEntry, ...]: ...
+
+
+class DuckDuckGoHtmlSearchBackend:
+    name = "duckduckgo_html"
+
+    async def search(
+        self,
+        query: str,
+        *,
+        policy: WebToolPolicy,
+        client: httpx.AsyncClient | None,
+        trust_manager: TrustManager | None,
+        trust_profile: TrustProfile | None,
+        resolver: AddressResolver,
+    ) -> tuple[_SearchEntry, ...]:
+        search_url = f"{DUCKDUCKGO_HTML_URL}?{urlencode({'q': query})}"
+        async with _client_scope(
+            client,
+            policy=policy,
+            trust_manager=trust_manager,
+            trust_profile=trust_profile,
+        ) as http_client:
+            fetched = await _fetch_public_bytes(
+                search_url,
+                client=http_client,
+                policy=policy,
+                resolver=resolver,
+                allowed_content_types=frozenset({"text/html", "application/xhtml+xml"}),
+            )
+        html = _decode_content(fetched.content, fetched.charset)
+        return tuple(_parse_duckduckgo_results(html))
+
+
+DEFAULT_WEB_SEARCH_BACKEND: WebSearchBackend = DuckDuckGoHtmlSearchBackend()
+
+
 def create_web_http_client(
     policy: WebToolPolicy | None = None,
     *,
@@ -255,7 +350,10 @@ def create_web_http_client(
         ),
         headers={
             "User-Agent": "LuminaAgent/0.1 (+safe-web-tool)",
-            "Accept": "text/html,application/xhtml+xml,text/plain,application/json;q=0.8",
+            "Accept": (
+                "text/html,application/xhtml+xml,application/pdf,"
+                "text/plain,application/json;q=0.8"
+            ),
         },
     )
 
@@ -265,13 +363,16 @@ async def web_search(
     *,
     tool_execution_id: str,
     result_limit: int = 5,
+    purpose: str | None = None,
+    parent_invocation_id: str | None = None,
     policy: WebToolPolicy | None = None,
     client: httpx.AsyncClient | None = None,
     trust_manager: TrustManager | None = None,
     trust_profile: TrustProfile | None = None,
     resolver: AddressResolver | None = None,
+    backend: WebSearchBackend | None = None,
 ) -> WebSearchResult:
-    """Search DuckDuckGo HTML and return snapshot-ready source evidence."""
+    """Search the selected approved backend and return snapshot-ready evidence."""
 
     selected_policy = policy or WebToolPolicy()
     normalized_query = " ".join(query.split())
@@ -303,31 +404,29 @@ async def web_search(
             stage="validation",
         )
     normalized_tool_execution_id = _normalize_tool_execution_id(tool_execution_id)
+    normalized_purpose = _normalize_optional_label(purpose, max_chars=160)
+    normalized_parent_invocation_id = _normalize_optional_label(
+        parent_invocation_id, max_chars=200
+    )
+    selected_backend = backend or DEFAULT_WEB_SEARCH_BACKEND
 
     invocation = SearchInvocation(
         invocation_id=f"search_{uuid4().hex}",
         tool_execution_id=normalized_tool_execution_id,
         query=normalized_query,
-        backend="duckduckgo_html",
+        backend=selected_backend.name,
         started_at=datetime.now(UTC),
+        purpose=normalized_purpose,
+        parent_invocation_id=normalized_parent_invocation_id,
     )
-    search_url = f"{DUCKDUCKGO_HTML_URL}?{urlencode({'q': normalized_query})}"
-    async with _client_scope(
-        client,
+    entries = await selected_backend.search(
+        normalized_query,
         policy=selected_policy,
+        client=client,
         trust_manager=trust_manager,
         trust_profile=trust_profile,
-    ) as http_client:
-        fetched = await _fetch_public_bytes(
-            search_url,
-            client=http_client,
-            policy=selected_policy,
-            resolver=resolver or resolve_public_addresses,
-            allowed_content_types=frozenset({"text/html", "application/xhtml+xml"}),
-        )
-
-    html = _decode_content(fetched.content, fetched.charset)
-    entries = _parse_duckduckgo_results(html)
+        resolver=resolver or resolve_public_addresses,
+    )
     sources: list[SourceEvidence] = []
     seen_urls: set[str] = set()
     fetched_at = datetime.now(UTC)
@@ -365,6 +464,8 @@ async def web_search(
                 fetched_at=fetched_at,
                 content_hash=hashlib.sha256(evidence_content).hexdigest(),
                 evidence_kind="search_snippet",
+                extraction_status="snippet_only",
+                search_backends=(selected_backend.name,),
             )
         )
     return WebSearchResult(invocation=invocation, sources=tuple(sources))
@@ -375,6 +476,8 @@ async def web_fetch(
     *,
     tool_execution_id: str,
     query_ids: Sequence[str] = (),
+    page_start: int | None = None,
+    page_end: int | None = None,
     policy: WebToolPolicy | None = None,
     client: httpx.AsyncClient | None = None,
     trust_manager: TrustManager | None = None,
@@ -383,6 +486,22 @@ async def web_fetch(
 ) -> WebFetchResult:
     """Fetch readable public content with redirect and DNS rebinding guards."""
 
+    selected_page_start = page_start if page_start is not None else 1
+    if selected_page_start < 1:
+        raise WebToolError(
+            "invalid_pdf_page_range",
+            "PDF 시작 페이지는 1 이상이어야 합니다.",
+            stage="input",
+        )
+    if page_end is not None and (
+        page_end < selected_page_start
+        or page_end - selected_page_start + 1 > _PDF_PAGES_PER_FETCH
+    ):
+        raise WebToolError(
+            "invalid_pdf_page_range",
+            f"PDF는 한 번에 최대 {_PDF_PAGES_PER_FETCH}페이지까지 가져올 수 있습니다.",
+            stage="input",
+        )
     selected_policy = policy or WebToolPolicy()
     normalized_tool_execution_id = _normalize_tool_execution_id(tool_execution_id)
     normalized_query_ids = _normalize_query_ids(query_ids)
@@ -400,14 +519,62 @@ async def web_fetch(
             allowed_content_types=selected_policy.allowed_content_types,
         )
 
-    decoded = _decode_content(fetched.content, fetched.charset)
-    if fetched.content_type in {"text/html", "application/xhtml+xml"}:
-        title, readable = extract_readable_html(decoded)
-    else:
+    locator_map: dict[str, object] | None = None
+    extraction_metadata: dict[str, object] | None = None
+    if fetched.content_type == "application/pdf":
         parsed_final = _parse_public_url(fetched.final_url)
-        title = parsed_final.hostname
-        readable = _normalize_readable_text(decoded)
+        filename = unquote(urlsplit(fetched.final_url).path.rsplit("/", 1)[-1])
+        selected_page_end = page_end or (
+            selected_page_start + _PDF_PAGES_PER_FETCH - 1
+        )
+        extraction = await asyncio.get_running_loop().run_in_executor(
+            _PDF_EXTRACTION_WORKERS,
+            partial(
+                extract_pdf_text,
+                content=fetched.content,
+                page_start=selected_page_start,
+                page_end=selected_page_end,
+            ),
+        )
+        if extraction.status != "completed":
+            raise WebToolError(
+                "pdf_extraction_failed",
+                "PDF 본문을 안전하게 추출하지 못했습니다.",
+                stage="content",
+            ) from None
+        readable = extraction.text
+        if not _PDF_PAGE_MARKER.sub("", readable).strip():
+            raise WebToolError(
+                "pdf_text_unavailable",
+                "PDF에서 읽을 수 있는 텍스트를 찾지 못했습니다. 스캔 문서는 OCR이 필요합니다.",
+                stage="content",
+            )
+        locator_map = dict(extraction.locator_map)
+        extraction_metadata = dict(extraction.metadata)
+        title = filename or parsed_final.hostname
+    else:
+        if page_start is not None or page_end is not None:
+            raise WebToolError(
+                "pdf_page_range_not_applicable",
+                "페이지 범위는 PDF URL에만 사용할 수 있습니다.",
+                stage="input",
+            )
+        decoded = _decode_content(fetched.content, fetched.charset)
+        if fetched.content_type in {"text/html", "application/xhtml+xml"}:
+            title, readable = extract_readable_html(decoded)
+        else:
+            parsed_final = _parse_public_url(fetched.final_url)
+            title = parsed_final.hostname
+            readable = _normalize_readable_text(decoded)
+    original_readable_chars = len(readable)
     readable = _truncate_text(readable, selected_policy.max_text_chars)
+    if extraction_metadata is not None:
+        extraction_metadata.update(
+            {
+                "originalExtractedChars": original_readable_chars,
+                "textTruncated": len(readable) < original_readable_chars,
+            }
+        )
     parsed_final = _parse_public_url(fetched.final_url)
     excerpt = _truncate_text(readable, selected_policy.max_excerpt_chars)
     evidence = SourceEvidence(
@@ -422,12 +589,17 @@ async def web_fetch(
         fetched_at=datetime.now(UTC),
         content_hash=hashlib.sha256(fetched.content).hexdigest(),
         evidence_kind="fetched_content",
+        content_type=fetched.content_type,
+        extraction_status="complete" if readable else "empty",
+        text_chars=len(readable),
     )
     return WebFetchResult(
         evidence=evidence,
         text=readable,
         content_type=fetched.content_type,
         redirect_count=fetched.redirect_count,
+        locator_map=locator_map,
+        extraction_metadata=extraction_metadata,
     )
 
 
@@ -589,7 +761,11 @@ async def _fetch_public_bytes(
                 )
             content = await _read_limited_body(
                 response,
-                max_bytes=policy.max_response_bytes,
+                max_bytes=(
+                    policy.max_pdf_response_bytes
+                    if content_type == "application/pdf"
+                    else policy.max_response_bytes
+                ),
                 timeout_seconds=policy.timeout_seconds,
             )
             return _FetchedResponse(
@@ -930,6 +1106,21 @@ def _normalize_tool_execution_id(value: str) -> str:
     return normalized
 
 
+def _normalize_optional_label(value: str | None, *, max_chars: int) -> str | None:
+    normalized = " ".join(str(value or "").split())
+    if not normalized:
+        return None
+    if len(normalized) > max_chars or any(
+        ord(character) < 0x20 or ord(character) == 0x7F for character in normalized
+    ):
+        raise WebToolError(
+            "invalid_search_metadata",
+            "검색 목적 또는 상위 검색 ID가 올바르지 않습니다.",
+            stage="validation",
+        )
+    return normalized
+
+
 def _normalize_query_ids(values: Sequence[str]) -> tuple[str, ...]:
     if len(values) > 50:
         raise WebToolError(
@@ -1217,12 +1408,15 @@ class _ReadableHTMLParser(HTMLParser):
 
 
 __all__ = [
+    "DEFAULT_WEB_SEARCH_BACKEND",
     "DUCKDUCKGO_HTML_URL",
+    "DuckDuckGoHtmlSearchBackend",
     "SearchInvocation",
     "SourceEvidence",
     "UNTRUSTED_CONTENT_BANNER",
     "WebFetchResult",
     "WebSearchResult",
+    "WebSearchBackend",
     "WebToolError",
     "WebToolPolicy",
     "create_web_http_client",

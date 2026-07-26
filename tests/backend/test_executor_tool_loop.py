@@ -8,6 +8,7 @@ from pathlib import Path
 from threading import Event
 
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
 
 from lumina.agent import executor as executor_module
 from lumina.agent.executor import LocalRunExecutor, local_run_executor
@@ -15,7 +16,7 @@ from lumina.config import Settings
 from lumina.main import create_app
 from lumina.db import SessionLocal
 from lumina.instructions.service import DEFAULT_SYSTEM_PROMPT
-from lumina.models import RunEvent, ToolExecution
+from lumina.models import ArtifactVersion, Message, Run, RunEvent, ToolExecution
 from lumina.providers import (
     MockProvider,
     MockToolCall,
@@ -23,7 +24,7 @@ from lumina.providers import (
     ProviderUsage,
 )
 from lumina.providers.codex.adapter import _CodexToolCallStream
-from lumina.tools.web import SearchInvocation, SourceEvidence, WebSearchResult
+from lumina.tools.web import SearchInvocation, SourceEvidence, WebFetchResult, WebSearchResult
 
 
 def test_codex_structured_final_text_streams_before_envelope_completion() -> None:
@@ -231,6 +232,16 @@ def test_auto_effort_preserves_explicit_choice_and_classifies_task_shape() -> No
     assert executor_module._effective_reasoning_effort(
         "auto",
         provider_id="pgpt",
+        user_message="조사가 끝난 보고서를 작성해 줘",
+        artifact_required=True,
+        attachment_count=0,
+        reference_count=0,
+        web_research_budget=(20, 30),
+        artifact_drafting=True,
+    ) == "low"
+    assert executor_module._effective_reasoning_effort(
+        "auto",
+        provider_id="pgpt",
         user_message="철저하게 전수 조사해 줘",
         artifact_required=False,
         attachment_count=0,
@@ -274,6 +285,7 @@ def test_auto_effort_and_model_turn_metrics_are_persisted(
             cached_input_tokens=75,
             uncached_input_tokens=25,
             output_tokens=5,
+            reasoning_tokens=3,
             raw={"provider": "mock"},
         ),
     )
@@ -294,7 +306,11 @@ def test_auto_effort_and_model_turn_metrics_are_persisted(
                 "Idempotency-Key": "auto-effort-metrics-0001",
             },
             json={
-                "message": {"text": "이 문장을 영어로 번역해 줘"},
+                "message": {
+                    "text": "이 문장을 영어로 번역해 줘",
+                    "analysisDepth": "deep",
+                    "answerLength": "brief",
+                },
                 "execution": {
                     "providerId": "mock",
                     "modelKey": "mock-agent",
@@ -317,8 +333,13 @@ def test_auto_effort_and_model_turn_metrics_are_persisted(
     assert first["durationMs"] >= first["ttftMs"] >= 0
     assert first["cachedInputTokens"] == 75
     assert first["uncachedInputTokens"] == 25
+    assert first["reasoningTokens"] == 3
     assert first["cacheHitRatio"] == 0.75
     with SessionLocal() as db:
+        persisted_run = db.get(Run, run_id)
+        assert persisted_run is not None
+        assert persisted_run.snapshot_json["analysis_depth"] == "deep"
+        assert persisted_run.snapshot_json["answer_length"] == "brief"
         events = list(
             db.query(RunEvent).filter(
                 RunEvent.run_id == run_id,
@@ -422,9 +443,13 @@ def test_web_tool_results_share_one_turn_context_budget() -> None:
         for index in range(3)
     ]
 
+    delivered: dict[str, int] = {}
+    for index, (call, _result) in enumerate(resolved_calls):
+        call["id"] = f"fetch-{index}"
     contents = executor_module._provider_tool_result_contents(
         resolved_calls,
         capabilities={"context_window": 16_000},
+        delivered_web_text_chars=delivered,
     )
 
     assert len(contents) == 3
@@ -432,6 +457,7 @@ def test_web_tool_results_share_one_turn_context_budget() -> None:
     assert all(
         json.loads(content)["providerContextTruncated"] is True for content in contents
     )
+    assert delivered == {"fetch-0": 0, "fetch-1": 0, "fetch-2": 9_600}
 
 
 def test_all_tool_results_share_one_turn_context_budget_and_keep_readback_ids() -> None:
@@ -469,7 +495,93 @@ def test_individual_truncated_tool_result_exposes_recoverable_reference() -> Non
     assert "read_tool_result" in payload["toolResultReference"]["instruction"]
 
 
+def test_large_structured_mcp_result_uses_compact_quantitative_projection() -> None:
+    raw_marker = "RAW-ROW-MUST-NOT-ENTER-PROVIDER-CONTEXT-" + ("x" * 2_000)
+    rows = [
+        {
+            "partnerDesc": "Australia",
+            "partnerISO": "AUS",
+            "period": "2025",
+            "primaryValue": 300,
+            "netWgt": 30,
+            "rawPayload": raw_marker,
+        },
+        {
+            "partnerDesc": "Brazil",
+            "partnerISO": "BRA",
+            "period": "2025",
+            "primaryValue": 100,
+            "netWgt": 20,
+            "rawPayload": raw_marker,
+        },
+    ]
+    inner = json.dumps(
+        {"count": 2, "returned": 2, "data": rows, "error": ""},
+        ensure_ascii=False,
+    )
+    result = {
+        "content": [{"type": "text", "text": inner}],
+        "structuredContent": {"result": inner},
+        "isError": False,
+    }
+
+    content = executor_module._provider_tool_result_content(
+        "mcp__generic_trade__preview_data__digest",
+        result,
+        serialized_limit=500,
+        tool_call_id="call-large-mcp",
+        untrusted=False,
+    )
+    payload = json.loads(content)
+    projection = payload["providerContextProjection"]
+
+    assert raw_marker not in content
+    assert "providerContextPreview" not in payload
+    assert payload["providerContextTruncated"] is True
+    assert len(payload["providerContextDigest"]) == 64
+    assert payload["toolResultReference"]["toolCallId"] == "call-large-mcp"
+    assert projection["schema"] == "structured-tool-summary-v1"
+    assert projection["recordCollection"] == "data"
+    assert projection["recordCount"] == 2
+    assert projection["numericStats"]["primaryValue"] == {
+        "count": 2,
+        "sum": 400,
+        "average": 200,
+        "min": 100,
+        "max": 300,
+    }
+    assert projection["topRecordsBy"] == "primaryValue"
+    assert projection["topRecords"][0]["partnerDesc"] == "Australia"
+    assert len(content) < 4_000
+
+
+def test_large_unparseable_mcp_result_keeps_only_reference_and_digest() -> None:
+    raw_marker = "UNPARSEABLE-RAW-MUST-NOT-ENTER-CONTEXT-" + ("z" * 4_000)
+    content = executor_module._provider_tool_result_content(
+        "mcp__generic__opaque_result__digest",
+        {"content": [{"type": "text", "text": raw_marker}], "isError": False},
+        serialized_limit=500,
+        tool_call_id="call-opaque-mcp",
+        untrusted=False,
+    )
+    payload = json.loads(content)
+
+    assert raw_marker not in content
+    assert payload["providerContextProjection"]["summaryAvailable"] is False
+    assert payload["toolResultReference"]["toolCallId"] == "call-opaque-mcp"
+    assert len(payload["providerContextDigest"]) == 64
+
+
 def test_web_research_uses_adaptive_guidance_with_separate_safety_limits() -> None:
+    assert executor_module._web_research_budget("최신 동향을 조사해줘", "brief") == (
+        3,
+        5,
+    )
+    assert executor_module._web_research_budget("간단한 질문", "standard") == (
+        10,
+        15,
+    )
+    assert executor_module._web_research_budget("간단한 질문", "deep") == (20, 30)
     assert executor_module._web_research_budget(
         "포스코 관련 최근 3개월 언론기사 동향을 조사해줘"
     ) == (10, 15)
@@ -487,6 +599,65 @@ def test_web_research_uses_adaptive_guidance_with_separate_safety_limits() -> No
     ) == (10, 15)
 
 
+def test_web_research_requirement_distinguishes_required_optional_and_disabled() -> (
+    None
+):
+    assert (
+        executor_module._web_research_requirement("최신 철강 시장 동향을 조사해줘").mode
+        == "required"
+    )
+    assert (
+        executor_module._web_research_requirement(
+            "제2형 당뇨병 치료 지침을 설명해줘"
+        ).mode
+        == "required"
+    )
+    assert (
+        executor_module._web_research_requirement("현재 코드 구조를 설명해줘").mode
+        == "optional"
+    )
+    assert (
+        executor_module._web_research_requirement(
+            "인터넷은 사용하지 말고 내가 준 내용만 요약해줘"
+        ).mode
+        == "disabled"
+    )
+
+
+def test_web_source_merge_promotes_fetched_evidence_and_preserves_provenance() -> None:
+    search_source = {
+        "sourceId": "src-1",
+        "normalizedUrl": "https://example.com/report",
+        "verbatimExcerpt": "search snippet",
+        "queryIds": ["search-1"],
+        "toolExecutionIds": ["tool-search"],
+        "searchBackends": ["duckduckgo_html"],
+        "evidenceKind": "search_snippet",
+        "extractionStatus": "snippet_only",
+        "contentHash": "search-hash",
+    }
+    fetched_source = {
+        "sourceId": "src-1",
+        "normalizedUrl": "https://example.com/report",
+        "verbatimExcerpt": "verified page text",
+        "queryIds": ["search-1", "search-2"],
+        "toolExecutionIds": ["tool-fetch"],
+        "searchBackends": [],
+        "evidenceKind": "fetched_content",
+        "extractionStatus": "complete",
+        "contentHash": "fetch-hash",
+    }
+
+    merged = executor_module._merge_web_source_evidence(search_source, fetched_source)
+
+    assert merged["evidenceKind"] == "fetched_content"
+    assert merged["verbatimExcerpt"] == "verified page text"
+    assert merged["contentHash"] == "fetch-hash"
+    assert merged["queryIds"] == ["search-1", "search-2"]
+    assert merged["toolExecutionIds"] == ["tool-search", "tool-fetch"]
+    assert merged["searchBackends"] == ["duckduckgo_html"]
+
+
 def test_web_search_schema_distinguishes_query_calls_from_candidate_urls() -> None:
     description = executor_module._WEB_SEARCH_TOOL_SCHEMA["function"]["description"]
 
@@ -494,6 +665,12 @@ def test_web_search_schema_distinguishes_query_calls_from_candidate_urls() -> No
     assert "return several candidate URLs" in description
     assert "starting guidance, not a hard limit" in description
     assert "stay within three searches" not in description
+    assert (
+        "purpose"
+        in executor_module._WEB_SEARCH_TOOL_SCHEMA["function"]["parameters"][
+            "properties"
+        ]
+    )
 
 
 def test_web_budget_skips_overlapping_duplicate_and_excess_calls(monkeypatch) -> None:
@@ -599,6 +776,32 @@ def test_web_fetch_signature_ignores_fragment_and_tracking_parameters() -> None:
     assert first == second
 
 
+def test_web_fetch_signature_distinguishes_pdf_page_ranges() -> None:
+    first = executor_module._web_call_signature(
+        "web_fetch",
+        {
+            "url": "https://example.com/report.pdf",
+            "page_start": 1,
+            "page_end": 50,
+        },
+    )
+    same_default = executor_module._web_call_signature(
+        "web_fetch",
+        {"url": "https://example.com/report.pdf"},
+    )
+    later = executor_module._web_call_signature(
+        "web_fetch",
+        {
+            "url": "https://example.com/report.pdf",
+            "page_start": 51,
+            "page_end": 100,
+        },
+    )
+
+    assert first == same_default
+    assert first != later
+
+
 def test_write_file_progress_counts_streamed_tokens_and_lines() -> None:
     streamed = executor_module._write_file_tool_progress(
         {
@@ -618,13 +821,90 @@ def test_write_file_progress_counts_streamed_tokens_and_lines() -> None:
 
 def test_artifact_progress_refreshes_at_100ms_with_live_model_output() -> None:
     assert executor_module._ARTIFACT_PROGRESS_INTERVAL_SECONDS == 0.1
+    assert executor_module._ARTIFACT_PROGRESS_CHECKPOINT_INTERVAL_SECONDS == 1.0
     assert executor_module._artifact_progress_due(None, 10.0)
     assert not executor_module._artifact_progress_due(10.0, 10.099)
     assert executor_module._artifact_progress_due(10.0, 10.1)
+    assert not executor_module._artifact_progress_due(
+        10.0, 10.999, interval_seconds=1.0
+    )
+    assert executor_module._artifact_progress_due(
+        10.0, 11.0, interval_seconds=1.0
+    )
     assert executor_module._live_model_output_tokens(3_204, 400) == 3_304
 
 
-def test_report_progress_is_visible_without_provider_output_or_tool_call(
+def test_artifact_progress_counts_tool_arguments_incrementally() -> None:
+    call: dict[str, object] = {
+        "arguments": "",
+        "argument_chunks": [],
+        "artifact_argument_characters": 0,
+        "artifact_argument_escaped_newlines": 0,
+        "artifact_argument_escape_tail": False,
+    }
+    chunks = ['{"html_source":"first\\', 'nsecond\\nthird"}']
+    progress = (0, 0)
+    for chunk in chunks:
+        progress = executor_module._append_tool_call_argument_delta(call, chunk)
+
+    arguments = executor_module._materialize_tool_call_arguments(call)
+    assert arguments == "".join(chunks)
+    assert progress == executor_module._artifact_argument_progress(arguments)
+
+
+def test_partial_report_checkpoint_decodes_complete_streamed_json_prefix() -> None:
+    calls = {
+        "call_report": {
+            "name": "create_report",
+            "argument_chunks": [
+                '{"format":"html","html_source":"<main>first\\n둘째',
+                '\\u0020section\\',
+            ],
+        }
+    }
+
+    checkpoint = executor_module._partial_report_source_checkpoint(calls)
+
+    assert checkpoint == "<main>first\n둘째 section"
+
+
+def test_partial_report_checkpoint_merges_suffix_without_boundary_replay() -> None:
+    calls = [
+        {
+            "name": "create_report",
+            "arguments": json.dumps(
+                {
+                    "format": "html",
+                    "html_source": "continued</p></main></body></html>",
+                }
+            ),
+        }
+    ]
+
+    merged = executor_module._merge_partial_report_checkpoint(
+        calls,
+        "<!doctype html><html><body><main><p>interrupted continued",
+    )
+
+    assert merged is True
+    arguments = json.loads(calls[0]["arguments"])
+    assert arguments["html_source"] == (
+        "<!doctype html><html><body><main><p>interrupted "
+        "continued</p></main></body></html>"
+    )
+
+
+def test_partial_report_continuation_prompt_includes_complete_checkpoint() -> None:
+    checkpoint = f"<main>BEGIN{'x' * 2_500}END"
+
+    prompt = executor_module._partial_report_continuation_prompt(checkpoint)
+
+    assert json.dumps(checkpoint, ensure_ascii=False) in prompt
+    assert "BEGIN" in prompt
+    assert "END" in prompt
+
+
+def test_report_progress_waits_for_artifact_tool_output(
     monkeypatch, tmp_path: Path
 ) -> None:
     settings = Settings(
@@ -680,11 +960,8 @@ def test_report_progress_is_visible_without_provider_output_or_tool_call(
                 f"/api/runs/{started.json()['run']['runId']}/snapshot"
             ).json()
             assert snapshot["status"] == "model_streaming"
-            assert snapshot["artifactProgress"] == {
-                "tokens": 0,
-                "lines": 0,
-                "estimated": True,
-            }
+            assert snapshot["artifactProgress"] is None
+            assert snapshot["artifactUsage"] is None
         finally:
             release_provider.set()
 
@@ -852,6 +1129,8 @@ def test_agent_loop_persists_web_evidence_and_returns_to_model(
         assert assistant["metadata"]["searchInvocations"][0]["query"] == (
             "설비 예방 정비 최신 동향"
         )
+        assert assistant["metadata"]["researchRequirement"]["mode"] == "required"
+        assert assistant["metadata"]["researchVerification"] == "unverified"
 
 
 def test_file_mode_is_a_general_delivery_preference_not_a_file_command(
@@ -969,7 +1248,7 @@ def test_file_mode_is_a_general_delivery_preference_not_a_file_command(
         assert "File intent JSON contract" in system_text
         assert "Artifact opportunity contract" in system_text
         assert "Do not call `create_report` or `write_file`" in system_text
-        assert "Memory capture contract" in system_text
+        assert "Memory result contract" in system_text
         assert (
             "Artifact contract: The user requested a reusable file." not in system_text
         )
@@ -1182,6 +1461,13 @@ def test_file_mode_accepts_model_selected_artifact_without_explicit_file_words(
                     arguments={
                         "format": "html",
                         "title": "분기 실적 분석",
+                        "html_source": (
+                            "<!doctype html><html lang='ko'><head><meta charset='utf-8'>"
+                            "<title>분기 실적 분석</title></head><body><main>"
+                            "<h1>분기 실적 분석</h1><section><h2>분석 결과</h2>"
+                            "<p>파일 모드 선호를 반영해 재사용 가능한 결과로 정리했습니다.</p>"
+                            "</section></main></body></html>"
+                        ),
                         "executive_summary": "분기 실적의 핵심 흐름을 분석했습니다.",
                         "key_metrics": [],
                         "sections": [
@@ -1246,10 +1532,14 @@ def test_report_request_recovers_when_model_tries_to_finish_without_artifact(
     provider_turn = 0
     observed_system_prompts: list[str] = []
     observed_stable_prefixes: list[str] = []
+    report_turn_started_at: list[datetime] = []
+    report_turn_efforts: list[str | None] = []
     report_stream_resumed_at: list[datetime] = []
 
     class DelayedReportProvider(MockProvider):
         async def stream(self, request):
+            report_turn_started_at.append(datetime.now(UTC))
+            report_turn_efforts.append(request.effort)
             async for event in super().stream(request):
                 yield event
                 if event.type == "tool_call_started":
@@ -1274,6 +1564,13 @@ def test_report_request_recovers_when_model_tries_to_finish_without_artifact(
                 arguments={
                     "format": "html",
                     "title": "시장 동향",
+                    "html_source": (
+                        "<!doctype html><html lang='ko'><head><meta charset='utf-8'>"
+                        "<title>시장 동향</title></head><body><main>"
+                        "<h1>시장 동향</h1><section><h2>주요 결과</h2>"
+                        "<p>검증된 자료를 바탕으로 정리한 결과입니다.</p>"
+                        "</section></main></body></html>"
+                    ),
                     "executive_summary": "핵심 동향을 요약했습니다.",
                     "key_metrics": [],
                     "sections": [
@@ -1333,9 +1630,21 @@ def test_report_request_recovers_when_model_tries_to_finish_without_artifact(
         snapshot["toolExecutions"][0]["startedAt"].replace("Z", "+00:00")
     )
     assert report_stream_resumed_at
-    assert report_tool_started_at <= report_stream_resumed_at[0]
+    assert report_tool_started_at <= report_turn_started_at[0]
+    assert report_turn_efforts == ["low"]
+    with SessionLocal() as db:
+        event_types = [
+            event.event_type
+            for event in db.query(RunEvent)
+            .filter(RunEvent.run_id == started.json()["run"]["runId"])
+            .order_by(RunEvent.sequence)
+        ]
+    assert event_types.index("artifact_progress") < event_types.index("tool_started")
     assert len(snapshot["artifacts"]) == 1
     assert "must call `create_report`" in observed_system_prompts[0]
+    assert "without naming a file format" in observed_system_prompts[0]
+    assert '`format="html"`; do not default to Markdown' in observed_system_prompts[0]
+    assert "explicitly requests" in observed_system_prompts[0]
     assert "`html_source` argument" in observed_system_prompts[0]
     assert (
         "Lumina renders it and supplies the expand/zoom viewer"
@@ -1351,6 +1660,169 @@ def test_report_request_recovers_when_model_tries_to_finish_without_artifact(
         "without internal IDs or raw tool-result fields" in observed_system_prompts[0]
     )
     assert "must call `create_report`" not in observed_stable_prefixes[0]
+
+
+def test_web_fetch_starts_visible_report_drafting_before_create_report_output(
+    monkeypatch, tmp_path: Path
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'report-drafting-turn.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    provider_turn = 0
+    report_turn_started_at: list[datetime] = []
+    report_turn_efforts: list[str | None] = []
+
+    async def fetched_page(url: str, *, tool_execution_id: str, **_kwargs):
+        now = datetime.now(UTC)
+        evidence = SourceEvidence(
+            source_id="source-report",
+            original_url=url,
+            normalized_url=url,
+            title="확인된 기사",
+            domain="example.com",
+            verbatim_excerpt="보고서 근거",
+            query_ids=(),
+            tool_execution_ids=(tool_execution_id,),
+            fetched_at=now,
+            content_hash="c" * 64,
+            evidence_kind="fetched_content",
+        )
+        return WebFetchResult(
+            evidence=evidence,
+            text="확인된 기사 본문",
+            content_type="text/html",
+            redirect_count=0,
+        )
+
+    class ReportProvider(MockProvider):
+        async def stream(self, request):
+            report_turn_started_at.append(datetime.now(UTC))
+            report_turn_efforts.append(request.effort)
+            async for event in super().stream(request):
+                yield event
+
+    def provider(*_args, **_kwargs):
+        nonlocal provider_turn
+        provider_turn += 1
+        if provider_turn == 1:
+            return MockProvider(
+                tool_call=MockToolCall(
+                    name="web_fetch",
+                    arguments={"url": "https://example.com/article", "query_ids": []},
+                    call_id="call-report-fetch",
+                )
+            )
+        if provider_turn == 2:
+            return ReportProvider(
+                tool_call=MockToolCall(
+                    name="create_report",
+                    arguments={
+                        "format": "html",
+                        "title": "기사 동향",
+                        "html_source": (
+                            "<!doctype html><html lang='ko'><head><meta charset='utf-8'>"
+                            "<title>기사 동향</title></head><body><main>"
+                            "<h1>기사 동향</h1><section><h2>주요 참고자료</h2>"
+                            "<p>확인한 기사: https://example.com/article</p>"
+                            "</section></main></body></html>"
+                        ),
+                        "executive_summary": "확인된 근거를 요약했습니다.",
+                        "key_metrics": [],
+                        "sections": [
+                            {
+                                "heading": "주요 참고자료",
+                                "body": "확인한 기사: https://example.com/article",
+                                "bullets": [],
+                            }
+                        ],
+                        "action_items": [],
+                    },
+                    call_id="call-report-drafting",
+                )
+            )
+        return MockProvider(text_chunks=("기사 동향 보고서를 생성했습니다.",))
+
+    monkeypatch.setattr(executor_module, "web_fetch", fetched_page)
+    monkeypatch.setattr(local_run_executor, "_provider", provider)
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "보고서 작성 Turn"},
+        ).json()
+        started = client.post(
+            f"/api/conversations/{conversation['id']}/runs",
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": "report-drafting-turn-0001",
+            },
+            json={"message": {"text": "최근 기사를 확인하고 HTML 보고서로 작성해 줘"}},
+        )
+        assert started.status_code == 202, started.text
+        snapshot = _wait_for_terminal(client, started.json()["run"]["runId"])
+        turn_sets = client.get(
+            f"/api/conversations/{conversation['id']}/turn-sets"
+        ).json()["turnSets"]
+        assistant = next(
+            message
+            for message in turn_sets[-1]["messages"]
+            if message["role"] == "assistant"
+        )
+        with SessionLocal() as db:
+            stored_message = db.get(Message, assistant["id"])
+            assert stored_message is not None
+            stored_message.metadata_json = {
+                **stored_message.metadata_json,
+                "citations": [],
+            }
+            db.commit()
+        legacy_turn_sets = client.get(
+            f"/api/conversations/{conversation['id']}/turn-sets"
+        ).json()["turnSets"]
+        legacy_assistant = next(
+            message
+            for message in legacy_turn_sets[-1]["messages"]
+            if message["role"] == "assistant"
+        )
+
+    assert snapshot["status"] == "completed"
+    report_tool = next(
+        tool for tool in snapshot["toolExecutions"] if tool["toolName"] == "create_report"
+    )
+    report_tool_started_at = datetime.fromisoformat(
+        report_tool["startedAt"].replace("Z", "+00:00")
+    )
+    assert report_tool_started_at <= report_turn_started_at[0]
+    assert report_turn_efforts == ["low"]
+    assert assistant["metadata"]["citations"][0]["sourceId"] == "source-report"
+    assert (
+        assistant["metadata"]["citations"][0]["citationOrigin"]
+        == "artifact_link"
+    )
+    assert legacy_assistant["metadata"]["citations"][0]["sourceId"] == (
+        "source-report"
+    )
+    with SessionLocal() as db:
+        events = list(
+            db.query(RunEvent)
+            .filter(RunEvent.run_id == started.json()["run"]["runId"])
+            .order_by(RunEvent.sequence)
+        )
+    drafting_progress = next(event for event in events if event.event_type == "artifact_progress")
+    report_started = next(
+        event
+        for event in events
+        if event.event_type == "tool_started"
+        and event.payload_json["execution"]["toolName"] == "create_report"
+    )
+    assert drafting_progress.sequence < report_started.sequence
 
 
 def test_executable_html_write_file_satisfies_artifact_completion_gate(
@@ -1416,6 +1888,71 @@ def test_executable_html_write_file_satisfies_artifact_completion_gate(
     assert [tool["toolName"] for tool in snapshot["toolExecutions"]] == ["write_file"]
     assert len(snapshot["artifacts"]) == 1
     assert snapshot["artifacts"][0]["displayName"] == "game.html"
+
+
+def test_write_file_commit_failure_cleans_artifact_content(
+    monkeypatch, tmp_path: Path
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'write-file-cleanup.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+
+    def provider(
+        _provider_id: str, *, wants_artifact: bool, first_turn: bool
+    ) -> MockProvider:
+        del wants_artifact
+        if first_turn:
+            return MockProvider(
+                tool_call=MockToolCall(
+                    name="write_file",
+                    arguments={"path": "cleanup.md", "content": "uncommitted"},
+                    call_id="call_write_file_cleanup",
+                )
+            )
+        return MockProvider(text_chunks=("unexpected continuation",))
+
+    real_commit = Session.commit
+    artifact_commit_failed = False
+
+    def fail_artifact_commit(session: Session) -> None:
+        nonlocal artifact_commit_failed
+        has_artifact_version = any(
+            isinstance(item, ArtifactVersion) for item in session.identity_map.values()
+        )
+        if has_artifact_version and not artifact_commit_failed:
+            artifact_commit_failed = True
+            raise RuntimeError("forced write_file artifact commit failure")
+        real_commit(session)
+
+    monkeypatch.setattr(local_run_executor, "_provider", provider)
+    monkeypatch.setattr(Session, "commit", fail_artifact_commit)
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "write_file cleanup"},
+        ).json()
+        started = client.post(
+            f"/api/conversations/{conversation['id']}/runs",
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": "write-file-cleanup-0001",
+            },
+            json={"message": {"text": "Create cleanup.md"}},
+        )
+        assert started.status_code == 202, started.text
+        snapshot = _wait_for_terminal(client, started.json()["run"]["runId"])
+
+    assert artifact_commit_failed is True
+    assert snapshot["status"] == "failed"
+    assert not [path for path in settings.artifacts_dir.rglob("*") if path.is_file()]
 
 
 def test_independent_tool_calls_run_in_parallel_and_persist_subtasks(
@@ -1590,6 +2127,61 @@ def test_update_plan_tool_publishes_meaningful_plan_without_tool_activity(
         assert [item["step"] for item in snapshot["workPlan"]] == steps
         assert {item["status"] for item in snapshot["workPlan"]} == {"completed"}
         assert snapshot["toolExecutions"] == []
+
+
+def test_fast_tiny_text_chunks_use_bounded_durable_checkpoints(
+    monkeypatch, tmp_path: Path
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'assistant-checkpoints.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    expected = "가" * 2_000
+
+    def provider(
+        _provider_id: str, *, wants_artifact: bool, first_turn: bool
+    ) -> MockProvider:
+        assert wants_artifact is False
+        assert first_turn is True
+        return MockProvider(text_chunks=tuple(expected))
+
+    monkeypatch.setattr(local_run_executor, "_provider", provider)
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "Assistant checkpoints"},
+        ).json()
+        started = client.post(
+            f"/api/conversations/{conversation['id']}/runs",
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": "assistant-checkpoints-0001",
+            },
+            json={"message": {"text": "긴 답변을 작성해 주세요."}},
+        )
+        assert started.status_code == 202, started.text
+        run_id = started.json()["run"]["runId"]
+        snapshot = _wait_for_terminal(client, run_id)
+
+    assert snapshot["status"] == "completed"
+    assert snapshot["assistantDraft"]["text"] == expected
+    with SessionLocal() as db:
+        durable_deltas = list(
+            db.query(RunEvent).filter(
+                RunEvent.run_id == run_id,
+                RunEvent.event_type == "assistant_text_delta",
+            )
+        )
+    assert len(durable_deltas) <= 3
+    assert "".join(event.payload_json["delta"] for event in durable_deltas) == expected
+    assert all("text" not in event.payload_json for event in durable_deltas)
 
 
 def _login(client: TestClient) -> str:

@@ -125,7 +125,7 @@ Turn Set
 ```
 
 - 세션을 처음 열면 가장 최근 Turn Set 3개를 기본으로 불러옵니다.
-- 사용자가 메시지 영역의 위쪽으로 스크롤하면 바로 앞의 Turn Set을 오래된 방향으로 순차 로딩합니다. 한 Turn Set은 중간에서 잘라 내려받지 않습니다.
+- 사용자가 메시지 영역을 위쪽으로 스크롤해 상단 근처에 접근하면, 최상단에 닿기 전에 바로 앞의 Turn Set을 오래된 방향으로 미리 순차 로딩합니다. 한 Turn Set은 중간에서 잘라 내려받지 않습니다.
 - Backend는 `before_cursor`, `limit_turn_sets`, `has_more_before`를 기준으로 응답하며 cursor는 Message 개수나 화면 index가 아닌 안정적인 서버 발급값을 사용합니다.
 - 새 메시지와 live Run event는 하단에 계속 결합하되, 과거 Turn Set 로딩과 같은 Message 또는 event가 중복되지 않도록 `message_id`, `run_id`, event sequence로 병합합니다.
 - 위쪽에 과거 Turn Set을 삽입한 뒤에도 사용자가 보고 있던 첫 visible Message의 위치를 유지합니다. 과거 항목 추가 때문에 화면이 갑자기 위나 아래로 튀지 않아야 합니다.
@@ -567,7 +567,7 @@ $mcp:internal-search
 - 접근 거부, 삭제된 파일과 연결 실패를 사용자용 오류로 반환
 - 누가 어떤 파일·Skill·MCP를 참조했는지 감사 기록
 
-대형 문서는 첫 Model 요청에 원문 전체나 임의로 잘린 앞부분을 넣지 않습니다. 단일 문서가 Model Context의 20%에 해당하는 추정 Token을 넘거나 현재 인라인 예산을 넘으면 Backend는 Run에 고정된 Message·파일 ID와 digest로 `source-document-manifest`를 구성합니다. Manifest에는 문서 ID, 줄 수, 크기, 짧은 head·middle·tail sample과 분리 가능한 사용자 요청만 포함하고, Agent는 `search_source_document`로 관련 구간을 찾은 뒤 `read_source_document`로 원문 줄 범위를 검증합니다. Composer에 직접 붙여 넣은 대형 원문, Attachment, Project file, Artifact 모두 같은 복구 계약을 사용하며 다른 Project나 Conversation의 Attachment는 문서 ID를 알아도 읽을 수 없습니다. 작은 문서는 불필요한 Tool 왕복을 피하기 위해 기존처럼 인라인합니다.
+대형 문서는 첫 Model 요청에 원문 전체나 임의로 잘린 앞부분을 넣지 않습니다. 단일 문서가 Model Context의 20%에 해당하는 추정 Token을 넘거나 현재 인라인 예산을 넘으면 Backend는 Run에 고정된 Message·파일 ID와 digest로 `source-document-manifest`를 구성합니다. Manifest에는 문서 ID, 줄 수, 크기, 짧은 head·middle·tail sample과 분리 가능한 사용자 요청만 포함합니다. 장·절·조나 Markdown heading처럼 신뢰할 수 있는 section 구조가 있고 요청이 전체·충돌·예외·교차 section 분석이면 `explore_source_document`로 구조를 탐색한 뒤 `search_source_document`와 `read_source_document`로 정확한 원문 범위를 검증합니다. 구조가 없거나 특정 조항·문구 조회이면 구조 탐색 없이 검색과 원문 읽기를 사용합니다. Project 저장소의 `@파일`과 `@폴더` 참조는 크기와 관계없이 본문을 첫 Model 요청에 넣지 않고, 고정된 파일 경로·버전·digest·문서 ID의 경량 `source-document-index`만 제공합니다. Composer에 직접 붙여 넣은 원문, Attachment와 Artifact는 기존 크기 기준을 적용하며, 작은 문서는 불필요한 Tool 왕복을 피하기 위해 인라인할 수 있습니다. 다른 Project나 Conversation의 Attachment는 문서 ID를 알아도 읽을 수 없습니다.
 
 ### 보안과 Project 공유
 

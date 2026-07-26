@@ -10,6 +10,7 @@ ProviderEventType = Literal[
     "tool_call_started",
     "tool_call_delta",
     "tool_call_completed",
+    "tool_call_discarded",
     "usage",
     "completed",
 ]
@@ -31,6 +32,7 @@ class ProviderCapabilities:
     max_input_bytes: int | None = None
     max_document_pages: int | None = None
     context_window: int | None = None
+    max_input_tokens: int | None = None
     max_output_tokens: int | None = None
 
 
@@ -70,6 +72,7 @@ class ProviderUsage:
     cache_write_tokens: int = 0
     uncached_input_tokens: int = 0
     output_tokens: int = 0
+    reasoning_tokens: int | None = None
     raw: Mapping[str, Any] = field(default_factory=dict)
 
 

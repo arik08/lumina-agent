@@ -33,6 +33,12 @@ def test_default_system_prompt_contains_core_agent_execution_contract() -> None:
 def test_default_system_prompt_describes_rich_chat_rendering_contract() -> None:
     assert RICH_CHAT_RENDERING_CONTRACT in DEFAULT_SYSTEM_PROMPT
     assert "fenced `mermaid` block" in RICH_CHAT_RENDERING_CONTRACT
+    assert "legibility at normal chat width" in RICH_CHAT_RENDERING_CONTRACT
+    assert "one hub with a wide fan of tiny sibling nodes" in RICH_CHAT_RENDERING_CONTRACT
+    assert "simplify or split it into focused diagrams" in RICH_CHAT_RENDERING_CONTRACT
+    assert "each top-level semantic branch one hue family" in RICH_CHAT_RENDERING_CONTRACT
+    assert "assign every node" in RICH_CHAT_RENDERING_CONTRACT
+    assert "at least 4.5:1 contrast" in RICH_CHAT_RENDERING_CONTRACT
     assert "fenced `lumina-chart` block" in RICH_CHAT_RENDERING_CONTRACT
     assert "Apache ECharts option" in RICH_CHAT_RENDERING_CONTRACT
     assert "pie, scatter, radar, graph, tree, treemap, sunburst, sankey" in RICH_CHAT_RENDERING_CONTRACT

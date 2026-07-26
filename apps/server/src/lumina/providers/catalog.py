@@ -7,8 +7,8 @@ from typing import Any
 
 from .types import ProviderCapabilities
 
-CATALOG_REVISION = "2026-07-15.1-pgpt-5.5-5.6"
-CATALOG_VERIFIED_AT = date(2026, 7, 15)
+CATALOG_REVISION = "2026-07-17.1-pgpt-input-limits"
+CATALOG_VERIFIED_AT = date(2026, 7, 17)
 PUBLIC_PRICING_VERSION = "public-list-2026-07-12"
 DEFAULT_CONTEXT_COMPACTION_THRESHOLD = 0.75
 
@@ -83,6 +83,7 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             structured_output=True,
             reasoning_effort=True,
             context_window=1_050_000,
+            max_input_tokens=911_900,
             max_output_tokens=128_000,
         ),
         default_max_output_tokens=42_000,
@@ -100,6 +101,7 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             structured_output=True,
             reasoning_effort=True,
             context_window=400_000,
+            max_input_tokens=270_000,
             max_output_tokens=128_000,
         ),
         default_max_output_tokens=42_000,
@@ -117,6 +119,7 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             structured_output=True,
             reasoning_effort=True,
             context_window=1_050_000,
+            max_input_tokens=911_900,
             max_output_tokens=128_000,
         ),
         default_max_output_tokens=42_000,
@@ -438,6 +441,16 @@ def validate_catalog(items: Iterable[ModelCatalogSeed]) -> None:
             defaults[item.provider_id] = defaults.get(item.provider_id, 0) + 1
         hard_max = item.capabilities.max_output_tokens
         default_max = item.default_max_output_tokens
+        max_input = item.capabilities.max_input_tokens
+        context_window = item.capabilities.context_window
+        if max_input is not None and max_input < 1:
+            raise ValueError(f"Model input limit must be positive: {key!r}")
+        if (
+            max_input is not None
+            and context_window is not None
+            and max_input > context_window
+        ):
+            raise ValueError(f"Model input limit exceeds context window: {key!r}")
         if hard_max is not None and hard_max < 1:
             raise ValueError(f"Model hard output limit must be positive: {key!r}")
         if default_max is not None and default_max < 1:

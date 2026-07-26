@@ -3,13 +3,15 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const componentUrl = new URL("../src/components/AdminTrafficChart.tsx", import.meta.url);
+const componentStylesUrl = new URL("../src/components/AdminTrafficChart.css", import.meta.url);
 const adminViewUrl = new URL("../src/components/AdminView.tsx", import.meta.url);
 const stylesUrl = new URL("../src/styles.css", import.meta.url);
 const apiUrl = new URL("../src/api.ts", import.meta.url);
 
 test("monitoring renders a full-width minute traffic chart from the aggregate endpoint", async () => {
-  const [component, api] = await Promise.all([
+  const [component, componentStyles, api] = await Promise.all([
     readFile(componentUrl, "utf8"),
+    readFile(componentStylesUrl, "utf8"),
     readFile(apiUrl, "utf8"),
   ]);
 
@@ -17,6 +19,8 @@ test("monitoring renders a full-width minute traffic chart from the aggregate en
   assert.match(component, /value: "60", label: "1시간"/);
   assert.match(component, /value: "240", label: "4시간"/);
   assert.match(component, /value: "480", label: "8시간"/);
+  assert.match(component, /menuClassName="admin-traffic-period-menu"/);
+  assert.match(componentStyles, /\.admin-traffic-period-select\.size-small \.lumina-select-trigger,[\s\S]*\.admin-traffic-period-menu\.size-small > button \{ font-size: 14px; \}/);
   assert.match(component, /getAuditTraffic\(periodMinutes, controller\.signal\)/);
   assert.match(component, /className="admin-traffic-line is-abnormal"/);
   assert.match(component, /오류 .*자동 .*수동/);

@@ -3,9 +3,11 @@ from __future__ import annotations
 import base64
 from datetime import datetime
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import case, func, or_, select, text, update
+from sqlalchemy.exc import DatabaseError
 from sqlalchemy.orm import Session
 
+from ..agent_frontends import DEFAULT_AGENT_FRONTEND
 from ..api.errors import ApiProblem
 from ..authorization import (
     conversation_access_query,
@@ -74,6 +76,8 @@ def create_conversation(
         project_id=project.id,
         owner_user_id=user.id,
         title=title.strip(),
+        agent_id=DEFAULT_AGENT_FRONTEND.agent_id,
+        agent_version=DEFAULT_AGENT_FRONTEND.agent_version,
         revision=1,
     )
     db.add(conversation)
@@ -91,7 +95,7 @@ def list_conversations(
     limit: int = 30,
 ) -> tuple[list[Conversation], str | None]:
     limit = max(1, min(limit, 100))
-    query = conversation_access_query(user)
+    query = conversation_access_query(user).where(Conversation.surface == "chat")
     if project_id:
         require_project(db, user, project_id)
         query = query.where(Conversation.project_id == project_id)
@@ -146,6 +150,7 @@ def list_auto_delete_candidates(
         db.scalars(
             select(Conversation)
             .where(
+                Conversation.surface == "chat",
                 Conversation.status == "active",
                 Conversation.deleted_at.is_(None),
                 Conversation.is_liked.is_(False),
@@ -169,18 +174,32 @@ def search_conversation_content(
     if not tokens:
         return [], ()
     limit = max(1, min(limit, 100))
-    query = conversation_access_query(user)
+    query = conversation_access_query(user).where(Conversation.surface == "chat")
     if project_id:
         require_project(db, user, project_id)
         query = query.where(Conversation.project_id == project_id)
+    fts_available = _sqlite_message_fts_available(db)
     for token in tokens:
+        title_match = func.lower(Conversation.title).contains(token)
+        candidate_ids = (
+            _fts_conversation_ids(db, token)
+            if fts_available and len(token) >= 3
+            else None
+        )
+        if candidate_ids is not None:
+            query = query.where(
+                or_(
+                    title_match,
+                    Conversation.id.in_(candidate_ids),
+                )
+            )
         message_match = select(Message.conversation_id).where(
             Message.conversation_id == Conversation.id,
             func.lower(Message.canonical_text).contains(token),
         )
         query = query.where(
             or_(
-                func.lower(Conversation.title).contains(token),
+                title_match,
                 message_match.exists(),
             )
         )
@@ -192,6 +211,37 @@ def search_conversation_content(
         )
     )
     return rows, tokens
+
+
+def _sqlite_message_fts_available(db: Session) -> bool:
+    bind = db.get_bind()
+    if bind.dialect.name != "sqlite":
+        return False
+    return bool(
+        db.scalar(
+            text(
+                "SELECT 1 FROM sqlite_master "
+                "WHERE type = 'table' AND name = 'message_search_fts'"
+            )
+        )
+    )
+
+
+def _fts_conversation_ids(db: Session, token: str) -> tuple[str, ...] | None:
+    match_query = f'"{token.replace(chr(34), chr(34) * 2)}"'
+    try:
+        return tuple(
+            str(conversation_id)
+            for conversation_id in db.scalars(
+                text(
+                    "SELECT DISTINCT conversation_id FROM message_search_fts "
+                    "WHERE message_search_fts MATCH :match_query"
+                ),
+                {"match_query": match_query},
+            )
+        )
+    except DatabaseError:
+        return None
 
 
 def conversation_summary(db: Session, conversation: Conversation) -> dict[str, object]:
@@ -207,15 +257,84 @@ def conversation_summary(db: Session, conversation: Conversation) -> dict[str, o
         .order_by(Run.created_at.desc())
         .limit(1)
     )
+    return _conversation_summary_payload(conversation, active or latest, active)
+
+
+def conversation_summaries(
+    db: Session, conversations: list[Conversation]
+) -> dict[str, dict[str, object]]:
+    if not conversations:
+        return {}
+    conversation_ids = [conversation.id for conversation in conversations]
+    ranked = (
+        select(
+            Run.conversation_id.label("conversation_id"),
+            Run.id.label("run_id"),
+            Run.status.label("status"),
+            Run.last_sequence.label("last_sequence"),
+            func.row_number()
+            .over(
+                partition_by=Run.conversation_id,
+                order_by=(
+                    case((Run.status.in_(ACTIVE_STATUSES), 0), else_=1),
+                    Run.created_at.desc(),
+                    Run.id.desc(),
+                ),
+            )
+            .label("rank"),
+        )
+        .where(Run.conversation_id.in_(conversation_ids))
+        .subquery()
+    )
+    selected = {
+        str(conversation_id): (str(run_id), str(status), int(last_sequence))
+        for conversation_id, run_id, status, last_sequence in db.execute(
+            select(
+                ranked.c.conversation_id,
+                ranked.c.run_id,
+                ranked.c.status,
+                ranked.c.last_sequence,
+            ).where(ranked.c.rank == 1)
+        )
+    }
+    return {
+        conversation.id: _conversation_summary_payload(
+            conversation,
+            selected.get(conversation.id),
+            (
+                selected[conversation.id]
+                if conversation.id in selected
+                and selected[conversation.id][1] in ACTIVE_STATUSES
+                else None
+            ),
+        )
+        for conversation in conversations
+    }
+
+
+def _conversation_summary_payload(
+    conversation: Conversation,
+    latest: Run | tuple[str, str, int] | None,
+    active: Run | tuple[str, str, int] | None,
+) -> dict[str, object]:
+    latest_status = (
+        latest.status if isinstance(latest, Run) else latest[1] if latest else None
+    )
+    latest_sequence = (
+        latest.last_sequence if isinstance(latest, Run) else latest[2] if latest else 0
+    )
+    active_run_id = (
+        active.id if isinstance(active, Run) else active[0] if active else None
+    )
     return {
         "id": conversation.id,
         "project_id": conversation.project_id,
         "title": conversation.title,
         "is_favorite": conversation.is_favorite,
         "is_liked": conversation.is_liked,
-        "last_run_status": sidebar_status(latest.status) if latest else None,
-        "active_run_id": active.id if active else None,
-        "last_sequence": latest.last_sequence if latest else 0,
+        "last_run_status": sidebar_status(latest_status) if latest_status else None,
+        "active_run_id": active_run_id,
+        "last_sequence": latest_sequence,
         "revision": conversation.revision,
         "created_at": conversation.created_at,
         "updated_at": conversation.updated_at,
@@ -236,17 +355,46 @@ def update_conversation(
     conversation = require_conversation(db, user, conversation_id, write=True)
     if expected_revision is not None and conversation.revision != expected_revision:
         raise ApiProblem(409, "revision_conflict", "다른 곳에서 대화가 변경되었습니다.")
+    values: dict[str, object] = {
+        "revision": conversation.revision + 1,
+        "last_activity_at": utc_now(),
+    }
     if title is not None:
-        conversation.title = title.strip()
+        values["title"] = title.strip()
     if is_favorite is not None:
-        conversation.is_favorite = is_favorite
+        values["is_favorite"] = is_favorite
     if is_liked is not None:
-        conversation.is_liked = is_liked
+        values["is_liked"] = is_liked
     if archived is not None:
-        conversation.status = "archived" if archived else "active"
-    conversation.revision += 1
-    conversation.last_activity_at = utc_now()
-    db.flush()
+        values["status"] = "archived" if archived else "active"
+    if expected_revision is None:
+        for field_name, value in values.items():
+            setattr(conversation, field_name, value)
+        db.flush()
+        return conversation
+
+    result = db.execute(
+        update(Conversation)
+        .where(
+            Conversation.id == conversation.id,
+            Conversation.revision == expected_revision,
+            Conversation.deleted_at.is_(None),
+        )
+        .values(**values)
+        .execution_options(synchronize_session=False)
+    )
+    if getattr(result, "rowcount", 0) != 1:
+        current_revision = db.scalar(
+            select(Conversation.revision).where(Conversation.id == conversation.id)
+        )
+        raise ApiProblem(
+            409,
+            "revision_conflict",
+            "다른 곳에서 대화가 변경되었습니다.",
+            details={"currentRevision": current_revision},
+        )
+    db.expire(conversation)
+    db.refresh(conversation)
     return conversation
 
 

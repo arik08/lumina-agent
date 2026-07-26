@@ -18,24 +18,28 @@ def test_ask_me_uses_the_existing_question_ui_without_over_questioning() -> None
 
     assert "name: ask-me" in skill
     assert "Call `request_user_input` by itself" in skill
-    assert "Normally ask one question" in skill
-    assert "prefer no more than three" in skill
-    assert "Never exceed ten questions" in skill
+    assert "ask exactly one" in skill
+    assert "normally no more than three" in skill
+    assert "ten total questions" in skill
+    assert "Never repeat a resolved question" in skill
+    assert "verify the result against that contract" in skill
     assert " (추천)" in skill
-    assert "Never place a user-facing question in ordinary response text" in skill
+    assert "Never place a question in ordinary response text" in skill
     assert "If no Blocking item remains" in skill
+    assert "requests personalized guidance without facts" in skill
+    assert "Do not substitute a generic conditional checklist" in skill
+    assert "Role-play framing or an assigned profession" in skill
+    assert "Do not trigger intake for general knowledge" in skill
+    assert "gives an underspecified search or retrieval request" in skill
+    assert "Before using files, enterprise search, MCP, or web search" in skill
+    assert "if the preceding conversation already identifies it" in skill
 
 
 def test_ask_me_has_repository_catalog_metadata() -> None:
-    descriptions = json.loads(
-        (SKILL_ROOT / "catalog.ko.json").read_text(encoding="utf-8")
-    )
-    tags = json.loads(
-        (SKILL_ROOT / "catalog.tags.json").read_text(encoding="utf-8")
-    )
+    catalog = json.loads((SKILL_ROOT / "catalog.json").read_text(encoding="utf-8"))
 
-    assert descriptions["ask-me"].startswith("작업을 실행하기 전에")
-    assert tags["ask-me"] == ["Agent", "업무설계"]
+    assert catalog["ask-me"]["description"].startswith("기존 확인 질문 UI를 통해")
+    assert catalog["ask-me"]["tags"] == ["Agent", "업무설계"]
 
 
 def test_ask_me_is_explicitly_invoked() -> None:

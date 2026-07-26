@@ -232,7 +232,7 @@ def test_codex_catalog_and_legacy_seed_merge_preserve_adapter_capabilities(
     engine.dispose()
 
 
-def test_image_assets_are_embedded_in_html_and_docx_outputs() -> None:
+def test_html_uses_inline_image_data_and_docx_embeds_image_assets() -> None:
     image = ReportImage(
         source_type="artifact",
         source_id="image-artifact-1",
@@ -250,17 +250,31 @@ def test_image_assets_are_embedded_in_html_and_docx_outputs() -> None:
         "image_artifact_ids": [image.source_id],
     }
 
-    html_report = generate_report(
-        "이미지를 포함해 주세요.", {**common, "format": "html"}, images=(image,)
-    )
     encoded = base64.b64encode(_PNG)
+    html_source = (
+        "<!doctype html><html lang='ko'><head><meta charset='utf-8'>"
+        "<title>설비 이미지 보고서</title></head><body><main>"
+        "<h1>설비 이미지 보고서</h1><img alt='설비 배치도' src='data:image/png;base64,"
+        + encoded.decode("ascii")
+        + "'></main></body></html>"
+    )
+    html_report = generate_report(
+        "이미지를 포함해 주세요.",
+        {"format": "html", "title": "설비 이미지 보고서", "html_source": html_source},
+    )
     assert b"data:image/png;base64," + encoded in html_report.content
-    assert html_report.asset_manifest[0]["contentHash"] == image.content_hash
+    assert html_report.asset_manifest == ()
     status, validation = validate_artifact_content(
         kind="html", mime_type="text/html", content=html_report.content
     )
     assert status == "structural_passed", validation
     assert validation["renderVerified"] is False
+    with pytest.raises(ValueError, match="직접 포함"):
+        generate_report(
+            "이미지를 포함해 주세요.",
+            {"format": "html", "title": "설비 이미지 보고서", "html_source": html_source},
+            images=(image,),
+        )
 
     docx_report = generate_report(
         "이미지를 포함해 주세요.", {**common, "format": "docx"}, images=(image,)
@@ -526,6 +540,7 @@ def test_codex_image_tool_persists_immutable_versions_without_raw_payloads(
         destination_artifact_id = first_snapshot["artifacts"][0]["id"]
         first_tool = first_snapshot["toolExecutions"][0]
         assert first_tool["status"] == "completed"
+        assert "storage_key" not in first_tool["result"]
         first_tools_step = next(
             step for step in first_snapshot["plan"]["steps"] if step["key"] == "tools"
         )

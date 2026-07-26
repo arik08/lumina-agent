@@ -14,7 +14,7 @@ site-specific logic.
 
 Playwright MCP invocation requires caller's tool access; this module
 provides the subprocess path for local JS templates but only stubs the MCP
-path (MCP must be driven from the Claude session itself).
+path (MCP must be driven from the Agent session itself).
 """
 from __future__ import annotations
 
@@ -140,7 +140,7 @@ def run_playwright_fallback(
 
     if choice.startswith("playwright_mcp"):
         att.error = (
-            "Playwright MCP must be invoked from the Claude session — "
+            "Playwright MCP must be invoked from the Agent session — "
             "call mcp__playwright__* tools directly instead of fetch_chain."
         )
         att.verdict = Verdict.UNKNOWN.value

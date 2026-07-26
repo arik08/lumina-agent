@@ -17,9 +17,11 @@ _READ_ACTIONS = frozenset(
         "fetch",
         "find",
         "get",
+        "check",
         "inspect",
         "list",
         "lookup",
+        "preview",
         "query",
         "read",
         "search",
@@ -89,6 +91,12 @@ def classify_tool_risk(
     approval_mode: str,
     mcp_original_name: str | None = None,
 ) -> ToolRisk:
+    if tool_name == "run_python":
+        return ToolRisk(
+            "local_execution",
+            "high",
+            approval_mode != "yolo",
+        )
     if tool_name in {
         "web_search",
         "web_fetch",
@@ -96,8 +104,13 @@ def classify_tool_risk(
         "grep",
         "read_file",
         "list_dir",
+        "explore_source_document",
         "search_source_document",
         "read_source_document",
+        "read_skill_resource",
+        "search_knowledge",
+        "read_knowledge_document",
+        "follow_knowledge_links",
         "read_tool_result",
         "tool_search",
         "tool_describe",
@@ -107,7 +120,12 @@ def classify_tool_risk(
         "classify_file_output_intent",
     }:
         return ToolRisk("read_only", "low", False)
-    if tool_name in {"create_report", "generate_image", "write_file"}:
+    if tool_name in {
+        "create_report",
+        "generate_image",
+        "write_file",
+        "run_python_calculation",
+    }:
         return ToolRisk("workspace_write", "low", approval_mode == "confirm_all")
     candidate = mcp_original_name or tool_name
     word_source = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", candidate)
@@ -210,6 +228,21 @@ def pending_approval_payloads(db: Session, run_id: str) -> list[dict[str, Any]]:
     ]
 
 
+def pending_approval_payloads_batch(
+    db: Session, run_ids: list[str]
+) -> dict[str, list[dict[str, Any]]]:
+    grouped = {run_id: [] for run_id in run_ids}
+    if not run_ids:
+        return grouped
+    for item in db.scalars(
+        select(ToolApproval)
+        .where(ToolApproval.run_id.in_(run_ids), ToolApproval.status == "pending")
+        .order_by(ToolApproval.run_id, ToolApproval.requested_at, ToolApproval.id)
+    ):
+        grouped.setdefault(item.run_id, []).append(approval_payload(item))
+    return grouped
+
+
 __all__ = [
     "ToolRisk",
     "approval_payload",
@@ -217,5 +250,6 @@ __all__ = [
     "has_sensitive_tool_arguments",
     "normalized_tool_arguments",
     "pending_approval_payloads",
+    "pending_approval_payloads_batch",
     "safe_argument_summary",
 ]

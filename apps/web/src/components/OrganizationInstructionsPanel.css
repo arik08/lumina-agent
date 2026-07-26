@@ -36,7 +36,8 @@
 .admin-prompt-history > p.is-error { margin: 8px 12px; color: var(--danger); font-size: 10px; }
 .admin-prompt-toolbar { display: flex; min-height: 42px; align-items: center; gap: 8px; padding: 6px 14px; border-bottom: 1px solid var(--line); background: var(--surface); }
 .admin-prompt-toolbar > span { color: var(--muted); font-size: 10px; }
-.admin-prompt-toolbar .select-menu { width: min(260px, 38vw); }
+.admin-prompt-toolbar .lumina-select { width: min(260px, 38vw); flex: 0 1 260px; }
+.admin-prompt-project-menu > button { font-size: 14px; }
 .admin-prompt-toolbar > small { overflow: hidden; margin-left: auto; color: var(--muted); font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
 .admin-prompt-composition { width: min(820px, calc(100% - 36px)); margin: 16px auto 0; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-soft); }
 .admin-prompt-composition > header { min-height: 40px; border-bottom: 1px solid var(--line); }
@@ -82,7 +83,7 @@
   .admin-prompt-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
   .admin-prompt-sidebar { max-height: 250px; border-right: 0; border-bottom: 1px solid var(--line); }
   .admin-prompt-toolbar { flex-wrap: wrap; }
-  .admin-prompt-toolbar .select-menu { width: min(100%, 280px); }
+  .admin-prompt-toolbar .lumina-select { width: min(100%, 280px); flex-basis: 280px; }
   .admin-prompt-toolbar > small { width: 100%; margin-left: 0; }
   .admin-prompt-composition, .runtime-prompt-editor { width: calc(100% - 20px); }
   .admin-prompt-composition li { grid-template-columns: 22px minmax(0, 1fr); }

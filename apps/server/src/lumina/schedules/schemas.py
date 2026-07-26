@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, get_args
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from ..api.schemas import ApiModel, ExecutionSelection
 
@@ -33,6 +33,7 @@ class ScheduledTaskCreate(ApiModel):
 
 
 class ScheduledTaskPatch(ApiModel):
+    project_id: str | None = None
     name: str | None = Field(default=None, min_length=1, max_length=240)
     instructions: str | None = Field(default=None, min_length=1, max_length=200_000)
     schedule_kind: ScheduleKind | None = None
@@ -45,3 +46,16 @@ class ScheduledTaskPatch(ApiModel):
     delivery_policy: dict[str, Any] | None = None
     max_attempts: int | None = Field(default=None, ge=1, le=10)
     timeout_seconds: int | None = Field(default=None, ge=30, le=86_400)
+
+    @model_validator(mode="after")
+    def validate_changes(self) -> "ScheduledTaskPatch":
+        if not self.model_fields_set:
+            raise ValueError("at least one scheduled task field is required")
+        null_fields = sorted(
+            field_name
+            for field_name in self.model_fields_set - {"source_conversation_id"}
+            if getattr(self, field_name) is None
+        )
+        if null_fields:
+            raise ValueError(f"fields cannot be null: {', '.join(null_fields)}")
+        return self

@@ -12,17 +12,17 @@ const panelStyles = readFileSync(
 );
 const apiSource = readFileSync(new URL("../src/api.ts", import.meta.url), "utf8");
 
-test("admin prompt management exposes the complete six-layer overview", () => {
+test("admin prompt management exposes the prompt hierarchy without a duplicate Concept layer", () => {
   for (const label of [
     "Lumina 고정 system prompt",
     "관리자 기본 지침",
     "내장 Agent 기본 지침",
-    "프로젝트 Concept",
     "프로젝트 지침",
     "개인 지침",
   ]) {
     assert.match(panelSource, new RegExp(label));
   }
+  assert.doesNotMatch(panelSource, /프로젝트 Concept/);
   assert.match(panelSource, /실제 Run 프롬프트 합성 구조/);
   assert.match(panelSource, /공유 프로젝트에서는 개인 지침을 합성하지 않습니다/);
   assert.match(panelSource, /모든 변경은 새 Run부터 적용/);
@@ -38,6 +38,14 @@ test("internal prompts are editable while project-scoped layers remain read only
   assert.match(apiSource, /\/admin\/runtime-prompts/);
 });
 
+test("each common prompt layer explains its purpose when the editor is empty", () => {
+  assert.match(panelSource, /가장 높은 우선순위 제품 실행 계약/);
+  assert.match(panelSource, /모든 프로젝트와 Run에 공통 적용되는 조직 정책/);
+  assert.match(panelSource, /조직 정책 다음에 적용되는 Lumina의 일반 작업 원칙/);
+  assert.match(panelSource, /placeholder=\{RUNTIME_PROMPT_PLACEHOLDERS\[document\.key\]\}/);
+  assert.match(panelSource, /placeholder=\{ORGANIZATION_INSTRUCTIONS_PLACEHOLDER\}/);
+});
+
 test("prompt composition controls stay visually quiet and collapse from the full header row", () => {
   assert.match(panelSource, /className="admin-prompt-composition-toggle"[\s\S]*onClick=\{\(\) => setShowComposition\(false\)\}/);
   assert.match(panelStyles, /\.admin-prompt-sidebar > header > button\.tooltip-control \{[^}]*border: 0;[^}]*background: transparent;/);
@@ -49,4 +57,14 @@ test("prompt composition expands in the same lower slot as its shortcut", () => 
     panelSource,
     /\{showComposition \? \(\s*<section className="admin-prompt-composition"[\s\S]*<\/section>\s*\) : \(\s*<button className="admin-prompt-composition-shortcut"/,
   );
+});
+
+test("project preview selector stays compact so the toolbar note remains readable", () => {
+  assert.match(panelStyles, /\.admin-prompt-toolbar \.lumina-select \{[^}]*width: min\(260px, 38vw\);[^}]*flex: 0 1 260px;/);
+  assert.doesNotMatch(panelStyles, /\.admin-prompt-toolbar \.select-menu/);
+});
+
+test("project preview options use the same font size as the select trigger", () => {
+  assert.match(panelSource, /menuClassName="admin-prompt-project-menu"/);
+  assert.match(panelStyles, /\.admin-prompt-project-menu > button \{ font-size: 14px; \}/);
 });

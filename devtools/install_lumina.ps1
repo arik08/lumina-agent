@@ -3,6 +3,8 @@ param(
     [switch]$NonInteractive,
     [switch]$ConfigurePgpt,
     [switch]$SkipPgpt,
+    [switch]$InstallCodex,
+    [switch]$SkipCodex,
     [string]$CompanyCaPath,
     [switch]$RequireCompanyCa,
     [switch]$PgptNetworkCheck,
@@ -16,6 +18,7 @@ $ErrorActionPreference = "Stop"
 $RepositoryRoot = Split-Path -Parent $PSScriptRoot
 $ServerRoot = Join-Path $RepositoryRoot "apps/server"
 $WebRoot = Join-Path $RepositoryRoot "apps/web"
+$WeatherMcpRoot = Join-Path $RepositoryRoot "extensions/mcp/korea_weather"
 $EnvFile = Join-Path $RepositoryRoot ".env"
 . (Join-Path $PSScriptRoot "LuminaCache.Env.ps1") -RepositoryRoot $RepositoryRoot
 . (Join-Path $PSScriptRoot "LuminaInstall.Env.ps1")
@@ -204,6 +207,9 @@ function Read-LuminaYesNoChoice {
 if ($ConfigurePgpt -and $SkipPgpt) {
     throw "ConfigurePgpt and SkipPgpt cannot be used together."
 }
+if ($InstallCodex -and $SkipCodex) {
+    throw "InstallCodex and SkipCodex cannot be used together."
+}
 if ($PgptNetworkCheck -and $NoNetwork) {
     throw "PgptNetworkCheck and NoNetwork cannot be used together."
 }
@@ -221,6 +227,7 @@ $NpmCommand = if ($env:OS -eq "Windows_NT") {
 else {
     (Get-Command "npm" -ErrorAction Stop | Select-Object -First 1).Source
 }
+Assert-Command "git" "Install Git from https://git-scm.com/downloads. It is required to install the National Assembly MCP server."
 Write-Host "[Lumina] Required tools are available."
 
 if ($ValidateOnly) {
@@ -287,6 +294,12 @@ if (-not $ConfigurePgpt -and -not $SkipPgpt -and -not $NonInteractive) {
         -Prompt "Configure the optional P-GPT provider now?"
 }
 
+$enableCodex = [bool]$InstallCodex
+if (-not $InstallCodex -and -not $SkipCodex -and -not $NonInteractive) {
+    $choice = Read-Host "Install the optional Codex Provider support? [y/N]"
+    $enableCodex = $choice -match '^(?i)y(?:es)?$'
+}
+
 if ($enablePgpt) {
     Write-Host "[Lumina] Configuring P-GPT credentials without displaying their values..."
     $pgptApiKey = Get-RequiredSecretSetting -Key "PGPT_API_KEY" -Prompt "P-GPT API key"
@@ -349,6 +362,9 @@ elseif ($RequireCompanyCa) {
 if (-not $SkipDependencyInstall) {
     Write-Host "[Lumina] Installing Python dependencies..."
     $pythonInstallArguments = @("sync", "--project", $ServerRoot, "--python", "3.13")
+    if ($enableCodex) {
+        $pythonInstallArguments += @("--extra", "codex")
+    }
     if ($NoNetwork) {
         $pythonInstallArguments += "--offline"
     }
@@ -421,6 +437,24 @@ if (-not $SkipDependencyInstall) {
         $frontendInstallArguments += @("--offline", "--no-audit")
     }
     Invoke-Checked -Command $NpmCommand -Arguments $frontendInstallArguments
+
+    Write-Host "[Lumina] Installing Korea Weather MCP dependencies..."
+    $weatherInstallArguments = @("ci", "--prefix", $WeatherMcpRoot)
+    if ($NoNetwork) {
+        $weatherInstallArguments += @("--offline", "--no-audit")
+    }
+    Invoke-Checked -Command $NpmCommand -Arguments $weatherInstallArguments
+
+    Write-Host "[Lumina] Installing the pinned National Assembly MCP server..."
+    $assemblyInstallArguments = @(
+        "run", "--project", $ServerRoot,
+        "python", (Join-Path $RepositoryRoot "extensions/mcp/national_assembly_bootstrap.py"),
+        "--install-only"
+    )
+    if ($NoNetwork) {
+        $assemblyInstallArguments += "--offline"
+    }
+    Invoke-Checked -Command "uv" -Arguments $assemblyInstallArguments
 }
 
 Write-Host "[Lumina] Applying database migrations..."

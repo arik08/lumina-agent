@@ -1,0 +1,408 @@
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type UIEventHandler } from "react";
+import { createPortal } from "react-dom";
+import {
+  AlertCircle,
+  Check,
+  CheckCheck,
+  Clock3,
+  Folder,
+  FolderInput,
+  FilterX,
+  Heart,
+  LoaderCircle,
+  MessageCircle,
+  MessageCircleQuestion,
+  MoreVertical,
+  Pencil,
+  Pin,
+  PinOff,
+  Search,
+  Trash2,
+  Waypoints,
+  X,
+} from "lucide-react";
+import { useFixedVirtualList } from "../use-fixed-virtual-list";
+
+export interface SidebarRecentItem {
+  id: string;
+  projectId: string;
+  title: string;
+  isFavorite: boolean;
+  isLiked: boolean;
+  status?: string;
+  kind?: "conversation" | "deep-analysis";
+}
+
+interface SidebarProjectOption {
+  id: string;
+  name: string;
+}
+
+interface SessionMenuPosition {
+  left: number;
+  top: number;
+  opensAbove: boolean;
+  themeDark: boolean;
+}
+
+const SESSION_MENU_GAP = 1;
+const SESSION_MENU_VIEWPORT_MARGIN = 8;
+
+interface SidebarRecentItemsProps {
+  items: SidebarRecentItem[];
+  projects: SidebarProjectOption[];
+  activeId: string | null;
+  loading: boolean;
+  emptyText: string;
+  likedEmptyText: string;
+  onSelect: (id: string) => void;
+  onRename: (id: string, title: string) => Promise<boolean>;
+  onToggleFavorite: (id: string) => Promise<void>;
+  onToggleLiked: (id: string) => Promise<void>;
+  onMove: (id: string, projectId: string) => Promise<boolean>;
+  onDelete: (id: string) => Promise<boolean>;
+  onBulkMove: (ids: string[], projectId: string) => Promise<string[]>;
+  onBulkDelete: (ids: string[]) => Promise<string[]>;
+  onScroll?: UIEventHandler<HTMLDivElement>;
+  onLoadMore?: () => void;
+  hasMore?: boolean;
+  titleFilterQuery?: string;
+  titleFilterLoading?: boolean;
+  titleFilterAriaLabel?: string;
+  filterEmptyText?: string;
+  onTitleFilterChange?: (query: string) => void;
+  onTitleFilterClear?: () => void;
+}
+
+export const SidebarRecentItems = memo(function SidebarRecentItems({
+  items,
+  projects,
+  activeId,
+  loading,
+  emptyText,
+  likedEmptyText,
+  onSelect,
+  onRename,
+  onToggleFavorite,
+  onToggleLiked,
+  onMove,
+  onDelete,
+  onBulkMove,
+  onBulkDelete,
+  onScroll,
+  onLoadMore,
+  hasMore = false,
+  titleFilterQuery,
+  titleFilterLoading = false,
+  titleFilterAriaLabel = "항목 제목으로 필터링",
+  filterEmptyText,
+  onTitleFilterChange,
+  onTitleFilterClear,
+}: SidebarRecentItemsProps) {
+  const [likedOnly, setLikedOnly] = useState(false);
+  const [menuId, setMenuId] = useState<string | null>(null);
+  const [moveMenuId, setMoveMenuId] = useState<string | null>(null);
+  const [deleteArmedId, setDeleteArmedId] = useState<string | null>(null);
+  const [deleteBusyId, setDeleteBusyId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [titleDraft, setTitleDraft] = useState("");
+  const [bulkMode, setBulkMode] = useState(false);
+  const [bulkIds, setBulkIds] = useState<Set<string>>(new Set());
+  const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkDeleteArmed, setBulkDeleteArmed] = useState(false);
+  const [titleFilterOpen, setTitleFilterOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState<SessionMenuPosition | null>(null);
+  const titleFilterInputRef = useRef<HTMLInputElement>(null);
+  const menuTriggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const titleFiltering = Boolean(titleFilterQuery?.trim());
+  const visibleItems = useMemo(
+    () => items.filter((item) => !likedOnly || item.isLiked),
+    [items, likedOnly],
+  );
+  const virtualList = useFixedVirtualList(visibleItems.length, 34, { threshold: 60, overscan: 8 });
+  const renderedItems = visibleItems.slice(virtualList.start, virtualList.end);
+  const openMenuItem = menuId ? visibleItems.find((item) => item.id === menuId) : undefined;
+
+  const positionSessionMenu = useCallback(() => {
+    const trigger = menuTriggerRef.current;
+    const menu = menuRef.current;
+    if (!trigger?.isConnected || !menu) return;
+    const triggerRect = trigger.getBoundingClientRect();
+    const menuRect = menu.getBoundingClientRect();
+    const footerTop = trigger.closest(".sidebar")
+      ?.querySelector<HTMLElement>(".sidebar-footer")
+      ?.getBoundingClientRect().top ?? window.innerHeight;
+    const availableBelow = Math.max(0, footerTop - triggerRect.bottom - SESSION_MENU_GAP);
+    const availableAbove = Math.max(0, triggerRect.top - SESSION_MENU_GAP - SESSION_MENU_VIEWPORT_MARGIN);
+    const opensAbove = menuRect.height > availableBelow && availableAbove > availableBelow;
+    const left = Math.min(
+      Math.max(SESSION_MENU_VIEWPORT_MARGIN, triggerRect.right - menuRect.width),
+      Math.max(SESSION_MENU_VIEWPORT_MARGIN, window.innerWidth - menuRect.width - SESSION_MENU_VIEWPORT_MARGIN),
+    );
+    const top = opensAbove
+      ? Math.max(SESSION_MENU_VIEWPORT_MARGIN, triggerRect.top - SESSION_MENU_GAP - menuRect.height)
+      : Math.min(
+        triggerRect.bottom + SESSION_MENU_GAP,
+        window.innerHeight - SESSION_MENU_VIEWPORT_MARGIN - menuRect.height,
+      );
+    const nextPosition = {
+      left,
+      top,
+      opensAbove,
+      themeDark: Boolean(trigger.closest(".theme-dark")),
+    };
+    setMenuPosition((current) => current
+      && current.left === nextPosition.left
+      && current.top === nextPosition.top
+      && current.opensAbove === nextPosition.opensAbove
+      && current.themeDark === nextPosition.themeDark
+      ? current
+      : nextPosition);
+  }, []);
+
+  useEffect(() => {
+    if (!titleFilterOpen) return;
+    titleFilterInputRef.current?.focus();
+  }, [titleFilterOpen]);
+
+  useEffect(() => {
+    const ids = new Set(items.map((item) => item.id));
+    setBulkIds((current) => {
+      const retained = [...current].filter((id) => ids.has(id));
+      return retained.length === current.size ? current : new Set(retained);
+    });
+    if (menuId && !ids.has(menuId)) setMenuId(null);
+  }, [items, menuId]);
+
+  useLayoutEffect(() => {
+    if (!menuId) {
+      setMenuPosition(null);
+      return;
+    }
+    positionSessionMenu();
+    const reposition = () => positionSessionMenu();
+    const observer = typeof ResizeObserver === "function" && menuRef.current
+      ? new ResizeObserver(reposition)
+      : null;
+    if (menuRef.current) observer?.observe(menuRef.current);
+    window.addEventListener("resize", reposition);
+    window.addEventListener("scroll", reposition, true);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
+    };
+  }, [menuId, moveMenuId, positionSessionMenu, projects.length]);
+
+  useEffect(() => {
+    const close = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setMenuId(null);
+      setMoveMenuId(null);
+      setDeleteArmedId(null);
+      setEditingId(null);
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, []);
+
+  useEffect(() => {
+    if (!menuId && !bulkMoveOpen) return undefined;
+    const closeOutsideSubmenu = (event: PointerEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (menuId && target && (menuRef.current?.contains(target) || menuTriggerRef.current?.contains(target))) return;
+      if (bulkMoveOpen && target?.closest(".bulk-session-heading-actions")) return;
+      setMenuId(null);
+      setMoveMenuId(null);
+      setDeleteArmedId(null);
+      setBulkMoveOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOutsideSubmenu);
+    return () => document.removeEventListener("pointerdown", closeOutsideSubmenu);
+  }, [bulkMoveOpen, menuId]);
+
+  const finishBulk = (succeeded: string[]) => {
+    const remaining = new Set([...bulkIds].filter((id) => !succeeded.includes(id)));
+    setBulkIds(remaining);
+    if (remaining.size === 0) {
+      setBulkMode(false);
+      setBulkMoveOpen(false);
+    }
+  };
+
+  const commitRename = async (item: SidebarRecentItem) => {
+    const title = titleDraft.trim();
+    if (!title || title === item.title) {
+      setEditingId(null);
+      return;
+    }
+    if (await onRename(item.id, title)) setEditingId(null);
+  };
+
+  const deleteOne = async (id: string) => {
+    if (deleteBusyId) return;
+    if (deleteArmedId !== id) {
+      setDeleteArmedId(id);
+      return;
+    }
+    setDeleteBusyId(id);
+    try {
+      if (await onDelete(id)) setMenuId(null);
+    } finally {
+      setDeleteBusyId(null);
+      setDeleteArmedId(null);
+    }
+  };
+
+  return (
+    <section className="sidebar-section session-section">
+      <div className="sidebar-section-heading session-heading">
+        <span>{bulkMode ? `${likedOnly ? "좋아요 · " : ""}${bulkIds.size}개 선택` : likedOnly ? "좋아요" : "최근 항목"}</span>
+        {bulkMode ? (
+          <div className="bulk-session-heading-actions">
+            <button className="tooltip-control" type="button" aria-label="선택한 항목 프로젝트 이동" data-tooltip="이동" disabled={!bulkIds.size || bulkBusy || projects.length === 0} onClick={() => setBulkMoveOpen((open) => !open)}><FolderInput size={14} /></button>
+            <button className={`tooltip-control is-danger ${bulkDeleteArmed ? "is-armed" : ""}`} type="button" aria-label={bulkDeleteArmed ? "선택한 항목 삭제 확인, 한 번 더 누르면 삭제" : "선택한 항목 삭제"} data-tooltip={bulkDeleteArmed ? "삭제경고" : "삭제"} disabled={!bulkIds.size || bulkBusy} onClick={async () => {
+              if (!bulkDeleteArmed) { setBulkDeleteArmed(true); return; }
+              setBulkBusy(true);
+              try { finishBulk(await onBulkDelete([...bulkIds])); }
+              finally { setBulkBusy(false); setBulkDeleteArmed(false); }
+            }}>{bulkBusy ? <LoaderCircle className="is-running" size={14} /> : bulkDeleteArmed ? <AlertCircle size={14} /> : <Trash2 size={14} />}</button>
+            <button className="bulk-session-select tooltip-control" type="button" aria-label={bulkIds.size === items.length ? "모든 항목 선택 해제" : "모든 항목 선택"} data-tooltip={bulkIds.size === items.length ? "선택 해제" : "전체 선택"} onClick={() => setBulkIds((current) => current.size === items.length ? new Set() : new Set(items.map((item) => item.id)))}><CheckCheck size={14} /></button>
+            <button className="tooltip-control" type="button" aria-label="항목 관리 닫기" data-tooltip="닫기" onClick={() => { setBulkMode(false); setBulkIds(new Set()); setBulkMoveOpen(false); }}><X size={14} /></button>
+            {bulkMoveOpen && (
+              <div className="bulk-session-projects">
+                {projects.map((project) => <button type="button" key={project.id} disabled={bulkBusy} onClick={async () => {
+                  setBulkBusy(true);
+                  try { finishBulk(await onBulkMove([...bulkIds], project.id)); }
+                  finally { setBulkBusy(false); }
+                }}><Folder size={13} /> {project.name}</button>)}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="session-heading-actions">
+            {(loading || titleFilterLoading) && <LoaderCircle className="is-running" size={13} />}
+            {onTitleFilterChange && titleFiltering && (
+              <button className="session-title-filter-clear session-heading-action tooltip-control" type="button" aria-label="세션 제목 필터 해제" data-tooltip="필터 해제" onClick={() => {
+                onTitleFilterClear?.();
+                setTitleFilterOpen(false);
+              }}><FilterX size={14} /></button>
+            )}
+            {onTitleFilterChange && (
+              <button className={`session-title-filter-toggle session-heading-action tooltip-control ${titleFilterOpen || titleFiltering ? "is-active" : ""}`} type="button" aria-label="세션 제목 검색" aria-expanded={titleFilterOpen || titleFiltering} data-tooltip="제목 검색" onClick={() => setTitleFilterOpen(true)}><Search size={14} /></button>
+            )}
+            <button className={`liked-sessions-filter session-heading-action tooltip-control ${likedOnly ? "is-active" : ""}`} type="button" aria-label={likedOnly ? "전체 보기" : "좋아요만 보기"} aria-pressed={likedOnly} data-tooltip={likedOnly ? "전체 보기" : "좋아요만"} onClick={() => setLikedOnly((active) => !active)}><Heart size={14} fill={likedOnly ? "currentColor" : "none"} /></button>
+            <button className="bulk-session-open tooltip-control" type="button" aria-label="항목 관리" data-tooltip="항목 관리" disabled={items.length === 0} onClick={() => { setBulkMode(true); setBulkIds(new Set()); setMenuId(null); setMoveMenuId(null); }}><CheckCheck size={14} /></button>
+          </div>
+        )}
+      </div>
+      {onTitleFilterChange && (titleFilterOpen || titleFiltering) && (
+        <label className="session-title-filter">
+          <Search size={13} aria-hidden="true" />
+          <input
+            ref={titleFilterInputRef}
+            type="search"
+            aria-label={titleFilterAriaLabel}
+            placeholder="세션 제목 검색"
+            value={titleFilterQuery ?? ""}
+            onChange={(event) => onTitleFilterChange(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Escape") return;
+              event.preventDefault();
+              onTitleFilterClear?.();
+              setTitleFilterOpen(false);
+            }}
+          />
+        </label>
+      )}
+      <div className="session-list" ref={virtualList.containerRef} onScroll={(event) => {
+        virtualList.onScroll(event.currentTarget);
+        onScroll?.(event);
+        const list = event.currentTarget;
+        const prefetchDistance = Math.max(132, list.clientHeight * 0.35);
+        if (hasMore && list.scrollHeight - list.scrollTop - list.clientHeight <= prefetchDistance) {
+          onLoadMore?.();
+        }
+      }}>
+        <div
+          className={`session-list-items ${virtualList.virtualized ? "is-virtualized" : ""}`}
+          style={virtualList.virtualized ? { height: `${virtualList.totalHeight}px` } : undefined}
+        >
+        {renderedItems.map((item, renderedIndex) => (
+          <div
+            className={`session-item ${item.id === activeId && !bulkMode ? "is-selected" : ""} ${bulkMode ? "is-bulk" : ""}`}
+            data-recent-item-id={item.id}
+            key={item.id}
+            style={virtualList.virtualized ? { top: `${(virtualList.start + renderedIndex) * 34}px` } : undefined}
+          >
+            {bulkMode ? (
+              <button className="session-row" type="button" onClick={() => setBulkIds((current) => {
+                const next = new Set(current);
+                if (next.has(item.id)) next.delete(item.id); else next.add(item.id);
+                return next;
+              })} aria-pressed={bulkIds.has(item.id)}>
+                <span className={`bulk-session-checkbox ${bulkIds.has(item.id) ? "is-checked" : ""}`}>{bulkIds.has(item.id) && <Check size={11} />}</span>
+                <span>{item.title}</span>
+              </button>
+            ) : (
+              <>
+                <button className="session-like-button" type="button" aria-label={`${item.title} ${item.isLiked ? "좋아요 취소" : "좋아요"}`} aria-pressed={item.isLiked} onClick={() => void onToggleLiked(item.id)}>
+                  {item.isLiked ? <Heart className="session-like" size={14} fill="currentColor" /> : item.kind === "deep-analysis" ? <Waypoints size={14} /> : item.status === "running" ? <LoaderCircle className="is-running" size={14} /> : item.status === "queued" ? <Clock3 size={14} /> : item.status === "input" ? <MessageCircleQuestion size={14} /> : item.status === "failed" ? <AlertCircle size={14} /> : item.isFavorite ? <Pin className="session-pin" size={14} /> : <MessageCircle size={14} />}
+                </button>
+                {editingId === item.id ? (
+                  <input className="session-title-inline-input" aria-label={`${item.title} 이름 변경`} autoFocus value={titleDraft} onFocus={(event) => event.currentTarget.select()} onChange={(event) => setTitleDraft(event.currentTarget.value)} onBlur={() => void commitRename(item)} onKeyDown={(event) => {
+                    if (event.key === "Enter") { event.preventDefault(); void commitRename(item); }
+                    if (event.key === "Escape") { event.preventDefault(); setEditingId(null); }
+                  }} />
+                ) : <button className="session-row session-title-button" type="button" onClick={() => onSelect(item.id)}><span>{item.title}</span></button>}
+              </>
+            )}
+            {!bulkMode && <button className="session-options-button" type="button" aria-label={`${item.title} 옵션`} aria-expanded={menuId === item.id} onClick={(event) => {
+              event.stopPropagation();
+              setMoveMenuId(null);
+              setDeleteArmedId(null);
+              if (menuId === item.id) {
+                setMenuId(null);
+                menuTriggerRef.current = null;
+                return;
+              }
+              menuTriggerRef.current = event.currentTarget;
+              setMenuPosition(null);
+              setMenuId(item.id);
+            }}><MoreVertical size={15} /></button>}
+          </div>
+        ))}
+        </div>
+        {!loading && !titleFilterLoading && visibleItems.length === 0 && <p className="sidebar-empty">{likedOnly ? likedEmptyText : titleFiltering ? (filterEmptyText ?? "일치하는 항목이 없습니다.") : emptyText}</p>}
+      </div>
+      {openMenuItem && createPortal(
+        <div
+          className={`session-options-menu session-options-menu-global${menuPosition?.opensAbove ? " opens-above" : ""}${menuPosition?.themeDark ? " theme-dark" : ""}`}
+          ref={menuRef}
+          role="menu"
+          style={{
+            left: menuPosition?.left ?? 0,
+            top: menuPosition?.top ?? 0,
+            visibility: menuPosition ? "visible" : "hidden",
+          } as CSSProperties}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button type="button" role="menuitem" onClick={() => { setMenuId(null); void onToggleFavorite(openMenuItem.id); }}>{openMenuItem.isFavorite ? <PinOff size={14} /> : <Pin size={14} />} {openMenuItem.isFavorite ? "즐겨찾기 해제" : "즐겨찾기"}</button>
+          <button type="button" role="menuitem" onClick={() => { setMenuId(null); void onToggleLiked(openMenuItem.id); }}><Heart size={14} fill={openMenuItem.isLiked ? "currentColor" : "none"} /> {openMenuItem.isLiked ? "좋아요 취소" : "좋아요"}</button>
+          <button type="button" role="menuitem" onClick={() => { setTitleDraft(openMenuItem.title); setEditingId(openMenuItem.id); setMenuId(null); }}><Pencil size={14} /> 세션명 변경</button>
+          <button type="button" role="menuitem" onClick={() => setMoveMenuId((current) => current === openMenuItem.id ? null : openMenuItem.id)}><FolderInput size={14} /> 프로젝트 변경</button>
+          {moveMenuId === openMenuItem.id && (
+            <div className="session-project-options">
+              {projects.filter((project) => project.id !== openMenuItem.projectId).map((project) => <button type="button" key={project.id} onClick={async () => { if (await onMove(openMenuItem.id, project.id)) setMenuId(null); }}><Folder size={13} /> {project.name}</button>)}
+              {projects.length === 0 && <span>이동할 프로젝트가 없습니다.</span>}
+            </div>
+          )}
+          <button className={`is-danger ${deleteArmedId === openMenuItem.id ? "is-armed" : ""}`} type="button" role="menuitem" disabled={deleteBusyId === openMenuItem.id} onClick={() => void deleteOne(openMenuItem.id)}>{deleteBusyId === openMenuItem.id ? <LoaderCircle className="is-running" size={14} /> : deleteArmedId === openMenuItem.id ? <AlertCircle size={14} /> : <Trash2 size={14} />} {deleteArmedId === openMenuItem.id ? "삭제 확인" : "삭제"}</button>
+        </div>,
+        document.body,
+      )}
+    </section>
+  );
+});

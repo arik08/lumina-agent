@@ -176,6 +176,11 @@ export interface ProjectFileSummary {
   updatedAt: IsoDateTime;
 }
 
+export interface ProjectFilePage {
+  items: ProjectFileSummary[];
+  nextCursor: string | null;
+}
+
 export interface ProjectFileDetail extends ProjectFileSummary {
   versions: ProjectFileVersion[];
 }
@@ -185,6 +190,7 @@ export interface AnnouncementItem {
   title: string;
   body: string;
   author: { id: UUID; loginId: string; displayName: string | null } | null;
+  readAt: IsoDateTime | null;
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
 }
@@ -192,8 +198,680 @@ export interface AnnouncementItem {
 export interface AnnouncementList {
   items: AnnouncementItem[];
   total: number;
+  unreadCount: number;
 }
 
+export type DeepAnalysisAutonomyMode = "guided" | "balanced" | "autonomous";
+
+export interface DeepAnalysisResearchPeriod {
+  startDate: string | null;
+  endDate: string | null;
+}
+
+export interface DeepAnalysisWebSourcePolicy {
+  mode: "all" | "prioritize" | "restrict";
+  domains: string[];
+  excludedDomains: string[];
+}
+
+export interface DeepAnalysisMissionSummary {
+  id: UUID;
+  projectId: UUID;
+  title: string;
+  isFavorite: boolean;
+  isLiked: boolean;
+  objective: string;
+  status: string;
+  startMode: string;
+  patternVersionId: UUID | null;
+  autonomyMode: DeepAnalysisAutonomyMode;
+  analysisDepth: "auto" | "brief" | "standard" | "deep";
+  answerLength: "auto" | "brief" | "standard" | "detailed";
+  outputMode: OutputMode;
+  outputFormat: DeepAnalysisOutputFormat;
+  targetOutputTokens: number | null;
+  execution: ExecutionSelection | null;
+  promptReferences: PromptReference[];
+  researchPeriod: DeepAnalysisResearchPeriod;
+  webSourcePolicy: DeepAnalysisWebSourcePolicy;
+  guidanceCount: number;
+  budgetMicrousd: number | null;
+  spentMicrousd: number;
+  completionOutcome: "satisfied" | "satisfied_with_exceptions" | "not_satisfied" | null;
+  revision: number;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+export interface DeepAnalysisWorkflowNode {
+  id: UUID;
+  nodeKey: string;
+  nodeType: string;
+  title: string;
+  purpose: string;
+  status: string;
+  sequence: number;
+  positionX: number;
+  positionY: number;
+  config: Record<string, unknown>;
+  conversationId: UUID | null;
+  runId: UUID | null;
+  outputProjectFileId: UUID | null;
+  outputLogicalPath: string | null;
+  outputSummary: string;
+  outputMarkdown: string;
+  generatedFiles: Array<{
+    projectFileId: UUID;
+    path: string;
+    version: number;
+    contentHash: string;
+    kind: string;
+  }>;
+  runHistory: Array<{
+    attempt: number;
+    runId: UUID;
+    status: string;
+    costMicrousd: number;
+    errorMessage: string | null;
+    startedAt: IsoDateTime | null;
+    finishedAt: IsoDateTime | null;
+  }>;
+  runStatus: string | null;
+  executionPrompt: string | null;
+  contextManifest: {
+    id: UUID;
+    missionContextRevision: number;
+    prefixHash: string;
+    toolProfile: string;
+    itemCount: number;
+    tokenEstimate: number;
+    items: Array<Record<string, unknown>>;
+    lineage: Record<string, unknown>;
+    createdAt: IsoDateTime;
+  } | null;
+  liveOutput: string;
+  errorMessage: string | null;
+  actualCostMicrousd: number;
+  startedAt: IsoDateTime | null;
+  finishedAt: IsoDateTime | null;
+}
+
+export interface DeepAnalysisWorkflowEdge {
+  id: UUID;
+  sourceNodeKey: string;
+  targetNodeKey: string;
+  edgeType: string;
+}
+
+export interface DeepAnalysisWorkflowRevision {
+  id: UUID;
+  revisionNumber: number;
+  state: string;
+  source: string;
+  reason: string;
+  graphDigest: string;
+  changeLog: Array<{
+    revision: number;
+    action: string;
+    reason?: string | null;
+    confidence?: number | null;
+    requestedByNodeKey?: string;
+    addedNodeKeys?: string[];
+    removedNodeKeys?: string[];
+    graphChanged: boolean;
+    createdAt: IsoDateTime;
+  }>;
+  nodes: DeepAnalysisWorkflowNode[];
+  edges: DeepAnalysisWorkflowEdge[];
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+export interface DeepAnalysisDecision {
+  id: UUID;
+  missionId: UUID;
+  workflowRevisionId: UUID;
+  requestedByNodeKey: string | null;
+  question: string;
+  options: Array<{
+    id: string;
+    label: string;
+    description: string;
+  }>;
+  recommendationOptionId: string | null;
+  recommendationRationale: string;
+  impact: Record<string, unknown>;
+  affectedNodeKeys: string[];
+  status: "pending" | "resolved" | "cancelled";
+  selectedOptionId: string | null;
+  answerText: string;
+  decidedByUserId: UUID | null;
+  appliedWorkflowRevisionNumber: number | null;
+  resolvedAt: IsoDateTime | null;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+export interface DeepAnalysisMissionCharter {
+  purpose: string;
+  keyQuestions: string[];
+  deliverables: string[];
+  audience: string;
+  inScope: string[];
+  outOfScope: string[];
+  comparisonBasis: string;
+  qualityStandards: string[];
+  confirmed: boolean;
+  confirmedMissionRevision?: number;
+  confirmedAt?: IsoDateTime;
+}
+
+export interface DeepAnalysisCompletionContract {
+  requiredSections: string[];
+  requiredNodeTypes: string[];
+  requireReport: boolean;
+  requireNoFailedNodes: boolean;
+  requireNoStaleNodes: boolean;
+  minimumEvidenceCoverage: number;
+  maximumOpenIssues: number;
+  maximumUnexplainedResidualPercent: number | null;
+  requiresFinalReview: boolean;
+  allowWaiver: boolean;
+  qualityGate?: string;
+  latestQualityGateResultId?: UUID;
+  finalOutputFileId?: UUID;
+  finalOutputPath?: string;
+}
+
+export interface DeepAnalysisQualityGate {
+  id: UUID;
+  workflowRevisionId: UUID;
+  reportNodeKey: string | null;
+  parentResultId: UUID | null;
+  waiverDecisionId: UUID | null;
+  result: "passed" | "failed" | "waived";
+  completionOutcome: "satisfied" | "satisfied_with_exceptions" | "not_satisfied";
+  checks: Array<{
+    id: string;
+    status: "passed" | "failed";
+    message: string;
+    details: Record<string, unknown>;
+  }>;
+  failureReasons: string[];
+  evaluatedAt: IsoDateTime;
+  createdAt: IsoDateTime;
+}
+
+export interface DeepAnalysisEvidence {
+  id: UUID;
+  sourceNodeKey: string | null;
+  sourceType: "project_file" | "generated_file" | "node_output" | "external";
+  stableId: string;
+  versionId: string | null;
+  contentDigest: string | null;
+  locator: string;
+  title: string;
+  metadata: Record<string, unknown>;
+  createdAt: IsoDateTime;
+}
+
+export interface DeepAnalysisClaimEvidence {
+  evidence: DeepAnalysisEvidence;
+  stance: "support" | "contradict" | "context";
+  rationale: string;
+}
+
+export interface DeepAnalysisClaim {
+  id: UUID;
+  sourceNodeKey: string | null;
+  statement: string;
+  level: "observation" | "supporting_finding" | "key_finding" | "recommendation";
+  status: "proposed" | "supported" | "verified" | "disputed" | "unresolved" | "rejected";
+  confidence: number | null;
+  materiality: "low" | "medium" | "high" | "critical";
+  reportInclusion: string;
+  validation: Record<string, unknown>;
+  staleStatus: "fresh" | "review_required";
+  evidence: DeepAnalysisClaimEvidence[];
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+export interface DeepAnalysisOpenIssue {
+  id: UUID;
+  sourceNodeKey: string | null;
+  issueType: string;
+  statement: string;
+  status: "open" | "resolved" | "accepted" | "superseded";
+  materiality: "low" | "medium" | "high" | "critical";
+  residualAmount: number | null;
+  residualPercent: number | null;
+  requiredAction: string;
+  reportInclusion: string;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+export interface DeepAnalysisMissionExport {
+  id: UUID;
+  missionId: UUID;
+  scope: "latest" | "report_evidence" | "audit";
+  includeOriginals: boolean;
+  status: "preparing" | "completed" | "failed";
+  filename: string;
+  contentHash: string | null;
+  sizeBytes: number | null;
+  manifest: Record<string, unknown>;
+  errorMessage: string;
+  completedAt: IsoDateTime | null;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+export interface UpdateDeepAnalysisWorkflowDraftRequest {
+  expectedRevision: number;
+  nodes: Array<{
+    nodeKey: string;
+    nodeType: string;
+    title: string;
+    purpose: string;
+    positionX: number;
+    positionY: number;
+    config: Record<string, unknown>;
+  }>;
+  edges: Array<{ sourceNodeKey: string; targetNodeKey: string }>;
+}
+
+export interface DeepAnalysisMissionDetail extends DeepAnalysisMissionSummary {
+  executionAvailable: boolean;
+  eventCursor: number;
+  charter: DeepAnalysisMissionCharter;
+  completionContract: DeepAnalysisCompletionContract;
+  sourceManifest: Array<{
+    projectFileId: UUID;
+    logicalPath: string;
+    version: number;
+    versionId: UUID;
+    contentHash: string;
+    mimeType: string;
+    sizeBytes: number;
+  }>;
+  decisions: DeepAnalysisDecision[];
+  qualityGates: DeepAnalysisQualityGate[];
+  claims: DeepAnalysisClaim[];
+  evidence: DeepAnalysisEvidence[];
+  openIssues: DeepAnalysisOpenIssue[];
+  files: Array<{
+    id: UUID;
+    projectFileId: UUID;
+    projectFileVersionId: UUID;
+    logicalPath: string;
+    version: number;
+    contentHash: string;
+    producingNodeKey: string | null;
+    producingRunId: UUID | null;
+    purpose: string;
+    validationStatus: string;
+    staleStatus: string;
+    metadata: Record<string, unknown>;
+    createdAt: IsoDateTime;
+  }>;
+  workflow: DeepAnalysisWorkflowRevision;
+}
+
+export interface DeepAnalysisResearchInspector {
+  missionId: UUID;
+  generatedAt: IsoDateTime;
+  summary: {
+    sourceCount: number;
+    citedSourceCount: number;
+    referenceOnlyCount: number;
+    webSourceCount: number;
+    projectSourceCount: number;
+    citationCount: number;
+    citationReviewNeededCount: number;
+    policyViolationCount: number;
+    researchVerification: string[];
+  };
+  sources: Array<{
+    sourceId: string;
+    sourceKind: "web" | "project_file";
+    title?: string;
+    normalizedUrl?: string;
+    logicalPath?: string;
+    citationStatus?: "cited" | "reference_only";
+    policyStatus: string;
+    occurrences: Array<{
+      nodeKey?: string;
+      nodeTitle?: string;
+      attempt?: number;
+      runId?: UUID;
+    }>;
+  }>;
+  citations: Array<Record<string, unknown>>;
+  citationReviewCandidates: Array<{
+    nodeKey: string;
+    lineNumber: number;
+    text: string;
+    status: "citation_review_needed";
+  }>;
+}
+
+export interface DeepAnalysisRefreshPreview {
+  missionId: UUID;
+  checkedAt: IsoDateTime;
+  hasChanges: boolean;
+  canRefresh: boolean;
+  changedSources: Array<{
+    projectFileId: UUID;
+    logicalPath: string;
+    status: "changed" | "missing";
+    fromVersion: number | null;
+    toVersion: number | null;
+  }>;
+  missingSourceCount: number;
+  affectedNodeKeys: string[];
+  refreshedSourceManifest: DeepAnalysisMissionDetail["sourceManifest"];
+  reportDiff: {
+    available: boolean;
+    fromAttempt?: number;
+    toAttempt?: number;
+    addedLines: number;
+    removedLines: number;
+    truncated?: boolean;
+    lines: string[];
+  };
+}
+
+export interface DeepAnalysisMissionEvent {
+  missionId: UUID;
+  sequence: number;
+  type: string;
+  payload: Record<string, unknown>;
+  createdAt: IsoDateTime;
+}
+
+export interface DeepAnalysisMissionProjection {
+  missionId: UUID;
+  eventCursor: number;
+  status: string;
+  spentMicrousd: number;
+  revision: number;
+  nodes: Array<Pick<
+    DeepAnalysisWorkflowNode,
+    | "id"
+    | "status"
+    | "runId"
+    | "runStatus"
+    | "liveOutput"
+    | "errorMessage"
+    | "actualCostMicrousd"
+    | "startedAt"
+    | "finishedAt"
+  >>;
+}
+
+export interface DeepAnalysisMissionCosts {
+  missionId: UUID;
+  spentMicrousd: number;
+  budgetMicrousd: number | null;
+  budgetUsageRatio: number | null;
+  estimatedCompletionMicrousd: number;
+  noCacheUpperBoundMicrousd: number;
+  estimatedCacheSavingMicrousd: number;
+  cacheHitRatio: number;
+  totals: {
+    inputTokens: number;
+    cachedInputTokens: number;
+    cacheWriteTokens: number;
+    uncachedInputTokens: number;
+    outputTokens: number;
+  };
+  rows: Array<{
+    nodeKey: string;
+    nodeTitle: string;
+    stage: string;
+    attempt: number;
+    isRetry: boolean;
+    runId: UUID;
+    status: string;
+    providerId: string;
+    modelKey: string;
+    modelDisplayName: string;
+    date: string;
+    inputTokens: number;
+    cachedInputTokens: number;
+    cacheWriteTokens: number;
+    uncachedInputTokens: number;
+    outputTokens: number;
+    actualCostMicrousd: number;
+    noCacheCostMicrousd: number | null;
+    estimatedCacheSavingMicrousd: number | null;
+    pricingVersion: string | null;
+    costBasis: string;
+  }>;
+}
+
+export interface CreateDeepAnalysisMissionRequest {
+  title: string;
+  objective?: string;
+  autonomyMode?: DeepAnalysisAutonomyMode;
+  budgetMicrousd?: number | null;
+  analysisDepth?: "auto" | "brief" | "standard" | "deep";
+  answerLength?: "auto" | "brief" | "standard" | "detailed";
+  outputMode?: OutputMode;
+  outputFormat?: DeepAnalysisOutputFormat;
+  targetOutputTokens?: number | null;
+  execution?: ExecutionSelection;
+  promptReferences?: PromptReference[];
+  researchPeriod?: DeepAnalysisResearchPeriod;
+  webSourcePolicy?: DeepAnalysisWebSourcePolicy;
+  workflowStartMode?: DeepAnalysisWorkflowStartMode;
+  patternVersionId?: UUID | null;
+}
+
+export interface RegenerateDeepAnalysisWorkflowRequest {
+  expectedRevision: number;
+  prompt: string;
+}
+
+export type DeepAnalysisWorkflowStartMode =
+  | "ai"
+  | "preset_quantitative"
+  | "preset_comparative_research"
+  | "preset_decision"
+  | "preset_open_analysis"
+  | "pattern";
+
+export interface DeepAnalysisWorkflowPatternVersion {
+  id: UUID;
+  patternId: UUID;
+  versionNumber: number;
+  status: "draft" | "published" | "retired";
+  definitionDigest: string;
+  definition: {
+    kind: string;
+    schemaVersion: number;
+    intent: string;
+    expectedOutputs: string[];
+    requiredQuestions: string[];
+    nodes: Array<Record<string, unknown>>;
+    edges: Array<Record<string, unknown>>;
+    policies: Record<string, unknown>;
+  };
+  changeSummary: string;
+  sourceMissionId: UUID | null;
+  publishedByUserId: UUID | null;
+  publishedAt: IsoDateTime | null;
+  createdAt: IsoDateTime;
+}
+
+export interface DeepAnalysisWorkflowPattern {
+  id: UUID;
+  projectId: UUID | null;
+  scope: "builtin" | "project";
+  name: string;
+  description: string;
+  status: string;
+  latestPublishedVersion: DeepAnalysisWorkflowPatternVersion | null;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+export interface UpdateDeepAnalysisMissionRequest {
+  expectedRevision: number;
+  title?: string;
+  objective?: string;
+  autonomyMode?: DeepAnalysisAutonomyMode;
+  budgetMicrousd?: number;
+  analysisDepth?: "auto" | "brief" | "standard" | "deep";
+  answerLength?: "auto" | "brief" | "standard" | "detailed";
+  outputMode?: OutputMode;
+  outputFormat?: DeepAnalysisOutputFormat;
+  targetOutputTokens?: number | null;
+  execution?: ExecutionSelection;
+  promptReferences?: PromptReference[];
+  researchPeriod?: DeepAnalysisResearchPeriod;
+  webSourcePolicy?: DeepAnalysisWebSourcePolicy;
+  isFavorite?: boolean;
+  isLiked?: boolean;
+  charter?: Omit<DeepAnalysisMissionCharter, "confirmed" | "confirmedMissionRevision" | "confirmedAt">;
+  completionContract?: Omit<DeepAnalysisCompletionContract, "qualityGate" | "latestQualityGateResultId" | "finalOutputFileId" | "finalOutputPath">;
+}
+
+export interface StartDeepAnalysisMissionRequest {
+  expectedRevision: number;
+}
+
+export interface CancelDeepAnalysisMissionRequest {
+  expectedRevision: number;
+}
+
+export interface RetryDeepAnalysisMissionRequest {
+  expectedRevision: number;
+  nodeKey: string;
+}
+
+export interface AnswerDeepAnalysisDecisionRequest {
+  expectedRevision: number;
+  selectedOptionId: string;
+  answerText?: string;
+}
+
+export type KnowledgeUseMode = "off" | "auto" | "explicit" | "deep";
+
+export interface KnowledgeSpace {
+  id: UUID;
+  name: string;
+  purpose: string;
+  visibility: "private" | "organization";
+  useMode: KnowledgeUseMode;
+  settingsRevision: number;
+  projectIds: UUID[];
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+export interface RestartDeepAnalysisMissionRequest {
+  expectedRevision: number;
+}
+
+export interface SteerDeepAnalysisMissionRequest {
+  expectedRevision: number;
+  instruction: string;
+  promptReferences?: PromptReference[];
+}
+
+export interface CreateKnowledgeSpaceRequest { name: string; purpose?: string; visibility?: "private" | "organization"; }
+export interface UpdateKnowledgeSpaceRequest { expectedRevision: number; name?: string; purpose?: string; projectIds?: UUID[]; useMode?: KnowledgeUseMode; }
+export interface KnowledgeDocumentTag {
+  id: UUID;
+  name: string;
+  namespace: string;
+  definition: string;
+  scopeNote: string;
+  parentTagId: UUID | null;
+}
+export interface UpdateKnowledgeDocumentTagsRequest { tags: string[]; }
+export interface KnowledgeTag extends KnowledgeDocumentTag {
+  aliases: string[];
+  status: "active" | "deprecated";
+  revision: number;
+  usageCount: number;
+}
+export type KnowledgeTaggingTarget = "untagged" | "all";
+export type KnowledgeNewTagPolicy = "pool_only" | "propose" | "auto_approve";
+export interface KnowledgeBatchTagRequest {
+  spaceId: UUID;
+  providerId: string;
+  modelKey: string;
+  target: KnowledgeTaggingTarget;
+  newTagPolicy: KnowledgeNewTagPolicy;
+}
+export interface KnowledgeBatchTagResult {
+  requestedCount: number;
+  taggedCount: number;
+  proposedCount: number;
+  proposalDocumentCount: number;
+  failedCount: number;
+  remainingCount: number;
+  target: KnowledgeTaggingTarget;
+  newTagPolicy: KnowledgeNewTagPolicy;
+}
+export interface KnowledgeTagProposal {
+  id: UUID;
+  spaceId: UUID;
+  namespace: string;
+  canonicalName: string;
+  scopeNote: string;
+  aliases: string[];
+  documentCount: number;
+  status: "pending" | "approved" | "merged" | "rejected";
+  revision: number;
+  providerId: string;
+  modelKey: string;
+  resolvedTagId: UUID | null;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+export interface CreateKnowledgeTagRequest {
+  spaceId: UUID;
+  namespace: string;
+  canonicalName: string;
+  definition?: string;
+  scopeNote?: string;
+  aliases?: string[];
+  parentTagId?: UUID | null;
+}
+export interface UpdateKnowledgeTagRequest {
+  expectedRevision: number;
+  namespace?: string;
+  canonicalName?: string;
+  definition?: string;
+  scopeNote?: string;
+  aliases?: string[];
+  parentTagId?: UUID | null;
+}
+export interface KnowledgeDocumentSummary {
+  id: UUID; spaceId: UUID; projectId: UUID; title: string; researchedAt: IsoDateTime;
+  tags: KnowledgeDocumentTag[]; citationCount: number; linkedDocumentCount: number; bodyPreview: string; createdAt: IsoDateTime; updatedAt: IsoDateTime;
+}
+export interface KnowledgeCitation {
+  sourceId: string; title: string; url: string; domain: string; excerpt: string;
+  evidenceKind: string; markerNumber: number | null; status: string;
+}
+export interface KnowledgeDocument extends KnowledgeDocumentSummary {
+  body: string;
+  source: { messageId: UUID | null; runId: UUID | null; conversationId: UUID | null };
+  citations: KnowledgeCitation[];
+  contentDigest: string;
+  created?: boolean;
+}
+export interface KnowledgeGraphNode { id: UUID; title: string; researchedAt: IsoDateTime; tags: KnowledgeDocumentTag[]; }
+export interface KnowledgeGraphEdge {
+  id: string; sourceDocumentId: UUID; targetDocumentId: UUID; sharedTagIds: UUID[]; weight: number;
+}
+export interface KnowledgeGraphResponse { nodes: KnowledgeGraphNode[]; edges: KnowledgeGraphEdge[]; truncated: boolean; }
 export interface AnnouncementMutationRequest {
   title: string;
   body: string;
@@ -231,7 +909,10 @@ export interface HelpItemList {
 
 export type Theme = "light" | "dark";
 export type OutputMode = "auto" | "chat" | "file";
+export type DeepAnalysisOutputFormat = string;
 export type ClarificationMode = "autonomous" | "balanced" | "confirming";
+export type AnalysisDepth = "auto" | "brief" | "standard" | "deep";
+export type AnswerLength = "auto" | "brief" | "standard" | "detailed";
 
 export interface ExecutionSelection {
   providerId: string;
@@ -246,7 +927,12 @@ export interface AdminInitialExecutionSettings {
 
 export interface CurrentSettings {
   theme: Theme;
+  conversationWidth: number;
+  conversationFontSize: number;
   outputMode: OutputMode;
+  analysisDepth: AnalysisDepth;
+  answerLength: AnswerLength;
+  promptEnhancementInstruction: string;
   clarificationMode: ClarificationMode;
   execution: ExecutionSelection;
   modelCandidates: Record<string, string[]>;
@@ -263,7 +949,12 @@ export interface CurrentSettings {
 
 export interface UpdateCurrentSettingsRequest {
   theme?: Theme;
+  conversationWidth?: number;
+  conversationFontSize?: number;
   outputMode?: OutputMode;
+  analysisDepth?: AnalysisDepth;
+  answerLength?: AnswerLength;
+  promptEnhancementInstruction?: string;
   clarificationMode?: ClarificationMode;
   execution?: ExecutionSelection;
   modelCandidates?: Record<string, string[]>;
@@ -291,6 +982,7 @@ export interface ModelCapabilities {
   imageInput: boolean;
   imageGeneration: boolean;
   contextWindow: number | null;
+  maxInputTokens: number | null;
   effortOptions: EffortOption[];
 }
 
@@ -313,6 +1005,8 @@ export interface AdminProviderModel {
   capabilities: Record<string, unknown>;
   defaultContextWindow: number | null;
   contextPolicyLocked: boolean;
+  maxInputTokens: number | null;
+  defaultMaxInputTokens: number | null;
   maxOutputTokens: number | null;
   defaultMaxOutputTokens: number | null;
   configuredMaxOutputTokens: number | null;
@@ -377,6 +1071,14 @@ export type SidebarRunStatus =
   | "failed"
   | "cancelled";
 
+export interface AgentFrontendReference {
+  id: string;
+  version: string;
+  frontendModule: string;
+  frontendContract: string;
+  fallback: boolean;
+}
+
 export interface ConversationListItem {
   id: UUID;
   projectId: UUID;
@@ -386,6 +1088,7 @@ export interface ConversationListItem {
   lastRunStatus: SidebarRunStatus | null;
   activeRunId: UUID | null;
   lastSequence: number;
+  agent: AgentFrontendReference;
   updatedAt: IsoDateTime;
   revision: string;
 }
@@ -439,6 +1142,23 @@ export interface PromptReference {
   tokenEnd?: number | null;
 }
 
+export type PromptEnhancementOption = "structure" | "evidence" | "missing_context" | "output_format";
+
+export interface PromptEnhancementRequest {
+  projectId: UUID;
+  text: string;
+  options: PromptEnhancementOption[];
+  customInstruction: string;
+  promptReferences: PromptReference[];
+  execution: ExecutionSelection;
+}
+
+export interface PromptEnhancementResult {
+  enhancedText: string;
+  providerId: string;
+  modelKey: string;
+}
+
 export interface ComposerSuggestion {
   id: UUID;
   referenceId?: UUID;
@@ -481,7 +1201,41 @@ export interface SourceEvidence {
   title: string;
   domain: string;
   verbatimExcerpt: string;
-  evidenceKind: "search_snippet" | "fetched_content";
+  evidenceKind: "search_snippet" | "fetched_content" | "knowledge_document";
+  contentType?: string | null;
+  extractionStatus?: "snippet_only" | "complete" | "empty";
+  searchBackends?: string[];
+  textChars?: number | null;
+  llmTextChars?: number | null;
+  knowledgeDocumentId?: UUID;
+  selectionScore?: number;
+}
+
+export interface KnowledgeSelection {
+  documentId: UUID;
+  title: string;
+  selectionScore: number;
+  sourceId: string;
+  passages: Array<{
+    offset: number;
+    limit: number;
+    nextOffset: number;
+    hasMore: boolean;
+    totalCharacters: number;
+    text: string;
+  }>;
+  originalCitations: Array<Record<string, unknown>>;
+}
+
+export interface WebSourceContentPage {
+  sourceId: string;
+  content: string;
+  offset: number;
+  nextOffset: number;
+  hasMore: boolean;
+  totalChars: number;
+  llmTextChars: number;
+  llmTextCharsEstimated: boolean;
 }
 
 export interface MessageCitation {
@@ -491,6 +1245,15 @@ export interface MessageCitation {
   marker_number?: number;
   claimBlockId?: string | null;
   status: "cited" | "resolved" | "reference_only";
+}
+
+export interface MemoryCitation {
+  memoryId: UUID;
+  scope: "user" | "project";
+  category: string;
+  displayText: string;
+  memoryKey?: string;
+  revision?: number;
 }
 
 export interface MessageMetadata {
@@ -504,12 +1267,21 @@ export interface MessageMetadata {
   };
   sources?: SourceEvidence[];
   citations?: MessageCitation[];
+  memoryCitations?: MemoryCitation[];
+  knowledgeSelections?: KnowledgeSelection[];
   searchInvocations?: Array<{
     invocationId: string;
     query: string;
     backend: string;
     startedAt: IsoDateTime;
+    purpose?: "broad_discovery" | "official_facts" | "latest_update" | "independent_evaluation" | "contradiction_check";
+    parentInvocationId?: string;
   }>;
+  researchRequirement?: {
+    mode: "required" | "optional" | "disabled";
+    reasons: string[];
+  };
+  researchVerification?: "verified" | "unverified" | "not_required" | "disabled";
   [key: string]: unknown;
 }
 
@@ -549,6 +1321,15 @@ export interface AdminUserList {
   hasMore: boolean;
 }
 
+export interface AdminCacheMetric {
+  modelCalls: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  cacheWriteTokens: number;
+  uncachedInputTokens: number;
+  cacheHitRatioPercent: number;
+}
+
 export interface AdminUsageStatistics {
   generatedAt: IsoDateTime;
   timezone: string;
@@ -562,6 +1343,17 @@ export interface AdminUsageStatistics {
     runs: number;
   };
   trend: Array<{ date: string; activeUsers: number; loginCount: number; runCount: number }>;
+  cache: {
+    firstCall: AdminCacheMetric;
+    subsequentCalls: AdminCacheMetric;
+    byStaticDigest: Array<AdminCacheMetric & {
+      digest: string;
+      providerId: string;
+      modelKey: string;
+      firstCall: AdminCacheMetric;
+      subsequentCalls: AdminCacheMetric;
+    }>;
+  };
   users: Array<{
     userId: UUID;
     loginId: string;
@@ -587,6 +1379,7 @@ export interface AdminRunSafetySettings {
   maxTotalTokens: number;
   maxElapsedMinutes: number;
   maxCostUsd: number;
+  yoloMode: boolean;
 }
 
 export interface AdminEmergencyStopResult {
@@ -876,6 +1669,7 @@ export interface ArtifactVersion {
   version: number;
   mimeType: string;
   sourceText: string | null;
+  sourceAvailable: boolean;
   previewUrl: string | null;
   contentHash: string;
   size: number;
@@ -999,7 +1793,7 @@ export interface SkillDraft {
   dirty: boolean;
   status: string;
   etag: string;
-  package: SkillPackage;
+  package?: SkillPackage;
   updatedAt: IsoDateTime;
 }
 
@@ -1008,12 +1802,51 @@ export interface SkillVersion {
   extensionId: UUID;
   version: number;
   parentVersionId: UUID | null;
+  restoredFromVersionId: UUID | null;
   digest: string;
   status: string;
+  changeType: "save" | "rollback";
+  changeSummary: string;
+  createdByUserId: UUID;
+  createdByDisplayName: string | null;
   manifest: Record<string, unknown>;
   package?: SkillPackage;
   createdAt: IsoDateTime;
   publishedAt: IsoDateTime | null;
+}
+
+export interface SkillVersionDiffLine {
+  kind: "context" | "add" | "delete";
+  oldLine: number | null;
+  newLine: number | null;
+  content: string;
+}
+
+export interface SkillVersionDiffHunk {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: SkillVersionDiffLine[];
+}
+
+export interface SkillVersionFileDiff {
+  path: string;
+  status: "added" | "modified" | "deleted";
+  additions: number;
+  deletions: number;
+  hunks: SkillVersionDiffHunk[];
+}
+
+export interface SkillVersionComparison {
+  fromVersion: SkillVersion;
+  toVersion: SkillVersion;
+  files: SkillVersionFileDiff[];
+  summary: {
+    filesChanged: number;
+    additions: number;
+    deletions: number;
+  };
 }
 
 export interface SkillOwnership {
@@ -1031,12 +1864,14 @@ export interface SkillExtension {
   slug: string;
   name: string;
   description: string;
+  tags: string[];
   visibility: "private" | "project" | "organization";
   ownerUserId: UUID;
   creatorUserId: UUID;
   currentUserRole: "owner" | "maintainer" | null;
   ownerships: SkillOwnership[];
   canEdit: boolean;
+  canEditTags: boolean;
   canCreateDraft: boolean;
   canDelete: boolean;
   latestPublishedVersionId: UUID | null;
@@ -1093,6 +1928,7 @@ export interface ExtensionInstallation {
   scopeType: "user" | "project" | "organization";
   scopeId: UUID;
   enabled: boolean;
+  projectIds: UUID[] | null;
   settings: Record<string, unknown>;
   installedAt: IsoDateTime;
 }
@@ -1143,6 +1979,10 @@ export interface McpDefinition {
   name: string;
   description: string;
   status: string;
+  skillWrapper?: {
+    wrapped: boolean;
+    name: string | null;
+  };
   currentRevisionId: UUID | null;
   revisions: McpRevision[];
   approvedAt: IsoDateTime | null;
@@ -1166,6 +2006,7 @@ export interface McpInstallation {
   scopeType: "user" | "project";
   scopeId: UUID;
   enabled: boolean;
+  projectIds: UUID[] | null;
   toolAllowlist: string[];
   boundSecrets: Array<{
     name: string;
@@ -1187,7 +2028,15 @@ export interface McpInstallation {
   supportedSecretSchemes: string[];
   secretBindingRole: "admin";
   ready: boolean;
+  connectionErrorCode: string | null;
   installedAt: IsoDateTime;
+}
+
+export interface McpAnswerTestResult {
+  answer: string;
+  providerId: string;
+  modelKey: string;
+  toolName: string;
 }
 
 export interface McpDefinitionCreateRequest {
@@ -1366,8 +2215,11 @@ export interface TurnSet {
 
 export interface TurnSetPage {
   turnSets: TurnSet[];
+  runSnapshots?: RunSnapshot[];
   previousCursor: string | null;
   hasMoreBefore: boolean;
+  totalQuestionCount?: number;
+  usageBeforePage: Record<string, unknown>;
 }
 
 export interface RunSnapshot {
@@ -1375,6 +2227,7 @@ export interface RunSnapshot {
   conversationId: UUID;
   conversationTitle: string | null;
   conversationRevision: number | null;
+  agent: AgentFrontendReference;
   status: RunStatus;
   errorCode: string | null;
   errorMessage: string | null;
@@ -1385,6 +2238,7 @@ export interface RunSnapshot {
     messageId: UUID;
     text: string;
   } | null;
+  assistantDraftRevision?: number;
   artifactProgress: {
     tokens: number;
     lines: number;
@@ -1438,8 +2292,10 @@ export interface ModelTurnMetric {
   stopReason: string | null;
   inputTokens: number;
   cachedInputTokens: number;
+  cacheWriteTokens: number;
   uncachedInputTokens: number;
   outputTokens: number;
+  reasoningTokens?: number | null;
   cacheHitRatio: number;
 }
 
@@ -1527,6 +2383,8 @@ export interface RunMessageInput {
   attachmentIds: UUID[];
   promptReferences: PromptReference[];
   outputMode: OutputMode;
+  analysisDepth: AnalysisDepth;
+  answerLength: AnswerLength;
   targetOutputTokens?: number;
 }
 
@@ -1580,6 +2438,7 @@ export type RunEventType =
   | "run_status_changed"
   | "model_turn_completed"
   | "assistant_text_delta"
+  | "assistant_draft_rewound"
   | "progress_summary"
   | "output_intent_classified"
   | "skill_selected"
@@ -1625,14 +2484,18 @@ export type RunEvent =
   | RunEventEnvelope<"run_started" | "run_status_changed", { status: RunStatus }>
   | RunEventEnvelope<"model_turn_completed", ModelTurnMetric>
   | RunEventEnvelope<"assistant_text_delta", { messageId: UUID; delta: string }>
+  | RunEventEnvelope<
+      "assistant_draft_rewound",
+      { messageId: UUID; text: string; retainedCharacters: number; revision: number }
+    >
   | RunEventEnvelope<"progress_summary", { id: UUID; text: string; phase: string }>
   | RunEventEnvelope<"output_intent_classified", NonNullable<RunSnapshot["outputIntent"]>>
   | RunEventEnvelope<"skill_selected", { activity: Extract<RunActivity, { type: "skill" }> }>
   | RunEventEnvelope<"assistant_turn_completed", { message: ChatMessage }>
   | RunEventEnvelope<"conversation_title_updated", { title: string; revision: number; source: "llm" }>
-  | RunEventEnvelope<"artifact_progress", { tokens: number; lines: number }>
+  | RunEventEnvelope<"artifact_progress", NonNullable<RunSnapshot["artifactProgress"]>>
   | RunEventEnvelope<"work_plan_updated", { steps: WorkPlanStep[] }>
-  | RunEventEnvelope<"plan_step_changed", { planId: UUID; step: PlanStep }>
+  | RunEventEnvelope<"plan_step_changed", { planId: UUID; step: PlanStep; subtasks?: PlanSubtask[] }>
   | RunEventEnvelope<"tool_started" | "tool_progress" | "tool_completed", { execution: ToolExecution }>
   | RunEventEnvelope<"approval_requested", { approval: ToolApproval }>
   | RunEventEnvelope<"approval_resolved", { approval: ToolApproval; decision: ToolApproval["status"]; command?: RunCommand }>
@@ -1678,5 +2541,14 @@ export type RunEvent =
 export interface RunStreamHandlers {
   onOpen?: () => void;
   onEvent: (event: RunEvent) => void;
+  onArtifactProgress?: (
+    runId: UUID,
+    progress: NonNullable<RunSnapshot["artifactProgress"]>,
+  ) => void;
+  onAssistantDraft?: (
+    runId: UUID,
+    draft: NonNullable<RunSnapshot["assistantDraft"]>,
+    append: boolean,
+  ) => void;
   onError?: (error: Event | Error) => void;
 }

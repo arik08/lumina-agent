@@ -17,12 +17,20 @@ import {
   type WheelEvent,
 } from "react";
 import { createPortal } from "react-dom";
+import { ensureMermaidNodeTextContrast } from "../mermaid-contrast";
+import { repairMermaidClassNames, repairMermaidSource } from "../mermaid-source";
+import { useNearViewport } from "../use-near-viewport";
 import { SyntaxCode } from "./SyntaxCode";
 import "./InteractiveResponse.css";
 
 let mermaidRenderSequence = 0;
 let mermaidModulePromise: Promise<typeof import("mermaid")> | null = null;
-const mermaidRenderJobs = new Map<string, ReturnType<(typeof import("mermaid"))["default"]["render"]>>();
+type MermaidRenderResult = Awaited<ReturnType<(typeof import("mermaid"))["default"]["render"]>>;
+const mermaidRenderJobs = new Map<string, Promise<MermaidRenderResult>>();
+const mermaidRenderCache = new Map<string, MermaidRenderResult>();
+const mermaidRenderCacheLimit = 24;
+const mermaidRenderCacheCharacterBudget = 1_000_000;
+let mermaidRenderQueue: Promise<void> = Promise.resolve();
 const artifactVisualPalette = {
   blue: "#3288bd",
   teal: "#66c2a5",
@@ -36,7 +44,6 @@ const artifactVisualPalette = {
   purple: "#5e4fa2",
 } as const;
 const artifactVisualPaletteSequence = Object.values(artifactVisualPalette);
-const mermaidNodeTones = ["blue", "teal", "orange", "red", "purple"] as const;
 
 async function loadMermaid() {
   if (!mermaidModulePromise) {
@@ -50,14 +57,6 @@ async function loadMermaid() {
 
 export function preloadMermaid() {
   void loadMermaid().catch(() => undefined);
-}
-
-if (typeof window !== "undefined") {
-  if (typeof window.requestIdleCallback === "function") {
-    window.requestIdleCallback(preloadMermaid, { timeout: 1500 });
-  } else {
-    window.setTimeout(preloadMermaid, 0);
-  }
 }
 
 function clamp(value: number, minimum: number, maximum: number) {
@@ -174,23 +173,96 @@ function ZoomViewer({
   );
 }
 
-function MermaidSurface({ source, expanded = false }: { source: string; expanded?: boolean }) {
+function MermaidSurface({ source, expanded = false, zoom = 1, onInitialFit }: {
+  source: string;
+  expanded?: boolean;
+  zoom?: number;
+  onInitialFit?: (zoom: number) => void;
+}) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const baseWidthRef = useRef(0);
+  const zoomRef = useRef(zoom);
   const dragRef = useRef<{ pointerId: number; x: number; y: number; scrollLeft: number; scrollTop: number } | null>(null);
   const [error, setError] = useState(false);
+  const nearViewport = useNearViewport(containerRef, { eager: expanded });
+
+  const positionAtFlowStart = (surface: HTMLDivElement, renderedSvg: SVGSVGElement) => {
+    const direction = source.match(/^\s*(?:flowchart|graph)\s+(TB|TD|BT|LR|RL)\b/im)?.[1];
+    const nodes = direction
+      ? Array.from(renderedSvg.querySelectorAll<SVGGraphicsElement>("g.node"))
+      : [];
+    if (!direction || nodes.length === 0) {
+      surface.scrollLeft = 0;
+      surface.scrollTop = 0;
+      return;
+    }
+    const node = nodes.reduce((best, candidate) => {
+      const bestBox = best.getBoundingClientRect();
+      const candidateBox = candidate.getBoundingClientRect();
+      if (direction === "RL") return candidateBox.right > bestBox.right ? candidate : best;
+      if (direction === "BT") return candidateBox.bottom > bestBox.bottom ? candidate : best;
+      if (direction === "LR") return candidateBox.left < bestBox.left ? candidate : best;
+      return candidateBox.top < bestBox.top ? candidate : best;
+    });
+    const svgBox = renderedSvg.getBoundingClientRect();
+    const nodeBox = node.getBoundingClientRect();
+    const padding = 12;
+    if (direction === "LR" || direction === "RL") {
+      surface.scrollLeft = direction === "LR"
+        ? Math.max(nodeBox.left - svgBox.left - padding, 0)
+        : Math.max(nodeBox.right - svgBox.left - surface.clientWidth + padding, 0);
+      surface.scrollTop = Math.max(nodeBox.top - svgBox.top - (surface.clientHeight - nodeBox.height) / 2, 0);
+      return;
+    }
+    surface.scrollLeft = Math.max(nodeBox.left - svgBox.left - (surface.clientWidth - nodeBox.width) / 2, 0);
+    surface.scrollTop = direction === "BT"
+      ? Math.max(nodeBox.bottom - svgBox.top - surface.clientHeight + padding, 0)
+      : Math.max(nodeBox.top - svgBox.top - padding, 0);
+  };
 
   useEffect(() => {
+    if (!nearViewport) return undefined;
     let cancelled = false;
     setError(false);
     void renderMermaidSvg(source).then(({ svg, bindFunctions }) => {
       if (cancelled || !containerRef.current) return;
       containerRef.current.innerHTML = svg;
       bindFunctions?.(containerRef.current);
+      const renderedSvg = containerRef.current.querySelector("svg");
+      if (renderedSvg) {
+        ensureMermaidNodeTextContrast(renderedSvg);
+        const naturalWidth = renderedSvg.viewBox.baseVal.width || renderedSvg.getBoundingClientRect().width;
+        const naturalHeight = renderedSvg.viewBox.baseVal.height || renderedSvg.getBoundingClientRect().height;
+        baseWidthRef.current = naturalWidth;
+        const widthFit = containerRef.current.clientWidth / Math.max(naturalWidth, 1);
+        const heightFit = containerRef.current.clientHeight / Math.max(naturalHeight, 1);
+        const fitZoom = Math.min(widthFit, heightFit, 1);
+        const initialZoom = expanded
+          ? clamp(fitZoom, 0.3, 1)
+          : clamp(Math.floor(fitZoom * 10) / 10, 0.7, 1);
+        zoomRef.current = initialZoom;
+        renderedSvg.style.width = `${baseWidthRef.current * initialZoom}px`;
+        renderedSvg.style.maxWidth = "none";
+        onInitialFit?.(initialZoom);
+        window.requestAnimationFrame(() => {
+          const surface = containerRef.current;
+          if (!surface) return;
+          positionAtFlowStart(surface, renderedSvg);
+        });
+      }
     }).catch(() => {
       if (!cancelled) setError(true);
     });
     return () => { cancelled = true; };
-  }, [source]);
+  }, [expanded, nearViewport, onInitialFit, source]);
+
+  useEffect(() => {
+    zoomRef.current = zoom;
+    const renderedSvg = containerRef.current?.querySelector("svg");
+    if (!renderedSvg || !baseWidthRef.current) return;
+    renderedSvg.style.width = `${baseWidthRef.current * zoom}px`;
+    renderedSvg.style.maxWidth = "none";
+  }, [zoom]);
 
   if (error) return <SyntaxCode className="mermaid-render-error" value={source} language="mermaid" />;
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
@@ -217,6 +289,16 @@ function MermaidSurface({ source, expanded = false }: { source: string; expanded
     event.currentTarget.classList.remove("is-dragging");
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   };
+  const handleWheel = (event: WheelEvent<HTMLDivElement>) => {
+    if (expanded || event.deltaY === 0) return;
+    const surface = event.currentTarget;
+    const atTop = surface.scrollTop <= 0;
+    const atBottom = surface.scrollTop + surface.clientHeight >= surface.scrollHeight - 1;
+    const shouldScrollConversation = (event.deltaY < 0 && atTop) || (event.deltaY > 0 && atBottom);
+    if (!shouldScrollConversation) return;
+    event.preventDefault();
+    surface.closest<HTMLElement>(".conversation-scroll")?.scrollBy({ top: event.deltaY });
+  };
   return (
     <div
       ref={containerRef}
@@ -227,6 +309,7 @@ function MermaidSurface({ source, expanded = false }: { source: string; expanded
       onPointerMove={handlePointerMove}
       onPointerUp={finishDrag}
       onPointerCancel={finishDrag}
+      onWheel={handleWheel}
     >
       <span>다이어그램 렌더링 중…</span>
     </div>
@@ -234,26 +317,27 @@ function MermaidSurface({ source, expanded = false }: { source: string; expanded
 }
 
 function mermaidAppearance() {
-  const styles = getComputedStyle(document.documentElement);
+  const themeRoot = document.querySelector<HTMLElement>(".app-shell") ?? document.documentElement;
+  const styles = getComputedStyle(themeRoot);
   const token = (name: string, fallback: string) => styles.getPropertyValue(name).trim() || fallback;
   const themeVariables = {
     background: "transparent",
     primaryColor: token("--cobalt-pale", "#edf2fb"),
     primaryTextColor: token("--ink", "#20242c"),
-    primaryBorderColor: artifactVisualPalette.blue,
+    primaryBorderColor: token("--cobalt", "#3f66c9"),
     secondaryColor: token("--surface-soft", "#f5f6f7"),
     secondaryTextColor: token("--ink", "#20242c"),
     tertiaryColor: token("--surface", "#ffffff"),
     tertiaryTextColor: token("--ink", "#20242c"),
-    lineColor: artifactVisualPalette.purple,
+    lineColor: token("--muted", "#6c737e"),
     textColor: token("--ink", "#20242c"),
     noteBkgColor: token("--surface-selected", "#edf2fb"),
     noteTextColor: token("--ink", "#20242c"),
     actorBkg: token("--surface", "#ffffff"),
-    actorBorder: artifactVisualPalette.blue,
+    actorBorder: token("--line-strong", "#d4d8de"),
     actorTextColor: token("--ink", "#20242c"),
     clusterBkg: token("--surface-soft", "#f5f6f7"),
-    clusterBorder: artifactVisualPalette.teal,
+    clusterBorder: token("--line-strong", "#d4d8de"),
     pie1: artifactVisualPalette.blue,
     pie2: artifactVisualPalette.teal,
     pie3: artifactVisualPalette.lime,
@@ -293,6 +377,16 @@ function mermaidAppearance() {
   };
   return {
     signature: JSON.stringify(themeVariables),
+    tokenBindings: [
+      [themeVariables.primaryColor, "--cobalt-pale"],
+      [themeVariables.primaryTextColor, "--ink"],
+      [themeVariables.primaryBorderColor, "--cobalt"],
+      [themeVariables.secondaryColor, "--surface-soft"],
+      [themeVariables.tertiaryColor, "--surface"],
+      [themeVariables.lineColor, "--muted"],
+      [themeVariables.noteBkgColor, "--surface-selected"],
+      [themeVariables.actorBorder, "--line-strong"],
+    ] as const,
     config: {
       startOnLoad: false,
       securityLevel: "strict",
@@ -305,29 +399,61 @@ function mermaidAppearance() {
   } as const;
 }
 
-function decorateMermaidSvg(svg: string) {
-  const template = document.createElement("template");
-  template.innerHTML = svg;
-  template.content.querySelectorAll<SVGGElement>("g.node").forEach((node, index) => {
-    const hasAuthoredClass = Array.from(node.classList).some((className) => className !== "node" && className !== "default");
-    if (hasAuthoredClass) return;
-    const isDecision = Array.from(node.children).some((child) => child.tagName.toLowerCase() === "polygon");
-    node.dataset.luminaTone = isDecision ? "orange" : mermaidNodeTones[index % mermaidNodeTones.length];
-  });
-  return template.innerHTML;
+function bindMermaidThemeTokens(svg: string, bindings: ReadonlyArray<readonly [string, string]>) {
+  return bindings.reduce(
+    (themedSvg, [value, tokenName]) => themedSvg.replaceAll(value, `var(${tokenName}, ${value})`),
+    svg,
+  );
 }
 
 export async function renderMermaidSvg(source: string) {
-  const normalizedSource = source.trim();
+  const normalizedSource = repairMermaidClassNames(source.trim());
   const appearance = mermaidAppearance();
   const cacheKey = `${appearance.signature}\u0000${normalizedSource}`;
+  const cachedResult = mermaidRenderCache.get(cacheKey);
+  if (cachedResult) {
+    mermaidRenderCache.delete(cacheKey);
+    mermaidRenderCache.set(cacheKey, cachedResult);
+    return cachedResult;
+  }
   const activeJob = mermaidRenderJobs.get(cacheKey);
   if (activeJob) return activeJob;
 
-  const renderJob = loadMermaid().then(async ({ default: mermaid }) => {
-    mermaid.initialize(appearance.config);
-    const result = await mermaid.render(`lumina-mermaid-${++mermaidRenderSequence}`, normalizedSource);
-    return { ...result, svg: decorateMermaidSvg(result.svg) };
+  const renderJob = new Promise<MermaidRenderResult>((resolve, reject) => {
+    mermaidRenderQueue = mermaidRenderQueue
+      .then(async () => {
+        try {
+          const { default: mermaid } = await loadMermaid();
+          mermaid.initialize(appearance.config);
+          let result;
+          try {
+            result = await mermaid.render(`lumina-mermaid-${++mermaidRenderSequence}`, normalizedSource);
+          } catch (error) {
+            const repairedSource = repairMermaidSource(normalizedSource);
+            if (repairedSource === normalizedSource) throw error;
+            result = await mermaid.render(`lumina-mermaid-${++mermaidRenderSequence}`, repairedSource);
+          }
+          const themedResult = { ...result, svg: bindMermaidThemeTokens(result.svg, appearance.tokenBindings) };
+          mermaidRenderCache.set(cacheKey, themedResult);
+          let cachedCharacters = [...mermaidRenderCache.values()].reduce(
+            (count, cached) => count + cached.svg.length,
+            0,
+          );
+          while (
+            mermaidRenderCache.size > mermaidRenderCacheLimit
+            || cachedCharacters > mermaidRenderCacheCharacterBudget
+          ) {
+            const oldestKey = mermaidRenderCache.keys().next().value;
+            if (typeof oldestKey !== "string") break;
+            cachedCharacters -= mermaidRenderCache.get(oldestKey)?.svg.length ?? 0;
+            mermaidRenderCache.delete(oldestKey);
+          }
+          resolve(themedResult);
+        } catch (error) {
+          reject(error);
+        }
+      })
+      .catch(() => undefined);
   });
   mermaidRenderJobs.set(cacheKey, renderJob);
   void renderJob.finally(() => {
@@ -338,26 +464,33 @@ export async function renderMermaidSvg(source: string) {
 
 export function MermaidDiagram({ source }: { source: string }) {
   const [expanded, setExpanded] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  const [initialZoom, setInitialZoom] = useState(1);
+  const changeZoom = (next: number) => setZoom(clamp(next, 0.3, 2));
+  const applyInitialFit = useCallback((next: number) => {
+    setInitialZoom(next);
+    setZoom(next);
+  }, []);
+  useEffect(() => {
+    setInitialZoom(1);
+    setZoom(1);
+  }, [source]);
   return (
     <>
       <section className="interactive-response-block mermaid-diagram" aria-label="Mermaid 다이어그램">
-        <div
-          className="interactive-response-toolbar interactive-response-expand-trigger"
-          role="button"
-          tabIndex={0}
-          aria-label="Mermaid 다이어그램 확대"
-          onClick={() => setExpanded(true)}
-          onKeyDown={(event) => {
-            if (event.key !== "Enter" && event.key !== " ") return;
-            event.preventDefault();
-            setExpanded(true);
-          }}
-        >
-          <span>Mermaid</span>
-          <span className="interactive-response-expand-icon" aria-hidden="true"><Maximize2 size={15} /></span>
+        <div className="interactive-response-toolbar">
+          <button type="button" className="interactive-response-expand-label" aria-label="Mermaid 다이어그램 크게 보기" onClick={() => setExpanded(true)}>Mermaid</button>
+          <div className="interactive-response-toolbar-actions">
+            <div className="mermaid-inline-zoom-controls" aria-label="Mermaid 다이어그램 배율 조절">
+              <button type="button" aria-label="Mermaid 다이어그램 축소" data-tooltip="축소" disabled={zoom <= 0.3} onClick={() => changeZoom(zoom - 0.2)}><Minus size={15} /></button>
+              <button type="button" className="mermaid-inline-zoom-value" aria-label="Mermaid 다이어그램 배율 초기화" data-tooltip="초기 배율로" onClick={() => setZoom(initialZoom)}>{Math.round(zoom * 100)}%</button>
+              <button type="button" aria-label="Mermaid 다이어그램 확대" data-tooltip="확대" disabled={zoom >= 2} onClick={() => changeZoom(zoom + 0.2)}><Plus size={15} /></button>
+            </div>
+            <button type="button" className="interactive-response-expand-icon" aria-label="Mermaid 다이어그램 크게 보기" data-tooltip="크게 보기" onClick={() => setExpanded(true)}><Maximize2 size={15} /></button>
+          </div>
         </div>
         <div className="interactive-response-content" onDoubleClick={() => setExpanded(true)}>
-          <MermaidSurface source={source} />
+          <MermaidSurface source={source} zoom={zoom} onInitialFit={applyInitialFit} />
         </div>
       </section>
       <ZoomViewer title="Mermaid" open={expanded} onClose={() => setExpanded(false)}>
@@ -382,6 +515,32 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+function categoryLabelWidth(value: unknown) {
+  const label = typeof value === "string" || typeof value === "number"
+    ? String(value)
+    : isRecord(value) && (typeof value.value === "string" || typeof value.value === "number")
+      ? String(value.value)
+      : "";
+  if (!label) return 0;
+  return Array.from(label).reduce((width, character) => width + (character.charCodeAt(0) > 0xff ? 12 : 7), 16);
+}
+
+function readableCategoryAxis(axis: unknown, availableWidth: number) {
+  if (!isRecord(axis) || axis.type !== "category" || !Array.isArray(axis.data)) return axis;
+  const estimatedLabelWidth = axis.data.reduce((width, value) => width + categoryLabelWidth(value), 0);
+  if (estimatedLabelWidth <= Math.max(availableWidth - 80, 240)) return axis;
+  const axisLabel = isRecord(axis.axisLabel) ? axis.axisLabel : {};
+  return { ...axis, axisLabel: { interval: 0, rotate: 30, ...axisLabel } };
+}
+
+function withReadableCategoryAxes(option: Record<string, unknown>, availableWidth: number) {
+  if (!("xAxis" in option)) return option;
+  const xAxis = Array.isArray(option.xAxis)
+    ? option.xAxis.map((axis) => readableCategoryAxis(axis, availableWidth))
+    : readableCategoryAxis(option.xAxis, availableWidth);
+  return { ...option, xAxis };
+}
+
 function safeExternalUrl(value: unknown) {
   const text = shortText(value, 500);
   if (!text) return "";
@@ -402,6 +561,42 @@ function isSafeChartJson(value: unknown, depth = 0): boolean {
   return Object.entries(value).every(([key, item]) => (
     key !== "__proto__" && key !== "prototype" && key !== "constructor" && isSafeChartJson(item, depth + 1)
   ));
+}
+
+const leanChartOptionKeys = new Set([
+  "animation",
+  "animationDuration",
+  "animationEasing",
+  "backgroundColor",
+  "color",
+  "dataZoom",
+  "dataset",
+  "grid",
+  "legend",
+  "series",
+  "textStyle",
+  "title",
+  "tooltip",
+  "xAxis",
+  "yAxis",
+]);
+const leanChartSeriesTypes = new Set(["bar", "line", "pie", "scatter"]);
+
+function canUseLeanChartRuntime(option: Record<string, unknown>) {
+  if (Object.keys(option).some((key) => !leanChartOptionKeys.has(key))) return false;
+  const series = Array.isArray(option.series) ? option.series : option.series ? [option.series] : [];
+  return series.length > 0 && series.every((item) => (
+    isRecord(item)
+    && typeof item.type === "string"
+    && leanChartSeriesTypes.has(item.type)
+    && item.coordinateSystem !== "polar"
+  ));
+}
+
+function loadChartRuntime(option: Record<string, unknown>) {
+  return canUseLeanChartRuntime(option)
+    ? import("./echarts-lean-runtime").then(({ echarts }) => echarts)
+    : import("echarts");
 }
 
 function chartTitle(option: Record<string, unknown>, fallback = "데이터 차트") {
@@ -470,25 +665,28 @@ export function parseInteractiveChart(source: string): InteractiveChartSpec | nu
 function InteractiveChartContent({ spec, expanded = false }: { spec: InteractiveChartSpec; expanded?: boolean }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [error, setError] = useState(false);
+  const nearViewport = useNearViewport(containerRef, { eager: expanded });
 
   useEffect(() => {
+    if (!nearViewport) return undefined;
     const container = containerRef.current;
     if (!container) return undefined;
     let cancelled = false;
     let dispose = () => {};
     setError(false);
-    void import("echarts").then((echarts) => {
+    void loadChartRuntime(spec.option).then((echarts) => {
       if (cancelled) return;
       const chart = echarts.init(container, undefined, { renderer: "canvas" });
       const applyOption = () => {
         const currentStyles = getComputedStyle(container);
         const currentToken = (name: string, fallback: string) => currentStyles.getPropertyValue(name).trim() || fallback;
+        const readableOption = withReadableCategoryAxes(spec.option, container.clientWidth);
         chart.setOption({
           darkMode: Boolean(container.closest(".theme-dark")),
           color: [currentToken("--cobalt", "#3f66c9"), currentToken("--danger", "#c34f51"), currentToken("--success", "#2f9765"), currentToken("--warning", "#b8771f"), currentToken("--muted", "#6c737e")],
           backgroundColor: "transparent",
           textStyle: { color: currentToken("--ink", "#20242c"), fontFamily: currentToken("--font-ui", "Segoe UI, sans-serif") },
-          ...spec.option,
+          ...readableOption,
         }, { notMerge: true });
       };
       applyOption();
@@ -509,7 +707,7 @@ function InteractiveChartContent({ spec, expanded = false }: { spec: Interactive
       cancelled = true;
       dispose();
     };
-  }, [spec.option]);
+  }, [nearViewport, spec.option]);
 
   if (error) return <SyntaxCode className="interactive-chart-error" value={JSON.stringify(spec.option, null, 2)} language="json" />;
   return (
@@ -549,7 +747,7 @@ export function InlineMarkdownImage({ src, alt }: { src: string; alt: string }) 
     <>
       <span className="inline-markdown-image">
         <button type="button" aria-label={`${alt || "이미지"} 크게 보기`} onClick={() => setExpanded(true)}>
-          <img src={src} alt={alt} loading="lazy" />
+          <img src={src} alt={alt} loading="lazy" decoding="async" />
           <span><ImageIcon size={14} /> 크게 보기</span>
         </button>
         {alt && <span className="inline-markdown-image-caption">{alt}</span>}

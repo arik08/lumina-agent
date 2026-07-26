@@ -17,6 +17,17 @@ test("queued requests accumulate above the composer with steer and cancel contro
   assert.match(app, /aria-label=\{`Queue \$\{position\}번 요청 취소`\}/);
 });
 
+test("the composer footer shows the latest pending Steering or Queue mode before the model", async () => {
+  const [app, styles] = await Promise.all([
+    readFile(appUrl, "utf8"),
+    readFile(stylesUrl, "utf8"),
+  ]);
+
+  assert.match(app, /pendingComposerMode[\s\S]*?command\.type === "steer" \|\| command\.type === "queue_next"/);
+  assert.match(app, /<span className="composer-command-mode" role="status">[\s\S]*?"Queue" : "Steering"[\s\S]*?<ComposerPicker/);
+  assert.match(styles, /\.composer-footer \.composer-command-mode\s*\{[^}]*color:\s*var\(--cobalt\)[^}]*white-space:\s*nowrap/);
+});
+
 test("queue controls use the run command endpoint and keep pending queue messages out of chat", async () => {
   const workspace = await readFile(workspaceUrl, "utf8");
 

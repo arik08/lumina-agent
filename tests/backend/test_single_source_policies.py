@@ -9,7 +9,6 @@ from lumina.artifacts.reporting import theme
 from lumina.attachments import extraction, validation
 from lumina.config import Settings
 from lumina.extensions import service as extension_service
-from lumina.extensions import package_policy, repository_catalog
 from lumina.mcp import policy as mcp_policy
 from lumina.mcp import runtime as mcp_runtime
 from lumina.mcp import service as mcp_service
@@ -20,7 +19,6 @@ from lumina.providers.codex import image_generation
 from lumina.providers.mock import MockProvider
 from lumina.runs import state as run_state
 from lumina.schedules import service as schedule_service
-from lumina.tools import workspace
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -46,6 +44,7 @@ def test_mcp_security_policy_is_shared_by_validation_and_runtime() -> None:
         mcp_service.APPROVABLE_PRIVATE_NETWORKS
         is mcp_policy.APPROVABLE_PRIVATE_NETWORKS
     )
+    assert mcp_service.MAX_MCP_TIMEOUT_SECONDS == mcp_policy.MAX_MCP_TIMEOUT_SECONDS
 
 
 def test_image_format_mapping_is_shared_by_tool_and_provider() -> None:
@@ -88,11 +87,6 @@ def test_document_safety_limits_are_shared_across_processing_stages() -> None:
     assert extraction.MAX_DOCUMENT_PAGES is document_limits.MAX_DOCUMENT_PAGES
     assert validation.MAX_OPENXML_MEMBERS is document_limits.MAX_OPENXML_MEMBERS
     assert artifact_service.MAX_OPENXML_MEMBERS is document_limits.MAX_OPENXML_MEMBERS
-
-
-def test_skill_text_file_policy_is_shared_by_catalog_and_workspace() -> None:
-    assert repository_catalog.SKILL_TEXT_SUFFIXES is package_policy.SKILL_TEXT_SUFFIXES
-    assert workspace.SKILL_TEXT_SUFFIXES is package_policy.SKILL_TEXT_SUFFIXES
 
 
 def test_provider_ids_and_default_endpoints_have_one_literal_source() -> None:

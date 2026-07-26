@@ -16,6 +16,9 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
         files_dir=tmp_path / "files",
         artifacts_dir=tmp_path / "artifacts",
         cookie_secure=False,
+        pgpt_api_key="test-api-key",
+        pgpt_employee_no="test-employee",
+        pgpt_company_code="30",
     )
     with TestClient(create_app(settings)) as client:
         csrf = _login_admin(client)
@@ -51,6 +54,34 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
         )
         assert current_settings["source"]["execution"] == "organization"
 
+        for invalid_settings in (
+            {},
+            {"theme": None},
+            {"conversationWidth": None},
+            {"conversationFontSize": None},
+            {"outputMode": None},
+            {"analysisDepth": None},
+            {"answerLength": None},
+            {"clarificationMode": None},
+            {"execution": None},
+            {"modelCandidates": None},
+        ):
+            rejected_settings = client.patch(
+                "/api/settings/current",
+                headers={"X-CSRF-Token": csrf},
+                json={
+                    **invalid_settings,
+                    "expectedRevision": current_settings["revision"],
+                },
+            )
+            assert rejected_settings.status_code == 422, (
+                invalid_settings,
+                rejected_settings.text,
+            )
+        assert client.get("/api/settings/current").json()["revision"] == (
+            current_settings["revision"]
+        )
+
         personal_execution = client.patch(
             "/api/settings/current",
             headers={"X-CSRF-Token": csrf},
@@ -63,7 +94,7 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
                 "expectedRevision": current_settings["revision"],
             },
         )
-        assert personal_execution.status_code == 200
+        assert personal_execution.status_code == 200, personal_execution.text
         assert personal_execution.json()["source"]["execution"] == "user"
         changed_organization_default = client.patch(
             "/api/admin/providers/initial-execution",
@@ -111,6 +142,8 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
         assert gpt_54["defaultContextWindow"] == 1_050_000
         assert gpt_54["defaultContextUsageRatio"] == 0.75
         assert gpt_54["contextPolicyLocked"] is False
+        assert gpt_54["maxInputTokens"] == 911_900
+        assert gpt_54["defaultMaxInputTokens"] == 911_900
         assert gpt_54["maxOutputTokens"] == 128_000
         assert gpt_54["defaultMaxOutputTokens"] == 42_000
         assert gpt_54["configuredMaxOutputTokens"] == 42_000
@@ -128,6 +161,20 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
         )
         assert configured.status_code == 200, configured.text
         assert configured.json()["configuredMaxOutputTokens"] == 64_000
+
+        configured_input = client.patch(
+            "/api/admin/providers/pgpt/models/gpt-5.4",
+            headers={"X-CSRF-Token": csrf},
+            json={
+                "capabilities": {
+                    **configured.json()["capabilities"],
+                    "max_input_tokens": 900_000,
+                }
+            },
+        )
+        assert configured_input.status_code == 200, configured_input.text
+        assert configured_input.json()["maxInputTokens"] == 900_000
+        assert configured_input.json()["defaultMaxInputTokens"] == 911_900
 
         configured_ratio = client.patch(
             "/api/admin/providers/pgpt/models/gpt-5.4",
@@ -181,6 +228,8 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
         assert codex_gpt_54["defaultContextWindow"] == 272_000
         assert codex_gpt_54["defaultContextUsageRatio"] == 0.85
         assert codex_gpt_54["contextPolicyLocked"] is True
+        assert codex_gpt_54["maxInputTokens"] is None
+        assert codex_gpt_54["defaultMaxInputTokens"] is None
 
         rejected_codex_policy = client.patch(
             "/api/admin/providers/codex/models/gpt-5.4",
@@ -220,6 +269,25 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
         assert created.json()["enabled"] is False
         assert created.json()["defaultContextWindow"] is None
         assert created.json()["maxOutputTokens"] is None
+
+        for invalid_patch in (
+            {"displayName": None},
+            {"runtimeModelId": None},
+            {"aliases": None},
+            {"enabled": None},
+            {"isDefault": None},
+            {"sortOrder": None},
+            {"capabilities": None},
+        ):
+            rejected_null = client.patch(
+                "/api/admin/providers/internal/models/internal-analysis-v1",
+                headers={"X-CSRF-Token": csrf},
+                json=invalid_patch,
+            )
+            assert rejected_null.status_code == 422, (
+                invalid_patch,
+                rejected_null.text,
+            )
 
         activated = client.patch(
             "/api/admin/providers/internal/models/internal-analysis-v1",

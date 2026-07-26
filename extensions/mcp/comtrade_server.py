@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import ssl
+import threading
 import time
 from typing import Any
 
@@ -16,12 +17,17 @@ from mcp.server.fastmcp import FastMCP
 
 DEFAULT_API_HOST = "comtradeapi.un.org"
 MAX_ROWS = 5000
-MAX_REQUEST_ATTEMPTS = 3
+MAX_REQUEST_ATTEMPTS = 4
+MAX_RETRY_AFTER_SECONDS = 10.0
+RETRY_AFTER_GRACE_SECONDS = 0.25
+PUBLIC_REQUEST_INTERVAL_SECONDS = 2.25
 TRANSIENT_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 server = FastMCP("comtrade")
+_public_request_lock = threading.Lock()
+_last_public_request_at = 0.0
 
 
 def _httpx_verify_argument() -> bool | ssl.SSLContext:
@@ -82,8 +88,39 @@ def _request_headers(*, api_key: str | None = None) -> dict[str, str]:
     return headers
 
 
-def _retry_sleep(attempt: int) -> None:
-    time.sleep(min(0.5 * attempt, 2.0))
+def _retry_sleep(attempt: int, response: httpx.Response | None = None) -> None:
+    delay = min(0.5 * attempt, 2.0)
+    if response is not None and response.status_code == 429:
+        try:
+            retry_after = float(response.headers.get("Retry-After", ""))
+        except ValueError:
+            retry_after = 0.0
+        if retry_after <= 0:
+            try:
+                message = str(response.json().get("message", ""))
+            except (AttributeError, ValueError):
+                message = ""
+            match = re.search(
+                r"(?:in|after)\s+(\d+(?:\.\d+)?)\s*seconds?", message, re.IGNORECASE
+            )
+            retry_after = float(match.group(1)) if match else 0.0
+        if retry_after > 0:
+            delay = max(delay, min(retry_after, MAX_RETRY_AFTER_SECONDS))
+            delay += RETRY_AFTER_GRACE_SECONDS
+    time.sleep(delay)
+
+
+def _wait_for_request_slot() -> None:
+    global _last_public_request_at
+    with _public_request_lock:
+        now = time.monotonic()
+        delay = max(
+            0.0,
+            _last_public_request_at + PUBLIC_REQUEST_INTERVAL_SECONDS - now,
+        )
+        if delay > 0:
+            time.sleep(delay)
+        _last_public_request_at = now + delay
 
 
 def _clean_limit(limit: int) -> int:
@@ -99,6 +136,17 @@ def _safe_path_token(value: str, *, field_name: str) -> str:
 
 def _bool_param(value: bool) -> str:
     return "true" if value else "false"
+
+
+def _partner_code_param(value: str) -> str | None:
+    token = value.strip()
+    if token.casefold() == "all":
+        return None
+    if not re.fullmatch(r"\d+(?:,\d+)*", token):
+        raise ValueError(
+            "partner_code must be 'all', '0' for World, or comma-separated numeric codes."
+        )
+    return token
 
 
 def _to_json(data: Any) -> str:
@@ -121,6 +169,8 @@ def _request_json(path: str, params: dict[str, Any] | None = None, *, api_key: s
     last_error: BaseException | None = None
     for attempt in range(1, MAX_REQUEST_ATTEMPTS + 1):
         try:
+            if api_key is None:
+                _wait_for_request_slot()
             response = httpx.get(
                 url,
                 params=query,
@@ -133,7 +183,7 @@ def _request_json(path: str, params: dict[str, Any] | None = None, *, api_key: s
                 getattr(response, "status_code", 200) in TRANSIENT_STATUS_CODES
                 and attempt < MAX_REQUEST_ATTEMPTS
             ):
-                _retry_sleep(attempt)
+                _retry_sleep(attempt, response)
                 continue
             response.raise_for_status()
             return _response_json(response)
@@ -156,10 +206,32 @@ def _request_json(path: str, params: dict[str, Any] | None = None, *, api_key: s
             last_error = exc
             status_code = exc.response.status_code if exc.response is not None else None
             if status_code in TRANSIENT_STATUS_CODES and attempt < MAX_REQUEST_ATTEMPTS:
-                _retry_sleep(attempt)
+                _retry_sleep(attempt, exc.response)
                 continue
-            break
+            raise RuntimeError(_http_status_failure_message(exc.response)) from exc
     raise RuntimeError(_network_failure_message(_api_base_url())) from last_error
+
+
+def _http_status_failure_message(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+    if isinstance(payload, dict):
+        detail = {
+            key: payload[key]
+            for key in ("statusCode", "error", "message", "details")
+            if key in payload
+        }
+        rendered = json.dumps(
+            detail,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )[:1000]
+    else:
+        rendered = "No JSON error detail was returned."
+    return f"UN Comtrade API returned HTTP {response.status_code}: {rendered}"
 
 
 def _response_json(response: httpx.Response) -> object:
@@ -200,7 +272,7 @@ def _trade_params(
         "flowCode": flow_code,
         "reporterCode": reporter_code,
         "period": period,
-        "partnerCode": partner_code,
+        "partnerCode": _partner_code_param(partner_code),
         "partner2Code": partner2_code,
         "customsCode": customs_code,
         "motCode": mot_code,
@@ -245,7 +317,7 @@ def preview_trade_data(
     include_desc: bool = True,
     limit: int = 100,
 ) -> str:
-    """Fetch UN Comtrade public preview trade data without requiring an API key."""
+    """Fetch public preview trade data. Use partner_code="all" for a partner breakdown."""
     payload = _request_json(
         _trade_path("public/v1/preview", type_code, freq_code, classification_code),
         _trade_params(
@@ -279,7 +351,7 @@ def get_trade_data(
     include_desc: bool = True,
     limit: int = 1000,
 ) -> str:
-    """Fetch UN Comtrade data endpoint results. Requires UN_COMTRADE_API_KEY or COMTRADE_API_KEY."""
+    """Fetch keyed trade data. Use partner_code="all" for a partner breakdown."""
     api_key = _api_key()
     if not api_key:
         raise ValueError(

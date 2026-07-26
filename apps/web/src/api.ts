@@ -19,17 +19,51 @@ import type {
   AdminUser,
   AdminUserList,
   AttachmentSummary,
+  AnswerDeepAnalysisDecisionRequest,
   AuthSession,
+  CancelDeepAnalysisMissionRequest,
+  CreateKnowledgeTagRequest,
+  CreateKnowledgeSpaceRequest,
   CreateAdminUserRequest,
   CreateConversationRequest,
+  CreateDeepAnalysisMissionRequest,
   CreateProjectLearningProposalRequest,
   CreateProjectRequest,
   CurrentSettings,
+  DeepAnalysisClaim,
+  DeepAnalysisEvidence,
+  DeepAnalysisMissionDetail,
+  DeepAnalysisMissionEvent,
+  DeepAnalysisRefreshPreview,
+  DeepAnalysisResearchInspector,
+  DeepAnalysisMissionProjection,
+  DeepAnalysisMissionCosts,
+  DeepAnalysisMissionExport,
+  DeepAnalysisMissionSummary,
+  DeepAnalysisOpenIssue,
+  DeepAnalysisWorkflowRevision,
+  DeepAnalysisWorkflowPattern,
+  DeepAnalysisWorkflowPatternVersion,
+  KnowledgeDocument,
+  KnowledgeDocumentSummary,
+  KnowledgeBatchTagRequest,
+  KnowledgeBatchTagResult,
+  KnowledgeGraphResponse,
+  KnowledgeSpace,
+  KnowledgeTag,
+  KnowledgeTagProposal,
+  UpdateKnowledgeTagRequest,
+  UpdateKnowledgeDocumentTagsRequest,
+  UpdateKnowledgeSpaceRequest,
   CursorPage,
   ListConversationsQuery,
   LoginRequest,
   RegistrationRequest,
   RegistrationResponse,
+  RetryDeepAnalysisMissionRequest,
+  RestartDeepAnalysisMissionRequest,
+  SteerDeepAnalysisMissionRequest,
+  RegenerateDeepAnalysisWorkflowRequest,
   InstructionDocument,
   RuntimePromptDocument,
   RuntimePromptKey,
@@ -55,11 +89,14 @@ import type {
   RunStreamHandlers,
   SaveArtifactVersionRequest,
   StartRunRequest,
+  StartDeepAnalysisMissionRequest,
   TurnSetPage,
   UserMemory,
   UpdateAdminUserRequest,
   UpdateProjectRequest,
   UpdateConversationRequest,
+  UpdateDeepAnalysisMissionRequest,
+  UpdateDeepAnalysisWorkflowDraftRequest,
   UpdateCurrentSettingsRequest,
   ConversationListItem,
   ComposerSuggestion,
@@ -79,8 +116,10 @@ import type {
   SkillCatalogLikeResult,
   SkillCatalogResponse,
   SkillExtension,
+  SkillVersionComparison,
   SkillVersion,
   ProjectFileDetail,
+  ProjectFilePage,
   ProjectFolderSummary,
   ProjectFileSummary,
   ProjectLearningMutationResult,
@@ -88,10 +127,14 @@ import type {
   ProjectLearningProposalStatus,
   ProjectMemory,
   ProjectMemoryHistory,
+  PromptEnhancementRequest,
+  PromptEnhancementResult,
   McpConfiguration,
   McpDefinition,
   McpDefinitionCreateRequest,
   McpInstallation,
+  McpAnswerTestResult,
+  WebSourceContentPage,
 } from "./api-types";
 import { createClientId } from "./client-id";
 
@@ -106,6 +149,27 @@ interface ApiRequestOptions extends Omit<RequestInit, "body"> {
 
 const apiBase = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
 const streamBase = (import.meta.env.VITE_STREAM_BASE_URL || "/stream").replace(/\/$/, "");
+const prefetchedRequestTtlMs = 5 * 60 * 1_000;
+const prefetchedRequests = new Map<string, {
+  expiresAt: number;
+  promise: Promise<unknown>;
+}>();
+let apiPrefetchDepth = 0;
+const BACKEND_CONTRACT_MISMATCH_MESSAGE = "Frontend와 Backend 버전이 일치하지 않습니다. Lumina 실행 창에서 R을 눌러 다시 시작해 주세요.";
+
+export function artifactStandalonePreviewUrl(artifactId: string, version: number) {
+  return buildUrl(apiBase, `/artifacts/${encodeURIComponent(artifactId)}/preview`, {
+    version,
+    standalone: true,
+  });
+}
+
+export function projectFilePreviewUrl(projectId: string, fileId: string) {
+  return buildUrl(
+    apiBase,
+    `/projects/${encodeURIComponent(projectId)}/files/${encodeURIComponent(fileId)}/preview`,
+  );
+}
 
 export function attachmentContentUrl(attachmentId: string) {
   return `${apiBase}/attachments/${encodeURIComponent(attachmentId)}/content`;
@@ -193,11 +257,16 @@ async function parseBody(response: Response): Promise<unknown> {
 
 function apiErrorFrom(response: Response, payload: unknown) {
   if (isRecord(payload)) {
+    const routeMissing = response.status === 404 && payload.detail === "Not Found";
     return new ApiError(
-      typeof payload.message === "string" ? payload.message : "요청을 처리하지 못했습니다.",
+      routeMissing
+        ? BACKEND_CONTRACT_MISMATCH_MESSAGE
+        : typeof payload.message === "string" ? payload.message : "요청을 처리하지 못했습니다.",
       {
         status: response.status,
-        code: typeof payload.code === "string" ? payload.code : "request_failed",
+        code: routeMissing
+          ? "backend_contract_mismatch"
+          : typeof payload.code === "string" ? payload.code : "request_failed",
         requestId: typeof payload.requestId === "string" ? payload.requestId : undefined,
         field: typeof payload.field === "string" ? payload.field : undefined,
         details: payload.details,
@@ -266,6 +335,7 @@ async function fetchApi(path: string, options: ApiRequestOptions = {}) {
   const response = await fetchBackend(buildUrl(apiBase, path, query), {
     ...requestInit,
     body,
+    cache: requestInit.cache ?? "no-store",
     credentials: "include",
     headers,
   });
@@ -280,10 +350,68 @@ async function fetchApi(path: string, options: ApiRequestOptions = {}) {
 }
 
 async function request<T>(path: string, options?: ApiRequestOptions): Promise<T> {
-  const response = await fetchApi(path, options);
-  const payload = await parseBody(response);
-  captureCsrf(response, payload);
-  return payload as T;
+  const method = (options?.method ?? "GET").toUpperCase();
+  const cacheKey = method === "GET" ? buildUrl(apiBase, path, options?.query) : null;
+  if (!cacheKey) prefetchedRequests.clear();
+
+  if (cacheKey) {
+    const prefetched = prefetchedRequests.get(cacheKey);
+    if (prefetched && prefetched.expiresAt > Date.now()) {
+      if (apiPrefetchDepth === 0) prefetchedRequests.delete(cacheKey);
+      return waitForRequest(prefetched.promise as Promise<T>, options?.signal);
+    }
+    if (prefetched) prefetchedRequests.delete(cacheKey);
+  }
+
+  const promise = (async () => {
+    const response = await fetchApi(path, options);
+    const contentType = response.headers.get("content-type") ?? "";
+    if (response.status !== 204 && !contentType.includes("application/json")) {
+      const backendContractMismatch = contentType.includes("text/html");
+      throw new ApiError(backendContractMismatch
+        ? BACKEND_CONTRACT_MISMATCH_MESSAGE
+        : "서버가 예상하지 못한 응답을 반환했습니다. Lumina 실행 상태를 확인해 주세요.", {
+        status: 502,
+        code: backendContractMismatch ? "backend_contract_mismatch" : "invalid_api_response",
+        details: { contentType, path, method: method },
+      });
+    }
+    const payload = await parseBody(response);
+    captureCsrf(response, payload);
+    return payload as T;
+  })();
+
+  if (cacheKey && apiPrefetchDepth > 0) {
+    prefetchedRequests.set(cacheKey, {
+      expiresAt: Date.now() + prefetchedRequestTtlMs,
+      promise,
+    });
+    void promise.catch(() => {
+      if (prefetchedRequests.get(cacheKey)?.promise === promise) {
+        prefetchedRequests.delete(cacheKey);
+      }
+    });
+  }
+  return promise;
+}
+
+function waitForRequest<T>(promise: Promise<T>, signal?: AbortSignal | null) {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(new DOMException("Aborted", "AbortError"));
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(new DOMException("Aborted", "AbortError"));
+    signal.addEventListener("abort", abort, { once: true });
+    void promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
+}
+
+export async function prefetchApiData(run: () => Promise<void>) {
+  apiPrefetchDepth += 1;
+  try {
+    await run();
+  } finally {
+    apiPrefetchDepth -= 1;
+  }
 }
 
 export async function getAuthSession(signal?: AbortSignal) {
@@ -296,21 +424,38 @@ export interface UsdKrwExchangeRate {
   rate: number | null;
   asOf: string | null;
   source: string | null;
+  status: "fresh" | "stale" | "unavailable";
 }
 
+const USD_KRW_FRESH_CACHE_MS = 6 * 60 * 60 * 1_000;
+const USD_KRW_RETRY_CACHE_MS = 5 * 60 * 1_000;
 let usdKrwExchangeRateRequest: Promise<UsdKrwExchangeRate> | null = null;
+let usdKrwExchangeRateExpiresAt = 0;
 
 export function getUsdKrwExchangeRate() {
-  if (!usdKrwExchangeRateRequest) {
+  if (!usdKrwExchangeRateRequest || Date.now() >= usdKrwExchangeRateExpiresAt) {
+    usdKrwExchangeRateExpiresAt = Number.POSITIVE_INFINITY;
     usdKrwExchangeRateRequest = (async () => {
       const controller = new AbortController();
       const timeout = window.setTimeout(() => controller.abort(), 8_000);
       try {
-        return await request<UsdKrwExchangeRate>("/finance/exchange-rate/usd-krw", {
+        const result = await request<UsdKrwExchangeRate>("/finance/exchange-rate/usd-krw", {
           signal: controller.signal,
         });
+        usdKrwExchangeRateExpiresAt = Date.now() + (
+          result.status === "fresh" ? USD_KRW_FRESH_CACHE_MS : USD_KRW_RETRY_CACHE_MS
+        );
+        return result;
       } catch {
-        return { base: "USD", quote: "KRW", rate: null, asOf: null, source: null };
+        usdKrwExchangeRateExpiresAt = Date.now() + USD_KRW_RETRY_CACHE_MS;
+        return {
+          base: "USD",
+          quote: "KRW",
+          rate: null,
+          asOf: null,
+          source: null,
+          status: "unavailable",
+        } satisfies UsdKrwExchangeRate;
       } finally {
         window.clearTimeout(timeout);
       }
@@ -498,12 +643,16 @@ export async function listProjectFiles(
   projectId: string,
   query = "",
   includeDeleted = false,
+  cursor?: string,
   signal?: AbortSignal,
 ) {
-  return request<ProjectFileSummary[]>(`/projects/${encodeURIComponent(projectId)}/files`, {
-    query: { q: query, includeDeleted, limit: 300 },
+  const response = await request<ProjectFilePage | ProjectFileSummary[]>(`/projects/${encodeURIComponent(projectId)}/files`, {
+    query: { q: query, includeDeleted, limit: 200, cursor, page: true },
     signal,
   });
+  if (Array.isArray(response)) return { items: response, nextCursor: null };
+  if (!Array.isArray(response.items)) throw new Error("파일 목록 응답 형식이 올바르지 않습니다.");
+  return response;
 }
 
 export async function getProjectFile(projectId: string, fileId: string, signal?: AbortSignal) {
@@ -805,6 +954,28 @@ export async function getRunSnapshot(runId: string, signal?: AbortSignal) {
   return request<RunSnapshot>(`/runs/${encodeURIComponent(runId)}/snapshot`, { signal });
 }
 
+export async function getProviderCatalog(projectId?: string, signal?: AbortSignal) {
+  return request<{
+    providers: ProviderSummary[];
+    modelsByProvider: Record<string, ModelSummary[]>;
+  }>("/provider-catalog", { query: { project_id: projectId }, signal });
+}
+
+export async function getRunSnapshots(runIds: string[], signal?: AbortSignal) {
+  const uniqueRunIds = [...new Set(runIds)];
+  if (uniqueRunIds.length === 0) return [];
+  const chunks: string[][] = [];
+  for (let index = 0; index < uniqueRunIds.length; index += 20) {
+    chunks.push(uniqueRunIds.slice(index, index + 20));
+  }
+  const pages = await Promise.all(chunks.map((chunk) => request<RunSnapshot[]>("/runs/snapshots", {
+    method: "POST",
+    body: { runIds: chunk },
+    signal,
+  })));
+  return pages.flat();
+}
+
 function isRunEvent(value: unknown): value is RunEvent {
   return isRecord(value)
     && typeof value.runId === "string"
@@ -812,6 +983,25 @@ function isRunEvent(value: unknown): value is RunEvent {
     && typeof value.sequence === "number"
     && typeof value.type === "string"
     && typeof value.createdAt === "string";
+}
+
+function isRunArtifactProgressMessage(value: unknown): value is {
+  runId: string;
+  progress: NonNullable<RunSnapshot["artifactProgress"]>;
+} {
+  if (!isRecord(value) || typeof value.runId !== "string" || !isRecord(value.progress)) return false;
+  return typeof value.progress.tokens === "number"
+    && typeof value.progress.lines === "number";
+}
+
+function isRunAssistantDraftMessage(value: unknown): value is {
+  runId: string;
+  draft: NonNullable<RunSnapshot["assistantDraft"]> & { append: boolean };
+} {
+  if (!isRecord(value) || typeof value.runId !== "string" || !isRecord(value.draft)) return false;
+  return typeof value.draft.messageId === "string"
+    && typeof value.draft.text === "string"
+    && typeof value.draft.append === "boolean";
 }
 
 export function openRunEventStream(
@@ -839,10 +1029,42 @@ export function openRunEventStream(
     }
   };
 
+  const handleArtifactProgress = (message: MessageEvent<string>) => {
+    try {
+      const parsed: unknown = JSON.parse(message.data);
+      if (!isRunArtifactProgressMessage(parsed) || parsed.runId !== runId) {
+        throw new Error("Artifact 진행 event 형식이 올바르지 않습니다.");
+      }
+      handlers.onArtifactProgress?.(parsed.runId, parsed.progress);
+    } catch (error) {
+      handlers.onError?.(
+        error instanceof Error
+          ? error
+          : new Error("Artifact 진행 event를 읽지 못했습니다."),
+      );
+    }
+  };
+
+  const handleAssistantDraft = (message: MessageEvent<string>) => {
+    try {
+      const parsed: unknown = JSON.parse(message.data);
+      if (!isRunAssistantDraftMessage(parsed) || parsed.runId !== runId) {
+        throw new Error("Assistant draft event 형식이 올바르지 않습니다.");
+      }
+      handlers.onAssistantDraft?.(parsed.runId, parsed.draft, parsed.draft.append);
+    } catch (error) {
+      handlers.onError?.(
+        error instanceof Error ? error : new Error("Assistant draft event를 읽지 못했습니다."),
+      );
+    }
+  };
+
   source.onopen = () => handlers.onOpen?.();
   source.onerror = (event) => handlers.onError?.(event);
   source.onmessage = handleMessage;
   source.addEventListener("run_event", handleMessage as EventListener);
+  source.addEventListener("artifact_progress", handleArtifactProgress as EventListener);
+  source.addEventListener("assistant_draft", handleAssistantDraft as EventListener);
 
   return () => source.close();
 }
@@ -957,10 +1179,15 @@ export async function createMessageMarkdownArtifact(messageId: string, signal?: 
   });
 }
 
-export async function getArtifactVersion(artifactId: string, version: number, signal?: AbortSignal) {
+export async function getArtifactVersion(
+  artifactId: string,
+  version: number,
+  includeSource = true,
+  signal?: AbortSignal,
+) {
   return request<ArtifactVersion>(
     `/artifacts/${encodeURIComponent(artifactId)}/versions/${encodeURIComponent(String(version))}`,
-    { signal },
+    { query: { include_source: includeSource }, signal },
   );
 }
 
@@ -1119,9 +1346,27 @@ export async function listComposerSuggestions(
   });
 }
 
+export async function enhanceComposerPrompt(
+  payload: PromptEnhancementRequest,
+  signal?: AbortSignal,
+) {
+  return request<PromptEnhancementResult>("/composer/enhance", {
+    method: "POST",
+    body: payload,
+    signal,
+  });
+}
+
 export async function listArtifacts(projectId?: string, signal?: AbortSignal) {
   return request<CursorPage<ArtifactSummary>>("/artifacts", {
     query: { project_id: projectId, limit: 100 },
+    signal,
+  });
+}
+
+export async function deleteArtifact(artifactId: string, signal?: AbortSignal) {
+  return request<void>(`/artifacts/${encodeURIComponent(artifactId)}`, {
+    method: "DELETE",
     signal,
   });
 }
@@ -1177,6 +1422,458 @@ export async function listExtensions(query?: string, signal?: AbortSignal) {
   return request<SkillExtension[]>("/extensions", { query: { query }, signal });
 }
 
+export async function listDeepAnalysisMissions(projectId: string, signal?: AbortSignal) {
+  return request<DeepAnalysisMissionSummary[]>(
+    `/projects/${encodeURIComponent(projectId)}/deep-analysis/missions`,
+    { signal },
+  );
+}
+
+export async function createDeepAnalysisMission(
+  projectId: string,
+  payload: CreateDeepAnalysisMissionRequest,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisMissionDetail>(
+    `/projects/${encodeURIComponent(projectId)}/deep-analysis/missions`,
+    { method: "POST", body: payload, signal },
+  );
+}
+
+export async function listDeepAnalysisPatterns(projectId: string, signal?: AbortSignal) {
+  return request<DeepAnalysisWorkflowPattern[]>(
+    `/projects/${encodeURIComponent(projectId)}/deep-analysis/patterns`,
+    { signal },
+  );
+}
+
+export async function createDeepAnalysisPattern(
+  projectId: string,
+  payload: { missionId: string; name: string; description?: string },
+) {
+  return request<DeepAnalysisWorkflowPatternVersion>(
+    `/projects/${encodeURIComponent(projectId)}/deep-analysis/patterns`,
+    { method: "POST", body: payload },
+  );
+}
+
+export async function createDeepAnalysisPatternVersion(
+  patternId: string,
+  payload: { missionId: string; changeSummary?: string },
+) {
+  return request<DeepAnalysisWorkflowPatternVersion>(
+    `/deep-analysis/patterns/${encodeURIComponent(patternId)}/versions`,
+    { method: "POST", body: payload },
+  );
+}
+
+export async function publishDeepAnalysisPatternVersion(patternId: string, versionId: string) {
+  return request<DeepAnalysisWorkflowPatternVersion>(
+    `/deep-analysis/patterns/${encodeURIComponent(patternId)}/versions/${encodeURIComponent(versionId)}/publish`,
+    { method: "POST" },
+  );
+}
+
+export async function deleteDeepAnalysisPattern(patternId: string) {
+  await request<void>(
+    `/deep-analysis/patterns/${encodeURIComponent(patternId)}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function getDeepAnalysisMission(missionId: string, signal?: AbortSignal) {
+  return request<DeepAnalysisMissionDetail>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}`,
+    { signal },
+  );
+}
+
+export async function listDeepAnalysisMissionEvents(
+  missionId: string,
+  afterSequence: number,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisMissionEvent[]>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/events`,
+    { query: { afterSequence }, signal },
+  );
+}
+
+export async function getDeepAnalysisMissionProjection(
+  missionId: string,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisMissionProjection>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/projection`,
+    { signal },
+  );
+}
+
+export function openDeepAnalysisMissionEventStream(
+  missionId: string,
+  afterSequence: number,
+  handlers: {
+    onEvent: (event: DeepAnalysisMissionEvent) => void;
+    onOpen?: () => void;
+    onError?: (error: unknown) => void;
+  },
+) {
+  const source = new EventSource(
+    buildUrl(streamBase, `/deep-analysis/missions/${encodeURIComponent(missionId)}`, {
+      after_sequence: Math.max(0, afterSequence),
+    }),
+    { withCredentials: true },
+  );
+  let lastDeliveredSequence = afterSequence;
+  const handleMessage = (message: MessageEvent<string>) => {
+    try {
+      const parsed: unknown = JSON.parse(message.data);
+      if (
+        !isRecord(parsed)
+        || parsed.missionId !== missionId
+        || typeof parsed.sequence !== "number"
+        || typeof parsed.type !== "string"
+        || typeof parsed.createdAt !== "string"
+        || !isRecord(parsed.payload)
+      ) throw new Error("Mission event 형식이 올바르지 않습니다.");
+      if (parsed.sequence <= lastDeliveredSequence) return;
+      lastDeliveredSequence = parsed.sequence;
+      handlers.onEvent(parsed as unknown as DeepAnalysisMissionEvent);
+    } catch (error) {
+      handlers.onError?.(error);
+    }
+  };
+  source.onopen = () => handlers.onOpen?.();
+  source.onerror = (event) => handlers.onError?.(event);
+  source.addEventListener("mission_event", handleMessage as EventListener);
+
+  return () => source.close();
+}
+
+export async function getDeepAnalysisMissionCosts(
+  missionId: string,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisMissionCosts>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/costs`,
+    { signal },
+  );
+}
+
+export async function getDeepAnalysisClaims(missionId: string, signal?: AbortSignal) {
+  return request<DeepAnalysisClaim[]>(
+    `/api/deep-analysis/missions/${missionId}/claims`,
+    { signal },
+  );
+}
+
+export async function getDeepAnalysisEvidence(missionId: string, signal?: AbortSignal) {
+  return request<DeepAnalysisEvidence[]>(
+    `/api/deep-analysis/missions/${missionId}/evidence`,
+    { signal },
+  );
+}
+
+export async function getDeepAnalysisOpenIssues(missionId: string, signal?: AbortSignal) {
+  return request<DeepAnalysisOpenIssue[]>(
+    `/api/deep-analysis/missions/${missionId}/open-issues`,
+    { signal },
+  );
+}
+
+export async function createDeepAnalysisMissionExport(
+  missionId: string,
+) {
+  return request<DeepAnalysisMissionExport>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/exports`,
+    { method: "POST", body: {}, idempotencyKey: createClientId() },
+  );
+}
+
+export async function createDeepAnalysisWorkflowDraft(
+  missionId: string,
+  expectedRevision: number,
+) {
+  return request<DeepAnalysisWorkflowRevision>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/revisions`,
+    { method: "POST", body: { expectedRevision } },
+  );
+}
+
+export async function updateDeepAnalysisWorkflowDraft(
+  missionId: string,
+  payload: UpdateDeepAnalysisWorkflowDraftRequest,
+) {
+  return request<DeepAnalysisWorkflowRevision>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/draft`,
+    { method: "PATCH", body: payload },
+  );
+}
+
+export async function activateDeepAnalysisWorkflowDraft(
+  missionId: string,
+  expectedRevision: number,
+) {
+  return request<DeepAnalysisMissionDetail>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/draft/activate`,
+    { method: "POST", body: { expectedRevision } },
+  );
+}
+
+export async function startDeepAnalysisMission(
+  missionId: string,
+  payload: StartDeepAnalysisMissionRequest,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisMissionDetail>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/start`,
+    { method: "POST", body: payload, signal, idempotencyKey: createClientId() },
+  );
+}
+
+export async function cancelDeepAnalysisMission(
+  missionId: string,
+  payload: CancelDeepAnalysisMissionRequest,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisMissionDetail>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/cancel`,
+    { method: "POST", body: payload, signal, idempotencyKey: createClientId() },
+  );
+}
+
+export async function pauseDeepAnalysisMission(
+  missionId: string,
+  payload: CancelDeepAnalysisMissionRequest,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisMissionDetail>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/pause`,
+    { method: "POST", body: payload, signal, idempotencyKey: createClientId() },
+  );
+}
+
+export async function resumeDeepAnalysisMission(
+  missionId: string,
+  payload: CancelDeepAnalysisMissionRequest,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisMissionDetail>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/resume`,
+    { method: "POST", body: payload, signal, idempotencyKey: createClientId() },
+  );
+}
+
+export async function retryDeepAnalysisMission(
+  missionId: string,
+  payload: RetryDeepAnalysisMissionRequest,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisMissionDetail>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/retry`,
+    { method: "POST", body: payload, signal, idempotencyKey: createClientId() },
+  );
+}
+
+export async function deleteDeepAnalysisMission(
+  missionId: string,
+  expectedRevision: number,
+  signal?: AbortSignal,
+) {
+  await request<void>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}`,
+    { method: "DELETE", query: { expected_revision: expectedRevision }, signal },
+  );
+}
+
+export async function updateDeepAnalysisMission(
+  missionId: string,
+  payload: UpdateDeepAnalysisMissionRequest,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisMissionDetail>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}`,
+    { method: "PATCH", body: payload, signal },
+  );
+}
+
+export async function restartDeepAnalysisMission(
+  missionId: string,
+  payload: RestartDeepAnalysisMissionRequest,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisMissionDetail>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/restart`,
+    { method: "POST", body: payload, signal, idempotencyKey: createClientId() },
+  );
+}
+
+export async function getDeepAnalysisResearchInspector(
+  missionId: string,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisResearchInspector>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/research-inspector`,
+    { signal },
+  );
+}
+
+export async function getDeepAnalysisRefreshPreview(
+  missionId: string,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisRefreshPreview>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/refresh-preview`,
+    { signal },
+  );
+}
+
+export async function steerDeepAnalysisMission(
+  missionId: string,
+  payload: SteerDeepAnalysisMissionRequest,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisMissionDetail>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/steer`,
+    { method: "POST", body: payload, signal, idempotencyKey: createClientId() },
+  );
+}
+
+export async function refreshDeepAnalysisMission(
+  missionId: string,
+  payload: RestartDeepAnalysisMissionRequest,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisMissionDetail>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/refresh`,
+    { method: "POST", body: payload, signal, idempotencyKey: createClientId() },
+  );
+}
+
+export async function regenerateDeepAnalysisWorkflow(
+  missionId: string,
+  payload: RegenerateDeepAnalysisWorkflowRequest,
+) {
+  return request<DeepAnalysisMissionDetail>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/workflow/regenerate`,
+    { method: "POST", body: payload, idempotencyKey: createClientId() },
+  );
+}
+
+export async function moveDeepAnalysisMission(
+  missionId: string,
+  projectId: string,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisMissionSummary>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/move`,
+    { method: "POST", body: { projectId }, signal },
+  );
+}
+
+export async function answerDeepAnalysisDecision(
+  missionId: string,
+  decisionId: string,
+  payload: AnswerDeepAnalysisDecisionRequest,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisMissionDetail>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/decisions/${encodeURIComponent(decisionId)}/answer`,
+    { method: "POST", body: payload, signal, idempotencyKey: createClientId() },
+  );
+}
+
+export async function runDeepAnalysisQualityGate(
+  missionId: string,
+  payload: StartDeepAnalysisMissionRequest,
+  signal?: AbortSignal,
+) {
+  return request<DeepAnalysisMissionDetail>(
+    `/deep-analysis/missions/${encodeURIComponent(missionId)}/quality-gate`,
+    { method: "POST", body: payload, signal, idempotencyKey: createClientId() },
+  );
+}
+
+export async function listKnowledgeSpaces(signal?: AbortSignal) {
+  return request<KnowledgeSpace[]>("/knowledge/spaces", { signal });
+}
+export async function createKnowledgeSpace(payload: CreateKnowledgeSpaceRequest, signal?: AbortSignal) {
+  return request<KnowledgeSpace>("/knowledge/spaces", { method: "POST", body: payload, signal });
+}
+export async function updateKnowledgeSpace(spaceId: string, payload: UpdateKnowledgeSpaceRequest, signal?: AbortSignal) {
+  return request<KnowledgeSpace>(`/knowledge/spaces/${encodeURIComponent(spaceId)}`, { method: "PATCH", body: payload, signal });
+}
+export async function listKnowledgeTags(spaceId: string, signal?: AbortSignal) {
+  return request<KnowledgeTag[]>("/knowledge/tags", { query: { spaceId }, signal });
+}
+export async function createKnowledgeTag(payload: CreateKnowledgeTagRequest, signal?: AbortSignal) {
+  return request<KnowledgeTag>("/knowledge/tags", { method: "POST", body: payload, signal });
+}
+export async function updateKnowledgeTag(tagId: string, payload: UpdateKnowledgeTagRequest, signal?: AbortSignal) {
+  return request<KnowledgeTag>(`/knowledge/tags/${encodeURIComponent(tagId)}`, { method: "PATCH", body: payload, signal });
+}
+export async function listKnowledgeDocuments(filters: { spaceId?: string; projectId?: string; query?: string; limit?: number } = {}, signal?: AbortSignal) {
+  return request<KnowledgeDocumentSummary[]>("/knowledge/documents", { query: filters, signal });
+}
+export async function getKnowledgeDocument(documentId: string, signal?: AbortSignal) {
+  return request<KnowledgeDocument>(`/knowledge/documents/${encodeURIComponent(documentId)}`, { signal });
+}
+export async function updateKnowledgeDocumentTags(documentId: string, payload: UpdateKnowledgeDocumentTagsRequest, signal?: AbortSignal) {
+  return request<KnowledgeDocument>(`/knowledge/documents/${encodeURIComponent(documentId)}`, { method: "PATCH", body: payload, signal });
+}
+export async function deleteKnowledgeDocument(documentId: string, signal?: AbortSignal) {
+  return request<void>(`/knowledge/documents/${encodeURIComponent(documentId)}`, { method: "DELETE", signal });
+}
+export async function saveKnowledgeDocumentFromMessage(messageId: string, signal?: AbortSignal) {
+  return request<KnowledgeDocument>(`/knowledge/documents/from-message/${encodeURIComponent(messageId)}`, { method: "POST", signal });
+}
+export async function saveKnowledgeDocumentFromArtifact(artifactId: string, version: number, signal?: AbortSignal) {
+  return request<KnowledgeDocument>(`/knowledge/documents/from-artifact/${encodeURIComponent(artifactId)}`, {
+    method: "POST",
+    query: { version },
+    signal,
+  });
+}
+export async function batchTagKnowledgeDocuments(payload: KnowledgeBatchTagRequest, signal?: AbortSignal) {
+  return request<KnowledgeBatchTagResult>("/knowledge/documents/tag-batch", { method: "POST", body: payload, signal });
+}
+export async function listKnowledgeTagProposals(spaceId: string, signal?: AbortSignal) {
+  return request<KnowledgeTagProposal[]>("/knowledge/tag-proposals", { query: { spaceId }, signal });
+}
+export async function resolveKnowledgeTagProposal(proposalId: string, payload: { action: "approve" | "merge" | "reject"; expectedRevision: number; targetTagId?: string }, signal?: AbortSignal) {
+  return request<KnowledgeTagProposal>(`/knowledge/tag-proposals/${encodeURIComponent(proposalId)}/resolve`, { method: "POST", body: payload, signal });
+}
+export async function resolveKnowledgeTagProposals(payload: { action: "approve" | "reject"; proposalIds: string[] }, signal?: AbortSignal) {
+  return request<{ resolvedCount: number }>("/knowledge/tag-proposals/resolve-batch", { method: "POST", body: payload, signal });
+}
+export async function getKnowledgeGraph(spaceId?: string, signal?: AbortSignal) {
+  return request<KnowledgeGraphResponse>("/knowledge/graph", { query: { spaceId }, signal });
+}
+export async function getWebSourceContent(
+  conversationId: string,
+  runId: string,
+  sourceId: string,
+  offset = 0,
+  limit = 4_000,
+  signal?: AbortSignal,
+) {
+  return request<WebSourceContentPage>(
+    `/conversations/${encodeURIComponent(conversationId)}/runs/${encodeURIComponent(runId)}/sources/${encodeURIComponent(sourceId)}/content`,
+    { query: { offset, limit }, signal },
+  );
+}
+
+export async function getAnnouncementUnreadCount(signal?: AbortSignal) {
+  return request<NotificationUnreadCount>("/notifications/announcements/unread-count", { signal });
+}
+
+export async function markAnnouncementRead(announcementId: string, signal?: AbortSignal) {
+  return request<AnnouncementItem>(`/notifications/announcements/${encodeURIComponent(announcementId)}/read`, {
+    method: "POST",
+    signal,
+  });
+}
+
 export async function listSkillCatalog(
   filters: {
     query?: string;
@@ -1224,6 +1921,32 @@ export async function getExtensionVersion(versionId: string, signal?: AbortSigna
   return request<SkillVersion>(`/extension-versions/${encodeURIComponent(versionId)}`, { signal });
 }
 
+export async function compareSkillVersions(
+  skillId: string,
+  fromVersionId: string,
+  toVersionId: string,
+  signal?: AbortSignal,
+) {
+  return request<SkillVersionComparison>(`/skills/${encodeURIComponent(skillId)}/compare`, {
+    query: { from_version_id: fromVersionId, to_version_id: toVersionId },
+    signal,
+  });
+}
+
+export async function rollbackSkillVersion(
+  skillId: string,
+  targetVersionId: string,
+  expectedCurrentVersionId: string,
+  changeSummary: string,
+  signal?: AbortSignal,
+) {
+  return request<SkillVersion>(`/skills/${encodeURIComponent(skillId)}/rollbacks`, {
+    method: "POST",
+    body: { targetVersionId, expectedCurrentVersionId, changeSummary },
+    signal,
+  });
+}
+
 export async function checkoutSkillDraft(extensionId: string, signal?: AbortSignal) {
   return request<SkillDraft>(`/extensions/${encodeURIComponent(extensionId)}/draft`, {
     method: "POST",
@@ -1231,9 +1954,15 @@ export async function checkoutSkillDraft(extensionId: string, signal?: AbortSign
   });
 }
 
+export async function getSkillDraft(extensionId: string, signal?: AbortSignal) {
+  return request<SkillDraft>(`/extensions/${encodeURIComponent(extensionId)}/draft`, {
+    signal,
+  });
+}
+
 export async function updateExtensionMetadata(
   extensionId: string,
-  payload: { name: string; description: string },
+  payload: { name: string; description: string; tags?: string[] },
   signal?: AbortSignal,
 ) {
   return request<SkillExtension>(`/extensions/${encodeURIComponent(extensionId)}`, {
@@ -1329,8 +2058,9 @@ export async function removeSkillOwnership(
   );
 }
 
-export async function listExtensionInstallations(signal?: AbortSignal) {
+export async function listExtensionInstallations(projectId?: string, signal?: AbortSignal) {
   return request<ExtensionInstallation[]>("/extension-installations", {
+    query: { project_id: projectId },
     signal,
   });
 }
@@ -1396,6 +2126,64 @@ export async function setMcpInstallationEnabled(
     body: { enabled },
     signal,
   });
+}
+
+export async function updateExtensionInstallationProjects(
+  installationId: string,
+  projectIds: string[] | null,
+  signal?: AbortSignal,
+) {
+  return request<ExtensionInstallation>(`/extension-installations/${encodeURIComponent(installationId)}`, {
+    method: "PATCH",
+    body: { projectIds },
+    signal,
+  });
+}
+
+export async function setExtensionInstallationEnabled(
+  installationId: string,
+  enabled: boolean,
+  signal?: AbortSignal,
+) {
+  return request<ExtensionInstallation>(`/extension-installations/${encodeURIComponent(installationId)}`, {
+    method: "PATCH",
+    body: { enabled },
+    signal,
+  });
+}
+
+export async function updateMcpInstallationProjects(
+  installationId: string,
+  projectIds: string[] | null,
+  signal?: AbortSignal,
+) {
+  return request<McpInstallation>(`/mcp/installations/${encodeURIComponent(installationId)}`, {
+    method: "PATCH",
+    body: { projectIds },
+    signal,
+  });
+}
+
+export async function verifyMcpInstallation(
+  installationId: string,
+  signal?: AbortSignal,
+) {
+  return request<McpInstallation>(
+    `/mcp/installations/${encodeURIComponent(installationId)}/verify`,
+    { method: "POST", body: {}, signal },
+  );
+}
+
+export async function testMcpInstallationAnswer(
+  installationId: string,
+  projectId: string,
+  prompt: string,
+  signal?: AbortSignal,
+) {
+  return request<McpAnswerTestResult>(
+    `/mcp/installations/${encodeURIComponent(installationId)}/answer-test`,
+    { method: "POST", body: { projectId, prompt }, signal },
+  );
 }
 
 export async function uninstallMcp(installationId: string, signal?: AbortSignal) {
@@ -1508,6 +2296,25 @@ export async function createScheduledTask(
   });
 }
 
+export async function updateScheduledTask(
+  taskId: string,
+  payload: {
+    projectId: string;
+    name: string;
+    instructions: string;
+    scheduleKind: ScheduleKind;
+    scheduleConfig: Record<string, number>;
+    execution: CurrentSettings["execution"];
+  },
+  signal?: AbortSignal,
+) {
+  return request<ScheduledTask>(`/scheduled-tasks/${encodeURIComponent(taskId)}`, {
+    method: "PATCH",
+    body: payload,
+    signal,
+  });
+}
+
 export async function setScheduledTaskEnabled(taskId: string, enabled: boolean, signal?: AbortSignal) {
   return request<ScheduledTask>(`/scheduled-tasks/${encodeURIComponent(taskId)}/${enabled ? "enable" : "disable"}`, {
     method: "POST",
@@ -1550,7 +2357,7 @@ export async function createHelpItem(
 
 export async function updateHelpItem(
   itemId: string,
-  payload: { title: string; markdownContent: string; expectedRevision: number },
+  payload: { title: string; markdownContent: string; expectedRevision: number; parentId?: string | null },
   signal?: AbortSignal,
 ) {
   return request<HelpItem>(`/help/items/${encodeURIComponent(itemId)}`, {
@@ -1673,6 +2480,24 @@ export async function listAdminConversations(
 
 export async function getAdminConversation(conversationId: string, signal?: AbortSignal) {
   return request<AdminConversationDetail>(`/admin/conversations/${encodeURIComponent(conversationId)}`, { signal });
+}
+
+export async function exportAdminConversations(
+  filters: { query?: string; feedbackOnly?: boolean; limit?: number } = {},
+  signal?: AbortSignal,
+): Promise<ArtifactDownload> {
+  const response = await fetchApi("/admin/conversations/export.xlsx", {
+    query: {
+      query: filters.query,
+      feedback_only: filters.feedbackOnly || undefined,
+      limit: filters.limit,
+    },
+    signal,
+  });
+  return {
+    blob: await response.blob(),
+    fileName: downloadFileName(response, "lumina_conversations.xlsx"),
+  };
 }
 
 export async function listAdminAuditEvents(
@@ -1836,18 +2661,14 @@ export const api = {
     list: listNotifications,
     listAnnouncements,
     getUnreadCount: getNotificationUnreadCount,
+    getAnnouncementUnreadCount,
     markRead: markNotificationRead,
+    markAnnouncementRead,
     markAllRead: markAllNotificationsRead,
     delete: deleteNotification,
     deleteAll: deleteAllNotifications,
   },
   projects: { list: listProjects, create: createProject, update: updateProject, archive: archiveProject },
-  projectMemberships: {
-    list: listProjectMemberships,
-    add: addProjectMembership,
-    update: updateProjectMembership,
-    remove: removeProjectMembership,
-  },
   instructions: {
     getPersonal: getPersonalInstructions,
     updatePersonal: updatePersonalInstructions,
@@ -1861,27 +2682,8 @@ export const api = {
     updateOrganizationRevision: updateOrganizationInstructionRevision,
     updateOrganizationRevisionLabel: updateOrganizationInstructionRevisionLabel,
   },
-  projectFiles: {
-    list: listProjectFiles,
-    get: getProjectFile,
-    upload: uploadProjectFile,
-    uploadVersion: uploadProjectFileVersion,
-    move: moveProjectFile,
-    download: downloadProjectFile,
-    delete: deleteProjectFile,
-    listFolders: listProjectFolders,
-    createFolder: createProjectFolder,
-    moveFolder: moveProjectFolder,
-    deleteFolder: deleteProjectFolder,
-  },
-  help: {
-    list: listHelpItems,
-    create: createHelpItem,
-    update: updateHelpItem,
-    delete: deleteHelpItem,
-  },
   settings: { getCurrent: getCurrentSettings, updateCurrent: updateCurrentSettings },
-  providers: { list: listProviders, listModels: listProviderModels },
+  providers: { list: listProviders, listModels: listProviderModels, getCatalog: getProviderCatalog },
   adminProviders: {
     list: listAdminProviders,
     listModels: listAdminProviderModels,
@@ -1900,11 +2702,13 @@ export const api = {
     branch: branchConversation,
     export: exportConversation,
     getTurnSets: getConversationTurnSets,
+    getSourceContent: getWebSourceContent,
   },
-  runs: { start: startRun, action: sendRunAction, getSnapshot: getRunSnapshot, openStream: openRunEventStream },
+  runs: { start: startRun, action: sendRunAction, getSnapshot: getRunSnapshot, getSnapshots: getRunSnapshots, openStream: openRunEventStream },
   artifacts: {
     list: listArtifacts,
     get: getArtifact,
+    delete: deleteArtifact,
     createFromMessage: createMessageMarkdownArtifact,
     getVersion: getArtifactVersion,
     getDraft: getArtifactDraft,
@@ -1918,89 +2722,14 @@ export const api = {
     report: reportMessage,
   },
   attachments: { upload: uploadAttachment, uploadPastedText },
-  composer: { listSuggestions: listComposerSuggestions },
+  composer: {
+    listSuggestions: listComposerSuggestions,
+    enhancePrompt: enhanceComposerPrompt,
+  },
   sharing: {
     create: createConversationShare,
     get: getSharedConversation,
     downloadArtifact: downloadSharedArtifact,
     downloadAttachment: downloadSharedAttachment,
-  },
-  extensions: {
-    list: listExtensions,
-    listCatalog: listSkillCatalog,
-    setLike: setSkillCatalogLike,
-    syncRepository: syncRepositoryExtensions,
-    getRepositoryState: getRepositoryExtensionState,
-    listTrash: listTrashedExtensions,
-    getVersion: getExtensionVersion,
-    checkoutDraft: checkoutSkillDraft,
-    updateMetadata: updateExtensionMetadata,
-    delete: deleteExtension,
-    restore: restoreExtension,
-    createSkill,
-    updateDraft: updateSkillDraft,
-    saveVersion: saveSkillVersion,
-    addOwnership: addSkillOwnership,
-    removeOwnership: removeSkillOwnership,
-    listInstallations: listExtensionInstallations,
-    install: installExtensionVersion,
-    uninstall: uninstallExtension,
-  },
-  mcp: {
-    listCatalog: listMcpCatalog,
-    listInstallations: listMcpInstallations,
-    install: installMcp,
-    setEnabled: setMcpInstallationEnabled,
-    uninstall: uninstallMcp,
-    bindSecret: bindMcpSecret,
-    unbindSecret: unbindMcpSecret,
-  },
-  schedules: {
-    list: listScheduledTasks,
-    create: createScheduledTask,
-    setEnabled: setScheduledTaskEnabled,
-    delete: deleteScheduledTask,
-    runNow: runScheduledTaskNow,
-    listRuns: listScheduledRuns,
-  },
-  memories: {
-    list: listMemories,
-    update: updateMemory,
-    delete: deleteMemory,
-    getSettings: getMemorySettings,
-    updateSettings: updateMemorySettings,
-    optimize: optimizeMemories,
-  },
-  projectMemories: {
-    list: listProjectMemories,
-    getHistory: getProjectMemoryHistory,
-    listProposals: listProjectLearningProposals,
-    createProposal: createProjectLearningProposal,
-    reviewProposal: reviewProjectLearningProposal,
-    applyProposal: applyProjectLearningProposal,
-    rollbackProposal: rollbackProjectLearningProposal,
-  },
-  admin: {
-    listAnnouncements: listAdminAnnouncements,
-    createAnnouncement: createAdminAnnouncement,
-    updateAnnouncement: updateAdminAnnouncement,
-    deleteAnnouncement: deleteAdminAnnouncement,
-    getUsageStatistics: getAdminUsageStatistics,
-    getRunSafetySettings: getAdminRunSafetySettings,
-    updateRunSafetySettings: updateAdminRunSafetySettings,
-    emergencyStopAllRuns: emergencyStopAllAdminRuns,
-    listUsers: listAdminUsers,
-    createUser: createAdminUser,
-    updateUser: updateAdminUser,
-    resetPassword: resetAdminUserPassword,
-    listConversations: listAdminConversations,
-    getConversation: getAdminConversation,
-    listAuditEvents: listAdminAuditEvents,
-    getAuditTraffic: getAdminAuditTraffic,
-    listMcpDefinitions: listAdminMcpDefinitions,
-    createMcpDefinition: createAdminMcpDefinition,
-    createMcpRevision: createAdminMcpRevision,
-    approveMcpRevision: approveAdminMcpRevision,
-    setMcpStatus: setAdminMcpDefinitionStatus,
   },
 };

@@ -1,6 +1,6 @@
 """Single entrypoint: insane-search generic fetch chain.
 
-    from insane_search.engine import fetch
+    from engine import fetch
     result = fetch("https://example.com/path", success_selectors=["article"])
 
 Public contract:
@@ -41,6 +41,8 @@ REFERER_STRATEGIES = {
     "google_search": lambda _url: "https://www.google.com/",
     "none": lambda _url: "",
 }
+
+_PUBLIC_DOH_URL = "https://1.1.1.1/dns-query"  # NOTE-BIAS-OK: generic DNS recovery, not target-site logic
 
 
 # --- Attempt & result schema (Codex: "evidence schema first") ----------------
@@ -102,17 +104,39 @@ def _curl_probe(
     if referer:
         headers["Referer"] = referer
 
+    request_options = {
+        "impersonate": impersonate,
+        "headers": headers,
+        "timeout": timeout,
+        "allow_redirects": True,
+    }
     try:
-        resp = cffi_requests.get(
-            url,
-            impersonate=impersonate,
-            headers=headers,
-            timeout=timeout,
-            allow_redirects=True,
-        )
+        resp = cffi_requests.get(url, **request_options)
         return resp, None
     except Exception as e:
-        return None, f"{type(e).__name__}:{str(e)[:200]}"
+        if not _is_dns_failure(e):
+            return None, f"{type(e).__name__}:{str(e)[:200]}"
+        try:
+            from curl_cffi.const import CurlOpt
+
+            resp = cffi_requests.get(
+                url,
+                **request_options,
+                curl_options={CurlOpt.DOH_URL: _PUBLIC_DOH_URL},
+            )
+            return resp, None
+        except Exception as retry_error:
+            return None, f"{type(retry_error).__name__}:{str(retry_error)[:200]}"
+
+
+def _is_dns_failure(error: Exception) -> bool:
+    message = f"{type(error).__name__}: {error}".casefold()
+    return (
+        type(error).__name__.casefold() == "dnserror"
+        or getattr(error, "code", None) == 6
+        or "could not resolve host" in message
+        or "resolving timed out" in message
+    )
 
 
 def _run_attempt(
@@ -395,7 +419,7 @@ def _build_result(resp, attempt: Attempt, trace: list[Attempt], profile_used: Op
 
 # WAF profiles known to typically gate HTML but leave internal JSON APIs
 # (relatively) open. When these are detected and curl challenges pile up,
-# we surface R7 hint in the summary so the caller (or Claude) can branch
+# we surface R7 hint in the summary so the caller or Agent can branch
 # to an API-first route without waiting for full grid exhaustion.
 _R7_ELIGIBLE_PROFILES = frozenset({
     "akamai_bot_manager",
@@ -410,7 +434,7 @@ R7_HINT = (
     "💡 R7 API-first 권장: WAF가 HTML 경로를 차단 중. "
     "Playwright MCP 사용 → browser_navigate → browser_network_requests "
     "→ `/api/`·`/graphql`·`\\.json` 필터로 내부 엔드포인트 탐지 → "
-    "해당 URL을 `python3 -m engine <API_URL>`로 재호출. 대부분 API 레이어는 "
+    "해당 URL을 같은 Skill engine module로 재호출. 대부분 API 레이어는 "
     "WAF 방어가 얕아 curl_cffi만으로 수집됨."
 )
 

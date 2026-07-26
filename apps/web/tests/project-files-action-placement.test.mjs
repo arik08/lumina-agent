@@ -41,9 +41,11 @@ test("file workspace keeps refresh at the far right of the header", async () => 
 });
 
 test("file repository is an explorer and viewer with recursive folder upload", async () => {
-  const [view, resizer] = await Promise.all([
+  const [view, htmlPreview, resizer, styles] = await Promise.all([
     read("../src/components/ProjectFilesView.tsx"),
+    read("../src/components/ArtifactHtmlPreview.tsx"),
     read("../src/components/ResizableSplitPane.tsx"),
+    read("../src/styles.css"),
   ]);
 
   assert.match(view, /webkitGetAsEntry/);
@@ -52,11 +54,45 @@ test("file repository is an explorer and viewer with recursive folder upload", a
   assert.match(view, /file-workspace-explorer/);
   assert.match(view, /file-workspace-viewer/);
   assert.match(view, /renderFilePreview/);
-  assert.match(view, /sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock allow-downloads"/);
-  assert.doesNotMatch(view, /allow-same-origin/);
+  assert.match(view, /looksLikeStandaloneHtml/);
+  assert.match(view, /import \{ ArtifactHtmlPreview \} from "\.\/ArtifactHtmlPreview"/);
+  assert.match(view, /injectArtifactPreviewBridge\(text\)/);
+  assert.match(view, /<ArtifactHtmlPreview[\s\S]*?frameRef=\{htmlPreviewFrameRef\}[\s\S]*?source=\{preview\.source\}[\s\S]*?previewUrl=\{null\}/);
+  assert.match(view, /new URL\(bridgePath, window\.location\.origin\)\.href/);
+  assert.match(view, /setPreview\(\{ status: "ready", kind, source: text \}\)/);
+  assert.match(view, /kind: "text", text: text\.slice\(0, limit\)/);
+  assert.match(view, /import \{ MarkdownResponse \} from "\.\/ConversationTurn"/);
+  assert.match(view, /isMarkdownFile\(detail\)[\s\S]*?<MarkdownResponse text=\{preview\.text\} \/>/);
+  assert.match(view, /if \(kind === "text"\) \{[\s\S]*?looksLikeStandaloneHtml\(text\)[\s\S]*?kind: "html", source: injectArtifactPreviewBridge\(text\)/);
+  assert.match(view, /extension === "md" \|\| extension === "markdown" \|\| detail\.mimeType/);
+  assert.match(view, /isMarkdownFile\(detail\) && !markdownSource/);
+  assert.match(view, /aria-label=\{markdownSource \? "렌더링 보기" : "원문 보기"\}/);
+  assert.match(view, /aria-pressed=\{markdownSource\}/);
+  assert.match(view, /markdownSource \? <Eye size=\{14\} \/> : <Code2 size=\{14\} \/>/);
+  assert.match(view, /setMarkdownSource\(false\);[\s\S]*?\}, \[selectedId\]\);/);
+  assert.match(styles, /\.file-viewer-actions \.file-preview-mode-toggle\.is-active\s*\{[^}]*border-color:\s*var\(--cobalt\);[^}]*background:\s*var\(--cobalt-pale\);/s);
+  assert.match(view, /className="file-preview-markdown conversation-response-typography"/);
+  assert.match(styles, /\.conversation-response-typography\s*\{[^}]*font-size:\s*var\(--conversation-font-size\);[^}]*line-height:\s*1\.68;/s);
+  assert.match(htmlPreview, /sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock allow-downloads/);
+  assert.doesNotMatch(htmlPreview, /allow-same-origin/);
+  assert.doesNotMatch(view, /folder-reference-note/);
+  assert.doesNotMatch(view, /채팅에서 이 폴더를 선택하면/);
   assert.doesNotMatch(view, /새 버전 사유|버전 기록|uploadVersion|currentVersion/);
   assert.match(view, /storageKey="lumina:file-explorer-width"/);
   assert.match(resizer, /window\.localStorage\.setItem/);
+});
+
+test("file tree construction indexes folders instead of rescanning siblings", async () => {
+  const view = await read("../src/components/ProjectFilesView.tsx");
+  const buildFileTree = view.slice(
+    view.indexOf("function buildFileTree"),
+    view.indexOf("function parentPath"),
+  );
+
+  assert.match(buildFileTree, /const folderByPath = new Map<string, FileTreeNode>\(\)/);
+  assert.match(buildFileTree, /folderByPath\.get\(currentPath\)/);
+  assert.match(buildFileTree, /folderByPath\.set\(currentPath, folder\)/);
+  assert.doesNotMatch(buildFileTree, /children\.find\(/);
 });
 
 test("file detail keeps compact metadata immediately before download", async () => {
@@ -75,13 +111,26 @@ test("file detail keeps compact metadata immediately before download", async () 
 
   assert.ok(detailStart >= 0 && headerStart > detailStart && headerEnd > headerStart);
   assert.match(header, /<h2>\{detail\.displayName\}<\/h2>/);
-  assert.doesNotMatch(header, /detail\.logicalPath|detail\.mimeType/);
+  assert.doesNotMatch(header, /detail\.logicalPath|<span>\{detail\.mimeType\}<\/span>/);
   assert.match(header, /formatBytes\(detail\.size\)/);
   assert.match(header, /formatDate\(detail\.createdAt\)/);
   assert.ok(metadata >= 0 && metadata < download && download < remove);
   assert.equal((view.match(/className="file-viewer-meta"/g) ?? []).length, 1);
   assert.match(styles, /\.file-viewer-meta\s*\{[^}]*display:\s*inline-flex;[^}]*white-space:\s*nowrap;/s);
-  assert.match(styles, /\.file-viewer-actions button\s*\{[^}]*flex:\s*0 0 auto;[^}]*white-space:\s*nowrap;/s);
+  assert.match(styles, /\.file-viewer-actions :is\(button, a\)\s*\{[^}]*flex:\s*0 0 auto;[^}]*white-space:\s*nowrap;/s);
+});
+
+test("HTML project files can open their standalone preview in a new window", async () => {
+  const [view, api, styles] = await Promise.all([
+    read("../src/components/ProjectFilesView.tsx"),
+    read("../src/api.ts"),
+    read("../src/styles.css"),
+  ]);
+
+  assert.match(view, /import \{ ApiError, projectFilePreviewUrl \} from "\.\.\/api"/);
+  assert.match(view, /detail\.mimeType === "text\/html"[\s\S]*?href=\{projectFilePreviewUrl\(projectId, detail\.id\)\}[\s\S]*?target="_blank"[\s\S]*?rel="noopener noreferrer"[\s\S]*?새 창에서 열기/);
+  assert.match(api, /export function projectFilePreviewUrl\(projectId: string, fileId: string\)/);
+  assert.match(styles, /\.file-viewer-actions :is\(button, a\)\s*\{[^}]*text-decoration:\s*none;/s);
 });
 
 test("file explorer supports context actions and drag moves", async () => {
@@ -110,7 +159,14 @@ test("file explorer supports context actions and drag moves", async () => {
   assert.match(styles, /\.file-tree-context-menu button\s*\{[^}]*border:\s*0;/s);
   assert.match(styles, /\.file-tree-context-menu button\s*\{[^}]*background:\s*transparent;/s);
   assert.match(styles, /\.file-tree-context-menu button:hover\s*\{[^}]*background:\s*var\(--surface-soft\);/s);
+  assert.match(view, /themeDark:\s*Boolean\(event\.currentTarget\.closest\("\.theme-dark"\)\)/);
+  assert.match(view, /className=\{`file-tree-context-menu\$\{contextMenu\.themeDark \? " theme-dark" : ""\}`\}/);
+  assert.match(view, /x:\s*Math\.max\(8, Math\.min\(event\.clientX, window\.innerWidth - 190\)\)/);
+  assert.match(view, /y:\s*Math\.max\(8, Math\.min\(event\.clientY, window\.innerHeight - 150\)\)/);
+  assert.match(styles, /\.file-tree-context-menu\.theme-dark,[\s\S]*?--menu-surface:\s*#121417;/);
   assert.match(styles, /\.file-tree-row\.is-drop-target/);
+  assert.match(styles, /\.file-tree-row > span:last-child\s*\{[^}]*font-weight:\s*400;/s);
+  assert.match(styles, /\.file-tree-row:is\(\.is-selected, \.is-bulk-selected\) > span:last-child\s*\{[^}]*font-weight:\s*640;/s);
   assert.match(styles, /\.file-explorer-heading-actions/);
   assert.match(styles, /\.file-explorer-heading-actions button\s*\{[^}]*background:\s*transparent;/s);
 });

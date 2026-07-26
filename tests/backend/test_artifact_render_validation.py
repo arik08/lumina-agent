@@ -329,6 +329,52 @@ def test_unsafe_openxml_hyperlink_is_rejected_before_render() -> None:
     assert backend.commands == []
 
 
+def test_openxml_relationship_entities_are_rejected_before_render() -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    assert isinstance(sheet, Worksheet)
+    sheet["A1"] = "linked"
+    sheet["A1"].hyperlink = "https://example.com/report"
+    source = BytesIO()
+    workbook.save(source)
+    workbook.close()
+
+    relationship_path = "xl/worksheets/_rels/sheet1.xml.rels"
+    entity_relationships = b"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE Relationships [
+  <!ENTITY target "https://example.com/report">
+]>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="&target;" TargetMode="External"/>
+</Relationships>
+"""
+    payload = BytesIO()
+    replaced = False
+    with (
+        ZipFile(BytesIO(source.getvalue())) as source_package,
+        ZipFile(payload, "w", ZIP_DEFLATED) as target_package,
+    ):
+        for entry in source_package.infolist():
+            content = source_package.read(entry)
+            if entry.filename == relationship_path:
+                content = entity_relationships
+                replaced = True
+            target_package.writestr(entry, content)
+    assert replaced
+    backend = _FakeBackend(office_pdf=b"not used")
+
+    status, validation = validate_artifact_content(
+        kind="xlsx",
+        mime_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        content=payload.getvalue(),
+        render_backend=backend,
+    )
+
+    assert status == "failed"
+    assert "invalid_openxml_relationships" in validation["errors"]
+    assert backend.commands == []
+
+
 def test_macro_enabled_openxml_payload_is_rejected_before_renderer_runs() -> None:
     report = generate_report("Create a DOCX report", _report_arguments("docx"))
     source = BytesIO()

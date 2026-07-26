@@ -660,11 +660,6 @@ def select_relevant_memories(
     query_terms = _memory_terms(query)
     ranked: list[tuple[int, int, float, str, UserMemory]] = []
     for memory in candidates:
-        always_relevant = memory.category in {
-            "communication_preference",
-            "user_identity",
-            "user_role",
-        }
         memory_terms = _memory_terms(
             " ".join(
                 (
@@ -676,9 +671,9 @@ def select_relevant_memories(
             )
         )
         overlap = len(query_terms & memory_terms)
-        if not always_relevant and overlap == 0:
+        if overlap == 0:
             continue
-        score = (1_000 if always_relevant else 0) + overlap * 50
+        score = overlap * 50
         ranked.append(
             (score, memory.evidence_count, memory.confidence, memory.id, memory)
         )

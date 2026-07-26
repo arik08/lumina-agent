@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from ..api.errors import ApiProblem
 from ..authorization import require_admin, require_project
+from ..extensions.agent_skill_spec import skill_resource_paths
 from ..models import (
     Extension,
     ExtensionVersion,
@@ -22,7 +23,11 @@ from ..models import (
     User,
     utc_now,
 )
-from .policy import APPROVABLE_PRIVATE_NETWORKS, SECRET_NAME_PATTERN
+from .policy import (
+    APPROVABLE_PRIVATE_NETWORKS,
+    MAX_MCP_TIMEOUT_SECONDS,
+    SECRET_NAME_PATTERN,
+)
 
 
 ALLOWED_STDIO_EXECUTABLES = frozenset(
@@ -191,9 +196,11 @@ def validate_configuration(
         configuration.get("required_secret_names", [])
     )
     timeout_seconds = int(configuration.get("timeout_seconds", 30))
-    if not 1 <= timeout_seconds <= 300:
+    if not 1 <= timeout_seconds <= MAX_MCP_TIMEOUT_SECONDS:
         raise ApiProblem(
-            422, "mcp_timeout_invalid", "MCP timeout은 1초에서 300초 사이여야 합니다."
+            422,
+            "mcp_timeout_invalid",
+            f"MCP timeout은 1초에서 {MAX_MCP_TIMEOUT_SECONDS}초 사이여야 합니다.",
         )
 
     if transport == "stdio":
@@ -684,7 +691,14 @@ def definition_payload(
     *,
     include_all_revisions: bool,
     include_configuration: bool,
+    skill_wrappers: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    wrappers = (
+        skill_wrappers
+        if skill_wrappers is not None
+        else mcp_skill_wrappers(db, organization_id=definition.organization_id)
+    )
+    skill_wrapper = wrappers.get(definition.slug)
     statement = select(McpConfigurationRevision).where(
         McpConfigurationRevision.definition_id == definition.id
     )
@@ -701,6 +715,10 @@ def definition_payload(
         "name": definition.name,
         "description": definition.description,
         "status": definition.status,
+        "skillWrapper": {
+            "wrapped": skill_wrapper is not None,
+            "name": skill_wrapper["name"] if skill_wrapper is not None else None,
+        },
         "currentRevisionId": definition.current_revision_id,
         "revisions": [
             revision_payload(revision, include_configuration=include_configuration)
@@ -849,13 +867,22 @@ def list_installations(
             (McpInstallation.scope_type == "project")
             & (McpInstallation.scope_id == project_id)
         )
-    return list(
+    installations = list(
         db.scalars(
             select(McpInstallation)
             .where(McpInstallation.removed_at.is_(None), or_(*filters))
             .order_by(McpInstallation.installed_at.desc(), McpInstallation.id)
         )
     )
+    if project_id is None:
+        return installations
+    return [
+        installation
+        for installation in installations
+        if installation.scope_type != "user"
+        or installation.project_ids_json is None
+        or project_id in installation.project_ids_json
+    ]
 
 
 def require_installation(
@@ -880,13 +907,33 @@ def require_installation(
     return installation
 
 
-def set_installation_enabled(
-    db: Session, *, user: User, installation_id: str, enabled: bool
+def update_installation(
+    db: Session,
+    *,
+    user: User,
+    installation_id: str,
+    enabled: bool | None,
+    project_ids: list[str] | None,
+    update_project_ids: bool,
 ) -> McpInstallation:
     installation = require_installation(
         db, user=user, installation_id=installation_id, write=True
     )
-    installation.enabled = enabled
+    if enabled is not None:
+        installation.enabled = enabled
+    if update_project_ids:
+        if installation.scope_type != "user":
+            raise ApiProblem(
+                422,
+                "mcp_installation_project_scope_unsupported",
+                "사용자 범위 MCP 설치만 프로젝트별로 설정할 수 있습니다.",
+            )
+        normalized_project_ids = list(dict.fromkeys(project_ids or []))
+        for project_id in normalized_project_ids:
+            require_project(db, user, project_id)
+        installation.project_ids_json = (
+            normalized_project_ids if project_ids is not None else None
+        )
     db.flush()
     return installation
 
@@ -1033,17 +1080,17 @@ def installation_payload(
         "scopeType": installation.scope_type,
         "scopeId": installation.scope_id,
         "enabled": installation.enabled,
+        "projectIds": installation.project_ids_json,
         "toolAllowlist": installation.tool_allowlist_json,
         "boundSecrets": secret_slots,
         "secretResolutionStatus": secret_resolution_status,
         "supportedSecretSchemes": ["env"],
         "secretBindingRole": "admin",
-        "ready": (
-            definition.status == "approved"
-            and revision.approval_status == "approved"
-            and installation.enabled
-            and secret_resolution_status in {"ready", "not_required"}
-        ),
+        # Installation and Secret configuration are prerequisites, not proof that
+        # the MCP process can initialize and return the approved Tool schemas.
+        # The explicit runtime probe is the only path that may return ready=True.
+        "ready": False,
+        "connectionErrorCode": None,
         "installedAt": installation.installed_at,
     }
 
@@ -1052,7 +1099,7 @@ def resolve_mcp_snapshot(
     db: Session, *, user: User, project_id: str
 ) -> list[dict[str, Any]]:
     require_project(db, user, project_id)
-    wrappers = _mcp_skill_wrappers(db, organization_id=user.organization_id)
+    wrappers = mcp_skill_wrappers(db, organization_id=user.organization_id)
     rows = list(
         db.execute(
             select(McpInstallation, McpConfigurationRevision, McpDefinition)
@@ -1080,6 +1127,12 @@ def resolve_mcp_snapshot(
     resolved: dict[str, dict[str, Any]] = {}
     priorities: dict[str, int] = {}
     for installation, revision, definition in rows:
+        if (
+            installation.scope_type == "user"
+            and installation.project_ids_json is not None
+            and project_id not in installation.project_ids_json
+        ):
+            continue
         bindings = {
             binding.secret_name: binding.secret_ref
             for binding in db.scalars(
@@ -1133,7 +1186,7 @@ def resolve_mcp_snapshot(
     )
 
 
-def _mcp_skill_wrappers(
+def mcp_skill_wrappers(
     db: Session, *, organization_id: str
 ) -> dict[str, dict[str, Any]]:
     wrappers: dict[str, dict[str, Any]] = {}
@@ -1166,9 +1219,14 @@ def _mcp_skill_wrappers(
             continue
         wrappers[mcp_slug] = {
             "extension_id": extension.id,
+            "slug": extension.slug,
             "name": extension.name,
             "digest": version.package_digest,
+            "source": "version",
+            "version_id": version.id,
+            "version": version.version_number,
             "instructions": instructions,
+            "resources": skill_resource_paths(version.package_json),
         }
     return wrappers
 
@@ -1256,7 +1314,7 @@ __all__ = [
     "list_installations",
     "resolve_mcp_snapshot",
     "set_definition_status",
-    "set_installation_enabled",
+    "update_installation",
     "unbind_secret_reference",
     "uninstall",
     "validate_configuration",

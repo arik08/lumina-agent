@@ -6,18 +6,22 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy import func, select
+from sqlalchemy import case, func, literal, or_, select
 from sqlalchemy.orm import Session
 
+from ...agent_frontends import agent_frontend_payload
+from ...artifact_citations import run_artifact_citation_texts
 from ...audit import record_audit
 from ...authorization import require_conversation
+from ...citations import resolve_inline_citations
+from ...config import Settings, get_settings
 from ...conversations.service import (
     branch_conversation,
+    conversation_summaries,
     conversation_summary,
     create_conversation,
     list_conversations,
     move_conversation,
-    recent_messages,
     search_conversation_content,
     soft_delete_conversation,
     update_conversation,
@@ -33,7 +37,8 @@ from ...models import (
     ToolExecution,
     User,
 )
-from ...runs.service import message_response, run_snapshot
+from ...runs.service import message_response, preload_message_attachments, run_snapshots
+from ...storage import ManagedLocalStorage
 from ..dependencies import AuthContext, get_current_user, require_csrf
 from ..errors import ApiProblem
 from ..schemas import (
@@ -47,8 +52,111 @@ from ..schemas import (
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
 
-def _summary(db: Session, conversation) -> dict[str, object]:
-    result = conversation_summary(db, conversation)
+def _usage_number(usage: dict[str, object], key: str) -> float:
+    value = usage.get(key)
+    return (
+        float(value)
+        if isinstance(value, int | float) and not isinstance(value, bool)
+        else 0.0
+    )
+
+
+def _add_usage(
+    left: dict[str, object] | None,
+    right: dict[str, object],
+) -> dict[str, object]:
+    input_tokens = int(_usage_number(right, "input_tokens"))
+    cached_tokens = int(_usage_number(right, "cached_input_tokens"))
+    normalized_right: dict[str, object] = {
+        **right,
+        "input_tokens": input_tokens,
+        "cached_input_tokens": cached_tokens,
+        "cache_write_tokens": int(_usage_number(right, "cache_write_tokens")),
+        "uncached_input_tokens": int(
+            _usage_number(right, "uncached_input_tokens")
+            if "uncached_input_tokens" in right
+            else max(0, input_tokens - cached_tokens)
+        ),
+        "output_tokens": int(_usage_number(right, "output_tokens")),
+    }
+    if left is None:
+        return normalized_right
+    result = {
+        **normalized_right,
+        **{
+            key: int(_usage_number(left, key))
+            + int(_usage_number(normalized_right, key))
+            for key in (
+                "input_tokens",
+                "cached_input_tokens",
+                "cache_write_tokens",
+                "uncached_input_tokens",
+                "output_tokens",
+            )
+        },
+    }
+    if "cost_usd" in left and "cost_usd" in normalized_right:
+        result["cost_usd"] = _usage_number(left, "cost_usd") + _usage_number(
+            normalized_right, "cost_usd"
+        )
+    else:
+        result.pop("cost_usd", None)
+    left_breakdown = left.get("estimated_cost_breakdown_usd")
+    right_breakdown = normalized_right.get("estimated_cost_breakdown_usd")
+    if isinstance(left_breakdown, dict) and isinstance(right_breakdown, dict):
+        result["estimated_cost_breakdown_usd"] = {
+            key: _usage_number(left_breakdown, key)
+            + _usage_number(right_breakdown, key)
+            for key in ("cached_input", "uncached_input", "input", "output", "total")
+        }
+    else:
+        result.pop("estimated_cost_breakdown_usd", None)
+    result["cost_basis"] = (
+        normalized_right.get("cost_basis")
+        if left.get("cost_basis") == normalized_right.get("cost_basis")
+        else "mixed"
+    )
+    return result
+
+
+def _message_response_with_artifact_citations(
+    message: Message,
+    db: Session,
+    artifact_texts_by_run: dict[str, tuple[str, ...]],
+    attachments_by_message: dict[str, list[dict[str, object]]] | None = None,
+) -> dict[str, object]:
+    payload = message_response(
+        message,
+        db,
+        preloaded_attachments=(attachments_by_message or {}).get(message.id),
+    )
+    metadata = message.metadata_json or {}
+    sources = metadata.get("sources")
+    if (
+        message.role == "assistant"
+        and message.run_id is not None
+        and isinstance(sources, list)
+        and sources
+        and not metadata.get("citations")
+        and artifact_texts_by_run.get(message.run_id)
+    ):
+        payload["metadata"] = {
+            **metadata,
+            **resolve_inline_citations(
+                message.canonical_text,
+                sources,
+                reference_texts=artifact_texts_by_run[message.run_id],
+            ),
+        }
+    return payload
+
+
+def _summary(
+    db: Session,
+    conversation,
+    result: dict[str, object] | None = None,
+) -> dict[str, object]:
+    result = result or conversation_summary(db, conversation)
     result["revision"] = str(result["revision"])
     return {
         "id": result["id"],
@@ -61,6 +169,9 @@ def _summary(db: Session, conversation) -> dict[str, object]:
         "lastSequence": result["last_sequence"],
         "parentConversationId": conversation.parent_conversation_id,
         "branchMessageId": conversation.branch_message_id,
+        "agent": agent_frontend_payload(
+            conversation.agent_id, conversation.agent_version
+        ),
         "revision": result["revision"],
         "createdAt": result["created_at"],
         "updatedAt": result["updated_at"],
@@ -78,8 +189,12 @@ def get_conversations(
     conversations, next_cursor = list_conversations(
         db, user, project_id=project_id, cursor=cursor, limit=limit
     )
+    summaries = conversation_summaries(db, conversations)
     return {
-        "items": [_summary(db, conversation) for conversation in conversations],
+        "items": [
+            _summary(db, conversation, summaries[conversation.id])
+            for conversation in conversations
+        ],
         "nextCursor": next_cursor,
         "hasMore": next_cursor is not None,
     }
@@ -102,8 +217,12 @@ def search_conversations(
         cursor=cursor,
         limit=limit,
     )
+    summaries = conversation_summaries(db, conversations)
     return {
-        "items": [_summary(db, conversation) for conversation in conversations],
+        "items": [
+            _summary(db, conversation, summaries[conversation.id])
+            for conversation in conversations
+        ],
         "nextCursor": next_cursor,
         "hasMore": next_cursor is not None,
     }
@@ -124,40 +243,52 @@ def search_conversation_messages(
         project_id=project_id,
         limit=limit,
     )
+    conversation_ids = [conversation.id for conversation in conversations]
+    matched_by_conversation: dict[str, list[Message]] = defaultdict(list)
+    if tokens and conversation_ids:
+        predicate = None
+        for token in tokens:
+            token_predicate = func.lower(Message.canonical_text).contains(token)
+            predicate = (
+                token_predicate if predicate is None else predicate & token_predicate
+            )
+        assert predicate is not None
+        ranked_matches = (
+            select(
+                Message.id.label("message_id"),
+                func.row_number()
+                .over(
+                    partition_by=Message.conversation_id,
+                    order_by=(Message.created_at.desc(), Message.id),
+                )
+                .label("rank"),
+            )
+            .where(
+                Message.conversation_id.in_(conversation_ids),
+                predicate,
+            )
+            .subquery()
+        )
+        for message in db.scalars(
+            select(Message)
+            .join(ranked_matches, ranked_matches.c.message_id == Message.id)
+            .where(ranked_matches.c.rank <= 3)
+            .order_by(Message.conversation_id, Message.created_at.desc(), Message.id)
+        ):
+            matched_by_conversation[message.conversation_id].append(message)
+    summaries = conversation_summaries(db, conversations)
     items: list[dict[str, object]] = []
     for conversation in conversations:
-        message_matches = []
-        if tokens:
-            predicate = None
-            for token in tokens:
-                token_predicate = func.lower(Message.canonical_text).contains(token)
-                predicate = (
-                    token_predicate
-                    if predicate is None
-                    else predicate & token_predicate
-                )
-            assert predicate is not None
-            matched_messages = list(
-                db.scalars(
-                    select(Message)
-                    .where(
-                        Message.conversation_id == conversation.id,
-                        predicate,
-                    )
-                    .order_by(Message.created_at.desc(), Message.id)
-                    .limit(3)
-                )
-            )
-            message_matches = [
-                {
-                    "messageId": message.id,
-                    "role": message.role,
-                    "snippet": _search_snippet(message.canonical_text, tokens),
-                    "createdAt": message.created_at,
-                }
-                for message in matched_messages
-            ]
-        item = _summary(db, conversation)
+        message_matches = [
+            {
+                "messageId": message.id,
+                "role": message.role,
+                "snippet": _search_snippet(message.canonical_text, tokens),
+                "createdAt": message.created_at,
+            }
+            for message in matched_by_conversation[conversation.id]
+        ]
+        item = _summary(db, conversation, summaries[conversation.id])
         item["matches"] = message_matches
         items.append(item)
     return {"items": items, "queryTokens": list(tokens)}
@@ -194,11 +325,14 @@ def _parse_revision(if_match: str | None) -> int | None:
         return None
     value = if_match.strip().removeprefix("W/").strip('"')
     try:
-        return int(value)
+        revision = int(value)
     except ValueError as exc:
         raise ApiProblem(
             400, "invalid_revision", "대화 revision이 올바르지 않습니다."
         ) from exc
+    if revision < 1:
+        raise ApiProblem(400, "invalid_revision", "대화 revision이 올바르지 않습니다.")
+    return revision
 
 
 @router.patch("/{conversation_id}")
@@ -209,11 +343,16 @@ def patch_conversation(
     context: AuthContext = Depends(require_csrf),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
+    header_revision = _parse_revision(if_match)
     conversation = update_conversation(
         db,
         context.user,
         conversation_id,
-        expected_revision=_parse_revision(if_match) or payload.expected_revision,
+        expected_revision=(
+            header_revision
+            if header_revision is not None
+            else payload.expected_revision
+        ),
         title=payload.title,
         is_favorite=payload.is_favorite,
         is_liked=payload.is_liked,
@@ -297,44 +436,240 @@ def get_turn_sets(
     before_cursor: str | None = None,
     limit_turn_sets: int = Query(default=3, ge=1, le=20),
     user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     conversation = require_conversation(db, user, conversation_id)
-    messages = recent_messages(db, conversation.id, limit=400)
-    run_order: list[str] = []
+    total_question_count = (
+        db.scalar(
+            select(func.count(Message.id)).where(
+                Message.conversation_id == conversation.id,
+                Message.role == "user",
+                func.trim(Message.canonical_text) != "",
+            )
+        )
+        or 0
+    )
+    branch_run_id = Message.metadata_json["branchSourceRunId"].as_string()
+    turn_key = case(
+        (Message.run_id.is_not(None), Message.run_id),
+        (
+            branch_run_id.is_not(None) & (branch_run_id != ""),
+            literal("branch:") + branch_run_id,
+        ),
+        else_=literal("message:") + Message.id,
+    )
+    grouped_turns = (
+        select(
+            turn_key.label("turn_key"),
+            func.min(Message.created_at).label("first_created_at"),
+            func.min(Message.id).label("first_message_id"),
+        )
+        .where(Message.conversation_id == conversation.id)
+        .group_by(turn_key)
+        .subquery()
+    )
+    page_query = select(
+        grouped_turns.c.turn_key,
+        grouped_turns.c.first_created_at,
+        grouped_turns.c.first_message_id,
+    )
+    if before_cursor is not None:
+        cursor_row = db.execute(
+            select(
+                grouped_turns.c.first_created_at,
+                grouped_turns.c.first_message_id,
+            ).where(grouped_turns.c.turn_key == before_cursor)
+        ).one_or_none()
+        if cursor_row is None:
+            raise ApiProblem(
+                400,
+                "invalid_turn_cursor",
+                "대화 기록 cursor가 올바르지 않습니다.",
+            )
+        cursor_created_at, cursor_message_id = cursor_row
+        page_query = page_query.where(
+            or_(
+                grouped_turns.c.first_created_at < cursor_created_at,
+                (
+                    (grouped_turns.c.first_created_at == cursor_created_at)
+                    & (grouped_turns.c.first_message_id < cursor_message_id)
+                ),
+            )
+        )
+    page_rows = list(
+        db.execute(
+            page_query.order_by(
+                grouped_turns.c.first_created_at.desc(),
+                grouped_turns.c.first_message_id.desc(),
+            ).limit(limit_turn_sets + 1)
+        )
+    )
+    has_more = len(page_rows) > limit_turn_sets
+    selected_rows = list(reversed(page_rows[:limit_turn_sets]))
+    selected_keys = [str(row.turn_key) for row in selected_rows]
+    usage_before_page: dict[str, object] | None = None
+    if selected_rows:
+        oldest = selected_rows[0]
+        older_turn = or_(
+            grouped_turns.c.first_created_at < oldest.first_created_at,
+            (
+                (grouped_turns.c.first_created_at == oldest.first_created_at)
+                & (grouped_turns.c.first_message_id < oldest.first_message_id)
+            ),
+        )
+        input_tokens = Run.usage_json["input_tokens"].as_integer()
+        cached_tokens = Run.usage_json["cached_input_tokens"].as_integer()
+        cache_write_tokens = Run.usage_json["cache_write_tokens"].as_integer()
+        uncached_tokens = Run.usage_json["uncached_input_tokens"].as_integer()
+        output_tokens = Run.usage_json["output_tokens"].as_integer()
+        cost_usd = Run.usage_json["cost_usd"].as_float()
+        cost_basis = Run.usage_json["cost_basis"].as_string()
+        breakdown = Run.usage_json["estimated_cost_breakdown_usd"]
+        aggregate = db.execute(
+            select(
+                func.count(Run.id),
+                func.sum(func.coalesce(input_tokens, 0)),
+                func.sum(func.coalesce(cached_tokens, 0)),
+                func.sum(func.coalesce(cache_write_tokens, 0)),
+                func.sum(
+                    func.coalesce(
+                        uncached_tokens,
+                        func.coalesce(input_tokens, 0)
+                        - func.coalesce(cached_tokens, 0),
+                    )
+                ),
+                func.sum(func.coalesce(output_tokens, 0)),
+                func.count(cost_usd),
+                func.sum(cost_usd),
+                func.min(cost_basis),
+                func.max(cost_basis),
+                *[
+                    func.sum(func.coalesce(breakdown[key].as_float(), 0.0))
+                    for key in (
+                        "cached_input",
+                        "uncached_input",
+                        "input",
+                        "output",
+                        "total",
+                    )
+                ],
+                func.count(breakdown["total"].as_float()),
+            )
+            .select_from(Run)
+            .join(grouped_turns, grouped_turns.c.turn_key == Run.id)
+            .where(
+                Run.conversation_id == conversation.id,
+                older_turn,
+            )
+        ).one()
+        (
+            usage_count,
+            input_total,
+            cached_total,
+            cache_write_total,
+            uncached_total,
+            output_total,
+            cost_count,
+            cost_total,
+            basis_min,
+            basis_max,
+            cached_cost,
+            uncached_cost,
+            input_cost,
+            output_cost,
+            breakdown_total,
+            breakdown_count,
+        ) = aggregate
+        if usage_count:
+            usage_before_page = {
+                "input_tokens": int(input_total or 0),
+                "cached_input_tokens": int(cached_total or 0),
+                "cache_write_tokens": int(cache_write_total or 0),
+                "uncached_input_tokens": max(0, int(uncached_total or 0)),
+                "output_tokens": int(output_total or 0),
+                "cost_basis": basis_min if basis_min == basis_max else "mixed",
+            }
+            if cost_count == usage_count:
+                usage_before_page["cost_usd"] = float(cost_total or 0.0)
+            if breakdown_count == usage_count:
+                usage_before_page["estimated_cost_breakdown_usd"] = {
+                    "cached_input": float(cached_cost or 0.0),
+                    "uncached_input": float(uncached_cost or 0.0),
+                    "input": float(input_cost or 0.0),
+                    "output": float(output_cost or 0.0),
+                    "total": float(breakdown_total or 0.0),
+                }
+    selected_messages = (
+        list(
+            db.scalars(
+                select(Message)
+                .where(
+                    Message.conversation_id == conversation.id,
+                    turn_key.in_(selected_keys),
+                )
+                .order_by(Message.created_at, Message.id)
+            )
+        )
+        if selected_keys
+        else []
+    )
     grouped: dict[str, list[Message]] = defaultdict(list)
-    for message in messages:
+    for message in selected_messages:
         branch_source_run_id = (message.metadata_json or {}).get("branchSourceRunId")
         key = message.run_id or (
             f"branch:{branch_source_run_id}"
             if isinstance(branch_source_run_id, str) and branch_source_run_id
             else f"message:{message.id}"
         )
-        if key not in grouped:
-            run_order.append(key)
         grouped[key].append(message)
-    end = len(run_order)
-    if before_cursor is not None:
-        try:
-            end = run_order.index(before_cursor)
-        except ValueError as exc:
-            raise ApiProblem(
-                400,
-                "invalid_turn_cursor",
-                "대화 기록 cursor가 올바르지 않습니다.",
-            ) from exc
-    start = max(0, end - limit_turn_sets)
-    selected_keys = run_order[start:end]
+    legacy_citation_run_ids = [
+        message.run_id
+        for message in selected_messages
+        if message.role == "assistant"
+        and message.run_id is not None
+        and isinstance((message.metadata_json or {}).get("sources"), list)
+        and (message.metadata_json or {}).get("sources")
+        and not (message.metadata_json or {}).get("citations")
+    ]
+    artifact_texts_by_run = (
+        run_artifact_citation_texts(
+            db, ManagedLocalStorage(settings.artifacts_dir), legacy_citation_run_ids
+        )
+        if settings.artifacts_dir is not None and legacy_citation_run_ids
+        else {}
+    )
+    attachments_by_message = preload_message_attachments(db, selected_messages)
+    selected_run_ids = [
+        key for key in selected_keys if not key.startswith(("message:", "branch:"))
+    ]
+    selected_runs = (
+        list(db.scalars(select(Run).where(Run.id.in_(selected_run_ids))))
+        if selected_run_ids
+        else []
+    )
+    runs_by_id = {run.id: run for run in selected_runs}
+    snapshots_by_run = {
+        snapshot["runId"]: snapshot for snapshot in run_snapshots(db, selected_runs)
+    }
     turn_sets: list[dict[str, object]] = []
     for key in selected_keys:
-        run = db.get(Run, key) if not key.startswith(("message:", "branch:")) else None
-        snapshot = run_snapshot(db, run) if run else None
+        run = runs_by_id.get(key)
+        snapshot = snapshots_by_run.get(key)
         group = grouped[key]
         turn_sets.append(
             {
                 "id": key,
                 "runId": run.id if run else None,
-                "messages": [message_response(message, db) for message in group],
+                "messages": [
+                    _message_response_with_artifact_citations(
+                        message,
+                        db,
+                        artifact_texts_by_run,
+                        attachments_by_message,
+                    )
+                    for message in group
+                ],
                 "plan": snapshot["plan"] if snapshot else None,
                 "toolExecutions": snapshot["toolExecutions"] if snapshot else [],
                 "artifacts": snapshot["artifacts"] if snapshot else [],
@@ -342,12 +677,66 @@ def get_turn_sets(
                 "completedAt": run.finished_at if run else group[-1].updated_at,
             }
         )
-    has_more = start > 0
     return {
         "turnSets": turn_sets,
+        "runSnapshots": list(snapshots_by_run.values()),
         "previousCursor": selected_keys[0] if has_more and selected_keys else None,
         "hasMoreBefore": has_more,
+        "totalQuestionCount": total_question_count,
+        "usageBeforePage": usage_before_page or {},
     }
+
+
+@router.get("/{conversation_id}/runs/{run_id}/sources/{source_id}/content")
+def get_web_source_content(
+    conversation_id: str,
+    run_id: str,
+    source_id: str,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=4_000, ge=500, le=20_000),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    conversation = require_conversation(db, user, conversation_id)
+    run = db.get(Run, run_id)
+    if run is None or run.conversation_id != conversation.id:
+        raise ApiProblem(404, "source_not_found", "출처 본문을 찾을 수 없습니다.")
+
+    tools = db.scalars(
+        select(ToolExecution).where(
+            ToolExecution.run_id == run.id,
+            ToolExecution.tool_name == "web_fetch",
+            ToolExecution.status == "completed",
+        )
+    )
+    for tool in tools:
+        result = tool.result_json if isinstance(tool.result_json, dict) else {}
+        source = result.get("source")
+        text = result.get("text")
+        if (
+            not isinstance(source, dict)
+            or source.get("sourceId") != source_id
+            or not isinstance(text, str)
+        ):
+            continue
+        page = text[offset : offset + limit]
+        next_offset = offset + len(page)
+        raw_llm_chars = result.get("providerContextIncludedChars")
+        llm_chars_recorded = isinstance(raw_llm_chars, int) and not isinstance(
+            raw_llm_chars, bool
+        )
+        llm_chars = raw_llm_chars if llm_chars_recorded else min(len(text), 15_000)
+        return {
+            "sourceId": source_id,
+            "content": page,
+            "offset": offset,
+            "nextOffset": next_offset,
+            "hasMore": next_offset < len(text),
+            "totalChars": len(text),
+            "llmTextChars": llm_chars,
+            "llmTextCharsEstimated": not llm_chars_recorded,
+        }
+    raise ApiProblem(404, "source_not_found", "출처 본문을 찾을 수 없습니다.")
 
 
 @router.get("/{conversation_id}/export")

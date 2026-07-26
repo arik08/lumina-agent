@@ -65,9 +65,7 @@ def _applied_skill_ids(snapshot: dict[str, Any]) -> set[str]:
         and item.get("reference_id")
     }
     auto_ids = {
-        str(item)
-        for item in snapshot.get("auto_selected_skill_ids", [])
-        if str(item)
+        str(item) for item in snapshot.get("auto_selected_skill_ids", []) if str(item)
     }
     return explicit_ids | auto_ids
 
@@ -145,7 +143,9 @@ def list_skill_catalog(
             .group_by(ExtensionInstallation.extension_id)
         )
     }
-    like_keys = {_like_key(extension_id): extension_id for extension_id in extension_ids}
+    like_keys = {
+        _like_key(extension_id): extension_id for extension_id in extension_ids
+    }
     like_counts = {
         like_keys[str(key)]: int(count)
         for key, count in db.execute(
@@ -191,7 +191,11 @@ def list_skill_catalog(
             None,
         )
         manifest = latest_version.manifest_json if latest_version is not None else {}
-        tags = _manifest_tags(manifest)
+        tags = (
+            _manifest_tags({"tags": extension.tags_json})
+            if extension.tags_json is not None
+            else _manifest_tags(manifest)
+        )
         category_value = _manifest_category(manifest)
         installation = user_installations.get(extension.id)
         records.append(

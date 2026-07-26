@@ -4,29 +4,39 @@ import test from "node:test";
 
 const viewPath = new URL("../src/components/MarketplaceView.tsx", import.meta.url);
 const apiPath = new URL("../src/api.ts", import.meta.url);
+const featureApiPath = new URL("../src/feature-api.ts", import.meta.url);
 const stylesPath = new URL("../src/styles.css", import.meta.url);
-const tagsPath = new URL("../../../extensions/skills/catalog.tags.json", import.meta.url);
+const tagEditorStylesPath = new URL("../src/components/MarketplaceTagEditor.css", import.meta.url);
+const catalogPath = new URL("../../../extensions/skills/catalog.json", import.meta.url);
 
 test("repository skills display searchable hashtag metadata instead of a source label", async () => {
-  const [view, tagsText] = await Promise.all([
+  const [view, catalogText] = await Promise.all([
     readFile(viewPath, "utf8"),
-    readFile(tagsPath, "utf8"),
+    readFile(catalogPath, "utf8"),
   ]);
-  const tags = JSON.parse(tagsText);
+  const catalog = JSON.parse(catalogText);
 
-  assert.deepEqual(tags["visual-artifact"], ["경영기획", "디자인"]);
-  assert.ok(Object.values(tags).every((value) => Array.isArray(value) && value.length > 0));
+  assert.deepEqual(catalog["visual-artifact"].tags, ["경영기획", "디자인"]);
+  assert.ok(Object.values(catalog).every((entry) => typeof entry.description === "string" && entry.description.length > 0));
+  assert.ok(Object.values(catalog).every((entry) => Array.isArray(entry.tags) && entry.tags.length > 0));
   assert.match(view, /className="marketplace-tags" aria-label="Skill 태그"/);
+  assert.match(view, /const storedTags = \(item as SkillExtension & \{ tags\?: unknown \}\)\.tags/);
+  assert.match(view, /Array\.isArray\(storedTags\) && storedTags\.length > 0/);
   assert.match(view, /tags\.map\(\(tag\) => `#\$\{tag\}`\)/);
   assert.doesNotMatch(view, /Lumina 기본 제공/);
 });
 
 test("marketplace detects repository changes and keeps manual full refresh as fallback", async () => {
-  const [view, api] = await Promise.all([readFile(viewPath, "utf8"), readFile(apiPath, "utf8")]);
+  const [view, api, featureApi] = await Promise.all([
+    readFile(viewPath, "utf8"),
+    readFile(apiPath, "utf8"),
+    readFile(featureApiPath, "utf8"),
+  ]);
 
   assert.match(api, /skillsChanged: number; mcpChanged: number; revision: string/);
-  assert.match(api, /getRepositoryState: getRepositoryExtensionState/);
-  assert.match(view, /window\.setInterval\(pollRepositoryState, 3_000\)/);
+  assert.match(featureApi, /getRepositoryState: getRepositoryExtensionState/);
+  assert.match(view, /window\.setInterval\(pollWhenVisible, 15_000\)/);
+  assert.match(view, /document\.addEventListener\("visibilitychange", pollWhenVisible\)/);
   assert.match(view, /previousRevision === state\.revision/);
   assert.match(view, /const state = await api\.extensions\.syncRepository\(\)/);
   assert.match(view, /onClick=\{\(\) => void refreshRepository\(\)\}/);
@@ -56,6 +66,15 @@ test("skill visibility and version use the reviewed Publish.Merge.Feedback displ
   assert.doesNotMatch(view, /WorkingDraft/);
 });
 
+test("only modified Skill drafts appear in My Drafts", async () => {
+  const view = await readFile(viewPath, "utf8");
+
+  assert.match(view, /if \(skillView === "drafts" && !item\.draft\?\.dirty\) return false/);
+  assert.match(view, /drafts: items\.filter\(\(item\) => item\.draft\?\.dirty\)\.length/);
+  assert.doesNotMatch(view, /if \(skillView === "drafts" && !item\.draft\) return false/);
+  assert.doesNotMatch(view, /drafts: items\.filter\(\(item\) => item\.draft\)\.length/);
+});
+
 test("marketplace keeps Skill creation in the chat Skill Creator flow", async () => {
   const view = await readFile(viewPath, "utf8");
 
@@ -83,7 +102,7 @@ test("skill rows use a dedicated install and unused toggle without status badges
   assert.match(styles, /\.skill-install-toggle:active \{ transform: none; \}/);
   assert.match(styles, /\.skill-install-toggle\.is-installed \{[^}]*background: color-mix\(in oklab, var\(--success\) 8%, var\(--surface\)\)/);
   assert.match(styles, /\.skill-install-toggle\.is-installed:hover:not\(:disabled\)[^\{]*\{[^}]*background: color-mix\(in oklab, var\(--danger\) 12%, var\(--surface\)\)/);
-  assert.match(styles, /\.marketplace-scope-tabs button span \{[^}]*min-width: 18px; height: 18px;[^}]*box-sizing: border-box;[^}]*justify-content: center;/);
+  assert.match(styles, /\.marketplace-scope-tabs button span \{[^}]*min-width: 28px; height: 18px;[^}]*box-sizing: border-box;[^}]*justify-content: center;/);
   assert.doesNotMatch(view, />설치됨<\/em>/);
   assert.doesNotMatch(view, />공식<\/em>/);
 });
@@ -131,6 +150,23 @@ test("skill metadata stays in place while editing", async () => {
   assert.doesNotMatch(view, /className="marketplace-title-editor"/);
   assert.doesNotMatch(view, /className="marketplace-description-editor"/);
   assert.match(styles, /\.marketplace-inline-editor:focus \{[^}]*box-shadow: inset 0 -1px var\(--cobalt\);/);
+});
+
+test("only Skill owners and administrators can edit tags", async () => {
+  const [view, api, types, tagEditorStyles] = await Promise.all([
+    readFile(viewPath, "utf8"),
+    readFile(apiPath, "utf8"),
+    readFile(new URL("../src/api-types.ts", import.meta.url), "utf8"),
+    readFile(tagEditorStylesPath, "utf8"),
+  ]);
+
+  assert.match(types, /canEditTags: boolean/);
+  assert.match(types, /tags: string\[\]/);
+  assert.match(api, /tags\?: string\[\]/);
+  assert.match(view, /selected\.canEditTags && <div className="marketplace-tag-editor"/);
+  assert.match(view, /aria-label="Skill 태그 추가"/);
+  assert.match(view, /tags: tagsToSave/);
+  assert.match(tagEditorStyles, /\.marketplace-tag-editor button \{/);
 });
 
 test("owners and administrators get a compact two-step Skill trash action", async () => {

@@ -2,6 +2,8 @@
 
 # Extension Marketplace 설계
 
+Agent Skills package 형식과 progressive disclosure의 원본은 [Agent Skills specification](https://agentskills.io/specification)과 [client implementation guide](https://agentskills.io/client-implementation/adding-skills-support)입니다. Lumina 전용 연결 정보는 표준 `metadata` 아래에 두고 표준 field를 대체하지 않습니다.
+
 ## 목적
 
 이 문서는 `.examples/AI_Skill_MarketPlace/` 목업에서 확인한 카탈로그, 상세 파일 조회, 설치, Fork, 작성, 수정과 삭제 경험을 Lumina Agent의 다중 사용자용 Skill·MCP·Plugin 관리 플랫폼으로 확장한 제품·Backend 계약입니다.
@@ -17,7 +19,7 @@
 5. Run은 Draft 사용 시 `draft_id + draft_revision + digest`, 저장 version 사용 시 `extension_id + version_id + digest`를 정확히 고정합니다. Draft가 바뀌어도 이미 시작한 Run은 바뀌지 않습니다.
 6. 설치 해제와 Skill 삭제를 구분합니다. Skill 삭제는 30일 보관함 이동이며 그 전에는 복원할 수 있습니다. 보존 기간 뒤 catalog·Draft·version·installation 원본은 정리하되, 이미 완료된 Run의 고정 snapshot과 감사 기록은 유지합니다.
 7. Frontend가 보낸 소유자, 조직, 경로, 권한과 비밀값을 신뢰하지 않습니다. Backend가 인증 주체와 정책으로 다시 결정합니다.
-8. Skill은 서버에서 직접 실행되는 code가 아닌 지침 package로 취급합니다. Plugin과 MCP는 실행·network 위험이 있으므로 검증과 permission policy를 통과하기 전에는 Worker에 노출하지 않습니다.
+8. Skill은 서버가 자동 import하는 code가 아닌 지침 package로 취급합니다. 다만 활성 Skill의 고정 version·Draft revision에 포함된 `.py`는 `run_python`의 명시적 고위험 승인을 거쳐 임시 전용 작업 디렉터리에서 실행할 수 있습니다. 이 디렉터리와 정리 정책은 OS 수준 sandbox를 의미하지 않으므로 실행 승인을 생략하지 않습니다. Plugin과 MCP는 실행·network 위험이 있으므로 검증과 permission policy를 통과하기 전에는 Worker에 노출하지 않습니다.
 9. `creator_user_id`는 최초 기여 기록으로 고정하고, 현재 관리 책임은 복수 `SkillOwnership`의 Owner·Maintainer로 분리합니다. 소유권 변경은 Creator 기록을 바꾸지 않습니다.
 10. 공개 Skill의 수정은 공용 WorkingDraft를 공유하지 않고 사용자별 개인 WorkingDraft를 만듭니다. 같은 사용자의 병렬 변경이 충돌하면 기존 head를 덮어쓰지 않고 별도 branch로 보존합니다.
 11. 사용자에게 보이는 `vPublish.Merge.Feedback`는 진화 상태를 설명하는 계산된 표시값입니다. 내부 정렬·참조·Run 재현은 immutable `version_id`, Draft `revision_id`와 digest를 사용합니다.
@@ -39,6 +41,14 @@
 ### Skill
 
 Skill package는 최소 `SKILL.md`를 가지며 선택적으로 manifest, references, scripts, examples와 assets를 포함합니다. Marketplace가 관리하는 Skill에는 안정적인 `skill_id`와 별도의 불변 `skill_version_id`를 부여합니다.
+
+Skill script 실행은 일반 shell을 노출하지 않습니다. `run_python`은 현재 Run에서 이미 활성화된 Skill의 정확한 `version_id` 또는 `draft_id + revision + digest`를 다시 검증하고 package를 임시 디렉터리에 materialize한 뒤, 관리자 설정으로 고정된 Python으로 상대 `.py` path 또는 module만 실행합니다. 실행 환경에는 Provider key와 사용자 Secret을 전달하지 않고, timeout·출력 제한·프로세스 트리 정리를 적용합니다. 기본 `on_risk`에서도 매 호출 승인이 필요하며 실행 결과에는 고정 source 식별자, 실행 profile, 종료 코드와 제한된 stdout/stderr만 남깁니다.
+
+일반 `.py`와 `insane-search` 같은 bundled script는 기본 `standard` profile을 사용하며 10분 상한을 적용합니다. 장시간 결정적 script는 관리자 opt-in인 `heavy` profile을 사용할 수 있습니다. `heavy`는 임의 Artifact에는 허용하지 않고 고정된 활성 Skill에만 허용하며, 관리자가 `LUMINA_PYTHON_EXECUTION_EXECUTABLE`로 전용 Python 또는 virtual environment를 지정하고 `LUMINA_PYTHON_HEAVY_EXECUTION_ENABLED=true`를 설정한 경우에만 실행합니다. 시간 hard cap은 24시간이고 환경 설정으로 더 낮출 수 있습니다. Run 전체 deadline이 더 짧으면 Run deadline이 우선하므로 장시간 실행은 `LUMINA_RUN_TIMEOUT_SECONDS`도 요청 시간 이상으로 설정해야 합니다. Agent Skills 표준에 없는 5MB package 상한은 두지 않습니다. `name`·`description`만 catalog에 노출하고, 활성화 시 `SKILL.md`, 그 뒤 필요한 resource만 `read_skill_resource` 또는 `run_python`으로 사용합니다. 200MB급 회사 program과 native·Python dependency는 MCP server의 전용 runtime image 또는 virtual environment에 version·digest로 고정합니다. Skill wrapper에는 사용자가 제공할 입력 schema·질문 순서·검증 규칙·MCP Tool 호출법·결과 해석 지침을 두며, `metadata.lumina-source`로 MCP와 연결합니다. 모델이 필수 값을 수집하면 MCP Tool의 JSON schema에 맞춰 호출하고 반환값을 data로 분석합니다. 큰 model/data에는 권한 검증된 Artifact·object storage 입력 계약을 함께 구현합니다.
+
+현재 modular-monolith의 `heavy` profile은 비동기 child process로 실행되어 API event loop를 막지 않고 Worker lease heartbeat, 취소 시 process-tree 종료와 기존 Tool 감사 계약을 재사용합니다. 다만 임시 작업 디렉터리는 OS sandbox가 아니고 Worker 재시작을 넘는 durable batch job도 아니므로, 다중 사용자 운영에서 CPU·RAM quota, Worker 장애 후 이어하기 또는 수시간 작업의 checkpoint가 필요한 Skill은 별도 container/batch Worker backend로 승격한 뒤 활성화합니다.
+
+일반 Run의 암시적 Skill 선택은 LLM의 의미 판단으로 수행합니다. 선택 개수에는 기본값이나 상한을 두지 않고 0개·1개·여러 개를 모두 허용하되, 각 Skill의 핵심 절차가 사용자가 요청한 행동·산출물과 직접 일치하고 해당 지침을 제외하면 실행 방식이나 결과가 실질적으로 달라질 때만 선택합니다. 주제 인접성, 이름·설명의 단어 중복, 일반적인 유용성, 아직 발생하지 않은 미래 조건은 선택 근거가 아닙니다. 일반 접근 실패처럼 선행 조건이 있는 Skill은 그 조건을 실제로 관찰한 뒤 선택합니다. `agents/openai.yaml`의 `policy.allow_implicit_invocation: false`인 Skill은 LLM 후보에서 제외하되 `$Skill` 명시 호출은 계속 허용합니다.
 
 ```text
 Skill
@@ -175,6 +185,10 @@ Skill Folder Root
 ## 설치와 적용
 
 설치 대상은 `user`, `project`, `organization` 중 하나입니다. 일반 Marketplace의 기본 설치는 로그인한 `user` 계정 범위이며, Project와 Organization 설치는 권한이 있는 협업·관리 workflow에서 명시적으로 선택합니다.
+
+사용자 범위 Skill·MCP 설치는 기본적으로 모든 접근 가능 Project에서 활성화합니다. 설치 상세의 다중 선택 LOV에서 여러 Project를 함께 선택하거나 전체 선택·해제할 수 있으며, `project_ids = null`은 현재와 앞으로 생성될 모든 접근 가능 Project, 빈 배열은 어떤 Project에서도 사용하지 않음, ID 배열은 선택한 Project만 허용함을 뜻합니다. Backend는 Composer 후보와 Run·예약 Run snapshot을 만들 때 이 범위를 다시 검증합니다.
+
+Project 설정은 현재 Project에서 유효한 Skill·MCP 설치를 체크 목록으로 보여줍니다. 체크 해제는 즉시 다음 Run과 Composer 후보에 반영하지만 현재 화면의 행은 제거하지 않아 같은 화면에서 다시 선택할 수 있게 하고, 다른 화면이나 Project로 전환한 뒤 목록을 다시 불러올 때 제외합니다.
 
 ```text
 Catalog ExtensionVersion

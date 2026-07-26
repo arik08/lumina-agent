@@ -13,6 +13,7 @@
 | Cowork 계열 기능 | Lumina의 기존 설계 | 통합 결과 |
 |---|---|---|
 | 자율 다단계 작업 | `AGENT_LOOP.md`의 Turn·Tool·Queue·중단/재개 | Plan·Subtask·Steering·단계 재실행을 추가 |
+| 장기·대형 심층분석 | 구조화된 Plan, Project 파일과 Artifact | 독립 `심층분석` Mission에서 Node별 채팅 세션과 Edge 기반 결과 전달, 단위별 LLM 출력 보존과 실제 비용 추적은 [`DEEP_ANALYSIS_WORKFLOW.md`](DEEP_ANALYSIS_WORKFLOW.md)를 기준으로 추가 |
 | 로컬 파일 작업 공간 | `@파일명`, Artifact, Storage | 명시 연결 Workspace와 Local Bridge를 추가 |
 | 전문 업무 산출물 | Artifact Library | 형식별 생성·Preview·검증·부분 수정 추가 |
 | Project 지속성 | 사용자·조직·세션 구조 | `Organization → Project → Session → Run`으로 확장 |
@@ -94,7 +95,7 @@ Local Workspace    → 사용자 PC의 Local Bridge가 허용 폴더만 연결
 Remote Connector   → SharePoint, Drive, Box 등 외부 저장소
 ```
 
-`Server Workspace`는 사용자가 업로드한 참조 파일의 기본 저장 위치입니다. 채팅의 `저장`과 Agent의 Artifact 생성·편집 결과는 별도 Artifact Storage에 기록하며 파일 저장소 트리에 자동으로 추가하지 않습니다. 사용자의 개인 PC에는 사용자가 명시적으로 브라우저 다운로드를 실행할 때만 사본을 전달합니다. 초기에는 단일 구동 장비의 관리된 `data/` 영역을 사용할 수 있지만, API와 metadata는 Storage Adapter를 통해 향후 별도 S3/MinIO 또는 조직 파일 서버로 이전할 수 있게 합니다.
+`Server Workspace`는 사용자가 업로드한 참조 파일의 기본 저장 위치입니다. 일반 채팅의 `저장`과 Agent의 Artifact 생성·편집 결과는 별도 Artifact Storage에 기록하며 `프로젝트 파일` 트리에 자동으로 추가하지 않습니다. 심층분석 Mission이 생성한 단위별 MD·CSV·PY는 이 일반 규칙의 명시적 예외로, Project 파일과 섞지 않고 파일 화면의 같은 수준인 시스템 관리 `심층분석` root에서 Mission별로 표시합니다. 상세 저장·이름·version과 권한 계약은 [`DEEP_ANALYSIS_WORKFLOW.md`](DEEP_ANALYSIS_WORKFLOW.md)를 따릅니다. 사용자의 개인 PC에는 사용자가 명시적으로 브라우저 다운로드를 실행할 때만 사본을 전달합니다. 초기에는 단일 구동 장비의 관리된 `data/` 영역을 사용할 수 있지만, API와 metadata는 Storage Adapter를 통해 향후 별도 S3/MinIO 또는 조직 파일 서버로 이전할 수 있게 합니다.
 
 Local Bridge가 없는 환경에서는 “로컬 폴더 직접 접근”을 제공한다고 오해하게 만들지 않습니다. 초기 버전은 Upload와 Server Workspace부터 구현하고, Local Bridge는 이후 별도 설치 구성요소로 제공합니다.
 
@@ -104,7 +105,7 @@ Local Bridge가 없는 환경에서는 “로컬 폴더 직접 접근”을 제�
 - 파일과 폴더 Drag & Drop 시 하위 구조를 보존해 업로드합니다.
 - Project 화면 왼쪽에 탐색기형 파일 트리와 검색, 오른쪽에 선택 파일 Preview를 표시합니다.
 - `@파일명`과 `@폴더명`으로 채팅에서 파일 또는 폴더 전체를 빠르게 연결합니다.
-- Agent의 Workspace Tool은 탐색과 읽기만 허용하고 생성 결과는 Artifact로 분리합니다.
+- Agent의 Workspace Tool은 탐색과 읽기만 허용하고 생성 결과는 Artifact로 분리합니다. 사용자가 `.py` 작성을 요청하면 `write_file`로 immutable Artifact version을 만들고, 실행은 해당 Artifact ID·version 또는 현재 Run에 고정된 활성 Skill package만 받는 `run_python`으로 분리합니다. 임의 host 경로나 shell command는 받지 않습니다.
 - 사용자 UI에 파일 버전 관리 흐름을 제공하지 않습니다. 저장 무결성과 감사에 필요한 내부 revision은 사용자 조작 개념과 분리합니다.
 - 삭제는 휴지통 이동과 영구 삭제를 구분하고 영구 삭제는 추가 승인을 요구합니다.
 - 생성된 파일에서 원본 입력과 생성 Run으로 이동할 수 있습니다.
@@ -141,6 +142,14 @@ Project 또는 연결 폴더에 `AGENTS.md` 같은 지침을 둘 수 있습니�
 
 - 사용자가 파일 유형을 언급하지 않고 보고서 작성을 요청하면 독립 실행 가능한 HTML 보고서를 생성합니다.
 - 사용자가 DOCX, XLSX, PPTX, PDF, Markdown 등 특정 형식을 명시하면 명시된 형식을 우선합니다.
+- 비교 가능한 수치·기간·범주·비율·순위·점수 축이 있는 HTML 보고서는 표와 KPI만 나열하지 않고 최소 하나의 실질적인 ECharts 또는 inline SVG 차트를 포함합니다. 불완전하거나 정의가 달라 비교 자체가 오해를 만들 때만 차트를 생략하고 그 이유를 보고서에 명시합니다.
+- 차트 유형은 독립변수의 의미에 맞춥니다. 라인·영역 차트는 시간·거리·연령·성숙도·명시적인 단계처럼 연속성이나 순서가 실제 분석 의미를 가질 때만 사용합니다. 국가·기업·공급사·제품·지역 같은 명목형 범주는 임의 순서로 선을 연결하지 않고, 동일 범주의 복수 지표는 서로 다른 색의 그룹형 막대·점 도표·동일 범주 순서의 소형 다중 차트를 우선합니다. 단위나 보조축이 다르다는 이유만으로 계열을 라인으로 바꾸지 않습니다.
+- HTML 보고서의 주요 분석 절은 근거가 허용하는 차트·표·타임라인·매트릭스·프로세스·근거 카드 등 독자의 질문에 답하는 구조를 사용합니다. 장문의 산문만 이어지는 절은 구조화하거나 산문이 더 명확한 구체적 이유를 남깁니다.
+- ECharts 차트는 제목·부제·범례·plot 영역을 서로 겹치지 않는 별도 수직 band로 예약합니다. 명시적인 위치와 grid 여백을 사용하고, 범례가 줄바꿈되는 좁은 폭에서도 실제 경계를 확인합니다.
+- HTML 보고서 표의 화면용 본문 글자는 14px 이상을 유지합니다. 열이 많을 때 글자를 줄이거나 transform·zoom을 적용하지 않고 줄바꿈과 가로 overflow를 사용합니다.
+- Mermaid 원문은 `.mermaid` class가 있는 element 안에 직접 둡니다. 일반 `pre`에 넣지 않으며 Lumina가 제공하는 renderer·확대 control을 중복 삽입하지 않습니다.
+- HTML 보고서의 헤더 배경은 화면 전체 폭을 사용할 수 있지만, 헤더 안쪽 제목·요약·메타데이터와 본문·푸터는 하나의 공통 콘텐츠 폭과 좌우 gutter를 재사용해 같은 좌우축에 정렬합니다. 헤더만 viewport 비율 padding을 쓰고 본문은 별도 고정 폭으로 가운데 정렬하는 이중 폭 체계를 사용하지 않습니다.
+- HTML 보고서의 주요 절에는 부분 수정에 사용할 안정적인 고유 `id`를 둡니다. 선택한 목표 분량에 못 미친 HTML 보고서를 보강할 때는 전체 문서를 다시 출력하거나 결론 뒤에 새 절을 누적하지 않고, 기존 근거와 인용을 보존하면서 산문 밀도가 높은 대상 절만 같은 `id`의 시각 구조로 교체해 같은 Artifact의 새 버전으로 저장합니다.
 
 ### 사용자 체감 기능
 
@@ -224,6 +233,7 @@ Plugin    → Skill·MCP·Provider·UI·설정을 묶은 설치 단위
 - 설치 전에 필요한 권한, 외부 전송 데이터, 실행 코드와 의존성을 보여줍니다.
 - `$이름`으로 현재 요청에서 Skill 또는 MCP를 명시적으로 호출합니다.
 - Project마다 허용 Connector·Skill·Plugin 목록을 관리합니다.
+- Project 설정에서 현재 유효한 Skill·MCP를 확인하고 체크로 사용 여부를 바꿉니다. 체크 해제한 행은 현재 화면에 남겨 즉시 되돌릴 수 있게 하며 화면·Project 전환 후 다시 조회할 때 제외합니다.
 - 업데이트 가능 버전, 현재 고정 버전, 변경 내역과 폐기 상태를 표시합니다.
 - 비활성화하거나 제거해도 과거 Run에서 사용한 버전과 출처는 기록으로 남깁니다.
 
@@ -390,6 +400,7 @@ Project, 파일, Connector, Skill, Plugin, Browser와 Computer Use 모두 현재
 5. Upload·Server Workspace와 파일 버전
 6. DOCX/XLSX/PPTX/PDF/HTML 생성·Preview·검증 기반
 7. Connector·Skill·MCP 동적 로딩
+8. 심층분석 Mission, 초기 AI Node·Edge 자동 설계와 편집 가능한 Workflow revision, Node별 채팅 세션·Markdown 출력 보존
 
 ### 2단계: 반복 업무와 지속성
 
@@ -421,6 +432,9 @@ Project, 파일, Connector, Skill, Plugin, Browser와 Computer Use 모두 현재
 8. 예약 작업은 중복 실행 없이 입력 snapshot과 결과 이력을 보존합니다.
 9. Live Artifact는 버전 이력과 복원을 지원합니다.
 10. Frontend 연결이 끊겨도 Run과 예약 작업은 Backend에서 계속됩니다.
+11. 심층분석 Mission의 각 Node는 독립 채팅 세션에서 실행되고, 완료 출력은 추가 모델 재작성 없이 Markdown으로 보존되며 실제 Run 비용을 역추적할 수 있습니다.
+12. Mission은 목표에 맞는 Node·Edge·프롬프트를 한 번 자동 설계하고 사용자가 이를 편집합니다. 선행 Node의 출력은 연결된 후행 Node의 입력 문맥으로 전달됩니다.
+13. 심층분석 자체는 Claim·Evidence·Quality Gate 같은 별도 감사 구조를 만들지 않습니다. 필요한 검토와 출처 형식은 일반 Node 프롬프트로 지정합니다.
 
 ## 참고한 공식 설명 주제
 

@@ -41,14 +41,25 @@ test("the global connection label follows readiness and API transport failures",
   assert.match(stylesheet, /\.connection-state\.state-offline/);
 });
 
-test("the React root renders a recoverable top-level error screen", async () => {
+test("API contract mismatches do not masquerade as successful SPA responses", async () => {
+  const api = await read("../src/api.ts");
+
+  assert.match(api, /BACKEND_CONTRACT_MISMATCH_MESSAGE = "Frontend와 Backend 버전이 일치하지 않습니다\./);
+  assert.match(api, /contentType\.includes\("text\/html"\)/);
+  assert.match(api, /backendContractMismatch \? "backend_contract_mismatch" : "invalid_api_response"/);
+  assert.match(api, /details: \{ contentType, path, method:/);
+  assert.match(api, /response\.status === 404 && payload\.detail === "Not Found"/);
+});
+
+test("the backend recovery guard stays mounted around the top-level error screen", async () => {
   const [main, boundary, stylesheet] = await Promise.all([
     read("../src/main.tsx"),
     read("../src/AppErrorBoundary.tsx"),
     read("../src/styles.css"),
   ]);
 
-  assert.match(main, /<AppErrorBoundary>[\s\S]*<BackendConnectionGuard>/);
+  assert.match(main, /<BackendConnectionGuard>[\s\S]*<AppErrorBoundary>/);
+  assert.doesNotMatch(main, /<AppErrorBoundary>[\s\S]*<BackendConnectionGuard>/);
   assert.match(boundary, /class AppErrorBoundary extends Component/);
   assert.match(boundary, /static getDerivedStateFromError/);
   assert.match(boundary, /componentDidCatch/);

@@ -7,7 +7,209 @@
       "args": [
         "extensions/mcp/comtrade_server.py"
       ],
-      "cwd": "."
+      "cwd": ".",
+      "tools": [
+        {
+          "name": "preview_trade_data",
+          "description": "Fetch public preview trade data without an API key. Use partner_code=\"0\" for World or \"all\" for a partner breakdown.",
+          "inputSchema": {
+            "properties": {
+              "reporter_code": {
+                "title": "Reporter Code",
+                "type": "string"
+              },
+              "period": {
+                "title": "Period",
+                "type": "string"
+              },
+              "cmd_code": {
+                "default": "TOTAL",
+                "title": "Cmd Code",
+                "type": "string"
+              },
+              "flow_code": {
+                "default": "X",
+                "title": "Flow Code",
+                "type": "string"
+              },
+              "partner_code": {
+                "default": "0",
+                "title": "Partner Code",
+                "type": "string"
+              },
+              "type_code": {
+                "default": "C",
+                "title": "Type Code",
+                "type": "string"
+              },
+              "freq_code": {
+                "default": "A",
+                "title": "Freq Code",
+                "type": "string"
+              },
+              "classification_code": {
+                "default": "HS",
+                "title": "Classification Code",
+                "type": "string"
+              },
+              "partner2_code": {
+                "default": "0",
+                "title": "Partner2 Code",
+                "type": "string"
+              },
+              "customs_code": {
+                "default": "C00",
+                "title": "Customs Code",
+                "type": "string"
+              },
+              "mot_code": {
+                "default": "0",
+                "title": "Mot Code",
+                "type": "string"
+              },
+              "include_desc": {
+                "default": true,
+                "title": "Include Desc",
+                "type": "boolean"
+              },
+              "limit": {
+                "default": 100,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "reporter_code",
+              "period"
+            ],
+            "title": "preview_trade_dataArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "get_trade_data",
+          "description": "Fetch keyed trade data. Use partner_code=\"0\" for World or \"all\" for a partner breakdown. Requires UN_COMTRADE_API_KEY or COMTRADE_API_KEY.",
+          "inputSchema": {
+            "properties": {
+              "reporter_code": {
+                "title": "Reporter Code",
+                "type": "string"
+              },
+              "period": {
+                "title": "Period",
+                "type": "string"
+              },
+              "cmd_code": {
+                "default": "TOTAL",
+                "title": "Cmd Code",
+                "type": "string"
+              },
+              "flow_code": {
+                "default": "X",
+                "title": "Flow Code",
+                "type": "string"
+              },
+              "partner_code": {
+                "default": "0",
+                "title": "Partner Code",
+                "type": "string"
+              },
+              "type_code": {
+                "default": "C",
+                "title": "Type Code",
+                "type": "string"
+              },
+              "freq_code": {
+                "default": "A",
+                "title": "Freq Code",
+                "type": "string"
+              },
+              "classification_code": {
+                "default": "HS",
+                "title": "Classification Code",
+                "type": "string"
+              },
+              "partner2_code": {
+                "default": "0",
+                "title": "Partner2 Code",
+                "type": "string"
+              },
+              "customs_code": {
+                "default": "C00",
+                "title": "Customs Code",
+                "type": "string"
+              },
+              "mot_code": {
+                "default": "0",
+                "title": "Mot Code",
+                "type": "string"
+              },
+              "include_desc": {
+                "default": true,
+                "title": "Include Desc",
+                "type": "boolean"
+              },
+              "limit": {
+                "default": 1000,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "reporter_code",
+              "period"
+            ],
+            "title": "get_trade_dataArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "list_reporters",
+          "description": "List UN Comtrade reporter areas and ISO codes.",
+          "inputSchema": {
+            "properties": {
+              "limit": {
+                "default": 300,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "title": "list_reportersArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "search_reporters",
+          "description": "Search UN Comtrade reporter areas by name, numeric code, or ISO code.",
+          "inputSchema": {
+            "properties": {
+              "keyword": {
+                "title": "Keyword",
+                "type": "string"
+              },
+              "limit": {
+                "default": 50,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "keyword"
+            ],
+            "title": "search_reportersArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "check_connection",
+          "description": "Check whether UN Comtrade public preview API is reachable from the current network.",
+          "inputSchema": {
+            "properties": {},
+            "title": "check_connectionArguments",
+            "type": "object"
+          }
+        }
+      ]
     }
   }
 }

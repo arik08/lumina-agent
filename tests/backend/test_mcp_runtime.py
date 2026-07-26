@@ -17,6 +17,8 @@ from lumina.mcp.runtime import (
     McpRuntimeError,
     McpServerConfig,
     _PinnedNetworkBackend,
+    _environment_value,
+    _resolve_stdio_command,
 )
 
 
@@ -80,6 +82,20 @@ def _runtime_environment() -> dict[str, str]:
     }
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows environment keys are case-insensitive")
+def test_windows_environment_lookup_is_case_insensitive() -> None:
+    assert _environment_value({"Path": "venv-path"}, "PATH") == "venv-path"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="npx uses a Windows command shim")
+def test_windows_npx_command_uses_node_cli() -> None:
+    resolved = _resolve_stdio_command(("npx", "-y", "example-mcp@1.0.0"))
+
+    assert resolved[0] == "node"
+    assert resolved[1].endswith("npx-cli.js")
+    assert resolved[2:] == ("-y", "example-mcp@1.0.0")
+
+
 @pytest.mark.asyncio
 async def test_stdio_lifecycle_allowlist_call_and_secret_redaction(
     tmp_path: Path,
@@ -104,6 +120,54 @@ async def test_stdio_lifecycle_allowlist_call_and_secret_redaction(
     assert methods.count("notifications/initialized") == 1
     assert methods.count("tools/list") == 1
     assert methods.count("tools/call") == 1
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mode", "expected_code", "expected_detail"),
+    (
+        ("rpc_error", "mcp_jsonrpc_error", "Invalid parameter value"),
+        ("tool_error", "mcp_tool_error", "echo=hello"),
+    ),
+)
+async def test_stdio_tool_failures_preserve_safe_server_detail(
+    tmp_path: Path,
+    mode: str,
+    expected_code: str,
+    expected_detail: str,
+) -> None:
+    runtime = McpRuntime(_settings(tmp_path), environment=_runtime_environment())
+    tool = (await runtime.prepare_servers((_stdio_config(tmp_path, mode=mode),)))[0]
+
+    try:
+        with pytest.raises(McpRuntimeError) as failure:
+            await runtime.call_tool(tool, {"value": "hello"})
+
+        assert failure.value.code == expected_code
+        assert expected_detail in str(failure.value)
+        assert "top-secret-value" not in str(failure.value)
+        assert "[REDACTED]" in str(failure.value)
+    finally:
+        await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_stdio_resolves_repository_relative_manifest_script(
+    tmp_path: Path,
+) -> None:
+    config = _stdio_config(tmp_path)
+    repository_root = Path(__file__).resolve().parents[2]
+    relative_server = Path(config.command[1]).relative_to(repository_root)
+    relative_config = replace(
+        config,
+        command=(config.command[0], relative_server.as_posix(), *config.command[2:]),
+    )
+    runtime = McpRuntime(_settings(tmp_path), environment=_runtime_environment())
+
+    tools = await runtime.prepare_servers((relative_config,))
+
+    assert [tool.original_name for tool in tools] == ["echo"]
     await runtime.close()
 
 

@@ -3,6 +3,8 @@
 .admin-traffic-title-block { display: grid; gap: 3px; }
 .admin-traffic-title-row { display: flex; align-items: center; gap: 8px; }
 .admin-traffic-period-select { min-width: 76px; }
+.admin-traffic-period-select.size-small .lumina-select-trigger,
+.admin-traffic-period-menu.size-small > button { font-size: 14px; }
 .admin-traffic-heading strong { font-size: 13px; }
 .admin-traffic-heading small { color: var(--muted); font-size: 10.5px; }
 .admin-traffic-legend { font-weight: 650; }

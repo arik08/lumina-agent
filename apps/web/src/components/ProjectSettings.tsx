@@ -1,10 +1,12 @@
-import { AlertTriangle, Archive, Check, FileText, Folder, FolderPlus, LoaderCircle, Menu, Save, Trash2, UserPlus, Users } from "lucide-react";
+import { AlertTriangle, Archive, Check, FileText, Folder, FolderPlus, LoaderCircle, Menu, Save, Sparkles, Trash2, UserPlus, Users, Wrench } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { api } from "../api";
-import type { ProjectMembership, ProjectRole, ProjectSummary } from "../api-types";
+import { extensionsApi, mcpApi, projectMembershipsApi } from "../feature-api";
+import type { ExtensionInstallation, McpInstallation, ProjectMembership, ProjectRole, ProjectSummary } from "../api-types";
 import { InstructionEditor } from "./InstructionEditor";
 import { SelectMenu } from "./SelectMenu";
 import "./ProjectSettings.css";
+
+const api = { extensions: extensionsApi, mcp: mcpApi, projectMemberships: projectMembershipsApi };
 
 type AssignableRole = Exclude<ProjectRole, "owner">;
 
@@ -18,6 +20,26 @@ const roleLabels: Record<ProjectRole, string> = {
 const assignableRoleOptions = (["member", "viewer", "admin"] as AssignableRole[])
   .map((role) => ({ value: role, label: roleLabels[role] }));
 
+const PERSONAL_INSTRUCTIONS_PLACEHOLDER = `이 영역은 프로젝트 선택과 무관하게 개인 프로젝트에 적용되는 나만의 전역 작업 지침입니다.
+
+예시:
+- 선호하는 답변 언어, 문체와 설명 수준
+- 자주 사용하는 업무 용어와 배경 정보
+- 반복해서 원하는 분석·보고 방식
+- 개인 산출물의 형식과 정리 원칙
+
+공유 프로젝트에는 적용되지 않으며 조직 정책과 프로젝트 지침보다 우선할 수 없습니다.`;
+
+const PROJECT_INSTRUCTIONS_PLACEHOLDER = `이 영역은 현재 프로젝트의 모든 Run과 구성원에게 공통 적용되는 업무 지침입니다.
+
+예시:
+- 프로젝트의 목적, 범위와 주요 용어
+- 참고해야 할 자료와 사실 기준
+- 작업 순서, 검토 방식과 완료 조건
+- 보고서·표·문서 등 산출물 형식
+
+개인 지침보다 우선하며 이 프로젝트 밖에는 적용되지 않습니다.`;
+
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "요청을 처리하지 못했습니다.";
 }
@@ -28,15 +50,27 @@ interface ProjectSettingsProps {
   onOpenNavigation: () => void;
   onSelect: (projectId: string) => void;
   onCreate: () => Promise<unknown>;
-  onSave: (projectId: string, changes: { name: string; description: string; concept: string }) => Promise<unknown>;
+  onSave: (projectId: string, changes: { name: string; description: string }) => Promise<unknown>;
   onDelete: (projectId: string) => Promise<boolean>;
   onMembershipsChanged: () => Promise<unknown>;
+}
+
+interface ProjectSkillSetting {
+  installation: ExtensionInstallation;
+  name: string;
+  description: string;
+  checked: boolean;
+}
+
+interface ProjectMcpSetting {
+  installation: McpInstallation;
+  description: string;
+  checked: boolean;
 }
 
 export function ProjectSettings({ projects, project, onOpenNavigation, onSelect, onCreate, onSave, onDelete, onMembershipsChanged }: ProjectSettingsProps) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [concept, setConcept] = useState("");
   const [busy, setBusy] = useState(false);
   const [deleteArmed, setDeleteArmed] = useState(false);
   const [personalSelected, setPersonalSelected] = useState(false);
@@ -49,6 +83,11 @@ export function ProjectSettings({ projects, project, onOpenNavigation, onSelect,
   const [memberError, setMemberError] = useState("");
   const [accountLoginId, setAccountLoginId] = useState("");
   const [newRole, setNewRole] = useState<AssignableRole>("member");
+  const [projectSkills, setProjectSkills] = useState<ProjectSkillSetting[]>([]);
+  const [projectMcps, setProjectMcps] = useState<ProjectMcpSetting[]>([]);
+  const [resourcesLoading, setResourcesLoading] = useState(false);
+  const [resourceActionId, setResourceActionId] = useState<string | null>(null);
+  const [resourceError, setResourceError] = useState("");
 
   const canManageMembers = project?.role === "owner" || project?.role === "admin";
   const sortedMemberships = useMemo(
@@ -69,19 +108,22 @@ export function ProjectSettings({ projects, project, onOpenNavigation, onSelect,
   useEffect(() => {
     setName(project?.name ?? "");
     setDescription(project?.description ?? "");
-    setConcept(project?.concept ?? "");
     setDeleteArmed(false);
     setMemberDeleteArmed(null);
     setMemberMessage("");
     setMemberError("");
     setAccountLoginId("");
     setMemberships([]);
+    setProjectSkills([]);
+    setProjectMcps([]);
+    setResourceError("");
     if (!project) {
       setMembersLoading(false);
       return;
     }
     const controller = new AbortController();
     setMembersLoading(true);
+    setResourcesLoading(true);
     void loadMemberships(project.id, controller.signal)
       .catch((error) => {
         if (!controller.signal.aborted) setMemberError(errorMessage(error));
@@ -89,8 +131,79 @@ export function ProjectSettings({ projects, project, onOpenNavigation, onSelect,
       .finally(() => {
         if (!controller.signal.aborted) setMembersLoading(false);
       });
+    void Promise.all([
+      api.extensions.list(),
+      api.extensions.listInstallations(project.id, controller.signal),
+      api.mcp.listCatalog(controller.signal),
+      api.mcp.listInstallations(project.id, controller.signal),
+    ]).then(([extensions, skillInstallations, mcpDefinitions, mcpInstallations]) => {
+      const extensionById = new Map(extensions.map((item) => [item.id, item]));
+      const mcpDefinitionById = new Map(mcpDefinitions.map((item) => [item.id, item]));
+      setProjectSkills(skillInstallations.filter((item) => item.enabled).map((installation) => {
+        const extension = extensionById.get(installation.extensionId);
+        return {
+          installation,
+          name: extension?.name ?? "알 수 없는 Skill",
+          description: extension?.description ?? "",
+          checked: true,
+        };
+      }));
+      setProjectMcps(mcpInstallations.filter((item) => item.enabled).map((installation) => ({
+        installation,
+        description: mcpDefinitionById.get(installation.definitionId)?.description ?? "",
+        checked: true,
+      })));
+    }).catch((error) => {
+      if (!controller.signal.aborted) setResourceError(errorMessage(error));
+    }).finally(() => {
+      if (!controller.signal.aborted) setResourcesLoading(false);
+    });
     return () => controller.abort();
-  }, [loadMemberships, project?.id]);
+  }, [loadMemberships, project?.id, projects]);
+
+  const setSkillForProject = async (setting: ProjectSkillSetting, enabled: boolean) => {
+    if (!project || setting.checked === enabled) return;
+    setResourceActionId(setting.installation.id);
+    setResourceError("");
+    try {
+      if (setting.installation.scopeType === "user") {
+        const currentProjectIds = setting.installation.projectIds ?? projects.map((item) => item.id);
+        const nextProjectIds = enabled
+          ? [...new Set([...currentProjectIds, project.id])]
+          : currentProjectIds.filter((id) => id !== project.id);
+        await api.extensions.updateProjects(setting.installation.id, nextProjectIds);
+      } else {
+        await api.extensions.setEnabled(setting.installation.id, enabled);
+      }
+      setProjectSkills((items) => items.map((item) => item.installation.id === setting.installation.id ? { ...item, checked: enabled } : item));
+    } catch (error) {
+      setResourceError(errorMessage(error));
+    } finally {
+      setResourceActionId(null);
+    }
+  };
+
+  const setMcpForProject = async (setting: ProjectMcpSetting, enabled: boolean) => {
+    if (!project || setting.checked === enabled) return;
+    setResourceActionId(setting.installation.id);
+    setResourceError("");
+    try {
+      if (setting.installation.scopeType === "user") {
+        const currentProjectIds = setting.installation.projectIds ?? projects.map((item) => item.id);
+        const nextProjectIds = enabled
+          ? [...new Set([...currentProjectIds, project.id])]
+          : currentProjectIds.filter((id) => id !== project.id);
+        await api.mcp.updateProjects(setting.installation.id, nextProjectIds);
+      } else {
+        await api.mcp.setEnabled(setting.installation.id, enabled);
+      }
+      setProjectMcps((items) => items.map((item) => item.installation.id === setting.installation.id ? { ...item, checked: enabled } : item));
+    } catch (error) {
+      setResourceError(errorMessage(error));
+    } finally {
+      setResourceActionId(null);
+    }
+  };
 
   const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -98,7 +211,7 @@ export function ProjectSettings({ projects, project, onOpenNavigation, onSelect,
     setDeleteArmed(false);
     setBusy(true);
     try {
-      await onSave(project.id, { name: name.trim(), description: description.trim(), concept });
+      await onSave(project.id, { name: name.trim(), description: description.trim() });
     } finally {
       setBusy(false);
     }
@@ -219,21 +332,32 @@ export function ProjectSettings({ projects, project, onOpenNavigation, onSelect,
               heading="개인 지침"
               description="현재 프로젝트 선택과 무관하게 개인 작업에 적용할 전역 프롬프트입니다."
               note="나만 볼 수 있으며 언제든 바로 수정할 수 있습니다. 공유 프로젝트에는 포함되지 않습니다."
+              placeholder={PERSONAL_INSTRUCTIONS_PLACEHOLDER}
             />
           </div>
         ) : !project ? <p className="workspace-empty">설정할 프로젝트가 없습니다.</p> : (
           <div className="project-settings-scroll">
             <form className="project-settings-form" onSubmit={(event) => void save(event)}>
-              <header><h2>프로젝트 정보</h2><p>이름과 업무 배경을 관리합니다.</p></header>
+              <header>
+                <div><h2>프로젝트 정보</h2><p>이름과 설명을 관리합니다.</p></div>
+                <div className="project-settings-actions">
+                  <button className="primary-compact lumina-primary-action" type="submit" disabled={busy || !name.trim()}>{busy ? <LoaderCircle className="is-running" size={15} /> : <Save size={15} />} 정보 저장</button>
+                  {!project.isDefault && <button className={`text-danger ${deleteArmed ? "is-delete-armed" : ""}`} type="button" aria-label={deleteArmed ? "프로젝트 삭제 확인, 한 번 더 누르면 삭제" : "프로젝트 삭제"} disabled={busy} onClick={() => void remove()}>{busy ? <LoaderCircle className="is-running" size={15} /> : deleteArmed ? <AlertTriangle size={15} /> : <Archive size={15} />} {deleteArmed ? "한 번 더 눌러 삭제" : "프로젝트 삭제"}</button>}
+                </div>
+              </header>
               <label>이름<input value={name} maxLength={240} required onChange={(event) => setName(event.currentTarget.value)} /></label>
               <label>설명<input value={description} maxLength={1000} placeholder="프로젝트를 구분할 짧은 설명" onChange={(event) => setDescription(event.currentTarget.value)} /></label>
-              <label>업무 Concept<textarea value={concept} rows={7} placeholder="목적, 용어, 배경 정보 등 새 Run에 제공할 맥락" onChange={(event) => setConcept(event.currentTarget.value)} /></label>
-              <div className="project-settings-actions">
-                {!project.isDefault && <button className={`text-danger ${deleteArmed ? "is-delete-armed" : ""}`} type="button" aria-label={deleteArmed ? "프로젝트 삭제 확인, 한 번 더 누르면 삭제" : "프로젝트 삭제"} disabled={busy} onClick={() => void remove()}>{busy ? <LoaderCircle className="is-running" size={15} /> : deleteArmed ? <AlertTriangle size={15} /> : <Archive size={15} />} {deleteArmed ? "한 번 더 눌러 삭제" : "프로젝트 삭제"}</button>}
-                <button className="primary-compact lumina-primary-action" type="submit" disabled={busy || !name.trim()}>{busy ? <LoaderCircle className="is-running" size={15} /> : <Save size={15} />} 정보 저장</button>
-              </div>
               {project.isDefault && <small>기본 프로젝트는 삭제할 수 없습니다.</small>}
             </form>
+
+            <InstructionEditor
+              scope="project"
+              projectId={project.id}
+              heading="프로젝트 지침"
+              description="이 프로젝트의 모든 Run에 적용할 업무 배경, 작업 방식과 산출물 원칙입니다."
+              note="모든 구성원에게 적용됩니다. 프로젝트를 편집할 수 있는 구성원은 언제든 수정할 수 있습니다."
+              placeholder={PROJECT_INSTRUCTIONS_PLACEHOLDER}
+            />
 
             <section className="project-membership-settings" aria-labelledby="project-membership-heading">
               <header>
@@ -257,7 +381,7 @@ export function ProjectSettings({ projects, project, onOpenNavigation, onSelect,
                       <span className="project-member-avatar" aria-hidden="true">{membership.displayName.trim().charAt(0).toUpperCase() || "?"}</span>
                       <span className="project-member-identity"><strong>{membership.displayName}</strong><small>{membership.loginId}</small></span>
                       {protectedOwner ? <span className="project-member-owner">소유자</span> : canManageMembers ? (
-                        <SelectMenu className="project-member-role-select" size="small" align="end" value={membership.role} options={assignableRoleOptions} ariaLabel={`${membership.displayName} 권한`} disabled={actionBusy} onChange={(role) => void changeMemberRole(membership, role as AssignableRole)} />
+                        <SelectMenu className="project-member-role-select" menuClassName="project-member-role-menu" size="small" align="end" value={membership.role} options={assignableRoleOptions} ariaLabel={`${membership.displayName} 권한`} disabled={actionBusy} onChange={(role) => void changeMemberRole(membership, role as AssignableRole)} />
                       ) : <span className="project-member-role">{roleLabels[membership.role]}</span>}
                       {!protectedOwner && canManageMembers && <button className={removalArmed ? "is-delete-armed" : ""} type="button" aria-label={removalArmed ? `${membership.displayName} 제거 확인, 한 번 더 누르면 제거` : `${membership.displayName} 제거`} disabled={actionBusy} onClick={() => void removeMember(membership)}>{actionBusy ? <LoaderCircle className="is-running" size={14} /> : removalArmed ? <AlertTriangle size={14} /> : <Trash2 size={14} />}<span>{removalArmed ? "한 번 더 눌러 제거" : "제거"}</span></button>}
                     </article>
@@ -270,13 +394,24 @@ export function ProjectSettings({ projects, project, onOpenNavigation, onSelect,
               {memberError && <p className="instruction-message is-error">{memberError}</p>}
             </section>
 
-            <InstructionEditor
-              scope="project"
-              projectId={project.id}
-              heading="프로젝트 지침"
-              description="이 프로젝트의 모든 Run에 적용할 작업 방식과 산출물 원칙입니다."
-              note="모든 구성원에게 같은 지침이 적용되며, 프로젝트를 편집할 수 있는 구성원은 언제든 수정할 수 있습니다."
-            />
+            <section className="project-resource-settings" aria-labelledby="project-resource-heading">
+              <header><div><h2 id="project-resource-heading">Skill 및 MCP</h2><p>이 프로젝트의 Run과 Composer에서 사용할 설치 항목입니다.</p></div><span>{projectSkills.filter((item) => item.checked).length + projectMcps.filter((item) => item.checked).length}개 사용</span></header>
+              {resourcesLoading ? <p className="project-resource-state"><LoaderCircle className="is-running" size={14} /> 설치 항목을 불러오는 중입니다.</p> : <>
+                <div className="project-resource-group">
+                  <strong><Sparkles size={14} /> Skill</strong>
+                  {projectSkills.map((setting) => <label className={!setting.checked ? "is-unchecked" : ""} key={setting.installation.id}><input type="checkbox" checked={setting.checked} disabled={resourceActionId === setting.installation.id} onChange={(event) => void setSkillForProject(setting, event.currentTarget.checked)} /><span><strong>{setting.name}</strong><small>{setting.description || "설명 없음"}</small></span>{resourceActionId === setting.installation.id && <LoaderCircle className="is-running" size={13} />}</label>)}
+                  {projectSkills.length === 0 && <small>이 프로젝트에서 사용하는 Skill이 없습니다.</small>}
+                </div>
+                <div className="project-resource-group">
+                  <strong><Wrench size={14} /> MCP</strong>
+                  {projectMcps.map((setting) => <label className={!setting.checked ? "is-unchecked" : ""} key={setting.installation.id}><input type="checkbox" checked={setting.checked} disabled={resourceActionId === setting.installation.id} onChange={(event) => void setMcpForProject(setting, event.currentTarget.checked)} /><span><strong>{setting.installation.name}</strong><small>{setting.description || "설명 없음"}</small></span>{resourceActionId === setting.installation.id && <LoaderCircle className="is-running" size={13} />}</label>)}
+                  {projectMcps.length === 0 && <small>이 프로젝트에서 사용하는 MCP가 없습니다.</small>}
+                </div>
+              </>}
+              <small className="project-resource-note">체크를 해제해도 현재 화면에서는 항목이 유지되며, 다른 화면으로 이동한 뒤부터 목록에서 제외됩니다.</small>
+              {resourceError && <p className="instruction-message is-error">{resourceError}</p>}
+            </section>
+
           </div>
         )}
       </div>

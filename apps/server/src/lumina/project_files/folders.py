@@ -60,8 +60,11 @@ def create_project_folder(
     path_key = logical_path_key(canonical_path)
     active_files, active_folders = _active_project_entries(db, project_id)
     if any(
-        _is_same_or_descendant(item.logical_path, canonical_path)
-        for item in [*active_files, *active_folders]
+        _is_same_or_descendant(project_file.logical_path, canonical_path)
+        for project_file in active_files
+    ) or any(
+        _is_same_or_descendant(folder.logical_path, canonical_path)
+        for folder in active_folders
     ):
         raise ApiProblem(
             409,
@@ -143,16 +146,16 @@ def move_project_folder(
         )
 
     now = utc_now()
-    for item in moving_files:
-        item.logical_path = file_targets[item.id]
-        item.active_path_key = logical_path_key(item.logical_path)
-        item.revision += 1
-        item.updated_at = now
-    for item in moving_folders:
-        item.logical_path = folder_targets[item.id]
-        item.active_path_key = logical_path_key(item.logical_path)
-        item.revision += 1
-        item.updated_at = now
+    for project_file in moving_files:
+        project_file.logical_path = file_targets[project_file.id]
+        project_file.active_path_key = logical_path_key(project_file.logical_path)
+        project_file.revision += 1
+        project_file.updated_at = now
+    for folder in moving_folders:
+        folder.logical_path = folder_targets[folder.id]
+        folder.active_path_key = logical_path_key(folder.logical_path)
+        folder.revision += 1
+        folder.updated_at = now
     try:
         db.flush()
     except IntegrityError as exc:
@@ -180,12 +183,18 @@ def soft_delete_project_folder(
     if not deleting_files and not deleting_folders:
         raise ApiProblem(404, "project_folder_not_found", "Project 폴더를 찾지 못했습니다.")
     now = utc_now()
-    for item in [*deleting_files, *deleting_folders]:
-        item.active_path_key = None
-        item.status = "deleted"
-        item.deleted_at = now
-        item.revision += 1
-        item.updated_at = now
+    for project_file in deleting_files:
+        project_file.active_path_key = None
+        project_file.status = "deleted"
+        project_file.deleted_at = now
+        project_file.revision += 1
+        project_file.updated_at = now
+    for folder in deleting_folders:
+        folder.active_path_key = None
+        folder.status = "deleted"
+        folder.deleted_at = now
+        folder.revision += 1
+        folder.updated_at = now
     db.flush()
     return (len(deleting_files), len(deleting_folders))
 

@@ -58,6 +58,18 @@ test("announcement summaries link to the selected Help detail", async () => {
   assert.match(stylesheet, /\.chat-actions \.announcement-item \{[^}]*height: auto;[^}]*min-height: 78px/s);
 });
 
+test("announcement summaries align the time with the title and omit the author", async () => {
+  const [app, stylesheet] = await Promise.all([
+    read("../src/App.tsx"),
+    read("../src/styles.css"),
+  ]);
+
+  assert.match(app, /className="announcement-item-heading"><strong>\{announcement\.title\}<\/strong><small>\{formatNotificationTime\(announcement\.createdAt\)\}<\/small>/);
+  assert.doesNotMatch(app, /announcement\.author\?\.displayName/);
+  assert.match(stylesheet, /\.announcement-item-heading \{[^}]*display: grid !important;[^}]*grid-template-columns: minmax\(0, 1fr\) auto;[^}]*align-items: baseline;/s);
+  assert.doesNotMatch(stylesheet, /\.announcement-list \{[^}]*min-height:/s);
+});
+
 test("notification receipt shows more compact title-only rows", async () => {
   const [app, stylesheet] = await Promise.all([
     read("../src/App.tsx"),
@@ -81,4 +93,30 @@ test("notification trigger does not render an empty tooltip while the panel is o
   assert.match(app, /data-tooltip=\{notificationOpen \? undefined : "알림"\}/);
   assert.match(stylesheet, /\.global-tooltip-layer\s*\{/);
   assert.doesNotMatch(stylesheet, /tooltip-control:not\(\[data-tooltip\]\)::after/);
+});
+
+test("notification polling pauses offscreen without overlapping requests", async () => {
+  const app = await read("../src/App.tsx");
+
+  assert.match(app, /let refreshing = false;[\s\S]*?const refresh = async \(\) => \{\s*if \(refreshing\) return;/);
+  assert.match(app, /const refreshWhenVisible = \(\) => \{\s*if \(document\.visibilityState === "visible"\) void refresh\(\);/);
+  assert.match(app, /window\.setInterval\(refreshWhenVisible, 30_000\)/);
+  assert.match(app, /document\.addEventListener\("visibilitychange", refreshWhenVisible\)/);
+  assert.match(app, /document\.removeEventListener\("visibilitychange", refreshWhenVisible\)/);
+});
+
+test("notification trigger separates unread notifications and announcements", async () => {
+  const [app, stylesheet] = await Promise.all([
+    read("../src/App.tsx"),
+    read("../src/styles.css"),
+  ]);
+
+  assert.match(app, /notificationUnreadCount > 0 \|\| announcementUnreadCount > 0/);
+  assert.match(app, /notification-trigger-count is-notification/);
+  assert.match(app, /notification-trigger-count is-announcement/);
+  assert.match(app, /announcementUnreadCount > 0 && <span>/);
+  assert.match(stylesheet, /\.notification-trigger\.has-counts \{[^}]*width: auto;/s);
+  assert.doesNotMatch(stylesheet, /\.notification-trigger\.has-counts \{[^}]*border:/s);
+  assert.match(stylesheet, /\.notification-trigger-count \{[^}]*font-weight: 400;/s);
+  assert.match(stylesheet, /\.notification-trigger-count\.is-announcement/);
 });

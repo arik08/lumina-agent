@@ -7,10 +7,27 @@ from .errors import ProviderConfigurationError, ProviderRequestError
 
 def validate_http_base_url(value: str, provider_label: str) -> str:
     normalized = value.strip().rstrip("/")
-    parsed = urlsplit(normalized)
+    if any(
+        character.isspace() or ord(character) < 32 or ord(character) == 127
+        for character in normalized
+    ) or "\\" in normalized:
+        raise ProviderConfigurationError(
+            f"{provider_label} base URL contains invalid characters."
+        )
+    try:
+        parsed = urlsplit(normalized)
+        port = parsed.port
+    except ValueError as exc:
+        raise ProviderConfigurationError(
+            f"{provider_label} base URL is invalid."
+        ) from exc
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ProviderConfigurationError(
             f"{provider_label} base URL must be an absolute HTTP(S) URL."
+        )
+    if port == 0 or parsed.netloc.endswith(":"):
+        raise ProviderConfigurationError(
+            f"{provider_label} base URL contains an invalid port."
         )
     if parsed.username or parsed.password:
         raise ProviderConfigurationError(

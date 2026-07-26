@@ -3,9 +3,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import ssl
+from io import BytesIO
+from types import SimpleNamespace
 
 import httpx
 import pytest
+from reportlab.pdfgen.canvas import Canvas
 
 from lumina.http_client import HttpClientOptions, TrustProfile
 from lumina.tools import web as web_module
@@ -62,6 +65,8 @@ async def test_duckduckgo_search_parses_structured_evidence() -> None:
             "  steel   market\n outlook  ",
             tool_execution_id="tool-search-1",
             result_limit=5,
+            purpose="official_facts",
+            parent_invocation_id="search-parent",
             client=client,
             resolver=_public_resolver,
         )
@@ -69,6 +74,8 @@ async def test_duckduckgo_search_parses_structured_evidence() -> None:
     assert result.invocation.backend == "duckduckgo_html"
     assert result.invocation.query == "steel market outlook"
     assert result.invocation.tool_execution_id == "tool-search-1"
+    assert result.invocation.purpose == "official_facts"
+    assert result.invocation.parent_invocation_id == "search-parent"
     assert len(result.sources) == 2
     first = result.sources[0]
     assert first.title == "Example Guide"
@@ -76,11 +83,39 @@ async def test_duckduckgo_search_parses_structured_evidence() -> None:
     assert first.original_url.endswith("utm_source=ddg&x=1")
     assert first.verbatim_excerpt == "A verbatim result snippet with useful evidence."
     assert first.evidence_kind == "search_snippet"
+    assert first.extraction_status == "snippet_only"
+    assert first.search_backends == ("duckduckgo_html",)
     assert first.query_ids == (result.invocation.invocation_id,)
     assert first.tool_execution_ids == ("tool-search-1",)
     assert first.source_id.startswith("src_")
     assert len(first.content_hash) == 64
     assert result.to_dict()["untrustedExternalContent"] is True
+
+
+@pytest.mark.asyncio
+async def test_web_search_uses_explicit_backend_boundary() -> None:
+    class PlannedBackend:
+        name = "planned_test_backend"
+
+        async def search(self, query: str, **_kwargs) -> tuple[object, ...]:
+            assert query == "future backend boundary"
+            return (
+                web_module._SearchEntry(
+                    url="https://example.com/future",
+                    title="Future backend",
+                    snippet="Backend result",
+                ),
+            )
+
+    result = await web_search(
+        "future backend boundary",
+        tool_execution_id="tool-planned-backend",
+        backend=PlannedBackend(),
+        resolver=_public_resolver,
+    )
+
+    assert result.invocation.backend == "planned_test_backend"
+    assert result.sources[0].search_backends == ("planned_test_backend",)
 
 
 @pytest.mark.asyncio
@@ -112,6 +147,9 @@ async def test_web_fetch_extracts_readable_html_and_content_hash() -> None:
     assert result.evidence.normalized_url == "https://example.com/report"
     assert result.evidence.query_ids == ("search-1",)
     assert result.evidence.evidence_kind == "fetched_content"
+    assert result.evidence.content_type == "text/html"
+    assert result.evidence.extraction_status == "complete"
+    assert result.evidence.text_chars == len(result.text)
     assert result.evidence.content_hash == hashlib.sha256(html).hexdigest()
     assert "Inspection result" in result.text
     assert "All checks passed." in result.text
@@ -159,6 +197,174 @@ async def test_web_fetch_prefers_primary_content_and_removes_page_chrome() -> No
     assert "Share this report" not in result.text
     assert "Related articles" not in result.text
     assert "Copyright, privacy" not in result.text
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_extracts_pdf_text_with_page_locators() -> None:
+    buffer = BytesIO()
+    canvas = Canvas(buffer)
+    canvas.drawString(72, 720, "First page annual report evidence")
+    canvas.showPage()
+    canvas.drawString(72, 720, "Second page procurement evidence")
+    canvas.save()
+    pdf = buffer.getvalue()
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/pdf"},
+            content=pdf,
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await web_fetch(
+            "https://example.com/annual-report.pdf",
+            tool_execution_id="tool-fetch-pdf",
+            policy=WebToolPolicy(max_response_bytes=12),
+            client=client,
+            resolver=_public_resolver,
+        )
+
+    assert result.content_type == "application/pdf"
+    assert result.evidence.title == "annual-report.pdf"
+    assert result.evidence.content_hash == hashlib.sha256(pdf).hexdigest()
+    assert result.locator_map == {
+        "kind": "page",
+        "count": 2,
+        "start": 1,
+        "end": 2,
+    }
+    assert "[Page 1]" in result.text
+    assert "First page annual report evidence" in result.text
+    assert "[Page 2]" in result.text
+    assert "Second page procurement evidence" in result.text
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_uses_dedicated_large_pdf_download_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pdf = b"%PDF-1.7\n" + (b"x" * 3_000_000)
+
+    monkeypatch.setattr(
+        web_module,
+        "extract_pdf_text",
+        lambda **_kwargs: SimpleNamespace(
+            status="completed",
+            text="[Page 1]\nLarge PDF evidence",
+            locator_map={"kind": "page", "count": 200, "start": 1, "end": 50},
+            metadata={"hasMorePages": True, "truncatedByPageLimit": False},
+        ),
+    )
+    transport = httpx.MockTransport(
+        lambda _request: httpx.Response(
+            200,
+            headers={"content-type": "application/pdf"},
+            content=pdf,
+        )
+    )
+    async with httpx.AsyncClient(transport=transport) as client:
+        result = await web_fetch(
+            "https://example.com/large-report.pdf",
+            tool_execution_id="tool-fetch-large-pdf",
+            client=client,
+            resolver=_public_resolver,
+        )
+
+    assert result.text == "[Page 1]\nLarge PDF evidence"
+    assert result.evidence.content_hash == hashlib.sha256(pdf).hexdigest()
+    assert result.locator_map == {
+        "kind": "page",
+        "count": 200,
+        "start": 1,
+        "end": 50,
+    }
+    assert result.extraction_metadata == {
+        "hasMorePages": True,
+        "truncatedByPageLimit": False,
+        "originalExtractedChars": len("[Page 1]\nLarge PDF evidence"),
+        "textTruncated": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_extracts_requested_pdf_page_range() -> None:
+    buffer = BytesIO()
+    canvas = Canvas(buffer)
+    for page_number in range(1, 4):
+        canvas.drawString(72, 720, f"Evidence from page {page_number}")
+        canvas.showPage()
+    canvas.save()
+
+    transport = httpx.MockTransport(
+        lambda _request: httpx.Response(
+            200,
+            headers={"content-type": "application/pdf"},
+            content=buffer.getvalue(),
+        )
+    )
+    async with httpx.AsyncClient(transport=transport) as client:
+        result = await web_fetch(
+            "https://example.com/ranged-report.pdf",
+            tool_execution_id="tool-fetch-ranged-pdf",
+            page_start=2,
+            page_end=3,
+            client=client,
+            resolver=_public_resolver,
+        )
+
+    assert "[Page 1]" not in result.text
+    assert "[Page 2]" in result.text
+    assert "Evidence from page 2" in result.text
+    assert "[Page 3]" in result.text
+    assert result.locator_map == {
+        "kind": "page",
+        "count": 3,
+        "start": 2,
+        "end": 3,
+    }
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_rejects_pdf_range_larger_than_fifty_pages() -> None:
+    with pytest.raises(WebToolError) as captured:
+        await web_fetch(
+            "https://example.com/report.pdf",
+            tool_execution_id="tool-fetch-invalid-range",
+            page_start=1,
+            page_end=51,
+            resolver=_public_resolver,
+        )
+
+    assert captured.value.code == "invalid_pdf_page_range"
+    assert captured.value.stage == "input"
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_reports_pdf_without_text_layer() -> None:
+    buffer = BytesIO()
+    canvas = Canvas(buffer)
+    canvas.showPage()
+    canvas.save()
+
+    transport = httpx.MockTransport(
+        lambda _request: httpx.Response(
+            200,
+            headers={"content-type": "application/pdf"},
+            content=buffer.getvalue(),
+        )
+    )
+    async with httpx.AsyncClient(transport=transport) as client:
+        with pytest.raises(WebToolError) as captured:
+            await web_fetch(
+                "https://example.com/scanned-report.pdf",
+                tool_execution_id="tool-fetch-scanned-pdf",
+                client=client,
+                resolver=_public_resolver,
+            )
+
+    assert captured.value.code == "pdf_text_unavailable"
+    assert captured.value.stage == "content"
 
 
 @pytest.mark.parametrize(
@@ -334,7 +540,7 @@ async def test_web_client_factory_keeps_tls_verification_and_explicit_proxy(
         assert options.proxy == "http://approved-proxy.example:8080"
         assert options.trust_env is False
         assert options.follow_redirects is False
-        assert options.timeout_seconds == 15.0
+        assert options.timeout_seconds == 45.0
     finally:
         await client.aclose()
 

@@ -11,6 +11,30 @@ if ($errors.Count -gt 0) {
     throw "run_lumina.ps1 has parser errors: $($errors.Message -join '; ')"
 }
 
+$stopScriptPath = Join-Path $PSScriptRoot "stop_lumina.ps1"
+$stopTokens = $null
+$stopErrors = $null
+$stopAst = [System.Management.Automation.Language.Parser]::ParseFile(
+    $stopScriptPath,
+    [ref]$stopTokens,
+    [ref]$stopErrors
+)
+if ($stopErrors.Count -gt 0) {
+    throw "stop_lumina.ps1 has parser errors: $($stopErrors.Message -join '; ')"
+}
+$stopIdentityFunction = $stopAst.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq "Get-LuminaSupervisorIdentity"
+    },
+    $true
+)
+if ($null -eq $stopIdentityFunction) {
+    throw "Get-LuminaSupervisorIdentity was not found."
+}
+. ([scriptblock]::Create($stopIdentityFunction.Extent.Text))
+
 $inputSourcePath = Join-Path $PSScriptRoot "LuminaLauncher.Input.ps1"
 $inputTokens = $null
 $inputErrors = $null
@@ -44,7 +68,7 @@ $restartPromptPath = Join-Path $PSScriptRoot "Wait-LuminaLauncherRestart.ps1"
 $restartPromptSource = Get-Content -Raw -LiteralPath $restartPromptPath
 $alreadyRunningBranch = [regex]::Match(
     $developmentLauncherSource,
-    '(?s)if "%LUMINA_DEV_EXIT%"=="76" \(.*?exit /b %LUMINA_DEV_EXIT%.*?\)'
+    '(?s)if "%LUMINA_DEV_EXIT%"=="76" \(.*?\)'
 )
 $databaseOwnershipBranch = [regex]::Match(
     $developmentLauncherSource,
@@ -59,11 +83,30 @@ if (
     $restartPromptSource -notmatch 'Test-HardResetInput' -or
     $restartPromptSource -notmatch 'exit 75' -or
     -not $alreadyRunningBranch.Success -or
+    $alreadyRunningBranch.Value -match 'exit /b' -or
     -not $databaseOwnershipBranch.Success -or
     $alreadyRunningBranch.Index -gt $developmentLauncherSource.IndexOf('Wait-LuminaLauncherRestart.ps1') -or
     $databaseOwnershipBranch.Index -gt $developmentLauncherSource.IndexOf('Wait-LuminaLauncherRestart.ps1')
 ) {
-    throw "The development launcher must close duplicate instances without leaving a restart prompt behind."
+    throw "The development launcher must keep port-conflict details visible and avoid retrying database ownership conflicts."
+}
+
+$takeoverFunction = $ast.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq "Enter-LuminaPortLocksWithTakeover"
+    },
+    $true
+)
+if (
+    $null -eq $takeoverFunction -or
+    $takeoverFunction.Extent.Text -notmatch 'Stop-PreviousSupervisor' -or
+    $takeoverFunction.Extent.Text -notmatch 'Enter-LuminaPortLocks' -or
+    $ast.Extent.Text -notmatch
+        'if \(-not \(Enter-LuminaPortLocksWithTakeover -Ports \$claimedPorts\)\)'
+) {
+    throw "The launcher must safely take over a matching previous supervisor before reporting a port conflict."
 }
 if (
     $developmentLauncherSource -notmatch 'if "%LUMINA_DEV_EXIT%"=="78" exit /b 0' -or
@@ -205,6 +248,28 @@ if ($null -eq $qaIsolationFunction -or $null -eq $databaseOwnershipFunction) {
 }
 . ([scriptblock]::Create($qaIsolationFunction.Extent.Text))
 . ([scriptblock]::Create($databaseOwnershipFunction.Extent.Text))
+
+$listeningPortsFunction = $ast.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq "Get-LuminaListeningPorts"
+    },
+    $true
+)
+$lanAddressesFunction = $ast.Find(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq "Get-LanIPv4Addresses"
+    },
+    $true
+)
+if ($null -eq $listeningPortsFunction -or $null -eq $lanAddressesFunction) {
+    throw "Fast launcher network inspection functions were not found."
+}
+. ([scriptblock]::Create($listeningPortsFunction.Extent.Text))
+. ([scriptblock]::Create($lanAddressesFunction.Extent.Text))
 
 $cases = @(
     @{ Name = "lowercase r"; Character = [char]'r'; VirtualKeyCode = 0; Expected = $true },
@@ -373,6 +438,31 @@ finally {
         )
     }
     Remove-Item -LiteralPath $qaIsolationRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+$listener = [System.Net.Sockets.TcpListener]::new(
+    [System.Net.IPAddress]::Loopback,
+    0
+)
+try {
+    $listener.Start()
+    $listenerPort = ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
+    if ($listenerPort -notin @(Get-LuminaListeningPorts -Ports @($listenerPort))) {
+        throw "Fast port inspection did not find an active TCP listener."
+    }
+}
+finally {
+    $listener.Stop()
+}
+if ($listenerPort -in @(Get-LuminaListeningPorts -Ports @($listenerPort))) {
+    throw "Fast port inspection retained a stopped TCP listener."
+}
+$lanAddresses = @(Get-LanIPv4Addresses)
+if (
+    $lanAddresses.Count -ne @($lanAddresses | Sort-Object -Unique).Count -or
+    @($lanAddresses | Where-Object { $_ -match '^127\.' -or $_ -match '^169\.254\.' }).Count -gt 0
+) {
+    throw "Fast LAN address inspection returned duplicate or local-only addresses."
 }
 
 $lockTestRoot = Join-Path $env:TEMP "lumina-port-lock-test-$([guid]::NewGuid())"
@@ -694,6 +784,48 @@ finally {
     Remove-Item -LiteralPath $SupervisorPidPath -Force -ErrorAction SilentlyContinue
 }
 
+$stopSupervisorPidPath = Join-Path `
+    $env:TEMP `
+    "lumina-stop-supervisor-test-$([guid]::NewGuid()).pid"
+$stopSupervisor = $null
+try {
+    $stopSupervisor = Start-Process `
+        -FilePath "powershell.exe" `
+        -ArgumentList @('-NoProfile', '-Command', 'Start-Sleep -Seconds 30') `
+        -WindowStyle Hidden `
+        -PassThru
+    $stopIdentity = (
+        "$($stopSupervisor.Id)|" +
+        "$($stopSupervisor.StartTime.ToUniversalTime().Ticks)"
+    )
+    [System.IO.File]::WriteAllText($stopSupervisorPidPath, $stopIdentity)
+    $resolvedStopIdentity = Get-LuminaSupervisorIdentity `
+        -PidPath $stopSupervisorPidPath
+    if (
+        $null -eq $resolvedStopIdentity -or
+        $resolvedStopIdentity.ProcessId -ne $stopSupervisor.Id
+    ) {
+        throw "The stop launcher did not resolve a matching supervisor identity."
+    }
+
+    [System.IO.File]::WriteAllText(
+        $stopSupervisorPidPath,
+        "$($stopSupervisor.Id)|1"
+    )
+    if ($null -ne (Get-LuminaSupervisorIdentity -PidPath $stopSupervisorPidPath)) {
+        throw "The stop launcher accepted a reused or mismatched supervisor identity."
+    }
+}
+finally {
+    if ($null -ne $stopSupervisor) {
+        Stop-Process -Id $stopSupervisor.Id -Force -ErrorAction SilentlyContinue
+    }
+    Remove-Item `
+        -LiteralPath $stopSupervisorPidPath `
+        -Force `
+        -ErrorAction SilentlyContinue
+}
+
 $startProcessesFunction = $ast.Find(
     {
         param($node)
@@ -877,10 +1009,30 @@ if (
 ) {
     throw "Normal startup must stay quiet while failures retain log guidance."
 }
-$preparationCall = $source.LastIndexOf('Confirm-LuminaRuntimePrepared')
+$initialStartup = $source.IndexOf('$resetReason = "initial startup"')
+$preparationCall = $source.LastIndexOf(
+    'Confirm-LuminaRuntimePrepared',
+    $initialStartup
+)
 $supervisorLoop = $source.IndexOf('while ($true)', $preparationCall)
-if ($preparationCall -lt 0 -or $supervisorLoop -lt 0 -or $preparationCall -ge $supervisorLoop) {
+if (
+    $initialStartup -lt 0 -or
+    $preparationCall -lt 0 -or
+    $supervisorLoop -lt 0 -or
+    $preparationCall -ge $supervisorLoop
+) {
     throw "Runtime preparation must happen before the automatic supervisor loop."
+}
+$manualResetBlock = $source.Substring(
+    $source.LastIndexOf('if ($manualResetRequested)'),
+    $source.LastIndexOf('if (Test-LuminaDatabaseOwnershipFailure') -
+        $source.LastIndexOf('if ($manualResetRequested)')
+)
+if (
+    $manualResetBlock -notmatch '\$runtimePreparationRequired\s*=\s*\$true' -or
+    $source.Substring($supervisorLoop) -notmatch '(?s)if \(\$runtimePreparationRequired\).*?Confirm-LuminaRuntimePrepared.*?\$runtimePreparationRequired\s*=\s*\$false'
+) {
+    throw "Manual restart must prepare the runtime again before starting updated Backend code."
 }
 if (
     $source -match '\$MaxAutomaticRestarts' -or
@@ -908,6 +1060,13 @@ if (
 }
 if ($source -notmatch '\$StartupTimeoutSeconds\s*=\s*90') {
     throw "The startup deadline must allow a 90-second Windows cold start."
+}
+if (
+    $source -notmatch '\$StartupPollIntervalMilliseconds\s*=\s*200' -or
+    $waitReadyFunction.Extent.Text -notmatch
+        'Start-Sleep\s+-Milliseconds\s+\$StartupPollIntervalMilliseconds'
+) {
+    throw "Startup readiness must use the bounded fast polling interval."
 }
 if ($source -match 'Restarting in 1 second') {
     throw "The launcher must not retain the unbounded fixed one-second restart loop."

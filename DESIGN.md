@@ -37,27 +37,33 @@ colors:
 typography:
   headline:
     fontFamily: "Pretendard Variable, Pretendard, Noto Sans KR, Segoe UI, sans-serif"
-    fontSize: "14px"
+    fontSize: "16px"
     fontWeight: 700
     lineHeight: 1.3
     letterSpacing: "-0.01em"
   title:
     fontFamily: "Pretendard Variable, Pretendard, Noto Sans KR, Segoe UI, sans-serif"
-    fontSize: "13px"
+    fontSize: "14px"
     fontWeight: 650
     lineHeight: 1.4
     letterSpacing: "normal"
   body:
     fontFamily: "Pretendard Variable, Pretendard, Noto Sans KR, Segoe UI, sans-serif"
-    fontSize: "12.5px"
+    fontSize: "14px"
     fontWeight: 400
     lineHeight: 1.55
     letterSpacing: "normal"
   label:
     fontFamily: "Pretendard Variable, Pretendard, Noto Sans KR, Segoe UI, sans-serif"
-    fontSize: "11.5px"
+    fontSize: "14px"
     fontWeight: 500
     lineHeight: 1.4
+    letterSpacing: "normal"
+  metadata:
+    fontFamily: "Pretendard Variable, Pretendard, Noto Sans KR, Segoe UI, sans-serif"
+    fontSize: "13px"
+    fontWeight: 400
+    lineHeight: 1.45
     letterSpacing: "normal"
 rounded:
   xs: "3px"
@@ -82,21 +88,21 @@ components:
     typography: "{typography.label}"
     rounded: "{rounded.control}"
     padding: "0 9px"
-    height: "30px"
+    height: "32px"
   button-primary-dark:
     backgroundColor: "{colors.dark-cobalt-pale}"
     textColor: "{colors.dark-cobalt}"
     typography: "{typography.label}"
     rounded: "{rounded.control}"
     padding: "0 9px"
-    height: "30px"
+    height: "32px"
   button-secondary:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.ink}"
     typography: "{typography.label}"
     rounded: "{rounded.control}"
     padding: "0 9px"
-    height: "30px"
+    height: "32px"
   input:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.ink}"
@@ -120,7 +126,7 @@ components:
   chip-selected:
     backgroundColor: "{colors.cobalt-pale}"
     textColor: "{colors.cobalt}"
-    typography: "{typography.label}"
+    typography: "{typography.metadata}"
     rounded: "{rounded.pill}"
     padding: "0 8px"
     height: "25px"
@@ -185,10 +191,15 @@ Lumina의 palette는 cobalt 한 가지 accent와 차갑게 tint된 neutral surfa
 
 ### Hierarchy
 
-- **Headline** (700, 14px, 1.3): feature header와 주요 panel 제목입니다.
-- **Title** (650, 13px, 1.4): section 제목, row identity와 card heading입니다.
-- **Body** (400, 12.5px, 1.55): 설명, form value와 dense content입니다. 긴 설명은 65에서 75ch 안으로 제한합니다.
-- **Label** (500, 11.5px, 1.4): field label, button, metadata와 compact control입니다. 10px 이하는 보조 metadata 외에는 금지합니다.
+- **Headline** (700, 16px, 1.3): feature header와 주요 panel 제목입니다.
+- **Title** (650, 14px, 1.4): section 제목, row identity와 card heading입니다.
+- **Body** (400, 14px, 1.55): 설명, form value와 dense content의 기본 크기입니다. 긴 설명은 65에서 75ch 안으로 제한합니다.
+- **Label** (500, 14px, 1.4): field label, button, input, select와 menu option에 사용합니다.
+- **Metadata** (400, 13px, 1.45): 시간, 개수, 상태 보조 설명처럼 본문보다 우선순위가 낮은 정보에만 사용합니다.
+
+**The Readable Minimum Rule.** 일반 제품 UI의 읽을 수 있는 최솟값은 13px입니다. 공간이 넉넉한 화면에서 본문·입력·버튼·선택기·목록 행을 13px 미만으로 줄이지 않습니다. 12px 이하는 그래프 축이나 코드 line number처럼 본문과 명확히 분리되고 다른 방식으로 내용을 확인할 수 있는 특수 표기에만 예외적으로 허용합니다.
+
+**The Compact Is Geometry Rule.** `compact`는 control 높이, padding과 gap을 줄이는 밀도 variant이며 글자 크기를 줄이는 variant가 아닙니다. compact control도 Label 14px을 유지합니다.
 
 **The Weight Before Decoration Rule.** hierarchy는 font size와 weight로 해결합니다. gradient text, 과한 letter spacing, 장식용 대문자화는 금지합니다.
 
@@ -232,7 +243,7 @@ Lumina는 flat by default입니다. 일반 section과 row는 surface tone과 1px
 
 ### Inputs / Fields
 
-- **Style:** 기본 높이는 32px, border는 line, radius는 5px, background는 surface입니다. compact control은 29px입니다.
+- **Style:** 기본 높이는 32px, border는 line, radius는 5px, background는 surface입니다. compact control은 29px이지만 글자는 기본 Label 14px을 유지합니다.
 - **Focus:** cobalt border로 상태를 표시합니다. glow는 form hierarchy를 덮지 않는 낮은 opacity일 때만 허용합니다.
 - **Error / Disabled:** error는 danger border와 같은 위치의 안내 문구를 함께 표시합니다. disabled는 opacity를 낮추되 value를 읽을 수 있어야 합니다.
 
@@ -257,7 +268,7 @@ Lumina는 flat by default입니다. 일반 section과 row는 surface tone과 1px
 ### Tooltips and Scrollbars
 
 - **Tooltip:** 모든 tooltip은 body portal의 공용 layer를 사용합니다. browser title과 clipping container 내부 pseudo-element는 금지합니다.
-- **Scrollbar:** 모든 사용자 노출 scroll surface는 공용 thin scrollbar를 사용합니다. Track은 투명하게 유지하고 thumb는 accent 색이 아닌 `ink` 기반의 중성 회색으로 계산합니다. 기본 상태는 11% 강도로 은은하게 보이며, 스크롤 조작 중에는 30%로 선명해지고 마지막 조작 650ms 후 520ms 동안 서서히 흐려집니다. Light와 Dark, Artifact Library, 채팅, Marketplace, 파일 Workspace, 예약 작업, 설정, popover와 선택 메뉴에 같은 token과 idle-fade 동작을 적용하며 화면별 색상 예외를 만들지 않습니다.
+- **Scrollbar:** 모든 사용자 노출 scroll surface는 공용 thin scrollbar를 사용합니다. Track은 투명하게 유지하고 thumb는 accent 색이 아닌 `ink` 기반의 중성 회색으로 계산합니다. 기본 상태는 11% 강도로 은은하게 보이며, 스크롤 조작 중에는 30%로 선명해지고 마지막 조작 650ms 후 520ms 동안 서서히 흐려집니다. Light와 Dark, Artifact Library, Marketplace, 파일 Workspace, 예약 작업, 설정, popover와 선택 메뉴에 같은 token과 idle-fade 동작을 적용하며 화면별 색상 예외를 만들지 않습니다. 가장 중요한 탐색 영역인 채팅 본문은 예외로 취급해 Chromium 계열 scrollbar 폭을 16px로 넓히고 Firefox에서도 `thin`을 사용하지 않습니다. 채팅 scrollbar는 조작 후에도 20% 강도에서 흐려짐을 멈춰 항상 식별할 수 있게 하며, 조작 중에는 공용 30% 강도를 사용합니다.
 
 ### Status, Warning and Error Messages
 
@@ -277,6 +288,7 @@ Lumina는 flat by default입니다. 일반 section과 row는 surface tone과 1px
 - **Do** 먼저 기존 공용 primitive와 semantic variant를 찾고, 없을 때만 새 component API를 추가합니다.
 - **Do** radius, control height, spacing, shadow와 motion을 CSS custom property로 정의한 뒤 사용합니다.
 - **Do** 주 버튼은 하나의 공용 primary action style로 관리하고 Light와 Dark 변형은 theme token으로 해결합니다.
+- **Do** 본문·입력·버튼·선택기와 menu option은 14px, 보조 metadata는 13px을 기본으로 사용합니다.
 - **Do** List of Value는 8px trigger, 10px menu, 6px option의 공용 rounded geometry를 사용합니다.
 - **Do** DOM과 computed style로 Light, Dark, open, hover, keyboard focus, disabled와 loading 상태를 확인합니다.
 - **Do** 권한, 공유 범위와 실행 상태를 label, icon, color 중 둘 이상으로 명확히 표시합니다.
@@ -289,6 +301,7 @@ Lumina는 flat by default입니다. 일반 section과 row는 surface tone과 1px
 - **Don't** 과도한 카드 중첩을 만들지 않습니다.
 - **Don't** 의미 없는 모션과 색상을 추가하지 않습니다.
 - **Don't** 중요한 실행·권한 상태를 모호하게 감추지 않습니다.
+- **Don't** `compact`, 좁은 pane 또는 많은 항목을 이유로 글자를 13px 미만으로 축소하지 않습니다. 먼저 layout, wrapping, overflow와 정보 우선순위를 조정합니다.
 - **Don't** 같은 버튼, input, menu, list row의 geometry와 state를 화면 selector마다 하드코딩하지 않습니다.
 - **Don't** Dark theme shadow를 밝은 text 또는 ink token으로 계산해 흰 아우라를 만들지 않습니다.
 - **Don't** gradient text, decorative glassmorphism, colored side stripe와 layout property animation을 사용하지 않습니다.

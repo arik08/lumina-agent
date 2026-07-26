@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
+import hashlib
 import json
 from pathlib import Path
 
@@ -13,14 +15,26 @@ from lumina.api.schemas import RunCreate, RunMessageInput
 from lumina.config import Settings
 from lumina.db import SessionLocal
 from lumina.main import create_app
-from lumina.models import Attachment, Run, User
+from lumina.models import (
+    Artifact,
+    ArtifactVersion,
+    Attachment,
+    ProjectFile,
+    ProjectFileVersion,
+    Run,
+    User,
+    utc_now,
+)
 from lumina.runs.approvals import classify_tool_risk
 from lumina.runs.service import create_run
 from lumina.tools.source_documents import (
     SOURCE_DOCUMENT_TOOL_SCHEMAS,
+    artifact_source_document_id,
     attachment_source_document_id,
+    build_source_document_manifest,
     execute_source_document_tool,
     message_source_document_id,
+    project_file_source_document_id,
     source_document_threshold_tokens,
 )
 
@@ -57,6 +71,7 @@ def _large_document() -> str:
 
 def test_source_document_tool_schema_and_dynamic_threshold() -> None:
     assert [item["function"]["name"] for item in SOURCE_DOCUMENT_TOOL_SCHEMAS] == [
+        "explore_source_document",
         "search_source_document",
         "read_source_document",
     ]
@@ -64,8 +79,60 @@ def test_source_document_tool_schema_and_dynamic_threshold() -> None:
     assert source_document_threshold_tokens(16_000) == 4_000
     assert source_document_threshold_tokens(128_000) == 25_600
     assert source_document_threshold_tokens(1_050_000) == 80_000
-    for name in ("search_source_document", "read_source_document"):
+    for name in (
+        "explore_source_document",
+        "search_source_document",
+        "read_source_document",
+    ):
         assert classify_tool_risk(name, approval_mode="on_risk").effect == "read_only"
+
+
+def test_source_document_manifest_selects_navigation_from_structure_and_intent() -> None:
+    content = "\n".join(
+        (
+            "# Policy",
+            "Introduction",
+            "## Governance",
+            "Approval rules",
+            "## Exceptions",
+            "Exception rules",
+        )
+    )
+    broad = build_source_document_manifest(
+        document_id="message:one:digest",
+        name="policy.md",
+        source_kind="message",
+        content=content,
+        user_request="Analyze all exceptions and conflicting sections.",
+    )
+    exact = build_source_document_manifest(
+        document_id="message:one:digest",
+        name="policy.md",
+        source_kind="message",
+        content=content,
+        user_request="Find section 2.",
+    )
+    unstructured = build_source_document_manifest(
+        document_id="message:two:digest",
+        name="records.txt",
+        source_kind="message",
+        content="\n".join(f"{index:05d}. record" for index in range(100)),
+        user_request="Analyze the entire document.",
+    )
+    truncated = build_source_document_manifest(
+        document_id="message:three:digest",
+        name="partial-policy.md",
+        source_kind="message",
+        content=content,
+        source_truncated=True,
+        user_request="Analyze all exceptions and conflicting sections.",
+    )
+
+    assert '"strategy": "explore_then_search_then_read"' in broad
+    assert "explore_source_document" in broad
+    assert '"strategy": "search_then_read"' in exact
+    assert '"reason": "no_reliable_section_structure"' in unstructured
+    assert '"reason": "source_extraction_incomplete"' in truncated
 
 
 def test_large_attachment_uses_recoverable_manifest_and_line_tools(
@@ -74,6 +141,12 @@ def test_large_attachment_uses_recoverable_manifest_and_line_tools(
     settings = _settings(tmp_path)
     executor = LocalRunExecutor(settings)
     long_text = _large_document()
+    long_lines = long_text.splitlines()
+    long_lines[0] = "# Corporate Policy"
+    long_lines[1_000] = "## Governance"
+    long_lines[4_000] = "### Reorganization"
+    long_lines[6_000] = "## Compliance"
+    long_text = "\n".join(long_lines)
     assert len(long_text) > 500_000
 
     with TestClient(create_app(settings)) as client:
@@ -126,6 +199,14 @@ def test_large_attachment_uses_recoverable_manifest_and_line_tools(
                 ),
                 idempotency_key="large-source-document-run",
             )
+            now = utc_now()
+            run.worker_id = executor._worker_id
+            run.heartbeat_at = now
+            run.lease_expires_at = now + timedelta(minutes=1)
+            run.snapshot_json = {
+                **run.snapshot_json,
+                "workerId": executor._worker_id,
+            }
             db.commit()
             assert created is True
             run_id = run.id
@@ -141,6 +222,8 @@ def test_large_attachment_uses_recoverable_manifest_and_line_tools(
         )
         assert "<source-document-manifest>" in prepared
         assert document_id in prepared
+        assert "explore_source_document" in prepared
+        assert '"strategy": "explore_then_search_then_read"' in prepared
         assert "TARGET-4321" not in prepared
         assert len(prepared) < 5_000
 
@@ -181,6 +264,34 @@ def test_large_attachment_uses_recoverable_manifest_and_line_tools(
             assert read["nextStartLine"] == 4_323
             assert read["untrustedExternalContent"] is True
 
+            outline = execute_source_document_tool(
+                db,
+                executor.file_storage,
+                executor.storage,
+                run=run,
+                name="explore_source_document",
+                arguments={"document_id": document_id},
+            )
+            assert outline["available"] is True
+            assert outline["nodes"][0]["title"] == "Corporate Policy"
+            assert outline["nodes"][0]["childCount"] == 2
+            root_node_id = outline["nodes"][0]["nodeId"]
+            children = execute_source_document_tool(
+                db,
+                executor.file_storage,
+                executor.storage,
+                run=run,
+                name="explore_source_document",
+                arguments={
+                    "document_id": document_id,
+                    "parent_node_id": root_node_id,
+                },
+            )
+            assert [item["title"] for item in children["nodes"]] == [
+                "Governance",
+                "Compliance",
+            ]
+
             dispatched = asyncio.run(
                 executor._execute_tool(
                     run_id,
@@ -199,6 +310,19 @@ def test_large_attachment_uses_recoverable_manifest_and_line_tools(
                 )
             )
             assert "TARGET-4321" in dispatched["content"]
+
+            dispatched_outline = asyncio.run(
+                executor._execute_tool(
+                    run_id,
+                    {
+                        "id": "source-document-explore-dispatch",
+                        "name": "explore_source_document",
+                        "arguments": json.dumps({"document_id": document_id}),
+                    },
+                    "Inspect the document structure.",
+                )
+            )
+            assert dispatched_outline["available"] is True
 
             other_attachment = db.get(Attachment, other_upload.json()["id"])
             assert other_attachment is not None
@@ -244,6 +368,196 @@ def test_small_attachment_remains_inline(tmp_path: Path) -> None:
         )
         assert "작은 문서 원문" in prepared
         assert "<source-document-manifest>" not in prepared
+
+
+def test_project_file_and_artifact_source_documents_resolve_exact_versions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _settings(tmp_path)
+    executor = LocalRunExecutor(settings)
+    with TestClient(create_app(settings)) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers=headers,
+            json={"projectId": project_id, "title": "versioned sources"},
+        ).json()
+        with SessionLocal() as db:
+            user = db.scalar(select(User).where(User.login_id == "admin@posco.com"))
+            assert user is not None
+            run, _message, created = create_run(
+                db,
+                user=user,
+                conversation_id=conversation["id"],
+                payload=RunCreate(
+                    message=RunMessageInput(text="버전이 고정된 원문을 확인해 주세요.")
+                ),
+                idempotency_key="versioned-source-document-run",
+            )
+            assert created is True
+
+            project_file_content = "Project file exact version\nSecond line".encode()
+            project_file_digest = hashlib.sha256(project_file_content).hexdigest()
+            stored_project_file = executor.file_storage.put_bytes(
+                "project-files/versioned-source.txt",
+                project_file_content,
+                expected_sha256=project_file_digest,
+            )
+            project_file = ProjectFile(
+                organization_id=user.organization_id,
+                project_id=project_id,
+                created_by_user_id=user.id,
+                logical_path="sources/versioned-source.txt",
+                active_path_key="sources/versioned-source.txt",
+            )
+            db.add(project_file)
+            db.flush()
+            db.add(
+                ProjectFileVersion(
+                    project_file_id=project_file.id,
+                    version_number=1,
+                    storage_key=stored_project_file.key,
+                    content_hash=stored_project_file.sha256,
+                    size_bytes=stored_project_file.size,
+                    mime_type="text/plain",
+                    original_filename="versioned-source.txt",
+                    extraction_status="completed",
+                    created_by_user_id=user.id,
+                )
+            )
+
+            artifact_content = "Artifact exact version\nSecond line".encode()
+            artifact_digest = hashlib.sha256(artifact_content).hexdigest()
+            stored_artifact = executor.storage.put_bytes(
+                "artifacts/versioned-source.html",
+                artifact_content,
+                expected_sha256=artifact_digest,
+            )
+            artifact = Artifact(
+                organization_id=user.organization_id,
+                project_id=project_id,
+                conversation_id=conversation["id"],
+                created_by_user_id=user.id,
+                display_name="Versioned source.html",
+                kind="html",
+                mime_type="text/html",
+                current_version_number=1,
+            )
+            db.add(artifact)
+            db.flush()
+            db.add(
+                ArtifactVersion(
+                    artifact_id=artifact.id,
+                    version_number=1,
+                    storage_key=stored_artifact.key,
+                    content_hash=stored_artifact.sha256,
+                    size_bytes=stored_artifact.size,
+                    change_type="create",
+                    validation_status="valid",
+                    created_by_user_id=user.id,
+                )
+            )
+            db.commit()
+
+            document_id = project_file_source_document_id(
+                project_file.id, project_file_digest
+            )
+            original_read_bytes = executor.file_storage.read_bytes
+
+            def reject_eager_project_file_read(
+                *_args: object, **_kwargs: object
+            ) -> bytes:
+                raise AssertionError(
+                    "Project file bodies must be read only by source tools"
+                )
+
+            monkeypatch.setattr(
+                executor.file_storage, "read_bytes", reject_eager_project_file_read
+            )
+            direct_file_context = executor._message_with_context(
+                "Inspect the referenced file only when needed.",
+                attachment_ids=[],
+                prompt_references=[
+                    {
+                        "kind": "file",
+                        "reference_id": project_file.id,
+                        "version_or_digest": project_file_digest,
+                        "display_snapshot": {
+                            "targetType": "project_file",
+                            "logicalPath": project_file.logical_path,
+                        },
+                    }
+                ],
+                extensions=[],
+                context_window=128_000,
+            )
+            folder_context = executor._message_with_context(
+                "Inspect the referenced folder only when needed.",
+                attachment_ids=[],
+                prompt_references=[
+                    {
+                        "kind": "folder",
+                        "reference_id": "sources-folder",
+                        "version_or_digest": project_file_digest,
+                        "display_snapshot": {
+                            "targetType": "project_folder",
+                            "logicalPath": "sources",
+                            "fileVersions": [
+                                {
+                                    "id": project_file.id,
+                                    "path": project_file.logical_path,
+                                    "digest": project_file_digest,
+                                }
+                            ],
+                        },
+                    }
+                ],
+                extensions=[],
+                context_window=128_000,
+            )
+            monkeypatch.setattr(
+                executor.file_storage, "read_bytes", original_read_bytes
+            )
+
+            for prepared in (direct_file_context, folder_context):
+                assert "Project file exact version" not in prepared
+                assert "<source-document-index>" in prepared
+                assert document_id in prepared
+                assert "explore_source_document" in prepared
+                assert "search_source_document" in prepared
+                assert "read_source_document" in prepared
+
+            project_file_result = execute_source_document_tool(
+                db,
+                executor.file_storage,
+                executor.storage,
+                run=run,
+                name="read_source_document",
+                arguments={
+                    "document_id": document_id,
+                    "start_line": 1,
+                    "limit": 2,
+                },
+            )
+            artifact_result = execute_source_document_tool(
+                db,
+                executor.file_storage,
+                executor.storage,
+                run=run,
+                name="read_source_document",
+                arguments={
+                    "document_id": artifact_source_document_id(
+                        artifact.id, artifact_digest
+                    ),
+                    "start_line": 1,
+                    "limit": 2,
+                },
+            )
+
+            assert "Project file exact version" in project_file_result["content"]
+            assert "Artifact exact version" in artifact_result["content"]
 
 
 def test_oversized_pasted_user_document_is_recoverable_from_message(

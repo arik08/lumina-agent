@@ -7,6 +7,9 @@ const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8
 
 test("artifact split keeps enough width for the completed answer actions", () => {
   assert.match(app, /const artifactPaneMinWidth = 360;/);
+  assert.match(app, /const artifactPaneDefaultWidth = 1200;/);
+  assert.match(app, /Number\.isFinite\(saved\) && saved >= artifactPaneMinWidth\s*\? saved\s*: artifactPaneDefaultWidth;/);
+  assert.match(app, /localStorage\.setItem\("lumina:artifactPaneWidth", String\(artifactPaneWidth\)\)/);
   assert.match(app, /const artifactSplitPaneMinViewport = 1024;/);
   assert.match(app, /const chatPaneMinWidth = 440;/);
   assert.match(app, /window\.innerWidth - sidebarWidth - chatPaneMinWidth/);

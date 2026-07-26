@@ -14,7 +14,7 @@ test("usage popover uses the global layer and only flips below at the viewport e
   ]);
 
   assert.match(turn, /aria-describedby=\{popoverOpen \? popoverId : undefined\}/);
-  assert.match(turn, /<GlobalTooltipLayer anchor=\{controlRef\.current\} className="answer-usage-popover" id=\{popoverId\} open=\{popoverOpen\}>/);
+  assert.match(turn, /<GlobalTooltipLayer anchor=\{controlRef\.current\} className=\{`answer-usage-popover \$\{showSessionUsage \? "" : "is-answer-only"\}`\} id=\{popoverId\} open=\{popoverOpen\}>/);
   assert.match(globalTooltip, /createPortal\([\s\S]*?document\.body/s);
   assert.match(globalTooltip, /const spaceAbove = anchorRect\.top - viewportPadding - tooltipGap/);
   assert.match(globalTooltip, /const spaceBelow = window\.innerHeight - anchorRect\.bottom - viewportPadding - tooltipGap/);

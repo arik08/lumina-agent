@@ -1,23 +1,27 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from html.parser import HTMLParser
 from io import BytesIO
 import math
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlparse
-from xml.etree import ElementTree
 from zipfile import BadZipFile, ZipFile
 
+from defusedxml import DefusedXmlException
+from defusedxml import ElementTree as DefusedElementTree
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..api.errors import ApiProblem
 from ..document_limits import MAX_DOCUMENT_PAGES, MAX_OPENXML_MEMBERS
 from ..authorization import require_conversation, require_project
-from ..models import Artifact, ArtifactDraft, ArtifactVersion, User, utc_now
-from ..storage import ManagedLocalStorage, StorageNotFoundError
+from ..models import Artifact, ArtifactDraft, ArtifactVersion, User, new_uuid, utc_now
+from ..storage import ManagedLocalStorage, StorageError
 from .render_validation import ArtifactRenderBackend, verify_artifact_render
 
 
@@ -119,7 +123,11 @@ def create_artifact(
         asset_manifest=asset_manifest,
     )
     artifact.current_version_number = 1
-    db.flush()
+    try:
+        db.flush()
+    except BaseException:
+        discard_artifact_storage(storage, version.storage_key)
+        raise
     return artifact, version
 
 
@@ -192,8 +200,13 @@ def create_artifact_version(
         validation_status=validation_status,
         validation_json=validation,
     )
-    artifact.current_version_number = version.version_number
-    db.flush()
+    _set_current_version(
+        db,
+        storage,
+        artifact=artifact,
+        base_version=base_version,
+        version=version,
+    )
     return version
 
 
@@ -269,8 +282,13 @@ def create_binary_artifact_version(
         renderer_manifest=renderer_manifest,
         asset_manifest=asset_manifest,
     )
-    artifact.current_version_number = version.version_number
-    db.flush()
+    _set_current_version(
+        db,
+        storage,
+        artifact=artifact,
+        base_version=base_version,
+        version=version,
+    )
     return artifact, version
 
 
@@ -293,9 +311,14 @@ def _write_version(
 ) -> ArtifactVersion:
     digest = hashlib.sha256(content).hexdigest()
     extension = _safe_extension(artifact.display_name, artifact.mime_type)
-    key = f"artifacts/{artifact.id}/v{version_number}/{digest}.{extension}"
+    version_id = new_uuid()
+    key = (
+        f"artifacts/{artifact.id}/v{version_number}/"
+        f"{version_id}-{digest}.{extension}"
+    )
     stored = storage.put_bytes(key, content, expected_sha256=digest)
     version = ArtifactVersion(
+        id=version_id,
         artifact_id=artifact.id,
         version_number=version_number,
         storage_backend="local",
@@ -314,8 +337,73 @@ def _write_version(
         created_by_user_id=user.id,
     )
     db.add(version)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        discard_artifact_storage(storage, stored.key)
+        raise ApiProblem(
+            409,
+            "artifact_version_conflict",
+            "Artifact version이 다른 작업에서 먼저 저장되었습니다.",
+        ) from exc
+    except BaseException:
+        discard_artifact_storage(storage, stored.key)
+        raise
     return version
+
+
+def _set_current_version(
+    db: Session,
+    storage: ManagedLocalStorage,
+    *,
+    artifact: Artifact,
+    base_version: int,
+    version: ArtifactVersion,
+) -> None:
+    try:
+        result = db.execute(
+            update(Artifact)
+            .where(
+                Artifact.id == artifact.id,
+                Artifact.current_version_number == base_version,
+                Artifact.deleted_at.is_(None),
+            )
+            .values(current_version_number=version.version_number)
+            .execution_options(synchronize_session=False)
+        )
+    except BaseException:
+        discard_artifact_storage(storage, version.storage_key)
+        raise
+    if getattr(result, "rowcount", 0) != 1:
+        discard_artifact_storage(storage, version.storage_key)
+        db.expire(artifact)
+        db.refresh(artifact)
+        raise ApiProblem(
+            409,
+            "artifact_version_conflict",
+            "Artifact가 다른 곳에서 변경되었습니다. 최신 버전을 확인해 주세요.",
+            details={"currentVersion": artifact.current_version_number},
+        )
+    db.expire(artifact)
+    db.refresh(artifact)
+
+
+def discard_artifact_storage(storage: ManagedLocalStorage, key: str) -> None:
+    with suppress(StorageError):
+        storage.delete(key)
+
+
+@contextmanager
+def cleanup_artifact_storage_on_error(
+    storage: ManagedLocalStorage,
+) -> Iterator[list[str]]:
+    storage_keys: list[str] = []
+    try:
+        yield storage_keys
+    except BaseException:
+        for storage_key in storage_keys:
+            discard_artifact_storage(storage, storage_key)
+        raise
 
 
 def read_artifact_version(
@@ -339,7 +427,7 @@ def read_artifact_version(
         content = storage.read_bytes(
             version.storage_key, expected_sha256=version.content_hash
         )
-    except StorageNotFoundError as exc:
+    except StorageError as exc:
         raise ApiProblem(
             503, "artifact_content_missing", "Artifact 원본을 읽을 수 없습니다."
         ) from exc
@@ -355,7 +443,7 @@ def save_draft(
     base_version: int,
     content: bytes,
     expected_etag: str | None,
-) -> ArtifactDraft:
+) -> tuple[ArtifactDraft, str | None]:
     artifact = require_artifact(db, user, artifact_id, write=True)
     ensure_artifact_text_editable(artifact)
     if artifact.current_version_number != base_version:
@@ -400,48 +488,57 @@ def save_draft(
             "draft_conflict",
             "지정한 Artifact 편집 초안을 찾을 수 없습니다.",
         )
+    previous_storage_key = draft.storage_key if draft is not None else None
     digest = hashlib.sha256(content).hexdigest()
     etag = hashlib.sha256(
         f"{artifact.id}:{user.id}:{base_version}:{digest}".encode()
     ).hexdigest()
     extension = _safe_extension(artifact.display_name, artifact.mime_type)
-    key = f"artifact-drafts/{artifact.id}/{user.id}/{etag}.{extension}"
+    write_id = new_uuid()
+    key = (
+        f"artifact-drafts/{artifact.id}/{user.id}/"
+        f"{write_id}-{etag}.{extension}"
+    )
     stored = storage.put_bytes(key, content, expected_sha256=digest)
-    if draft is None:
-        draft = ArtifactDraft(
-            artifact_id=artifact.id,
-            user_id=user.id,
-            base_version_number=base_version,
-            storage_key=stored.key,
-            content_hash=stored.sha256,
-            etag=etag,
-        )
-        db.add(draft)
-        db.flush()
-    else:
-        result = db.execute(
-            update(ArtifactDraft)
-            .where(
-                ArtifactDraft.id == draft.id,
-                ArtifactDraft.etag == expected_etag,
-            )
-            .values(
+    try:
+        if draft is None:
+            draft = ArtifactDraft(
+                artifact_id=artifact.id,
+                user_id=user.id,
                 base_version_number=base_version,
                 storage_key=stored.key,
                 content_hash=stored.sha256,
                 etag=etag,
-                updated_at=utc_now(),
             )
-            .execution_options(synchronize_session=False)
-        )
-        if getattr(result, "rowcount", 0) != 1:
-            raise ApiProblem(
-                409,
-                "draft_conflict",
-                "Artifact 편집 초안이 다른 곳에서 변경되었습니다.",
+            db.add(draft)
+            db.flush()
+        else:
+            result = db.execute(
+                update(ArtifactDraft)
+                .where(
+                    ArtifactDraft.id == draft.id,
+                    ArtifactDraft.etag == expected_etag,
+                )
+                .values(
+                    base_version_number=base_version,
+                    storage_key=stored.key,
+                    content_hash=stored.sha256,
+                    etag=etag,
+                    updated_at=utc_now(),
+                )
+                .execution_options(synchronize_session=False)
             )
-        db.refresh(draft)
-    return draft
+            if getattr(result, "rowcount", 0) != 1:
+                raise ApiProblem(
+                    409,
+                    "draft_conflict",
+                    "Artifact 편집 초안이 다른 곳에서 변경되었습니다.",
+                )
+            db.refresh(draft)
+    except BaseException:
+        discard_artifact_storage(storage, stored.key)
+        raise
+    return draft, previous_storage_key
 
 
 def read_user_draft(
@@ -469,7 +566,7 @@ def read_user_draft(
         content = storage.read_bytes(
             draft.storage_key, expected_sha256=draft.content_hash
         )
-    except StorageNotFoundError as exc:
+    except StorageError as exc:
         raise ApiProblem(
             503,
             "artifact_draft_content_missing",
@@ -486,9 +583,20 @@ def delete_user_draft_if_matches(
     base_version: int,
     etag: str | None,
     content_hash: str,
-) -> bool:
+) -> str | None:
     if etag is None:
-        return False
+        return None
+    storage_key = db.scalar(
+        select(ArtifactDraft.storage_key).where(
+            ArtifactDraft.artifact_id == artifact_id,
+            ArtifactDraft.user_id == user.id,
+            ArtifactDraft.base_version_number == base_version,
+            ArtifactDraft.etag == etag,
+            ArtifactDraft.content_hash == content_hash,
+        )
+    )
+    if storage_key is None:
+        return None
     result = db.execute(
         delete(ArtifactDraft).where(
             ArtifactDraft.artifact_id == artifact_id,
@@ -498,7 +606,7 @@ def delete_user_draft_if_matches(
             ArtifactDraft.content_hash == content_hash,
         )
     )
-    return getattr(result, "rowcount", 0) == 1
+    return storage_key if getattr(result, "rowcount", 0) == 1 else None
 
 
 _MAX_OPENXML_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
@@ -573,8 +681,8 @@ def _inspect_openxml_package(
                     errors.append("openxml_relationships_too_large")
                     continue
                 try:
-                    root = ElementTree.fromstring(package.read(entry))
-                except (ElementTree.ParseError, OSError):
+                    root = DefusedElementTree.fromstring(package.read(entry))
+                except (DefusedXmlException, DefusedElementTree.ParseError, OSError):
                     errors.append("invalid_openxml_relationships")
                     continue
                 for relationship in root:
@@ -650,10 +758,13 @@ class _ArtifactHTMLValidator(HTMLParser):
         self.tags: set[str] = set()
         self.errors: list[str] = []
         self._title_depth = 0
+        self._html_closed = False
         self.title_text: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         lowered = tag.casefold()
+        if self._html_closed:
+            self.errors.append("trailing_content_after_html")
         self.tags.add(lowered)
         if lowered in self.forbidden_tags:
             self.errors.append(f"forbidden_tag:{lowered}")
@@ -668,12 +779,17 @@ class _ArtifactHTMLValidator(HTMLParser):
                 self.errors.append(f"unsafe_url:{attr_name}")
 
     def handle_endtag(self, tag: str) -> None:
-        if tag.casefold() == "title" and self._title_depth:
+        lowered = tag.casefold()
+        if lowered == "title" and self._title_depth:
             self._title_depth -= 1
+        elif lowered == "html":
+            self._html_closed = True
 
     def handle_data(self, data: str) -> None:
         if self._title_depth:
             self.title_text.append(data)
+        if self._html_closed and data.strip():
+            self.errors.append("trailing_content_after_html")
 
 
 def validate_artifact_content(

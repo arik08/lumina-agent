@@ -1,7 +1,8 @@
 ---
 name: worldbank
 description: World Bank의 국가별 개발지표와 국제 비교 시계열을 조회할 때 사용하는 MCP 라우팅 지침입니다.
-source: skill-mcp:worldbank
+metadata:
+  lumina-source: skill-mcp:worldbank
 ---
 
 # World Bank MCP

@@ -17,7 +17,9 @@ test("data-heavy views retain their last successful list during background refre
     assert.match(source, /useCachedViewState/);
     assert.match(source, /hasCached/);
   }
-  assert.match(marketplace, /loading=\{!hasCachedCatalog && \(catalogLoading \|\| !error\)\}/);
+  assert.match(marketplace, /const visibleCatalog = hasCachedCatalog \? catalog : lastVisibleCatalogRef\.current/);
+  assert.match(marketplace, /catalog=\{visibleCatalog\}/);
+  assert.match(marketplace, /loading=\{!hasCachedCatalog && visibleCatalog\.items\.length === 0 && \(catalogLoading \|\| !error\)\}/);
   assert.match(library, /loading && !hasCachedItems/);
   assert.match(files, /\(!hasCachedFiles \|\| !hasCachedFolders\) && \(loading \|\| !error\)/);
   assert.match(schedules, /loading && !hasCachedTasks/);

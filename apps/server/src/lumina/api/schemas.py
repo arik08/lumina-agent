@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 def _to_camel(value: str) -> str:
@@ -58,6 +58,15 @@ class ProjectPatch(ApiModel):
     description: str | None = Field(default=None, max_length=1000)
     concept: str | None = Field(default=None, max_length=20_000)
     archived: bool | None = None
+
+    @model_validator(mode="after")
+    def require_change(self) -> "ProjectPatch":
+        if all(
+            value is None
+            for value in (self.name, self.description, self.concept, self.archived)
+        ):
+            raise ValueError("at least one project field is required")
+        return self
 
 
 class ProjectResponse(ApiModel):
@@ -145,6 +154,15 @@ class ConversationPatch(ApiModel):
     archived: bool | None = None
     expected_revision: int | None = Field(default=None, ge=1)
 
+    @model_validator(mode="after")
+    def require_change(self) -> "ConversationPatch":
+        if all(
+            value is None
+            for value in (self.title, self.is_favorite, self.is_liked, self.archived)
+        ):
+            raise ValueError("at least one conversation field is required")
+        return self
+
 
 class ConversationMove(ApiModel):
     project_id: str
@@ -156,6 +174,14 @@ class ConversationBranch(ApiModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
 
 
+class AgentFrontendReference(ApiModel):
+    id: str
+    version: str
+    frontend_module: str
+    frontend_contract: str
+    fallback: bool = False
+
+
 class ConversationListItem(ApiModel):
     id: str
     project_id: str
@@ -165,6 +191,7 @@ class ConversationListItem(ApiModel):
     last_run_status: str | None
     active_run_id: str | None
     last_sequence: int = 0
+    agent: AgentFrontendReference
     revision: int
     created_at: datetime
     updated_at: datetime
@@ -195,7 +222,28 @@ class RunMessageInput(ApiModel):
     attachment_ids: list[str] = Field(default_factory=list)
     prompt_references: list[MessageReferenceInput] = Field(default_factory=list)
     output_mode: Literal["auto", "chat", "file"] = "auto"
+    analysis_depth: Literal["auto", "brief", "standard", "deep"] = "auto"
+    answer_length: Literal["auto", "brief", "standard", "detailed"] = "auto"
     target_output_tokens: int | None = Field(default=None, ge=1, le=40_000)
+
+
+class PromptEnhancementInput(ApiModel):
+    project_id: str
+    text: str = Field(min_length=1, max_length=32_000)
+    options: list[
+        Literal["structure", "evidence", "missing_context", "output_format"]
+    ] = Field(default_factory=list, max_length=4)
+    custom_instruction: str = Field(default="", max_length=1_000)
+    prompt_references: list[MessageReferenceInput] = Field(
+        default_factory=list, max_length=100
+    )
+    execution: ExecutionSelection | None = None
+
+    @model_validator(mode="after")
+    def validate_enhancement_edits(self) -> "PromptEnhancementInput":
+        if not self.options and not self.custom_instruction.strip():
+            raise ValueError("at least one prompt enhancement edit is required")
+        return self
 
 
 class RunCreate(ApiModel):
@@ -338,11 +386,32 @@ class ProviderResponse(ApiModel):
 
 class SettingsPatch(ApiModel):
     theme: Literal["light", "dark"] | None = None
+    conversation_width: int | None = Field(default=None, ge=600, le=1400)
+    conversation_font_size: int | None = Field(default=None, ge=14, le=24)
     output_mode: Literal["auto", "chat", "file"] | None = None
+    analysis_depth: Literal["auto", "brief", "standard", "deep"] | None = None
+    answer_length: Literal["auto", "brief", "standard", "detailed"] | None = None
+    prompt_enhancement_instruction: str | None = Field(
+        default=None, max_length=1_000
+    )
     clarification_mode: Literal["autonomous", "balanced", "confirming"] | None = None
     execution: ExecutionSelection | None = None
     model_candidates: dict[str, list[str]] | None = None
     expected_revision: str
+
+    @model_validator(mode="after")
+    def validate_changes(self) -> "SettingsPatch":
+        setting_fields = self.model_fields_set - {"expected_revision"}
+        if not setting_fields:
+            raise ValueError("at least one setting field is required")
+        null_fields = sorted(
+            field_name
+            for field_name in setting_fields
+            if getattr(self, field_name) is None
+        )
+        if null_fields:
+            raise ValueError(f"setting fields cannot be null: {', '.join(null_fields)}")
+        return self
 
 
 class SettingsResponse(ApiModel):
@@ -427,6 +496,7 @@ class AnnouncementResponse(ApiModel):
     title: str
     body: str
     author: AnnouncementAuthorResponse | None
+    read_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -434,6 +504,7 @@ class AnnouncementResponse(ApiModel):
 class AnnouncementListResponse(ApiModel):
     items: list[AnnouncementResponse]
     total: int
+    unread_count: int = 0
 
 
 class NotificationUnreadCountResponse(ApiModel):

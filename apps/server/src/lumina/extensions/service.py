@@ -3,12 +3,15 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from difflib import SequenceMatcher
 from datetime import datetime, timedelta
 from pathlib import PurePosixPath
 from typing import Any
 
-from sqlalchemy import delete, func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session, load_only
+from yaml import YAMLError, safe_load
 
 from ..api.errors import ApiProblem
 from ..authorization import require_conversation, require_project
@@ -29,12 +32,22 @@ from ..models import (
     utc_now,
 )
 from ..secret_policy import reject_secret_key_names
+from .agent_skill_spec import (
+    AgentSkillDocument,
+    AgentSkillSpecError,
+    ensure_agent_skill_package,
+    parse_agent_skill,
+    skill_resource_paths,
+)
+from .package_content import decode_package_content
 
 
 _SAFE_SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _SECRET_ASSIGNMENT = re.compile(
     r"(?im)^\s*(?:api[_-]?key|access[_-]?token|password|secret)\s*[:=]\s*"
-    r"(?:['\"])?(?!<|\$\{|your[_-]|replace[_-]|example)[A-Za-z0-9_./+=-]{8,}"
+    r"(?:['\"](?!<|\$\{|your[_-]|replace[_-]|example)"
+    r"[A-Za-z0-9_./+=-]{8,}['\"]|"
+    r"(?!<|\$\{|your[_-]|replace[_-]|example)[A-Za-z0-9_./+=-]{8,})\s*$"
 )
 _FORBIDDEN_PACKAGE_NAMES = {".env", "credentials", "secrets"}
 _FORBIDDEN_PACKAGE_SUFFIXES = {".key", ".p12", ".pfx", ".pem"}
@@ -47,7 +60,6 @@ def normalize_package(files: dict[str, str]) -> dict[str, str]:
         raise ApiProblem(422, "skill_package_empty", "Skill package가 비어 있습니다.")
     normalized: dict[str, str] = {}
     normalized_names: set[str] = set()
-    total_size = 0
     for raw_path, content in files.items():
         path_text = raw_path.replace("\\", "/").strip()
         path = PurePosixPath(path_text)
@@ -81,17 +93,19 @@ def normalize_package(files: dict[str, str]) -> dict[str, str]:
             raise ApiProblem(
                 422, "invalid_package_content", "Skill package 파일은 text여야 합니다."
             )
-        encoded_size = len(content.encode("utf-8"))
-        if encoded_size > 1_000_000:
-            raise ApiProblem(
-                413, "package_file_too_large", "Skill package 파일 크기가 너무 큽니다."
-            )
-        total_size += encoded_size
-        if total_size > 5_000_000:
-            raise ApiProblem(
-                413, "package_too_large", "Skill package 전체 크기가 너무 큽니다."
-            )
-        if "-----BEGIN" in content and "PRIVATE KEY-----" in content:
+        try:
+            raw_content, encoding = decode_package_content(content)
+        except ValueError as exc:
+            raise ApiProblem(422, "invalid_package_content", str(exc)) from exc
+        secret_scan_content = (
+            content
+            if encoding == "utf-8"
+            else raw_content.decode("utf-8", errors="ignore")
+        )
+        if (
+            "-----BEGIN" in secret_scan_content
+            and "PRIVATE KEY-----" in secret_scan_content
+        ):
             raise ApiProblem(
                 422,
                 "secret_content_forbidden",
@@ -110,6 +124,22 @@ def normalize_package(files: dict[str, str]) -> dict[str, str]:
             422, "skill_md_required", "Skill package에는 SKILL.md가 필요합니다."
         )
     return dict(sorted(normalized.items()))
+
+
+def standardize_skill_package(
+    package: dict[str, str],
+    *,
+    expected_name: str,
+    fallback_description: str,
+) -> tuple[dict[str, str], AgentSkillDocument]:
+    try:
+        return ensure_agent_skill_package(
+            package,
+            expected_name=expected_name,
+            fallback_description=fallback_description,
+        )
+    except AgentSkillSpecError as exc:
+        raise ApiProblem(422, "invalid_agent_skill", str(exc)) from exc
 
 
 def package_digest(package: dict[str, str]) -> str:
@@ -240,8 +270,28 @@ def can_view_skill_package(db: Session, user: User, extension: Extension) -> boo
     return installation_id is not None
 
 
+def _normalize_skill_tags(raw_tags: list[str]) -> list[str]:
+    tags: list[str] = []
+    for raw_tag in raw_tags:
+        tag = raw_tag.strip().removeprefix("#").strip()
+        if not tag or tag in tags:
+            continue
+        if len(tag) > 40:
+            raise ApiProblem(
+                422, "skill_tag_too_long", "Skill 태그는 40자 이하여야 합니다."
+            )
+        tags.append(tag)
+    return tags
+
+
 def update_extension_metadata(
-    db: Session, *, user: User, extension_id: str, name: str, description: str
+    db: Session,
+    *,
+    user: User,
+    extension_id: str,
+    name: str,
+    description: str,
+    tags: list[str] | None = None,
 ) -> Extension:
     extension = require_extension(db, user, extension_id)
     if not can_manage_skill(db, user, extension):
@@ -250,6 +300,14 @@ def update_extension_metadata(
         )
     extension.name = " ".join(name.split())
     extension.description = description.strip()
+    if tags is not None:
+        if skill_role(db, user, extension) != "owner":
+            raise ApiProblem(
+                403,
+                "skill_tags_write_forbidden",
+                "Skill 태그는 관리자 또는 Owner만 수정할 수 있습니다.",
+            )
+        extension.tags_json = _normalize_skill_tags(tags)
     extension.updated_at = utc_now()
     db.flush()
     return extension
@@ -447,10 +505,17 @@ def create_skill(
                 "source_project_mismatch",
                 "원본 대화와 Skill Project가 일치하지 않습니다.",
             )
-    package = normalize_package(package_files)
-    digest = package_digest(package)
     extension_id = new_uuid()
     resolved_slug = _slug(slug, name, extension_id)
+    package, skill_document = standardize_skill_package(
+        normalize_package(package_files),
+        expected_name=resolved_slug,
+        fallback_description=(
+            description.strip()
+            or f"Use this Skill for the {name.strip()} workflow when requested."
+        ),
+    )
+    digest = package_digest(package)
     duplicate = db.scalar(
         select(Extension).where(
             Extension.owner_user_id == user.id,
@@ -465,7 +530,7 @@ def create_skill(
         kind="skill",
         slug=resolved_slug,
         name=name.strip(),
-        description=description,
+        description=skill_document.description,
         owner_user_id=user.id,
         creator_user_id=user.id,
         organization_id=user.organization_id,
@@ -587,7 +652,13 @@ def sync_workspace_skill(
         extension.description = normalized_description
         extension.updated_at = utc_now()
 
-    package = normalize_package(package_files)
+    package, skill_document = standardize_skill_package(
+        normalize_package(package_files),
+        expected_name=extension.slug,
+        fallback_description=normalized_description,
+    )
+    if extension.description != skill_document.description:
+        extension.description = skill_document.description
     digest = package_digest(package)
     if draft.current_digest == digest:
         db.flush()
@@ -616,18 +687,45 @@ def update_draft(
 ) -> tuple[ExtensionDraft, bool]:
     draft = require_owned_draft(db, user, draft_id)
     _check_draft_precondition(draft, expected_revision, expected_digest)
-    package = normalize_package(package_files)
+    extension = db.get(Extension, draft.extension_id)
+    if extension is None:
+        raise ApiProblem(404, "extension_not_found", "Skill을 찾을 수 없습니다.")
+    package, skill_document = standardize_skill_package(
+        normalize_package(package_files),
+        expected_name=extension.slug,
+        fallback_description=extension.description,
+    )
+    if extension.description != skill_document.description:
+        extension.description = skill_document.description
+        extension.updated_at = utc_now()
     digest = package_digest(package)
     if digest == draft.current_digest:
         return draft, False
-    draft.current_revision += 1
-    draft.current_digest = digest
-    draft.package_json = package
-    draft.updated_at = utc_now()
+    next_revision = expected_revision + 1
+    result = db.execute(
+        update(ExtensionDraft)
+        .where(
+            ExtensionDraft.id == draft.id,
+            ExtensionDraft.current_revision == expected_revision,
+            ExtensionDraft.current_digest == expected_digest,
+        )
+        .values(
+            current_revision=next_revision,
+            current_digest=digest,
+            package_json=package,
+            updated_at=utc_now(),
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if getattr(result, "rowcount", 0) != 1:
+        db.expire(draft)
+        db.refresh(draft)
+        _check_draft_precondition(draft, expected_revision, expected_digest)
+        raise RuntimeError("Skill Draft compare-and-swap failed without a conflict")
     db.add(
         ExtensionDraftRevision(
             draft_id=draft.id,
-            revision_number=draft.current_revision,
+            revision_number=next_revision,
             package_json=package,
             package_digest=digest,
             change_summary=change_summary,
@@ -635,6 +733,8 @@ def update_draft(
         )
     )
     db.flush()
+    db.expire(draft)
+    db.refresh(draft)
     return draft, True
 
 
@@ -709,6 +809,12 @@ def save_draft_version(
             "Skill Draft의 base version이 변경되었습니다.",
         )
     _ensure_no_secrets(manifest, path="manifest")
+    revision = db.scalar(
+        select(ExtensionDraftRevision).where(
+            ExtensionDraftRevision.draft_id == draft.id,
+            ExtensionDraftRevision.revision_number == draft.current_revision,
+        )
+    )
     latest_number = (
         db.scalar(
             select(func.max(ExtensionVersion.version_number)).where(
@@ -724,14 +830,49 @@ def save_draft_version(
         package_json=dict(draft.package_json),
         package_digest=draft.current_digest,
         manifest_json=manifest,
+        change_summary=(revision.change_summary if revision else ""),
+        change_type="save",
         status="private",
         created_by_user_id=user.id,
     )
     db.add(version)
-    db.flush()
-    draft.base_version_id = version.id
-    draft.updated_at = utc_now()
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        raise ApiProblem(
+            409,
+            "version_conflict",
+            "Skill version이 다른 작업에서 먼저 저장되었습니다.",
+        ) from exc
+    base_filter = (
+        ExtensionDraft.base_version_id.is_(None)
+        if base_version_id is None
+        else ExtensionDraft.base_version_id == base_version_id
+    )
+    result = db.execute(
+        update(ExtensionDraft)
+        .where(
+            ExtensionDraft.id == draft.id,
+            ExtensionDraft.current_revision == expected_revision,
+            ExtensionDraft.current_digest == expected_digest,
+            base_filter,
+        )
+        .values(base_version_id=version.id, updated_at=utc_now())
+        .execution_options(synchronize_session=False)
+    )
+    if getattr(result, "rowcount", 0) != 1:
+        db.expire(draft)
+        db.refresh(draft)
+        _check_draft_precondition(draft, expected_revision, expected_digest)
+        if draft.base_version_id != base_version_id:
+            raise ApiProblem(
+                409,
+                "base_version_conflict",
+                "Skill Draft의 base version이 변경되었습니다.",
+            )
+        raise RuntimeError("Skill version compare-and-swap failed without a conflict")
+    db.expire(draft)
+    db.refresh(draft)
     return version
 
 
@@ -765,6 +906,242 @@ def publish_version(
     extension.latest_published_version_id = version.id
     db.flush()
     return extension, version
+
+
+def _version_is_visible_to_user(
+    db: Session,
+    *,
+    user: User,
+    extension: Extension,
+    version: ExtensionVersion,
+) -> bool:
+    return (
+        can_manage_skill(db, user, extension)
+        or version.status == "published"
+        or version.created_by_user_id == user.id
+    )
+
+
+def _diff_file(
+    *,
+    path: str,
+    before: str | None,
+    after: str | None,
+) -> dict[str, Any]:
+    before_lines = [] if before is None else before.splitlines()
+    after_lines = [] if after is None else after.splitlines()
+    matcher = SequenceMatcher(None, before_lines, after_lines, autojunk=False)
+    hunks: list[dict[str, Any]] = []
+    additions = 0
+    deletions = 0
+    for group in matcher.get_grouped_opcodes(n=3):
+        old_start = group[0][1] + 1
+        new_start = group[0][3] + 1
+        lines: list[dict[str, Any]] = []
+        for tag, i1, i2, j1, j2 in group:
+            if tag == "equal":
+                for offset, content in enumerate(before_lines[i1:i2]):
+                    lines.append(
+                        {
+                            "kind": "context",
+                            "oldLine": i1 + offset + 1,
+                            "newLine": j1 + offset + 1,
+                            "content": content,
+                        }
+                    )
+                continue
+            if tag in {"replace", "delete"}:
+                for offset, content in enumerate(before_lines[i1:i2]):
+                    deletions += 1
+                    lines.append(
+                        {
+                            "kind": "delete",
+                            "oldLine": i1 + offset + 1,
+                            "newLine": None,
+                            "content": content,
+                        }
+                    )
+            if tag in {"replace", "insert"}:
+                for offset, content in enumerate(after_lines[j1:j2]):
+                    additions += 1
+                    lines.append(
+                        {
+                            "kind": "add",
+                            "oldLine": None,
+                            "newLine": j1 + offset + 1,
+                            "content": content,
+                        }
+                    )
+        hunks.append(
+            {
+                "oldStart": old_start,
+                "oldLines": group[-1][2] - group[0][1],
+                "newStart": new_start,
+                "newLines": group[-1][4] - group[0][3],
+                "lines": lines,
+            }
+        )
+    return {
+        "path": path,
+        "status": "added"
+        if before is None
+        else "deleted"
+        if after is None
+        else "modified",
+        "additions": additions,
+        "deletions": deletions,
+        "hunks": hunks,
+    }
+
+
+def compare_skill_versions(
+    db: Session,
+    *,
+    user: User,
+    extension_id: str,
+    from_version_id: str,
+    to_version_id: str,
+) -> dict[str, Any]:
+    extension = require_extension(db, user, extension_id)
+    if not can_view_skill_package(db, user, extension):
+        raise ApiProblem(
+            404, "version_not_found", "설치된 Skill version만 비교할 수 있습니다."
+        )
+    versions = [
+        db.get(ExtensionVersion, version_id)
+        for version_id in (from_version_id, to_version_id)
+    ]
+    if any(
+        version is None
+        or version.extension_id != extension.id
+        or not _version_is_visible_to_user(
+            db, user=user, extension=extension, version=version
+        )
+        for version in versions
+    ):
+        raise ApiProblem(404, "version_not_found", "Skill version을 찾을 수 없습니다.")
+    before, after = versions
+    assert before is not None and after is not None
+    paths = sorted(set(before.package_json) | set(after.package_json))
+    files = [
+        _diff_file(
+            path=path,
+            before=before.package_json.get(path),
+            after=after.package_json.get(path),
+        )
+        for path in paths
+        if before.package_json.get(path) != after.package_json.get(path)
+    ]
+    return {
+        "fromVersion": version_payload(before, include_package=False),
+        "toVersion": version_payload(after, include_package=False),
+        "files": files,
+        "summary": {
+            "filesChanged": len(files),
+            "additions": sum(item["additions"] for item in files),
+            "deletions": sum(item["deletions"] for item in files),
+        },
+    }
+
+
+def rollback_skill_version(
+    db: Session,
+    *,
+    user: User,
+    extension_id: str,
+    target_version_id: str,
+    expected_current_version_id: str,
+    change_summary: str,
+) -> tuple[Extension, ExtensionVersion]:
+    extension = require_extension(db, user, extension_id)
+    if skill_role(db, user, extension) != "owner":
+        raise ApiProblem(
+            403,
+            "skill_rollback_forbidden",
+            "Skill Owner만 공식 버전을 복원할 수 있습니다.",
+        )
+    if extension.latest_published_version_id != expected_current_version_id:
+        raise ApiProblem(
+            409,
+            "published_version_conflict",
+            "현재 공식 Skill version이 변경되었습니다.",
+        )
+    current = db.get(ExtensionVersion, expected_current_version_id)
+    target = db.get(ExtensionVersion, target_version_id)
+    if (
+        current is None
+        or current.extension_id != extension.id
+        or current.status != "published"
+    ):
+        raise ApiProblem(
+            409,
+            "published_version_conflict",
+            "현재 공식 Skill version을 확인할 수 없습니다.",
+        )
+    if target is None or target.extension_id != extension.id:
+        raise ApiProblem(
+            404, "version_not_found", "복원할 Skill version을 찾을 수 없습니다."
+        )
+    if target.revoked_at is not None or target.status == "revoked":
+        raise ApiProblem(
+            409, "version_revoked", "폐기된 Skill version은 복원할 수 없습니다."
+        )
+    if target.id == current.id:
+        raise ApiProblem(
+            409, "version_already_current", "이미 현재 공식 Skill version입니다."
+        )
+    latest_number = (
+        db.scalar(
+            select(func.max(ExtensionVersion.version_number)).where(
+                ExtensionVersion.extension_id == extension.id
+            )
+        )
+        or 0
+    )
+    restored = ExtensionVersion(
+        extension_id=extension.id,
+        version_number=latest_number + 1,
+        parent_version_id=current.id,
+        package_json=dict(target.package_json),
+        package_digest=target.package_digest,
+        manifest_json=dict(target.manifest_json),
+        change_summary=change_summary.strip() or f"v{target.version_number} 기반 복원",
+        change_type="rollback",
+        restored_from_version_id=target.id,
+        status="published",
+        created_by_user_id=user.id,
+        published_at=utc_now(),
+    )
+    db.add(restored)
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        raise ApiProblem(
+            409, "version_conflict", "다른 작업에서 Skill version을 먼저 만들었습니다."
+        ) from exc
+    result = db.execute(
+        update(Extension)
+        .where(
+            Extension.id == extension.id,
+            Extension.latest_published_version_id == expected_current_version_id,
+        )
+        .values(
+            latest_published_version_id=restored.id,
+            publisher_user_id=user.id,
+            visibility="organization",
+            updated_at=utc_now(),
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if getattr(result, "rowcount", 0) != 1:
+        raise ApiProblem(
+            409,
+            "published_version_conflict",
+            "현재 공식 Skill version이 변경되었습니다.",
+        )
+    db.expire(extension)
+    db.refresh(extension)
+    return extension, restored
 
 
 def add_skill_ownership(
@@ -903,11 +1280,31 @@ def require_installation(
     return installation
 
 
-def set_installation_enabled(
-    db: Session, *, user: User, installation_id: str, enabled: bool
+def update_installation(
+    db: Session,
+    *,
+    user: User,
+    installation_id: str,
+    enabled: bool | None,
+    project_ids: list[str] | None,
+    update_project_ids: bool,
 ) -> ExtensionInstallation:
     installation = require_installation(db, user, installation_id, write=True)
-    installation.enabled = enabled
+    if enabled is not None:
+        installation.enabled = enabled
+    if update_project_ids:
+        if installation.scope_type != "user":
+            raise ApiProblem(
+                422,
+                "installation_project_scope_unsupported",
+                "사용자 범위 Skill 설치만 프로젝트별로 설정할 수 있습니다.",
+            )
+        normalized_project_ids = list(dict.fromkeys(project_ids or []))
+        for project_id in normalized_project_ids:
+            require_project(db, user, project_id)
+        installation.project_ids_json = (
+            normalized_project_ids if project_ids is not None else None
+        )
     db.flush()
     return installation
 
@@ -937,7 +1334,7 @@ def list_installations(
         & (ExtensionInstallation.scope_id == scope_id)
         for scope_type, scope_id in scopes
     ]
-    return list(
+    installations = list(
         db.scalars(
             select(ExtensionInstallation)
             .where(
@@ -947,6 +1344,15 @@ def list_installations(
             .order_by(ExtensionInstallation.installed_at.desc())
         )
     )
+    if project_id is None:
+        return installations
+    return [
+        installation
+        for installation in installations
+        if installation.scope_type != "user"
+        or installation.project_ids_json is None
+        or project_id in installation.project_ids_json
+    ]
 
 
 def list_extensions(
@@ -996,17 +1402,28 @@ def resolve_skill_snapshot(
     resolved: dict[str, dict[str, Any]] = {}
     for binding, draft, extension in bindings:
         effective_project_id = binding.project_id or extension.project_id
+        skill_document = _skill_document(
+            draft.package_json,
+            slug=extension.slug,
+            fallback_description=extension.description,
+        )
+        allow_implicit_invocation = _skill_allows_implicit_invocation(
+            draft.package_json
+        )
         candidate = {
             "extension_id": extension.id,
             "kind": extension.kind,
             "slug": extension.slug,
             "name": extension.name,
-            "description": extension.description,
+            "description": skill_document.description,
             "source": "draft",
             "draft_id": draft.id,
             "draft_revision": draft.current_revision,
             "digest": draft.current_digest,
             "instructions": _skill_instructions(draft.package_json),
+            "resources": skill_resource_paths(draft.package_json),
+            "compatibility": skill_document.compatibility,
+            "allow_implicit_invocation": allow_implicit_invocation,
             "scope_type": "project" if effective_project_id else "user",
             "scope_id": effective_project_id or user.id,
         }
@@ -1034,19 +1451,36 @@ def resolve_skill_snapshot(
     ):
         if (installation.scope_type, installation.scope_id) not in scope_pairs:
             continue
+        if (
+            installation.scope_type == "user"
+            and installation.project_ids_json is not None
+            and project_id not in installation.project_ids_json
+        ):
+            continue
         if extension.id in resolved:
             continue
+        skill_document = _skill_document(
+            version.package_json,
+            slug=extension.slug,
+            fallback_description=extension.description,
+        )
+        allow_implicit_invocation = _skill_allows_implicit_invocation(
+            version.package_json
+        )
         resolved[extension.id] = {
             "extension_id": extension.id,
             "kind": extension.kind,
             "slug": extension.slug,
             "name": extension.name,
-            "description": extension.description,
+            "description": skill_document.description,
             "source": "version",
             "version_id": version.id,
             "version": version.version_number,
             "digest": version.package_digest,
             "instructions": _skill_instructions(version.package_json),
+            "resources": skill_resource_paths(version.package_json),
+            "compatibility": skill_document.compatibility,
+            "allow_implicit_invocation": allow_implicit_invocation,
             "installation_id": installation.id,
             "scope_type": installation.scope_type,
             "scope_id": installation.scope_id,
@@ -1066,6 +1500,42 @@ def _skill_instructions(package: dict[str, str]) -> str:
         "skill_instructions_missing",
         "Skill snapshot의 SKILL.md를 찾을 수 없습니다.",
     )
+
+
+def _skill_document(
+    package: dict[str, str],
+    *,
+    slug: str,
+    fallback_description: str,
+) -> AgentSkillDocument:
+    content = _skill_instructions(package)
+    try:
+        return parse_agent_skill(content, expected_name=slug)
+    except AgentSkillSpecError:
+        _normalized, document = standardize_skill_package(
+            package,
+            expected_name=slug,
+            fallback_description=fallback_description,
+        )
+        return document
+
+
+def _skill_allows_implicit_invocation(package: dict[str, str]) -> bool:
+    for path, content in package.items():
+        if path.casefold() not in {"agents/openai.yaml", "agents/openai.yml"}:
+            continue
+        try:
+            metadata = safe_load(content)
+        except YAMLError:
+            return True
+        if not isinstance(metadata, dict):
+            return True
+        policy = metadata.get("policy")
+        if not isinstance(policy, dict):
+            return True
+        value = policy.get("allow_implicit_invocation")
+        return value if isinstance(value, bool) else True
+    return True
 
 
 def authorize_scope(
@@ -1430,99 +1900,237 @@ def delete_folder(
     return folder
 
 
-def extension_payload(
-    db: Session, extension: Extension, *, user: User
-) -> dict[str, Any]:
-    role = skill_role(db, user, extension)
-    can_manage = role in {"owner", "maintainer"}
-    draft = db.scalar(
-        select(ExtensionDraft).where(
-            ExtensionDraft.extension_id == extension.id,
-            ExtensionDraft.owner_user_id == user.id,
-        )
-    )
-    version_query = select(ExtensionVersion).where(
-        ExtensionVersion.extension_id == extension.id
-    )
-    if not can_manage:
-        version_query = version_query.where(
-            or_(
-                ExtensionVersion.status == "published",
-                ExtensionVersion.created_by_user_id == user.id,
+def extension_payloads(
+    db: Session,
+    extensions: list[Extension],
+    *,
+    user: User,
+    include_draft_package: bool = True,
+) -> list[dict[str, Any]]:
+    if not extensions:
+        return []
+    extension_ids = [extension.id for extension in extensions]
+    role_by_extension_id = {
+        skill_id: role
+        for skill_id, role in db.execute(
+            select(SkillOwnership.skill_id, SkillOwnership.role).where(
+                SkillOwnership.skill_id.in_(extension_ids),
+                SkillOwnership.principal_type == "user",
+                SkillOwnership.principal_id == user.id,
             )
         )
-    versions = list(db.scalars(version_query.order_by(ExtensionVersion.version_number)))
-    ownerships = list(
+    }
+    draft_options = [
+        ExtensionDraft.id,
+        ExtensionDraft.extension_id,
+        ExtensionDraft.owner_user_id,
+        ExtensionDraft.base_version_id,
+        ExtensionDraft.current_revision,
+        ExtensionDraft.current_digest,
+        ExtensionDraft.status,
+        ExtensionDraft.updated_at,
+    ]
+    if include_draft_package:
+        draft_options.append(ExtensionDraft.package_json)
+    drafts = list(
         db.scalars(
-            select(SkillOwnership)
-            .where(SkillOwnership.skill_id == extension.id)
-            .order_by(SkillOwnership.created_at, SkillOwnership.id)
+            select(ExtensionDraft)
+            .where(
+                ExtensionDraft.extension_id.in_(extension_ids),
+                ExtensionDraft.owner_user_id == user.id,
+            )
+            .options(load_only(*draft_options))
         )
     )
+    draft_by_extension_id = {draft.extension_id: draft for draft in drafts}
+    all_versions = list(
+        db.scalars(
+            select(ExtensionVersion)
+            .where(ExtensionVersion.extension_id.in_(extension_ids))
+            .options(
+                load_only(
+                    ExtensionVersion.id,
+                    ExtensionVersion.extension_id,
+                    ExtensionVersion.version_number,
+                    ExtensionVersion.parent_version_id,
+                    ExtensionVersion.package_digest,
+                    ExtensionVersion.status,
+                    ExtensionVersion.manifest_json,
+                    ExtensionVersion.change_summary,
+                    ExtensionVersion.change_type,
+                    ExtensionVersion.restored_from_version_id,
+                    ExtensionVersion.created_by_user_id,
+                    ExtensionVersion.created_at,
+                    ExtensionVersion.published_at,
+                )
+            )
+            .order_by(ExtensionVersion.extension_id, ExtensionVersion.version_number)
+        )
+    )
+    versions_by_extension_id: dict[str, list[ExtensionVersion]] = {}
+    version_by_id: dict[str, ExtensionVersion] = {}
+    for version in all_versions:
+        versions_by_extension_id.setdefault(version.extension_id, []).append(version)
+        version_by_id[version.id] = version
+    all_ownerships = list(
+        db.scalars(
+            select(SkillOwnership)
+            .where(SkillOwnership.skill_id.in_(extension_ids))
+            .order_by(
+                SkillOwnership.skill_id,
+                SkillOwnership.created_at,
+                SkillOwnership.id,
+            )
+        )
+    )
+    ownerships_by_extension_id: dict[str, list[SkillOwnership]] = {}
+    for ownership in all_ownerships:
+        ownerships_by_extension_id.setdefault(ownership.skill_id, []).append(ownership)
+    principal_ids = {
+        ownership.principal_id
+        for ownership in all_ownerships
+        if ownership.principal_type == "user"
+    } | {version.created_by_user_id for version in all_versions}
     principal_users = {
         principal.id: principal
         for principal in db.scalars(
-            select(User).where(
-                User.id.in_(
-                    [
-                        item.principal_id
-                        for item in ownerships
-                        if item.principal_type == "user"
-                    ]
-                )
+            select(User).where(User.id.in_(principal_ids))
+        )
+    } if principal_ids else {}
+    project_ids = list(
+        db.scalars(
+            select(ProjectMembership.project_id).where(
+                ProjectMembership.user_id == user.id,
+                ProjectMembership.status == "active",
             )
         )
-    }
-    payload: dict[str, Any] = {
-        "id": extension.id,
-        "kind": extension.kind,
-        "slug": extension.slug,
-        "name": extension.name,
-        "description": extension.description,
-        "visibility": extension.visibility,
-        "ownerUserId": extension.owner_user_id,
-        "creatorUserId": extension.creator_user_id,
-        "currentUserRole": role,
-        "ownerships": [
-            {
-                "id": item.id,
-                "principalType": item.principal_type,
-                "principalId": item.principal_id,
-                "role": item.role,
-                "displayName": (
-                    principal_users[item.principal_id].display_name
-                    or principal_users[item.principal_id].login_id
-                    if item.principal_id in principal_users
-                    else item.principal_id
+    )
+    installed_extension_ids = set(
+        db.scalars(
+            select(ExtensionInstallation.extension_id).where(
+                ExtensionInstallation.extension_id.in_(extension_ids),
+                ExtensionInstallation.removed_at.is_(None),
+                or_(
+                    (
+                        (ExtensionInstallation.scope_type == "user")
+                        & (ExtensionInstallation.scope_id == user.id)
+                    ),
+                    (
+                        (ExtensionInstallation.scope_type == "organization")
+                        & (ExtensionInstallation.scope_id == user.organization_id)
+                    ),
+                    (
+                        (ExtensionInstallation.scope_type == "project")
+                        & (ExtensionInstallation.scope_id.in_(project_ids))
+                    ),
                 ),
-                "createdAt": item.created_at,
-            }
-            for item in ownerships
-        ],
-        "latestPublishedVersionId": extension.latest_published_version_id,
-        "versions": [
-            version_payload(version, include_package=False) for version in versions
-        ],
-        "createdAt": extension.created_at,
-        "updatedAt": extension.updated_at,
-        "archivedAt": extension.archived_at,
-        "purgesAt": (
-            extension.archived_at + _SKILL_TRASH_RETENTION
-            if extension.archived_at is not None
-            else None
-        ),
-        "canEdit": can_manage,
-        "canCreateDraft": can_manage or can_view_skill_package(db, user, extension),
-        "canDelete": role == "owner",
-    }
-    if draft is not None:
-        base = (
-            db.get(ExtensionVersion, draft.base_version_id)
-            if draft.base_version_id
-            else None
+            )
         )
-        payload["draft"] = draft_payload(draft, base_version=base, include_package=True)
-    return payload
+    )
+    payloads: list[dict[str, Any]] = []
+    for extension in extensions:
+        role = (
+            "owner"
+            if user.role == "admin" or extension.owner_user_id == user.id
+            else role_by_extension_id.get(extension.id)
+        )
+        can_manage = role in {"owner", "maintainer"}
+        versions = versions_by_extension_id.get(extension.id, [])
+        if not can_manage:
+            versions = [
+                version
+                for version in versions
+                if version.status == "published"
+                or version.created_by_user_id == user.id
+            ]
+        ownerships = ownerships_by_extension_id.get(extension.id, [])
+        latest_manifest_tags: list[str] = []
+        if versions:
+            raw_tags = versions[-1].manifest_json.get("tags")
+            if isinstance(raw_tags, list):
+                latest_manifest_tags = _normalize_skill_tags(
+                    [item for item in raw_tags if isinstance(item, str)]
+                )
+        payload: dict[str, Any] = {
+            "id": extension.id,
+            "kind": extension.kind,
+            "slug": extension.slug,
+            "name": extension.name,
+            "description": extension.description,
+            "tags": extension.tags_json
+            if extension.tags_json is not None
+            else latest_manifest_tags,
+            "visibility": extension.visibility,
+            "ownerUserId": extension.owner_user_id,
+            "creatorUserId": extension.creator_user_id,
+            "currentUserRole": role,
+            "ownerships": [
+                {
+                    "id": item.id,
+                    "principalType": item.principal_type,
+                    "principalId": item.principal_id,
+                    "role": item.role,
+                    "displayName": (
+                        principal_users[item.principal_id].display_name
+                        or principal_users[item.principal_id].login_id
+                        if item.principal_id in principal_users
+                        else item.principal_id
+                    ),
+                    "createdAt": item.created_at,
+                }
+                for item in ownerships
+            ],
+            "latestPublishedVersionId": extension.latest_published_version_id,
+            "versions": [
+                version_payload(
+                    version,
+                    include_package=False,
+                    created_by_display_name=(
+                        principal_users[version.created_by_user_id].display_name
+                        or principal_users[version.created_by_user_id].login_id
+                        if version.created_by_user_id in principal_users
+                        else None
+                    ),
+                )
+                for version in versions
+            ],
+            "createdAt": extension.created_at,
+            "updatedAt": extension.updated_at,
+            "archivedAt": extension.archived_at,
+            "purgesAt": (
+                extension.archived_at + _SKILL_TRASH_RETENTION
+                if extension.archived_at is not None
+                else None
+            ),
+            "canEdit": can_manage,
+            "canEditTags": role == "owner",
+            "canCreateDraft": can_manage or extension.id in installed_extension_ids,
+            "canDelete": role == "owner",
+        }
+        draft = draft_by_extension_id.get(extension.id)
+        if draft is not None:
+            payload["draft"] = draft_payload(
+                draft,
+                base_version=version_by_id.get(draft.base_version_id or ""),
+                include_package=include_draft_package,
+            )
+        payloads.append(payload)
+    return payloads
+
+
+def extension_payload(
+    db: Session,
+    extension: Extension,
+    *,
+    user: User,
+    include_draft_package: bool = True,
+) -> dict[str, Any]:
+    return extension_payloads(
+        db,
+        [extension],
+        user=user,
+        include_draft_package=include_draft_package,
+    )[0]
 
 
 def draft_payload(
@@ -1550,15 +2158,23 @@ def draft_payload(
 
 
 def version_payload(
-    version: ExtensionVersion, *, include_package: bool
+    version: ExtensionVersion,
+    *,
+    include_package: bool,
+    created_by_display_name: str | None = None,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
         "id": version.id,
         "extensionId": version.extension_id,
         "version": version.version_number,
         "parentVersionId": version.parent_version_id,
+        "restoredFromVersionId": version.restored_from_version_id,
         "digest": version.package_digest,
         "status": version.status,
+        "changeType": version.change_type,
+        "changeSummary": version.change_summary,
+        "createdByUserId": version.created_by_user_id,
+        "createdByDisplayName": created_by_display_name,
         "manifest": version.manifest_json,
         "createdAt": version.created_at,
         "publishedAt": version.published_at,
@@ -1578,6 +2194,7 @@ def installation_payload(
         "scopeType": installation.scope_type,
         "scopeId": installation.scope_id,
         "enabled": installation.enabled,
+        "projectIds": installation.project_ids_json,
         "settings": installation.settings_json,
         "installedAt": installation.installed_at,
     }

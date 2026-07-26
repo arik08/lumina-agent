@@ -3,13 +3,15 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from collections.abc import Iterable, Mapping
+import re
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import and_, func, or_, select, tuple_, update
 from sqlalchemy.orm import Session
-from fastapi.encoders import jsonable_encoder
 
+from ..agent_frontends import agent_frontend_payload, normalize_agent_frontend_payload
 from ..api.errors import ApiProblem
 from ..api.schemas import (
     ExecutionSelection,
@@ -17,15 +19,16 @@ from ..api.schemas import (
     RunActionRequest,
     RunCreate,
 )
-from ..artifacts.service import artifact_summary, current_artifact_version
+from ..artifacts.service import artifact_summary
 from ..config import Settings, get_settings
 from ..audit import record_audit
-from ..authorization import require_conversation
+from ..authorization import conversation_access_query, require_conversation, require_project
 from ..extensions.service import resolve_skill_snapshot
 from ..instructions import (
     resolve_instruction_stack_from_models,
     runtime_prompt_snapshot,
 )
+from ..tools.knowledge import build_project_knowledge_retrieval_snapshot
 from ..mcp.service import resolve_mcp_snapshot
 from ..models import (
     Artifact,
@@ -36,8 +39,6 @@ from ..models import (
     Message,
     MessageReference,
     Organization,
-    Plan,
-    PlanStep,
     Project,
     ProjectFile,
     ProjectFileVersion,
@@ -64,9 +65,29 @@ from ..providers.catalog import (
     estimate_model_cost_parts,
 )
 from ..providers.execution_defaults import initial_execution_selection
-from .approvals import approval_payload, pending_approval_payloads
-from .safety import run_limit_snapshot
-from .subtasks import list_step_subtasks
+from .approvals import (
+    approval_payload,
+    pending_approval_payloads_batch,
+)
+from .events import append_event
+from .plans import (
+    PLAN_STEP_QUEUED,
+    _retryable_plan_step,
+    align_work_plan_for_tool_start,
+    cancel_plan,
+    change_plan_step,
+    complete_plan_step,
+    create_run_plan,
+    fail_plan,
+    pause_plan,
+    plan_snapshot,
+    plan_snapshots,
+    resume_plan,
+    retry_plan_step,
+    start_plan_step,
+    update_work_plan,
+)
+from .safety import run_approval_mode, run_limit_snapshot
 from .state import (
     ACTIVE_STATUSES,
     AWAITING_APPROVAL,
@@ -74,7 +95,6 @@ from .state import (
     CANCELLED,
     COMPLETED,
     INTERRUPTED,
-    MODEL_STREAMING,
     PAUSED,
     QUEUED,
     TERMINAL_STATUSES,
@@ -82,21 +102,29 @@ from .state import (
 )
 
 
-PLAN_STEP_QUEUED = "queued"
-PLAN_STEP_RUNNING = "running"
-PLAN_STEP_BLOCKED = "blocked"
-PLAN_STEP_COMPLETED = "completed"
-PLAN_STEP_FAILED = "failed"
-PLAN_STEP_CANCELLED = "cancelled"
+_EXPLICIT_MCP_REFERENCE_RE = re.compile(
+    r"(?<![A-Za-z0-9_$])\$mcp:([a-z0-9]+(?:-[a-z0-9]+)*)",
+    re.IGNORECASE,
+)
 
-WORK_PLAN_PHASES = {
-    "planning",
-    "research",
-    "analysis",
-    "drafting",
-    "validation",
-    "other",
-}
+
+__all__ = (
+    "align_work_plan_for_tool_start",
+    "append_event",
+    "cancel_plan",
+    "change_plan_step",
+    "complete_plan_step",
+    "create_run_plan",
+    "fail_plan",
+    "pause_plan",
+    "plan_snapshot",
+    "runs_for_user",
+    "run_snapshots",
+    "resume_plan",
+    "retry_plan_step",
+    "start_plan_step",
+    "update_work_plan",
+)
 
 
 UNTITLED_CONVERSATION_TITLES = {"제목 없음", "새 작업"}
@@ -108,31 +136,6 @@ def _conversation_title_from_message(message_text: str) -> str:
     if len(normalized) <= CONVERSATION_TITLE_MAX_LENGTH:
         return normalized
     return normalized[: CONVERSATION_TITLE_MAX_LENGTH - 1].rstrip() + "…"
-
-
-_PLAN_STEP_TRANSITIONS = {
-    PLAN_STEP_QUEUED: {
-        PLAN_STEP_RUNNING,
-        PLAN_STEP_BLOCKED,
-        PLAN_STEP_COMPLETED,
-        PLAN_STEP_CANCELLED,
-    },
-    PLAN_STEP_RUNNING: {
-        PLAN_STEP_BLOCKED,
-        PLAN_STEP_COMPLETED,
-        PLAN_STEP_FAILED,
-        PLAN_STEP_CANCELLED,
-    },
-    PLAN_STEP_BLOCKED: {
-        PLAN_STEP_QUEUED,
-        PLAN_STEP_RUNNING,
-        PLAN_STEP_FAILED,
-        PLAN_STEP_CANCELLED,
-    },
-    PLAN_STEP_FAILED: {PLAN_STEP_QUEUED},
-    PLAN_STEP_CANCELLED: {PLAN_STEP_QUEUED},
-    PLAN_STEP_COMPLETED: set(),
-}
 
 
 def resolve_execution(
@@ -306,6 +309,44 @@ def _default_execution_selection(
     return fallback, [warning] if warning else []
 
 
+def _idempotent_run(
+    db: Session,
+    *,
+    conversation_id: str,
+    user_id: str,
+    idempotency_key: str,
+) -> tuple[Run, Message] | None:
+    run = db.scalar(
+        select(Run).where(
+            Run.conversation_id == conversation_id,
+            Run.user_id == user_id,
+            Run.idempotency_key == idempotency_key,
+        )
+    )
+    if run is None:
+        return None
+    message = db.scalar(
+        select(Message).where(Message.run_id == run.id, Message.role == "user")
+    )
+    if message is None:
+        raise ApiProblem(
+            409, "run_incomplete", "기존 Run의 사용자 메시지를 찾을 수 없습니다."
+        )
+    return run, message
+
+
+def _reserve_conversation_turn(db: Session, conversation_id: str) -> int:
+    next_turn_index = db.scalar(
+        update(Conversation)
+        .where(Conversation.id == conversation_id)
+        .values(next_turn_index=Conversation.next_turn_index + 1)
+        .returning(Conversation.next_turn_index)
+    )
+    if next_turn_index is None:
+        raise ApiProblem(404, "conversation_not_found", "대화를 찾을 수 없습니다.")
+    return int(next_turn_index) - 1
+
+
 def create_run(
     db: Session,
     *,
@@ -314,28 +355,20 @@ def create_run(
     payload: RunCreate,
     idempotency_key: str,
     extension_snapshot_override: list[dict[str, Any]] | None = None,
-    apply_extension_snapshot: bool = False,
+    use_extension_snapshot_candidates: bool = False,
     image_backend_model: str | None = None,
     settings: Settings | None = None,
 ) -> tuple[Run, Message, bool]:
     config = settings or get_settings()
     conversation = require_conversation(db, user, conversation_id, write=True)
-    existing = db.scalar(
-        select(Run).where(
-            Run.conversation_id == conversation.id,
-            Run.user_id == user.id,
-            Run.idempotency_key == idempotency_key,
-        )
+    existing = _idempotent_run(
+        db,
+        conversation_id=conversation.id,
+        user_id=user.id,
+        idempotency_key=idempotency_key,
     )
     if existing:
-        message = db.scalar(
-            select(Message).where(Message.run_id == existing.id, Message.role == "user")
-        )
-        if message is None:
-            raise ApiProblem(
-                409, "run_incomplete", "기존 Run의 사용자 메시지를 찾을 수 없습니다."
-            )
-        return existing, message, False
+        return existing[0], existing[1], False
 
     attachment_ids = _validate_attachments(
         db, user, conversation.project_id, payload.message.attachment_ids
@@ -420,6 +453,7 @@ def create_run(
             409, "organization_missing", "사용자의 조직을 찾을 수 없습니다."
         )
     limits = run_limit_snapshot(organization.run_safety_settings_json)
+    approval_mode = run_approval_mode(organization.run_safety_settings_json)
     runtime_prompts = runtime_prompt_snapshot(db, organization)
     instruction_stack = resolve_instruction_stack_from_models(
         organization=organization,
@@ -445,6 +479,11 @@ def create_run(
         ],
         "excluded_scopes": list(instruction_stack.excluded_scopes),
     }
+    knowledge_retrieval = build_project_knowledge_retrieval_snapshot(
+        db,
+        project_id=project.id,
+        owner_user_id=user.id,
+    )
     normalized_login_id = user.login_id.strip().casefold()
     prompt_cache_scope = (
         "lumina:user:v1:"
@@ -462,11 +501,16 @@ def create_run(
         references=references,
     )
     extension_application = (
-        "all_snapshot" if apply_extension_snapshot else "explicit_references"
+        "snapshot_candidates"
+        if use_extension_snapshot_candidates
+        else "explicit_references"
+    )
+    agent_snapshot = agent_frontend_payload(
+        conversation.agent_id, conversation.agent_version
     )
     stable_prefix = {
         "contract_version": "lumina-run-v1",
-        "agent": {"id": conversation.agent_id, "version": conversation.agent_version},
+        "agent": agent_snapshot,
         "project": {
             "id": project.id,
             "concept": project.concept,
@@ -476,12 +520,19 @@ def create_run(
         },
         "execution": execution,
         "output_mode": payload.message.output_mode,
+        "analysis_depth": payload.message.analysis_depth,
+        "answer_length": payload.message.answer_length,
         "instructions": instruction_snapshot,
+        **(
+            {"knowledge_retrieval": knowledge_retrieval}
+            if knowledge_retrieval
+            else {}
+        ),
         "runtime_prompts": runtime_prompts,
         "extensions": extensions,
         "extension_application": extension_application,
         "environment_type": "local_worker",
-        "approval_mode": "on_risk",
+        "approval_mode": approval_mode,
         "clarification_mode": clarification_mode,
         "prompt_cache_scope": prompt_cache_scope,
     }
@@ -496,6 +547,22 @@ def create_run(
             default=str,
         ).encode("utf-8")
     ).hexdigest()
+    turn_index = _reserve_conversation_turn(db, conversation.id)
+    db.refresh(conversation)
+    existing = _idempotent_run(
+        db,
+        conversation_id=conversation.id,
+        user_id=user.id,
+        idempotency_key=idempotency_key,
+    )
+    if existing:
+        db.execute(
+            update(Conversation)
+            .where(Conversation.id == conversation.id)
+            .values(next_turn_index=Conversation.next_turn_index - 1)
+        )
+        return existing[0], existing[1], False
+
     assistant_message_id = new_uuid()
     run = Run(
         organization_id=user.organization_id,
@@ -508,7 +575,7 @@ def create_run(
         runtime_model_id=execution["runtime_model_id"],
         model_display_name=execution["model_display_name"],
         effort=execution["effort"],
-        approval_mode="on_risk",
+        approval_mode=approval_mode,
         environment_type="local_worker",
         # Retained only for compatibility with the existing database column.
         # Runtime termination no longer depends on a model-turn count.
@@ -523,13 +590,17 @@ def create_run(
             "assistant_message_id": assistant_message_id,
             "user_message_text": payload.message.text,
             "output_mode": payload.message.output_mode,
+            "analysis_depth": payload.message.analysis_depth,
+            "answer_length": payload.message.answer_length,
             "target_output_tokens": target_output_tokens,
-            "agent": {
-                "id": conversation.agent_id,
-                "version": conversation.agent_version,
-            },
+            "agent": agent_snapshot,
             "project": stable_prefix["project"],
             "instructions": instruction_snapshot,
+            **(
+                {"knowledge_retrieval": knowledge_retrieval}
+                if knowledge_retrieval
+                else {}
+            ),
             "runtime_prompts": runtime_prompts,
             "extensions": extensions,
             "extension_application": extension_application,
@@ -537,7 +608,7 @@ def create_run(
             "prompt_cache_scope": prompt_cache_scope,
             "contract_version": stable_prefix["contract_version"],
             "environment_type": "local_worker",
-            "approval_mode": "on_risk",
+            "approval_mode": approval_mode,
             "limits": limits,
             "memory_learning_mode": memory_learning_mode,
             "clarification_mode": clarification_mode,
@@ -548,14 +619,6 @@ def create_run(
     db.add(run)
     db.flush()
     create_run_plan(db, run, goal=payload.message.text)
-    turn_index = (
-        db.scalar(
-            select(func.max(Message.turn_index)).where(
-                Message.conversation_id == conversation.id
-            )
-        )
-        or 0
-    ) + 1
     message = Message(
         conversation_id=conversation.id,
         run_id=run.id,
@@ -568,6 +631,8 @@ def create_run(
             "attachment_ids": attachment_ids,
             "prompt_references": references,
             "output_mode": payload.message.output_mode,
+            "analysis_depth": payload.message.analysis_depth,
+            "answer_length": payload.message.answer_length,
             "target_output_tokens": target_output_tokens,
         },
     )
@@ -653,18 +718,32 @@ def _validate_references(
     message_text: str,
 ) -> list[dict[str, Any]]:
     conversation = require_conversation(db, user, conversation_id)
+    return validate_project_references(
+        db, user, conversation.project_id, references, message_text=message_text
+    )
+
+
+def validate_project_references(
+    db: Session,
+    user: User,
+    project_id: str,
+    references: Iterable[MessageReferenceInput],
+    *,
+    message_text: str,
+) -> list[dict[str, Any]]:
+    require_project(db, user, project_id)
     skill_snapshots = {
         str(item["extension_id"]): item
-        for item in resolve_skill_snapshot(
-            db, user=user, project_id=conversation.project_id
-        )
+        for item in resolve_skill_snapshot(db, user=user, project_id=project_id)
     }
     mcp_snapshots = {
         str(item["definition_id"]): item
-        for item in resolve_mcp_snapshot(
-            db, user=user, project_id=conversation.project_id
-        )
+        for item in resolve_mcp_snapshot(db, user=user, project_id=project_id)
     }
+    references = [
+        *references,
+        *_explicit_mcp_references(message_text, mcp_snapshots.values()),
+    ]
     validated: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str | None]] = set()
     for reference in references:
@@ -675,7 +754,7 @@ def _validate_references(
             if (
                 artifact is None
                 or artifact.deleted_at is not None
-                or artifact.project_id != conversation.project_id
+                or artifact.project_id != project_id
             ):
                 raise ApiProblem(
                     404, "reference_not_found", "Artifact 참조를 찾을 수 없습니다."
@@ -736,18 +815,18 @@ def _validate_references(
                         ),
                     )
                     .where(
-                        ProjectFile.project_id == conversation.project_id,
+                        ProjectFile.project_id == project_id,
                         ProjectFile.deleted_at.is_(None),
                         ProjectFile.status == "active",
                     )
                     .order_by(ProjectFile.logical_path, ProjectFile.id)
-                )
+                ).tuples()
             )
             folder = next(
                 (
                     item
                     for item in build_project_folder_references(
-                        conversation.project_id, workspace_rows
+                        project_id, workspace_rows
                     )
                     if item.id == reference.reference_id
                 ),
@@ -780,7 +859,7 @@ def _validate_references(
             if project_file is not None:
                 if (
                     project_file.deleted_at is not None
-                    or project_file.project_id != conversation.project_id
+                    or project_file.project_id != project_id
                     or project_file.status != "active"
                 ):
                     raise ApiProblem(
@@ -804,7 +883,7 @@ def _validate_references(
                 if (
                     attachment is None
                     or attachment.deleted_at is not None
-                    or attachment.project_id != conversation.project_id
+                    or attachment.project_id != project_id
                     or attachment.status not in {"ready", "completed"}
                 ):
                     raise ApiProblem(
@@ -916,6 +995,35 @@ def _validate_references(
         seen.add(canonical_key)
         validated.append(payload)
     return validated
+
+
+def _explicit_mcp_references(
+    message_text: str, snapshots: Iterable[Mapping[str, Any]]
+) -> list[MessageReferenceInput]:
+    by_slug = {
+        str(snapshot.get("slug", "")).casefold(): snapshot
+        for snapshot in snapshots
+        if snapshot.get("slug")
+    }
+    inferred: list[MessageReferenceInput] = []
+    for match in _EXPLICIT_MCP_REFERENCE_RE.finditer(message_text):
+        slug = match.group(1).casefold()
+        snapshot = by_slug.get(slug)
+        if snapshot is None:
+            raise ApiProblem(
+                409,
+                "extension_not_installed",
+                f"$mcp:{slug} MCP가 현재 Project 범위에서 준비되지 않았습니다.",
+            )
+        inferred.append(
+            MessageReferenceInput(
+                kind="mcp",
+                reference_id=str(snapshot["definition_id"]),
+                token_start=match.start(),
+                token_end=match.end(),
+            )
+        )
+    return inferred
 
 
 def _selected_mcp_snapshots(
@@ -1050,737 +1158,6 @@ def _persist_message_references(
     db.flush()
 
 
-def create_run_plan(db: Session, run: Run, *, goal: str) -> Plan:
-    existing = db.scalar(select(Plan).where(Plan.run_id == run.id))
-    if existing is not None:
-        _sync_plan_snapshot(db, run)
-        return existing
-
-    plan = Plan(run_id=run.id, goal=goal.strip(), status="active")
-    db.add(plan)
-    db.flush()
-    step_specs = _dynamic_plan_step_specs(run, goal)
-    previous_step_id: str | None = None
-    for position, (step_key, label, effect, input_snapshot) in enumerate(
-        step_specs, start=1
-    ):
-        step = PlanStep(
-            id=new_uuid(),
-            plan_id=plan.id,
-            step_key=step_key,
-            label=label,
-            position=position,
-            status=PLAN_STEP_QUEUED,
-            depends_on_json=[previous_step_id] if previous_step_id else [],
-            input_snapshot_json=input_snapshot,
-            result_json={},
-            artifact_ids_json=[],
-            effect=effect,
-            attempt=0,
-        )
-        db.add(step)
-        previous_step_id = step.id
-    db.flush()
-    snapshot = _sync_plan_snapshot(db, run)
-    append_event(db, run, "plan_created", {"plan": snapshot})
-    return plan
-
-
-def _dynamic_plan_step_specs(
-    run: Run, goal: str
-) -> tuple[tuple[str, str, str, dict[str, Any]], ...]:
-    normalized = goal.casefold()
-    if any(
-        token in normalized
-        for token in ("보고서", "report", "조사", "리서치", "동향", "비교", "분석")
-    ):
-        labels = (
-            "요청 범위와 조사 기준을 정리합니다",
-            "관련 자료를 탐색하고 근거를 수집합니다",
-            "핵심 내용을 분석하고 결과를 구조화합니다",
-            "결과를 검증하고 보고서를 전달합니다",
-        )
-    elif any(
-        token in normalized
-        for token in (
-            "코드",
-            "구현",
-            "수정",
-            "버그",
-            "리팩터",
-            "테스트",
-            "build",
-            "fix",
-        )
-    ):
-        labels = (
-            "요청과 관련된 코드의 영향 범위를 확인합니다",
-            "변경 방향을 설계하고 구현합니다",
-            "테스트와 실제 동작을 검증합니다",
-            "변경 결과를 정리하고 전달합니다",
-        )
-    elif any(
-        token in normalized
-        for token in ("표", "엑셀", "데이터", "csv", "xlsx", "통계", "차트")
-    ):
-        labels = (
-            "데이터 범위와 산출물 기준을 확인합니다",
-            "데이터를 정리하고 분석합니다",
-            "표와 시각화 결과를 검증합니다",
-            "분석 결과와 산출물을 전달합니다",
-        )
-    elif any(
-        token in normalized for token in ("파일", "문서", "pdf", "docx", "pptx", "요약")
-    ):
-        labels = (
-            "대상 문서와 요청 범위를 확인합니다",
-            "문서 내용을 분석하고 핵심 정보를 추출합니다",
-            "결과 구성과 산출물을 검증합니다",
-            "완성된 결과를 전달합니다",
-        )
-    else:
-        labels = (
-            "요청 목표와 제약을 확인합니다",
-            "필요한 정보를 확인하고 작업을 수행합니다",
-            "결과를 검토하고 정확성을 확인합니다",
-            "최종 답변을 정리하고 전달합니다",
-        )
-
-    return (
-        (
-            "prepare",
-            labels[0],
-            "read_only",
-            {
-                "project_id": run.project_id,
-                "attachment_ids": run.snapshot_json.get("attachments", []),
-                "prompt_references": run.snapshot_json.get("prompt_references", []),
-            },
-        ),
-        (
-            "model",
-            labels[1],
-            "read_only",
-            {
-                "execution": run.snapshot_json.get("execution", {}),
-                "prompt_prefix_hash": run.snapshot_json.get("prompt_prefix_hash"),
-            },
-        ),
-        (
-            "tools",
-            labels[2],
-            "side_effect",
-            {
-                "allowed_tools": ["create_report", "web_search", "web_fetch"],
-                "approval_mode": run.approval_mode,
-            },
-        ),
-        (
-            "final",
-            labels[3],
-            "read_only",
-            {"assistant_message_id": run.snapshot_json.get("assistant_message_id")},
-        ),
-    )
-
-
-def plan_snapshot(db: Session, run: Run) -> dict[str, Any] | None:
-    plan = db.scalar(select(Plan).where(Plan.run_id == run.id))
-    if plan is None:
-        return None
-    steps = list(
-        db.scalars(
-            select(PlanStep)
-            .where(PlanStep.plan_id == plan.id)
-            .order_by(PlanStep.position, PlanStep.id)
-        )
-    )
-    return {
-        "id": plan.id,
-        "goal": plan.goal,
-        "status": plan.status,
-        "steps": [_plan_step_payload(db, step) for step in steps],
-        "createdAt": plan.created_at,
-        "updatedAt": plan.updated_at,
-    }
-
-
-def update_work_plan(
-    db: Session,
-    run: Run,
-    *,
-    steps: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Persist the model-authored, user-visible work plan for a Run."""
-    if not 1 <= len(steps) <= 8:
-        raise ValueError("업무 계획은 1개 이상 8개 이하의 단계여야 합니다.")
-
-    previous = run.snapshot_json.get("work_plan", [])
-    previous_ids = {
-        str(item.get("step", "")).strip().casefold(): str(item.get("id"))
-        for item in previous
-        if isinstance(item, dict) and item.get("id")
-    }
-    previous_ids_by_order = {
-        int(item.get("order")): str(item.get("id"))
-        for item in previous
-        if isinstance(item, dict)
-        and item.get("id")
-        and isinstance(item.get("order"), int)
-    }
-    previous_phases_by_order = {
-        int(item.get("order")): str(item.get("phase"))
-        for item in previous
-        if isinstance(item, dict)
-        and isinstance(item.get("order"), int)
-        and item.get("phase") in WORK_PLAN_PHASES
-    }
-    normalized: list[dict[str, Any]] = []
-    active_count = 0
-    for order, item in enumerate(steps, start=1):
-        if not isinstance(item, dict):
-            raise ValueError("각 업무 계획 단계는 객체여야 합니다.")
-        label = " ".join(str(item.get("step", "")).split())
-        if not label or len(label) > 240:
-            raise ValueError("업무 계획 단계명은 1자 이상 240자 이하여야 합니다.")
-        status = str(item.get("status", "pending"))
-        if status not in {"pending", "in_progress", "completed"}:
-            raise ValueError("업무 계획 상태가 올바르지 않습니다.")
-        phase = item.get("phase")
-        if phase is None:
-            phase = previous_phases_by_order.get(order) or _infer_work_plan_phase(
-                label
-            )
-        if phase not in WORK_PLAN_PHASES:
-            raise ValueError("업무 계획 단계 성격이 올바르지 않습니다.")
-        if status == "in_progress":
-            active_count += 1
-        normalized.append(
-            {
-                "id": previous_ids.get(label.casefold())
-                or previous_ids_by_order.get(order)
-                or new_uuid(),
-                "step": label,
-                "status": status,
-                "order": order,
-                "phase": phase,
-            }
-        )
-    if active_count > 1:
-        raise ValueError("동시에 진행 중인 업무 계획 단계는 하나만 허용됩니다.")
-    if (
-        run.status not in TERMINAL_STATUSES
-        and normalized
-        and all(item["status"] == "completed" for item in normalized)
-    ):
-        raise ValueError(
-            "Run이 진행 중일 때 업무 계획 전체를 완료할 수 없습니다. "
-            "최종 답변 작성도 실제 작업으로 판단하여 해당 단계를 직접 추가하거나 "
-            "선택하고 in_progress로 유지해 주세요."
-        )
-
-    run.snapshot_json = {**run.snapshot_json, "work_plan": normalized}
-    append_event(db, run, "work_plan_updated", {"steps": normalized})
-    db.flush()
-    return normalized
-
-
-def _infer_work_plan_phase(label: str) -> str:
-    """Classify legacy plan rows that predate explicit phase metadata."""
-    normalized = " ".join(label.casefold().split())
-    report_nouns = ("보고서", "report")
-    drafting_actions = (
-        "작성",
-        "생성",
-        "제작",
-        "구성",
-        "write",
-        "draft",
-        "create",
-        "compose",
-        "generate",
-        "produce",
-    )
-    if any(noun in normalized for noun in report_nouns) and any(
-        action in normalized for action in drafting_actions
-    ):
-        return "drafting"
-    return "other"
-
-
-def align_work_plan_for_tool_start(
-    db: Session,
-    run: Run,
-    *,
-    tool_name: str,
-) -> list[dict[str, Any]] | None:
-    """Align the user-visible plan with an authoritative streaming tool phase."""
-    target_phase = {"create_report": "drafting"}.get(tool_name)
-    if target_phase is None:
-        return None
-
-    previous = run.snapshot_json.get("work_plan", [])
-    if not isinstance(previous, list) or not previous:
-        return None
-    steps = [dict(item) for item in previous if isinstance(item, dict)]
-    if len(steps) != len(previous):
-        return None
-
-    active_index = next(
-        (
-            index
-            for index, item in enumerate(steps)
-            if item.get("status") == "in_progress"
-        ),
-        None,
-    )
-    if active_index is not None and (
-        steps[active_index].get("phase")
-        or _infer_work_plan_phase(str(steps[active_index].get("step", "")))
-    ) == target_phase:
-        return None
-
-    target_index = next(
-        (
-            index
-            for index, item in enumerate(steps)
-            if item.get("status") != "completed"
-            and (
-                item.get("phase")
-                or _infer_work_plan_phase(str(item.get("step", "")))
-            )
-            == target_phase
-            and (active_index is None or index > active_index)
-        ),
-        None,
-    )
-    if target_index is None:
-        return None
-
-    changed = False
-    for index, item in enumerate(steps):
-        current_status = item.get("status")
-        if index < target_index:
-            next_status = "completed"
-        elif index == target_index:
-            next_status = "in_progress"
-        elif current_status == "in_progress":
-            next_status = "pending"
-        else:
-            next_status = current_status
-        if next_status != current_status:
-            item["status"] = next_status
-            changed = True
-    if not changed:
-        return None
-
-    run.snapshot_json = {**run.snapshot_json, "work_plan": steps}
-    append_event(db, run, "work_plan_updated", {"steps": steps})
-    db.flush()
-    return steps
-
-
-def _plan_step_payload(db: Session, step: PlanStep) -> dict[str, Any]:
-    return {
-        "id": step.id,
-        "key": step.step_key,
-        "label": step.label,
-        "status": step.status,
-        "order": step.position,
-        "dependsOn": step.depends_on_json,
-        "inputSnapshot": step.input_snapshot_json,
-        "result": step.result_json,
-        "artifactIds": step.artifact_ids_json,
-        "effect": step.effect,
-        "attempt": step.attempt,
-        "idempotencyKey": step.idempotency_key,
-        "startedAt": step.started_at,
-        "completedAt": step.completed_at,
-        "errorCode": step.error_code,
-        "error": step.error_message,
-        "subtasks": list_step_subtasks(db, step.id),
-    }
-
-
-def _sync_plan_snapshot(db: Session, run: Run) -> dict[str, Any]:
-    snapshot = plan_snapshot(db, run)
-    if snapshot is None:
-        raise ApiProblem(409, "plan_missing", "Run의 Plan을 찾을 수 없습니다.")
-    encoded_snapshot = jsonable_encoder(snapshot)
-    run.snapshot_json = {**run.snapshot_json, "plan": encoded_snapshot}
-    return encoded_snapshot
-
-
-def _plan_rows(db: Session, run: Run) -> tuple[Plan, list[PlanStep]]:
-    plan = db.scalar(select(Plan).where(Plan.run_id == run.id))
-    if plan is None:
-        raise ApiProblem(409, "plan_missing", "Run의 Plan을 찾을 수 없습니다.")
-    steps = list(
-        db.scalars(
-            select(PlanStep)
-            .where(PlanStep.plan_id == plan.id)
-            .order_by(PlanStep.position, PlanStep.id)
-        )
-    )
-    return plan, steps
-
-
-def _step_by_key(db: Session, run: Run, step_key: str) -> PlanStep:
-    plan, _steps = _plan_rows(db, run)
-    step = db.scalar(
-        select(PlanStep).where(
-            PlanStep.plan_id == plan.id, PlanStep.step_key == step_key
-        )
-    )
-    if step is None:
-        raise ApiProblem(409, "plan_step_missing", "Plan Step을 찾을 수 없습니다.")
-    return step
-
-
-def _refresh_plan_status(plan: Plan, steps: list[PlanStep]) -> None:
-    statuses = {step.status for step in steps}
-    if steps and statuses == {PLAN_STEP_COMPLETED}:
-        plan.status = "completed"
-    elif PLAN_STEP_FAILED in statuses:
-        plan.status = "failed"
-    elif PLAN_STEP_BLOCKED in statuses:
-        plan.status = "paused"
-    elif statuses <= {PLAN_STEP_COMPLETED, PLAN_STEP_CANCELLED}:
-        plan.status = "cancelled"
-    else:
-        plan.status = "active"
-    plan.updated_at = utc_now()
-
-
-def change_plan_step(
-    db: Session,
-    run: Run,
-    step_key: str,
-    *,
-    status: str | None = None,
-    result: dict[str, Any] | None = None,
-    artifact_ids: Iterable[str] = (),
-    error_code: str | None = None,
-    error_message: str | None = None,
-    reason: str,
-) -> PlanStep:
-    plan, steps = _plan_rows(db, run)
-    step = next((item for item in steps if item.step_key == step_key), None)
-    if step is None:
-        raise ApiProblem(409, "plan_step_missing", "Plan Step을 찾을 수 없습니다.")
-    changed = False
-    now = utc_now()
-    if status is not None and status != step.status:
-        allowed = _PLAN_STEP_TRANSITIONS.get(step.status, set())
-        if status not in allowed:
-            raise ApiProblem(
-                409,
-                "invalid_plan_step_transition",
-                f"Plan Step을 {step.status}에서 {status}(으)로 변경할 수 없습니다.",
-            )
-        previous_status = step.status
-        step.status = status
-        changed = True
-        if status == PLAN_STEP_RUNNING:
-            if previous_status == PLAN_STEP_QUEUED:
-                step.attempt += 1
-                step.started_at = now
-            elif step.started_at is None:
-                step.started_at = now
-            step.completed_at = None
-            step.error_code = None
-            step.error_message = None
-        elif status in {
-            PLAN_STEP_COMPLETED,
-            PLAN_STEP_FAILED,
-            PLAN_STEP_CANCELLED,
-        }:
-            step.completed_at = now
-            if status == PLAN_STEP_COMPLETED:
-                step.error_code = None
-                step.error_message = None
-        elif status == PLAN_STEP_QUEUED:
-            step.started_at = None
-            step.completed_at = None
-            step.error_code = None
-            step.error_message = None
-    if result:
-        step.result_json = {**step.result_json, **result}
-        changed = True
-    new_artifact_ids = list(dict.fromkeys((*step.artifact_ids_json, *artifact_ids)))
-    if new_artifact_ids != step.artifact_ids_json:
-        step.artifact_ids_json = new_artifact_ids
-        changed = True
-    if error_code is not None and error_code != step.error_code:
-        step.error_code = error_code
-        changed = True
-    if error_message is not None and error_message != step.error_message:
-        step.error_message = error_message
-        changed = True
-    if not changed:
-        return step
-    step.updated_at = now
-    _refresh_plan_status(plan, steps)
-    db.flush()
-    _sync_plan_snapshot(db, run)
-    append_event(
-        db,
-        run,
-        "plan_step_changed",
-        {
-            "planId": plan.id,
-            "planStatus": plan.status,
-            "step": _plan_step_payload(db, step),
-            "reason": reason,
-        },
-    )
-    return step
-
-
-def start_plan_step(db: Session, run: Run, step_key: str, *, reason: str) -> PlanStep:
-    step = _step_by_key(db, run, step_key)
-    if step.status in {PLAN_STEP_RUNNING, PLAN_STEP_COMPLETED}:
-        return step
-    return change_plan_step(db, run, step_key, status=PLAN_STEP_RUNNING, reason=reason)
-
-
-def complete_plan_step(
-    db: Session,
-    run: Run,
-    step_key: str,
-    *,
-    result: dict[str, Any] | None = None,
-    artifact_ids: Iterable[str] = (),
-    reason: str,
-) -> PlanStep:
-    step = _step_by_key(db, run, step_key)
-    target = None if step.status == PLAN_STEP_COMPLETED else PLAN_STEP_COMPLETED
-    return change_plan_step(
-        db,
-        run,
-        step_key,
-        status=target,
-        result=result,
-        artifact_ids=artifact_ids,
-        reason=reason,
-    )
-
-
-def pause_plan(db: Session, run: Run) -> None:
-    if db.scalar(select(Plan.id).where(Plan.run_id == run.id)) is None:
-        return
-    _plan, steps = _plan_rows(db, run)
-    step = next(
-        (item for item in steps if item.status == PLAN_STEP_RUNNING),
-        next((item for item in steps if item.status == PLAN_STEP_QUEUED), None),
-    )
-    if step is None:
-        return
-    previous_status = step.status
-    run.snapshot_json = {
-        **run.snapshot_json,
-        "plan_pause": {"step_id": step.id, "previous_status": previous_status},
-    }
-    change_plan_step(
-        db,
-        run,
-        step.step_key,
-        status=PLAN_STEP_BLOCKED,
-        reason="run_paused",
-    )
-
-
-def resume_plan(db: Session, run: Run) -> None:
-    if db.scalar(select(Plan.id).where(Plan.run_id == run.id)) is None:
-        return
-    marker = run.snapshot_json.get("plan_pause", {})
-    _plan, steps = _plan_rows(db, run)
-    step = next(
-        (
-            item
-            for item in steps
-            if item.status == PLAN_STEP_BLOCKED
-            and (not marker or marker.get("step_id") == item.id)
-        ),
-        None,
-    )
-    if step is None:
-        return
-    target = (
-        PLAN_STEP_QUEUED
-        if marker.get("previous_status") == PLAN_STEP_QUEUED
-        else PLAN_STEP_RUNNING
-    )
-    change_plan_step(db, run, step.step_key, status=target, reason="run_resumed")
-    snapshot = dict(run.snapshot_json)
-    snapshot.pop("plan_pause", None)
-    run.snapshot_json = snapshot
-
-
-def cancel_plan(db: Session, run: Run, *, reason: str = "run_cancelled") -> None:
-    if db.scalar(select(Plan.id).where(Plan.run_id == run.id)) is None:
-        return
-    plan, steps = _plan_rows(db, run)
-    for step in steps:
-        if step.status in {
-            PLAN_STEP_QUEUED,
-            PLAN_STEP_RUNNING,
-            PLAN_STEP_BLOCKED,
-        }:
-            change_plan_step(
-                db,
-                run,
-                step.step_key,
-                status=PLAN_STEP_CANCELLED,
-                reason=reason,
-            )
-    plan.status = "cancelled"
-    plan.updated_at = utc_now()
-    db.flush()
-    _sync_plan_snapshot(db, run)
-
-
-def fail_plan(db: Session, run: Run, *, code: str, message: str) -> None:
-    if db.scalar(select(Plan.id).where(Plan.run_id == run.id)) is None:
-        return
-    _plan, steps = _plan_rows(db, run)
-    active = next(
-        (
-            item
-            for item in steps
-            if item.status in {PLAN_STEP_RUNNING, PLAN_STEP_BLOCKED}
-        ),
-        None,
-    )
-    if active is None:
-        active = next((item for item in steps if item.status == PLAN_STEP_QUEUED), None)
-        if active is not None:
-            start_plan_step(db, run, active.step_key, reason="failure_boundary")
-    if active is not None:
-        change_plan_step(
-            db,
-            run,
-            active.step_key,
-            status=PLAN_STEP_FAILED,
-            error_code=code,
-            error_message=message,
-            reason="run_failed",
-        )
-    _plan, steps = _plan_rows(db, run)
-    for step in steps:
-        if step.status == PLAN_STEP_QUEUED:
-            change_plan_step(
-                db,
-                run,
-                step.step_key,
-                status=PLAN_STEP_CANCELLED,
-                reason="blocked_by_failed_dependency",
-            )
-
-
-def _retryable_plan_step(
-    db: Session, run: Run, step_id: str | None
-) -> tuple[PlanStep, list[PlanStep]]:
-    if not step_id:
-        raise ApiProblem(422, "step_id_required", "재실행할 Plan Step을 선택해 주세요.")
-    if run.status not in TERMINAL_STATUSES - {COMPLETED}:
-        raise ApiProblem(
-            409,
-            "step_retry_run_not_terminal",
-            "종료된 실패·취소 Run의 Step만 재실행할 수 있습니다.",
-        )
-    plan, steps = _plan_rows(db, run)
-    step = next((item for item in steps if item.id == step_id), None)
-    if step is None or step.plan_id != plan.id:
-        raise ApiProblem(404, "plan_step_not_found", "Plan Step을 찾을 수 없습니다.")
-    if step.status not in {PLAN_STEP_FAILED, PLAN_STEP_CANCELLED}:
-        raise ApiProblem(
-            409,
-            "step_retry_invalid_status",
-            "실패하거나 취소된 Plan Step만 재실행할 수 있습니다.",
-        )
-    if step.step_key == "tools":
-        raise ApiProblem(
-            409,
-            "step_retry_checkpoint_unavailable",
-            "Tool Step은 저장된 Tool Call checkpoint가 없어 직접 재실행할 수 없습니다.",
-        )
-    candidates = [item for item in steps if item.position >= step.position]
-    for candidate in candidates:
-        if (
-            candidate.status != PLAN_STEP_COMPLETED
-            and candidate.effect != "read_only"
-            and candidate.attempt > 0
-            and not candidate.idempotency_key
-        ):
-            raise ApiProblem(
-                409,
-                "step_retry_unsafe_side_effect",
-                "완료 여부를 증명할 수 없는 부작용 Tool 단계가 있어 재실행을 거부했습니다.",
-            )
-    return step, candidates
-
-
-def retry_plan_step(db: Session, run: Run, step_id: str | None) -> PlanStep:
-    step, candidates = _retryable_plan_step(db, run, step_id)
-    for candidate in candidates:
-        if candidate.status in {
-            PLAN_STEP_FAILED,
-            PLAN_STEP_CANCELLED,
-            PLAN_STEP_BLOCKED,
-        }:
-            change_plan_step(
-                db,
-                run,
-                candidate.step_key,
-                status=PLAN_STEP_QUEUED,
-                reason="step_retry_queued",
-            )
-    plan, _steps = _plan_rows(db, run)
-    plan.status = "active"
-    plan.updated_at = utc_now()
-    run.status = QUEUED
-    run.queued_at = utc_now()
-    run.finished_at = None
-    run.error_code = None
-    run.error_message = None
-    run.assistant_draft = ""
-    run.snapshot_json = {
-        **run.snapshot_json,
-        "retry": {
-            "step_id": step.id,
-            "step_key": step.step_key,
-            "next_attempt": step.attempt + 1,
-            "scheduled_at": utc_now().isoformat(),
-        },
-    }
-    db.flush()
-    _sync_plan_snapshot(db, run)
-    append_event(
-        db,
-        run,
-        "retry_scheduled",
-        {"step": _plan_step_payload(db, step), "status": QUEUED},
-    )
-    return step
-
-
-def append_event(
-    db: Session, run: Run, event_type: str, payload: dict[str, Any]
-) -> RunEvent:
-    run.last_sequence += 1
-    event = RunEvent(
-        run_id=run.id,
-        conversation_id=run.conversation_id,
-        sequence=run.last_sequence,
-        event_type=event_type,
-        payload_json=jsonable_encoder(payload),
-    )
-    db.add(event)
-    db.flush()
-    return event
-
-
 def transition_run(
     db: Session, run: Run, target: str, *, event_type: str = "run_status_changed"
 ) -> RunEvent:
@@ -1820,11 +1197,34 @@ def transition_run(
 
 
 def run_for_user(db: Session, user: User, run_id: str, *, write: bool = False) -> Run:
-    run = db.get(Run, run_id)
-    if run is None:
+    return runs_for_user(db, user, [run_id], write=write)[0]
+
+
+def runs_for_user(
+    db: Session,
+    user: User,
+    run_ids: Sequence[str],
+    *,
+    write: bool = False,
+) -> list[Run]:
+    ordered_ids = list(dict.fromkeys(run_ids))
+    if not ordered_ids:
+        return []
+    accessible_conversation_ids = conversation_access_query(
+        user,
+        write=write,
+    ).with_only_columns(Conversation.id)
+    statement = select(Run).where(
+        Run.id.in_(ordered_ids),
+        Run.conversation_id.in_(accessible_conversation_ids),
+    )
+    if write:
+        statement = statement.with_for_update()
+    rows = list(db.scalars(statement))
+    by_id = {run.id: run for run in rows}
+    if any(run_id not in by_id for run_id in ordered_ids):
         raise ApiProblem(404, "not_found", "Run을 찾을 수 없습니다.")
-    require_conversation(db, user, run.conversation_id, write=write)
-    return run
+    return [by_id[run_id] for run_id in ordered_ids]
 
 
 def event_response(event: RunEvent) -> dict[str, Any]:
@@ -1904,30 +1304,78 @@ def _write_file_progress(
     }
 
 
-def message_response(message: Message, db: Session | None = None) -> dict[str, Any]:
+def _attachment_response(attachment: Attachment) -> dict[str, Any]:
+    return {
+        "id": attachment.id,
+        "conversationId": attachment.conversation_id,
+        "projectId": attachment.project_id,
+        "kind": attachment.kind,
+        "fileName": attachment.original_filename,
+        "mimeType": attachment.sniffed_mime_type,
+        "size": attachment.size_bytes,
+        "status": attachment.status,
+        "extractionStatus": attachment.extraction_status,
+        "metadata": attachment.metadata_json,
+        "createdAt": attachment.created_at,
+    }
+
+
+def preload_message_attachments(
+    db: Session, messages: Sequence[Message]
+) -> dict[str, list[dict[str, Any]]]:
+    attachment_ids_by_message: dict[str, list[str]] = {}
+    all_attachment_ids: set[str] = set()
+    for message in messages:
+        raw_ids = message.metadata_json.get("attachment_ids", [])
+        ids = (
+            list(dict.fromkeys(str(item) for item in raw_ids if item))
+            if isinstance(raw_ids, list)
+            else []
+        )
+        attachment_ids_by_message[message.id] = ids
+        all_attachment_ids.update(ids)
+    attachments_by_id = (
+        {
+            attachment.id: attachment
+            for attachment in db.scalars(
+                select(Attachment).where(
+                    Attachment.id.in_(all_attachment_ids),
+                    Attachment.deleted_at.is_(None),
+                )
+            )
+        }
+        if all_attachment_ids
+        else {}
+    )
+    return {
+        message.id: [
+            _attachment_response(attachments_by_id[attachment_id])
+            for attachment_id in attachment_ids_by_message.get(message.id, [])
+            if attachment_id in attachments_by_id
+        ]
+        for message in messages
+    }
+
+
+def message_response(
+    message: Message,
+    db: Session | None = None,
+    *,
+    preloaded_attachments: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     references = message.metadata_json.get("prompt_references", [])
     attachment_ids = message.metadata_json.get("attachment_ids", [])
-    attachments = []
-    if db is not None and isinstance(attachment_ids, list):
+    attachments = preloaded_attachments if preloaded_attachments is not None else []
+    if (
+        preloaded_attachments is None
+        and db is not None
+        and isinstance(attachment_ids, list)
+    ):
         for attachment_id in dict.fromkeys(attachment_ids):
             attachment = db.get(Attachment, attachment_id)
             if attachment is None or attachment.deleted_at is not None:
                 continue
-            attachments.append(
-                {
-                    "id": attachment.id,
-                    "conversationId": attachment.conversation_id,
-                    "projectId": attachment.project_id,
-                    "kind": attachment.kind,
-                    "fileName": attachment.original_filename,
-                    "mimeType": attachment.sniffed_mime_type,
-                    "size": attachment.size_bytes,
-                    "status": attachment.status,
-                    "extractionStatus": attachment.extraction_status,
-                    "metadata": attachment.metadata_json,
-                    "createdAt": attachment.created_at,
-                }
-            )
+            attachments.append(_attachment_response(attachment))
     return {
         "id": message.id,
         "conversationId": message.conversation_id,
@@ -1943,9 +1391,211 @@ def message_response(message: Message, db: Session | None = None) -> dict[str, A
     }
 
 
-def _artifact_usage_snapshot(db: Session, run: Run) -> dict[str, Any] | None:
+@dataclass(slots=True)
+class _RunSnapshotBatch:
+    conversations: dict[str, Conversation]
+    artifact_progress: dict[str, RunEvent]
+    tools: dict[str, list[ToolExecution]]
+    activity_events: dict[str, list[RunEvent]]
+    artifacts: dict[str, list[Artifact]]
+    commands: dict[str, list[RunCommand]]
+    compactions: dict[str, list[CompactedContextEntry]]
+    artifact_versions: dict[str, ArtifactVersion]
+    plans: dict[str, dict[str, Any] | None]
+    approvals: dict[str, list[dict[str, Any]]]
+
+
+def _load_run_snapshot_batch(db: Session, runs: Sequence[Run]) -> _RunSnapshotBatch:
+    unique_runs = list({run.id: run for run in runs}.values())
+    run_ids = [run.id for run in unique_runs]
+    conversation_ids = list({run.conversation_id for run in unique_runs})
+    conversations = (
+        {
+            item.id: item
+            for item in db.scalars(
+                select(Conversation).where(Conversation.id.in_(conversation_ids))
+            )
+        }
+        if conversation_ids
+        else {}
+    )
+    tools = {run_id: [] for run_id in run_ids}
+    tool_rows = (
+        list(
+            db.scalars(
+                select(ToolExecution)
+                .where(ToolExecution.run_id.in_(run_ids))
+                .order_by(
+                    ToolExecution.run_id,
+                    ToolExecution.created_at,
+                    ToolExecution.id,
+                )
+            )
+        )
+        if run_ids
+        else []
+    )
+    artifact_run_ids: dict[str, set[str]] = {}
+    for tool in tool_rows:
+        tools.setdefault(tool.run_id, []).append(tool)
+        if tool.artifact_id:
+            artifact_run_ids.setdefault(tool.artifact_id, set()).add(tool.run_id)
+
+    activity_events = {run_id: [] for run_id in run_ids}
+    event_rows = (
+        list(
+            db.scalars(
+                select(RunEvent)
+                .where(
+                    RunEvent.run_id.in_(run_ids),
+                    RunEvent.event_type.in_(
+                        (
+                            "progress_summary",
+                            "skill_selected",
+                            "tool_started",
+                            "input_requested",
+                        )
+                    ),
+                )
+                .order_by(RunEvent.run_id, RunEvent.sequence)
+            )
+        )
+        if run_ids
+        else []
+    )
+    for event in event_rows:
+        activity_events.setdefault(event.run_id, []).append(event)
+
+    legacy_progress_run_ids = [
+        run.id
+        for run in unique_runs
+        if not isinstance(run.snapshot_json.get("artifact_usage"), Mapping)
+    ]
+    artifact_progress: dict[str, RunEvent] = {}
+    if legacy_progress_run_ids:
+        latest_progress = (
+            select(
+                RunEvent.run_id.label("run_id"),
+                func.max(RunEvent.sequence).label("sequence"),
+            )
+            .where(
+                RunEvent.run_id.in_(legacy_progress_run_ids),
+                RunEvent.event_type == "artifact_progress",
+            )
+            .group_by(RunEvent.run_id)
+            .subquery()
+        )
+        progress_rows = db.scalars(
+            select(RunEvent).join(
+                latest_progress,
+                and_(
+                    RunEvent.run_id == latest_progress.c.run_id,
+                    RunEvent.sequence == latest_progress.c.sequence,
+                ),
+            )
+        )
+        artifact_progress = {event.run_id: event for event in progress_rows}
+
+    artifact_scope = Artifact.source_run_id.in_(run_ids) if run_ids else None
+    if artifact_run_ids:
+        linked_scope = Artifact.id.in_(artifact_run_ids)
+        artifact_scope = (
+            or_(artifact_scope, linked_scope)
+            if artifact_scope is not None
+            else linked_scope
+        )
+    artifact_rows = (
+        list(
+            db.scalars(
+                select(Artifact)
+                .where(artifact_scope, Artifact.deleted_at.is_(None))
+                .order_by(Artifact.created_at, Artifact.id)
+            )
+        )
+        if artifact_scope is not None
+        else []
+    )
+    artifacts = {run_id: [] for run_id in run_ids}
+    for artifact in artifact_rows:
+        owners = set(artifact_run_ids.get(artifact.id, ()))
+        if artifact.source_run_id in artifacts:
+            owners.add(str(artifact.source_run_id))
+        for run_id in owners:
+            artifacts.setdefault(run_id, []).append(artifact)
+
+    commands = {run_id: [] for run_id in run_ids}
+    for command in (
+        db.scalars(
+            select(RunCommand)
+            .where(RunCommand.run_id.in_(run_ids))
+            .order_by(RunCommand.run_id, RunCommand.created_at, RunCommand.id)
+        )
+        if run_ids
+        else ()
+    ):
+        commands.setdefault(command.run_id, []).append(command)
+
+    compactions = {run_id: [] for run_id in run_ids}
+    for entry in (
+        db.scalars(
+            select(CompactedContextEntry)
+            .where(CompactedContextEntry.run_id.in_(run_ids))
+            .order_by(
+                CompactedContextEntry.run_id,
+                CompactedContextEntry.version,
+                CompactedContextEntry.compacted_at,
+                CompactedContextEntry.id,
+            )
+        )
+        if run_ids
+        else ()
+    ):
+        if entry.run_id is not None:
+            compactions.setdefault(entry.run_id, []).append(entry)
+
+    artifact_version_keys = [
+        (artifact.id, artifact.current_version_number)
+        for artifact in artifact_rows
+        if artifact.current_version_number is not None
+    ]
+    artifact_versions = (
+        {
+            version.artifact_id: version
+            for version in db.scalars(
+                select(ArtifactVersion).where(
+                    tuple_(
+                        ArtifactVersion.artifact_id,
+                        ArtifactVersion.version_number,
+                    ).in_(artifact_version_keys)
+                )
+            )
+        }
+        if artifact_version_keys
+        else {}
+    )
+    return _RunSnapshotBatch(
+        conversations=conversations,
+        artifact_progress=artifact_progress,
+        tools=tools,
+        activity_events=activity_events,
+        artifacts=artifacts,
+        commands=commands,
+        compactions=compactions,
+        artifact_versions=artifact_versions,
+        plans=plan_snapshots(db, unique_runs),
+        approvals=pending_approval_payloads_batch(db, run_ids),
+    )
+
+
+def _artifact_usage_snapshot(
+    db: Session,
+    run: Run,
+    *,
+    latest_progress: RunEvent | None = None,
+    progress_preloaded: bool = False,
+) -> dict[str, Any] | None:
     usage: object = run.snapshot_json.get("artifact_usage")
-    if not isinstance(usage, Mapping):
+    if not isinstance(usage, Mapping) and not progress_preloaded:
         latest_progress = db.scalar(
             select(RunEvent)
             .where(
@@ -1955,6 +1605,7 @@ def _artifact_usage_snapshot(db: Session, run: Run) -> dict[str, Any] | None:
             .order_by(RunEvent.sequence.desc())
             .limit(1)
         )
+    if not isinstance(usage, Mapping):
         usage = latest_progress.payload_json if latest_progress is not None else None
     if not isinstance(usage, Mapping):
         return None
@@ -1982,35 +1633,21 @@ def _artifact_usage_snapshot(db: Session, run: Run) -> dict[str, Any] | None:
     return normalized
 
 
-def run_snapshot(db: Session, run: Run) -> dict[str, Any]:
-    conversation = db.get(Conversation, run.conversation_id)
+def run_snapshot(
+    db: Session, run: Run, *, batch: _RunSnapshotBatch | None = None
+) -> dict[str, Any]:
+    loaded = batch or _load_run_snapshot_batch(db, [run])
+    conversation = loaded.conversations.get(run.conversation_id)
     usage = _usage_snapshot(run)
-    artifact_usage = _artifact_usage_snapshot(db, run)
-    tools = list(
-        db.scalars(
-            select(ToolExecution)
-            .where(ToolExecution.run_id == run.id)
-            .order_by(ToolExecution.created_at, ToolExecution.id)
-        )
+    artifact_usage = _artifact_usage_snapshot(
+        db,
+        run,
+        latest_progress=loaded.artifact_progress.get(run.id),
+        progress_preloaded=True,
     )
+    tools = loaded.tools.get(run.id, [])
     tools_by_id = {tool.id: tool for tool in tools}
-    activity_events = list(
-        db.scalars(
-            select(RunEvent)
-            .where(
-                RunEvent.run_id == run.id,
-                RunEvent.event_type.in_(
-                    (
-                        "progress_summary",
-                        "skill_selected",
-                        "tool_started",
-                        "input_requested",
-                    )
-                ),
-            )
-            .order_by(RunEvent.sequence)
-        )
-    )
+    activity_events = loaded.activity_events.get(run.id, [])
     activities = _skill_activities(run)
     for event in activity_events:
         if event.event_type == "skill_selected":
@@ -2072,39 +1709,24 @@ def run_snapshot(db: Session, run: Run) -> dict[str, Any]:
             str(activity.get("id", "")),
         )
     )
-    tool_artifact_ids = {
-        tool.artifact_id for tool in tools if tool.artifact_id is not None
-    }
-    artifact_scope = Artifact.source_run_id == run.id
-    if tool_artifact_ids:
-        artifact_scope = or_(artifact_scope, Artifact.id.in_(tool_artifact_ids))
-    artifacts = list(
-        db.scalars(
-            select(Artifact)
-            .where(artifact_scope, Artifact.deleted_at.is_(None))
-            .order_by(Artifact.created_at, Artifact.id)
-        )
-    )
-    commands = list(
-        db.scalars(
-            select(RunCommand)
-            .where(RunCommand.run_id == run.id)
-            .order_by(RunCommand.created_at, RunCommand.id)
-        )
-    )
-    context_compactions = list(
-        db.scalars(
-            select(CompactedContextEntry)
-            .where(CompactedContextEntry.conversation_id == run.conversation_id)
-            .order_by(
-                CompactedContextEntry.version,
-                CompactedContextEntry.compacted_at,
-                CompactedContextEntry.id,
-            )
-        )
-    )
+    artifacts = loaded.artifacts.get(run.id, [])
+    commands = loaded.commands.get(run.id, [])
+    context_compactions = loaded.compactions.get(run.id, [])
+    artifact_versions = loaded.artifact_versions
     assistant_message_id = run.snapshot_json.get("assistant_message_id")
+    assistant_draft_revision = run.snapshot_json.get("assistant_draft_revision", 0)
+    if (
+        not isinstance(assistant_draft_revision, int)
+        or isinstance(assistant_draft_revision, bool)
+        or assistant_draft_revision < 0
+    ):
+        assistant_draft_revision = 0
     execution = run.snapshot_json.get("execution", {})
+    agent_snapshot = normalize_agent_frontend_payload(
+        run.snapshot_json.get("agent"),
+        agent_id=conversation.agent_id if conversation is not None else "general",
+        agent_version=conversation.agent_version if conversation is not None else "1",
+    )
     return {
         "runId": run.id,
         "conversationId": run.conversation_id,
@@ -2112,6 +1734,7 @@ def run_snapshot(db: Session, run: Run) -> dict[str, Any]:
         "conversationRevision": conversation.revision
         if conversation is not None
         else None,
+        "agent": agent_snapshot,
         "status": run.status,
         "errorCode": run.error_code,
         "errorMessage": run.error_message,
@@ -2123,15 +1746,16 @@ def run_snapshot(db: Session, run: Run) -> dict[str, Any]:
             if assistant_message_id and run.assistant_draft
             else None
         ),
+        "assistantDraftRevision": assistant_draft_revision,
         "artifactProgress": run.snapshot_json.get("artifact_progress"),
         "artifactUsage": artifact_usage,
         "outputIntent": run.snapshot_json.get("output_intent"),
         "workPlan": run.snapshot_json.get("work_plan", []),
-        "plan": plan_snapshot(db, run),
+        "plan": loaded.plans.get(run.id),
         "activities": activities,
         "toolExecutions": [tool_response(tool) for tool in tools],
         "artifacts": [
-            artifact_summary(artifact, current_artifact_version(db, artifact))
+            artifact_summary(artifact, artifact_versions.get(artifact.id))
             for artifact in artifacts
         ],
         "pendingCommands": [
@@ -2139,7 +1763,7 @@ def run_snapshot(db: Session, run: Run) -> dict[str, Any]:
             for command in commands
             if command.status not in {"applied", "cancelled", "failed", "promoted"}
         ],
-        "pendingApprovals": pending_approval_payloads(db, run.id),
+        "pendingApprovals": loaded.approvals.get(run.id, []),
         "inputRequests": run.snapshot_json.get("input_requests", []),
         "contextCompactions": [
             {
@@ -2180,6 +1804,12 @@ def run_snapshot(db: Session, run: Run) -> dict[str, Any]:
         "usage": usage,
         "mcpServers": run.snapshot_json.get("mcp_servers", []),
     }
+
+
+def run_snapshots(db: Session, runs: Sequence[Run]) -> list[dict[str, Any]]:
+    ordered = list(runs)
+    batch = _load_run_snapshot_batch(db, ordered)
+    return [run_snapshot(db, run, batch=batch) for run in ordered]
 
 
 def _usage_snapshot(run: Run) -> dict[str, Any]:
@@ -2438,8 +2068,12 @@ def _cancel_run_state(
     snapshot["input_requests"] = [
         {
             **item,
-            "status": "cancelled" if item.get("status") == "pending" else item.get("status"),
-            "cancelledAt": utc_now().isoformat() if item.get("status") == "pending" else item.get("cancelledAt"),
+            "status": "cancelled"
+            if item.get("status") == "pending"
+            else item.get("status"),
+            "cancelledAt": utc_now().isoformat()
+            if item.get("status") == "pending"
+            else item.get("cancelledAt"),
         }
         for item in snapshot.get("input_requests", [])
         if isinstance(item, dict)
@@ -2453,7 +2087,9 @@ def _cancel_run_state(
 
 def _input_request(run: Run, request_id: str | None) -> dict[str, Any]:
     if not request_id:
-        raise ApiProblem(422, "input_request_id_required", "답변할 확인 질문을 선택해 주세요.")
+        raise ApiProblem(
+            422, "input_request_id_required", "답변할 확인 질문을 선택해 주세요."
+        )
     request = next(
         (
             item
@@ -2463,9 +2099,13 @@ def _input_request(run: Run, request_id: str | None) -> dict[str, Any]:
         None,
     )
     if request is None:
-        raise ApiProblem(404, "input_request_not_found", "확인 질문을 찾을 수 없습니다.")
+        raise ApiProblem(
+            404, "input_request_not_found", "확인 질문을 찾을 수 없습니다."
+        )
     if request.get("status") != "pending" or run.status != AWAITING_INPUT:
-        raise ApiProblem(409, "input_request_not_pending", "이미 답변했거나 종료된 확인 질문입니다.")
+        raise ApiProblem(
+            409, "input_request_not_pending", "이미 답변했거나 종료된 확인 질문입니다."
+        )
     return request
 
 
@@ -2480,9 +2120,13 @@ def _normalized_user_input_answers(
     answer_items = list(answers)
     supplied = {answer.question_id: answer for answer in answer_items}
     if len(supplied) != len(answer_items):
-        raise ApiProblem(422, "input_answer_duplicate", "같은 질문에는 한 번만 답변해 주세요.")
+        raise ApiProblem(
+            422, "input_answer_duplicate", "같은 질문에는 한 번만 답변해 주세요."
+        )
     if set(supplied) != set(questions):
-        raise ApiProblem(422, "input_answers_incomplete", "모든 확인 질문에 답변해 주세요.")
+        raise ApiProblem(
+            422, "input_answers_incomplete", "모든 확인 질문에 답변해 주세요."
+        )
     normalized: list[dict[str, Any]] = []
     for question_id, question in questions.items():
         answer = supplied[question_id]
@@ -2494,7 +2138,9 @@ def _normalized_user_input_answers(
             )
         )
         if selected_count != 1:
-            raise ApiProblem(422, "input_answer_invalid", "각 질문에는 하나의 답변만 선택해 주세요.")
+            raise ApiProblem(
+                422, "input_answer_invalid", "각 질문에는 하나의 답변만 선택해 주세요."
+            )
         if answer.use_ai_judgment:
             normalized.append(
                 {"questionId": question_id, "kind": "ai", "text": "AI가 판단"}
@@ -2518,7 +2164,9 @@ def _normalized_user_input_answers(
             None,
         )
         if option is None:
-            raise ApiProblem(422, "input_option_invalid", "선택한 답변 항목을 사용할 수 없습니다.")
+            raise ApiProblem(
+                422, "input_option_invalid", "선택한 답변 항목을 사용할 수 없습니다."
+            )
         normalized.append(
             {
                 "questionId": question_id,
@@ -2585,7 +2233,9 @@ def apply_run_action(
         target_message = db.get(Message, message_id) if message_id else None
         if target_message is None:
             raise ApiProblem(
-                409, "run_command_message_missing", "대기 요청의 메시지를 찾을 수 없습니다."
+                409,
+                "run_command_message_missing",
+                "대기 요청의 메시지를 찾을 수 없습니다.",
             )
         queued_message_id = target_command.payload_json.get("queued_message_id")
         if queued_message_id:
@@ -2594,7 +2244,9 @@ def apply_run_action(
             target_queued_message is None or target_queued_message.status != "queued"
         ):
             raise ApiProblem(
-                409, "queued_message_not_pending", "Queue 요청이 더 이상 대기 중이 아닙니다."
+                409,
+                "queued_message_not_pending",
+                "Queue 요청이 더 이상 대기 중이 아닙니다.",
             )
         if payload.type == "steer_queued":
             attachment_ids = _validate_attachments(
@@ -2612,7 +2264,9 @@ def apply_run_action(
                 run.conversation_id,
                 [
                     MessageReferenceInput.model_validate(item)
-                    for item in target_message.metadata_json.get("prompt_references", [])
+                    for item in target_message.metadata_json.get(
+                        "prompt_references", []
+                    )
                     if isinstance(item, dict)
                 ],
                 message_text=target_message.canonical_text,
@@ -2674,6 +2328,8 @@ def apply_run_action(
             "attachment_ids": attachment_ids,
             "prompt_references": references,
             "output_mode": payload.message.output_mode,
+            "analysis_depth": payload.message.analysis_depth,
+            "answer_length": payload.message.answer_length,
             "target_output_tokens": (
                 payload.message.target_output_tokens
                 if payload.message.output_mode != "chat"
@@ -2716,6 +2372,8 @@ def apply_run_action(
                 "attachment_ids": attachment_ids,
                 "prompt_references": references,
                 "output_mode": payload.message.output_mode,
+                "analysis_depth": payload.message.analysis_depth,
+                "answer_length": payload.message.answer_length,
                 "target_output_tokens": canonical_message["target_output_tokens"],
             },
         )
@@ -2733,6 +2391,8 @@ def apply_run_action(
                         "text": message.canonical_text,
                         "attachment_ids": attachment_ids,
                         "prompt_references": references,
+                        "analysis_depth": canonical_message["analysis_depth"],
+                        "answer_length": canonical_message["answer_length"],
                         "target_output_tokens": canonical_message[
                             "target_output_tokens"
                         ],
@@ -2769,6 +2429,8 @@ def apply_run_action(
                 execution_options_json={
                     **run.snapshot_json.get("execution", {}),
                     "output_mode": payload.message.output_mode,
+                    "analysis_depth": canonical_message["analysis_depth"],
+                    "answer_length": canonical_message["answer_length"],
                     "target_output_tokens": canonical_message["target_output_tokens"],
                 },
                 idempotency_key=idempotency_key,
@@ -2827,6 +2489,12 @@ def apply_run_action(
                         ),
                         "prompt_references": target_message.metadata_json.get(
                             "prompt_references", []
+                        ),
+                        "analysis_depth": target_message.metadata_json.get(
+                            "analysis_depth", "auto"
+                        ),
+                        "answer_length": target_message.metadata_json.get(
+                            "answer_length", "auto"
                         ),
                         "target_output_tokens": target_message.metadata_json.get(
                             "target_output_tokens"
@@ -2891,7 +2559,9 @@ def apply_run_action(
         }
     elif payload.type == "submit_user_input":
         assert input_request is not None
-        normalized_answers = _normalized_user_input_answers(input_request, payload.answers)
+        normalized_answers = _normalized_user_input_answers(
+            input_request, payload.answers
+        )
         resolved_at = utc_now()
         resolved_request = {
             **input_request,
@@ -2928,13 +2598,17 @@ def apply_run_action(
                 "user_response_waiting",
                 "사용자 응답을 기다리는 Run은 이미 안전하게 정지되어 있습니다.",
             )
-        if run.status not in ACTIVE_STATUSES - {PAUSED}:
+        if run.status not in (ACTIVE_STATUSES - {PAUSED}) | {QUEUED}:
             raise ApiProblem(
                 409, "run_not_active", "현재 Run은 일시 정지할 수 없습니다."
             )
         run.snapshot_json = {**run.snapshot_json, "resume_status": run.status}
         transition_run(db, run, PAUSED)
         pause_plan(db, run)
+        if run.worker_id is None:
+            from .recovery import detach_paused_run
+
+            detach_paused_run(db, run, reason="queued_pause")
         command.status = "applied"
         command.applied_at = utc_now()
     elif payload.type == "resume":
@@ -2942,11 +2616,26 @@ def apply_run_action(
             raise ApiProblem(
                 409, "run_not_paused", "현재 Run은 일시 정지 상태가 아닙니다."
             )
-        target = run.snapshot_json.get("resume_status", MODEL_STREAMING)
-        transition_run(db, run, target)
-        resume_plan(db, run)
+        resumed_at = utc_now()
+        lease_is_live = run.lease_expires_at is None or run.lease_expires_at > resumed_at
+        if run.worker_id is not None and lease_is_live:
+            run.snapshot_json = {
+                **run.snapshot_json,
+                "resume_requested": True,
+                "resume_requested_at": resumed_at.isoformat(),
+            }
+            append_event(
+                db,
+                run,
+                "run_resume_requested",
+                {"status": PAUSED, "queuedAfterSafeBoundary": True},
+            )
+        else:
+            from .recovery import queue_paused_run_for_resume
+
+            queue_paused_run_for_resume(db, run)
         command.status = "applied"
-        command.applied_at = utc_now()
+        command.applied_at = resumed_at
     elif payload.type == "cancel":
         if run.status in TERMINAL_STATUSES:
             command.status = "applied"
@@ -3079,9 +2768,9 @@ def _resequence_queued_commands(db: Session, run: Run) -> list[RunCommand]:
         )
     )
     positions: dict[str, int] = {}
-    for position, queued_message in enumerate(queued_messages, start=1):
-        queued_message.position = position
-        positions[queued_message.id] = position
+    for queue_position, queued_message in enumerate(queued_messages, start=1):
+        queued_message.position = queue_position
+        positions[queued_message.id] = queue_position
     changed: list[RunCommand] = []
     commands = list(
         db.scalars(
@@ -3094,12 +2783,15 @@ def _resequence_queued_commands(db: Session, run: Run) -> list[RunCommand]:
     )
     for queued_command in commands:
         queued_message_id = queued_command.payload_json.get("queued_message_id")
-        position = positions.get(str(queued_message_id))
-        if position is None or queued_command.payload_json.get("queue_position") == position:
+        resolved_position = positions.get(str(queued_message_id))
+        if (
+            resolved_position is None
+            or queued_command.payload_json.get("queue_position") == resolved_position
+        ):
             continue
         queued_command.payload_json = {
             **queued_command.payload_json,
-            "queue_position": position,
+            "queue_position": resolved_position,
         }
         changed.append(queued_command)
     return changed

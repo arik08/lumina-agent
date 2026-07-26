@@ -1,6 +1,8 @@
-# openai.yaml fields (full example + descriptions)
+# `agents/openai.yaml` fields
 
-`agents/openai.yaml` is an extended, product-specific config intended for the machine/harness to read, not the agent. Other product-specific config can also live in the `agents/` folder.
+`agents/openai.yaml` is optional Lumina/OpenAI-style client metadata for the machine or
+harness to read, not the agent. It is not part of the portable Agent Skills specification
+and must not replace standard `SKILL.md` frontmatter.
 
 ## Full example
 
@@ -11,7 +13,7 @@ interface:
   icon_small: "./assets/small-400px.png"
   icon_large: "./assets/large-logo.svg"
   brand_color: "#3B82F6"
-  default_prompt: "Optional surrounding prompt to use the skill with"
+  default_prompt: "Use $skill-name to complete the relevant workflow."
 
 dependencies:
   tools:
@@ -27,23 +29,21 @@ policy:
 
 ## Field descriptions and constraints
 
-Top-level constraints:
+Quote string values and keep keys unquoted.
 
-- Quote all string values.
-- Keep keys unquoted.
-- For `interface.default_prompt`: generate a helpful, short (typically 1 sentence) example starting prompt based on the skill. It must explicitly mention the skill as `$skill-name` (e.g., "Use $skill-name-here to draft a concise weekly status update.").
+- `interface.display_name`: Human-facing title shown in Skill lists and chips.
+- `interface.short_description`: Human-facing UI description of 25-64 characters.
+- `interface.icon_small`: Small icon path relative to the Skill root.
+- `interface.icon_large`: Large icon path relative to the Skill root.
+- `interface.brand_color`: Hex color used for UI accents.
+- `interface.default_prompt`: Short example prompt that explicitly mentions `$skill-name`.
+- `dependencies.tools[].type`: Dependency category. Lumina currently supports `mcp`.
+- `dependencies.tools[].value`: MCP identifier.
+- `dependencies.tools[].description`: Human-readable dependency purpose.
+- `dependencies.tools[].transport`: MCP connection type.
+- `dependencies.tools[].url`: MCP server URL when applicable.
+- `policy.allow_implicit_invocation`: When false, exclude the Skill from implicit model
+  selection while still allowing explicit invocation. The default is true.
 
-- `interface.display_name`: Human-facing title shown in UI skill lists and chips.
-- `interface.short_description`: Human-facing short UI blurb (25–64 chars) for quick scanning.
-- `interface.icon_small`: Path to a small icon asset (relative to skill dir). Default to `./assets/` and place icons in the skill's `assets/` folder.
-- `interface.icon_large`: Path to a larger logo asset (relative to skill dir). Default to `./assets/` and place icons in the skill's `assets/` folder.
-- `interface.brand_color`: Hex color used for UI accents (e.g., badges).
-- `interface.default_prompt`: Default prompt snippet inserted when invoking the skill.
-- `dependencies.tools[].type`: Dependency category. Only `mcp` is supported for now.
-- `dependencies.tools[].value`: Identifier of the tool or dependency.
-- `dependencies.tools[].description`: Human-readable explanation of the dependency.
-- `dependencies.tools[].transport`: Connection type when `type` is `mcp`.
-- `dependencies.tools[].url`: MCP server URL when `type` is `mcp`.
-- `policy.allow_implicit_invocation`: When false, the skill is not injected into
-  the model context by default, but can still be invoked explicitly via `$skill`.
-  Defaults to true.
+Use `metadata.lumina-source` in `SKILL.md` for the portable wrapper-to-MCP source marker.
+Use `dependencies.tools` only for client-side connection metadata.

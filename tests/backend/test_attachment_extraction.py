@@ -1,17 +1,88 @@
 from __future__ import annotations
 
+import asyncio
+import threading
+import time
 from io import BytesIO
 from pathlib import Path
+from unittest.mock import patch
 
+import pytest
 from docx import Document
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from pptx import Presentation
+from pypdf import PdfWriter
+from sqlalchemy.orm import Session
 
-from lumina.api.routes.attachments import _sniff_mime
+from lumina.api.routes.attachments import _extract_attachment, _sniff_mime
 from lumina.attachments import extract_attachment_text
 from lumina.config import Settings
 from lumina.main import create_app
+
+
+def test_attachment_extraction_runs_off_the_event_loop_thread() -> None:
+    caller_thread = threading.get_ident()
+    worker_threads: list[int] = []
+
+    def recording_extractor(**kwargs):
+        worker_threads.append(threading.get_ident())
+        return extract_attachment_text(**kwargs)
+
+    async def extract():
+        with patch(
+            "lumina.api.routes.attachments.extract_attachment_text",
+            side_effect=recording_extractor,
+        ):
+            return await _extract_attachment(
+                filename="inspection.txt",
+                mime_type="text/plain",
+                content=b"inspection",
+            )
+
+    result = asyncio.run(extract())
+
+    assert result.status == "completed"
+    assert worker_threads and worker_threads[0] != caller_thread
+
+
+def test_attachment_extraction_worker_concurrency_is_bounded() -> None:
+    active = 0
+    peak = 0
+    lock = threading.Lock()
+
+    def recording_extractor(**kwargs):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        try:
+            time.sleep(0.03)
+            return extract_attachment_text(**kwargs)
+        finally:
+            with lock:
+                active -= 1
+
+    async def extract_all():
+        with patch(
+            "lumina.api.routes.attachments.extract_attachment_text",
+            side_effect=recording_extractor,
+        ):
+            return await asyncio.gather(
+                *(
+                    _extract_attachment(
+                        filename=f"inspection-{index}.txt",
+                        mime_type="text/plain",
+                        content=b"inspection",
+                    )
+                    for index in range(6)
+                )
+            )
+
+    results = asyncio.run(extract_all())
+
+    assert all(result.status == "completed" for result in results)
+    assert peak == 2
 
 
 def test_text_extraction_tracks_lines() -> None:
@@ -23,6 +94,40 @@ def test_text_extraction_tracks_lines() -> None:
     assert result.status == "completed"
     assert result.text == "첫 줄\n둘째 줄"
     assert result.locator_map == {"kind": "line", "count": 2}
+
+
+def test_pdf_extraction_allows_public_permission_encryption() -> None:
+    writer = PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+    writer.encrypt(user_password="", owner_password="owner-secret")
+    encrypted_buffer = BytesIO()
+    writer.write(encrypted_buffer)
+
+    extracted = extract_attachment_text(
+        filename="public-report.pdf",
+        mime_type="application/pdf",
+        content=encrypted_buffer.getvalue(),
+    )
+
+    assert extracted.status == "completed"
+    assert "[Page 1]" in extracted.text
+
+
+def test_pdf_extraction_rejects_required_reader_password() -> None:
+    writer = PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+    writer.encrypt(user_password="reader-secret", owner_password="owner-secret")
+    encrypted_buffer = BytesIO()
+    writer.write(encrypted_buffer)
+
+    extracted = extract_attachment_text(
+        filename="private-report.pdf",
+        mime_type="application/pdf",
+        content=encrypted_buffer.getvalue(),
+    )
+
+    assert extracted.status == "failed"
+    assert extracted.metadata["errorType"] == "EncryptedPdf"
 
 
 def test_office_formats_extract_without_writing_temporary_files() -> None:
@@ -156,3 +261,54 @@ def test_attachment_api_rejects_fake_office_and_persists_valid_extraction(
         assert uploaded.status_code == 201, uploaded.text
         assert uploaded.json()["extractionStatus"] == "completed"
         assert uploaded.json()["metadata"]["extractedSize"] > 0
+
+        stored_attachment = next(
+            path
+            for path in (settings.files_dir / "attachments").rglob("*")
+            if path.is_file()
+        )
+        stored_attachment.write_bytes(b"tampered attachment")
+        unavailable = client.get(
+            f"/api/attachments/{uploaded.json()['id']}/content"
+        )
+        assert unavailable.status_code == 503
+        assert unavailable.json()["code"] == "attachment_content_missing"
+
+
+def test_attachment_commit_failure_cleans_all_managed_files(tmp_path: Path) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'attachment-cleanup.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    with TestClient(create_app(settings)) as client:
+        login = client.post(
+            "/api/auth/login",
+            json={
+                "loginName": "admin",
+                "loginDomain": "posco.com",
+                "password": "1",
+            },
+        )
+        csrf = login.json()["csrfToken"]
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "첨부 rollback 검증"},
+        ).json()
+
+        with patch.object(
+            Session, "commit", side_effect=RuntimeError("forced attachment commit failure")
+        ):
+            with pytest.raises(RuntimeError, match="forced attachment commit failure"):
+                client.post(
+                    f"/api/conversations/{conversation['id']}/attachments",
+                    headers={"X-CSRF-Token": csrf},
+                    data={"pasted_text": "commit 실패 시 정리할 본문", "source": "paste"},
+                )
+
+    assert not [path for path in settings.files_dir.rglob("*") if path.is_file()]

@@ -4,7 +4,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..api.errors import ApiProblem
@@ -292,6 +293,10 @@ def update_scheduled_task(
     now: datetime | None = None,
 ) -> ScheduledTask:
     task = require_scheduled_task(db, user, task_id, write=True)
+    project_id = str(changes.get("project_id", task.project_id))
+    project_changed = project_id != task.project_id
+    if project_changed:
+        require_project(db, user, project_id, write=True)
     schedule_kind = changes.get("schedule_kind", task.schedule_kind)
     schedule_config = changes.get("schedule_config", task.schedule_config_json)
     timezone = changes.get("timezone", task.timezone)
@@ -302,7 +307,7 @@ def update_scheduled_task(
     _validate_context(
         db,
         user=user,
-        project_id=task.project_id,
+        project_id=project_id,
         context_mode=context_mode,
         source_conversation_id=source_conversation_id,
     )
@@ -312,6 +317,7 @@ def update_scheduled_task(
         task.name = str(changes["name"]).strip()
     if "instructions" in changes:
         task.instructions = str(changes["instructions"])
+    task.project_id = project_id
     task.schedule_kind = schedule_kind
     task.schedule_config_json = normalized_config
     task.timezone = timezone
@@ -331,7 +337,8 @@ def update_scheduled_task(
         task.model_key = resolved_execution.model_key
         task.effort = resolved_execution.effort_id
     extension_mode = changes.get("extension_snapshot_policy")
-    if extension_mode is not None:
+    if extension_mode is not None or project_changed:
+        extension_mode = extension_mode or task.extension_policy_json.get("mode", "pinned")
         if extension_mode not in EXTENSION_SNAPSHOT_POLICIES:
             raise ApiProblem(
                 422,
@@ -341,7 +348,7 @@ def update_scheduled_task(
         task.extension_policy_json = {"mode": extension_mode}
         if extension_mode == "pinned":
             task.extension_policy_json["snapshot"] = resolve_skill_snapshot(
-                db, user=user, project_id=task.project_id
+                db, user=user, project_id=project_id
             )
     if "delivery_policy" in changes:
         delivery_policy = changes["delivery_policy"]
@@ -520,12 +527,18 @@ def start_scheduled_run(
     scheduled_for: datetime,
     idempotency_key: str,
 ) -> tuple[ScheduledRun, bool]:
-    existing = db.scalar(
-        select(ScheduledRun).where(
-            ScheduledRun.scheduled_task_id == task.id,
-            ScheduledRun.idempotency_key == idempotency_key,
+    def existing_occurrence() -> ScheduledRun | None:
+        return db.scalar(
+            select(ScheduledRun).where(
+                ScheduledRun.scheduled_task_id == task.id,
+                or_(
+                    ScheduledRun.idempotency_key == idempotency_key,
+                    ScheduledRun.scheduled_for == scheduled_for,
+                ),
+            )
         )
-    )
+
+    existing = existing_occurrence()
     if existing is not None:
         return existing, False
     extension_snapshot = _execution_extension_snapshot(db, task, user)
@@ -557,8 +570,15 @@ def start_scheduled_run(
         status="queued",
         attempt=1,
     )
-    db.add(scheduled_run)
-    db.flush()
+    try:
+        with db.begin_nested():
+            db.add(scheduled_run)
+            db.flush()
+    except IntegrityError:
+        existing = existing_occurrence()
+        if existing is None:
+            raise
+        return existing, False
     conversation = _scheduled_conversation(
         db, user=user, task=task, scheduled_run=scheduled_run
     )
@@ -576,7 +596,7 @@ def start_scheduled_run(
         ),
         idempotency_key=f"scheduled-run:{scheduled_run.id}:attempt:1",
         extension_snapshot_override=extension_snapshot,
-        apply_extension_snapshot=True,
+        use_extension_snapshot_candidates=True,
     )
     _patch_scheduled_run_snapshot(
         run,
@@ -644,6 +664,7 @@ def dispatch_due_tasks(
                 ScheduledTask.next_run_at <= current,
             )
             .order_by(ScheduledTask.next_run_at, ScheduledTask.id)
+            .with_for_update(skip_locked=True)
         )
     )
     created: list[ScheduledRun] = []
@@ -845,7 +866,7 @@ def _start_retry_attempt(
         ),
         idempotency_key=(f"scheduled-run:{scheduled_run.id}:attempt:{next_attempt}"),
         extension_snapshot_override=extensions,
-        apply_extension_snapshot=True,
+        use_extension_snapshot_candidates=True,
     )
     scheduled_run.attempt = next_attempt
     run.parent_run_id = previous_run_id

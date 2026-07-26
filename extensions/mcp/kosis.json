@@ -7,7 +7,266 @@
       "args": [
         "extensions/mcp/kosis_server.py"
       ],
-      "cwd": "."
+      "cwd": ".",
+      "tools": [
+        {
+          "name": "list_statistics",
+          "description": "List KOSIS statistics categories and tables under a service view and parent list ID.",
+          "inputSchema": {
+            "properties": {
+              "vw_cd": {
+                "default": "MT_ZTITLE",
+                "title": "Vw Cd",
+                "type": "string"
+              },
+              "parent_id": {
+                "default": "A",
+                "title": "Parent Id",
+                "type": "string"
+              },
+              "limit": {
+                "default": 100,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "title": "list_statisticsArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "search_statistics",
+          "description": "Search KOSIS tables by Korean keyword and return matching table IDs and paths.",
+          "inputSchema": {
+            "properties": {
+              "keyword": {
+                "title": "Keyword",
+                "type": "string"
+              },
+              "limit": {
+                "default": 50,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "keyword"
+            ],
+            "title": "search_statisticsArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "get_stat_data",
+          "description": "Fetch KOSIS statistical data for an org/table and item/classification filters.",
+          "inputSchema": {
+            "properties": {
+              "org_id": {
+                "title": "Org Id",
+                "type": "string"
+              },
+              "tbl_id": {
+                "title": "Tbl Id",
+                "type": "string"
+              },
+              "prd_se": {
+                "default": "Y",
+                "title": "Prd Se",
+                "type": "string"
+              },
+              "start_prd_de": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Start Prd De"
+              },
+              "end_prd_de": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "End Prd De"
+              },
+              "new_est_prd_cnt": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": 3,
+                "title": "New Est Prd Cnt"
+              },
+              "itm_id": {
+                "default": "ALL",
+                "title": "Itm Id",
+                "type": "string"
+              },
+              "obj_l1": {
+                "default": "ALL",
+                "title": "Obj L1",
+                "type": "string"
+              },
+              "obj_l2": {
+                "default": "",
+                "title": "Obj L2",
+                "type": "string"
+              },
+              "obj_l3": {
+                "default": "",
+                "title": "Obj L3",
+                "type": "string"
+              },
+              "obj_l4": {
+                "default": "",
+                "title": "Obj L4",
+                "type": "string"
+              },
+              "obj_l5": {
+                "default": "",
+                "title": "Obj L5",
+                "type": "string"
+              },
+              "obj_l6": {
+                "default": "",
+                "title": "Obj L6",
+                "type": "string"
+              },
+              "obj_l7": {
+                "default": "",
+                "title": "Obj L7",
+                "type": "string"
+              },
+              "obj_l8": {
+                "default": "",
+                "title": "Obj L8",
+                "type": "string"
+              },
+              "limit": {
+                "default": 200,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "org_id",
+              "tbl_id"
+            ],
+            "title": "get_stat_dataArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "get_table_meta",
+          "description": "Return KOSIS table metadata such as title, organization, items, units, notes, or update date.",
+          "inputSchema": {
+            "properties": {
+              "org_id": {
+                "title": "Org Id",
+                "type": "string"
+              },
+              "tbl_id": {
+                "title": "Tbl Id",
+                "type": "string"
+              },
+              "meta_type": {
+                "default": "TBL",
+                "title": "Meta Type",
+                "type": "string"
+              },
+              "limit": {
+                "default": 200,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "org_id",
+              "tbl_id"
+            ],
+            "title": "get_table_metaArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "explain_statistics",
+          "description": "Return KOSIS survey/statistics explanation metadata by statId or orgId plus tblId.",
+          "inputSchema": {
+            "properties": {
+              "org_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Org Id"
+              },
+              "tbl_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Tbl Id"
+              },
+              "stat_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Stat Id"
+              },
+              "meta_itm": {
+                "default": "All",
+                "title": "Meta Itm",
+                "type": "string"
+              },
+              "limit": {
+                "default": 200,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "title": "explain_statisticsArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "check_connection",
+          "description": "Check whether the KOSIS API is reachable from the current network.",
+          "inputSchema": {
+            "properties": {},
+            "title": "check_connectionArguments",
+            "type": "object"
+          }
+        }
+      ]
     }
   }
 }
