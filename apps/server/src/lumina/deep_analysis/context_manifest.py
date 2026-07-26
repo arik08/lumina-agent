@@ -20,19 +20,35 @@ def stable_prefix_hash(
     mission: DeepAnalysisMission,
     *,
     tool_profile: str,
+    stable_prefix_text: str,
+    files: list[dict[str, Any]],
 ) -> str:
     context_revision = int(
         mission.charter_json.get("confirmedMissionRevision") or mission.revision
     )
     canonical = json.dumps(
         {
-            "schema": 1,
+            "schema": 2,
             "organizationId": mission.organization_id,
             "projectId": mission.project_id,
             "missionId": mission.id,
             "missionContextRevision": context_revision,
             "autonomyMode": mission.autonomy_mode,
             "toolProfile": tool_profile,
+            "stablePrefixDigest": hashlib.sha256(
+                stable_prefix_text.encode("utf-8")
+            ).hexdigest(),
+            "files": [
+                {
+                    "projectFileId": item.get("projectFileId"),
+                    "versionId": item.get("versionId"),
+                    "contentHash": item.get("contentHash"),
+                    "dependencyNodeKey": item.get("dependencyNodeKey"),
+                    "dependencyKind": item.get("dependencyKind"),
+                    "dependencyOutputRole": item.get("dependencyOutputRole"),
+                }
+                for item in files
+            ],
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -48,6 +64,7 @@ def persist_context_manifest(
     run: Run,
     files: list[dict[str, Any]],
     tool_profile: str,
+    stable_prefix_text: str,
     dynamic_context_characters: int,
 ) -> DeepAnalysisContextManifest:
     existing = db.scalar(
@@ -66,6 +83,15 @@ def persist_context_manifest(
             "logicalPath": item.get("logicalPath"),
             "role": "dependency_output" if item.get("generated") else "mission_source",
             "order": index,
+            **(
+                {
+                    "dependencyNodeKey": item.get("dependencyNodeKey"),
+                    "dependencyKind": item.get("dependencyKind"),
+                    "dependencyOutputRole": item.get("dependencyOutputRole"),
+                }
+                if item.get("generated")
+                else {}
+            ),
         }
         for index, item in enumerate(files)
     ]
@@ -77,7 +103,12 @@ def persist_context_manifest(
         node_id=node.id,
         run_id=run.id,
         mission_context_revision=context_revision,
-        prefix_hash=stable_prefix_hash(mission, tool_profile=tool_profile),
+        prefix_hash=stable_prefix_hash(
+            mission,
+            tool_profile=tool_profile,
+            stable_prefix_text=stable_prefix_text,
+            files=files,
+        ),
         tool_profile=tool_profile,
         item_count=len(items),
         token_estimate=max(0, round(dynamic_context_characters / 4)),
@@ -87,6 +118,7 @@ def persist_context_manifest(
             "nodeKey": node.node_key,
             "sourceManifestFrozen": True,
             "compressionApplied": False,
+            "stablePrefixSchema": 2,
         },
     )
     db.add(manifest)

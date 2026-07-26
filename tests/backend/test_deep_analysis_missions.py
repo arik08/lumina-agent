@@ -23,13 +23,14 @@ from lumina.agent.executor import (
 from lumina.config import Settings
 from lumina.db import SessionLocal
 from lumina.deep_analysis.calculations import execute_python_calculation
-from lumina.deep_analysis.context_manifest import current_file_version
+from lumina.deep_analysis.context_manifest import current_file_version, stable_prefix_hash
 from lumina.deep_analysis.ai_planner import design_initial_workflow
 from lumina.deep_analysis.events import emit_event
 from lumina.deep_analysis.execution import (
     _node_output_mode,
     _output_path,
     _output_path_for_content,
+    _run_prompt_prefix,
     _run_profile,
     _run_prompt,
     create_runnable_node_runs,
@@ -283,6 +284,7 @@ def test_node_output_contracts_keep_handoffs_compact_and_reports_detailed() -> N
     assert "<!doctype html>" in scope_prompt
     assert "완료 안내만 쓰지 마십시오" in scope_prompt
     assert "선행 산출물의 내용을 반복 요약하지" in scope_prompt
+    assert "## 다음 Node 인계" in scope_prompt
 
     report_prompt = _run_prompt(mission, report, [])
     assert "의사결정자가 바로 사용할 수 있는 최종 보고서" in report_prompt
@@ -312,6 +314,139 @@ def test_node_output_contracts_keep_handoffs_compact_and_reports_detailed() -> N
     assert "사용자가 지정한 최종 산출물 형태는 '임원용 1페이지 의사결정 메모'" in custom_prompt
     assert "직접 입력한 형태의 원문은 Markdown 파일로 저장" in custom_prompt
     assert _output_path(mission, report).endswith("/N040_최종 보고서.md")
+
+
+def test_branch_prompts_share_stable_prefix_and_merge_inputs_keep_lineage() -> None:
+    mission = DeepAnalysisMission(
+        id="mission-prefix",
+        organization_id="organization-prefix",
+        project_id="project-prefix",
+        created_by_user_id="user-prefix",
+        title="분기 Prefix 검증",
+        objective="공통 근거를 분기 분석한 뒤 합류합니다.",
+        autonomy_mode="balanced",
+        charter_json={"confirmedMissionRevision": 3},
+        revision=3,
+        execution_settings_json={
+            "researchPeriod": {"startDate": "2025-01-01", "endDate": "2025-12-31"},
+            "webSourcePolicy": {
+                "mode": "prioritize",
+                "domains": ["example.com"],
+                "excludedDomains": [],
+            },
+            "guidanceHistory": [],
+        },
+    )
+    shared_manifest = [
+        {
+            "projectFileId": "source-file",
+            "logicalPath": "inputs/source.md",
+            "versionId": "source-version",
+            "contentHash": "a" * 64,
+            "generated": False,
+        },
+        {
+            "projectFileId": "root-output",
+            "logicalPath": "심층분석/root.md",
+            "versionId": "root-version",
+            "contentHash": "b" * 64,
+            "generated": True,
+            "dependencyNodeKey": "root",
+            "dependencyKind": "direct_predecessor",
+            "dependencyOutputRole": "representative",
+        },
+    ]
+    branch_a = DeepAnalysisWorkflowNode(
+        node_key="branch-a",
+        node_type="research",
+        title="시장 조사",
+        purpose="시장 근거를 확인합니다.",
+    )
+    branch_b = DeepAnalysisWorkflowNode(
+        node_key="branch-b",
+        node_type="research",
+        title="기술 조사",
+        purpose="기술 근거를 확인합니다.",
+    )
+
+    stable_prefix = _run_prompt_prefix(mission, shared_manifest)
+    prompt_a = _run_prompt(mission, branch_a, shared_manifest)
+    prompt_b = _run_prompt(mission, branch_b, shared_manifest)
+
+    assert prompt_a.startswith(stable_prefix)
+    assert prompt_b.startswith(stable_prefix)
+    assert prompt_a[: len(stable_prefix)] == prompt_b[: len(stable_prefix)]
+    assert "branch-a" not in stable_prefix
+    assert "branch-b" not in stable_prefix
+    assert prompt_a.index("inputs/source.md") < prompt_a.index("branch-a")
+    assert stable_prefix_hash(
+        mission,
+        tool_profile="deep-analysis-core-v1",
+        stable_prefix_text=stable_prefix,
+        files=shared_manifest,
+    ) == stable_prefix_hash(
+        mission,
+        tool_profile="deep-analysis-core-v1",
+        stable_prefix_text=_run_prompt_prefix(mission, list(shared_manifest)),
+        files=list(shared_manifest),
+    )
+    changed_manifest = [dict(item) for item in shared_manifest]
+    changed_manifest[0]["contentHash"] = "f" * 64
+    assert stable_prefix_hash(
+        mission,
+        tool_profile="deep-analysis-core-v1",
+        stable_prefix_text=stable_prefix,
+        files=shared_manifest,
+    ) != stable_prefix_hash(
+        mission,
+        tool_profile="deep-analysis-core-v1",
+        stable_prefix_text=stable_prefix,
+        files=changed_manifest,
+    )
+
+    merge_manifest = [
+        {
+            **shared_manifest[0],
+        },
+        {
+            "projectFileId": "branch-a-output",
+            "logicalPath": "심층분석/branch-a.md",
+            "versionId": "branch-a-version",
+            "contentHash": "c" * 64,
+            "generated": True,
+            "dependencyNodeKey": "branch-a",
+            "dependencyKind": "direct_predecessor",
+            "dependencyOutputRole": "representative",
+        },
+        {
+            "projectFileId": "branch-b-output",
+            "logicalPath": "심층분석/branch-b.md",
+            "versionId": "branch-b-version",
+            "contentHash": "d" * 64,
+            "generated": True,
+            "dependencyNodeKey": "branch-b",
+            "dependencyKind": "direct_predecessor",
+            "dependencyOutputRole": "representative",
+        },
+        {
+            **shared_manifest[1],
+            "dependencyKind": "ancestor",
+        },
+    ]
+    merge_node = DeepAnalysisWorkflowNode(
+        node_key="merge",
+        node_type="synthesis",
+        title="분기 합류",
+        purpose="두 분기의 결과를 합성합니다.",
+    )
+    merge_prompt = _run_prompt(mission, merge_node, merge_manifest)
+
+    assert "[직접 선행 Node 산출물]" in merge_prompt
+    assert "[이전 공통 조상 산출물]" in merge_prompt
+    assert merge_prompt.index("branch-a.md") < merge_prompt.index("root.md")
+    assert "직접 선행 Node branch-a, branch-b의 대표 출력을 각각 확인" in merge_prompt
+    assert "충돌하는 결론은 임의로 하나를 버리지 말고" in merge_prompt
+    assert "공통 조상 산출물은 배경으로 한 번만 사용" in merge_prompt
 
 
 @pytest.mark.parametrize("artifact_tool_name", ["write_file", "create_report"])
@@ -2315,12 +2450,22 @@ def test_mission_executes_all_nodes_and_persists_markdown_outputs(
             return set(direct).union(*(ancestors(key) for key in direct))
 
         for node in restored["workflow"]["nodes"]:
-            dependency_keys = {
-                str(item["logicalPath"]).rsplit("/", 1)[-1].split("_", 1)[0]
+            dependency_items = [
+                item
                 for item in node["contextManifest"]["items"]
                 if item["role"] == "dependency_output"
+            ]
+            dependency_keys = {
+                str(item["logicalPath"]).rsplit("/", 1)[-1].split("_", 1)[0]
+                for item in dependency_items
             }
             assert dependency_keys <= ancestors(node["nodeKey"])
+            assert all(
+                item["dependencyNodeKey"] in ancestors(node["nodeKey"])
+                and item["dependencyKind"] in {"direct_predecessor", "ancestor"}
+                and item["dependencyOutputRole"] in {"representative", "supporting"}
+                for item in dependency_items
+            )
         assert len([
             item for item in restored["files"] if item["purpose"] == "node_output"
         ]) == len(restored["workflow"]["nodes"])

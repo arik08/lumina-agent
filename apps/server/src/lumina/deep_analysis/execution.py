@@ -296,42 +296,79 @@ def _run_manifest(
     incoming: dict[str, set[str]] = {}
     for edge in edges:
         incoming.setdefault(edge.target_node_key, set()).add(edge.source_node_key)
+    direct_predecessor_keys = incoming.get(node.node_key, set())
     ancestor_keys: set[str] = set()
-    queue = list(incoming.get(node.node_key, set()))
+    queue = list(direct_predecessor_keys)
     while queue:
         key = queue.pop(0)
         if key in ancestor_keys:
             continue
         ancestor_keys.add(key)
         queue.extend(incoming.get(key, set()))
-    generated_ids: set[str] = set()
-    for candidate in workflow_nodes:
+    dependency_metadata: dict[str, dict[str, Any]] = {}
+    for candidate in sorted(workflow_nodes, key=lambda item: item.sequence):
         if candidate.node_key not in ancestor_keys:
             continue
         if candidate.output_project_file_id:
-            generated_ids.add(candidate.output_project_file_id)
+            dependency_metadata[candidate.output_project_file_id] = {
+                "dependencyNodeKey": candidate.node_key,
+                "dependencyNodeTitle": candidate.title,
+                "dependencyKind": (
+                    "direct_predecessor"
+                    if candidate.node_key in direct_predecessor_keys
+                    else "ancestor"
+                ),
+                "dependencyOutputRole": "representative",
+                "dependencySequence": candidate.sequence,
+            }
         for item in candidate.generated_files_json:
             if isinstance(item, dict) and item.get("projectFileId"):
-                generated_ids.add(str(item["projectFileId"]))
-    if not generated_ids:
+                project_file_id = str(item["projectFileId"])
+                if project_file_id in dependency_metadata:
+                    continue
+                dependency_metadata[project_file_id] = {
+                    "dependencyNodeKey": candidate.node_key,
+                    "dependencyNodeTitle": candidate.title,
+                    "dependencyKind": (
+                        "direct_predecessor"
+                        if candidate.node_key in direct_predecessor_keys
+                        else "ancestor"
+                    ),
+                    "dependencyOutputRole": "supporting",
+                    "dependencySequence": candidate.sequence,
+                }
+    if not dependency_metadata:
         return manifest
-    generated = db.execute(
-        select(ProjectFile, ProjectFileVersion)
-        .join(
-            ProjectFileVersion,
-            (ProjectFileVersion.project_file_id == ProjectFile.id)
-            & (ProjectFileVersion.version_number == ProjectFile.current_version_number),
+    generated = list(
+        db.execute(
+            select(ProjectFile, ProjectFileVersion)
+            .join(
+                ProjectFileVersion,
+                (ProjectFileVersion.project_file_id == ProjectFile.id)
+                & (
+                    ProjectFileVersion.version_number
+                    == ProjectFile.current_version_number
+                ),
+            )
+            .where(
+                ProjectFile.project_id == mission.project_id,
+                ProjectFile.deleted_at.is_(None),
+                ProjectFile.id.in_(dependency_metadata),
+            )
+        ).tuples()
+    )
+    generated.sort(
+        key=lambda row: (
+            dependency_metadata[row[0].id]["dependencyKind"] != "direct_predecessor",
+            dependency_metadata[row[0].id]["dependencySequence"],
+            dependency_metadata[row[0].id]["dependencyOutputRole"] != "representative",
+            row[0].logical_path,
         )
-        .where(
-            ProjectFile.project_id == mission.project_id,
-            ProjectFile.deleted_at.is_(None),
-            ProjectFile.id.in_(generated_ids),
-        )
-        .order_by(ProjectFile.logical_path)
-    ).tuples()
+    )
     for project_file, version in generated:
         if project_file.id in known_ids:
             continue
+        metadata = dependency_metadata[project_file.id]
         manifest.append(
             {
                 "projectFileId": project_file.id,
@@ -342,6 +379,10 @@ def _run_manifest(
                 "mimeType": version.mime_type,
                 "sizeBytes": version.size_bytes,
                 "generated": True,
+                "dependencyNodeKey": metadata["dependencyNodeKey"],
+                "dependencyNodeTitle": metadata["dependencyNodeTitle"],
+                "dependencyKind": metadata["dependencyKind"],
+                "dependencyOutputRole": metadata["dependencyOutputRole"],
             }
         )
     return manifest
@@ -350,7 +391,38 @@ def _run_manifest(
 def _manifest_prompt(manifest: list[dict[str, Any]]) -> str:
     if not manifest:
         return "- 시작 시점에 등록된 Project 파일이 없습니다. 자료 부재를 결과에 명시하십시오."
-    lines = [f"- {item['logicalPath']}" for item in manifest[:200]]
+    groups = (
+        ("Mission 입력 자료", lambda item: not item.get("generated")),
+        (
+            "직접 선행 Node 산출물",
+            lambda item: item.get("dependencyKind") == "direct_predecessor",
+        ),
+        (
+            "이전 공통 조상 산출물",
+            lambda item: item.get("dependencyKind") == "ancestor",
+        ),
+    )
+    lines: list[str] = []
+    rendered = 0
+    for title, predicate in groups:
+        items = [item for item in manifest if predicate(item)]
+        if not items:
+            continue
+        lines.append(f"[{title}]")
+        for item in items:
+            if rendered >= 200:
+                break
+            node_key = item.get("dependencyNodeKey")
+            output_role = item.get("dependencyOutputRole")
+            origin = (
+                f" · {node_key} · {'대표 출력' if output_role == 'representative' else '보조 산출물'}"
+                if node_key
+                else ""
+            )
+            lines.append(f"- {item['logicalPath']}{origin}")
+            rendered += 1
+        if rendered >= 200:
+            break
     if len(manifest) > 200:
         lines.append(f"- 외 {len(manifest) - 200}개 파일이 있습니다.")
     return "\n".join(lines)
@@ -487,13 +559,13 @@ def _output_instruction(
         "파일을 작성했다거나 항목을 반영했다는 완료 안내만 쓰지 마십시오. 서론, Executive Summary, "
         "맺음말과 일반 배경 설명으로 분량을 늘리지 말고, 이 단계에서 새로 확인하거나 판단한 사실, "
         "근거·출처, 계산 결과, 반대 근거·불확실성, 다음 Node가 반드시 알아야 할 내용을 본문으로 남기십시오. "
-        "선행 산출물의 내용을 반복 요약하지 말고 필요한 경우 해당 파일이나 섹션을 가리키십시오."
+        "선행 산출물의 내용을 반복 요약하지 말고 필요한 경우 해당 파일이나 섹션을 가리키십시오. "
+        "본문 끝에는 `## 다음 Node 인계`를 두고 `결론`, `근거`, `불확실성`, `참조` 항목을 간결하게 작성하십시오."
     )
 
 
-def _run_prompt(
+def _run_prompt_prefix(
     mission: DeepAnalysisMission,
-    node: DeepAnalysisWorkflowNode,
     manifest: list[dict[str, Any]],
 ) -> str:
     settings = mission.execution_settings_json or {}
@@ -522,7 +594,6 @@ def _run_prompt(
 
 Mission: {mission.title}
 Mission 설명: {mission.objective or mission.title}
-작업 세션: {node.node_key} · {node.title}
 
 선행 세션 출력과 Project 파일:
 {_manifest_prompt(manifest)}
@@ -536,12 +607,48 @@ Mission 설명: {mission.objective or mission.title}
 
 실행 중 추가 지침(이 Node 시작 전에 제출된 항목):
 {guidance}
+"""
+
+
+def _merge_instruction(manifest: list[dict[str, Any]]) -> str:
+    predecessor_keys = tuple(
+        dict.fromkeys(
+            str(item["dependencyNodeKey"])
+            for item in manifest
+            if item.get("dependencyKind") == "direct_predecessor"
+            and item.get("dependencyNodeKey")
+        )
+    )
+    if len(predecessor_keys) < 2:
+        return ""
+    return (
+        "합류 규칙:\n"
+        f"- 직접 선행 Node {', '.join(predecessor_keys)}의 대표 출력을 각각 확인하십시오.\n"
+        "- 같은 파일·출처·주장을 반복해 붙이지 말고 파일 version과 출처를 기준으로 중복을 제거하십시오.\n"
+        "- 서로 충돌하는 결론은 임의로 하나를 버리지 말고 각 근거와 적용 조건을 나란히 보존한 뒤 판단하십시오.\n"
+        "- 공통 조상 산출물은 배경으로 한 번만 사용하고 직접 선행 Node가 새로 만든 판단을 중심으로 합성하십시오."
+    )
+
+
+def _run_prompt(
+    mission: DeepAnalysisMission,
+    node: DeepAnalysisWorkflowNode,
+    manifest: list[dict[str, Any]],
+) -> str:
+    stable_prefix = _run_prompt_prefix(mission, manifest)
+    merge_instruction = _merge_instruction(manifest)
+    return f"""{stable_prefix}
+--- Node 전용 지시 ---
+
+작업 세션: {node.node_key} · {node.title}
 
 작업 프롬프트:
 {node.purpose or node.title}
 
 단계별 지시:
 {_stage_instruction(node)}
+
+{merge_instruction}
 
 출력 계약:
 {_output_instruction(mission, node)}
@@ -663,6 +770,7 @@ def create_node_run(
         node,
         manifest,
     )
+    stable_prefix_text = _run_prompt_prefix(mission, manifest)
     execution_settings = mission.execution_settings_json or {}
     objective_offset = prompt.find(mission.objective) if mission.objective else -1
     prompt_references = []
@@ -766,6 +874,7 @@ def create_node_run(
         run=run,
         files=manifest,
         tool_profile="deep-analysis-core-v1",
+        stable_prefix_text=stable_prefix_text,
         dynamic_context_characters=len(prompt),
     )
     if created:
