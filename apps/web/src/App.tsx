@@ -1762,6 +1762,7 @@ function App() {
     activeRuntime.loaded,
   );
   const olderTurnSetsLoadingRef = useRef(false);
+  const [loadingOlderTurnSets, setLoadingOlderTurnSets] = useState(false);
   const prependScrollAnchorRef = useRef<{
     conversationId: string;
     scrollHeight: number;
@@ -1783,6 +1784,7 @@ function App() {
     ) return;
 
     olderTurnSetsLoadingRef.current = true;
+    setLoadingOlderTurnSets(true);
     prependScrollAnchorRef.current = {
       conversationId,
       scrollHeight: container.scrollHeight,
@@ -1794,6 +1796,7 @@ function App() {
       if (!loaded) prependScrollAnchorRef.current = null;
     } finally {
       olderTurnSetsLoadingRef.current = false;
+      setLoadingOlderTurnSets(false);
     }
   }, [
     activeRuntime.hasMoreTurnSetsBefore,
@@ -1808,6 +1811,7 @@ function App() {
     if (!conversationId || !container || olderTurnSetsLoadingRef.current) return false;
 
     olderTurnSetsLoadingRef.current = true;
+    setLoadingOlderTurnSets(true);
     prependScrollAnchorRef.current = {
       conversationId,
       scrollHeight: container.scrollHeight,
@@ -1820,6 +1824,7 @@ function App() {
       return loaded;
     } finally {
       olderTurnSetsLoadingRef.current = false;
+      setLoadingOlderTurnSets(false);
     }
   }, [
     activeRuntime.turnSets.length,
@@ -3580,6 +3585,12 @@ function App() {
           </div>
         </header>
 
+        {restoringActiveConversation && (
+          <div className="conversation-loading-overlay" role="status" aria-live="polite">
+            <span><LoaderCircle className="is-running" size={17} /> 대화를 불러오고 있습니다.</span>
+          </div>
+        )}
+
         <ConversationQuestionNavigator
           key={workspace.activeConversationId ?? "empty-conversation"}
           turnSets={activeRuntime.turnSets}
@@ -3611,7 +3622,11 @@ function App() {
           onDoubleClick={() => { if (artifactOpen) closeArtifact(); }}
         >
           <main className="conversation" aria-label="대화 내용" aria-busy={restoringActiveConversation}>
-            {restoringActiveConversation && <div className="conversation-loading"><LoaderCircle className="is-running" size={17} /> 대화를 불러오고 있습니다.</div>}
+            {loadingOlderTurnSets && (
+              <div className="conversation-history-loading" role="status" aria-live="polite">
+                <LoaderCircle className="is-running" size={15} /> 이전 대화를 불러오는 중…
+              </div>
+            )}
             {activeRuntime.error && <div className="conversation-error"><AlertCircle size={16} /> {activeRuntime.error}</div>}
             {showNewConversationWelcome && (
               <div className="conversation-empty"><Sparkles size={24} /><h2>무엇을 함께 진행할까요?</h2><p>요청을 보내면 진행 과정, Tool 사용과 Artifact가 이곳에 이어집니다.</p><StarterPrompts onSelect={applyStarterPrompt} /></div>

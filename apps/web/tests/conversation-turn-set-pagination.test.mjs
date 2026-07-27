@@ -11,9 +11,10 @@ test("older conversation turn sets are fetched by cursor and prepended without d
 
   assert.match(workspace, /previousTurnSetCursor: page\.previousCursor/);
   assert.match(workspace, /hasMoreTurnSetsBefore: page\.hasMoreBefore/);
+  assert.match(workspace, /const loadEntireHistory = requestedQuestionIndex === 0/);
   assert.match(workspace, /const pageSize = requestedQuestionIndex === null \? 3 : 20/);
   assert.match(workspace, /getTurnSets\(conversationId, cursor, pageSize\)/);
-  assert.match(workspace, /requestedQuestionIndex < unloadedQuestionCount/);
+  assert.match(workspace, /loadEntireHistory[\s\S]*?\? unloadedQuestionCount > 0[\s\S]*?: requestedQuestionIndex < unloadedQuestionCount/);
   assert.match(workspace, /const currentTurnSetIds = new Set\(currentRuntime\.turnSets\.map/);
   assert.match(workspace, /turnSets: \[\.\.\.olderTurnSets, \.\.\.currentRuntime\.turnSets\]/);
   assert.match(workspace, /loadOlderConversationTurnSets,/);
@@ -28,6 +29,9 @@ test("approaching the top preloads older turn sets and preserves the visible pos
   assert.match(app, /workspace\.loadOlderConversationTurnSets\(conversationId\)/);
   assert.match(app, /workspace\.loadOlderConversationTurnSets\(conversationId, questionIndex\)/);
   assert.match(app, /container\.scrollTop = anchor\.scrollTop \+ \(container\.scrollHeight - anchor\.scrollHeight\)/);
+  assert.match(app, /setLoadingOlderTurnSets\(true\)/);
+  assert.match(app, /className="conversation-history-loading" role="status" aria-live="polite"/);
+  assert.match(app, /이전 대화를 불러오는 중…/);
   assert.match(app, /onScroll=\{\(\) => \{\s*conversationFollow\.onScroll\(\);\s*void loadOlderTurnSetsNearTop\(\);/s);
 });
 

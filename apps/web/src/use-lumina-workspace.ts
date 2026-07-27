@@ -407,6 +407,7 @@ export function useLuminaWorkspace() {
       const requestedQuestionIndex = typeof throughQuestionIndex === "number"
         ? Math.max(0, Math.floor(throughQuestionIndex))
         : null;
+      const loadEntireHistory = requestedQuestionIndex === 0;
       const pageSize = requestedQuestionIndex === null ? 3 : 20;
       const loadedQuestionCount = runtime.turnSets.reduce(
         (count, turnSet) => count + turnSet.messages.filter(
@@ -445,7 +446,9 @@ export function useLuminaWorkspace() {
         cursor = page.previousCursor;
       } while (
         requestedQuestionIndex !== null
-        && requestedQuestionIndex < unloadedQuestionCount
+        && (loadEntireHistory
+          ? unloadedQuestionCount > 0
+          : requestedQuestionIndex < unloadedQuestionCount)
         && hasMoreBefore
         && cursor
       );
