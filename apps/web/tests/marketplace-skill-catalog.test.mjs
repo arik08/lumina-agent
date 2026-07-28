@@ -52,6 +52,9 @@ test("catalog uses a searchable card grid with installed-only package viewing", 
   assert.match(panel, /<span>\{categoryLabel\(item\.value\)\}<\/span><small>\{item\.count\}<\/small>/);
   assert.match(panel, /\{categoryLabel\(category\)\}<X size=\{11\} \/>/);
   assert.match(panel, /className=\{`skill-catalog-card \$\{item\.installed \? "is-installed" : ""\} \$\{item\.likedByMe \? "is-liked" : ""\}`\.trim\(\)\}/);
+  assert.match(panel, /data-tooltip=\{item\.description \|\| "설명이 등록되지 않은 Skill입니다\."\}/);
+  assert.match(panel, /data-tooltip-delay="500"/);
+  assert.match(panel, /data-tooltip-variant="description"/);
   assert.match(panel, /className=\{`skill-catalog-like/);
   assert.match(panel, /item\.installed && <button className="skill-catalog-view tooltip-control"/);
   assert.match(panel, /data-tooltip="보기"/);

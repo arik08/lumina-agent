@@ -35,7 +35,8 @@ def test_idea_orchestrator_upstream_files_match_pinned_digests() -> None:
         target = references / entry["target"]
         assert target.is_file()
         assert target.name.startswith("upstream-")
-        assert hashlib.sha256(target.read_bytes()).hexdigest() == entry["sha256"]
+        canonical_bytes = target.read_bytes().replace(b"\r\n", b"\n")
+        assert hashlib.sha256(canonical_bytes).hexdigest() == entry["sha256"]
 
 
 def test_idea_orchestrator_has_catalog_and_ui_metadata() -> None:

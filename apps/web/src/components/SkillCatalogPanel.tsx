@@ -77,7 +77,12 @@ const CatalogCard = memo(function CatalogCard({
   onView: (item: SkillCatalogItem) => void;
 }) {
   return (
-    <article className={`skill-catalog-card ${item.installed ? "is-installed" : ""} ${item.likedByMe ? "is-liked" : ""}`.trim()}>
+    <article
+      className={`skill-catalog-card ${item.installed ? "is-installed" : ""} ${item.likedByMe ? "is-liked" : ""}`.trim()}
+      data-tooltip={item.description || "설명이 등록되지 않은 Skill입니다."}
+      data-tooltip-delay="500"
+      data-tooltip-variant="description"
+    >
       <div className="skill-catalog-card-copy">
         <div className="skill-catalog-card-header">
           <h2>{item.name}</h2>

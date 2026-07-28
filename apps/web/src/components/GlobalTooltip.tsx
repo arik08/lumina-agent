@@ -27,6 +27,7 @@ interface TooltipPosition {
 interface ActiveTooltip {
   target: HTMLElement;
   text: string;
+  variant: "default" | "description";
 }
 
 function tooltipTarget(value: EventTarget | null) {
@@ -35,6 +36,15 @@ function tooltipTarget(value: EventTarget | null) {
 
 function tooltipText(target: HTMLElement) {
   return target.dataset.tooltip?.trim() || "";
+}
+
+function tooltipDelay(target: HTMLElement) {
+  const delay = Number(target.dataset.tooltipDelay);
+  return Number.isFinite(delay) ? Math.min(5_000, Math.max(0, delay)) : 0;
+}
+
+function tooltipVariant(target: HTMLElement): ActiveTooltip["variant"] {
+  return target.dataset.tooltipVariant === "description" ? "description" : "default";
 }
 
 export function GlobalTooltipLayer({
@@ -50,7 +60,7 @@ export function GlobalTooltipLayer({
   children: ReactNode;
   className?: string;
   id?: string;
-  preferredPlacement?: "vertical" | "right";
+  preferredPlacement?: "vertical" | "right" | "above";
 }) {
   const layerRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<TooltipPosition>({
@@ -69,7 +79,9 @@ export function GlobalTooltipLayer({
     const spaceLeft = anchorRect.left - viewportPadding - tooltipGap;
     const placement = preferredPlacement === "right"
       ? (spaceRight >= layerRect.width || spaceRight >= spaceLeft ? "right" : "left")
-      : (spaceAbove < layerRect.height && spaceBelow > spaceAbove ? "below" : "above");
+      : preferredPlacement === "above"
+        ? "above"
+        : (spaceAbove < layerRect.height && spaceBelow > spaceAbove ? "below" : "above");
     const maximumLeft = Math.max(viewportPadding, window.innerWidth - viewportPadding - layerRect.width);
     const requestedLeft = placement === "right"
       ? anchorRect.right + tooltipGap
@@ -126,23 +138,46 @@ export function GlobalTooltipLayer({
 export function GlobalTooltipProvider({ children }: { children: ReactNode }) {
   const tooltipId = useId();
   const activeRef = useRef<ActiveTooltip | null>(null);
+  const pendingRef = useRef<ActiveTooltip | null>(null);
+  const showTimerRef = useRef<number | null>(null);
   const [active, setActive] = useState<ActiveTooltip | null>(null);
 
   useEffect(() => {
+    const clearPending = () => {
+      if (showTimerRef.current !== null) window.clearTimeout(showTimerRef.current);
+      showTimerRef.current = null;
+      pendingRef.current = null;
+    };
+    const activate = (next: ActiveTooltip) => {
+      clearPending();
+      if (!next.target.isConnected || tooltipText(next.target) !== next.text) return;
+      activeRef.current = next;
+      setActive(next);
+    };
     const show = (event: Event) => {
       if (event instanceof PointerEvent && event.buttons !== 0) return;
       const target = tooltipTarget(event.target);
       if (!target) return;
       const text = tooltipText(target);
       if (!text) return;
-      activeRef.current = { target, text };
-      setActive({ target, text });
+      const next = { target, text, variant: tooltipVariant(target) };
+      if (activeRef.current?.target === target && activeRef.current.text === text) return;
+      if (pendingRef.current?.target === target && pendingRef.current.text === text) return;
+      clearPending();
+      const delay = tooltipDelay(target);
+      if (delay > 0) {
+        pendingRef.current = next;
+        showTimerRef.current = window.setTimeout(() => activate(next), delay);
+        return;
+      }
+      activate(next);
     };
     const hide = (event: Event) => {
-      const current = activeRef.current;
+      const current = activeRef.current ?? pendingRef.current;
       if (!current) return;
       const relatedTarget = "relatedTarget" in event ? event.relatedTarget : null;
       if (relatedTarget instanceof Node && current.target.contains(relatedTarget)) return;
+      clearPending();
       activeRef.current = null;
       setActive(null);
     };
@@ -157,6 +192,7 @@ export function GlobalTooltipProvider({ children }: { children: ReactNode }) {
       document.removeEventListener("pointerdown", hide, true);
       document.removeEventListener("focusin", show, true);
       document.removeEventListener("focusout", hide, true);
+      clearPending();
     };
   }, []);
 
@@ -183,17 +219,24 @@ export function GlobalTooltipProvider({ children }: { children: ReactNode }) {
         setActive(null);
         return;
       }
-      activeRef.current = { target, text };
-      setActive((current) => current?.target === target && current.text === text ? current : { target, text });
+      const next = { target, text, variant: tooltipVariant(target) };
+      activeRef.current = next;
+      setActive((current) => current?.target === target && current.text === text ? current : next);
     });
-    observer.observe(target, { attributes: true, attributeFilter: ["data-tooltip"] });
+    observer.observe(target, { attributes: true, attributeFilter: ["data-tooltip", "data-tooltip-variant"] });
     return () => observer.disconnect();
   }, [active?.target]);
 
   return (
     <>
       {children}
-      <GlobalTooltipLayer anchor={active?.target ?? null} id={tooltipId} open={Boolean(active)}>
+      <GlobalTooltipLayer
+        anchor={active?.target ?? null}
+        className={`global-tooltip ${active?.variant === "description" ? "is-description" : ""}`.trim()}
+        id={tooltipId}
+        open={Boolean(active)}
+        preferredPlacement={active?.variant === "description" ? "above" : "vertical"}
+      >
         {active?.text}
       </GlobalTooltipLayer>
     </>

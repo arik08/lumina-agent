@@ -110,7 +110,12 @@ def sync_repository_skills(
             continue
         slug = skill_document.name
         catalog_entry = catalog.get(slug, {})
-        description = skill_document.description
+        catalog_description = catalog_entry.get("description")
+        description = (
+            catalog_description.strip()
+            if isinstance(catalog_description, str) and catalog_description.strip()
+            else skill_document.description
+        )
         tags = _catalog_tags(catalog_entry.get("tags"))
         wrapper_source = skill_document.metadata.get("lumina-source", "")
         mcp_slug = (

@@ -137,6 +137,18 @@ def test_marketplace_refresh_syncs_new_repository_skill(
     repository_root = tmp_path / "repository"
     skills_root = repository_root / "extensions" / "skills"
     skills_root.mkdir(parents=True)
+    (skills_root / "catalog.json").write_text(
+        json.dumps(
+            {
+                "explorer-added": {
+                    "description": "카탈로그에 표시할 한국어 설명",
+                    "tags": [],
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setattr(repository_catalog, "REPOSITORY_ROOT", repository_root)
 
     app, _settings = _test_app(tmp_path)
@@ -147,7 +159,7 @@ def test_marketplace_refresh_syncs_new_repository_skill(
         skill_root = skills_root / "explorer-added"
         skill_root.mkdir()
         (skill_root / "SKILL.md").write_text(
-            "---\nname: explorer-added\ndescription: 탐색기로 추가한 Skill\n---\n\n# Explorer Added\n",
+            "---\nname: explorer-added\ndescription: English runtime trigger description.\n---\n\n# Explorer Added\n",
             encoding="utf-8",
         )
 
@@ -162,7 +174,7 @@ def test_marketplace_refresh_syncs_new_repository_skill(
 
         catalog = client.get("/api/extensions").json()
         assert [(item["slug"], item["description"]) for item in catalog] == [
-            ("explorer-added", "탐색기로 추가한 Skill")
+            ("explorer-added", "카탈로그에 표시할 한국어 설명")
         ]
 
         repeated = client.post(

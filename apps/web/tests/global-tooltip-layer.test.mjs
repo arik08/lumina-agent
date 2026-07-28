@@ -20,11 +20,16 @@ test("all simple tooltips are delegated to one document body portal", async () =
   assert.match(tooltip, /event instanceof PointerEvent && event\.buttons !== 0/);
   assert.match(tooltip, /document\.addEventListener\("pointerdown", hide, true\)/);
   assert.match(tooltip, /document\.addEventListener\("focusin", show, true\)/);
+  assert.match(tooltip, /target\.dataset\.tooltipDelay/);
+  assert.match(tooltip, /window\.setTimeout\(\(\) => activate\(next\), delay\)/);
+  assert.match(tooltip, /target\.dataset\.tooltipVariant === "description"/);
   assert.doesNotMatch(tooltip, /getAttribute\("title"\)|removeAttribute\("title"\)/);
   assert.match(tooltip, /document\.body/);
   assert.match(tooltip, /anchor\.closest\("\.theme-dark"\) \? " theme-dark" : ""/);
   assert.match(styles, /\.global-tooltip-layer\s*\{[^}]*position:\s*fixed;[^}]*z-index:\s*10000/s);
   assert.match(styles, /\.global-tooltip-layer\.theme-dark,[\s\S]*?--menu-surface:\s*#121417;/);
+  assert.match(tooltip, /preferredPlacement=\{active\?\.variant === "description" \? "above" : "vertical"\}/);
+  assert.match(styles, /\.global-tooltip\.is-description \{[^}]*width: min\(440px, calc\(100vw - 24px\)\);[^}]*white-space: normal;/);
   assert.doesNotMatch(styles, /content:\s*attr\(data-tooltip\)/);
   assert.doesNotMatch(styles, /tooltip-control[^,{]*::after/);
 });

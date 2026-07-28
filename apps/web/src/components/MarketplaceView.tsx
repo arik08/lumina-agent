@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowLeft, Braces, Check, ChevronDown, ChevronRight, Code2, Download, Eye, FileCode2, FileJson, FileText, Folder, FolderOpen, History, Info, LoaderCircle, Maximize2, Menu, Minimize2, Package, Pencil, Power, RefreshCw, Save, Search, ServerCog, Settings2, Sparkles, Store, Trash2, Undo2, Wrench, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Braces, Check, ChevronDown, ChevronRight, Code2, Download, Eye, FileCode2, FileJson, FileText, Folder, FolderOpen, History, Info, LoaderCircle, Maximize2, Menu, Minimize2, Network, Package, Pencil, Power, RefreshCw, Save, Search, ServerCog, Settings2, Sparkles, Store, Trash2, Undo2, Wrench, X } from "lucide-react";
 import { type DragEvent, type KeyboardEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
@@ -7,6 +7,7 @@ import { api as coreApi, ApiError } from "../api";
 import { extensionsApi } from "../feature-api";
 import type { ExtensionInstallation, ProjectSummary, SkillCatalogItem, SkillCatalogResponse, SkillExtension, SkillVersion, SkillVersionComparison } from "../api-types";
 import { useCachedViewState } from "../view-data-cache";
+import { A2AMarketplacePanel } from "./A2AMarketplacePanel";
 import { AdminMcpPanel } from "./AdminMcpPanel";
 import { McpMarketplacePanel } from "./McpMarketplacePanel";
 import { MarketplaceInstallButton } from "./MarketplaceInstallButton";
@@ -140,7 +141,7 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
   const projectScopeMenuRef = useRef<HTMLDivElement>(null);
   const repositoryRevisionRef = useRef<string | null>(null);
   const catalogRequestIdRef = useRef(0);
-  const [marketKind, setMarketKind] = useState<"skill" | "mcp">("skill");
+  const [marketKind, setMarketKind] = useState<"skill" | "mcp" | "a2a">("skill");
   const [mcpView, setMcpView] = useState<"catalog" | "admin">("catalog");
   const [mcpRefreshKey, setMcpRefreshKey] = useState(0);
   const cacheKey = `marketplace:${projectId ?? "none"}`;
@@ -313,7 +314,7 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
           void refresh();
           void refreshCatalog();
         }
-        else setMcpRefreshKey((value) => value + 1);
+        else if (marketKind === "mcp") setMcpRefreshKey((value) => value + 1);
       }).catch(() => undefined);
     };
     const pollWhenVisible = () => {
@@ -348,7 +349,7 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
       if (marketKind === "skill") {
         await Promise.all([refresh(), refreshCatalog()]);
       }
-      else setMcpRefreshKey((value) => value + 1);
+      else if (marketKind === "mcp") setMcpRefreshKey((value) => value + 1);
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "Repository 확장을 다시 찾지 못했습니다.");
     }
@@ -864,7 +865,7 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
 
   return (
     <div className="feature-view marketplace-view">
-      <header className="feature-header"><div><button className="feature-mobile-menu" type="button" aria-label="사이드바 열기" onClick={onOpenNavigation}><Menu size={17} /></button><Store size={17} /><h1>마켓스토어</h1><div className="feature-kind-tabs" role="tablist" aria-label="Marketplace 유형"><button type="button" role="tab" aria-selected={marketKind === "skill"} onClick={() => setMarketKind("skill")}><Sparkles size={14} /> Skill</button><button type="button" role="tab" aria-selected={marketKind === "mcp"} onClick={() => setMarketKind("mcp")}><Wrench size={14} /> MCP</button></div><span>탐색·설치·관리</span></div><div><button type="button" aria-label="새로 고침" onClick={() => void refreshRepository()}><RefreshCw size={15} /></button></div></header>
+      <header className="feature-header"><div><button className="feature-mobile-menu" type="button" aria-label="사이드바 열기" onClick={onOpenNavigation}><Menu size={17} /></button><Store size={17} /><h1>마켓스토어</h1><div className="feature-kind-tabs" role="tablist" aria-label="Marketplace 유형"><button type="button" role="tab" aria-selected={marketKind === "skill"} onClick={() => setMarketKind("skill")}><Sparkles size={14} /> Skill</button><button type="button" role="tab" aria-selected={marketKind === "mcp"} onClick={() => setMarketKind("mcp")}><Wrench size={14} /> MCP</button><button type="button" role="tab" aria-selected={marketKind === "a2a"} onClick={() => setMarketKind("a2a")}><Network size={14} /> A2A</button></div><span>탐색·설치·관리</span></div><div>{marketKind !== "a2a" && <button type="button" aria-label="새로 고침" onClick={() => void refreshRepository()}><RefreshCw size={15} /></button>}</div></header>
       {marketKind === "skill" && <div className="marketplace-toolbar">
         <div className="marketplace-scope-tabs" role="tablist" aria-label="Skill 보기">
           <button type="button" role="tab" aria-selected={skillView === "catalog"} onClick={returnToCatalog}><Package size={14} /> 카탈로그 <span>{catalogTabCount}</span></button>
@@ -881,7 +882,7 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
         </div>
       </div>}
       {error && <div className="feature-error" role="alert">{error}</div>}
-      {marketKind === "mcp" ? mcpView === "admin" && canManage ? <AdminMcpPanel key={mcpRefreshKey} /> : <McpMarketplacePanel key={`${projectId ?? "none"}:${mcpRefreshKey}`} projectId={projectId} /> : skillView === "catalog" ? <SkillCatalogPanel
+      {marketKind === "a2a" ? <A2AMarketplacePanel /> : marketKind === "mcp" ? mcpView === "admin" && canManage ? <AdminMcpPanel key={mcpRefreshKey} /> : <McpMarketplacePanel key={`${projectId ?? "none"}:${mcpRefreshKey}`} projectId={projectId} /> : skillView === "catalog" ? <SkillCatalogPanel
         catalog={visibleCatalog}
         loading={!hasCachedCatalog && visibleCatalog.items.length === 0 && (catalogLoading || !error)}
         loadingMore={catalogLoadingMore}
