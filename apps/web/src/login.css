@@ -155,28 +155,6 @@
 }
 
 .login-form { display: grid; gap: 21px; }
-.login-dev-account {
-  position: relative;
-  display: inline-flex;
-  width: 30px;
-  height: 30px;
-  align-items: center;
-  justify-content: center;
-  justify-self: end;
-  margin-bottom: -10px;
-  border: 0;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--login-cobalt) 9%, white);
-  color: var(--login-cobalt);
-  cursor: pointer;
-  transition: background 150ms ease, color 150ms ease;
-}
-.login-dev-account:hover { background: color-mix(in srgb, var(--login-cobalt) 15%, white); }
-.login-dev-account:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--login-cobalt) 70%, white);
-  outline-offset: 2px;
-}
-.login-dev-account:disabled { cursor: wait; opacity: 0.65; }
 
 .login-field {
   display: grid;

@@ -1,5 +1,5 @@
-import { ArrowRight, AtSign, KeyRound, LoaderCircle, ShieldCheck, Sparkles, UserPlus } from "lucide-react";
-import { type FormEvent, useRef, useState } from "react";
+import { ArrowRight, AtSign, KeyRound, LoaderCircle, ShieldCheck, Sparkles } from "lucide-react";
+import { type FormEvent, type MouseEvent, useRef, useState } from "react";
 import { ApiError, login, registerAccount } from "../api";
 import type { AuthSession, LoginRequest, UserRole } from "../api-types";
 import { SelectMenu } from "./SelectMenu";
@@ -78,6 +78,12 @@ export function LoginScreen({ onAuthenticated, initialDomain = "posco.com" }: Lo
     await authenticate({ loginName: "admin", loginDomain: "posco.com", password: "1" });
   };
 
+  const handleWordmarkClick = (event: MouseEvent<HTMLAnchorElement>) => {
+    if (!import.meta.env.DEV) return;
+    event.preventDefault();
+    void loginAsDevelopmentAdmin();
+  };
+
   const submitRegistration = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (submitting) return;
@@ -117,7 +123,7 @@ export function LoginScreen({ onAuthenticated, initialDomain = "posco.com" }: Lo
     <main className="login-screen">
       <section className="login-layout" aria-labelledby="login-heading">
         <div className="login-story">
-          <a className="login-wordmark" href="/" aria-label="Lumina 홈">
+          <a className="login-wordmark" href="/" aria-label="Lumina 홈" onClick={handleWordmarkClick}>
             <Sparkles size={22} strokeWidth={1.7} aria-hidden="true" />
             <span>Lumina</span>
           </a>
@@ -144,17 +150,6 @@ export function LoginScreen({ onAuthenticated, initialDomain = "posco.com" }: Lo
           </div>
 
           {!registering ? <form className="login-form" noValidate onSubmit={submit}>
-            {import.meta.env.DEV && (
-              <button
-                className="login-dev-account"
-                type="button"
-                aria-label="개발 관리자 계정으로 로그인"
-                disabled={submitting}
-                onClick={() => void loginAsDevelopmentAdmin()}
-              >
-                <UserPlus size={16} strokeWidth={1.8} aria-hidden="true" />
-              </button>
-            )}
             <label className="login-field" htmlFor="lumina-login-name">
               <span>아이디</span>
               <input
