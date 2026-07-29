@@ -1010,6 +1010,7 @@ export interface AdminProviderModel {
   maximumContextWindow: number | null;
   maximumInputTokens: number | null;
   maximumContextUsageRatio: number | null;
+  standardContextReserveTokens: number | null;
   contextPolicyLocked: boolean;
   maxInputTokens: number | null;
   defaultMaxInputTokens: number | null;

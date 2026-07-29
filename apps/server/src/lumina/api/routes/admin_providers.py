@@ -93,7 +93,16 @@ def _payload(model: ProviderModel) -> dict[str, Any]:
         "standard",
         "maximum",
     }:
-        capacity_mode = "standard"
+        stored_context_window = _positive_int(
+            model.capabilities_json.get(
+                "context_window", model.capabilities_json.get("contextWindow")
+            )
+        )
+        capacity_mode = (
+            "maximum"
+            if stored_context_window == maximum_context_window
+            else "standard"
+        )
     hard_max = _positive_int(
         catalog_entry.capabilities.max_output_tokens
         if catalog_entry
@@ -145,6 +154,11 @@ def _payload(model: ProviderModel) -> dict[str, Any]:
         "maximumInputTokens": maximum_input_tokens,
         "maximumContextUsageRatio": (
             catalog_entry.capabilities.maximum_context_compaction_threshold
+            if catalog_entry
+            else None
+        ),
+        "standardContextReserveTokens": (
+            catalog_entry.capabilities.standard_context_compaction_reserve_tokens
             if catalog_entry
             else None
         ),
@@ -239,10 +253,21 @@ def _validate_capabilities(
             if capacity_mode == "maximum"
             else catalog_entry.context_compaction_threshold
         )
+        expected_standard_reserve = (
+            catalog_entry.capabilities.standard_context_compaction_reserve_tokens
+        )
+        standard_reserve = capabilities.get(
+            "standard_context_compaction_reserve_tokens",
+            capabilities.get("standardContextCompactionReserveTokens"),
+        )
         if (
             context_window != expected_context_window
             or max_input_tokens != expected_input_tokens
             or context_usage_ratio != expected_usage_ratio
+            or (
+                capacity_mode == "standard"
+                and standard_reserve != expected_standard_reserve
+            )
         ):
             raise ApiProblem(
                 422,

@@ -38,6 +38,7 @@ class ProviderCapabilities:
     maximum_context_window: int | None = None
     maximum_input_tokens: int | None = None
     maximum_context_compaction_threshold: float | None = None
+    standard_context_compaction_reserve_tokens: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

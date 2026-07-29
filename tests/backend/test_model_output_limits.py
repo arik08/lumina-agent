@@ -6,7 +6,11 @@ from lumina.agent.executor import (
     _artifact_model_request_tokens,
     _configured_max_output_tokens,
 )
-from lumina.context.service import _compaction_threshold, _context_budget
+from lumina.context.service import (
+    _compaction_threshold,
+    _context_budget,
+    _padded_estimate,
+)
 
 
 def test_executor_uses_configured_output_limit_without_exceeding_hard_max() -> None:
@@ -110,3 +114,30 @@ def test_context_budget_honors_measured_input_limit() -> None:
 
     assert context_window == 1_050_000
     assert effective_input_budget == 907_804
+
+
+def test_standard_context_mode_leaves_only_20k_price_headroom() -> None:
+    run = SimpleNamespace(
+        snapshot_json={
+            "execution": {
+                "capabilities": {
+                    "context_window": 272_000,
+                    "max_input_tokens": 272_000,
+                    "configured_max_output_tokens": 42_000,
+                    "context_capacity_mode": "standard",
+                    "context_compaction_threshold": 1.0,
+                    "standard_context_compaction_reserve_tokens": 20_000,
+                }
+            }
+        },
+        provider_id="pgpt",
+        model_key="gpt-5.4",
+        runtime_model_id="gpt-5.4",
+    )
+
+    context_window, effective_input_budget = _context_budget(run, ())
+
+    assert context_window == 272_000
+    assert effective_input_budget == 252_000
+    assert _compaction_threshold(run, effective_input_budget) == 252_000
+    assert _padded_estimate(run, 200_000) == 200_000

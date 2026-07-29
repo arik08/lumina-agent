@@ -7,12 +7,13 @@ from typing import Any
 
 from .types import ProviderCapabilities
 
-CATALOG_REVISION = "2026-07-29.1-standard-context-mode"
+CATALOG_REVISION = "2026-07-29.2-standard-context-20k-headroom"
 CATALOG_VERIFIED_AT = date(2026, 7, 29)
 PUBLIC_PRICING_VERSION = "public-list-2026-07-12"
 DEFAULT_CONTEXT_COMPACTION_THRESHOLD = 0.75
 STANDARD_CONTEXT_WINDOW = 272_000
-STANDARD_CONTEXT_COMPACTION_THRESHOLD = 0.85
+STANDARD_CONTEXT_COMPACTION_THRESHOLD = 1.0
+STANDARD_CONTEXT_COMPACTION_RESERVE_TOKENS = 20_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +92,9 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             maximum_context_window=1_050_000,
             maximum_input_tokens=911_900,
             maximum_context_compaction_threshold=DEFAULT_CONTEXT_COMPACTION_THRESHOLD,
+            standard_context_compaction_reserve_tokens=(
+                STANDARD_CONTEXT_COMPACTION_RESERVE_TOKENS
+            ),
         ),
         default_max_output_tokens=42_000,
         context_compaction_threshold=STANDARD_CONTEXT_COMPACTION_THRESHOLD,
@@ -132,6 +136,9 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             maximum_context_window=1_050_000,
             maximum_input_tokens=911_900,
             maximum_context_compaction_threshold=DEFAULT_CONTEXT_COMPACTION_THRESHOLD,
+            standard_context_compaction_reserve_tokens=(
+                STANDARD_CONTEXT_COMPACTION_RESERVE_TOKENS
+            ),
         ),
         default_max_output_tokens=42_000,
         context_compaction_threshold=STANDARD_CONTEXT_COMPACTION_THRESHOLD,
@@ -153,6 +160,9 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             context_capacity_mode="standard",
             maximum_context_window=1_050_000,
             maximum_context_compaction_threshold=DEFAULT_CONTEXT_COMPACTION_THRESHOLD,
+            standard_context_compaction_reserve_tokens=(
+                STANDARD_CONTEXT_COMPACTION_RESERVE_TOKENS
+            ),
         ),
         default_max_output_tokens=42_000,
         context_compaction_threshold=STANDARD_CONTEXT_COMPACTION_THRESHOLD,
@@ -174,6 +184,9 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             context_capacity_mode="standard",
             maximum_context_window=1_050_000,
             maximum_context_compaction_threshold=DEFAULT_CONTEXT_COMPACTION_THRESHOLD,
+            standard_context_compaction_reserve_tokens=(
+                STANDARD_CONTEXT_COMPACTION_RESERVE_TOKENS
+            ),
         ),
         default_max_output_tokens=42_000,
         context_compaction_threshold=STANDARD_CONTEXT_COMPACTION_THRESHOLD,
@@ -195,6 +208,9 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             context_capacity_mode="standard",
             maximum_context_window=1_050_000,
             maximum_context_compaction_threshold=DEFAULT_CONTEXT_COMPACTION_THRESHOLD,
+            standard_context_compaction_reserve_tokens=(
+                STANDARD_CONTEXT_COMPACTION_RESERVE_TOKENS
+            ),
         ),
         default_max_output_tokens=42_000,
         context_compaction_threshold=STANDARD_CONTEXT_COMPACTION_THRESHOLD,
@@ -316,6 +332,9 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             context_capacity_mode="standard",
             maximum_context_window=1_050_000,
             maximum_context_compaction_threshold=DEFAULT_CONTEXT_COMPACTION_THRESHOLD,
+            standard_context_compaction_reserve_tokens=(
+                STANDARD_CONTEXT_COMPACTION_RESERVE_TOKENS
+            ),
         ),
         context_compaction_threshold=STANDARD_CONTEXT_COMPACTION_THRESHOLD,
         token_pricing=ModelTokenPricing(
@@ -346,6 +365,9 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             context_capacity_mode="standard",
             maximum_context_window=1_050_000,
             maximum_context_compaction_threshold=DEFAULT_CONTEXT_COMPACTION_THRESHOLD,
+            standard_context_compaction_reserve_tokens=(
+                STANDARD_CONTEXT_COMPACTION_RESERVE_TOKENS
+            ),
         ),
         context_compaction_threshold=STANDARD_CONTEXT_COMPACTION_THRESHOLD,
         token_pricing=ModelTokenPricing(
@@ -376,6 +398,9 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             context_capacity_mode="standard",
             maximum_context_window=1_050_000,
             maximum_context_compaction_threshold=DEFAULT_CONTEXT_COMPACTION_THRESHOLD,
+            standard_context_compaction_reserve_tokens=(
+                STANDARD_CONTEXT_COMPACTION_RESERVE_TOKENS
+            ),
         ),
         context_compaction_threshold=STANDARD_CONTEXT_COMPACTION_THRESHOLD,
         token_pricing=ModelTokenPricing(
@@ -506,6 +531,9 @@ def validate_catalog(items: Iterable[ModelCatalogSeed]) -> None:
         maximum_threshold = (
             item.capabilities.maximum_context_compaction_threshold
         )
+        standard_reserve = (
+            item.capabilities.standard_context_compaction_reserve_tokens
+        )
         if capacity_mode is not None and capacity_mode not in {"standard", "maximum"}:
             raise ValueError(f"Unknown context capacity mode: {key!r}")
         if maximum_context_window is not None:
@@ -524,9 +552,20 @@ def validate_catalog(items: Iterable[ModelCatalogSeed]) -> None:
                 raise ValueError(f"Invalid maximum input limit: {key!r}")
             if maximum_threshold is None or not 0 < maximum_threshold <= 1:
                 raise ValueError(f"Invalid maximum-mode compaction threshold: {key!r}")
+            if (
+                standard_reserve is None
+                or standard_reserve < 1
+                or standard_reserve >= context_window
+            ):
+                raise ValueError(f"Invalid standard-mode compaction reserve: {key!r}")
         elif any(
             value is not None
-            for value in (capacity_mode, maximum_input_tokens, maximum_threshold)
+            for value in (
+                capacity_mode,
+                maximum_input_tokens,
+                maximum_threshold,
+                standard_reserve,
+            )
         ):
             raise ValueError(f"Incomplete context capacity profile: {key!r}")
         pricing = item.token_pricing

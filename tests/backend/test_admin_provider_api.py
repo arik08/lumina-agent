@@ -140,11 +140,16 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
             model for model in pgpt_models.json() if model["modelKey"] == "gpt-5.4"
         )
         assert gpt_54["defaultContextWindow"] == 272_000
-        assert gpt_54["defaultContextUsageRatio"] == 0.85
+        assert gpt_54["defaultContextUsageRatio"] == 1.0
         assert gpt_54["contextCapacityMode"] == "standard"
         assert gpt_54["maximumContextWindow"] == 1_050_000
         assert gpt_54["maximumInputTokens"] == 911_900
         assert gpt_54["maximumContextUsageRatio"] == 0.75
+        assert gpt_54["standardContextReserveTokens"] == 20_000
+        assert (
+            gpt_54["capabilities"]["standard_context_compaction_reserve_tokens"]
+            == 20_000
+        )
         assert gpt_54["contextPolicyLocked"] is False
         assert gpt_54["maxInputTokens"] == 272_000
         assert gpt_54["defaultMaxInputTokens"] == 272_000

@@ -895,7 +895,7 @@ CompactedContextEntry
 └─ compacted_at
 ```
 
-- 매 model 호출 전 `effective_input_budget = model_context_window - reserved_output_tokens - tool_schema_tokens - safety_margin`을 계산합니다. 추정 입력이 기본 soft threshold인 유효 예산의 75%를 넘으면 선제 압축하고, Provider가 보고한 실제 token 값을 추정치보다 우선합니다. Codex GPT-5.4·5.5·5.6 계열만 서비스 정책상 272K Context와 85% 임계값을 사용합니다. P-GPT·OpenAI·Gemini·Claude API는 Model Catalog에 검증된 각 표준 API Context window를 사용하고 Codex 제한을 상속하지 않습니다. model profile의 상향 임계값은 낮추지 않으며 메시지 개수만으로 압축을 결정하지 않습니다.
+- 매 model 호출 전 `effective_input_budget = model_context_window - reserved_output_tokens - tool_schema_tokens - safety_margin`을 계산합니다. 추정 입력이 기본 soft threshold인 유효 예산의 75%를 넘으면 선제 압축하고, Provider가 보고한 실제 token 값을 추정치보다 우선합니다. 272K 이후 장문 입력 가격이 달라지는 P-GPT·OpenAI GPT의 표준 용량 모드는 가격 경계에 20K만 남긴 약 252K 추정 입력을 압축 시작점으로 사용하며, 최대 용량 모드만 1.05M 유효 예산의 75%와 보수적 token 추정 padding을 사용합니다. Codex GPT-5.4·5.5·5.6 계열은 서비스 정책상 272K Context와 85% 임계값을 사용합니다. 그 밖의 P-GPT·OpenAI·Gemini·Claude API는 Model Catalog에 검증된 각 표준 API Context window를 사용하고 Codex 제한을 상속하지 않습니다. model profile의 상향 임계값은 낮추지 않으며 메시지 개수만으로 압축을 결정하지 않습니다.
 - 최근 사용자·assistant Turn과 미완료 Tool Call/Result pair는 그대로 남기고, 오래된 중간 구간을 구조화 요약 하나로 교체합니다.
 - 요약에는 목표, 사용자 제약과 선호, 현재 Plan·Step, 완료 작업, 실패·차단 상태, 핵심 결정, 미해결 질문, 승인 상태, 부작용 결과, idempotency key, 관련 파일·Artifact·citation/source ID와 다음 확인 항목을 보존합니다.
 - 오래된 Tool 출력은 Artifact 또는 source reference로 전환합니다.

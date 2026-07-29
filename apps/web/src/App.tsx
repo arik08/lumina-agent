@@ -1517,8 +1517,27 @@ function App() {
   const adminMeasuredInputTokenLimit = Number.isSafeInteger(parsedAdminInputTokens) && parsedAdminInputTokens > 0
     ? parsedAdminInputTokens
     : null;
+  const adminStandardContextReserveTokens = (
+    selectedAdminSettingsModel?.contextCapacityMode === "standard"
+    && typeof selectedAdminSettingsModel.standardContextReserveTokens === "number"
+  )
+    ? selectedAdminSettingsModel.standardContextReserveTokens
+    : null;
   const adminBaseInputContext = (() => {
     if (!Number.isSafeInteger(parsedAdminContextWindow) || parsedAdminContextWindow < 1) return null;
+    if (
+      adminStandardContextReserveTokens !== null
+      && adminStandardContextReserveTokens > 0
+      && adminStandardContextReserveTokens < parsedAdminContextWindow
+    ) {
+      return Math.max(
+        256,
+        Math.min(
+          parsedAdminContextWindow - adminStandardContextReserveTokens,
+          adminMeasuredInputTokenLimit ?? parsedAdminContextWindow,
+        ),
+      );
+    }
     const reservedOutput = adminOutputTokens > 0
       ? adminOutputTokens
       : Math.max(512, Math.min(4_096, Math.floor(parsedAdminContextWindow / 8)));
@@ -1565,6 +1584,9 @@ function App() {
         context_window: contextWindow,
         max_input_tokens: maxInputTokens,
         context_compaction_threshold: usageRatio,
+        standard_context_compaction_reserve_tokens: (
+          selectedAdminSettingsModel.standardContextReserveTokens
+        ),
       };
       delete capabilities.contextCapacityMode;
       delete capabilities.contextWindow;
@@ -4301,7 +4323,7 @@ function App() {
                         <span>
                           <strong>컨텍스트 용량 모드</strong>
                           <small>
-                            표준 모드는 272K 가격 경계를 넘기기 전에 자동 압축합니다. 최대 모드는 긴 원문이 꼭 필요한 작업에만 사용하세요.
+                            표준 모드는 272K 가격 경계 앞에 약 20K만 남기고 압축합니다. 최대 모드는 긴 원문이 꼭 필요한 작업에만 사용하세요.
                           </small>
                         </span>
                         <SelectMenu
@@ -4386,32 +4408,46 @@ function App() {
                     <div className="settings-row settings-context-budget-row">
                       <span>
                         <strong>기본 최대 입력 컨텍스트</strong>
-                        <small>전체 컨텍스트에서 출력 예약을 뺀 값과 모델 입력 상한 중 작은 값에서 안전 여유를 뺀 시스템 입력 예산입니다. Tool 적용 전 기준이며 실제 Run에서는 Tool schema 토큰을 추가 차감합니다.</small>
+                        <small>
+                          {adminStandardContextReserveTokens !== null
+                            ? "표준 모드의 가격 경계에서 20K 여유를 둔 입력 예산입니다."
+                            : "전체 컨텍스트에서 출력 예약을 뺀 값과 모델 입력 상한 중 작은 값에서 안전 여유를 뺀 시스템 입력 예산입니다. Tool 적용 전 기준이며 실제 Run에서는 Tool schema 토큰을 추가 차감합니다."}
+                        </small>
                       </span>
                       <output aria-live="polite">{adminBaseInputContext === null ? "계산할 수 없음" : `${adminBaseInputContext.toLocaleString()} 토큰`}</output>
                     </div>
                     <div className="settings-row">
                       <span>
-                        <strong>자동 압축 시작 비율</strong>
+                        <strong>{adminStandardContextReserveTokens !== null ? "자동 압축 여유" : "자동 압축 시작 비율"}</strong>
                         <small>
-                          위 최대 입력 컨텍스트의 몇 %에서 선제 압축할지 정합니다.
+                          {adminStandardContextReserveTokens !== null
+                            ? "272K를 전부 채우기 직전에 압축할 수 있도록 약 20K를 남깁니다."
+                            : "위 최대 입력 컨텍스트의 몇 %에서 선제 압축할지 정합니다."}
                           {selectedAdminSettingsModel?.contextPolicyLocked
                             ? ` Codex 서비스 정책은 ${Math.round(adminDefaultContextUsageRatio * 100)}%로 고정됩니다.`
-                            : selectedAdminSettingsModel?.maximumContextWindow
+                            : selectedAdminSettingsModel?.maximumContextWindow && adminStandardContextReserveTokens === null
                               ? " 용량 모드에 맞는 안전 여유가 자동 적용됩니다."
                               : null}
                         </small>
                       </span>
-                      <div className="settings-inline-control settings-percent-control">
-                        <span className="settings-suffixed-input"><input aria-label="자동 압축 시작 비율" type="text" inputMode="numeric" value={adminContextUsagePercent} disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked || adminContextCapacityManaged} onChange={(event) => setAdminContextUsagePercent(event.currentTarget.value.replace(/\D/g, "").slice(0, 3))} /><span aria-hidden="true">%</span></span>
-                        <button className="is-secondary" type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked || adminContextCapacityManaged} onClick={() => void resetAdminContextUsagePercent()}>초기화</button>
-                        <button type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked || adminContextCapacityManaged} onClick={() => void saveAdminContextUsagePercent()}>저장</button>
-                      </div>
+                      {adminStandardContextReserveTokens !== null
+                        ? <output>{adminStandardContextReserveTokens.toLocaleString()} 토큰</output>
+                        : (
+                          <div className="settings-inline-control settings-percent-control">
+                            <span className="settings-suffixed-input"><input aria-label="자동 압축 시작 비율" type="text" inputMode="numeric" value={adminContextUsagePercent} disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked || adminContextCapacityManaged} onChange={(event) => setAdminContextUsagePercent(event.currentTarget.value.replace(/\D/g, "").slice(0, 3))} /><span aria-hidden="true">%</span></span>
+                            <button className="is-secondary" type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked || adminContextCapacityManaged} onClick={() => void resetAdminContextUsagePercent()}>초기화</button>
+                            <button type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked || adminContextCapacityManaged} onClick={() => void saveAdminContextUsagePercent()}>저장</button>
+                          </div>
+                        )}
                     </div>
                     <div className="settings-row settings-context-budget-row">
                       <span>
                         <strong>기본 자동 압축 시작점</strong>
-                        <small>Tool 적용 전 최대 입력 컨텍스트에 위 비율을 적용한 소프트 임계값입니다. 실제 Run에서는 Tool schema만큼 더 낮아집니다.</small>
+                        <small>
+                          {adminStandardContextReserveTokens !== null
+                            ? "표준 모드에서 대화·지침·Tool schema를 합친 추정 입력이 이 값에 도달하면 압축합니다."
+                            : "Tool 적용 전 최대 입력 컨텍스트에 위 비율을 적용한 소프트 임계값입니다. 실제 Run에서는 Tool schema만큼 더 낮아집니다."}
+                        </small>
                       </span>
                       <output aria-live="polite">{adminBaseCompactionThreshold === null ? "계산할 수 없음" : `${adminBaseCompactionThreshold.toLocaleString()} 토큰`}</output>
                     </div>

@@ -910,6 +910,23 @@ def _context_budget(
         ),
         context_window,
     )
+    capacity_mode = capabilities.get(
+        "context_capacity_mode", capabilities.get("contextCapacityMode")
+    )
+    standard_reserve = capabilities.get(
+        "standard_context_compaction_reserve_tokens",
+        capabilities.get("standardContextCompactionReserveTokens"),
+    )
+    if (
+        capacity_mode == "standard"
+        and isinstance(standard_reserve, int)
+        and not isinstance(standard_reserve, bool)
+        and 0 < standard_reserve < context_window
+    ):
+        return context_window, max(
+            256,
+            min(context_window - standard_reserve, max_input_tokens),
+        )
     return context_window, max(
         256,
         min(context_window - reserved_output, max_input_tokens)
@@ -946,6 +963,21 @@ def _compaction_threshold(run: Run, effective_budget: int) -> int:
 
 def _padded_estimate(run: Run, estimated_tokens: int) -> int:
     if run.provider_id == "pgpt":
+        execution = run.snapshot_json.get("execution", {})
+        capabilities = (
+            execution.get("capabilities", {})
+            if isinstance(execution, Mapping)
+            else {}
+        )
+        capacity_mode = (
+            capabilities.get(
+                "context_capacity_mode", capabilities.get("contextCapacityMode")
+            )
+            if isinstance(capabilities, Mapping)
+            else None
+        )
+        if capacity_mode == "standard":
+            return estimated_tokens
         return math.ceil(estimated_tokens * PGPT_TOKEN_ESTIMATION_PADDING)
     return estimated_tokens
 
