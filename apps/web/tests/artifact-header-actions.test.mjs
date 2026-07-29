@@ -31,6 +31,7 @@ test("artifact header keeps its actions visible above the preview", async () => 
   assert.match(app, /const artifactDownloadVersion = artifactVersion\?\.version \?\? artifactSummary\?\.currentVersion \?\? null/);
   assert.match(app, /const \[summary, initialVersion, savedDraft\] = await Promise\.all\(\[[\s\S]*?api\.artifacts\.getVersion\([\s\S]*?artifact\.mimeType !== "text\/html"[\s\S]*?api\.artifacts\.getDraft\(artifact\.id\)/);
   assert.match(app, /artifactVersion\?\.sourceAvailable/);
+  assert.match(app, /useLayoutEffect\(\(\) => \{[\s\S]*?fitArtifactPaneToViewport[\s\S]*?window\.innerWidth < artifactSplitPaneMinViewport[\s\S]*?clampArtifactPaneWidth\(current, sidebarCollapsed\)[\s\S]*?addEventListener\("resize", fitArtifactPaneToViewport\)[\s\S]*?removeEventListener\("resize", fitArtifactPaneToViewport\)/);
   assert.match(app, /<ArtifactPreviewActions[\s\S]*?shareDisabled=\{!artifactSummary\?\.conversationId\}/);
   assert.match(app, /knowledgeDisabled=\{!artifactHasTextSource \|\| artifactLoading\}/);
   assert.match(app, /saveKnowledgeDocumentFromArtifact\(artifactSummary\.id, artifactVersion\.version\)/);

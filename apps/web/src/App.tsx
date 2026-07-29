@@ -1040,6 +1040,16 @@ function App() {
     localStorage.setItem("lumina:artifactPaneWidth", String(artifactPaneWidth));
   }, [artifactPaneWidth]);
 
+  useLayoutEffect(() => {
+    const fitArtifactPaneToViewport = () => {
+      if (window.innerWidth < artifactSplitPaneMinViewport) return;
+      setArtifactPaneWidth((current) => Math.round(clampArtifactPaneWidth(current, sidebarCollapsed)));
+    };
+    fitArtifactPaneToViewport();
+    window.addEventListener("resize", fitArtifactPaneToViewport);
+    return () => window.removeEventListener("resize", fitArtifactPaneToViewport);
+  }, [sidebarCollapsed]);
+
   useEffect(() => {
     artifactDraftRef.current = artifactDraft;
   }, [artifactDraft]);
