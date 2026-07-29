@@ -44,7 +44,10 @@ test("HTML Artifact capture keeps the preview sandbox and clones through the bri
   assert.match(capture, /const stableHeightLimit = Math\.ceil\(shortestHeight \* 1\.08\)/);
   assert.match(capture, /contentHeight <= stableHeightLimit/);
   assert.doesNotMatch(capture, /growth <= plateauThreshold/);
-  assert.match(capture, /scale: 1/);
+  assert.match(capture, /const scale = selectArtifactCaptureScale\(width, height, window\.devicePixelRatio\)/);
+  assert.match(capture, /Math\.sqrt\(artifactCaptureMaxPixels \/ \(width \* height\)\)/);
+  assert.match(capture, /\n\s+scale,\n/);
+  assert.doesNotMatch(capture, /scale: 1/);
   assert.match(capture, /frame\.remove\(\)/);
 });
 

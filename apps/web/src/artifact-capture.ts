@@ -71,6 +71,20 @@ export function selectArtifactCaptureViewportWidth(measurements: Array<{
     ?? viable.at(-1)!.viewportWidth;
 }
 
+export function selectArtifactCaptureScale(
+  width: number,
+  height: number,
+  devicePixelRatio: number,
+) {
+  const desiredScale = Math.max(1, Number.isFinite(devicePixelRatio) ? devicePixelRatio : 1);
+  const dimensionScale = Math.min(
+    artifactCaptureMaxDimension / width,
+    artifactCaptureMaxDimension / height,
+  );
+  const pixelScale = Math.sqrt(artifactCaptureMaxPixels / (width * height));
+  return Math.max(1, Math.min(desiredScale, dimensionScale, pixelScale));
+}
+
 async function optimalCaptureWidth(
   frame: HTMLIFrameElement,
   document: Document,
@@ -141,6 +155,7 @@ export async function captureArtifactSnapshot(snapshot: ArtifactCaptureSnapshot)
     const body = captureDocument.body;
     const width = Math.max(viewportWidth, renderedContentWidth(captureDocument));
     const height = Math.max(viewportHeight, root.scrollHeight, body?.scrollHeight ?? 0);
+    const scale = selectArtifactCaptureScale(width, height, window.devicePixelRatio);
     if (
       width > artifactCaptureMaxDimension
       || height > artifactCaptureMaxDimension
@@ -162,7 +177,7 @@ export async function captureArtifactSnapshot(snapshot: ArtifactCaptureSnapshot)
       windowHeight: viewportHeight,
       scrollX: 0,
       scrollY: 0,
-      scale: 1,
+      scale,
       useCORS: true,
       allowTaint: false,
       imageTimeout: 15_000,
