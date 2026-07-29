@@ -357,10 +357,10 @@ const minimumCanvasScale = 0.4;
 const maximumCanvasScale = 1.8;
 const workflowNodeWidth = 176;
 const workflowNodeHeight = 86;
-const workflowLayerTop = 160;
 const workflowLayerGap = 74;
-const workflowSiblingGap = 36;
 const workflowMissionRootPosition = { positionX: 272, positionY: 88 } as const;
+const workflowLayerTop = workflowMissionRootPosition.positionY + workflowNodeHeight + workflowLayerGap;
+const workflowSiblingGap = 36;
 const defaultInspectorWidth = 760;
 const minimumInspectorWidth = 420;
 const maximumInspectorWidthRatio = 0.84;
@@ -413,7 +413,10 @@ function storedInspectorWidth() {
   }
 }
 
-function arrangeWorkflowTopDown(workflow: DeepAnalysisWorkflowRevision) {
+function arrangeWorkflowTopDown(
+  workflow: DeepAnalysisWorkflowRevision,
+  includeIsolatedNodes = false,
+) {
   const nodeByKey = new Map(workflow.nodes.map((node) => [node.nodeKey, node]));
   const outgoing = new Map<string, string[]>();
   const incomingCount = new Map(workflow.nodes.map((node) => [node.nodeKey, 0]));
@@ -425,6 +428,9 @@ function arrangeWorkflowTopDown(workflow: DeepAnalysisWorkflowRevision) {
     outgoing.set(edge.sourceNodeKey, [...(outgoing.get(edge.sourceNodeKey) ?? []), edge.targetNodeKey]);
     incomingCount.set(edge.targetNodeKey, (incomingCount.get(edge.targetNodeKey) ?? 0) + 1);
   }
+  const layoutNodeKeys = includeIsolatedNodes
+    ? new Set(workflow.nodes.map((node) => node.nodeKey))
+    : connectedNodeKeys;
 
   const compareNodes = (leftKey: string, rightKey: string) => {
     const left = nodeByKey.get(leftKey);
@@ -434,7 +440,7 @@ function arrangeWorkflowTopDown(workflow: DeepAnalysisWorkflowRevision) {
       || leftKey.localeCompare(rightKey);
   };
   const queue = workflow.nodes
-    .filter((node) => connectedNodeKeys.has(node.nodeKey) && (incomingCount.get(node.nodeKey) ?? 0) === 0)
+    .filter((node) => layoutNodeKeys.has(node.nodeKey) && (incomingCount.get(node.nodeKey) ?? 0) === 0)
     .map((node) => node.nodeKey)
     .sort(compareNodes);
   const depth = new Map(queue.map((nodeKey) => [nodeKey, 0]));
@@ -456,30 +462,23 @@ function arrangeWorkflowTopDown(workflow: DeepAnalysisWorkflowRevision) {
 
   let fallbackDepth = Math.max(0, ...depth.values());
   for (const node of [...workflow.nodes].sort((left, right) => compareNodes(left.nodeKey, right.nodeKey))) {
-    if (!connectedNodeKeys.has(node.nodeKey) || visited.has(node.nodeKey)) continue;
+    if (!layoutNodeKeys.has(node.nodeKey) || visited.has(node.nodeKey)) continue;
     fallbackDepth += 1;
     depth.set(node.nodeKey, fallbackDepth);
   }
   const layers = new Map<number, DeepAnalysisWorkflowNode[]>();
   for (const node of workflow.nodes) {
-    if (!connectedNodeKeys.has(node.nodeKey)) continue;
+    if (!layoutNodeKeys.has(node.nodeKey)) continue;
     const nodeDepth = depth.get(node.nodeKey) ?? 0;
     layers.set(nodeDepth, [...(layers.get(nodeDepth) ?? []), node]);
   }
   for (const nodes of layers.values()) {
     nodes.sort((left, right) => compareNodes(left.nodeKey, right.nodeKey));
   }
-  const maximumLayerWidth = Math.max(
-    workflowNodeWidth,
-    ...[...layers.values()].map(
-      (nodes) => nodes.length * workflowNodeWidth + Math.max(0, nodes.length - 1) * workflowSiblingGap,
-    ),
-  );
-
   return {
     ...workflow,
     nodes: workflow.nodes.map((node) => {
-      if (!connectedNodeKeys.has(node.nodeKey)) return node;
+      if (!layoutNodeKeys.has(node.nodeKey)) return node;
       const nodeDepth = depth.get(node.nodeKey) ?? 0;
       const layer = layers.get(nodeDepth) ?? [node];
       const column = layer.findIndex((item) => item.nodeKey === node.nodeKey);
@@ -487,7 +486,7 @@ function arrangeWorkflowTopDown(workflow: DeepAnalysisWorkflowRevision) {
         + Math.max(0, layer.length - 1) * workflowSiblingGap;
       return {
         ...node,
-        positionX: 48 + (maximumLayerWidth - layerWidth) / 2
+        positionX: workflowMissionRootPosition.positionX + (workflowNodeWidth - layerWidth) / 2
           + column * (workflowNodeWidth + workflowSiblingGap),
         positionY: workflowLayerTop + nodeDepth * (workflowNodeHeight + workflowLayerGap),
       };
@@ -1570,12 +1569,12 @@ export function DeepAnalysisView({
     setError(null);
     try {
       const draft = workflowDraft ?? await api.deepAnalysis.createDraft(mission.id, mission.revision);
-      const arranged = arrangeWorkflowTopDown(draft);
+      const arranged = arrangeWorkflowTopDown(draft, true);
       setWorkflowDraft(arranged);
       setWorkflowDraftDirty(true);
       setEditingWorkflow(true);
       setSelectedNodeKey(arranged.nodes[0]?.nodeKey ?? null);
-      window.requestAnimationFrame(() => fitNodesToViewport(arranged.nodes));
+      window.requestAnimationFrame(() => fitNodesToViewport([workflowMissionRootPosition, ...arranged.nodes]));
     } catch (draftError) {
       setError(errorMessage(draftError));
     } finally {

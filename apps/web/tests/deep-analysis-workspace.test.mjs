@@ -192,13 +192,29 @@ test("newly added isolated Nodes keep their position and do not affect connected
   assert.match(view, /const connectedNodeKeys = new Set<string>\(\)/);
   assert.match(view, /connectedNodeKeys\.add\(edge\.sourceNodeKey\)/);
   assert.match(view, /connectedNodeKeys\.add\(edge\.targetNodeKey\)/);
-  assert.match(view, /if \(!connectedNodeKeys\.has\(node\.nodeKey\)\) continue/);
-  assert.match(view, /if \(!connectedNodeKeys\.has\(node\.nodeKey\)\) return node/);
+  assert.match(view, /const layoutNodeKeys = includeIsolatedNodes[\s\S]*?: connectedNodeKeys/);
+  assert.match(view, /if \(!layoutNodeKeys\.has\(node\.nodeKey\)\) continue/);
+  assert.match(view, /if \(!layoutNodeKeys\.has\(node\.nodeKey\)\) return node/);
   assert.match(view, /setWorkflowDraft\(\{ \.\.\.workflowDraft, nodes: \[\.\.\.workflowDraft\.nodes, node\] \}\)/);
   assert.match(view, /const occupiedPositions = \[\.\.\.workflowDraft\.nodes, workflowMissionRootPosition\]/);
   assert.match(view, /while \(occupiedPositions\.some\(/);
   assert.doesNotMatch(addDraftNode, /setCanvasOffset\(/);
   assert.match(view, /nodes: current\.nodes\.map\(\(node\) => node\.nodeKey === pending\.nodeKey[\s\S]*?: node\)/);
+});
+
+test("Node auto-arrange explicitly lays out isolated Nodes without creating Edges", async () => {
+  const view = await readFile(viewPath, "utf8");
+  const autoArrangeWorkflow = view.slice(
+    view.indexOf("async function autoArrangeWorkflow()"),
+    view.indexOf("async function regenerateWorkflow("),
+  );
+
+  assert.match(view, /function arrangeWorkflowTopDown\([\s\S]*?includeIsolatedNodes = false/);
+  assert.match(view, /const arranged = arrangeWorkflowTopDown\(draft, true\)/);
+  assert.match(view, /fitNodesToViewport\(\[workflowMissionRootPosition, \.\.\.arranged\.nodes\]\)/);
+  assert.match(view, /const workflowLayerTop = workflowMissionRootPosition\.positionY \+ workflowNodeHeight \+ workflowLayerGap/);
+  assert.match(view, /positionX: workflowMissionRootPosition\.positionX \+ \(workflowNodeWidth - layerWidth\) \/ 2/);
+  assert.doesNotMatch(autoArrangeWorkflow, /edges:\s*\[/);
 });
 
 test("Mission root opens the existing analysis information and persists edits", async () => {
