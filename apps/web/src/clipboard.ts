@@ -2,6 +2,10 @@ type ClipboardWriter = {
   writeText: (text: string) => Promise<void>;
 };
 
+type ImageClipboardWriter = {
+  write: (items: ClipboardItems) => Promise<void>;
+};
+
 type CopyTextOptions = {
   clipboard?: ClipboardWriter | null;
   legacyCopy?: (text: string) => boolean;
@@ -57,4 +61,27 @@ export async function copyText(text: string, options: CopyTextOptions = {}) {
   }
   if (clipboardError instanceof Error) throw clipboardError;
   throw new Error("Clipboard copy failed.");
+}
+
+export async function copyPngToClipboard(
+  png: Promise<Blob>,
+  uploadFallback: (blob: Blob) => Promise<void>,
+) {
+  const clipboard = typeof navigator !== "undefined"
+    ? navigator.clipboard as (Clipboard & ImageClipboardWriter) | undefined
+    : undefined;
+  if (
+    typeof window !== "undefined"
+    && window.isSecureContext !== false
+    && typeof clipboard?.write === "function"
+    && typeof ClipboardItem !== "undefined"
+  ) {
+    await clipboard.write([
+      new ClipboardItem({
+        "image/png": png,
+      }),
+    ]);
+    return;
+  }
+  await uploadFallback(await png);
 }

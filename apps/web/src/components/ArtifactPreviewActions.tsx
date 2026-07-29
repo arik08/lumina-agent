@@ -1,4 +1,4 @@
-import { BookPlus, Code2, Download, ExternalLink, Eye, LoaderCircle } from "lucide-react";
+import { BookPlus, Camera, Check, Code2, Download, ExternalLink, Eye, LoaderCircle } from "lucide-react";
 
 import { ShareActionIcon } from "./ActionIcons";
 
@@ -9,11 +9,15 @@ interface ArtifactPreviewActionsProps {
   knowledgeSaving?: boolean;
   knowledgeSaved?: boolean;
   shareDisabled?: boolean;
+  captureDisabled?: boolean;
+  captureState?: "idle" | "capturing" | "copied";
+  captureTooltip?: string;
   downloadDisabled?: boolean;
   openWindowHref?: string | null;
   onToggleSource: () => void | Promise<void>;
   onSaveKnowledge?: () => void | Promise<void>;
   onShare: () => void | Promise<void>;
+  onCapture?: () => void | Promise<void>;
   onDownload: () => void | Promise<void>;
 }
 
@@ -24,11 +28,15 @@ export function ArtifactPreviewActions({
   knowledgeSaving = false,
   knowledgeSaved = false,
   shareDisabled = false,
+  captureDisabled = false,
+  captureState = "idle",
+  captureTooltip = "전체 이미지 복사",
   downloadDisabled = false,
   openWindowHref = null,
   onToggleSource,
   onSaveKnowledge,
   onShare,
+  onCapture,
   onDownload,
 }: ArtifactPreviewActionsProps) {
   return <>
@@ -65,6 +73,20 @@ export function ArtifactPreviewActions({
     >
       <ShareActionIcon size={17} />
     </button>
+    {onCapture && (
+      <button
+        className={`artifact-capture-control tooltip-control ${captureState === "copied" ? "is-copied" : ""}`}
+        type="button"
+        aria-label={captureState === "capturing" ? "전체 이미지 생성 중" : captureState === "copied" ? "전체 이미지 복사됨" : "전체 이미지 복사"}
+        data-tooltip={captureState === "capturing" ? "전체 이미지 생성 중" : captureState === "copied" ? "전체 이미지 복사됨" : captureTooltip}
+        disabled={captureDisabled || captureState === "capturing"}
+        onClick={() => void onCapture()}
+      >
+        {captureState === "capturing"
+          ? <LoaderCircle className="is-running" size={17} />
+          : captureState === "copied" ? <Check size={17} /> : <Camera size={17} />}
+      </button>
+    )}
     <button
       className="artifact-file-control tooltip-control"
       type="button"

@@ -1265,6 +1265,15 @@ export async function downloadArtifactVersion(
   };
 }
 
+export async function copyPngImageToHostClipboard(blob: Blob, signal?: AbortSignal) {
+  await request<{ ok: true }>("/clipboard/image", {
+    method: "POST",
+    body: blob,
+    headers: { "Content-Type": "image/png" },
+    signal,
+  });
+}
+
 export async function putMessageRating(
   messageId: string,
   value: "like" | "dislike",

@@ -1,5 +1,11 @@
 import { LoaderCircle } from "lucide-react";
 import { useEffect, useState, type RefObject } from "react";
+import {
+  artifactCaptureRequestMessage,
+  artifactCaptureSnapshotMessage,
+  captureArtifactSnapshot,
+  type ArtifactCaptureSnapshot,
+} from "../artifact-capture";
 import "./ArtifactHtmlPreview.css";
 
 const artifactPreviewHeightMessage = "lumina:artifact-preview-height";
@@ -11,7 +17,16 @@ function withAutoHeightBridge(source: string) {
   return `${source}${bridge}`;
 }
 
-export function useArtifactPreviewBridge(frameRef: RefObject<HTMLIFrameElement | null>) {
+export type ArtifactCaptureResult = {
+  requestId: string;
+  blob?: Blob;
+  error?: string;
+};
+
+export function useArtifactPreviewBridge(
+  frameRef: RefObject<HTMLIFrameElement | null>,
+  onCaptureResult?: (result: ArtifactCaptureResult) => void,
+) {
   useEffect(() => {
     let renderQueue = Promise.resolve();
     const receiveMermaidRequest = (event: MessageEvent) => {
@@ -30,9 +45,43 @@ export function useArtifactPreviewBridge(frameRef: RefObject<HTMLIFrameElement |
         }
       });
     };
+    const receiveCaptureSnapshot = (event: MessageEvent) => {
+      const target = frameRef.current?.contentWindow;
+      if (
+        !onCaptureResult
+        || event.source !== target
+        || event.data?.type !== artifactCaptureSnapshotMessage
+        || typeof event.data.requestId !== "string"
+      ) return;
+      const requestId = event.data.requestId;
+      if (typeof event.data.error === "string") {
+        onCaptureResult({ requestId, error: event.data.error });
+        return;
+      }
+      if (
+        typeof event.data.html !== "string"
+        || typeof event.data.width !== "number"
+        || typeof event.data.height !== "number"
+        || typeof event.data.viewportHeight !== "number"
+      ) {
+        onCaptureResult({ requestId, error: "캡처 문서 정보가 올바르지 않습니다." });
+        return;
+      }
+      void captureArtifactSnapshot(event.data as ArtifactCaptureSnapshot).then(
+        (blob) => onCaptureResult({ requestId, blob }),
+        (error) => onCaptureResult({
+          requestId,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    };
     window.addEventListener("message", receiveMermaidRequest);
-    return () => window.removeEventListener("message", receiveMermaidRequest);
-  }, [frameRef]);
+    window.addEventListener("message", receiveCaptureSnapshot);
+    return () => {
+      window.removeEventListener("message", receiveMermaidRequest);
+      window.removeEventListener("message", receiveCaptureSnapshot);
+    };
+  }, [frameRef, onCaptureResult]);
 }
 
 export function ArtifactHtmlPreview({
@@ -41,19 +90,23 @@ export function ArtifactHtmlPreview({
   previewUrl,
   title,
   autoHeight = false,
+  captureRequestId = "",
+  onCaptureResult,
 }: {
   frameRef: RefObject<HTMLIFrameElement | null>;
   source: string | null;
   previewUrl: string | null;
   title: string;
   autoHeight?: boolean;
+  captureRequestId?: string;
+  onCaptureResult?: (result: ArtifactCaptureResult) => void;
 }) {
   const [frameContent, setFrameContent] = useState<
     { src: string; srcDoc?: never } | { src?: never; srcDoc: string } | null
   >(null);
   const [loaded, setLoaded] = useState(false);
   const [frameHeight, setFrameHeight] = useState<number | null>(null);
-  useArtifactPreviewBridge(frameRef);
+  useArtifactPreviewBridge(frameRef, onCaptureResult);
 
   useEffect(() => {
     setLoaded(false);
@@ -82,6 +135,21 @@ export function ArtifactHtmlPreview({
     window.addEventListener("message", receiveHeight);
     return () => window.removeEventListener("message", receiveHeight);
   }, [autoHeight, frameRef]);
+
+  useEffect(() => {
+    if (!captureRequestId) return;
+    const frame = frameRef.current;
+    if (!frame) return;
+    const requestCapture = () => {
+      frame.contentWindow?.postMessage({
+        type: artifactCaptureRequestMessage,
+        requestId: captureRequestId,
+      }, "*");
+    };
+    requestCapture();
+    frame.addEventListener("load", requestCapture);
+    return () => frame.removeEventListener("load", requestCapture);
+  }, [captureRequestId, frameRef]);
 
   return <div className={`artifact-preview-shell ${autoHeight ? "is-auto-height" : ""}`} aria-busy={!loaded}>
     {!loaded && <div className="artifact-preview-loading" role="progressbar" aria-label="HTML 미리보기 준비 중">

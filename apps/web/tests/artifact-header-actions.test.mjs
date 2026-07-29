@@ -13,7 +13,7 @@ test("artifact header keeps its actions visible above the preview", async () => 
     readFile(stylesheetPath, "utf8"),
   ]);
 
-  for (const label of ["소스코드 보기", "지식 그래프 등록", "공유 링크 복사", "다운로드", "새 창에서 열기"]) {
+  for (const label of ["소스코드 보기", "지식 그래프 등록", "공유 링크 복사", "전체 이미지 복사", "다운로드", "새 창에서 열기"]) {
     assert.ok(actions.includes(label), `missing shared Artifact preview action: ${label}`);
   }
   for (const label of ["본문 수정", "전체화면", "Artifact 닫기"]) {

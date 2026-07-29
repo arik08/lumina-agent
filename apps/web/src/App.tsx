@@ -79,11 +79,11 @@ import {
   defaultArtifactOutputTokens,
   PromptEnhancementMenu,
 } from "./components/ComposerControls";
-import { copyText } from "./clipboard";
+import { copyPngToClipboard, copyText } from "./clipboard";
 import { clipboardTextWithLineBreaks } from "./composer-clipboard";
 import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent as ReactUIEvent } from "react";
 import { createPortal } from "react-dom";
-import { api, ApiError, artifactStandalonePreviewUrl, attachmentContentUrl, saveKnowledgeDocumentFromArtifact } from "./api";
+import { api, ApiError, artifactStandalonePreviewUrl, attachmentContentUrl, copyPngImageToHostClipboard, saveKnowledgeDocumentFromArtifact } from "./api";
 import { deepAnalysisSidebarApi } from "./feature-api";
 import { isTerminalRunStatus } from "./run-status";
 import { IsolatedSyntaxTextarea, SyntaxCode } from "./components/SyntaxCode";
@@ -133,6 +133,7 @@ import {
   sessionUsageRevision,
 } from "./components/ConversationTurn";
 import { ArtifactPreviewActions } from "./components/ArtifactPreviewActions";
+import type { ArtifactCaptureResult } from "./components/ArtifactHtmlPreview";
 import { ImageAttachmentViewer } from "./components/ImageAttachmentViewer";
 import { TextAttachmentViewer } from "./components/TextAttachmentViewer";
 
@@ -156,6 +157,7 @@ const artifactPreviewEditSnapshotRequest = "lumina:artifact-preview-edit-snapsho
 const artifactPreviewEditSnapshotMessage = "lumina:artifact-preview-edit-snapshot";
 const artifactAiCommentMessage = "lumina:artifact-ai-comment";
 const artifactAiCommentsMessage = "lumina:artifact-ai-comments";
+const artifactCaptureTimeoutMs = 30_000;
 const artifactPaneMinWidth = 360;
 const artifactPaneDefaultWidth = 1200;
 const artifactSplitPaneMinViewport = 1024;
@@ -1000,6 +1002,8 @@ function App() {
   const [artifactSaveBusy, setArtifactSaveBusy] = useState<"draft" | "version" | null>(null);
   const [artifactKnowledgeSaving, setArtifactKnowledgeSaving] = useState(false);
   const [artifactKnowledgeSavedKey, setArtifactKnowledgeSavedKey] = useState<string | null>(null);
+  const [artifactCaptureState, setArtifactCaptureState] = useState<"idle" | "capturing" | "copied">("idle");
+  const [artifactCaptureRequestId, setArtifactCaptureRequestId] = useState("");
   const titleCommitRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const composerInputRef = useRef<HTMLTextAreaElement>(null);
@@ -1012,6 +1016,13 @@ function App() {
   const artifactOpenRequestRef = useRef(0);
   const artifactHistoryOpenRef = useRef(false);
   const artifactPreviewFrameRef = useRef<HTMLIFrameElement>(null);
+  const pendingArtifactCaptureRef = useRef<{
+    requestId: string;
+    resolve: (blob: Blob) => void;
+    reject: (error: Error) => void;
+    timeoutId: number;
+  } | null>(null);
+  const artifactCaptureResetTimerRef = useRef<number | null>(null);
   const artifactEditSnapshotResolversRef = useRef(new Map<string, (html: string) => void>());
   const artifactEditSnapshotCounterRef = useRef(0);
   const artifactDraftRef = useRef("");
@@ -1035,6 +1046,21 @@ function App() {
   useEffect(() => {
     artifactDraftRef.current = artifactDraft;
   }, [artifactDraft]);
+
+  useEffect(() => {
+    const pending = pendingArtifactCaptureRef.current;
+    if (pending) {
+      window.clearTimeout(pending.timeoutId);
+      pending.reject(new Error("Artifact가 변경되어 전체 이미지 생성을 취소했습니다."));
+      pendingArtifactCaptureRef.current = null;
+    }
+    if (artifactCaptureResetTimerRef.current !== null) {
+      window.clearTimeout(artifactCaptureResetTimerRef.current);
+      artifactCaptureResetTimerRef.current = null;
+    }
+    setArtifactCaptureRequestId("");
+    setArtifactCaptureState("idle");
+  }, [artifactSummary?.id, artifactVersion?.version]);
 
   useEffect(() => {
     if (!workspace.settings) return;
@@ -2905,6 +2931,68 @@ function App() {
     }
   };
 
+  const handleArtifactCaptureResult = useCallback((result: ArtifactCaptureResult) => {
+    const pending = pendingArtifactCaptureRef.current;
+    if (!pending || result.requestId !== pending.requestId) return;
+    window.clearTimeout(pending.timeoutId);
+    if (result.error) {
+      pending.reject(new Error(result.error));
+      return;
+    }
+    if (!result.blob || result.blob.type !== "image/png") {
+      pending.reject(new Error("보고서 PNG 이미지가 생성되지 않았습니다."));
+      return;
+    }
+    pending.resolve(result.blob);
+  }, []);
+
+  const copyArtifactImage = async () => {
+    if (
+      artifactVersion?.mimeType !== "text/html"
+      || artifactTab !== "preview"
+      || artifactEditing
+      || artifactLoading
+      || pendingArtifactCaptureRef.current
+    ) return;
+    if (artifactCaptureResetTimerRef.current !== null) {
+      window.clearTimeout(artifactCaptureResetTimerRef.current);
+      artifactCaptureResetTimerRef.current = null;
+    }
+    const requestId = typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `artifact-capture-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    let captureTimeoutId = 0;
+    const png = new Promise<Blob>((resolve, reject) => {
+      captureTimeoutId = window.setTimeout(() => {
+        if (pendingArtifactCaptureRef.current?.requestId !== requestId) return;
+        reject(new Error("전체 이미지 생성 시간이 초과되었습니다."));
+      }, artifactCaptureTimeoutMs);
+      pendingArtifactCaptureRef.current = {
+        requestId,
+        resolve,
+        reject,
+        timeoutId: captureTimeoutId,
+      };
+    });
+    setArtifactCaptureState("capturing");
+    setArtifactCaptureRequestId(requestId);
+    try {
+      await copyPngToClipboard(png, copyPngImageToHostClipboard);
+      setArtifactCaptureState("copied");
+      artifactCaptureResetTimerRef.current = window.setTimeout(() => {
+        artifactCaptureResetTimerRef.current = null;
+        setArtifactCaptureState("idle");
+      }, 1_400);
+    } catch (error) {
+      setArtifactCaptureState("idle");
+      showToast(`전체 이미지 복사 실패: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      window.clearTimeout(captureTimeoutId);
+      pendingArtifactCaptureRef.current = null;
+      setArtifactCaptureRequestId("");
+    }
+  };
+
   const shareArtifact = async () => {
     if (!artifactSummary?.conversationId) return;
     try {
@@ -4325,6 +4413,11 @@ function App() {
                 knowledgeSaving={artifactKnowledgeSaving}
                 knowledgeSaved={artifactKnowledgeKey !== null && artifactKnowledgeSavedKey === artifactKnowledgeKey}
                 shareDisabled={!artifactSummary?.conversationId}
+                captureDisabled={artifactTab !== "preview" || artifactEditing || artifactLoading}
+                captureState={artifactCaptureState}
+                captureTooltip={artifactTab !== "preview"
+                  ? "미리보기에서 전체 이미지 복사"
+                  : artifactEditing ? "수정사항 반영 후 전체 이미지 복사" : "전체 이미지 복사"}
                 downloadDisabled={!artifactSummary || artifactDownloadVersion === null}
                 openWindowHref={
                   artifactSummary && artifactVersion?.mimeType === "text/html"
@@ -4334,6 +4427,7 @@ function App() {
                 onToggleSource={toggleArtifactTab}
                 onSaveKnowledge={saveArtifactToKnowledge}
                 onShare={shareArtifact}
+                onCapture={artifactVersion?.mimeType === "text/html" ? copyArtifactImage : undefined}
                 onDownload={downloadArtifact}
               />
               <button className="tooltip-control" type="button" aria-label={artifactFullscreen ? "전체화면 종료" : "전체화면"} data-tooltip={artifactFullscreen ? "전체화면 종료" : "전체화면"} onClick={() => setArtifactFullscreen((value) => !value)}>
@@ -4404,6 +4498,8 @@ function App() {
                     source={artifactEditing ? artifactEditablePreview : null}
                     previewUrl={artifactEditing ? null : artifactPreviewUrl}
                     title={artifactSummary?.displayName ?? "Artifact 미리보기"}
+                    captureRequestId={artifactCaptureRequestId}
+                    onCaptureResult={handleArtifactCaptureResult}
                   />
                 </Suspense>
               ) : (

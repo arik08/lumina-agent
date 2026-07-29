@@ -2,6 +2,67 @@
   if (window.__luminaArtifactPreviewBridgeReady) return;
   window.__luminaArtifactPreviewBridgeReady = true;
 
+  const captureRequestType = "lumina:artifact-capture-request";
+  const captureSnapshotType = "lumina:artifact-capture-snapshot";
+  let activeCaptureRequestId = "";
+
+  window.addEventListener("message", async (event) => {
+    if (event.data?.type !== captureRequestType) return;
+    const requestId = String(event.data.requestId || "");
+    if (!requestId || requestId === activeCaptureRequestId) return;
+    activeCaptureRequestId = requestId;
+    try {
+      if (document.fonts?.ready) await document.fonts.ready;
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const root = document.documentElement;
+      const body = document.body;
+      const width = Math.max(root?.scrollWidth || 0, body?.scrollWidth || 0, window.innerWidth || 0);
+      const height = Math.max(root?.scrollHeight || 0, body?.scrollHeight || 0, window.innerHeight || 0);
+      if (!width || !height) throw new Error("캡처할 보고서 크기를 확인할 수 없습니다.");
+      const snapshot = root.cloneNode(true);
+      snapshot.querySelectorAll("script").forEach((element) => element.remove());
+      if (!snapshot.querySelector("base")) {
+        const base = document.createElement("base");
+        base.href = document.baseURI;
+        snapshot.querySelector("head")?.prepend(base);
+      }
+      const sourceCanvases = Array.from(document.querySelectorAll("canvas"));
+      const snapshotCanvases = Array.from(snapshot.querySelectorAll("canvas"));
+      sourceCanvases.forEach((canvas, index) => {
+        const target = snapshotCanvases[index];
+        if (!target) return;
+        try {
+          const image = document.createElement("img");
+          image.src = canvas.toDataURL("image/png");
+          image.alt = canvas.getAttribute("aria-label") || "";
+          image.width = canvas.width;
+          image.height = canvas.height;
+          image.setAttribute("style", canvas.getAttribute("style") || "");
+          target.replaceWith(image);
+        } catch {
+          // A cross-origin canvas cannot expose pixels; html2canvas will report the remaining issue.
+        }
+      });
+      const doctype = document.doctype ? `<!DOCTYPE ${document.doctype.name}>` : "<!doctype html>";
+      parent.postMessage({
+        type: captureSnapshotType,
+        requestId,
+        html: `${doctype}\n${snapshot.outerHTML}`,
+        width,
+        height,
+        viewportHeight: window.innerHeight,
+      }, "*");
+    } catch (error) {
+      parent.postMessage({
+        type: captureSnapshotType,
+        requestId,
+        error: error instanceof Error ? error.message : String(error),
+      }, "*");
+    } finally {
+      activeCaptureRequestId = "";
+    }
+  });
+
   const style = document.createElement("style");
   style.id = "lumina-artifact-preview-style";
   style.textContent = `
