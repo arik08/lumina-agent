@@ -636,7 +636,7 @@ def _login(client: TestClient) -> None:
         json={
             "loginName": "admin",
             "loginDomain": "posco.com",
-            "password": "1",
+            "password": "1111",
         },
     )
     assert response.status_code == 200, response.text
@@ -764,7 +764,7 @@ def test_prompt_enhancement_endpoint_is_one_tool_free_provider_call(
             json={
                 "loginName": "admin",
                 "loginDomain": "posco.com",
-                "password": "1",
+                "password": "1111",
             },
         )
         response = client.post(

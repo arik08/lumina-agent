@@ -496,7 +496,7 @@ def test_admin_membership_management_is_limited_to_its_organization(
         assert other_org_add.status_code == 404
         assert other_org_add.json()["code"] == "organization_user_not_found"
 
-        admin_headers = _login(client, "admin", "1")
+        admin_headers = _login(client, "admin", "1111")
         same_org_admin_add = client.post(
             f"/api/projects/{project_id}/memberships",
             headers=admin_headers,

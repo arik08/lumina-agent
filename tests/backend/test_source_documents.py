@@ -53,7 +53,7 @@ def _settings(tmp_path: Path) -> Settings:
 def _login(client: TestClient) -> dict[str, str]:
     response = client.post(
         "/api/auth/login",
-        json={"loginName": "admin", "loginDomain": "posco.com", "password": "1"},
+        json={"loginName": "admin", "loginDomain": "posco.com", "password": "1111"},
     )
     assert response.status_code == 200
     return {"X-CSRF-Token": response.json()["csrfToken"]}

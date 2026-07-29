@@ -105,7 +105,7 @@ def test_instruction_api_permissions_concurrency_and_secret_guard(
 ) -> None:
     app = create_app(_settings(tmp_path))
     with TestClient(app) as client:
-        admin_headers = _login(client, "admin", "1")
+        admin_headers = _login(client, "admin", "1111")
 
         organization = client.get("/api/admin/organization/instructions")
         assert organization.status_code == 200, organization.text
@@ -302,7 +302,7 @@ def test_instruction_api_permissions_concurrency_and_secret_guard(
         assert restored_system_prompt.status_code == 403
 
         client.cookies.clear()
-        admin_headers = _login(client, "admin", "1")
+        admin_headers = _login(client, "admin", "1111")
         restored_system_prompt = client.patch(
             "/api/admin/runtime-prompts/system",
             headers=admin_headers,

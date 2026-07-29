@@ -41,7 +41,7 @@ def _settings(tmp_path: Path, name: str = "project-memory.db") -> Settings:
 
 
 def _login(
-    client: TestClient, login_name: str = "admin", password: str = "1"
+    client: TestClient, login_name: str = "admin", password: str = "1111"
 ) -> dict[str, str]:
     response = client.post(
         "/api/auth/login",

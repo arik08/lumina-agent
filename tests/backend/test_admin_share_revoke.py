@@ -32,7 +32,7 @@ def test_admin_can_force_revoke_share_without_exposing_token(tmp_path: Path) -> 
         cookie_secure=False,
     )
     with TestClient(create_app(settings)) as client:
-        admin_csrf = _login(client, "admin", "1")
+        admin_csrf = _login(client, "admin", "1111")
         recipient = client.post(
             "/api/admin/users",
             headers={"X-CSRF-Token": admin_csrf},

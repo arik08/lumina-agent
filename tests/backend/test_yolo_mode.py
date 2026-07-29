@@ -66,7 +66,7 @@ def test_default_yolo_mode_executes_dangerous_tools_without_approval(
             json={
                 "loginName": "admin",
                 "loginDomain": "posco.com",
-                "password": "1",
+                "password": "1111",
             },
         )
         assert login.status_code == 200, login.text
@@ -138,7 +138,7 @@ def test_yolo_mode_does_not_persist_sensitive_tool_arguments(
             json={
                 "loginName": "admin",
                 "loginDomain": "posco.com",
-                "password": "1",
+                "password": "1111",
             },
         )
         headers = {"X-CSRF-Token": login.json()["csrfToken"]}

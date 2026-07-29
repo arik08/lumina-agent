@@ -114,7 +114,7 @@ def _start_and_wait(
 def test_link_snapshot_share_and_revoke(tmp_path: Path) -> None:
     app = _test_app(tmp_path)
     with TestClient(app) as client:
-        admin_csrf = _login(client, "admin", "1")
+        admin_csrf = _login(client, "admin", "1111")
         for login_name in ("alice", "bob", "charlie"):
             _create_user(client, admin_csrf, login_name)
 

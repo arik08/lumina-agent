@@ -33,7 +33,7 @@ def test_help_manual_is_readable_by_users_and_managed_only_by_admins(tmp_path: P
         cookie_secure=False,
     )
     with TestClient(create_app(settings)) as client:
-        admin_csrf = _login(client, "admin", "1")
+        admin_csrf = _login(client, "admin", "1111")
         headers = {"X-CSRF-Token": admin_csrf}
         created_user = client.post(
             "/api/admin/users",
@@ -143,7 +143,7 @@ def test_help_manual_is_readable_by_users_and_managed_only_by_admins(tmp_path: P
         assert forbidden.json()["code"] == "admin_required"
 
         client.cookies.clear()
-        admin_csrf = _login(client, "admin", "1")
+        admin_csrf = _login(client, "admin", "1111")
         deleted = client.delete(
             f"/api/help/items/{folder.json()['id']}",
             headers={"X-CSRF-Token": admin_csrf},
@@ -164,7 +164,7 @@ def test_help_item_compare_and_swap_rejects_stale_admin_session(
         cookie_secure=False,
     )
     with TestClient(create_app(settings)) as client:
-        csrf = _login(client, "admin", "1")
+        csrf = _login(client, "admin", "1111")
         created = client.post(
             "/api/help/items",
             headers={"X-CSRF-Token": csrf},

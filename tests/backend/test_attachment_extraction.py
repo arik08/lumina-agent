@@ -209,7 +209,7 @@ def test_attachment_api_rejects_fake_office_and_persists_valid_extraction(
             json={
                 "loginName": "admin",
                 "loginDomain": "posco.com",
-                "password": "1",
+                "password": "1111",
             },
         )
         csrf = login.json()["csrfToken"]
@@ -290,7 +290,7 @@ def test_attachment_commit_failure_cleans_all_managed_files(tmp_path: Path) -> N
             json={
                 "loginName": "admin",
                 "loginDomain": "posco.com",
-                "password": "1",
+                "password": "1111",
             },
         )
         csrf = login.json()["csrfToken"]

@@ -25,7 +25,7 @@ def test_login_run_replay_and_artifact_version(tmp_path: Path, capsys) -> None:
             json={
                 "loginName": "admin",
                 "loginDomain": "posco.com",
-                "password": "1",
+                "password": "1111",
             },
         )
         assert login.status_code == 200

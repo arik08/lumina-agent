@@ -182,7 +182,7 @@ def _login(client: TestClient) -> str:
         json={
             "loginName": "admin",
             "loginDomain": "posco.com",
-            "password": "1",
+            "password": "1111",
         },
     )
     assert response.status_code == 200, response.text

@@ -52,7 +52,7 @@ def test_conversation_and_run_freeze_builtin_frontend_contract(tmp_path: Path) -
             json={
                 "loginName": "admin",
                 "loginDomain": "posco.com",
-                "password": "1",
+                "password": "1111",
             },
         )
         assert login.status_code == 200, login.text

@@ -206,7 +206,7 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
         "last_warm_input_tokens",
         "last_warm_cached_tokens",
     } <= prompt_cache_seed_columns
-    assert revision == "0066"
+    assert revision == "0068"
     assert "ix_run_events_run_type" in {
         index["name"] for index in inspector.get_indexes("run_events")
     }
@@ -472,7 +472,7 @@ def test_context_migration_adopts_legacy_create_all_table(tmp_path: Path) -> Non
         }
         with engine.connect() as connection:
             assert (
-                MigrationContext.configure(connection).get_current_revision() == "0066"
+                MigrationContext.configure(connection).get_current_revision() == "0068"
             )
     finally:
         engine.dispose()
@@ -502,7 +502,7 @@ def test_recent_migrations_adopt_tables_precreated_by_runtime_schema(
     try:
         with engine.connect() as connection:
             revision = MigrationContext.configure(connection).get_current_revision()
-        assert revision == "0066"
+        assert revision == "0068"
     finally:
         engine.dispose()
 

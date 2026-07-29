@@ -93,7 +93,7 @@ def _create_user(
 def test_admin_run_safety_settings_and_emergency_stop(tmp_path: Path) -> None:
     app = _test_app(tmp_path)
     with TestClient(app) as admin_client:
-        csrf = _login(admin_client, "admin", "1")
+        csrf = _login(admin_client, "admin", "1111")
 
         defaults = admin_client.get("/api/admin/run-safety")
         assert defaults.status_code == 200, defaults.text
@@ -220,7 +220,7 @@ def test_admin_run_safety_settings_and_emergency_stop(tmp_path: Path) -> None:
 def test_admin_user_lifecycle_permissions_and_audit(tmp_path: Path) -> None:
     app = _test_app(tmp_path)
     with TestClient(app) as admin_client:
-        admin_csrf = _login(admin_client, "admin", "1")
+        admin_csrf = _login(admin_client, "admin", "1111")
         assert (
             admin_client.post(
                 "/api/admin/users",
@@ -326,7 +326,7 @@ def test_admin_usage_statistics_are_organization_scoped_and_admin_only(
 ) -> None:
     app = _test_app(tmp_path)
     with TestClient(app) as admin_client:
-        admin_csrf = _login(admin_client, "admin", "1")
+        admin_csrf = _login(admin_client, "admin", "1111")
         _create_user(admin_client, admin_csrf, login_name="analyst")
         user_client = TestClient(app)
         try:
@@ -459,7 +459,7 @@ def test_admin_usage_statistics_are_organization_scoped_and_admin_only(
 def test_admin_audit_traffic_returns_complete_minute_buckets(tmp_path: Path) -> None:
     app = _test_app(tmp_path)
     with TestClient(app) as admin_client:
-        admin_csrf = _login(admin_client, "admin", "1")
+        admin_csrf = _login(admin_client, "admin", "1111")
         _create_user(admin_client, admin_csrf, login_name="traffic-user")
         user_client = TestClient(app)
         try:
@@ -565,7 +565,7 @@ def test_admin_audit_traffic_returns_complete_minute_buckets(tmp_path: Path) -> 
 def test_admin_conversation_view_is_audited(tmp_path: Path) -> None:
     app = _test_app(tmp_path)
     with TestClient(app) as client:
-        csrf = _login(client, "admin", "1")
+        csrf = _login(client, "admin", "1111")
         project_id = client.get("/api/projects").json()[0]["id"]
         conversation = client.post(
             "/api/conversations",
@@ -689,7 +689,7 @@ def test_admin_announcements_are_managed_by_admins_and_visible_to_users(
 ) -> None:
     app = _test_app(tmp_path)
     with TestClient(app) as admin_client:
-        admin_csrf = _login(admin_client, "admin", "1")
+        admin_csrf = _login(admin_client, "admin", "1111")
         _create_user(admin_client, admin_csrf, login_name="announcement-reader")
 
         user_client = TestClient(app)

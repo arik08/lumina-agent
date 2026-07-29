@@ -23,7 +23,7 @@ def test_model_candidates_allow_multiple_and_empty_selection(tmp_path: Path) -> 
             json={
                 "loginName": "admin",
                 "loginDomain": "posco.com",
-                "password": "1",
+                "password": "1111",
             },
         )
         assert login.status_code == 200
@@ -77,7 +77,7 @@ def test_composer_output_mode_defaults_and_persists(tmp_path: Path) -> None:
     with TestClient(create_app(settings)) as client:
         login = client.post(
             "/api/auth/login",
-            json={"loginName": "admin", "loginDomain": "posco.com", "password": "1"},
+            json={"loginName": "admin", "loginDomain": "posco.com", "password": "1111"},
         )
         headers = {"X-CSRF-Token": login.json()["csrfToken"]}
         project_id = client.get("/api/projects").json()[0]["id"]
@@ -114,7 +114,7 @@ def test_composer_output_mode_uses_project_scope_for_shared_project(
     with TestClient(create_app(settings)) as client:
         login = client.post(
             "/api/auth/login",
-            json={"loginName": "admin", "loginDomain": "posco.com", "password": "1"},
+            json={"loginName": "admin", "loginDomain": "posco.com", "password": "1111"},
         )
         headers = {"X-CSRF-Token": login.json()["csrfToken"]}
         project_id = client.get("/api/projects").json()[0]["id"]

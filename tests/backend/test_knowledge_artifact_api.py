@@ -30,7 +30,7 @@ def test_html_artifact_is_saved_as_readable_knowledge_document_once(
             json={
                 "loginName": "admin",
                 "loginDomain": "posco.com",
-                "password": "1",
+                "password": "1111",
             },
         )
         assert login.status_code == 200, login.text

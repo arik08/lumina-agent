@@ -76,7 +76,7 @@ def _test_app(tmp_path: Path) -> tuple[FastAPI, Settings]:
     return application, settings
 
 
-def _login(client: TestClient, name: str = "admin", password: str = "1") -> str:
+def _login(client: TestClient, name: str = "admin", password: str = "1111") -> str:
     response = client.post(
         "/api/auth/login",
         json={

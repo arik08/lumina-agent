@@ -54,7 +54,7 @@ def test_registration_requires_admin_approval_and_notifies_bootstrap_admin(
 
         assert _login(client, "new.member", "safe-password").status_code == 401
 
-        admin_session = _login(client, "admin", "1")
+        admin_session = _login(client, "admin", "1111")
         assert admin_session.status_code == 200
         csrf = admin_session.json()["csrfToken"]
         notifications = client.get("/api/notifications").json()["items"]

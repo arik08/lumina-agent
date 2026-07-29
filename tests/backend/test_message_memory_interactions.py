@@ -145,7 +145,7 @@ def _setup(tmp_path: Path) -> tuple[FastAPI, dict[str, str]]:
     return application, ids
 
 
-def _login(client: TestClient, name: str = "admin", password: str = "1") -> str:
+def _login(client: TestClient, name: str = "admin", password: str = "1111") -> str:
     response = client.post(
         "/api/auth/login",
         json={

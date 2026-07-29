@@ -74,7 +74,7 @@ def _settings(
     )
 
 
-def _login(client: TestClient, login_name: str = "admin", password: str = "1") -> str:
+def _login(client: TestClient, login_name: str = "admin", password: str = "1111") -> str:
     response = client.post(
         "/api/auth/login",
         json={
@@ -1026,19 +1026,21 @@ def test_optional_codex_warmup_does_not_block_backend_startup(
     configure_database(settings.database_url)
     create_schema()
     warmup_started = threading.Event()
+    warmup_finished = threading.Event()
     release_warmup = threading.Event()
 
     async def blocking_warmup() -> None:
         warmup_started.set()
-        await asyncio.to_thread(release_warmup.wait, 2.5)
+        try:
+            await asyncio.to_thread(release_warmup.wait, 10)
+        finally:
+            warmup_finished.set()
 
     monkeypatch.setattr(local_run_executor.codex_provider, "warmup", blocking_warmup)
-    started_at = time.monotonic()
     with TestClient(create_app(settings)) as client:
         try:
-            startup_seconds = time.monotonic() - started_at
-            assert startup_seconds < 1.25
             assert warmup_started.wait(timeout=1)
+            assert not warmup_finished.is_set()
             assert client.get("/api/health/ready").status_code == 200
         finally:
             release_warmup.set()
@@ -2596,7 +2598,10 @@ def test_expired_crashed_worker_lease_is_recovered_without_another_restart(
         }
         run.worker_id = "worker-process-that-crashed"
         run.heartbeat_at = utc_now()
-        run.lease_expires_at = utc_now() + timedelta(milliseconds=200)
+        # App startup can exceed a few hundred milliseconds under the full suite.
+        # Keep the lease live long enough to observe the paused state before the
+        # same executor recovers it after expiry.
+        run.lease_expires_at = utc_now() + timedelta(seconds=2)
 
     provider.release[marker].set()
     with TestClient(create_app(settings)) as second_client:

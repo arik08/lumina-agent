@@ -48,7 +48,7 @@ def _settings(tmp_path: Path, name: str) -> Settings:
 
 
 def _login(
-    client: TestClient, name: str = "admin", password: str = "1"
+    client: TestClient, name: str = "admin", password: str = "1111"
 ) -> dict[str, str]:
     response = client.post(
         "/api/auth/login",

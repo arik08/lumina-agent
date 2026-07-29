@@ -63,7 +63,7 @@ def test_compacted_conversation_retrieval_is_a_low_risk_local_read() -> None:
 def _login(
     client: TestClient,
     login_name: str = "admin",
-    password: str = "1",
+    password: str = "1111",
 ) -> dict[str, str]:
     response = client.post(
         "/api/auth/login",

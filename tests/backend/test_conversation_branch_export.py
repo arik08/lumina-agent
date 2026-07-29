@@ -9,7 +9,7 @@ from lumina.config import Settings
 from lumina.main import create_app
 
 
-def _login(client: TestClient, login_name: str = "admin", password: str = "1") -> str:
+def _login(client: TestClient, login_name: str = "admin", password: str = "1111") -> str:
     response = client.post(
         "/api/auth/login",
         json={

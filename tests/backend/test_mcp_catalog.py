@@ -188,7 +188,7 @@ def test_mcp_catalog_binding_snapshot_and_cross_user_isolation(
         TestClient(app) as alice_client,
         TestClient(app) as bob_client,
     ):
-        admin_csrf = _login(admin_client, "admin", "1")
+        admin_csrf = _login(admin_client, "admin", "1111")
         alice_csrf = _login(alice_client, "alice", "alice-pw")
         bob_csrf = _login(bob_client, "bob", "bob-pw")
 
@@ -764,7 +764,7 @@ def test_mcp_catalog_binding_snapshot_and_cross_user_isolation(
 def test_user_mcp_installation_can_be_scoped_by_project(tmp_path: Path) -> None:
     app, ids = _setup(tmp_path)
     with TestClient(app) as admin_client, TestClient(app) as alice_client:
-        admin_csrf = _login(admin_client, "admin", "1")
+        admin_csrf = _login(admin_client, "admin", "1111")
         alice_csrf = _login(alice_client, "alice", "alice-pw")
 
         created = admin_client.post(

@@ -232,6 +232,7 @@ def _validate_capabilities(
         catalog_entry.capabilities.maximum_context_window if catalog_entry else None
     )
     if maximum_context_window is not None:
+        assert catalog_entry is not None
         if capacity_mode not in {"standard", "maximum"}:
             raise ApiProblem(
                 422,
