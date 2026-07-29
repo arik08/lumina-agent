@@ -242,7 +242,7 @@ def codex_oauth_available() -> bool:
 
 
 class CodexResponsesAdapter:
-    """ChatGPT OAuth adapter backed by Codex App Server by default."""
+    """ChatGPT OAuth adapter using cache-aware Direct Responses by default."""
 
     provider_id = PROVIDER_ID
     capabilities = ProviderCapabilities(
@@ -251,7 +251,7 @@ class CodexResponsesAdapter:
         reasoning_effort=True,
     )
 
-    def __init__(self, *, direct_responses: bool = False) -> None:
+    def __init__(self, *, direct_responses: bool = True) -> None:
         self._client: AsyncCodex | None = None
         self._available_models: frozenset[str] = frozenset()
         self._workspace: tempfile.TemporaryDirectory[str] | None = None
@@ -343,10 +343,34 @@ class CodexResponsesAdapter:
             return self._responses_client
 
     async def stream(self, request: ProviderRequest) -> AsyncIterator[ProviderEvent]:
-        if self._direct_responses:
-            async for event in self._stream_direct(request):
+        if not self._direct_responses:
+            async for event in self._stream_app_server(request):
                 yield event
             return
+
+        output_started = False
+        try:
+            async for event in self._stream_direct(request):
+                if event.type in {
+                    "text_delta",
+                    "tool_call_started",
+                    "tool_call_delta",
+                    "tool_call_completed",
+                }:
+                    output_started = True
+                yield event
+            return
+        except ProviderRequestError as exc:
+            if output_started or exc.status_code not in {
+                400,
+                401,
+                403,
+                404,
+                405,
+                422,
+            }:
+                raise
+
         async for event in self._stream_app_server(request):
             yield event
 

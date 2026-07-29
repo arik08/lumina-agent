@@ -129,20 +129,20 @@ async def test_codex_direct_routes_same_prefix_across_new_run_sessions(
 
 
 @pytest.mark.asyncio
-async def test_codex_oauth_defaults_to_app_server_transport(
+async def test_codex_oauth_defaults_to_direct_responses_transport(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     adapter = CodexResponsesAdapter()
 
-    async def app_server_stream(_request: ProviderRequest):
+    async def direct_stream(_request: ProviderRequest):
         yield ProviderEvent(type="completed", stop_reason="stop")
 
-    async def unexpected_direct_stream(_request: ProviderRequest):
-        raise AssertionError("Direct Responses must remain opt-in")
+    async def unexpected_app_server_stream(_request: ProviderRequest):
+        raise AssertionError("App Server must remain the fallback transport")
         yield
 
-    monkeypatch.setattr(adapter, "_stream_app_server", app_server_stream)
-    monkeypatch.setattr(adapter, "_stream_direct", unexpected_direct_stream)
+    monkeypatch.setattr(adapter, "_stream_direct", direct_stream)
+    monkeypatch.setattr(adapter, "_stream_app_server", unexpected_app_server_stream)
 
     events = [
         event
@@ -155,6 +155,119 @@ async def test_codex_oauth_defaults_to_app_server_transport(
     ]
 
     assert [event.type for event in events] == ["completed"]
+
+
+@pytest.mark.asyncio
+async def test_codex_oauth_falls_back_to_app_server_before_direct_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = CodexResponsesAdapter()
+
+    async def failing_direct_stream(_request: ProviderRequest):
+        raise ProviderRequestError(
+            "Direct Responses unavailable",
+            retryable=False,
+            stage="request",
+            status_code=404,
+        )
+        yield
+
+    async def app_server_stream(_request: ProviderRequest):
+        yield ProviderEvent(type="text_delta", text="fallback")
+        yield ProviderEvent(type="completed", stop_reason="stop")
+
+    monkeypatch.setattr(adapter, "_stream_direct", failing_direct_stream)
+    monkeypatch.setattr(adapter, "_stream_app_server", app_server_stream)
+
+    events = [
+        event
+        async for event in adapter.stream(
+            ProviderRequest(
+                model="gpt-5.5",
+                messages=(ProviderMessage(role="user", content="hello"),),
+            )
+        )
+    ]
+
+    assert [(event.type, event.text) for event in events] == [
+        ("text_delta", "fallback"),
+        ("completed", None),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_codex_oauth_does_not_fall_back_after_direct_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = CodexResponsesAdapter()
+    fallback_called = False
+
+    async def partial_direct_stream(_request: ProviderRequest):
+        yield ProviderEvent(type="text_delta", text="partial")
+        raise ProviderRequestError(
+            "Direct stream interrupted",
+            retryable=True,
+            stage="stream",
+        )
+
+    async def unexpected_app_server_stream(_request: ProviderRequest):
+        nonlocal fallback_called
+        fallback_called = True
+        yield ProviderEvent(type="completed", stop_reason="stop")
+
+    monkeypatch.setattr(adapter, "_stream_direct", partial_direct_stream)
+    monkeypatch.setattr(adapter, "_stream_app_server", unexpected_app_server_stream)
+
+    with pytest.raises(ProviderRequestError, match="Direct stream interrupted"):
+        _events = [
+            event
+            async for event in adapter.stream(
+                ProviderRequest(
+                    model="gpt-5.5",
+                    messages=(ProviderMessage(role="user", content="hello"),),
+                )
+            )
+        ]
+
+    assert fallback_called is False
+
+
+@pytest.mark.asyncio
+async def test_codex_oauth_does_not_fall_back_for_transient_direct_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = CodexResponsesAdapter()
+    fallback_called = False
+
+    async def rate_limited_direct_stream(_request: ProviderRequest):
+        raise ProviderRequestError(
+            "Direct Responses rate limited",
+            retryable=True,
+            stage="request",
+            status_code=429,
+        )
+        yield
+
+    async def unexpected_app_server_stream(_request: ProviderRequest):
+        nonlocal fallback_called
+        fallback_called = True
+        yield ProviderEvent(type="completed", stop_reason="stop")
+
+    monkeypatch.setattr(adapter, "_stream_direct", rate_limited_direct_stream)
+    monkeypatch.setattr(adapter, "_stream_app_server", unexpected_app_server_stream)
+
+    with pytest.raises(ProviderRequestError, match="rate limited"):
+        _events = [
+            event
+            async for event in adapter.stream(
+                ProviderRequest(
+                    model="gpt-5.5",
+                    messages=(ProviderMessage(role="user", content="hello"),),
+                )
+            )
+        ]
+
+    assert fallback_called is False
 
 
 def test_codex_transport_close_is_classified_as_retryable_stream_failure() -> None:
