@@ -32,7 +32,8 @@ from .security import (
 
 
 BOOTSTRAP_ADMIN_LOGIN_ID = "admin@posco.com"
-BOOTSTRAP_ADMIN_PASSWORD = "1"
+BOOTSTRAP_ADMIN_PASSWORD = "1111"
+_LEGACY_BOOTSTRAP_ADMIN_PASSWORDS = ("1",)
 DEFAULT_ORGANIZATION_SLUG = "posco"
 DEFAULT_PROJECT_NAME = "기본 프로젝트"
 
@@ -279,6 +280,22 @@ def _bootstrap(session: Session, settings: Settings) -> BootstrapResult:
             role="admin",
             status="active",
             must_change_password=False,
+        )
+    elif any(
+        verify_password(password, admin.password_hash)
+        for password in _LEGACY_BOOTSTRAP_ADMIN_PASSWORDS
+    ):
+        admin.password_hash = hash_password(BOOTSTRAP_ADMIN_PASSWORD)
+        admin.failed_login_count = 0
+        admin.locked_until = None
+        revoke_user_sessions(session, admin.id)
+        _audit(
+            session,
+            action="bootstrap_admin_password_upgraded",
+            target_type="user",
+            target_id=admin.id,
+            organization_id=admin.organization_id,
+            result="success",
         )
 
     for user in session.scalars(select(User)).all():

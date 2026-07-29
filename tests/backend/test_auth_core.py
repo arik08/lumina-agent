@@ -76,7 +76,8 @@ def test_bootstrap_is_idempotent_and_seeds_contract_data(
     assert admin.status == "active"
     assert admin.must_change_password is False
     assert admin.password_hash.startswith("$argon2id$")
-    assert verify_password("1", admin.password_hash)
+    assert verify_password("1111", admin.password_hash)
+    assert not verify_password("1", admin.password_hash)
 
     default_projects = db_session.scalars(
         select(Project).where(
@@ -164,6 +165,25 @@ def test_bootstrap_never_overwrites_existing_admin_password_or_model_mapping(
     assert model.runtime_model_id == "company-deployment-gpt54"
 
 
+def test_bootstrap_upgrades_legacy_admin_password_and_revokes_sessions(
+    db_session: Session, test_settings: Settings
+) -> None:
+    bootstrap_database(db_session, settings=test_settings)
+    admin = db_session.scalar(select(User).where(User.login_id == "admin@posco.com"))
+    assert admin is not None
+    admin.password_hash = hash_password("1")
+    issued = issue_server_session(db_session, admin)
+    db_session.commit()
+
+    bootstrap_database(db_session, settings=test_settings)
+    db_session.commit()
+    db_session.refresh(admin)
+
+    assert verify_password("1111", admin.password_hash)
+    assert not verify_password("1", admin.password_hash)
+    assert resolve_server_session(db_session, issued.session_token) is None
+
+
 def test_user_creation_normalizes_login_and_creates_one_default_project(
     db_session: Session, test_settings: Settings
 ) -> None:
@@ -209,7 +229,7 @@ def test_failed_login_is_counted_and_success_resets_counter(
         db_session,
         login_name="ADMIN",
         login_domain="POSCO.COM",
-        password="1",
+        password="1111",
         settings=test_settings,
     )
     db_session.commit()
