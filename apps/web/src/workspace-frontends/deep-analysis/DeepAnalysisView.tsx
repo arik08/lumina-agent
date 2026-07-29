@@ -360,6 +360,7 @@ const workflowNodeHeight = 86;
 const workflowLayerTop = 160;
 const workflowLayerGap = 74;
 const workflowSiblingGap = 36;
+const workflowMissionRootPosition = { positionX: 272, positionY: 88 } as const;
 const defaultInspectorWidth = 760;
 const minimumInspectorWidth = 420;
 const maximumInspectorWidthRatio = 0.84;
@@ -1200,24 +1201,14 @@ export function DeepAnalysisView({
   const workflowMissionRoot = useMemo(() => {
     const nodes = shownWorkflow?.nodes ?? [];
     if (!shownWorkflow) return null;
+    const connectedNodeKeys = new Set(
+      shownWorkflow.edges.flatMap((edge) => [edge.sourceNodeKey, edge.targetNodeKey]),
+    );
     const targetNodeKeys = new Set((shownWorkflow?.edges ?? []).map((edge) => edge.targetNodeKey));
-    const connectedNodes = nodes.filter((node) => !targetNodeKeys.has(node.nodeKey));
-    if (!connectedNodes.length) {
-      return {
-        connectedNodes: [],
-        position: { positionX: 272, positionY: 88 },
-      };
-    }
-    const left = Math.min(...connectedNodes.map((node) => node.positionX));
-    const right = Math.max(...connectedNodes.map((node) => node.positionX + workflowNodeWidth));
-    const top = Math.min(...connectedNodes.map((node) => node.positionY));
-    return {
-      connectedNodes,
-      position: {
-        positionX: (left + right - workflowNodeWidth) / 2,
-        positionY: top - workflowNodeHeight - workflowLayerGap,
-      },
-    };
+    const connectedNodes = nodes.filter(
+      (node) => connectedNodeKeys.has(node.nodeKey) && !targetNodeKeys.has(node.nodeKey),
+    );
+    return { connectedNodes, position: workflowMissionRootPosition };
   }, [shownWorkflow]);
   const workflowCanvasSize = useMemo(() => ({
     width: Math.max(
@@ -1882,18 +1873,13 @@ export function DeepAnalysisView({
     const lastAddedNode = [...workflowDraft.nodes].reverse().find((node) => node.id.startsWith("draft:"));
     let positionX = Math.max(lastAddedNode ? lastAddedNode.positionX + cascadeOffset : centeredPositionX, minimumPositionX);
     let positionY = lastAddedNode ? lastAddedNode.positionY + cascadeOffset : centeredPositionY;
-    if (!lastAddedNode) {
-      while (workflowDraft.nodes.some(
-        (node) => Math.abs(node.positionX - positionX) < workflowNodeWidth + 24
-          && Math.abs(node.positionY - positionY) < 110,
-      )) {
-        positionY += verticalPlacementStep;
-      }
+    const occupiedPositions = [...workflowDraft.nodes, workflowMissionRootPosition];
+    while (occupiedPositions.some(
+      (node) => Math.abs(node.positionX - positionX) < workflowNodeWidth + 24
+        && Math.abs(node.positionY - positionY) < workflowNodeHeight + 24,
+    )) {
+      positionY += verticalPlacementStep;
     }
-    setCanvasOffset({
-      x: viewport.clientWidth / 2 - (positionX + workflowNodeWidth / 2) * canvasScale,
-      y: viewport.clientHeight / 2 - (positionY + 43) * canvasScale,
-    });
     const node: DeepAnalysisWorkflowNode = {
       id: `draft:${nodeKey}`,
       nodeKey,

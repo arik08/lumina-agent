@@ -166,13 +166,16 @@ test("Workflow fitting keeps Nodes below the fixed canvas controls", async () =>
   assert.match(view, /y: contentTop \+ Math\.max\(0, \(availableHeight - contentHeight \* fittedScale\) \/ 2\) - minY \* fittedScale/);
 });
 
-test("Workflow Canvas always keeps the Mission root before entry Nodes", async () => {
+test("Workflow Canvas keeps the Mission root visible without connecting isolated Nodes", async () => {
   const view = await readFile(viewPath, "utf8");
 
+  assert.match(view, /const workflowMissionRootPosition = \{ positionX: 272, positionY: 88 \} as const/);
   assert.match(view, /const workflowMissionRoot = useMemo/);
   assert.match(view, /if \(!shownWorkflow\) return null/);
-  assert.match(view, /const connectedNodes = nodes\.filter\(\(node\) => !targetNodeKeys\.has\(node\.nodeKey\)\)/);
-  assert.match(view, /connectedNodes: \[\],[\s\S]*?position: \{ positionX: 272, positionY: 88 \}/);
+  assert.match(view, /const connectedNodeKeys = new Set\([\s\S]*?\.flatMap\(\(edge\) => \[edge\.sourceNodeKey, edge\.targetNodeKey\]\)/);
+  assert.match(view, /connectedNodeKeys\.has\(node\.nodeKey\) && !targetNodeKeys\.has\(node\.nodeKey\)/);
+  assert.match(view, /return \{ connectedNodes, position: workflowMissionRootPosition \}/);
+  assert.doesNotMatch(view, /const positionedNodes = connectedNodes\.length \? connectedNodes : nodes/);
   assert.match(view, /workflowMissionRoot\?\.connectedNodes\.map/);
   assert.match(view, /className=\{`deep-analysis-goal-node deep-analysis-mission-root-node/);
   assert.match(view, /mission\.startMode === "manual" \? "직접 구성" : "AI 자동 설계"/);
@@ -181,6 +184,10 @@ test("Workflow Canvas always keeps the Mission root before entry Nodes", async (
 
 test("newly added isolated Nodes keep their position and do not affect connected layout", async () => {
   const view = await readFile(viewPath, "utf8");
+  const addDraftNode = view.slice(
+    view.indexOf("function addDraftNode()"),
+    view.indexOf("function removeDraftEdge("),
+  );
 
   assert.match(view, /const connectedNodeKeys = new Set<string>\(\)/);
   assert.match(view, /connectedNodeKeys\.add\(edge\.sourceNodeKey\)/);
@@ -188,6 +195,10 @@ test("newly added isolated Nodes keep their position and do not affect connected
   assert.match(view, /if \(!connectedNodeKeys\.has\(node\.nodeKey\)\) continue/);
   assert.match(view, /if \(!connectedNodeKeys\.has\(node\.nodeKey\)\) return node/);
   assert.match(view, /setWorkflowDraft\(\{ \.\.\.workflowDraft, nodes: \[\.\.\.workflowDraft\.nodes, node\] \}\)/);
+  assert.match(view, /const occupiedPositions = \[\.\.\.workflowDraft\.nodes, workflowMissionRootPosition\]/);
+  assert.match(view, /while \(occupiedPositions\.some\(/);
+  assert.doesNotMatch(addDraftNode, /setCanvasOffset\(/);
+  assert.match(view, /nodes: current\.nodes\.map\(\(node\) => node\.nodeKey === pending\.nodeKey[\s\S]*?: node\)/);
 });
 
 test("Mission root opens the existing analysis information and persists edits", async () => {
