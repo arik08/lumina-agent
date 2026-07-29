@@ -31,6 +31,9 @@
 - Run이 사용하는 파일, 지침, Provider 설정과 Skill·MCP는 정확한 version·revision·digest를 snapshot으로 고정합니다.
 - 새 Provider Model은 자동 활성화하지 않습니다. 지속 선택값의 원본은 서버 DB이며 새 옵션에는 저장 scope, default, restore 시점과 invalid fallback을 함께 정의합니다.
 - TLS 오류를 `verify=False`로 우회하지 않고 public CA와 company CA를 결합한 Trust Manager를 사용합니다.
+- P-GPT가 지원하지 않는 Tool JSON Schema keyword가 있으면 `PgptAdapter`의 payload 생성 경계에서만 호환 변환합니다. 원본 Tool schema와 Lumina 서버 내부 입력 검증은 약화하거나 Provider 공용 경로에 맞춰 변경하지 않습니다.
+- P-GPT Agent 호환성은 `Reply with OK` 같은 Tool 없는 요청만으로 판정하지 않습니다. 실제 Agent와 같은 Tool 목록, 특히 `PYTHON_EXECUTION_TOOL_SCHEMA`를 포함한 요청으로 HTTP 응답과 streaming 완료를 검증합니다.
+- 회사 P-GPT에 직접 접속할 수 없으면 실제 Tool schema를 포함한 deterministic mock transport 회귀 test를 추가하고, 로컬 통과와 회사 환경 검증 대기를 완료 보고에서 분리합니다.
 - MCP definition과 `extensions/skills/<wrapper>/SKILL.md`의 `metadata.lumina-source: skill-mcp:<mcp-slug>`를 함께 관리하고 Skill과 MCP로 중복 노출하지 않습니다.
 
 ## UI 변경
