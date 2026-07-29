@@ -189,6 +189,47 @@ async def test_web_fetch_retries_retryable_http_failure() -> None:
 
 
 @pytest.mark.asyncio
+async def test_web_fetch_extracts_rss_feed_entries() -> None:
+    feed = b"""<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0"><channel>
+      <title>Steel News</title>
+      <item>
+        <title>New low-carbon steel route</title>
+        <link>https://example.com/news/steel-route</link>
+        <pubDate>Wed, 29 Jul 2026 08:00:00 GMT</pubDate>
+        <description><![CDATA[<p>A pilot line started operation.</p>]]></description>
+      </item>
+      <item>
+        <title>Second industry update</title>
+        <link>https://example.com/news/update</link>
+        <description>Capacity will expand next year.</description>
+      </item>
+    </channel></rss>"""
+
+    transport = httpx.MockTransport(
+        lambda _request: httpx.Response(
+            200,
+            headers={"content-type": "application/rss+xml; charset=utf-8"},
+            content=feed,
+        )
+    )
+    async with httpx.AsyncClient(transport=transport) as client:
+        result = await web_fetch(
+            "https://example.com/news.xml",
+            tool_execution_id="tool-fetch-rss",
+            client=client,
+            resolver=_public_resolver,
+        )
+
+    assert result.evidence.title == "Steel News"
+    assert result.content_type == "application/rss+xml"
+    assert "New low-carbon steel route" in result.text
+    assert "https://example.com/news/steel-route" in result.text
+    assert "A pilot line started operation." in result.text
+    assert "Second industry update" in result.text
+
+
+@pytest.mark.asyncio
 async def test_web_fetch_prefers_primary_content_and_removes_page_chrome() -> None:
     html = b"""<!doctype html><html><head><title>Primary report</title></head><body>
     <header>Global company navigation<br><img src="logo.png">and account links</header>
@@ -314,6 +355,40 @@ async def test_web_fetch_uses_dedicated_large_pdf_download_limit(
         "originalExtractedChars": len("[Page 1]\nLarge PDF evidence"),
         "textTruncated": False,
     }
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_accepts_pdf_url_served_as_octet_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pdf = b"%PDF-1.7\nmock-pdf"
+    monkeypatch.setattr(
+        web_module,
+        "extract_pdf_text",
+        lambda **_kwargs: SimpleNamespace(
+            status="completed",
+            text="[Page 1]\nRecovered PDF evidence",
+            locator_map={"kind": "page", "count": 1, "start": 1, "end": 1},
+            metadata={},
+        ),
+    )
+    transport = httpx.MockTransport(
+        lambda _request: httpx.Response(
+            200,
+            headers={"content-type": "application/octet-stream"},
+            content=pdf,
+        )
+    )
+    async with httpx.AsyncClient(transport=transport) as client:
+        result = await web_fetch(
+            "https://example.com/report.pdf",
+            tool_execution_id="tool-fetch-octet-pdf",
+            client=client,
+            resolver=_public_resolver,
+        )
+
+    assert result.content_type == "application/pdf"
+    assert result.text == "[Page 1]\nRecovered PDF evidence"
 
 
 @pytest.mark.asyncio
@@ -570,6 +645,11 @@ async def test_web_client_factory_keeps_tls_verification_and_explicit_proxy(
         assert options.trust_env is False
         assert options.follow_redirects is False
         assert options.timeout_seconds == 45.0
+        headers = captured["headers"]
+        assert isinstance(headers, dict)
+        assert headers["User-Agent"].startswith("Mozilla/5.0 ")
+        assert "application/rss+xml" in headers["Accept"]
+        assert headers["Accept-Language"].startswith("ko-KR")
     finally:
         await client.aclose()
 

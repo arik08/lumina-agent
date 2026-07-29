@@ -24,8 +24,11 @@ from urllib.parse import (
     urlunsplit,
 )
 from uuid import uuid4
+from xml.etree.ElementTree import Element, ParseError
 
 import httpx
+from defusedxml import ElementTree as DefusedElementTree
+from defusedxml.common import DefusedXmlException
 
 from ..attachments.extraction import extract_pdf_text
 from ..http_client import (
@@ -49,7 +52,22 @@ _ALLOWED_CONTENT_TYPES = frozenset(
         "text/plain",
         "application/json",
         "application/pdf",
+        "application/atom+xml",
+        "application/rss+xml",
+        "application/xml",
+        "text/xml",
     }
+)
+_XML_CONTENT_TYPES = frozenset(
+    {
+        "application/atom+xml",
+        "application/rss+xml",
+        "application/xml",
+        "text/xml",
+    }
+)
+_GENERIC_BINARY_CONTENT_TYPES = frozenset(
+    {"", "application/download", "application/octet-stream", "binary/octet-stream"}
 )
 _TRACKING_PARAMETERS = frozenset(
     {
@@ -352,11 +370,17 @@ def create_web_http_client(
             follow_redirects=False,
         ),
         headers={
-            "User-Agent": "LuminaAgent/0.1 (+safe-web-tool)",
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/136.0.0.0 Safari/537.36"
+            ),
             "Accept": (
                 "text/html,application/xhtml+xml,application/pdf,"
-                "text/plain,application/json;q=0.8"
+                "application/rss+xml,application/atom+xml,application/xml;q=0.9,"
+                "text/plain,application/json;q=0.8,*/*;q=0.1"
             ),
+            "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
         },
     )
 
@@ -552,6 +576,8 @@ async def web_fetch(
         decoded = _decode_content(fetched.content, fetched.charset)
         if fetched.content_type in {"text/html", "application/xhtml+xml"}:
             title, readable = extract_readable_html(decoded)
+        elif fetched.content_type in _XML_CONTENT_TYPES:
+            title, readable = extract_readable_xml(decoded)
         else:
             parsed_final = _parse_public_url(fetched.final_url)
             title = parsed_final.hostname
@@ -674,6 +700,70 @@ def extract_readable_html(html: str) -> tuple[str, str]:
     return title, body
 
 
+def extract_readable_xml(xml: str) -> tuple[str, str]:
+    """Extract readable RSS, Atom, or generic XML without resolving entities."""
+
+    try:
+        root = DefusedElementTree.fromstring(xml)
+    except (ParseError, DefusedXmlException, ValueError) as exc:
+        raise WebToolError(
+            "xml_parse_failed",
+            "외부 XML을 안전하게 읽을 수 없습니다.",
+            stage="content",
+        ) from exc
+
+    def local_name(tag: object) -> str:
+        return str(tag).rsplit("}", 1)[-1].casefold()
+
+    def element_text(element: Element | None) -> str:
+        if element is None:
+            return ""
+        text = "".join(element.itertext())
+        if "<" in text and ">" in text:
+            _, extracted = extract_readable_html(text)
+            if extracted:
+                text = extracted
+        return _normalize_readable_text(text)
+
+    def first_child(element: Element, names: set[str]) -> Element | None:
+        for child in element:
+            if local_name(child.tag) in names:
+                return child
+        return None
+
+    container = root
+    if local_name(root.tag) == "rss":
+        channel = first_child(root, {"channel"})
+        if channel is not None:
+            container = channel
+    feed_title = element_text(first_child(container, {"title"}))
+    entries = [
+        element
+        for element in container.iter()
+        if local_name(element.tag) in {"entry", "item"}
+    ]
+    if not entries:
+        return feed_title, _normalize_readable_text(" ".join(root.itertext()))
+
+    rendered: list[str] = []
+    for entry in entries[:100]:
+        title = element_text(first_child(entry, {"title"}))
+        link_element = first_child(entry, {"link"})
+        link = element_text(link_element)
+        if link_element is not None:
+            link = (link_element.attrib.get("href") or link).strip()
+        published = element_text(
+            first_child(entry, {"pubdate", "published", "updated", "date"})
+        )
+        summary = element_text(
+            first_child(entry, {"description", "summary", "content"})
+        )
+        parts = [part for part in (title, link, published, summary) if part]
+        if parts:
+            rendered.append("\n".join(parts))
+    return feed_title, "\n\n".join(rendered)
+
+
 @asynccontextmanager
 async def _client_scope(
     client: httpx.AsyncClient | None,
@@ -768,27 +858,40 @@ async def _fetch_public_bytes(
             content_type, charset = _parse_content_type(
                 response.headers.get("content-type")
             )
-            if content_type not in allowed_content_types:
+            pdf_url_hint = urlsplit(target.request_url).path.casefold().endswith(".pdf")
+            generic_pdf_response = (
+                pdf_url_hint and content_type in _GENERIC_BINARY_CONTENT_TYPES
+            )
+            if content_type not in allowed_content_types and not generic_pdf_response:
                 raise WebToolError(
                     "unsupported_content_type",
                     "허용되지 않은 외부 콘텐츠 형식입니다.",
                     stage="content",
                 )
+            effective_content_type = (
+                "application/pdf" if generic_pdf_response else content_type
+            )
             content = await _read_limited_body(
                 response,
                 max_bytes=(
                     policy.max_pdf_response_bytes
-                    if content_type == "application/pdf"
+                    if effective_content_type == "application/pdf"
                     else policy.max_response_bytes
                 ),
                 timeout_seconds=policy.timeout_seconds,
             )
+            if generic_pdf_response and not content[:1024].lstrip().startswith(b"%PDF-"):
+                raise WebToolError(
+                    "unsupported_content_type",
+                    "PDF URL이 PDF가 아닌 외부 콘텐츠를 반환했습니다.",
+                    stage="content",
+                )
             return _FetchedResponse(
                 original_url=original_url,
                 final_url=target.request_url,
                 normalized_final_url=target.normalized_url,
                 content=content,
-                content_type=content_type,
+                content_type=effective_content_type,
                 charset=charset,
                 redirect_count=redirect_count,
             )
