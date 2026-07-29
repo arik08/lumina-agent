@@ -75,7 +75,7 @@ export function LoginScreen({ onAuthenticated, initialDomain = "posco.com" }: Lo
     setLoginName("admin");
     setLoginDomain("posco.com");
     setPassword("");
-    await authenticate({ loginName: "admin", loginDomain: "posco.com", password: "1" });
+    await authenticate({ loginName: "admin", loginDomain: "posco.com", password: "1111" });
   };
 
   const handleWordmarkClick = (event: MouseEvent<HTMLAnchorElement>) => {
@@ -129,9 +129,9 @@ export function LoginScreen({ onAuthenticated, initialDomain = "posco.com" }: Lo
           </a>
 
           <div className="login-story-copy">
-            <p className="login-eyebrow">UNDERSTAND. CONNECT. NAVIGATE. ACT.</p>
-            <h1 id="login-heading">작업의 흐름을<br />놓치지 않는 Agent</h1>
-            <p>대화, 실행 과정과 산출물을 하나의 Project 안에서 안전하게 이어갑니다.</p>
+            <p className="login-eyebrow">LANGUAGE UNDERSTANDING MEETS INTELLIGENT ACTION.</p>
+            <h1 id="login-heading">이해에서 실행까지,<br />스스로 길을 찾는 Agent</h1>
+            <p>당신의 의도와 맥락을 이해하고, 필요한 경로를 탐색해 실제 작업까지 완수합니다.</p>
           </div>
 
           <div className="login-trust-note">
@@ -150,7 +150,7 @@ export function LoginScreen({ onAuthenticated, initialDomain = "posco.com" }: Lo
           </div>
 
           {!registering ? <form className="login-form" noValidate onSubmit={submit}>
-            <label className="login-field" htmlFor="lumina-login-name">
+            <label className="login-field login-identity-control" htmlFor="lumina-login-name">
               <span>아이디</span>
               <input
                 id="lumina-login-name"

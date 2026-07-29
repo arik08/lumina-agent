@@ -219,6 +219,29 @@
   border-block: 1px solid #eef0f2;
 }
 
+.login-identity-control {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  min-height: 42px;
+  align-items: center;
+  gap: 0;
+  border-block: 1px solid #eef0f2;
+}
+
+.login-identity-control input {
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.login-identity-control input:focus {
+  border-color: transparent;
+  outline: 0;
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--login-cobalt) 76%, white);
+}
+
 .login-domain-value {
   display: flex;
   min-width: 0;
@@ -273,17 +296,32 @@
 .login-submit:disabled { cursor: wait; opacity: 0.72; }
 
 .login-register-open {
-  justify-self: center;
-  border: 0;
-  background: transparent;
+  display: inline-flex;
+  width: 100%;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--login-cobalt) 20%, var(--login-line));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--login-cobalt) 6%, white);
   color: var(--login-cobalt);
   font: inherit;
   font-size: 13px;
   font-weight: 650;
   cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
 }
 
-.login-register-open:hover { color: #3158b8; text-decoration: underline; }
+.login-register-open:hover {
+  border-color: color-mix(in srgb, var(--login-cobalt) 32%, var(--login-line));
+  background: color-mix(in srgb, var(--login-cobalt) 10%, white);
+  color: #3158b8;
+}
+
+.login-register-open:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--login-cobalt) 70%, white);
+  outline-offset: 2px;
+}
 .login-registration-form { gap: 14px; }
 .login-registration-heading { display: grid; gap: 4px; }
 .login-registration-heading strong { font-size: 16px; }

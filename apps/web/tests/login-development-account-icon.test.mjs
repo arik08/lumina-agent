@@ -15,7 +15,7 @@ test("development account helper is hidden behind the Lumina wordmark", async ()
   assert.match(component, /if \(!import\.meta\.env\.DEV\) return;/);
   assert.match(component, /<a className="login-wordmark" href="\/" aria-label="Lumina 홈" onClick=\{handleWordmarkClick\}>/);
   assert.match(component, /void loginAsDevelopmentAdmin\(\);/);
-  assert.match(component, /authenticate\(\{ loginName: "admin", loginDomain: "posco\.com", password: "1" \}\)/);
+  assert.match(component, /authenticate\(\{ loginName: "admin", loginDomain: "posco\.com", password: "1111" \}\)/);
   assert.doesNotMatch(component, /\bUserPlus\b|login-dev-account|개발 관리자 계정으로 로그인/);
 
   assert.doesNotMatch(stylesheet, /login-dev-account/);
