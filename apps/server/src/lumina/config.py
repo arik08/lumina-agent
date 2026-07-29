@@ -2,10 +2,14 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, cast
 
 from pydantic import AliasChoices, Field, SecretStr, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
 
 from .providers.constants import (
     DEFAULT_ANTHROPIC_BASE_URL,
@@ -20,7 +24,36 @@ DEFAULT_DATABASE_URL = (
 )
 
 
-class Settings(BaseSettings):
+class DotenvFirstSettings(BaseSettings):
+    """Prefer non-empty dotenv values while retaining environment fallback."""
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        del cls, settings_cls
+
+        def non_empty_dotenv_settings() -> dict[str, Any]:
+            return {
+                key: value
+                for key, value in dotenv_settings().items()
+                if not (isinstance(value, str) and not value.strip())
+            }
+
+        return (
+            init_settings,
+            cast(PydanticBaseSettingsSource, non_empty_dotenv_settings),
+            env_settings,
+            file_secret_settings,
+        )
+
+
+class Settings(DotenvFirstSettings):
     """Process configuration loaded from environment variables and ``.env``."""
 
     model_config = SettingsConfigDict(

@@ -3,13 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from pydantic import SecretStr
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import SettingsConfigDict
 
-from ..config import DEFAULT_DATABASE_URL
+from ..config import DEFAULT_DATABASE_URL, DotenvFirstSettings
 from ..providers.catalog import default_catalog_model
 
 
-class DiagnosticEnvironment(BaseSettings):
+class DiagnosticEnvironment(DotenvFirstSettings):
     """Secret-aware environment view used only by the diagnostic boundary."""
 
     model_config = SettingsConfigDict(
