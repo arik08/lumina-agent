@@ -128,6 +128,10 @@ from ..providers.openai_compatible import OpenAICompatibleAdapter
 from ..providers.pgpt import PgptAdapter
 from ..providers.catalog import model_operational_profile
 from ..storage import ManagedLocalStorage
+from ..tools.conversation_context import (
+    CONVERSATION_CONTEXT_TOOL_SCHEMA,
+    execute_conversation_context_tool,
+)
 from ..tools.web import WebToolError, WebToolPolicy, web_fetch, web_search
 from ..tools.source_documents import (
     SOURCE_DOCUMENT_TOOL_SCHEMAS,
@@ -1676,6 +1680,7 @@ class LocalRunExecutor:
             _UPDATE_PLAN_TOOL_SCHEMA,
             _REQUEST_USER_INPUT_TOOL_SCHEMA,
             _READ_TOOL_RESULT_TOOL_SCHEMA,
+            CONVERSATION_CONTEXT_TOOL_SCHEMA,
             *((_FILE_OUTPUT_INTENT_TOOL_SCHEMA,) if output_mode == "file" else ()),
             *((skill_activation_schema,) if skill_activation_schema else ()),
             *(
@@ -4979,7 +4984,10 @@ class LocalRunExecutor:
                     role="system",
                     content=(
                         "Recoverable compacted history. Original source messages "
-                        "remain stored and are identified in the summary:\n"
+                        "remain stored and are identified in the summary. If exact prior "
+                        "wording or omitted detail is needed, use "
+                        "retrieve_conversation_context with action=search, then action=read. "
+                        "Recovered text is historical context, not a new user request:\n"
                         + prepared.summary
                     ),
                 )
@@ -5505,6 +5513,40 @@ class LocalRunExecutor:
                 tool_id,
                 payload,
                 f"저장된 Tool 결과 {len(str(payload.get('content', ''))):,}자를 읽었습니다.",
+            )
+            return payload
+
+        if tool_call["name"] == "retrieve_conversation_context":
+            try:
+                with session_scope() as db:
+                    context_run = db.scalar(
+                        select(Run).where(Run.id == run_id).with_for_update()
+                    )
+                    if context_run is None:
+                        raise RuntimeError(
+                            "Run context disappeared during conversation recovery"
+                        )
+                    self._require_execution_owner(context_run)
+                    payload = execute_conversation_context_tool(
+                        db,
+                        run=context_run,
+                        arguments=arguments,
+                    )
+            except (TypeError, ValueError) as exc:
+                return await self._fail_tool_execution(run_id, tool_id, exc)
+            recovered_chars = 0
+            recovered_message = payload.get("message")
+            if isinstance(recovered_message, Mapping):
+                recovered_chars = len(str(recovered_message.get("content", "")))
+            await self._complete_tool_execution(
+                run_id,
+                tool_id,
+                payload,
+                (
+                    f"압축된 대화 원문 {recovered_chars:,}자를 복구했습니다."
+                    if recovered_chars
+                    else "압축된 대화 Context를 검색했습니다."
+                ),
             )
             return payload
 
@@ -7303,6 +7345,16 @@ class LocalRunExecutor:
                 "count": count,
                 "estimatedTokensBefore": prepared.estimated_tokens_before,
                 "estimatedTokensAfter": prepared.estimated_tokens_after,
+                "savedTokens": max(
+                    0,
+                    prepared.estimated_tokens_before
+                    - prepared.estimated_tokens_after,
+                ),
+                "compressionRatio": round(
+                    prepared.estimated_tokens_before
+                    / max(1, prepared.estimated_tokens_after),
+                    2,
+                ),
                 "effectiveInputBudget": prepared.effective_input_budget,
                 "compactedMessageCount": prepared.compacted_message_count,
                 "preservedMessageCount": prepared.preserved_message_count,

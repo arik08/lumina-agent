@@ -44,6 +44,7 @@ from lumina.models import (
 from lumina.providers import ProviderImage, ProviderMessage
 from lumina.runs.service import create_run_plan, run_snapshot
 from lumina.providers.types import ProviderCapabilities, ProviderEvent
+from lumina.tools.conversation_context import execute_conversation_context_tool
 
 
 def _inline_extractor(
@@ -350,6 +351,52 @@ def test_recalled_memory_citations_include_only_model_reported_used_memory() -> 
             "revision": 3,
         },
     ]
+
+
+def test_recent_tail_preservation_adapts_to_budget_with_bounded_limits(
+    tmp_path: Path,
+) -> None:
+    user, project, conversation = _configure(tmp_path, "adaptive-recent-tail")
+    with SessionLocal() as db:
+        run = _run(
+            db,
+            user=user,
+            project=project,
+            conversation=conversation,
+            sequence=1,
+        )
+        messages = [
+            _message(
+                db,
+                run=run,
+                user=user,
+                role="user" if index % 2 == 0 else "assistant",
+                text=f"short message {index}",
+                turn_index=index + 1,
+                offset=index,
+            )
+            for index in range(30)
+        ]
+
+        short_content = {message.id: message.canonical_text for message in messages}
+        assert (
+            context_service._recent_message_preserve_count(
+                messages,
+                short_content,
+                effective_budget=100_000,
+            )
+            == context_service.RECENT_MESSAGES_MAX_TO_PRESERVE
+        )
+
+        oversized_content = {message.id: "가" * 2_000 for message in messages}
+        assert (
+            context_service._recent_message_preserve_count(
+                messages,
+                oversized_content,
+                effective_budget=4_000,
+            )
+            == context_service.RECENT_MESSAGES_TO_PRESERVE
+        )
 
 
 def test_compaction_is_recoverable_and_preserves_tool_side_effects(
@@ -1141,6 +1188,134 @@ def test_read_tool_result_pages_full_result_from_same_run(tmp_path: Path) -> Non
             )
         )
         assert readback is not None and readback.status == "completed"
+
+
+def test_compacted_conversation_context_search_and_read_stay_scoped(
+    tmp_path: Path,
+) -> None:
+    user, project, conversation = _configure(tmp_path, "compacted-context-recovery")
+    with SessionLocal() as db:
+        user = db.merge(user)
+        project = db.merge(project)
+        conversation = db.merge(conversation)
+        run = _run(
+            db,
+            user=user,
+            project=project,
+            conversation=conversation,
+            sequence=1,
+            context_window=1_200,
+        )
+        history = [
+            _message(
+                db,
+                run=run,
+                user=user,
+                role="user" if index % 2 == 0 else "assistant",
+                text=(
+                    f"historical message {index} "
+                    + ("recovery-needle exact prior decision " if index == 0 else "")
+                    + ("context payload " * 180)
+                ),
+                turn_index=index // 2 + 1,
+                offset=index,
+            )
+            for index in range(10)
+        ]
+        prepared = prepare_context(
+            db,
+            run=run,
+            history=history,
+            content_by_message_id={
+                message.id: message.canonical_text for message in history
+            },
+            prefix_texts=("system",),
+            tool_schemas=(),
+        )
+        assert prepared.compaction is not None
+        assert prepared.compaction.status == "active"
+        assert "retrieve_conversation_context" in (prepared.summary or "")
+        compacted_message_id = history[0].id
+        retained_message_id = history[-1].id
+
+        other_conversation = Conversation(
+            organization_id=user.organization_id,
+            project_id=project.id,
+            owner_user_id=user.id,
+            title="Other conversation",
+        )
+        db.add(other_conversation)
+        db.flush()
+        other_run = _run(
+            db,
+            user=user,
+            project=project,
+            conversation=other_conversation,
+            sequence=2,
+        )
+        other_message = _message(
+            db,
+            run=other_run,
+            user=user,
+            role="user",
+            text="cross-conversation-secret recovery-needle",
+            turn_index=1,
+            offset=0,
+        )
+        prepared.compaction.source_message_ids_json = [
+            *prepared.compaction.source_message_ids_json,
+            other_message.id,
+        ]
+        db.flush()
+
+        search_result = execute_conversation_context_tool(
+            db,
+            run=run,
+            arguments={
+                "action": "search",
+                "query": "recovery-needle",
+                "max_results": 5,
+            },
+        )
+        assert search_result["available"] is True
+        assert [match["messageId"] for match in search_result["matches"]] == [
+            compacted_message_id
+        ]
+        assert "cross-conversation-secret" not in json.dumps(
+            search_result, ensure_ascii=False
+        )
+
+        read_result = execute_conversation_context_tool(
+            db,
+            run=run,
+            arguments={
+                "action": "read",
+                "message_id": compacted_message_id,
+                "offset": 0,
+                "limit": 500,
+                "around": 2,
+            },
+        )
+        assert read_result["available"] is True
+        assert read_result["message"]["messageId"] == compacted_message_id
+        assert "recovery-needle" in read_result["message"]["content"]
+        assert read_result["message"]["hasMore"] is True
+        assert len(read_result["message"]["contentHash"]) == 64
+        assert all(
+            neighbor["messageId"] != retained_message_id
+            for neighbor in read_result["neighbors"]
+        )
+
+        unavailable = execute_conversation_context_tool(
+            db,
+            run=run,
+            arguments={
+                "action": "read",
+                "message_id": retained_message_id,
+            },
+        )
+        assert unavailable["available"] is False
+        assert unavailable["error"]["code"] == "compacted_message_not_available"
 
 
 def test_context_window_budget_avoids_character_only_compaction(tmp_path: Path) -> None:

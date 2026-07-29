@@ -69,6 +69,7 @@ Tool 실패는 가능한 경우 전체 Loop를 즉시 중단하지 않고 구조
 - 병렬 실행 중 하나가 실패해도 다른 결과를 취소하거나 잃지 않습니다.
 - 모든 Tool Call에는 대응하는 Tool Result를 생성하여 대화 상태가 깨지지 않게 합니다.
 - 큰 출력은 메시지에 전부 넣지 않습니다. 전체 Tool 종류에 모델 Context window 기반 개별 결과·한 Turn 합계 예산을 적용하고, 원문은 `ToolExecution`에 보존한 뒤 preview와 Tool Call ID만 Context에 넣습니다. 모델이 추가 원문이 필요하면 같은 Run으로 권한이 제한된 `read_tool_result`를 offset·limit 방식으로 호출합니다.
+- 완료된 대화 Context를 압축할 때는 최소 최근 4개 Message를 유지하고 유효 입력 예산의 8% 범위에서 최대 20개까지 연속된 최신 Message를 추가 보존합니다. 요약에는 source Message·Run·Tool Call ID를 남기며, 누락된 정확한 표현이나 결정이 필요하면 `retrieve_conversation_context`가 현재 Run의 사용자 권한과 Conversation을 다시 확인한 뒤 활성 압축 범위만 검색하고 Message ID별 원문을 offset·limit으로 반환합니다. 다른 Conversation과 아직 압축되지 않은 Message는 조회하지 않습니다.
 - 허용된 MCP Tool schema의 예상 크기가 모델 Context window의 10% 이상이면 core Tool은 유지하고 MCP Tool은 `tool_search`·`tool_describe`·`tool_call` bridge 뒤에 둡니다. bridge는 Run snapshot에 고정된 MCP catalog만 조회·호출하며 직접 호출과 동일한 schema 검증, 승인, Secret binding, 감사와 결과 예산을 통과합니다.
 - Web·외부 MCP처럼 신뢰하지 않는 출처의 결과는 provider Context에 넣기 전에 구조화된 불신 경계로 감싸고, 결과 본문이 경계 종료 문자열을 위조해도 탈출할 수 없도록 delimiter를 무력화합니다.
 - 완료된 Tool Call의 큰 문자열 인자와 결과 preview는 다음 model Turn 전에 유효한 JSON과 Tool Call/Result ID 관계를 유지한 채 축약합니다. 전체 입력과 결과는 DB·Artifact 원본에 남기고, Context에는 경로 같은 짧은 식별 정보와 head/tail preview, 복구 가능 marker만 보존합니다. Provider가 Tool Call에 검증용 서명을 붙인 경우에는 서명된 호출 인자를 바꾸지 않습니다.

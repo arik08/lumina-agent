@@ -50,6 +50,16 @@ def test_mcp_preview_and_connection_checks_are_external_reads() -> None:
         assert risk.approval_required is False
 
 
+def test_compacted_conversation_retrieval_is_a_low_risk_local_read() -> None:
+    risk = classify_tool_risk(
+        "retrieve_conversation_context",
+        approval_mode="on_risk",
+    )
+    assert risk.effect == "read_only"
+    assert risk.risk_level == "low"
+    assert risk.approval_required is False
+
+
 def _login(
     client: TestClient,
     login_name: str = "admin",

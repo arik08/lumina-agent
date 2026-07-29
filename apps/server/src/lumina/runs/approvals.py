@@ -107,6 +107,7 @@ def classify_tool_risk(
         "explore_source_document",
         "search_source_document",
         "read_source_document",
+        "retrieve_conversation_context",
         "read_skill_resource",
         "search_knowledge",
         "read_knowledge_document",

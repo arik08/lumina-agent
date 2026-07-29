@@ -1233,6 +1233,7 @@ def test_file_mode_is_a_general_delivery_preference_not_a_file_command(
         assert "create_report" in tool_names
         assert "write_file" in tool_names
         assert "classify_file_output_intent" in tool_names
+        assert "retrieve_conversation_context" in tool_names
         if first_tool_names is None:
             first_tool_names = tool_names
         else:
@@ -1337,6 +1338,7 @@ def test_chat_mode_never_exposes_or_executes_artifact_tools(
         }
         assert "create_report" not in tool_names
         assert "write_file" not in tool_names
+        assert "retrieve_conversation_context" in tool_names
     system_text = "\n".join(
         str(message.content)
         for message in requests[0].messages
