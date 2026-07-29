@@ -46,7 +46,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ca-bundle", type=Path)
     parser.add_argument("--trust-runtime-dir", type=Path)
     parser.add_argument("--repo-root", type=Path, default=REPOSITORY_ROOT)
-    parser.add_argument("--env-file", type=Path)
+    env_group = parser.add_mutually_exclusive_group()
+    env_group.add_argument("--env-file", type=Path)
+    env_group.add_argument(
+        "--no-env-file",
+        action="store_true",
+        help="Read configuration only from the process environment.",
+    )
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument("--json", action="store_true", dest="json_output")
     return parser
@@ -60,7 +66,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.network and not (args.pgpt or args.database):
         parser.error("--network requires --pgpt or --database")
     repo_root = args.repo_root.expanduser().resolve()
-    env_file = args.env_file or repo_root / ".env"
+    env_file = None if args.no_env_file else (args.env_file or repo_root / ".env")
     environment = DiagnosticEnvironment.load(env_file)
     report = run_diagnostics(
         environment=environment,

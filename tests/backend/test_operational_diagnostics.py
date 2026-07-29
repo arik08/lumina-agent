@@ -222,6 +222,41 @@ def test_diagnostics_cli_exit_code_and_output_do_not_leak_credentials(
     assert missing == 1
 
 
+def test_diagnostics_cli_can_explicitly_skip_dotenv_for_offline_postgres(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    (tmp_path / ".env").write_text(
+        "DATABASE_URL=sqlite:///must-not-win.db\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql+psycopg://lumina:offline@127.0.0.1/lumina",
+    )
+
+    exit_code = diagnostics_main(
+        [
+            "--repo-root",
+            str(tmp_path),
+            "--no-env-file",
+            "--no-network",
+            "--database",
+            "--require-postgres",
+            "--json",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert output["ok"] is True
+    assert any(
+        step["stage"] == "database_config"
+        and step["status"] == "passed"
+        and "postgresql" in step["message"]
+        for step in output["steps"]
+    )
+
+
 def test_health_readiness_and_structured_redaction_regression(tmp_path: Path) -> None:
     settings = Settings(
         environment="test",

@@ -23,14 +23,16 @@ $arguments = @(
     "run", "--offline", "--project", $ServerRoot,
     "python", "-m", "lumina.diagnostics",
     "--repo-root", $RepositoryRoot,
-    "--env-file", $ResolvedEnvFile,
     "--database", "--require-postgres"
 )
 if ($Connect) {
+    $arguments += @("--env-file", $ResolvedEnvFile)
     $arguments += "--network"
 }
 else {
-    # This URL is compile-only. No connection is attempted without -Connect.
+    # Dotenv values intentionally take precedence in Lumina. Omit the user's
+    # env file so this compile-only URL reaches the diagnostics process.
+    $arguments += "--no-env-file"
     $env:DATABASE_URL = "postgresql+psycopg://lumina:offline@127.0.0.1/lumina"
     $arguments += "--no-network"
 }
