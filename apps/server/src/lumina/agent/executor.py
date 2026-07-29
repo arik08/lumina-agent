@@ -97,6 +97,7 @@ from ..models import (
     ArtifactVersion,
     CompactedContextEntry,
     Message,
+    PromptCacheSeed,
     ProjectFileVersion,
     QueuedMessage,
     Run,
@@ -243,6 +244,12 @@ from ..api.schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+_CODEX_CACHE_PREWARM_LIMIT = 4
+_CODEX_CACHE_SEEDS_PER_USER_MODEL = 4
+_CODEX_CACHE_PRIMER_MESSAGE = (
+    "Initialize the reusable prompt prefix only. Do not call tools. Reply with OK."
+)
 
 
 class _RunParked(Exception):
@@ -879,11 +886,168 @@ class LocalRunExecutor:
             await self.codex_provider.warmup()
         except ProviderError as exc:
             logger.warning(
-                "Codex App Server warmup skipped",
+                "Codex provider warmup skipped",
                 extra={"provider_error": type(exc).__name__},
             )
+            return
         except Exception:
-            logger.exception("Unexpected Codex App Server warmup failure")
+            logger.exception("Unexpected Codex provider warmup failure")
+            return
+
+        for seed_id, request in self._codex_cache_seed_requests():
+            try:
+                usage = await self.codex_provider.prewarm(request)
+            except ProviderError as exc:
+                logger.warning(
+                    "Codex prefix cache prewarm skipped",
+                    extra={
+                        "provider_error": type(exc).__name__,
+                        "model": request.model,
+                    },
+                )
+                continue
+            except Exception:
+                logger.exception(
+                    "Unexpected Codex prefix cache prewarm failure",
+                    extra={"model": request.model},
+                )
+                continue
+            with session_scope() as db:
+                seed = db.get(PromptCacheSeed, seed_id)
+                if seed is not None:
+                    seed.last_warmed_at = utc_now()
+                    seed.last_warm_input_tokens = (
+                        usage.input_tokens if usage is not None else None
+                    )
+                    seed.last_warm_cached_tokens = (
+                        usage.cached_input_tokens if usage is not None else None
+                    )
+            logger.info(
+                "Codex prefix cache prewarm completed",
+                extra={
+                    "model": request.model,
+                    "input_tokens": usage.input_tokens if usage is not None else None,
+                    "cached_input_tokens": (
+                        usage.cached_input_tokens if usage is not None else None
+                    ),
+                },
+            )
+
+    def _codex_cache_seed_requests(self) -> list[tuple[str, ProviderRequest]]:
+        selected: list[PromptCacheSeed] = []
+        seen_scopes: set[tuple[str, str]] = set()
+        with SessionLocal() as db:
+            seeds = list(
+                db.scalars(
+                    select(PromptCacheSeed)
+                    .join(User, User.id == PromptCacheSeed.user_id)
+                    .where(
+                        PromptCacheSeed.provider_id == "codex",
+                        User.status == "active",
+                    )
+                    .order_by(PromptCacheSeed.last_used_at.desc())
+                    .limit(_CODEX_CACHE_PREWARM_LIMIT * 8)
+                )
+            )
+            for seed in seeds:
+                scope = (seed.user_id, seed.model)
+                if scope in seen_scopes:
+                    continue
+                seen_scopes.add(scope)
+                selected.append(seed)
+                if len(selected) >= _CODEX_CACHE_PREWARM_LIMIT:
+                    break
+
+        return [
+            (
+                seed.id,
+                ProviderRequest(
+                    model=seed.model,
+                    messages=(
+                        ProviderMessage(role="system", content=seed.system_content),
+                        ProviderMessage(
+                            role="user",
+                            content=_CODEX_CACHE_PRIMER_MESSAGE,
+                        ),
+                    ),
+                    tools=tuple(dict(tool) for tool in seed.tools_json),
+                    effort="low",
+                    metadata={
+                        "prompt_cache_key": seed.prompt_cache_key,
+                        "prompt_cache_retention": "24h",
+                    },
+                ),
+            )
+            for seed in selected
+        ]
+
+    def _remember_codex_cache_seed(
+        self,
+        run_id: str,
+        request: ProviderRequest,
+        *,
+        static_digest: str,
+    ) -> None:
+        prompt_cache_key = str(request.metadata.get("prompt_cache_key", "")).strip()
+        system_content = next(
+            (
+                message.content
+                for message in request.messages
+                if message.role == "system" and message.content
+            ),
+            None,
+        )
+        if not prompt_cache_key or not static_digest or not system_content:
+            return
+        tools_json = json.loads(
+            json.dumps(request.tools, ensure_ascii=False, default=str)
+        )
+        now = utc_now()
+        with session_scope() as db:
+            run = db.get(Run, run_id)
+            if run is None:
+                return
+            seed = db.scalar(
+                select(PromptCacheSeed).where(
+                    PromptCacheSeed.prompt_cache_key == prompt_cache_key
+                )
+            )
+            if seed is None:
+                seed = PromptCacheSeed(
+                    user_id=run.user_id,
+                    provider_id="codex",
+                    model=request.model,
+                    prompt_cache_key=prompt_cache_key,
+                    static_digest=static_digest,
+                    system_content=system_content,
+                    tools_json=tools_json,
+                    effort=request.effort,
+                    last_used_at=now,
+                )
+                db.add(seed)
+            else:
+                seed.user_id = run.user_id
+                seed.model = request.model
+                seed.static_digest = static_digest
+                seed.system_content = system_content
+                seed.tools_json = tools_json
+                seed.effort = request.effort
+                seed.last_used_at = now
+            db.flush()
+            obsolete = list(
+                db.scalars(
+                    select(PromptCacheSeed)
+                    .where(
+                        PromptCacheSeed.user_id == run.user_id,
+                        PromptCacheSeed.provider_id == "codex",
+                        PromptCacheSeed.model == request.model,
+                    )
+                    .order_by(PromptCacheSeed.last_used_at.desc())
+                    .offset(_CODEX_CACHE_SEEDS_PER_USER_MODEL)
+                )
+            )
+            for stale_seed in obsolete:
+                db.delete(stale_seed)
 
     def _clear_codex_warmup_task(self, task: asyncio.Task[None]) -> None:
         if self._codex_warmup_task is task:
@@ -1844,6 +2008,12 @@ class LocalRunExecutor:
                 if prompt_cache_key
                 else {},
             )
+            if provider_id == "codex" and prompt_cache_key and round_index == 0:
+                self._remember_codex_cache_seed(
+                    run_id,
+                    request,
+                    static_digest=prompt_cache_static_digest,
+                )
             tool_calls: dict[str, dict[str, Any]] = {}
             tool_order: list[str] = []
             round_text: list[str] = []

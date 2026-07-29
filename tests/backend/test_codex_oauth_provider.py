@@ -16,6 +16,7 @@ from lumina.providers import (
     ProviderMessage,
     ProviderRequest,
     ProviderRequestError,
+    ProviderUsage,
 )
 from lumina.providers.codex import CodexResponsesAdapter
 from lumina.providers.codex import adapter as codex_adapter
@@ -155,6 +156,46 @@ async def test_codex_oauth_defaults_to_direct_responses_transport(
     ]
 
     assert [event.type for event in events] == ["completed"]
+
+
+@pytest.mark.asyncio
+async def test_codex_oauth_prewarm_uses_direct_transport_and_returns_usage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = CodexResponsesAdapter()
+    request = ProviderRequest(
+        model="gpt-5.5",
+        messages=(
+            ProviderMessage(role="system", content="stable system"),
+            ProviderMessage(role="user", content="prime"),
+        ),
+        metadata={"prompt_cache_key": "lumina:user:v2:stable"},
+    )
+
+    async def direct_stream(actual_request: ProviderRequest):
+        assert actual_request is request
+        yield ProviderEvent(
+            type="usage",
+            usage=ProviderUsage(
+                input_tokens=100,
+                cached_input_tokens=85,
+                uncached_input_tokens=15,
+                output_tokens=1,
+            ),
+        )
+        yield ProviderEvent(type="completed", stop_reason="stop")
+
+    async def unexpected_app_server_stream(_request: ProviderRequest):
+        raise AssertionError("Prewarm must never use the App Server fallback")
+        yield
+
+    monkeypatch.setattr(adapter, "_stream_direct", direct_stream)
+    monkeypatch.setattr(adapter, "_stream_app_server", unexpected_app_server_stream)
+
+    usage = await adapter.prewarm(request)
+
+    assert usage is not None
+    assert usage.cached_input_tokens == 85
 
 
 @pytest.mark.asyncio

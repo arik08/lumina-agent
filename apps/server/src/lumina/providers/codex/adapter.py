@@ -278,7 +278,7 @@ class CodexResponsesAdapter:
                 workspace.cleanup()
 
     async def warmup(self) -> None:
-        """Start the shared App Server before the first user request."""
+        """Prepare shared OAuth and model-discovery state before user requests."""
 
         try:
             await self._ready_client()
@@ -286,6 +286,15 @@ class CodexResponsesAdapter:
             raise
         except Exception as exc:
             raise _request_error(exc) from exc
+
+    async def prewarm(self, request: ProviderRequest) -> ProviderUsage | None:
+        """Populate the Direct Responses prefix cache without exposing output."""
+
+        usage: ProviderUsage | None = None
+        async for event in self._stream_direct(request):
+            if event.type == "usage" and event.usage is not None:
+                usage = event.usage
+        return usage
 
     async def _ready_client(self) -> tuple[AsyncCodex, frozenset[str], str]:
         async with self._client_lock:

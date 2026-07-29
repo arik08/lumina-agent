@@ -70,6 +70,9 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
         knowledge_space_columns = {
             column["name"] for column in inspector.get_columns("knowledge_spaces")
         }
+        prompt_cache_seed_columns = {
+            column["name"] for column in inspector.get_columns("prompt_cache_seeds")
+        }
         with engine.connect() as connection:
             revision = MigrationContext.configure(connection).get_current_revision()
             knowledge_fts_trigger_count = connection.scalar(
@@ -139,6 +142,7 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
         "knowledge_tag_aliases",
         "knowledge_document_tags",
         "knowledge_tag_proposals",
+        "prompt_cache_seeds",
     } <= tables
     assert {"concept_revision", "concept_hash"} <= project_columns
     assert {
@@ -189,7 +193,20 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
         "ix_knowledge_documents_source_artifact_id",
         "ix_knowledge_documents_source_artifact_version_id",
     } <= knowledge_document_indexes
-    assert revision == "0065"
+    assert {
+        "user_id",
+        "provider_id",
+        "model",
+        "prompt_cache_key",
+        "static_digest",
+        "system_content",
+        "tools_json",
+        "last_used_at",
+        "last_warmed_at",
+        "last_warm_input_tokens",
+        "last_warm_cached_tokens",
+    } <= prompt_cache_seed_columns
+    assert revision == "0066"
     assert "ix_run_events_run_type" in {
         index["name"] for index in inspector.get_indexes("run_events")
     }
@@ -455,7 +472,7 @@ def test_context_migration_adopts_legacy_create_all_table(tmp_path: Path) -> Non
         }
         with engine.connect() as connection:
             assert (
-                MigrationContext.configure(connection).get_current_revision() == "0065"
+                MigrationContext.configure(connection).get_current_revision() == "0066"
             )
     finally:
         engine.dispose()
@@ -485,7 +502,7 @@ def test_recent_migrations_adopt_tables_precreated_by_runtime_schema(
     try:
         with engine.connect() as connection:
             revision = MigrationContext.configure(connection).get_current_revision()
-        assert revision == "0065"
+        assert revision == "0066"
     finally:
         engine.dispose()
 

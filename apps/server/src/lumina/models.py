@@ -393,6 +393,42 @@ class Run(UUIDPrimaryKeyMixin, Base):
     )
 
 
+class PromptCacheSeed(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "prompt_cache_seeds"
+    __table_args__ = (
+        UniqueConstraint(
+            "prompt_cache_key",
+            name="uq_prompt_cache_seeds_prompt_cache_key",
+        ),
+        Index("ix_prompt_cache_seeds_recent", "last_used_at"),
+    )
+
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    provider_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    model: Mapped[str] = mapped_column(String(240), nullable=False)
+    prompt_cache_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    static_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    system_content: Mapped[str] = mapped_column(Text, nullable=False)
+    tools_json: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
+    effort: Mapped[str | None] = mapped_column(String(32))
+    last_used_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, nullable=False
+    )
+    last_warmed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    last_warm_input_tokens: Mapped[int | None] = mapped_column(Integer)
+    last_warm_cached_tokens: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
 class Plan(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "plans"
     __table_args__ = (UniqueConstraint("run_id", name="uq_plans_run_id"),)
