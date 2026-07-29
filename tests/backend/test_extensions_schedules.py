@@ -2149,7 +2149,7 @@ def test_next_occurrence_respects_timezone_and_weekdays() -> None:
     assert result == datetime(2026, 7, 13, 0, 0, tzinfo=UTC)
 
 
-def test_skill_tags_are_editable_only_by_owner_or_admin(tmp_path: Path) -> None:
+def test_skill_tags_are_editable_by_skill_maintainers(tmp_path: Path) -> None:
     app, _settings = _test_app(tmp_path)
     with SessionLocal() as db:
         organization = db.scalar(select(Organization))
@@ -2192,24 +2192,10 @@ def test_skill_tags_are_editable_only_by_owner_or_admin(tmp_path: Path) -> None:
         maintainer_csrf = _login(client, "tag-maintainer", "pw")
         maintainer_view = client.get(f"/api/extensions/{skill['id']}").json()
         assert maintainer_view["canEdit"] is True
-        assert maintainer_view["canEditTags"] is False
-        forbidden = client.patch(
-            f"/api/extensions/{skill['id']}",
-            headers={"X-CSRF-Token": maintainer_csrf},
-            json={
-                "name": skill["name"],
-                "description": skill["description"],
-                "tags": ["금지"],
-            },
-        )
-        assert forbidden.status_code == 403
-        assert forbidden.json()["code"] == "skill_tags_write_forbidden"
-
-        client.cookies.clear()
-        admin_csrf = _login(client)
+        assert maintainer_view["canEditTags"] is True
         updated = client.patch(
             f"/api/extensions/{skill['id']}",
-            headers={"X-CSRF-Token": admin_csrf},
+            headers={"X-CSRF-Token": maintainer_csrf},
             json={
                 "name": skill["name"],
                 "description": skill["description"],
@@ -2218,6 +2204,9 @@ def test_skill_tags_are_editable_only_by_owner_or_admin(tmp_path: Path) -> None:
         )
         assert updated.status_code == 200, updated.text
         assert updated.json()["tags"] == ["Agent", "개발"]
+
+        client.cookies.clear()
+        _login(client)
         catalog_item = next(
             item
             for item in client.get("/api/extensions/catalog").json()["items"]

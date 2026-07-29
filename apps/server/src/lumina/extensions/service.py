@@ -301,12 +301,6 @@ def update_extension_metadata(
     extension.name = " ".join(name.split())
     extension.description = description.strip()
     if tags is not None:
-        if skill_role(db, user, extension) != "owner":
-            raise ApiProblem(
-                403,
-                "skill_tags_write_forbidden",
-                "Skill 태그는 관리자 또는 Owner만 수정할 수 있습니다.",
-            )
         extension.tags_json = _normalize_skill_tags(tags)
     extension.updated_at = utc_now()
     db.flush()
@@ -2103,7 +2097,7 @@ def extension_payloads(
                 else None
             ),
             "canEdit": can_manage,
-            "canEditTags": role == "owner",
+            "canEditTags": can_manage,
             "canCreateDraft": can_manage or extension.id in installed_extension_ids,
             "canDelete": role == "owner",
         }

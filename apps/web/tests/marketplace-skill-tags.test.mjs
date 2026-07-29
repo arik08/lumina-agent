@@ -152,7 +152,7 @@ test("skill metadata stays in place while editing", async () => {
   assert.match(styles, /\.marketplace-inline-editor:focus \{[^}]*box-shadow: inset 0 -1px var\(--cobalt\);/);
 });
 
-test("only Skill owners and administrators can edit tags", async () => {
+test("Skill owners, maintainers, and administrators can edit tags with other metadata", async () => {
   const [view, api, types, tagEditorStyles] = await Promise.all([
     readFile(viewPath, "utf8"),
     readFile(apiPath, "utf8"),
