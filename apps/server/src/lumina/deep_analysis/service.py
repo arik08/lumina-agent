@@ -405,7 +405,7 @@ def create_mission(
     revision = DeepAnalysisWorkflowRevision(
         mission_id=mission.id,
         revision_number=1,
-        source="generated",
+        source="manual" if start_mode == "manual" else "generated",
         reason=plan.reason,
         graph_digest=graph_digest(plan.nodes, plan_edges(plan)),
         change_log_json=change_log,
@@ -561,7 +561,11 @@ def update_mission(
             details={"currentRevision": mission.revision},
         )
     db.refresh(mission)
-    if mission.status == "draft" and (title is not None or objective is not None):
+    if (
+        mission.status == "draft"
+        and mission.start_mode != "manual"
+        and (title is not None or objective is not None)
+    ):
         _rebuild_draft_workflow(db, mission)
     return mission
 
@@ -722,6 +726,14 @@ def start_mission(
             "설정한 비용 한도가 남아 있지 않습니다. 예산을 늘린 뒤 다시 시작해 주세요.",
         )
 
+    _revision, nodes, edges = active_workflow(db, mission.id)
+    if not nodes:
+        raise ApiProblem(
+            409,
+            "workflow_nodes_required",
+            "실행할 Node를 하나 이상 추가해 주세요.",
+        )
+
     result = db.execute(
         update(DeepAnalysisMission)
         .where(
@@ -744,7 +756,6 @@ def start_mission(
             details={"currentRevision": mission.revision},
         )
 
-    _revision, nodes, edges = active_workflow(db, mission.id)
     first_runnable_node = next_runnable_node(nodes, edges)
     if first_runnable_node is not None:
         first_runnable_node.status = "running"

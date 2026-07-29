@@ -54,6 +54,7 @@ class WebSourcePolicy(ApiModel):
 class MissionCreate(ApiModel):
     title: str = Field(min_length=1, max_length=240)
     objective: str = Field(default="", max_length=20_000)
+    workflow_start_mode: Literal["ai", "manual"] = "ai"
     autonomy_mode: Literal["guided", "balanced", "autonomous"] = "balanced"
     budget_microusd: int | None = Field(default=None, ge=0)
     analysis_depth: Literal["auto", "brief", "standard", "deep"] = "auto"

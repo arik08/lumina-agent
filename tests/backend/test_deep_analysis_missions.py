@@ -767,6 +767,106 @@ def test_mission_workflow_persists_and_uses_revision_cas(tmp_path: Path) -> None
         assert stale.json()["details"] == {"currentRevision": 2}
 
 
+def test_manual_mission_starts_empty_and_runs_after_direct_graph_edit(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "lumina.api.routes.deep_analysis.local_run_executor.enqueue",
+        lambda _run_id: None,
+    )
+    with TestClient(create_app(_settings(tmp_path))) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        created_response = client.post(
+            f"/api/projects/{project_id}/deep-analysis/missions",
+            headers=headers,
+            json={
+                "title": "새 분석",
+                "objective": "",
+                "workflowStartMode": "manual",
+            },
+        )
+        assert created_response.status_code == 201, created_response.text
+        created = created_response.json()
+        assert created["startMode"] == "manual"
+        assert created["workflow"]["source"] == "manual"
+        assert created["workflow"]["nodes"] == []
+        assert created["workflow"]["edges"] == []
+
+        empty_start = client.post(
+            f"/api/deep-analysis/missions/{created['id']}/start",
+            headers=headers,
+            json={"expectedRevision": created["revision"]},
+        )
+        assert empty_start.status_code == 409
+        assert empty_start.json()["code"] == "workflow_nodes_required"
+
+        updated = client.patch(
+            f"/api/deep-analysis/missions/{created['id']}",
+            headers=headers,
+            json={
+                "expectedRevision": created["revision"],
+                "title": "직접 구성한 분석",
+                "objective": "두 단계를 직접 연결해 실행한다.",
+            },
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["workflow"]["nodes"] == []
+
+        draft = client.post(
+            f"/api/deep-analysis/missions/{created['id']}/revisions",
+            headers=headers,
+            json={"expectedRevision": updated.json()["revision"]},
+        )
+        assert draft.status_code == 201, draft.text
+        saved = client.patch(
+            f"/api/deep-analysis/missions/{created['id']}/draft",
+            headers=headers,
+            json={
+                "expectedRevision": updated.json()["revision"],
+                "nodes": [
+                    {
+                        "nodeKey": "N010",
+                        "nodeType": "research",
+                        "title": "자료 조사",
+                        "purpose": "핵심 자료를 조사한다.",
+                        "positionX": 200,
+                        "positionY": 220,
+                        "config": {},
+                    },
+                    {
+                        "nodeKey": "N020",
+                        "nodeType": "report",
+                        "title": "결과 정리",
+                        "purpose": "조사 결과를 정리한다.",
+                        "positionX": 200,
+                        "positionY": 380,
+                        "config": {},
+                    },
+                ],
+                "edges": [
+                    {"sourceNodeKey": "N010", "targetNodeKey": "N020"},
+                ],
+            },
+        )
+        assert saved.status_code == 200, saved.text
+        activated = client.post(
+            f"/api/deep-analysis/missions/{created['id']}/draft/activate",
+            headers=headers,
+            json={"expectedRevision": updated.json()["revision"]},
+        )
+        assert activated.status_code == 200, activated.text
+        assert len(activated.json()["workflow"]["nodes"]) == 2
+
+        started = client.post(
+            f"/api/deep-analysis/missions/{created['id']}/start",
+            headers=headers,
+            json={"expectedRevision": activated.json()["revision"]},
+        )
+        assert started.status_code == 200, started.text
+        assert started.json()["workflow"]["nodes"][0]["status"] == "running"
+
+
 def test_mission_creation_freezes_sources_and_applies_run_output_settings(
     tmp_path: Path, monkeypatch
 ) -> None:

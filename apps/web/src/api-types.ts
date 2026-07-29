@@ -655,6 +655,7 @@ export interface DeepAnalysisMissionCosts {
 export interface CreateDeepAnalysisMissionRequest {
   title: string;
   objective?: string;
+  workflowStartMode?: DeepAnalysisWorkflowStartMode;
   autonomyMode?: DeepAnalysisAutonomyMode;
   budgetMicrousd?: number | null;
   analysisDepth?: "auto" | "brief" | "standard" | "deep";
@@ -666,7 +667,6 @@ export interface CreateDeepAnalysisMissionRequest {
   promptReferences?: PromptReference[];
   researchPeriod?: DeepAnalysisResearchPeriod;
   webSourcePolicy?: DeepAnalysisWebSourcePolicy;
-  workflowStartMode?: DeepAnalysisWorkflowStartMode;
   patternVersionId?: UUID | null;
 }
 
@@ -677,6 +677,7 @@ export interface RegenerateDeepAnalysisWorkflowRequest {
 
 export type DeepAnalysisWorkflowStartMode =
   | "ai"
+  | "manual"
   | "preset_quantitative"
   | "preset_comparative_research"
   | "preset_decision"

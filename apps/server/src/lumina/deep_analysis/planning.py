@@ -60,6 +60,14 @@ WorkflowPreset = Literal[
 ]
 
 
+def manual_workflow_plan() -> InitialWorkflowPlan:
+    return InitialWorkflowPlan(
+        kind="manual",
+        reason="사용자가 Node와 Edge를 직접 구성하는 빈 Workflow입니다.",
+        nodes=(),
+    )
+
+
 def initial_workflow_plan(
     title: str,
     objective: str,

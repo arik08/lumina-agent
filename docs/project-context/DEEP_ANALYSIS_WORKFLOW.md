@@ -13,7 +13,7 @@ Deep Analysis는 여러 채팅 세션에서 사람이 순서대로 수행하던 
 
 ## 2. 생성과 편집
 
-새 Mission은 제목과 목적을 바탕으로 한 번의 LLM 호출로 초기 Node·Edge를 자동 설계합니다. 이 호출이 실패하거나 유효한 DAG를 만들지 못하면 규칙 기반 기본 Workflow를 즉시 사용합니다. preset 선택이나 저장 Pattern 적용은 제공하지 않습니다.
+`새 분석`을 누르면 LLM 호출을 기다리지 않고 빈 수동 Workflow Mission을 즉시 생성합니다. Canvas에는 MISSION root와 Node 편집 도구를 바로 표시하며, 사용자는 Node를 추가하고 유형·제목·프롬프트를 설정한 뒤 Edge로 연결합니다. AI 설계가 필요할 때만 Workflow 재생성 버튼에서 지시를 입력해 Node·Edge 초안을 만들 수 있으며, 실패하면 현재 수동 Workflow를 보존합니다. preset 선택이나 저장 Pattern 적용은 제공하지 않습니다.
 
 MISSION 설정에는 선택적 연구 시작일·종료일과 웹 출처 정책을 함께 저장합니다. 웹 출처 정책은 전체 웹, 지정 도메인 우선, 지정 도메인만 허용의 세 모드를 제공하고 별도 제외 도메인을 둘 수 있습니다. 지정 도메인만 허용하는 경우 검색 결과와 직접 본문 조회 모두 Backend에서 정책을 강제합니다.
 
@@ -62,7 +62,7 @@ MISSION 출처·인용 검사는 각 Node Run이 이미 저장한 웹 검색·�
 
 ## 5. 비용 원칙
 
-기본 비용 단위는 `초기 Workflow 설계 1회 + 실행된 Node 수 × Node당 Agent Run 비용`입니다. 다음 반복 LLM 호출은 없습니다.
+기본 비용 단위는 `실행된 Node 수 × Node당 Agent Run 비용`입니다. 사용자가 Workflow 재생성을 요청한 경우에만 AI 설계 호출 비용이 추가됩니다. 다음 반복 LLM 호출은 없습니다.
 
 - 실행 중 Workflow 재계획
 - Claim·Evidence 추출
@@ -84,6 +84,8 @@ Mission 화면은 두 탭만 제공합니다.
 
 Node 상세 영역의 세로 경계는 포인터 드래그와 키보드 화살표로 폭을 조절할 수 있으며 마지막 폭을 기억합니다. Canvas의 빈 영역은 드래그해 이동할 수 있습니다.
 
+빈 수동 Workflow는 실행할 수 없습니다. Node를 하나 이상 추가하고 편집 Draft를 활성화한 뒤에만 시작 action을 사용할 수 있으며, Frontend와 Backend가 같은 조건을 강제합니다.
+
 ## 7. 제외한 기능
 
 다음 기능은 현재 Deep Analysis 계약에 포함하지 않습니다.
@@ -99,4 +101,4 @@ Node 상세 영역의 세로 경계는 포인터 드래그와 키보드 화살�
 
 ## 8. 데이터 전환
 
-개발 초기 단계이므로 기존 Mission 데이터는 호환 변환하지 않습니다. migration `0055`는 기존 Mission과 Mission 전용 채팅 세션을 삭제하고 Workflow Node에 `conversation_id`를 추가합니다. 새 Mission은 자동 설계된 새 계약으로 다시 생성합니다.
+개발 초기 단계이므로 기존 Mission 데이터는 호환 변환하지 않습니다. migration `0055`는 기존 Mission과 Mission 전용 채팅 세션을 삭제하고 Workflow Node에 `conversation_id`를 추가합니다. 새 Mission은 빈 수동 Workflow에서 시작하며 필요할 때만 AI 재생성을 사용합니다.

@@ -123,7 +123,7 @@ from ...deep_analysis.research import (
     mission_refresh_preview,
     mission_research_inspector,
 )
-from ...deep_analysis.planning import initial_workflow_plan
+from ...deep_analysis.planning import initial_workflow_plan, manual_workflow_plan
 from ...models import Message, ProjectFile, ProjectFileVersion, Run, User, utc_now
 from ...runs.service import resolve_execution, validate_project_references
 from ...providers.execution_defaults import initial_execution_selection
@@ -946,32 +946,37 @@ async def post_mission(
             "modelKey": resolved_execution["model_key"],
             "effortId": resolved_execution["effort"],
         }
-    initial_plan = None
-    start_mode = "ai_fallback"
-    planning_metadata: dict[str, object] = {"mode": "fallback"}
-    try:
-        provider_id = str(execution["providerId"])
-        model_key = str(execution["modelKey"])
-        design = await design_initial_workflow(
-            provider=local_run_executor.provider_for_probe(provider_id),
-            model=model_key,
-            title=payload.title,
-            objective=payload.objective,
-            effort=execution.get("effortId"),
-        )
-        initial_plan = design.plan
-        start_mode = "ai_designed"
-        planning_metadata = {
-            "mode": "ai",
-            "providerId": provider_id,
-            "modelKey": model_key,
-            "effortId": execution.get("effortId"),
-        }
-    except Exception as exc:
-        logger.warning(
-            "Deep Analysis initial workflow planning failed; using deterministic fallback: %s",
-            type(exc).__name__,
-        )
+    if payload.workflow_start_mode == "manual":
+        initial_plan = manual_workflow_plan()
+        start_mode = "manual"
+        planning_metadata: dict[str, object] = {"mode": "manual"}
+    else:
+        initial_plan = None
+        start_mode = "ai_fallback"
+        planning_metadata = {"mode": "fallback"}
+        try:
+            provider_id = str(execution["providerId"])
+            model_key = str(execution["modelKey"])
+            design = await design_initial_workflow(
+                provider=local_run_executor.provider_for_probe(provider_id),
+                model=model_key,
+                title=payload.title,
+                objective=payload.objective,
+                effort=execution.get("effortId"),
+            )
+            initial_plan = design.plan
+            start_mode = "ai_designed"
+            planning_metadata = {
+                "mode": "ai",
+                "providerId": provider_id,
+                "modelKey": model_key,
+                "effortId": execution.get("effortId"),
+            }
+        except Exception as exc:
+            logger.warning(
+                "Deep Analysis initial workflow planning failed; using deterministic fallback: %s",
+                type(exc).__name__,
+            )
     mission = create_mission(
         db,
         context.user,

@@ -55,6 +55,7 @@ import {
 import { ArtifactHtmlPreview } from "../../components/ArtifactHtmlPreview";
 import { ArtifactPreviewActions } from "../../components/ArtifactPreviewActions";
 import { MarkdownResponse } from "../../components/ConversationTurn";
+import { SelectMenu } from "../../components/SelectMenu";
 import { useCachedViewState } from "../../view-data-cache";
 import { useSharedNow } from "../../shared-clock";
 import { useFixedVirtualList } from "../../use-fixed-virtual-list";
@@ -83,6 +84,15 @@ import type {
 import "./deep-analysis.css";
 
 const api = { ...coreApi, deepAnalysis: deepAnalysisApi, projectFiles: projectFilesApi };
+const workflowNodeTypeOptions = [
+  { value: "scope", label: "범위 설계" },
+  { value: "research", label: "자료 조사" },
+  { value: "data_check", label: "자료 검증" },
+  { value: "analysis", label: "분석" },
+  { value: "validation", label: "교차 검증" },
+  { value: "synthesis", label: "종합" },
+  { value: "report", label: "보고서" },
+];
 
 interface DeepAnalysisViewProps {
   projectId: string | null;
@@ -686,7 +696,7 @@ export function DeepAnalysisView({
     "running",
     "paused",
     "awaiting_input",
-  ].includes(mission?.status ?? "") && !editingWorkflow;
+  ].includes(mission?.status ?? "") && (!editingWorkflow || mission?.startMode === "manual");
   const missionSettingsDirty = mission !== null && (
     missionTitleDraft.trim() !== mission.title
     || missionObjectiveDraft.trim() !== mission.objective
@@ -731,6 +741,7 @@ export function DeepAnalysisView({
   const selectedExecutionOption = executionOptions.find((option) => option.id === selectedExecutionId);
   const createEffortOptions = selectedExecutionOption?.effortOptions ?? [];
   const eventCursorRef = useRef(0);
+  const handledCreateRequestRef = useRef(0);
   const workflowUndoStackRef = useRef<Array<{
     draft: DeepAnalysisWorkflowRevision;
     dirty: boolean;
@@ -863,7 +874,8 @@ export function DeepAnalysisView({
   }, [requestedMissionId]);
 
   useEffect(() => {
-    if (createRequest <= 0) return;
+    if (createRequest <= 0 || createRequest <= handledCreateRequestRef.current) return;
+    handledCreateRequestRef.current = createRequest;
     setTitle("");
     setObjective("");
     setAnalysisDepth("auto");
@@ -880,8 +892,9 @@ export function DeepAnalysisView({
     setExcludedWebSourceDomains("");
     setReferenceTrigger(null);
     setReferenceQuery("");
-    setCreateOpen(true);
+    setCreateOpen(false);
     onCreateRequestHandled();
+    void createManualMission();
   }, [createRequest, onCreateRequestHandled]);
 
   useEffect(() => {
@@ -974,6 +987,10 @@ export function DeepAnalysisView({
       .then((detail) => {
         eventCursorRef.current = detail.eventCursor;
         setMissionEvents(detail.id, []);
+        const opensManualDraft = canEdit
+          && detail.startMode === "manual"
+          && detail.status === "draft"
+          && detail.workflow.nodes.length === 0;
         setSelectedNodeKey(detail.workflow.nodes[0]?.nodeKey ?? null);
         setCostModeActive(false);
         setCostDetailsOpen(false);
@@ -982,7 +999,17 @@ export function DeepAnalysisView({
         setWorkflowDraft(null);
         setWorkflowDraftDirty(false);
         setEditingWorkflow(false);
+        setMissionRootSelected(opensManualDraft);
         setMission(detail);
+        if (opensManualDraft) {
+          void api.deepAnalysis.createDraft(detail.id, detail.revision)
+            .then((draft) => {
+              setWorkflowDraft(draft);
+              setEditingWorkflow(true);
+              window.requestAnimationFrame(() => fitCanvasToViewport());
+            })
+            .catch((draftError) => setError(errorMessage(draftError)));
+        }
         void api.deepAnalysis.listEvents(detail.id, 0, controller.signal)
           .then((events) => setMissionEvents(detail.id, events))
           .catch(() => {
@@ -998,7 +1025,7 @@ export function DeepAnalysisView({
         if (!controller.signal.aborted) setLoadingMission(false);
       });
     return () => controller.abort();
-  }, [projectId, selectedMissionId]);
+  }, [canEdit, projectId, selectedMissionId]);
 
   useEffect(() => {
     setCanvasScale(1);
@@ -1172,15 +1199,15 @@ export function DeepAnalysisView({
   );
   const workflowMissionRoot = useMemo(() => {
     const nodes = shownWorkflow?.nodes ?? [];
-    if (!nodes.length) return null;
-    const connectedNodeKeys = new Set(
-      (shownWorkflow?.edges ?? []).flatMap((edge) => [edge.sourceNodeKey, edge.targetNodeKey]),
-    );
+    if (!shownWorkflow) return null;
     const targetNodeKeys = new Set((shownWorkflow?.edges ?? []).map((edge) => edge.targetNodeKey));
-    const connectedNodes = nodes.filter(
-      (node) => connectedNodeKeys.has(node.nodeKey) && !targetNodeKeys.has(node.nodeKey),
-    );
-    if (!connectedNodes.length) return null;
+    const connectedNodes = nodes.filter((node) => !targetNodeKeys.has(node.nodeKey));
+    if (!connectedNodes.length) {
+      return {
+        connectedNodes: [],
+        position: { positionX: 272, positionY: 88 },
+      };
+    }
     const left = Math.min(...connectedNodes.map((node) => node.positionX));
     const right = Math.max(...connectedNodes.map((node) => node.positionX + workflowNodeWidth));
     const top = Math.min(...connectedNodes.map((node) => node.positionY));
@@ -1868,7 +1895,6 @@ export function DeepAnalysisView({
       y: viewport.clientHeight / 2 - (positionY + 43) * canvasScale,
     });
     const node: DeepAnalysisWorkflowNode = {
-      ...workflowDraft.nodes[0],
       id: `draft:${nodeKey}`,
       nodeKey,
       nodeType: "research",
@@ -1878,9 +1904,9 @@ export function DeepAnalysisView({
       sequence: workflowDraft.nodes.length + 1,
       positionX,
       positionY,
-      config: {}, runId: null, outputProjectFileId: null, outputLogicalPath: null,
+      config: {}, conversationId: null, runId: null, outputProjectFileId: null, outputLogicalPath: null,
       outputSummary: "", outputMarkdown: "", generatedFiles: [], runHistory: [],
-      runStatus: null, executionPrompt: null, liveOutput: "", errorMessage: null, actualCostMicrousd: 0,
+      runStatus: null, executionPrompt: null, contextManifest: null, liveOutput: "", errorMessage: null, actualCostMicrousd: 0,
       startedAt: null, finishedAt: null,
     };
     workflowUndoStackRef.current.push({
@@ -1941,6 +1967,44 @@ export function DeepAnalysisView({
       setError(errorMessage(startError));
     } finally {
       setStartingMission(false);
+    }
+  }
+
+  async function createManualMission() {
+    if (!projectId || creating) return;
+    setCreating(true);
+    setActiveTab("workflow");
+    setSelectedMissionId(null);
+    setMission(null);
+    setSelectedNodeKey(null);
+    setMissionRootSelected(false);
+    setWorkflowDraft(null);
+    setEditingWorkflow(false);
+    setError(null);
+    try {
+      const created = await api.deepAnalysis.createMission(projectId, {
+        title: "새 분석",
+        objective: "",
+        workflowStartMode: "manual",
+        autonomyMode: "balanced",
+        analysisDepth: "auto",
+        answerLength: "auto",
+        outputMode: "auto",
+        outputFormat: "markdown",
+        targetOutputTokens: 10_000,
+        execution: execution ?? undefined,
+        promptReferences: [],
+        researchPeriod: { startDate: null, endDate: null },
+        webSourcePolicy: { mode: "all", domains: [], excludedDomains: [] },
+      });
+      setMissions((current) => [created, ...current.filter((item) => item.id !== created.id)]);
+      setMission(created);
+      setMissionRootSelected(true);
+      setSelectedMissionId(created.id);
+    } catch (createError) {
+      setError(errorMessage(createError));
+    } finally {
+      setCreating(false);
     }
   }
 
@@ -2735,8 +2799,12 @@ export function DeepAnalysisView({
                       <button
                         className={`deep-analysis-start ${!mission.executionAvailable ? "is-unavailable" : ""}`}
                         type="button"
-                        disabled={startingMission || savingWorkflow || activatingWorkflow || !mission.executionAvailable}
-                        data-tooltip={!mission.executionAvailable ? "실제 분석 실행기가 연결된 후 시작할 수 있습니다." : undefined}
+                        disabled={startingMission || savingWorkflow || activatingWorkflow || !mission.executionAvailable || shownWorkflow?.nodes.length === 0}
+                        data-tooltip={!mission.executionAvailable
+                          ? "실제 분석 실행기가 연결된 후 시작할 수 있습니다."
+                          : shownWorkflow?.nodes.length === 0
+                            ? "실행할 Node를 하나 이상 추가해 주세요."
+                            : undefined}
                         onClick={() => void startMission()}
                       >
                         {startingMission ? <LoaderCircle className="is-running" size={15} /> : <Play size={15} />}
@@ -3078,7 +3146,7 @@ export function DeepAnalysisView({
                         >
                           <span><Target size={14} />MISSION</span>
                           <strong>작업 흐름</strong>
-                          <small>AI 자동 설계</small>
+                          <small>{mission.startMode === "manual" ? "직접 구성" : "AI 자동 설계"}</small>
                         </button>
                       )}
                       {editingWorkflow && selectedEdgeId && (() => {
@@ -3128,7 +3196,10 @@ export function DeepAnalysisView({
                         aria-label="workflow 재생성"
                         aria-expanded={workflowRegenerateOpen}
                         data-tooltip="workflow 재생성"
-                        disabled={!canEdit || editingWorkflow || regeneratingWorkflow || ["running", "paused", "awaiting_input"].includes(mission.status)}
+                        disabled={!canEdit
+                          || (editingWorkflow && (workflowDraft?.nodes.length ?? 0) > 0)
+                          || regeneratingWorkflow
+                          || ["running", "paused", "awaiting_input"].includes(mission.status)}
                         onClick={() => setWorkflowRegenerateOpen((open) => !open)}
                       >
                         {regeneratingWorkflow ? <LoaderCircle className="is-running" size={14} /> : <RefreshCw size={14} />}
@@ -3172,7 +3243,11 @@ export function DeepAnalysisView({
                           type="button"
                           aria-label={editingWorkflow ? "편집 종료" : "노드 편집"}
                           data-tooltip={editingWorkflow ? "편집 종료" : "노드 편집"}
-                          disabled={!canEdit || (mission.status !== "draft" && mission.status !== "ready") || savingWorkflow || activatingWorkflow}
+                          disabled={!canEdit
+                            || (mission.status !== "draft" && mission.status !== "ready")
+                            || savingWorkflow
+                            || activatingWorkflow
+                            || (editingWorkflow && workflowDraft?.nodes.length === 0)}
                           onClick={() => void (editingWorkflow ? activateWorkflowDraft() : beginWorkflowEdit())}
                         >
                           {savingWorkflow || activatingWorkflow ? <LoaderCircle className="is-running" size={14} /> : <Pencil size={14} />}
@@ -3211,7 +3286,9 @@ export function DeepAnalysisView({
                           <span>MISSION</span>
                         </div>
                         <strong>분석 정보</strong>
-                        <small>목표를 바탕으로 Node와 Edge를 한 번 자동 설계하며, 생성 후 직접 편집할 수 있습니다.</small>
+                        <small>{mission.startMode === "manual"
+                          ? "Node를 추가하고 연결한 뒤 각 단계의 프롬프트를 설정해 실행합니다."
+                          : "목표를 바탕으로 설계된 Node와 Edge를 직접 편집할 수 있습니다."}</small>
                         {shownWorkflow?.reason && (
                           <small className="deep-analysis-node-origin">
                             <GitBranch size={12} /> {shownWorkflow.reason}
@@ -3566,6 +3643,20 @@ export function DeepAnalysisView({
                       <section>
                         <h3>작업 프롬프트</h3>
                         {editingWorkflow && workflowDraft ? <>
+                          <label className="deep-analysis-node-edit-field">Node 유형<SelectMenu
+                            value={selectedNode.nodeType}
+                            options={workflowNodeTypeOptions}
+                            ariaLabel={`${selectedNode.nodeKey} Node 유형`}
+                            onChange={(nodeType) => {
+                              setWorkflowDraft({
+                                ...workflowDraft,
+                                nodes: workflowDraft.nodes.map((node) => node.nodeKey === selectedNode.nodeKey
+                                  ? { ...node, nodeType }
+                                  : node),
+                              });
+                              setWorkflowDraftDirty(true);
+                            }}
+                          /></label>
                           <label className="deep-analysis-node-edit-field">이름<input value={selectedNode.title} onChange={(event) => {
                             setWorkflowDraft({ ...workflowDraft, nodes: workflowDraft.nodes.map((node) => node.nodeKey === selectedNode.nodeKey ? { ...node, title: event.target.value } : node) });
                             setWorkflowDraftDirty(true);

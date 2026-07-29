@@ -93,15 +93,15 @@ test("execution log keeps only the latest output progress row for each Node", as
   assert.match(view, /const newestEvents = useMemo\(\(\) => visibleEvents\.slice\(\)\.reverse\(\)/);
 });
 
-test("new Missions automatically create a workflow without preset controls", async () => {
+test("new Missions open an editable empty workflow without waiting for AI planning", async () => {
   const view = await readFile(viewPath, "utf8");
 
-  assert.match(view, /목표를 바탕으로 Node와 Edge를 한 번 자동 설계/);
-  assert.match(view, /Workflow 자동 만들기/);
-  assert.match(view, /const \[createElapsedSeconds, setCreateElapsedSeconds\] = useState\(0\)/);
-  assert.match(view, /Math\.floor\(\(Date\.now\(\) - startedAt\) \/ 1_000\)/);
-  assert.match(view, /window\.setInterval\(updateElapsed, 1_000\)/);
-  assert.match(view, /`Workflow 설계 중\.\.\. \(\$\{createElapsedSeconds\}s\)`/);
+  assert.match(view, /void createManualMission\(\)/);
+  assert.match(view, /workflowStartMode: "manual"/);
+  assert.match(view, /title: "새 분석"/);
+  assert.match(view, /detail\.startMode === "manual"[\s\S]*?detail\.workflow\.nodes\.length === 0/);
+  assert.match(view, /api\.deepAnalysis\.createDraft\(detail\.id, detail\.revision\)/);
+  assert.match(view, /setEditingWorkflow\(true\)/);
   assert.match(view, /autonomyMode: "balanced"/);
   assert.doesNotMatch(view, /preset_|listPatterns|savePattern|Pattern 저장/);
 });
@@ -166,16 +166,16 @@ test("Workflow fitting keeps Nodes below the fixed canvas controls", async () =>
   assert.match(view, /y: contentTop \+ Math\.max\(0, \(availableHeight - contentHeight \* fittedScale\) \/ 2\) - minY \* fittedScale/);
 });
 
-test("Workflow Canvas keeps the Mission root before connected start Nodes only", async () => {
+test("Workflow Canvas always keeps the Mission root before entry Nodes", async () => {
   const view = await readFile(viewPath, "utf8");
 
   assert.match(view, /const workflowMissionRoot = useMemo/);
-  assert.match(view, /const connectedNodeKeys = new Set\([\s\S]*?\.flatMap\(\(edge\) => \[edge\.sourceNodeKey, edge\.targetNodeKey\]\)/);
-  assert.match(view, /connectedNodeKeys\.has\(node\.nodeKey\) && !targetNodeKeys\.has\(node\.nodeKey\)/);
-  assert.match(view, /if \(!connectedNodes\.length\) return null/);
+  assert.match(view, /if \(!shownWorkflow\) return null/);
+  assert.match(view, /const connectedNodes = nodes\.filter\(\(node\) => !targetNodeKeys\.has\(node\.nodeKey\)\)/);
+  assert.match(view, /connectedNodes: \[\],[\s\S]*?position: \{ positionX: 272, positionY: 88 \}/);
   assert.match(view, /workflowMissionRoot\?\.connectedNodes\.map/);
   assert.match(view, /className=\{`deep-analysis-goal-node deep-analysis-mission-root-node/);
-  assert.match(view, /<span><Target size=\{14\} \/>MISSION<\/span>[\s\S]*?<strong>작업 흐름<\/strong>[\s\S]*?<small>AI 자동 설계<\/small>/);
+  assert.match(view, /mission\.startMode === "manual" \? "직접 구성" : "AI 자동 설계"/);
   assert.match(view, /fitNodesToViewport\(\[[\s\S]*?workflowMissionRoot\.position[\s\S]*?shownWorkflow\?\.nodes/);
 });
 
@@ -220,6 +220,9 @@ test("Workflow editing supports Node movement and Edge connections", async () =>
   assert.match(view, /data-connection-input=\{node\.nodeKey\}/);
   assert.match(view, /api\.deepAnalysis\.updateDraft/);
   assert.match(view, /노드 편집/);
+  assert.match(view, /aria-label="Node 추가"/);
+  assert.match(view, /Node 유형<SelectMenu/);
+  assert.match(view, /conversationId: null[\s\S]*?contextManifest: null/);
 });
 
 test("Workflow regeneration is a separate icon control with a prompt", async () => {
