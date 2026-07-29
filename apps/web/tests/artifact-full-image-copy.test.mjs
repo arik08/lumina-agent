@@ -41,6 +41,9 @@ test("HTML Artifact capture keeps the preview sandbox and clones through the bri
   assert.match(bridge, /canvas\.toDataURL\("image\/png"\)/);
   assert.match(capture, /import html2canvas from "html2canvas"/);
   assert.match(capture, /artifactCaptureMaxPixels = 50_000_000/);
+  assert.match(capture, /const stableHeightLimit = Math\.ceil\(shortestHeight \* 1\.08\)/);
+  assert.match(capture, /contentHeight <= stableHeightLimit/);
+  assert.doesNotMatch(capture, /growth <= plateauThreshold/);
   assert.match(capture, /scale: 1/);
   assert.match(capture, /frame\.remove\(\)/);
 });

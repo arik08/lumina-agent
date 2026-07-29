@@ -58,17 +58,17 @@ function renderedContentWidth(document: Document) {
 export function selectArtifactCaptureViewportWidth(measurements: Array<{
   viewportWidth: number;
   contentWidth: number;
+  contentHeight: number;
   hasHorizontalOverflow: boolean;
 }>) {
-  for (let index = 1; index < measurements.length; index += 1) {
-    const previous = measurements[index - 1];
-    const current = measurements[index];
-    if (current.hasHorizontalOverflow) continue;
-    const growth = current.contentWidth - previous.contentWidth;
-    const plateauThreshold = Math.max(16, Math.round(previous.contentWidth * 0.015));
-    if (growth <= plateauThreshold) return previous.viewportWidth;
+  const viable = measurements.filter((measurement) => !measurement.hasHorizontalOverflow);
+  if (viable.length === 0) {
+    return measurements.at(-1)?.viewportWidth ?? artifactCaptureDesktopWidths[0];
   }
-  return measurements.at(-1)?.viewportWidth ?? artifactCaptureDesktopWidths[0];
+  const shortestHeight = Math.min(...viable.map((measurement) => measurement.contentHeight));
+  const stableHeightLimit = Math.ceil(shortestHeight * 1.08);
+  return viable.find((measurement) => measurement.contentHeight <= stableHeightLimit)?.viewportWidth
+    ?? viable.at(-1)!.viewportWidth;
 }
 
 async function optimalCaptureWidth(
@@ -83,6 +83,7 @@ async function optimalCaptureWidth(
   const measurements: Array<{
     viewportWidth: number;
     contentWidth: number;
+    contentHeight: number;
     hasHorizontalOverflow: boolean;
   }> = [];
   for (const viewportWidth of widths) {
@@ -91,14 +92,14 @@ async function optimalCaptureWidth(
     const root = document.documentElement;
     const body = document.body;
     const scrollWidth = Math.max(root.scrollWidth, body?.scrollWidth ?? 0);
+    const contentHeight = Math.max(root.scrollHeight, body?.scrollHeight ?? 0);
     const contentWidth = renderedContentWidth(document) || scrollWidth || viewportWidth;
     measurements.push({
       viewportWidth,
       contentWidth,
+      contentHeight,
       hasHorizontalOverflow: scrollWidth > viewportWidth + 1,
     });
-    const selected = selectArtifactCaptureViewportWidth(measurements);
-    if (selected !== viewportWidth) return selected;
   }
   return selectArtifactCaptureViewportWidth(measurements);
 }
