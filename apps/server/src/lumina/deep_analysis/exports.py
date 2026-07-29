@@ -44,7 +44,7 @@ def _current_file_version(
             ProjectFile.deleted_at.is_(None),
             ProjectFileVersion.version_number == ProjectFile.current_version_number,
         )
-    ).one_or_none()
+    ).tuples().one_or_none()
 
 
 def _source_file_version(
@@ -58,7 +58,7 @@ def _source_file_version(
             ProjectFile.project_id == project_id,
             ProjectFileVersion.id == version_id,
         )
-    ).one_or_none()
+    ).tuples().one_or_none()
 
 
 def _unique_name(used_names: set[str], *, name: str, project_file_id: str) -> str:

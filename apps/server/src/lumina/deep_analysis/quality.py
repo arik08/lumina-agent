@@ -44,7 +44,15 @@ def list_quality_gates(
         if node_ids
         else {}
     )
-    return [(gate, node_keys.get(gate.report_node_id)) for gate in gates]
+    return [
+        (
+            gate,
+            node_keys.get(gate.report_node_id)
+            if gate.report_node_id is not None
+            else None,
+        )
+        for gate in gates
+    ]
 
 
 def _check(

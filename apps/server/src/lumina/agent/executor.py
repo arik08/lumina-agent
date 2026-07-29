@@ -5599,6 +5599,7 @@ class LocalRunExecutor:
             try:
                 query = str(arguments.get("query", ""))
                 result_limit = int(arguments.get("result_limit", 5))
+                source_count = 0
                 search_result = await web_search(
                     query,
                     tool_execution_id=tool_id,
@@ -5613,19 +5614,19 @@ class LocalRunExecutor:
                 payload = search_result.to_dict()
                 raw_sources = payload.get("sources", [])
                 if isinstance(raw_sources, list):
-                    payload["sources"] = _filter_web_sources_for_policy(
+                    filtered_sources = _filter_web_sources_for_policy(
                         raw_sources, web_source_policy
                     )
-                    payload["policyFilteredCount"] = len(raw_sources) - len(
-                        payload["sources"]
-                    )
+                    payload["sources"] = filtered_sources
+                    source_count = len(filtered_sources)
+                    payload["policyFilteredCount"] = len(raw_sources) - source_count
             except (WebToolError, TypeError, ValueError) as exc:
                 return await self._fail_tool_execution(run_id, tool_id, exc)
             await self._complete_tool_execution(
                 run_id,
                 tool_id,
                 payload,
-                f"검색 결과 {len(payload.get('sources', []))}건을 확인했습니다.",
+                f"검색 결과 {source_count}건을 확인했습니다.",
             )
             return payload
 
@@ -6364,21 +6365,21 @@ class LocalRunExecutor:
                     )
                 },
             )
-            artifact_usage: dict[str, Any] = {
+            report_artifact_usage: dict[str, Any] = {
                 "tokens": document_tokens,
                 "lines": document_lines,
                 "estimated": False,
             }
             if target_output_tokens is not None:
-                artifact_usage["targetTokens"] = target_output_tokens
+                report_artifact_usage["targetTokens"] = target_output_tokens
             run.snapshot_json = {
                 **run.snapshot_json,
                 "artifact_progress": None,
-                "artifact_usage": artifact_usage,
+                "artifact_usage": report_artifact_usage,
                 "artifact_length_retry_count": 0,
                 "artifact_length_retry_artifact_id": None,
             }
-            append_event(db, run, "artifact_progress", artifact_usage)
+            append_event(db, run, "artifact_progress", report_artifact_usage)
             change_plan_step(
                 db,
                 run,
@@ -8408,11 +8409,15 @@ def _append_restored_checkpoint_transcript(
         role = str(entry.get("role", ""))
         if role == "assistant":
             content = str(entry.get("content", ""))
-        elif isinstance(entry.get("message_id"), str):
+            messages.append(ProviderMessage(role="assistant", content=content))
+            continue
+        if role != "user":
+            raise ValueError("Stored steer transcript role is invalid")
+        if isinstance(entry.get("message_id"), str):
             content = steer_content_by_id[str(entry["message_id"])]
         else:
             content = str(entry.get("content", ""))
-        messages.append(ProviderMessage(role=role, content=content))
+        messages.append(ProviderMessage(role="user", content=content))
 
 
 def _append_safe_transcript_entries(

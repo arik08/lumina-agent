@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -102,7 +102,11 @@ def list_claims(
     return [
         (
             claim,
-            node_keys.get(claim.source_node_id),
+            (
+                node_keys.get(claim.source_node_id)
+                if claim.source_node_id is not None
+                else None
+            ),
             evidence_by_claim.get(claim.id, []),
         )
         for claim in claims
@@ -147,7 +151,15 @@ def list_open_issues(
         if node_ids
         else {}
     )
-    return [(issue, node_keys.get(issue.source_node_id)) for issue in issues]
+    return [
+        (
+            issue,
+            node_keys.get(issue.source_node_id)
+            if issue.source_node_id is not None
+            else None,
+        )
+        for issue in issues
+    ]
 
 
 def ledger_instruction(node: DeepAnalysisWorkflowNode) -> str:
@@ -186,12 +198,15 @@ def extract_analysis_ledger(markdown: str) -> tuple[str, dict[str, Any]]:
         status = str(item.get("status") or "proposed")
         materiality = str(item.get("materiality") or "medium")
         try:
-            confidence = min(1.0, max(0.0, float(item.get("confidence"))))
+            confidence = min(
+                1.0, max(0.0, float(cast(Any, item.get("confidence"))))
+            )
         except (TypeError, ValueError):
             confidence = None
         evidence: list[dict[str, str | None]] = []
-        raw_evidence = (
-            item.get("evidence") if isinstance(item.get("evidence"), list) else []
+        evidence_value = item.get("evidence")
+        raw_evidence: list[Any] = (
+            evidence_value if isinstance(evidence_value, list) else []
         )
         for evidence_item in raw_evidence:
             if not isinstance(evidence_item, dict):
@@ -234,8 +249,11 @@ def extract_analysis_ledger(markdown: str) -> tuple[str, dict[str, Any]]:
                 ),
                 "reportInclusion": str(item.get("reportInclusion") or "")[:80],
                 "validation": (
-                    dict(item.get("validation"))
-                    if isinstance(item.get("validation"), dict)
+                    dict(validation_value)
+                    if isinstance(
+                        validation_value := item.get("validation"),
+                        dict,
+                    )
                     else {}
                 ),
                 "evidence": evidence,

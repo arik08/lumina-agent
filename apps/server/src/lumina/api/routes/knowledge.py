@@ -407,16 +407,18 @@ async def post_knowledge_document_batch_tags(
                 409, "provider_unavailable", "사용 가능한 태깅 모델이 아닙니다."
             )
         runtime_model_id = model.runtime_model_id
-    result = await tag_untagged_knowledge_documents(
-        db,
-        context.user,
-        space_id=payload.space_id,
-        provider=local_run_executor.provider_for_probe(payload.provider_id),
-        model=runtime_model_id,
-        provider_id=payload.provider_id,
-        model_key=payload.model_key,
-        target=payload.target,
-        new_tag_policy=payload.new_tag_policy,
+    result: dict[str, object] = dict(
+        await tag_untagged_knowledge_documents(
+            db,
+            context.user,
+            space_id=payload.space_id,
+            provider=local_run_executor.provider_for_probe(payload.provider_id),
+            model=runtime_model_id,
+            provider_id=payload.provider_id,
+            model_key=payload.model_key,
+            target=payload.target,
+            new_tag_policy=payload.new_tag_policy,
+        )
     )
     record_audit(
         db,

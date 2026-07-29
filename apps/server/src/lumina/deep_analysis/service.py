@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any, cast
+
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
@@ -28,6 +31,10 @@ from .planning import (
 
 
 DEEP_ANALYSIS_EXECUTION_AVAILABLE = True
+
+
+def _affected_rows(result: Any) -> int:
+    return int(getattr(result, "rowcount", 0) or 0)
 
 
 def default_charter(title: str, objective: str) -> dict[str, object]:
@@ -110,7 +117,11 @@ def list_decisions(
         (
             decision,
             responses.get(decision.id),
-            node_keys.get(decision.requested_by_node_id),
+            (
+                node_keys.get(decision.requested_by_node_id)
+                if decision.requested_by_node_id is not None
+                else None
+            ),
         )
         for decision in decisions
     ]
@@ -188,7 +199,7 @@ def answer_decision(
         .values(status="running", revision=expected_revision + 1)
         .execution_options(synchronize_session=False)
     )
-    if result.rowcount != 1:
+    if _affected_rows(result) != 1:
         db.refresh(mission)
         raise ApiProblem(
             409,
@@ -541,7 +552,7 @@ def update_mission(
         .values(**values)
         .execution_options(synchronize_session=False)
     )
-    if result.rowcount != 1:
+    if _affected_rows(result) != 1:
         db.refresh(mission)
         raise ApiProblem(
             409,
@@ -648,7 +659,7 @@ def delete_mission(
             DeepAnalysisMission.revision == expected_revision,
         )
     )
-    if result.rowcount != 1:
+    if _affected_rows(result) != 1:
         db.refresh(mission)
         raise ApiProblem(
             409,
@@ -724,7 +735,7 @@ def start_mission(
         )
         .execution_options(synchronize_session=False)
     )
-    if result.rowcount != 1:
+    if _affected_rows(result) != 1:
         db.refresh(mission)
         raise ApiProblem(
             409,
@@ -796,7 +807,7 @@ def retry_mission_node(
         )
         .execution_options(synchronize_session=False)
     )
-    if result.rowcount != 1:
+    if _affected_rows(result) != 1:
         db.refresh(mission)
         raise ApiProblem(
             409,
@@ -882,7 +893,7 @@ def restart_mission(
         .values(**mission_values)
         .execution_options(synchronize_session=False)
     )
-    if result.rowcount != 1:
+    if _affected_rows(result) != 1:
         db.refresh(mission)
         raise ApiProblem(
             409,
@@ -961,7 +972,7 @@ def run_quality_gate(
         .values(revision=expected_revision + 1)
         .execution_options(synchronize_session=False)
     )
-    if result.rowcount != 1:
+    if _affected_rows(result) != 1:
         db.refresh(mission)
         raise ApiProblem(
             409,
@@ -1007,7 +1018,7 @@ def cancel_mission(
         .values(status="cancelled", revision=expected_revision + 1)
         .execution_options(synchronize_session=False)
     )
-    if result.rowcount != 1:
+    if _affected_rows(result) != 1:
         db.refresh(mission)
         raise ApiProblem(
             409,
@@ -1049,7 +1060,7 @@ def pause_mission(
         .values(status="paused", revision=expected_revision + 1)
         .execution_options(synchronize_session=False)
     )
-    if result.rowcount != 1:
+    if _affected_rows(result) != 1:
         db.refresh(mission)
         raise ApiProblem(
             409,
@@ -1086,7 +1097,7 @@ def resume_mission(
         .values(status="running", revision=expected_revision + 1)
         .execution_options(synchronize_session=False)
     )
-    if result.rowcount != 1:
+    if _affected_rows(result) != 1:
         db.refresh(mission)
         raise ApiProblem(
             409,
@@ -1240,8 +1251,9 @@ def update_workflow_draft(
         db.add(DeepAnalysisWorkflowNode(
             workflow_revision_id=draft.id, node_key=str(item["nodeKey"]), node_type=str(item["nodeType"]),
             title=str(item["title"]), purpose=str(item.get("purpose") or ""), status="planned", sequence=sequence,
-            position_x=int(item["positionX"]), position_y=int(item["positionY"]),
-            config_json=dict(item.get("config") or {}),
+            position_x=int(cast(Any, item["positionX"])),
+            position_y=int(cast(Any, item["positionY"])),
+            config_json=dict(cast(Mapping[str, Any], item.get("config") or {})),
         ))
     for source, target in edge_pairs:
         db.add(DeepAnalysisWorkflowEdge(workflow_revision_id=draft.id, source_node_key=source, target_node_key=target, edge_type="sequence"))
@@ -1289,7 +1301,7 @@ def regenerate_workflow(
         )
         .execution_options(synchronize_session=False)
     )
-    if result.rowcount != 1:
+    if _affected_rows(result) != 1:
         db.refresh(mission)
         raise ApiProblem(
             409,

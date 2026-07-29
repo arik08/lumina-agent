@@ -262,9 +262,9 @@ def update_knowledge_document_tags(
         if not normalized_name or normalized_name in seen_names:
             continue
         seen_names.add(normalized_name)
-        tag = tags_by_name.get(normalized_name)
-        if tag is None:
-            tag = KnowledgeTag(
+        resolved_tag = tags_by_name.get(normalized_name)
+        if resolved_tag is None:
+            resolved_tag = KnowledgeTag(
                 space_id=document.space_id,
                 namespace="topic",
                 canonical_name=canonical_name,
@@ -274,10 +274,10 @@ def update_knowledge_document_tags(
                 revision=1,
                 status="active",
             )
-            db.add(tag)
+            db.add(resolved_tag)
             db.flush()
-            tags_by_name[normalized_name] = tag
-        resolved_tags.append(tag)
+            tags_by_name[normalized_name] = resolved_tag
+        resolved_tags.append(resolved_tag)
 
     db.execute(
         delete(KnowledgeDocumentTag).where(
@@ -840,8 +840,9 @@ def knowledge_tag_payloads(
         return []
     tag_ids = [tag.id for tag in tags]
     aliases = _tag_aliases(db, tag_ids)
-    usage_counts = dict(
-        db.execute(
+    usage_counts: dict[str, int] = {
+        tag_id: int(count)
+        for tag_id, count in db.execute(
             select(KnowledgeDocumentTag.tag_id, func.count(KnowledgeDocumentTag.document_id))
             .join(
                 KnowledgeDocument,
@@ -851,7 +852,7 @@ def knowledge_tag_payloads(
             .where(KnowledgeDocument.status == "active")
             .group_by(KnowledgeDocumentTag.tag_id)
         ).all()
-    )
+    }
     return [
         {
             "id": tag.id,

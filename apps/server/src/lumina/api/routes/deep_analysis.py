@@ -2509,7 +2509,7 @@ def post_mission_export(
         )
         .values(last_export_requested_at=requested_at)
     )
-    if claimed.rowcount != 1:
+    if int(getattr(claimed, "rowcount", 0) or 0) != 1:
         raise ApiProblem(
             429,
             "mission_export_cooldown",

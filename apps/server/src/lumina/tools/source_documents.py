@@ -4,7 +4,7 @@ import hashlib
 import json
 import re
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from threading import RLock
 from typing import Any
@@ -744,7 +744,7 @@ def _score(text: str, query: str) -> int:
     return score
 
 
-def _matching_snippet(lines: list[str], query: str) -> str:
+def _matching_snippet(lines: Sequence[str], query: str) -> str:
     needle = query.casefold()
     tokens = _QUERY_TOKEN_RE.findall(needle)
     candidate = next(

@@ -281,19 +281,28 @@ def mission_refresh_preview(
         for item in mission.source_manifest_json
         if isinstance(item, dict) and item.get("projectFileId")
     ]
-    rows = db.execute(
-        select(ProjectFile, ProjectFileVersion)
-        .join(
-            ProjectFileVersion,
-            (ProjectFileVersion.project_file_id == ProjectFile.id)
-            & (ProjectFileVersion.version_number == ProjectFile.current_version_number),
+    rows: list[tuple[ProjectFile, ProjectFileVersion]] = (
+        list(
+            db.execute(
+                select(ProjectFile, ProjectFileVersion)
+                .join(
+                    ProjectFileVersion,
+                    (ProjectFileVersion.project_file_id == ProjectFile.id)
+                    & (
+                        ProjectFileVersion.version_number
+                        == ProjectFile.current_version_number
+                    ),
+                )
+                .where(
+                    ProjectFile.project_id == mission.project_id,
+                    ProjectFile.id.in_(file_ids),
+                    ProjectFile.deleted_at.is_(None),
+                )
+            ).tuples()
         )
-        .where(
-            ProjectFile.project_id == mission.project_id,
-            ProjectFile.id.in_(file_ids),
-            ProjectFile.deleted_at.is_(None),
-        )
-    ).tuples() if file_ids else []
+        if file_ids
+        else []
+    )
     current = {project_file.id: (project_file, version) for project_file, version in rows}
     changed_sources: list[dict[str, Any]] = []
     refreshed_manifest: list[dict[str, Any]] = []

@@ -1419,7 +1419,7 @@ def _load_run_snapshot_batch(db: Session, runs: Sequence[Run]) -> _RunSnapshotBa
         if conversation_ids
         else {}
     )
-    tools = {run_id: [] for run_id in run_ids}
+    tools: dict[str, list[ToolExecution]] = {run_id: [] for run_id in run_ids}
     tool_rows = (
         list(
             db.scalars(
@@ -1441,7 +1441,7 @@ def _load_run_snapshot_batch(db: Session, runs: Sequence[Run]) -> _RunSnapshotBa
         if tool.artifact_id:
             artifact_run_ids.setdefault(tool.artifact_id, set()).add(tool.run_id)
 
-    activity_events = {run_id: [] for run_id in run_ids}
+    activity_events: dict[str, list[RunEvent]] = {run_id: [] for run_id in run_ids}
     event_rows = (
         list(
             db.scalars(
@@ -1496,7 +1496,7 @@ def _load_run_snapshot_batch(db: Session, runs: Sequence[Run]) -> _RunSnapshotBa
         )
         artifact_progress = {event.run_id: event for event in progress_rows}
 
-    artifact_scope = Artifact.source_run_id.in_(run_ids) if run_ids else None
+    artifact_scope: Any = Artifact.source_run_id.in_(run_ids) if run_ids else None
     if artifact_run_ids:
         linked_scope = Artifact.id.in_(artifact_run_ids)
         artifact_scope = (
@@ -1515,7 +1515,7 @@ def _load_run_snapshot_batch(db: Session, runs: Sequence[Run]) -> _RunSnapshotBa
         if artifact_scope is not None
         else []
     )
-    artifacts = {run_id: [] for run_id in run_ids}
+    artifacts: dict[str, list[Artifact]] = {run_id: [] for run_id in run_ids}
     for artifact in artifact_rows:
         owners = set(artifact_run_ids.get(artifact.id, ()))
         if artifact.source_run_id in artifacts:
@@ -1523,7 +1523,7 @@ def _load_run_snapshot_batch(db: Session, runs: Sequence[Run]) -> _RunSnapshotBa
         for run_id in owners:
             artifacts.setdefault(run_id, []).append(artifact)
 
-    commands = {run_id: [] for run_id in run_ids}
+    commands: dict[str, list[RunCommand]] = {run_id: [] for run_id in run_ids}
     for command in (
         db.scalars(
             select(RunCommand)
@@ -1535,7 +1535,9 @@ def _load_run_snapshot_batch(db: Session, runs: Sequence[Run]) -> _RunSnapshotBa
     ):
         commands.setdefault(command.run_id, []).append(command)
 
-    compactions = {run_id: [] for run_id in run_ids}
+    compactions: dict[str, list[CompactedContextEntry]] = {
+        run_id: [] for run_id in run_ids
+    }
     for entry in (
         db.scalars(
             select(CompactedContextEntry)

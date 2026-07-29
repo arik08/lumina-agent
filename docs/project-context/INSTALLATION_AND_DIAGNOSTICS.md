@@ -124,6 +124,8 @@ Backend 회귀 테스트는 저장소 루트에서 다음 명령으로 실행합
 ```powershell
 $env:PYTHONPYCACHEPREFIX = "$PWD\.cache\pycache"
 uv run --project apps/server --extra codex pytest -c apps/server/pyproject.toml
+uv run --project apps/server mypy apps/server/src
+uv run --project apps/server ruff check apps/server/src tests/backend
 ```
 
 Frontend는 빠른 Node 단위 테스트를 먼저 실행한 뒤 TypeScript와 production bundle을 검증합니다.

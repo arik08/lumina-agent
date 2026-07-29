@@ -5,7 +5,7 @@ import json
 from datetime import UTC, date, datetime, time, timedelta
 from io import BytesIO
 from pathlib import Path
-from typing import Literal, get_args
+from typing import Any, Literal, cast, get_args
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
@@ -17,6 +17,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 from pydantic import Field, model_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
 
 from ...audit import record_audit
 from ...agent.executor import local_run_executor
@@ -452,7 +453,7 @@ def get_usage_statistics(
         }
 
     def add_cache_metric(
-        bucket: dict[str, object],
+        bucket: dict[str, Any],
         *,
         input_tokens: int,
         cached_tokens: int,
@@ -466,7 +467,7 @@ def get_usage_statistics(
             ("cacheWriteTokens", cache_write_tokens),
             ("uncachedInputTokens", uncached_tokens),
         ):
-            bucket[key] = int(bucket[key]) + value
+            bucket[key] = int(cast(Any, bucket[key])) + value
 
     cache_buckets: dict[str, dict[str, int]] = {
         "firstCall": empty_cache_bucket(),
@@ -546,9 +547,9 @@ def get_usage_statistics(
                 uncached_tokens=uncached_tokens,
             )
 
-    def cache_metric_payload(values: dict[str, object]) -> dict[str, object]:
-        cached_tokens = int(values["cachedInputTokens"])
-        input_tokens = int(values["inputTokens"])
+    def cache_metric_payload(values: dict[str, Any]) -> dict[str, object]:
+        cached_tokens = int(cast(Any, values["cachedInputTokens"]))
+        input_tokens = int(cast(Any, values["inputTokens"]))
         payload = dict(values)
         for key in ("firstCall", "subsequentCalls"):
             nested = payload.get(key)
@@ -703,7 +704,10 @@ def get_usage_statistics(
                 cache_metric_payload(bucket)
                 for bucket in sorted(
                     digest_buckets.values(),
-                    key=lambda item: (-int(item["inputTokens"]), str(item["digest"])),
+                    key=lambda item: (
+                        -int(cast(Any, item["inputTokens"])),
+                        str(item["digest"]),
+                    ),
                 )
             ],
         },
@@ -994,8 +998,8 @@ def _admin_conversation_filters(
     project_id: str | None = None,
     status: str | None = None,
     feedback_only: bool = False,
-) -> tuple[list[object], str]:
-    filters: list[object] = [
+) -> tuple[list[ColumnElement[bool]], str]:
+    filters: list[ColumnElement[bool]] = [
         Conversation.organization_id == actor.organization_id,
         Conversation.deleted_at.is_(None),
     ]
@@ -1050,12 +1054,15 @@ def list_admin_conversations(
         .where(*filters)
     )
     total = int(
+        cast(
+            Any,
         db.scalar(
             select(func.count(Conversation.id))
             .join(User, User.id == Conversation.owner_user_id)
             .where(*filters)
         )
-        or 0
+            or 0,
+        )
     )
     rows = list(
         db.execute(
@@ -1066,7 +1073,7 @@ def list_admin_conversations(
     )
     conversation_ids = [conversation.id for conversation, _owner in rows]
 
-    def grouped_counts(statement: object) -> dict[str, int]:
+    def grouped_counts(statement: Any) -> dict[str, int]:
         if not conversation_ids:
             return {}
         return {
@@ -1156,7 +1163,7 @@ def _set_xlsx_value(cell: Cell, value: object) -> None:
         cell.value = value[:_XLSX_MAX_CELL_LENGTH]
         cell.data_type = "s"
         return
-    cell.value = value
+    cell.value = cast(Any, value)
     if isinstance(value, datetime):
         cell.number_format = "yyyy-mm-dd hh:mm:ss"
 
@@ -1172,7 +1179,7 @@ def _write_xlsx_sheet(
     for column, (header, width) in enumerate(
         zip(headers, widths, strict=True), start=1
     ):
-        cell = sheet.cell(1, column)
+        cell = cast(Cell, sheet.cell(1, column))
         _set_xlsx_value(cell, header)
         cell.font = _XLSX_HEADER_FONT
         cell.fill = _XLSX_HEADER_FILL
@@ -1182,14 +1189,15 @@ def _write_xlsx_sheet(
     sheet.row_dimensions[1].height = 28
     for row_index, values in enumerate(rows, start=2):
         for column, value in enumerate(values, start=1):
-            cell = sheet.cell(row_index, column)
+            cell = cast(Cell, sheet.cell(row_index, column))
             _set_xlsx_value(cell, value)
             cell.font = _XLSX_BODY_FONT
             cell.border = _XLSX_ROW_BORDER
             cell.alignment = Alignment(vertical="top", wrap_text=True)
         sheet.row_dimensions[row_index].height = 42
     last_row = max(1, len(rows) + 1)
-    sheet.auto_filter.ref = f"A1:{sheet.cell(1, len(headers)).column_letter}{last_row}"
+    last_header_cell = cast(Cell, sheet.cell(1, len(headers)))
+    sheet.auto_filter.ref = f"A1:{last_header_cell.column_letter}{last_row}"
 
 
 def _admin_conversation_workbook(
@@ -1215,9 +1223,16 @@ def _admin_conversation_workbook(
     analysis_data: list[list[object]] = []
     for conversation, owner in conversation_rows:
         conversation_messages = messages_by_conversation.get(conversation.id, [])
-        for message in conversation_messages or [None]:
-            feedback = feedback_by_message.get(message.id, []) if message else []
-            feedback_items = [item for item, _author in feedback]
+        messages_to_export: list[Message | None] = (
+            list(conversation_messages) if conversation_messages else [None]
+        )
+        for export_message in messages_to_export:
+            message_feedback_rows = (
+                feedback_by_message.get(export_message.id, [])
+                if export_message
+                else []
+            )
+            feedback_items = [item for item, _author in message_feedback_rows]
             analysis_data.append(
                 [
                     conversation.id,
@@ -1232,19 +1247,24 @@ def _admin_conversation_workbook(
                     share_counts.get(conversation.id, 0),
                     _xlsx_datetime(conversation.created_at),
                     _xlsx_datetime(conversation.last_activity_at),
-                    message.id if message else "",
-                    message.run_id or "" if message else "",
-                    message.turn_index if message else "",
-                    message.role if message else "",
-                    message.status if message else "",
-                    message.canonical_text if message else "",
+                    export_message.id if export_message else "",
+                    export_message.run_id or "" if export_message else "",
+                    export_message.turn_index if export_message else "",
+                    export_message.role if export_message else "",
+                    export_message.status if export_message else "",
+                    export_message.canonical_text if export_message else "",
                     (
                         "예"
-                        if message
-                        and len(message.canonical_text) > _XLSX_MAX_CELL_LENGTH
+                        if export_message
+                        and len(export_message.canonical_text)
+                        > _XLSX_MAX_CELL_LENGTH
                         else "아니요"
                     ),
-                    _xlsx_datetime(message.created_at) if message else None,
+                    (
+                        _xlsx_datetime(export_message.created_at)
+                        if export_message
+                        else None
+                    ),
                     " + ".join(
                         kind
                         for kind in ("rating", "report")
@@ -1273,7 +1293,10 @@ def _admin_conversation_workbook(
                         if item.report_description
                     ),
                     ", ".join(
-                        dict.fromkeys(author.login_id for _item, author in feedback)
+                        dict.fromkeys(
+                            author.login_id
+                            for _item, author in message_feedback_rows
+                        )
                     ),
                     (
                         _xlsx_datetime(min(item.created_at for item in feedback_items))
@@ -1386,7 +1409,7 @@ def export_admin_conversations(
             .where(*filters)
             .order_by(Conversation.last_activity_at.desc(), Conversation.id)
             .limit(limit)
-        ).all()
+        ).tuples().all()
     )
     conversation_ids = [conversation.id for conversation, _owner in conversation_rows]
     messages = (
@@ -1415,13 +1438,13 @@ def export_admin_conversations(
                     Message.created_at,
                     MessageFeedback.created_at,
                 )
-            ).all()
+            ).tuples().all()
         )
         if conversation_ids
         else []
     )
 
-    def grouped_counts(statement: object) -> dict[str, int]:
+    def grouped_counts(statement: Any) -> dict[str, int]:
         if not conversation_ids:
             return {}
         return {

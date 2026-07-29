@@ -419,7 +419,7 @@ def extract_workflow_decision(markdown: str) -> tuple[str, dict[str, Any]]:
         confidence = min(1.0, max(0.0, float(raw.get("confidence"))))
     except (TypeError, ValueError):
         confidence = None
-    additions = []
+    additions: list[dict[str, Any]] = []
     seen_refs: set[str] = set()
     for item in raw.get("add", []) if isinstance(raw.get("add"), list) else []:
         if not isinstance(item, dict):
@@ -432,10 +432,11 @@ def extract_workflow_decision(markdown: str) -> tuple[str, dict[str, Any]]:
             ref = re.sub(r"[^A-Za-z0-9_-]", "", raw_ref)[:32]
             if not ref or ref in seen_refs or ref.lower() == "current":
                 ref = f"A{len(additions) + 1}"
-            raw_dependencies = (
-                item.get("dependsOn") if isinstance(item.get("dependsOn"), list) else []
+            dependencies_value = item.get("dependsOn")
+            raw_dependencies: list[Any] = (
+                dependencies_value if isinstance(dependencies_value, list) else []
             )
-            dependencies = []
+            dependencies: list[str] = []
             for dependency in raw_dependencies:
                 candidate = str(dependency)[:32]
                 if candidate == "current" or candidate in seen_refs:

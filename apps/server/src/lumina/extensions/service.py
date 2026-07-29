@@ -1920,7 +1920,7 @@ def extension_payloads(
             )
         )
     }
-    draft_options = [
+    draft_options: list[Any] = [
         ExtensionDraft.id,
         ExtensionDraft.extension_id,
         ExtensionDraft.owner_user_id,

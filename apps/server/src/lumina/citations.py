@@ -149,9 +149,9 @@ def _artifact_source_occurrences(
                 normalized_url = _url_match_key(candidate)
             except WebToolError:
                 continue
-            source_id = source_by_url.get(normalized_url)
-            if source_id:
-                occurrences.append((document_index, match.start(), source_id))
+            matched_source_id = source_by_url.get(normalized_url)
+            if matched_source_id:
+                occurrences.append((document_index, match.start(), matched_source_id))
     return occurrences
 
 

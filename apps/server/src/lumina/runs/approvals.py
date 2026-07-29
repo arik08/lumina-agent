@@ -232,7 +232,9 @@ def pending_approval_payloads(db: Session, run_id: str) -> list[dict[str, Any]]:
 def pending_approval_payloads_batch(
     db: Session, run_ids: list[str]
 ) -> dict[str, list[dict[str, Any]]]:
-    grouped = {run_id: [] for run_id in run_ids}
+    grouped: dict[str, list[dict[str, Any]]] = {
+        run_id: [] for run_id in run_ids
+    }
     if not run_ids:
         return grouped
     for item in db.scalars(

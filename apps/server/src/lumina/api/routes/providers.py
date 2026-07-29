@@ -656,29 +656,29 @@ def patch_current_settings(
     if payload.execution is not None:
         value = payload.execution.model_dump(mode="json", by_alias=True)
         _validate_execution(db, value, settings)
-        target: UserSetting | ProjectSetting | None
+        execution_target: UserSetting | ProjectSetting | None
         if project.project_type == "shared":
-            target = _project_setting(db, project.id, "execution.default")
-            if target is None:
-                target = ProjectSetting(
+            execution_target = _project_setting(db, project.id, "execution.default")
+            if execution_target is None:
+                execution_target = ProjectSetting(
                     project_id=project.id,
                     key="execution.default",
                     value_json=value,
                     updated_by_user_id=context.user.id,
                 )
-                db.add(target)
+                db.add(execution_target)
             else:
-                target.value_json = value
-                target.updated_by_user_id = context.user.id
+                execution_target.value_json = value
+                execution_target.updated_by_user_id = context.user.id
         else:
-            target = _setting(db, context.user.id, "execution.default")
-            if target is None:
-                target = UserSetting(
+            execution_target = _setting(db, context.user.id, "execution.default")
+            if execution_target is None:
+                execution_target = UserSetting(
                     user_id=context.user.id, key="execution.default", value_json=value
                 )
-                db.add(target)
+                db.add(execution_target)
             else:
-                target.value_json = value
+                execution_target.value_json = value
     if payload.model_candidates is not None:
         value = _validate_model_candidates(db, payload.model_candidates)
         if model_candidates_setting is None:
