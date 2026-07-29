@@ -79,6 +79,21 @@ class InitialExecutionPatch(ApiModel):
 def _payload(model: ProviderModel) -> dict[str, Any]:
     catalog_entry = catalog_model(model.provider_id, model.model_key)
     context_policy_locked = model.provider_id == "codex" and catalog_entry is not None
+    maximum_context_window = _positive_int(
+        catalog_entry.capabilities.maximum_context_window if catalog_entry else None
+    )
+    maximum_input_tokens = _positive_int(
+        catalog_entry.capabilities.maximum_input_tokens if catalog_entry else None
+    )
+    capacity_mode = model.capabilities_json.get(
+        "context_capacity_mode",
+        model.capabilities_json.get("contextCapacityMode"),
+    )
+    if maximum_context_window is not None and capacity_mode not in {
+        "standard",
+        "maximum",
+    }:
+        capacity_mode = "standard"
     hard_max = _positive_int(
         catalog_entry.capabilities.max_output_tokens
         if catalog_entry
@@ -124,6 +139,14 @@ def _payload(model: ProviderModel) -> dict[str, Any]:
             catalog_entry.context_compaction_threshold
             if catalog_entry and catalog_entry.context_compaction_threshold is not None
             else DEFAULT_CONTEXT_COMPACTION_THRESHOLD
+        ),
+        "contextCapacityMode": capacity_mode,
+        "maximumContextWindow": maximum_context_window,
+        "maximumInputTokens": maximum_input_tokens,
+        "maximumContextUsageRatio": (
+            catalog_entry.capabilities.maximum_context_compaction_threshold
+            if catalog_entry
+            else None
         ),
         "contextPolicyLocked": context_policy_locked,
         "maxInputTokens": max_input_tokens,
@@ -182,6 +205,50 @@ def _validate_capabilities(
             "invalid_context_usage_ratio",
             "자동 압축 시작 비율은 1% 이상 100% 이하이어야 합니다.",
         )
+    capacity_mode = capabilities.get(
+        "context_capacity_mode", capabilities.get("contextCapacityMode")
+    )
+    if capacity_mode is not None and capacity_mode not in {"standard", "maximum"}:
+        raise ApiProblem(
+            422,
+            "invalid_context_capacity_mode",
+            "컨텍스트 용량 모드는 standard 또는 maximum이어야 합니다.",
+        )
+    maximum_context_window = (
+        catalog_entry.capabilities.maximum_context_window if catalog_entry else None
+    )
+    if maximum_context_window is not None:
+        if capacity_mode not in {"standard", "maximum"}:
+            raise ApiProblem(
+                422,
+                "context_capacity_mode_required",
+                "이 모델은 컨텍스트 용량 모드를 지정해야 합니다.",
+            )
+        expected_context_window = (
+            maximum_context_window
+            if capacity_mode == "maximum"
+            else catalog_entry.capabilities.context_window
+        )
+        expected_input_tokens = (
+            catalog_entry.capabilities.maximum_input_tokens
+            if capacity_mode == "maximum"
+            else catalog_entry.capabilities.max_input_tokens
+        )
+        expected_usage_ratio = (
+            catalog_entry.capabilities.maximum_context_compaction_threshold
+            if capacity_mode == "maximum"
+            else catalog_entry.context_compaction_threshold
+        )
+        if (
+            context_window != expected_context_window
+            or max_input_tokens != expected_input_tokens
+            or context_usage_ratio != expected_usage_ratio
+        ):
+            raise ApiProblem(
+                422,
+                "context_capacity_profile_mismatch",
+                "컨텍스트 상한과 자동 압축 시작점은 선택한 용량 모드의 정책값을 사용해야 합니다.",
+            )
     if catalog_entry is not None and catalog_entry.provider_id == "codex":
         catalog_context_window = catalog_entry.capabilities.context_window
         catalog_threshold = catalog_entry.context_compaction_threshold

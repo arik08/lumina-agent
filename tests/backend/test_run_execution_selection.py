@@ -15,7 +15,14 @@ from lumina.api.schemas import (
 from lumina.auth import bootstrap_database
 from lumina.config import Settings
 from lumina.db import Base
-from lumina.models import Organization, Project, ProjectSetting, User, UserSetting
+from lumina.models import (
+    Organization,
+    Project,
+    ProjectSetting,
+    ProviderModel,
+    User,
+    UserSetting,
+)
 from lumina.runs.service import resolve_execution
 
 
@@ -116,6 +123,57 @@ def test_organization_initial_execution_only_applies_before_user_selection(
     engine.dispose()
 
 
+def test_maximum_context_mode_is_pinned_to_the_run_snapshot(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{(tmp_path / 'context-mode.db').as_posix()}")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    production = _settings(tmp_path, "production")
+    with session_factory() as db_session:
+        bootstrap_database(db_session, settings=production)
+        user = db_session.scalar(select(User).where(User.login_id == "admin@posco.com"))
+        assert user is not None
+        project = db_session.scalar(
+            select(Project).where(
+                Project.owner_user_id == user.id,
+                Project.is_default.is_(True),
+            )
+        )
+        model = db_session.scalar(
+            select(ProviderModel).where(
+                ProviderModel.provider_id == "pgpt",
+                ProviderModel.model_key == "gpt-5.4",
+            )
+        )
+        assert project is not None
+        assert model is not None
+        model.capabilities_json = {
+            **model.capabilities_json,
+            "context_capacity_mode": "maximum",
+            "context_window": 1_050_000,
+            "max_input_tokens": 911_900,
+            "context_compaction_threshold": 0.75,
+        }
+        db_session.flush()
+
+        resolved = resolve_execution(
+            db_session,
+            _payload(ExecutionSelection(
+                provider_id="pgpt",
+                model_key="gpt-5.4",
+                effort_id="high",
+            )),
+            user=user,
+            project=project,
+            settings=production,
+        )
+
+        assert resolved["capabilities"]["context_capacity_mode"] == "maximum"
+        assert resolved["capabilities"]["context_window"] == 1_050_000
+        assert resolved["capabilities"]["max_input_tokens"] == 911_900
+        assert resolved["capabilities"]["context_compaction_threshold"] == 0.75
+    engine.dispose()
+
+
 def _assert_execution_selection(db_session: Session, tmp_path: Path) -> None:
     production = _settings(tmp_path, "production")
     bootstrap_database(db_session, settings=production)
@@ -202,7 +260,8 @@ def _assert_execution_selection(db_session: Session, tmp_path: Path) -> None:
     )
     assert (fallback["provider_id"], fallback["model_key"]) == ("pgpt", "gpt-5.4")
     assert fallback["fallback_messages"]
-    assert fallback["capabilities"]["context_window"] == 1_050_000
+    assert fallback["capabilities"]["context_window"] == 272_000
+    assert fallback["capabilities"]["context_capacity_mode"] == "standard"
     assert fallback["capabilities"]["max_output_tokens"] == 128_000
     assert fallback["capabilities"]["configured_max_output_tokens"] == 42_000
 

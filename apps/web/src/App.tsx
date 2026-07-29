@@ -111,9 +111,6 @@ import type {
   ToolExecution,
 } from "./api-types";
 
-type AdminProviderModelWithContextUsageRatio = AdminProviderModel & {
-  defaultContextUsageRatio?: number;
-};
 import LoginScreen from "./components/LoginScreen";
 import { AdminRunSafetySettings } from "./components/AdminRunSafetySettings";
 import { ViewDataCacheProvider } from "./view-data-cache";
@@ -1396,8 +1393,11 @@ function App() {
   ) ?? null;
   const adminInitialEffortOptions = selectedAdminInitialExecutionModel?.capabilities.effortOptions ?? [];
   const adminDefaultContextUsageRatio = (
-    selectedAdminSettingsModel as AdminProviderModelWithContextUsageRatio | null
-  )?.defaultContextUsageRatio ?? 0.75;
+    selectedAdminSettingsModel?.defaultContextUsageRatio ?? 0.75
+  );
+  const adminContextCapacityManaged = Boolean(
+    selectedAdminSettingsModel?.maximumContextWindow,
+  );
 
   useEffect(() => {
     if (!isAdmin || !providerMenuOpen) return;
@@ -1540,10 +1540,57 @@ function App() {
     ? Math.max(1, Math.floor(adminBaseInputContext * parsedAdminContextUsagePercent / 100))
     : null;
 
+  const saveAdminContextCapacityMode = async (mode: "standard" | "maximum") => {
+    if (
+      !selectedAdminSettingsModel
+      || !selectedAdminSettingsModel.maximumContextWindow
+    ) return;
+    const maximum = mode === "maximum";
+    const contextWindow = maximum
+      ? selectedAdminSettingsModel.maximumContextWindow
+      : selectedAdminSettingsModel.defaultContextWindow;
+    const maxInputTokens = maximum
+      ? selectedAdminSettingsModel.maximumInputTokens
+      : selectedAdminSettingsModel.defaultMaxInputTokens;
+    const usageRatio = maximum
+      ? selectedAdminSettingsModel.maximumContextUsageRatio
+      : selectedAdminSettingsModel.defaultContextUsageRatio;
+    if (!contextWindow || !usageRatio) return;
+    setAdminSettingsBusy(true);
+    setAdminSettingsError(null);
+    try {
+      const capabilities: Record<string, unknown> = {
+        ...selectedAdminSettingsModel.capabilities,
+        context_capacity_mode: mode,
+        context_window: contextWindow,
+        max_input_tokens: maxInputTokens,
+        context_compaction_threshold: usageRatio,
+      };
+      delete capabilities.contextCapacityMode;
+      delete capabilities.contextWindow;
+      delete capabilities.maxInputTokens;
+      delete capabilities.contextCompactionThreshold;
+      const updated = await api.adminProviders.updateModel(
+        adminSettingsProviderId,
+        selectedAdminSettingsModel.modelKey,
+        { capabilities },
+      );
+      setAdminSettingsModels((models) => models.map(
+        (model) => model.modelKey === updated.modelKey ? updated : model,
+      ));
+    } catch (error) {
+      setAdminSettingsError(
+        error instanceof Error ? error.message : "컨텍스트 용량 모드를 저장하지 못했습니다.",
+      );
+    } finally {
+      setAdminSettingsBusy(false);
+    }
+  };
+
   const saveAdminMaxTokens = async () => {
     if (!selectedAdminSettingsModel) return;
-    if (selectedAdminSettingsModel.contextPolicyLocked) {
-      setAdminSettingsError("Codex Context는 서비스 정책값으로 고정됩니다.");
+    if (selectedAdminSettingsModel.contextPolicyLocked || adminContextCapacityManaged) {
+      setAdminSettingsError("컨텍스트 상한은 선택한 용량 모드의 정책값으로 관리됩니다.");
       return;
     }
     const contextWindow = Number(adminMaxTokens.replaceAll(",", ""));
@@ -1584,6 +1631,10 @@ function App() {
   };
   const saveAdminInputTokens = async (value = parsedAdminInputTokens) => {
     if (!selectedAdminSettingsModel) return;
+    if (adminContextCapacityManaged) {
+      setAdminSettingsError("입력 토큰 상한은 선택한 용량 모드의 정책값으로 관리됩니다.");
+      return;
+    }
     if (!Number.isSafeInteger(value) || value < 1 || value > parsedAdminContextWindow) {
       setAdminSettingsError("실측 입력 토큰 상한은 전체 컨텍스트 이내의 1 이상 정수여야 합니다.");
       return;
@@ -1616,8 +1667,8 @@ function App() {
   };
   const saveAdminContextUsagePercent = async (nextPercent = parsedAdminContextUsagePercent) => {
     if (!selectedAdminSettingsModel) return;
-    if (selectedAdminSettingsModel.contextPolicyLocked) {
-      setAdminSettingsError("Codex 자동 압축 시작 비율은 서비스 정책값으로 고정됩니다.");
+    if (selectedAdminSettingsModel.contextPolicyLocked || adminContextCapacityManaged) {
+      setAdminSettingsError("자동 압축 시작점은 선택한 용량 모드의 정책값으로 관리됩니다.");
       return;
     }
     if (!Number.isInteger(nextPercent) || nextPercent < 1 || nextPercent > 100) {
@@ -4245,6 +4296,28 @@ function App() {
                     <header><span><ShieldCheck size={15} /><h2 id="admin-context-settings-title">컨텍스트 관리</h2></span><small>모든 사용자에게 적용</small></header>
                     <div className="settings-row"><span><strong>Provider</strong><small>컨텍스트 실행 정책을 확인할 Provider입니다.</small></span><SelectMenu className="settings-select" align="end" value={adminSettingsProviderId} options={accountProviders.map((provider) => ({ value: provider.id, label: provider.displayName }))} ariaLabel="컨텍스트 관리 Provider" disabled={adminSettingsBusy} onChange={setAdminSettingsProviderId} /></div>
                     <div className="settings-row"><span><strong>Model</strong><small>설정값은 선택한 Model에만 적용됩니다.</small></span><SelectMenu className="settings-select" align="end" value={adminSettingsModelKey} options={adminSettingsModels.map((model) => ({ value: model.modelKey, label: model.displayName }))} ariaLabel="컨텍스트 관리 Model" disabled={adminSettingsBusy} onChange={setAdminSettingsModelKey} /></div>
+                    {selectedAdminSettingsModel?.maximumContextWindow && (
+                      <div className="settings-row">
+                        <span>
+                          <strong>컨텍스트 용량 모드</strong>
+                          <small>
+                            표준 모드는 272K 가격 경계를 넘기기 전에 자동 압축합니다. 최대 모드는 긴 원문이 꼭 필요한 작업에만 사용하세요.
+                          </small>
+                        </span>
+                        <SelectMenu
+                          className="settings-select"
+                          align="end"
+                          value={selectedAdminSettingsModel.contextCapacityMode ?? "standard"}
+                          options={[
+                            { value: "standard", label: `표준 · ${(selectedAdminSettingsModel.defaultContextWindow ?? 272_000).toLocaleString()} 토큰 (기본)` },
+                            { value: "maximum", label: `최대 · ${selectedAdminSettingsModel.maximumContextWindow.toLocaleString()} 토큰 (고비용)` },
+                          ]}
+                          ariaLabel="컨텍스트 용량 모드"
+                          disabled={adminSettingsBusy}
+                          onChange={(value) => void saveAdminContextCapacityMode(value as "standard" | "maximum")}
+                        />
+                      </div>
+                    )}
                     <div className="settings-row">
                       <span>
                         <strong>모델 전체 컨텍스트</strong>
@@ -4252,15 +4325,17 @@ function App() {
                           Provider가 명시한 입력과 출력의 전체 컨텍스트 윈도우입니다.
                           {selectedAdminSettingsModel?.contextPolicyLocked
                             ? " Codex는 서비스 정책값으로 고정됩니다."
+                            : selectedAdminSettingsModel?.maximumContextWindow
+                              ? " 선택한 용량 모드의 정책값으로 자동 관리됩니다."
                             : selectedAdminSettingsModel?.defaultContextWindow
                               ? ` 기본값 ${selectedAdminSettingsModel.defaultContextWindow.toLocaleString()} 토큰.`
                               : " 등록된 기본값이 없습니다."}
                         </small>
                       </span>
                       <div className="settings-inline-control">
-                        <input aria-label="모델 전체 컨텍스트 토큰" type="text" inputMode="numeric" value={adminMaxTokens} disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked} onChange={(event) => setAdminMaxTokens(event.currentTarget.value.replace(/\D/g, "").replace(/\B(?=(\d{3})+(?!\d))/g, ","))} />
-                        <button className="is-secondary" type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel?.defaultContextWindow || selectedAdminSettingsModel.contextPolicyLocked} onClick={() => void resetAdminMaxTokens()}>초기화</button>
-                        <button type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked} onClick={() => void saveAdminMaxTokens()}>저장</button>
+                        <input aria-label="모델 전체 컨텍스트 토큰" type="text" inputMode="numeric" value={adminMaxTokens} disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked || adminContextCapacityManaged} onChange={(event) => setAdminMaxTokens(event.currentTarget.value.replace(/\D/g, "").replace(/\B(?=(\d{3})+(?!\d))/g, ","))} />
+                        <button className="is-secondary" type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel?.defaultContextWindow || selectedAdminSettingsModel.contextPolicyLocked || adminContextCapacityManaged} onClick={() => void resetAdminMaxTokens()}>초기화</button>
+                        <button type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked || adminContextCapacityManaged} onClick={() => void saveAdminMaxTokens()}>저장</button>
                       </div>
                     </div>
                     <div className="settings-row settings-context-budget-row">
@@ -4274,9 +4349,9 @@ function App() {
                         </small>
                       </span>
                       <div className="settings-inline-control">
-                        <input aria-label="실측 입력 토큰 상한" type="text" inputMode="numeric" value={adminInputTokens} disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked} onChange={(event) => setAdminInputTokens(event.currentTarget.value.replace(/\D/g, "").replace(/\B(?=(\d{3})+(?!\d))/g, ","))} />
-                        <button className="is-secondary" type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel?.defaultMaxInputTokens || selectedAdminSettingsModel.contextPolicyLocked} onClick={resetAdminInputTokens}>초기화</button>
-                        <button type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked || adminMeasuredInputTokenLimit === null} onClick={() => void saveAdminInputTokens()}>저장</button>
+                        <input aria-label="실측 입력 토큰 상한" type="text" inputMode="numeric" value={adminInputTokens} disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked || adminContextCapacityManaged} onChange={(event) => setAdminInputTokens(event.currentTarget.value.replace(/\D/g, "").replace(/\B(?=(\d{3})+(?!\d))/g, ","))} />
+                        <button className="is-secondary" type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel?.defaultMaxInputTokens || selectedAdminSettingsModel.contextPolicyLocked || adminContextCapacityManaged} onClick={resetAdminInputTokens}>초기화</button>
+                        <button type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked || adminContextCapacityManaged || adminMeasuredInputTokenLimit === null} onClick={() => void saveAdminInputTokens()}>저장</button>
                       </div>
                     </div>
                     <div className="settings-row settings-output-token-row">
@@ -4322,13 +4397,15 @@ function App() {
                           위 최대 입력 컨텍스트의 몇 %에서 선제 압축할지 정합니다.
                           {selectedAdminSettingsModel?.contextPolicyLocked
                             ? ` Codex 서비스 정책은 ${Math.round(adminDefaultContextUsageRatio * 100)}%로 고정됩니다.`
-                            : null}
+                            : selectedAdminSettingsModel?.maximumContextWindow
+                              ? " 용량 모드에 맞는 안전 여유가 자동 적용됩니다."
+                              : null}
                         </small>
                       </span>
                       <div className="settings-inline-control settings-percent-control">
-                        <span className="settings-suffixed-input"><input aria-label="자동 압축 시작 비율" type="text" inputMode="numeric" value={adminContextUsagePercent} disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked} onChange={(event) => setAdminContextUsagePercent(event.currentTarget.value.replace(/\D/g, "").slice(0, 3))} /><span aria-hidden="true">%</span></span>
-                        <button className="is-secondary" type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked} onClick={() => void resetAdminContextUsagePercent()}>초기화</button>
-                        <button type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked} onClick={() => void saveAdminContextUsagePercent()}>저장</button>
+                        <span className="settings-suffixed-input"><input aria-label="자동 압축 시작 비율" type="text" inputMode="numeric" value={adminContextUsagePercent} disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked || adminContextCapacityManaged} onChange={(event) => setAdminContextUsagePercent(event.currentTarget.value.replace(/\D/g, "").slice(0, 3))} /><span aria-hidden="true">%</span></span>
+                        <button className="is-secondary" type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked || adminContextCapacityManaged} onClick={() => void resetAdminContextUsagePercent()}>초기화</button>
+                        <button type="button" disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked || adminContextCapacityManaged} onClick={() => void saveAdminContextUsagePercent()}>저장</button>
                       </div>
                     </div>
                     <div className="settings-row settings-context-budget-row">

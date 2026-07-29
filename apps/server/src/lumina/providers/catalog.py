@@ -7,10 +7,12 @@ from typing import Any
 
 from .types import ProviderCapabilities
 
-CATALOG_REVISION = "2026-07-17.1-pgpt-input-limits"
-CATALOG_VERIFIED_AT = date(2026, 7, 17)
+CATALOG_REVISION = "2026-07-29.1-standard-context-mode"
+CATALOG_VERIFIED_AT = date(2026, 7, 29)
 PUBLIC_PRICING_VERSION = "public-list-2026-07-12"
 DEFAULT_CONTEXT_COMPACTION_THRESHOLD = 0.75
+STANDARD_CONTEXT_WINDOW = 272_000
+STANDARD_CONTEXT_COMPACTION_THRESHOLD = 0.85
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,11 +84,16 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             tools=True,
             structured_output=True,
             reasoning_effort=True,
-            context_window=1_050_000,
-            max_input_tokens=911_900,
+            context_window=STANDARD_CONTEXT_WINDOW,
+            max_input_tokens=STANDARD_CONTEXT_WINDOW,
             max_output_tokens=128_000,
+            context_capacity_mode="standard",
+            maximum_context_window=1_050_000,
+            maximum_input_tokens=911_900,
+            maximum_context_compaction_threshold=DEFAULT_CONTEXT_COMPACTION_THRESHOLD,
         ),
         default_max_output_tokens=42_000,
+        context_compaction_threshold=STANDARD_CONTEXT_COMPACTION_THRESHOLD,
     ),
     ModelCatalogSeed(
         provider_id="pgpt",
@@ -118,11 +125,16 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             tools=True,
             structured_output=True,
             reasoning_effort=True,
-            context_window=1_050_000,
-            max_input_tokens=911_900,
+            context_window=STANDARD_CONTEXT_WINDOW,
+            max_input_tokens=STANDARD_CONTEXT_WINDOW,
             max_output_tokens=128_000,
+            context_capacity_mode="standard",
+            maximum_context_window=1_050_000,
+            maximum_input_tokens=911_900,
+            maximum_context_compaction_threshold=DEFAULT_CONTEXT_COMPACTION_THRESHOLD,
         ),
         default_max_output_tokens=42_000,
+        context_compaction_threshold=STANDARD_CONTEXT_COMPACTION_THRESHOLD,
     ),
     ModelCatalogSeed(
         provider_id="pgpt",
@@ -136,10 +148,14 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             tools=True,
             structured_output=True,
             reasoning_effort=True,
-            context_window=1_050_000,
+            context_window=STANDARD_CONTEXT_WINDOW,
             max_output_tokens=128_000,
+            context_capacity_mode="standard",
+            maximum_context_window=1_050_000,
+            maximum_context_compaction_threshold=DEFAULT_CONTEXT_COMPACTION_THRESHOLD,
         ),
         default_max_output_tokens=42_000,
+        context_compaction_threshold=STANDARD_CONTEXT_COMPACTION_THRESHOLD,
     ),
     ModelCatalogSeed(
         provider_id="pgpt",
@@ -153,10 +169,14 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             tools=True,
             structured_output=True,
             reasoning_effort=True,
-            context_window=1_050_000,
+            context_window=STANDARD_CONTEXT_WINDOW,
             max_output_tokens=128_000,
+            context_capacity_mode="standard",
+            maximum_context_window=1_050_000,
+            maximum_context_compaction_threshold=DEFAULT_CONTEXT_COMPACTION_THRESHOLD,
         ),
         default_max_output_tokens=42_000,
+        context_compaction_threshold=STANDARD_CONTEXT_COMPACTION_THRESHOLD,
     ),
     ModelCatalogSeed(
         provider_id="pgpt",
@@ -170,10 +190,14 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             tools=True,
             structured_output=True,
             reasoning_effort=True,
-            context_window=1_050_000,
+            context_window=STANDARD_CONTEXT_WINDOW,
             max_output_tokens=128_000,
+            context_capacity_mode="standard",
+            maximum_context_window=1_050_000,
+            maximum_context_compaction_threshold=DEFAULT_CONTEXT_COMPACTION_THRESHOLD,
         ),
         default_max_output_tokens=42_000,
+        context_compaction_threshold=STANDARD_CONTEXT_COMPACTION_THRESHOLD,
     ),
     ModelCatalogSeed(
         provider_id="codex",
@@ -288,8 +312,12 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             tools=True,
             structured_output=True,
             reasoning_effort=True,
-            context_window=1_050_000,
+            context_window=STANDARD_CONTEXT_WINDOW,
+            context_capacity_mode="standard",
+            maximum_context_window=1_050_000,
+            maximum_context_compaction_threshold=DEFAULT_CONTEXT_COMPACTION_THRESHOLD,
         ),
+        context_compaction_threshold=STANDARD_CONTEXT_COMPACTION_THRESHOLD,
         token_pricing=ModelTokenPricing(
             input=5.0,
             cached_input=0.5,
@@ -314,8 +342,12 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             tools=True,
             structured_output=True,
             reasoning_effort=True,
-            context_window=1_050_000,
+            context_window=STANDARD_CONTEXT_WINDOW,
+            context_capacity_mode="standard",
+            maximum_context_window=1_050_000,
+            maximum_context_compaction_threshold=DEFAULT_CONTEXT_COMPACTION_THRESHOLD,
         ),
+        context_compaction_threshold=STANDARD_CONTEXT_COMPACTION_THRESHOLD,
         token_pricing=ModelTokenPricing(
             input=2.5,
             cached_input=0.25,
@@ -340,8 +372,12 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             tools=True,
             structured_output=True,
             reasoning_effort=True,
-            context_window=1_050_000,
+            context_window=STANDARD_CONTEXT_WINDOW,
+            context_capacity_mode="standard",
+            maximum_context_window=1_050_000,
+            maximum_context_compaction_threshold=DEFAULT_CONTEXT_COMPACTION_THRESHOLD,
         ),
+        context_compaction_threshold=STANDARD_CONTEXT_COMPACTION_THRESHOLD,
         token_pricing=ModelTokenPricing(
             input=1.0,
             cached_input=0.1,
@@ -464,6 +500,35 @@ def validate_catalog(items: Iterable[ModelCatalogSeed]) -> None:
         threshold = item.context_compaction_threshold
         if threshold is not None and not 0 < threshold <= 1:
             raise ValueError(f"Model compaction threshold must be in (0, 1]: {key!r}")
+        capacity_mode = item.capabilities.context_capacity_mode
+        maximum_context_window = item.capabilities.maximum_context_window
+        maximum_input_tokens = item.capabilities.maximum_input_tokens
+        maximum_threshold = (
+            item.capabilities.maximum_context_compaction_threshold
+        )
+        if capacity_mode is not None and capacity_mode not in {"standard", "maximum"}:
+            raise ValueError(f"Unknown context capacity mode: {key!r}")
+        if maximum_context_window is not None:
+            if context_window is None or maximum_context_window <= context_window:
+                raise ValueError(
+                    f"Maximum context window must exceed the standard window: {key!r}"
+                )
+            if capacity_mode != "standard":
+                raise ValueError(
+                    f"Long-context catalog models must default to standard mode: {key!r}"
+                )
+            if maximum_input_tokens is not None and (
+                maximum_input_tokens < 1
+                or maximum_input_tokens > maximum_context_window
+            ):
+                raise ValueError(f"Invalid maximum input limit: {key!r}")
+            if maximum_threshold is None or not 0 < maximum_threshold <= 1:
+                raise ValueError(f"Invalid maximum-mode compaction threshold: {key!r}")
+        elif any(
+            value is not None
+            for value in (capacity_mode, maximum_input_tokens, maximum_threshold)
+        ):
+            raise ValueError(f"Incomplete context capacity profile: {key!r}")
         pricing = item.token_pricing
         if pricing is not None:
             rates = (

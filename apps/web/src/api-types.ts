@@ -1005,6 +1005,11 @@ export interface AdminProviderModel {
   isDefault: boolean;
   capabilities: Record<string, unknown>;
   defaultContextWindow: number | null;
+  defaultContextUsageRatio: number;
+  contextCapacityMode: "standard" | "maximum" | null;
+  maximumContextWindow: number | null;
+  maximumInputTokens: number | null;
+  maximumContextUsageRatio: number | null;
   contextPolicyLocked: boolean;
   maxInputTokens: number | null;
   defaultMaxInputTokens: number | null;

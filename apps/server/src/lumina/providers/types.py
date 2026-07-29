@@ -34,6 +34,10 @@ class ProviderCapabilities:
     context_window: int | None = None
     max_input_tokens: int | None = None
     max_output_tokens: int | None = None
+    context_capacity_mode: str | None = None
+    maximum_context_window: int | None = None
+    maximum_input_tokens: int | None = None
+    maximum_context_compaction_threshold: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

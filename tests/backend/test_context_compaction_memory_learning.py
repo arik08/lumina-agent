@@ -1554,7 +1554,7 @@ def test_codex_context_keeps_raw_prefix_past_default_75_percent_threshold(
 @pytest.mark.parametrize(
     ("provider_id", "model_id", "minimum_budget"),
     [
-        ("openai", "gpt-5.6-terra", 1_000_000),
+        ("openai", "gpt-5.6-terra", 250_000),
         ("google", "gemini-3.1-pro", 900_000),
         ("anthropic", "claude-sonnet-5", 850_000),
         ("anthropic", "claude-haiku-4-5", 130_000),

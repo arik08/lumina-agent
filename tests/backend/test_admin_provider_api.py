@@ -139,11 +139,15 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
         gpt_54 = next(
             model for model in pgpt_models.json() if model["modelKey"] == "gpt-5.4"
         )
-        assert gpt_54["defaultContextWindow"] == 1_050_000
-        assert gpt_54["defaultContextUsageRatio"] == 0.75
+        assert gpt_54["defaultContextWindow"] == 272_000
+        assert gpt_54["defaultContextUsageRatio"] == 0.85
+        assert gpt_54["contextCapacityMode"] == "standard"
+        assert gpt_54["maximumContextWindow"] == 1_050_000
+        assert gpt_54["maximumInputTokens"] == 911_900
+        assert gpt_54["maximumContextUsageRatio"] == 0.75
         assert gpt_54["contextPolicyLocked"] is False
-        assert gpt_54["maxInputTokens"] == 911_900
-        assert gpt_54["defaultMaxInputTokens"] == 911_900
+        assert gpt_54["maxInputTokens"] == 272_000
+        assert gpt_54["defaultMaxInputTokens"] == 272_000
         assert gpt_54["maxOutputTokens"] == 128_000
         assert gpt_54["defaultMaxOutputTokens"] == 42_000
         assert gpt_54["configuredMaxOutputTokens"] == 42_000
@@ -162,34 +166,43 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
         assert configured.status_code == 200, configured.text
         assert configured.json()["configuredMaxOutputTokens"] == 64_000
 
-        configured_input = client.patch(
+        configured_maximum_context = client.patch(
             "/api/admin/providers/pgpt/models/gpt-5.4",
             headers={"X-CSRF-Token": csrf},
             json={
                 "capabilities": {
                     **configured.json()["capabilities"],
-                    "max_input_tokens": 900_000,
+                    "context_capacity_mode": "maximum",
+                    "context_window": 1_050_000,
+                    "max_input_tokens": 911_900,
+                    "context_compaction_threshold": 0.75,
                 }
             },
         )
-        assert configured_input.status_code == 200, configured_input.text
-        assert configured_input.json()["maxInputTokens"] == 900_000
-        assert configured_input.json()["defaultMaxInputTokens"] == 911_900
+        assert configured_maximum_context.status_code == 200, (
+            configured_maximum_context.text
+        )
+        assert configured_maximum_context.json()["contextCapacityMode"] == "maximum"
+        assert (
+            configured_maximum_context.json()["capabilities"]["context_window"]
+            == 1_050_000
+        )
+        assert configured_maximum_context.json()["maxInputTokens"] == 911_900
+        assert configured_maximum_context.json()["defaultMaxInputTokens"] == 272_000
 
         configured_ratio = client.patch(
             "/api/admin/providers/pgpt/models/gpt-5.4",
             headers={"X-CSRF-Token": csrf},
             json={
                 "capabilities": {
-                    **configured.json()["capabilities"],
+                    **configured_maximum_context.json()["capabilities"],
                     "context_compaction_threshold": 0.8,
                 }
             },
         )
-        assert configured_ratio.status_code == 200, configured_ratio.text
+        assert configured_ratio.status_code == 422, configured_ratio.text
         assert (
-            configured_ratio.json()["capabilities"]["context_compaction_threshold"]
-            == 0.8
+            configured_ratio.json()["code"] == "context_capacity_profile_mismatch"
         )
 
         rejected_ratio = client.patch(
@@ -197,7 +210,7 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
             headers={"X-CSRF-Token": csrf},
             json={
                 "capabilities": {
-                    **configured_ratio.json()["capabilities"],
+                    **configured_maximum_context.json()["capabilities"],
                     "context_compaction_threshold": 1.01,
                 }
             },
@@ -380,7 +393,7 @@ def _login_admin(client: TestClient) -> str:
         json={
             "loginName": "admin",
             "loginDomain": "posco.com",
-            "password": "1",
+            "password": "1111",
         },
     )
     assert response.status_code == 200
