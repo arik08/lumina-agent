@@ -673,6 +673,46 @@ def test_web_search_schema_distinguishes_query_calls_from_candidate_urls() -> No
     )
 
 
+def test_web_fetch_schema_limits_page_ranges_to_confirmed_pdfs() -> None:
+    description = executor_module._WEB_FETCH_TOOL_SCHEMA["function"]["description"]
+    properties = executor_module._WEB_FETCH_TOOL_SCHEMA["function"]["parameters"][
+        "properties"
+    ]
+
+    assert "Only set page_start/page_end for a confirmed PDF" in description
+    assert "Omit for ordinary web pages" in properties["page_start"]["description"]
+    assert "Omit for ordinary web pages" in properties["page_end"]["description"]
+
+
+def test_failed_web_attempt_does_not_block_same_call_retry(monkeypatch) -> None:
+    failed_execution = type(
+        "FailedExecution",
+        (),
+        {
+            "tool_name": "web_fetch",
+            "status": "failed",
+            "result_json": None,
+            "validated_input_json": {"url": "https://example.com/article"},
+        },
+    )()
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def scalars(self, _query):
+            return [failed_execution]
+
+    monkeypatch.setattr(executor_module, "SessionLocal", FakeSession)
+    counts, signatures = LocalRunExecutor()._web_attempt_state("run-retry")
+
+    assert counts["web_fetch"] == 1
+    assert signatures["web_fetch"] == set()
+
+
 def test_web_budget_skips_overlapping_duplicate_and_excess_calls(monkeypatch) -> None:
     executor = LocalRunExecutor()
     monkeypatch.setattr(

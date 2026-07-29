@@ -3809,7 +3809,7 @@ class LocalRunExecutor:
                 else {}
             )
             signature = _web_call_signature(tool_name, arguments)
-            if signature:
+            if signature and execution.status == "completed" and not skipped:
                 signatures[tool_name].add(signature)
         return counts, signatures
 

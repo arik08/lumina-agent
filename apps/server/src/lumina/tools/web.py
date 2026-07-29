@@ -116,6 +116,7 @@ class WebToolPolicy:
     max_query_chars: int = 500
     max_search_results: int = 10
     max_excerpt_chars: int = 600
+    max_retries: int = 2
     proxy: str | None = None
     allowed_content_types: frozenset[str] = field(
         default_factory=lambda: _ALLOWED_CONTENT_TYPES
@@ -138,6 +139,8 @@ class WebToolPolicy:
             raise ValueError("max_search_results must be between 1 and 20")
         if not 1 <= self.max_excerpt_chars <= 2_000:
             raise ValueError("max_excerpt_chars must be between 1 and 2000")
+        if not 0 <= self.max_retries <= 3:
+            raise ValueError("max_retries must be between 0 and 3")
         if self.proxy is not None:
             parsed = urlsplit(self.proxy)
             if (
@@ -486,22 +489,8 @@ async def web_fetch(
 ) -> WebFetchResult:
     """Fetch readable public content with redirect and DNS rebinding guards."""
 
-    selected_page_start = page_start if page_start is not None else 1
-    if selected_page_start < 1:
-        raise WebToolError(
-            "invalid_pdf_page_range",
-            "PDF 시작 페이지는 1 이상이어야 합니다.",
-            stage="input",
-        )
-    if page_end is not None and (
-        page_end < selected_page_start
-        or page_end - selected_page_start + 1 > _PDF_PAGES_PER_FETCH
-    ):
-        raise WebToolError(
-            "invalid_pdf_page_range",
-            f"PDF는 한 번에 최대 {_PDF_PAGES_PER_FETCH}페이지까지 가져올 수 있습니다.",
-            stage="input",
-        )
+    if urlsplit(url.strip()).path.casefold().endswith(".pdf"):
+        _validated_pdf_page_range(page_start, page_end)
     selected_policy = policy or WebToolPolicy()
     normalized_tool_execution_id = _normalize_tool_execution_id(tool_execution_id)
     normalized_query_ids = _normalize_query_ids(query_ids)
@@ -511,22 +500,29 @@ async def web_fetch(
         trust_manager=trust_manager,
         trust_profile=trust_profile,
     ) as http_client:
-        fetched = await _fetch_public_bytes(
-            url,
-            client=http_client,
-            policy=selected_policy,
-            resolver=resolver or resolve_public_addresses,
-            allowed_content_types=selected_policy.allowed_content_types,
-        )
+        for retry_index in range(selected_policy.max_retries + 1):
+            try:
+                fetched = await _fetch_public_bytes(
+                    url,
+                    client=http_client,
+                    policy=selected_policy,
+                    resolver=resolver or resolve_public_addresses,
+                    allowed_content_types=selected_policy.allowed_content_types,
+                )
+                break
+            except WebToolError as exc:
+                if not exc.retryable or retry_index >= selected_policy.max_retries:
+                    raise
+                await asyncio.sleep(min(0.1 * (2**retry_index), 0.5))
 
     locator_map: dict[str, object] | None = None
     extraction_metadata: dict[str, object] | None = None
     if fetched.content_type == "application/pdf":
+        selected_page_start, selected_page_end = _validated_pdf_page_range(
+            page_start, page_end
+        )
         parsed_final = _parse_public_url(fetched.final_url)
         filename = unquote(urlsplit(fetched.final_url).path.rsplit("/", 1)[-1])
-        selected_page_end = page_end or (
-            selected_page_start + _PDF_PAGES_PER_FETCH - 1
-        )
         extraction = await asyncio.get_running_loop().run_in_executor(
             _PDF_EXTRACTION_WORKERS,
             partial(
@@ -553,12 +549,6 @@ async def web_fetch(
         extraction_metadata = dict(extraction.metadata)
         title = filename or parsed_final.hostname
     else:
-        if page_start is not None or page_end is not None:
-            raise WebToolError(
-                "pdf_page_range_not_applicable",
-                "페이지 범위는 PDF URL에만 사용할 수 있습니다.",
-                stage="input",
-            )
         decoded = _decode_content(fetched.content, fetched.charset)
         if fetched.content_type in {"text/html", "application/xhtml+xml"}:
             title, readable = extract_readable_html(decoded)
@@ -601,6 +591,31 @@ async def web_fetch(
         locator_map=locator_map,
         extraction_metadata=extraction_metadata,
     )
+
+
+def _validated_pdf_page_range(
+    page_start: int | None, page_end: int | None
+) -> tuple[int, int]:
+    selected_page_start = page_start if page_start is not None else 1
+    if selected_page_start < 1:
+        raise WebToolError(
+            "invalid_pdf_page_range",
+            "PDF 시작 페이지는 1 이상이어야 합니다.",
+            stage="input",
+        )
+    selected_page_end = page_end or (
+        selected_page_start + _PDF_PAGES_PER_FETCH - 1
+    )
+    if (
+        selected_page_end < selected_page_start
+        or selected_page_end - selected_page_start + 1 > _PDF_PAGES_PER_FETCH
+    ):
+        raise WebToolError(
+            "invalid_pdf_page_range",
+            f"PDF는 한 번에 최대 {_PDF_PAGES_PER_FETCH}페이지까지 가져올 수 있습니다.",
+            stage="input",
+        )
+    return selected_page_start, selected_page_end
 
 
 async def resolve_public_addresses(hostname: str, port: int) -> tuple[str, ...]:

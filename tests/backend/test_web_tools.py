@@ -139,6 +139,8 @@ async def test_web_fetch_extracts_readable_html_and_content_hash() -> None:
             "https://example.com/report#internal-anchor",
             tool_execution_id="tool-fetch-1",
             query_ids=("search-1", "search-1"),
+            page_start=1,
+            page_end=1,
             client=client,
             resolver=_public_resolver,
         )
@@ -157,6 +159,33 @@ async def test_web_fetch_extracts_readable_html_and_content_hash() -> None:
     assert "Navigation must be omitted" not in result.text
     assert result.prompt_text.startswith(UNTRUSTED_CONTENT_BANNER)
     assert result.to_dict()["text"].startswith(UNTRUSTED_CONTENT_BANNER)
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_retries_retryable_http_failure() -> None:
+    attempts = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return httpx.Response(503, headers={"content-type": "text/html"})
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html; charset=utf-8"},
+            content=b"<main><h1>Recovered source</h1></main>",
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await web_fetch(
+            "https://example.com/recovered",
+            tool_execution_id="tool-fetch-retry",
+            client=client,
+            resolver=_public_resolver,
+        )
+
+    assert attempts == 2
+    assert "Recovered source" in result.text
 
 
 @pytest.mark.asyncio
