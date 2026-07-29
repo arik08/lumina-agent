@@ -46,6 +46,7 @@ from lumina.providers.pgpt import (
     PgptProfile,
     build_pgpt_payload,
 )
+from lumina.tools.python_execution import PYTHON_EXECUTION_TOOL_SCHEMA
 
 
 _TOOL = {
@@ -61,6 +62,14 @@ _TOOL = {
         },
     },
 }
+
+
+def _nested_keys(value: object) -> set[str]:
+    if isinstance(value, dict):
+        return set(value).union(*(_nested_keys(item) for item in value.values()))
+    if isinstance(value, list):
+        return set().union(*(_nested_keys(item) for item in value))
+    return set()
 
 
 def _sse(*events: dict[str, object]) -> bytes:
@@ -1065,6 +1074,55 @@ async def test_pgpt_adapter_uses_streaming_cache_payload_and_normalizes_response
     assert [event.text for event in events if event.type == "text_delta"] == ["OK"]
     assert (
         next(event for event in events if event.type == "usage").usage.input_tokens == 4
+    )
+
+
+@pytest.mark.asyncio
+async def test_pgpt_adapter_strips_unsupported_conditional_tool_schema_only_on_wire() -> (
+    None
+):
+    unsupported_keywords = {"allOf", "oneOf", "if", "then", "const"}
+    request = ProviderRequest(
+        model="gpt-5.4",
+        messages=(ProviderMessage(role="user", content="Use the Python tool"),),
+        tools=(PYTHON_EXECUTION_TOOL_SCHEMA,),
+    )
+
+    shared_payload = build_chat_completions_payload(request)
+    shared_parameters = shared_payload["tools"][0]["function"]["parameters"]
+    assert unsupported_keywords <= _nested_keys(shared_parameters)
+
+    async def handler(http_request: httpx.Request) -> httpx.Response:
+        payload = json.loads(http_request.content)
+        parameters = payload["tools"][0]["function"]["parameters"]
+        assert not (unsupported_keywords & _nested_keys(parameters))
+        assert parameters["type"] == "object"
+        assert parameters["required"] == ["source"]
+        assert parameters["additionalProperties"] is False
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "text/event-stream"},
+            content=_openai_sse(
+                {"choices": [{"delta": {"content": "OK"}, "finish_reason": "stop"}]}
+            )
+            + b"data: [DONE]\n\n",
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        adapter = PgptAdapter(
+            profile=PgptProfile(base_url="https://pgpt.test/v1"),
+            credentials=PgptCredentials(
+                api_key="pgpt-key",
+                employee_no="employee-no",
+                company_code="30",
+            ),
+            client=client,
+        )
+        events = [event async for event in adapter.stream(request)]
+
+    assert [event.text for event in events if event.type == "text_delta"] == ["OK"]
+    assert unsupported_keywords <= _nested_keys(
+        PYTHON_EXECUTION_TOOL_SCHEMA["function"]["parameters"]
     )
 
 

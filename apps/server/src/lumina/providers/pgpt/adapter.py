@@ -25,11 +25,48 @@ from .profile import PgptProfile
 
 DEFAULT_PGPT_MAX_COMPLETION_TOKENS = 42_000
 PROVIDER_ID = PGPT_PROVIDER_ID
+_UNSUPPORTED_PGPT_JSON_SCHEMA_KEYWORDS = frozenset(
+    {"allOf", "oneOf", "if", "then", "const"}
+)
+
+
+def _simplify_pgpt_json_schema(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {
+            key: _simplify_pgpt_json_schema(item)
+            for key, item in value.items()
+            if key not in _UNSUPPORTED_PGPT_JSON_SCHEMA_KEYWORDS
+        }
+    if isinstance(value, (list, tuple)):
+        return [_simplify_pgpt_json_schema(item) for item in value]
+    return value
+
+
+def _simplify_pgpt_tool_schemas(payload: dict[str, Any]) -> None:
+    tools = payload.get("tools")
+    if not isinstance(tools, list):
+        return
+    simplified_tools: list[Any] = []
+    for tool in tools:
+        if not isinstance(tool, Mapping):
+            simplified_tools.append(tool)
+            continue
+        simplified_tool = dict(tool)
+        function = tool.get("function")
+        if isinstance(function, Mapping):
+            simplified_function = dict(function)
+            parameters = function.get("parameters")
+            if isinstance(parameters, Mapping):
+                simplified_function["parameters"] = _simplify_pgpt_json_schema(parameters)
+            simplified_tool["function"] = simplified_function
+        simplified_tools.append(simplified_tool)
+    payload["tools"] = simplified_tools
 
 
 def build_pgpt_payload(request: ProviderRequest) -> dict[str, Any]:
     """Build the streaming subset accepted by the company P-GPT gateway."""
     payload = build_chat_completions_payload(request)
+    _simplify_pgpt_tool_schemas(payload)
     payload.setdefault(
         "max_completion_tokens",
         DEFAULT_PGPT_MAX_COMPLETION_TOKENS,
