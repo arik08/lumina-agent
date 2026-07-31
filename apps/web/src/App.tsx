@@ -76,6 +76,7 @@ import {
   answerLengthOptions,
   ArtifactLengthSlider,
   ComposerPicker,
+  ContextUsageIndicator,
   defaultArtifactOutputTokens,
   PromptEnhancementMenu,
 } from "./components/ComposerControls";
@@ -1801,6 +1802,7 @@ function App() {
         providerLabel: provider.displayName,
         modelKey: model.modelKey,
         modelLabel: model.displayName,
+        contextWindow: model.capabilities.contextWindow,
         effortOptions: model.capabilities.effortOptions,
       })),
   );
@@ -1808,6 +1810,8 @@ function App() {
     option.providerId === workspace.settings?.execution.providerId
       && option.modelKey === workspace.settings?.execution.modelKey,
   )?.id ?? "";
+  const selectedCandidate = candidateModelOptions.find((option) => option.id === selectedCandidateId);
+  const latestContextInputTokens = activeRun?.modelTurnMetrics.at(-1)?.inputTokens ?? 0;
 
   const hideModelNameTooltip = () => {
     if (modelNameTooltipTimerRef.current !== null) {
@@ -4203,6 +4207,12 @@ function App() {
                     <span className="composer-command-mode" role="status">
                       {pendingComposerMode === "queue_next" ? "Queue" : "Steering"}
                     </span>
+                  )}
+                  {selectedCandidate?.contextWindow && (
+                    <ContextUsageIndicator
+                      usedTokens={latestContextInputTokens}
+                      contextWindow={selectedCandidate.contextWindow}
+                    />
                   )}
                   <ComposerPicker
                     options={candidateModelOptions}

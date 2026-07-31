@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { Check, ChevronDown, FileText, LoaderCircle, WandSparkles } from "lucide-react";
 
 import type { OutputMode, PromptEnhancementOption } from "../api-types";
+import { GlobalTooltipLayer } from "./GlobalTooltip";
 
 export interface ComposerPickerOption {
   id: string;
@@ -27,6 +28,65 @@ export const answerLengthOptions: ComposerPickerOption[] = [
 ];
 
 export const defaultArtifactOutputTokens = 10_000;
+
+function formatContextTokens(value: number) {
+  if (value < 1_000) return value.toLocaleString("ko-KR");
+  const thousands = value / 1_000;
+  return `${thousands >= 10 || Number.isInteger(thousands) ? thousands.toFixed(0) : thousands.toFixed(1)}k`;
+}
+
+export function ContextUsageIndicator({
+  usedTokens,
+  contextWindow,
+}: {
+  usedTokens: number;
+  contextWindow: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLSpanElement>(null);
+  const popoverId = useId();
+  const safeUsedTokens = Math.max(0, usedTokens);
+  const usagePercent = Math.min(100, Math.round((safeUsedTokens / contextWindow) * 100));
+  const remainingPercent = Math.max(0, 100 - usagePercent);
+
+  return (
+    <span
+      className="context-usage-control"
+      ref={rootRef}
+      onPointerEnter={() => setOpen(true)}
+      onPointerLeave={() => setOpen(false)}
+      onFocusCapture={() => setOpen(true)}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false);
+      }}
+    >
+      <button
+        className="context-usage-trigger"
+        type="button"
+        aria-label={`컨텍스트 ${usagePercent}% 사용`}
+        aria-describedby={open ? popoverId : undefined}
+      >
+        <svg aria-hidden="true" viewBox="0 0 20 20">
+          <circle className="context-usage-track" cx="10" cy="10" r="7.5" />
+          <circle
+            className="context-usage-progress"
+            cx="10"
+            cy="10"
+            r="7.5"
+            pathLength="100"
+            strokeDasharray="100"
+            strokeDashoffset={100 - usagePercent}
+          />
+        </svg>
+      </button>
+      <GlobalTooltipLayer anchor={rootRef.current} className="context-usage-popover" id={popoverId} open={open} preferredPlacement="above">
+        <span>컨텍스트 길이:</span>
+        <strong>{usagePercent}% 사용 ({remainingPercent}% 남음)</strong>
+        <small>{formatContextTokens(safeUsedTokens)} / {formatContextTokens(contextWindow)} 토큰 사용</small>
+      </GlobalTooltipLayer>
+    </span>
+  );
+}
 const promptEnhancementOptions: Array<{
   id: PromptEnhancementOption;
   label: string;

@@ -15,6 +15,7 @@ from ...conversations.service import default_project
 from ...db import get_db
 from ...models import Project, ProjectSetting, ProviderModel, User, UserSetting
 from ...providers.codex import codex_oauth_available
+from ...providers.catalog import catalog_model
 from ...providers.execution_defaults import initial_execution_selection
 from ..dependencies import AuthContext, get_current_user, require_csrf
 from ..errors import ApiProblem
@@ -197,7 +198,7 @@ def get_provider_models(
             "enabled": model.enabled,
             "isDefault": model.is_default,
             "catalogRevision": model.catalog_revision,
-            "capabilities": _capabilities(model.capabilities_json),
+            "capabilities": _provider_model_capabilities(model),
         }
         for model in models
     ]
@@ -232,7 +233,7 @@ def get_provider_catalog(
                 "enabled": model.enabled,
                 "isDefault": model.is_default,
                 "catalogRevision": model.catalog_revision,
-                "capabilities": _capabilities(model.capabilities_json),
+                "capabilities": _provider_model_capabilities(model),
             }
         )
     if settings.environment != "production":
@@ -273,7 +274,25 @@ def get_provider_catalog(
     return {"providers": providers, "modelsByProvider": models_by_provider}
 
 
-def _capabilities(raw: dict[str, Any]) -> dict[str, object]:
+def _provider_model_capabilities(model: ProviderModel) -> dict[str, object]:
+    catalog_entry = catalog_model(model.provider_id, model.model_key)
+    return _capabilities(
+        model.capabilities_json,
+        fallback_context_window=(
+            catalog_entry.capabilities.context_window if catalog_entry else None
+        ),
+        fallback_max_input_tokens=(
+            catalog_entry.capabilities.max_input_tokens if catalog_entry else None
+        ),
+    )
+
+
+def _capabilities(
+    raw: dict[str, Any],
+    *,
+    fallback_context_window: int | None = None,
+    fallback_max_input_tokens: int | None = None,
+) -> dict[str, object]:
     provider_efforts = raw.get("effort_options") or ("low", "medium", "high")
     efforts = ("auto", *(value for value in provider_efforts if value != "auto"))
     return {
@@ -281,8 +300,8 @@ def _capabilities(raw: dict[str, Any]) -> dict[str, object]:
         "structuredOutput": bool(raw.get("structured_output", True)),
         "imageInput": bool(raw.get("image_input", False)),
         "imageGeneration": bool(raw.get("image_generation", False)),
-        "contextWindow": raw.get("context_window"),
-        "maxInputTokens": raw.get("max_input_tokens"),
+        "contextWindow": raw.get("context_window") or fallback_context_window,
+        "maxInputTokens": raw.get("max_input_tokens") or fallback_max_input_tokens,
         "effortOptions": [
             {
                 "id": value,

@@ -248,6 +248,22 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
         assert codex_gpt_54["contextPolicyLocked"] is True
         assert codex_gpt_54["maxInputTokens"] is None
         assert codex_gpt_54["defaultMaxInputTokens"] is None
+        public_codex_models = client.get("/api/providers/codex/models")
+        assert public_codex_models.status_code == 200
+        public_codex_gpt_54 = next(
+            model
+            for model in public_codex_models.json()
+            if model["modelKey"] == "gpt-5.4"
+        )
+        assert public_codex_gpt_54["capabilities"]["contextWindow"] == 272_000
+        provider_catalog = client.get("/api/provider-catalog")
+        assert provider_catalog.status_code == 200
+        catalog_codex_gpt_54 = next(
+            model
+            for model in provider_catalog.json()["modelsByProvider"]["codex"]
+            if model["modelKey"] == "gpt-5.4"
+        )
+        assert catalog_codex_gpt_54["capabilities"]["contextWindow"] == 272_000
 
         rejected_codex_policy = client.patch(
             "/api/admin/providers/codex/models/gpt-5.4",
