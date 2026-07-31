@@ -50,6 +50,22 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
         }
         run_columns = {column["name"] for column in inspector.get_columns("runs")}
         run_indexes = {index["name"] for index in inspector.get_indexes("runs")}
+        run_event_indexes = {
+            index["name"] for index in inspector.get_indexes("run_events")
+        }
+        deep_analysis_event_indexes = {
+            index["name"] for index in inspector.get_indexes("deep_analysis_events")
+        }
+        all_index_names = {
+            index["name"]
+            for table_name in (
+                "plan_steps",
+                "plan_subtasks",
+                "messages",
+                "tool_executions",
+            )
+            for index in inspector.get_indexes(table_name)
+        } | run_indexes
         run_unique_constraints = {
             constraint["name"]
             for constraint in inspector.get_unique_constraints("runs")
@@ -206,14 +222,132 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
         "last_warm_input_tokens",
         "last_warm_cached_tokens",
     } <= prompt_cache_seed_columns
-    assert revision == "0068"
-    assert "ix_run_events_run_type" in {
-        index["name"] for index in inspector.get_indexes("run_events")
-    }
+    assert revision == "0072"
+    assert "ix_run_events_run_type" in run_event_indexes
+    assert "ix_run_events_replay" not in run_event_indexes
+    assert "ix_deep_analysis_events_replay" not in deep_analysis_event_indexes
+    assert (
+        not {
+            "ix_runs_conversation_id",
+            "ix_runs_user_id",
+            "ix_runs_status",
+            "ix_plan_steps_timeline",
+            "ix_plan_steps_plan_id",
+            "ix_plan_subtasks_timeline",
+            "ix_plan_subtasks_plan_step_id",
+            "ix_messages_conversation_id",
+            "ix_tool_executions_run_id",
+        }
+        & all_index_names
+    )
     assert "ix_runs_queue_claim" in run_indexes
+    assert "ix_runs_queue_order" in run_indexes
     assert "ix_runs_worker_lease" in run_indexes
     assert "uq_runs_conversation_user_idempotency" in run_unique_constraints
     assert {"worker_id", "heartbeat_at", "lease_expires_at"}.issubset(run_columns)
+
+
+def test_migration_0072_cleans_legacy_mission_orphans(tmp_path: Path) -> None:
+    database = tmp_path / "legacy-deep-analysis-orphans.db"
+    database_url = f"sqlite:///{database.as_posix()}"
+    upgrade_database(database_url, "0071")
+
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO deep_analysis_events "
+                    "(mission_id, sequence, event_type, payload_json, id, created_at) "
+                    "VALUES ('missing-mission', 1, 'legacy', '{}', "
+                    "'orphan-event', '2026-08-01T00:00:00+00:00')"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO deep_analysis_workflow_pattern_versions "
+                    "(pattern_id, version_number, status, definition_json, "
+                    "definition_digest, change_summary, source_mission_id, id, "
+                    "created_at, updated_at) VALUES "
+                    "('missing-pattern', 1, 'draft', '{}', 'digest', 'legacy', "
+                    "'missing-mission', 'orphan-pattern-version', "
+                    "'2026-08-01T00:00:00+00:00', "
+                    "'2026-08-01T00:00:00+00:00')"
+                )
+            )
+            for statement in (
+                "INSERT INTO deep_analysis_claim_evidence_links "
+                "(id, claim_id, evidence_id, stance, rationale, created_at, "
+                "updated_at) VALUES ('orphan-link', 'missing-claim', "
+                "'missing-evidence', 'supports', 'legacy', "
+                "'2026-08-01T00:00:00+00:00', "
+                "'2026-08-01T00:00:00+00:00')",
+                "INSERT INTO deep_analysis_decision_responses "
+                "(id, decision_id, selected_option_id, answer_text, "
+                "decided_by_user_id, created_at, updated_at) VALUES "
+                "('orphan-response', 'missing-decision', 'option', 'legacy', "
+                "'missing-user', '2026-08-01T00:00:00+00:00', "
+                "'2026-08-01T00:00:00+00:00')",
+                "INSERT INTO deep_analysis_workflow_edges "
+                "(workflow_revision_id, source_node_key, target_node_key, "
+                "edge_type, id, created_at, updated_at) VALUES "
+                "('missing-revision', 'source', 'target', 'depends_on', "
+                "'orphan-edge', '2026-08-01T00:00:00+00:00', "
+                "'2026-08-01T00:00:00+00:00')",
+                "INSERT INTO deep_analysis_workflow_nodes "
+                "(workflow_revision_id, node_key, node_type, title, purpose, "
+                "status, sequence, position_x, position_y, config_json, "
+                "output_summary, actual_cost_microusd, id, created_at, "
+                "updated_at) VALUES ('missing-revision', 'node', 'research', "
+                "'Legacy', 'legacy', 'pending', 1, 0, 0, '{}', '', 0, "
+                "'orphan-node', '2026-08-01T00:00:00+00:00', "
+                "'2026-08-01T00:00:00+00:00')",
+            ):
+                connection.execute(text(statement))
+    finally:
+        engine.dispose()
+
+    upgrade_database(database_url, "0072")
+
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            event_count = connection.scalar(
+                text(
+                    "SELECT COUNT(*) FROM deep_analysis_events "
+                    "WHERE id = 'orphan-event'"
+                )
+            )
+            source_mission_id = connection.scalar(
+                text(
+                    "SELECT source_mission_id "
+                    "FROM deep_analysis_workflow_pattern_versions "
+                    "WHERE id = 'orphan-pattern-version'"
+                )
+            )
+            revision = MigrationContext.configure(connection).get_current_revision()
+            descendant_count = sum(
+                int(
+                    connection.scalar(
+                        text(f"SELECT COUNT(*) FROM {table_name} WHERE id = :id"),
+                        {"id": row_id},
+                    )
+                    or 0
+                )
+                for table_name, row_id in (
+                    ("deep_analysis_claim_evidence_links", "orphan-link"),
+                    ("deep_analysis_decision_responses", "orphan-response"),
+                    ("deep_analysis_workflow_edges", "orphan-edge"),
+                    ("deep_analysis_workflow_nodes", "orphan-node"),
+                )
+            )
+    finally:
+        engine.dispose()
+
+    assert event_count == 0
+    assert source_mission_id is None
+    assert descendant_count == 0
+    assert revision == "0072"
 
 
 def test_message_search_fts_migration_0056_round_trip(tmp_path: Path) -> None:
@@ -472,7 +606,7 @@ def test_context_migration_adopts_legacy_create_all_table(tmp_path: Path) -> Non
         }
         with engine.connect() as connection:
             assert (
-                MigrationContext.configure(connection).get_current_revision() == "0068"
+                MigrationContext.configure(connection).get_current_revision() == "0072"
             )
     finally:
         engine.dispose()
@@ -502,7 +636,7 @@ def test_recent_migrations_adopt_tables_precreated_by_runtime_schema(
     try:
         with engine.connect() as connection:
             revision = MigrationContext.configure(connection).get_current_revision()
-        assert revision == "0068"
+        assert revision == "0072"
     finally:
         engine.dispose()
 

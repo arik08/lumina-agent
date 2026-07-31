@@ -25,6 +25,7 @@ from ..types import (
     ProviderRequest,
     ProviderUsage,
 )
+from ..usage import derive_uncached_input_tokens
 
 
 logger = logging.getLogger(__name__)
@@ -97,15 +98,15 @@ def normalize_openai_usage(raw: Mapping[str, Any]) -> ProviderUsage:
         output_details = {}
     raw_reasoning_tokens = output_details.get("reasoning_tokens")
     reasoning_tokens = (
-        max(0, int(raw_reasoning_tokens))
-        if raw_reasoning_tokens is not None
-        else None
+        max(0, int(raw_reasoning_tokens)) if raw_reasoning_tokens is not None else None
     )
     return ProviderUsage(
         input_tokens=input_tokens,
         cached_input_tokens=cached,
         cache_write_tokens=cache_write,
-        uncached_input_tokens=max(0, input_tokens - cached),
+        uncached_input_tokens=derive_uncached_input_tokens(
+            input_tokens, cached, cache_write
+        ),
         output_tokens=output_tokens,
         reasoning_tokens=reasoning_tokens,
         raw=dict(raw),

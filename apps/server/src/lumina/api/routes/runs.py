@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
+from typing import Any
 
 from fastapi import APIRouter, Depends, Header, Request
 from fastapi.encoders import jsonable_encoder
@@ -52,6 +54,30 @@ def _idempotency_key(value: str | None) -> str:
     return value
 
 
+def _load_stream_event_batch(
+    session_token: str, run_id: str, cursor: int
+) -> tuple[list[dict[str, Any]], bool, int] | None:
+    with SessionLocal() as event_db:
+        resolved = resolve_server_session(event_db, session_token)
+        if resolved is None:
+            return None
+        try:
+            run = run_for_user(event_db, resolved.user, run_id)
+        except ApiProblem:
+            return None
+        rows = event_db.scalars(
+            select(RunEvent)
+            .where(RunEvent.run_id == run_id, RunEvent.sequence > cursor)
+            .order_by(RunEvent.sequence)
+            .limit(200)
+        )
+        return (
+            [event_response(event) for event in rows],
+            run.status in TERMINAL_STATUSES,
+            run.last_sequence,
+        )
+
+
 @router.post("/conversations/{conversation_id}/runs", status_code=202)
 async def post_run(
     conversation_id: str,
@@ -89,14 +115,20 @@ async def post_run_action(
     context: AuthContext = Depends(require_csrf),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
-    run, command, message, changed = apply_run_action(
-        db,
-        user=context.user,
-        run_id=run_id,
-        payload=payload,
-        idempotency_key=_idempotency_key(idempotency_key),
-    )
-    db.commit()
+    # Authentication dependencies may have opened a SQLite read transaction
+    # before this request can acquire the Run mutation lock. End that snapshot
+    # so a concurrently committed executor write cannot make the action's
+    # subsequent write upgrade fail with SQLITE_BUSY_SNAPSHOT.
+    db.rollback()
+    async with local_run_executor.run_database_mutation_lock(run_id):
+        run, command, message, changed = apply_run_action(
+            db,
+            user=context.user,
+            run_id=run_id,
+            payload=payload,
+            idempotency_key=_idempotency_key(idempotency_key),
+        )
+        db.commit()
     if changed:
         local_run_executor.invalidate_control(run.id)
         if payload.type == "cancel":
@@ -192,25 +224,15 @@ async def stream_run(
                 return
             if query_required:
                 observed_durable_revision = event_broker.revisions(run_id)[1]
-                with SessionLocal() as event_db:
-                    resolved = resolve_server_session(event_db, context.session_token)
-                    if resolved is None:
-                        return
-                    try:
-                        run = run_for_user(event_db, resolved.user, run_id)
-                    except ApiProblem:
-                        return
-                    rows = list(
-                        event_db.scalars(
-                            select(RunEvent)
-                            .where(RunEvent.run_id == run_id, RunEvent.sequence > cursor)
-                            .order_by(RunEvent.sequence)
-                            .limit(200)
-                        )
-                    )
-                    terminal = run.status in TERMINAL_STATUSES
-                    last_sequence = run.last_sequence
-                    encoded = [event_response(event) for event in rows]
+                batch = await asyncio.to_thread(
+                    _load_stream_event_batch,
+                    context.session_token,
+                    run_id,
+                    cursor,
+                )
+                if batch is None:
+                    return
+                encoded, terminal, last_sequence = batch
                 durable_revision = max(durable_revision, observed_durable_revision)
                 if encoded:
                     for event in encoded:

@@ -33,6 +33,7 @@ from openai_codex.generated.v2_all import (
 )
 
 from ..constants import CODEX_PROVIDER_ID
+from ..usage import derive_uncached_input_tokens
 from ..errors import ProviderConfigurationError, ProviderRequestError
 from ..openai import OpenAIResponsesAdapter
 from ..types import (
@@ -435,11 +436,7 @@ class CodexResponsesAdapter:
             except ProviderConfigurationError:
                 raise
             except ProviderRequestError as exc:
-                if (
-                    attempt == 0
-                    and not emitted_output
-                    and exc.status_code == 401
-                ):
+                if attempt == 0 and not emitted_output and exc.status_code == 401:
                     account = getattr(client, "account")
                     await account(refresh_token=True)
                     continue
@@ -656,7 +653,9 @@ def _prompt(request: ProviderRequest) -> str:
 
 
 def _incremental_prompt(messages: tuple[ProviderMessage, ...]) -> str:
-    payload = {"conversation_delta": [_serialized_message(message) for message in messages]}
+    payload = {
+        "conversation_delta": [_serialized_message(message) for message in messages]
+    }
     return (
         "Continue the same Lumina model request. The static system, tool, and output "
         "contracts from the previous turn remain authoritative. Process only this new "
@@ -746,7 +745,9 @@ def _codex_access_token() -> str:
 def _codex_account_id(token: str) -> str:
     parts = token.split(".")
     if len(parts) != 3:
-        raise ProviderConfigurationError("Codex OAuth access token 형식이 올바르지 않습니다.")
+        raise ProviderConfigurationError(
+            "Codex OAuth access token 형식이 올바르지 않습니다."
+        )
     try:
         encoded = parts[1] + "=" * (-len(parts[1]) % 4)
         payload = json.loads(base64.urlsafe_b64decode(encoded).decode("utf-8"))
@@ -771,9 +772,7 @@ def _codex_cache_session_id(request: ProviderRequest) -> str | None:
     return f"lumina-cache-{digest}"
 
 
-def _codex_responses_headers(
-    token: str, request: ProviderRequest
-) -> dict[str, str]:
+def _codex_responses_headers(token: str, request: ProviderRequest) -> dict[str, str]:
     headers = {
         "chatgpt-account-id": _codex_account_id(token),
         "originator": "lumina_agent",
@@ -991,10 +990,11 @@ def _normalized_tool_arguments(raw: str, *, diagnostic: str) -> str:
             ) from exc
         trailing = stripped[end:].strip()
         # Codex can append the start of an abandoned second JSON value.
-        if (
-            not isinstance(arguments, dict)
-            or "".join(trailing.split()) not in {",", ",{", ",["}
-        ):
+        if not isinstance(arguments, dict) or "".join(trailing.split()) not in {
+            ",",
+            ",{",
+            ",[",
+        }:
             raise _invalid_result(
                 "tool_call_arguments_trailing_content",
                 diagnostic=diagnostic,
@@ -1033,7 +1033,7 @@ def _usage(raw: object) -> ProviderUsage | None:
     return ProviderUsage(
         input_tokens=input_tokens,
         cached_input_tokens=cached,
-        uncached_input_tokens=max(0, input_tokens - cached),
+        uncached_input_tokens=derive_uncached_input_tokens(input_tokens, cached),
         output_tokens=output_tokens,
         reasoning_tokens=(
             max(0, int(raw_reasoning_tokens))

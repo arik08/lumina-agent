@@ -44,7 +44,9 @@ class WebSourcePolicy(ApiModel):
     @model_validator(mode="after")
     def validate_policy(self) -> "WebSourcePolicy":
         if self.mode in {"prioritize", "restrict"} and not self.domains:
-            raise ValueError("prioritize and restrict modes require at least one domain")
+            raise ValueError(
+                "prioritize and restrict modes require at least one domain"
+            )
         overlap = set(self.domains) & set(self.excluded_domains)
         if overlap:
             raise ValueError("a domain cannot be both included and excluded")
@@ -63,7 +65,9 @@ class MissionCreate(ApiModel):
     output_format: str = Field(default="markdown", min_length=1, max_length=120)
     target_output_tokens: int | None = Field(default=10_000, ge=1, le=40_000)
     execution: ExecutionSelection | None = None
-    prompt_references: list[MessageReferenceInput] = Field(default_factory=list, max_length=100)
+    prompt_references: list[MessageReferenceInput] = Field(
+        default_factory=list, max_length=100
+    )
     research_period: ResearchPeriod = Field(default_factory=ResearchPeriod)
     web_source_policy: WebSourcePolicy = Field(default_factory=WebSourcePolicy)
 
@@ -88,7 +92,9 @@ class MissionPatch(ApiModel):
     output_format: str | None = Field(default=None, min_length=1, max_length=120)
     target_output_tokens: int | None = Field(default=None, ge=1, le=40_000)
     execution: ExecutionSelection | None = None
-    prompt_references: list[MessageReferenceInput] | None = Field(default=None, max_length=100)
+    prompt_references: list[MessageReferenceInput] | None = Field(
+        default=None, max_length=100
+    )
     research_period: ResearchPeriod | None = None
     web_source_policy: WebSourcePolicy | None = None
     is_favorite: bool | None = None
@@ -139,7 +145,9 @@ class MissionRestart(ApiModel):
 class MissionSteer(ApiModel):
     expected_revision: int = Field(ge=1)
     instruction: str = Field(min_length=1, max_length=10_000)
-    prompt_references: list[MessageReferenceInput] = Field(default_factory=list, max_length=100)
+    prompt_references: list[MessageReferenceInput] = Field(
+        default_factory=list, max_length=100
+    )
 
     @field_validator("instruction")
     @classmethod
@@ -282,6 +290,7 @@ class WorkflowDraftNode(ApiModel):
 class WorkflowDraftEdge(ApiModel):
     source_node_key: str = Field(min_length=1, max_length=32)
     target_node_key: str = Field(min_length=1, max_length=32)
+    edge_type: Literal["sequence", "loop_back"] = "sequence"
 
 
 class WorkflowDraftPatch(ApiModel):

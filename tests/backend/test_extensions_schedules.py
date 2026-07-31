@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import time
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -53,6 +54,64 @@ from lumina.schedules.service import (
     start_scheduled_run,
 )
 from lumina.schedules import service as schedules_service
+
+
+@pytest.mark.asyncio
+async def test_scheduler_database_tick_does_not_block_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scheduler = schedules_service.LocalScheduler()
+
+    def slow_tick_database(
+        *, now: datetime | None = None
+    ) -> tuple[list[str], list[str]]:
+        del now
+        time.sleep(0.05)
+        return [], []
+
+    monkeypatch.setattr(scheduler, "_tick_database", slow_tick_database)
+    ticks = 0
+    running = True
+
+    async def ticker() -> None:
+        nonlocal ticks
+        while running:
+            ticks += 1
+            await asyncio.sleep(0.005)
+
+    ticker_task = asyncio.create_task(ticker())
+    assert await scheduler.tick() == []
+    running = False
+    await ticker_task
+
+    assert ticks >= 3
+
+
+@pytest.mark.asyncio
+async def test_scheduler_cancellation_waits_for_database_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scheduler = schedules_service.LocalScheduler()
+    tick_started = Event()
+    release_tick = Event()
+
+    def slow_tick_database(
+        *, now: datetime | None = None
+    ) -> tuple[list[str], list[str]]:
+        del now
+        tick_started.set()
+        release_tick.wait(timeout=2)
+        return [], []
+
+    monkeypatch.setattr(scheduler, "_tick_database", slow_tick_database)
+    tick_task = asyncio.create_task(scheduler.tick())
+    await asyncio.to_thread(tick_started.wait, 2)
+    tick_task.cancel()
+    await asyncio.sleep(0.01)
+    assert not tick_task.done()
+    release_tick.set()
+    with pytest.raises(asyncio.CancelledError):
+        await tick_task
 
 
 def _test_app(tmp_path: Path) -> tuple[FastAPI, Settings]:
@@ -301,7 +360,9 @@ def test_repository_mcp_wrapper_is_classified_and_attached_to_mcp_snapshot(
             )
             assert installation is not None and definition is not None
             assert installation.configuration_revision_id != old_revision_id
-            assert installation.configuration_revision_id == definition.current_revision_id
+            assert (
+                installation.configuration_revision_id == definition.current_revision_id
+            )
             assert installation.tool_allowlist_json == ["search_docs"]
             installation.configuration_revision_id = old_revision_id
             db.commit()
@@ -319,7 +380,9 @@ def test_repository_mcp_wrapper_is_classified_and_attached_to_mcp_snapshot(
                 select(McpDefinition).where(McpDefinition.slug == "internal-search")
             )
             assert installation is not None and definition is not None
-            assert installation.configuration_revision_id == definition.current_revision_id
+            assert (
+                installation.configuration_revision_id == definition.current_revision_id
+            )
 
 
 def test_selected_mcp_wrapper_guidance_enters_the_run_context(tmp_path: Path) -> None:
@@ -435,7 +498,8 @@ def test_skill_draft_compare_and_swap_rejects_stale_session(tmp_path: Path) -> N
         draft_id = draft_payload["id"]
         initial_digest = draft_payload["digest"]
         listed = next(
-            item for item in client.get("/api/extensions").json()
+            item
+            for item in client.get("/api/extensions").json()
             if item["id"] == created.json()["id"]
         )
         assert "package" not in listed["draft"]
@@ -1770,9 +1834,12 @@ def test_schedule_patch_updates_project_timing_and_execution(tmp_path: Path) -> 
             "modelKey": "mock-agent",
             "effortId": "high",
         }
-        assert client.get(
-            "/api/scheduled-tasks", params={"project_id": source_project_id}
-        ).json() == []
+        assert (
+            client.get(
+                "/api/scheduled-tasks", params={"project_id": source_project_id}
+            ).json()
+            == []
+        )
         destination_tasks = client.get(
             "/api/scheduled-tasks", params={"project_id": destination_project_id}
         ).json()

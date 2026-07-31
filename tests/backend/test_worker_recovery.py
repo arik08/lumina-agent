@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import select
 
+from lumina.agent import executor as executor_module
 from lumina.api.schemas import RunCreate, RunMessageInput
 from lumina.agent.executor import (
     LocalRunExecutor,
@@ -57,6 +58,93 @@ from lumina.runs.state import (
 from lumina.runs.subtasks import bind_tool_subtask, ensure_tool_subtasks
 
 
+@pytest.mark.asyncio
+async def test_executor_observes_unexpected_run_task_failure(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    executor = LocalRunExecutor(_settings(tmp_path, "task-failure"))
+
+    async def fail_outside_boundary() -> None:
+        raise RuntimeError("unexpected task boundary failure")
+
+    task = asyncio.create_task(fail_outside_boundary())
+    executor._tasks["run-task-failure"] = task
+    task.add_done_callback(executor._discard_task)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert "run-task-failure" not in executor._tasks
+    assert "Run task terminated outside its failure boundary" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_heavy_work_can_propagate_cancellation_to_subprocess_style_work(
+    tmp_path: Path,
+) -> None:
+    executor = LocalRunExecutor(_settings(tmp_path, "heavy-work-cancel"))
+    started = asyncio.Event()
+    cleaned_up = asyncio.Event()
+
+    async def cancellable_operation() -> None:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleaned_up.set()
+
+    task = asyncio.create_task(
+        executor._run_heavy_work(
+            cancellable_operation,
+            cancel_on_caller_cancel=True,
+        )
+    )
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert cleaned_up.is_set()
+    assert executor.heavy_work_statistics["active"] == 0
+    assert executor.heavy_work_statistics["waiting"] == 0
+
+
+@pytest.mark.asyncio
+async def test_executor_stop_closes_all_providers_after_one_close_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _settings(tmp_path, "provider-close-failure")
+    configure_database(settings.database_url)
+    create_schema()
+    bootstrap_database(settings=settings)
+    executor = LocalRunExecutor(settings)
+    closed: list[str] = []
+
+    async def fail_mcp_close() -> None:
+        closed.append("mcp")
+        raise RuntimeError("mcp close failed")
+
+    async def close_codex() -> None:
+        closed.append("codex")
+
+    async def close_pgpt() -> None:
+        closed.append("pgpt")
+
+    async def close_external() -> None:
+        closed.append("external")
+
+    monkeypatch.setattr(executor.mcp_runtime, "close", fail_mcp_close)
+    monkeypatch.setattr(executor.codex_provider, "close", close_codex)
+    monkeypatch.setattr(executor.pgpt_provider, "close", close_pgpt)
+    monkeypatch.setattr(executor, "_close_external_provider_client", close_external)
+
+    with pytest.raises(RuntimeError, match="mcp close failed"):
+        await executor.stop()
+
+    assert set(closed) == {"mcp", "codex", "pgpt", "external"}
+
+
 def test_executor_can_restart_on_a_new_event_loop(tmp_path: Path) -> None:
     settings = _settings(tmp_path, "new-event-loop")
     configure_database(settings.database_url)
@@ -70,6 +158,122 @@ def test_executor_can_restart_on_a_new_event_loop(tmp_path: Path) -> None:
 
     asyncio.run(lifecycle())
     asyncio.run(lifecycle())
+
+
+def test_executor_stop_cancels_optional_cache_warmup(tmp_path: Path) -> None:
+    settings = _settings(tmp_path, "cancel-cache-warmup")
+    configure_database(settings.database_url)
+    create_schema()
+    bootstrap_database(settings=settings)
+    executor = LocalRunExecutor(settings)
+
+    async def lifecycle() -> None:
+        await executor.start()
+        cancelled = asyncio.Event()
+
+        async def warm_forever() -> None:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+        warmup_task = asyncio.create_task(warm_forever())
+        executor._codex_warmup_task = warmup_task
+        await asyncio.sleep(0)
+
+        await asyncio.wait_for(executor.stop(), timeout=1)
+
+        assert warmup_task.cancelled()
+        assert cancelled.is_set()
+        assert executor._codex_warmup_task is None
+
+    asyncio.run(lifecycle())
+
+
+def test_executor_samples_event_loop_lag_and_cancels_monitor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(executor_module, "_EVENT_LOOP_LAG_SAMPLE_SECONDS", 0.01)
+    settings = _settings(tmp_path, "event-loop-lag-monitor")
+    configure_database(settings.database_url)
+    create_schema()
+    bootstrap_database(settings=settings)
+    executor = LocalRunExecutor(settings)
+
+    async def lifecycle() -> None:
+        await executor.start()
+        monitor_task = executor._loop_lag_task
+        assert monitor_task is not None
+        await asyncio.sleep(0.03)
+        statistics = executor.event_loop_lag_statistics
+        assert statistics["totalSamples"] >= 1
+        assert statistics["windowSamples"] >= 1
+        assert statistics["maxWindowMs"] >= 0
+
+        await asyncio.wait_for(executor.stop(), timeout=1)
+
+        assert monitor_task.done()
+        assert executor._loop_lag_task is None
+
+    asyncio.run(lifecycle())
+
+
+def test_executor_bounds_heavy_work_for_small_machines(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(executor_module.os, "cpu_count", lambda: 2)
+
+    async def exercise_limit() -> None:
+        executor = LocalRunExecutor(_settings(tmp_path, "heavy-work-limit"))
+        first_entered = asyncio.Event()
+        second_entered = asyncio.Event()
+        release_first = asyncio.Event()
+
+        async def first_operation() -> None:
+            first_entered.set()
+            await release_first.wait()
+
+        async def second_operation() -> None:
+            second_entered.set()
+
+        async def second() -> None:
+            await first_entered.wait()
+            await executor._run_heavy_work(second_operation)
+
+        first_task = asyncio.create_task(executor._run_heavy_work(first_operation))
+        second_task = asyncio.create_task(second())
+        await first_entered.wait()
+        await asyncio.sleep(0)
+
+        assert executor.heavy_work_statistics == {
+            "active": 1,
+            "waiting": 1,
+            "limit": 1,
+        }
+        assert not second_entered.is_set()
+
+        first_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first_task
+        assert executor.heavy_work_statistics == {
+            "active": 1,
+            "waiting": 1,
+            "limit": 1,
+        }
+        assert not second_entered.is_set()
+
+        release_first.set()
+        await second_task
+        assert second_entered.is_set()
+        assert executor.heavy_work_statistics == {
+            "active": 0,
+            "waiting": 0,
+            "limit": 1,
+        }
+
+    asyncio.run(exercise_limit())
 
 
 def test_worker_recovery_rewinds_only_the_inflight_model_draft(tmp_path: Path) -> None:
@@ -416,9 +620,7 @@ def test_paused_run_cannot_start_a_new_tool_side_effect(tmp_path: Path) -> None:
 
     with SessionLocal() as db:
         assert (
-            db.scalar(
-                select(ToolExecution.id).where(ToolExecution.run_id == run_id)
-            )
+            db.scalar(select(ToolExecution.id).where(ToolExecution.run_id == run_id))
             is None
         )
 
@@ -697,9 +899,7 @@ def test_malformed_paused_tool_checkpoint_fails_without_replaying_tools(
         assert run is not None and run.status == FAILED
         assert run.error_code == "pause_checkpoint_invalid"
         assert (
-            db.scalar(
-                select(ToolExecution.id).where(ToolExecution.run_id == run_id)
-            )
+            db.scalar(select(ToolExecution.id).where(ToolExecution.run_id == run_id))
             is None
         )
 

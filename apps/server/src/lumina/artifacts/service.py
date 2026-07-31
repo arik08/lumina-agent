@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
@@ -26,6 +27,18 @@ from .render_validation import ArtifactRenderBackend, verify_artifact_render
 
 
 TEXT_EDITABLE_ARTIFACT_KINDS = frozenset({"html", "markdown", "text", "json", "csv"})
+ArtifactValidation = tuple[str, dict[str, Any]]
+
+
+async def validate_artifact_content_async(
+    *, kind: str, mime_type: str, content: bytes
+) -> ArtifactValidation:
+    return await asyncio.to_thread(
+        validate_artifact_content,
+        kind=kind,
+        mime_type=mime_type,
+        content=content,
+    )
 
 
 def require_artifact(
@@ -69,6 +82,26 @@ def current_artifact_version(db: Session, artifact: Artifact) -> ArtifactVersion
     )
 
 
+def _resolve_artifact_validation(
+    *,
+    kind: str,
+    mime_type: str,
+    content: bytes,
+    precomputed: ArtifactValidation | None,
+) -> ArtifactValidation:
+    if precomputed is None:
+        return validate_artifact_content(
+            kind=kind,
+            mime_type=mime_type,
+            content=content,
+        )
+    status, validation = precomputed
+    expected_hash = hashlib.sha256(content).hexdigest()
+    if validation.get("contentHash") != expected_hash:
+        raise ValueError("Precomputed Artifact validation does not match its content")
+    return status, validation
+
+
 def create_artifact(
     db: Session,
     storage: ManagedLocalStorage,
@@ -86,6 +119,7 @@ def create_artifact(
     validation_status: str | None = None,
     renderer_manifest: dict[str, Any] | None = None,
     asset_manifest: list[dict[str, Any]] | None = None,
+    precomputed_validation: ArtifactValidation | None = None,
 ) -> tuple[Artifact, ArtifactVersion]:
     require_project(db, user, project_id, write=True)
     if conversation_id:
@@ -103,8 +137,11 @@ def create_artifact(
     )
     db.add(artifact)
     db.flush()
-    computed_status, validation = validate_artifact_content(
-        kind=kind, mime_type=mime_type, content=content
+    computed_status, validation = _resolve_artifact_validation(
+        kind=kind,
+        mime_type=mime_type,
+        content=content,
+        precomputed=precomputed_validation,
     )
     version = _write_version(
         db,
@@ -142,6 +179,7 @@ def create_artifact_version(
     change_type: str,
     change_summary: str,
     source_version: ArtifactVersion | None = None,
+    precomputed_validation: ArtifactValidation | None = None,
 ) -> ArtifactVersion:
     artifact = require_artifact(db, user, artifact_id, write=True)
     ensure_artifact_text_editable(artifact)
@@ -183,8 +221,11 @@ def create_artifact_version(
         )
         or 0
     )
-    validation_status, validation = validate_artifact_content(
-        kind=artifact.kind, mime_type=artifact.mime_type, content=content
+    validation_status, validation = _resolve_artifact_validation(
+        kind=artifact.kind,
+        mime_type=artifact.mime_type,
+        content=content,
+        precomputed=precomputed_validation,
     )
     version = _write_version(
         db,
@@ -312,10 +353,7 @@ def _write_version(
     digest = hashlib.sha256(content).hexdigest()
     extension = _safe_extension(artifact.display_name, artifact.mime_type)
     version_id = new_uuid()
-    key = (
-        f"artifacts/{artifact.id}/v{version_number}/"
-        f"{version_id}-{digest}.{extension}"
-    )
+    key = f"artifacts/{artifact.id}/v{version_number}/{version_id}-{digest}.{extension}"
     stored = storage.put_bytes(key, content, expected_sha256=digest)
     version = ArtifactVersion(
         id=version_id,
@@ -495,10 +533,7 @@ def save_draft(
     ).hexdigest()
     extension = _safe_extension(artifact.display_name, artifact.mime_type)
     write_id = new_uuid()
-    key = (
-        f"artifact-drafts/{artifact.id}/{user.id}/"
-        f"{write_id}-{etag}.{extension}"
-    )
+    key = f"artifact-drafts/{artifact.id}/{user.id}/{write_id}-{etag}.{extension}"
     stored = storage.put_bytes(key, content, expected_sha256=digest)
     try:
         if draft is None:

@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "suites": {
+    "cache-contract": {
+      "description": "Stable prompt prefix routing, GPT-5.6 cache policy, and usage telemetry.",
+      "cases": [
+        "tests/backend/test_executor_tool_loop.py::test_prompt_cache_key_tracks_static_prefix_not_dynamic_messages",
+        "tests/backend/test_openai_responses_provider.py::test_responses_payload_uses_modern_cache_ttl_for_gpt_5_6",
+        "tests/backend/test_openai_responses_provider.py::test_responses_payload_marks_only_stable_system_prefix_for_gpt_5_6",
+        "tests/backend/test_codex_oauth_provider.py::test_codex_direct_routes_same_prefix_across_new_run_sessions",
+        "tests/backend/test_codex_prompt_cache_prewarm.py::test_codex_cache_prewarm_skips_recently_warmed_and_stale_seeds",
+        "tests/backend/test_config.py::test_codex_cache_prewarm_is_opt_in",
+        "tests/backend/test_executor_tool_loop.py::test_auto_effort_and_model_turn_metrics_are_persisted",
+        "tests/backend/test_admin_api.py::test_admin_usage_statistics_are_organization_scoped_and_admin_only"
+      ]
+    },
+    "provider-resilience": {
+      "description": "Retry classification, partial-output safety, and provider fallback boundaries.",
+      "cases": [
+        "tests/backend/test_openai_responses_provider.py::test_openai_responses_stream_error_is_typed_retryable_and_redacted",
+        "tests/backend/test_codex_oauth_provider.py::test_codex_oauth_retries_transport_close_before_output",
+        "tests/backend/test_codex_oauth_provider.py::test_codex_oauth_discards_dead_client_after_partial_output",
+        "tests/backend/test_run_concurrency_replay.py::test_provider_retry_delay_jitters_clients_without_violating_retry_after",
+        "tests/backend/test_executor_tool_loop.py::test_tool_loop_guard_requires_identical_results_and_no_visible_output",
+        "tests/backend/test_executor_tool_loop.py::test_identical_tool_rounds_warn_then_stop_without_burning_turn_limit",
+        "tests/backend/test_run_concurrency_replay.py::test_retryable_provider_failure_retries_only_before_output",
+        "tests/backend/test_run_concurrency_replay.py::test_retryable_provider_failure_continues_partial_text_without_replay"
+      ]
+    },
+    "worker-recovery": {
+      "description": "Worker restart, ownership fencing, safe tool recovery, and lease behavior.",
+      "cases": [
+        "tests/backend/test_worker_recovery.py::test_executor_can_restart_on_a_new_event_loop",
+        "tests/backend/test_worker_recovery.py::test_executor_observes_unexpected_run_task_failure",
+        "tests/backend/test_worker_recovery.py::test_executor_stop_cancels_optional_cache_warmup",
+        "tests/backend/test_worker_recovery.py::test_executor_stop_closes_all_providers_after_one_close_fails",
+        "tests/backend/test_run_safety.py::test_heartbeat_backs_off_before_restart_after_database_failure",
+        "tests/backend/test_worker_recovery.py::test_worker_recovery_rewinds_only_the_inflight_model_draft",
+        "tests/backend/test_worker_recovery.py::test_worker_recovery_never_replays_an_unknown_tool_outcome",
+        "tests/backend/test_worker_recovery.py::test_graceful_shutdown_records_interrupted_then_schedules_recovery",
+        "tests/backend/test_worker_recovery.py::test_worker_recovery_respects_live_lease_and_reclaims_expired_lease",
+        "tests/backend/test_worker_recovery.py::test_stale_executor_cannot_mutate_run_tool_events_or_live_draft",
+        "tests/backend/test_run_concurrency_replay.py::test_queued_message_is_recovered_once_after_executor_restart"
+      ]
+    },
+    "context-efficiency": {
+      "description": "Bounded provider context, lossless tool pairing, and compaction headroom.",
+      "cases": [
+        "tests/backend/test_executor_tool_loop.py::test_all_tool_results_share_one_turn_context_budget_and_keep_readback_ids",
+        "tests/backend/test_context_compaction_memory_learning.py::test_runtime_compaction_preserves_recent_tool_pairs_and_marks_summary",
+        "tests/backend/test_context_compaction_memory_learning.py::test_runtime_compaction_shrinks_oversized_recent_tool_pair_as_valid_json",
+        "tests/backend/test_context_compaction_memory_learning.py::test_runtime_compaction_leaves_headroom_when_recent_tool_rounds_are_large",
+        "tests/backend/test_context_compaction_memory_learning.py::test_reactive_runtime_compaction_forces_recovery_below_soft_threshold"
+      ]
+    },
+    "event-loop-isolation": {
+      "description": "Blocking render and calculation work stays outside the async request and Run control loop.",
+      "cases": [
+        "tests/backend/test_artifact_async_validation.py::test_artifact_validation_does_not_block_event_loop",
+        "tests/backend/test_artifact_async_validation.py::test_precomputed_artifact_validation_must_match_content",
+        "tests/backend/test_deep_analysis_calculations.py::test_prepared_python_calculation_does_not_block_event_loop",
+        "tests/backend/test_worker_recovery.py::test_executor_samples_event_loop_lag_and_cancels_monitor",
+        "tests/backend/test_mcp_runtime.py::test_prepare_run_loads_pinned_snapshot_without_blocking_event_loop",
+        "tests/backend/test_python_execution.py::test_python_materialization_does_not_block_event_loop",
+        "tests/backend/test_python_execution.py::test_python_cancellation_waits_for_materialization_before_cleanup",
+        "tests/backend/test_extensions_schedules.py::test_scheduler_database_tick_does_not_block_event_loop",
+        "tests/backend/test_extensions_schedules.py::test_scheduler_cancellation_waits_for_database_transaction",
+        "tests/backend/test_run_safety.py::test_provider_recovery_database_writes_do_not_block_event_loop"
+      ]
+    },
+    "capacity-and-streaming": {
+      "description": "Queue capacity, concurrent conversations, bounded broker state, and efficient live streaming.",
+      "cases": [
+        "tests/backend/test_run_claim_capacity.py::test_response_waiting_runs_do_not_exhaust_server_execution_slots",
+        "tests/backend/test_run_claim_capacity.py::test_response_waiting_runs_do_not_exhaust_user_execution_slots",
+        "tests/backend/test_run_claim_performance.py::test_queue_claim_handles_same_timestamp_burst",
+        "tests/backend/test_run_claim_performance.py::test_queue_claim_database_work_does_not_block_event_loop",
+        "tests/backend/test_run_claim_performance.py::test_queue_claim_cancellation_waits_for_database_transaction",
+        "tests/backend/test_run_safety.py::test_run_control_cache_avoids_database_poll_until_invalidated",
+        "tests/backend/test_run_safety.py::test_heartbeat_database_write_does_not_block_event_loop",
+        "tests/backend/test_run_safety.py::test_expired_run_recovery_database_work_does_not_block_event_loop",
+        "tests/backend/test_run_safety.py::test_assistant_text_database_append_does_not_block_event_loop",
+        "tests/backend/test_run_safety.py::test_usage_and_turn_metric_database_writes_do_not_block_event_loop",
+        "tests/backend/test_run_safety.py::test_api_and_executor_database_mutations_share_the_same_run_lock",
+        "tests/backend/test_run_safety.py::test_run_control_database_read_does_not_block_event_loop",
+        "tests/backend/test_worker_recovery.py::test_executor_bounds_heavy_work_for_small_machines",
+        "tests/backend/test_worker_recovery.py::test_heavy_work_can_propagate_cancellation_to_subprocess_style_work",
+        "tests/backend/test_run_concurrency_replay.py::test_different_conversations_for_one_user_execute_in_parallel",
+        "tests/backend/test_executor_tool_loop.py::test_independent_tool_calls_run_in_parallel_and_persist_subtasks",
+        "tests/backend/test_run_concurrency_replay.py::test_sse_transient_draft_wake_does_not_poll_the_database",
+        "tests/backend/test_run_safety.py::test_event_broker_bounds_idle_run_revisions_without_pruning_live_state",
+        "tests/backend/test_run_safety.py::test_event_broker_compacts_tiny_draft_chunks_without_losing_replay",
+        "tests/backend/test_mcp_runtime.py::test_mcp_runtime_bounds_idle_revision_connections",
+        "tests/backend/test_mcp_runtime.py::test_waiting_tool_call_reconnects_after_connection_is_retired",
+        "tests/backend/test_mcp_runtime.py::test_mcp_runtime_rejects_new_connections_while_closing",
+        "tests/backend/test_mcp_runtime.py::test_mcp_runtime_discards_connection_initialized_across_close"
+      ]
+    },
+    "storage-efficiency": {
+      "description": "Cross-dialect migrations preserve composite lookup coverage without redundant write indexes.",
+      "cases": [
+        "tests/backend/test_config.py::test_pytest_defaults_are_isolated_from_repository_runtime",
+        "tests/backend/test_migrations.py::test_alembic_upgrades_the_injected_database_url",
+        "tests/backend/test_migrations.py::test_migration_0072_cleans_legacy_mission_orphans",
+        "tests/backend/test_postgres_compatibility.py::test_postgres_alembic_offline_head_contains_cross_dialect_contracts"
+      ]
+    }
+  }
+}

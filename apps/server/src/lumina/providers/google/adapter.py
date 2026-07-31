@@ -19,6 +19,7 @@ from ..types import (
     ProviderRequest,
     ProviderUsage,
 )
+from ..usage import derive_uncached_input_tokens
 
 
 PROVIDER_ID = GOOGLE_PROVIDER_ID
@@ -324,13 +325,11 @@ def normalize_google_usage(raw: Mapping[str, Any]) -> ProviderUsage:
     reasoning_tokens = (
         _integer(raw_reasoning_tokens) if raw_reasoning_tokens is not None else None
     )
-    output_tokens = _integer(raw.get("candidatesTokenCount")) + (
-        reasoning_tokens or 0
-    )
+    output_tokens = _integer(raw.get("candidatesTokenCount")) + (reasoning_tokens or 0)
     return ProviderUsage(
         input_tokens=input_tokens,
         cached_input_tokens=cached,
-        uncached_input_tokens=max(0, input_tokens - cached),
+        uncached_input_tokens=derive_uncached_input_tokens(input_tokens, cached),
         output_tokens=output_tokens,
         reasoning_tokens=reasoning_tokens,
         raw=dict(raw),

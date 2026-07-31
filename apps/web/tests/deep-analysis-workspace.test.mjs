@@ -366,16 +366,21 @@ test("Running and completed Nodes keep evenly spaced elapsed time below the titl
   assert.match(css, /\.deep-analysis-view\.deep-analysis-view \.deep-analysis-node-meta > span,[\s\S]*\.deep-analysis-node > \.deep-analysis-node-elapsed,[\s\S]*\.deep-analysis-node > \.deep-analysis-node-cost \{ font-size: inherit; line-height: 1\.2; \}/);
 });
 
-test("Workflow connections only use top and bottom node ports", async () => {
+test("Workflow connections keep sequence edges vertical and bounded loops lateral", async () => {
   const [view, css] = await Promise.all([
     readFile(viewPath, "utf8"),
     readFile(cssPath, "utf8"),
   ]);
 
-  assert.match(view, /const workflowPortSides = \["north", "south"\] as const/);
-  assert.doesNotMatch(view, /\["north", "east", "south", "west"\]/);
-  assert.doesNotMatch(view, /return deltaX >= 0 \? \["east", "west"\]/);
-  assert.doesNotMatch(css, /\.deep-analysis-connection-port\.port-(?:east|west)/);
+  assert.match(view, /const workflowPortSides = \["north", "east", "south", "west"\] as const/);
+  assert.match(view, /edge\.edgeType === "loop_back"/);
+  assert.match(view, /!\["validation", "data_check"\]\.includes\(source\.nodeType\)/);
+  assert.match(view, /const reachable = new Set\(\[targetNodeKey\]\)[\s\S]*?!reachable\.has\(sourceNodeKey\)/);
+  assert.match(view, /edgeType: isLoop \? "loop_back" : "sequence"/);
+  assert.match(view, />Loop<\/text>/);
+  assert.match(css, /path\.deep-analysis-edge\.is-loop-back/);
+  assert.match(css, /\.deep-analysis-connection-port\.port-east/);
+  assert.match(css, /\.deep-analysis-connection-port\.port-west/);
 });
 
 test("Accumulated cost mode survives submenu dismissal and only the button restores elapsed time", async () => {

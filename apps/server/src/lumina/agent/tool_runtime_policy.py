@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -8,7 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..mcp.runtime import PreparedMcpTool
-from ..runs.approvals import classify_tool_risk
+from ..runs.approvals import classify_tool_risk, normalized_tool_arguments
 
 
 _TOOL_SCHEMA_CONTEXT_FRACTION = 0.10
@@ -96,7 +97,8 @@ def build_tool_surface(
     *,
     context_window: int | None,
 ) -> ToolSurface:
-    mcp_schemas = tuple(tool.provider_schema for tool in mcp_tools)
+    ordered_mcp_tools = sorted(mcp_tools, key=lambda tool: tool.provider_name)
+    mcp_schemas = tuple(tool.provider_schema for tool in ordered_mcp_tools)
     deferred_tokens = estimate_schema_tokens(mcp_schemas)
     threshold = (
         max(1, int(context_window * _TOOL_SCHEMA_CONTEXT_FRACTION))
@@ -112,7 +114,7 @@ def build_tool_surface(
         )
     return ToolSurface(
         schemas=(*core_schemas, *TOOL_BRIDGE_SCHEMAS),
-        deferred_names=frozenset(tool.provider_name for tool in mcp_tools),
+        deferred_names=frozenset(tool.provider_name for tool in ordered_mcp_tools),
         deferred_schema_tokens=deferred_tokens,
         threshold_tokens=threshold,
     )
@@ -120,10 +122,55 @@ def build_tool_surface(
 
 def estimate_schema_tokens(schemas: Sequence[Mapping[str, Any]]) -> int:
     serialized = json.dumps(
-        list(schemas), ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str
+        list(schemas),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
     )
     cjk_chars = len(_CJK_RE.findall(serialized))
     return cjk_chars + int(math.ceil((len(serialized) - cjk_chars) / 4))
+
+
+def tool_round_fingerprint(
+    calls: Sequence[Mapping[str, Any]],
+    provider_tool_contents: Sequence[str],
+) -> str:
+    if len(calls) != len(provider_tool_contents):
+        raise ValueError("Tool loop fingerprint requires one result per call")
+    normalized: list[dict[str, str]] = []
+    for call, content in zip(calls, provider_tool_contents, strict=True):
+        _arguments, _canonical, argument_digest = normalized_tool_arguments(
+            call.get("arguments")
+        )
+        normalized.append(
+            {
+                "name": str(call.get("name", "")),
+                "argumentDigest": argument_digest,
+                "resultDigest": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            }
+        )
+    serialized = json.dumps(
+        normalized,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def advance_tool_loop_guard(
+    *,
+    previous_fingerprint: str | None,
+    previous_repeat_count: int,
+    current_fingerprint: str,
+    visible_output: str,
+) -> tuple[str | None, int]:
+    if visible_output.strip():
+        return None, 0
+    if current_fingerprint == previous_fingerprint:
+        return current_fingerprint, max(1, previous_repeat_count + 1)
+    return current_fingerprint, 1
 
 
 def search_deferred_tools(
@@ -133,14 +180,18 @@ def search_deferred_tools(
     *,
     limit: int,
 ) -> list[dict[str, str]]:
-    terms = tuple(term for term in re.split(r"[^a-z0-9가-힣]+", query.casefold()) if term)
+    terms = tuple(
+        term for term in re.split(r"[^a-z0-9가-힣]+", query.casefold()) if term
+    )
     matches: list[tuple[int, str, PreparedMcpTool]] = []
     for name in sorted(deferred_names):
         tool = mcp_tools.get(name)
         if tool is None:
             continue
         haystack = f"{name} {tool.original_name} {tool.server_slug} {tool.description}".casefold()
-        score = sum(3 if term in name.casefold() else 1 for term in terms if term in haystack)
+        score = sum(
+            3 if term in name.casefold() else 1 for term in terms if term in haystack
+        )
         if terms and score == 0:
             continue
         matches.append((score, name, tool))
@@ -248,11 +299,13 @@ def wrap_untrusted_tool_result(content: str, *, source: str) -> str:
 
 __all__ = [
     "ToolSurface",
+    "advance_tool_loop_guard",
     "build_tool_surface",
     "describe_deferred_tool",
     "estimate_schema_tokens",
     "resolve_bridge_call",
     "search_deferred_tools",
     "should_parallelize_tool_calls",
+    "tool_round_fingerprint",
     "wrap_untrusted_tool_result",
 ]

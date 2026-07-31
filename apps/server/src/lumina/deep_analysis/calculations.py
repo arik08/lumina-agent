@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import ast
 import csv
+from dataclasses import dataclass
 import hashlib
 import io
 import json
@@ -108,7 +110,7 @@ _BLOCKED_NAMES = {
 _SAFE_FILE_STEM = re.compile(r"[^0-9A-Za-z가-힣._ -]+")
 
 
-_WORKER = r'''
+_WORKER = r"""
 import json, math, statistics, sys
 from decimal import Decimal
 
@@ -132,7 +134,22 @@ rows = scope.get("RESULT_ROWS")
 if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
     raise ValueError("RESULT_ROWS must be a list of dictionaries")
 sys.stdout.write(json.dumps({"rows": rows}, ensure_ascii=False, default=str))
-'''
+"""
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedPythonCalculation:
+    script: str
+    input_paths: tuple[str, ...]
+    inputs: dict[str, list[dict[str, str]]]
+    script_path: str
+    result_path: str
+
+
+@dataclass(frozen=True, slots=True)
+class CompletedPythonCalculation:
+    rows: list[dict[str, Any]]
+    result_content: bytes
 
 
 def _static_integer(node: ast.AST) -> int | None:
@@ -154,7 +171,9 @@ def _static_integer(node: ast.AST) -> int | None:
     if isinstance(node.op, ast.Sub):
         return left - right
     if isinstance(node.op, ast.Mult):
-        if left and abs(right) > MAX_STATIC_INTEGER // min(abs(left), MAX_STATIC_INTEGER):
+        if left and abs(right) > MAX_STATIC_INTEGER // min(
+            abs(left), MAX_STATIC_INTEGER
+        ):
             return MAX_STATIC_INTEGER + 1
         return left * right
     if isinstance(node.op, ast.Pow):
@@ -175,7 +194,9 @@ def _validate_script(script: str) -> None:
         raise ValueError(f"Python 계산식 문법 오류: {exc.msg}") from exc
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom, ast.Global, ast.Nonlocal)):
-            raise ValueError("Python 계산식에서는 import와 전역 범위 변경을 사용할 수 없습니다.")
+            raise ValueError(
+                "Python 계산식에서는 import와 전역 범위 변경을 사용할 수 없습니다."
+            )
         if isinstance(node, ast.Attribute) and node.attr.startswith("_"):
             raise ValueError("Python 계산식에서는 private 속성에 접근할 수 없습니다.")
         if isinstance(node, ast.Name) and node.id in _BLOCKED_NAMES:
@@ -247,7 +268,9 @@ def _load_inputs(
     return inputs
 
 
-def _run_script(script: str, inputs: dict[str, list[dict[str, str]]]) -> list[dict[str, Any]]:
+def _run_script(
+    script: str, inputs: dict[str, list[dict[str, str]]]
+) -> list[dict[str, Any]]:
     _validate_script(script)
     payload = json.dumps({"script": script, "inputs": inputs}, ensure_ascii=False)
     environment = {"PYTHONIOENCODING": "utf-8"}
@@ -302,7 +325,9 @@ def _csv_bytes(rows: list[dict[str, Any]]) -> bytes:
     writer = csv.DictWriter(output, fieldnames=columns, extrasaction="ignore")
     if columns:
         writer.writeheader()
-        writer.writerows({str(key): value for key, value in row.items()} for row in rows)
+        writer.writerows(
+            {str(key): value for key, value in row.items()} for row in rows
+        )
     return ("\ufeff" + output.getvalue()).encode("utf-8")
 
 
@@ -355,18 +380,18 @@ def _upsert_file(
     )
 
 
-def execute_python_calculation(
+def prepare_python_calculation(
     db: Session,
     storage: ManagedStorage,
     *,
     run: Run,
-    user: User,
     arguments: dict[str, Any],
-    max_upload_bytes: int,
-) -> dict[str, Any]:
+) -> PreparedPythonCalculation:
     deep_analysis = run.snapshot_json.get("deep_analysis")
     if not isinstance(deep_analysis, dict):
-        raise ApiProblem(403, "deep_analysis_only", "심층분석 Run에서만 사용할 수 있습니다.")
+        raise ApiProblem(
+            403, "deep_analysis_only", "심층분석 Run에서만 사용할 수 있습니다."
+        )
     output_dir = str(deep_analysis.get("output_directory") or "").strip("/")
     node_key = str(deep_analysis.get("node_key") or "Node")
     if not output_dir:
@@ -377,19 +402,77 @@ def execute_python_calculation(
         raise ValueError("input_paths는 목록이어야 합니다.")
     input_paths = [str(item) for item in raw_input_paths]
     inputs = _load_inputs(db, storage, run=run, input_paths=input_paths)
-    rows = _run_script(script, inputs)
-
     script_name = _safe_name(arguments.get("script_name"), ".py", "calculation.py")
     result_name = _safe_name(arguments.get("result_name"), ".csv", "result.csv")
     script_path = f"{output_dir}/{node_key}_{script_name}"
     result_path = f"{output_dir}/{node_key}_{result_name}"
+    return PreparedPythonCalculation(
+        script=script,
+        input_paths=tuple(input_paths),
+        inputs=inputs,
+        script_path=script_path,
+        result_path=result_path,
+    )
+
+
+def run_prepared_python_calculation(
+    prepared: PreparedPythonCalculation,
+) -> CompletedPythonCalculation:
+    rows = _run_script(prepared.script, prepared.inputs)
+    return CompletedPythonCalculation(rows=rows, result_content=_csv_bytes(rows))
+
+
+async def run_prepared_python_calculation_async(
+    prepared: PreparedPythonCalculation,
+) -> CompletedPythonCalculation:
+    return await asyncio.to_thread(run_prepared_python_calculation, prepared)
+
+
+def execute_python_calculation(
+    db: Session,
+    storage: ManagedStorage,
+    *,
+    run: Run,
+    user: User,
+    arguments: dict[str, Any],
+    max_upload_bytes: int,
+) -> dict[str, Any]:
+    """Synchronous compatibility wrapper for non-async callers and tests."""
+    prepared = prepare_python_calculation(
+        db,
+        storage,
+        run=run,
+        arguments=arguments,
+    )
+    completed = run_prepared_python_calculation(prepared)
+    return persist_python_calculation(
+        db,
+        storage,
+        run=run,
+        user=user,
+        prepared=prepared,
+        completed=completed,
+        max_upload_bytes=max_upload_bytes,
+    )
+
+
+def persist_python_calculation(
+    db: Session,
+    storage: ManagedStorage,
+    *,
+    run: Run,
+    user: User,
+    prepared: PreparedPythonCalculation,
+    completed: CompletedPythonCalculation,
+    max_upload_bytes: int,
+) -> dict[str, Any]:
     script_file, script_version = _upsert_file(
         db,
         storage,
         run=run,
         user=user,
-        path=script_path,
-        content=script.encode("utf-8"),
+        path=prepared.script_path,
+        content=prepared.script.encode("utf-8"),
         max_upload_bytes=max_upload_bytes,
     )
     result_file, result_version = _upsert_file(
@@ -397,8 +480,8 @@ def execute_python_calculation(
         storage,
         run=run,
         user=user,
-        path=result_path,
-        content=_csv_bytes(rows),
+        path=prepared.result_path,
+        content=completed.result_content,
         max_upload_bytes=max_upload_bytes,
     )
     files = [
@@ -417,9 +500,10 @@ def execute_python_calculation(
             "kind": "csv",
         },
     ]
+    rows = completed.rows
     return {
         "files": files,
-        "inputPaths": input_paths,
+        "inputPaths": list(prepared.input_paths),
         "rowCount": len(rows),
         "columnCount": len({str(key) for row in rows for key in row}),
         "previewRows": rows[:50],

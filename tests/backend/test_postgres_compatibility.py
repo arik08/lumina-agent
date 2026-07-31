@@ -42,6 +42,10 @@ def test_postgres_alembic_offline_head_contains_cross_dialect_contracts() -> Non
     assert "uq_projects_default_owner" in normalized
     assert "WHERE is_default" in normalized
     assert "kind = 'rating' AND deleted_at IS NULL" in normalized
+    assert "DROP INDEX CONCURRENTLY ix_run_events_replay" in normalized
+    assert "DROP INDEX CONCURRENTLY ix_deep_analysis_events_replay" in normalized
+    assert "DROP INDEX CONCURRENTLY ix_plan_subtasks_timeline" in normalized
+    assert "DROP INDEX CONCURRENTLY ix_tool_executions_run_id" in normalized
     assert "PRAGMA" not in normalized.upper()
 
 

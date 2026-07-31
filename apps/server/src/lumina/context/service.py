@@ -273,11 +273,9 @@ def compact_runtime_messages(
     # bulky payloads is enough. This is cheaper and less lossy than replacing whole
     # execution units with prose, while recent units remain byte-for-byte intact.
     if compacted_units:
-        compacted_messages = [
-            message for unit in compacted_units for message in unit
-        ]
-        payload_compacted_messages, payload_compacted_count = (
-            _compact_runtime_payloads(compacted_messages, strip_images=True)
+        compacted_messages = [message for unit in compacted_units for message in unit]
+        payload_compacted_messages, payload_compacted_count = _compact_runtime_payloads(
+            compacted_messages, strip_images=True
         )
         if payload_compacted_count:
             payload_prepared = (
@@ -469,8 +467,9 @@ def estimate_text_tokens(value: str) -> int:
     if not value:
         return 0
     cjk = len(_CJK.findall(value))
-    word_tokens = sum(max(1, math.ceil(len(word) / 4)) for word in _WORD.findall(value))
-    other = max(0, len(value) - cjk - sum(len(word) for word in _WORD.findall(value)))
+    words = _WORD.findall(value)
+    word_tokens = sum(max(1, math.ceil(len(word) / 4)) for word in words)
+    other = max(0, len(value) - cjk - sum(len(word) for word in words))
     return max(1, cjk + word_tokens + math.ceil(other / 3))
 
 
@@ -499,10 +498,7 @@ def _recent_message_preserve_count(
         message_tokens = estimate_text_tokens(
             content_by_message_id.get(message.id, message.canonical_text)
         )
-        if (
-            preserved >= minimum
-            and preserved_tokens + message_tokens > target_tokens
-        ):
+        if preserved >= minimum and preserved_tokens + message_tokens > target_tokens:
             break
         preserved += 1
         preserved_tokens += message_tokens
@@ -802,9 +798,7 @@ def prepare_context(
             "estimatedTokensBefore": estimated_before,
             "estimatedTokensAfter": estimated_after,
             "savedTokens": max(0, estimated_before - estimated_after),
-            "compressionRatio": round(
-                estimated_before / max(1, estimated_after), 2
-            ),
+            "compressionRatio": round(estimated_before / max(1, estimated_after), 2),
             "recoveryAvailable": effective,
             "cooldownUntil": cooldown,
         },
@@ -827,9 +821,7 @@ def prepare_context(
             "estimated_tokens_before": estimated_before,
             "estimated_tokens_after": estimated_after,
             "saved_tokens": max(0, estimated_before - estimated_after),
-            "compression_ratio": round(
-                estimated_before / max(1, estimated_after), 2
-            ),
+            "compression_ratio": round(estimated_before / max(1, estimated_after), 2),
             "recovery_available": True,
         },
     }
@@ -905,9 +897,7 @@ def _context_budget(
     )
     safety_margin = max(256, min(4_096, context_window // 20))
     max_input_tokens = _positive_integer(
-        capabilities.get(
-            "max_input_tokens", capabilities.get("maxInputTokens")
-        ),
+        capabilities.get("max_input_tokens", capabilities.get("maxInputTokens")),
         context_window,
     )
     capacity_mode = capabilities.get(
@@ -965,9 +955,7 @@ def _padded_estimate(run: Run, estimated_tokens: int) -> int:
     if run.provider_id == "pgpt":
         execution = run.snapshot_json.get("execution", {})
         capabilities = (
-            execution.get("capabilities", {})
-            if isinstance(execution, Mapping)
-            else {}
+            execution.get("capabilities", {}) if isinstance(execution, Mapping) else {}
         )
         capacity_mode = (
             capabilities.get(
@@ -1151,11 +1139,15 @@ def _compact_runtime_payloads(
             else:
                 seen_tool_hashes.add(original_tool_digest)
         if strip_images and updated.images:
-            image_note = f"[{len(updated.images)} historical image(s) removed from context]"
+            image_note = (
+                f"[{len(updated.images)} historical image(s) removed from context]"
+            )
             updated = replace(
                 updated,
                 content=(
-                    f"{updated.content}\n{image_note}" if updated.content else image_note
+                    f"{updated.content}\n{image_note}"
+                    if updated.content
+                    else image_note
                 ),
                 images=(),
             )

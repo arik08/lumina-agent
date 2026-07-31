@@ -47,7 +47,9 @@ def _mcp_tool(
 
 
 def test_tool_surface_defers_large_mcp_schema_set_behind_three_bridges() -> None:
-    tools = tuple(_mcp_tool(f"mcp_tool_{index}", schema_padding=4_000) for index in range(8))
+    tools = tuple(
+        _mcp_tool(f"mcp_tool_{index}", schema_padding=4_000) for index in range(8)
+    )
 
     surface = build_tool_surface(
         ({"type": "function", "function": {"name": "read_file"}},),
@@ -68,6 +70,20 @@ def test_tool_surface_keeps_small_mcp_schema_set_directly_visible() -> None:
 
     assert surface.bridge_active is False
     assert surface.schemas == (tool.provider_schema,)
+
+
+def test_tool_surface_stabilizes_mcp_order_for_prompt_cache_prefix() -> None:
+    alpha = _mcp_tool("mcp_alpha")
+    zulu = _mcp_tool("mcp_zulu")
+
+    forward = build_tool_surface((), (alpha, zulu), context_window=32_000)
+    reverse = build_tool_surface((), (zulu, alpha), context_window=32_000)
+
+    assert forward.schemas == reverse.schemas
+    assert [schema["function"]["name"] for schema in reverse.schemas] == [
+        "mcp_alpha",
+        "mcp_zulu",
+    ]
 
 
 def test_bridge_search_describe_and_call_stay_inside_run_catalog() -> None:

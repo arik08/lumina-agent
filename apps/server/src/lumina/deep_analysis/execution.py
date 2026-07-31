@@ -1,18 +1,24 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any, Literal, cast
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from ..agent_frontends import DEFAULT_AGENT_FRONTEND
 from ..api.errors import ApiProblem
-from ..api.schemas import ExecutionSelection, MessageReferenceInput, RunCreate, RunMessageInput
+from ..api.schemas import (
+    ExecutionSelection,
+    MessageReferenceInput,
+    RunCreate,
+    RunMessageInput,
+)
 from ..config import Settings
 from ..models import (
     Artifact,
@@ -35,6 +41,7 @@ from ..runs.state import CANCELLED, COMPLETED, TERMINAL_STATUSES
 from ..storage import ManagedStorage, StorageError
 from .models import (
     DeepAnalysisMission,
+    DeepAnalysisMissionFileLink,
     DeepAnalysisWorkflowEdge,
     DeepAnalysisWorkflowNode,
     DeepAnalysisWorkflowRevision,
@@ -45,7 +52,13 @@ from .context_manifest import (
     link_file,
     persist_context_manifest,
 )
-from .planning import runnable_nodes
+from .planning import dependency_edges, runnable_nodes
+
+
+_LOOP_DECISION_PATTERN = re.compile(
+    r"<!--\s*LUMINA_LOOP_DECISION\s*(\{.*?\})\s*-->",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,7 +109,9 @@ def record_recovered_run_ids(db: Session, run_ids: tuple[str, ...]) -> None:
     if not run_ids:
         return
     rows = db.execute(
-        select(DeepAnalysisWorkflowNode, DeepAnalysisWorkflowRevision, DeepAnalysisMission)
+        select(
+            DeepAnalysisWorkflowNode, DeepAnalysisWorkflowRevision, DeepAnalysisMission
+        )
         .join(
             DeepAnalysisWorkflowRevision,
             DeepAnalysisWorkflowRevision.id
@@ -126,26 +141,35 @@ def record_recovered_run_ids(db: Session, run_ids: tuple[str, ...]) -> None:
 
 def _run_context(
     db: Session, run_id: str
-) -> tuple[
-    DeepAnalysisWorkflowNode,
-    DeepAnalysisWorkflowRevision,
-    DeepAnalysisMission,
-] | None:
-    return db.execute(
-        select(
-            DeepAnalysisWorkflowNode, DeepAnalysisWorkflowRevision, DeepAnalysisMission
+) -> (
+    tuple[
+        DeepAnalysisWorkflowNode,
+        DeepAnalysisWorkflowRevision,
+        DeepAnalysisMission,
+    ]
+    | None
+):
+    return (
+        db.execute(
+            select(
+                DeepAnalysisWorkflowNode,
+                DeepAnalysisWorkflowRevision,
+                DeepAnalysisMission,
+            )
+            .join(
+                DeepAnalysisWorkflowRevision,
+                DeepAnalysisWorkflowRevision.id
+                == DeepAnalysisWorkflowNode.workflow_revision_id,
+            )
+            .join(
+                DeepAnalysisMission,
+                DeepAnalysisMission.id == DeepAnalysisWorkflowRevision.mission_id,
+            )
+            .where(DeepAnalysisWorkflowNode.run_id == run_id)
         )
-        .join(
-            DeepAnalysisWorkflowRevision,
-            DeepAnalysisWorkflowRevision.id
-            == DeepAnalysisWorkflowNode.workflow_revision_id,
-        )
-        .join(
-            DeepAnalysisMission,
-            DeepAnalysisMission.id == DeepAnalysisWorkflowRevision.mission_id,
-        )
-        .where(DeepAnalysisWorkflowNode.run_id == run_id)
-    ).tuples().one_or_none()
+        .tuples()
+        .one_or_none()
+    )
 
 
 def record_node_started(db: Session, run: Run) -> None:
@@ -175,14 +199,31 @@ def record_node_started(db: Session, run: Run) -> None:
     }
 
 
-def record_output_progress(db: Session, run: Run) -> bool:
+def record_output_progress(
+    db: Session,
+    run: Run,
+    *,
+    output_characters: int | None = None,
+) -> bool:
     """Persist bounded progress markers without copying model text into Mission events."""
     deep_analysis = run.snapshot_json.get("deep_analysis")
-    if not isinstance(deep_analysis, dict) or not run.assistant_draft:
+    if not isinstance(deep_analysis, dict):
         return False
-    output_characters = len(run.assistant_draft)
+    if output_characters is None:
+        output_characters = len(run.assistant_draft or "")
+    if output_characters <= 0:
+        return False
     bucket = ((output_characters - 1) // 2000) + 1
-    if int(deep_analysis.get("outputEventBucket") or 0) >= bucket:
+    previous_bucket = int(deep_analysis.get("outputEventBucket") or 0)
+    run.snapshot_json = {
+        **run.snapshot_json,
+        "deep_analysis": {
+            **deep_analysis,
+            "outputCharacters": output_characters,
+            "outputEventBucket": max(previous_bucket, bucket),
+        },
+    }
+    if previous_bucket >= bucket:
         return False
     context = _run_context(db, run.id)
     if context is None:
@@ -200,10 +241,6 @@ def record_output_progress(db: Session, run: Run) -> bool:
             "progressBucket": bucket,
         },
     )
-    run.snapshot_json = {
-        **run.snapshot_json,
-        "deep_analysis": {**deep_analysis, "outputEventBucket": bucket},
-    }
     return True
 
 
@@ -223,7 +260,9 @@ def _mission_output_timestamp(mission: DeepAnalysisMission) -> str:
 
 
 def _configured_output_format(mission: DeepAnalysisMission) -> str:
-    value = str((mission.execution_settings_json or {}).get("outputFormat") or "markdown").strip()
+    value = str(
+        (mission.execution_settings_json or {}).get("outputFormat") or "markdown"
+    ).strip()
     return value or "markdown"
 
 
@@ -235,10 +274,14 @@ def _output_path(mission: DeepAnalysisMission, node: DeepAnalysisWorkflowNode) -
     mission_name = _path_segment(mission.title, fallback="심층분석")
     node_name = _path_segment(node.title, fallback=node.node_key)
     created_at = _mission_output_timestamp(mission)
-    suffix = ".html" if (
-        node.node_type == "report"
-        and _is_html_output_format(_configured_output_format(mission))
-    ) else ".md"
+    suffix = (
+        ".html"
+        if (
+            node.node_type == "report"
+            and _is_html_output_format(_configured_output_format(mission))
+        )
+        else ".md"
+    )
     return f"심층분석/{mission_name}_{created_at}/{node.node_key}_{node_name}{suffix}"
 
 
@@ -277,9 +320,7 @@ def _run_manifest(
 ) -> list[dict[str, Any]]:
     manifest = [dict(item) for item in mission.source_manifest_json]
     known_ids = {
-        str(item.get("projectFileId"))
-        for item in manifest
-        if item.get("projectFileId")
+        str(item.get("projectFileId")) for item in manifest if item.get("projectFileId")
     }
     workflow_nodes = list(
         db.scalars(
@@ -298,7 +339,7 @@ def _run_manifest(
         )
     )
     incoming: dict[str, set[str]] = {}
-    for edge in edges:
+    for edge in dependency_edges(edges):
         incoming.setdefault(edge.target_node_key, set()).add(edge.source_node_key)
     direct_predecessor_keys = incoming.get(node.node_key, set())
     ancestor_keys: set[str] = set()
@@ -542,7 +583,9 @@ def _output_instruction(
                 "html, head, body를 포함하며 Markdown code fence로 감싸지 마십시오."
             )
             if normalized not in {"html", "html (.html)", ".html"}:
-                format_instruction += f" 사용자가 입력한 구체적 형태는 '{output_format}'입니다."
+                format_instruction += (
+                    f" 사용자가 입력한 구체적 형태는 '{output_format}'입니다."
+                )
         elif normalized in {"markdown", "markdown (.md)", "md", ".md"}:
             format_instruction = "최종 산출물은 Markdown 문서로 작성하십시오."
         else:
@@ -582,12 +625,16 @@ def _run_prompt_prefix(
     if not isinstance(source_policy, dict):
         source_policy = {}
     source_mode = str(source_policy.get("mode") or "all")
-    source_domains = ", ".join(
-        str(value) for value in source_policy.get("domains", []) if value
-    ) or "없음"
-    excluded_domains = ", ".join(
-        str(value) for value in source_policy.get("excludedDomains", []) if value
-    ) or "없음"
+    source_domains = (
+        ", ".join(str(value) for value in source_policy.get("domains", []) if value)
+        or "없음"
+    )
+    excluded_domains = (
+        ", ".join(
+            str(value) for value in source_policy.get("excludedDomains", []) if value
+        )
+        or "없음"
+    )
     guidance_lines = [
         f"{index}. {item.get('instruction')}"
         for index, item in enumerate(settings.get("guidanceHistory", []), start=1)
@@ -634,6 +681,68 @@ def _merge_instruction(manifest: list[dict[str, Any]]) -> str:
     )
 
 
+def _loop_settings(node: DeepAnalysisWorkflowNode) -> dict[str, Any] | None:
+    value = (node.config_json or {}).get("loopBack")
+    if not isinstance(value, dict):
+        return None
+    target = value.get("targetNodeKey")
+    condition = value.get("condition")
+    max_iterations = value.get("maxIterations")
+    if (
+        not isinstance(target, str)
+        or not isinstance(condition, str)
+        or not condition.strip()
+        or not isinstance(max_iterations, int)
+        or isinstance(max_iterations, bool)
+        or not 2 <= max_iterations <= 3
+    ):
+        return None
+    return {
+        "targetNodeKey": target,
+        "condition": condition.strip(),
+        "maxIterations": max_iterations,
+    }
+
+
+def _loop_instruction(node: DeepAnalysisWorkflowNode) -> str:
+    settings = _loop_settings(node)
+    if settings is None:
+        return ""
+    completed_iterations = sum(
+        isinstance(item, dict)
+        and item.get("loopBackTargetNodeKey") == settings["targetNodeKey"]
+        for item in node.run_history_json
+    )
+    iteration = completed_iterations + 1
+    return f"""
+
+반복 판단:
+- 이 Node는 {settings["targetNodeKey"]}부터 다시 실행할 수 있는 검증 Node입니다.
+- 현재 반복은 {iteration}/{settings["maxIterations"]}회차입니다.
+- 반복 조건: {settings["condition"]}
+- 확인 가능한 근거로 조건이 충족되고 현재 반복이 마지막이 아닐 때만 repeat를 true로 판단하십시오.
+- 본문 맨 끝에 아래 HTML 주석을 정확히 하나 추가하십시오. 이 주석은 저장 전에 제거됩니다.
+<!-- LUMINA_LOOP_DECISION {{"repeat":true|false,"reason":"판단 근거"}} -->
+"""
+
+
+def _extract_loop_decision(markdown: str) -> tuple[str, dict[str, Any] | None]:
+    match = _LOOP_DECISION_PATTERN.search(markdown)
+    clean = _LOOP_DECISION_PATTERN.sub("", markdown).rstrip()
+    if match is None:
+        return clean, None
+    try:
+        payload = json.loads(match.group(1))
+    except (json.JSONDecodeError, TypeError):
+        return clean, None
+    if not isinstance(payload, dict) or not isinstance(payload.get("repeat"), bool):
+        return clean, None
+    return clean, {
+        "repeat": payload["repeat"],
+        "reason": str(payload.get("reason") or "").strip()[:1000],
+    }
+
+
 def _run_prompt(
     mission: DeepAnalysisMission,
     node: DeepAnalysisWorkflowNode,
@@ -641,6 +750,7 @@ def _run_prompt(
 ) -> str:
     stable_prefix = _run_prompt_prefix(mission, manifest)
     merge_instruction = _merge_instruction(manifest)
+    loop_instruction = _loop_instruction(node)
     return f"""{stable_prefix}
 --- Node 전용 지시 ---
 
@@ -653,6 +763,8 @@ def _run_prompt(
 {_stage_instruction(node)}
 
 {merge_instruction}
+
+{loop_instruction}
 
 출력 계약:
 {_output_instruction(mission, node)}
@@ -696,7 +808,9 @@ def _reserved_budget_microusd(
     db: Session,
     nodes: list[DeepAnalysisWorkflowNode],
 ) -> int:
-    run_ids = [node.run_id for node in nodes if node.status == "running" and node.run_id]
+    run_ids = [
+        node.run_id for node in nodes if node.status == "running" and node.run_id
+    ]
     if not run_ids:
         return 0
     total = 0
@@ -712,7 +826,9 @@ def _reserved_budget_microusd(
             continue
         limits = run.snapshot_json.get("limits")
         max_cost_usd = limits.get("maxCostUsd") if isinstance(limits, dict) else None
-        if isinstance(max_cost_usd, (int, float)) and not isinstance(max_cost_usd, bool):
+        if isinstance(max_cost_usd, (int, float)) and not isinstance(
+            max_cost_usd, bool
+        ):
             total += max(0, round(float(max_cost_usd) * 1_000_000))
     return total
 
@@ -754,11 +870,11 @@ def create_node_run(
                 )
             )
         )
-        budget_limit_microusd = _available_budget_microusd(
-            db, mission, workflow_nodes
-        )
+        budget_limit_microusd = _available_budget_microusd(db, mission, workflow_nodes)
     if budget_limit_microusd is not None and budget_limit_microusd <= 0:
-        raise ApiProblem(409, "mission_budget_exhausted", "Mission 예산이 소진되었습니다.")
+        raise ApiProblem(
+            409, "mission_budget_exhausted", "Mission 예산이 소진되었습니다."
+        )
 
     conversation = _ensure_node_conversation(
         db,
@@ -784,8 +900,12 @@ def create_node_run(
         reference = {
             key: item.get(key)
             for key in (
-                "kind", "reference_id", "version_or_digest", "display_snapshot",
-                "token_start", "token_end",
+                "kind",
+                "reference_id",
+                "version_or_digest",
+                "display_snapshot",
+                "token_start",
+                "token_end",
             )
         }
         token_start = reference.get("token_start")
@@ -939,8 +1059,7 @@ def create_runnable_node_runs(
             return ()
         share, remainder = divmod(available_budget, len(selected))
         budget_limits = [
-            share + (1 if index < remainder else 0)
-            for index in range(len(selected))
+            share + (1 if index < remainder else 0) for index in range(len(selected))
         ]
     created_runs: list[Run] = []
     for node, budget_limit in zip(selected, budget_limits, strict=True):
@@ -957,9 +1076,7 @@ def create_runnable_node_runs(
     return tuple(created_runs)
 
 
-def archive_current_attempt(
-    db: Session, node: DeepAnalysisWorkflowNode
-) -> None:
+def archive_current_attempt(db: Session, node: DeepAnalysisWorkflowNode) -> None:
     if not node.run_id:
         return
     run = db.get(Run, node.run_id)
@@ -969,17 +1086,23 @@ def archive_current_attempt(
         "status": run.status if run is not None else node.status,
         "costMicrousd": _cost_microusd(run.usage_json) if run is not None else 0,
         "errorMessage": (
-            run.error_message if run is not None and run.error_message else node.error_message
+            run.error_message
+            if run is not None and run.error_message
+            else node.error_message
         ),
         "startedAt": (
             run.started_at.isoformat()
             if run is not None and run.started_at is not None
-            else node.started_at.isoformat() if node.started_at is not None else None
+            else node.started_at.isoformat()
+            if node.started_at is not None
+            else None
         ),
         "finishedAt": (
             run.finished_at.isoformat()
             if run is not None and run.finished_at is not None
-            else node.finished_at.isoformat() if node.finished_at is not None else None
+            else node.finished_at.isoformat()
+            if node.finished_at is not None
+            else None
         ),
     }
     node.run_history_json = [*node.run_history_json, item]
@@ -1029,10 +1152,14 @@ def _completed_artifact_output(
     ).tuples()
     for _artifact, version in rows:
         try:
-            content = storage.read_bytes(
-                version.storage_key,
-                expected_sha256=version.content_hash,
-            ).decode("utf-8").strip()
+            content = (
+                storage.read_bytes(
+                    version.storage_key,
+                    expected_sha256=version.content_hash,
+                )
+                .decode("utf-8")
+                .strip()
+            )
         except (StorageError, UnicodeDecodeError):
             continue
         if content:
@@ -1072,9 +1199,10 @@ def _save_output(
         if version_row is not None:
             project_file, version = version_row
             expected_path = _output_path_for_content(mission, node, markdown)
-            if PurePosixPath(project_file.logical_path).suffix == PurePosixPath(
-                expected_path
-            ).suffix:
+            if (
+                PurePosixPath(project_file.logical_path).suffix
+                == PurePosixPath(expected_path).suffix
+            ):
                 content = markdown.encode("utf-8")
                 if version.content_hash != hashlib.sha256(content).hexdigest():
                     project_file, version = create_project_file_version(
@@ -1083,9 +1211,7 @@ def _save_output(
                         project_id=mission.project_id,
                         file_id=project_file.id,
                         base_version=project_file.current_version_number,
-                        original_filename=PurePosixPath(
-                            project_file.logical_path
-                        ).name,
+                        original_filename=PurePosixPath(project_file.logical_path).name,
                         content=content,
                         change_reason=(
                             f"심층분석 {mission.id} {node.node_key} 산출물 복구"
@@ -1339,7 +1465,13 @@ def sync_terminal_run(
         return TerminalSyncResult(changed=True)
 
     if run.status == COMPLETED:
-        markdown = artifact_output or run.assistant_draft.strip()
+        clean_assistant, loop_decision = _extract_loop_decision(
+            run.assistant_draft.strip()
+        )
+        markdown, artifact_loop_decision = _extract_loop_decision(
+            artifact_output or clean_assistant
+        )
+        loop_decision = artifact_loop_decision or loop_decision
         if not markdown:
             node.status = "failed"
             node.error_message = "모델이 비어 있는 출력을 반환했습니다."
@@ -1362,7 +1494,9 @@ def sync_terminal_run(
         node.error_message = None
         db.flush()
         for generated_file in node.generated_files_json:
-            if not isinstance(generated_file, dict) or not generated_file.get("projectFileId"):
+            if not isinstance(generated_file, dict) or not generated_file.get(
+                "projectFileId"
+            ):
                 continue
             version_row = current_file_version(db, str(generated_file["projectFileId"]))
             if version_row is None:
@@ -1458,6 +1592,134 @@ def sync_terminal_run(
             )
             return TerminalSyncResult(changed=True)
 
+        loop_edge = next(
+            (
+                edge
+                for edge in edges
+                if edge.edge_type == "loop_back"
+                and edge.source_node_key == node.node_key
+            ),
+            None,
+        )
+        loop_settings = _loop_settings(node)
+        if loop_edge is not None and loop_settings is not None:
+            completed_iterations = sum(
+                isinstance(item, dict)
+                and item.get("loopBackTargetNodeKey") == loop_edge.target_node_key
+                for item in node.run_history_json
+            )
+            current_iteration = completed_iterations + 1
+            repeat = bool(loop_decision and loop_decision["repeat"])
+            repeat = repeat and current_iteration < loop_settings["maxIterations"]
+            loop_reason = (
+                loop_decision["reason"]
+                if loop_decision is not None
+                else "구조화된 반복 판단이 없어 다음 단계로 진행합니다."
+            )
+            emit_event(
+                db,
+                mission,
+                "workflow_loop_evaluated",
+                {
+                    "sourceNodeKey": node.node_key,
+                    "targetNodeKey": loop_edge.target_node_key,
+                    "iteration": current_iteration,
+                    "maxIterations": loop_settings["maxIterations"],
+                    "repeat": repeat,
+                    "reason": loop_reason,
+                },
+            )
+            if repeat:
+                forward_edges = dependency_edges(edges)
+                descendants = {loop_edge.target_node_key}
+                queue = [loop_edge.target_node_key]
+                while queue:
+                    source_key = queue.pop()
+                    for edge in forward_edges:
+                        if (
+                            edge.source_node_key == source_key
+                            and edge.target_node_key not in descendants
+                        ):
+                            descendants.add(edge.target_node_key)
+                            queue.append(edge.target_node_key)
+                ancestors = {node.node_key}
+                queue = [node.node_key]
+                while queue:
+                    target_key = queue.pop()
+                    for edge in forward_edges:
+                        if (
+                            edge.target_node_key == target_key
+                            and edge.source_node_key not in ancestors
+                        ):
+                            ancestors.add(edge.source_node_key)
+                            queue.append(edge.source_node_key)
+                loop_node_keys = descendants & ancestors
+                loop_node_ids = {
+                    item.id for item in nodes if item.node_key in loop_node_keys
+                }
+                if loop_node_ids:
+                    db.execute(
+                        update(DeepAnalysisMissionFileLink)
+                        .where(
+                            DeepAnalysisMissionFileLink.producing_node_id.in_(
+                                loop_node_ids
+                            )
+                        )
+                        .values(stale_status="review_required")
+                        .execution_options(synchronize_session=False)
+                    )
+                for loop_node in nodes:
+                    if loop_node.node_key not in loop_node_keys:
+                        continue
+                    archive_current_attempt(db, loop_node)
+                    if loop_node.id == node.id and loop_node.run_history_json:
+                        history = list(loop_node.run_history_json)
+                        history[-1] = {
+                            **history[-1],
+                            "loopBackTargetNodeKey": loop_edge.target_node_key,
+                            "loopIteration": current_iteration,
+                            "loopReason": loop_reason,
+                        }
+                        loop_node.run_history_json = history
+                    loop_node.status = "planned"
+                    loop_node.run_id = None
+                    loop_node.output_project_file_id = None
+                    loop_node.output_logical_path = None
+                    loop_node.output_summary = ""
+                    loop_node.output_markdown = ""
+                    loop_node.generated_files_json = []
+                    loop_node.error_message = None
+                    loop_node.actual_cost_microusd = 0
+                    loop_node.started_at = None
+                    loop_node.finished_at = None
+                db.flush()
+                next_runs = create_runnable_node_runs(
+                    db,
+                    user=user,
+                    mission=mission,
+                    nodes=nodes,
+                    edges=edges,
+                    settings=settings,
+                )
+                mission.revision += 1
+                emit_event(
+                    db,
+                    mission,
+                    "workflow_loop_restarted",
+                    {
+                        "sourceNodeKey": node.node_key,
+                        "targetNodeKey": loop_edge.target_node_key,
+                        "iteration": current_iteration + 1,
+                        "maxIterations": loop_settings["maxIterations"],
+                        "nodeKeys": sorted(loop_node_keys),
+                        "missionRevision": mission.revision,
+                    },
+                )
+                return TerminalSyncResult(
+                    next_run_ids=tuple(item.id for item in next_runs),
+                    changed=True,
+                )
+
         next_runs = create_runnable_node_runs(
             db,
             user=user,
@@ -1478,9 +1740,7 @@ def sync_terminal_run(
             mission.revision += 1
             return TerminalSyncResult(changed=True)
 
-        unresolved = [
-            item for item in nodes if item.status in {"planned", "ready"}
-        ]
+        unresolved = [item for item in nodes if item.status in {"planned", "ready"}]
         if unresolved:
             mission.status = "blocked"
             mission.revision += 1

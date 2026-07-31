@@ -90,6 +90,74 @@ def _create_user(
     return response.json()
 
 
+def test_admin_runtime_statistics_reports_queue_and_capacity(tmp_path: Path) -> None:
+    app = _test_app(tmp_path)
+    with TestClient(app) as client:
+        _login(client, "admin", "1111")
+        with SessionLocal.begin() as db:
+            user = db.scalar(select(User).where(User.login_id == "admin@posco.com"))
+            assert user is not None
+            project = db.scalar(select(Project).where(Project.owner_user_id == user.id))
+            assert project is not None
+            queued_at = utc_now() - timedelta(seconds=2)
+            conversation = Conversation(
+                organization_id=user.organization_id,
+                project_id=project.id,
+                owner_user_id=user.id,
+                title="Runtime statistics queue",
+            )
+            db.add(conversation)
+            db.flush()
+            db.add(
+                Run(
+                    organization_id=user.organization_id,
+                    project_id=project.id,
+                    conversation_id=conversation.id,
+                    user_id=user.id,
+                    status="queued",
+                    provider_id="mock",
+                    model_key="mock-agent",
+                    runtime_model_id="mock-agent",
+                    model_display_name="Mock Agent",
+                    snapshot_json={},
+                    usage_json={},
+                    queued_at=queued_at,
+                    worker_id="reserved-for-statistics-test",
+                    heartbeat_at=utc_now(),
+                    lease_expires_at=utc_now() + timedelta(minutes=1),
+                )
+            )
+
+        response = client.get("/api/admin/runtime-statistics")
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["executor"]["started"] is True
+        assert payload["executor"]["serverConcurrencyLimit"] == 12
+        event_loop_lag = payload["executor"]["eventLoopLag"]
+        assert set(event_loop_lag) == {
+            "lastMs",
+            "p95WindowMs",
+            "maxWindowMs",
+            "windowSamples",
+            "totalSamples",
+        }
+        assert event_loop_lag["lastMs"] >= 0
+        assert event_loop_lag["p95WindowMs"] >= 0
+        assert event_loop_lag["maxWindowMs"] >= 0
+        assert payload["executor"]["heavyWork"]["active"] == 0
+        assert payload["executor"]["heavyWork"]["waiting"] == 0
+        assert payload["executor"]["heavyWork"]["limit"] >= 1
+        assert payload["executor"]["mcpConnections"] == {
+            "cached": 0,
+            "activeUsers": 0,
+            "limit": 32,
+        }
+        assert payload["executor"]["codexCachePrewarmEnabled"] is False
+        assert payload["queue"]["depth"] == 1
+        assert payload["queue"]["oldestWaitMs"] >= 1_500
+        assert payload["runStatusCounts"]["queued"] == 1
+
+
 def test_admin_run_safety_settings_and_emergency_stop(tmp_path: Path) -> None:
     app = _test_app(tmp_path)
     with TestClient(app) as admin_client:
@@ -386,21 +454,57 @@ def test_admin_usage_statistics_are_organization_scoped_and_admin_only(
                         conversation_id=conversation.id,
                         sequence=1,
                         event_type="model_turn_completed",
-                        payload_json={"turnIndex": 0, "inputTokens": 100, "cachedInputTokens": 20, "cacheWriteTokens": 10, "uncachedInputTokens": 70},
+                        payload_json={
+                            "turnIndex": 0,
+                            "inputTokens": 100,
+                            "cachedInputTokens": 20,
+                            "cacheWriteTokens": 10,
+                            "uncachedInputTokens": 70,
+                            "staticPrefixEstimatedTokens": 8_000,
+                            "systemPromptEstimatedTokens": 5_500,
+                            "toolSchemaEstimatedTokens": 2_500,
+                            "ttftMs": 1_000,
+                            "firstVisibleTextMs": 1_200,
+                            "durationMs": 5_000,
+                        },
                     ),
                     RunEvent(
                         run_id=first_run.id,
                         conversation_id=conversation.id,
                         sequence=2,
                         event_type="model_turn_completed",
-                        payload_json={"turnIndex": 1, "inputTokens": 200, "cachedInputTokens": 180, "cacheWriteTokens": 5, "uncachedInputTokens": 15},
+                        payload_json={
+                            "turnIndex": 1,
+                            "inputTokens": 200,
+                            "cachedInputTokens": 180,
+                            "cacheWriteTokens": 5,
+                            "uncachedInputTokens": 15,
+                            "staticPrefixEstimatedTokens": 8_200,
+                            "systemPromptEstimatedTokens": 5_600,
+                            "toolSchemaEstimatedTokens": 2_600,
+                            "ttftMs": 200,
+                            "firstVisibleTextMs": 250,
+                            "durationMs": 2_000,
+                        },
                     ),
                     RunEvent(
                         run_id=second_run.id,
                         conversation_id=conversation.id,
                         sequence=1,
                         event_type="model_turn_completed",
-                        payload_json={"turnIndex": 0, "inputTokens": 300, "cachedInputTokens": 150, "cacheWriteTokens": 30, "uncachedInputTokens": 120},
+                        payload_json={
+                            "turnIndex": 0,
+                            "inputTokens": 300,
+                            "cachedInputTokens": 150,
+                            "cacheWriteTokens": 30,
+                            "uncachedInputTokens": 120,
+                            "staticPrefixEstimatedTokens": 7_000,
+                            "systemPromptEstimatedTokens": 4_800,
+                            "toolSchemaEstimatedTokens": 2_200,
+                            "ttftMs": 3_000,
+                            "firstVisibleTextMs": 3_500,
+                            "durationMs": 7_000,
+                        },
                     ),
                 )
             )
@@ -424,6 +528,8 @@ def test_admin_usage_statistics_are_organization_scoped_and_admin_only(
         assert analyst["inputTokens"] == 0
         assert analyst["cachedInputTokens"] == 0
         assert analyst["cacheHitRatioPercent"] == 0
+        assert analyst["cacheWriteRatioPercent"] == 0
+        assert analyst["uncachedInputRatioPercent"] == 0
         assert analyst["outputTokens"] == 0
         assert payload["cache"]["firstCall"] == {
             "modelCalls": 2,
@@ -431,17 +537,64 @@ def test_admin_usage_statistics_are_organization_scoped_and_admin_only(
             "cachedInputTokens": 170,
             "cacheWriteTokens": 40,
             "uncachedInputTokens": 190,
+            "staticPrefixEstimatedTokensMax": 8_000,
+            "systemPromptEstimatedTokensMax": 5_500,
+            "toolSchemaEstimatedTokensMax": 2_500,
             "cacheHitRatioPercent": 42.5,
+            "cacheWriteRatioPercent": 10.0,
+            "uncachedInputRatioPercent": 47.5,
         }
         assert payload["cache"]["subsequentCalls"]["cacheHitRatioPercent"] == 90.0
+        assert (
+            payload["cache"]["subsequentCalls"]["staticPrefixEstimatedTokensMax"]
+            == 8_200
+        )
+        assert (
+            payload["cache"]["subsequentCalls"]["systemPromptEstimatedTokensMax"]
+            == 5_600
+        )
+        assert (
+            payload["cache"]["subsequentCalls"]["toolSchemaEstimatedTokensMax"] == 2_600
+        )
+        assert payload["cache"]["subsequentCalls"]["cacheWriteRatioPercent"] == 2.5
+        assert payload["cache"]["subsequentCalls"]["uncachedInputRatioPercent"] == 7.5
         assert [item["digest"] for item in payload["cache"]["byStaticDigest"]] == [
             "digest-a",
             "digest-b",
         ]
         digest_a = payload["cache"]["byStaticDigest"][0]
         assert digest_a["cacheWriteTokens"] == 15
+        assert digest_a["staticPrefixEstimatedTokensMax"] == 8_200
+        assert digest_a["systemPromptEstimatedTokensMax"] == 5_600
+        assert digest_a["toolSchemaEstimatedTokensMax"] == 2_600
         assert digest_a["firstCall"]["cacheHitRatioPercent"] == 20.0
+        assert digest_a["firstCall"]["cacheWriteRatioPercent"] == 10.0
+        assert digest_a["firstCall"]["uncachedInputRatioPercent"] == 70.0
         assert digest_a["subsequentCalls"]["cacheHitRatioPercent"] == 90.0
+        assert payload["modelLatency"] == {
+            "firstCall": {
+                "ttftSamples": 2,
+                "ttftP50Ms": 1_000.0,
+                "ttftP95Ms": 3_000.0,
+                "firstVisibleTextSamples": 2,
+                "firstVisibleTextP50Ms": 1_200.0,
+                "firstVisibleTextP95Ms": 3_500.0,
+                "durationSamples": 2,
+                "durationP50Ms": 5_000.0,
+                "durationP95Ms": 7_000.0,
+            },
+            "subsequentCalls": {
+                "ttftSamples": 1,
+                "ttftP50Ms": 200.0,
+                "ttftP95Ms": 200.0,
+                "firstVisibleTextSamples": 1,
+                "firstVisibleTextP50Ms": 250.0,
+                "firstVisibleTextP95Ms": 250.0,
+                "durationSamples": 1,
+                "durationP50Ms": 2_000.0,
+                "durationP95Ms": 2_000.0,
+            },
+        }
 
         audit = admin_client.get(
             "/api/admin/audit-events?action=admin_usage_statistics_viewed"
@@ -469,7 +622,9 @@ def test_admin_audit_traffic_returns_complete_minute_buckets(tmp_path: Path) -> 
             user_client.close()
 
         with SessionLocal() as db:
-            admin_user = db.scalar(select(User).where(User.login_id == "admin@posco.com"))
+            admin_user = db.scalar(
+                select(User).where(User.login_id == "admin@posco.com")
+            )
             assert admin_user is not None
             now = utc_now()
             db.add_all(
@@ -559,7 +714,9 @@ def test_admin_audit_traffic_returns_complete_minute_buckets(tmp_path: Path) -> 
         eight_hours = admin_client.get("/api/admin/audit-traffic?minutes=480")
         assert eight_hours.status_code == 200
         assert len(eight_hours.json()["buckets"]) == 480
-        assert admin_client.get("/api/admin/audit-traffic?minutes=14").status_code == 422
+        assert (
+            admin_client.get("/api/admin/audit-traffic?minutes=14").status_code == 422
+        )
 
 
 def test_admin_conversation_view_is_audited(tmp_path: Path) -> None:
@@ -664,10 +821,7 @@ def test_admin_conversation_view_is_audited(tmp_path: Path) -> None:
             analysis_sheet.cell(2, headers["Comment"]).value
             == "관리 화면에서 확인할 의견"
         )
-        assert (
-            analysis_sheet.cell(2, headers["의견 작성자"]).value
-            == "admin@posco.com"
-        )
+        assert analysis_sheet.cell(2, headers["의견 작성자"]).value == "admin@posco.com"
         assert analysis_sheet.cell(2, headers["메시지 내용"]).data_type == "s"
 
         export_audit = client.get(
@@ -760,9 +914,7 @@ def test_admin_announcements_are_managed_by_admins_and_visible_to_users(
                 "/api/notifications/announcements/unread-count"
             ).json() == {"unreadCount": 1}
 
-            searched = admin_client.get(
-                "/api/admin/announcements?query=시간 변경"
-            )
+            searched = admin_client.get("/api/admin/announcements?query=시간 변경")
             assert searched.status_code == 200
             assert [item["id"] for item in searched.json()["items"]] == [
                 announcement["id"]
@@ -782,7 +934,9 @@ def test_admin_announcements_are_managed_by_admins_and_visible_to_users(
         finally:
             user_client.close()
 
-        audit = admin_client.get("/api/admin/audit-events?target_id=" + announcement["id"])
+        audit = admin_client.get(
+            "/api/admin/audit-events?target_id=" + announcement["id"]
+        )
         assert audit.status_code == 200
         assert {item["action"] for item in audit.json()["items"]} == {
             "announcement_created",

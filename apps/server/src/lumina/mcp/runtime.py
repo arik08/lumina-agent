@@ -9,6 +9,8 @@ import os
 import re
 import shutil
 import socket
+import time
+import weakref
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -40,6 +42,8 @@ _MAX_MESSAGE_BYTES = 1024 * 1024
 _MAX_TOOL_PAGES = 20
 _MAX_TOOLS = 1024
 _MAX_SESSION_ID_BYTES = 1024
+_MAX_CACHED_CONNECTIONS = 32
+_MAX_RETIRED_CONNECTION_RETRIES = 2
 _SAFE_ENV_NAMES = (
     "PATH",
     "PATHEXT",
@@ -121,6 +125,9 @@ class _CachedMcpConnection:
     connection: "_McpConnection"
     negotiated_tools: tuple[dict[str, Any], ...]
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    active_users: int = 0
+    last_used_at: float = field(default_factory=time.monotonic)
+    retired: bool = False
 
 
 class DnsResolver(Protocol):
@@ -197,9 +204,7 @@ def load_pinned_server_configs(db: Session, run: Run) -> tuple[McpServerConfig, 
 def load_installation_server_config(
     db: Session, installation: McpInstallation, *, user: User
 ) -> McpServerConfig:
-    revision = db.get(
-        McpConfigurationRevision, installation.configuration_revision_id
-    )
+    revision = db.get(McpConfigurationRevision, installation.configuration_revision_id)
     definition = db.get(McpDefinition, installation.definition_id)
     if (
         revision is None
@@ -255,15 +260,32 @@ class McpRuntime:
         self._dns_resolver = dns_resolver or _resolve_host
         self._environment = dict(os.environ if environment is None else environment)
         self._connections: dict[str, _CachedMcpConnection] = {}
-        self._connection_locks: dict[str, asyncio.Lock] = {}
+        self._connection_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
+            weakref.WeakValueDictionary()
+        )
+        self._closing = False
+        self._lifecycle_revision = 0
+
+    @property
+    def connection_statistics(self) -> dict[str, int]:
+        return {
+            "cached": len(self._connections),
+            "activeUsers": sum(
+                cached.active_users for cached in self._connections.values()
+            ),
+            "limit": _MAX_CACHED_CONNECTIONS,
+        }
 
     async def prepare_run(self, run_id: str) -> tuple[PreparedMcpTool, ...]:
+        configs = await asyncio.to_thread(self._pinned_server_configs, run_id)
+        return await self.prepare_servers(configs)
+
+    def _pinned_server_configs(self, run_id: str) -> tuple[McpServerConfig, ...]:
         with SessionLocal() as db:
             run = db.get(Run, run_id)
             if run is None:
                 raise _runtime_error("mcp_snapshot_invalid", "snapshot")
-            configs = load_pinned_server_configs(db, run)
-        return await self.prepare_servers(configs)
+            return load_pinned_server_configs(db, run)
 
     async def prepare_servers(
         self, configs: Sequence[McpServerConfig]
@@ -295,28 +317,48 @@ class McpRuntime:
         self, tool: PreparedMcpTool, arguments: Mapping[str, Any]
     ) -> dict[str, Any]:
         secrets = self._resolve_secrets(tool.config)
-        cache_key, cached = await self._ready_connection(tool.config, secrets)
-        current = {
-            str(item["name"]): item
-            for item in _intersect_tools(tool.config, cached.negotiated_tools)
-        }
-        current_tool = current.get(tool.original_name)
-        if current_tool is None or current_tool.get("inputSchema") != dict(
-            tool.input_schema
-        ):
-            raise _runtime_error("mcp_tool_schema_drift", "schema")
-        try:
-            async with cached.lock:
-                raw_result = await cached.connection.call_tool(
-                    tool.original_name, dict(arguments)
-                )
-        except asyncio.CancelledError:
-            await asyncio.shield(self._discard_connection(cache_key, cached))
-            raise
-        except McpRuntimeError as exc:
-            if exc.retryable or exc.stage in {"network", "transport"}:
-                await self._discard_connection(cache_key, cached)
-            raise
+        retired_retries = 0
+        while True:
+            cache_key, cached = await self._ready_connection(tool.config, secrets)
+            try:
+                current = {
+                    str(item["name"]): item
+                    for item in _intersect_tools(tool.config, cached.negotiated_tools)
+                }
+                current_tool = current.get(tool.original_name)
+                if current_tool is None or current_tool.get("inputSchema") != dict(
+                    tool.input_schema
+                ):
+                    raise _runtime_error("mcp_tool_schema_drift", "schema")
+                async with cached.lock:
+                    if cached.retired:
+                        retired_retries += 1
+                        if retired_retries > _MAX_RETIRED_CONNECTION_RETRIES:
+                            raise _runtime_error(
+                                "mcp_connection_unstable", "network", retryable=True
+                            )
+                        continue
+                    try:
+                        raw_result = await cached.connection.call_tool(
+                            tool.original_name, dict(arguments)
+                        )
+                    except asyncio.CancelledError:
+                        cached.retired = True
+                        raise
+                    except McpRuntimeError as exc:
+                        if exc.retryable or exc.stage in {"network", "transport"}:
+                            cached.retired = True
+                        raise
+            except asyncio.CancelledError:
+                await asyncio.shield(self._discard_connection(cache_key, cached))
+                raise
+            except McpRuntimeError as exc:
+                if exc.retryable or exc.stage in {"network", "transport"}:
+                    await self._discard_connection(cache_key, cached)
+                raise
+            finally:
+                await asyncio.shield(self._release_connection(cache_key, cached))
+            break
         safe_result = _redact_value(raw_result, tuple(secrets.values()))
         if not isinstance(safe_result, dict):
             raise _runtime_error("mcp_response_invalid", "result")
@@ -339,12 +381,29 @@ class McpRuntime:
         }
 
     async def close(self) -> None:
-        cached_connections = list(self._connections.values())
-        self._connections.clear()
-        self._connection_locks.clear()
-        for cached in cached_connections:
-            async with cached.lock:
-                await cached.connection.__aexit__(None, None, None)
+        self._closing = True
+        self._lifecycle_revision += 1
+        try:
+            cached_connections = list(self._connections.values())
+            self._connections.clear()
+            self._connection_locks.clear()
+
+            async def close_cached(cached: _CachedMcpConnection) -> None:
+                async with cached.lock:
+                    await cached.connection.__aexit__(None, None, None)
+
+            results = await asyncio.gather(
+                *(close_cached(cached) for cached in cached_connections),
+                return_exceptions=True,
+            )
+            failure = next(
+                (result for result in results if isinstance(result, BaseException)),
+                None,
+            )
+            if failure is not None:
+                raise failure
+        finally:
+            self._closing = False
 
     async def _prepare_server(
         self, config: McpServerConfig
@@ -356,38 +415,97 @@ class McpRuntime:
         except BaseException:
             await self._discard_connection(cache_key, cached)
             raise
+        finally:
+            await asyncio.shield(self._release_connection(cache_key, cached))
 
     async def _ready_connection(
         self, config: McpServerConfig, secrets: Mapping[str, str]
     ) -> tuple[str, _CachedMcpConnection]:
+        if self._closing:
+            raise _runtime_error("mcp_runtime_closing", "transport", retryable=True)
+        lifecycle_revision = self._lifecycle_revision
         cache_key = _connection_cache_key(config, secrets)
         cached = self._connections.get(cache_key)
         if cached is not None:
+            cached.active_users += 1
+            cached.last_used_at = time.monotonic()
             return cache_key, cached
         lock = self._connection_locks.setdefault(cache_key, asyncio.Lock())
         async with lock:
+            if self._closing:
+                raise _runtime_error("mcp_runtime_closing", "transport", retryable=True)
             cached = self._connections.get(cache_key)
             if cached is not None:
+                cached.active_users += 1
+                cached.last_used_at = time.monotonic()
                 return cache_key, cached
             connection = self._connection(config, secrets)
             await connection.__aenter__()
             try:
                 negotiated = await connection.initialize_and_list_tools()
+                if self._closing or lifecycle_revision != self._lifecycle_revision:
+                    raise _runtime_error(
+                        "mcp_runtime_closing", "transport", retryable=True
+                    )
             except BaseException:
                 await connection.__aexit__(None, None, None)
                 raise
             cached = _CachedMcpConnection(
                 connection=connection,
                 negotiated_tools=tuple(negotiated),
+                active_users=1,
             )
             self._connections[cache_key] = cached
+            await self._evict_idle_connections(exclude_key=cache_key)
             return cache_key, cached
+
+    async def _release_connection(
+        self, cache_key: str, cached: _CachedMcpConnection
+    ) -> None:
+        cached.active_users = max(0, cached.active_users - 1)
+        cached.last_used_at = time.monotonic()
+        await self._evict_idle_connections(exclude_key=cache_key)
+
+    async def _evict_idle_connections(self, *, exclude_key: str) -> None:
+        overflow = len(self._connections) - _MAX_CACHED_CONNECTIONS
+        if overflow <= 0:
+            return
+        candidates = sorted(
+            (
+                (cache_key, cached)
+                for cache_key, cached in self._connections.items()
+                if cache_key != exclude_key
+                and cached.active_users == 0
+                and not cached.lock.locked()
+            ),
+            key=lambda item: item[1].last_used_at,
+        )
+        evicted: list[_CachedMcpConnection] = []
+        for cache_key, cached in candidates[:overflow]:
+            if self._connections.get(cache_key) is cached:
+                self._connections.pop(cache_key, None)
+                evicted.append(cached)
+
+        async def close_evicted(cached: _CachedMcpConnection) -> None:
+            async with cached.lock:
+                await cached.connection.__aexit__(None, None, None)
+
+        results = await asyncio.gather(
+            *(close_evicted(cached) for cached in evicted),
+            return_exceptions=True,
+        )
+        failure = next(
+            (result for result in results if isinstance(result, BaseException)), None
+        )
+        if failure is not None:
+            raise failure
 
     async def _discard_connection(
         self, cache_key: str, cached: _CachedMcpConnection
     ) -> None:
         if self._connections.get(cache_key) is not cached:
             return
+        cached.retired = True
         self._connections.pop(cache_key, None)
         async with cached.lock:
             await cached.connection.__aexit__(None, None, None)
@@ -1232,11 +1350,7 @@ def _environment_value(environment: Mapping[str, str], name: str) -> str:
         return value
     folded_name = name.casefold()
     return next(
-        (
-            value
-            for key, value in environment.items()
-            if key.casefold() == folded_name
-        ),
+        (value for key, value in environment.items() if key.casefold() == folded_name),
         "",
     )
 

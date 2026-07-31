@@ -74,6 +74,7 @@ import type {
   DeepAnalysisMissionSummary,
   DeepAnalysisOutputFormat,
   DeepAnalysisWorkflowNode,
+  DeepAnalysisWorkflowEdge,
   DeepAnalysisWorkflowRevision,
   ComposerSuggestion,
   EffortOption,
@@ -365,7 +366,7 @@ const defaultInspectorWidth = 760;
 const minimumInspectorWidth = 420;
 const maximumInspectorWidthRatio = 0.84;
 const inspectorWidthStorageKey = "lumina:deep-analysis:inspector-width:v2";
-const workflowPortSides = ["north", "south"] as const;
+const workflowPortSides = ["north", "east", "south", "west"] as const;
 type WorkflowPortSide = typeof workflowPortSides[number];
 type WorkflowNodePosition = Pick<DeepAnalysisWorkflowNode, "positionX" | "positionY">;
 function statusLabel(status: string) {
@@ -422,6 +423,7 @@ function arrangeWorkflowTopDown(
   const incomingCount = new Map(workflow.nodes.map((node) => [node.nodeKey, 0]));
   const connectedNodeKeys = new Set<string>();
   for (const edge of workflow.edges) {
+    if (edge.edgeType === "loop_back") continue;
     if (!nodeByKey.has(edge.sourceNodeKey) || !nodeByKey.has(edge.targetNodeKey)) continue;
     connectedNodeKeys.add(edge.sourceNodeKey);
     connectedNodeKeys.add(edge.targetNodeKey);
@@ -496,12 +498,16 @@ function arrangeWorkflowTopDown(
 
 function workflowPortPoint(node: WorkflowNodePosition, side: WorkflowPortSide) {
   if (side === "north") return { x: node.positionX + workflowNodeWidth / 2, y: node.positionY };
-  return { x: node.positionX + workflowNodeWidth / 2, y: node.positionY + workflowNodeHeight };
+  if (side === "east") return { x: node.positionX + workflowNodeWidth, y: node.positionY + workflowNodeHeight / 2 };
+  if (side === "south") return { x: node.positionX + workflowNodeWidth / 2, y: node.positionY + workflowNodeHeight };
+  return { x: node.positionX, y: node.positionY + workflowNodeHeight / 2 };
 }
 
 function workflowPortVector(side: WorkflowPortSide) {
   if (side === "north") return { x: 0, y: -1 };
-  return { x: 0, y: 1 };
+  if (side === "east") return { x: 1, y: 0 };
+  if (side === "south") return { x: 0, y: 1 };
+  return { x: -1, y: 0 };
 }
 
 function workflowEdgeSides(
@@ -515,7 +521,26 @@ function workflowEdgeSides(
 function workflowEdgeGeometry(
   source: WorkflowNodePosition,
   target: WorkflowNodePosition,
+  edgeType: DeepAnalysisWorkflowEdge["edgeType"] = "sequence",
 ) {
+  if (edgeType === "loop_back") {
+    const side: WorkflowPortSide = (
+      source.positionX + target.positionX + workflowNodeWidth
+      < workflowMissionRootPosition.positionX * 2 + workflowNodeWidth
+    ) ? "west" : "east";
+    const sourcePoint = workflowPortPoint(source, side);
+    const targetPoint = workflowPortPoint(target, side);
+    const railX = side === "east"
+      ? Math.max(source.positionX, target.positionX) + workflowNodeWidth + 52
+      : Math.min(source.positionX, target.positionX) - 52;
+    const direction = side === "east" ? 1 : -1;
+    return {
+      sourcePoint,
+      targetPoint,
+      labelPoint: { x: railX, y: (sourcePoint.y + targetPoint.y) / 2 },
+      path: `M ${sourcePoint.x} ${sourcePoint.y} C ${sourcePoint.x + direction * 28} ${sourcePoint.y}, ${railX} ${sourcePoint.y}, ${railX} ${sourcePoint.y} L ${railX} ${targetPoint.y} C ${railX} ${targetPoint.y}, ${targetPoint.x + direction * 28} ${targetPoint.y}, ${targetPoint.x} ${targetPoint.y}`,
+    };
+  }
   const [sourceSide, targetSide] = workflowEdgeSides(source, target);
   const sourcePoint = workflowPortPoint(source, sourceSide);
   const targetPoint = workflowPortPoint(target, targetSide);
@@ -537,6 +562,10 @@ function workflowEdgeGeometry(
   return {
     sourcePoint,
     targetPoint,
+    labelPoint: {
+      x: (sourcePoint.x + targetPoint.x) / 2,
+      y: (sourcePoint.y + targetPoint.y) / 2,
+    },
     path: `M ${sourcePoint.x} ${sourcePoint.y} L ${sourceStem.x} ${sourceStem.y} C ${sourceStem.x + sourceVector.x * controlOffset} ${sourceStem.y + sourceVector.y * controlOffset}, ${targetStem.x + targetVector.x * controlOffset} ${targetStem.y + targetVector.y * controlOffset}, ${targetStem.x} ${targetStem.y} L ${targetPoint.x} ${targetPoint.y}`,
   };
 }
@@ -558,6 +587,8 @@ function eventDescription(event: DeepAnalysisMissionEvent) {
     workflow_expansion_proposed: "중간 결과에 따라 Workflow 변경을 검토했습니다.",
     workflow_expansion_decided: "Workflow 변경 판단을 기록했습니다.",
     workflow_revision_activated: "새 Workflow revision을 활성화했습니다.",
+    workflow_loop_evaluated: "Loop 반복 조건을 평가했습니다.",
+    workflow_loop_restarted: "Loop 구간을 다시 실행합니다.",
     decision_requested: "사용자 판단을 요청했습니다.",
     decision_answered: "사용자 판단을 반영했습니다.",
     mission_cost_updated: "누적 비용을 갱신했습니다.",
@@ -581,6 +612,7 @@ const DETAIL_REFRESH_EVENT_TYPES = new Set([
   "workflow_draft_created",
   "workflow_draft_updated",
   "workflow_regenerated",
+  "workflow_loop_restarted",
   "workflow_revision_activated",
 ]);
 
@@ -1200,10 +1232,11 @@ export function DeepAnalysisView({
   const workflowMissionRoot = useMemo(() => {
     const nodes = shownWorkflow?.nodes ?? [];
     if (!shownWorkflow) return null;
+    const dependencyEdges = shownWorkflow.edges.filter((edge) => edge.edgeType !== "loop_back");
     const connectedNodeKeys = new Set(
-      shownWorkflow.edges.flatMap((edge) => [edge.sourceNodeKey, edge.targetNodeKey]),
+      dependencyEdges.flatMap((edge) => [edge.sourceNodeKey, edge.targetNodeKey]),
     );
-    const targetNodeKeys = new Set((shownWorkflow?.edges ?? []).map((edge) => edge.targetNodeKey));
+    const targetNodeKeys = new Set(dependencyEdges.map((edge) => edge.targetNodeKey));
     const connectedNodes = nodes.filter(
       (node) => connectedNodeKeys.has(node.nodeKey) && !targetNodeKeys.has(node.nodeKey),
     );
@@ -1224,6 +1257,12 @@ export function DeepAnalysisView({
   const selectedNode = useMemo(
     () => selectedNodeKey ? shownWorkflowNodeByKey.get(selectedNodeKey) ?? null : null,
     [selectedNodeKey, shownWorkflowNodeByKey],
+  );
+  const selectedNodeLoopEdge = useMemo(
+    () => selectedNode
+      ? shownWorkflow?.edges.find((edge) => edge.edgeType === "loop_back" && edge.sourceNodeKey === selectedNode.nodeKey) ?? null
+      : null,
+    [selectedNode, shownWorkflow?.edges],
   );
   const selectedNodeShowsSource = selectedNode?.id === outputSourceNodeId;
 
@@ -1627,6 +1666,7 @@ export function DeepAnalysisView({
       edges: draft.edges.map((edge) => ({
         sourceNodeKey: edge.sourceNodeKey,
         targetNodeKey: edge.targetNodeKey,
+        edgeType: edge.edgeType === "loop_back" ? "loop_back" as const : "sequence" as const,
       })),
     };
   }
@@ -1767,18 +1807,75 @@ export function DeepAnalysisView({
     setConnectionDraft({ sourceNodeKey, sourceSide, pointerX: point.x, pointerY: point.y });
   }
 
-  function completeConnection(targetNodeKey: string) {
+  function completeConnection(targetNodeKey: string, targetSide: WorkflowPortSide) {
     if (!workflowDraft || !connectionDraft || connectionDraft.sourceNodeKey === targetNodeKey) return;
     const sourceNodeKey = connectionDraft.sourceNodeKey;
+    const source = workflowDraft.nodes.find((node) => node.nodeKey === sourceNodeKey);
+    const target = workflowDraft.nodes.find((node) => node.nodeKey === targetNodeKey);
+    if (!source || !target) return;
+    const lateralSides = new Set<WorkflowPortSide>(["east", "west"]);
+    const isLoop = lateralSides.has(connectionDraft.sourceSide) && lateralSides.has(targetSide);
+    const isSequence = !lateralSides.has(connectionDraft.sourceSide) && !lateralSides.has(targetSide);
+    if (!isLoop && !isSequence) {
+      setError("일반 연결은 위·아래 포트끼리, Loop는 좌·우 포트끼리 연결해 주세요.");
+      setConnectionDraft(null);
+      connectionDragRef.current = null;
+      return;
+    }
+    if (isLoop) {
+      const outgoing = new Map<string, string[]>();
+      for (const edge of workflowDraft.edges) {
+        if (edge.edgeType === "loop_back") continue;
+        outgoing.set(edge.sourceNodeKey, [...(outgoing.get(edge.sourceNodeKey) ?? []), edge.targetNodeKey]);
+      }
+      const reachable = new Set([targetNodeKey]);
+      const pending = [targetNodeKey];
+      while (pending.length) {
+        const current = pending.pop()!;
+        for (const candidate of outgoing.get(current) ?? []) {
+          if (reachable.has(candidate)) continue;
+          reachable.add(candidate);
+          pending.push(candidate);
+        }
+      }
+      if (
+        !reachable.has(sourceNodeKey)
+        || source.positionY <= target.positionY
+        || !["validation", "data_check"].includes(source.nodeType)
+      ) {
+        setError("Loop는 아래쪽 검증 Node에서 정상 상하 경로의 선행 Node로만 연결할 수 있습니다.");
+        setConnectionDraft(null);
+        connectionDragRef.current = null;
+        return;
+      }
+    }
     const exists = workflowDraft.edges.some(
       (edge) => edge.sourceNodeKey === sourceNodeKey && edge.targetNodeKey === targetNodeKey,
     );
     if (!exists) {
       setWorkflowDraft({
         ...workflowDraft,
+        nodes: isLoop ? workflowDraft.nodes.map((node) => node.nodeKey === sourceNodeKey
+          ? {
+              ...node,
+              config: {
+                ...node.config,
+                loopBack: {
+                  targetNodeKey,
+                  condition: "검증 기준을 충족하지 못한 경우",
+                  maxIterations: 2,
+                },
+              },
+            }
+          : node) : workflowDraft.nodes,
         edges: [
           ...workflowDraft.edges,
-          { id: `draft:${sourceNodeKey}:${targetNodeKey}`, sourceNodeKey, targetNodeKey, edgeType: "sequence" },
+          {
+            id: `draft:${sourceNodeKey}:${targetNodeKey}`,
+            sourceNodeKey,
+            targetNodeKey,
+            edgeType: isLoop ? "loop_back" : "sequence",
+          },
         ],
       });
       setWorkflowDraftDirty(true);
@@ -1819,11 +1916,12 @@ export function DeepAnalysisView({
     const drag = connectionDragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     if (drag.moved) {
-      const target = document
+      const targetElement = document
         .elementFromPoint(event.clientX, event.clientY)
-        ?.closest<HTMLElement>("[data-connection-input]")
-        ?.dataset.connectionInput;
-      if (target && target !== drag.sourceNodeKey) completeConnection(target);
+        ?.closest<HTMLElement>("[data-connection-input]");
+      const target = targetElement?.dataset.connectionInput;
+      const targetSide = targetElement?.dataset.connectionSide as WorkflowPortSide | undefined;
+      if (target && targetSide && target !== drag.sourceNodeKey) completeConnection(target, targetSide);
       else setConnectionDraft(null);
       connectionDragRef.current = null;
     }
@@ -1907,8 +2005,19 @@ export function DeepAnalysisView({
 
   function removeDraftEdge(edgeId: string) {
     if (!workflowDraft) return;
+    const removed = workflowDraft.edges.find((edge) => edge.id === edgeId);
     setWorkflowDraft({
       ...workflowDraft,
+      nodes: removed?.edgeType === "loop_back"
+        ? workflowDraft.nodes.map((node) => node.nodeKey === removed.sourceNodeKey
+          ? {
+              ...node,
+              config: Object.fromEntries(
+                Object.entries(node.config).filter(([key]) => key !== "loopBack"),
+              ),
+            }
+          : node)
+        : workflowDraft.nodes,
       edges: workflowDraft.edges.filter((edge) => edge.id !== edgeId),
     });
     setWorkflowDraftDirty(true);
@@ -3032,13 +3141,21 @@ export function DeepAnalysisView({
                           const source = shownWorkflowNodeByKey.get(edge.sourceNodeKey);
                           const target = shownWorkflowNodeByKey.get(edge.targetNodeKey);
                           if (!source || !target) return null;
-                          const geometry = workflowEdgeGeometry(source, target);
+                          const geometry = workflowEdgeGeometry(source, target, edge.edgeType);
                           return (
                             <g key={edge.id}>
                               <path
-                                className={`deep-analysis-edge ${selectedEdgeId === edge.id ? "is-selected" : ""}`}
+                                className={`deep-analysis-edge ${edge.edgeType === "loop_back" ? "is-loop-back" : ""} ${selectedEdgeId === edge.id ? "is-selected" : ""}`}
                                 d={geometry.path}
                               />
+                              {edge.edgeType === "loop_back" && (
+                                <text
+                                  className="deep-analysis-loop-label"
+                                  x={geometry.labelPoint.x}
+                                  y={geometry.labelPoint.y - 7}
+                                  textAnchor="middle"
+                                >Loop</text>
+                              )}
                               {editingWorkflow && (
                                 <path
                                   className="deep-analysis-edge-hit"
@@ -3095,7 +3212,7 @@ export function DeepAnalysisView({
                           onConnectionMove={moveConnectionDrag}
                           onConnectionEnd={endConnectionDrag}
                           onConnectionKeyStart={(side) => beginConnection(node.nodeKey, side)}
-                          onConnectionComplete={() => completeConnection(node.nodeKey)}
+                          onConnectionComplete={(side) => completeConnection(node.nodeKey, side)}
                         />
                       ))}
                       {workflowMissionRoot && (
@@ -3139,13 +3256,13 @@ export function DeepAnalysisView({
                         const source = edge ? shownWorkflowNodeByKey.get(edge.sourceNodeKey) : undefined;
                         const target = edge ? shownWorkflowNodeByKey.get(edge.targetNodeKey) : undefined;
                         if (!edge || !source || !target) return null;
-                        const geometry = workflowEdgeGeometry(source, target);
+                        const geometry = workflowEdgeGeometry(source, target, edge.edgeType);
                         return (
                           <button
                             className="deep-analysis-edge-delete"
                             style={{
-                              left: (geometry.sourcePoint.x + geometry.targetPoint.x) / 2,
-                              top: (geometry.sourcePoint.y + geometry.targetPoint.y) / 2,
+                              left: geometry.labelPoint.x,
+                              top: geometry.labelPoint.y,
                             }}
                             type="button"
                             aria-label={`${source.nodeKey}에서 ${target.nodeKey} 연결 지우기`}
@@ -3160,7 +3277,7 @@ export function DeepAnalysisView({
                           const source = shownWorkflowNodeByKey.get(edge.sourceNodeKey);
                           const target = shownWorkflowNodeByKey.get(edge.targetNodeKey);
                           if (!source || !target) return null;
-                          const geometry = workflowEdgeGeometry(source, target);
+                          const geometry = workflowEdgeGeometry(source, target, edge.edgeType);
                           return (
                             <g key={edge.id}>
                               <circle className="deep-analysis-edge-port" cx={geometry.sourcePoint.x} cy={geometry.sourcePoint.y} r="4" />
@@ -3650,6 +3767,47 @@ export function DeepAnalysisView({
                             setWorkflowDraft({ ...workflowDraft, nodes: workflowDraft.nodes.map((node) => node.nodeKey === selectedNode.nodeKey ? { ...node, purpose: event.target.value } : node) });
                             setWorkflowDraftDirty(true);
                           }} /></label>
+                          {selectedNodeLoopEdge && (() => {
+                            const loopBack = selectedNode.config.loopBack;
+                            const settings = loopBack && typeof loopBack === "object" && !Array.isArray(loopBack)
+                              ? loopBack as Record<string, unknown>
+                              : {};
+                            const updateLoopSetting = (key: string, value: string | number) => {
+                              setWorkflowDraft({
+                                ...workflowDraft,
+                                nodes: workflowDraft.nodes.map((node) => node.nodeKey === selectedNode.nodeKey
+                                  ? {
+                                      ...node,
+                                      config: {
+                                        ...node.config,
+                                        loopBack: {
+                                          ...settings,
+                                          targetNodeKey: selectedNodeLoopEdge.targetNodeKey,
+                                          [key]: value,
+                                        },
+                                      },
+                                    }
+                                  : node),
+                              });
+                              setWorkflowDraftDirty(true);
+                            };
+                            return (
+                              <div className="deep-analysis-loop-settings">
+                                <strong>Loop → {selectedNodeLoopEdge.targetNodeKey}</strong>
+                                <label className="deep-analysis-node-edit-field">반복 조건<input
+                                  value={String(settings.condition ?? "")}
+                                  onChange={(event) => updateLoopSetting("condition", event.target.value)}
+                                /></label>
+                                <label className="deep-analysis-node-edit-field">최대 실행 횟수<input
+                                  type="number"
+                                  min={2}
+                                  max={3}
+                                  value={Number(settings.maxIterations ?? 2)}
+                                  onChange={(event) => updateLoopSetting("maxIterations", Math.min(3, Math.max(2, Number(event.target.value) || 2)))}
+                                /></label>
+                              </div>
+                            );
+                          })()}
                         </> : <p>{selectedNode.purpose}</p>}
                       </section>
                       <section>
@@ -3876,7 +4034,7 @@ function WorkflowNodeButton({
   onConnectionMove: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   onConnectionEnd: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   onConnectionKeyStart: (side: WorkflowPortSide) => void;
-  onConnectionComplete: () => void;
+    onConnectionComplete: (side: WorkflowPortSide) => void;
 }) {
   const clockNow = useSharedNow(node.status === "running" && Boolean(node.startedAt));
   const normalizedStartedAt = node.startedAt ? normalizeUtcDateTime(node.startedAt) : null;
@@ -3942,7 +4100,7 @@ function WorkflowNodeButton({
             aria-label={`${node.nodeKey} ${side} 방향 입력에 연결`}
             data-connection-input={node.nodeKey}
             data-connection-side={side}
-            onClick={onConnectionComplete}
+            onClick={() => onConnectionComplete(side)}
           />
         ))}
       </>}

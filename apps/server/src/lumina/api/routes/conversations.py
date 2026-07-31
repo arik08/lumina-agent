@@ -37,6 +37,7 @@ from ...models import (
     ToolExecution,
     User,
 )
+from ...providers.usage import derive_uncached_input_tokens
 from ...runs.service import message_response, preload_message_attachments, run_snapshots
 from ...storage import ManagedLocalStorage
 from ..dependencies import AuthContext, get_current_user, require_csrf
@@ -67,15 +68,20 @@ def _add_usage(
 ) -> dict[str, object]:
     input_tokens = int(_usage_number(right, "input_tokens"))
     cached_tokens = int(_usage_number(right, "cached_input_tokens"))
+    cache_write_tokens = int(_usage_number(right, "cache_write_tokens"))
     normalized_right: dict[str, object] = {
         **right,
         "input_tokens": input_tokens,
         "cached_input_tokens": cached_tokens,
-        "cache_write_tokens": int(_usage_number(right, "cache_write_tokens")),
+        "cache_write_tokens": cache_write_tokens,
         "uncached_input_tokens": int(
             _usage_number(right, "uncached_input_tokens")
             if "uncached_input_tokens" in right
-            else max(0, input_tokens - cached_tokens)
+            else derive_uncached_input_tokens(
+                input_tokens,
+                cached_tokens,
+                cache_write_tokens,
+            )
         ),
         "output_tokens": int(_usage_number(right, "output_tokens")),
     }

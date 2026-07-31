@@ -300,7 +300,7 @@ export interface DeepAnalysisWorkflowEdge {
   id: UUID;
   sourceNodeKey: string;
   targetNodeKey: string;
-  edgeType: string;
+  edgeType: "sequence" | "adaptive" | "loop_back";
 }
 
 export interface DeepAnalysisWorkflowRevision {
@@ -479,7 +479,11 @@ export interface UpdateDeepAnalysisWorkflowDraftRequest {
     positionY: number;
     config: Record<string, unknown>;
   }>;
-  edges: Array<{ sourceNodeKey: string; targetNodeKey: string }>;
+  edges: Array<{
+    sourceNodeKey: string;
+    targetNodeKey: string;
+    edgeType: "sequence" | "loop_back";
+  }>;
 }
 
 export interface DeepAnalysisMissionDetail extends DeepAnalysisMissionSummary {

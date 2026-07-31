@@ -330,6 +330,7 @@ class Run(UUIDPrimaryKeyMixin, Base):
             "queued_at",
             "conversation_id",
         ),
+        Index("ix_runs_queue_order", "status", "queued_at", "id"),
         Index("ix_runs_worker_lease", "worker_id", "lease_expires_at"),
     )
 
@@ -340,17 +341,15 @@ class Run(UUIDPrimaryKeyMixin, Base):
         ForeignKey("projects.id", ondelete="RESTRICT"), index=True, nullable=False
     )
     conversation_id: Mapped[str] = mapped_column(
-        ForeignKey("conversations.id", ondelete="CASCADE"), index=True, nullable=False
+        ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
     )
     user_id: Mapped[str] = mapped_column(
-        ForeignKey("users.id", ondelete="RESTRICT"), index=True, nullable=False
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
     parent_run_id: Mapped[str | None] = mapped_column(
         ForeignKey("runs.id", ondelete="SET NULL")
     )
-    status: Mapped[str] = mapped_column(
-        String(32), default="queued", index=True, nullable=False
-    )
+    status: Mapped[str] = mapped_column(String(32), default="queued", nullable=False)
     provider_id: Mapped[str] = mapped_column(String(80), nullable=False)
     model_key: Mapped[str] = mapped_column(String(160), nullable=False)
     runtime_model_id: Mapped[str] = mapped_column(String(240), nullable=False)
@@ -449,11 +448,10 @@ class PlanStep(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint("plan_id", "step_key", name="uq_plan_steps_plan_id_step_key"),
         UniqueConstraint("plan_id", "position", name="uq_plan_steps_plan_id_position"),
-        Index("ix_plan_steps_timeline", "plan_id", "position"),
     )
 
     plan_id: Mapped[str] = mapped_column(
-        ForeignKey("plans.id", ondelete="CASCADE"), index=True, nullable=False
+        ForeignKey("plans.id", ondelete="CASCADE"), nullable=False
     )
     step_key: Mapped[str] = mapped_column(String(48), nullable=False)
     label: Mapped[str] = mapped_column(String(240), nullable=False)
@@ -491,11 +489,10 @@ class PlanSubtask(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         UniqueConstraint(
             "plan_step_id", "position", name="uq_plan_subtasks_step_position"
         ),
-        Index("ix_plan_subtasks_timeline", "plan_step_id", "position"),
     )
 
     plan_step_id: Mapped[str] = mapped_column(
-        ForeignKey("plan_steps.id", ondelete="CASCADE"), index=True, nullable=False
+        ForeignKey("plan_steps.id", ondelete="CASCADE"), nullable=False
     )
     tool_execution_id: Mapped[str | None] = mapped_column(
         ForeignKey("tool_executions.id", ondelete="SET NULL"), unique=True
@@ -535,7 +532,7 @@ class Message(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     conversation_id: Mapped[str] = mapped_column(
-        ForeignKey("conversations.id", ondelete="CASCADE"), index=True, nullable=False
+        ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
     )
     run_id: Mapped[str | None] = mapped_column(
         ForeignKey("runs.id", ondelete="SET NULL"), index=True
@@ -717,7 +714,6 @@ class RunEvent(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "run_events"
     __table_args__ = (
         UniqueConstraint("run_id", "sequence"),
-        Index("ix_run_events_replay", "run_id", "sequence"),
         Index("ix_run_events_run_type", "run_id", "event_type"),
     )
 
@@ -742,7 +738,7 @@ class RunCommand(UUIDPrimaryKeyMixin, Base):
     __table_args__ = (UniqueConstraint("run_id", "idempotency_key"),)
 
     run_id: Mapped[str] = mapped_column(
-        ForeignKey("runs.id", ondelete="CASCADE"), index=True, nullable=False
+        ForeignKey("runs.id", ondelete="CASCADE"), nullable=False
     )
     actor_user_id: Mapped[str] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
@@ -2159,7 +2155,9 @@ class KnowledgeTagProposal(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     normalized_name: Mapped[str] = mapped_column(String(160), nullable=False)
     scope_note: Mapped[str] = mapped_column(Text, default="", nullable=False)
     aliases_json: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
-    document_ids_json: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    document_ids_json: Mapped[list[str]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
     provider_id: Mapped[str] = mapped_column(String(120), nullable=False)
     model_key: Mapped[str] = mapped_column(String(240), nullable=False)
     status: Mapped[str] = mapped_column(

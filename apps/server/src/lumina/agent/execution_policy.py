@@ -139,14 +139,7 @@ def _provider_prompt_cache_key(
         (message.content or "" for message in messages if message.role == "system"),
         "",
     )
-    stable_tools = sorted(
-        (dict(tool) for tool in tools),
-        key=lambda tool: str(
-            tool.get("function", {}).get("name", "")
-            if isinstance(tool.get("function"), Mapping)
-            else tool.get("name", "")
-        ),
-    )
+    stable_tools = tuple(dict(tool) for tool in tools)
     static_payload = {
         "provider": provider_id.strip().casefold(),
         "model": model.strip().casefold(),
@@ -165,7 +158,7 @@ def _provider_prompt_cache_key(
     cache_digest = hashlib.sha256(
         f"{user_scope}\0{static_digest}".encode("utf-8")
     ).hexdigest()[:48]
-    return f"lumina:user:v2:{cache_digest}", static_digest
+    return f"lumina:user:v3:{cache_digest}", static_digest
 
 
 def _nonnegative_int(value: Any) -> int:

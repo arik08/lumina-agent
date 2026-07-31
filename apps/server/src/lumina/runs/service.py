@@ -22,7 +22,11 @@ from ..api.schemas import (
 from ..artifacts.service import artifact_summary
 from ..config import Settings, get_settings
 from ..audit import record_audit
-from ..authorization import conversation_access_query, require_conversation, require_project
+from ..authorization import (
+    conversation_access_query,
+    require_conversation,
+    require_project,
+)
 from ..extensions.service import resolve_skill_snapshot
 from ..instructions import (
     resolve_instruction_stack_from_models,
@@ -533,11 +537,7 @@ def create_run(
         "analysis_depth": payload.message.analysis_depth,
         "answer_length": payload.message.answer_length,
         "instructions": instruction_snapshot,
-        **(
-            {"knowledge_retrieval": knowledge_retrieval}
-            if knowledge_retrieval
-            else {}
-        ),
+        **({"knowledge_retrieval": knowledge_retrieval} if knowledge_retrieval else {}),
         "runtime_prompts": runtime_prompts,
         "extensions": extensions,
         "extension_application": extension_application,
@@ -1751,6 +1751,7 @@ def run_snapshot(
         "errorCode": run.error_code,
         "errorMessage": run.error_message,
         "lastSequence": run.last_sequence,
+        "queueMetrics": run.snapshot_json.get("queueMetrics"),
         "startedAt": run.started_at,
         "finishedAt": run.finished_at,
         "assistantDraft": (
@@ -2629,7 +2630,9 @@ def apply_run_action(
                 409, "run_not_paused", "현재 Run은 일시 정지 상태가 아닙니다."
             )
         resumed_at = utc_now()
-        lease_is_live = run.lease_expires_at is None or run.lease_expires_at > resumed_at
+        lease_is_live = (
+            run.lease_expires_at is None or run.lease_expires_at > resumed_at
+        )
         if run.worker_id is not None and lease_is_live:
             run.snapshot_json = {
                 **run.snapshot_json,

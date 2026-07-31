@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from ..models import Run
 from ..providers.catalog import estimate_model_cost_parts
+from ..providers.usage import derive_uncached_input_tokens
 from .models import DeepAnalysisMission, DeepAnalysisWorkflowNode
 from .service import active_workflow
 
@@ -60,7 +61,11 @@ def _run_row(
     uncached_tokens = _integer(
         usage.get(
             "uncached_input_tokens",
-            max(0, input_tokens - cached_tokens - cache_write_tokens),
+            derive_uncached_input_tokens(
+                input_tokens,
+                cached_tokens,
+                cache_write_tokens,
+            ),
         )
     )
     output_tokens = _integer(usage.get("output_tokens"))
@@ -77,7 +82,9 @@ def _run_row(
         "providerId": run.provider_id,
         "modelKey": run.model_key,
         "modelDisplayName": run.model_display_name,
-        "date": (run.finished_at or run.started_at or run.created_at).date().isoformat(),
+        "date": (run.finished_at or run.started_at or run.created_at)
+        .date()
+        .isoformat(),
         "inputTokens": input_tokens,
         "cachedInputTokens": cached_tokens,
         "cacheWriteTokens": cache_write_tokens,
@@ -89,9 +96,7 @@ def _run_row(
             max(0, no_cache - actual) if no_cache is not None else None
         ),
         "pricingVersion": (
-            str(usage.get("pricing_version"))
-            if usage.get("pricing_version")
-            else None
+            str(usage.get("pricing_version")) if usage.get("pricing_version") else None
         ),
         "costBasis": str(usage.get("cost_basis") or "unknown"),
     }
@@ -106,10 +111,11 @@ def mission_costs(db: Session, mission: DeepAnalysisMission) -> dict[str, Any]:
         for history in node.run_history_json:
             if isinstance(history, dict) and history.get("runId"):
                 run_ids.add(str(history["runId"]))
-    runs = {
-        item.id: item
-        for item in db.scalars(select(Run).where(Run.id.in_(run_ids)))
-    } if run_ids else {}
+    runs = (
+        {item.id: item for item in db.scalars(select(Run).where(Run.id.in_(run_ids)))}
+        if run_ids
+        else {}
+    )
 
     rows: list[dict[str, Any]] = []
     for node in nodes:
@@ -121,12 +127,16 @@ def mission_costs(db: Session, mission: DeepAnalysisMission) -> dict[str, Any]:
         for index, run_id in enumerate(history_ids, start=1):
             run = runs.get(run_id)
             if run is not None:
-                rows.append(_run_row(node=node, run=run, attempt=index, is_retry=index > 1))
+                rows.append(
+                    _run_row(node=node, run=run, attempt=index, is_retry=index > 1)
+                )
         if node.run_id and node.run_id not in history_ids:
             run = runs.get(node.run_id)
             if run is not None:
                 attempt = len(history_ids) + 1
-                rows.append(_run_row(node=node, run=run, attempt=attempt, is_retry=attempt > 1))
+                rows.append(
+                    _run_row(node=node, run=run, attempt=attempt, is_retry=attempt > 1)
+                )
 
     totals = {
         "inputTokens": sum(item["inputTokens"] for item in rows),
@@ -142,14 +152,23 @@ def mission_costs(db: Session, mission: DeepAnalysisMission) -> dict[str, Any]:
         if item["noCacheCostMicrousd"] is not None
     ]
     completed_nodes = [node for node in nodes if node.status == "completed"]
-    remaining_nodes = [node for node in nodes if node.status in {"planned", "ready", "running"}]
+    remaining_nodes = [
+        node for node in nodes if node.status in {"planned", "ready", "running"}
+    ]
     average_actual = (
-        round(sum(node.actual_cost_microusd for node in completed_nodes) / len(completed_nodes))
+        round(
+            sum(node.actual_cost_microusd for node in completed_nodes)
+            / len(completed_nodes)
+        )
         if completed_nodes
         else 0
     )
     estimated_remaining = average_actual * len(remaining_nodes)
-    average_no_cache = round(sum(no_cache_known) / len(no_cache_known)) if no_cache_known else average_actual
+    average_no_cache = (
+        round(sum(no_cache_known) / len(no_cache_known))
+        if no_cache_known
+        else average_actual
+    )
     estimated_completion = mission.spent_microusd + estimated_remaining
     no_cache_upper = sum(no_cache_known) + average_no_cache * len(remaining_nodes)
     return {

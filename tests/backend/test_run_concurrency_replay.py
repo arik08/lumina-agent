@@ -74,7 +74,9 @@ def _settings(
     )
 
 
-def _login(client: TestClient, login_name: str = "admin", password: str = "1111") -> str:
+def _login(
+    client: TestClient, login_name: str = "admin", password: str = "1111"
+) -> str:
     response = client.post(
         "/api/auth/login",
         json={
@@ -158,9 +160,7 @@ def _wait_for_detached_pause(run_id: str, *, timeout: float = 3.0) -> None:
                 run is not None
                 and run.status == "paused"
                 and run.worker_id is None
-                and isinstance(
-                    run.snapshot_json.get("paused_worker_detached"), dict
-                )
+                and isinstance(run.snapshot_json.get("paused_worker_detached"), dict)
             ):
                 return
         time.sleep(0.02)
@@ -338,12 +338,12 @@ class _ToolBoundarySteerProvider:
         )
         assert not any(
             message.role == "tool"
-            or any(
-                call.get("id") == "call_before_steer" for call in message.tool_calls
-            )
+            or any(call.get("id") == "call_before_steer" for call in message.tool_calls)
             for message in request.messages
         )
-        yield ProviderEvent(type="text_delta", text="steering applied before tool execution")
+        yield ProviderEvent(
+            type="text_delta", text="steering applied before tool execution"
+        )
         yield ProviderEvent(type="completed", stop_reason="stop")
 
 
@@ -382,9 +382,12 @@ class _OrderedToolSteerRecoveryProvider:
 
     @staticmethod
     def _index(
-        messages: tuple[ProviderMessage, ...], predicate: Callable[[ProviderMessage], bool]
+        messages: tuple[ProviderMessage, ...],
+        predicate: Callable[[ProviderMessage], bool],
     ) -> int:
-        return next(index for index, message in enumerate(messages) if predicate(message))
+        return next(
+            index for index, message in enumerate(messages) if predicate(message)
+        )
 
     async def stream(self, request: ProviderRequest) -> AsyncIterator[ProviderEvent]:
         self.attempts += 1
@@ -428,53 +431,69 @@ class _OrderedToolSteerRecoveryProvider:
         messages = request.messages
         partial_prefix_index = self._index(
             messages,
-            lambda message: message.role == "assistant"
-            and message.content == "partial-prefix|",
+            lambda message: (
+                message.role == "assistant" and message.content == "partial-prefix|"
+            ),
         )
         prefix_index = self._index(
             messages,
-            lambda message: message.role == "user"
-            and "prefix-steer" in (message.content or ""),
+            lambda message: (
+                message.role == "user" and "prefix-steer" in (message.content or "")
+            ),
         )
         assistant_a_index = self._index(
             messages,
-            lambda message: message.role == "assistant"
-            and any(call.get("id") == "call_ordered_a" for call in message.tool_calls),
+            lambda message: (
+                message.role == "assistant"
+                and any(
+                    call.get("id") == "call_ordered_a" for call in message.tool_calls
+                )
+            ),
         )
         tool_a_index = self._index(
             messages,
-            lambda message: message.role == "tool"
-            and message.tool_call_id == "call_ordered_a",
+            lambda message: (
+                message.role == "tool" and message.tool_call_id == "call_ordered_a"
+            ),
         )
         partial_post_a_index = self._index(
             messages,
-            lambda message: message.role == "assistant"
-            and message.content == "partial-post-a|",
+            lambda message: (
+                message.role == "assistant" and message.content == "partial-post-a|"
+            ),
         )
         post_a_index = self._index(
             messages,
-            lambda message: message.role == "user"
-            and "post-a-steer" in (message.content or ""),
+            lambda message: (
+                message.role == "user" and "post-a-steer" in (message.content or "")
+            ),
         )
         assistant_b_index = self._index(
             messages,
-            lambda message: message.role == "assistant"
-            and any(call.get("id") == "call_ordered_b" for call in message.tool_calls),
+            lambda message: (
+                message.role == "assistant"
+                and any(
+                    call.get("id") == "call_ordered_b" for call in message.tool_calls
+                )
+            ),
         )
         tool_b_index = self._index(
             messages,
-            lambda message: message.role == "tool"
-            and message.tool_call_id == "call_ordered_b",
+            lambda message: (
+                message.role == "tool" and message.tool_call_id == "call_ordered_b"
+            ),
         )
         partial_post_b_index = self._index(
             messages,
-            lambda message: message.role == "assistant"
-            and message.content == "partial-post-b|",
+            lambda message: (
+                message.role == "assistant" and message.content == "partial-post-b|"
+            ),
         )
         post_b_index = self._index(
             messages,
-            lambda message: message.role == "user"
-            and "post-b-steer" in (message.content or ""),
+            lambda message: (
+                message.role == "user" and "post-b-steer" in (message.content or "")
+            ),
         )
         assert (
             partial_prefix_index
@@ -489,11 +508,14 @@ class _OrderedToolSteerRecoveryProvider:
             < post_b_index
         )
         for marker in ("prefix-steer", "post-a-steer", "post-b-steer"):
-            assert sum(
-                marker in (message.content or "")
-                for message in messages
-                if message.role == "user"
-            ) == 1
+            assert (
+                sum(
+                    marker in (message.content or "")
+                    for message in messages
+                    if message.role == "user"
+                )
+                == 1
+            )
         yield ProviderEvent(
             type="text_delta", text="ordered tool transcript recovered once"
         )
@@ -846,8 +868,7 @@ class _ValidReportWithDiscardedToolCallProvider:
             return
 
         assert any(
-            message.role == "tool"
-            and message.tool_call_id == "call_valid_report"
+            message.role == "tool" and message.tool_call_id == "call_valid_report"
             for message in request.messages
         )
         assert not any(
@@ -1021,7 +1042,10 @@ def test_optional_codex_warmup_does_not_block_backend_startup(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     settings = _settings(tmp_path, "background-warmup.db").model_copy(
-        update={"environment": "development"}
+        update={
+            "environment": "development",
+            "codex_cache_prewarm_enabled": True,
+        }
     )
     configure_database(settings.database_url)
     create_schema()
@@ -1363,6 +1387,30 @@ def test_provider_retry_delay_prefers_retry_after_and_caps_it() -> None:
     assert executor_module._provider_retry_delay_seconds(retry_after, 0) == 12.5
     assert executor_module._provider_retry_delay_seconds(excessive, 0) == 600.0
     assert executor_module._PROVIDER_RETRY_DELAYS_SECONDS == (1.0, 2.0, 4.0)
+
+
+def test_provider_retry_delay_jitters_clients_without_violating_retry_after(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(executor_module.random, "uniform", lambda low, high: high)
+    transient = ProviderRequestError(
+        "temporary",
+        retryable=True,
+        stage="network",
+    )
+    retry_after = ProviderRequestError(
+        "rate limited",
+        retryable=True,
+        stage="response",
+        retry_after_seconds=12.0,
+    )
+
+    assert executor_module._provider_retry_delay_seconds(
+        transient, 0, jitter=True
+    ) == pytest.approx(executor_module._PROVIDER_RETRY_DELAYS_SECONDS[0])
+    assert executor_module._provider_retry_delay_seconds(
+        retry_after, 0, jitter=True
+    ) == pytest.approx(15.0)
 
 
 @pytest.mark.asyncio
@@ -1846,9 +1894,7 @@ def test_resume_requested_before_pause_task_exits_requeues_after_safe_boundary(
         await original_release(run_id)
 
     monkeypatch.setattr(local_run_executor, "_provider", _gate_factory(provider))
-    monkeypatch.setattr(
-        local_run_executor, "_release_parked_ownership", gated_release
-    )
+    monkeypatch.setattr(local_run_executor, "_release_parked_ownership", gated_release)
     settings = _settings(tmp_path, "pause-resume-race.db")
 
     with TestClient(create_app(settings)) as client:
@@ -1928,7 +1974,10 @@ def test_model_pause_rewinds_partial_draft_and_publishes_full_replacement(
             while time.monotonic() < deadline:
                 with SessionLocal() as db:
                     run = db.get(Run, run_id)
-                    if run is not None and run.assistant_draft == "partial-before-pause":
+                    if (
+                        run is not None
+                        and run.assistant_draft == "partial-before-pause"
+                    ):
                         break
                 time.sleep(0.02)
             else:
@@ -1995,9 +2044,7 @@ def test_pause_after_provider_completed_event_parks_before_final_transition(
         metric_calls += 1
         if metric_calls == 1:
             metrics_boundary.set()
-            released = await asyncio.to_thread(
-                release_metrics_boundary.wait, 5.0
-            )
+            released = await asyncio.to_thread(release_metrics_boundary.wait, 5.0)
             if not released:
                 raise AssertionError("Provider completion boundary was not released")
 
@@ -2273,9 +2320,7 @@ def test_completed_tool_batch_is_checkpointed_once_across_pause_and_restart(
         assert resumed.json()["run"]["status"] == "queued"
         completed = _wait_for_terminal(second_client, run_id)
         assert completed["status"] == "completed"
-        assert completed["assistantDraft"]["text"] == (
-            "tool checkpoint resumed once"
-        )
+        assert completed["assistantDraft"]["text"] == ("tool checkpoint resumed once")
 
     assert provider.attempts == 2
     assert tool_batch_invocations == 1
@@ -2369,19 +2414,19 @@ def test_tool_and_steer_transcript_order_survives_worker_restart(
                 "user",
             ]
             assert len(checkpoint["completed_batches"]) == 1
-            assert len(
-                checkpoint["completed_batches"][0]["post_batch_user_message_ids"]
-            ) == 1
+            assert (
+                len(checkpoint["completed_batches"][0]["post_batch_user_message_ids"])
+                == 1
+            )
             assert [
                 entry["role"]
-                for entry in checkpoint["completed_batches"][0][
-                    "post_batch_transcript"
-                ]
+                for entry in checkpoint["completed_batches"][0]["post_batch_transcript"]
             ] == ["assistant", "user"]
             assert len(checkpoint["post_batch_user_message_ids"]) == 1
-            assert [
-                entry["role"] for entry in checkpoint["post_batch_transcript"]
-            ] == ["assistant", "user"]
+            assert [entry["role"] for entry in checkpoint["post_batch_transcript"]] == [
+                "assistant",
+                "user",
+            ]
 
     with TestClient(create_app(settings)) as second_client:
         _login(second_client)
@@ -2482,9 +2527,9 @@ def test_auto_continuation_transcript_survives_worker_restart(
             transcript = run.snapshot_json["tool_checkpoint_prefix_transcript"]
             assert [entry["role"] for entry in transcript] == ["assistant", "user"]
             assert transcript[1]["content"] == executor_module._CONTINUATION_PROMPT
-            assert run.snapshot_json["model_turn_inflight"][
-                "draftCheckpoint"
-            ] == len("truncated-prefix|")
+            assert run.snapshot_json["model_turn_inflight"]["draftCheckpoint"] == len(
+                "truncated-prefix|"
+            )
 
     with TestClient(create_app(settings)) as second_client:
         _login(second_client)
@@ -2553,9 +2598,7 @@ def test_pending_tool_checkpoint_reuses_inline_result_after_worker_stops(
         csrf = _login(second_client)
         completed = _wait_for_terminal(second_client, run_id)
         assert completed["status"] == "completed"
-        assert completed["assistantDraft"]["text"] == (
-            "tool checkpoint resumed once"
-        )
+        assert completed["assistantDraft"]["text"] == ("tool checkpoint resumed once")
 
     assert provider.attempts == 2
     assert completed_checkpoint_attempts == 2
@@ -2907,6 +2950,13 @@ def test_queued_message_is_recovered_once_after_executor_restart(
     with TestClient(create_app(settings)) as second_client:
         try:
             _login(second_client)
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                with SessionLocal() as db:
+                    queued = db.get(QueuedMessage, queued_message_id)
+                    if queued is not None and queued.status == "promoted":
+                        break
+                time.sleep(0.01)
             with SessionLocal() as db:
                 queued = db.get(QueuedMessage, queued_message_id)
                 assert queued is not None
@@ -3263,7 +3313,9 @@ def test_sse_stops_before_delivering_events_after_session_revocation(
 
 
 def test_sse_transient_draft_wake_does_not_poll_the_database(tmp_path: Path) -> None:
-    with TestClient(create_app(_settings(tmp_path, "sse-transient-draft.db"))) as client:
+    with TestClient(
+        create_app(_settings(tmp_path, "sse-transient-draft.db"))
+    ) as client:
         csrf = _login(client)
         conversation_id = _conversation(client, csrf, "SSE transient draft")
         session_token = client.cookies.get("lumina_session")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import os
 from dataclasses import replace
 from pathlib import Path
@@ -16,6 +17,8 @@ from lumina.mcp.runtime import (
     McpRuntime,
     McpRuntimeError,
     McpServerConfig,
+    PreparedMcpTool,
+    _CachedMcpConnection,
     _PinnedNetworkBackend,
     _environment_value,
     _resolve_stdio_command,
@@ -82,7 +85,38 @@ def _runtime_environment() -> dict[str, str]:
     }
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows environment keys are case-insensitive")
+@pytest.mark.asyncio
+async def test_prepare_run_loads_pinned_snapshot_without_blocking_event_loop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = McpRuntime(_settings(tmp_path), environment={})
+
+    def slow_snapshot_load(_run_id: str) -> tuple[McpServerConfig, ...]:
+        time.sleep(0.05)
+        return ()
+
+    monkeypatch.setattr(runtime, "_pinned_server_configs", slow_snapshot_load)
+    ticks = 0
+    running = True
+
+    async def ticker() -> None:
+        nonlocal ticks
+        while running:
+            ticks += 1
+            await asyncio.sleep(0.005)
+
+    ticker_task = asyncio.create_task(ticker())
+    await runtime.prepare_run("run-id")
+    running = False
+    await ticker_task
+
+    assert ticks >= 3
+
+
+@pytest.mark.skipif(
+    os.name != "nt", reason="Windows environment keys are case-insensitive"
+)
 def test_windows_environment_lookup_is_case_insensitive() -> None:
     assert _environment_value({"Path": "venv-path"}, "PATH") == "venv-path"
 
@@ -121,6 +155,243 @@ async def test_stdio_lifecycle_allowlist_call_and_secret_redaction(
     assert methods.count("tools/list") == 1
     assert methods.count("tools/call") == 1
     await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_mcp_runtime_bounds_idle_revision_connections(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import lumina.mcp.runtime as runtime_module
+
+    monkeypatch.setattr(runtime_module, "_MAX_CACHED_CONNECTIONS", 2)
+    runtime = McpRuntime(_settings(tmp_path), environment=_runtime_environment())
+    base = _stdio_config(tmp_path)
+
+    try:
+        for index in range(4):
+            config = replace(
+                base,
+                configuration_revision_id=f"revision-{index}",
+                digest=f"{index:064x}",
+            )
+            tools = await runtime.prepare_servers((config,))
+            assert tools[0].original_name == "echo"
+            assert len(runtime._connections) <= 2
+            assert runtime.connection_statistics["cached"] <= 2
+            assert runtime.connection_statistics["activeUsers"] == 0
+            assert runtime.connection_statistics["limit"] == 2
+    finally:
+        await runtime.close()
+
+    assert runtime._connections == {}
+
+
+@pytest.mark.asyncio
+async def test_mcp_runtime_closes_cached_connections_concurrently(
+    tmp_path: Path,
+) -> None:
+    class SlowConnection:
+        def __init__(self) -> None:
+            self.closed = False
+
+        async def __aexit__(self, *_exc: object) -> None:
+            await asyncio.sleep(0.05)
+            self.closed = True
+
+    runtime = McpRuntime(_settings(tmp_path), environment={})
+    connections = [SlowConnection() for _ in range(4)]
+    runtime._connections = {
+        str(index): _CachedMcpConnection(
+            connection=connection,  # type: ignore[arg-type]
+            negotiated_tools=(),
+        )
+        for index, connection in enumerate(connections)
+    }
+
+    started = time.monotonic()
+    await runtime.close()
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 0.15
+    assert all(connection.closed for connection in connections)
+
+
+@pytest.mark.asyncio
+async def test_waiting_tool_call_reconnects_after_connection_is_retired(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_call_started = asyncio.Event()
+    release_first_call = asyncio.Event()
+
+    class FakeConnection:
+        def __init__(self, *, fail: bool) -> None:
+            self.fail = fail
+            self.calls = 0
+            self.closed = False
+
+        async def __aenter__(self) -> FakeConnection:
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            self.closed = True
+
+        async def initialize_and_list_tools(self) -> tuple[dict[str, Any], ...]:
+            return ({"name": "echo", "description": "Echo", "inputSchema": SCHEMA},)
+
+        async def call_tool(
+            self, _name: str, _arguments: dict[str, Any]
+        ) -> dict[str, Any]:
+            self.calls += 1
+            if self.fail:
+                first_call_started.set()
+                await release_first_call.wait()
+                raise McpRuntimeError(
+                    "mcp_network_error",
+                    "network failed",
+                    stage="network",
+                    retryable=True,
+                )
+            return {
+                "content": [{"type": "text", "text": "reconnected"}],
+                "isError": False,
+            }
+
+    failed_connection = FakeConnection(fail=True)
+    replacement_connection = FakeConnection(fail=False)
+    connection_queue = [failed_connection, replacement_connection]
+    runtime = McpRuntime(_settings(tmp_path), environment={})
+    monkeypatch.setattr(
+        runtime,
+        "_connection",
+        lambda _config, _secrets: connection_queue.pop(0),
+    )
+    config = replace(
+        _stdio_config(tmp_path),
+        required_secret_names=(),
+        secret_refs={},
+    )
+    tool = PreparedMcpTool(
+        provider_name="mcp__internal-docs__echo",
+        server_slug=config.slug,
+        original_name="echo",
+        description="Echo",
+        input_schema=SCHEMA,
+        config=config,
+    )
+
+    failing_call = asyncio.create_task(runtime.call_tool(tool, {"value": "first"}))
+    await first_call_started.wait()
+    waiting_call = asyncio.create_task(runtime.call_tool(tool, {"value": "second"}))
+    await asyncio.sleep(0)
+    release_first_call.set()
+
+    with pytest.raises(McpRuntimeError, match="network failed"):
+        await failing_call
+    result = await waiting_call
+
+    assert result["content"] == [{"type": "text", "text": "reconnected"}]
+    assert failed_connection.calls == 1
+    assert failed_connection.closed is True
+    assert replacement_connection.calls == 1
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_mcp_runtime_rejects_new_connections_while_closing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    close_started = asyncio.Event()
+    release_close = asyncio.Event()
+
+    class SlowCloseConnection:
+        async def __aexit__(self, *_exc: object) -> None:
+            close_started.set()
+            await release_close.wait()
+
+    runtime = McpRuntime(_settings(tmp_path), environment={})
+    runtime._connections["existing"] = _CachedMcpConnection(
+        connection=SlowCloseConnection(),  # type: ignore[arg-type]
+        negotiated_tools=(),
+    )
+    connection_attempts = 0
+
+    def unexpected_connection(
+        _config: McpServerConfig, _secrets: dict[str, str]
+    ) -> None:
+        nonlocal connection_attempts
+        connection_attempts += 1
+
+    monkeypatch.setattr(runtime, "_connection", unexpected_connection)
+    close_task = asyncio.create_task(runtime.close())
+    await close_started.wait()
+
+    with pytest.raises(McpRuntimeError) as failure:
+        await runtime.prepare_servers(
+            (
+                replace(
+                    _stdio_config(tmp_path),
+                    required_secret_names=(),
+                    secret_refs={},
+                ),
+            )
+        )
+
+    assert failure.value.code == "mcp_runtime_closing"
+    assert connection_attempts == 0
+    release_close.set()
+    await close_task
+    assert runtime._closing is False
+
+
+@pytest.mark.asyncio
+async def test_mcp_runtime_discards_connection_initialized_across_close(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    initialize_started = asyncio.Event()
+    release_initialize = asyncio.Event()
+
+    class InitializingConnection:
+        def __init__(self) -> None:
+            self.close_count = 0
+
+        async def __aenter__(self) -> InitializingConnection:
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            self.close_count += 1
+
+        async def initialize_and_list_tools(self) -> tuple[dict[str, Any], ...]:
+            initialize_started.set()
+            await release_initialize.wait()
+            return ({"name": "echo", "description": "Echo", "inputSchema": SCHEMA},)
+
+    connection = InitializingConnection()
+    runtime = McpRuntime(_settings(tmp_path), environment={})
+    monkeypatch.setattr(
+        runtime,
+        "_connection",
+        lambda _config, _secrets: connection,
+    )
+    config = replace(
+        _stdio_config(tmp_path),
+        required_secret_names=(),
+        secret_refs={},
+    )
+    prepare_task = asyncio.create_task(runtime.prepare_servers((config,)))
+    await initialize_started.wait()
+
+    await runtime.close()
+    release_initialize.set()
+
+    with pytest.raises(McpRuntimeError) as failure:
+        await prepare_task
+    assert failure.value.code == "mcp_runtime_closing"
+    assert connection.close_count == 1
+    assert runtime._connections == {}
 
 
 @pytest.mark.asyncio

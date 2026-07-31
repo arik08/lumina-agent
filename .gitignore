@@ -9,6 +9,7 @@
 .vite/
 .playwright-mcp/
 .lumina-ui-checks/
+.lumina-harness/
 /.tmp-comment-selection-verify.*
 /artifact-output-*
 

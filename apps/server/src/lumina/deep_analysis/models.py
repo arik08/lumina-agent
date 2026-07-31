@@ -91,7 +91,6 @@ class DeepAnalysisEvent(UUIDPrimaryKeyMixin, Base):
         UniqueConstraint(
             "mission_id", "sequence", name="uq_deep_analysis_event_sequence"
         ),
-        Index("ix_deep_analysis_events_replay", "mission_id", "sequence"),
     )
 
     mission_id: Mapped[str] = mapped_column(
@@ -142,14 +141,17 @@ class DeepAnalysisContextManifest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "deep_analysis_context_manifests"
     __table_args__ = (
         UniqueConstraint("run_id", name="uq_deep_analysis_context_manifest_run"),
-        Index("ix_deep_analysis_context_manifest_mission_node", "mission_id", "node_id"),
+        Index(
+            "ix_deep_analysis_context_manifest_mission_node", "mission_id", "node_id"
+        ),
     )
 
     mission_id: Mapped[str] = mapped_column(
         ForeignKey("deep_analysis_missions.id", ondelete="CASCADE"), nullable=False
     )
     node_id: Mapped[str] = mapped_column(
-        ForeignKey("deep_analysis_workflow_nodes.id", ondelete="CASCADE"), nullable=False
+        ForeignKey("deep_analysis_workflow_nodes.id", ondelete="CASCADE"),
+        nullable=False,
     )
     run_id: Mapped[str] = mapped_column(
         ForeignKey("runs.id", ondelete="CASCADE"), nullable=False
@@ -349,9 +351,7 @@ class DeepAnalysisDecision(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     affected_node_keys_json: Mapped[list[str]] = mapped_column(
         JSON, default=list, nullable=False
     )
-    status: Mapped[str] = mapped_column(
-        String(24), default="pending", nullable=False
-    )
+    status: Mapped[str] = mapped_column(String(24), default="pending", nullable=False)
     applied_workflow_revision_number: Mapped[int | None] = mapped_column(Integer)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -405,7 +405,9 @@ class DeepAnalysisQualityGateResult(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     failure_reasons_json: Mapped[list[str]] = mapped_column(
         JSON, default=list, nullable=False
     )
-    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    evaluated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
 
 
 class DeepAnalysisClaim(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -424,7 +426,9 @@ class DeepAnalysisClaim(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     level: Mapped[str] = mapped_column(String(40), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     confidence: Mapped[float | None] = mapped_column(Float)
-    materiality: Mapped[str] = mapped_column(String(24), default="medium", nullable=False)
+    materiality: Mapped[str] = mapped_column(
+        String(24), default="medium", nullable=False
+    )
     report_inclusion: Mapped[str] = mapped_column(
         String(80), default="", nullable=False
     )
@@ -504,7 +508,9 @@ class DeepAnalysisOpenIssue(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     issue_type: Mapped[str] = mapped_column(String(40), nullable=False)
     statement: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(24), default="open", nullable=False)
-    materiality: Mapped[str] = mapped_column(String(24), default="medium", nullable=False)
+    materiality: Mapped[str] = mapped_column(
+        String(24), default="medium", nullable=False
+    )
     residual_amount: Mapped[float | None] = mapped_column(Float)
     residual_percent: Mapped[float | None] = mapped_column(Float)
     required_action: Mapped[str] = mapped_column(Text, default="", nullable=False)
@@ -526,7 +532,9 @@ class DeepAnalysisMissionExport(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
     scope: Mapped[str] = mapped_column(String(32), nullable=False)
-    include_originals: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    include_originals: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
     status: Mapped[str] = mapped_column(String(24), default="preparing", nullable=False)
     filename: Mapped[str] = mapped_column(String(500), default="", nullable=False)
     storage_key: Mapped[str | None] = mapped_column(String(1000))

@@ -9,7 +9,7 @@ from lumina.agent.executor import LocalRunExecutor
 from lumina.auth.service import bootstrap_database
 from lumina.config import Settings
 from lumina.db import SessionLocal, configure_database, create_schema, session_scope
-from lumina.models import Conversation, Project, PromptCacheSeed, Run, User
+from lumina.models import Conversation, Project, PromptCacheSeed, Run, User, utc_now
 from lumina.providers import (
     ProviderMessage,
     ProviderRequest,
@@ -91,7 +91,7 @@ def test_codex_cache_seed_persists_only_the_static_prefix(
     settings = _settings(tmp_path)
     run_id, user_id = _seed_run(settings)
     executor = LocalRunExecutor(settings)
-    request = _request("lumina:user:v2:first")
+    request = _request("lumina:user:v3:first")
 
     executor._remember_codex_cache_seed(
         run_id,
@@ -103,7 +103,7 @@ def test_codex_cache_seed_persists_only_the_static_prefix(
         seed = db.scalar(select(PromptCacheSeed))
         assert seed is not None
         assert seed.user_id == user_id
-        assert seed.prompt_cache_key == "lumina:user:v2:first"
+        assert seed.prompt_cache_key == "lumina:user:v3:first"
         assert seed.static_digest == "a" * 64
         assert seed.system_content == "stable system prompt"
         assert seed.tools_json[0]["function"]["name"] == "lookup"
@@ -120,14 +120,14 @@ def test_codex_cache_seed_history_is_bounded_per_user_model(
     for index in range(6):
         executor._remember_codex_cache_seed(
             run_id,
-            _request(f"lumina:user:v2:{index}"),
+            _request(f"lumina:user:v3:{index}"),
             static_digest=f"{index:064d}",
         )
 
     with SessionLocal() as db:
         keys = set(db.scalars(select(PromptCacheSeed.prompt_cache_key)))
     assert len(keys) == 4
-    assert keys == {f"lumina:user:v2:{index}" for index in range(2, 6)}
+    assert keys == {f"lumina:user:v3:{index}" for index in range(2, 6)}
 
 
 @pytest.mark.asyncio
@@ -140,23 +140,23 @@ async def test_codex_cache_seed_prewarms_latest_user_model_scope_and_records_usa
     executor = LocalRunExecutor(settings)
     executor._remember_codex_cache_seed(
         run_id,
-        _request("lumina:user:v2:old", tool_name="old_lookup"),
+        _request("lumina:user:v3:old", tool_name="old_lookup"),
         static_digest="a" * 64,
     )
     executor._remember_codex_cache_seed(
         run_id,
-        _request("lumina:user:v2:new", tool_name="new_lookup"),
+        _request("lumina:user:v3:new", tool_name="new_lookup"),
         static_digest="b" * 64,
     )
     with session_scope() as db:
         old_seed = db.scalar(
             select(PromptCacheSeed).where(
-                PromptCacheSeed.prompt_cache_key == "lumina:user:v2:old"
+                PromptCacheSeed.prompt_cache_key == "lumina:user:v3:old"
             )
         )
         new_seed = db.scalar(
             select(PromptCacheSeed).where(
-                PromptCacheSeed.prompt_cache_key == "lumina:user:v2:new"
+                PromptCacheSeed.prompt_cache_key == "lumina:user:v3:new"
             )
         )
         assert old_seed is not None
@@ -184,7 +184,7 @@ async def test_codex_cache_seed_prewarms_latest_user_model_scope_and_records_usa
     await executor._warm_codex_provider()
 
     assert len(warmed) == 1
-    assert warmed[0].metadata["prompt_cache_key"] == "lumina:user:v2:new"
+    assert warmed[0].metadata["prompt_cache_key"] == "lumina:user:v3:new"
     assert warmed[0].messages[0].content == "stable system prompt"
     assert warmed[0].messages[1].role == "user"
     assert warmed[0].tools[0]["function"]["name"] == "new_lookup"
@@ -207,7 +207,7 @@ async def test_codex_cache_prewarm_failure_does_not_block_startup(
     executor = LocalRunExecutor(settings)
     executor._remember_codex_cache_seed(
         run_id,
-        _request("lumina:user:v2:failure"),
+        _request("lumina:user:v3:failure"),
         static_digest="f" * 64,
     )
 
@@ -230,3 +230,53 @@ async def test_codex_cache_prewarm_failure_does_not_block_startup(
         seed = db.scalar(select(PromptCacheSeed))
         assert seed is not None
         assert seed.last_warmed_at is None
+
+
+@pytest.mark.asyncio
+async def test_codex_cache_prewarm_skips_recently_warmed_and_stale_seeds(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    run_id, _user_id = _seed_run(settings)
+    executor = LocalRunExecutor(settings)
+    executor._remember_codex_cache_seed(
+        run_id,
+        _request("lumina:user:v3:recent"),
+        static_digest="c" * 64,
+    )
+    executor._remember_codex_cache_seed(
+        run_id,
+        _request("lumina:user:v3:stale"),
+        static_digest="d" * 64,
+    )
+    with session_scope() as db:
+        recent = db.scalar(
+            select(PromptCacheSeed).where(
+                PromptCacheSeed.prompt_cache_key == "lumina:user:v3:recent"
+            )
+        )
+        stale = db.scalar(
+            select(PromptCacheSeed).where(
+                PromptCacheSeed.prompt_cache_key == "lumina:user:v3:stale"
+            )
+        )
+        assert recent is not None and stale is not None
+        recent.last_warmed_at = utc_now()
+        stale.last_used_at = stale.last_used_at.replace(year=2025)
+
+    warmed: list[ProviderRequest] = []
+
+    async def warmup() -> None:
+        return None
+
+    async def prewarm(request: ProviderRequest) -> ProviderUsage:
+        warmed.append(request)
+        return ProviderUsage(input_tokens=1, output_tokens=1)
+
+    monkeypatch.setattr(executor.codex_provider, "warmup", warmup)
+    monkeypatch.setattr(executor.codex_provider, "prewarm", prewarm)
+
+    await executor._warm_codex_provider()
+
+    assert warmed == []

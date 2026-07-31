@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -338,7 +339,9 @@ def update_scheduled_task(
         task.effort = resolved_execution.effort_id
     extension_mode = changes.get("extension_snapshot_policy")
     if extension_mode is not None or project_changed:
-        extension_mode = extension_mode or task.extension_policy_json.get("mode", "pinned")
+        extension_mode = extension_mode or task.extension_policy_json.get(
+            "mode", "pinned"
+        )
         if extension_mode not in EXTENSION_SNAPSHOT_POLICIES:
             raise ApiProblem(
                 422,
@@ -1097,10 +1100,9 @@ def scheduled_run_payload(scheduled_run: ScheduledRun) -> dict[str, Any]:
 class LocalScheduler:
     """Single-process scheduler contract; DB remains the source of truth."""
 
-    async def tick(self, *, now: datetime | None = None) -> list[str]:
-        from ..agent.executor import local_run_executor
-        from ..runs.broker import event_broker
-
+    def _tick_database(
+        self, *, now: datetime | None = None
+    ) -> tuple[list[str], list[str]]:
         with SessionLocal() as db:
             retry_run_ids, notify_run_ids = maintain_scheduled_runs(db, now=now)
             scheduled_runs = dispatch_due_tasks(db, now=now)
@@ -1109,6 +1111,20 @@ class LocalScheduler:
                 *(item.run_id for item in scheduled_runs if item.run_id),
             ]
             db.commit()
+        return run_ids, notify_run_ids
+
+    async def tick(self, *, now: datetime | None = None) -> list[str]:
+        from ..agent.executor import local_run_executor
+        from ..runs.broker import event_broker
+
+        database_task = asyncio.create_task(
+            asyncio.to_thread(self._tick_database, now=now)
+        )
+        try:
+            run_ids, notify_run_ids = await asyncio.shield(database_task)
+        except asyncio.CancelledError:
+            await asyncio.gather(database_task, return_exceptions=True)
+            raise
         for run_id in notify_run_ids:
             await event_broker.notify(run_id)
         for run_id in run_ids:

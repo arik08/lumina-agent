@@ -87,6 +87,39 @@ def test_responses_payload_uses_modern_cache_ttl_for_gpt_5_6() -> None:
     assert "prompt_cache_retention" not in payload
 
 
+def test_responses_payload_marks_only_stable_system_prefix_for_gpt_5_6() -> None:
+    payload = build_responses_payload(
+        ProviderRequest(
+            model="gpt-5.6-sol",
+            messages=(
+                ProviderMessage(role="system", content="Stable harness contract."),
+                ProviderMessage(role="system", content="Dynamic turn contract."),
+                ProviderMessage(role="user", content="Current task"),
+            ),
+            metadata={
+                "prompt_cache_key": "lumina:user:v2:stable-prefix-digest",
+                "prompt_cache_retention": "24h",
+            },
+        )
+    )
+
+    assert payload["prompt_cache_options"] == {"ttl": "30m", "mode": "explicit"}
+    assert payload["input"] == [
+        {
+            "role": "system",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": "Stable harness contract.",
+                    "prompt_cache_breakpoint": {"mode": "explicit"},
+                }
+            ],
+        },
+        {"role": "system", "content": "Dynamic turn contract."},
+        {"role": "user", "content": "Current task"},
+    ]
+
+
 def test_responses_payload_maps_function_call_round_trip_and_json_schema() -> None:
     payload = build_responses_payload(
         ProviderRequest(
@@ -203,7 +236,10 @@ async def test_openai_responses_streams_text_usage_and_builds_responses_payload(
                         "output": [],
                         "usage": {
                             "input_tokens": 10,
-                            "input_tokens_details": {"cached_tokens": 3},
+                            "input_tokens_details": {
+                                "cached_tokens": 3,
+                                "cache_write_tokens": 2,
+                            },
                             "output_tokens": 4,
                             "output_tokens_details": {"reasoning_tokens": 2},
                             "total_tokens": 14,
@@ -245,7 +281,8 @@ async def test_openai_responses_streams_text_usage_and_builds_responses_payload(
     assert usage is not None
     assert usage.input_tokens == 10
     assert usage.cached_input_tokens == 3
-    assert usage.uncached_input_tokens == 7
+    assert usage.cache_write_tokens == 2
+    assert usage.uncached_input_tokens == 5
     assert usage.output_tokens == 4
     assert usage.reasoning_tokens == 2
     assert events[-1].stop_reason == "stop"

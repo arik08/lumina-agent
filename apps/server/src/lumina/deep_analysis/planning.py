@@ -46,10 +46,19 @@ class PlannedNode:
 
 
 @dataclass(frozen=True, slots=True)
+class PlannedLoop:
+    source: str
+    target: str
+    condition: str
+    max_iterations: int
+
+
+@dataclass(frozen=True, slots=True)
 class InitialWorkflowPlan:
     kind: str
     reason: str
     nodes: tuple[PlannedNode, ...]
+    loops: tuple[PlannedLoop, ...] = ()
 
 
 WorkflowPreset = Literal[
@@ -75,20 +84,24 @@ def initial_workflow_plan(
     preset: WorkflowPreset | None = None,
 ) -> InitialWorkflowPlan:
     question = f"{title} {objective}".lower()
-    if preset == "quantitative" or preset is None and any(
-        token in question
-        for token in (
-            "원가",
-            "비용",
-            "매출",
-            "수익",
-            "변동",
-            "증감",
-            "기여도",
-            "kpi",
-            "csv",
-            "xlsx",
-            "정량",
+    if (
+        preset == "quantitative"
+        or preset is None
+        and any(
+            token in question
+            for token in (
+                "원가",
+                "비용",
+                "매출",
+                "수익",
+                "변동",
+                "증감",
+                "기여도",
+                "kpi",
+                "csv",
+                "xlsx",
+                "정량",
+            )
         )
     ):
         return InitialWorkflowPlan(
@@ -145,70 +158,229 @@ def initial_workflow_plan(
                 ),
             ),
         )
-    if preset == "comparative_research" or preset is None and any(
-        token in question
-        for token in ("비교", "벤치마크", "시장", "경쟁", "동향", "조사", "사례", "리서치")
-    ) and not any(
-        token in question
-        for token in ("전략", "투자", "도입", "선택", "의사결정", "정책", "리스크", "사업성")
+    if (
+        preset == "comparative_research"
+        or preset is None
+        and any(
+            token in question
+            for token in (
+                "비교",
+                "벤치마크",
+                "시장",
+                "경쟁",
+                "동향",
+                "조사",
+                "사례",
+                "리서치",
+            )
+        )
+        and not any(
+            token in question
+            for token in (
+                "전략",
+                "투자",
+                "도입",
+                "선택",
+                "의사결정",
+                "정책",
+                "리스크",
+                "사업성",
+            )
+        )
     ):
         return InitialWorkflowPlan(
             kind="comparative_research",
             reason="비교·조사형 질문으로 판단해 자료 수집과 비교 기준 점검을 분기하고, 비교 분석과 반대 관점을 다시 합류시키는 초기안을 구성했습니다.",
             nodes=(
-                PlannedNode("N001", "scope", "조사 질문·비교축 설계", "대상, 기간, 비교 기준과 판단 조건을 확정하고 Workflow 적합성을 평가합니다."),
-                PlannedNode("N010", "research", "근거·사례 수집", "Project 자료와 사용 가능한 출처에서 비교 가능한 근거와 사례를 수집합니다.", ("N001",)),
-                PlannedNode("N015", "validation", "비교 기준·출처 점검", "비교축의 공정성, 출처 신뢰도와 시점 차이를 독립적으로 점검합니다.", ("N001",)),
-                PlannedNode("N020", "analysis", "비교 대상별 분석", "수집 자료와 검증된 비교축을 함께 사용해 대상별 차이와 맥락을 분석합니다.", ("N010", "N015")),
-                PlannedNode("N025", "analysis", "반대 관점·예외 분석", "주요 해석을 뒤집을 수 있는 반례, 누락 관점과 적용 예외를 별도로 분석합니다.", ("N010", "N015")),
-                PlannedNode("N030", "synthesis", "비교 결과 교차 합성", "주 분석과 반대 관점을 교차검증하여 공통점, 차이, 시사점과 불확실성을 합성합니다.", ("N020", "N025")),
-                PlannedNode("N040", "report", "최종 보고서", "비교 결과, 근거, 반대 관점, 한계와 적용 시사점을 보고서로 정리합니다.", ("N030",)),
+                PlannedNode(
+                    "N001",
+                    "scope",
+                    "조사 질문·비교축 설계",
+                    "대상, 기간, 비교 기준과 판단 조건을 확정하고 Workflow 적합성을 평가합니다.",
+                ),
+                PlannedNode(
+                    "N010",
+                    "research",
+                    "근거·사례 수집",
+                    "Project 자료와 사용 가능한 출처에서 비교 가능한 근거와 사례를 수집합니다.",
+                    ("N001",),
+                ),
+                PlannedNode(
+                    "N015",
+                    "validation",
+                    "비교 기준·출처 점검",
+                    "비교축의 공정성, 출처 신뢰도와 시점 차이를 독립적으로 점검합니다.",
+                    ("N001",),
+                ),
+                PlannedNode(
+                    "N020",
+                    "analysis",
+                    "비교 대상별 분석",
+                    "수집 자료와 검증된 비교축을 함께 사용해 대상별 차이와 맥락을 분석합니다.",
+                    ("N010", "N015"),
+                ),
+                PlannedNode(
+                    "N025",
+                    "analysis",
+                    "반대 관점·예외 분석",
+                    "주요 해석을 뒤집을 수 있는 반례, 누락 관점과 적용 예외를 별도로 분석합니다.",
+                    ("N010", "N015"),
+                ),
+                PlannedNode(
+                    "N030",
+                    "synthesis",
+                    "비교 결과 교차 합성",
+                    "주 분석과 반대 관점을 교차검증하여 공통점, 차이, 시사점과 불확실성을 합성합니다.",
+                    ("N020", "N025"),
+                ),
+                PlannedNode(
+                    "N040",
+                    "report",
+                    "최종 보고서",
+                    "비교 결과, 근거, 반대 관점, 한계와 적용 시사점을 보고서로 정리합니다.",
+                    ("N030",),
+                ),
             ),
         )
-    if preset == "decision" or preset is None and any(
-        token in question
-        for token in ("전략", "투자", "도입", "선택", "의사결정", "정책", "리스크", "사업성")
+    if (
+        preset == "decision"
+        or preset is None
+        and any(
+            token in question
+            for token in (
+                "전략",
+                "투자",
+                "도입",
+                "선택",
+                "의사결정",
+                "정책",
+                "리스크",
+                "사업성",
+            )
+        )
     ):
         return InitialWorkflowPlan(
             kind="decision",
             reason="의사결정형 질문으로 판단해 선택지, 평가 기준, 위험과 실행조건을 분리한 초기안을 구성했습니다.",
             nodes=(
-                PlannedNode("N001", "scope", "의사결정 문제 정의", "결정해야 할 사항, 제약, 이해관계자와 성공 기준을 확정하고 Workflow 적합성을 평가합니다."),
-                PlannedNode("N010", "research", "현황·선택지 파악", "현재 상태와 가능한 선택지를 근거와 함께 정리합니다.", ("N001",)),
-                PlannedNode("N020", "analysis", "대안 가치 분석", "대안별 기대효과, 비용과 실행 가능성을 동일한 기준으로 분석합니다.", ("N010",)),
-                PlannedNode("N025", "analysis", "위험·민감도 분석", "핵심 위험, 실패 조건과 결론을 바꾸는 민감 요인을 분석합니다.", ("N010",)),
-                PlannedNode("N030", "validation", "대안 교차검증", "가정과 반대 근거를 검토하고 대안 간 트레이드오프를 확인합니다.", ("N020", "N025")),
-                PlannedNode("N035", "synthesis", "권고안·실행조건 합성", "권고안과 선택 조건, 선행 조치와 중단 기준을 합성합니다.", ("N030",)),
-                PlannedNode("N040", "report", "최종 보고서", "의사결정안, 근거, 위험, 실행 로드맵과 후속 확인 항목을 정리합니다.", ("N035",)),
+                PlannedNode(
+                    "N001",
+                    "scope",
+                    "의사결정 문제 정의",
+                    "결정해야 할 사항, 제약, 이해관계자와 성공 기준을 확정하고 Workflow 적합성을 평가합니다.",
+                ),
+                PlannedNode(
+                    "N010",
+                    "research",
+                    "현황·선택지 파악",
+                    "현재 상태와 가능한 선택지를 근거와 함께 정리합니다.",
+                    ("N001",),
+                ),
+                PlannedNode(
+                    "N020",
+                    "analysis",
+                    "대안 가치 분석",
+                    "대안별 기대효과, 비용과 실행 가능성을 동일한 기준으로 분석합니다.",
+                    ("N010",),
+                ),
+                PlannedNode(
+                    "N025",
+                    "analysis",
+                    "위험·민감도 분석",
+                    "핵심 위험, 실패 조건과 결론을 바꾸는 민감 요인을 분석합니다.",
+                    ("N010",),
+                ),
+                PlannedNode(
+                    "N030",
+                    "validation",
+                    "대안 교차검증",
+                    "가정과 반대 근거를 검토하고 대안 간 트레이드오프를 확인합니다.",
+                    ("N020", "N025"),
+                ),
+                PlannedNode(
+                    "N035",
+                    "synthesis",
+                    "권고안·실행조건 합성",
+                    "권고안과 선택 조건, 선행 조치와 중단 기준을 합성합니다.",
+                    ("N030",),
+                ),
+                PlannedNode(
+                    "N040",
+                    "report",
+                    "최종 보고서",
+                    "의사결정안, 근거, 위험, 실행 로드맵과 후속 확인 항목을 정리합니다.",
+                    ("N035",),
+                ),
             ),
         )
     return InitialWorkflowPlan(
         kind="open_analysis",
         reason="비정형 질문으로 판단해 핵심 가설과 대안 가설을 분리 탐색한 뒤 검증에서 합류하는 최소 Workflow를 구성했습니다.",
         nodes=(
-            PlannedNode("N001", "scope", "질문·범위 설계", "질문을 검증 가능한 하위 질문으로 나누고 필요한 Workflow를 평가합니다."),
-            PlannedNode("N010", "data_check", "근거·자료 진단", "사용 가능한 자료와 부족한 근거를 구분합니다.", ("N001",)),
-            PlannedNode("N020", "analysis", "핵심 가설 분석", "확인된 근거로 가장 유력한 가설과 설명을 분석합니다.", ("N010",)),
-            PlannedNode("N025", "analysis", "대안 가설·반례 분석", "핵심 설명과 경쟁하는 대안 가설, 반례와 누락 변수를 독립적으로 분석합니다.", ("N010",)),
-            PlannedNode("N030", "synthesis", "교차검증·합성", "핵심 가설과 대안 가설을 함께 검증하여 결론, 불확실성과 한계를 합성합니다.", ("N020", "N025")),
-            PlannedNode("N040", "report", "최종 보고서", "결론, 근거, 대안 설명, 한계와 후속 조치를 보고서로 정리합니다.", ("N030",)),
+            PlannedNode(
+                "N001",
+                "scope",
+                "질문·범위 설계",
+                "질문을 검증 가능한 하위 질문으로 나누고 필요한 Workflow를 평가합니다.",
+            ),
+            PlannedNode(
+                "N010",
+                "data_check",
+                "근거·자료 진단",
+                "사용 가능한 자료와 부족한 근거를 구분합니다.",
+                ("N001",),
+            ),
+            PlannedNode(
+                "N020",
+                "analysis",
+                "핵심 가설 분석",
+                "확인된 근거로 가장 유력한 가설과 설명을 분석합니다.",
+                ("N010",),
+            ),
+            PlannedNode(
+                "N025",
+                "analysis",
+                "대안 가설·반례 분석",
+                "핵심 설명과 경쟁하는 대안 가설, 반례와 누락 변수를 독립적으로 분석합니다.",
+                ("N010",),
+            ),
+            PlannedNode(
+                "N030",
+                "synthesis",
+                "교차검증·합성",
+                "핵심 가설과 대안 가설을 함께 검증하여 결론, 불확실성과 한계를 합성합니다.",
+                ("N020", "N025"),
+            ),
+            PlannedNode(
+                "N040",
+                "report",
+                "최종 보고서",
+                "결론, 근거, 대안 설명, 한계와 후속 조치를 보고서로 정리합니다.",
+                ("N030",),
+            ),
         ),
     )
 
 
 def plan_edges(plan: InitialWorkflowPlan) -> list[tuple[str, str]]:
     return [
-        (dependency, node.key)
-        for node in plan.nodes
-        for dependency in node.depends_on
+        (dependency, node.key) for node in plan.nodes for dependency in node.depends_on
     ]
+
+
+def dependency_edges(
+    edges: Iterable[DeepAnalysisWorkflowEdge],
+) -> list[DeepAnalysisWorkflowEdge]:
+    return [edge for edge in edges if edge.edge_type != "loop_back"]
 
 
 def planned_positions(plan: InitialWorkflowPlan) -> dict[str, tuple[int, int, int]]:
     level: dict[str, int] = {}
     for node in plan.nodes:
         level[node.key] = (
-            max((level.get(dependency, 0) for dependency in node.depends_on), default=-1)
+            max(
+                (level.get(dependency, 0) for dependency in node.depends_on), default=-1
+            )
             + 1
         )
     groups: dict[int, list[PlannedNode]] = {}
@@ -240,16 +412,27 @@ def graph_digest(
                 "type": node.node_type,
                 "title": node.title,
                 "purpose": node.purpose,
+                "config": (
+                    {"loopBack": node.config_json.get("loopBack")}
+                    if isinstance(node, DeepAnalysisWorkflowNode)
+                    and node.config_json.get("loopBack") is not None
+                    else {}
+                ),
             }
         )
     edge_payload = []
     for edge in edges:
         if isinstance(edge, DeepAnalysisWorkflowEdge):
-            edge_payload.append((edge.source_node_key, edge.target_node_key))
+            edge_payload.append(
+                (edge.source_node_key, edge.target_node_key, edge.edge_type)
+            )
         else:
-            edge_payload.append(edge)
+            edge_payload.append((*edge, "sequence"))
     canonical = json.dumps(
-        {"nodes": sorted(node_payload, key=lambda item: item["key"]), "edges": sorted(edge_payload)},
+        {
+            "nodes": sorted(node_payload, key=lambda item: item["key"]),
+            "edges": sorted(edge_payload),
+        },
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
@@ -274,7 +457,11 @@ def _snapshot(
             for node in sorted(nodes, key=lambda item: item.sequence)
         ],
         "edges": [
-            {"source": edge.source_node_key, "target": edge.target_node_key}
+            {
+                "source": edge.source_node_key,
+                "target": edge.target_node_key,
+                "edgeType": edge.edge_type,
+            }
             for edge in sorted(
                 edges, key=lambda item: (item.source_node_key, item.target_node_key)
             )
@@ -296,8 +483,18 @@ def initial_change_log(plan: InitialWorkflowPlan) -> list[dict[str, Any]]:
             for index, node in enumerate(plan.nodes)
         ],
         "edges": [
-            {"source": source, "target": target}
+            {"source": source, "target": target, "edgeType": "sequence"}
             for source, target in plan_edges(plan)
+        ]
+        + [
+            {
+                "source": loop.source,
+                "target": loop.target,
+                "edgeType": "loop_back",
+                "condition": loop.condition,
+                "maxIterations": loop.max_iterations,
+            }
+            for loop in plan.loops
         ],
     }
     return [
@@ -319,7 +516,7 @@ def _topological_order(
     by_key = {node.node_key: node for node in nodes}
     incoming = {key: 0 for key in by_key}
     outgoing: dict[str, list[str]] = {key: [] for key in by_key}
-    for edge in edges:
+    for edge in dependency_edges(edges):
         if edge.source_node_key not in by_key or edge.target_node_key not in by_key:
             continue
         incoming[edge.target_node_key] += 1
@@ -376,13 +573,15 @@ def adaptive_decision_instruction(
     replans = sum(
         1
         for item in revision.change_log_json
-        if isinstance(item, dict) and item.get("graphChanged") and item.get("action") != "initial"
+        if isinstance(item, dict)
+        and item.get("graphChanged")
+        and item.get("action") != "initial"
     )
     return f"""
 
 Workflow 적응 판단:
 - 현재 결과를 바탕으로 남은 Workflow가 충분한지 반드시 평가하십시오.
-- 남은 Node: {', '.join(pending) if pending else '없음'}
+- 남은 Node: {", ".join(pending) if pending else "없음"}
 - 이미 적용된 그래프 재계획: {replans}/{MAX_REPLANS}회
 - 근거가 부족하거나 별도 전문 분석이 필요하면 expand, 불필요한 예정 Node가 있으면 shrink, 예정 단계를 다른 분석으로 바꿔야 하면 replace, 바로 최종 합성이 가능하면 finish를 선택하십시오.
 - 사용자의 답에 따라 분석 범위나 결론이 실질적으로 달라지고 안전한 기본값을 정할 수 없을 때만 ask를 선택하십시오. 질문은 한 번에 하나, 선택지는 2~3개로 제한하고 AI 권고와 영향을 함께 제시하십시오.
@@ -457,17 +656,20 @@ def extract_workflow_decision(markdown: str) -> tuple[str, dict[str, Any]]:
                     "ref": ref,
                     "title": title,
                     "purpose": purpose,
-                    "nodeType": node_type if node_type in _ALLOWED_NODE_TYPES else "analysis",
+                    "nodeType": node_type
+                    if node_type in _ALLOWED_NODE_TYPES
+                    else "analysis",
                     "dependsOn": dependencies,
                 }
             )
             seen_refs.add(ref)
         if len(additions) >= MAX_ADDED_NODES_PER_DECISION:
             break
-    removals = [
-        str(item)[:32]
-        for item in raw.get("remove", []) if isinstance(item, str)
-    ][:8] if isinstance(raw.get("remove"), list) else []
+    removals = (
+        [str(item)[:32] for item in raw.get("remove", []) if isinstance(item, str)][:8]
+        if isinstance(raw.get("remove"), list)
+        else []
+    )
     question = str(raw.get("question") or "").strip()[:2000]
     options: list[dict[str, str]] = []
     seen_option_ids: set[str] = set()
@@ -475,22 +677,16 @@ def extract_workflow_decision(markdown: str) -> tuple[str, dict[str, Any]]:
     for item in raw_options:
         if not isinstance(item, dict):
             continue
-        option_id = re.sub(
-            r"[^A-Za-z0-9_-]", "", str(item.get("id") or "")
-        )[:64]
+        option_id = re.sub(r"[^A-Za-z0-9_-]", "", str(item.get("id") or ""))[:64]
         label = str(item.get("label") or "").strip()[:240]
         description = str(item.get("description") or "").strip()[:1000]
         if not option_id or option_id in seen_option_ids or not label:
             continue
-        options.append(
-            {"id": option_id, "label": label, "description": description}
-        )
+        options.append({"id": option_id, "label": label, "description": description})
         seen_option_ids.add(option_id)
         if len(options) >= 3:
             break
-    recommendation_option_id = str(
-        raw.get("recommendationOptionId") or ""
-    )[:64]
+    recommendation_option_id = str(raw.get("recommendationOptionId") or "")[:64]
     if recommendation_option_id not in seen_option_ids:
         recommendation_option_id = ""
     impact = raw.get("impact") if isinstance(raw.get("impact"), dict) else {}
@@ -564,6 +760,7 @@ def _remove_pending_nodes(
     edges: list[DeepAnalysisWorkflowEdge],
     requested: set[str],
 ) -> list[str]:
+    forward_edges = dependency_edges(edges)
     removable = {
         node.node_key
         for node in nodes
@@ -575,12 +772,12 @@ def _remove_pending_nodes(
         return []
     predecessors = {
         edge.source_node_key
-        for edge in edges
+        for edge in forward_edges
         if edge.target_node_key in removable and edge.source_node_key not in removable
     }
     successors = {
         edge.target_node_key
-        for edge in edges
+        for edge in forward_edges
         if edge.source_node_key in removable and edge.target_node_key not in removable
     }
     for edge in list(edges):
@@ -611,15 +808,18 @@ def apply_workflow_decision(
         .order_by(DeepAnalysisWorkflowNode.sequence)
     )
     edges = list(
-        db.query(DeepAnalysisWorkflowEdge)
-        .filter(DeepAnalysisWorkflowEdge.workflow_revision_id == revision.id)
+        db.query(DeepAnalysisWorkflowEdge).filter(
+            DeepAnalysisWorkflowEdge.workflow_revision_id == revision.id
+        )
     )
     before = _snapshot(nodes, edges)
     action = str(decision.get("action") or "continue")
     graph_change_count = sum(
         1
         for item in revision.change_log_json
-        if isinstance(item, dict) and item.get("graphChanged") and item.get("action") != "initial"
+        if isinstance(item, dict)
+        and item.get("graphChanged")
+        and item.get("action") != "initial"
     )
     if graph_change_count >= MAX_REPLANS and action in {
         "expand",
@@ -668,16 +868,17 @@ def apply_workflow_decision(
         additions = additions[:room]
         successors = [
             edge.target_node_key
-            for edge in list(edges)
+            for edge in dependency_edges(edges)
             if edge.source_node_key == current_node.node_key
         ]
         for edge in list(edges):
-            if edge.source_node_key == current_node.node_key:
+            if (
+                edge.edge_type != "loop_back"
+                and edge.source_node_key == current_node.node_key
+            ):
                 edges.remove(edge)
                 db.delete(edge)
-        created: list[
-            tuple[DeepAnalysisWorkflowNode, dict[str, Any], str]
-        ] = []
+        created: list[tuple[DeepAnalysisWorkflowNode, dict[str, Any], str]] = []
         used_refs: set[str] = set()
         for index, item in enumerate(additions):
             key = _next_node_key(nodes)
@@ -756,10 +957,14 @@ def apply_workflow_decision(
                 graph_changed = True
 
     if action == "ask":
-        pending = db.query(DeepAnalysisDecision).filter(
-            DeepAnalysisDecision.mission_id == mission.id,
-            DeepAnalysisDecision.status == "pending",
-        ).one_or_none()
+        pending = (
+            db.query(DeepAnalysisDecision)
+            .filter(
+                DeepAnalysisDecision.mission_id == mission.id,
+                DeepAnalysisDecision.status == "pending",
+            )
+            .one_or_none()
+        )
         if pending is None:
             db.add(
                 DeepAnalysisDecision(
@@ -768,9 +973,7 @@ def apply_workflow_decision(
                     requested_by_node_id=current_node.id,
                     question=str(decision.get("question") or ""),
                     options_json=list(decision.get("options") or []),
-                    recommendation_option_id=decision.get(
-                        "recommendationOptionId"
-                    ),
+                    recommendation_option_id=decision.get("recommendationOptionId"),
                     recommendation_rationale=str(
                         decision.get("recommendationRationale") or ""
                     ),
@@ -835,16 +1038,14 @@ def runnable_nodes(
 ) -> list[DeepAnalysisWorkflowNode]:
     status = {node.node_key: node.status for node in nodes}
     predecessors: dict[str, set[str]] = {node.node_key: set() for node in nodes}
-    for edge in edges:
+    for edge in dependency_edges(edges):
         if edge.target_node_key in predecessors:
             predecessors[edge.target_node_key].add(edge.source_node_key)
     return [
         node
         for node in sorted(nodes, key=lambda item: item.sequence)
         if node.status in {"planned", "ready"}
-        and all(
-            status.get(key) == "completed" for key in predecessors[node.node_key]
-        )
+        and all(status.get(key) == "completed" for key in predecessors[node.node_key])
     ]
 
 
@@ -852,7 +1053,7 @@ def descendant_node_keys(
     node_key: str, edges: Iterable[DeepAnalysisWorkflowEdge]
 ) -> set[str]:
     outgoing: dict[str, set[str]] = {}
-    for edge in edges:
+    for edge in dependency_edges(edges):
         outgoing.setdefault(edge.source_node_key, set()).add(edge.target_node_key)
     found = {node_key}
     queue = [node_key]

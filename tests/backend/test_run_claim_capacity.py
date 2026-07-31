@@ -49,6 +49,11 @@ def test_response_waiting_runs_do_not_exhaust_server_execution_slots(
     with SessionLocal() as db:
         claimed = db.get(Run, candidate_id)
         assert claimed is not None and claimed.status == PREPARING
+        queue_metrics = claimed.snapshot_json["queueMetrics"]
+        assert queue_metrics["claimCount"] == 1
+        assert queue_metrics["lastWaitMs"] >= 0
+        assert queue_metrics["totalWaitMs"] == queue_metrics["lastWaitMs"]
+        assert queue_metrics["maxWaitMs"] == queue_metrics["lastWaitMs"]
 
 
 @pytest.mark.parametrize("waiting_status", [AWAITING_APPROVAL, AWAITING_INPUT, PAUSED])
@@ -97,6 +102,7 @@ def test_response_waiting_run_still_blocks_the_same_conversation(
         _run(db, user, conversation, status=QUEUED)
 
     assert asyncio.run(LocalRunExecutor(settings)._claim_next()) is None
+
 
 @pytest.mark.parametrize(
     ("user_concurrency_limit", "server_concurrency_limit"),

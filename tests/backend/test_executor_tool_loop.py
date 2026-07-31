@@ -24,7 +24,12 @@ from lumina.providers import (
     ProviderUsage,
 )
 from lumina.providers.codex.adapter import _CodexToolCallStream
-from lumina.tools.web import SearchInvocation, SourceEvidence, WebFetchResult, WebSearchResult
+from lumina.tools.web import (
+    SearchInvocation,
+    SourceEvidence,
+    WebFetchResult,
+    WebSearchResult,
+)
 
 
 def test_codex_structured_final_text_streams_before_envelope_completion() -> None:
@@ -65,6 +70,38 @@ def test_progress_control_leaves_final_answer_text_visible() -> None:
     assert buffer is None
     assert visible == "요청하신 작업을 완료했습니다."
     assert summary is None
+
+
+def test_tool_loop_guard_requires_identical_results_and_no_visible_output() -> None:
+    first = executor_module._tool_round_fingerprint(
+        [{"id": "call-1", "name": "read_file", "arguments": '{"path":"a.txt"}'}],
+        ['{"content":"same"}'],
+    )
+    same_with_new_call_id = executor_module._tool_round_fingerprint(
+        [{"id": "call-2", "name": "read_file", "arguments": '{"path":"a.txt"}'}],
+        ['{"content":"same"}'],
+    )
+    changed_result = executor_module._tool_round_fingerprint(
+        [{"id": "call-3", "name": "read_file", "arguments": '{"path":"a.txt"}'}],
+        ['{"content":"changed"}'],
+    )
+
+    assert first == same_with_new_call_id
+    assert first != changed_result
+    fingerprint, repeat_count = executor_module._advance_tool_loop_guard(
+        previous_fingerprint=first,
+        previous_repeat_count=1,
+        current_fingerprint=same_with_new_call_id,
+        visible_output="",
+    )
+    assert fingerprint == first
+    assert repeat_count == 2
+    assert executor_module._advance_tool_loop_guard(
+        previous_fingerprint=fingerprint,
+        previous_repeat_count=repeat_count,
+        current_fingerprint=same_with_new_call_id,
+        visible_output="새로운 사용자 가시 출력",
+    ) == (None, 0)
 
 
 def test_file_output_mode_is_a_preference_until_artifact_intent_is_explicit() -> None:
@@ -121,13 +158,23 @@ def test_prompt_cache_key_tracks_static_prefix_not_dynamic_messages() -> None:
         provider_id="codex",
         model="gpt-5.5",
         messages=later_messages,
-        tools=tuple(reversed(tools)),
+        tools=tools,
     )
 
     assert first_key == later_key
     assert first_digest == later_digest
-    assert first_key.startswith("lumina:user:v2:")
+    assert first_key.startswith("lumina:user:v3:")
     assert len(first_key) == 63
+
+    reordered_key, reordered_digest = executor_module._provider_prompt_cache_key(
+        user_scope="lumina:user:v1:user-a",
+        provider_id="codex",
+        model="gpt-5.5",
+        messages=later_messages,
+        tools=tuple(reversed(tools)),
+    )
+    assert reordered_key != first_key
+    assert reordered_digest != first_digest
 
     other_user_key, _ = executor_module._provider_prompt_cache_key(
         user_scope="lumina:user:v1:user-b",
@@ -148,115 +195,152 @@ def test_prompt_cache_key_tracks_static_prefix_not_dynamic_messages() -> None:
 
 
 def test_auto_effort_preserves_explicit_choice_and_classifies_task_shape() -> None:
-    assert executor_module._effective_reasoning_effort(
-        "high",
-        provider_id="pgpt",
-        user_message="짧게 답해 줘",
-        artifact_required=False,
-        attachment_count=0,
-        reference_count=0,
-        web_research_budget=(0, 0),
-    ) == "high"
-    assert executor_module._effective_reasoning_effort(
-        "auto",
-        provider_id="pgpt",
-        user_message="이 문장을 영어로 번역해 줘",
-        artifact_required=False,
-        attachment_count=0,
-        reference_count=0,
-        web_research_budget=(0, 0),
-    ) == "low"
-    assert executor_module._effective_reasoning_effort(
-        "auto",
-        provider_id="pgpt",
-        user_message="런타임 장애의 근본 원인을 분석하고 수정해 줘",
-        artifact_required=False,
-        attachment_count=0,
-        reference_count=0,
-        web_research_budget=(0, 0),
-    ) == "medium"
-    assert executor_module._effective_reasoning_effort(
-        "auto",
-        provider_id="pgpt",
-        user_message="도구 결과를 반영해 줘",
-        artifact_required=False,
-        attachment_count=0,
-        reference_count=0,
-        web_research_budget=(0, 0),
-    ) == "low"
-    assert executor_module._effective_reasoning_effort(
-        "auto",
-        provider_id="pgpt",
-        user_message="일반적인 업무 요청의 배경과 원하는 결과를 자세히 설명합니다. " * 10,
-        artifact_required=False,
-        attachment_count=0,
-        reference_count=0,
-        web_research_budget=(0, 0),
-    ) == "low"
-    assert executor_module._effective_reasoning_effort(
-        "auto",
-        provider_id="pgpt",
-        user_message="최신 자료를 조사해 줘",
-        artifact_required=False,
-        attachment_count=0,
-        reference_count=0,
-        web_research_budget=(10, 15),
-    ) == "medium"
-    assert executor_module._effective_reasoning_effort(
-        "auto",
-        provider_id="pgpt",
-        user_message="첨부 내용을 확인해 줘",
-        artifact_required=False,
-        attachment_count=2,
-        reference_count=2,
-        web_research_budget=(0, 0),
-    ) == "low"
-    assert executor_module._effective_reasoning_effort(
-        "auto",
-        provider_id="pgpt",
-        user_message="여러 첨부 내용을 함께 검토해 줘",
-        artifact_required=False,
-        attachment_count=3,
-        reference_count=0,
-        web_research_budget=(0, 0),
-    ) == "medium"
-    assert executor_module._effective_reasoning_effort(
-        "auto",
-        provider_id="pgpt",
-        user_message="보고서를 작성해 줘",
-        artifact_required=True,
-        attachment_count=0,
-        reference_count=0,
-        web_research_budget=(10, 15),
-    ) == "medium"
-    assert executor_module._effective_reasoning_effort(
-        "auto",
-        provider_id="pgpt",
-        user_message="조사가 끝난 보고서를 작성해 줘",
-        artifact_required=True,
-        attachment_count=0,
-        reference_count=0,
-        web_research_budget=(20, 30),
-        artifact_drafting=True,
-    ) == "low"
-    assert executor_module._effective_reasoning_effort(
-        "auto",
-        provider_id="pgpt",
-        user_message="철저하게 전수 조사해 줘",
-        artifact_required=False,
-        attachment_count=0,
-        reference_count=0,
-        web_research_budget=(20, 30),
-    ) == "high"
-    assert executor_module._effective_reasoning_effort(
-        "auto",
-        provider_id="google",
-        user_message="복잡한 수학 문제를 증명해 줘",
-        artifact_required=False,
-        attachment_count=0,
-        reference_count=0,
-        web_research_budget=(0, 0),
-    ) is None
+    assert (
+        executor_module._effective_reasoning_effort(
+            "high",
+            provider_id="pgpt",
+            user_message="짧게 답해 줘",
+            artifact_required=False,
+            attachment_count=0,
+            reference_count=0,
+            web_research_budget=(0, 0),
+        )
+        == "high"
+    )
+    assert (
+        executor_module._effective_reasoning_effort(
+            "auto",
+            provider_id="pgpt",
+            user_message="이 문장을 영어로 번역해 줘",
+            artifact_required=False,
+            attachment_count=0,
+            reference_count=0,
+            web_research_budget=(0, 0),
+        )
+        == "low"
+    )
+    assert (
+        executor_module._effective_reasoning_effort(
+            "auto",
+            provider_id="pgpt",
+            user_message="런타임 장애의 근본 원인을 분석하고 수정해 줘",
+            artifact_required=False,
+            attachment_count=0,
+            reference_count=0,
+            web_research_budget=(0, 0),
+        )
+        == "medium"
+    )
+    assert (
+        executor_module._effective_reasoning_effort(
+            "auto",
+            provider_id="pgpt",
+            user_message="도구 결과를 반영해 줘",
+            artifact_required=False,
+            attachment_count=0,
+            reference_count=0,
+            web_research_budget=(0, 0),
+        )
+        == "low"
+    )
+    assert (
+        executor_module._effective_reasoning_effort(
+            "auto",
+            provider_id="pgpt",
+            user_message="일반적인 업무 요청의 배경과 원하는 결과를 자세히 설명합니다. "
+            * 10,
+            artifact_required=False,
+            attachment_count=0,
+            reference_count=0,
+            web_research_budget=(0, 0),
+        )
+        == "low"
+    )
+    assert (
+        executor_module._effective_reasoning_effort(
+            "auto",
+            provider_id="pgpt",
+            user_message="최신 자료를 조사해 줘",
+            artifact_required=False,
+            attachment_count=0,
+            reference_count=0,
+            web_research_budget=(10, 15),
+        )
+        == "medium"
+    )
+    assert (
+        executor_module._effective_reasoning_effort(
+            "auto",
+            provider_id="pgpt",
+            user_message="첨부 내용을 확인해 줘",
+            artifact_required=False,
+            attachment_count=2,
+            reference_count=2,
+            web_research_budget=(0, 0),
+        )
+        == "low"
+    )
+    assert (
+        executor_module._effective_reasoning_effort(
+            "auto",
+            provider_id="pgpt",
+            user_message="여러 첨부 내용을 함께 검토해 줘",
+            artifact_required=False,
+            attachment_count=3,
+            reference_count=0,
+            web_research_budget=(0, 0),
+        )
+        == "medium"
+    )
+    assert (
+        executor_module._effective_reasoning_effort(
+            "auto",
+            provider_id="pgpt",
+            user_message="보고서를 작성해 줘",
+            artifact_required=True,
+            attachment_count=0,
+            reference_count=0,
+            web_research_budget=(10, 15),
+        )
+        == "medium"
+    )
+    assert (
+        executor_module._effective_reasoning_effort(
+            "auto",
+            provider_id="pgpt",
+            user_message="조사가 끝난 보고서를 작성해 줘",
+            artifact_required=True,
+            attachment_count=0,
+            reference_count=0,
+            web_research_budget=(20, 30),
+            artifact_drafting=True,
+        )
+        == "low"
+    )
+    assert (
+        executor_module._effective_reasoning_effort(
+            "auto",
+            provider_id="pgpt",
+            user_message="철저하게 전수 조사해 줘",
+            artifact_required=False,
+            attachment_count=0,
+            reference_count=0,
+            web_research_budget=(20, 30),
+        )
+        == "high"
+    )
+    assert (
+        executor_module._effective_reasoning_effort(
+            "auto",
+            provider_id="google",
+            user_message="복잡한 수학 문제를 증명해 줘",
+            artifact_required=False,
+            attachment_count=0,
+            reference_count=0,
+            web_research_budget=(0, 0),
+        )
+        is None
+    )
 
 
 def test_auto_effort_and_model_turn_metrics_are_persisted(
@@ -281,15 +365,18 @@ def test_auto_effort_and_model_turn_metrics_are_persisted(
     provider = CapturingProvider(
         text_chunks=("The sentence is ready.",),
         usage=ProviderUsage(
-            input_tokens=100,
+            input_tokens=110,
             cached_input_tokens=75,
+            cache_write_tokens=10,
             uncached_input_tokens=25,
             output_tokens=5,
             reasoning_tokens=3,
             raw={"provider": "mock"},
         ),
     )
-    monkeypatch.setattr(local_run_executor, "_provider", lambda *_args, **_kwargs: provider)
+    monkeypatch.setattr(
+        local_run_executor, "_provider", lambda *_args, **_kwargs: provider
+    )
 
     with TestClient(create_app(settings)) as client:
         csrf = _login(client)
@@ -331,15 +418,27 @@ def test_auto_effort_and_model_turn_metrics_are_persisted(
     assert first["effectiveEffort"] == "low"
     assert first["ttftMs"] is not None
     assert first["durationMs"] >= first["ttftMs"] >= 0
+    assert first["firstVisibleTextMs"] >= first["ttftMs"]
     assert first["cachedInputTokens"] == 75
+    assert first["cacheWriteTokens"] == 10
     assert first["uncachedInputTokens"] == 25
     assert first["reasoningTokens"] == 3
-    assert first["cacheHitRatio"] == 0.75
+    assert first["cacheHitRatio"] == 0.6818
+    assert 0 < first["staticPrefixEstimatedTokens"] <= 10_000
+    assert first["systemPromptEstimatedTokens"] > 0
+    assert first["toolSchemaEstimatedTokens"] > 0
+    assert first["staticPrefixEstimatedTokens"] == (
+        first["systemPromptEstimatedTokens"] + first["toolSchemaEstimatedTokens"]
+    )
     with SessionLocal() as db:
         persisted_run = db.get(Run, run_id)
         assert persisted_run is not None
         assert persisted_run.snapshot_json["analysis_depth"] == "deep"
         assert persisted_run.snapshot_json["answer_length"] == "brief"
+        assert persisted_run.snapshot_json["prompt_cache_system_estimated_tokens"] > 0
+        assert (
+            persisted_run.snapshot_json["prompt_cache_tool_schema_estimated_tokens"] > 0
+        )
         events = list(
             db.query(RunEvent).filter(
                 RunEvent.run_id == run_id,
@@ -352,16 +451,16 @@ def test_auto_effort_and_model_turn_metrics_are_persisted(
 
 def test_update_plan_schema_identifies_the_report_drafting_phase() -> None:
     tool_schema = executor_module._UPDATE_PLAN_TOOL_SCHEMA["function"]
-    item_schema = tool_schema["parameters"][
-        "properties"
-    ]["plan"]["items"]
+    item_schema = tool_schema["parameters"]["properties"]["plan"]["items"]
 
     assert "final answer" in tool_schema["description"]
     assert "in_progress" in tool_schema["description"]
     assert "phase" in item_schema["required"]
     assert "drafting" in item_schema["properties"]["phase"]["enum"]
     assert "create_report" in item_schema["properties"]["phase"]["description"]
-    assert "final user-visible answer" in item_schema["properties"]["phase"]["description"]
+    assert (
+        "final user-visible answer" in item_schema["properties"]["phase"]["description"]
+    )
     assert "final user-visible answer" in DEFAULT_SYSTEM_PROMPT
     assert "keep that step `in_progress`" in DEFAULT_SYSTEM_PROMPT
     assert "runtime marks it `completed`" in DEFAULT_SYSTEM_PROMPT
@@ -868,9 +967,7 @@ def test_artifact_progress_refreshes_at_100ms_with_live_model_output() -> None:
     assert not executor_module._artifact_progress_due(
         10.0, 10.999, interval_seconds=1.0
     )
-    assert executor_module._artifact_progress_due(
-        10.0, 11.0, interval_seconds=1.0
-    )
+    assert executor_module._artifact_progress_due(10.0, 11.0, interval_seconds=1.0)
     assert executor_module._live_model_output_tokens(3_204, 400) == 3_304
 
 
@@ -898,7 +995,7 @@ def test_partial_report_checkpoint_decodes_complete_streamed_json_prefix() -> No
             "name": "create_report",
             "argument_chunks": [
                 '{"format":"html","html_source":"<main>first\\n둘째',
-                '\\u0020section\\',
+                "\\u0020section\\",
             ],
         }
     }
@@ -1255,10 +1352,10 @@ def test_file_mode_is_a_general_delivery_preference_not_a_file_command(
     assert all(snapshot["artifactProgress"] is None for snapshot in snapshots)
     assert all(snapshot["artifactUsage"] is None for snapshot in snapshots)
     assert len(requests) == 4
-    assert {
-        request.metadata["prompt_cache_key"] for request in requests
-    } == {requests[0].metadata["prompt_cache_key"]}
-    assert requests[0].metadata["prompt_cache_key"].startswith("lumina:user:v2:")
+    assert {request.metadata["prompt_cache_key"] for request in requests} == {
+        requests[0].metadata["prompt_cache_key"]
+    }
+    assert requests[0].metadata["prompt_cache_key"].startswith("lumina:user:v3:")
     run_thread_ids = [request.metadata["codex_run_thread_id"] for request in requests]
     assert run_thread_ids[0] == run_thread_ids[1]
     assert run_thread_ids[2] == run_thread_ids[3]
@@ -1836,7 +1933,9 @@ def test_web_fetch_starts_visible_report_drafting_before_create_report_output(
 
     assert snapshot["status"] == "completed"
     report_tool = next(
-        tool for tool in snapshot["toolExecutions"] if tool["toolName"] == "create_report"
+        tool
+        for tool in snapshot["toolExecutions"]
+        if tool["toolName"] == "create_report"
     )
     report_tool_started_at = datetime.fromisoformat(
         report_tool["startedAt"].replace("Z", "+00:00")
@@ -1844,20 +1943,17 @@ def test_web_fetch_starts_visible_report_drafting_before_create_report_output(
     assert report_tool_started_at <= report_turn_started_at[0]
     assert report_turn_efforts == ["low"]
     assert assistant["metadata"]["citations"][0]["sourceId"] == "source-report"
-    assert (
-        assistant["metadata"]["citations"][0]["citationOrigin"]
-        == "artifact_link"
-    )
-    assert legacy_assistant["metadata"]["citations"][0]["sourceId"] == (
-        "source-report"
-    )
+    assert assistant["metadata"]["citations"][0]["citationOrigin"] == "artifact_link"
+    assert legacy_assistant["metadata"]["citations"][0]["sourceId"] == ("source-report")
     with SessionLocal() as db:
         events = list(
             db.query(RunEvent)
             .filter(RunEvent.run_id == started.json()["run"]["runId"])
             .order_by(RunEvent.sequence)
         )
-    drafting_progress = next(event for event in events if event.event_type == "artifact_progress")
+    drafting_progress = next(
+        event for event in events if event.event_type == "artifact_progress"
+    )
     report_started = next(
         event
         for event in events
@@ -1995,6 +2091,69 @@ def test_write_file_commit_failure_cleans_artifact_content(
     assert artifact_commit_failed is True
     assert snapshot["status"] == "failed"
     assert not [path for path in settings.artifacts_dir.rglob("*") if path.is_file()]
+
+
+def test_identical_tool_rounds_warn_then_stop_without_burning_turn_limit(
+    monkeypatch, tmp_path: Path
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'tool-loop-guard.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    provider_calls = 0
+
+    def provider(
+        _provider_id: str, *, wants_artifact: bool, first_turn: bool
+    ) -> MockProvider:
+        nonlocal provider_calls
+        del wants_artifact, first_turn
+        provider_calls += 1
+        return MockProvider(
+            text_chunks=(),
+            tool_call=MockToolCall(
+                name="glob",
+                arguments={"pattern": "**/*"},
+                call_id=f"repeated-glob-{provider_calls}",
+            ),
+        )
+
+    monkeypatch.setattr(local_run_executor, "_provider", provider)
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "Tool loop guard"},
+        ).json()
+        started = client.post(
+            f"/api/conversations/{conversation['id']}/runs",
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": "tool-loop-guard-0001",
+            },
+            json={"message": {"text": "프로젝트 파일 목록을 확인해 주세요."}},
+        )
+        assert started.status_code == 202, started.text
+        run_id = started.json()["run"]["runId"]
+        snapshot = _wait_for_terminal(client, run_id)
+
+    assert snapshot["status"] == "failed"
+    assert snapshot["errorCode"] == "tool_loop_detected"
+    assert provider_calls == 3
+    with SessionLocal() as db:
+        event_types = [
+            event.event_type
+            for event in db.query(RunEvent)
+            .filter(RunEvent.run_id == run_id)
+            .order_by(RunEvent.sequence)
+        ]
+    assert event_types.count("tool_loop_warning") == 1
+    assert event_types.count("tool_loop_detected") == 1
 
 
 def test_independent_tool_calls_run_in_parallel_and_persist_subtasks(

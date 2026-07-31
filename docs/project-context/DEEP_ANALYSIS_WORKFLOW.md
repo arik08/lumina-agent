@@ -24,8 +24,9 @@ MISSION 설정에는 선택적 연구 시작일·종료일과 웹 출처 정책�
 - Node 위치
 - Node 추가·삭제
 - Edge 연결·삭제
+- 검증 Loop의 반복 조건과 최대 실행 횟수
 
-Workflow는 순환하지 않는 DAG여야 합니다. 같은 Node를 자기 자신과 연결하거나 순환 Edge를 저장할 수 없습니다.
+일반 `sequence` Edge는 순환하지 않는 DAG여야 합니다. 예외적으로 `validation` 또는 `data_check` Node는 정상 상하 경로에 포함된 선행 Node를 향해 `loop_back` Edge 하나를 만들 수 있습니다. Loop는 좌우 포트로 연결하고 Canvas 바깥쪽을 돌아 위의 선행 Node로 복귀하는 선으로 표시합니다. 정상 경로가 없거나 자기 자신을 향하거나 서로 겹치는 Loop는 저장하지 않으며, 반복 조건과 최대 실행 횟수 2~3회를 반드시 둡니다. 사람의 수동 편집과 AI Workflow 재생성은 같은 Backend 검증을 사용합니다. AI는 검증 실패의 피드백으로 선행 조사·분석을 실제 개선할 수 있고 종료 기준이 측정 가능한 경우에만 Loop를 제안합니다.
 
 ## 3. 실행 계약
 
@@ -40,7 +41,8 @@ Workflow는 순환하지 않는 DAG여야 합니다. 같은 Node를 자기 자�
 5. 보고서가 아닌 Node도 사용자가 직접 읽을 수 있는 Markdown 중간보고서를 저장합니다. 확인한 사실·근거·계산·불확실성과 다음 Node가 알아야 할 내용을 담되, 서론·Executive Summary·맺음말 같은 최종 보고서용 문장 광택은 만들지 않습니다. 본문 끝의 `다음 Node 인계`에는 결론·근거·불확실성·참조를 간결하게 남깁니다. Run이 `create_report` 또는 `write_file`로 상세 문서를 만들고 채팅에는 짧은 완료 안내만 남긴 경우에도 상세 문서 원문을 Node의 대표 출력으로 보존합니다.
 6. 보고서 Node만 선행 결과의 중복을 제거하고 결론·근거·반대 근거·한계·후속 조치를 갖춘 완성형 보고서를 작성합니다. 최종 산출물 형태는 Mission에서 정하며 Markdown을 기본으로 하고 HTML 추천값 또는 사용자가 직접 입력한 형태를 따릅니다.
 7. 뒤 Node는 화면에서 사용자가 확인한 것과 동일한 선행 Node 대표 출력 전체를 입력 문맥으로 받습니다. 둘 이상의 Edge가 합류하면 직접 선행 Node의 대표 출력과 보조 산출물을 먼저 안정 정렬하고 이전 공통 조상 산출물을 별도 구분합니다. 합류 Node는 content hash·출처 기준으로 중복을 제거하되 충돌하는 결론과 각각의 provenance를 보존합니다.
-8. 실행 가능한 Node와 실행 중인 Node가 모두 남지 않으면 Mission을 완료합니다.
+8. Loop source인 검증 Node는 자신의 검증 결과와 함께 구조화된 반복 판단을 남깁니다. 조건을 충족하고 최대 횟수가 남았으면 `loop_back` 대상부터 검증 Node까지의 정상 경로만 다시 계획 상태로 돌리고 기존 Run·산출물은 이력과 검토 필요 상태로 보존합니다. 조건을 충족하지 않거나 최대 횟수에 도달하면 아래 방향의 다음 Node로 진행합니다. `loop_back` Edge 자체는 위상 정렬과 일반 dependency 충족 계산에서 제외합니다.
+9. 실행 가능한 Node와 실행 중인 Node가 모두 남지 않으면 Mission을 완료합니다.
 
 Node 재실행은 같은 Node 채팅 세션을 계속 사용하되 새 Run을 만듭니다. 사용자는 종료된 Mission의 MISSION Node에서 전체 Workflow를 처음부터 다시 실행할 수 있으며, 이때 모든 Node의 현재 실행을 이력으로 보존하고 기존 산출물은 검토 필요 상태로 전환한 뒤 시작 Node부터 새 Run을 만듭니다. Mission을 다른 Project로 이동하거나 삭제할 때는 Node별 채팅 세션도 함께 이동하거나 삭제합니다.
 
@@ -69,7 +71,7 @@ MISSION 출처·인용 검사는 각 Node Run이 이미 저장한 웹 검색·�
 - Quality Gate 판정
 - 완료 계약 또는 예외 승인 판정
 
-비용 화면은 실제 Node Run 사용량만 집계합니다.
+비용 화면은 Loop로 다시 실행된 Run을 포함한 실제 Node Run 사용량만 집계합니다.
 
 ## 6. 화면 계약
 
@@ -92,6 +94,7 @@ Node 상세 영역의 세로 경계는 포인터 드래그와 키보드 화살�
 
 - preset·저장 Pattern 기반 초기 Workflow 생성
 - 실행 중 LLM 기반 Node 추가·삭제·분기 판단
+- 실행 중 새로운 Loop 생성 또는 Loop 범위 변경
 - Mission Charter와 별도 Completion Contract
 - Claim Ledger, Evidence Ledger, Open Issue
 - Quality Gate와 waiver 결정

@@ -402,6 +402,8 @@
 .deep-analysis-canvas > svg path { fill: none; stroke: var(--deep-analysis-graph-line); stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
 .deep-analysis-edge-layer { pointer-events: none; }
 .deep-analysis-canvas > svg path.deep-analysis-edge.is-selected { stroke: var(--cobalt); stroke-width: 2; }
+.deep-analysis-canvas > svg path.deep-analysis-edge.is-loop-back { stroke: color-mix(in srgb, var(--cobalt) 72%, var(--deep-analysis-graph-line)); stroke-dasharray: 5 4; }
+.deep-analysis-loop-label { fill: var(--cobalt); font-size: 11px; font-weight: 650; paint-order: stroke; stroke: var(--canvas); stroke-width: 3px; }
 .deep-analysis-canvas > svg path.deep-analysis-edge-hit { pointer-events: stroke; stroke: transparent; stroke-width: 14; cursor: pointer; }
 .deep-analysis-canvas > svg path.deep-analysis-connection-preview { stroke: var(--cobalt); stroke-dasharray: 4 3; stroke-width: 1.6; }
 .deep-analysis-port-layer { pointer-events: none; }
@@ -433,7 +435,9 @@
 .deep-analysis-connection-port { position: absolute; z-index: 2; width: 24px; height: 24px; border: 0; padding: 0; background: transparent; opacity: 0; pointer-events: none; cursor: crosshair; transition: opacity var(--motion-fast); }
 .deep-analysis-connection-port::after { position: absolute; top: 7px; left: 7px; width: 10px; height: 10px; border: 2px solid var(--surface); border-radius: 50%; background: var(--deep-analysis-graph-line); box-shadow: 0 0 0 1px var(--deep-analysis-graph-line); content: ""; transition: background var(--motion-fast), box-shadow var(--motion-fast); }
 .deep-analysis-connection-port.port-north { top: -12px; left: calc(50% - 12px); }
+.deep-analysis-connection-port.port-east { top: calc(50% - 12px); right: -12px; }
 .deep-analysis-connection-port.port-south { bottom: -12px; left: calc(50% - 12px); }
+.deep-analysis-connection-port.port-west { top: calc(50% - 12px); left: -12px; }
 .deep-analysis-node-shell.is-editable:not(.is-connecting, .is-port-suppressed):hover .deep-analysis-connection-port.is-output,
 .deep-analysis-node-shell.is-editable:not(.is-connecting):focus-within .deep-analysis-connection-port.is-output,
 .deep-analysis-node-shell.is-connecting:not(.is-connection-source) .deep-analysis-connection-port.is-input,
@@ -442,6 +446,8 @@
 .deep-analysis-connection-port:hover::after,
 .deep-analysis-connection-port:focus-visible::after { background: var(--cobalt); box-shadow: 0 0 0 2px var(--cobalt-pale); }
 .deep-analysis-node-shell.is-connection-source .deep-analysis-connection-port.is-input { opacity: .25; }
+.deep-analysis-loop-settings { display: grid; gap: 9px; border-top: 1px solid var(--line); padding-top: 10px; }
+.deep-analysis-loop-settings > strong { color: var(--cobalt); font-size: 13px; }
 .deep-analysis-edge-delete { position: absolute; z-index: 4; display: grid; width: 24px; height: 24px; place-items: center; border: 1px solid var(--cobalt); border-radius: 50%; padding: 0; background: var(--surface); color: var(--danger); cursor: pointer; transform: translate(-50%, -50%); }
 .deep-analysis-edge-delete:hover { border-color: var(--cobalt); background: var(--danger-surface); }
 

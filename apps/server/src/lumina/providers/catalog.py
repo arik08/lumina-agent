@@ -6,6 +6,7 @@ from datetime import date
 from typing import Any
 
 from .types import ProviderCapabilities
+from .usage import derive_uncached_input_tokens
 
 CATALOG_REVISION = "2026-07-29.2-standard-context-20k-headroom"
 CATALOG_VERIFIED_AT = date(2026, 7, 29)
@@ -528,12 +529,8 @@ def validate_catalog(items: Iterable[ModelCatalogSeed]) -> None:
         capacity_mode = item.capabilities.context_capacity_mode
         maximum_context_window = item.capabilities.maximum_context_window
         maximum_input_tokens = item.capabilities.maximum_input_tokens
-        maximum_threshold = (
-            item.capabilities.maximum_context_compaction_threshold
-        )
-        standard_reserve = (
-            item.capabilities.standard_context_compaction_reserve_tokens
-        )
+        maximum_threshold = item.capabilities.maximum_context_compaction_threshold
+        standard_reserve = item.capabilities.standard_context_compaction_reserve_tokens
         if capacity_mode is not None and capacity_mode not in {"standard", "maximum"}:
             raise ValueError(f"Unknown context capacity mode: {key!r}")
         if maximum_context_window is not None:
@@ -641,8 +638,10 @@ def estimate_model_cost_parts(
     if pricing is None:
         return None
 
-    uncached_input_tokens = max(
-        0, input_tokens - cached_input_tokens - cache_write_tokens
+    uncached_input_tokens = derive_uncached_input_tokens(
+        input_tokens,
+        cached_input_tokens,
+        cache_write_tokens,
     )
     input_rate = pricing.input
     cached_rate = pricing.cached_input

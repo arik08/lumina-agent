@@ -5,6 +5,11 @@ from collections.abc import Mapping
 from typing import Any
 
 
+_MAX_IDLE_RUN_REVISIONS = 4_096
+_MAX_DRAFT_CHUNKS = 1_024
+_DRAFT_CHUNKS_TO_COMPACT = 512
+
+
 class RunEventBroker:
     """Process-local wake-up hints; the database remains the event source of truth."""
 
@@ -17,9 +22,7 @@ class RunEventBroker:
         self._artifact_progress_revisions: dict[str, int] = {}
         self._artifact_progress: dict[str, tuple[int, dict[str, Any]]] = {}
         self._assistant_draft_revisions: dict[str, int] = {}
-        self._assistant_drafts: dict[
-            str, tuple[int, str, str, list[str], int]
-        ] = {}
+        self._assistant_drafts: dict[str, tuple[int, str, str, list[str], int]] = {}
 
     def seed_assistant_draft(self, run_id: str, message_id: str, text: str) -> None:
         """Seed recovered durable text before newly streamed deltas arrive."""
@@ -46,6 +49,10 @@ class RunEventBroker:
             chunks = current[3]
             chunks.append(delta)
             base_revision = current[4]
+            if len(chunks) > _MAX_DRAFT_CHUNKS:
+                base_text += "".join(chunks[:_DRAFT_CHUNKS_TO_COMPACT])
+                del chunks[:_DRAFT_CHUNKS_TO_COMPACT]
+                base_revision += _DRAFT_CHUNKS_TO_COMPACT
         self._assistant_drafts[run_id] = (
             revision,
             message_id,
@@ -116,14 +123,34 @@ class RunEventBroker:
 
     async def _notify(self, run_id: str, *, durable: bool) -> None:
         self._next_wake_revision += 1
+        self._wake_revisions.pop(run_id, None)
         self._wake_revisions[run_id] = self._next_wake_revision
         if durable:
+            self._durable_revisions.pop(run_id, None)
             self._durable_revisions[run_id] = self._next_wake_revision
+        self._prune_idle_revisions()
         condition = self._conditions.get(run_id)
         if condition is None:
             return
         async with condition:
             condition.notify_all()
+
+    def _prune_idle_revisions(self) -> None:
+        if len(self._wake_revisions) <= _MAX_IDLE_RUN_REVISIONS:
+            return
+        candidate_to_prune: str | None = None
+        for candidate in self._wake_revisions:
+            if (
+                candidate in self._waiters
+                or candidate in self._artifact_progress
+                or candidate in self._assistant_drafts
+            ):
+                continue
+            candidate_to_prune = candidate
+            break
+        if candidate_to_prune is not None:
+            self._wake_revisions.pop(candidate_to_prune, None)
+            self._durable_revisions.pop(candidate_to_prune, None)
 
     def revisions(self, run_id: str) -> tuple[int, int]:
         return (

@@ -101,12 +101,47 @@ def _responses_text_format(raw_format: Mapping[str, Any]) -> dict[str, Any]:
     return {"format": dict(raw_format)}
 
 
+def _mark_stable_system_cache_breakpoint(
+    *,
+    messages: tuple[ProviderMessage, ...],
+    input_items: list[dict[str, Any]],
+) -> bool:
+    stable_system = next(
+        (message for message in messages if message.role == "system"),
+        None,
+    )
+    if stable_system is None or not stable_system.content:
+        return False
+
+    for item in input_items:
+        if item.get("role") != "system":
+            continue
+        content = item.get("content")
+        if isinstance(content, str):
+            item["content"] = [
+                {
+                    "type": "input_text",
+                    "text": content,
+                    "prompt_cache_breakpoint": {"mode": "explicit"},
+                }
+            ]
+            return True
+        if isinstance(content, list):
+            for block in content:
+                if block.get("type") == "input_text" and block.get("text"):
+                    block["prompt_cache_breakpoint"] = {"mode": "explicit"}
+                    return True
+        return False
+    return False
+
+
 def build_responses_payload(request: ProviderRequest) -> dict[str, Any]:
+    input_items = [
+        item for message in request.messages for item in _message_items(message)
+    ]
     payload: dict[str, Any] = {
         "model": request.model,
-        "input": [
-            item for message in request.messages for item in _message_items(message)
-        ],
+        "input": input_items,
         "stream": True,
         "store": False,
     }
@@ -124,7 +159,13 @@ def build_responses_payload(request: ProviderRequest) -> dict[str, Any]:
     if isinstance(prompt_cache_key, str) and prompt_cache_key:
         payload["prompt_cache_key"] = prompt_cache_key
         if request.model.casefold().startswith("gpt-5.6"):
-            payload["prompt_cache_options"] = {"ttl": "30m"}
+            options = {"ttl": "30m"}
+            if _mark_stable_system_cache_breakpoint(
+                messages=request.messages,
+                input_items=input_items,
+            ):
+                options["mode"] = "explicit"
+            payload["prompt_cache_options"] = options
         else:
             retention = request.metadata.get("prompt_cache_retention")
             if retention in {"in_memory", "24h"}:

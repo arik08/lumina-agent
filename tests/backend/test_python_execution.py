@@ -105,13 +105,12 @@ def test_python_tool_schema_and_approval_contract() -> None:
         classify_tool_risk("run_python", approval_mode="confirm_all").approval_required
         is True
     )
-    assert classify_tool_risk(
-        "run_python", approval_mode="yolo"
-    ).approval_required is False
-    assert _ARTIFACT_CREATION_REQUEST.search("hello.py를 작성해 주세요")
     assert (
-        SKILL_RESOURCE_TOOL_SCHEMA["function"]["name"] == "read_skill_resource"
+        classify_tool_risk("run_python", approval_mode="yolo").approval_required
+        is False
     )
+    assert _ARTIFACT_CREATION_REQUEST.search("hello.py를 작성해 주세요")
+    assert SKILL_RESOURCE_TOOL_SCHEMA["function"]["name"] == "read_skill_resource"
     resource_risk = classify_tool_risk(
         "read_skill_resource",
         approval_mode="on_risk",
@@ -191,9 +190,7 @@ def test_python_artifact_is_frozen_and_executed_with_utf8_output(
             db.commit()
 
     assert prepared is not None
-    result = asyncio.run(
-        execute_python(prepared, secrets=("secret-value-123",))
-    )
+    result = asyncio.run(execute_python(prepared, secrets=("secret-value-123",)))
 
     assert result["ok"] is True
     assert result["returnCode"] == 0
@@ -339,9 +336,7 @@ def test_active_skill_module_uses_exact_version_package(tmp_path: Path) -> None:
             db.add(extension)
             db.flush()
             package = {
-                "SKILL.md": (
-                    "---\nname: python-fixture\ndescription: fixture\n---\n"
-                ),
+                "SKILL.md": ("---\nname: python-fixture\ndescription: fixture\n---\n"),
                 "engine/__init__.py": "VALUE = 'snapshot-ok'\n",
                 "engine/__main__.py": (
                     "import sys\n"
@@ -618,3 +613,84 @@ def test_heavy_python_cancellation_stops_the_process() -> None:
     started = time.monotonic()
     asyncio.run(cancel_execution())
     assert time.monotonic() - started < 5
+
+
+@pytest.mark.asyncio
+async def test_python_materialization_does_not_block_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import lumina.tools.python_execution as python_execution_module
+
+    original_materialize = python_execution_module._materialize
+
+    def slow_materialize(root: Path, files: dict[str, str]) -> None:
+        time.sleep(0.05)
+        original_materialize(root, files)
+
+    monkeypatch.setattr(python_execution_module, "_materialize", slow_materialize)
+    prepared = PreparedPythonExecution(
+        source_type="artifact",
+        files={"worker.py": "print('ok')\n"},
+        entrypoint="worker.py",
+        module=None,
+        args=(),
+        timeout_seconds=10,
+        source_metadata={"artifactId": "fixture", "artifactVersion": 1},
+    )
+    ticks = 0
+    running = True
+
+    async def ticker() -> None:
+        nonlocal ticks
+        while running:
+            ticks += 1
+            await asyncio.sleep(0.005)
+
+    ticker_task = asyncio.create_task(ticker())
+    result = await execute_python(prepared)
+    running = False
+    await ticker_task
+
+    assert result["ok"] is True
+    assert ticks >= 3
+
+
+@pytest.mark.asyncio
+async def test_python_cancellation_waits_for_materialization_before_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import lumina.tools.python_execution as python_execution_module
+
+    materializing = asyncio.Event()
+    materialized = asyncio.Event()
+    temporary_root: Path | None = None
+
+    def slow_materialize(root: Path, files: dict[str, str]) -> None:
+        nonlocal temporary_root
+        temporary_root = root
+        materializing_loop.call_soon_threadsafe(materializing.set)
+        time.sleep(0.05)
+        (root / next(iter(files))).write_text("print('ok')\n", encoding="utf-8")
+        materializing_loop.call_soon_threadsafe(materialized.set)
+
+    materializing_loop = asyncio.get_running_loop()
+    monkeypatch.setattr(python_execution_module, "_materialize", slow_materialize)
+    prepared = PreparedPythonExecution(
+        source_type="artifact",
+        files={"worker.py": "print('ok')\n"},
+        entrypoint="worker.py",
+        module=None,
+        args=(),
+        timeout_seconds=10,
+        source_metadata={"artifactId": "fixture", "artifactVersion": 1},
+    )
+
+    task = asyncio.create_task(execute_python(prepared))
+    await materializing.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert materialized.is_set()
+    assert temporary_root is not None
+    assert not temporary_root.exists()

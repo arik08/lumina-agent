@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 from datetime import UTC, date, datetime, time, timedelta
 from io import BytesIO
 from pathlib import Path
@@ -42,6 +43,10 @@ from ...models import (
     utc_now,
 )
 from ...runs.broker import event_broker
+from ...providers.usage import (
+    derive_uncached_input_tokens,
+    prompt_cache_hit_ratio,
+)
 from ...runs.safety import normalize_run_safety_settings, run_safety_payload
 from ...runs.service import (
     cancel_organization_work,
@@ -397,6 +402,59 @@ def _usage_number(usage: dict[str, object], key: str) -> float:
     )
 
 
+@router.get("/runtime-statistics")
+def get_runtime_statistics(
+    actor: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    """Return low-cardinality queue and worker capacity signals for operators."""
+    require_admin(actor)
+    now = utc_now()
+    status_counts = {
+        str(status): int(count)
+        for status, count in db.execute(
+            select(Run.status, func.count(Run.id))
+            .where(Run.organization_id == actor.organization_id)
+            .group_by(Run.status)
+        )
+    }
+    queued_depth = status_counts.get("queued", 0)
+    oldest_queued_at = db.scalar(
+        select(func.min(Run.queued_at)).where(
+            Run.organization_id == actor.organization_id,
+            Run.status == "queued",
+        )
+    )
+    oldest_wait_ms = (
+        max(0, int((now - oldest_queued_at).total_seconds() * 1_000))
+        if oldest_queued_at is not None
+        else 0
+    )
+    active_local_runs = local_run_executor.active_run_count
+    server_limit = settings.server_concurrency_limit
+    return {
+        "capturedAt": now,
+        "executor": {
+            "started": local_run_executor.started,
+            "activeLocalRuns": active_local_runs,
+            "serverConcurrencyLimit": server_limit,
+            "saturationRatio": (
+                round(active_local_runs / server_limit, 4) if server_limit > 0 else 0.0
+            ),
+            "eventLoopLag": local_run_executor.event_loop_lag_statistics,
+            "heavyWork": local_run_executor.heavy_work_statistics,
+            "mcpConnections": local_run_executor.mcp_runtime.connection_statistics,
+            "codexCachePrewarmEnabled": settings.codex_cache_prewarm_enabled,
+        },
+        "queue": {
+            "depth": queued_depth,
+            "oldestWaitMs": oldest_wait_ms,
+        },
+        "runStatusCounts": status_counts,
+    }
+
+
 @router.get("/usage-statistics")
 def get_usage_statistics(
     request: Request,
@@ -429,10 +487,13 @@ def get_usage_statistics(
         Run.user_id,
         Run.created_at,
         Run.usage_json,
-        Run.snapshot_json,
+        Run.snapshot_json["prompt_cache_static_digest"]
+        .as_string()
+        .label("prompt_cache_static_digest"),
         Run.provider_id,
         Run.model_key,
     ).where(Run.organization_id == actor.organization_id)
+    range_start: datetime | None = None
     if days:
         requested_first_day = today - timedelta(days=days - 1)
         range_start = datetime.combine(
@@ -450,6 +511,9 @@ def get_usage_statistics(
             "cachedInputTokens": 0,
             "cacheWriteTokens": 0,
             "uncachedInputTokens": 0,
+            "staticPrefixEstimatedTokensMax": 0,
+            "systemPromptEstimatedTokensMax": 0,
+            "toolSchemaEstimatedTokensMax": 0,
         }
 
     def add_cache_metric(
@@ -459,6 +523,9 @@ def get_usage_statistics(
         cached_tokens: int,
         cache_write_tokens: int,
         uncached_tokens: int,
+        static_prefix_estimated_tokens: int,
+        system_prompt_estimated_tokens: int,
+        tool_schema_estimated_tokens: int,
     ) -> None:
         for key, value in (
             ("modelCalls", 1),
@@ -468,21 +535,54 @@ def get_usage_statistics(
             ("uncachedInputTokens", uncached_tokens),
         ):
             bucket[key] = int(cast(Any, bucket[key])) + value
+        for key, value in (
+            ("staticPrefixEstimatedTokensMax", static_prefix_estimated_tokens),
+            ("systemPromptEstimatedTokensMax", system_prompt_estimated_tokens),
+            ("toolSchemaEstimatedTokensMax", tool_schema_estimated_tokens),
+        ):
+            bucket[key] = max(int(cast(Any, bucket[key])), value)
 
     cache_buckets: dict[str, dict[str, int]] = {
         "firstCall": empty_cache_bucket(),
         "subsequentCalls": empty_cache_bucket(),
     }
+    latency_buckets: dict[str, dict[str, list[float]]] = {
+        "firstCall": {"ttftMs": [], "firstVisibleTextMs": [], "durationMs": []},
+        "subsequentCalls": {
+            "ttftMs": [],
+            "firstVisibleTextMs": [],
+            "durationMs": [],
+        },
+    }
     digest_buckets: dict[tuple[str, str, str], dict[str, object]] = {}
     runs_by_id = {run.id: run for run in runs}
     if runs_by_id:
-        model_turns = db.execute(
-            select(RunEvent.run_id, RunEvent.payload_json).where(
-                RunEvent.run_id.in_(runs_by_id),
+        model_turn_query = (
+            select(RunEvent.run_id, RunEvent.payload_json)
+            .join(Run, Run.id == RunEvent.run_id)
+            .where(
+                Run.organization_id == actor.organization_id,
                 RunEvent.event_type == "model_turn_completed",
             )
         )
+        if range_start is not None:
+            model_turn_query = model_turn_query.where(Run.created_at >= range_start)
+        model_turns = db.execute(model_turn_query)
         for run_id, payload in model_turns:
+            try:
+                turn_index = int(payload.get("turnIndex", 0))
+            except (TypeError, ValueError):
+                turn_index = 0
+            call_bucket_name = "firstCall" if turn_index == 0 else "subsequentCalls"
+            latency_bucket = latency_buckets[call_bucket_name]
+            for key in ("ttftMs", "firstVisibleTextMs", "durationMs"):
+                value = payload.get(key)
+                if (
+                    isinstance(value, int | float)
+                    and not isinstance(value, bool)
+                    and value >= 0
+                ):
+                    latency_bucket[key].append(float(value))
             input_tokens = int(_usage_number(payload, "inputTokens"))
             if input_tokens <= 0:
                 continue
@@ -490,28 +590,34 @@ def get_usage_statistics(
             cache_write_tokens = int(_usage_number(payload, "cacheWriteTokens"))
             uncached_tokens = int(_usage_number(payload, "uncachedInputTokens"))
             if "uncachedInputTokens" not in payload:
-                uncached_tokens = max(
-                    0, input_tokens - cached_tokens - cache_write_tokens
+                uncached_tokens = derive_uncached_input_tokens(
+                    input_tokens,
+                    cached_tokens,
+                    cache_write_tokens,
                 )
-            try:
-                turn_index = int(payload.get("turnIndex", 0))
-            except (TypeError, ValueError):
-                turn_index = 0
-            bucket = cache_buckets[
-                "firstCall" if turn_index == 0 else "subsequentCalls"
-            ]
+            static_prefix_estimated_tokens = int(
+                _usage_number(payload, "staticPrefixEstimatedTokens")
+            )
+            system_prompt_estimated_tokens = int(
+                _usage_number(payload, "systemPromptEstimatedTokens")
+            )
+            tool_schema_estimated_tokens = int(
+                _usage_number(payload, "toolSchemaEstimatedTokens")
+            )
+            bucket = cache_buckets[call_bucket_name]
             add_cache_metric(
                 bucket,
                 input_tokens=input_tokens,
                 cached_tokens=cached_tokens,
                 cache_write_tokens=cache_write_tokens,
                 uncached_tokens=uncached_tokens,
+                static_prefix_estimated_tokens=static_prefix_estimated_tokens,
+                system_prompt_estimated_tokens=system_prompt_estimated_tokens,
+                tool_schema_estimated_tokens=tool_schema_estimated_tokens,
             )
 
             run = runs_by_id[run_id]
-            digest = str(
-                run.snapshot_json.get("prompt_cache_static_digest") or "unknown"
-            )
+            digest = str(run.prompt_cache_static_digest or "unknown")
             digest_key = (digest, run.provider_id, run.model_key)
             digest_bucket = digest_buckets.setdefault(
                 digest_key,
@@ -524,6 +630,9 @@ def get_usage_statistics(
                     "cachedInputTokens": 0,
                     "cacheWriteTokens": 0,
                     "uncachedInputTokens": 0,
+                    "staticPrefixEstimatedTokensMax": 0,
+                    "systemPromptEstimatedTokensMax": 0,
+                    "toolSchemaEstimatedTokensMax": 0,
                     "firstCall": empty_cache_bucket(),
                     "subsequentCalls": empty_cache_bucket(),
                 },
@@ -534,6 +643,9 @@ def get_usage_statistics(
                 cached_tokens=cached_tokens,
                 cache_write_tokens=cache_write_tokens,
                 uncached_tokens=uncached_tokens,
+                static_prefix_estimated_tokens=static_prefix_estimated_tokens,
+                system_prompt_estimated_tokens=system_prompt_estimated_tokens,
+                tool_schema_estimated_tokens=tool_schema_estimated_tokens,
             )
             digest_call_bucket = digest_bucket[
                 "firstCall" if turn_index == 0 else "subsequentCalls"
@@ -545,10 +657,15 @@ def get_usage_statistics(
                 cached_tokens=cached_tokens,
                 cache_write_tokens=cache_write_tokens,
                 uncached_tokens=uncached_tokens,
+                static_prefix_estimated_tokens=static_prefix_estimated_tokens,
+                system_prompt_estimated_tokens=system_prompt_estimated_tokens,
+                tool_schema_estimated_tokens=tool_schema_estimated_tokens,
             )
 
     def cache_metric_payload(values: dict[str, Any]) -> dict[str, object]:
         cached_tokens = int(cast(Any, values["cachedInputTokens"]))
+        cache_write_tokens = int(cast(Any, values["cacheWriteTokens"]))
+        uncached_tokens = int(cast(Any, values["uncachedInputTokens"]))
         input_tokens = int(cast(Any, values["inputTokens"]))
         payload = dict(values)
         for key in ("firstCall", "subsequentCalls"):
@@ -557,9 +674,39 @@ def get_usage_statistics(
                 payload[key] = cache_metric_payload(nested)
         return {
             **payload,
-            "cacheHitRatioPercent": round(cached_tokens / input_tokens * 100, 1)
+            "cacheHitRatioPercent": round(
+                prompt_cache_hit_ratio(cached_tokens, input_tokens) * 100,
+                1,
+            ),
+            "cacheWriteRatioPercent": round(cache_write_tokens / input_tokens * 100, 1)
             if input_tokens
-            else 0,
+            else 0.0,
+            "uncachedInputRatioPercent": round(uncached_tokens / input_tokens * 100, 1)
+            if input_tokens
+            else 0.0,
+        }
+
+    def latency_metric_payload(values: dict[str, list[float]]) -> dict[str, object]:
+        def percentile(samples: list[float], ratio: float) -> float | None:
+            if not samples:
+                return None
+            ordered = sorted(samples)
+            index = max(0, math.ceil(len(ordered) * ratio) - 1)
+            return round(ordered[index], 1)
+
+        ttft = values["ttftMs"]
+        first_visible_text = values["firstVisibleTextMs"]
+        duration = values["durationMs"]
+        return {
+            "ttftSamples": len(ttft),
+            "ttftP50Ms": percentile(ttft, 0.5),
+            "ttftP95Ms": percentile(ttft, 0.95),
+            "firstVisibleTextSamples": len(first_visible_text),
+            "firstVisibleTextP50Ms": percentile(first_visible_text, 0.5),
+            "firstVisibleTextP95Ms": percentile(first_visible_text, 0.95),
+            "durationSamples": len(duration),
+            "durationP50Ms": percentile(duration, 0.5),
+            "durationP95Ms": percentile(duration, 0.95),
         }
 
     if days:
@@ -581,6 +728,7 @@ def get_usage_statistics(
     user_runs = {user.id: 0 for user in users}
     user_input_tokens = {user.id: 0 for user in users}
     user_cached_input_tokens = {user.id: 0 for user in users}
+    user_cache_write_tokens = {user.id: 0 for user in users}
     user_uncached_input_tokens = {user.id: 0 for user in users}
     user_output_tokens = {user.id: 0 for user in users}
     user_cost = {user.id: 0.0 for user in users}
@@ -603,14 +751,22 @@ def get_usage_statistics(
             usage = run.usage_json or {}
             input_tokens = int(_usage_number(usage, "input_tokens"))
             cached_input_tokens = int(_usage_number(usage, "cached_input_tokens"))
+            cache_write_tokens = int(_usage_number(usage, "cache_write_tokens"))
             uncached_input_tokens = int(_usage_number(usage, "uncached_input_tokens"))
             if "uncached_input_tokens" not in usage:
-                uncached_input_tokens = max(0, input_tokens - cached_input_tokens)
+                uncached_input_tokens = derive_uncached_input_tokens(
+                    input_tokens,
+                    cached_input_tokens,
+                    cache_write_tokens,
+                )
             user_input_tokens[run.user_id] = (
                 user_input_tokens.get(run.user_id, 0) + input_tokens
             )
             user_cached_input_tokens[run.user_id] = (
                 user_cached_input_tokens.get(run.user_id, 0) + cached_input_tokens
+            )
+            user_cache_write_tokens[run.user_id] = (
+                user_cache_write_tokens.get(run.user_id, 0) + cache_write_tokens
             )
             user_uncached_input_tokens[run.user_id] = (
                 user_uncached_input_tokens.get(run.user_id, 0) + uncached_input_tokens
@@ -636,7 +792,6 @@ def get_usage_statistics(
         last_active_day = max(active_days) if active_days else None
         cached_input_tokens = user_cached_input_tokens.get(user.id, 0)
         uncached_input_tokens = user_uncached_input_tokens.get(user.id, 0)
-        cacheable_input_tokens = cached_input_tokens + uncached_input_tokens
         run_count = user_runs.get(user.id, 0)
         row: dict[str, object] = {
             "userId": user.id,
@@ -650,11 +805,29 @@ def get_usage_statistics(
             "runCount": run_count,
             "inputTokens": user_input_tokens.get(user.id, 0),
             "cachedInputTokens": cached_input_tokens,
+            "cacheWriteTokens": user_cache_write_tokens.get(user.id, 0),
             "cacheHitRatioPercent": round(
-                cached_input_tokens / cacheable_input_tokens * 100, 1
+                prompt_cache_hit_ratio(
+                    cached_input_tokens,
+                    user_input_tokens.get(user.id, 0),
+                )
+                * 100,
+                1,
+            ),
+            "cacheWriteRatioPercent": round(
+                user_cache_write_tokens.get(user.id, 0)
+                / user_input_tokens.get(user.id, 0)
+                * 100,
+                1,
             )
-            if cacheable_input_tokens
-            else 0,
+            if user_input_tokens.get(user.id, 0)
+            else 0.0,
+            "uncachedInputRatioPercent": round(
+                uncached_input_tokens / user_input_tokens.get(user.id, 0) * 100,
+                1,
+            )
+            if user_input_tokens.get(user.id, 0)
+            else 0.0,
             "outputTokens": user_output_tokens.get(user.id, 0),
             "estimatedCostUsd": round(user_cost.get(user.id, 0.0), 6),
             "lastActiveDate": last_active_day.isoformat() if last_active_day else None,
@@ -710,6 +883,10 @@ def get_usage_statistics(
                     ),
                 )
             ],
+        },
+        "modelLatency": {
+            key: latency_metric_payload(values)
+            for key, values in latency_buckets.items()
         },
         "users": per_user,
     }
@@ -1056,11 +1233,11 @@ def list_admin_conversations(
     total = int(
         cast(
             Any,
-        db.scalar(
-            select(func.count(Conversation.id))
-            .join(User, User.id == Conversation.owner_user_id)
-            .where(*filters)
-        )
+            db.scalar(
+                select(func.count(Conversation.id))
+                .join(User, User.id == Conversation.owner_user_id)
+                .where(*filters)
+            )
             or 0,
         )
     )
@@ -1228,9 +1405,7 @@ def _admin_conversation_workbook(
         )
         for export_message in messages_to_export:
             message_feedback_rows = (
-                feedback_by_message.get(export_message.id, [])
-                if export_message
-                else []
+                feedback_by_message.get(export_message.id, []) if export_message else []
             )
             feedback_items = [item for item, _author in message_feedback_rows]
             analysis_data.append(
@@ -1256,8 +1431,7 @@ def _admin_conversation_workbook(
                     (
                         "예"
                         if export_message
-                        and len(export_message.canonical_text)
-                        > _XLSX_MAX_CELL_LENGTH
+                        and len(export_message.canonical_text) > _XLSX_MAX_CELL_LENGTH
                         else "아니요"
                     ),
                     (
@@ -1294,8 +1468,7 @@ def _admin_conversation_workbook(
                     ),
                     ", ".join(
                         dict.fromkeys(
-                            author.login_id
-                            for _item, author in message_feedback_rows
+                            author.login_id for _item, author in message_feedback_rows
                         )
                     ),
                     (
@@ -1409,7 +1582,9 @@ def export_admin_conversations(
             .where(*filters)
             .order_by(Conversation.last_activity_at.desc(), Conversation.id)
             .limit(limit)
-        ).tuples().all()
+        )
+        .tuples()
+        .all()
     )
     conversation_ids = [conversation.id for conversation, _owner in conversation_rows]
     messages = (
@@ -1438,7 +1613,9 @@ def export_admin_conversations(
                     Message.created_at,
                     MessageFeedback.created_at,
                 )
-            ).tuples().all()
+            )
+            .tuples()
+            .all()
         )
         if conversation_ids
         else []

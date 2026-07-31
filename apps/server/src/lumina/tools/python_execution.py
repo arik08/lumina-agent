@@ -212,9 +212,7 @@ class PythonExecutionPolicy:
 
     @classmethod
     def from_settings(cls, settings: Any) -> "PythonExecutionPolicy":
-        configured_executable = getattr(
-            settings, "python_execution_executable", None
-        )
+        configured_executable = getattr(settings, "python_execution_executable", None)
         return cls(
             heavy_enabled=bool(
                 getattr(settings, "python_heavy_execution_enabled", False)
@@ -257,9 +255,7 @@ def prepare_python_execution(
     source = str(arguments.get("source") or "").strip().casefold()
     profile = _profile(arguments.get("profile"))
     if profile == "heavy" and not execution_policy.heavy_enabled:
-        raise ValueError(
-            "heavy Python 실행은 서버 관리자가 활성화해야 합니다."
-        )
+        raise ValueError("heavy Python 실행은 서버 관리자가 활성화해야 합니다.")
     if source == "artifact" and profile != "standard":
         raise ValueError("heavy Python 실행은 고정된 활성 Skill에만 허용됩니다.")
     args = _arguments(arguments.get("args"))
@@ -312,10 +308,14 @@ def _prepare_artifact_execution(
     if not artifact_id:
         raise ValueError("Artifact Python 실행에는 artifact_id가 필요합니다.")
     if arguments.get("skill_id") or arguments.get("path") or arguments.get("module"):
-        raise ValueError("Artifact Python 실행에는 Skill 경로를 함께 지정할 수 없습니다.")
+        raise ValueError(
+            "Artifact Python 실행에는 Skill 경로를 함께 지정할 수 없습니다."
+        )
     artifact = require_artifact(db, user, artifact_id)
     if artifact.project_id != run.project_id:
-        raise ApiProblem(403, "artifact_project_mismatch", "현재 Project의 Artifact가 아닙니다.")
+        raise ApiProblem(
+            403, "artifact_project_mismatch", "현재 Project의 Artifact가 아닙니다."
+        )
     if PurePosixPath(artifact.display_name).suffix.casefold() != ".py":
         raise ValueError("run_python은 .py Artifact만 실행할 수 있습니다.")
     requested_version = arguments.get("artifact_version")
@@ -324,7 +324,9 @@ def _prepare_artifact_execution(
         or isinstance(requested_version, bool)
         or requested_version < 1
     ):
-        raise ValueError("Artifact Python 실행에는 1 이상의 artifact_version이 필요합니다.")
+        raise ValueError(
+            "Artifact Python 실행에는 1 이상의 artifact_version이 필요합니다."
+        )
     version = db.scalar(
         select(ArtifactVersion).where(
             ArtifactVersion.artifact_id == artifact.id,
@@ -396,7 +398,9 @@ def _prepare_skill_execution(
             f"{module_entry.as_posix()}/__init__.py",
         )
         if not any(candidate in package for candidate in candidates):
-            raise ValueError(f"Skill snapshot에 Python module이 없습니다: {module_value}")
+            raise ValueError(
+                f"Skill snapshot에 Python module이 없습니다: {module_value}"
+            )
         entrypoint = module_value
         module = module_value
     return PreparedPythonExecution(
@@ -435,9 +439,17 @@ async def execute_python(
     secrets: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     started = time.monotonic()
-    with tempfile.TemporaryDirectory(prefix="lumina-python-") as temporary:
-        root = Path(temporary).resolve()
-        _materialize(root, prepared.files)
+    temporary = tempfile.TemporaryDirectory(prefix="lumina-python-")
+    try:
+        root = Path(temporary.name).resolve()
+        materialize_task = asyncio.create_task(
+            asyncio.to_thread(_materialize, root, prepared.files)
+        )
+        try:
+            await asyncio.shield(materialize_task)
+        except asyncio.CancelledError:
+            await asyncio.gather(materialize_task, return_exceptions=True)
+            raise
         if prepared.module is None:
             worker = _RUN_PATH_WORKER
             target = str(root / PurePosixPath(prepared.entrypoint))
@@ -472,9 +484,7 @@ async def execute_python(
         stderr_task = asyncio.create_task(_collect_output(process.stderr))
         timed_out = False
         try:
-            await asyncio.wait_for(
-                process.wait(), timeout=prepared.timeout_seconds
-            )
+            await asyncio.wait_for(process.wait(), timeout=prepared.timeout_seconds)
         except asyncio.TimeoutError:
             timed_out = True
             await _terminate_process_tree(process)
@@ -487,6 +497,8 @@ async def execute_python(
                     await stdin_task
             stdout_bytes, stdout_truncated = await stdout_task
             stderr_bytes, stderr_truncated = await stderr_task
+    finally:
+        await asyncio.shield(asyncio.to_thread(temporary.cleanup))
     stdout = _redact_execution_paths(_decode_output(stdout_bytes), root)
     stderr = _redact_execution_paths(_decode_output(stderr_bytes), root)
     stdout = redact_sensitive_text(stdout, secrets=secrets)
@@ -590,9 +602,7 @@ def _timeout(
 def _python_executable(value: str) -> str:
     executable = Path(value).expanduser().resolve()
     if not executable.is_file():
-        raise ValueError(
-            "관리자가 설정한 Python 실행 파일을 찾을 수 없습니다."
-        )
+        raise ValueError("관리자가 설정한 Python 실행 파일을 찾을 수 없습니다.")
     return str(executable)
 
 
@@ -626,7 +636,9 @@ def _materialize(root: Path, files: Mapping[str, str]) -> None:
         try:
             target.relative_to(root)
         except ValueError as exc:
-            raise ValueError("Python 실행 package 경로가 임시 root를 벗어났습니다.") from exc
+            raise ValueError(
+                "Python 실행 package 경로가 임시 root를 벗어났습니다."
+            ) from exc
         target.parent.mkdir(parents=True, exist_ok=True)
         payload, encoding = decode_package_content(content)
         if encoding == "utf-8":
