@@ -63,25 +63,33 @@ export async function copyText(text: string, options: CopyTextOptions = {}) {
   throw new Error("Clipboard copy failed.");
 }
 
-export async function copyPngToClipboard(
-  png: Promise<Blob>,
-  uploadFallback: (blob: Blob) => Promise<void>,
-) {
+export function canCopyPngToClipboard() {
   const clipboard = typeof navigator !== "undefined"
     ? navigator.clipboard as (Clipboard & ImageClipboardWriter) | undefined
     : undefined;
-  if (
+  return (
     typeof window !== "undefined"
     && window.isSecureContext !== false
     && typeof clipboard?.write === "function"
     && typeof ClipboardItem !== "undefined"
-  ) {
+  );
+}
+
+export async function deliverPngCapture(
+  png: Promise<Blob>,
+  downloadFallback: (blob: Blob) => void | Promise<void>,
+): Promise<"copied" | "downloaded"> {
+  const clipboard = typeof navigator !== "undefined"
+    ? navigator.clipboard as (Clipboard & ImageClipboardWriter) | undefined
+    : undefined;
+  if (canCopyPngToClipboard() && clipboard) {
     await clipboard.write([
       new ClipboardItem({
         "image/png": png,
       }),
     ]);
-    return;
+    return "copied";
   }
-  await uploadFallback(await png);
+  await downloadFallback(await png);
+  return "downloaded";
 }

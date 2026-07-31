@@ -46,20 +46,19 @@ test("HTML Artifact capture keeps the preview sandbox and clones through the bri
   assert.doesNotMatch(capture, /growth <= plateauThreshold/);
   assert.match(capture, /const scale = selectArtifactCaptureScale\(width, height, window\.devicePixelRatio\)/);
   assert.match(capture, /Math\.sqrt\(artifactCaptureMaxPixels \/ \(width \* height\)\)/);
-  assert.match(capture, /\n\s+scale,\n/);
+  assert.match(capture, /\r?\n\s+scale,\r?\n/);
   assert.doesNotMatch(capture, /scale: 1/);
   assert.match(capture, /frame\.remove\(\)/);
 });
 
-test("PNG clipboard uses the browser on secure origins and host fallback on HTTP", async () => {
+test("PNG capture uses the browser clipboard on secure origins and downloads on HTTP", async () => {
   const clipboard = await readFile(paths.clipboard, "utf8");
+  const app = await readFile(paths.app, "utf8");
   assert.match(clipboard, /window\.isSecureContext !== false/);
   assert.match(clipboard, /new ClipboardItem\(\{/);
   assert.match(clipboard, /"image\/png": png/);
-  assert.match(clipboard, /await uploadFallback\(await png\)/);
-});
-
-test("the development proxy forwards the real LAN client address for clipboard safety", async () => {
-  const vite = await readFile(new URL("../vite.config.ts", import.meta.url), "utf8");
-  assert.match(vite, /"\/api":\s*\{[\s\S]*?xfwd:\s*true/);
+  assert.match(clipboard, /await downloadFallback\(await png\)/);
+  assert.match(clipboard, /return "downloaded"/);
+  assert.match(app, /anchor\.download = `\$\{baseName\}\.png`/);
+  assert.doesNotMatch(app, /copyPngImageToHostClipboard/);
 });

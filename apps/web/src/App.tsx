@@ -79,11 +79,11 @@ import {
   defaultArtifactOutputTokens,
   PromptEnhancementMenu,
 } from "./components/ComposerControls";
-import { copyPngToClipboard, copyText } from "./clipboard";
+import { canCopyPngToClipboard, copyText, deliverPngCapture } from "./clipboard";
 import { clipboardTextWithLineBreaks } from "./composer-clipboard";
 import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent as ReactUIEvent } from "react";
 import { createPortal } from "react-dom";
-import { api, ApiError, artifactStandalonePreviewUrl, attachmentContentUrl, copyPngImageToHostClipboard, saveKnowledgeDocumentFromArtifact } from "./api";
+import { api, ApiError, artifactStandalonePreviewUrl, attachmentContentUrl, saveKnowledgeDocumentFromArtifact } from "./api";
 import { deepAnalysisSidebarApi } from "./feature-api";
 import { isTerminalRunStatus } from "./run-status";
 import { IsolatedSyntaxTextarea, SyntaxCode } from "./components/SyntaxCode";
@@ -999,7 +999,7 @@ function App() {
   const [artifactSaveBusy, setArtifactSaveBusy] = useState<"draft" | "version" | null>(null);
   const [artifactKnowledgeSaving, setArtifactKnowledgeSaving] = useState(false);
   const [artifactKnowledgeSavedKey, setArtifactKnowledgeSavedKey] = useState<string | null>(null);
-  const [artifactCaptureState, setArtifactCaptureState] = useState<"idle" | "capturing" | "copied">("idle");
+  const [artifactCaptureState, setArtifactCaptureState] = useState<"idle" | "capturing" | "copied" | "downloaded">("idle");
   const [artifactCaptureRequestId, setArtifactCaptureRequestId] = useState("");
   const titleCommitRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -3060,15 +3060,23 @@ function App() {
     setArtifactCaptureState("capturing");
     setArtifactCaptureRequestId(requestId);
     try {
-      await copyPngToClipboard(png, copyPngImageToHostClipboard);
-      setArtifactCaptureState("copied");
+      const result = await deliverPngCapture(png, (blob) => {
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        const baseName = artifactSummary?.displayName.replace(/\.[^.]+$/, "") || "lumina-report";
+        anchor.href = url;
+        anchor.download = `${baseName}.png`;
+        anchor.click();
+        URL.revokeObjectURL(url);
+      });
+      setArtifactCaptureState(result);
       artifactCaptureResetTimerRef.current = window.setTimeout(() => {
         artifactCaptureResetTimerRef.current = null;
         setArtifactCaptureState("idle");
       }, 1_400);
     } catch (error) {
       setArtifactCaptureState("idle");
-      showToast(`전체 이미지 복사 실패: ${error instanceof Error ? error.message : String(error)}`);
+      showToast(`전체 이미지 생성 실패: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       window.clearTimeout(captureTimeoutId);
       pendingArtifactCaptureRef.current = null;
@@ -4539,8 +4547,10 @@ function App() {
                 captureDisabled={artifactTab !== "preview" || artifactEditing || artifactLoading}
                 captureState={artifactCaptureState}
                 captureTooltip={artifactTab !== "preview"
-                  ? "미리보기에서 전체 이미지 복사"
-                  : artifactEditing ? "수정사항 반영 후 전체 이미지 복사" : "전체 이미지 복사"}
+                  ? `미리보기에서 전체 이미지 ${canCopyPngToClipboard() ? "복사" : "PNG 다운로드"}`
+                  : artifactEditing
+                    ? `수정사항 반영 후 전체 이미지 ${canCopyPngToClipboard() ? "복사" : "PNG 다운로드"}`
+                    : `전체 이미지 ${canCopyPngToClipboard() ? "복사" : "PNG 다운로드"}`}
                 downloadDisabled={!artifactSummary || artifactDownloadVersion === null}
                 openWindowHref={
                   artifactSummary && artifactVersion?.mimeType === "text/html"

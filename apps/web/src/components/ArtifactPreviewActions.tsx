@@ -10,7 +10,7 @@ interface ArtifactPreviewActionsProps {
   knowledgeSaved?: boolean;
   shareDisabled?: boolean;
   captureDisabled?: boolean;
-  captureState?: "idle" | "capturing" | "copied";
+  captureState?: "idle" | "capturing" | "copied" | "downloaded";
   captureTooltip?: string;
   downloadDisabled?: boolean;
   openWindowHref?: string | null;
@@ -75,16 +75,16 @@ export function ArtifactPreviewActions({
     </button>
     {onCapture && (
       <button
-        className={`artifact-capture-control tooltip-control ${captureState === "copied" ? "is-copied" : ""}`}
+        className={`artifact-capture-control tooltip-control ${captureState === "copied" || captureState === "downloaded" ? "is-copied" : ""}`}
         type="button"
-        aria-label={captureState === "capturing" ? "전체 이미지 생성 중" : captureState === "copied" ? "전체 이미지 복사됨" : "전체 이미지 복사"}
-        data-tooltip={captureState === "capturing" ? "전체 이미지 생성 중" : captureState === "copied" ? "전체 이미지 복사됨" : captureTooltip}
+        aria-label={captureState === "capturing" ? "전체 이미지 생성 중" : captureState === "copied" ? "전체 이미지 복사됨" : captureState === "downloaded" ? "전체 이미지 다운로드됨" : captureTooltip}
+        data-tooltip={captureState === "capturing" ? "전체 이미지 생성 중" : captureState === "copied" ? "전체 이미지 복사됨" : captureState === "downloaded" ? "전체 이미지 다운로드됨" : captureTooltip}
         disabled={captureDisabled || captureState === "capturing"}
         onClick={() => void onCapture()}
       >
         {captureState === "capturing"
           ? <LoaderCircle className="is-running" size={17} />
-          : captureState === "copied" ? <Check size={17} /> : <Camera size={17} />}
+          : captureState === "copied" || captureState === "downloaded" ? <Check size={17} /> : <Camera size={17} />}
       </button>
     )}
     <button
