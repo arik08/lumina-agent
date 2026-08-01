@@ -65,6 +65,7 @@
         "tests/backend/test_python_execution.py::test_python_cancellation_waits_for_materialization_before_cleanup",
         "tests/backend/test_extensions_schedules.py::test_scheduler_database_tick_does_not_block_event_loop",
         "tests/backend/test_extensions_schedules.py::test_scheduler_cancellation_waits_for_database_transaction",
+        "tests/backend/test_run_safety.py::test_begin_model_turn_database_write_does_not_block_event_loop",
         "tests/backend/test_run_safety.py::test_provider_recovery_database_writes_do_not_block_event_loop"
       ]
     },

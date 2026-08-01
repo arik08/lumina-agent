@@ -2202,7 +2202,7 @@ class LocalRunExecutor:
             messages = await self._compact_runtime_context(
                 run_id, messages, tool_schemas
             )
-            violation, round_index = self._begin_model_turn(run_id)
+            violation, round_index = await self._begin_model_turn(run_id)
             if violation is not None:
                 await self._limit_run(run_id, violation)
                 return
@@ -8180,7 +8180,16 @@ class LocalRunExecutor:
         )
         return list(prepared.messages)
 
-    def _begin_model_turn(self, run_id: str) -> tuple[RunLimitViolation | None, int]:
+    async def _begin_model_turn(
+        self, run_id: str
+    ) -> tuple[RunLimitViolation | None, int]:
+        return await self._run_database_mutation(
+            run_id, self._begin_model_turn_database, run_id
+        )
+
+    def _begin_model_turn_database(
+        self, run_id: str
+    ) -> tuple[RunLimitViolation | None, int]:
         with session_scope() as db:
             run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             if run is None or run.status in TERMINAL_STATUSES:

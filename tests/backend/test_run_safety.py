@@ -664,6 +664,49 @@ def test_usage_and_turn_metric_database_writes_do_not_block_event_loop(
     assert asyncio.run(exercise()) >= 6
 
 
+def test_begin_model_turn_database_write_does_not_block_event_loop(
+    monkeypatch, tmp_path: Path
+) -> None:
+    executor = LocalRunExecutor(
+        Settings(
+            environment="test",
+            DATABASE_URL=(
+                f"sqlite:///{(tmp_path / 'begin-turn-offloop.db').as_posix()}"
+            ),
+            data_dir=tmp_path,
+            files_dir=tmp_path / "files",
+            artifacts_dir=tmp_path / "artifacts",
+            cookie_secure=False,
+        )
+    )
+
+    def slow_begin(_run_id: str) -> tuple[None, int]:
+        time.sleep(0.05)
+        return None, 3
+
+    monkeypatch.setattr(executor, "_begin_model_turn_database", slow_begin)
+
+    async def exercise() -> tuple[int, tuple[object, int]]:
+        ticks = 0
+        running = True
+
+        async def ticker() -> None:
+            nonlocal ticks
+            while running:
+                ticks += 1
+                await asyncio.sleep(0.005)
+
+        ticker_task = asyncio.create_task(ticker())
+        result = await executor._begin_model_turn("run")
+        running = False
+        await ticker_task
+        return ticks, result
+
+    ticks, result = asyncio.run(exercise())
+    assert ticks >= 3
+    assert result == (None, 3)
+
+
 def test_provider_recovery_database_writes_do_not_block_event_loop(
     monkeypatch, tmp_path: Path
 ) -> None:
