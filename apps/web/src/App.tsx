@@ -115,7 +115,7 @@ import type {
 import LoginScreen from "./components/LoginScreen";
 import { AdminRunSafetySettings } from "./components/AdminRunSafetySettings";
 import { ViewDataCacheProvider } from "./view-data-cache";
-import { preloadAppViews } from "./app-preload";
+import { preloadAppView } from "./app-preload";
 import { SelectMenu } from "./components/SelectMenu";
 import { ConversationQuestionNavigator } from "./components/ConversationQuestionNavigator";
 import { SidebarRecentItems } from "./components/SidebarRecentItems";
@@ -1332,20 +1332,6 @@ function App() {
   }
   const cumulativeUsageByTurnSetId = cumulativeUsageCacheRef.current.value;
   const activeProject = workspace.projects.find((project) => project.id === workspace.activeProjectId) ?? null;
-  useEffect(() => {
-    const preload = () => {
-      void preloadAppViews({
-        projectId: workspace.activeProjectId,
-        isAdmin,
-      });
-    };
-    if ("requestIdleCallback" in window) {
-      const idleId = window.requestIdleCallback(preload, { timeout: 1_000 });
-      return () => window.cancelIdleCallback(idleId);
-    }
-    const timer = globalThis.setTimeout(preload, 0);
-    return () => globalThis.clearTimeout(timer);
-  }, [isAdmin, workspace.activeProjectId]);
   useEffect(() => {
     setDeepAnalysisMissions([]);
     setDeepAnalysisMissionsLoading(false);
@@ -3417,7 +3403,7 @@ function App() {
             ? <button type="button" aria-label="새 분석" data-tooltip="새 분석" disabled={activeProject?.role === "viewer"} onClick={startNewDeepAnalysis}><SquarePen size={18} /></button>
             : <button type="button" aria-label="새 채팅" data-tooltip="새 채팅" onClick={startNewConversation}><SquarePen size={18} /></button>}
           {navigation.map(({ id, label, icon: Icon }) => (
-            <button className={sidebarView === id ? "is-active" : ""} type="button" aria-label={label} data-tooltip={label} key={id} onClick={() => {
+            <button className={sidebarView === id ? "is-active" : ""} type="button" aria-label={label} data-tooltip={label} key={id} onPointerEnter={() => preloadAppView(id)} onFocus={() => preloadAppView(id)} onClick={() => {
               if (id === "files") setRequestedProjectFileId(null);
               setMainView(id);
             }}><Icon size={18} /></button>
@@ -3444,7 +3430,7 @@ function App() {
         </header>
 
         <nav className="primary-navigation" aria-label="주요 메뉴">
-          {navigation.map(({ id, label, icon: Icon }) => <button className={sidebarView === id ? "is-active" : ""} type="button" key={id} onClick={() => {
+          {navigation.map(({ id, label, icon: Icon }) => <button className={sidebarView === id ? "is-active" : ""} type="button" key={id} onPointerEnter={() => preloadAppView(id)} onFocus={() => preloadAppView(id)} onClick={() => {
             if (id === "files") setRequestedProjectFileId(null);
             setMainView(id);
             setSidebarOpen(false);

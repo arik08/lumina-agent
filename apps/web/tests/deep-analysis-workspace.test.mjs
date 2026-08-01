@@ -57,6 +57,9 @@ test("Mission event streaming coalesces refreshes and resumes immediately when v
   assert.match(view, /if \(refreshing \|\| document\.visibilityState !== "visible"\) return;/);
   assert.match(view, /const refreshWhenVisible = \(\) => \{\s*if \(document\.visibilityState !== "visible"\) return;\s*void refreshDetail\(\);\s*void refreshProjection\(\);/);
   assert.match(view, /document\.addEventListener\("visibilitychange", refreshWhenVisible\)/);
+  assert.match(view, /window\.setInterval\(\(\) => \{\s*void refreshProjection\(\);\s*\}, 2_000\)/);
+  assert.match(view, /\[costDetailsOpen, mission\?\.id, mission\?\.spentMicrousd\]/);
+  assert.doesNotMatch(view, /\[costDetailsOpen, mission\?\.id, mission\?\.eventCursor\]/);
   assert.match(view, /closeStream\(\)/);
   assert.match(view, /document\.removeEventListener\("visibilitychange", refreshWhenVisible\)/);
 });
@@ -334,7 +337,7 @@ test("Node output is one rendered document with a link to its saved file", async
   assert.match(view, /return value\.replace\(\/\\\\r\\\\n\|\\\\n\|\\\\r\/g, "\\n"\)/);
   assert.match(view, /output\.scrollTop = output\.scrollHeight/);
   assert.match(view, /api\.deepAnalysis\.openEventStream/);
-  assert.match(view, /const projectionInterval = window\.setInterval\(\(\) => \{\s*void refreshProjection\(\);\s*\}, 500\)/);
+  assert.match(view, /const projectionInterval = window\.setInterval\(\(\) => \{\s*void refreshProjection\(\);\s*\}, 2_000\)/);
   assert.match(view, /window\.clearInterval\(projectionInterval\)/);
   assert.match(view, /className="deep-analysis-output-document conversation-response-typography"/);
   assert.doesNotMatch(css, /\.deep-analysis-output-document\s*\{[^}]*font-size:/s);

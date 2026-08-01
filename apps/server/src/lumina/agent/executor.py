@@ -8726,10 +8726,23 @@ class LocalRunExecutor:
     async def _mark_turn_interrupted_by_steer(
         self, run_id: str, message_id: str, partial_text: str
     ) -> None:
+        changed = await self._run_database_mutation(
+            run_id,
+            self._mark_turn_interrupted_by_steer_database,
+            run_id,
+            message_id,
+            partial_text,
+        )
+        if changed:
+            await event_broker.notify(run_id)
+
+    def _mark_turn_interrupted_by_steer_database(
+        self, run_id: str, message_id: str, partial_text: str
+    ) -> bool:
         with session_scope() as db:
             run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             if run is None or run.status in TERMINAL_STATUSES:
-                return
+                return False
             self._require_execution_owner(run)
             if partial_text:
                 _append_safe_transcript_entries(
@@ -8745,7 +8758,7 @@ class LocalRunExecutor:
                     "status": "interrupted_by_steer",
                 },
             )
-        await event_broker.notify(run_id)
+        return True
 
     async def _apply_pending_steers(
         self,
@@ -8753,13 +8766,29 @@ class LocalRunExecutor:
         *,
         preceding_assistant_content: str | None = None,
     ) -> list[str]:
+        steer_messages, applied = await self._run_database_mutation(
+            run_id,
+            self._apply_pending_steers_database,
+            run_id,
+            preceding_assistant_content,
+        )
+        self.invalidate_control(run_id)
+        if applied:
+            await event_broker.notify(run_id)
+        return steer_messages
+
+    def _apply_pending_steers_database(
+        self,
+        run_id: str,
+        preceding_assistant_content: str | None,
+    ) -> tuple[list[str], bool]:
         applied = False
         steer_messages: list[str] = []
         applied_message_ids: set[str] = set()
         with session_scope() as db:
             run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             if run is None:
-                return steer_messages
+                return steer_messages, applied
             self._require_execution_owner(run)
             commands = list(
                 db.scalars(
@@ -8782,8 +8811,23 @@ class LocalRunExecutor:
                         },
                     ),
                 )
+            message_ids = {
+                str(message_id)
+                for command in commands
+                if (message_id := command.payload_json.get("message_id"))
+            }
+            messages_by_id: dict[str, Message] = {}
+            if message_ids:
+                messages_by_id = {
+                    message.id: message
+                    for message in db.scalars(
+                        select(Message).where(Message.id.in_(message_ids))
+                    )
+                }
             for command in commands:
-                message = db.get(Message, command.payload_json.get("message_id"))
+                message = messages_by_id.get(
+                    str(command.payload_json.get("message_id", ""))
+                )
                 if message:
                     attachment_ids = [
                         str(item)
@@ -8870,10 +8914,7 @@ class LocalRunExecutor:
                         if item.get("message_id") not in applied_message_ids
                     ],
                 }
-        self.invalidate_control(run_id)
-        if applied:
-            await event_broker.notify(run_id)
-        return steer_messages
+        return steer_messages, applied
 
     async def _complete_run(
         self,

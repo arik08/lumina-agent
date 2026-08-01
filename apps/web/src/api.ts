@@ -149,12 +149,6 @@ interface ApiRequestOptions extends Omit<RequestInit, "body"> {
 
 const apiBase = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
 const streamBase = (import.meta.env.VITE_STREAM_BASE_URL || "/stream").replace(/\/$/, "");
-const prefetchedRequestTtlMs = 5 * 60 * 1_000;
-const prefetchedRequests = new Map<string, {
-  expiresAt: number;
-  promise: Promise<unknown>;
-}>();
-let apiPrefetchDepth = 0;
 const BACKEND_CONTRACT_MISMATCH_MESSAGE = "Frontend와 Backend 버전이 일치하지 않습니다. Lumina 실행 창에서 R을 눌러 다시 시작해 주세요.";
 
 export function artifactStandalonePreviewUrl(artifactId: string, version: number) {
@@ -351,67 +345,21 @@ async function fetchApi(path: string, options: ApiRequestOptions = {}) {
 
 async function request<T>(path: string, options?: ApiRequestOptions): Promise<T> {
   const method = (options?.method ?? "GET").toUpperCase();
-  const cacheKey = method === "GET" ? buildUrl(apiBase, path, options?.query) : null;
-  if (!cacheKey) prefetchedRequests.clear();
-
-  if (cacheKey) {
-    const prefetched = prefetchedRequests.get(cacheKey);
-    if (prefetched && prefetched.expiresAt > Date.now()) {
-      if (apiPrefetchDepth === 0) prefetchedRequests.delete(cacheKey);
-      return waitForRequest(prefetched.promise as Promise<T>, options?.signal);
-    }
-    if (prefetched) prefetchedRequests.delete(cacheKey);
-  }
-
-  const promise = (async () => {
-    const response = await fetchApi(path, options);
-    const contentType = response.headers.get("content-type") ?? "";
-    if (response.status !== 204 && !contentType.includes("application/json")) {
-      const backendContractMismatch = contentType.includes("text/html");
-      throw new ApiError(backendContractMismatch
-        ? BACKEND_CONTRACT_MISMATCH_MESSAGE
-        : "서버가 예상하지 못한 응답을 반환했습니다. Lumina 실행 상태를 확인해 주세요.", {
-        status: 502,
-        code: backendContractMismatch ? "backend_contract_mismatch" : "invalid_api_response",
-        details: { contentType, path, method: method },
-      });
-    }
-    const payload = await parseBody(response);
-    captureCsrf(response, payload);
-    return payload as T;
-  })();
-
-  if (cacheKey && apiPrefetchDepth > 0) {
-    prefetchedRequests.set(cacheKey, {
-      expiresAt: Date.now() + prefetchedRequestTtlMs,
-      promise,
-    });
-    void promise.catch(() => {
-      if (prefetchedRequests.get(cacheKey)?.promise === promise) {
-        prefetchedRequests.delete(cacheKey);
-      }
+  const response = await fetchApi(path, options);
+  const contentType = response.headers.get("content-type") ?? "";
+  if (response.status !== 204 && !contentType.includes("application/json")) {
+    const backendContractMismatch = contentType.includes("text/html");
+    throw new ApiError(backendContractMismatch
+      ? BACKEND_CONTRACT_MISMATCH_MESSAGE
+      : "서버가 예상하지 못한 응답을 반환했습니다. Lumina 실행 상태를 확인해 주세요.", {
+      status: 502,
+      code: backendContractMismatch ? "backend_contract_mismatch" : "invalid_api_response",
+      details: { contentType, path, method: method },
     });
   }
-  return promise;
-}
-
-function waitForRequest<T>(promise: Promise<T>, signal?: AbortSignal | null) {
-  if (!signal) return promise;
-  if (signal.aborted) return Promise.reject(new DOMException("Aborted", "AbortError"));
-  return new Promise<T>((resolve, reject) => {
-    const abort = () => reject(new DOMException("Aborted", "AbortError"));
-    signal.addEventListener("abort", abort, { once: true });
-    void promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
-  });
-}
-
-export async function prefetchApiData(run: () => Promise<void>) {
-  apiPrefetchDepth += 1;
-  try {
-    await run();
-  } finally {
-    apiPrefetchDepth -= 1;
-  }
+  const payload = await parseBody(response);
+  captureCsrf(response, payload);
+  return payload as T;
 }
 
 export async function getAuthSession(signal?: AbortSignal) {

@@ -1089,7 +1089,7 @@ export function DeepAnalysisView({
       })
       .finally(() => setLoadingCosts(false));
     return () => controller.abort();
-  }, [costDetailsOpen, mission?.id, mission?.eventCursor]);
+  }, [costDetailsOpen, mission?.id, mission?.spentMicrousd]);
 
   useEffect(() => {
     if (!costDetailsOpen) return;
@@ -1203,7 +1203,7 @@ export function DeepAnalysisView({
     );
     const projectionInterval = window.setInterval(() => {
       void refreshProjection();
-    }, 500);
+    }, 2_000);
     const refreshWhenVisible = () => {
       if (document.visibilityState !== "visible") return;
       void refreshDetail();

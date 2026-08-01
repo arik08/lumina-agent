@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from datetime import timedelta
-import logging
-import json
+import asyncio
 from collections.abc import AsyncIterator
+from datetime import timedelta
+import json
+import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
@@ -142,6 +144,31 @@ from ..errors import ApiProblem
 router = APIRouter(tags=["deep-analysis"])
 stream_router = APIRouter(tags=["deep-analysis-stream"])
 logger = logging.getLogger(__name__)
+
+
+def _load_mission_event_batch(
+    session_token: str, mission_id: str, cursor: int
+) -> list[dict[str, Any]] | None:
+    with SessionLocal() as event_db:
+        resolved = resolve_server_session(event_db, session_token)
+        if resolved is None:
+            return None
+        try:
+            mission = require_mission(event_db, resolved.user, mission_id)
+        except ApiProblem:
+            return None
+        return [
+            jsonable_encoder(
+                MissionEventResponse.model_validate(event_payload(item)),
+                by_alias=True,
+            )
+            for item in list_events(
+                event_db,
+                mission.id,
+                after_sequence=cursor,
+                limit=200,
+            )
+        ]
 
 
 def _storage(settings: Settings) -> ManagedLocalStorage:
@@ -1233,42 +1260,48 @@ async def stream_mission_events(
 
     async def events() -> AsyncIterator[str]:
         nonlocal cursor
+        wake_revision, durable_revision = event_broker.revisions(
+            f"mission:{mission_id}"
+        )
+        query_required = True
         while True:
             if await request.is_disconnected():
                 return
-            with SessionLocal() as event_db:
-                resolved = resolve_server_session(event_db, context.session_token)
-                if resolved is None:
-                    return
-                try:
-                    mission = require_mission(event_db, resolved.user, mission_id)
-                except ApiProblem:
-                    return
-                rows = list_events(
-                    event_db,
-                    mission.id,
-                    after_sequence=cursor,
-                    limit=200,
+            if query_required:
+                observed_durable_revision = event_broker.revisions(
+                    f"mission:{mission_id}"
+                )[1]
+                encoded = await asyncio.to_thread(
+                    _load_mission_event_batch,
+                    context.session_token,
+                    mission_id,
+                    cursor,
                 )
-                encoded = [
-                    jsonable_encoder(
-                        MissionEventResponse.model_validate(event_payload(item)),
-                        by_alias=True,
-                    )
-                    for item in rows
-                ]
-            if encoded:
-                for event in encoded:
-                    cursor = int(event["sequence"])
-                    data = json.dumps(
-                        event,
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                    )
-                    yield (f"id: {cursor}\nevent: mission_event\ndata: {data}\n\n")
-                continue
+                if encoded is None:
+                    return
+                durable_revision = max(durable_revision, observed_durable_revision)
+                if encoded:
+                    for event in encoded:
+                        cursor = int(event["sequence"])
+                        data = json.dumps(
+                            event,
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        )
+                        yield (
+                            f"id: {cursor}\nevent: mission_event\ndata: {data}\n\n"
+                        )
+                    continue
             yield ": keep-alive\n\n"
-            await event_broker.wait(f"mission:{mission_id}", timeout=1.0)
+            wake_revision, timed_out = await event_broker.wait(
+                f"mission:{mission_id}",
+                timeout=10.0,
+                after_revision=wake_revision,
+            )
+            current_durable_revision = event_broker.revisions(
+                f"mission:{mission_id}"
+            )[1]
+            query_required = timed_out or current_durable_revision > durable_revision
 
     return StreamingResponse(
         events(),
