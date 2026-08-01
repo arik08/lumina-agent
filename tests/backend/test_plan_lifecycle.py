@@ -667,6 +667,7 @@ def test_pause_resume_cancel_and_retry_keep_plan_consistent(tmp_path: Path) -> N
         )
         assert retried is True and command.status == "applied"
         assert run.status == QUEUED
+        assert run.snapshot_json["run_attempt"] == 2
         assert {steps[key].status for key in ("model", "tools", "final")} == {"queued"}
         assert steps["prepare"].status == "completed"
         assert plan_snapshot(db, run)["status"] == "active"
@@ -695,6 +696,7 @@ def test_pause_resume_cancel_and_retry_keep_plan_consistent(tmp_path: Path) -> N
             )
         )
         assert "retry_scheduled" in event_types
+        assert "run_status_changed" in event_types
 
 
 def test_failed_step_retry_and_unsafe_tool_retry_contract(tmp_path: Path) -> None:
@@ -716,6 +718,7 @@ def test_failed_step_retry_and_unsafe_tool_retry_contract(tmp_path: Path) -> Non
             idempotency_key="retry-failed-model",
         )
         assert run.status == QUEUED
+        assert run.snapshot_json["run_attempt"] == 2
 
     unsafe_run_id, unsafe_admin_id = _direct_run(tmp_path, key="unsafe")
     with SessionLocal() as db:

@@ -229,6 +229,40 @@ def test_simple_chat_completion_does_not_create_notification(tmp_path: Path) -> 
         assert listing.json()["unreadCount"] == 0
 
 
+def test_run_transition_notifications_are_idempotent_per_attempt(
+    tmp_path: Path,
+) -> None:
+    app = create_app(_settings(tmp_path, "run-attempt-notifications.db"))
+    with TestClient(app) as client:
+        csrf = _login(client)
+        _project_id, conversation_id = _conversation(client, csrf, "Retry notification")
+        with SessionLocal() as db:
+            user = db.scalar(select(User).where(User.login_id == "admin@posco.com"))
+            assert user is not None
+            run, _message, _created = create_run(
+                db,
+                user=user,
+                conversation_id=conversation_id,
+                payload=RunCreate(message=RunMessageInput(text="Retry me")),
+                idempotency_key="notification-attempt-run-0001",
+            )
+            first, first_created = create_run_transition_notification(db, run, FAILED)
+            duplicate, duplicate_created = create_run_transition_notification(
+                db, run, FAILED
+            )
+            run.snapshot_json = {**run.snapshot_json, "run_attempt": 2}
+            second, second_created = create_run_transition_notification(db, run, FAILED)
+
+            assert first is not None and duplicate is not None and second is not None
+            assert first_created is True
+            assert duplicate_created is False
+            assert duplicate.id == first.id
+            assert second_created is True
+            assert second.id != first.id
+            assert first.idempotency_key.endswith(":attempt:1:status:failed")
+            assert second.idempotency_key.endswith(":attempt:2:status:failed")
+
+
 def test_deep_analysis_only_notifies_for_final_report_completion(
     tmp_path: Path,
 ) -> None:

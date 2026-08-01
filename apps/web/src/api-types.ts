@@ -2283,10 +2283,11 @@ export interface RunSnapshot {
   };
   modelTurnMetrics: ModelTurnMetric[];
   limits: {
-    deadline: IsoDateTime;
-    tokenLimit: number | null;
-    costLimitUsd: number | null;
-    costAccounting: "provider_reported";
+    maxModelTurns: number;
+    maxTotalTokens: number;
+    maxElapsedSeconds: number;
+    maxCostUsd: number;
+    costAccounting: "provider_reported_or_estimated";
   };
   usage: Record<string, unknown>;
 }
@@ -2476,6 +2477,7 @@ export type RunEventType =
   | "queued_message_cancelled"
   | "queued_message_promoted_to_run"
   | "provider_failure_classified"
+  | "retry_scheduled"
   | "run_completed"
   | "run_failed"
   | "run_limit_reached"
@@ -2507,6 +2509,7 @@ export type RunEvent =
   | RunEventEnvelope<"artifact_progress", NonNullable<RunSnapshot["artifactProgress"]>>
   | RunEventEnvelope<"work_plan_updated", { steps: WorkPlanStep[] }>
   | RunEventEnvelope<"plan_step_changed", { planId: UUID; step: PlanStep; subtasks?: PlanSubtask[] }>
+  | RunEventEnvelope<"retry_scheduled", { step: PlanStep; status: RunStatus }>
   | RunEventEnvelope<"tool_started" | "tool_progress" | "tool_completed", { execution: ToolExecution }>
   | RunEventEnvelope<"approval_requested", { approval: ToolApproval }>
   | RunEventEnvelope<"approval_resolved", { approval: ToolApproval; decision: ToolApproval["status"]; command?: RunCommand }>
@@ -2543,7 +2546,11 @@ export type RunEvent =
   | RunEventEnvelope<
       "run_limit_reached",
       {
-        code: "run_deadline_reached" | "run_token_limit" | "run_cost_limit";
+        code:
+          | "run_model_turn_limit_reached"
+          | "run_token_limit_reached"
+          | "run_cost_limit_reached"
+          | "run_deadline_reached";
         limit: number | string | null;
         observed: number | string | null;
       }

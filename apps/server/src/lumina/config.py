@@ -3,6 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal, cast
+from warnings import warn
 
 from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import (
@@ -22,6 +23,17 @@ DEFAULT_DATA_DIR = REPOSITORY_ROOT / "data"
 DEFAULT_DATABASE_URL = (
     f"sqlite:///{(DEFAULT_DATA_DIR / 'database' / 'lumina.db').as_posix()}"
 )
+
+
+@lru_cache(maxsize=None)
+def _warn_legacy_run_limits(names: tuple[str, ...]) -> None:
+    warn(
+        f"Legacy Run limit settings are no longer supported: {', '.join(names)}. "
+        "Configure organization Run safety settings instead; these values are "
+        "ignored.",
+        UserWarning,
+        stacklevel=3,
+    )
 
 
 class DotenvFirstSettings(BaseSettings):
@@ -131,13 +143,13 @@ class Settings(DotenvFirstSettings):
     csrf_cookie_name: str = "lumina_csrf"
     cookie_secure: bool = False
 
-    session_concurrency_limit: int = Field(default=1, ge=1)
+    session_concurrency_limit: int = Field(default=1, ge=1, le=1)
     user_concurrency_limit: int = Field(default=3, ge=1)
     server_concurrency_limit: int = Field(default=12, ge=1)
     tool_concurrency_limit: int = Field(default=4, ge=1, le=16)
     codex_cache_prewarm_enabled: bool = False
-    run_timeout_seconds: float = Field(default=900.0, gt=0, le=86_400)
-    run_token_limit: int | None = Field(default=200_000, ge=1)
+    run_timeout_seconds: float | None = Field(default=None, gt=0, le=86_400)
+    run_token_limit: int | None = Field(default=None, ge=1)
     run_cost_limit_usd: float | None = Field(default=None, gt=0)
     login_max_failed_attempts: int = Field(default=5, ge=1)
     login_lock_seconds: int = Field(default=900, ge=1)
@@ -153,6 +165,18 @@ class Settings(DotenvFirstSettings):
 
     @model_validator(mode="after")
     def resolve_storage_directories(self) -> "Settings":
+        legacy_run_limits = {
+            "run_timeout_seconds": self.run_timeout_seconds,
+            "run_token_limit": self.run_token_limit,
+            "run_cost_limit_usd": self.run_cost_limit_usd,
+        }
+        configured_legacy_limits = [
+            name for name, value in legacy_run_limits.items() if value is not None
+        ]
+        if configured_legacy_limits:
+            _warn_legacy_run_limits(tuple(configured_legacy_limits))
+            for name in configured_legacy_limits:
+                setattr(self, name, None)
         self.data_dir = self.data_dir.expanduser().resolve()
         self.files_dir = (
             (self.files_dir or self.data_dir / "files").expanduser().resolve()

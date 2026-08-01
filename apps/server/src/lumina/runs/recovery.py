@@ -8,8 +8,8 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from ..models import Plan, PlanStep, PlanSubtask, Run, ToolExecution, utc_now
-from .plans import resume_plan
-from .service import append_event, plan_snapshot, transition_run
+from .events import append_event
+from .plans import plan_snapshot, resume_plan
 from .state import (
     ACTIVE_STATUSES,
     AWAITING_APPROVAL,
@@ -19,6 +19,7 @@ from .state import (
     QUEUED,
 )
 from .subtasks import finish_tool_subtask
+from .transitions import transition_run
 
 
 @dataclass(frozen=True, slots=True)

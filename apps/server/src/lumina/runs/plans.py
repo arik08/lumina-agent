@@ -12,6 +12,7 @@ from ..models import Plan, PlanStep, PlanSubtask, Run, new_uuid, utc_now
 from .events import append_event
 from .state import COMPLETED, QUEUED, TERMINAL_STATUSES
 from .subtasks import list_step_subtasks
+from .transitions import transition_run
 
 PLAN_STEP_QUEUED = "queued"
 PLAN_STEP_RUNNING = "running"
@@ -820,14 +821,17 @@ def retry_plan_step(db: Session, run: Run, step_id: str | None) -> PlanStep:
     plan, _steps = _plan_rows(db, run)
     plan.status = "active"
     plan.updated_at = utc_now()
-    run.status = QUEUED
     run.queued_at = utc_now()
     run.finished_at = None
     run.error_code = None
     run.error_message = None
     run.assistant_draft = ""
+    current_attempt = run.snapshot_json.get("run_attempt", 1)
+    if not isinstance(current_attempt, int) or isinstance(current_attempt, bool):
+        current_attempt = 1
     run.snapshot_json = {
         **run.snapshot_json,
+        "run_attempt": max(current_attempt, 1) + 1,
         "retry": {
             "step_id": step.id,
             "step_key": step.step_key,
@@ -835,6 +839,7 @@ def retry_plan_step(db: Session, run: Run, step_id: str | None) -> PlanStep:
             "scheduled_at": utc_now().isoformat(),
         },
     }
+    transition_run(db, run, QUEUED)
     db.flush()
     append_event(
         db,

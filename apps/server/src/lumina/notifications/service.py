@@ -235,6 +235,13 @@ def create_run_transition_notification(
             else {}
         ),
     }
+    run_attempt = run.snapshot_json.get("run_attempt", 1)
+    if (
+        not isinstance(run_attempt, int)
+        or isinstance(run_attempt, bool)
+        or run_attempt < 1
+    ):
+        run_attempt = 1
     return _create_notification(
         db,
         user_id=run.user_id,
@@ -243,7 +250,7 @@ def create_run_transition_notification(
         body=body,
         source_type="run",
         source_id=run.id,
-        idempotency_key=f"run:{run.id}:status:{target}",
+        idempotency_key=f"run:{run.id}:attempt:{run_attempt}:status:{target}",
         deep_link=deep_link,
         project_id=run.project_id,
         conversation_id=run.conversation_id,

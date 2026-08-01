@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from lumina.config import (
     DEFAULT_DATA_DIR,
     DEFAULT_DATABASE_URL,
@@ -64,3 +67,30 @@ def test_codex_cache_prewarm_is_opt_in(monkeypatch, tmp_path: Path) -> None:
     assert (
         Settings(_env_file=None, data_dir=tmp_path).codex_cache_prewarm_enabled is True
     )
+
+
+def test_same_session_concurrency_cannot_be_raised(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="less than or equal to 1"):
+        Settings(_env_file=None, data_dir=tmp_path, session_concurrency_limit=2)
+
+
+@pytest.mark.parametrize(
+    ("setting_name", "value"),
+    [
+        ("run_timeout_seconds", 30.0),
+        ("run_token_limit", 10_000),
+        ("run_cost_limit_usd", 2.5),
+    ],
+)
+def test_legacy_run_limit_settings_warn_and_are_ignored(
+    tmp_path: Path, setting_name: str, value: float | int
+) -> None:
+    with pytest.warns(
+        UserWarning,
+        match="Configure organization Run safety settings instead",
+    ):
+        settings = Settings(
+            _env_file=None, data_dir=tmp_path, **{setting_name: value}
+        )
+
+    assert getattr(settings, setting_name) is None

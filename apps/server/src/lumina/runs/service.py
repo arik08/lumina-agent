@@ -59,7 +59,6 @@ from ..models import (
     new_uuid,
     utc_now,
 )
-from ..notifications import create_run_transition_notification
 from ..project_files import get_project_file_version
 from ..project_files.folders import build_project_folder_references
 from ..project_memories import select_relevant_project_memories
@@ -97,13 +96,12 @@ from .state import (
     AWAITING_APPROVAL,
     AWAITING_INPUT,
     CANCELLED,
-    COMPLETED,
     INTERRUPTED,
     PAUSED,
     QUEUED,
     TERMINAL_STATUSES,
-    ensure_transition,
 )
+from .transitions import transition_run
 
 
 _EXPLICIT_MCP_REFERENCE_RE = re.compile(
@@ -591,6 +589,7 @@ def create_run(
         # Runtime termination no longer depends on a model-turn count.
         max_turns=0,
         snapshot_json={
+            "run_attempt": 1,
             "execution": execution,
             "attachments": attachment_ids,
             "prompt_references": references,
@@ -1166,44 +1165,6 @@ def _persist_message_references(
                 },
             )
     db.flush()
-
-
-def transition_run(
-    db: Session, run: Run, target: str, *, event_type: str = "run_status_changed"
-) -> RunEvent:
-    ensure_transition(run.status, target)
-    if target == COMPLETED:
-        work_plan = run.snapshot_json.get("work_plan", [])
-        if isinstance(work_plan, list) and any(
-            isinstance(item, dict) and item.get("status") != "completed"
-            for item in work_plan
-        ):
-            completed_work_plan = [
-                {**item, "status": "completed"} if isinstance(item, dict) else item
-                for item in work_plan
-            ]
-            run.snapshot_json = {
-                **run.snapshot_json,
-                "work_plan": completed_work_plan,
-            }
-            append_event(
-                db,
-                run,
-                "work_plan_updated",
-                {"steps": completed_work_plan},
-            )
-    run.status = target
-    now = utc_now()
-    if target == "preparing" and run.started_at is None:
-        run.started_at = now
-    if target in TERMINAL_STATUSES:
-        run.finished_at = now
-        run.snapshot_json = {**run.snapshot_json, "artifact_progress": None}
-    event = append_event(
-        db, run, event_type, {"status": target, "finishedAt": run.finished_at}
-    )
-    create_run_transition_notification(db, run, target)
-    return event
 
 
 def run_for_user(db: Session, user: User, run_id: str, *, write: bool = False) -> Run:

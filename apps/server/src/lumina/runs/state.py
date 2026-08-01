@@ -67,10 +67,10 @@ ALLOWED_TRANSITIONS: Mapping[str, frozenset[str]] = {
         {QUEUED, CANCELLED, LIMIT_REACHED}
     ),
     COMPLETED: frozenset(),
-    FAILED: frozenset(),
-    CANCELLED: frozenset(),
-    LIMIT_REACHED: frozenset(),
-    INTERRUPTED: frozenset({PREPARING, CANCELLED}),
+    FAILED: frozenset({QUEUED}),
+    CANCELLED: frozenset({QUEUED}),
+    LIMIT_REACHED: frozenset({QUEUED}),
+    INTERRUPTED: frozenset({QUEUED, PREPARING, CANCELLED}),
 }
 
 

@@ -70,6 +70,36 @@ def _default_project(client: TestClient) -> dict[str, object]:
     return next(item for item in response.json() if item["isDefault"])
 
 
+def test_general_admin_project_access_requires_membership(
+    tmp_path: Path,
+) -> None:
+    app = create_app(_settings(tmp_path, "admin-project-write-scope.db"))
+    with TestClient(app) as client:
+        _create_posco_user("admin-readonly-owner")
+        _create_posco_user("admin-readonly-reviewer", role="admin")
+        _login(client, "admin-readonly-owner")
+        owner_project = _default_project(client)
+        project_id = str(owner_project["id"])
+
+        admin_headers = _login(client, "admin-readonly-reviewer")
+        visible_ids = {item["id"] for item in client.get("/api/projects").json()}
+        assert project_id not in visible_ids
+
+        denied = client.patch(
+            f"/api/projects/{project_id}",
+            headers=admin_headers,
+            json={"description": "admin must not mutate through the general API"},
+        )
+        assert denied.status_code == 404
+        assert denied.json()["code"] == "not_found"
+
+        _login(client, "admin-readonly-owner")
+        persisted = next(
+            item for item in client.get("/api/projects").json() if item["id"] == project_id
+        )
+        assert persisted["description"] == owner_project["description"]
+
+
 def test_memberships_toggle_project_between_personal_and_shared(tmp_path: Path) -> None:
     app = create_app(_settings(tmp_path, "membership-project-scope.db"))
     with TestClient(app) as client:

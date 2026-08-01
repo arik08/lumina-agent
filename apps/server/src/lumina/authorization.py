@@ -8,7 +8,7 @@ from .models import Conversation, Project, ProjectMembership, User
 
 
 def project_access_query(user: User, *, write: bool = False):
-    if user.role == "admin":
+    if user.role == "admin" and not write:
         return select(Project).where(Project.organization_id == user.organization_id)
 
     member_roles = (

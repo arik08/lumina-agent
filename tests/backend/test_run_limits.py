@@ -169,9 +169,6 @@ def _settings(tmp_path: Path, name: str, **overrides: Any) -> Settings:
         files_dir=data_dir / "files",
         artifacts_dir=data_dir / "artifacts",
         cookie_secure=False,
-        run_timeout_seconds=overrides.pop("run_timeout_seconds", 30.0),
-        run_token_limit=overrides.pop("run_token_limit", 200_000),
-        run_cost_limit_usd=overrides.pop("run_cost_limit_usd", None),
         **overrides,
     )
 
@@ -250,16 +247,10 @@ def _assert_limit_event(run_id: str, code: str) -> Run:
         return run
 
 
-def test_run_snapshot_uses_organization_safety_limits_instead_of_legacy_settings(
+def test_run_snapshot_uses_organization_safety_limits(
     tmp_path: Path,
 ) -> None:
-    settings = _settings(
-        tmp_path,
-        "turn-limit.db",
-        run_timeout_seconds=60,
-        run_token_limit=10_000,
-        run_cost_limit_usd=2.5,
-    )
+    settings = _settings(tmp_path, "turn-limit.db")
     with TestClient(create_app(settings)) as client:
         run_id = _start_run(
             client,
