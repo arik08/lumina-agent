@@ -115,7 +115,11 @@ import type {
 import LoginScreen from "./components/LoginScreen";
 import { AdminRunSafetySettings } from "./components/AdminRunSafetySettings";
 import { ViewDataCacheProvider } from "./view-data-cache";
-import { preloadAppView } from "./app-preload";
+import {
+  backgroundPreloadOrder,
+  preloadAppView,
+  shouldBackgroundPreloadAppViews,
+} from "./app-preload";
 import { SelectMenu } from "./components/SelectMenu";
 import { ConversationQuestionNavigator } from "./components/ConversationQuestionNavigator";
 import { SidebarRecentItems } from "./components/SidebarRecentItems";
@@ -1332,6 +1336,36 @@ function App() {
   }
   const cumulativeUsageByTurnSetId = cumulativeUsageCacheRef.current.value;
   const activeProject = workspace.projects.find((project) => project.id === workspace.activeProjectId) ?? null;
+  useEffect(() => {
+    if (!workspace.authSession || !shouldBackgroundPreloadAppViews()) return;
+    let cancelled = false;
+    let preloadIndex = 0;
+    let idleId: number | null = null;
+    let fallbackTimer: number | null = null;
+    const preloadNext = () => {
+      idleId = null;
+      fallbackTimer = null;
+      if (cancelled) return;
+      const view = backgroundPreloadOrder[preloadIndex];
+      if (!view) return;
+      preloadIndex += 1;
+      void preloadAppView(view).finally(scheduleNext);
+    };
+    const scheduleNext = () => {
+      if (cancelled || preloadIndex >= backgroundPreloadOrder.length) return;
+      if ("requestIdleCallback" in window) {
+        idleId = window.requestIdleCallback(preloadNext, { timeout: 5_000 });
+        return;
+      }
+      fallbackTimer = globalThis.setTimeout(preloadNext, 750);
+    };
+    scheduleNext();
+    return () => {
+      cancelled = true;
+      if (idleId !== null) window.cancelIdleCallback(idleId);
+      if (fallbackTimer !== null) globalThis.clearTimeout(fallbackTimer);
+    };
+  }, [workspace.authSession?.user.id]);
   useEffect(() => {
     setDeepAnalysisMissions([]);
     setDeepAnalysisMissionsLoading(false);
@@ -3403,7 +3437,7 @@ function App() {
             ? <button type="button" aria-label="새 분석" data-tooltip="새 분석" disabled={activeProject?.role === "viewer"} onClick={startNewDeepAnalysis}><SquarePen size={18} /></button>
             : <button type="button" aria-label="새 채팅" data-tooltip="새 채팅" onClick={startNewConversation}><SquarePen size={18} /></button>}
           {navigation.map(({ id, label, icon: Icon }) => (
-            <button className={sidebarView === id ? "is-active" : ""} type="button" aria-label={label} data-tooltip={label} key={id} onPointerEnter={() => preloadAppView(id)} onFocus={() => preloadAppView(id)} onClick={() => {
+            <button className={sidebarView === id ? "is-active" : ""} type="button" aria-label={label} data-tooltip={label} key={id} onPointerEnter={() => void preloadAppView(id)} onFocus={() => void preloadAppView(id)} onClick={() => {
               if (id === "files") setRequestedProjectFileId(null);
               setMainView(id);
             }}><Icon size={18} /></button>
@@ -3430,7 +3464,7 @@ function App() {
         </header>
 
         <nav className="primary-navigation" aria-label="주요 메뉴">
-          {navigation.map(({ id, label, icon: Icon }) => <button className={sidebarView === id ? "is-active" : ""} type="button" key={id} onPointerEnter={() => preloadAppView(id)} onFocus={() => preloadAppView(id)} onClick={() => {
+          {navigation.map(({ id, label, icon: Icon }) => <button className={sidebarView === id ? "is-active" : ""} type="button" key={id} onPointerEnter={() => void preloadAppView(id)} onFocus={() => void preloadAppView(id)} onClick={() => {
             if (id === "files") setRequestedProjectFileId(null);
             setMainView(id);
             setSidebarOpen(false);
