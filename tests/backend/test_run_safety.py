@@ -680,9 +680,9 @@ def test_begin_model_turn_database_write_does_not_block_event_loop(
         )
     )
 
-    def slow_begin(_run_id: str) -> tuple[None, int]:
+    def slow_begin(_run_id: str) -> tuple[None, int, bool]:
         time.sleep(0.05)
-        return None, 3
+        return None, 3, False
 
     monkeypatch.setattr(executor, "_begin_model_turn_database", slow_begin)
 

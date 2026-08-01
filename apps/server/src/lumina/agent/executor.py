@@ -2208,7 +2208,6 @@ class LocalRunExecutor:
                 return
             if round_index == 0 and provider_retry_attempt == 0:
                 self._emit_run_activity(run_id, "started")
-            await self._set_status(run_id, MODEL_STREAMING)
             if artifact_drafting_turn and not artifact_drafting_started:
                 await self._publish_artifact_progress(
                     run_id,
@@ -8183,17 +8182,20 @@ class LocalRunExecutor:
     async def _begin_model_turn(
         self, run_id: str
     ) -> tuple[RunLimitViolation | None, int]:
-        return await self._run_database_mutation(
+        violation, round_index, status_changed = await self._run_database_mutation(
             run_id, self._begin_model_turn_database, run_id
         )
+        if status_changed:
+            await event_broker.notify(run_id)
+        return violation, round_index
 
     def _begin_model_turn_database(
         self, run_id: str
-    ) -> tuple[RunLimitViolation | None, int]:
+    ) -> tuple[RunLimitViolation | None, int, bool]:
         with session_scope() as db:
             run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             if run is None or run.status in TERMINAL_STATUSES:
-                return None, 0
+                return None, 0, False
             self._require_execution_owner(run)
             if run.status == PAUSED:
                 raise _RunParked
@@ -8201,11 +8203,14 @@ class LocalRunExecutor:
             previous = dict(run.usage_json)
             completed_turns = _nonnegative_int(previous.get("model_turns"))
             if violation is not None:
-                return violation, completed_turns
+                return violation, completed_turns, False
             previous["model_turns"] = completed_turns + 1
             run.usage_json = previous
             mark_model_turn_inflight(db, run, turn_index=completed_turns)
-            return None, completed_turns
+            status_changed = run.status != MODEL_STREAMING
+            if status_changed:
+                transition_run(db, run, MODEL_STREAMING)
+            return None, completed_turns, status_changed
 
     async def _retry_provider_request(
         self,

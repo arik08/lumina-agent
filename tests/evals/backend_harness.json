@@ -10,6 +10,7 @@
         "tests/backend/test_codex_oauth_provider.py::test_codex_direct_routes_same_prefix_across_new_run_sessions",
         "tests/backend/test_codex_prompt_cache_prewarm.py::test_codex_cache_prewarm_skips_recently_warmed_and_stale_seeds",
         "tests/backend/test_config.py::test_codex_cache_prewarm_is_opt_in",
+        "tests/backend/test_executor_tool_loop.py::test_auto_effort_preserves_explicit_choice_and_classifies_task_shape",
         "tests/backend/test_executor_tool_loop.py::test_auto_effort_and_model_turn_metrics_are_persisted",
         "tests/backend/test_admin_api.py::test_admin_usage_statistics_are_organization_scoped_and_admin_only"
       ]

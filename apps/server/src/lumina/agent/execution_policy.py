@@ -114,12 +114,16 @@ def _effective_reasoning_effort(
     message = " ".join(user_message.split())
     if _EXPLICIT_DEEP_WEB_RESEARCH.search(message):
         return "high"
+    # Search/fetch and file output already add their own round trips. Keep auto fast
+    # unless the selected research depth or task shape requires deeper reasoning.
     if (
-        artifact_required
+        (
+            web_research_budget[0] >= 20
+            and _AUTO_EFFORT_RESEARCH_PATTERN.search(message)
+        )
         or attachment_count >= 3
         or reference_count >= 3
         or _AUTO_EFFORT_COMPLEX_PATTERN.search(message)
-        or _AUTO_EFFORT_RESEARCH_PATTERN.search(message)
     ):
         return "medium"
     return "low"

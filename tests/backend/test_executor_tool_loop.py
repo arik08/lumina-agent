@@ -266,7 +266,7 @@ def test_auto_effort_preserves_explicit_choice_and_classifies_task_shape() -> No
             reference_count=0,
             web_research_budget=(10, 15),
         )
-        == "medium"
+        == "low"
     )
     assert (
         executor_module._effective_reasoning_effort(
@@ -301,6 +301,18 @@ def test_auto_effort_preserves_explicit_choice_and_classifies_task_shape() -> No
             attachment_count=0,
             reference_count=0,
             web_research_budget=(10, 15),
+        )
+        == "low"
+    )
+    assert (
+        executor_module._effective_reasoning_effort(
+            "auto",
+            provider_id="pgpt",
+            user_message="요청한 범위의 최신 자료를 조사해 정리해 줘",
+            artifact_required=False,
+            attachment_count=0,
+            reference_count=0,
+            web_research_budget=(20, 30),
         )
         == "medium"
     )
