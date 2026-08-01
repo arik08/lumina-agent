@@ -2152,6 +2152,547 @@ def _normalized_user_input_answers(
     return normalized
 
 
+def _pending_command_action_targets(
+    db: Session,
+    *,
+    user: User,
+    run: Run,
+    payload: RunActionRequest,
+) -> tuple[RunCommand, Message, QueuedMessage | None]:
+    if payload.command_id is None:
+        raise ApiProblem(
+            422, "command_id_required", "처리할 대기 요청을 선택해 주세요."
+        )
+    target_command = db.get(RunCommand, payload.command_id)
+    if target_command is None or target_command.run_id != run.id:
+        raise ApiProblem(
+            404, "run_command_not_found", "대기 요청을 찾을 수 없습니다."
+        )
+    if target_command.actor_user_id != user.id:
+        _require_run_command_actor(db, run=run, user=user)
+    if target_command.command_type not in {"steer", "queue_next"} or (
+        target_command.status not in {"waiting_safe_boundary", "queued"}
+    ):
+        raise ApiProblem(
+            409,
+            "run_command_not_pending",
+            "이미 적용되었거나 취소된 요청입니다.",
+        )
+    if payload.type == "steer_queued" and (
+        target_command.command_type != "queue_next"
+        or target_command.status != "queued"
+    ):
+        raise ApiProblem(
+            409,
+            "queued_command_required",
+            "Queue에서 대기 중인 요청만 현재 작업에 반영할 수 있습니다.",
+        )
+    message_id = target_command.payload_json.get("message_id")
+    target_message = db.get(Message, message_id) if message_id else None
+    if target_message is None:
+        raise ApiProblem(
+            409,
+            "run_command_message_missing",
+            "대기 요청의 메시지를 찾을 수 없습니다.",
+        )
+    target_queued_message: QueuedMessage | None = None
+    queued_message_id = target_command.payload_json.get("queued_message_id")
+    if queued_message_id:
+        target_queued_message = db.get(QueuedMessage, queued_message_id)
+    if target_command.command_type == "queue_next" and (
+        target_queued_message is None or target_queued_message.status != "queued"
+    ):
+        raise ApiProblem(
+            409,
+            "queued_message_not_pending",
+            "Queue 요청이 더 이상 대기 중이 아닙니다.",
+        )
+    if payload.type == "steer_queued":
+        attachment_ids = _validate_attachments(
+            db,
+            user,
+            run.project_id,
+            [
+                str(item)
+                for item in target_message.metadata_json.get("attachment_ids", [])
+            ],
+        )
+        references = _validate_references(
+            db,
+            user,
+            run.conversation_id,
+            [
+                MessageReferenceInput.model_validate(item)
+                for item in target_message.metadata_json.get(
+                    "prompt_references", []
+                )
+                if isinstance(item, dict)
+            ],
+            message_text=target_message.canonical_text,
+        )
+        _validate_steer_mcp_references(run, references)
+        target_message.metadata_json = {
+            **target_message.metadata_json,
+            "attachment_ids": attachment_ids,
+            "prompt_references": references,
+        }
+    return target_command, target_message, target_queued_message
+
+
+def _validated_action_approval(
+    db: Session, *, user: User, run: Run, payload: RunActionRequest
+) -> ToolApproval:
+    if payload.approval_id is None:
+        raise ApiProblem(
+            422, "approval_id_required", "처리할 Tool 승인 요청을 선택해 주세요."
+        )
+    approval = db.get(ToolApproval, payload.approval_id)
+    if approval is None or approval.run_id != run.id:
+        raise ApiProblem(
+            404, "approval_not_found", "Tool 승인 요청을 찾을 수 없습니다."
+        )
+    _require_approval_actor(db, run=run, user=user)
+    if run.status != AWAITING_APPROVAL:
+        raise ApiProblem(
+            409, "approval_not_pending", "현재 Run은 승인 대기 상태가 아닙니다."
+        )
+    if approval.status != "pending":
+        raise ApiProblem(
+            409,
+            "approval_already_resolved",
+            "Tool 승인 요청이 이미 처리되었습니다.",
+        )
+    return approval
+
+
+def _canonical_run_action_message(
+    db: Session, *, user: User, run: Run, payload: RunActionRequest
+) -> dict[str, Any]:
+    if payload.message is None:
+        raise ApiProblem(422, "message_required", "추가 요청 내용을 입력해 주세요.")
+    attachment_ids = _validate_attachments(
+        db, user, run.project_id, payload.message.attachment_ids
+    )
+    references = _validate_references(
+        db,
+        user,
+        run.conversation_id,
+        payload.message.prompt_references,
+        message_text=payload.message.text,
+    )
+    if payload.type == "steer":
+        _validate_steer_mcp_references(run, references)
+    return {
+        "text": payload.message.text,
+        "attachment_ids": attachment_ids,
+        "prompt_references": references,
+        "output_mode": payload.message.output_mode,
+        "analysis_depth": payload.message.analysis_depth,
+        "answer_length": payload.message.answer_length,
+        "target_output_tokens": (
+            payload.message.target_output_tokens
+            if payload.message.output_mode != "chat"
+            else None
+        ),
+    }
+
+
+def _apply_new_message_run_action(
+    db: Session,
+    *,
+    user: User,
+    run: Run,
+    payload: RunActionRequest,
+    command: RunCommand,
+    canonical_message: dict[str, Any],
+    idempotency_key: str,
+) -> Message:
+    assert payload.message is not None
+    attachment_ids = canonical_message["attachment_ids"]
+    references = canonical_message["prompt_references"]
+    message = Message(
+        conversation_id=run.conversation_id,
+        run_id=run.id if payload.type == "steer" else None,
+        author_user_id=user.id,
+        role="user",
+        status="pending",
+        canonical_text=payload.message.text,
+        turn_index=run.current_turn + 1,
+        metadata_json={
+            "command_type": payload.type,
+            "command_status": (
+                "waiting_safe_boundary" if payload.type == "steer" else "queued"
+            ),
+            "attachment_ids": attachment_ids,
+            "prompt_references": references,
+            "output_mode": payload.message.output_mode,
+            "analysis_depth": payload.message.analysis_depth,
+            "answer_length": payload.message.answer_length,
+            "target_output_tokens": canonical_message["target_output_tokens"],
+        },
+    )
+    db.add(message)
+    db.flush()
+    _persist_message_references(db, message, references)
+    command.payload_json = {**command.payload_json, "message_id": message.id}
+    if payload.type == "steer":
+        run.snapshot_json = {
+            **run.snapshot_json,
+            "pending_steers": [
+                *run.snapshot_json.get("pending_steers", []),
+                {
+                    "message_id": message.id,
+                    "text": message.canonical_text,
+                    "attachment_ids": attachment_ids,
+                    "prompt_references": references,
+                    "analysis_depth": canonical_message["analysis_depth"],
+                    "answer_length": canonical_message["answer_length"],
+                    "target_output_tokens": canonical_message["target_output_tokens"],
+                },
+            ],
+        }
+        command.status = "waiting_safe_boundary"
+        append_event(db, run, "steer_received", {"command": command_payload(command)})
+        append_event(
+            db,
+            run,
+            "steer_waiting_safe_boundary",
+            {"command": command_payload(command)},
+        )
+        return message
+
+    position = (
+        db.scalar(
+            select(func.max(QueuedMessage.position)).where(
+                QueuedMessage.conversation_id == run.conversation_id,
+                QueuedMessage.status == "queued",
+            )
+        )
+        or 0
+    ) + 1
+    queued = QueuedMessage(
+        conversation_id=run.conversation_id,
+        user_id=user.id,
+        position=position,
+        message_text=payload.message.text,
+        prompt_references_json=references,
+        attachment_ids_json=attachment_ids,
+        execution_options_json={
+            **run.snapshot_json.get("execution", {}),
+            "output_mode": payload.message.output_mode,
+            "analysis_depth": canonical_message["analysis_depth"],
+            "answer_length": canonical_message["answer_length"],
+            "target_output_tokens": canonical_message["target_output_tokens"],
+        },
+        idempotency_key=idempotency_key,
+    )
+    db.add(queued)
+    db.flush()
+    command.status = "queued"
+    command.payload_json = {
+        **command.payload_json,
+        "queue_position": position,
+        "queued_message_id": queued.id,
+    }
+    append_event(db, run, "queued_message_added", {"command": command_payload(command)})
+    return message
+
+
+def _apply_pending_command_run_action(
+    db: Session,
+    *,
+    run: Run,
+    payload: RunActionRequest,
+    command: RunCommand,
+    target_command: RunCommand,
+    target_message: Message,
+    target_queued_message: QueuedMessage | None,
+) -> Message | None:
+    now = utc_now()
+    message: Message | None = None
+    if payload.type == "steer_queued":
+        assert target_queued_message is not None
+        target_queued_message.status = "cancelled"
+        target_queued_message.cancelled_at = now
+        target_payload = {
+            **target_command.payload_json,
+            "type": "steer",
+            "converted_from_queue": True,
+            "source_queued_message_id": target_queued_message.id,
+        }
+        target_payload.pop("queue_position", None)
+        target_payload.pop("queued_message_id", None)
+        target_command.command_type = "steer"
+        target_command.status = "waiting_safe_boundary"
+        target_command.payload_json = target_payload
+        target_command.cancelled_at = None
+        target_message.run_id = run.id
+        target_message.status = "pending"
+        target_message.metadata_json = {
+            **target_message.metadata_json,
+            "command_type": "steer",
+            "command_status": "waiting_safe_boundary",
+        }
+        pending_steers = [
+            item
+            for item in run.snapshot_json.get("pending_steers", [])
+            if item.get("message_id") != target_message.id
+        ]
+        run.snapshot_json = {
+            **run.snapshot_json,
+            "pending_steers": [
+                *pending_steers,
+                {
+                    "message_id": target_message.id,
+                    "text": target_message.canonical_text,
+                    "attachment_ids": target_message.metadata_json.get(
+                        "attachment_ids", []
+                    ),
+                    "prompt_references": target_message.metadata_json.get(
+                        "prompt_references", []
+                    ),
+                    "analysis_depth": target_message.metadata_json.get(
+                        "analysis_depth", "auto"
+                    ),
+                    "answer_length": target_message.metadata_json.get(
+                        "answer_length", "auto"
+                    ),
+                    "target_output_tokens": target_message.metadata_json.get(
+                        "target_output_tokens"
+                    ),
+                },
+            ],
+        }
+        append_event(
+            db,
+            run,
+            "steer_received",
+            {"command": command_payload(target_command)},
+        )
+        append_event(
+            db,
+            run,
+            "steer_waiting_safe_boundary",
+            {"command": command_payload(target_command)},
+        )
+        message = target_message
+    else:
+        target_command.status = "cancelled"
+        target_command.cancelled_at = now
+        target_message.status = "interrupted"
+        target_message.metadata_json = {
+            **target_message.metadata_json,
+            "command_status": "cancelled",
+        }
+        if target_command.command_type == "queue_next":
+            assert target_queued_message is not None
+            target_queued_message.status = "cancelled"
+            target_queued_message.cancelled_at = now
+            event_type = "queued_message_cancelled"
+        else:
+            run.snapshot_json = {
+                **run.snapshot_json,
+                "pending_steers": [
+                    item
+                    for item in run.snapshot_json.get("pending_steers", [])
+                    if item.get("message_id") != target_message.id
+                ],
+            }
+            event_type = "steer_cancelled"
+        append_event(
+            db,
+            run,
+            event_type,
+            {"command": command_payload(target_command)},
+        )
+    for repositioned in _resequence_queued_commands(db, run):
+        append_event(
+            db,
+            run,
+            "queued_message_added",
+            {"command": command_payload(repositioned)},
+        )
+    command.status = "applied"
+    command.applied_at = now
+    command.payload_json = {
+        **command.payload_json,
+        "target_command_id": target_command.id,
+    }
+    return message
+
+
+def _apply_user_input_run_action(
+    db: Session,
+    *,
+    user: User,
+    run: Run,
+    payload: RunActionRequest,
+    command: RunCommand,
+    input_request: dict[str, Any],
+) -> None:
+    normalized_answers = _normalized_user_input_answers(input_request, payload.answers)
+    resolved_at = utc_now()
+    resolved_request = {
+        **input_request,
+        "status": "submitted",
+        "answers": normalized_answers,
+        "answeredAt": resolved_at.isoformat(),
+        "answeredByUserId": user.id,
+    }
+    requests = [
+        resolved_request if item.get("id") == input_request["id"] else item
+        for item in run.snapshot_json.get("input_requests", [])
+        if isinstance(item, dict)
+    ]
+    run.snapshot_json = {**run.snapshot_json, "input_requests": requests}
+    command.status = "applied"
+    command.applied_at = resolved_at
+    command.payload_json = {
+        **command.payload_json,
+        "input_request_id": input_request["id"],
+        "answers": normalized_answers,
+    }
+    append_event(
+        db,
+        run,
+        "input_submitted",
+        {"request": resolved_request, "command": command_payload(command)},
+    )
+    run.queued_at = resolved_at
+    transition_run(db, run, QUEUED)
+
+
+def _apply_pause_run_action(db: Session, *, run: Run, command: RunCommand) -> None:
+    if run.status in {AWAITING_APPROVAL, AWAITING_INPUT}:
+        raise ApiProblem(
+            409,
+            "user_response_waiting",
+            "사용자 응답을 기다리는 Run은 이미 안전하게 정지되어 있습니다.",
+        )
+    if run.status not in (ACTIVE_STATUSES - {PAUSED}) | {QUEUED}:
+        raise ApiProblem(409, "run_not_active", "현재 Run은 일시 정지할 수 없습니다.")
+    run.snapshot_json = {**run.snapshot_json, "resume_status": run.status}
+    transition_run(db, run, PAUSED)
+    pause_plan(db, run)
+    if run.worker_id is None:
+        from .recovery import detach_paused_run
+
+        detach_paused_run(db, run, reason="queued_pause")
+    command.status = "applied"
+    command.applied_at = utc_now()
+
+
+def _apply_resume_run_action(db: Session, *, run: Run, command: RunCommand) -> None:
+    if run.status != PAUSED:
+        raise ApiProblem(
+            409, "run_not_paused", "현재 Run은 일시 정지 상태가 아닙니다."
+        )
+    resumed_at = utc_now()
+    lease_is_live = run.lease_expires_at is None or run.lease_expires_at > resumed_at
+    if run.worker_id is not None and lease_is_live:
+        run.snapshot_json = {
+            **run.snapshot_json,
+            "resume_requested": True,
+            "resume_requested_at": resumed_at.isoformat(),
+        }
+        append_event(
+            db,
+            run,
+            "run_resume_requested",
+            {"status": PAUSED, "queuedAfterSafeBoundary": True},
+        )
+    else:
+        from .recovery import queue_paused_run_for_resume
+
+        queue_paused_run_for_resume(db, run)
+    command.status = "applied"
+    command.applied_at = resumed_at
+
+
+def _apply_approval_run_action(
+    db: Session,
+    *,
+    user: User,
+    run: Run,
+    payload: RunActionRequest,
+    command: RunCommand,
+    approval: ToolApproval,
+) -> None:
+    decision = "approved" if payload.type == "approve" else "rejected"
+    resolved_at = utc_now()
+    result = db.execute(
+        update(ToolApproval)
+        .where(ToolApproval.id == approval.id, ToolApproval.status == "pending")
+        .values(
+            status=decision,
+            resolved_by_user_id=user.id,
+            resolution_note=payload.note,
+            resolved_at=resolved_at,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if getattr(result, "rowcount", 0) != 1:
+        raise ApiProblem(
+            409,
+            "approval_already_resolved",
+            "Tool 승인 요청이 이미 처리되었습니다.",
+        )
+    db.expire(approval)
+    db.refresh(approval)
+    command.status = "applied"
+    command.applied_at = resolved_at
+    command.payload_json = {
+        **command.payload_json,
+        "approval_id": approval.id,
+        "decision": decision,
+    }
+    append_event(
+        db,
+        run,
+        "approval_resolved",
+        {
+            "approval": approval_payload(approval),
+            "decision": decision,
+            "command": command_payload(command),
+        },
+    )
+    record_audit(
+        db,
+        actor=user,
+        action=f"tool_approval_{decision}",
+        target_type="tool_approval",
+        target_id=approval.id,
+        result="success",
+        reason=decision,
+        metadata={
+            "run_id": run.id,
+            "tool_name": approval.tool_name,
+            "effect": approval.effect,
+            "risk_level": approval.risk_level,
+            "argument_digest": approval.argument_digest,
+        },
+    )
+    remaining = (
+        db.scalar(
+            select(func.count(ToolApproval.id)).where(
+                ToolApproval.run_id == run.id,
+                ToolApproval.status == "pending",
+            )
+        )
+        or 0
+    )
+    if remaining == 0:
+        change_plan_step(
+            db,
+            run,
+            "tools",
+            status=PLAN_STEP_QUEUED,
+            reason="tool_approvals_resolved",
+        )
+        run.queued_at = resolved_at
+        transition_run(db, run, QUEUED)
+
+
 def apply_run_action(
     db: Session,
     *,
@@ -2175,141 +2716,32 @@ def apply_run_action(
     target_message: Message | None = None
     target_queued_message: QueuedMessage | None = None
     if payload.type in {"steer_queued", "cancel_command"}:
-        if payload.command_id is None:
-            raise ApiProblem(
-                422, "command_id_required", "처리할 대기 요청을 선택해 주세요."
-            )
-        target_command = db.get(RunCommand, payload.command_id)
-        if target_command is None or target_command.run_id != run.id:
-            raise ApiProblem(
-                404, "run_command_not_found", "대기 요청을 찾을 수 없습니다."
-            )
-        if target_command.actor_user_id != user.id:
-            _require_run_command_actor(db, run=run, user=user)
-        if target_command.command_type not in {"steer", "queue_next"} or (
-            target_command.status not in {"waiting_safe_boundary", "queued"}
-        ):
-            raise ApiProblem(
-                409,
-                "run_command_not_pending",
-                "이미 적용되었거나 취소된 요청입니다.",
-            )
-        if payload.type == "steer_queued" and (
-            target_command.command_type != "queue_next"
-            or target_command.status != "queued"
-        ):
-            raise ApiProblem(
-                409,
-                "queued_command_required",
-                "Queue에서 대기 중인 요청만 현재 작업에 반영할 수 있습니다.",
-            )
-        message_id = target_command.payload_json.get("message_id")
-        target_message = db.get(Message, message_id) if message_id else None
-        if target_message is None:
-            raise ApiProblem(
-                409,
-                "run_command_message_missing",
-                "대기 요청의 메시지를 찾을 수 없습니다.",
-            )
-        queued_message_id = target_command.payload_json.get("queued_message_id")
-        if queued_message_id:
-            target_queued_message = db.get(QueuedMessage, queued_message_id)
-        if target_command.command_type == "queue_next" and (
-            target_queued_message is None or target_queued_message.status != "queued"
-        ):
-            raise ApiProblem(
-                409,
-                "queued_message_not_pending",
-                "Queue 요청이 더 이상 대기 중이 아닙니다.",
-            )
-        if payload.type == "steer_queued":
-            attachment_ids = _validate_attachments(
+        target_command, target_message, target_queued_message = (
+            _pending_command_action_targets(
                 db,
-                user,
-                run.project_id,
-                [
-                    str(item)
-                    for item in target_message.metadata_json.get("attachment_ids", [])
-                ],
+                user=user,
+                run=run,
+                payload=payload,
             )
-            references = _validate_references(
-                db,
-                user,
-                run.conversation_id,
-                [
-                    MessageReferenceInput.model_validate(item)
-                    for item in target_message.metadata_json.get(
-                        "prompt_references", []
-                    )
-                    if isinstance(item, dict)
-                ],
-                message_text=target_message.canonical_text,
-            )
-            _validate_steer_mcp_references(run, references)
-            target_message.metadata_json = {
-                **target_message.metadata_json,
-                "attachment_ids": attachment_ids,
-                "prompt_references": references,
-            }
+        )
 
     if payload.type == "retry_step":
         _retryable_plan_step(db, run, payload.step_id)
     approval: ToolApproval | None = None
     input_request: dict[str, Any] | None = None
     if payload.type in {"approve", "reject"}:
-        if payload.approval_id is None:
-            raise ApiProblem(
-                422, "approval_id_required", "처리할 Tool 승인 요청을 선택해 주세요."
-            )
-        approval = db.get(ToolApproval, payload.approval_id)
-        if approval is None or approval.run_id != run.id:
-            raise ApiProblem(
-                404, "approval_not_found", "Tool 승인 요청을 찾을 수 없습니다."
-            )
-        _require_approval_actor(db, run=run, user=user)
-        if run.status != AWAITING_APPROVAL:
-            raise ApiProblem(
-                409, "approval_not_pending", "현재 Run은 승인 대기 상태가 아닙니다."
-            )
-        if approval.status != "pending":
-            raise ApiProblem(
-                409,
-                "approval_already_resolved",
-                "Tool 승인 요청이 이미 처리되었습니다.",
-            )
+        approval = _validated_action_approval(
+            db, user=user, run=run, payload=payload
+        )
     if payload.type == "submit_user_input":
         input_request = _input_request(run, payload.input_request_id)
         _require_approval_actor(db, run=run, user=user)
 
     canonical_message: dict[str, Any] | None = None
     if payload.type in {"steer", "queue_next"}:
-        if payload.message is None:
-            raise ApiProblem(422, "message_required", "추가 요청 내용을 입력해 주세요.")
-        attachment_ids = _validate_attachments(
-            db, user, run.project_id, payload.message.attachment_ids
+        canonical_message = _canonical_run_action_message(
+            db, user=user, run=run, payload=payload
         )
-        references = _validate_references(
-            db,
-            user,
-            run.conversation_id,
-            payload.message.prompt_references,
-            message_text=payload.message.text,
-        )
-        if payload.type == "steer":
-            _validate_steer_mcp_references(run, references)
-        canonical_message = {
-            "text": payload.message.text,
-            "attachment_ids": attachment_ids,
-            "prompt_references": references,
-            "output_mode": payload.message.output_mode,
-            "analysis_depth": payload.message.analysis_depth,
-            "answer_length": payload.message.answer_length,
-            "target_output_tokens": (
-                payload.message.target_output_tokens
-                if payload.message.output_mode != "chat"
-                else None
-            ),
-        }
 
     command_payload_json = payload.model_dump(mode="json", by_alias=False)
     if canonical_message is not None:
@@ -2327,297 +2759,45 @@ def apply_run_action(
     message: Message | None = None
 
     if payload.type in {"steer", "queue_next"}:
-        assert payload.message is not None and canonical_message is not None
-        attachment_ids = canonical_message["attachment_ids"]
-        references = canonical_message["prompt_references"]
-        message = Message(
-            conversation_id=run.conversation_id,
-            run_id=run.id if payload.type == "steer" else None,
-            author_user_id=user.id,
-            role="user",
-            status="pending",
-            canonical_text=payload.message.text,
-            turn_index=run.current_turn + 1,
-            metadata_json={
-                "command_type": payload.type,
-                "command_status": (
-                    "waiting_safe_boundary" if payload.type == "steer" else "queued"
-                ),
-                "attachment_ids": attachment_ids,
-                "prompt_references": references,
-                "output_mode": payload.message.output_mode,
-                "analysis_depth": payload.message.analysis_depth,
-                "answer_length": payload.message.answer_length,
-                "target_output_tokens": canonical_message["target_output_tokens"],
-            },
+        assert canonical_message is not None
+        message = _apply_new_message_run_action(
+            db,
+            user=user,
+            run=run,
+            payload=payload,
+            command=command,
+            canonical_message=canonical_message,
+            idempotency_key=idempotency_key,
         )
-        db.add(message)
-        db.flush()
-        _persist_message_references(db, message, references)
-        command.payload_json = {**command.payload_json, "message_id": message.id}
-        if payload.type == "steer":
-            run.snapshot_json = {
-                **run.snapshot_json,
-                "pending_steers": [
-                    *run.snapshot_json.get("pending_steers", []),
-                    {
-                        "message_id": message.id,
-                        "text": message.canonical_text,
-                        "attachment_ids": attachment_ids,
-                        "prompt_references": references,
-                        "analysis_depth": canonical_message["analysis_depth"],
-                        "answer_length": canonical_message["answer_length"],
-                        "target_output_tokens": canonical_message[
-                            "target_output_tokens"
-                        ],
-                    },
-                ],
-            }
-            command.status = "waiting_safe_boundary"
-            append_event(
-                db, run, "steer_received", {"command": command_payload(command)}
-            )
-            append_event(
-                db,
-                run,
-                "steer_waiting_safe_boundary",
-                {"command": command_payload(command)},
-            )
-        else:
-            position = (
-                db.scalar(
-                    select(func.max(QueuedMessage.position)).where(
-                        QueuedMessage.conversation_id == run.conversation_id,
-                        QueuedMessage.status == "queued",
-                    )
-                )
-                or 0
-            ) + 1
-            queued = QueuedMessage(
-                conversation_id=run.conversation_id,
-                user_id=user.id,
-                position=position,
-                message_text=payload.message.text,
-                prompt_references_json=references,
-                attachment_ids_json=attachment_ids,
-                execution_options_json={
-                    **run.snapshot_json.get("execution", {}),
-                    "output_mode": payload.message.output_mode,
-                    "analysis_depth": canonical_message["analysis_depth"],
-                    "answer_length": canonical_message["answer_length"],
-                    "target_output_tokens": canonical_message["target_output_tokens"],
-                },
-                idempotency_key=idempotency_key,
-            )
-            db.add(queued)
-            db.flush()
-            command.status = "queued"
-            command.payload_json = {
-                **command.payload_json,
-                "queue_position": position,
-                "queued_message_id": queued.id,
-            }
-            append_event(
-                db, run, "queued_message_added", {"command": command_payload(command)}
-            )
     elif payload.type in {"steer_queued", "cancel_command"}:
         assert target_command is not None and target_message is not None
-        now = utc_now()
-        if payload.type == "steer_queued":
-            assert target_queued_message is not None
-            target_queued_message.status = "cancelled"
-            target_queued_message.cancelled_at = now
-            target_payload = {
-                **target_command.payload_json,
-                "type": "steer",
-                "converted_from_queue": True,
-                "source_queued_message_id": target_queued_message.id,
-            }
-            target_payload.pop("queue_position", None)
-            target_payload.pop("queued_message_id", None)
-            target_command.command_type = "steer"
-            target_command.status = "waiting_safe_boundary"
-            target_command.payload_json = target_payload
-            target_command.cancelled_at = None
-            target_message.run_id = run.id
-            target_message.status = "pending"
-            target_message.metadata_json = {
-                **target_message.metadata_json,
-                "command_type": "steer",
-                "command_status": "waiting_safe_boundary",
-            }
-            pending_steers = [
-                item
-                for item in run.snapshot_json.get("pending_steers", [])
-                if item.get("message_id") != target_message.id
-            ]
-            run.snapshot_json = {
-                **run.snapshot_json,
-                "pending_steers": [
-                    *pending_steers,
-                    {
-                        "message_id": target_message.id,
-                        "text": target_message.canonical_text,
-                        "attachment_ids": target_message.metadata_json.get(
-                            "attachment_ids", []
-                        ),
-                        "prompt_references": target_message.metadata_json.get(
-                            "prompt_references", []
-                        ),
-                        "analysis_depth": target_message.metadata_json.get(
-                            "analysis_depth", "auto"
-                        ),
-                        "answer_length": target_message.metadata_json.get(
-                            "answer_length", "auto"
-                        ),
-                        "target_output_tokens": target_message.metadata_json.get(
-                            "target_output_tokens"
-                        ),
-                    },
-                ],
-            }
-            append_event(
-                db,
-                run,
-                "steer_received",
-                {"command": command_payload(target_command)},
-            )
-            append_event(
-                db,
-                run,
-                "steer_waiting_safe_boundary",
-                {"command": command_payload(target_command)},
-            )
-            message = target_message
-        else:
-            target_command.status = "cancelled"
-            target_command.cancelled_at = now
-            target_message.status = "interrupted"
-            target_message.metadata_json = {
-                **target_message.metadata_json,
-                "command_status": "cancelled",
-            }
-            if target_command.command_type == "queue_next":
-                assert target_queued_message is not None
-                target_queued_message.status = "cancelled"
-                target_queued_message.cancelled_at = now
-                event_type = "queued_message_cancelled"
-            else:
-                run.snapshot_json = {
-                    **run.snapshot_json,
-                    "pending_steers": [
-                        item
-                        for item in run.snapshot_json.get("pending_steers", [])
-                        if item.get("message_id") != target_message.id
-                    ],
-                }
-                event_type = "steer_cancelled"
-            append_event(
-                db,
-                run,
-                event_type,
-                {"command": command_payload(target_command)},
-            )
-        for repositioned in _resequence_queued_commands(db, run):
-            append_event(
-                db,
-                run,
-                "queued_message_added",
-                {"command": command_payload(repositioned)},
-            )
-        command.status = "applied"
-        command.applied_at = now
-        command.payload_json = {
-            **command.payload_json,
-            "target_command_id": target_command.id,
-        }
+        message = _apply_pending_command_run_action(
+            db,
+            run=run,
+            payload=payload,
+            command=command,
+            target_command=target_command,
+            target_message=target_message,
+            target_queued_message=target_queued_message,
+        )
     elif payload.type == "submit_user_input":
         assert input_request is not None
-        normalized_answers = _normalized_user_input_answers(
-            input_request, payload.answers
-        )
-        resolved_at = utc_now()
-        resolved_request = {
-            **input_request,
-            "status": "submitted",
-            "answers": normalized_answers,
-            "answeredAt": resolved_at.isoformat(),
-            "answeredByUserId": user.id,
-        }
-        requests = [
-            resolved_request if item.get("id") == input_request["id"] else item
-            for item in run.snapshot_json.get("input_requests", [])
-            if isinstance(item, dict)
-        ]
-        run.snapshot_json = {**run.snapshot_json, "input_requests": requests}
-        command.status = "applied"
-        command.applied_at = resolved_at
-        command.payload_json = {
-            **command.payload_json,
-            "input_request_id": input_request["id"],
-            "answers": normalized_answers,
-        }
-        append_event(
+        _apply_user_input_run_action(
             db,
-            run,
-            "input_submitted",
-            {"request": resolved_request, "command": command_payload(command)},
+            user=user,
+            run=run,
+            payload=payload,
+            command=command,
+            input_request=input_request,
         )
-        run.queued_at = resolved_at
-        transition_run(db, run, QUEUED)
     elif payload.type == "pause":
-        if run.status in {AWAITING_APPROVAL, AWAITING_INPUT}:
-            raise ApiProblem(
-                409,
-                "user_response_waiting",
-                "사용자 응답을 기다리는 Run은 이미 안전하게 정지되어 있습니다.",
-            )
-        if run.status not in (ACTIVE_STATUSES - {PAUSED}) | {QUEUED}:
-            raise ApiProblem(
-                409, "run_not_active", "현재 Run은 일시 정지할 수 없습니다."
-            )
-        run.snapshot_json = {**run.snapshot_json, "resume_status": run.status}
-        transition_run(db, run, PAUSED)
-        pause_plan(db, run)
-        if run.worker_id is None:
-            from .recovery import detach_paused_run
-
-            detach_paused_run(db, run, reason="queued_pause")
-        command.status = "applied"
-        command.applied_at = utc_now()
+        _apply_pause_run_action(db, run=run, command=command)
     elif payload.type == "resume":
-        if run.status != PAUSED:
-            raise ApiProblem(
-                409, "run_not_paused", "현재 Run은 일시 정지 상태가 아닙니다."
-            )
-        resumed_at = utc_now()
-        lease_is_live = (
-            run.lease_expires_at is None or run.lease_expires_at > resumed_at
-        )
-        if run.worker_id is not None and lease_is_live:
-            run.snapshot_json = {
-                **run.snapshot_json,
-                "resume_requested": True,
-                "resume_requested_at": resumed_at.isoformat(),
-            }
-            append_event(
-                db,
-                run,
-                "run_resume_requested",
-                {"status": PAUSED, "queuedAfterSafeBoundary": True},
-            )
-        else:
-            from .recovery import queue_paused_run_for_resume
-
-            queue_paused_run_for_resume(db, run)
-        command.status = "applied"
-        command.applied_at = resumed_at
+        _apply_resume_run_action(db, run=run, command=command)
     elif payload.type == "cancel":
-        if run.status in TERMINAL_STATUSES:
-            command.status = "applied"
-        else:
+        if run.status not in TERMINAL_STATUSES:
             _cancel_run_state(db, run, actor_user_id=user.id)
-            command.status = "applied"
+        command.status = "applied"
         command.applied_at = utc_now()
     elif payload.type == "retry_step":
         step = retry_plan_step(db, run, payload.step_id)
@@ -2630,79 +2810,14 @@ def apply_run_action(
         }
     elif payload.type in {"approve", "reject"}:
         assert approval is not None
-        decision = "approved" if payload.type == "approve" else "rejected"
-        resolved_at = utc_now()
-        result = db.execute(
-            update(ToolApproval)
-            .where(ToolApproval.id == approval.id, ToolApproval.status == "pending")
-            .values(
-                status=decision,
-                resolved_by_user_id=user.id,
-                resolution_note=payload.note,
-                resolved_at=resolved_at,
-            )
-            .execution_options(synchronize_session=False)
-        )
-        if getattr(result, "rowcount", 0) != 1:
-            raise ApiProblem(
-                409,
-                "approval_already_resolved",
-                "Tool 승인 요청이 이미 처리되었습니다.",
-            )
-        db.expire(approval)
-        db.refresh(approval)
-        command.status = "applied"
-        command.applied_at = resolved_at
-        command.payload_json = {
-            **command.payload_json,
-            "approval_id": approval.id,
-            "decision": decision,
-        }
-        append_event(
+        _apply_approval_run_action(
             db,
-            run,
-            "approval_resolved",
-            {
-                "approval": approval_payload(approval),
-                "decision": decision,
-                "command": command_payload(command),
-            },
+            user=user,
+            run=run,
+            payload=payload,
+            command=command,
+            approval=approval,
         )
-        record_audit(
-            db,
-            actor=user,
-            action=f"tool_approval_{decision}",
-            target_type="tool_approval",
-            target_id=approval.id,
-            result="success",
-            reason=decision,
-            metadata={
-                "run_id": run.id,
-                "tool_name": approval.tool_name,
-                "effect": approval.effect,
-                "risk_level": approval.risk_level,
-                "argument_digest": approval.argument_digest,
-            },
-        )
-        remaining = (
-            db.scalar(
-                select(func.count(ToolApproval.id)).where(
-                    ToolApproval.run_id == run.id,
-                    ToolApproval.status == "pending",
-                )
-            )
-            or 0
-        )
-        if remaining == 0:
-            change_plan_step(
-                db,
-                run,
-                "tools",
-                status=PLAN_STEP_QUEUED,
-                reason="tool_approvals_resolved",
-            )
-            run.queued_at = resolved_at
-            transition_run(db, run, QUEUED)
     else:
         raise ApiProblem(
             409, "step_retry_unavailable", "재실행할 Plan Step이 없습니다."
