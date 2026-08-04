@@ -50,7 +50,10 @@ def _login(client: TestClient) -> dict[str, str]:
 
 def test_workspace_tool_schemas_and_risk_contract() -> None:
     names = [schema["function"]["name"] for schema in WORKSPACE_TOOL_SCHEMAS]
-    assert names == ["glob", "grep", "read_file", "list_dir"]
+    assert names == ["glob", "grep", "read_file", "list_dir", "create_skill"]
+    create_skill_schema = WORKSPACE_TOOL_SCHEMAS[-1]["function"]
+    assert "extensions/skills/<slug>/" in create_skill_schema["description"]
+    assert ".skills/" in create_skill_schema["description"]
     assert ARTIFACT_WRITE_TOOL_SCHEMA["function"]["name"] == "write_file"
     assert "without writing to the user-managed Project file repository" in (
         ARTIFACT_WRITE_TOOL_SCHEMA["function"]["description"]
@@ -63,6 +66,9 @@ def test_workspace_tool_schemas_and_risk_contract() -> None:
         classify_tool_risk("write_file", approval_mode="confirm_all").approval_required
         is True
     )
+    create_skill_risk = classify_tool_risk("create_skill", approval_mode="on_risk")
+    assert create_skill_risk.effect == "workspace_write"
+    assert create_skill_risk.approval_required is False
 
 
 def test_workspace_tools_are_project_scoped_and_version_writes(tmp_path: Path) -> None:
@@ -207,40 +213,40 @@ def test_skill_workspace_writes_register_and_update_active_draft(
             run = db.get(Run, run_id)
             user = db.scalar(select(User).where(User.login_id == "admin@posco.com"))
             assert run is not None and user is not None
-            execute_workspace_tool(
-                db,
-                executor.file_storage,
-                run=run,
-                user=user,
-                name="write_file",
-                arguments={
-                    "path": "skills/daily-standup-helper/references/templates.md",
-                    "content": "# Standup templates",
-                },
-                max_upload_bytes=settings.max_upload_bytes,
-            )
             written = execute_workspace_tool(
                 db,
                 executor.file_storage,
                 run=run,
                 user=user,
-                name="write_file",
+                name="create_skill",
                 arguments={
-                    "path": "skills/daily-standup-helper/SKILL.md",
-                    "content": (
-                        "---\n"
-                        "name: daily-standup-helper\n"
-                        "description: 매일 스탠드업을 정리합니다.\n"
-                        "---\n\n"
-                        "# Daily Standup Helper\n"
-                    ),
+                    "slug": "daily-standup-helper",
+                    "name": "daily-standup-helper",
+                    "description": "매일 스탠드업을 정리합니다.",
+                    "files": {
+                        "SKILL.md": (
+                            "---\n"
+                            "name: daily-standup-helper\n"
+                            "description: 매일 스탠드업을 정리합니다.\n"
+                            "---\n\n"
+                            "# Daily Standup Helper\n"
+                        ),
+                        "references/templates.md": "# Standup templates",
+                    },
                 },
                 max_upload_bytes=settings.max_upload_bytes,
             )
             db.commit()
 
-            assert written["skillDraft"]["slug"] == "daily-standup-helper"
-            assert written["skillDraft"]["revision"] == 1
+            assert written["slug"] == "daily-standup-helper"
+            assert written["revision"] == 1
+            assert written["packageRoot"] == (
+                "extensions/skills/daily-standup-helper"
+            )
+            assert {item["path"] for item in written["files"]} == {
+                "extensions/skills/daily-standup-helper/SKILL.md",
+                "extensions/skills/daily-standup-helper/references/templates.md",
+            }
 
         with SessionLocal() as db:
             extension = db.scalar(
@@ -268,6 +274,18 @@ def test_skill_workspace_writes_register_and_update_active_draft(
                 )
             )
             assert binding is not None and binding.enabled is True
+            project_paths = set(
+                db.scalars(
+                    select(ProjectFile.logical_path).where(
+                        ProjectFile.project_id == project_id
+                    )
+                )
+            )
+            assert project_paths == {
+                "extensions/skills/daily-standup-helper/SKILL.md",
+                "extensions/skills/daily-standup-helper/references/templates.md",
+            }
+            assert not any(path.startswith(".skills/") for path in project_paths)
 
         suggestions = client.get(
             "/api/composer/suggestions",
@@ -290,15 +308,31 @@ def test_skill_workspace_writes_register_and_update_active_draft(
                 executor.file_storage,
                 run=run,
                 user=user,
-                name="write_file",
+                name="create_skill",
                 arguments={
-                    "path": "skills/daily-standup-helper/references/templates.md",
-                    "content": "# Updated templates",
+                    "slug": "daily-standup-helper",
+                    "name": "daily-standup-helper",
+                    "description": "매일 스탠드업을 정리합니다.",
+                    "files": {
+                        "SKILL.md": (
+                            "---\n"
+                            "name: daily-standup-helper\n"
+                            "description: 매일 스탠드업을 정리합니다.\n"
+                            "---\n\n"
+                            "# Daily Standup Helper\n"
+                        ),
+                        "references/templates.md": "# Updated templates",
+                    },
                 },
                 max_upload_bytes=settings.max_upload_bytes,
             )
             db.commit()
-            assert updated["skillDraft"]["revision"] == 2
+            assert updated["revision"] == 2
+            assert next(
+                item
+                for item in updated["files"]
+                if item["path"].endswith("references/templates.md")
+            )["action"] == "updated"
 
 
 def test_glob_tool_call_name_is_persisted_for_ui(
@@ -362,6 +396,85 @@ def test_glob_tool_call_name_is_persisted_for_ui(
         assert snapshot["status"] == "completed"
         assert snapshot["toolExecutions"][0]["toolName"] == "glob"
         assert snapshot["toolExecutions"][0]["result"]["paths"] == ["notes/check.md"]
+
+
+def test_create_skill_tool_persists_package_in_extensions_workspace(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = _settings(tmp_path)
+
+    def provider(
+        _provider_id: str, *, wants_artifact: bool, first_turn: bool
+    ) -> MockProvider:
+        del wants_artifact
+        if first_turn:
+            return MockProvider(
+                tool_call=MockToolCall(
+                    name="create_skill",
+                    arguments={
+                        "slug": "say-hello",
+                        "name": "say-hello",
+                        "description": (
+                            "사용자가 간단한 한국어 인사를 요청하면 안녕하세요!라고 "
+                            "인사합니다."
+                        ),
+                        "files": {
+                            "SKILL.md": (
+                                "---\n"
+                                "name: say-hello\n"
+                                "description: 사용자가 간단한 한국어 인사를 요청하면 "
+                                "안녕하세요!라고 인사합니다.\n"
+                                "---\n\n"
+                                "# Say Hello\n\n"
+                                "Respond with exactly `안녕하세요!`.\n"
+                            )
+                        },
+                    },
+                    call_id="create-say-hello-skill",
+                )
+            )
+        return MockProvider(text_chunks=("인사 Skill을 만들었습니다.",))
+
+    monkeypatch.setattr(local_run_executor, "_provider", provider)
+    with TestClient(create_app(settings)) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers=headers,
+            json={"projectId": project_id, "title": "Skill Creator"},
+        ).json()
+        started = client.post(
+            f"/api/conversations/{conversation['id']}/runs",
+            headers={**headers, "Idempotency-Key": "create-say-hello-skill-run"},
+            json={"message": {"text": "안녕하세요!라고 인사하는 스킬을 만들어줘"}},
+        )
+        assert started.status_code == 202, started.text
+
+        deadline = time.monotonic() + 5
+        snapshot = {}
+        while time.monotonic() < deadline:
+            snapshot = client.get(
+                f"/api/runs/{started.json()['run']['runId']}/snapshot"
+            ).json()
+            if snapshot.get("status") == "completed":
+                break
+            time.sleep(0.02)
+
+        assert snapshot["status"] == "completed"
+        execution = snapshot["toolExecutions"][0]
+        assert execution["toolName"] == "create_skill"
+        assert execution["result"]["packageRoot"] == "extensions/skills/say-hello"
+
+        with SessionLocal() as db:
+            assert db.scalar(
+                select(ProjectFile.logical_path).where(
+                    ProjectFile.project_id == project_id
+                )
+            ) == "extensions/skills/say-hello/SKILL.md"
+            extension = db.scalar(select(Extension).where(Extension.slug == "say-hello"))
+            assert extension is not None
+            assert extension.project_id == project_id
 
 
 def test_write_file_result_is_exposed_as_document_artifact(

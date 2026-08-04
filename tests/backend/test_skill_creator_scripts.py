@@ -19,6 +19,15 @@ def _run(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def test_lumina_skill_creation_uses_persistent_extensions_workspace() -> None:
+    instructions = (SKILL_CREATOR / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "with the `create_skill` tool" in instructions
+    assert "`extensions/skills/<skill-name>/`" in instructions
+    assert "Never choose `.skills/` or `skills/`" in instructions
+    assert "temporary directory" in instructions
+
+
 def test_quick_validate_accepts_standard_optional_frontmatter(tmp_path: Path) -> None:
     skill_dir = tmp_path / "portable-skill"
     skill_dir.mkdir()

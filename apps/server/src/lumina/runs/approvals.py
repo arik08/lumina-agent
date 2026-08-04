@@ -125,6 +125,7 @@ def classify_tool_risk(
         "create_report",
         "generate_image",
         "write_file",
+        "create_skill",
         "run_python_calculation",
     }:
         return ToolRisk("workspace_write", "low", approval_mode == "confirm_all")

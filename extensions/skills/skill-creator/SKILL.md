@@ -150,11 +150,18 @@ requirements in `SKILL.md`; keep product-only fields in `agents/openai.yaml`.
 
 ## Initialize
 
-For a new Skill, choose the target directory with the user when placement is not already
-implied. In this repository, use the requested Lumina extension location. For a personal
-Codex Skill, use the configured Codex Skills directory.
+In Lumina, create or revise the package with the `create_skill` tool. Unless the user explicitly
+requests another supported destination, persist repository-style Skill files under
+`extensions/skills/<skill-name>/`. Never choose `.skills/` or `skills/` for a Lumina Skill.
+Do not run `scripts/init_skill.py` with `run_python` to create a persistent Skill: Skill Python
+execution uses a temporary directory that is removed after the Tool call. Pass `SKILL.md` and
+the required relative resource files through `create_skill`; verify its returned `packageRoot`,
+Draft revision, and file list.
 
-Run:
+Outside Lumina, choose the target directory with the user when placement is not already
+implied. For a personal Codex Skill, use the configured Codex Skills directory.
+
+When a client exposes a persistent filesystem instead of Lumina's `create_skill` tool, run:
 
 ```powershell
 python scripts/init_skill.py example-skill --path <output-directory>

@@ -62,6 +62,7 @@ Skill
 ```
 
 - Harness 대화에서 “이 작업을 Skill로 만들어”라고 하면 본인 전용 WorkingDraft를 만들고 현재 사용자에게 활성화합니다. 이 시점에는 `v1`이 없습니다.
+- 대화의 `create_skill` Tool은 package 파일을 Project workspace의 `extensions/skills/<slug>/`에 영속 저장하고 같은 내용으로 WorkingDraft를 생성·갱신합니다. `.skills/`·`skills/` 또는 `run_python` 임시 디렉터리는 Skill 생성 위치로 사용하지 않습니다.
 - 다른 사용자의 Published Skill에서 `내 버전으로 수정`을 시작하면 최신 설치·공식 version을 기준으로 해당 사용자만의 WorkingDraft를 만듭니다. 원본 Owner의 Draft와 다른 사용자의 Draft는 바뀌지 않습니다.
 - Draft는 autosave하며 각 변경에 내부 revision과 package digest를 부여합니다. 다음 Agent Run부터 최신 Draft revision을 실제 Skill로 사용하여 응답 변화가 나타나야 합니다.
 - 첫 명시적 `저장`은 현재 Draft snapshot으로 immutable `v1`을 만들고, 이후 다시 수정한 Draft를 저장하면 `v2`를 만듭니다.

@@ -598,7 +598,7 @@ def sync_workspace_skill(
     description: str,
     package_files: dict[str, str],
 ) -> tuple[Extension, ExtensionDraft, bool]:
-    """Create or refresh the active Draft represented by a Project skills/ folder."""
+    """Create or refresh the active Draft represented by extensions/skills/."""
     resolved_slug = _slug(slug, name, new_uuid())
     extension = db.scalar(
         select(Extension).where(

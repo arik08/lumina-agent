@@ -5699,6 +5699,34 @@ class LocalRunExecutor:
                 max_upload_bytes=self.settings.max_upload_bytes,
             )
 
+    def _execute_workspace_write_tool(
+        self,
+        run_id: str,
+        name: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        with session_scope() as db:
+            workspace_run = db.get(Run, run_id)
+            workspace_user = (
+                db.get(User, workspace_run.user_id)
+                if workspace_run is not None
+                else None
+            )
+            if workspace_run is None or workspace_user is None:
+                raise RuntimeError(
+                    "Run context disappeared during workspace tool execution"
+                )
+            self._require_execution_owner(workspace_run)
+            return execute_workspace_tool(
+                db,
+                self.file_storage,
+                run=workspace_run,
+                user=workspace_user,
+                name=name,
+                arguments=arguments,
+                max_upload_bytes=self.settings.max_upload_bytes,
+            )
+
     def _execute_source_document_read_tool(
         self,
         run_id: str,
@@ -6378,6 +6406,24 @@ class LocalRunExecutor:
                 tool_id,
                 payload,
                 f"Project workspace {tool_call['name']} 작업을 완료했습니다.",
+            )
+            return payload
+
+        if tool_call["name"] == "create_skill":
+            try:
+                payload = await asyncio.to_thread(
+                    self._execute_workspace_write_tool,
+                    run_id,
+                    str(tool_call["name"]),
+                    arguments,
+                )
+            except (ApiProblem, TypeError, ValueError) as exc:
+                return await self._fail_tool_execution(run_id, tool_id, exc)
+            await self._complete_tool_execution(
+                run_id,
+                tool_id,
+                payload,
+                f"Skill {payload['slug']} 생성을 완료했습니다.",
             )
             return payload
 

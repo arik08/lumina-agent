@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import re
 from pathlib import PurePosixPath
 from typing import Any
@@ -24,6 +25,7 @@ MAX_RESULTS = 200
 MAX_READ_LINES = 2_000
 MAX_READ_CHARS = 100_000
 MAX_GREP_FILE_CHARS = 1_000_000
+SKILL_WORKSPACE_ROOT = ("extensions", "skills")
 _SKILL_FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|$)", re.DOTALL)
 ARTIFACT_WRITE_TOOL_SCHEMA: dict[str, Any] = {
     "type": "function",
@@ -132,6 +134,46 @@ WORKSPACE_TOOL_SCHEMAS: tuple[dict[str, Any], ...] = (
                         "default": 100,
                     },
                 },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_skill",
+            "description": (
+                "Create or revise a Lumina Skill Draft and persist its package in the "
+                "current Project workspace under extensions/skills/<slug>/. Use this "
+                "instead of .skills/, a generic file Artifact, or run_python when the user "
+                "asks to create a Skill."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "slug": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                        "maxLength": 64,
+                    },
+                    "name": {"type": "string", "minLength": 1, "maxLength": 200},
+                    "description": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1024,
+                    },
+                    "files": {
+                        "type": "object",
+                        "description": (
+                            "Skill package files keyed by paths relative to the Skill root. "
+                            "SKILL.md is required."
+                        ),
+                        "minProperties": 1,
+                        "maxProperties": 200,
+                        "additionalProperties": {"type": "string"},
+                    },
+                },
+                "required": ["slug", "name", "description", "files"],
                 "additionalProperties": False,
             },
         },
@@ -245,6 +287,15 @@ def execute_workspace_tool(
         if skill_draft is not None:
             result["skillDraft"] = skill_draft
         return result
+    if name == "create_skill":
+        return _create_workspace_skill(
+            db,
+            storage,
+            run=run,
+            user=user,
+            arguments=arguments,
+            max_upload_bytes=max_upload_bytes,
+        )
     raise ValueError(f"Unknown workspace tool: {name}")
 
 
@@ -304,17 +355,21 @@ def _sync_workspace_skill_draft(
     written_path: str,
 ) -> dict[str, Any] | None:
     parts = PurePosixPath(written_path).parts
-    if len(parts) < 3 or parts[0].casefold() != "skills":
+    if (
+        len(parts) < 4
+        or tuple(part.casefold() for part in parts[:2]) != SKILL_WORKSPACE_ROOT
+    ):
         return None
-    slug = parts[1]
-    root = f"{parts[0]}/{slug}"
+    slug = parts[2]
+    root = f"extensions/skills/{slug}"
     package: dict[str, str] = {}
     for item in _active_files(db, run):
         item_parts = PurePosixPath(item.logical_path).parts
         if (
-            len(item_parts) < 3
-            or item_parts[0].casefold() != "skills"
-            or item_parts[1].casefold() != slug.casefold()
+            len(item_parts) < 4
+            or tuple(part.casefold() for part in item_parts[:2])
+            != SKILL_WORKSPACE_ROOT
+            or item_parts[2].casefold() != slug.casefold()
         ):
             continue
         version = get_project_file_version(db, item)
@@ -372,6 +427,143 @@ def _sync_workspace_skill_draft(
         "digest": draft.current_digest,
         "changed": changed,
     }
+
+
+def _create_workspace_skill(
+    db: Session,
+    storage: ManagedStorage,
+    *,
+    run: Run,
+    user: User,
+    arguments: dict[str, Any],
+    max_upload_bytes: int,
+) -> dict[str, Any]:
+    slug = str(arguments.get("slug") or "").strip()
+    name = str(arguments.get("name") or "").strip()
+    description = str(arguments.get("description") or "").strip()
+    raw_files = arguments.get("files")
+    if not isinstance(raw_files, dict):
+        raise ValueError("Skill package files는 object여야 합니다.")
+    package_files = {
+        str(path): str(content)
+        for path, content in raw_files.items()
+        if isinstance(path, str) and isinstance(content, str)
+    }
+    if len(package_files) != len(raw_files):
+        raise ValueError("Skill package 경로와 내용은 문자열이어야 합니다.")
+
+    extension, draft, changed = sync_workspace_skill(
+        db,
+        user=user,
+        project_id=run.project_id,
+        source_conversation_id=run.conversation_id,
+        slug=slug,
+        name=name,
+        description=description,
+        package_files=package_files,
+    )
+    package_root = f"extensions/skills/{extension.slug}"
+    written_files: list[dict[str, Any]] = []
+    current_files = _current_files(db, run.project_id)
+    for relative_path, content in sorted(draft.package_json.items()):
+        logical_path = normalize_logical_path(f"{package_root}/{relative_path}")
+        encoded = content.encode("utf-8")
+        existing = next(
+            (
+                item
+                for item in current_files
+                if item.logical_path.casefold() == logical_path.casefold()
+            ),
+            None,
+        )
+        if existing is None:
+            item, version = create_project_file(
+                db,
+                user=user,
+                project_id=run.project_id,
+                logical_path=logical_path,
+                original_filename=PurePosixPath(logical_path).name,
+                content=encoded,
+                change_reason="Agent create_skill",
+                max_upload_bytes=max_upload_bytes,
+                storage=storage,
+            )
+            current_files.append(item)
+            action = "created"
+        else:
+            current_version = get_project_file_version(db, existing)
+            if current_version.content_hash == _content_hash(encoded):
+                item, version, action = existing, current_version, "unchanged"
+            else:
+                item, version = create_project_file_version(
+                    db,
+                    user=user,
+                    project_id=run.project_id,
+                    file_id=existing.id,
+                    base_version=existing.current_version_number,
+                    original_filename=PurePosixPath(logical_path).name,
+                    content=encoded,
+                    change_reason="Agent create_skill",
+                    source_run_id=run.id,
+                    max_upload_bytes=max_upload_bytes,
+                    storage=storage,
+                )
+                action = "updated"
+        written_files.append(
+            {
+                "path": item.logical_path,
+                "action": action,
+                "version": version.version_number,
+                "contentHash": version.content_hash,
+            }
+        )
+
+    record_audit(
+        db,
+        action=(
+            "extension_created_from_workspace"
+            if draft.current_revision == 1
+            else "extension_draft_synced_from_workspace"
+        ),
+        target_type="extension",
+        target_id=extension.id,
+        result="success",
+        actor=user,
+        metadata={
+            "projectId": run.project_id,
+            "conversationId": run.conversation_id,
+            "draftRevision": draft.current_revision,
+            "packageRoot": package_root,
+        },
+    )
+    return {
+        "extensionId": extension.id,
+        "draftId": draft.id,
+        "slug": extension.slug,
+        "name": extension.name,
+        "revision": draft.current_revision,
+        "digest": draft.current_digest,
+        "changed": changed,
+        "packageRoot": package_root,
+        "files": written_files,
+    }
+
+
+def _current_files(db: Session, project_id: str) -> list[ProjectFile]:
+    return list(
+        db.scalars(
+            select(ProjectFile)
+            .where(
+                ProjectFile.project_id == project_id,
+                ProjectFile.deleted_at.is_(None),
+            )
+            .order_by(ProjectFile.logical_path)
+        )
+    )
+
+
+def _content_hash(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
 
 
 def _skill_frontmatter(content: str) -> dict[str, str]:
