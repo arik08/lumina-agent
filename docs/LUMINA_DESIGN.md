@@ -1101,6 +1101,9 @@ apps/server/src/lumina/providers/
 | `pgpt` | `GPT-5.6-Sol` | `gpt-5.6-sol` | 아니요 | 사용자 지정 |
 | `pgpt` | `GPT-5.6-Terra` | `gpt-5.6-terra` | 아니요 | 사용자 지정 |
 | `pgpt` | `GPT-5.6-Luna` | `gpt-5.6-luna` | 아니요 | 사용자 지정 |
+| `codex` | `GPT-5.6-Sol` | `gpt-5.6-sol` | 아니요 | ChatGPT OAuth 실호출 검증 |
+| `codex` | `GPT-5.6-Terra` | `gpt-5.6-terra` | 아니요 | ChatGPT OAuth 실호출 검증 |
+| `codex` | `GPT-5.6-Luna` | `gpt-5.6-luna` | 아니요 | ChatGPT OAuth 실호출 검증 |
 | `codex` | `GPT-5.5` | `gpt-5.5` | 예 | ChatGPT OAuth App Server 공개 catalog |
 | `codex` | `GPT-5.4` | `gpt-5.4` | 아니요 | ChatGPT OAuth App Server 공개 catalog |
 | `google` | `Gemini-3.1-Pro` | `gemini-3.1-pro` | 예 | 사용자 지정 |
@@ -1114,7 +1117,7 @@ apps/server/src/lumina/providers/
 
 OpenAI 항목은 [공식 최신 모델 가이드](https://developers.openai.com/api/docs/guides/latest-model.md), Anthropic 항목은 [공식 모델 개요](https://platform.claude.com/docs/en/about-claude/models/overview)와 [모델 선택 가이드](https://platform.claude.com/docs/en/about-claude/models/choosing-a-model)를 기준으로 선정했습니다. 외부 Provider의 `latest` alias는 실행 결과가 예고 없이 바뀔 수 있으므로 Run 재현용 ID로 저장하지 않습니다. 구현 직전과 catalog 갱신 시 공식 문서를 다시 확인하고, 변경은 관리자 검토를 거쳐 catalog revision으로 배포합니다.
 
-Codex text Provider는 OpenAI API Key가 아니라 로컬 Codex App Server의 `chatgpt` 인증 모드만 사용합니다. Backend는 Codex 자식 프로세스에서 `OPENAI_API_KEY`를 제거하여 API 과금 경로로 자동 fallback하지 못하게 하며, OAuth runtime이 보고한 검증 모델만 활성화합니다. `OpenAI` Provider의 API Key와 사용량은 Codex 구독 사용량과 분리합니다. Codex OAuth 경로에서 지원하지 않는 Lumina 전용 Tool은 API Key로 우회하지 않고 명시적으로 unavailable 처리합니다.
+Codex text Provider는 OpenAI API Key가 아니라 로컬 Codex App Server의 `chatgpt` 인증 모드만 사용합니다. Backend는 Codex 자식 프로세스에서 `OPENAI_API_KEY`를 제거하여 API 과금 경로로 자동 fallback하지 못하게 합니다. 원칙적으로 OAuth runtime의 공개 model discovery를 따르되, discovery 반영보다 먼저 실호출 검증을 마친 versioned Codex catalog 모델은 명시적 allowlist로 실행할 수 있습니다. `OpenAI` Provider의 API Key와 사용량은 Codex 구독 사용량과 분리합니다. Codex OAuth 경로에서 지원하지 않는 Lumina 전용 Tool은 API Key로 우회하지 않고 명시적으로 unavailable 처리합니다.
 
 Codex OAuth의 실제 과금 방식은 모델명 옆에 ChatGPT 구독으로 표시하되, 운영·관리 목적의 비용 비교를 위해 동일 토큰을 공개 단가표로 환산한 `예상비용`을 다른 Provider와 같은 짧은 원화 열로 표시합니다.
 

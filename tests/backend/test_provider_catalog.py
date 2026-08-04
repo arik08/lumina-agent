@@ -49,6 +49,9 @@ def test_initial_model_catalog_matches_detailed_design_section_12_3() -> None:
         ("pgpt", "GPT-5.6-Sol", "gpt-5.6-sol", False),
         ("pgpt", "GPT-5.6-Terra", "gpt-5.6-terra", False),
         ("pgpt", "GPT-5.6-Luna", "gpt-5.6-luna", False),
+        ("codex", "GPT-5.6-Sol", "gpt-5.6-sol", False),
+        ("codex", "GPT-5.6-Terra", "gpt-5.6-terra", False),
+        ("codex", "GPT-5.6-Luna", "gpt-5.6-luna", False),
         ("codex", "GPT-5.5", "gpt-5.5", True),
         ("codex", "GPT-5.4", "gpt-5.4", False),
         ("google", "Gemini-3.1-Pro", "gemini-3.1-pro", True),
@@ -70,7 +73,13 @@ def test_initial_model_catalog_matches_detailed_design_section_12_3() -> None:
             item.sort_order for item in items
         )
 
-    assert [item.sort_order for item in initial_model_catalog("codex")] == [40, 50]
+    assert [item.sort_order for item in initial_model_catalog("codex")] == [
+        10,
+        20,
+        30,
+        40,
+        50,
+    ]
     assert [item.model_key for item in initial_model_catalog("pgpt")] == [
         "gpt-5.4",
         "gpt-5.4-mini",

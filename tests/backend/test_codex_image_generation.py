@@ -228,7 +228,13 @@ def test_codex_catalog_and_legacy_seed_merge_preserve_adapter_capabilities(
         assert codex.capabilities_json == custom
 
     catalog = initial_model_catalog("codex")
-    assert [item.capabilities.image_generation for item in catalog] == [False, False]
+    assert [item.capabilities.image_generation for item in catalog] == [
+        False,
+        False,
+        False,
+        False,
+        False,
+    ]
     engine.dispose()
 
 

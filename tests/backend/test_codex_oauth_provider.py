@@ -35,6 +35,22 @@ class TransportClosedError(RuntimeError):
     pass
 
 
+@pytest.mark.parametrize(
+    "model",
+    ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
+)
+def test_codex_oauth_allows_live_verified_56_models_missing_from_discovery(
+    model: str,
+) -> None:
+    assert codex_adapter._oauth_model_available(model, frozenset({"gpt-5.5"}))
+
+
+def test_codex_oauth_still_rejects_unreviewed_models_missing_from_discovery() -> None:
+    assert not codex_adapter._oauth_model_available(
+        "gpt-future-unreviewed", frozenset({"gpt-5.5"})
+    )
+
+
 def _test_codex_token(account_id: str = "acct-test") -> str:
     header = base64.urlsafe_b64encode(b'{}').decode().rstrip("=")
     claims = base64.urlsafe_b64encode(

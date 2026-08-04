@@ -32,8 +32,8 @@ from openai_codex.generated.v2_all import (
     TurnCompletedNotification,
 )
 
+from ..catalog import initial_model_catalog
 from ..constants import CODEX_PROVIDER_ID
-from ..usage import derive_uncached_input_tokens
 from ..errors import ProviderConfigurationError, ProviderRequestError
 from ..openai import OpenAIResponsesAdapter
 from ..types import (
@@ -43,6 +43,7 @@ from ..types import (
     ProviderRequest,
     ProviderUsage,
 )
+from ..usage import derive_uncached_input_tokens
 
 
 _OUTPUT_SCHEMA: dict[str, Any] = {
@@ -78,6 +79,17 @@ _ISOLATABLE_TOOL_ARGUMENT_ERRORS = frozenset(
     }
 )
 PROVIDER_ID = CODEX_PROVIDER_ID
+_CODEX_OAUTH_DISCOVERY_OVERRIDES = frozenset(
+    item.runtime_model_id
+    for item in initial_model_catalog(PROVIDER_ID)
+    if item.model_key.startswith("gpt-5.6-")
+)
+
+
+def _oauth_model_available(model: str, discovered: frozenset[str]) -> bool:
+    return model in discovered or model in _CODEX_OAUTH_DISCOVERY_OVERRIDES
+
+
 _CODEX_RESPONSES_BASE_URL = "https://chatgpt.com/backend-api/codex"
 _CODEX_JWT_AUTH_CLAIM = "https://api.openai.com/auth"
 
@@ -388,7 +400,7 @@ class CodexResponsesAdapter:
         self, request: ProviderRequest
     ) -> AsyncIterator[ProviderEvent]:
         client, available, _cwd = await self._ready_client()
-        if request.model not in available:
+        if not _oauth_model_available(request.model, available):
             raise ProviderConfigurationError(
                 f"Codex OAuth에서 사용할 수 없는 모델입니다: {request.model}"
             )
@@ -451,7 +463,7 @@ class CodexResponsesAdapter:
             streamed = _CodexToolCallStream()
             try:
                 client, available, cwd = await self._ready_client()
-                if request.model not in available:
+                if not _oauth_model_available(request.model, available):
                     raise ProviderConfigurationError(
                         f"Codex OAuth에서 사용할 수 없는 모델입니다: {request.model}"
                     )

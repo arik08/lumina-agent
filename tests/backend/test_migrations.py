@@ -222,7 +222,7 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
         "last_warm_input_tokens",
         "last_warm_cached_tokens",
     } <= prompt_cache_seed_columns
-    assert revision == "0072"
+    assert revision == "0073"
     assert "ix_run_events_run_type" in run_event_indexes
     assert "ix_run_events_replay" not in run_event_indexes
     assert "ix_deep_analysis_events_replay" not in deep_analysis_event_indexes
@@ -348,6 +348,77 @@ def test_migration_0072_cleans_legacy_mission_orphans(tmp_path: Path) -> None:
     assert source_mission_id is None
     assert descendant_count == 0
     assert revision == "0072"
+
+
+def test_migration_0073_enables_codex_oauth_56_models(tmp_path: Path) -> None:
+    database = tmp_path / "codex-oauth-56.db"
+    database_url = f"sqlite:///{database.as_posix()}"
+    upgrade_database(database_url, "0072")
+
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            for sort_order, model_key in enumerate(
+                ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"),
+                start=1,
+            ):
+                connection.execute(
+                    text(
+                        "INSERT INTO provider_models "
+                        "(provider_id, model_key, display_name, runtime_model_id, "
+                        "aliases_json, enabled, is_default, sort_order, "
+                        "capabilities_json, source, catalog_revision, verified_at, "
+                        "id, created_at, updated_at) VALUES "
+                        "('codex', :model_key, :model_key, :model_key, '[]', 0, 0, "
+                        ":sort_order, '{}', 'product_contract:user', "
+                        "'2026-07-12.2-codex-oauth', "
+                        "'2026-07-12T00:00:00+00:00', :id, "
+                        "'2026-07-12T00:00:00+00:00', "
+                        "'2026-07-12T00:00:00+00:00')"
+                    ),
+                    {
+                        "id": f"codex-{model_key}",
+                        "model_key": model_key,
+                        "sort_order": sort_order,
+                    },
+                )
+            before = connection.execute(
+                text(
+                    "SELECT model_key, enabled FROM provider_models "
+                    "WHERE provider_id = 'codex' AND model_key LIKE 'gpt-5.6-%' "
+                    "ORDER BY sort_order"
+                )
+            ).all()
+    finally:
+        engine.dispose()
+
+    assert before == [
+        ("gpt-5.6-sol", False),
+        ("gpt-5.6-terra", False),
+        ("gpt-5.6-luna", False),
+    ]
+
+    upgrade_database(database_url, "0073")
+
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            after = connection.execute(
+                text(
+                    "SELECT model_key, enabled, sort_order, catalog_revision "
+                    "FROM provider_models "
+                    "WHERE provider_id = 'codex' AND model_key LIKE 'gpt-5.6-%' "
+                    "ORDER BY sort_order"
+                )
+            ).all()
+    finally:
+        engine.dispose()
+
+    assert after == [
+        ("gpt-5.6-sol", True, 10, "2026-08-05.1-codex-oauth-5.6"),
+        ("gpt-5.6-terra", True, 20, "2026-08-05.1-codex-oauth-5.6"),
+        ("gpt-5.6-luna", True, 30, "2026-08-05.1-codex-oauth-5.6"),
+    ]
 
 
 def test_message_search_fts_migration_0056_round_trip(tmp_path: Path) -> None:
@@ -606,7 +677,7 @@ def test_context_migration_adopts_legacy_create_all_table(tmp_path: Path) -> Non
         }
         with engine.connect() as connection:
             assert (
-                MigrationContext.configure(connection).get_current_revision() == "0072"
+                MigrationContext.configure(connection).get_current_revision() == "0073"
             )
     finally:
         engine.dispose()
@@ -636,7 +707,7 @@ def test_recent_migrations_adopt_tables_precreated_by_runtime_schema(
     try:
         with engine.connect() as connection:
             revision = MigrationContext.configure(connection).get_current_revision()
-        assert revision == "0072"
+        assert revision == "0073"
     finally:
         engine.dispose()
 
